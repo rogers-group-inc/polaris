@@ -139,24 +139,31 @@ function _setMaxLinePref(chartKey, on) {
 // `2 3`), NOT an inline <svg>: the chip sits inside the chart container ahead
 // of the plot, and the drag-select, tooltip and camera all find the plot with
 // container.querySelector("svg") — a swatch svg would win that lookup.
-function _maxLineChipHTML(chartKey, tier, on) {
+// `color` is the swatch: the series colour on a single-series chart, so the
+// key matches the line it toggles. Omitted where the max lines come in several
+// colours (cores, members, in/out) and the swatch can only say "all of them":
+// the primary text colour then, never grey, which is the Parent down colour.
+// A gradient reference (severity shading) cannot be a CSS background, so it
+// falls back to the accent the un-shaded line uses.
+function _maxLineChipHTML(chartKey, tier, on, color) {
+  var sw = !color ? "var(--color-text-primary)" : (/^url\(/.test(color) ? "var(--color-accent)" : color);
   var span = tier === "daily" ? "day" : "hour";
   return '<span class="chart-max-chip" data-max-chart="' + escapeHtml(chartKey) + '"' +
     ' title="' + escapeHtml((on ? "Click to hide" : "Click to show") + " the dashed line of each " + span + "'s highest reading") + '"' +
     ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none' +
     (on ? '' : ';opacity:0.8;text-decoration:line-through') + '">' +
     '<span class="chart-max-swatch" aria-hidden="true" style="width:15px;height:2px;flex:0 0 auto;' +
-      'background-image:linear-gradient(to right,currentColor 0,currentColor 2px,transparent 2px,transparent 5px);' +
+      'background-image:linear-gradient(to right,' + sw + ' 0,' + sw + ' 2px,transparent 2px,transparent 5px);' +
       'background-size:5px 2px;background-repeat:repeat-x' + (on ? '' : ';opacity:0.45') + '"></span>' +
     escapeHtml("Max (" + tier + " peak)") + '</span>';
 }
 // A chip-only legend row for a chart whose own legend lives inside its SVG
 // (CPU & Memory, interface throughput) or that has none (hardware sensor).
 // Empty off a rollup tier.
-function _maxLineLegendRowHTML(chartKey, tier) {
+function _maxLineLegendRowHTML(chartKey, tier, color) {
   if (!tier) return "";
   return '<div class="chart-max-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
-    _maxLineChipHTML(chartKey, tier, _getMaxLinePref(chartKey)) + '</div>';
+    _maxLineChipHTML(chartKey, tier, _getMaxLinePref(chartKey), color) + '</div>';
 }
 // Wires every Max chip for `chartKey` under `root`: flip the pref, re-render.
 function _wireMaxLineChip(root, chartKey, rerender) {
@@ -12846,7 +12853,7 @@ function _renderSensorChart(container, samples, opts) {
       }), sev.stroke)
     : "";
   container.innerHTML =
-    (maxTier ? _maxLineLegendRowHTML(opts.maxPrefKey, maxTier) : "") +
+    (maxTier ? _maxLineLegendRowHTML(opts.maxPrefKey, maxTier, sev.stroke) : "") +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       sev.defs +
@@ -14104,7 +14111,7 @@ function _renderSystemChart(container, data, asset, si) {
     : "";
   container.innerHTML =
     chartStaleBanner +
-    _maxLineLegendRowHTML("assetSystem", rollupTier) +
+    _maxLineLegendRowHTML("assetSystem", rollupTier, cpuColor) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
@@ -17254,7 +17261,7 @@ function _renderMonitorChart(container, data, transitions) {
     // The Max chip rides the key row on a rollup tier, so the row exists even
     // when the chart drew nothing but Up.
     legendSlot.innerHTML = _chartStateLegendHTML(onlyUp ? [] : keyEntries,
-      rollupTier ? _maxLineChipHTML("assetMonitor", rollupTier, showMax) : "");
+      rollupTier ? _maxLineChipHTML("assetMonitor", rollupTier, showMax, _CHART_UP_COLOR) : "");
     _wireMaxLineChip(legendSlot, "assetMonitor", function () { _renderMonitorChart(container, data, transitions); });
   }
 

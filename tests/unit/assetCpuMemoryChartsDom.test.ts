@@ -432,6 +432,8 @@ describe("CPU charts — rollup max (bucket peak) lines", () => {
     // The per-core lines are thinner than the aggregate's.
     expect(ml.find((m) => m.getAttribute("data-core") === "0")!.getAttribute("stroke-width")).toBe("1");
     expect(el.querySelector(".chart-max-chip")!.textContent).toBe("Max (hourly peak)");
+    // Many colours of max line: the swatch is the text colour, not a core's.
+    expect(el.querySelector(".chart-max-swatch")!.getAttribute("style")).toContain("var(--color-text-primary) 0");
 
     const det = container();
     g._renderCpuChart(det, payload(rollupSamples()), {}, {});
@@ -489,6 +491,8 @@ describe("CPU charts — rollup max (bucket peak) lines", () => {
     expect(ml[0]!.getAttribute("stroke")).toBe("var(--color-accent)");
     // The chip row sits ahead of the plot without hijacking `querySelector("svg")`.
     expect(el.querySelector(".chart-max-chip")!.textContent).toBe("Max (hourly peak)");
+    // One max line here, so the swatch is its colour.
+    expect(el.querySelector(".chart-max-swatch")!.getAttribute("style")).toContain("var(--color-accent) 0");
     expect(el.querySelector("svg")!.getAttribute("viewBox")).toMatch(/^0 0 /);
     (el.querySelector(".chart-max-chip") as HTMLElement).click();
     expect(maxLines(el)).toHaveLength(0);

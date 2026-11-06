@@ -202,6 +202,11 @@ describe("response-time chart — max line", () => {
     const { el, key } = renderMonitor(rollupMonitor("hourly"));
     expect(el.previousElementSibling).toBe(key);
     expect(chip(key)!.textContent).toBe("Max (hourly peak)");
+    // The swatch is the line's own colour (the Up green), never the grey of
+    // the key's Parent down entry.
+    const sw = chip(key)!.querySelector(".chart-max-swatch") as HTMLElement;
+    expect(sw.getAttribute("style")).toContain("var(--color-success) 0");
+    expect(sw.getAttribute("style")).not.toContain("currentColor");
     document.body.innerHTML = "";
     const daily = renderMonitor(rollupMonitor("daily"));
     expect(chip(daily.key)!.textContent).toBe("Max (daily peak)");

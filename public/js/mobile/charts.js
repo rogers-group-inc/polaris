@@ -339,6 +339,14 @@
     var anyMax = prepared.some(function (e) {
       return e.maxPts.some(function (p) { return p.v != null; });
     });
+    // The chip's swatch: the line's own colour when every max line shares one
+    // (response time, CPU only), so the key matches what it toggles; the chip's
+    // text colour when they differ (in/out, members).
+    var maxColors = {};
+    prepared.forEach(function (e) {
+      if (e.maxPts.some(function (p) { return p.v != null; })) maxColors[e.s.color || "var(--md-primary)"] = true;
+    });
+    var maxSwatch = Object.keys(maxColors).length === 1 ? Object.keys(maxColors)[0] : null;
 
     // With an explicit range the window's left edge is `from`. History
     // endpoints return lookback rows before it only so a line can enter from
@@ -497,7 +505,7 @@
       // The Max chip sits under the colour key: the key says what the colours
       // mean, the chip is the control for the dashed lines.
       + (opts.maxToggle && anyMax
-        ? '<div class="series-legend-bar"><div class="series-legend" data-legend="max">' + maxChipHTML(showMax) + '</div></div>'
+        ? '<div class="series-legend-bar"><div class="series-legend" data-legend="max">' + maxChipHTML(showMax, maxSwatch) + '</div></div>'
         : '');
   }
 
@@ -552,11 +560,12 @@
 
   // The Max chip — a `.chip` like the CPU chart's series chips, with a dashed
   // swatch. A switched-off chip keeps most of its ink and is struck through.
-  function maxChipHTML(on) {
+  // `color` = the swatch; omitted, the chip's own text colour (currentColor).
+  function maxChipHTML(on, color) {
     return '<button type="button" class="chip series-chip max-chip" data-max-toggle="1"'
       + ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="Bucket max lines"'
       + ' style="height:32px;padding:0 10px;gap:6px;font-size:13px;' + (on ? '' : 'opacity:.8;text-decoration:line-through;') + '">'
-      + '<span aria-hidden="true" style="width:14px;height:0;flex:0 0 auto;border-top:2px dashed currentColor;' + (on ? '' : 'opacity:.45;') + '"></span>'
+      + '<span aria-hidden="true" style="width:14px;height:0;flex:0 0 auto;border-top:2px dashed ' + (color || 'currentColor') + ';' + (on ? '' : 'opacity:.45;') + '"></span>'
       + 'Max</button>';
   }
 

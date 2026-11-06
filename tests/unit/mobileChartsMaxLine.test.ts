@@ -78,6 +78,17 @@ describe("lineChart bucket max", () => {
     expect(C.lineChart({ series: [{ values: avg, max: allNull }], maxToggle: true })).not.toContain("data-max-toggle");
   });
 
+  it("the chip's swatch is the line colour when every max line shares one, the text colour otherwise", () => {
+    const C = loadCharts();
+    const swatch = (html: string) =>
+      (frag(html).querySelector("[data-max-toggle] span") as HTMLElement).getAttribute("style") ?? "";
+    expect(swatch(C.lineChart({ series: [{ values: avg, max, color: "var(--md-success)" }], maxToggle: true })))
+      .toContain("dashed var(--md-success)");
+    expect(swatch(C.lineChart({
+      series: [{ values: avg, max, color: "#4fc3f7" }, { values: avg, max, color: "#ffb74d" }], maxToggle: true,
+    }))).toContain("dashed currentColor");
+  });
+
   it("hiding the max removes every max line and lowers the axis to the averages", () => {
     const C = loadCharts();
     const on = C.lineChart({ series: [{ values: avg, max }], maxToggle: true });
