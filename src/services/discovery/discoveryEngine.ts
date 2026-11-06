@@ -163,6 +163,7 @@ import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
 import { deviceSerialOrNull } from "../../utils/safeText.js";
 import { sortNewestFirst } from "../../utils/sortByTime.js";
+import { planHostnameMacSuffixes } from "../hostnameMacSuffixService.js";
 
 /** Auto-disable window for per-integration verbose debug logging (30 minutes). */
 const VERBOSE_LOGGING_TTL_MS = 30 * 60 * 1000;
@@ -6748,6 +6749,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // asset instead of one per sighting.
     const pendingInvUpdates = new Map<string, { data: Record<string, unknown>; label: string }>();
     const pendingInvMacs = new Map<string, MacJsonEntry[]>();
+    // Hostnames of the assets this pass creates — rule 91(i) names their families apart by MAC after the flush.
+    const invCreatedHostnames: string[] = [];
 
     for (const inv of result.deviceInventory) {
       if (!inv.macAddress && !inv.ipAddress) continue;
@@ -7084,6 +7087,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
             },
           });
           assetIdx.add(newAsset);
+          if (newAsset.hostname) invCreatedHostnames.push(newAsset.hostname);
           inventoryAssets.push(inv.hostname || normalizedMac || inv.ipAddress);
           logDiscoveryAssetCreated(newAsset.id, inv.hostname || normalizedMac || inv.ipAddress, {
             integrationName, integrationId, sourceKind: "fortigate-endpoint", actor,
@@ -7131,6 +7135,35 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
     if (pendingInvMacs.size > 0) {
       await batchSettled([...pendingInvMacs], ([assetId, macs]) => reconcileMacAddresses(assetId, macs));
+    }
+
+    // Business rule 91(i): a created asset whose name another live asset
+    // already carries — every bare-named member of that family whose name
+    // discovery gave it becomes "<name>-<last 3 MAC octets>". After the flush
+    // so the family read sees this run's writes; the in-memory row is renamed
+    // too, because Phase 10 echoes it into the fortigate-endpoint source.
+    if (invCreatedHostnames.length > 0) {
+      try {
+        const renames = await planHostnameMacSuffixes(invCreatedHostnames);
+        const results = await batchSettled(renames, (r) =>
+          prisma.asset.update({ where: { id: r.id }, data: { hostname: r.to } }),
+        );
+        for (let i = 0; i < renames.length; i++) {
+          const r = renames[i]!;
+          if (results[i]!.status === "rejected") {
+            syncLog("error", `Failed to rename ${r.from} to ${r.to}: ${(results[i] as PromiseRejectedResult).reason?.message || "Unknown error"}`);
+            continue;
+          }
+          const mem = assetIdx.findById(r.id);
+          if (mem) { mem.hostname = r.to; assetIdx.reindex(mem); }
+          logDiscoveryAssetUpdated({ hostname: r.from }, { hostname: r.to }, r.id, r.to, {
+            integrationName, integrationId, sourceKind: "fortigate-endpoint", actor,
+          });
+        }
+        if (renames.length > 0) syncLog("info", `Named ${renames.length} asset(s) apart by MAC: ${renames.map((r) => r.to).join(", ")}`);
+      } catch (err: any) {
+        syncLog("error", `Hostname MAC-suffix naming failed: ${err?.message || "Unknown error"}`);
+      }
     }
   }
 
