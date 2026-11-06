@@ -1185,7 +1185,7 @@
     var font = "system-ui,-apple-system,sans-serif";
     var sections = [
       { title: "Monitor health", rows: spec.health.map(function (h) { return { kind: "dot", color: h.color, label: h.label }; }) },
-      { title: "Links", rows: spec.edges.map(function (e) { return { kind: "line", color: e.color, dashed: e.style === "dashed", label: e.label }; }) },
+      { title: "Links", rows: spec.edges.map(function (e) { return { kind: "line", color: e.color, dashed: e.style !== "solid", label: e.label }; }) },
     ];
     if (spec.locations) {
       sections.push({ title: "Location groups", rows: spec.locations.map(function (l) { return { kind: "box", color: l.color, dashed: l.style === "dashed", label: l.label }; }) });
@@ -1308,7 +1308,7 @@
     var lightSpec = R.topologyLegendSpec("light");
     var keyItems = [];
     spec.health.forEach(function (h) { keyItems.push({ kind: "dot", color: h.color, fill: h.color, text: h.label }); });
-    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
+    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style !== "solid", text: e.label }); });
     spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
     var meta = [];
     var ext = cyInstance ? cyInstance.extent() : null;

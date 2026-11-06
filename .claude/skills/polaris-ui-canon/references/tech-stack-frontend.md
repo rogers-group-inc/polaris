@@ -38,17 +38,39 @@ observer calls `repaintOpenTopology()`, and the phone's topology tab does the sa
 `data-theme` rather than falling through to the light branch, so a caller that passes an id
 degrades to the right palette instead of the opposite one.
 
+**Links are coloured by speed and signal, not by kind** (operator design 2026-11-06, approved
+on the "Device Map link colors" canvas). Every link is `EDGE_COLORS[family].neutral` until it
+has something to say. `markLinkClasses` (run by `buildTopologyElements`) stamps a wired link
+`linkSpeed` = `linkSpeedClass(min of the two ends' srcIf/tgtIf.speedBps)` — `10g` (≥ 10 Gb,
+aggregates included) / `5g` / `2g5` / `1g` / `100m` / `10m` / `unknown` — and a mesh link
+`meshSignal` = `meshSignalClass(signalDbm)` — `good` ≥ −65 / `fair` ≥ −72 / `weak` ≥ −80 /
+`poor` / `unknown` (no reading, drawn like `good`). The stylesheet has one rule per class
+(colour + `LINK_SPEED_STYLE` weight; 10 Mb a round-capped dot pattern); how a link was found
+(isIface / isLldp / isApLink / controller) no longer has a colour and lives in the tooltip.
+**Warm hues are reserved for signal** — no speed may take yellow / orange / red, which the
+palette test enforces. MCLAG stays dashed in its speed's colour; the ring halo is
+`EDGE_COLORS.halo` (white / near-black — yellow was given to signal). The server side:
+`attachIfDetails` covers bridge and MCLAG edges too, and a mesh leaf's station row carries
+`signalDbm` / `noiseDbm` / `band` / `channel` / `channelWidthMhz`
+(`topologyGraphService → meshLinkDetail`, the root AP's `AssetApRadio` for channel and width;
+signal only exists where the controller's REST overlay ran). The tooltip
+(`edgeTooltipHtml` → `_speedTipRows` / `_meshTipRows`) writes every value out in words, so
+colour is never the only carrier. Desktop page and widget only — the phone draws the same
+colours but has no link tooltip.
+
 **Link and location-box colours are per family** (since 2026-10-16). `EDGE_COLORS.dark` is
-the original 300/400 pastel set; on the daylight grounds those measured 1.3–2.4:1 (cyan
-wireless, amber LLDP and the sky-blue building box all but vanished), so `EDGE_COLORS.light`
-and `LOC_GROUP_KINDS[kind].colorLight` step each hue to its 600/700 shade — ≥ 3.2:1 on
-morning's `#e8d4ad`, ≥ 3.8:1 on noon's `#eae8e5` (WCAG non-text 3:1). Same hue per kind in
-both families. `locGroupColor(kind, family?)` and `topologyLegendSpec(family?)` resolve the
+the 300/400 pastel set; on the daylight grounds those measured 1.3–2.4:1, so
+`EDGE_COLORS.light` and `LOC_GROUP_KINDS[kind].colorLight` step each hue to its 600/700
+shade — ≥ 3.2:1 on morning's `#e8d4ad`, ≥ 3.8:1 on noon's `#eae8e5` (WCAG non-text 3:1). The
+neutral is the FAINTEST line in both families. Same hue per class in both families. `locGroupColor(kind, family?)` and `topologyLegendSpec(family?)` resolve the
 family like the stylesheet does (`paletteFamily`, omitted → the document's), so the hulls,
 their tooltip and the legend follow the canvas; `map.js`'s `data-theme` observer also
 re-renders the legend body, which is otherwise filled once. Node health fills are the
 monitor-state palette and are NOT remapped. `topologyColumns.test.ts` holds the stylesheet's
-line colours equal to the legend's in both families — add a link kind to both or it fails.
+speed / signal rules equal to the legend's rows (colour and weight) in both families — add a
+class to both or it fails. The legend's `edges` rows carry `section` (speed / signal / also),
+`style` (solid / dashed / dotted) and `width`; `map.js`'s screenshot legend and export key
+treat any non-solid row as a broken line.
 
 **Port labels on bent and shared links** (operator rule, 2026-10-16). Cytoscape puts an
 edge label at the path midpoint — on a taxi / routed link, a middle leg far from both

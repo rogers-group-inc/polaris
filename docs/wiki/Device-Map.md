@@ -225,13 +225,35 @@ only has when it does not know which switch port the AP is on. Such a device
 stands unconnected in its location until its cable is found. A confirmed
 firewall-to-switch uplink whose ports cannot be resolved reads `fortilink`.
 
-**A switch-to-switch cable is one green line**, whether interface naming or an
-LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
-AP's switch uplink stays blue. Hover a link to see how it was found ("found by
-interface naming", "found by LLDP"). The legend lists each link and device
-kind by name only — devices by asset type (Firewall, Switch, Access Point),
-and the FortiGate's uplink as "Firewall to switch"; a wireless mesh backhaul
-between two APs is "AP to AP".
+**Link colors show speed and signal.** Every link starts as one neutral gray
+line, whatever kind of link it is and however it was found. Then:
+
+- **A cable takes the color of its speed**, and faster links are drawn
+  thicker: violet 10 Gb (or faster), blue 5 Gb, cyan 2.5 Gb, teal 1 Gb, slate
+  100 Mb, and a dotted slate line for 10 Mb. The speed is the slower of the
+  two ports' reported speeds. When neither port reports a speed (Polaris does
+  not know the port at one end, or its reading is more than an hour old) the
+  line stays gray.
+- **A wireless mesh link between two APs is dashed.** It stays gray while the
+  signal is good (−65 dBm or better), then turns yellow (−66 to −72), orange
+  (−73 to −80) and red (below −80) as the signal weakens. Signal strength comes
+  from the firewall's REST API; a site polled over SNMP only has no reading, so
+  its mesh links stay gray.
+
+Yellow, orange and red are only ever used for signal, so a slow cable never
+looks like a failing radio. An MCLAG inter-chassis link is dashed, in its
+speed's color, and a link that is part of a switch ring gets a white halo
+(near-black on the light themes).
+
+**Hover a link to see the details.** A cable's tooltip shows its ports, how it
+was found ("found by interface naming", "found by LLDP"), its speed, and each
+port's speed, status and error counts. A cable slower than 1 Gb also says that
+this is usually a cable or speed-negotiation fault. A mesh link's tooltip shows
+the signal in dBm and in words, the channel, band and channel width, the noise
+and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
+a section for each: **Wired link speed**, **Wireless mesh signal**, and
+**Also** (MCLAG and ring links). Devices are listed by asset type (Firewall,
+Switch, Access Point).
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
@@ -247,7 +269,7 @@ them: it moves to a stretch only its own link uses, and a link that shares
 its whole route shows no label.
 
 On the light themes (morning and noon) the links and location boxes are drawn
-in darker shades of the same colours, so they stay readable on the pale
+in darker shades of the same colors, so they stay readable on the pale
 background; the legend matches the theme you are using.
 
 When devices carry location codes, the details pane lists the switches and APs in the same

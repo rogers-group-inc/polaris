@@ -145,6 +145,16 @@
               source: a.id, target: s.id,
               label: s.ssid || "mesh",
               isMesh: 1,
+              // Radio-link detail the server attaches to a mesh leaf's
+              // station row (markLinkClasses colours by signalDbm; the
+              // tooltip prints all of it).
+              signalDbm: s.signalDbm != null ? s.signalDbm : null,
+              noiseDbm: s.noiseDbm != null ? s.noiseDbm : null,
+              band: s.band || null,
+              channel: s.channel != null ? s.channel : null,
+              channelWidthMhz: s.channelWidthMhz != null ? s.channelWidthMhz : null,
+              ssid: s.ssid || null,
+              seenAt: s.lastSeen || null,
             },
           });
         }
@@ -168,6 +178,8 @@
           label: e.label || "", reason: e.reason || "",
           isBridge: 1,
           isApLink: 1,
+          srcIf: e.srcIf || null,
+          tgtIf: e.tgtIf || null,
         },
       });
     });
@@ -280,13 +292,69 @@
           id: "me" + i, source: e.source, target: e.target,
           label: e.label ? "MCLAG " + e.label : "MCLAG", isMclag: 1,
           reason: e.reason || "",
+          srcIf: e.srcIf || null,
+          tgtIf: e.tgtIf || null,
         },
       });
     });
 
+    markLinkClasses(elements);
     markPhysicalLoops(elements);
     markInterGroupEdges(elements);
     return elements;
+  }
+
+  // ── Link colour classes ───────────────────────────────────────────────────
+  // Every device-to-device link is one neutral colour until it has something
+  // to say (operator design, 2026-11-06): a WIRED link takes the colour and
+  // weight of its speed, a MESH link turns yellow → orange → red as its
+  // signal weakens. Stamped as data so the stylesheet, the legend's hover
+  // match and the tooltip all read one decision.
+  //
+  // A wired link's speed is the slower of its two ends' interface speeds
+  // (srcIf / tgtIf, from the server's current-state interface table); an end
+  // with no reading or a non-positive one does not count. Both unknown →
+  // "unknown". Faster than 10 Gb (an aggregate, 25/40/100 Gb) reads as 10 Gb.
+  var LINK_SPEED_CLASSES = ["10g", "5g", "2g5", "1g", "100m", "10m"];
+  function linkSpeedClass(bps) {
+    if (!(bps > 0)) return "unknown";
+    if (bps >= 1e10) return "10g";
+    if (bps >= 5e9) return "5g";
+    if (bps >= 2.5e9) return "2g5";
+    if (bps >= 1e9) return "1g";
+    if (bps >= 1e8) return "100m";
+    return "10m";
+  }
+  function linkSpeedBps(d) {
+    var best = null;
+    [d && d.srcIf, d && d.tgtIf].forEach(function (i) {
+      var v = i && i.speedBps != null ? Number(i.speedBps) : NaN;
+      if (v > 0 && (best == null || v < best)) best = v;
+    });
+    return best;
+  }
+  // Mesh signal bands in dBm: good ≥ −65, fair −66…−72, weak −73…−80, poor
+  // below −80. No reading (an SNMP-only controller) → "unknown", drawn like
+  // good — the neutral dashed line — and named in the tooltip.
+  var MESH_SIGNAL_CLASSES = ["good", "fair", "weak", "poor"];
+  function meshSignalClass(dbm) {
+    if (dbm == null || dbm === "" || !isFinite(Number(dbm))) return "unknown";
+    var v = Number(dbm);
+    if (v >= -65) return "good";
+    if (v >= -72) return "fair";
+    if (v >= -80) return "weak";
+    return "poor";
+  }
+  function markLinkClasses(elements) {
+    elements.forEach(function (el) {
+      var d = el && el.data;
+      if (!d || !d.source) return;
+      if (d.isMesh) { d.meshSignal = meshSignalClass(d.signalDbm); return; }
+      if (d.isWireless) return;
+      var bps = linkSpeedBps(d);
+      d.speedBps = bps;
+      d.linkSpeed = linkSpeedClass(bps);
+    });
   }
 
   // Stamp `isInterGroup: 1` + a staggered `taxiTurn` (px) on every edge whose
@@ -411,23 +479,39 @@
     return (themeId === "morning" || themeId === "noon") ? "light" : "dark";
   }
 
-  // Link colours per palette family. The dark set is the 300/400 Tailwind
-  // shades; on the daylight grounds (noon #eae8e5, morning #e8d4ad) those
-  // measured 1.3–2.4:1 — the cyan wireless and amber LLDP lines all but
-  // vanished — so the light set steps each hue down to its 600/700 shade,
-  // ≥ 3.2:1 on morning and ≥ 3.8:1 on noon (WCAG non-text minimum 3:1).
-  // Same hue per link kind in both families, so the legend reads the same.
-  // The legend (topologyLegendSpec) reads this table — change them together.
+  // Link colours per palette family (operator design 2026-11-06, approved
+  // on the "Device Map link colors" canvas). Every device-to-device link is
+  // `neutral` until it has something to say: a wired link takes its SPEED's
+  // colour — a cool ramp, violet 10 Gb → blue → cyan → teal 1 Gb → slate
+  // 100 / 10 Mb — and a mesh link turns `fair` yellow → `weak` orange →
+  // `poor` red as its signal weakens. Warm hues are kept for signal alone, so
+  // a slow cable never reads as a failing radio; weight carries speed too
+  // (LINK_SPEED_STYLE), so the ramp still reads in grayscale. The daylight
+  // set steps each hue to its 600/700 shade (≥ 3:1 on noon / morning); the
+  // neutral is the FAINTEST line in both families. `halo` rings a link on a
+  // physical loop (white on dark, near-black on daylight — yellow was taken
+  // by signal). `portal` is the floor-view portal border; `wireless` the
+  // (unrendered) client-station link. The legend (topologyLegendSpec) reads
+  // this table — change them together.
   var EDGE_COLORS = {
     dark: {
-      controller: "#6a7388", fortilink: "#6a7388", iface: "#14b8a6", lldp: "#f59e0b",
-      mclag: "#d946ef", wireless: "#22d3ee", mesh: "#a78bfa", apLink: "#3b82f6", loop: "#eab308",
+      neutral: "#5b6478", "10g": "#a78bfa", "5g": "#60a5fa", "2g5": "#67e8f9", "1g": "#14b8a6",
+      "100m": "#94a3b8", "10m": "#94a3b8", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
+      halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee",
     },
     light: {
-      controller: "#64748b", fortilink: "#64748b", iface: "#0f766e", lldp: "#b45309",
-      mclag: "#a21caf", wireless: "#0e7490", mesh: "#6d28d9", apLink: "#1d4ed8", loop: "#a16207",
+      neutral: "#b4bcc8", "10g": "#7c3aed", "5g": "#2563eb", "2g5": "#0891b2", "1g": "#0f766e",
+      "100m": "#64748b", "10m": "#64748b", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
+      halo: "#111827", portal: "#64748b", wireless: "#0e7490",
     },
   };
+  // Line weight and pattern per speed class: faster is heavier; 10 Mb is
+  // dotted; an unknown speed is the neutral 2 px line.
+  var LINK_SPEED_STYLE = {
+    "10g": { width: 4 }, "5g": { width: 3.4 }, "2g5": { width: 3 }, "1g": { width: 2.4 },
+    "100m": { width: 1.8 }, "10m": { width: 1.6, dotted: true }, unknown: { width: 2 },
+  };
+  var MESH_LINK_WIDTH = 2.4;
 
   function topologyStylesheet(theme, opts) {
     opts = opts || {};
@@ -435,7 +519,7 @@
     var isDark = theme === "dark";
     var ec = EDGE_COLORS[theme];
     var textColor = isDark ? "#eef0f4" : "#1a1a1a";
-    var edgeColor = ec.controller;
+    var edgeColor = ec.neutral;
     var textBg    = isDark ? "#1c2029" : "#ffffff";
 
     var style = [
@@ -562,46 +646,50 @@
           "text-rotation": "autorotate",
         },
       },
-      // A switch-to-switch cable reads the same however it was found —
-      // interface naming (isIface) or an LLDP neighbour report (isLldp): one
-      // solid green "Switch ↔ switch" (operator decision 2026-11-02). Which
-      // signal drew it is in the link's tooltip (edgeTooltipHtml). The AP and
-      // MCLAG rules below still win for those links.
+      // Wired links: one neutral line whatever drew them (controller data,
+      // interface naming, LLDP, an AP uplink, a bridge), then coloured and
+      // weighted by SPEED below. HOW a link was found is in its tooltip.
+      // No arrowheads: the map reads hierarchy from its columns.
       {
-        selector: 'edge[isLldp = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.iface,
-          "target-arrow-color": ec.iface,
-          width: 2.4,
-        },
+        selector: 'edge[linkSpeed]',
+        style: { "line-style": "solid", "target-arrow-shape": "none" },
       },
       {
-        selector: 'edge[isIface = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.iface,
-          "target-arrow-color": ec.iface,
-          width: 2.4,
-        },
+        selector: 'edge[linkSpeed = "10g"]',
+        style: { "line-color": ec["10g"], "target-arrow-color": ec["10g"], width: LINK_SPEED_STYLE["10g"].width, },
       },
-      // MCLAG ICL edge: a sibling/peer link between two FortiSwitches. Fuchsia,
-      // dashed, no arrowhead (no hierarchy — they're peers), heavier than the
-      // observed edges so it reads as an authoritative interconnect distinct
-      // from the amber LLDP / teal interface / violet mesh edges.
+      {
+        selector: 'edge[linkSpeed = "5g"]',
+        style: { "line-color": ec["5g"], "target-arrow-color": ec["5g"], width: LINK_SPEED_STYLE["5g"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "2g5"]',
+        style: { "line-color": ec["2g5"], "target-arrow-color": ec["2g5"], width: LINK_SPEED_STYLE["2g5"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "1g"]',
+        style: { "line-color": ec["1g"], "target-arrow-color": ec["1g"], width: LINK_SPEED_STYLE["1g"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "100m"]',
+        style: { "line-color": ec["100m"], "target-arrow-color": ec["100m"], width: LINK_SPEED_STYLE["100m"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "10m"]',
+        style: { "line-color": ec["10m"], "target-arrow-color": ec["10m"], width: LINK_SPEED_STYLE["10m"].width, "line-style": "dashed", "line-dash-pattern": [0.5, 4], "line-cap": "round", },
+      },
+      {
+        selector: 'edge[linkSpeed = "unknown"]',
+        style: { "line-color": ec.neutral, "target-arrow-color": ec.neutral, width: LINK_SPEED_STYLE["unknown"].width, },
+      },
+      // MCLAG ICL: a peer link between two FortiSwitches — its speed's colour
+      // and weight, kept DASHED so the pair reads as peers, not parent/child.
       {
         selector: 'edge[isMclag = 1]',
-        style: {
-          "line-style": "dashed",
-          "line-color": ec.mclag,
-          "target-arrow-color": ec.mclag,
-          "target-arrow-shape": "none",
-          width: 2.4,
-        },
+        style: { "line-style": "dashed", "target-arrow-shape": "none" },
       },
-      // Wireless edge: AP → connected station. Dashed cyan, lighter than
-      // the wired controller / interface edges so the eye doesn't read
-      // station-cluster fanout as critical topology.
+      // Wireless edge: AP → connected station (not rendered today — the map
+      // is the FG / switch / AP backbone). Dashed, faint.
       {
         selector: 'edge[isWireless = 1]',
         style: {
@@ -612,41 +700,37 @@
           opacity: 0.7,
         },
       },
-      // Wireless mesh backhaul: root AP → leaf AP. Heavier dashed violet with a
-      // directional arrow so it reads as an authoritative uplink (the leaf
-      // depends on the root), distinct from the lighter cyan client wireless.
+      // Wireless mesh backhaul (root AP → leaf AP): dashed, the neutral
+      // colour at a good signal or none reported, then by signal band.
       {
         selector: 'edge[isMesh = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": ec.mesh,
-          "target-arrow-color": ec.mesh,
-          "target-arrow-shape": "triangle",
-          width: 2.2,
+          "line-color": ec.neutral,
+          "target-arrow-color": ec.neutral,
+          "target-arrow-shape": "none",
+          width: MESH_LINK_WIDTH,
         },
       },
-      // Wired AP↔switch link: a managed AP's switch uplink (switch → AP) or a
-      // FortiLink switch bridged behind an AP (AP → switch, isBridge). Solid
-      // blue with a directional arrow — a real ethernet cable, distinct from
-      // the dashed violet wireless mesh and the gray controller edges.
       {
-        selector: 'edge[isApLink = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.apLink,
-          "target-arrow-color": ec.apLink,
-          "target-arrow-shape": "triangle",
-          width: 2.2,
-        },
+        selector: 'edge[meshSignal = "fair"]',
+        style: { "line-color": ec.fair, "target-arrow-color": ec.fair },
+      },
+      {
+        selector: 'edge[meshSignal = "weak"]',
+        style: { "line-color": ec.weak, "target-arrow-color": ec.weak },
+      },
+      {
+        selector: 'edge[meshSignal = "poor"]',
+        style: { "line-color": ec.poor, "target-arrow-color": ec.poor },
       },
       // Physical loop membership (stamped by markPhysicalLoops): a wired edge
-      // lying on a cycle gets a yellow halo AROUND its own line color, so a
-      // switch ring reads at a glance without hiding which signal drew the
-      // edge. Composes with the type styles above — only outline props here.
+      // lying on a cycle gets a halo AROUND its own speed colour, so a switch
+      // ring reads at a glance. Only outline props here.
       {
         selector: 'edge[inLoop = 1]',
         style: {
-          "line-outline-color": ec.loop,
+          "line-outline-color": ec.halo,
           "line-outline-width": 2,
         },
       },
@@ -738,7 +822,7 @@
           "background-opacity": 0.9,
           "border-width": 2,
           "border-style": "dashed",
-          "border-color": edgeColor,
+          "border-color": ec.portal,
           "font-size": "10px",
           "font-style": "italic",
           "text-max-width": 130,
@@ -977,13 +1061,23 @@
         { key: "health:unknown",     label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
         { key: "health:unmonitored", label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
+      // Links, in three sections (`section`): wired speed, mesh signal, and
+      // the two marks that sit on top of either. `width` is the line's weight
+      // on the map; `style` solid | dashed | dotted.
       edges: [
-        { key: "edge:controller", label: "Firewall to switch", color: ec.controller, style: "solid" },
-        { key: "edge:switch",     label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
-        { key: "edge:mclag",      label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
-        { key: "edge:mesh",       label: "AP to AP",          color: ec.mesh, style: "dashed" },
-        { key: "edge:apLink",     label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
-        { key: "edge:loop",       label: "In physical loop",  color: ec.loop, style: "solid" },
+        { key: "speed:10g",     section: "speed",  label: "10 Gb",           color: ec["10g"],  style: "solid",  width: LINK_SPEED_STYLE["10g"].width },
+        { key: "speed:5g",      section: "speed",  label: "5 Gb",            color: ec["5g"],   style: "solid",  width: LINK_SPEED_STYLE["5g"].width },
+        { key: "speed:2g5",     section: "speed",  label: "2.5 Gb",          color: ec["2g5"],  style: "solid",  width: LINK_SPEED_STYLE["2g5"].width },
+        { key: "speed:1g",      section: "speed",  label: "1 Gb",            color: ec["1g"],   style: "solid",  width: LINK_SPEED_STYLE["1g"].width },
+        { key: "speed:100m",    section: "speed",  label: "100 Mb",          color: ec["100m"], style: "solid",  width: LINK_SPEED_STYLE["100m"].width },
+        { key: "speed:10m",     section: "speed",  label: "10 Mb",           color: ec["10m"],  style: "dotted", width: LINK_SPEED_STYLE["10m"].width },
+        { key: "speed:unknown", section: "speed",  label: "Speed not known", color: ec.neutral, style: "solid",  width: LINK_SPEED_STYLE.unknown.width },
+        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:fair",   section: "signal", label: "Fair, −66 to −72",        color: ec.fair,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:weak",   section: "signal", label: "Weak, −73 to −80",        color: ec.weak,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:poor",   section: "signal", label: "Poor, below −80",         color: ec.poor,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
+        { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
@@ -1031,6 +1125,14 @@
     if (kind === "edge") {
       return cy.edges().filter(function (e) {
         return val === "loop" ? e.data("inLoop") === 1 : edgeLegendKind(e) === val;
+      });
+    }
+    if (kind === "speed") return cy.edges().filter(function (e) { return e.data("linkSpeed") === val; });
+    // "Good" lights the links drawn like it: a good signal and none reported.
+    if (kind === "signal") {
+      return cy.edges().filter(function (e) {
+        var c = e.data("meshSignal");
+        return c === val || (val === "good" && c === "unknown");
       });
     }
     if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
@@ -3471,6 +3573,75 @@
   // details (speed / status / errors) when available. Reads device names from
   // the endpoint nodes and the port pair from the edge label
   // ("<srcPort> ↔ <tgtPort>"). Returns null when there's nothing useful.
+  // The tooltip's colour key for a link: a short line drawn in the link's own
+  // map colour and pattern, then the value in words — the colour is never
+  // the only carrier (the speed / signal is always written out).
+  function _tipSwatch(color, dashed) {
+    return '<span style="display:inline-block;width:22px;height:0;border-top:3px ' +
+      (dashed ? "dashed" : "solid") + ' ' + color + '"></span>';
+  }
+  function _tipAgo(ts) {
+    var t = ts ? new Date(ts).getTime() : NaN;
+    if (!isFinite(t)) return "";
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 90) return s + " s ago";
+    if (s < 5400) return Math.round(s / 60) + " min ago";
+    if (s < 129600) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / 86400) + " d ago";
+  }
+  function _speedTipRows(edge) {
+    var ec = EDGE_COLORS[paletteFamily()];
+    var cls = edge.data("linkSpeed") || "unknown";
+    var color = cls === "unknown" ? ec.neutral : ec[cls];
+    var row = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">' + _tipSwatch(color, false);
+    if (cls === "unknown") {
+      return row + '<b>Speed not known</b></div>' +
+        '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Neither end reports a port speed, so the link’s speed can’t be read.</div>';
+    }
+    row += '<b>' + _escTip(_humanizeSpeedBps(edge.data("speedBps"))) + '</b>' +
+      '<span style="opacity:0.7;font-size:0.82em">link speed</span></div>';
+    if (cls === "100m" || cls === "10m") {
+      row += '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Slower than 1 Gb on an infrastructure link. Usually a cable or speed-negotiation fault.</div>';
+    }
+    return row;
+  }
+  var _SIGNAL_WORD = { good: "Good signal", fair: "Fair signal", weak: "Weak signal", poor: "Poor signal" };
+  function _meshTipRows(edge) {
+    var ec = EDGE_COLORS[paletteFamily()];
+    var cls = edge.data("meshSignal") || "unknown";
+    var dbm = edge.data("signalDbm");
+    var html = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
+    if (cls === "unknown") {
+      html += _tipSwatch(ec.neutral, true) + '<b>Signal not reported</b></div>';
+    } else {
+      var wordColor = cls === "good" ? "var(--color-success)" : ec[cls];
+      html += _tipSwatch(cls === "good" ? ec.neutral : ec[cls], true) +
+        '<b>' + _escTip(String(dbm).replace("-", "−")) + ' dBm</b>' +
+        '<span style="font-weight:600;color:' + wordColor + '">' + _SIGNAL_WORD[cls] + '</span></div>';
+    }
+    var ch = edge.data("channel"), band = edge.data("band"), width = edge.data("channelWidthMhz");
+    var radio = [];
+    if (ch != null) radio.push("Channel " + ch);
+    if (band) radio.push(String(band).replace(/GHz$/i, " GHz").replace(/\s+GHz/, " GHz"));
+    if (width) radio.push(width + " MHz wide");
+    if (radio.length) html += '<div style="margin-top:4px">' + _escTip(radio.join(" · ")) + '</div>';
+    var noise = edge.data("noiseDbm");
+    if (cls !== "unknown" && noise != null) {
+      html += '<div style="font-size:0.82em;opacity:0.85">' +
+        _escTip("Noise " + String(noise).replace("-", "−") + " dBm · SNR " + (Number(dbm) - Number(noise)) + " dB") + '</div>';
+    }
+    if (edge.data("ssid")) {
+      html += '<div style="font-size:0.82em;opacity:0.85">SSID <span style="font-family:var(--font-mono,monospace)">' +
+        _escTip(edge.data("ssid")) + '</span></div>';
+    }
+    if (cls === "unknown") {
+      html += '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Signal strength comes from the firewall’s REST API; SNMP polling carries none.</div>';
+    }
+    var ago = _tipAgo(edge.data("seenAt"));
+    if (ago) html += '<div style="font-size:0.78em;opacity:0.7;margin-top:4px">Seen ' + ago + '</div>';
+    return html;
+  }
+
   function edgeTooltipHtml(cy, edge) {
     if (!cy || !edge) return null;
     var srcId = edge.data("source");
@@ -3491,11 +3662,14 @@
     var html =
       '<div style="font-weight:600">' + _escTip(srcLabel) +
       ' <span style="opacity:0.7">⇄</span> ' + _escTip(tgtLabel) + '</div>';
-    if (ports && ports !== "unknown ↔ unknown") {
+    var isMesh = !!edge.data("isMesh");
+    // A mesh link's label is its SSID, which gets its own row below.
+    if (!isMesh && ports && ports !== "unknown ↔ unknown") {
       html += '<div style="font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px">' +
         _escTip(ports) + '</div>';
     }
     html += '<div style="opacity:0.7;font-size:0.82em;margin-top:2px">' + _escTip(kind) + '</div>';
+    html += isMesh ? _meshTipRows(edge) : (edge.data("isWireless") ? "" : _speedTipRows(edge));
     // Per-side interface detail, each prefixed with its device so the operator
     // can tell which end "port14" / "port52" lives on (srcIf belongs to the
     // source node, tgtIf to the target).
@@ -3533,11 +3707,16 @@
       return '<span class="topology-legend-swatch">' + shape + '</span>';
     }
     function edgeSwatch(row) {
-      var dash = row.style === "dashed" ? "4 3" : "0";
+      var w = row.width || 2.4;
+      var dash = row.style === "dashed" ? "5 3" : (row.style === "dotted" ? "0.5 4" : "0");
+      var cap = row.style === "dashed" ? "butt" : "round";
+      var halo = row.halo
+        ? '<line x1="3" y1="6" x2="25" y2="6" stroke="' + row.halo + '" stroke-width="' + (w + 4) + '" stroke-linecap="round"/>'
+        : "";
       return '<span class="topology-legend-swatch">' +
-        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' +
-          '<line x1="2" y1="6" x2="26" y2="6" stroke="' + row.color +
-          '" stroke-width="2.4" stroke-dasharray="' + dash + '" stroke-linecap="round"/>' +
+        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' + halo +
+          '<line x1="3" y1="6" x2="25" y2="6" stroke="' + row.color +
+          '" stroke-width="' + w + '" stroke-dasharray="' + dash + '" stroke-linecap="' + cap + '"/>' +
         '</svg></span>';
     }
     function healthSwatch(row) {
@@ -3564,7 +3743,9 @@
     if (!spec) return "";
     return section("Nodes", spec.nodes, nodeSwatch) +
       section("Monitor health", spec.health, healthSwatch) +
-      section("Edges", spec.edges, edgeSwatch) +
+      section("Wired link speed", (spec.edges || []).filter(function (r) { return r.section === "speed"; }), edgeSwatch) +
+      section("Wireless mesh signal", (spec.edges || []).filter(function (r) { return r.section === "signal"; }), edgeSwatch) +
+      section("Also", (spec.edges || []).filter(function (r) { return r.section !== "speed" && r.section !== "signal"; }), edgeSwatch) +
       section("Location groups", spec.locations, locationSwatch);
   }
 
@@ -3738,6 +3919,8 @@
     separatePositions: separatePositions,
     separateNodes: separateNodes,
     edgeTooltipHtml: edgeTooltipHtml,
+    linkSpeedClass: linkSpeedClass,
+    meshSignalClass: meshSignalClass,
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,
     highlightLinkHover: highlightLinkHover,

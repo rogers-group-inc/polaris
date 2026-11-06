@@ -237,6 +237,26 @@ const SYNTHETIC_LLDP_PORT_RE = /^port-\d+$/i;
 const LLDP_PORT_NAME_SUBTYPES = new Set(["interfaceName", "interfaceAlias", "agentCircuitId", "local"]);
 
 /**
+ * The radio-link detail the Device Map draws a mesh backhaul link from: the
+ * leaf AP's station row on its root (signal / noise in dBm — present only
+ * when the controller's REST overlay ran; null on an SNMP-only site) and the
+ * root AP's radio it is associated on (channel, width; band from the station
+ * row first, the radio second). A missing radio leaves channel and width null.
+ */
+export function meshLinkDetail(
+  station: { signalStrength?: number | null; noise?: number | null; band?: string | null },
+  radio: { channel?: number | null; bandwidthMhz?: number | null; band?: string | null } | undefined,
+): { signalDbm: number | null; noiseDbm: number | null; band: string | null; channel: number | null; channelWidthMhz: number | null } {
+  return {
+    signalDbm: station.signalStrength ?? null,
+    noiseDbm: station.noise ?? null,
+    band: station.band ?? radio?.band ?? null,
+    channel: radio?.channel ?? null,
+    channelWidthMhz: radio?.bandwidthMhz ?? null,
+  };
+}
+
+/**
  * Switch↔switch links between two in-site switches that LLDP sees but that
  * no other edge class drew. Interface-name inference only catches FortiOS
  * peer aggregates named after the peer's serial or hostname, so a plain fiber
@@ -600,6 +620,16 @@ export async function buildSiteTopology(siteId: string) {
       assetType: string | null;
       ssid: string | null;
       lastSeen: Date | null;
+      // Radio-link detail, only on a station that is itself a FortiAP (a mesh
+      // leaf on its root): the Device Map colours and labels the mesh
+      // backhaul link from these. Signal/noise are dBm and come only from the
+      // controller's REST overlay (null on an SNMP-only site); channel and
+      // width are the ROOT AP's radio the leaf is associated on.
+      signalDbm?: number | null;
+      noiseDbm?: number | null;
+      band?: string | null;
+      channel?: number | null;
+      channelWidthMhz?: number | null;
     };
     const aps = siblings
       .filter((s) => s.assetType === "access_point")
@@ -658,12 +688,25 @@ export async function buildSiteTopology(siteId: string) {
       });
       const apById = new Map<string, typeof aps[number]>();
       for (const a of aps) apById.set(a.id, a);
+      // The root AP's radio each mesh leaf is associated on — one read for
+      // the radios of the roots that actually carry a mesh leaf (usually none).
+      const meshRootIds = [...new Set(stationRows
+        .filter((r) => r.radioId != null && r.matchedAsset?.assetType === "access_point" && apById.has(r.matchedAsset.id))
+        .map((r) => r.apAssetId))];
+      const radioByKey = new Map<string, { channel: number | null; bandwidthMhz: number | null; band: string | null }>();
+      if (meshRootIds.length > 0) {
+        const radios = await prisma.assetApRadio.findMany({
+          where: { assetId: { in: meshRootIds } },
+          select: { assetId: true, radioIndex: true, channel: true, bandwidthMhz: true, band: true },
+        });
+        for (const r of radios) radioByKey.set(`${r.assetId}|${r.radioIndex}`, r);
+      }
       const countByAp = new Map<string, number>();
       for (const row of stationRows) {
         countByAp.set(row.apAssetId, (countByAp.get(row.apAssetId) ?? 0) + 1);
         const ap = apById.get(row.apAssetId);
         if (!ap || ap.stations.length >= 25) continue;
-        ap.stations.push({
+        const station: StationSummary = {
           id:         row.matchedAsset?.id ?? null,
           hostname:   row.matchedAsset?.hostname ?? null,
           ipAddress:  row.matchedAsset?.ipAddress ?? row.staIpAddr ?? null,
@@ -671,7 +714,12 @@ export async function buildSiteTopology(siteId: string) {
           assetType:  row.matchedAsset?.assetType ?? null,
           ssid:       row.ssid ?? null,
           lastSeen:   row.lastSeen,
-        });
+        };
+        if (row.matchedAsset?.assetType === "access_point") {
+          const radio = row.radioId != null ? radioByKey.get(`${row.apAssetId}|${row.radioId}`) : undefined;
+          Object.assign(station, meshLinkDetail(row, radio));
+        }
+        ap.stations.push(station);
       }
       for (const a of aps) a.stationCount = countByAp.get(a.id) ?? 0;
     }
@@ -1637,6 +1685,10 @@ export async function buildSiteTopology(siteId: string) {
     attachIfDetails(edges);
     attachIfDetails(interfaceEdgesOut);
     attachIfDetails(lldpEdgesOut);
+    // Bridge (switch behind an AP) and MCLAG links are cables too: the Device
+    // Map colours every wired link by its speed, read from these details.
+    attachIfDetails(bridgeEdges);
+    attachIfDetails(mclagEdges);
 
     // Drop redundant FortiLink fallback edges. FortiOS stamps
     // `fgt_peer_intf_name = "fortilink"` on every managed switch — direct or

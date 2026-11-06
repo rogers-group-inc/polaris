@@ -400,7 +400,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `persistApRadioInventory(assetId, radios, source, now?)` -> `{ radios, vaps, removedRadios }` (write one AP's whole inventory) and `getApRadioInventory(assetId)` -> `ApRadioWithVaps[]` (the radios with their SSIDs nested, ordered radio index then SSID).
 
-**Used by:** `discoveryEngine.syncDhcpSubnets`'s FortiAP loop (source `"fortios"`, gated on the AP being online AND the parsed row carrying a `radio` array), `monitoringService`'s SNMP system-info pass (source `"snmp"`, `collectApRadiosSnmp` behind the same `assetType==="access_point"` gate as the station walk), and `api/routes/assets.ts` `GET /assets/:id/system-info` (the read).
+**Used by:** `discoveryEngine.syncDhcpSubnets`'s FortiAP loop (source `"fortios"`, gated on the AP being online AND the parsed row carrying a `radio` array), `monitoringService`'s SNMP system-info pass (source `"snmp"`, `collectApRadiosSnmp` behind the same `assetType==="access_point"` gate as the station walk), and `api/routes/assets.ts` `GET /assets/:id/system-info` (the read). `topologyGraphService` reads `AssetApRadio` directly for a mesh link's channel / width (the root AP's radio at the leaf's `radioId`).
 
 **Writes:** `AssetApRadio`, `AssetApVap` — one transaction per AP.
 
