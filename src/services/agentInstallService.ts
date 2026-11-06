@@ -62,7 +62,7 @@ import {
   removeWindowsStageDir,
   STAGED_SCRIPT_PRELUDE,
 } from "../utils/remoteStaging.js";
-import { getPublicUrlPort } from "../utils/publicUrl.js";
+import { getPublicUrlPort, publicBaseUrl } from "../utils/publicUrl.js";
 import { getServerCertHostnames, getServerCertFingerprint } from "./certInfo.js";
 import { assetSourceKindFromIntegrationType, isPollingMethodCompatible } from "../utils/pollingCompatibility.js";
 import {
@@ -1702,7 +1702,7 @@ export function inferOwnServerUrlSync(): string {
   // Every candidate is normalized: this string is written into agent.conf and
   // pasted into installer scripts, so one that fails the allowlist is skipped
   // for the next source rather than used.
-  const fromEnv = normalizeAgentServerUrl(process.env.POLARIS_PUBLIC_URL);
+  const fromEnv = normalizeAgentServerUrl(publicBaseUrl());
   if (fromEnv) return fromEnv;
   const httpsPort = getPublicUrlPort();
   const hostnames = getServerCertHostnames();

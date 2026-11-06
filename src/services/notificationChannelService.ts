@@ -21,6 +21,7 @@ import { pushDeepLinkUrl } from "../utils/notificationTemplate.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { restoreStoredSecrets } from "../utils/secretDestination.js";
 import { asObject } from "../utils/object.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
 const MASK = SECRET_MASK;
 
@@ -207,8 +208,8 @@ const WEB_PUSH_CHANNEL_NAME = "Web Push";
 /** VAPID requires a mailto:/https: contact URI. Derive one; the sender also
  *  has its own fallback, so this is never load-bearing. */
 function defaultVapidSubject(): string {
-  const base = process.env.POLARIS_PUBLIC_URL;
-  if (base && /^https:/i.test(base)) return base.replace(/\/$/, "");
+  const base = publicBaseUrl();
+  if (base && /^https:/i.test(base)) return base;
   return "mailto:polaris@localhost";
 }
 

@@ -11,5 +11,16 @@
  */
 
 export function isProxyMode(): boolean {
-  return Boolean(process.env.POLARIS_PROXY_CERT_PATH);
+  return proxyCertPath() !== null;
+}
+
+/**
+ * POLARIS_PROXY_CERT_PATH — the certificate nginx serves — or null when
+ * unset/empty. THE one reader of the variable: certInfo, the HA enrollment
+ * bundle and the Web Server settings card read the path through this, and
+ * "are we in proxy mode?" is isProxyMode() above, never a Boolean() of the
+ * env var at the call site.
+ */
+export function proxyCertPath(): string | null {
+  return process.env.POLARIS_PROXY_CERT_PATH || null;
 }

@@ -38,7 +38,7 @@ import {
   saveApiDocsSettings,
   docsSourceAllowed,
 } from "../../services/apiDocsAccessService.js";
-import { isProxyMode } from "../../utils/proxyMode.js";
+import { isProxyMode, proxyCertPath } from "../../utils/proxyMode.js";
 import { isWrapperAvailable } from "../../services/privilegedSysadmin.js";
 import { getProxyConfig } from "../../services/proxyConfigService.js";
 import { applyProxyConfig, getDriftStatus } from "../../services/nginxApplyService.js";
@@ -575,7 +575,7 @@ router.get("/https", async (_req, res, next) => {
       dnsSans: hosts?.dnsSans ?? [],
       ipSans: hosts?.ipSans ?? [],
       expiresAt: getServerCertExpiry(),
-      certPath: process.env.POLARIS_PROXY_CERT_PATH ?? null,
+      certPath: proxyCertPath(),
     });
   } catch (err) {
     next(err);

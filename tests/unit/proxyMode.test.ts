@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isProxyMode } from "../../src/utils/proxyMode.js";
+import { isProxyMode, proxyCertPath } from "../../src/utils/proxyMode.js";
 
 describe("isProxyMode", () => {
   const saved = process.env.POLARIS_PROXY_CERT_PATH;
@@ -41,5 +41,25 @@ describe("isProxyMode", () => {
     expect(isProxyMode()).toBe(true);
     delete process.env.POLARIS_PROXY_CERT_PATH;
     expect(isProxyMode()).toBe(false);
+  });
+});
+
+describe("proxyCertPath", () => {
+  const saved = process.env.POLARIS_PROXY_CERT_PATH;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.POLARIS_PROXY_CERT_PATH;
+    else process.env.POLARIS_PROXY_CERT_PATH = saved;
+  });
+
+  it("is null when unset or empty, the path otherwise — and agrees with isProxyMode", () => {
+    delete process.env.POLARIS_PROXY_CERT_PATH;
+    expect(proxyCertPath()).toBeNull();
+    expect(isProxyMode()).toBe(false);
+    process.env.POLARIS_PROXY_CERT_PATH = "";
+    expect(proxyCertPath()).toBeNull();
+    expect(isProxyMode()).toBe(false);
+    process.env.POLARIS_PROXY_CERT_PATH = "/etc/polaris-nginx/cert.pem";
+    expect(proxyCertPath()).toBe("/etc/polaris-nginx/cert.pem");
+    expect(isProxyMode()).toBe(true);
   });
 });

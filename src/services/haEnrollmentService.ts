@@ -41,6 +41,7 @@ import { buildTar, type TarEntry } from "../utils/tarWriter.js";
 import { ENV_FILE } from "../utils/paths.js";
 import { getServerCertFingerprint } from "./certInfo.js";
 import { getPublicApiBaseUrl } from "../utils/publicUrl.js";
+import { isProxyMode, proxyCertPath } from "../utils/proxyMode.js";
 import {
   getHaConfig,
   issueEtcdCert,
@@ -414,7 +415,7 @@ export async function buildNodeBundle(cfg: HaConfig, role: HaRole): Promise<Buff
   //     never going to succeed.
   // The witness is exempt: it gets etcd material only, and a vote does not need
   // to be able to impersonate the application.
-  if (role !== "witness" && !process.env.POLARIS_PROXY_CERT_PATH) {
+  if (role !== "witness" && !isProxyMode()) {
     throw new AppError(
       409,
       "POLARIS_PROXY_CERT_PATH is not set — the standby must serve the same certificate agents pin.",
@@ -494,7 +495,7 @@ function readEnvFile(): string {
 }
 
 function readProxyCert(): string {
-  const path = process.env.POLARIS_PROXY_CERT_PATH;
+  const path = proxyCertPath();
   if (!path) throw new AppError(409, "POLARIS_PROXY_CERT_PATH is not set — the standby must serve the same certificate agents pin.");
   try {
     return readFileSync(path, "utf8");
@@ -505,7 +506,7 @@ function readProxyCert(): string {
 }
 
 function readProxyKey(): string {
-  const certPath = process.env.POLARIS_PROXY_CERT_PATH;
+  const certPath = proxyCertPath();
   if (!certPath) throw new AppError(409, "POLARIS_PROXY_CERT_PATH is not set.");
   // The shipped layout keeps the key beside the cert as key.pem.
   const keyPath = certPath.replace(/cert\.pem$/, "key.pem");

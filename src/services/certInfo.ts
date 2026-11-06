@@ -17,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { createHash, X509Certificate } from "node:crypto";
 import { logger } from "../utils/logger.js";
+import { proxyCertPath } from "../utils/proxyMode.js";
 
 interface CachedCert {
   /** SHA-256 of the raw file bytes — cache key for "do I need to re-parse?". */
@@ -75,7 +76,7 @@ function readActiveCert(): CachedCert | null {
  * the rotation window was worse than one stale read).
  */
 function readPemBytes(): Buffer | null {
-  const path = process.env.POLARIS_PROXY_CERT_PATH;
+  const path = proxyCertPath();
   if (!path) return null;
   const first = tryReadFile(path);
   if (first && first.length > 0) return first;

@@ -182,6 +182,7 @@ import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../se
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
 import { assertIpChangeMayRetargetIntegrationToken as assertIpChangeMayRetargetIntegrationTokenUtil } from "../../utils/integrationTokenTarget.js";
 import { assertCredentialInAssetScope } from "../../services/assetCredentialScopeService.js";
+import { publicBaseUrl } from "../../utils/publicUrl.js";
 
 const router = Router();
 
@@ -7205,7 +7206,7 @@ router.post("/:id/agent/install", requirePermission("agentDeploy", "write"), asy
     // every remote install it produces an agent that connection-refuses
     // against its own loopback. Refuse early when ALL the above sources
     // fail for a remote-host install.
-    if (!process.env.POLARIS_PUBLIC_URL && !process.env.POLARIS_PUBLIC_HOST) {
+    if (!publicBaseUrl() && !process.env.POLARIS_PUBLIC_HOST) {
       const targetHost = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname || "";
       const isSameBox = targetHost === "127.0.0.1" || targetHost === "::1" ||
                         targetHost === "localhost" || targetHost.toLowerCase() === "localhost.localdomain";

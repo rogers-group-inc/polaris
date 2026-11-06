@@ -13,6 +13,31 @@
  * to derive an agent from anyway.
  */
 
+import { trimTrailing } from "./trimTrailing.js";
+
+/**
+ * POLARIS_PUBLIC_URL as a link base: trimmed, every trailing "/" removed, null
+ * when unset or blank. THE one reader of the variable — every link builder,
+ * the OIDC redirect URI and the helpers below go through it.
+ *
+ * Before 2026-11-06 each caller spelled its own: the email / push link
+ * builders stripped ONE trailing slash and no whitespace while OIDC trimmed
+ * both, so a value with a stray space or a doubled slash signed people in
+ * fine and mailed broken Acknowledge / View / device links
+ * (`https://host/ /alert-ack.html`, `https://host//automations.html`).
+ * A path in the value is kept (the link builders always kept it);
+ * getPublicApiBaseUrl / getPublicUrlPort / deriveNginxServerName take only the
+ * origin parts they need from it.
+ *
+ * Read on every call, never cached — tests flip the variable per case.
+ */
+export function publicBaseUrl(): string | null {
+  const raw = process.env.POLARIS_PUBLIC_URL;
+  if (!raw) return null;
+  const base = trimTrailing(raw.trim(), "/");
+  return base || null;
+}
+
 /**
  * Parse the port out of `POLARIS_PUBLIC_URL`. Returns:
  *  - the explicit port if the URL has one (e.g. `https://x.example.com:8443` → 8443)
@@ -24,7 +49,7 @@
  * so callers can call this freely without caching.
  */
 export function getPublicUrlPort(): number | null {
-  const raw = process.env.POLARIS_PUBLIC_URL;
+  const raw = publicBaseUrl();
   if (!raw) return null;
   try {
     const u = new URL(raw);
@@ -44,7 +69,7 @@ export function getPublicUrlPort(): number | null {
  * falls back to the browser's own origin in that case.
  */
 export function getPublicApiBaseUrl(): string | null {
-  const raw = process.env.POLARIS_PUBLIC_URL;
+  const raw = publicBaseUrl();
   if (!raw) return null;
   try {
     return new URL(raw).origin + "/api/v1";
@@ -61,7 +86,7 @@ export function getPublicApiBaseUrl(): string | null {
  * nginxApplyService and updateService's restart-time config sync.
  */
 export function deriveNginxServerName(): string {
-  const publicUrl = process.env.POLARIS_PUBLIC_URL;
+  const publicUrl = publicBaseUrl();
   if (publicUrl) {
     try { return new URL(publicUrl).hostname; } catch { /* fall through */ }
   }
