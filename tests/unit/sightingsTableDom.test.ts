@@ -45,6 +45,7 @@ function varSrc(name: string): string {
 
 let opened: string[] = [];
 let networks: string[] = [];
+let networkOpts: (Record<string, unknown> | undefined)[] = [];
 let copied: string[] = [];
 let canReadSubnets = true;
 
@@ -56,7 +57,9 @@ beforeAll(() => {
     ref && ref.managementAccess && ref.managementAccess.https ? [{ label: "Open HTTPS", onSelect: () => {} }] : [];
   g.copyTextToClipboard = (t: string) => { copied.push(t); return Promise.resolve(true); };
   g.permAtLeast = (key: string) => key === "subnets" && canReadSubnets;
-  g.PolarisPanels = { openNetwork: (id: string) => networks.push(id) };
+  g.PolarisPanels = {
+    openNetwork: (id: string, opts?: Record<string, unknown>) => { networks.push(id); networkOpts.push(opts); },
+  };
   const code = [
     varSrc("_sightingMenuRows"), varSrc("_sightingMenuSeq"),
     varSrc("_SOURCE_IPV4_RE"), varSrc("_SOURCE_IPV6_RE"), varSrc("_SOURCE_MAC_RE"),
@@ -68,13 +71,14 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  opened = []; networks = []; copied = []; canReadSubnets = true;
+  opened = []; networks = []; networkOpts = []; copied = []; canReadSubnets = true;
 });
 
 const gateRef = { id: "fgt1", hostname: "fgt-a", assetType: "firewall", managementAccess: { https: true, ssh: false } };
 function sighting(over: Record<string, unknown> = {}) {
   return {
     fortigateDevice: "SITE-A-FGT", ipAddress: "10.77.5.44", subnetName: "Staff", vlan: 50, subnetId: "net1",
+    subnetCidr: "10.77.5.0/24",
     source: "dhcp_lease", lastSeen: "2026-11-01T00:00:00Z", fortigateAsset: gateRef, ...over,
   };
 }
@@ -119,6 +123,15 @@ describe("Firewall Sightings table", () => {
     expect(items[0]).toMatchObject({ label: "Open network", primary: true });
     items[0].onSelect!();
     expect(networks).toEqual(["net1"]);
+    // Lands on the sighting's own IP row, on the right page of the network.
+    expect(networkOpts).toEqual([{ focusIp: "10.77.5.44", subnetCidr: "10.77.5.0/24" }]);
+  });
+
+  it("VLAN open without a CIDR still focuses the IP; openNetwork looks the CIDR up", () => {
+    const host = render([sighting({ subnetCidr: null })]);
+    const btn = host.querySelector("[data-sighting-net]") as HTMLElement;
+    g._sightingNetworkMenuItems(g._sightingMenuRows[btn.getAttribute("data-sighting-net")!])[0].onSelect!();
+    expect(networkOpts).toEqual([{ focusIp: "10.77.5.44", subnetCidr: undefined }]);
   });
 
   it("VLAN stays text with no matched network, or for a viewer who can't read networks", () => {

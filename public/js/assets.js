@@ -24529,8 +24529,15 @@ function _sightingNetworkMenuItems(s) {
     {
       label: "Open network",
       primary: true,
-      title: "Open " + label + " in its network panel",
-      onSelect: function () { PolarisPanels.openNetwork(s.subnetId); },
+      title: "Open " + label + " in its network panel" + (s.ipAddress ? ", at " + s.ipAddress : ""),
+      // The network was matched BY this IP (it holds it), so the panel can
+      // scroll to and highlight that row. subnetCidr saves the panel a fetch
+      // to find the right page; openNetwork looks it up when it is absent.
+      onSelect: function () {
+        PolarisPanels.openNetwork(s.subnetId, s.ipAddress
+          ? { focusIp: s.ipAddress, subnetCidr: s.subnetCidr || undefined }
+          : undefined);
+      },
     },
     { separator: true },
     {
