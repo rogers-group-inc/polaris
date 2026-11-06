@@ -101,6 +101,120 @@ function _setChartRangePref(key, range) {
     localStorage.setItem("polaris-prefs-charts-" + currentUsername, JSON.stringify(p));
   } catch (_) {}
 }
+
+// ─── Bucket-peak (max) line on rollup tiers ────────────────────────────────
+//
+// On the hourly and daily tiers a chart's solid line is each bucket's
+// AVERAGE, which flattens a five-minute spike to nothing over an hour. The
+// rollups keep each bucket's MAX as well, so every rollup chart draws it as a
+// fine dashed line (`2 3` — finer than the response-time chart's `4,3`
+// packet-loss dash, which is what keeps the two apart) in its series' colour,
+// UNDER the average. It is a NAMED series: one toggle per chart, persisted per
+// user in the charts prefs map under "<chartKey>:max", default on — unlike a
+// per-dimension (core) toggle, which is not persisted. Its chip only exists on
+// a rollup tier, where there is a max to draw. Hiding it rescales the y-axis
+// to the averages; the tooltip names both readings either way, so a huge max
+// never hides the average and switching the line off never hides the peak.
+
+// "hourly" | "daily" when the history payload reads a rollup tier, else null.
+function _chartRollupTier(data) {
+  if (!data) return null;
+  if (data.tier === "hourly" || data.tier === "daily") return data.tier;
+  var bs = typeof data.bucketSeconds === "number" ? data.bucketSeconds : 0;
+  if (bs > 0) return bs >= 86400 ? "daily" : "hourly";
+  return null;
+}
+function _getMaxLinePref(chartKey) {
+  return _getChartRangePref(chartKey + ":max", "on") !== "off";
+}
+function _setMaxLinePref(chartKey, on) {
+  _setChartRangePref(chartKey + ":max", on ? "on" : "off");
+}
+// The legend chip: a short dashed-line swatch instead of a colour square (the
+// line takes each series' colour, so no single colour names it). Its off look
+// mirrors _seriesChipHTML — the strikethrough carries the state, the label
+// keeps most of its ink because the chip is the only route back.
+//
+// The swatch is a CSS-gradient dash (2px on, 3px off — the line's own
+// `2 3`), NOT an inline <svg>: the chip sits inside the chart container ahead
+// of the plot, and the drag-select, tooltip and camera all find the plot with
+// container.querySelector("svg") — a swatch svg would win that lookup.
+function _maxLineChipHTML(chartKey, tier, on) {
+  var span = tier === "daily" ? "day" : "hour";
+  return '<span class="chart-max-chip" data-max-chart="' + escapeHtml(chartKey) + '"' +
+    ' title="' + escapeHtml((on ? "Click to hide" : "Click to show") + " the dashed line of each " + span + "'s highest reading") + '"' +
+    ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none' +
+    (on ? '' : ';opacity:0.8;text-decoration:line-through') + '">' +
+    '<span class="chart-max-swatch" aria-hidden="true" style="width:15px;height:2px;flex:0 0 auto;' +
+      'background-image:linear-gradient(to right,currentColor 0,currentColor 2px,transparent 2px,transparent 5px);' +
+      'background-size:5px 2px;background-repeat:repeat-x' + (on ? '' : ';opacity:0.45') + '"></span>' +
+    escapeHtml("Max (" + tier + " peak)") + '</span>';
+}
+// A chip-only legend row for a chart whose own legend lives inside its SVG
+// (CPU & Memory, interface throughput) or that has none (hardware sensor).
+// Empty off a rollup tier.
+function _maxLineLegendRowHTML(chartKey, tier) {
+  if (!tier) return "";
+  return '<div class="chart-max-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
+    _maxLineChipHTML(chartKey, tier, _getMaxLinePref(chartKey)) + '</div>';
+}
+// Wires every Max chip for `chartKey` under `root`: flip the pref, re-render.
+function _wireMaxLineChip(root, chartKey, rerender) {
+  if (!root) return;
+  root.querySelectorAll(".chart-max-chip").forEach(function (chip) {
+    if (chip.getAttribute("data-max-chart") !== chartKey) return;
+    chip.addEventListener("click", function () {
+      _setMaxLinePref(chartKey, !_getMaxLinePref(chartKey));
+      rerender();
+    });
+  });
+}
+// The dashed max line. `pts` is in time order, each `{x, y, color?}` or null —
+// a null (a bucket with no max: written before the column existed, or a
+// response-time bucket with no successes) BREAKS the line rather than bridging
+// it. A per-point `color` splits the line where it changes; the segment into a
+// point takes that point's colour. Goes inside the chart's clip-path group,
+// before the average line it sits under.
+function _maxLineSVG(pts, color, opts) {
+  opts = opts || {};
+  var width = opts.width || 1.25;
+  var opacity = opts.opacity != null ? opts.opacity : 0.85;
+  var extra = opts.attrs || "";
+  var out = "";
+  var run = [];
+  function cOf(p) { return p.color || color; }
+  function poly(list) {
+    out += '<polyline class="chart-max-line"' + extra + ' points="' +
+      list.map(function (p) { return p.x + "," + p.y; }).join(" ") +
+      '" fill="none" stroke="' + cOf(list[list.length - 1]) + '" stroke-width="' + width +
+      '" stroke-dasharray="2 3" stroke-linejoin="round" opacity="' + opacity + '"/>';
+  }
+  function flush() {
+    if (run.length === 1) {
+      // A lone bucket between two gaps: a dash needs two points, so a dot.
+      out += '<circle class="chart-max-line"' + extra + ' cx="' + run[0].x + '" cy="' + run[0].y + '" r="' + width +
+        '" fill="' + cOf(run[0]) + '" opacity="' + opacity + '"/>';
+    } else if (run.length > 1) {
+      var start = 0;
+      for (var j = 2; j < run.length; j++) {
+        if (cOf(run[j]) !== cOf(run[j - 1])) { poly(run.slice(start, j)); start = j - 1; }
+      }
+      poly(run.slice(start));
+    }
+    run = [];
+  }
+  (pts || []).forEach(function (p) {
+    if (!p || !isFinite(p.x) || !isFinite(p.y)) { flush(); return; }
+    run.push(p);
+  });
+  flush();
+  return out;
+}
+// Tooltip fragment naming both readings of a rollup bucket: "<avg> avg · <max> max".
+function _avgMaxText(avgText, maxText) {
+  return escapeHtml(avgText) + ' avg<span style="color:var(--color-text-secondary)"> · ' +
+    escapeHtml(maxText != null && maxText !== "" ? maxText : "—") + ' max</span>';
+}
 // Storage chart view mode (Used % vs Used bytes). Single string per user
 // because operators tend to think in one mental model across the whole
 // fleet, not per-asset.
@@ -12534,6 +12648,9 @@ async function _loadSensorHistoryFor(assetId, sensorName, range, callOpts) {
       samples = samples.map(function (s) {
         var c = {}; for (var k in s) if (Object.prototype.hasOwnProperty.call(s, k)) c[k] = s[k];
         c.value = TU.convertCelsius(s.value);
+        // The rollup bucket's peak moves with its average, or the dashed max
+        // line would sit on a °C scale over an °F axis.
+        if (typeof s.maxValue === "number") c.maxValue = TU.convertCelsius(s.maxValue);
         return c;
       });
     }
@@ -12565,6 +12682,11 @@ async function _loadSensorHistoryFor(assetId, sensorName, range, callOpts) {
       until:   data.until,
       subject: sensorName,
       unit:    unit,
+      // Rollup tier → the dashed bucket-peak line (`maxValue`) + its chip.
+      // Only this caller passes it; the process charts that share the
+      // renderer draw no max.
+      maxTier: _chartRollupTier(data),
+      maxPrefKey: "assetSensor",
       tiers:   convTiers(_sensorSevTiers.key === assetId + "|" + sensorName ? _sensorSevTiers.tiers : []),
     };
     _renderSensorChart(chartEl, samples, chartOpts);
@@ -12648,7 +12770,18 @@ function _renderSensorChart(container, samples, opts) {
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
 
+  // Rollup tiers (opts.maxTier, set by the hardware-sensor loader only): each
+  // bucket's peak (`maxValue`, already in the display unit) as a dashed line
+  // under the average. While shown, the visible window's peaks join the
+  // y-domain so the line is never clipped off the top; hidden, the axis fits
+  // the averages alone.
+  var maxTier = opts.maxPrefKey ? opts.maxTier || null : null;
+  var showMax = !!maxTier && _getMaxLinePref(opts.maxPrefKey);
+  function maxOf(s) { return typeof s.maxValue === "number" && isFinite(s.maxValue) ? s.maxValue : null; }
   var allC = samples.map(function (s) { return s.value; });
+  if (showMax) {
+    _inChartWindow(samples, opts.since).forEach(function (s) { var m = maxOf(s); if (m != null) allC.push(m); });
+  }
   var minC = Math.min.apply(null, allC);
   var maxC = Math.max.apply(null, allC);
   if (minC === maxC) {
@@ -12666,9 +12799,11 @@ function _renderSensorChart(container, samples, opts) {
 
   var pts = samples.map(function (s) { return xFor(s.timestamp) + "," + yFor(s.value); }).join(" ");
   var hits = samples.map(function (s) {
+    var m = maxOf(s);
     return '<circle class="chart-hit" cx="' + xFor(s.timestamp) + '" cy="' + yFor(s.value) + '" r="6" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(s.timestamp)) + '"' +
-      ' data-c="' + s.value + '"/>';
+      ' data-c="' + s.value + '"' +
+      (maxTier ? ' data-cmax="' + (m != null ? m : "") + '"' : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -12701,7 +12836,17 @@ function _renderSensorChart(container, samples, opts) {
   var sev = _severityChartLayer("sensor", opts.tiers, minC, maxC, {
     padL: padL, padT: padT, innerW: innerW, innerH: innerH, W: W, padR: padR, yFor: yFor, unit: unit,
   });
+  // The max line takes the same stroke as the average — the severity gradient
+  // when an automation watches the sensor (it is in user space, so a peak that
+  // climbs into a tier is coloured by that tier), the accent otherwise.
+  var maxSvg = showMax
+    ? _maxLineSVG(samples.map(function (s) {
+        var m = maxOf(s);
+        return m == null ? null : { x: xFor(s.timestamp), y: yFor(m) };
+      }), sev.stroke)
+    : "";
   container.innerHTML =
+    (maxTier ? _maxLineLegendRowHTML(opts.maxPrefKey, maxTier) : "") +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       sev.defs +
@@ -12710,6 +12855,7 @@ function _renderSensorChart(container, samples, opts) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         sev.lines +
+        maxSvg +
         '<polyline points="' + pts + '" fill="none" stroke="' + sev.stroke + '" stroke-width="1.5"/>' +
         samples.map(function (s) { return '<circle cx="' + xFor(s.timestamp) + '" cy="' + yFor(s.value) + '" r="1.5" fill="' + sev.stroke + '"/>'; }).join("") +
         hits +
@@ -12721,10 +12867,15 @@ function _renderSensorChart(container, samples, opts) {
   container.style.justifyContent = "flex-start";
 
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  if (maxTier) _wireMaxLineChip(container, opts.maxPrefKey, function () { _renderSensorChart(container, samples, opts); });
   _wireChartTooltip(container, function (target) {
     var c = Number(target.getAttribute("data-c"));
+    var cmax = target.getAttribute("data-cmax");
+    var sfx = unit ? " " + unit : "";
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>' + _hwFmtNum(c) + (unit ? " " + unit : "") + '</div>';
+      '<div>' + (cmax != null
+        ? _avgMaxText(_hwFmtNum(c) + sfx, cmax !== "" ? _hwFmtNum(Number(cmax)) + sfx : null)
+        : _hwFmtNum(c) + sfx) + '</div>';
   });
   _addChartScreenshotButton(container, opts.subject || "Sensor", { yAxis: (unit ? "Reading (" + unit + ")" : "Reading"), subject: opts.subject, getStats: _statsSummaryFrom("sensor-stats") });
   _observeChartResize(container, function (c) { _renderSensorChart(c, samples, opts); });
@@ -13900,6 +14051,11 @@ function _renderSystemChart(container, data, asset, si) {
   });
   var sortedHits = Object.keys(byTs).map(function (k) { return byTs[k]; })
                          .sort(function (a, b) { return new Date(a.ts).getTime() - new Date(b.ts).getTime(); });
+  // Rollup tiers: CPU's bucket peak (`maxCpuPct`) as a dashed line under the
+  // CPU average. CPU only — memory moves too slowly within a bucket for its
+  // peak to say anything the average does not. The axis is a fixed 0–100 %.
+  var rollupTier = _chartRollupTier(data);
+  var showMax = !!rollupTier && _getMaxLinePref("assetSystem");
   var hits = sortedHits.map(function (h, i) {
     var x = xFor(h.ts);
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
@@ -13908,6 +14064,7 @@ function _renderSystemChart(container, data, asset, si) {
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
       ' data-cpu="' + (h.cpu != null ? h.cpu : "") + '"' +
+      (rollupTier ? ' data-cpu-max="' + (typeof s.maxCpuPct === "number" ? s.maxCpuPct : "") + '"' : '') +
       ' data-mem="' + (h.mem != null ? h.mem : "") + '"' +
       ' data-mb="' + (typeof s.memUsedBytes === "number" ? s.memUsedBytes : "") + '"' +
       ' data-mt="' + (typeof s.memTotalBytes === "number" ? s.memTotalBytes : "") + '"/>';
@@ -13940,8 +14097,14 @@ function _renderSystemChart(container, data, asset, si) {
   var clipId = _chartClipId("system");
   var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
   var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
+  var cpuMaxSvg = showMax
+    ? _maxLineSVG(samples.map(function (s) {
+        return typeof s.maxCpuPct === "number" && isFinite(s.maxCpuPct) ? { x: xFor(s.timestamp), y: yFor(s.maxCpuPct) } : null;
+      }), cpuColor)
+    : "";
   container.innerHTML =
     chartStaleBanner +
+    _maxLineLegendRowHTML("assetSystem", rollupTier) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
@@ -13949,6 +14112,7 @@ function _renderSystemChart(container, data, asset, si) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        cpuMaxSvg +
         cpuLine.segments +
         memLine.segments +
         cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
@@ -13968,6 +14132,7 @@ function _renderSystemChart(container, data, asset, si) {
   container.style.justifyContent = "flex-start";
   container.style.flexDirection = "column";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  _wireMaxLineChip(container, "assetSystem", function () { _renderSystemChart(container, data, asset, si); });
 
   _wireChartTooltip(container, function (target) {
     var ts = target.getAttribute("data-ts");
@@ -13975,6 +14140,7 @@ function _renderSystemChart(container, data, asset, si) {
       return _missTooltipHTML(target);
     }
     var cpuRaw = target.getAttribute("data-cpu");
+    var cpuMaxRaw = target.getAttribute("data-cpu-max");
     var memRaw = target.getAttribute("data-mem");
     var mb = target.getAttribute("data-mb");
     var mt = target.getAttribute("data-mt");
@@ -13983,8 +14149,11 @@ function _renderSystemChart(container, data, asset, si) {
       memLine += " (" + _fmtBytes(Number(mb)) + " / " + _fmtBytes(Number(mt)) + ")";
     }
     memLine += "</div>";
+    var cpuTxt = cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—";
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
-      '<div>CPU: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</div>' +
+      '<div>CPU: ' + (cpuMaxRaw != null
+        ? _avgMaxText(cpuTxt, cpuMaxRaw !== "" ? Number(cpuMaxRaw).toFixed(1) + "%" : null)
+        : cpuTxt) + '</div>' +
       memLine;
   });
   _addChartScreenshotButton(container, "CPU & Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-system-summary") });
@@ -14089,6 +14258,7 @@ function _renderCpuChart(container, data, asset, si) {
   var avgVisible = !hidden.avg;
   var visibleCores = 0;
   for (var vc = 0; vc < coreCount; vc++) if (coreVisible(vc)) visibleCores++;
+  var rollupTier = _chartRollupTier(data);
 
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
@@ -14125,10 +14295,17 @@ function _renderCpuChart(container, data, asset, si) {
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].s.timestamp) + x) / 2;
     var cores = Array.isArray(h.s.cpuCorePcts) ? h.s.cpuCorePcts.join(",") : "";
+    // Rollup peaks ride the hit too, so the tooltip names avg AND max whether
+    // or not the max line is shown.
+    var coreMaxes = Array.isArray(h.s.cpuCoreMaxPcts) ? h.s.cpuCoreMaxPcts.map(function (v) { return typeof v === "number" ? v : ""; }).join(",") : "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '"' +
       ' data-cpu="' + (h.v != null ? h.v : "") + '"' +
-      ' data-cores="' + escapeHtml(cores) + '"/>';
+      ' data-cores="' + escapeHtml(cores) + '"' +
+      (rollupTier
+        ? ' data-cpu-max="' + (typeof h.s.maxCpuPct === "number" ? h.s.maxCpuPct : "") + '"' +
+          ' data-core-max="' + escapeHtml(coreMaxes) + '"'
+        : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -14158,6 +14335,34 @@ function _renderCpuChart(container, data, asset, si) {
   // host has — switching sixty-three of them off should leave the survivor
   // solid, which is what makes hiding the rest worth doing.
   var restOpacity = visibleCores <= 4 ? 0.85 : visibleCores <= 16 ? 0.62 : visibleCores <= 48 ? 0.45 : 0.32;
+  // Rollup tiers: each bucket's peak as a dashed line under its average —
+  // the aggregate's from `maxCpuPct`, each DRAWN core's from
+  // `cpuCoreMaxPcts` (same indexing as `cpuCorePcts`; absent on buckets
+  // written before per-core rollups, which simply draw no core max). The axis
+  // is a fixed 0–100 %, so showing or hiding the peaks never rescales it.
+  var showMax = !!rollupTier && _getMaxLinePref("assetCpu");
+  var coreMaxSvg = "";
+  var avgMaxSvg = "";
+  if (showMax) {
+    if (avgVisible) {
+      avgMaxSvg = _maxLineSVG(samples.map(function (s) {
+        return typeof s.maxCpuPct === "number" && isFinite(s.maxCpuPct) ? { x: xFor(s.timestamp), y: yFor(s.maxCpuPct) } : null;
+      }), _CPU_AVG_COLOR);
+    }
+    for (var mc = 0; mc < coreCount; mc++) {
+      if (!coreVisible(mc) || !coreSeries[mc].length) continue;
+      coreMaxSvg += _maxLineSVG(samples.map(function (s) {
+        var v = Array.isArray(s.cpuCoreMaxPcts) ? s.cpuCoreMaxPcts[mc] : null;
+        return typeof v === "number" && isFinite(v) ? { x: xFor(s.timestamp), y: yFor(v) } : null;
+      }), _cpuCoreColor(mc, coreCount), {
+        width: 1,
+        // Never more ink than the core's own line: 64 dashed lines at 0.85
+        // would be the wall the thinning below exists to avoid.
+        opacity: restOpacity,
+        attrs: ' data-core="' + mc + '"',
+      });
+    }
+  }
   var coreLinesSvg = "";
   if (coreSeries) {
     for (var c = 0; c < coreCount; c++) {
@@ -14174,7 +14379,7 @@ function _renderCpuChart(container, data, asset, si) {
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry"));
   container.innerHTML =
     chartStaleBanner +
-    _cpuLegendHTML(coreCount, hidden, data, asset) +
+    _cpuLegendHTML(coreCount, hidden, data, asset, rollupTier ? { tier: rollupTier, on: showMax } : null) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + avgLine.defs + '</defs>' +
@@ -14182,7 +14387,9 @@ function _renderCpuChart(container, data, asset, si) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        coreMaxSvg +
         coreLinesSvg +
+        avgMaxSvg +
         // The aggregate goes ON TOP of the cores and gets the only dots, so
         // it stays findable in the thicket. It is also the only failure-aware
         // line, so hiding it hides the outage markers with it — which is the
@@ -14207,16 +14414,24 @@ function _renderCpuChart(container, data, asset, si) {
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
 
   _wireCpuLegend(container, data, asset, si, coreCount);
+  _wireMaxLineChip(container, "assetCpu", function () { _renderCpuChart(container, data, asset, si); });
 
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
     var ts = target.getAttribute("data-ts");
     var cpuRaw = target.getAttribute("data-cpu");
     var off = _cpuHiddenCores(container);
+    // Rollup buckets: avg AND max per drawn series (data-cpu-max is only
+    // stamped on a rollup tier).
+    var rollupHit = target.hasAttribute("data-cpu-max");
+    var pctTxt = function (raw) { return raw !== "" && raw != null ? Number(raw).toFixed(1) + "%" : null; };
     var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>';
     if (!off.avg) {
-      html += '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+      html += rollupHit
+        ? '<div><strong>Average: ' + _avgMaxText(pctTxt(cpuRaw) || "—", pctTxt(target.getAttribute("data-cpu-max"))) + '</strong></div>'
+        : '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
     }
+    var coreMaxRaw = rollupHit ? (target.getAttribute("data-core-max") || "").split(",") : [];
     var coresRaw = target.getAttribute("data-cores");
     if (coresRaw) {
       var vals = coresRaw.split(",").map(Number);
@@ -14231,7 +14446,8 @@ function _renderCpuChart(container, data, asset, si) {
       var rows = shown.slice().sort(function (a, b) { return b.v - a.v; }).slice(0, 6);
       rows.forEach(function (r) {
         html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' +
-          _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' + r.v.toFixed(1) + '%</div>';
+          _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' +
+          (rollupHit ? _avgMaxText(r.v.toFixed(1) + "%", pctTxt(coreMaxRaw[r.i])) : r.v.toFixed(1) + '%') + '</div>';
       });
       if (shown.length > rows.length) {
         html += '<div style="color:var(--color-text-tertiary)">+' + (shown.length - rows.length) + ' more</div>';
@@ -14251,7 +14467,10 @@ function _renderCpuChart(container, data, asset, si) {
 // Legend for the CPU chart. Rendered as HTML above the SVG rather than as
 // <text> inside it because it has to WRAP — 64 core chips on one SVG line
 // run off the edge of the panel — and because the chips are interactive.
-function _cpuLegendHTML(coreCount, hidden, data, asset) {
+// `max` ({ tier, on }) adds the rollup tier's one Max chip, which switches the
+// aggregate's AND every core's dashed peak line together. It is a separate
+// class from the core chips, so "Show all" and isolate never touch it.
+function _cpuLegendHTML(coreCount, hidden, data, asset, max) {
   var anyHidden = Object.keys(hidden).length > 0;
   var chips = _seriesChipHTML("avg", "Average", _CPU_AVG_COLOR, !hidden.avg,
     "Click to hide the cross-core average", "cpu-legend-chip");
@@ -14259,6 +14478,7 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
     chips += _seriesChipHTML(String(c), String(c), _cpuCoreColor(c, coreCount), !hidden[String(c)],
       "Click to hide core " + c + " · double-click to show only this core", "cpu-legend-chip");
   }
+  if (max && max.tier) chips += _maxLineChipHTML("assetCpu", max.tier, max.on);
   // Only offered once something is off. At 64 cores an isolate is one
   // double-click and 63 chips of undoing, so the way back has to be one
   // click too.
@@ -14266,14 +14486,17 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
     chips += '<span class="cpu-legend-all" title="Show every series again"' +
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
-  // Why a range can show no cores even on a source that reports them:
-  // per-core data is kept on the DETAIL tier only, whichever source sent it. Saying so beats letting the operator conclude the source
-  // stopped reporting them. A source that never reports cores gets no note
-  // — "pick a shorter range" would send a FortiGate operator nowhere.
+  // Why a range can show no cores even on a source that reports them: the
+  // rollup buckets carry per-core vectors only for data written since
+  // per-core rollups shipped, so an older hourly/daily range has none.
+  // Shown only when the rollup samples actually lack them (coreCount 0).
+  // Saying so beats letting the operator conclude the source stopped
+  // reporting them. A source that never reports cores gets no note — "pick
+  // a shorter range" would send a FortiGate operator nowhere.
   var note = "";
   if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _telemetrySplitsCpuMemory(asset)) {
     note = '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' +
-      'Per-core detail is not kept in ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
+      'Per-core detail is not kept in these ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
       '</div>';
   }
   return '<div class="cpu-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
@@ -16187,11 +16410,13 @@ function assetMonitoringViewHTML(a) {
     customPanel +
     '<div id="asset-monitor-stale"></div>' +
     '<div id="asset-monitor-stats" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem"></div>' +
+    // Filled by _renderMonitorChart with a key for the colours it drew (and
+    // the Max chip on a rollup tier). Above the plot, where every other
+    // chart's legend sits; it must stay the chart's previous sibling.
+    '<div class="chart-state-legend"></div>' +
     '<div id="asset-monitor-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
-    // Filled by _renderMonitorChart with a key for the colours it drew.
-    '<div class="chart-state-legend"></div>' +
     '</div>'
   );
 }
@@ -16611,27 +16836,34 @@ function _toLocalDatetimeInput(d) {
     "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 
-// The key under a chart — one entry per colour the chart actually DREW, never
+// The key above a chart — one entry per colour the chart actually DREW, never
 // the whole vocabulary: a key naming a colour the reader cannot find is noise.
 // `entries` are { label, color, style } with style "line" | "dash" | "band";
 // the alert email draws the same key into its PNG (legendSvg in
 // utils/sparklineSvg.ts), with the same names.
-function _chartStateLegendHTML(entries) {
-  if (!entries || !entries.length) return "";
-  return '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.72rem;color:var(--color-text-secondary);margin-top:4px">' +
+// `extraHTML` (optional) is appended to the row — the response-time chart's
+// Max chip on a rollup tier. The row sits above the plot.
+function _chartStateLegendHTML(entries, extraHTML) {
+  if ((!entries || !entries.length) && !extraHTML) return "";
+  entries = entries || [];
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:4px">' +
     entries.map(function (e) {
       var swatch = e.style === "band"
         ? '<span style="width:12px;height:9px;flex:0 0 auto;background:' + e.color + ';border:1px dashed ' + (e.border || e.color) + '"></span>'
         : '<span style="width:14px;height:0;flex:0 0 auto;border-top:2px ' + (e.style === "dash" ? "dashed" : "solid") + ' ' + e.color + '"></span>';
       return '<span style="display:inline-flex;align-items:center;gap:5px">' + swatch + escapeHtml(e.label) + '</span>';
     }).join("") +
+    (extraHTML || "") +
   '</div>';
 }
 
 function _renderMonitorChart(container, data, transitions) {
   var samples = (data && data.samples) || [];
-  var legendSlot = container.nextElementSibling && container.nextElementSibling.classList.contains("chart-state-legend")
-    ? container.nextElementSibling : null;
+  // The key sits ABOVE the plot, as every other chart's legend does (the CPU
+  // chart's chips, the SD-WAN member legend): it is the chart's previous
+  // sibling in the section markup (assetMonitorViewHTML).
+  var legendSlot = container.previousElementSibling && container.previousElementSibling.classList.contains("chart-state-legend")
+    ? container.previousElementSibling : null;
   if (legendSlot) legendSlot.innerHTML = "";
   if (samples.length === 0) {
     container.textContent = "No samples in this range yet.";
@@ -16687,6 +16919,21 @@ function _renderMonitorChart(container, data, transitions) {
 
   var oks = samples.filter(ptHasResponse);
   var maxRtt = oks.length ? Math.max.apply(null, oks.map(function (s) { return s.responseTimeMs; })) : 100;
+  // Rollup tiers: each bucket's peak as a dashed line (_maxLineSVG), and the
+  // axis grows to hold it while it is shown — never clipped off the top.
+  // Only buckets with a success have a max worth drawing; only those inside
+  // the visible window may raise the axis (_inChartWindow).
+  var rollupTier = _chartRollupTier(data);
+  var showMax = !!rollupTier && _getMaxLinePref("assetMonitor");
+  function ptMax(s) {
+    return ptHasResponse(s) && typeof s.maxResponseTimeMs === "number" && isFinite(s.maxResponseTimeMs) ? s.maxResponseTimeMs : null;
+  }
+  if (showMax) {
+    _inChartWindow(oks, data && data.since).forEach(function (s) {
+      var m = ptMax(s);
+      if (m != null && m > maxRtt) maxRtt = m;
+    });
+  }
   if (maxRtt < 50) maxRtt = 50;
   // round up to a tidy ceiling
   var step = maxRtt > 1000 ? 250 : maxRtt > 200 ? 50 : 10;
@@ -16747,10 +16994,19 @@ function _renderMonitorChart(container, data, transitions) {
   );
   var statusAt = function (i) { return (states[i] && states[i].status) || "up"; };
   var linePts = [];
+  // The max line takes the SAME per-bucket colour as the average point beside
+  // it (Up green, or the recovering blue on the climb back), and breaks on a
+  // bucket with no success — there is no peak response in a bucket that got
+  // none.
+  var maxPts = [];
   samples.forEach(function (s, i) {
     if (ptHasResponse(s)) {
-      linePts.push({ x: xFor(s.timestamp), y: yFor(s.responseTimeMs), ok: true, rec: statusAt(i) === "recovering" });
+      var okPt = { x: xFor(s.timestamp), y: yFor(s.responseTimeMs), ok: true, rec: statusAt(i) === "recovering" };
+      linePts.push(okPt);
+      var m = ptMax(s);
+      maxPts.push(m == null ? null : { x: okPt.x, y: yFor(m), color: _chartPointColor(okPt, _CHART_UP_COLOR) });
     } else if (ptIsFailure(s)) {
+      maxPts.push(null);
       linePts.push({
         x: xFor(s.timestamp), y: padT + innerH, ok: false,
         dep: ptIsDependency(s),
@@ -16956,6 +17212,7 @@ function _renderMonitorChart(container, data, transitions) {
       yTitle +
       xTitle +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        (showMax ? _maxLineSVG(maxPts, _CHART_UP_COLOR) : "") +
         line.segments +
         // Drawn from linePts, not `oks`: same points, but these carry the
         // `rec` flag, so a dot on the climb back out is purple like its segment
@@ -16994,7 +17251,11 @@ function _renderMonitorChart(container, data, transitions) {
     if (maintLayer) keyEntries.push({ label: "Maintenance", color: "rgba(149,117,205,0.14)", border: "rgba(149,117,205,0.45)", style: "band" });
     if (transitionLayer) keyEntries.push({ label: "Polling change", color: "rgba(255,193,7,0.9)", style: "dash" });
     var onlyUp = keyEntries.length === 1 && keyEntries[0].label === "Up";
-    legendSlot.innerHTML = onlyUp ? "" : _chartStateLegendHTML(keyEntries);
+    // The Max chip rides the key row on a rollup tier, so the row exists even
+    // when the chart drew nothing but Up.
+    legendSlot.innerHTML = _chartStateLegendHTML(onlyUp ? [] : keyEntries,
+      rollupTier ? _maxLineChipHTML("assetMonitor", rollupTier, showMax) : "");
+    _wireMaxLineChip(legendSlot, "assetMonitor", function () { _renderMonitorChart(container, data, transitions); });
   }
 
   var tip = container.querySelector(".monitor-tooltip");
@@ -17036,16 +17297,18 @@ function _renderMonitorChart(container, data, transitions) {
         ? "missed poll — " + missedN + " outstanding"
         : "no response · Down";
     if (target.getAttribute("data-rollup") === "1") {
-      // Aggregated bucket: avg (+ min/max band) and the bucket's packet-loss %.
+      // Aggregated bucket: avg AND max (whether or not the max line is
+      // shown, so a huge peak never hides the average reading), the min, and
+      // the bucket's packet-loss %.
       var mn = target.getAttribute("data-min");
       var mx = target.getAttribute("data-max");
       var loss = parseFloat(target.getAttribute("data-loss") || "0");
-      var band = (mn !== "" && mx !== "") ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(mn) + '–' + escapeHtml(mx) + ' ms)</span>' : '';
-      var rRttLine = ok && rtt !== "" ? (escapeHtml(rtt) + " ms avg" + band) : '<span ' + danger + '>' + missText + '</span>';
+      var rRttLine = ok && rtt !== "" ? _avgMaxText(rtt + " ms", mx !== "" ? mx + " ms" : null) : '<span ' + danger + '>' + missText + '</span>';
       var rLossLine = loss > 0 ? '<span ' + danger + '>' + loss.toFixed(1) + '%</span>' : '0%';
       tip.innerHTML =
         '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
         '<div>Response: ' + rRttLine + '</div>' +
+        (ok && mn !== "" ? '<div>Min: ' + escapeHtml(mn) + ' ms</div>' : '') +
         '<div>Missed polls: ' + rLossLine + '</div>';
       tip.style.display = "block";
       positionTip(evt);
@@ -17364,7 +17627,7 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     _populateInterfaceCommentEditor(assetId, ifName, data, { silent: silent });
     _renderIfaceLldpBlock(data.lldpNeighbors || []);
     _renderIfaceAddressHistory(visRaw, _ifacePanelRow);
-    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages };
+    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages, maxTier: _chartRollupTier(data) };
     _renderIfaceThroughputChart(tputEl, derived, ifaceOpts);
     _renderIfaceErrorChart(errEl, derived, ifaceOpts);
     // Stash the active selection on each chart container so silent ticks /
@@ -17596,7 +17859,11 @@ function _derivePerIntervalSeries(samples, data) {
       var outBps = typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null;
       var inErr  = typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null;
       var outErr = typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null;
-      return { timestamp: s.timestamp, inBps: inBps, outBps: outBps, inErr: inErr, outErr: outErr };
+      // The bucket's PEAK rate (bytes/s → bits/s), for the throughput chart's
+      // dashed max line. Null on a bucket written before the column existed.
+      var inMaxBps  = typeof s.maxInBytesPerSec  === "number" ? s.maxInBytesPerSec  * 8 : null;
+      var outMaxBps = typeof s.maxOutBytesPerSec === "number" ? s.maxOutBytesPerSec * 8 : null;
+      return { timestamp: s.timestamp, inBps: inBps, outBps: outBps, inErr: inErr, outErr: outErr, inMaxBps: inMaxBps, outMaxBps: outMaxBps };
     });
   }
   var out = [];
@@ -17838,6 +18105,19 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var maxV = 0;
   inSeries.forEach (function (d) { if (d.inBps  > maxV) maxV = d.inBps;  });
   outSeries.forEach(function (d) { if (d.outBps > maxV) maxV = d.outBps; });
+  // Rollup tiers (opts.maxTier): each bucket's peak rate as a dashed line
+  // under its average. While shown, the visible window's peaks join the axis
+  // so the line is never clipped off the top; hidden, it fits the averages.
+  var maxTier = opts.maxTier || null;
+  var showMax = !!maxTier && _getMaxLinePref("assetInterface");
+  function finiteOrNull(v) { return typeof v === "number" && isFinite(v) ? v : null; }
+  if (showMax) {
+    _inChartWindow(derived, opts.since).forEach(function (d) {
+      var a = finiteOrNull(d.inMaxBps), b = finiteOrNull(d.outMaxBps);
+      if (a != null && a > maxV) maxV = a;
+      if (b != null && b > maxV) maxV = b;
+    });
+  }
   if (maxV < 1000) maxV = 1000;
   function tidyCeil(n) {
     var exp = Math.pow(10, Math.floor(Math.log10(n)));
@@ -17876,10 +18156,14 @@ function _renderIfaceThroughputChart(container, derived, opts) {
     if (!hasIn && !hasOut) return "";
     // Anchor the hit at whichever line is higher so the cursor lands close to a visible curve.
     var hi = hasIn && hasOut ? Math.max(d.inBps, d.outBps) : (hasIn ? d.inBps : d.outBps);
+    var inMx = finiteOrNull(d.inMaxBps), outMx = finiteOrNull(d.outMaxBps);
     return '<circle class="chart-hit" cx="' + xFor(d.timestamp) + '" cy="' + yFor(hi) + '" r="6" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(d.timestamp)) + '"' +
       ' data-in="'  + (hasIn  ? d.inBps  : "") + '"' +
-      ' data-out="' + (hasOut ? d.outBps : "") + '"/>';
+      ' data-out="' + (hasOut ? d.outBps : "") + '"' +
+      (maxTier
+        ? ' data-in-max="' + (inMx != null ? inMx : "") + '" data-out-max="' + (outMx != null ? outMx : "") + '"'
+        : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -17903,7 +18187,15 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var clipId = _chartClipId("ifaceTp");
   var inLine  = _failureAwareSeriesSVG(failAwarePts(inSeries,  "inBps"),  inColor,  clipId + "-in");
   var outLine = _failureAwareSeriesSVG(failAwarePts(outSeries, "outBps"), outColor, clipId + "-out");
+  function maxPts(key) {
+    return derived.map(function (d) {
+      var v = finiteOrNull(d[key]);
+      return v == null ? null : { x: xFor(d.timestamp), y: yFor(v) };
+    });
+  }
+  var maxSvg = showMax ? _maxLineSVG(maxPts("inMaxBps"), inColor) + _maxLineSVG(maxPts("outMaxBps"), outColor) : "";
   container.innerHTML =
+    _maxLineLegendRowHTML("assetInterface", maxTier) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + inLine.defs + outLine.defs + '</defs>' +
@@ -17911,6 +18203,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        maxSvg +
         inLine.segments +
         outLine.segments +
         inSeries .map(function (d) { return '<circle cx="' + xFor(d.timestamp) + '" cy="' + yFor(d.inBps)  + '" r="1.5" fill="' + inColor  + '"/>'; }).join("") +
@@ -17925,15 +18218,22 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   container.style.alignItems = "stretch";
   container.style.justifyContent = "flex-start";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  if (maxTier) _wireMaxLineChip(container, "assetInterface", function () { _renderIfaceThroughputChart(container, derived, opts); });
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") {
       return _missTooltipHTML(target);
     }
     var inV  = target.getAttribute("data-in");
     var outV = target.getAttribute("data-out");
+    // Rollup buckets name avg AND peak (data-in-max is only stamped there).
+    function cell(v, mx) {
+      var avg = v !== "" ? _fmtBitsPerSec(Number(v)) : "—";
+      if (mx == null) return avg;
+      return _avgMaxText(avg, mx !== "" ? _fmtBitsPerSec(Number(mx)) : null);
+    }
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>Input: '  + (inV  !== "" ? _fmtBitsPerSec(Number(inV))  : "—") + '</div>' +
-      '<div>Output: ' + (outV !== "" ? _fmtBitsPerSec(Number(outV)) : "—") + '</div>';
+      '<div>Input: '  + cell(inV,  target.getAttribute("data-in-max"))  + '</div>' +
+      '<div>Output: ' + cell(outV, target.getAttribute("data-out-max")) + '</div>';
   });
   _addChartScreenshotButton(container, "Throughput", { yAxis: "Throughput (bits/s)", subject: opts.subject, getStats: _statsSummaryFrom("iface-tput-stats") });
   _observeChartResize(container, function (c) { _renderIfaceThroughputChart(c, derived, opts); });
@@ -18971,7 +19271,11 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
       return { label: r.link, color: _sdwanMemberColor(r.link, memberNames), samples: r.samples, data: r.data };
     });
     var first = results.find(function (r) { return r.data; }) || results[0];
-    var copts = { since: first && first.data ? first.data.since : undefined, until: first && first.data ? first.data.until : undefined, subject: hcName };
+    var copts = {
+      since: first && first.data ? first.data.since : undefined, until: first && first.data ? first.data.until : undefined, subject: hcName,
+      // Rollup tier → dashed bucket-peak lines on latency and jitter.
+      maxTier: _chartRollupTier(first && first.data),
+    };
     var thr = members[0] || {};
     // Stash render state so the clickable legend can re-render all three charts
     // on toggle. Reset per-member visibility whenever the health-check changes.
@@ -19019,8 +19323,11 @@ function _renderAllPerfSlaCharts() {
   var latEl  = document.getElementById("sdwan-latency-chart");
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
-  if (latEl)  _renderPerfSlaMultiChart(latEl,  ps.series, "latencyMs",  { label: "Latency", unit: "ms", threshold: ps.thr.latencyThresholdMs }, ps.copts);
-  if (jitEl)  _renderPerfSlaMultiChart(jitEl,  ps.series, "jitterMs",   { label: "Jitter",  unit: "ms", threshold: ps.thr.jitterThresholdMs }, ps.copts);
+  // maxKey: the rollup bucket's peak, drawn dashed under each member's
+  // average. Not on packet loss — its average is already the figure that
+  // matters, and a 100 % peak in one sample would read as an outage.
+  if (latEl)  _renderPerfSlaMultiChart(latEl,  ps.series, "latencyMs",  { label: "Latency", unit: "ms", threshold: ps.thr.latencyThresholdMs, maxKey: "maxLatencyMs" }, ps.copts);
+  if (jitEl)  _renderPerfSlaMultiChart(jitEl,  ps.series, "jitterMs",   { label: "Jitter",  unit: "ms", threshold: ps.thr.jitterThresholdMs, maxKey: "maxJitterMs" }, ps.copts);
   if (lossEl) _renderPerfSlaMultiChart(lossEl, ps.series, "packetLoss", { label: "Packet loss", unit: "%", threshold: ps.thr.packetLossThreshold }, ps.copts);
 }
 
@@ -19038,12 +19345,18 @@ function _renderPerfSlaLegend(el, series) {
     return _seriesChipHTML(s.label, s.label, s.color, !hidden.has(s.label),
       "Click to hide " + s.label + " · double-click to show only this member", "sdwan-legend-chip");
   }).join("");
+  // One Max chip for the latency AND jitter charts on a rollup tier — a
+  // separate control from the member chips, so isolate / Show all leave it be.
+  var maxTier = _sdwanTabState && _sdwanTabState.perfSla && _sdwanTabState.perfSla.copts
+    ? _sdwanTabState.perfSla.copts.maxTier : null;
+  if (maxTier) chips += _maxLineChipHTML("assetSdwan", maxTier, _getMaxLinePref("assetSdwan"));
   if (hidden.size) {
     chips += '<span class="sdwan-legend-all" title="Show every member again"' +
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
   el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin:0.25rem 0 0.35rem">' +
     chips + '</div>';
+  if (maxTier) _wireMaxLineChip(el, "assetSdwan", _renderAllPerfSlaCharts);
   // A double-click also fires two clicks — defer the single-click toggle just
   // past the double-click window (as _wireCpuLegend does) so an isolate does
   // not first hide the member it was aimed at.
@@ -19103,11 +19416,18 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   opts = opts || {};
   meta = meta || {};
   // Build per-series value arrays; drop members with no numeric points.
+  // Rollup tiers (opts.maxTier) with a meta.maxKey: each member's bucket
+  // peak, kept on the value so the dashed line, the axis and the tooltip
+  // read the same figure. Null on a bucket with no max.
+  var maxTier = meta.maxKey ? opts.maxTier || null : null;
+  var showMax = !!maxTier && _getMaxLinePref("assetSdwan");
   var drawn = series.map(function (s) {
     return {
       label: s.label, color: s.color,
-      values: s.samples.map(function (x) { return { ts: x.timestamp, v: x[metricKey] }; })
-                        .filter(function (e) { return typeof e.v === "number"; }),
+      values: s.samples.map(function (x) {
+        var m = maxTier ? x[meta.maxKey] : null;
+        return { ts: x.timestamp, v: x[metricKey], m: typeof m === "number" && isFinite(m) ? m : null };
+      }).filter(function (e) { return typeof e.v === "number"; }),
     };
   }).filter(function (s) { return s.values.length; });
   if (!drawn.length) { container.textContent = "No samples in this range yet."; return; }
@@ -19128,6 +19448,13 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   // rest (fall back to all members when everything is hidden).
   var maxV = 1;
   (visible.length ? visible : drawn).forEach(function (s) { s.values.forEach(function (e) { if (e.v > maxV) maxV = e.v; }); });
+  // Shown peaks join the axis (visible window only) so the dashed line is
+  // never clipped off the top; hidden, the axis fits the averages + SLA line.
+  if (showMax) {
+    visible.forEach(function (s) {
+      _inChartWindow(s.values, opts.since, "ts").forEach(function (e) { if (e.m != null && e.m > maxV) maxV = e.m; });
+    });
+  }
   if (hasThreshold) maxV = Math.max(maxV, meta.threshold * 1.05);
   function tidyCeil(n) { var exp = Math.pow(10, Math.floor(Math.log10(n))); var mant = n / exp; var step = mant <= 1 ? 1 : mant <= 2 ? 2 : mant <= 5 ? 5 : 10; return step * exp; }
   var ceil = tidyCeil(maxV);
@@ -19140,11 +19467,19 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<line x1="' + padL + '" y1="' + ty + '" x2="' + (W - padR) + '" y2="' + ty + '" stroke="#e9a23b" stroke-width="1.25" stroke-dasharray="5,4"/>' +
       '<text x="' + (W - padR) + '" y="' + (ty - 3) + '" text-anchor="end" font-size="9" fill="#e9a23b">SLA ' + (Math.round(meta.threshold * 100) / 100) + ' ' + escapeHtml(meta.unit || "") + '</text>';
   }
+  // Every member's max line goes in first, so all of them sit UNDER every
+  // average line rather than one member's peak covering another's average.
+  var maxSvg = showMax
+    ? visible.map(function (s) {
+        return _maxLineSVG(s.values.map(function (e) { return e.m == null ? null : { x: xFor(e.ts), y: yFor(e.m) }; }), s.color);
+      }).join("")
+    : "";
   var seriesSvg = visible.map(function (s) {
     var pts = s.values.map(function (e) { return xFor(e.ts) + "," + yFor(e.v); }).join(" ");
     var dots = s.values.map(function (e) {
       return '<circle class="chart-hit" cx="' + xFor(e.ts) + '" cy="' + yFor(e.v) + '" r="5" fill="transparent" style="cursor:crosshair"' +
-        ' data-ts="' + escapeHtml(String(e.ts)) + '" data-v="' + e.v + '" data-member="' + escapeHtml(s.label) + '"/>';
+        ' data-ts="' + escapeHtml(String(e.ts)) + '" data-v="' + e.v + '" data-member="' + escapeHtml(s.label) + '"' +
+        (maxTier ? ' data-vmax="' + (e.m != null ? e.m : "") + '"' : '') + '/>';
     }).join("");
     return '<polyline points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="1.5"/>' + dots;
   }).join("");
@@ -19166,6 +19501,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         thresholdLine +
+        maxSvg +
         seriesSvg +
       '</g>' +
     '</svg>' + CHART_TOOLTIP_HTML;
@@ -19174,9 +19510,14 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   container.style.justifyContent = "flex-start";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
   _wireChartTooltip(container, function (target) {
+    var unitSfx = meta.unit ? " " + meta.unit : "";
+    var vmax = target.getAttribute("data-vmax");
+    var reading = vmax != null
+      ? _avgMaxText(target.getAttribute("data-v") + unitSfx, vmax !== "" ? vmax + unitSfx : null)
+      : escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "");
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(target.getAttribute("data-member")) + '</div>' +
       '<div>' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>' + escapeHtml(meta.label || metricKey) + ': ' + escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "") + '</div>';
+      '<div>' + escapeHtml(meta.label || metricKey) + ': ' + reading + '</div>';
   });
   _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _perfSlaShotStats });
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });

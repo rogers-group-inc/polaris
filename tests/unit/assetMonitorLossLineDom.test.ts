@@ -9,7 +9,7 @@
  *    coloured by the device's verdict over each bucket — the response line's
  *    own vocabulary (Up green, grey while the parent was dark, red Down, blue
  *    recovering), so the two lines never disagree about the same minutes;
- *  - the key under the chart names only the colours drawn;
+ *  - the key above the chart names only the colours drawn;
  *  - a gap in the buckets breaks the line rather than being bridged, because
  *    a gap in probing is not a stretch of 0 % loss;
  *  - an older payload with no `loss` keeps the single-axis chart unchanged.
@@ -43,6 +43,10 @@ const SRC = [
   constSrc("_CHART_FAIL_COLOR"), constSrc("_CHART_DEP_COLOR"), constSrc("_CHART_UP_COLOR"),
   constSrc("_CHART_MISS_COLOR"), constSrc("_CHART_RECOVER_COLOR"),
   fnSrc("function _chartStateLegendHTML("),
+  // The rollup max-line helpers the renderer calls (all no-ops on detail).
+  ...["_getChartRangePref", "_setChartRangePref", "_inChartWindow", "_chartRollupTier", "_getMaxLinePref",
+    "_setMaxLinePref", "_maxLineChipHTML", "_wireMaxLineChip", "_maxLineSVG", "_avgMaxText"]
+    .map((n) => fnSrc(`function ${n}(`)),
   fnSrc("function _renderMonitorChart("),
   "globalThis._renderMonitorChart = _renderMonitorChart;",
   "globalThis._CHART_UP_COLOR = _CHART_UP_COLOR;",
@@ -52,6 +56,8 @@ const SRC = [
 ].join("\n");
 
 function installStubs() {
+  g.currentUsername = "tester";
+  try { localStorage.clear(); } catch { /* private mode */ }
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c: string) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
   g._chartTimeBounds = (samples: any[], since?: string, until?: string) => ({
@@ -92,11 +98,12 @@ function payload(loss: unknown) {
 function render(data: unknown): HTMLElement {
   const el = document.createElement("div");
   Object.defineProperty(el, "clientWidth", { value: 600 });
-  document.body.appendChild(el);
-  // The key's slot, as the asset panel lays it out: the chart's next sibling.
+  // The key's slot, as the asset panel lays it out: the chart's PREVIOUS
+  // sibling — the key sits above the plot.
   const key = document.createElement("div");
   key.className = "chart-state-legend";
   document.body.appendChild(key);
+  document.body.appendChild(el);
   g._renderMonitorChart(el, data, []);
   return el;
 }
@@ -183,10 +190,10 @@ describe("response-time chart — packet-loss line", () => {
         : { timestamp: iso(i * 2), success: true, responseTimeMs: 20 }
     ));
     g.__statuses = samples.map((_s, i) => (i < 20 ? "down" : i < 24 ? "recovering" : "up"));
-    const el = document.body.appendChild(document.createElement("div"));
-    Object.defineProperty(el, "clientWidth", { value: 600 });
     const key = document.body.appendChild(document.createElement("div"));
     key.className = "chart-state-legend";
+    const el = document.body.appendChild(document.createElement("div"));
+    Object.defineProperty(el, "clientWidth", { value: 600 });
     g._renderMonitorChart(el, {
       since: iso(0), until: iso(60), samples,
       loss: { bucketMs: B, points: samples.map((_s, i) => ({ t: T0 + i * B, v: i < 20 ? 100 : 0 })), ratioPct: 66 },
