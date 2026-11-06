@@ -160,7 +160,10 @@ describe.skipIf(!hasBash)("polaris-update-sync.sh validators", () => {
     expect(check("", read("deploy/polaris-update-sync.service"), "self_unit_ok")).toBe(true);
     expect(check("", read("deploy/sudoers.d/polaris-nginx"), "sudoers_ok")).toBe(true);
     expect(check("", read("deploy/tmpfiles.d/polaris-nginx.conf"), "tmpfiles_ok")).toBe(true);
-  });
+    // 14 sequential bash spawns, each sourcing the whole script: a few hundred
+    // ms apiece on Windows Git Bash, so the default 5 s limit failed this case
+    // under a loaded full-suite run (twice on 2026-11-06) while it passed alone.
+  }, 30_000);
 
   it.each([
     ["User=root", "[Service]\nUser=root\nExecStart=/bin/true\n"],
