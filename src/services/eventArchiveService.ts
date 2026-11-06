@@ -299,7 +299,7 @@ export async function archiveAndExport(cutoff: Date): Promise<number> {
     return events.length;
   } catch (err: any) {
     logger.error(err, "Failed to export event archive");
-    if (isHostKeyRefusal(String(err?.stderr ?? err?.message ?? ""))) throw new Error(ARCHIVE_HOST_KEY_CHANGED_MESSAGE, { cause: err });
+    if (isHostKeyRefusal(String(err?.stderr ?? err?.message ?? ""))) throw new AppError(502, ARCHIVE_HOST_KEY_CHANGED_MESSAGE, { cause: err });
     throw err;
   } finally {
     try { unlinkSync(localPath); } catch { /* ignore cleanup errors */ }

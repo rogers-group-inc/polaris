@@ -46,6 +46,7 @@
 import type { WinRmConnection } from "../utils/winrm.js";
 import { winrmRunPowershell, withSshClient, sshExec } from "../utils/remoteExec.js";
 import type { AssetProcessInput, ProcessConnectionInput } from "./monitoringService.js";
+import { AppError } from "../utils/errors.js";
 
 // ─── Result contract ──────────────────────────────────────────────────
 
@@ -439,7 +440,7 @@ export async function collectProcessesSsh(
     if (needPs) {
       const ps = await sshExec(client, LINUX_PS_COMMAND, opts.timeoutMs);
       if (ps.exitCode !== 0) {
-        throw new Error(`ps exited ${ps.exitCode}: ${(ps.stderr || ps.stdout).slice(0, 200)}`);
+        throw new AppError(502, `ps exited ${ps.exitCode}: ${(ps.stderr || ps.stdout).slice(0, 200)}`);
       }
       const rows = parseLinuxPs(ps.stdout, Date.now());
       if (opts.inventory) result.inventory = aggregatePsRows(rows);
@@ -449,7 +450,7 @@ export async function collectProcessesSsh(
       const ss = await sshExec(client, ssCmd, opts.timeoutMs);
       // grep exits 1 when nothing matched — a valid empty scrape.
       if (ss.exitCode !== 0 && ss.exitCode !== 1) {
-        throw new Error(`ss exited ${ss.exitCode}: ${(ss.stderr || ss.stdout).slice(0, 200)}`);
+        throw new AppError(502, `ss exited ${ss.exitCode}: ${(ss.stderr || ss.stdout).slice(0, 200)}`);
       }
       result.connections = buildConnectionRows(parseLinuxSs(ss.stdout), opts.mapped);
     }
@@ -466,7 +467,7 @@ export async function collectProcessesWinrm(
   if (opts.inventory || opts.monitored.length > 0) {
     const out = await winrmRunPowershell(conn, WINDOWS_PS_PROCESS_SCRIPT);
     if (out.exitCode !== 0) {
-      throw new Error(`process script exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 200)}`);
+      throw new AppError(502, `process script exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 200)}`);
     }
     const rows = parseWindowsProcessJson(out.stdout);
     if (opts.inventory) result.inventory = aggregatePsRows(rows);
@@ -477,7 +478,7 @@ export async function collectProcessesWinrm(
     if (script) {
       const out = await winrmRunPowershell(conn, script);
       if (out.exitCode !== 0) {
-        throw new Error(`connections script exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 200)}`);
+        throw new AppError(502, `connections script exited ${out.exitCode}: ${(out.stderr || out.stdout).slice(0, 200)}`);
       }
       result.connections = buildConnectionRows(parseWindowsConnectionsJson(out.stdout), opts.mapped);
     }

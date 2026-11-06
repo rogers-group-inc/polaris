@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProxyConfig } from "../types/proxyConfig.js";
+import { AppError } from "../utils/errors.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,7 +92,7 @@ export function renderNginxConfig(input: RenderInput, templateOverride?: string)
 function renderSslProtocols(cfg: ProxyConfig): string {
   for (const proto of cfg.tlsProtocols as unknown[]) {
     if (proto !== "TLSv1.2" && proto !== "TLSv1.3") {
-      throw new Error("Refusing to render nginx config: tlsProtocols contains an unsupported value");
+      throw new AppError(400, "Refusing to render nginx config: tlsProtocols contains an unsupported value");
     }
   }
   return cfg.tlsProtocols.join(" ");

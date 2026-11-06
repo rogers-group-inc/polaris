@@ -223,7 +223,7 @@ export function isScheduledBackupDue(schedule: BackupSchedule, now: Date): boole
  * logs whatever this throws.
  */
 export async function copyBackupOffHost(sourcePath: string, filename: string, copyToDir: string): Promise<string> {
-  if (!existsSync(sourcePath)) throw new Error(`backup file ${sourcePath} vanished before the off-host copy`);
+  if (!existsSync(sourcePath)) throw new AppError(500, `backup file ${sourcePath} vanished before the off-host copy`);
   await mkdir(copyToDir, { recursive: true });
   const dest = join(copyToDir, filename);
   await copyFile(sourcePath, dest);

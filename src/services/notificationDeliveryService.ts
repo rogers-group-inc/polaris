@@ -45,6 +45,7 @@ import { sendWebhook } from "./notificationChannels/webhookChannel.js";
 import { sendPushbullet } from "./notificationChannels/pushbulletChannel.js";
 import { sendWebPush, type WebPushError } from "./notificationChannels/webPushChannel.js";
 import { sendApiCall } from "./notificationChannels/apiCallChannel.js";
+import { AppError } from "../utils/errors.js";
 
 const MAX_ATTEMPTS = 3;
 const BATCH_SIZE = 200;
@@ -564,7 +565,7 @@ export async function sendEmailThroughChannel(
       msg,
     );
   } else {
-    throw new Error(`channel type "${channel.type}" cannot send email`);
+    throw new AppError(400, `channel type "${channel.type}" cannot send email`);
   }
 }
 

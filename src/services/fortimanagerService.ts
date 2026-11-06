@@ -2760,7 +2760,7 @@ export async function discoverDhcpSubnets(
         ? `"${scopeDeviceName}" is excluded by the integration's device include/exclude filter`
         : `"${scopeDeviceName}" was not found in the ADOM "${adom}" device roster`;
       log("discover.devices", "error", `Scoped re-discovery failed: ${why}`);
-      throw new Error(`Scoped re-discovery failed: ${why}`);
+      throw new AppError(404, `Scoped re-discovery failed: ${why}`);
     }
     // Phrasing matters: the run accumulator parses "Found <n> managed device"
     // out of this progress message to set totalDevices.
