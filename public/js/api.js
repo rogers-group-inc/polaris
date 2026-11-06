@@ -1498,7 +1498,9 @@ const api = {
       return _uploadWithProgress("/server-settings/firmware/images", formData, onProgress);
     },
     deleteFirmwareImage:  (id)   => request("DELETE", `/server-settings/firmware/images/${encodeURIComponent(id)}`),
-    promoteFirmwareImage: (id)   => request("POST",   `/server-settings/firmware/images/${encodeURIComponent(id)}/make-primary`),
+    // An <a href download> target, not a fetch: the browser streams it to disk.
+    downloadFirmwareImageUrl: (id) => API_BASE + "/server-settings/firmware/images/" + encodeURIComponent(id) + "/download",
+    promoteFirmwareImage: (id)   => request("POST",  `/server-settings/firmware/images/${encodeURIComponent(id)}/make-primary`),
     purgeFirmwareModel:   (body) => request("POST",   "/server-settings/firmware/models/purge", body),
     setFirmwareBinding:   (body) => request("PUT",    "/server-settings/firmware/bindings", body),
     listFirmwareRuns:     (params) => request("GET",  "/server-settings/firmware/runs" + toQuery(params)),

@@ -144,8 +144,8 @@ writes a warning-level Event on the credential.
 
 Firmware images for the **switches, access points and FortiGate firewalls** in
 the inventory ([rule 87](Business-Rules#rule-87)). Gated on the `firmware` key:
-**Read** sees the tab and which devices have an upgrade waiting, **Read-Write**
-manages the repository. Starting an upgrade is **Read-Write on Assets**, from
+**Read** sees the tab and which devices have an upgrade waiting, and may
+**Download** any stored image; **Read-Write** manages the repository. Starting an upgrade is **Read-Write on Assets**, from
 the device itself — never here.
 
 ### The tree
@@ -198,7 +198,9 @@ has a backup.
 **Make primary** swaps a platform's two: the rows keep their order (newest version on top),
 so the Primary pill and the button jump rows, the promoted row highlights for a moment,
 and the toast names the new backup. Deleting a
-primary promotes its platform's backup. The
+primary promotes its platform's backup. **Download**, beside Delete on every
+row, saves the image under its original file name; it is offered to anyone who
+can see the tab, and is missing on a row whose file is gone from disk. The
 same bytes cannot be filed twice, and an image a device is flashing right now
 cannot be removed by anything.
 

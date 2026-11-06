@@ -216,8 +216,11 @@
       : "";
     var missing = img.fileMissing ? ' <span class="fw-pill fw-warn-pill" title="The image bytes are gone from disk (data/firmware). Upload it again.">File missing</span>' : "";
     var verbs = "";
+    if (can("write") && img.role === "backup") verbs += '<button type="button" class="btn btn-sm btn-secondary fw-image-promote" data-id="' + esc(img.id) + '" data-label="' + esc(img.versionLabel) + '">Make primary</button> ';
+    // Download is a read-rung verb: everyone who sees the row may take a copy.
+    // A plain link, never fetch-to-blob — an image is up to 300 MiB.
+    if (!img.fileMissing) verbs += '<a class="btn btn-sm btn-secondary fw-image-download" href="' + esc(api.serverSettings.downloadFirmwareImageUrl(img.id)) + '" download="' + esc(img.filename) + '">Download</a> ';
     if (can("write")) {
-      if (img.role === "backup") verbs += '<button type="button" class="btn btn-sm btn-secondary fw-image-promote" data-id="' + esc(img.id) + '" data-label="' + esc(img.versionLabel) + '">Make primary</button> ';
       verbs += '<button type="button" class="btn btn-sm btn-danger fw-image-del" data-id="' + esc(img.id) + '" data-role="' + esc(img.role) + '" data-label="' + esc(img.versionLabel) + '">Delete</button>';
     }
     return '<tr data-image-id="' + esc(img.id) + '">' +

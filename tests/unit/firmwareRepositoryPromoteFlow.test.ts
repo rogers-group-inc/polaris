@@ -58,6 +58,7 @@ function boot() {
       getFirmwareTree: async () => { treeCalls++; calls.push("tree"); return tree(treeCalls === 1 ? "new" : "old"); },
       listFirmwareRuns: async () => ({ runs: [] }),
       promoteFirmwareImage: async (id: string) => { calls.push("promote:" + id); return { image: { id } }; },
+      downloadFirmwareImageUrl: (id: string) => "/dl/" + id,
     } },
   });
   win.document.body.innerHTML = '<div id="tab-firmware"></div>';
