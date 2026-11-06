@@ -779,7 +779,7 @@ async function runUpgrade(
   try {
     push("info", `run started on ${a.hostname ?? a.ipAddress ?? a.id}: ${a.osVersion ?? "unknown"} → ${image.versionLabel} (${image.filename}, ${imageSize} bytes)`);
     await flush(true);
-    if (!engine) throw new Error("engine vanished");
+    if (!engine) throw new AppError(500, "engine vanished");
     const ctx: FirmwareEngineContext = {
       host: a.ipAddress || a.dnsName!,
       port: overrides?.port ?? cred.port,

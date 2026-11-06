@@ -5,8 +5,8 @@
 export class AppError extends Error {
   httpStatus: number;
 
-  constructor(httpStatus: number, message: string) {
-    super(message);
+  constructor(httpStatus: number, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.httpStatus = httpStatus;
     this.name = "AppError";
   }

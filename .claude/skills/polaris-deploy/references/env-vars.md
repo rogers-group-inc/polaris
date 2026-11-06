@@ -117,6 +117,11 @@ POLARIS_HA_HEARTBEAT=
 # where the two must stop claiming one identity.
 POLARIS_HA_INSTANCE_ID=
 
+# Local Patroni REST API (HA only; haService.ts PATRONI_REST_OVERRIDE). Unset =
+# loopback 8008, HTTPS with certificate checks off, then plain HTTP (rule 117).
+# Set = used exactly as given.
+POLARIS_PATRONI_REST=
+
 # /health AND /health/ready bearer token — auto-generated at first-run setup.
 # Clearing reopens both endpoints and surfaces a `health_token_unset` watch
 # reason on Maintenance tab. /health is liveness (checks nothing, the setup
@@ -224,6 +229,11 @@ POLARIS_UPDATE_REPO=
 # anonymously (utils/imageRegistry.ts) and compares its
 # POLARIS_BUILD_COMMIT_COUNT with this image's; it never pulls or restarts.
 POLARIS_UPDATE_IMAGE=
+
+# Build-time only (Dockerfile ARG → ENV); never operator-set. The version patch
+# on a container install (utils/version.ts) and the image update check's
+# comparand. Unset on host installs, which count commits.
+POLARIS_BUILD_COMMIT_COUNT=
 
 # PEM bundle of extra CAs Node should trust, for networks that re-sign HTTPS
 # with an internal CA. Node ships its OWN CA store and ignores the OS one, so a
