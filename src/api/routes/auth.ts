@@ -4,8 +4,7 @@
 
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { prisma } from "../../db.js";
-import { hashPassword, verifyPassword, passwordPolicySchema } from "../../utils/password.js";
+import { verifyPassword, passwordPolicySchema } from "../../utils/password.js";
 import { isLocked, lockoutRemaining, recordFailure, clearLockout } from "../../utils/loginLockout.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import {
@@ -14,6 +13,12 @@ import {
 } from "../../services/totpService.js";
 import { claimTotpStep } from "../../services/totpStepService.js";
 import { revokeUserSessions } from "../../services/sessionRevocationService.js";
+import {
+  findUserWithRoleByUsername,
+  findUserWithRoleById,
+  recordSuccessfulLogin,
+  setPasswordHash,
+} from "../../services/loginUserService.js";
 import {
   changeOwnPassword,
   startTotpEnrollment,
@@ -209,7 +214,7 @@ router.post("/login", async (req, res, next) => {
       );
     }
 
-    const user = await prisma.user.findUnique({ where: { username }, include: { role: true } });
+    const user = await findUserWithRoleByUsername(username);
 
     // ── LDAP branch ──
     // Route to LDAP when the existing account is an LDAP user, OR when the
@@ -314,14 +319,10 @@ router.post("/login", async (req, res, next) => {
     // account that has valid credentials but no completed-session activity.
     // Skip the stamp for admins — an admin reviewing their own role is
     // redundant noise (first-run wizard creates the seed admin this way).
-    const isFirstLogin = user.lastLogin === null;
-    const updateData: { lastLogin: Date; passwordHash?: string; needsRoleReview?: boolean } =
-      { lastLogin: new Date() };
-    if (needsRehash) {
-      updateData.passwordHash = await hashPassword(password);
-    }
-    if (isFirstLogin && user.role.name !== "admin") updateData.needsRoleReview = true;
-    await prisma.user.update({ where: { id: user.id }, data: updateData });
+    await recordSuccessfulLogin(user, {
+      stampFirstLogin: true,
+      ...(needsRehash ? { rehashPassword: password } : {}),
+    });
 
     // Does the password that just worked still meet the complexity policy?
     // This is the ONLY moment the question can be asked — a stored hash is
@@ -460,7 +461,7 @@ router.post("/login/totp", async (req, res, next) => {
       );
     }
 
-    const user = await prisma.user.findUnique({ where: { id: pending.userId }, include: { role: true } });
+    const user = await findUserWithRoleById(pending.userId);
     if (!user || !user.totpSecret || !user.totpEnabledAt) {
       // User or their TOTP config disappeared between steps — fail closed.
       mfaPending.consume(pendingToken);
@@ -507,9 +508,7 @@ router.post("/login/totp", async (req, res, next) => {
     mfaPending.consume(pendingToken);
     clearLockout(pending.username);
 
-    const postVerifyData: { lastLogin: Date; totpBackupCodes?: string[] } = { lastLogin: new Date() };
-    if (remainingBackupCodes) postVerifyData.totpBackupCodes = remainingBackupCodes;
-    await prisma.user.update({ where: { id: user.id }, data: postVerifyData });
+    await recordSuccessfulLogin(user, { remainingBackupCodes });
 
     // Both factors are satisfied — only now may a forced password change be
     // offered. The flag rode here on the pending token from the password step.
@@ -616,7 +615,7 @@ router.post("/passkeys/login", passkeyCeremonyLimiter, async (req, res, next) =>
       throw err;
     }
 
-    const user = await prisma.user.findUnique({ where: { id: auth.userId }, include: { role: true } });
+    const user = await findUserWithRoleById(auth.userId);
     if (!user) throw new AppError(401, "That passkey was not recognized.");
 
     // A passkey assertion is not guessable, so it is the one credential that
@@ -625,14 +624,7 @@ router.post("/passkeys/login", passkeyCeremonyLimiter, async (req, res, next) =>
     // attacker a denial-of-service through failed password attempts alone.
     clearLockout(user.username);
 
-    const isFirstLogin = user.lastLogin === null;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        lastLogin: new Date(),
-        ...(isFirstLogin && user.role.name !== "admin" ? { needsRoleReview: true } : {}),
-      },
-    });
+    await recordSuccessfulLogin(user, { stampFirstLogin: true });
 
     await regenerateSession(req);
     // mfaVerified: a passkey ceremony with user verification is two factors in
@@ -700,7 +692,7 @@ router.post("/login/passkey", passkeyCeremonyLimiter, async (req, res, next) => 
       expectUserId: pending.userId,
     });
 
-    const user = await prisma.user.findUnique({ where: { id: pending.userId }, include: { role: true } });
+    const user = await findUserWithRoleById(pending.userId);
     if (!user) {
       mfaPending.consume(pendingToken);
       throw new AppError(401, "Session expired — please sign in again.");
@@ -708,7 +700,7 @@ router.post("/login/passkey", passkeyCeremonyLimiter, async (req, res, next) => 
 
     mfaPending.consume(pendingToken);
     clearLockout(pending.username);
-    await prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
+    await recordSuccessfulLogin(user);
 
     if (pending.mustChangePassword) {
       return res.json(await demandPasswordChange(req, user, "passkey"));
@@ -753,7 +745,7 @@ router.post("/login/password-change", passwordChangeLimiter, async (req, res, ne
     const pending = mfaPending.peek(pendingToken, "password-change");
     if (!pending) throw new AppError(401, "Session expired — please sign in again.");
 
-    const user = await prisma.user.findUnique({ where: { id: pending.userId }, include: { role: true } });
+    const user = await findUserWithRoleById(pending.userId);
     if (!user || user.authProvider !== "local") {
       mfaPending.consume(pendingToken, "password-change");
       throw new AppError(401, "Session expired — please sign in again.");
@@ -769,10 +761,7 @@ router.post("/login/password-change", passwordChangeLimiter, async (req, res, ne
     const { valid: sameAsOld } = await verifyPassword(newPassword, user.passwordHash);
     if (sameAsOld) throw new AppError(400, "The new password must be different from your current one.");
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash: await hashPassword(newPassword) },
-    });
+    await setPasswordHash(user.id, newPassword);
     // Consume only after the write lands: a failed update must leave the user
     // holding a token they can retry with, not stranded at a login screen.
     mfaPending.consume(pendingToken, "password-change");
@@ -820,10 +809,7 @@ router.get("/me", async (req, res, next) => {
     const snapshot = req.session.roleSnapshot ?? null;
     // Load the user's own tags with the role joined for the snapshot. One
     // indexed PK lookup per /auth/me call.
-    const u = await prisma.user.findUnique({
-      where: { id: req.session.userId },
-      include: { role: true },
-    });
+    const u = await findUserWithRoleById(req.session.userId);
     if (!u) {
       // User row deleted out from under the session — fall back to a
       // best-effort response so the frontend can re-login cleanly.
