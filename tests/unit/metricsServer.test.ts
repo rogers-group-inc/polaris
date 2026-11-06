@@ -65,4 +65,16 @@ describe("metricsServer", () => {
     expect(ok.status).toBe(200);
     expect(ok.body).toMatch(/process_cpu_seconds_total/);
   });
+
+  // CQ-B042: the token is read per request, not captured when the listener
+  // binds — a token set (or rotated) afterwards takes effect on the next scrape.
+  it("reads METRICS_TOKEN per request, not at bind", async () => {
+    const handle = await startMetricsOnlyServer(0);
+    server = handle.server;
+    expect((await fetchPath(handle.port, "/metrics")).status).toBe(200);
+
+    process.env.METRICS_TOKEN = "rotated-xyz";
+    expect((await fetchPath(handle.port, "/metrics")).status).toBe(401);
+    expect((await fetchPath(handle.port, "/metrics", "rotated-xyz")).status).toBe(200);
+  });
 });
