@@ -84,112 +84,22 @@
       .replace(/'/g, "&#39;");
   }
 
-  // Failed-poll color — the same hue the desktop charts use
-  // (`_CHART_FAIL_COLOR` in public/js/assets.js), so a missed poll reads
-  // identically on both surfaces.
-  var FAIL_COLOR = "#d32f2f";
-  // Dependency-down grey: the poll missed because the asset's PARENT was dark,
-  // so the dive is drawn without the alarm — the device itself isn't accused of
-  // anything. Same value as _CHART_DEP_COLOR (desktop) and DEP_COLOR
-  // (utils/sparklineSvg.ts, the alert email); one outage looks the same on all
-  // three surfaces.
-  var DEP_COLOR = "#9aa0a6";
-  // The missed-poll amber and the recovering purple — the other two thirds of
-  // the response-time chart's verdict vocabulary. A miss that has NOT reached
-  // the covering automation's count is amber, because red asserts Down and
-  // spending it on the first dropped packet of a three-miss threshold dates the
-  // outage two polls early; a poll that ANSWERED while misses are still
-  // outstanding is purple, and stays purple until the automation's reset run is
-  // served (business rule 36). Same values as _CHART_MISS_COLOR /
-  // _CHART_RECOVER_COLOR on desktop, the Last-30-min strip's own cells, and
-  // MISS_COLOR / RECOVER_COLOR in utils/sparklineSvg.ts — one outage and one
-  // recovery look the same on all three surfaces; change one, change all.
-  var MISS_COLOR = "#ffc107";
-  var RECOVER_COLOR = "#0288d1";
+  // The missed-poll / recovery vocabulary and the outage-marker helpers are
+  // shared with the desktop charts — public/js/chart-shared.js, loaded before
+  // this file. The alert email (src/utils/sparklineSvg.ts) holds the same four
+  // hexes; change them there too.
+  var CS = window.PolarisChartShared;
+  var FAIL_COLOR = CS.FAIL_COLOR, DEP_COLOR = CS.DEP_COLOR;
+  var MISS_COLOR = CS.MISS_COLOR, RECOVER_COLOR = CS.RECOVER_COLOR;
+  var pointColorFor = CS.chartPointColor;
+  var medianCadenceMs = CS.medianCadenceMs;
+  var outageMarkers = CS.outageMarkers;
 
-  // The stroke/dot colour for one plot point. Port of `_chartPointColor` in
-  // public/js/assets.js — keep the two in step. Grey outranks the amber/red
-  // split (a miss the upstream explains is not counted against this device at
-  // all), and a point with no `down` flag stays red, which is every chart that
-  // never resolved a threshold.
-  // `p.downColor` is the covering automation's SEVERITY colour for a `down`
-  // probe (business rule 36) — Down is not inherently red, red is what
-  // `critical` looks like. Absent ⇒ FAIL_COLOR, which is both the critical
-  // colour and the right answer for a miss no automation was resolved for.
-  function pointColorFor(p, seriesColor) {
-    if (p && p.ok) return p.rec ? RECOVER_COLOR : seriesColor;
-    if (p && p.dep) return DEP_COLOR;
-    return p && p.down === false ? MISS_COLOR : ((p && p.downColor) || FAIL_COLOR);
-  }
   function failColorFor(p) { return pointColorFor(p, null); }
 
   // Gradient ids must be unique per rendered chart — several charts share the
   // asset sheet's DOM (response time, CPU/memory, three SD-WAN charts).
   var _chartSeq = 0;
-
-  // Median sampling cadence of a time-ordered series (ms); sizes the hole test
-  // in seriesReportedThrough below. Port of `_medianCadenceMs` in
-  // public/js/assets.js — keep the two in step.
-  function medianCadenceMs(timestampsMs) {
-    if (!timestampsMs || timestampsMs.length < 3) return 0;
-    var dts = [];
-    for (var i = 1; i < timestampsMs.length; i++) {
-      var dt = timestampsMs[i] - timestampsMs[i - 1];
-      if (dt > 0) dts.push(dt);
-    }
-    if (!dts.length) return 0;
-    dts.sort(function (a, b) { return a - b; });
-    return dts[Math.floor(dts.length / 2)];
-  }
-
-  // Missed-poll markers for the streams with no per-sample success flag, read
-  // from the response-time probe's own failure record rather than guessed at
-  // from the shape of the hole: the heavy cadences do not RUN while an asset is
-  // down, so a skipped poll leaves nothing behind, and the probe — which keeps
-  // running in every state — is what knows the device was unreachable.
-  //
-  // One marker at each end of an outage so the line dives to the baseline and
-  // climbs back out; a single-probe outage collapses to one marker.
-  //
-  // A marker landing on top of a real sample is dropped: the Polaris Agent
-  // pushes on its own schedule and is not gated on monitorStatus, so an agent
-  // host can keep reporting CPU straight through an outage of the server-side
-  // probe transport. Port of `_outageMarkers` in public/js/assets.js — keep the
-  // two in step.
-  function outageMarkers(outages, sampleTimesMs) {
-    if (!outages || !outages.length) return [];
-    var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-    var cadenceMs = medianCadenceMs(times);
-    var markers = [];
-    outages.forEach(function (o) {
-      var from = +new Date(o.from);
-      var to   = +new Date(o.to);
-      var dep = o.kind === "dependency";
-      if (!isFinite(from) || !isFinite(to)) return;
-      // Skip the WHOLE window when the series kept reporting through it, not
-      // merely its edges — see _outageMarkers in public/js/assets.js.
-      if (seriesReportedThrough(times, cadenceMs, from, to)) return;
-      markers.push({ t: from, dep: dep });
-      if (to > from) markers.push({ t: to, dep: dep });
-    });
-    return markers.sort(function (a, b) { return a.t - b.t; });
-  }
-
-  // A sample strictly inside the window, or no hole around it (the neighbours
-  // at-or-before `from` and at-or-after `to` within 1.5x cadence). Port of
-  // `_seriesReportedThrough` in public/js/assets.js, which carries the reasoning
-  // — keep the two in step.
-  function seriesReportedThrough(times, cadenceMs, from, to) {
-    var prev = null, next = null;
-    for (var i = 0; i < times.length; i++) {
-      var t = times[i];
-      if (t > from && t < to) return true;
-      if (t <= from) prev = t;
-      if (t >= to && next === null) next = t;
-    }
-    if (!(cadenceMs > 0) || prev === null || next === null) return false;
-    return next - prev <= cadenceMs * 1.5;
-  }
 
   // Normalize one series' `values` into time-ordered { ts (ms), v, ok } points:
   // drops junk and coerces explicit `ok:false` failures into valueless

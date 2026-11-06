@@ -12,6 +12,11 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 type Charts = { lineChart: (opts: Record<string, unknown>) => string };
 let charts: Charts;
@@ -22,6 +27,7 @@ beforeAll(() => {
   g.window = win;
   g.document = win.document;
   const src = readFileSync(resolve(__dirname, "../../public/js/mobile/charts.js"), "utf8");
+  loadSharedModules();
   (0, eval)(src);
   charts = (win as unknown as { PolarisCharts: Charts }).PolarisCharts;
 });

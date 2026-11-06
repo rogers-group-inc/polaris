@@ -98,6 +98,24 @@
 //     full observed key/value table)
 
 (function () {
+  // Helpers shared with the desktop slide-over — public/js/asset-shared.js and
+  // public/js/chart-shared.js, loaded before this file (mobile.html). One copy
+  // per helper; the desktop's assets.js calls the same ones.
+  var AS = window.PolarisAssetShared, CS = window.PolarisChartShared;
+  var inWindow = CS.inChartWindow;
+  var deriveInterfaceSeries = CS.derivePerIntervalSeries;
+  var sdwanColor = AS.sdwanMemberColor;
+  var ipsecIsRemoteAccess = AS.ipsecIsRemoteAccess;
+  var ipsecUptime = AS.ipsecUptimeLabel;
+  var memberUnhealthy = AS.poolMemberUnhealthy;
+  var poolScanText = AS.poolScanText;
+  var tableFilterMatches = AS.childFilterMatches;
+  var arpAgeLabel = AS.arpAgeLabel;
+  var buildWirelessTree = AS.buildWirelessTree;
+  var fwLocalInputValue = AS.fwLocalInputValue;
+  var fwWhenText = AS.fwWhenText;
+  var fwParseEmails = AS.fwParseEmails;
+
   // Chart ranges — every chart's segmented control offers the same five
   // (Response Time, CPU + Memory, the interface page, a volume's usage, and
   // SD-WAN), the presets every history endpoint accepts (src/utils/chartRange.ts).
@@ -116,18 +134,6 @@
     if (!span) return null;
     var to = Date.now();
     return { from: to - span, to: to };
-  }
-
-  // The rows a stats line may count: those at or after the window's left edge.
-  // History endpoints return lookback rows before `since` only so the line
-  // enters from the edge (lineChart keeps them off-plot) — the phone half of
-  // `_inChartWindow` in public/js/assets.js.
-  function inWindow(points, since, tsKey) {
-    var list = points || [];
-    var t0 = since == null ? NaN : +new Date(since);
-    if (!isFinite(t0)) return list;
-    var key = tsKey || "timestamp";
-    return list.filter(function (p) { return !(+new Date(p && p[key]) < t0); });
   }
 
   // Maintenance windows for the open asset, fetched ONCE per sheet open and
@@ -160,8 +166,10 @@
     return _maintWindows.promise;
   }
 
-  // Human labels for AssetSource.sourceKind — mirrors `_assetSourceLabels` in
-  // the desktop assets.js so both surfaces name discovery sources the same.
+  // Human labels for AssetSource.sourceKind — the same map as `_assetSourceLabels`
+  // in public/js/app.js (which the phone does not load), so both surfaces name
+  // discovery sources the same. tests/unit/assetSharedModules.test.ts fails when
+  // the two differ (the phone had lost the two self-report kinds, 2026-11-06).
   var SOURCE_LABELS = {
     "entra":              "Microsoft Entra ID",
     "intune":             "Microsoft Intune",
@@ -170,6 +178,8 @@
     "fortiswitch":        "FortiSwitch",
     "fortiap":            "FortiAP",
     "fortigate-endpoint": "FortiGate / FortiManager (endpoint)",
+    "snmp-sysdescr":      "Device self-report (SNMP sysDescr)",
+    "fortinet-live":      "Device self-report (FortiOS firmware)",
     "vcenter-vm":         "VMware vCenter (VM)",
     "vcenter-host":       "VMware vCenter (ESXi host)",
     "arc":                "Azure Arc",
@@ -177,16 +187,6 @@
     "polaris-agent":      "Polaris Agent",
     "manual":             "Manual / other",
   };
-
-  // SD-WAN member palette — mirrors `_SDWAN_MEMBER_COLORS` in the desktop
-  // assets.js so a given WAN member gets the same color on both surfaces.
-  var _SDWAN_MEMBER_COLORS = ["#2a9d8f", "#4361ee", "#f4a261", "#9b5de5", "#e76f51", "#43aa8b", "#577590", "#bc6c25"];
-  function sdwanColor(name, names) {
-    if (!name) return "#7b8794";
-    var i = (names || []).indexOf(name);
-    if (i < 0) i = 0;
-    return _SDWAN_MEMBER_COLORS[i % _SDWAN_MEMBER_COLORS.length];
-  }
 
   // Per-asset cache of the SD-WAN gate fetch (members + rules + perf-SLA
   // links) so renderSdwanPage draws the current-state lists without a
@@ -2009,51 +2009,6 @@
     }
   }
 
-  // Counter samples → per-interval rates. Mirrors _derivePerIntervalSeries in
-  // public/js/assets.js: a rolled-up window (bucketSeconds set) already carries
-  // per-second rates; raw samples are cumulative counters, differenced pairwise,
-  // with a counter reset (negative delta) dropped rather than drawn as a spike.
-  // Errors come out as a count per interval, not per second.
-  function deriveInterfaceSeries(samples, data) {
-    samples = samples || [];
-    if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
-      var bucketSec = data.bucketSeconds;
-      return samples.map(function (s) {
-        return {
-          ts: s.timestamp,
-          inBps:  typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null,
-          outBps: typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null,
-          // The bucket's MAX rate (bytes/s → bits/s). Null for a bucket rolled
-          // up before the max was kept, or an older server.
-          inMaxBps:  typeof s.maxInBytesPerSec  === "number" ? s.maxInBytesPerSec  * 8 : null,
-          outMaxBps: typeof s.maxOutBytesPerSec === "number" ? s.maxOutBytesPerSec * 8 : null,
-          inErr:  typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null,
-          outErr: typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null,
-        };
-      });
-    }
-    function delta(a, b) {
-      if (typeof a !== "number" || typeof b !== "number") return null;
-      return b - a < 0 ? null : b - a;
-    }
-    var out = [];
-    for (var i = 1; i < samples.length; i++) {
-      var prev = samples[i - 1], cur = samples[i];
-      var dtSec = (new Date(cur.timestamp) - new Date(prev.timestamp)) / 1000;
-      if (!(dtSec > 0)) continue;
-      var inOct = delta(prev.inOctets, cur.inOctets);
-      var outOct = delta(prev.outOctets, cur.outOctets);
-      out.push({
-        ts: cur.timestamp,
-        inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
-        outBps: outOct != null ? (outOct * 8) / dtSec : null,
-        inErr:  delta(prev.inErrors,  cur.inErrors),
-        outErr: delta(prev.outErrors, cur.outErrors),
-      });
-    }
-    return out;
-  }
-
   // The bit-rate unit a peak reads best in; the chart is drawn in that unit
   // so its axis ticks stay short.
   function bpsScale(peak) {
@@ -2102,12 +2057,12 @@
       d.forEach(function (p) {
         // Lookback points are drawn (off-plot, so the line enters from the
         // edge) but never counted in the averages or the axis peak.
-        var counted = !(+new Date(p.ts) < t0);
-        if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
-        if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
+        var counted = !(+new Date(p.timestamp) < t0);
+        if (p.inBps != null)  { inPts.push({ ts: p.timestamp, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
+        if (p.outBps != null) { outPts.push({ ts: p.timestamp, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
         if (rollup) {
-          inMax.push({ ts: p.ts, v: p.inMaxBps != null ? p.inMaxBps : null });
-          outMax.push({ ts: p.ts, v: p.outMaxBps != null ? p.outMaxBps : null });
+          inMax.push({ ts: p.timestamp, v: p.inMaxBps != null ? p.inMaxBps : null });
+          outMax.push({ ts: p.timestamp, v: p.outMaxBps != null ? p.outMaxBps : null });
           if (counted && p.inMaxBps != null && p.inMaxBps > maxPeak) maxPeak = p.inMaxBps;
           if (counted && p.outMaxBps != null && p.outMaxBps > maxPeak) maxPeak = p.outMaxBps;
         }
@@ -2147,9 +2102,9 @@
 
       var inE = [], outE = [], inTot = 0, outTot = 0;
       d.forEach(function (p) {
-        var counted = !(+new Date(p.ts) < t0);
-        if (p.inErr != null)  { inE.push({ ts: p.ts, v: p.inErr });  if (counted) inTot += p.inErr; }
-        if (p.outErr != null) { outE.push({ ts: p.ts, v: p.outErr }); if (counted) outTot += p.outErr; }
+        var counted = !(+new Date(p.timestamp) < t0);
+        if (p.inErr != null)  { inE.push({ ts: p.timestamp, v: p.inErr });  if (counted) inTot += p.inErr; }
+        if (p.outErr != null) { outE.push({ ts: p.timestamp, v: p.outErr }); if (counted) outTot += p.outErr; }
       });
       if (!inE.length && !outE.length) {
         errEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
@@ -2196,7 +2151,6 @@
     "advpn-spoke": "ADVPN spoke", "advpn-shortcut": "ADVPN shortcut", "dialup-peer": "Dial-up peer",
     "remote-access": "FortiClient (IPsec)", "ssl-vpn": "FortiClient (SSL-VPN)",
   };
-  function ipsecIsRemoteAccess(c) { return c.kind === "remote-access" || c.kind === "ssl-vpn"; }
   // The payload the gate fetched, per asset — the page draws from it.
   var _ipsecCache = Object.create(null);
 
@@ -2231,16 +2185,6 @@
     if (peers) bits.push(peers + " peer" + (peers === 1 ? "" : "s"));
     if (users) bits.push(users + " user" + (users === 1 ? "" : "s"));
     return bits.join(" · ");
-  }
-
-  // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up
-  // (the desktop's _ipsecUptimeLabel).
-  function ipsecUptime(since) {
-    if (!since) return "";
-    var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
-    if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
-    if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
-    return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
   }
 
   // up / down as every asset dot reads; "dynamic" (a dial-up template working
@@ -2556,37 +2500,16 @@
   // The desktop's healthy / failing words (_storageHealthCell): a pool's,
   // a group's, a drive's or a SMART verdict. Unknown words stay neutral.
   function healthClass(h) {
-    var s = String(h || "").toUpperCase();
-    if (/^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s)) return "poe-ok";
-    if (/(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s)) return "poe-fault";
-    return "poe-idle";
+    var st = AS.storageHealthState(h);
+    return st === "good" ? "poe-ok" : st === "bad" ? "poe-fault" : "poe-idle";
   }
   function healthPill(h) {
     return h ? '<span class="poe-label ' + healthClass(h) + '">' + escapeHtml(h) + '</span>' : "";
   }
 
-  // The desktop's _poolMemberUnhealthy, word for word.
-  function memberUnhealthy(m) {
-    var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
-    var h = String(m.health || "").toUpperCase();
-    return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
-      (!!m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
-  }
   function poolUnhealthy(pool) {
     return (pool.health && !/^(ONLINE|STARTED|DISK_OK)$/i.test(pool.health)) ||
       (pool.groups || []).some(function (g) { return (g.members || []).some(memberUnhealthy); });
-  }
-
-  // The desktop's _poolScanText.
-  function poolScanText(scan) {
-    if (!scan) return "";
-    var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
-    var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
-    var state = scan.state === "running"
-      ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
-      : (scan.state || "—");
-    var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
-    return kind + ": " + state + when + errs;
   }
 
   function hostPools(v) {
@@ -3432,28 +3355,6 @@
     return ((_tableSheet && _tableSheet.filterText) || "").trim().toLowerCase();
   }
 
-  // Partial match for every table filter box — the desktop's
-  // _childFilterMatches (assets.js); change one, change both. Plain substring
-  // over every field, so a middle fragment of an IP ("41.30") or a
-  // colon-separated MAC ("a0:12") hits; MAC fields are ALSO compared with
-  // separators stripped, so "a012", "a0-12" and "a0.12" find …:A0:12:… — a
-  // separator-free match must start on an octet (even offset), or "a0" would
-  // hit BA:01 through "ba01". `filter` is already lower-cased.
-  function tableFilterMatches(textParts, macParts, filter) {
-    if (!filter) return true;
-    if (textParts.concat(macParts).join(" ").toLowerCase().indexOf(filter) !== -1) return true;
-    var compact = filter.replace(/[\s:.\-]/g, "");
-    if (compact.length < 2 || !/^[0-9a-f]+$/.test(compact)) return false;
-    return macParts.some(function (m) {
-      if (!m) return false;
-      var hex = String(m).toLowerCase().replace(/[:.\-]/g, "");
-      for (var at = hex.indexOf(compact); at !== -1; at = hex.indexOf(compact, at + 1)) {
-        if (at % 2 === 0) return true;
-      }
-      return false;
-    });
-  }
-
   // Groups start collapsed on a big table (a core gate's cache runs into the
   // thousands); a filter, or a table that fits on a screen, opens them all.
   function groupsStartExpanded(groups, filter) {
@@ -3478,15 +3379,6 @@
   ];
   var ARP_RANGE_DAYS = { current: 0, "1h": 1 / 24, "12h": 0.5, "24h": 1, "7d": 7, "30d": 30 };
   var _arpRange = Object.create(null);   // per asset, for the SPA lifetime
-
-  function arpAgeLabel(sec) {
-    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
-    if (sec < 60) return Math.round(sec) + "s";
-    if (sec < 3600) return Math.floor(sec / 60) + "m";
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    return h + "h " + String(m).padStart(2, "0") + "m";
-  }
 
   function cadenceLabel(sec) {
     if (typeof sec !== "number" || !isFinite(sec) || sec <= 0) return null;
@@ -3707,26 +3599,6 @@
     if (band === "5GHz")   return "5 GHz";
     if (band === "6GHz")   return "6 GHz";
     return "";
-  }
-
-  function buildWirelessTree(radios, stations) {
-    var byBssid = {}, byRadioSsid = {};
-    var nodes = radios.map(function (r) {
-      var vapNodes = (r.vaps || []).map(function (v) {
-        var node = { vap: v, stations: [] };
-        if (v.bssid) byBssid[String(v.bssid).toUpperCase()] = node;
-        if (v.ssid)  byRadioSsid[r.radioIndex + "\u0000" + String(v.ssid).toLowerCase()] = node;
-        return node;
-      });
-      return { radio: r, vaps: vapNodes };
-    });
-    var unplaced = [];
-    stations.forEach(function (s) {
-      var node = s.bssid ? byBssid[String(s.bssid).toUpperCase()] : null;
-      if (!node && s.radioId != null && s.ssid) node = byRadioSsid[s.radioId + "\u0000" + String(s.ssid).toLowerCase()];
-      if (node) node.stations.push(s); else unplaced.push(s);
-    });
-    return { radios: nodes, unplaced: unplaced };
   }
 
   function wirelessStationRow(s) {
@@ -4428,26 +4300,6 @@
           + '<button class="btn btn-outlined" id="asset-fw-sched-cancel">Cancel</button></div>'
         : '')
       + '</div>';
-  }
-
-  /** "YYYY-MM-DDTHH:MM" in the phone's zone — a datetime-local input's value. Pure. */
-  function fwLocalInputValue(d) {
-    function p(n) { return (n < 10 ? "0" : "") + n; }
-    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
-  }
-
-  /** "Tue, Oct 7, 2:00 AM (in 9 h)". Pure. */
-  function fwWhenText(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-    var mins = Math.round((d.getTime() - Date.now()) / 60000);
-    var rel = mins <= 0 ? "due now" : mins < 60 ? "in " + mins + " min" : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h" : "in " + Math.round(mins / 1440) + " days";
-    return txt + " (" + rel + ")";
-  }
-
-  function fwParseEmails(text) {
-    return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
   function loadFirmwareRow(id, asset) {

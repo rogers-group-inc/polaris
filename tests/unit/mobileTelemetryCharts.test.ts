@@ -14,6 +14,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const read = (f: string) => readFileSync(join(process.cwd(), "public", "js", "mobile", f), "utf-8");
 const CHARTS_SRC = read("charts.js");
@@ -25,8 +30,10 @@ const GB = 1024 ** 3;
 function load() {
   g.escapeHtml = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  loadSharedModules();
   new Function(CHARTS_SRC)();
   // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  loadSharedModules();
   new Function(TELEMETRY_SRC)();
   return g.PolarisTelemetryCharts;
 }

@@ -3966,6 +3966,8 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/monitor-states.js",
     "/js/monitor-down-after.js",
     "/js/asset-merge-modal.js",
+    "/js/chart-shared.js",
+    "/js/asset-shared.js",
     "/js/assets.js",
     "/js/condition-builder.js",
     "/js/automations-address-book.js",

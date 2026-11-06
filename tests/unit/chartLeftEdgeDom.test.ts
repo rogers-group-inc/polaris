@@ -18,6 +18,11 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const g = globalThis as Record<string, any>;
 const lines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
@@ -43,6 +48,7 @@ beforeAll(() => {
   const win = new Window();
   g.window = win;
   g.document = win.document;
+  loadSharedModules();
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/mobile/charts.js"), "utf8"));
   charts = (win as unknown as { PolarisCharts: Charts }).PolarisCharts;
 });
