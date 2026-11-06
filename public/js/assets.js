@@ -21352,8 +21352,22 @@ var _MAC_ROW_IPS_VISIBLE = 3;
 var _ADDRESS_PRIMARY_BADGE = '<span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span>';
 var _ADDRESS_PRIMARY_IPV6_BADGE = '<span class="address-primary-badge" title="The asset&#39;s primary IPv6 — polled only when the asset has no IPv4">&#9733; Primary IPv6</span>';
 
+// The IPAM network the address sits in (server-resolved, gate-aware), as a
+// chip beside the score: "VLAN n", or the CIDR when the network has no VLAN.
+// Its title names the network in full. Plain title, not a hover — hovers
+// can't nest inside the IPs hover.
+function _addressNetworkChipHTML(net) {
+  if (!net || !(net.name || net.cidr)) return '';
+  var hasVlan = net.vlan != null;
+  var label = hasVlan ? 'VLAN ' + String(net.vlan) : (net.cidr || net.name);
+  var title = [net.name, net.cidr, hasVlan ? 'VLAN ' + String(net.vlan) : null]
+    .filter(function (s) { return s; }).join(' · ');
+  return '<span class="addr-net-chip" title="' + escapeHtml(title) + '">' + escapeHtml(label) + '</span>';
+}
+
 // One address in the IPs hover: the IP, its score chip (plain — hovers can't
-// nest), the MAC it is on, provenance, and the star or "Set as primary".
+// nest), its network chip, the MAC it is on, provenance, and the star or
+// "Set as primary".
 function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   var bits = [];
   bits.push(r.mac
@@ -21361,13 +21375,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
     : 'no MAC');
   var label = formatAddressSource(r.source);
   if (label) bits.push(escapeHtml(label));
-  // The IPAM network the address sits in (server-resolved, gate-aware).
-  if (r.network && (r.network.name || r.network.cidr)) {
-    var netBits = escapeHtml(r.network.name || r.network.cidr) +
-      (r.network.name && r.network.cidr ? ' <span class="mono">' + escapeHtml(r.network.cidr) + '</span>' : '');
-    if (r.network.vlan != null) netBits += ' VLAN ' + escapeHtml(String(r.network.vlan));
-    bits.push(netBits);
-  }
+  var netChip = _addressNetworkChipHTML(r.network);
   if (r.device) bits.push(escapeHtml(r.device));
   // The interface's primary address gets a pill; its secondary addresses get
   // none (FortiOS names them; other collectors leave the role unknown).
@@ -21390,6 +21398,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
         : '');
     return '<div class="mac-tooltip-row">' +
       '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
+      netChip +
       '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
       v6Star +
     '</div>';
@@ -21404,6 +21413,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   return '<div class="mac-tooltip-row">' +
     '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
     addressConfidenceChipHTML(asset, r.ip, { plain: true }) +
+    netChip +
     '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
     star +
   '</div>';

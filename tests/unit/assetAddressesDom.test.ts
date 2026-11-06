@@ -34,7 +34,7 @@ const FNS = [
   // The per-device shim (rule 141 (e)) falls back to the role helper this harness stubs.
   "_canEditAsset",
   "_assetAddressRows", "_addressMacKey", "primaryAddressMac", "_assetAddressPinnable", "primaryAddressPinHTML",
-  "formatAddressSource", "formatMacSource", "_addressTooltipRowHTML", "_macTooltipRowHTML", "_addressPillHTML", "addressPillsHTML",
+  "formatAddressSource", "formatMacSource", "_addressNetworkChipHTML", "_addressTooltipRowHTML", "_macTooltipRowHTML", "_addressPillHTML", "addressPillsHTML",
   "macDeleteButtonHTML", "macEntryText", "macEntryCount", "macEntriesTotal", "ipViewRow", "ipCellHTML",
   "_addressRowHTML", "_ipv6LineHTML",
   "_confAge", "_confHours", "_addressConfidence", "_confidenceBreakdownHTML", "addressConfidenceChipHTML",
@@ -361,14 +361,27 @@ describe("address confidence chips (business rule 103)", () => {
     expect(el.querySelector(".addr-conf")).toBeNull();
   });
 
-  it("the IPs hover names the network each address sits in", () => {
-    const asset = hmi();
+  it("the IPs hover shows a VLAN chip after the score, titled with the network", () => {
+    const asset = hmi({ addressConfidence: detail });
     const row = { ...asset.associatedIps[1], network: { name: "Office-Data", cidr: "172.23.6.0/24", vlan: 6, subnetId: "s1", gate: "ARCHMAT-101F-1" } };
-    const text = render(g._addressTooltipRowHTML(asset, row, false, true)).textContent || "";
-    expect(text).toContain("Office-Data");
-    expect(text).toContain("172.23.6.0/24");
-    expect(text).toContain("VLAN 6");
-    const bare = render(g._addressTooltipRowHTML(asset, asset.associatedIps[1], false, true)).textContent || "";
-    expect(bare).not.toContain("VLAN");
+    const el = render(g._addressTooltipRowHTML(asset, row, false, true));
+    const chip = el.querySelector(".addr-net-chip")!;
+    expect(chip.textContent).toBe("VLAN 6");
+    expect(chip.getAttribute("title")).toBe("Office-Data · 172.23.6.0/24 · VLAN 6");
+    // Right after the score chip, and the network is no longer in the line.
+    expect(chip.previousElementSibling?.classList.contains("addr-conf")).toBe(true);
+    const line = el.querySelector(".mac-tooltip-source")!.textContent || "";
+    expect(line).not.toContain("Office-Data");
+    expect(line).not.toContain("172.23.6.0/24");
+    const bare = render(g._addressTooltipRowHTML(asset, asset.associatedIps[1], false, true));
+    expect(bare.querySelector(".addr-net-chip")).toBeNull();
+  });
+
+  it("a network with no VLAN shows its CIDR in the chip", () => {
+    const asset = hmi();
+    const row = { ...asset.associatedIps[1], network: { name: "Office-Data", cidr: "172.23.6.0/24", vlan: null, subnetId: "s1", gate: null } };
+    const chip = render(g._addressTooltipRowHTML(asset, row, false, true)).querySelector(".addr-net-chip")!;
+    expect(chip.textContent).toBe("172.23.6.0/24");
+    expect(chip.getAttribute("title")).toBe("Office-Data · 172.23.6.0/24");
   });
 });
