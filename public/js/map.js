@@ -59,13 +59,13 @@
   // The GRID has two weights. The thick (major) lines are the column
   // solver's lattice, TOPO_COL_SPACING × TOPO_ROW_SPACING — where devices
   // land. The thin (minor) lines split each major cell TOPO_GRID_DIV ways,
-  // or TOPO_GRID_DIV_FINE ways once zoomed in far enough that a fine cell is
-  // TOPO_GRID_FINE_MIN_PX on screen (_topologyGridDiv); thin AND thick lines
+  // or TOPO_GRID_DIV_FINE ways from TOPO_GRID_FINE_MIN_ZOOM (100%) up
+  // (_topologyGridDiv); thin AND thick lines
   // together are the lattice line points snap to, so the snap follows the
   // split being drawn.
   var TOPO_GRID_DIV = 4;
   var TOPO_GRID_DIV_FINE = 8;
-  var TOPO_GRID_FINE_MIN_PX = 16;
+  var TOPO_GRID_FINE_MIN_ZOOM = 1; // 100% — was ~135% (a 16 px fine cell) until 2026-11-06
   var GRID_STORAGE_KEY = "polaris.topology.grid";                 // default off
   // Snap devices: drags land on the MAJOR lattice on release, and turning it
   // on re-snaps every current position. Same key as the old single "Snap"
@@ -3269,12 +3269,11 @@
     _paintTopologyGrid();
   }
   // How many ways the thin lines split a major cell at the current zoom: 4,
-  // or 8 once an eighth of the shorter side is TOPO_GRID_FINE_MIN_PX on
-  // screen. The thick lines never move.
+  // or 8 from TOPO_GRID_FINE_MIN_ZOOM up (a hair of slack, so a wheel zoom
+  // that lands at 0.99999 still counts as 100%). The thick lines never move.
   function _topologyGridDiv() {
     if (!cyInstance) return TOPO_GRID_DIV;
-    var fineCell = Math.min(TOPO_COL_SPACING, TOPO_ROW_SPACING) * cyInstance.zoom() / TOPO_GRID_DIV_FINE;
-    return fineCell >= TOPO_GRID_FINE_MIN_PX ? TOPO_GRID_DIV_FINE : TOPO_GRID_DIV;
+    return cyInstance.zoom() >= TOPO_GRID_FINE_MIN_ZOOM - 1e-6 ? TOPO_GRID_DIV_FINE : TOPO_GRID_DIV;
   }
   // The point a line's bend lands on with "Snap line points" on: the nearest
   // intersection of the thin + thick lines as currently drawn.

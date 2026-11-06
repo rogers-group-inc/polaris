@@ -280,8 +280,7 @@ the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
   where devices sit in the automatic layout; the thin lines split each cell
-  in four, and in eight once you zoom in far enough for the finer lines to
-  be readable (about 135%). The thick lines stay where they are.
+  in four, and in eight once you zoom in to 100% or more. The thick lines stay where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
 
