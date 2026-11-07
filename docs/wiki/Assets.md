@@ -901,6 +901,13 @@ says the sensor works. **SFP Temp**, **SFP Voltage** and **Bias (mA)** are
 available too; turn them on from the table's column gear. On the phone, the
 interface page lists all five.
 
+**History.** Click any of those readings in the table to open its history.
+An SFP port's interface page also charts **Rx power** and **Tx power** under
+*Optical power*, following the page's range buttons, with links to the
+temperature, voltage and bias history. The phone's interface page has the same
+Rx/Tx chart. This history is kept whether or not the interface is monitored:
+it is recorded with the hardware sensors, not with the interface.
+
 Readings placed on a port no longer appear under **Hardware Sensors**. Their
 history keeps recording under the port's name (`port49 Rx power`), so an
 automation can match it with a sensor-name pattern such as `*Rx power`. Placing
