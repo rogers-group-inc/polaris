@@ -1305,6 +1305,9 @@
     var host = document.getElementById("topology-graph");
     var data = R.anonymisedLayout(cyInstance, {
       view: _activeViewKey(),
+      // The site's firewall id salts the aliases: stable across this site's
+      // exports, meaningless outside it.
+      salt: topoState.siteId,
       pane: host ? { w: host.clientWidth, h: host.clientHeight } : null,
     });
     var blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
