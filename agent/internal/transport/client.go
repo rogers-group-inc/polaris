@@ -12,6 +12,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/polaris/agent/internal/pinned"
@@ -29,8 +31,17 @@ import (
 // reuse it for the life of the agent process.
 type Client struct {
 	baseURL string
-	bearer  string
 	httpc   *http.Client
+
+	// mu guards bearer and ctx (CQ-G009): SetBearer and BindContext may run
+	// while loop goroutines are mid-request, so reads go through token() and
+	// requestContext() rather than the fields.
+	mu     sync.RWMutex
+	bearer string
+	// ctx is the parent of every request, so cancelling it (agent shutdown,
+	// an SCM Stop) aborts requests in flight instead of letting each run out
+	// its 30 s client timeout. Background until BindContext is called.
+	ctx context.Context
 
 	// AgentVersion is reported on /enroll and /heartbeat so the server
 	// can render "v0.1.0" badges on the asset details page.
@@ -63,6 +74,7 @@ func NewClient(baseURL string, certPins []string, bearer string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		bearer:  bearer,
+		ctx:     context.Background(),
 		// AgentVersion is filled in by main.go from the ldflag-stamped
 		// `version` constant before any call that emits it (/enroll,
 		// /heartbeat). The fallback string here is what shows up if
@@ -74,7 +86,35 @@ func NewClient(baseURL string, certPins []string, bearer string) *Client {
 
 // SetBearer swaps the token the client uses for Authorization headers.
 // Called once after /enroll returns the long-lived bearer.
-func (c *Client) SetBearer(b string) { c.bearer = b }
+func (c *Client) SetBearer(b string) {
+	c.mu.Lock()
+	c.bearer = b
+	c.mu.Unlock()
+}
+
+// BindContext makes ctx the parent of every request this client sends, so
+// cancelling it cancels whatever is in flight. main binds the agent's
+// shutdown context once, before any loop starts.
+func (c *Client) BindContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	c.ctx = ctx
+	c.mu.Unlock()
+}
+
+func (c *Client) token() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.bearer
+}
+
+func (c *Client) requestContext() context.Context {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ctx
+}
 
 // BaseURL returns the normalized server base URL (no trailing slash). Used
 // by the verbose lifecycle logging in main so the "connecting to server"
@@ -324,7 +364,7 @@ type SamplesResponse struct {
 // assetId is stamped server-side; we never send our own assetId on the
 // wire. Returns the {accepted, rejected} counts the server reports.
 func (c *Client) PushSamples(body *SamplesBody) (*SamplesResponse, error) {
-	if c.bearer == "" {
+	if c.token() == "" {
 		return nil, errors.New("PushSamples called without a bearer token — enroll first")
 	}
 	var out SamplesResponse
@@ -365,7 +405,7 @@ type SystemInfoBody struct {
 // per-agent AssetSource row and re-projects the asset; same agent
 // pushing the same blob is a no-op DB-side.
 func (c *Client) PushSystemInfo(body *SystemInfoBody) error {
-	if c.bearer == "" {
+	if c.token() == "" {
 		return errors.New("PushSystemInfo called without a bearer token — enroll first")
 	}
 	var out struct {
@@ -393,7 +433,7 @@ type Command struct {
 // FetchCommands polls for pending commands. The server marks them "sent" so a
 // slow agent doesn't re-run them.
 func (c *Client) FetchCommands() ([]Command, error) {
-	if c.bearer == "" {
+	if c.token() == "" {
 		return nil, errors.New("FetchCommands called without a bearer token — enroll first")
 	}
 	var out struct {
@@ -414,7 +454,7 @@ func (c *Client) ReportCommandResult(commandID string, success bool, errMsg, res
 // fields (exit code + captured output, ≤64 KB each — scriptexec caps them).
 // exitCode nil = unknown (refused / killed before exit).
 func (c *Client) ReportCommandResultFull(commandID string, success bool, errMsg, resultState string, exitCode *int, stdout, stderr string) error {
-	if c.bearer == "" {
+	if c.token() == "" {
 		return errors.New("ReportCommandResult called without a bearer token — enroll first")
 	}
 	body := map[string]any{"commandId": commandID, "success": success}
@@ -447,7 +487,7 @@ func (c *Client) ReportCommandResultFull(commandID string, success bool, errMsg,
 // lets the agent know whether it needs to refresh /config — when it
 // matches the agent's cached etag we can skip the round-trip.
 func (c *Client) Heartbeat() (*HeartbeatResponse, error) {
-	if c.bearer == "" {
+	if c.token() == "" {
 		return nil, errors.New("Heartbeat called without a bearer token — enroll first")
 	}
 	body := map[string]string{"agentVersion": c.AgentVersion}
@@ -623,14 +663,15 @@ type PathCheckTraceroute struct {
 // circuit when nothing changed (server returns 304 → this function
 // returns a nil *ConfigResponse and a nil error).
 func (c *Client) FetchConfig(ifNoneMatch string) (*ConfigResponse, error) {
-	if c.bearer == "" {
+	tok := c.token()
+	if tok == "" {
 		return nil, errors.New("FetchConfig called without a bearer token — enroll first")
 	}
-	req, err := http.NewRequest("GET", c.baseURL+"/api/v1/agents/config", nil)
+	req, err := http.NewRequestWithContext(c.requestContext(), "GET", c.baseURL+"/api/v1/agents/config", nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.bearer)
+	req.Header.Set("Authorization", "Bearer "+tok)
 	if ifNoneMatch != "" {
 		req.Header.Set("If-None-Match", ifNoneMatch)
 	}
@@ -663,16 +704,17 @@ func (c *Client) do(method, path string, body, out any, withBearer bool) error {
 		}
 		rdr = bytes.NewReader(buf)
 	}
-	req, err := http.NewRequest(method, c.baseURL+path, rdr)
+	req, err := http.NewRequestWithContext(c.requestContext(), method, c.baseURL+path, rdr)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if withBearer {
-		if c.bearer == "" {
+		tok := c.token()
+		if tok == "" {
 			return errors.New("bearer required but unset")
 		}
-		req.Header.Set("Authorization", "Bearer "+c.bearer)
+		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := c.httpc.Do(req)
 	if err != nil {

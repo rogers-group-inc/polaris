@@ -3,8 +3,10 @@
 package collectors
 
 import (
+	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // readPlatformDMI reads vendor / model / serial from ioreg (in-kernel
@@ -23,7 +25,11 @@ import (
 // SPHardwareDataType. Skip for now; if operators need it later add a
 // dedicated call.
 func readPlatformDMI() *platformDMI {
-	out, err := exec.Command("/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output()
+	// Bounded like every other collector exec (CQ-G012): a wedged ioreg must
+	// not hold the system-info pass forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output()
 	if err != nil {
 		return &platformDMI{}
 	}
