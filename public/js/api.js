@@ -1127,10 +1127,10 @@ const api = {
     cancelRebootSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`)),
     setAgentReboot:         (id, enabled)   => request("PUT",    `/assets/${id}/reboot/agent`, { enabled: !!enabled }),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
-    // Agent API surface"). `agent.get` returns 404 when no agent is
-    // installed yet; the caller should treat that as "no install" rather
-    // than an error, so this helper resolves null on the "No agent
-    // installed" response instead of throwing.
+    // Agent API surface"). GET answers 204 when no agent is installed, which
+    // request() resolves to null (since 2026-11-06 — it was a 404 that put a
+    // red line in the console on every agent-less asset panel). The 404
+    // branch below stays for a server that has not been updated yet.
     agent:                (id) => request("GET", `/assets/${id}/agent`).catch((err) => {
       var msg = (err && err.message) ? err.message : "";
       if (/no agent installed/i.test(msg)) return null;

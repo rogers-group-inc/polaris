@@ -14035,6 +14035,12 @@ function _renderSystemChart(container, data, asset, si) {
     var x = xFor(h.ts);
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
     var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].ts) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     var s = h.sample;
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
@@ -14269,6 +14275,12 @@ function _renderCpuChart(container, data, asset, si) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     var cores = Array.isArray(h.s.cpuCorePcts) ? h.s.cpuCorePcts.join(",") : "";
     // Rollup peaks ride the hit too, so the tooltip names avg AND max whether
     // or not the max line is shown.
@@ -15017,6 +15029,12 @@ function _renderMemoryChart(container, data, asset, si) {
     var x = xFor(r.ts);
     var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
     var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     // One attribute per REPORTED band, indexed by its position in
     // `reported`, so the tooltip walks that list and neither vocabulary
     // needs its own hard-coded row set — and a switched-off band still has
@@ -15228,6 +15246,12 @@ function _renderMemoryPctChart(container, data, asset, si) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sorted[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sorted.length - 1 ? (W - padR) : (xFor(sorted[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '" data-mem="' + h.v + '"/>';
   }).join("");
@@ -15319,6 +15343,12 @@ function _renderSessionsChart(container, data, asset) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sorted[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sorted.length - 1 ? (W - padR) : (xFor(sorted[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '" data-sc="' + h.v + '"/>';
   }).join("");

@@ -62,7 +62,8 @@ fired alerts, and a monitor status other than "Pending" on every asset — run t
 ordered chain (`mock:compare` → `mock:notifications` → `mock:demo`, the last one being the
 presentation pass) under "Demo data and documentation screenshots" in `DEVELOPMENT.md`.
 That section also covers `scripts/capture-screenshots.mjs`, which shoots the docs images
-off such a stack, and "Mock switches and access points for the firmware repository" —
+off such a stack, `scripts/smoke-frontend.mjs`, which drives it with real Chrome and fails on
+any page error, load-order mistake or failed request (run it after a frontend refactor), and "Mock switches and access points for the firmware repository" —
 `scripts/seed-firmware-mock.ts` + `scripts/mock-firmware-devices.mjs`, both run INSIDE the
 app container (`podman exec`), which put Fortinet devices on loopback aliases — switches,
 APs and (2026-10-06) a fake FortiGate REST API at 127.0.0.5 (`MOCK-FGT60F-1`; admin login,

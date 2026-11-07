@@ -7133,7 +7133,14 @@ router.get("/:id/agent", requirePermission("assets", "read"), async (req, res, n
   try {
     const assetId = req.params.id as string;
     const row = await prisma.managedAgent.findUnique({ where: { assetId } });
-    if (!row) return res.status(404).json({ error: "No agent installed for this asset" });
+    // No agent is an ordinary answer, not an error: 204 No Content. The asset
+    // panel asks this for every device it opens, and a 404 here put a red
+    // "Failed to load resource" line in the browser console on every
+    // agent-less panel (found by scripts/smoke-frontend.mjs, 2026-11-06).
+    // api.js maps a 204 to null, which is what its callers already expect.
+    // The ACTION routes below (retry, upgrade, uninstall …) keep their 404:
+    // acting on an agent that is not there is an error.
+    if (!row) return res.status(204).end();
     // Strip secret-bearing fields before serializing.
     const {
       enrollmentTokenHash: _eh, enrollmentTokenPrefix: _ep,
