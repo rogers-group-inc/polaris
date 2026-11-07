@@ -307,6 +307,30 @@ describe("computeGroupedLayout", () => {
     expect(layoutAspect({ clientWidth: 0, clientHeight: 900 })).toBeUndefined();
     expect(layoutAspect(null)).toBeUndefined();
   });
+  it("never puts a device on the straight line between two linked devices", () => {
+    // Operator report (2026-11-07): PUG57 → its AP → PUG8 read as one chain
+    // on one row. Every same-row link is a corridor, sideways links too.
+    const els = [
+      node("fg", "fortigate"), node("sh2", "fortiswitch", { b: "Scale House" }),
+      node("pug57", "fortiswitch", { a: "Pugmill", b: "57 Loudout" }), node("ap57", "fortiap", { a: "Pugmill", b: "57 Loudout" }),
+      node("pug8", "fortiswitch", { a: "Pugmill", b: "8s Loadout" }),
+      node("csb", "fortiswitch", { a: "Pugmill", b: "CSB Loadout" }), node("apcsb", "fortiap", { a: "Pugmill", b: "CSB Loadout" }),
+      edge("fg", "sh2"), edge("sh2", "pug57"), edge("sh2", "pug8"), edge("pug57", "ap57"),
+      edge("pug57", "pug8"), edge("pug8", "csb"), edge("csb", "apcsb"), edge("pug57", "csb"),
+    ];
+    const pos = computeGroupedLayout(els)!;
+    const ids = Object.keys(pos);
+    for (const e of els.filter((x) => x.data.source)) {
+      const a = pos[e.data.source as string], b = pos[e.data.target as string];
+      if (a.lane !== b.lane) continue;
+      for (const id of ids) {
+        if (id === e.data.source || id === e.data.target) continue;
+        const p = pos[id];
+        const between = p.lane === a.lane && p.depth > Math.min(a.depth, b.depth) && p.depth < Math.max(a.depth, b.depth);
+        expect(between, `${id} sits on ${e.data.source}–${e.data.target}`).toBe(false);
+      }
+    }
+  });
   it("puts devices with no link in a strip under the site", () => {
     const els = [
       node("fg", "fortigate"), node("sw", "fortiswitch"), node("ap", "fortiap"),
