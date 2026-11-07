@@ -225,13 +225,40 @@ only has when it does not know which switch port the AP is on. Such a device
 stands unconnected in its location until its cable is found. A confirmed
 firewall-to-switch uplink whose ports cannot be resolved reads `fortilink`.
 
-**A switch-to-switch cable is one green line**, whether interface naming or an
-LLDP report found it. An MCLAG inter-chassis link keeps its own style, and an
-AP's switch uplink stays blue. Hover a link to see how it was found ("found by
-interface naming", "found by LLDP"). The legend lists each link and device
-kind by name only — devices by asset type (Firewall, Switch, Access Point),
-and the FortiGate's uplink as "Firewall to switch"; a wireless mesh backhaul
-between two APs is "AP to AP".
+**Link colors show speed and signal.** Every link starts as one neutral gray
+line, whatever kind of link it is and however it was found. Then:
+
+- **A cable takes the color of its speed**, and faster links are drawn
+  thicker: violet 10 Gb (or faster), blue 5 Gb, cyan 2.5 Gb, teal 1 Gb, slate
+  100 Mb, and a dotted slate line for 10 Mb. The speed is the slower of the
+  two ports' reported speeds. When neither port reports a speed (Polaris does
+  not know the port at one end, or its reading is more than an hour old) the
+  line stays gray.
+- **A wireless mesh link between two APs is dashed.** It stays gray while the
+  signal is good (−65 dBm or better), then turns yellow (−66 to −72), orange
+  (−73 to −80) and red (below −80) as the signal weakens. Signal strength comes
+  from the firewall's REST API; a site polled over SNMP only has no reading, so
+  its mesh links stay gray.
+
+Yellow, orange and red are only ever used for signal, so a slow cable never
+looks like a failing radio. An MCLAG inter-chassis link is dashed, in its
+speed's color, and a link that is part of a switch ring gets a white halo
+(near-black on the light themes).
+
+**Hover a link to see the details.** A cable's tooltip shows its ports, how it
+was found ("found by interface naming", "found by LLDP"), its speed, and each
+port's speed, status and error counts. Where a port holds an SFP transceiver
+that reports its diagnostics (see the Interfaces table on [Assets](Assets)), a line
+under that port adds its receive and transmit power, temperature, voltage and
+laser bias current. A receive power of −20 dBm or lower is shown in red, and
+the tooltip names the end that is receiving too little light. A copper SFP
+reports no diagnostics, so it gets no line. A cable slower than 1 Gb also says
+that this is usually a cable or speed-negotiation fault. A mesh link's tooltip shows
+the signal in dBm and in words, the channel, band and channel width, the noise
+and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
+a section for each: **Wired link speed**, **Wireless mesh signal**, and
+**Also** (MCLAG and ring links). Devices are listed by asset type (Firewall,
+Switch, Access Point).
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
@@ -247,7 +274,7 @@ them: it moves to a stretch only its own link uses, and a link that shares
 its whole route shows no label.
 
 On the light themes (morning and noon) the links and location boxes are drawn
-in darker shades of the same colours, so they stay readable on the pale
+in darker shades of the same colors, so they stay readable on the pale
 background; the legend matches the theme you are using.
 
 When devices carry location codes, the details pane lists the switches and APs in the same
@@ -264,6 +291,24 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
+**How the map places devices and boxes.** Every device has a level, which is
+how many hops it is from the FortiGate. Every location box has the level of
+the closest-to-the-FortiGate device inside it. Boxes and devices are laid out
+left to right by level, at every depth of nesting: the areas on the map,
+the buildings inside each area, and so on down. Each one sits on the same
+row as the device it connects to. A chain of switches stays on one straight
+row, and an access point beside it moves to the row below so that no link
+runs through a device.
+
+Because each box is placed by its level and not by the boxes around it,
+adding a location code to a device moves only the box that device joins or
+leaves, plus anything below it in the same column. If the map has a saved
+layout, a code change never moves a device you placed: the new box is drawn
+around the devices where they already are, even if two boxes then overlap.
+A device the saved layout has no spot for is placed next to the device it
+connects to. **Reset layout** › **Reset to baseline** lays the whole map out
+again from levels.
+
 **Editing the layout.** The topology opens **view-only**: you can click,
 select, pan, zoom, switch location views and export, but nothing moves.
 Dragging anywhere pans the map, including on a device or a location box. While
@@ -279,11 +324,20 @@ points**. Each one remembers its setting in this browser; the grid only ever sho
 the next time you edit if you left it on.
 
 - **Grid** draws two weights of line behind the map. The thick lines are
-  where devices sit in the automatic layout; the thin lines split each cell
-  in four, and in eight once you zoom in far enough for the finer lines to
-  be readable (about 135%). The thick lines stay where they are.
+  where devices snap. They form squares, twice as close together as the
+  automatic layout's spacing, so every automatically placed device sits on
+  one, with a free line between any two neighbours. The thin lines split each cell in
+  two, and in four once you zoom in to 100% or more. The thick lines stay
+  where they are.
 - **Snap devices** lands a dragged device on the thick lines, and lines up
   every device on the map when you turn it on.
+
+No two devices can sit on the same spot. Drop a device on another one, or
+snap two onto the same grid cell, and the one you moved steps to the nearest
+free spot while the other stays where it was. With **Snap devices** on, it
+moves to the nearest free grid cell. With it off, it moves just far enough to
+clear the other device. When the map opens, a device added since the layout
+was saved also steps aside if its automatic spot is now taken.
 - **Snap line points** lands a dragged bend point on any line, thick or thin,
   so zooming in gives you the finer eight-way spacing to place points on.
 
@@ -300,6 +354,14 @@ device, line or location box you clicked; hold **Shift** to add to the
 selection, or Shift-drag to box-select. Drawn lines are part of the
 layout: **Save layout** and **Reset layout** cover them, and each location
 view keeps its own. Lines are always straight between their points.
+
+**Moving with the arrow keys** (while editing). The arrow keys move the
+selected devices. With no device selected, they move the selected bend
+points instead. With **Snap devices** on, each press moves a device one grid
+cell, and if that cell is taken it carries on to the next free one in the
+same direction. With **Snap line points** on, a bend point moves to the next
+line of the grid as it is drawn at your zoom. With snapping off, each press
+moves 1 pixel, or 10 with **Shift** held. Each press is one undo step.
 
 **Undo and redo** (while editing). **Ctrl+Z** undoes the last layout
 change: a device or box moved, a bend added, moved or deleted, an end point

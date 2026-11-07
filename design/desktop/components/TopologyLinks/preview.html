@@ -1,0 +1,101 @@
+<!-- @dsCard group="Data" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Topology links</title>
+<style>
+  body { padding: 24px; }
+  .demo-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .demo-legend-host { position: relative; width: 284px; height: 560px; flex: 0 0 auto; }
+  .demo-tips { display: flex; flex-direction: column; gap: 16px; flex: 1 1 320px; min-width: 0; }
+  .demo-cap { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); margin: 0 0 4px; }
+  /* The #topology-edge-tooltip box, static here (the app positions it at the pointer). */
+  .demo-tip { max-width: 320px; padding: 8px 10px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-md); font-size: 12px; line-height: 1.45; color: var(--color-text-primary); }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Topology links</h2></div>
+  <p class="hint">
+    Every link on the Device Map topology is one neutral line until it has something to say: a cable
+    takes the colour and weight of its speed, and a dashed mesh link turns yellow, orange, then red as
+    its signal weakens. Warm hues belong to signal alone. The tooltip writes every value out in words.
+  </p>
+
+  <div class="demo-row">
+    <div class="demo-legend-host">
+      <div class="topology-legend">
+        <div class="topology-legend-header"><span class="topology-legend-title">Legend</span></div>
+        <div class="topology-legend-body">
+          <div class="topology-legend-section"><div class="topology-legend-section-title">Wired link speed</div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#a78bfa" stroke-width="4" stroke-linecap="round"/></svg></span><span class="topology-legend-label">10 Gb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#60a5fa" stroke-width="3.4" stroke-linecap="round"/></svg></span><span class="topology-legend-label">5 Gb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#67e8f9" stroke-width="3" stroke-linecap="round"/></svg></span><span class="topology-legend-label">2.5 Gb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#14b8a6" stroke-width="2.4" stroke-linecap="round"/></svg></span><span class="topology-legend-label">1 Gb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round"/></svg></span><span class="topology-legend-label">100 Mb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="0.5 4" stroke-linecap="round"/></svg></span><span class="topology-legend-label">10 Mb</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#5b6478" stroke-width="2" stroke-linecap="round"/></svg></span><span class="topology-legend-label">Speed not known</span></div>
+          </div>
+          <div class="topology-legend-section"><div class="topology-legend-section-title">Wireless mesh signal</div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#5b6478" stroke-width="2.4" stroke-dasharray="5 3"/></svg></span><span class="topology-legend-label">Good, −65 dBm or better</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#eab308" stroke-width="2.4" stroke-dasharray="5 3"/></svg></span><span class="topology-legend-label">Fair, −66 to −72</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#f97316" stroke-width="2.4" stroke-dasharray="5 3"/></svg></span><span class="topology-legend-label">Weak, −73 to −80</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#ef4444" stroke-width="2.4" stroke-dasharray="5 3"/></svg></span><span class="topology-legend-label">Poor, below −80</span></div>
+          </div>
+          <div class="topology-legend-section"><div class="topology-legend-section-title">Also</div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#a78bfa" stroke-width="4" stroke-dasharray="5 3"/></svg></span><span class="topology-legend-label">MCLAG peer link, its speed's color</span></div>
+            <div class="topology-legend-row"><span class="topology-legend-swatch"><svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true"><line x1="3" y1="6" x2="25" y2="6" stroke="#f8fafc" stroke-width="6.4" stroke-linecap="round"/><line x1="3" y1="6" x2="25" y2="6" stroke="#14b8a6" stroke-width="2.4" stroke-linecap="round"/></svg></span><span class="topology-legend-label">Part of a ring</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-tips">
+      <div>
+        <div class="demo-cap">Cable, speed known</div>
+        <div class="demo-tip" role="tooltip">
+          <div style="font-weight:600">SW-CORE <span style="opacity:0.7">⇄</span> SW-MINE-1</div>
+          <div style="font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px">port49 ↔ port50</div>
+          <div style="opacity:0.7;font-size:0.82em;margin-top:2px">Switch ↔ switch — found by LLDP</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="display:inline-block;width:22px;height:0;border-top:3px solid #a78bfa"></span><b>10 Gbps</b><span style="opacity:0.7;font-size:0.82em">link speed</span></div>
+          <div style="font-size:0.78em;opacity:0.85;margin-top:3px"><span style="opacity:0.7">SW-CORE:</span> port49 · 10 Gbps · up</div>
+          <div style="font-size:0.78em;opacity:0.85"><span style="opacity:0.7">SW-MINE-1:</span> port50 · 10 Gbps · up</div>
+        </div>
+      </div>
+      <div>
+        <div class="demo-cap">Cable, slower than 1 Gb</div>
+        <div class="demo-tip" role="tooltip">
+          <div style="font-weight:600">SW-SCALE <span style="opacity:0.7">⇄</span> AP-SCALE</div>
+          <div style="font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px">port7 ↔ lan1</div>
+          <div style="opacity:0.7;font-size:0.82em;margin-top:2px">AP switch uplink</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="display:inline-block;width:22px;height:0;border-top:3px solid #94a3b8"></span><b>100 Mbps</b><span style="opacity:0.7;font-size:0.82em">link speed</span></div>
+          <div style="font-size:0.82em;opacity:0.85;margin-top:4px">Slower than 1 Gb on an infrastructure link. Usually a cable or speed-negotiation fault.</div>
+          <div style="font-size:0.78em;opacity:0.85;margin-top:3px"><span style="opacity:0.7">SW-SCALE:</span> port7 · 100 Mbps · up · errors ↓212 ↑0</div>
+        </div>
+      </div>
+      <div>
+        <div class="demo-cap">Mesh, poor signal</div>
+        <div class="demo-tip" role="tooltip">
+          <div style="font-weight:600">AP-LOADOUT <span style="opacity:0.7">⇄</span> AP-PIT-2</div>
+          <div style="opacity:0.7;font-size:0.82em;margin-top:2px">AP to AP — wireless mesh backhaul</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="display:inline-block;width:22px;height:0;border-top:3px dashed #ef4444"></span><b>−84 dBm</b><span style="font-weight:600;color:#ef4444">Poor signal</span></div>
+          <div style="margin-top:4px">Channel 149 · 5 GHz · 80 MHz wide</div>
+          <div style="font-size:0.82em;opacity:0.85">Noise −95 dBm · SNR 11 dB</div>
+          <div style="font-size:0.82em;opacity:0.85">SSID <span style="font-family:var(--font-mono,monospace)">mesh-loadout</span></div>
+          <div style="font-size:0.78em;opacity:0.7;margin-top:4px">Seen 40 s ago</div>
+        </div>
+      </div>
+      <div>
+        <div class="demo-cap">Mesh, no signal reading</div>
+        <div class="demo-tip" role="tooltip">
+          <div style="font-weight:600">AP-SHOP <span style="opacity:0.7">⇄</span> AP-WASH</div>
+          <div style="opacity:0.7;font-size:0.82em;margin-top:2px">AP to AP — wireless mesh backhaul</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="display:inline-block;width:22px;height:0;border-top:3px dashed #5b6478"></span><b>Signal not reported</b></div>
+          <div style="margin-top:4px">Channel 36 · 5 GHz · 40 MHz wide</div>
+          <div style="font-size:0.82em;opacity:0.85;margin-top:4px">Signal strength comes from the firewall’s REST API; SNMP polling carries none.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

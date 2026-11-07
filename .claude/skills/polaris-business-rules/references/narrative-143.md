@@ -55,7 +55,10 @@ seeing the same readings. `GET /assets/:id/system-info` moves the row off `hardw
 its interface's `optics` object ONLY when that ifName is in the interface inventory
 (`splitOpticsSamples`) — a reading never disappears from both tables. The desktop Interfaces
 table shows Rx and Tx by default and temperature, voltage and bias as default-hidden columns; the
-phone's interface page lists all five.
+phone's interface page lists all five. The Device Map's link tooltip shows the same readings
+under each end's port (`topologyGraphService → latestOpticsByPort`, which folds through
+`splitOpticsSamples` against the switch's interface inventory, so it attributes exactly as the
+Interfaces table does), with the same −20 dBm low-Rx line.
 
 **History (2026-11-06).** A reading's history is read by its stored name through
 `GET /assets/:id/hardware-history?sensorName=` — the same endpoint the Hardware Sensors table

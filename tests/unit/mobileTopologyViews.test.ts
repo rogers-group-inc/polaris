@@ -106,7 +106,10 @@ describe("the view drives the render", () => {
   it("partitions the graph, reads the view's saved layout and suppresses the tiers the view already is", () => {
     expect(TAB).toMatch(/partitionElementsForFloor\(elements, _activeView\)/);
     expect(TAB).toMatch(/layouts\[_activeView\]/);
-    expect(TAB).toMatch(/renderLocationGroups\(_cy, suppress \? \{ suppressKinds: suppress \} : undefined\)/);
+    expect(TAB).toMatch(/suppressKinds: suppress \|\| undefined/);
+    // Saved devices are pinned so the box-overlap push never moves them.
+    expect(TAB).toMatch(/applySavedPositions\(_cy, savedPositions, elements\)/);
+    expect(TAB).toMatch(/fixedIds: applied\.pinned/);
   });
 
   it("jumps views on a portal tap", () => {

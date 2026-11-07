@@ -163,6 +163,16 @@
               source: a.id, target: s.id,
               label: s.ssid || "mesh",
               isMesh: 1,
+              // Radio-link detail the server attaches to a mesh leaf's
+              // station row (markLinkClasses colours by signalDbm; the
+              // tooltip prints all of it).
+              signalDbm: s.signalDbm != null ? s.signalDbm : null,
+              noiseDbm: s.noiseDbm != null ? s.noiseDbm : null,
+              band: s.band || null,
+              channel: s.channel != null ? s.channel : null,
+              channelWidthMhz: s.channelWidthMhz != null ? s.channelWidthMhz : null,
+              ssid: s.ssid || null,
+              seenAt: s.lastSeen || null,
             },
           });
         }
@@ -186,6 +196,8 @@
           label: e.label || "", reason: e.reason || "",
           isBridge: 1,
           isApLink: 1,
+          srcIf: e.srcIf || null,
+          tgtIf: e.tgtIf || null,
         },
       });
     });
@@ -298,13 +310,69 @@
           id: "me" + i, source: e.source, target: e.target,
           label: e.label ? "MCLAG " + e.label : "MCLAG", isMclag: 1,
           reason: e.reason || "",
+          srcIf: e.srcIf || null,
+          tgtIf: e.tgtIf || null,
         },
       });
     });
 
+    markLinkClasses(elements);
     markPhysicalLoops(elements);
     markInterGroupEdges(elements);
     return elements;
+  }
+
+  // ── Link colour classes ───────────────────────────────────────────────────
+  // Every device-to-device link is one neutral colour until it has something
+  // to say (operator design, 2026-11-06): a WIRED link takes the colour and
+  // weight of its speed, a MESH link turns yellow → orange → red as its
+  // signal weakens. Stamped as data so the stylesheet, the legend's hover
+  // match and the tooltip all read one decision.
+  //
+  // A wired link's speed is the slower of its two ends' interface speeds
+  // (srcIf / tgtIf, from the server's current-state interface table); an end
+  // with no reading or a non-positive one does not count. Both unknown →
+  // "unknown". Faster than 10 Gb (an aggregate, 25/40/100 Gb) reads as 10 Gb.
+  var LINK_SPEED_CLASSES = ["10g", "5g", "2g5", "1g", "100m", "10m"];
+  function linkSpeedClass(bps) {
+    if (!(bps > 0)) return "unknown";
+    if (bps >= 1e10) return "10g";
+    if (bps >= 5e9) return "5g";
+    if (bps >= 2.5e9) return "2g5";
+    if (bps >= 1e9) return "1g";
+    if (bps >= 1e8) return "100m";
+    return "10m";
+  }
+  function linkSpeedBps(d) {
+    var best = null;
+    [d && d.srcIf, d && d.tgtIf].forEach(function (i) {
+      var v = i && i.speedBps != null ? Number(i.speedBps) : NaN;
+      if (v > 0 && (best == null || v < best)) best = v;
+    });
+    return best;
+  }
+  // Mesh signal bands in dBm: good ≥ −65, fair −66…−72, weak −73…−80, poor
+  // below −80. No reading (an SNMP-only controller) → "unknown", drawn like
+  // good — the neutral dashed line — and named in the tooltip.
+  var MESH_SIGNAL_CLASSES = ["good", "fair", "weak", "poor"];
+  function meshSignalClass(dbm) {
+    if (dbm == null || dbm === "" || !isFinite(Number(dbm))) return "unknown";
+    var v = Number(dbm);
+    if (v >= -65) return "good";
+    if (v >= -72) return "fair";
+    if (v >= -80) return "weak";
+    return "poor";
+  }
+  function markLinkClasses(elements) {
+    elements.forEach(function (el) {
+      var d = el && el.data;
+      if (!d || !d.source) return;
+      if (d.isMesh) { d.meshSignal = meshSignalClass(d.signalDbm); return; }
+      if (d.isWireless) return;
+      var bps = linkSpeedBps(d);
+      d.speedBps = bps;
+      d.linkSpeed = linkSpeedClass(bps);
+    });
   }
 
   // Stamp `isInterGroup: 1` + a staggered `taxiTurn` (px) on every edge whose
@@ -429,23 +497,39 @@
     return (themeId === "morning" || themeId === "noon") ? "light" : "dark";
   }
 
-  // Link colours per palette family. The dark set is the 300/400 Tailwind
-  // shades; on the daylight grounds (noon #eae8e5, morning #e8d4ad) those
-  // measured 1.3–2.4:1 — the cyan wireless and amber LLDP lines all but
-  // vanished — so the light set steps each hue down to its 600/700 shade,
-  // ≥ 3.2:1 on morning and ≥ 3.8:1 on noon (WCAG non-text minimum 3:1).
-  // Same hue per link kind in both families, so the legend reads the same.
-  // The legend (topologyLegendSpec) reads this table — change them together.
+  // Link colours per palette family (operator design 2026-11-06, approved
+  // on the "Device Map link colors" canvas). Every device-to-device link is
+  // `neutral` until it has something to say: a wired link takes its SPEED's
+  // colour — a cool ramp, violet 10 Gb → blue → cyan → teal 1 Gb → slate
+  // 100 / 10 Mb — and a mesh link turns `fair` yellow → `weak` orange →
+  // `poor` red as its signal weakens. Warm hues are kept for signal alone, so
+  // a slow cable never reads as a failing radio; weight carries speed too
+  // (LINK_SPEED_STYLE), so the ramp still reads in grayscale. The daylight
+  // set steps each hue to its 600/700 shade (≥ 3:1 on noon / morning); the
+  // neutral is the FAINTEST line in both families. `halo` rings a link on a
+  // physical loop (white on dark, near-black on daylight — yellow was taken
+  // by signal). `portal` is the floor-view portal border; `wireless` the
+  // (unrendered) client-station link. The legend (topologyLegendSpec) reads
+  // this table — change them together.
   var EDGE_COLORS = {
     dark: {
-      controller: "#6a7388", fortilink: "#6a7388", iface: "#14b8a6", lldp: "#f59e0b",
-      mclag: "#d946ef", wireless: "#22d3ee", mesh: "#a78bfa", apLink: "#3b82f6", loop: "#eab308",
+      neutral: "#5b6478", "10g": "#a78bfa", "5g": "#60a5fa", "2g5": "#67e8f9", "1g": "#14b8a6",
+      "100m": "#94a3b8", "10m": "#94a3b8", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
+      halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee",
     },
     light: {
-      controller: "#64748b", fortilink: "#64748b", iface: "#0f766e", lldp: "#b45309",
-      mclag: "#a21caf", wireless: "#0e7490", mesh: "#6d28d9", apLink: "#1d4ed8", loop: "#a16207",
+      neutral: "#b4bcc8", "10g": "#7c3aed", "5g": "#2563eb", "2g5": "#0891b2", "1g": "#0f766e",
+      "100m": "#64748b", "10m": "#64748b", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
+      halo: "#111827", portal: "#64748b", wireless: "#0e7490",
     },
   };
+  // Line weight and pattern per speed class: faster is heavier; 10 Mb is
+  // dotted; an unknown speed is the neutral 2 px line.
+  var LINK_SPEED_STYLE = {
+    "10g": { width: 4 }, "5g": { width: 3.4 }, "2g5": { width: 3 }, "1g": { width: 2.4 },
+    "100m": { width: 1.8 }, "10m": { width: 1.6, dotted: true }, unknown: { width: 2 },
+  };
+  var MESH_LINK_WIDTH = 2.4;
 
   function topologyStylesheet(theme, opts) {
     opts = opts || {};
@@ -453,7 +537,7 @@
     var isDark = theme === "dark";
     var ec = EDGE_COLORS[theme];
     var textColor = isDark ? "#eef0f4" : "#1a1a1a";
-    var edgeColor = ec.controller;
+    var edgeColor = ec.neutral;
     var textBg    = isDark ? "#1c2029" : "#ffffff";
 
     var style = [
@@ -580,46 +664,50 @@
           "text-rotation": "autorotate",
         },
       },
-      // A switch-to-switch cable reads the same however it was found —
-      // interface naming (isIface) or an LLDP neighbour report (isLldp): one
-      // solid green "Switch ↔ switch" (operator decision 2026-11-02). Which
-      // signal drew it is in the link's tooltip (edgeTooltipHtml). The AP and
-      // MCLAG rules below still win for those links.
+      // Wired links: one neutral line whatever drew them (controller data,
+      // interface naming, LLDP, an AP uplink, a bridge), then coloured and
+      // weighted by SPEED below. HOW a link was found is in its tooltip.
+      // No arrowheads: the map reads hierarchy from its columns.
       {
-        selector: 'edge[isLldp = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.iface,
-          "target-arrow-color": ec.iface,
-          width: 2.4,
-        },
+        selector: 'edge[linkSpeed]',
+        style: { "line-style": "solid", "target-arrow-shape": "none" },
       },
       {
-        selector: 'edge[isIface = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.iface,
-          "target-arrow-color": ec.iface,
-          width: 2.4,
-        },
+        selector: 'edge[linkSpeed = "10g"]',
+        style: { "line-color": ec["10g"], "target-arrow-color": ec["10g"], width: LINK_SPEED_STYLE["10g"].width, },
       },
-      // MCLAG ICL edge: a sibling/peer link between two FortiSwitches. Fuchsia,
-      // dashed, no arrowhead (no hierarchy — they're peers), heavier than the
-      // observed edges so it reads as an authoritative interconnect distinct
-      // from the amber LLDP / teal interface / violet mesh edges.
+      {
+        selector: 'edge[linkSpeed = "5g"]',
+        style: { "line-color": ec["5g"], "target-arrow-color": ec["5g"], width: LINK_SPEED_STYLE["5g"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "2g5"]',
+        style: { "line-color": ec["2g5"], "target-arrow-color": ec["2g5"], width: LINK_SPEED_STYLE["2g5"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "1g"]',
+        style: { "line-color": ec["1g"], "target-arrow-color": ec["1g"], width: LINK_SPEED_STYLE["1g"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "100m"]',
+        style: { "line-color": ec["100m"], "target-arrow-color": ec["100m"], width: LINK_SPEED_STYLE["100m"].width, },
+      },
+      {
+        selector: 'edge[linkSpeed = "10m"]',
+        style: { "line-color": ec["10m"], "target-arrow-color": ec["10m"], width: LINK_SPEED_STYLE["10m"].width, "line-style": "dashed", "line-dash-pattern": [0.5, 4], "line-cap": "round", },
+      },
+      {
+        selector: 'edge[linkSpeed = "unknown"]',
+        style: { "line-color": ec.neutral, "target-arrow-color": ec.neutral, width: LINK_SPEED_STYLE["unknown"].width, },
+      },
+      // MCLAG ICL: a peer link between two FortiSwitches — its speed's colour
+      // and weight, kept DASHED so the pair reads as peers, not parent/child.
       {
         selector: 'edge[isMclag = 1]',
-        style: {
-          "line-style": "dashed",
-          "line-color": ec.mclag,
-          "target-arrow-color": ec.mclag,
-          "target-arrow-shape": "none",
-          width: 2.4,
-        },
+        style: { "line-style": "dashed", "target-arrow-shape": "none" },
       },
-      // Wireless edge: AP → connected station. Dashed cyan, lighter than
-      // the wired controller / interface edges so the eye doesn't read
-      // station-cluster fanout as critical topology.
+      // Wireless edge: AP → connected station (not rendered today — the map
+      // is the FG / switch / AP backbone). Dashed, faint.
       {
         selector: 'edge[isWireless = 1]',
         style: {
@@ -630,41 +718,37 @@
           opacity: 0.7,
         },
       },
-      // Wireless mesh backhaul: root AP → leaf AP. Heavier dashed violet with a
-      // directional arrow so it reads as an authoritative uplink (the leaf
-      // depends on the root), distinct from the lighter cyan client wireless.
+      // Wireless mesh backhaul (root AP → leaf AP): dashed, the neutral
+      // colour at a good signal or none reported, then by signal band.
       {
         selector: 'edge[isMesh = 1]',
         style: {
           "line-style": "dashed",
-          "line-color": ec.mesh,
-          "target-arrow-color": ec.mesh,
-          "target-arrow-shape": "triangle",
-          width: 2.2,
+          "line-color": ec.neutral,
+          "target-arrow-color": ec.neutral,
+          "target-arrow-shape": "none",
+          width: MESH_LINK_WIDTH,
         },
       },
-      // Wired AP↔switch link: a managed AP's switch uplink (switch → AP) or a
-      // FortiLink switch bridged behind an AP (AP → switch, isBridge). Solid
-      // blue with a directional arrow — a real ethernet cable, distinct from
-      // the dashed violet wireless mesh and the gray controller edges.
       {
-        selector: 'edge[isApLink = 1]',
-        style: {
-          "line-style": "solid",
-          "line-color": ec.apLink,
-          "target-arrow-color": ec.apLink,
-          "target-arrow-shape": "triangle",
-          width: 2.2,
-        },
+        selector: 'edge[meshSignal = "fair"]',
+        style: { "line-color": ec.fair, "target-arrow-color": ec.fair },
+      },
+      {
+        selector: 'edge[meshSignal = "weak"]',
+        style: { "line-color": ec.weak, "target-arrow-color": ec.weak },
+      },
+      {
+        selector: 'edge[meshSignal = "poor"]',
+        style: { "line-color": ec.poor, "target-arrow-color": ec.poor },
       },
       // Physical loop membership (stamped by markPhysicalLoops): a wired edge
-      // lying on a cycle gets a yellow halo AROUND its own line color, so a
-      // switch ring reads at a glance without hiding which signal drew the
-      // edge. Composes with the type styles above — only outline props here.
+      // lying on a cycle gets a halo AROUND its own speed colour, so a switch
+      // ring reads at a glance. Only outline props here.
       {
         selector: 'edge[inLoop = 1]',
         style: {
-          "line-outline-color": ec.loop,
+          "line-outline-color": ec.halo,
           "line-outline-width": 2,
         },
       },
@@ -732,9 +816,13 @@
           label: "data(label)",
           "font-size": "16px",
           "font-weight": 700,
+          // The name sits INSIDE the box, just under its top wall: anchored
+          // above the box (valign top) and pushed down past the wall. The box
+          // reserves LOC_LABEL_BAND px for it above its contents
+          // (_layoutLocationGroups), so the name never sits on a device.
           "text-valign": "top",
           "text-halign": "center",
-          "text-margin-y": -5,
+          "text-margin-y": LOC_LABEL_MARGIN_Y,
           "text-wrap": "none",
         },
       },
@@ -752,7 +840,7 @@
           "background-opacity": 0.9,
           "border-width": 2,
           "border-style": "dashed",
-          "border-color": edgeColor,
+          "border-color": ec.portal,
           "font-size": "10px",
           "font-style": "italic",
           "text-max-width": 130,
@@ -991,13 +1079,23 @@
         { key: "health:unknown",     label: "Dep. Down",         color: HEALTH_NODE_COLORS.unknown },
         { key: "health:unmonitored", label: "Unmonitored",       color: HEALTH_NODE_COLORS.unmonitored },
       ],
+      // Links, in three sections (`section`): wired speed, mesh signal, and
+      // the two marks that sit on top of either. `width` is the line's weight
+      // on the map; `style` solid | dashed | dotted.
       edges: [
-        { key: "edge:controller", label: "Firewall to switch", color: ec.controller, style: "solid" },
-        { key: "edge:switch",     label: "Switch ↔ switch",   color: ec.iface, style: "solid" },
-        { key: "edge:mclag",      label: "MCLAG ICL",         color: ec.mclag, style: "dashed" },
-        { key: "edge:mesh",       label: "AP to AP",          color: ec.mesh, style: "dashed" },
-        { key: "edge:apLink",     label: "AP ↔ switch",       color: ec.apLink, style: "solid" },
-        { key: "edge:loop",       label: "In physical loop",  color: ec.loop, style: "solid" },
+        { key: "speed:10g",     section: "speed",  label: "10 Gb",           color: ec["10g"],  style: "solid",  width: LINK_SPEED_STYLE["10g"].width },
+        { key: "speed:5g",      section: "speed",  label: "5 Gb",            color: ec["5g"],   style: "solid",  width: LINK_SPEED_STYLE["5g"].width },
+        { key: "speed:2g5",     section: "speed",  label: "2.5 Gb",          color: ec["2g5"],  style: "solid",  width: LINK_SPEED_STYLE["2g5"].width },
+        { key: "speed:1g",      section: "speed",  label: "1 Gb",            color: ec["1g"],   style: "solid",  width: LINK_SPEED_STYLE["1g"].width },
+        { key: "speed:100m",    section: "speed",  label: "100 Mb",          color: ec["100m"], style: "solid",  width: LINK_SPEED_STYLE["100m"].width },
+        { key: "speed:10m",     section: "speed",  label: "10 Mb",           color: ec["10m"],  style: "dotted", width: LINK_SPEED_STYLE["10m"].width },
+        { key: "speed:unknown", section: "speed",  label: "Speed not known", color: ec.neutral, style: "solid",  width: LINK_SPEED_STYLE.unknown.width },
+        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:fair",   section: "signal", label: "Fair, −66 to −72",        color: ec.fair,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:weak",   section: "signal", label: "Weak, −73 to −80",        color: ec.weak,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:poor",   section: "signal", label: "Poor, below −80",         color: ec.poor,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
+        { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
@@ -1045,6 +1143,14 @@
     if (kind === "edge") {
       return cy.edges().filter(function (e) {
         return val === "loop" ? e.data("inLoop") === 1 : edgeLegendKind(e) === val;
+      });
+    }
+    if (kind === "speed") return cy.edges().filter(function (e) { return e.data("linkSpeed") === val; });
+    // "Good" lights the links drawn like it: a good signal and none reported.
+    if (kind === "signal") {
+      return cy.edges().filter(function (e) {
+        var c = e.data("meshSignal");
+        return c === val || (val === "good" && c === "unknown");
       });
     }
     if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
@@ -1120,6 +1226,26 @@
     room:     { rank: 3, pad: 18, color: "#4ade80", colorLight: "#15803d", shape: "round-rectangle", dash: "solid",  z: 4, scaleW: 1, scaleH: 1 },
     jb:       { rank: 4, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
   };
+
+  // The box name lives inside the box, under its top wall (stylesheet
+  // [isLocGroup]). LOC_LABEL_BAND is the strip each box adds above its
+  // contents to hold it (in place of the level's top padding — see
+  // _layoutLocationGroups); LOC_LABEL_MARGIN_Y drops the label (anchored above
+  // the wall by valign top) down into that strip — its bottom edge 26 px
+  // below the wall, so a 16 px name has ~6 px clear of the wall. A box is
+  // also kept at least as wide as its name (estimated: no renderer in the
+  // headless/mobile paths to measure with), so the name never crosses a side
+  // wall.
+  var LOC_LABEL_BAND = 28;
+  // Clear space between the name strip and what sits under it (an inner
+  // box's wall or a device icon) — the name is ~8 px off it.
+  var LOC_LABEL_GAP = 6;
+  var LOC_LABEL_MARGIN_Y = 26;
+  var LOC_LABEL_CHAR_PX = 10; // 16 px bold Inter, generous
+  function _locLabelMinWidth(label, pad) {
+    var t = String(label || "");
+    return t ? t.length * LOC_LABEL_CHAR_PX + pad * 2 : 0;
+  }
 
   function locGroupColor(kind, theme) {
     var cfg = LOC_GROUP_KINDS[kind] || LOC_GROUP_KINDS.building;
@@ -1214,10 +1340,18 @@
               x2: Math.max(box.x2, f.box.x2), y2: Math.max(box.y2, f.box.y2) };
       }
       if (box === null) { cy.remove(n); return; }
-      var w = (box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW;
-      var h = (box.y2 - box.y1 + cfg.pad * 2) * cfg.scaleH;
+      // The name's strip goes on top of the contents (asymmetric: only the
+      // top wall moves), and a box narrower than its name widens evenly.
+      // A named box's top is its name strip plus LOC_LABEL_GAP — NOT the
+      // level's padding too: that stacked a second empty band under every
+      // name (42 px under an area's, 26 under a floor's) before the next
+      // wall or device. Sides and bottom keep the level's padding.
+      var named = !!n.data("label");
+      var topPad = named ? LOC_LABEL_BAND + LOC_LABEL_GAP : cfg.pad;
+      var w = Math.max((box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW, _locLabelMinWidth(n.data("label"), cfg.pad));
+      var h = (box.y2 - box.y1 + topPad + cfg.pad) * cfg.scaleH;
       var cx = (box.x1 + box.x2) / 2;
-      var cyy = (box.y1 + box.y2) / 2;
+      var cyy = ((box.y1 - topPad) + (box.y2 + cfg.pad)) / 2;
       n.position({ x: cx, y: cyy });
       n.style({ width: w, height: h });
       fitted.push({
@@ -1228,8 +1362,9 @@
     });
   }
 
-  // Minimum clear space between two shapes at the same nesting level. Covers
-  // the group-name label rendered above each shape's top edge.
+  // Minimum clear space between two shapes at the same nesting level. Sized
+  // when the group name rendered ABOVE each shape's top edge; the name now
+  // sits inside (LOC_LABEL_BAND), so this is plain spacing.
   var LOC_GROUP_SIBLING_GAP = 36;
 
   // Resolve overlaps between DISTINCT groups (shapes that don't nest inside
@@ -1241,7 +1376,8 @@
   // group's), so containment and the column structure both survive — then
   // everything re-fits and the sweep repeats until stable. Vertical pushes
   // only: columns encode network depth and must not change.
-  function _resolveLocGroupOverlaps(cy) {
+  function _resolveLocGroupOverlaps(cy, fixedIds) {
+    fixedIds = fixedIds || {};
     for (var pass = 0; pass < 8; pass++) {
       var hulls = cy.nodes("[isLocGroup]").toArray();
       if (hulls.length < 2) return;
@@ -1300,6 +1436,10 @@
             if (!_isDescendantScope(below.scope, other.scope)) return;
             (other.node.data("memberIds") || []).forEach(function (id) { memberIds[id] = true; });
           });
+          // A box holding any device from a saved layout stays where it is:
+          // the operator placed those devices, and an overlap is theirs to
+          // fix — never shove them (applySavedPositions → fixedIds).
+          if (Object.keys(memberIds).some(function (id) { return fixedIds[id]; })) continue;
           cy.batch(function () {
             Object.keys(memberIds).forEach(function (id) {
               var m = cy.getElementById(id);
@@ -1361,8 +1501,10 @@
     _layoutLocationGroups(cy);
     // Push apart shapes that don't nest inside each other. Runs at render
     // time only — the drag-follow refresh (refreshLocationGroups) must never
-    // move devices out from under the operator's pointer mid-drag.
-    _resolveLocGroupOverlaps(cy);
+    // move devices out from under the operator's pointer mid-drag — and
+    // never moves a box holding a saved device (opts.fixedIds, from
+    // applySavedPositions).
+    _resolveLocGroupOverlaps(cy, opts.fixedIds);
   }
 
   function removeLocationGroups(cy) {
@@ -3034,129 +3176,383 @@
     return out;
   }
 
-  // ── Quotient (two-level) layout for location-coded sites ─────────────────
-  // The flat solver's x is GLOBAL network depth, so a group's width is
-  // dictated by where its members happen to sit in the site-wide column
-  // sequence — a building whose chains start deep in the site renders as a
-  // huge sparse box. This layout fixes that with the classic compound-graph
-  // recipe:
+  // ── Level layout (every site, coded or not) ──────────────────────────────
+  // Places devices AND location boxes by the same network-depth rule, so a
+  // description edit only moves what it touches (2026-11-06; replaced the
+  // quotient layout, whose box order came from flat-solver ROWS — which the
+  // tier clustering reshuffles on every code change — and whose shelf
+  // packing wrapped columns at the tallest box's height).
   //
-  //   1. Run the flat solver once (it encodes every ordering/clustering rule).
-  //   2. Partition nodes into TOP-LEVEL groups — the outermost location tier
-  //      each node carries (its a: area, else its b: building). Uncoded
-  //      nodes (orphans, FortiLink fallbacks, untagged infra) share one
-  //      pseudo-group so they stay clustered.
-  //   3. Compact each group's interior: rank-compress the DISTINCT global
-  //      depth/lane values its members use, so the group is exactly as wide
-  //      and tall as its own subtree — internal shape, ordering, and the
-  //      full-tier (area→building→floor→room→jb) row clustering from the
-  //      flat solver are preserved, the dead space between them is not.
-  //      Because the flat solver now clusters through room/jb (anchors AND
-  //      each parent's leaf block), the inner-tier hulls inside a box are
-  //      contiguous bands wherever their members share a parent or sibling
-  //      set — the "two members at opposite corners" bounding-box blowup
-  //      only remains possible across different subtrees.
-  //   4. Lay out the QUOTIENT graph of group boxes: boxes are ordered into
-  //      quotient columns by each group's minimum global depth (so inter-
-  //      group flow still reads left-to-right), stacked within a column by
-  //      minimum global lane, with fixed grid gaps that clear the hull
-  //      padding. This is deterministic shelf packing — no iteration.
+  //   LEVEL   A device's level is its column from the weighted-Dijkstra flat
+  //           solver (computeTopologyColumns → depth: firewall 0, anchors on
+  //           even columns, leaves one right of their anchor). A box's level
+  //           is the level of its SHALLOWEST device, nested boxes' devices
+  //           included — an area holding a level-1 device is a level-1 area;
+  //           an area whose shallowest device is level 2 is level 2.
+  //   TREE    Boxes nest area > building > floor > room > junction box by
+  //           their scoped keys (the same keys renderLocationGroups draws, so
+  //           every laid-out box is a drawn box); a device belongs to its
+  //           deepest box, or to the site itself when it carries no code.
+  //   PLACE   Inside each box — and the site — the items are its child boxes
+  //           and the devices directly in it. Each item's COLUMN is its level
+  //           (distinct levels rank-compressed, so an empty level costs no
+  //           width); a column is as wide as its widest item, so a wide box
+  //           pushes deeper columns right and flow still reads left to right.
+  //           Within a column, an item sits on the ROW of the device it hangs
+  //           off (its upstream, already placed one or more columns left),
+  //           ties and unrooted items sorted by name; it moves down past any
+  //           item it would overlap in its own column, and past any item in a
+  //           column its link would cross (so a straight link never runs
+  //           through a device).
+  //   SIZE    Boxes are sized innermost first and placed as one block,
+  //           spaced from their siblings by what each one DRAWS (its wall's
+  //           reach beyond its devices, _levelSep) rounded up to half cells,
+  //           so sibling boxes never overlap, the overlap push in
+  //           renderLocationGroups has nothing to do, and every device stays
+  //           on the 65 px snap grid.
   //
-  // Returns the SAME { id: { depth, lane } } contract as
-  // computeTopologyColumns (units are grid columns/lanes; the caller
-  // multiplies by its px spacing), or null when the flat solver has no
-  // FortiGate root OR no node carries a location code (caller falls back to
-  // the flat solver / dagre).
+  // Nothing reads the flat solver's lanes, so adding a code to one device
+  // re-places only the boxes it joins or leaves and what stacks after them.
+  // Returns the computeTopologyColumns contract — { id: { depth, lane } } in
+  // grid units, device centres — or null when the flat solver has no
+  // FortiGate root (callers fall back to dagre).
+  // Spacing is computed in px against the 130 px cell and rounded UP to
+  // half cells: LEVEL_DEVICE_EXT is how far a device reaches from its centre
+  // (the firewall's 64 px body + border); siblings clear each other's walls
+  // by LOC_GROUP_SIBLING_GAP (so the overlap push in renderLocationGroups
+  // has nothing to do); a link crossing a column clears what is there by
+  // LEVEL_LINK_GAP. Devices never sit closer than one cell.
+  var LEVEL_CELL_PX = 130;
+  var LEVEL_DEVICE_EXT = 32;
+  var LEVEL_LINK_GAP = 20;
+  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", jb: "jb" };
+  function _ceilHalf(v) { return Math.ceil(v * 2 - 1e-9) / 2; }
+  function _levelSep(extA, extB) {
+    return Math.max(1, _ceilHalf((extA + extB + LOC_GROUP_SIBLING_GAP) / LEVEL_CELL_PX));
+  }
+  function _levelLinkSep(ext) {
+    return Math.max(0.5, _ceilHalf((ext + LEVEL_LINK_GAP) / LEVEL_CELL_PX));
+  }
+  var _levelMemo = { elements: null, upstream: null };
+
+  function _locPath(d) {
+    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", jb = d.locJb || "";
+    var path = [];
+    if (a) path.push({ key: "a|" + a, name: d.locAName || a });
+    if (b) path.push({ key: "b|" + a + "|" + b, name: d.locBName || b });
+    if (f) path.push({ key: "f|" + a + "|" + b + "|" + f, name: d.locFName || f });
+    if (r) path.push({ key: "r|" + a + "|" + b + "|" + f + "|" + r, name: d.locRName || r });
+    if (jb) path.push({ key: "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, name: d.locJbName || jb });
+    return path;
+  }
+
+  // Each device's upstream: the linked device nearest it that is strictly
+  // closer to the firewall (smaller |depth|) — its parent in the drawn tree.
+  // MCLAG peer links are sideways, never parent links. Ties → smaller id.
+  function _upstreamMap(elements, global) {
+    var best = {};
+    function consider(child, cand) {
+      if (!(child in global) || !(cand in global) || child === cand) return;
+      var dc = Math.abs(global[child].depth);
+      var dp = Math.abs(global[cand].depth);
+      if (!(dp < dc)) return;
+      var cur = best[child];
+      if (cur !== undefined) {
+        var dcur = Math.abs(global[cur].depth);
+        if (dp < dcur || (dp === dcur && cand > cur)) return;
+      }
+      best[child] = cand;
+    }
+    (elements || []).forEach(function (el) {
+      var d = el && el.data;
+      if (!d || !d.source || !d.target || d.isMclag) return;
+      consider(d.target, d.source);
+      consider(d.source, d.target);
+    });
+    return best;
+  }
+
   function computeGroupedLayout(elements) {
     var global = computeTopologyColumns(elements);
     if (!global) return null;
-    var GAP_X = 2; // grid columns between quotient columns (~260px)
-    var GAP_Y = 2; // grid lanes between stacked boxes (~190px)
-    var order = [];
-    var groups = {};
-    var anyCoded = false;
+    var upstream = _upstreamMap(elements, global);
+    _levelMemo = { elements: elements, upstream: upstream };
+    var childrenOf = {};
+    Object.keys(upstream).forEach(function (c) {
+      (childrenOf[upstream[c]] = childrenOf[upstream[c]] || []).push(c);
+    });
+
+    // ── Tree of boxes ──
+    var root = { key: "", name: "", children: [], childByKey: {}, devices: [] };
+    var labelOf = {};
     (elements || []).forEach(function (el) {
       var d = el && el.data;
-      if (!d || !d.id || d.source) return;
-      if (!(d.id in global)) return;
-      var key = d.locA
-        ? "a|" + d.locA
-        : (d.locB ? "b|" + (d.locA || "") + "|" + d.locB : "");
-      if (key) anyCoded = true;
-      var g = groups[key];
-      if (!g) {
-        g = { key: key, members: [] };
-        groups[key] = g;
-        order.push(g);
-      }
-      g.members.push(d.id);
+      if (!d || !d.id || d.source || !(d.id in global)) return;
+      labelOf[d.id] = String(d.label || d.id).toLowerCase();
+      var box = root;
+      _locPath(d).forEach(function (seg) {
+        var next = box.childByKey[seg.key];
+        if (!next) {
+          next = { key: seg.key, name: String(seg.name).toLowerCase(), children: [], childByKey: {}, devices: [] };
+          box.childByKey[seg.key] = next;
+          box.children.push(next);
+        }
+        box = next;
+      });
+      box.devices.push(d.id);
     });
-    if (!anyCoded) return null; // untagged site — flat solver is the layout
-    function rankMap(values) {
-      var uniq = Object.keys(values).map(Number).sort(function (a, b) { return a - b; });
-      var m = {};
-      uniq.forEach(function (v, i) { m[v] = i; });
-      return { map: m, count: uniq.length };
+
+    function cmpStr(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+
+    // Level + entry device of every box, innermost first.
+    function measure(box) {
+      var level = Infinity;
+      var entry = null;
+      function offer(id) {
+        var lv = global[id].depth;
+        if (lv < level || (lv === level && (entry === null || cmpStr(labelOf[id], labelOf[entry]) < 0 ||
+            (labelOf[id] === labelOf[entry] && id < entry)))) {
+          level = lv;
+          entry = id;
+        }
+      }
+      box.devices.forEach(offer);
+      box.children.forEach(function (c) { measure(c); offer(c.entry); });
+      box.level = level;
+      box.entry = entry;
     }
-    order.forEach(function (g) {
-      var dVals = {};
-      var lVals = {};
-      var qDepth = Infinity;
-      var qLane = Infinity;
-      g.members.forEach(function (id) {
-        var p = global[id];
-        dVals[p.depth] = true;
-        lVals[p.lane] = true;
-        if (p.depth < qDepth) qDepth = p.depth;
-        if (p.lane < qLane) qLane = p.lane;
+    measure(root);
+
+    // Lay a box out. Returns { w, h, ext, rel }: rel = device CENTRES
+    // relative to the box's first (top-left) centre, w × h the span of those
+    // centres, ext the px its drawn wall reaches beyond them (the device
+    // radius plus each nested level's padding / name strip). Siblings are
+    // spaced by what they DRAW — the two exts plus the sibling gap, rounded
+    // up to half cells so every device stays on the 65 px snap grid — so
+    // nested boxes cost only their own walls, not a fixed margin per level.
+    function layout(box) {
+      var items = [];
+      var itemOfDevice = {}; // every device in this box's subtree → its item here
+      box.children.forEach(function (c) {
+        var inner = layout(c);
+        Object.keys(inner.rel).forEach(function (id) { itemOfDevice[id] = items.length; });
+        items.push({ level: c.level, name: c.name, key: "b:" + c.key, entry: c.entry,
+                     w: inner.w, h: inner.h, ext: inner.ext, rel: inner.rel });
       });
-      var dr = rankMap(dVals);
-      var lr = rankMap(lVals);
-      g.w = dr.count;
-      g.h = lr.count;
-      g.qDepth = qDepth;
-      g.qLane = qLane;
-      g.local = {};
-      g.members.forEach(function (id) {
-        var p = global[id];
-        g.local[id] = { x: dr.map[p.depth], y: lr.map[p.lane] };
+      box.devices.forEach(function (id) {
+        var rel = {};
+        rel[id] = { x: 0, y: 0 };
+        itemOfDevice[id] = items.length;
+        items.push({ level: global[id].depth, name: labelOf[id], key: "d:" + id, entry: id,
+                     w: 0, h: 0, ext: LEVEL_DEVICE_EXT, rel: rel });
       });
-    });
-    // Height-budgeted shelf packing. Groups are placed in ascending
-    // entry-depth order (the uncoded pseudo-group's fallback exiles carry
-    // negative depths so it lands leftmost; ties break by entry lane then
-    // key), stacking down the current quotient column and wrapping to a new
-    // column when the stack would exceed the budget — the tallest group's
-    // height, so the canvas is never taller than its biggest box and small
-    // groups (single-AP buildings) tuck under each other instead of each
-    // claiming a whole column.
-    order.sort(function (a, b) {
-      if (a.qDepth !== b.qDepth) return a.qDepth - b.qDepth;
-      if (a.qLane !== b.qLane) return a.qLane - b.qLane;
-      return a.key < b.key ? -1 : 1;
-    });
-    var budget = 0;
-    order.forEach(function (g) { if (g.h > budget) budget = g.h; });
-    var positions = {};
-    var xOffset = 0;
-    var colWidth = 0;
-    var yCursor = 0;
-    order.forEach(function (g) {
-      if (yCursor > 0 && yCursor + g.h > budget) {
-        xOffset += colWidth + GAP_X;
-        colWidth = 0;
-        yCursor = 0;
+
+      // Columns by level, left to right; a column's x clears the widest
+      // item and the largest wall of the column before it.
+      var levels = [];
+      items.forEach(function (it) { if (levels.indexOf(it.level) < 0) levels.push(it.level); });
+      levels.sort(function (a, b) { return a - b; });
+      var colOf = {};
+      levels.forEach(function (lv, i) { colOf[lv] = i; });
+      var cols = levels.map(function () { return { items: [], x: 0, w: 0, ext: 0, placed: [], reserved: [] }; });
+      items.forEach(function (it) {
+        it.col = colOf[it.level];
+        var c = cols[it.col];
+        c.items.push(it);
+        if (it.w > c.w) c.w = it.w;
+        if (it.ext > c.ext) c.ext = it.ext;
+      });
+      cols.forEach(function (c, i) {
+        c.x = i === 0 ? 0 : cols[i - 1].x + cols[i - 1].w + _levelSep(cols[i - 1].ext, c.ext);
+      });
+
+      // Row of an item's upstream device, when that device sits in an item
+      // of THIS box that is already placed; else null.
+      function upRow(it) {
+        var u = upstream[it.entry];
+        if (u === undefined) return null;
+        var idx = itemOfDevice[u];
+        if (idx === undefined) return null;
+        var host = items[idx];
+        if (host.y === undefined) return null;
+        return host.y + host.rel[u].y;
       }
-      g.members.forEach(function (id) {
-        positions[id] = {
-          depth: xOffset + g.local[id].x,
-          lane: yCursor + g.local[id].y,
-        };
+      // First y ≥ `y` where an item (top y, span h, wall ext) clears every
+      // item placed in column c and every link reserved through it; returns
+      // the y to retry from, or null when y is clear.
+      function clashAt(c, y, h, ext) {
+        for (var i = 0; i < c.placed.length; i++) {
+          var p = c.placed[i];
+          var s = _levelSep(p.ext, ext);
+          if (y < p.y + p.h + s && p.y < y + h + s) return p.y + p.h + s;
+        }
+        for (var j = 0; j < c.reserved.length; j++) {
+          var r = c.reserved[j];
+          var sl = _levelLinkSep(ext);
+          if (y - sl < r && r < y + h + sl) return r + sl;
+        }
+        return null;
+      }
+      // A link on `row` crossing column c: clear of every placed item there.
+      function linkClashAt(c, row) {
+        for (var i = 0; i < c.placed.length; i++) {
+          var p = c.placed[i];
+          var sl = _levelLinkSep(p.ext);
+          if (p.y - sl < row && row < p.y + p.h + sl) return p.y + p.h + sl;
+        }
+        return null;
+      }
+      // The SPINE: for each upstream device, its first child item (by level,
+      // then name) that skips columns keeps the upstream's row — the row is
+      // reserved through the columns in between, so leaf APs there step
+      // below it and a switch chain stays one flat row, as the flat solver
+      // drew it. Other children route as fan-out links.
+      var spineOf = {}; // upstream deviceId → item
+      items.forEach(function (it) {
+        var u = upstream[it.entry];
+        var hi = u === undefined ? undefined : itemOfDevice[u];
+        if (hi === undefined || it.col <= items[hi].col + 1) return;
+        var cur = spineOf[u];
+        if (!cur || it.col < cur.col || (it.col === cur.col && (cmpStr(it.name, cur.name) || cmpStr(it.key, cur.key)) < 0)) {
+          spineOf[u] = it;
+        }
       });
-      yCursor += g.h + GAP_Y;
-      if (g.w > colWidth) colWidth = g.w;
+      // OUTBOUND links: a device here whose child lies OUTSIDE this box
+      // links out through the box's right side on its own row, so that row
+      // is kept clear in every column right of it (an AP beside the core
+      // switch steps below the link to the next building instead of the
+      // link running through it).
+      var outbound = [];
+      Object.keys(itemOfDevice).forEach(function (u) {
+        var kids = childrenOf[u];
+        if (kids && kids.some(function (k) { return itemOfDevice[k] === undefined; })) outbound.push(u);
+      });
+      function reserveSpines(ci) {
+        Object.keys(spineOf).forEach(function (u) {
+          var it = spineOf[u];
+          var host = items[itemOfDevice[u]];
+          if (host.y === undefined || !(host.col < ci && ci < it.col)) return;
+          cols[ci].reserved.push(host.y + host.rel[u].y);
+        });
+        outbound.forEach(function (u) {
+          var host = items[itemOfDevice[u]];
+          if (host.y === undefined || !(host.col < ci)) return;
+          cols[ci].reserved.push(host.y + host.rel[u].y);
+        });
+      }
+
+      var height = 0;
+      cols.forEach(function (c, ci) {
+        reserveSpines(ci);
+        c.items.forEach(function (it) { it.up = upRow(it); });
+        c.items.sort(function (a, b) {
+          var au = a.up === null ? -Infinity : a.up;
+          var bu = b.up === null ? -Infinity : b.up;
+          if (au !== bu) return au - bu;
+          return cmpStr(a.name, b.name) || cmpStr(a.key, b.key);
+        });
+        c.items.forEach(function (it) {
+          var entryRow = it.rel[it.entry].y;
+          var y = Math.max(0, it.up === null ? 0 : it.up - entryRow);
+          var upIdx = it.up === null ? undefined : itemOfDevice[upstream[it.entry]];
+          var fromCol = upIdx === undefined ? ci - 1 : items[upIdx].col;
+          var spineSelf = upIdx !== undefined && spineOf[upstream[it.entry]] === it;
+          for (var guard = 0; guard < 10000; guard++) {
+            var next = clashAt(c, y, it.h, it.ext);
+            // Its link crosses the columns between it and its upstream: the
+            // entry row must clear what is placed there (its own reserved
+            // corridor is, by construction, already clear).
+            for (var k = fromCol + 1; k < ci && next === null; k++) {
+              var hit = linkClashAt(cols[k], y + entryRow);
+              if (hit !== null) next = hit - entryRow;
+              if (next === null && !spineSelf) {
+                // ...and must not ride another link's reserved corridor.
+                for (var q = 0; q < cols[k].reserved.length && next === null; q++) {
+                  if (Math.abs(cols[k].reserved[q] - (y + entryRow)) < 0.5) next = cols[k].reserved[q] + 0.5 - entryRow;
+                }
+              }
+            }
+            if (next === null) break;
+            y = Math.max(y, next);
+          }
+          it.x = c.x;
+          it.y = y;
+          c.placed.push(it);
+          if (y + it.h > height) height = y + it.h;
+        });
+      });
+
+      var out = {};
+      var maxExt = 0;
+      items.forEach(function (it) {
+        if (it.ext > maxExt) maxExt = it.ext;
+        Object.keys(it.rel).forEach(function (id) {
+          out[id] = { x: it.x + it.rel[id].x, y: it.y + it.rel[id].y };
+        });
+      });
+      var width = cols.length ? cols[cols.length - 1].x + cols[cols.length - 1].w : 0;
+      // This box's own wall: the larger of its level's side padding and the
+      // name strip on top, beyond the furthest-reaching thing inside it.
+      var cfg = LOC_GROUP_KINDS[_LEVEL_KIND[box.key.slice(0, box.key.indexOf("|"))]];
+      var own = cfg ? Math.max(cfg.pad, LOC_LABEL_BAND + LOC_LABEL_GAP) : 0;
+      return { w: width, h: height, ext: maxExt + own, rel: out };
+    }
+
+    var placed = layout(root).rel;
+    var positions = {};
+    Object.keys(placed).forEach(function (id) {
+      positions[id] = { depth: placed[id].x, lane: placed[id].y };
     });
     return positions;
+  }
+
+  // Upstream (parent) device of every device, from the same pass the level
+  // layout ran — for placing a device a saved layout has no spot for next to
+  // its saved parent (applySavedPositions).
+  function layoutUpstream(elements) {
+    if (_levelMemo.elements === elements && _levelMemo.upstream) return _levelMemo.upstream;
+    var global = computeTopologyColumns(elements);
+    return global ? _upstreamMap(elements, global) : {};
+  }
+
+  // Lay a view's SAVED layout over the level layout just run (call from the
+  // layoutstop handler, before renderLocationGroups). Saved devices go to
+  // their saved spots and are PINNED: renderLocationGroups({ fixedIds }) never
+  // pushes them. A device the save has no spot for keeps its level-layout
+  // offset from its nearest saved upstream ancestor — a new switch lands
+  // beside its saved parent, not where the parent would be on an empty map.
+  // Returns { pinned: { id: true }, restored: [node], placed: [node] }.
+  function applySavedPositions(cy, saved, elements) {
+    var res = { pinned: {}, restored: [], placed: [] };
+    if (!cy || !saved || typeof saved !== "object") return res;
+    var auto = {};
+    cy.nodes().forEach(function (n) {
+      var p = n.position();
+      auto[n.id()] = { x: p.x, y: p.y };
+    });
+    function ok(p) { return p && typeof p.x === "number" && typeof p.y === "number"; }
+    var up = layoutUpstream(elements);
+    cy.batch(function () {
+      cy.nodes().forEach(function (n) {
+        var p = saved[n.id()];
+        if (ok(p)) {
+          n.position({ x: p.x, y: p.y });
+          res.pinned[n.id()] = true;
+          res.restored.push(n);
+        }
+      });
+      cy.nodes().forEach(function (n) {
+        var id = n.id();
+        if (res.pinned[id]) return;
+        res.placed.push(n);
+        var a = up[id];
+        for (var guard = 0; a !== undefined && !res.pinned[a] && guard < 256; guard++) a = up[a];
+        if (a === undefined || !res.pinned[a] || !auto[a] || !auto[id]) return;
+        var s = saved[a];
+        n.position({ x: auto[id].x + (s.x - auto[a].x), y: auto[id].y + (s.y - auto[a].y) });
+      });
+    });
+    return res;
   }
 
   // ── Edge hover tooltip text ───────────────────────────────────────────────
@@ -3195,6 +3591,106 @@
   // details (speed / status / errors) when available. Reads device names from
   // the endpoint nodes and the port pair from the edge label
   // ("<srcPort> ↔ <tgtPort>"). Returns null when there's nothing useful.
+  // The tooltip's colour key for a link: a short line drawn in the link's own
+  // map colour and pattern, then the value in words — the colour is never
+  // the only carrier (the speed / signal is always written out).
+  function _tipSwatch(color, dashed) {
+    return '<span style="display:inline-block;width:22px;height:0;border-top:3px ' +
+      (dashed ? "dashed" : "solid") + ' ' + color + '"></span>';
+  }
+  function _tipAgo(ts) {
+    var t = ts ? new Date(ts).getTime() : NaN;
+    if (!isFinite(t)) return "";
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 90) return s + " s ago";
+    if (s < 5400) return Math.round(s / 60) + " min ago";
+    if (s < 129600) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / 86400) + " d ago";
+  }
+  function _speedTipRows(edge) {
+    var ec = EDGE_COLORS[paletteFamily()];
+    var cls = edge.data("linkSpeed") || "unknown";
+    var color = cls === "unknown" ? ec.neutral : ec[cls];
+    var row = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">' + _tipSwatch(color, false);
+    if (cls === "unknown") {
+      return row + '<b>Speed not known</b></div>' +
+        '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Neither end reports a port speed, so the link’s speed can’t be read.</div>';
+    }
+    row += '<b>' + _escTip(_humanizeSpeedBps(edge.data("speedBps"))) + '</b>' +
+      '<span style="opacity:0.7;font-size:0.82em">link speed</span></div>';
+    if (cls === "100m" || cls === "10m") {
+      row += '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Slower than 1 Gb on an infrastructure link. Usually a cable or speed-negotiation fault.</div>';
+    }
+    return row;
+  }
+  // A port's transceiver readings (SFP DDM, business rule 143), one indented
+  // line under its port line: "SFP Rx −3.20 dBm · Tx −2.10 dBm · 41.0 °C ·
+  // 3.30 V · 8.98 mA", each part only when read. Rx at or below
+  // OPTICS_RX_LOW_DBM is red, matching the asset's Interfaces table
+  // (assets.js RX_LOW_DBM). A copper SFP or an empty cage reads nothing and
+  // gets no line.
+  var OPTICS_RX_LOW_DBM = -20;
+  function _fmtDbm(v) { return String(v).replace("-", "−"); }
+  function _opticsTipRow(ifd) {
+    var o = ifd && ifd.optics;
+    if (!o) return "";
+    function num(v) { return typeof v === "number" && isFinite(v); }
+    var parts = [];
+    if (num(o.rxDbm)) {
+      var rx = "Rx " + _fmtDbm(o.rxDbm.toFixed(2)) + " dBm";
+      parts.push(o.rxDbm <= OPTICS_RX_LOW_DBM
+        ? '<span style="color:var(--color-danger,#dc2626);font-weight:600">' + _escTip(rx) + '</span>'
+        : _escTip(rx));
+    }
+    if (num(o.txDbm)) parts.push(_escTip("Tx " + _fmtDbm(o.txDbm.toFixed(2)) + " dBm"));
+    if (num(o.temperatureC)) {
+      var TU = typeof window !== "undefined" ? window.PolarisTempUnit : null;
+      var tv = TU && TU.convertCelsius ? TU.convertCelsius(o.temperatureC) : o.temperatureC;
+      parts.push(_escTip(tv.toFixed(1) + " " + (TU && TU.celsiusLabel ? TU.celsiusLabel() : "°C")));
+    }
+    if (num(o.voltage)) parts.push(_escTip(o.voltage.toFixed(2) + " V"));
+    if (num(o.biasA)) parts.push(_escTip((o.biasA * 1000).toFixed(2) + " mA"));
+    if (!parts.length) return "";
+    return '<div style="font-size:0.78em;opacity:0.85;padding-left:12px">' +
+      '<span style="opacity:0.7">SFP</span> ' + parts.join(" · ") + '</div>';
+  }
+  var _SIGNAL_WORD = { good: "Good signal", fair: "Fair signal", weak: "Weak signal", poor: "Poor signal" };
+  function _meshTipRows(edge) {
+    var ec = EDGE_COLORS[paletteFamily()];
+    var cls = edge.data("meshSignal") || "unknown";
+    var dbm = edge.data("signalDbm");
+    var html = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">';
+    if (cls === "unknown") {
+      html += _tipSwatch(ec.neutral, true) + '<b>Signal not reported</b></div>';
+    } else {
+      var wordColor = cls === "good" ? "var(--color-success)" : ec[cls];
+      html += _tipSwatch(cls === "good" ? ec.neutral : ec[cls], true) +
+        '<b>' + _escTip(String(dbm).replace("-", "−")) + ' dBm</b>' +
+        '<span style="font-weight:600;color:' + wordColor + '">' + _SIGNAL_WORD[cls] + '</span></div>';
+    }
+    var ch = edge.data("channel"), band = edge.data("band"), width = edge.data("channelWidthMhz");
+    var radio = [];
+    if (ch != null) radio.push("Channel " + ch);
+    if (band) radio.push(String(band).replace(/GHz$/i, " GHz").replace(/\s+GHz/, " GHz"));
+    if (width) radio.push(width + " MHz wide");
+    if (radio.length) html += '<div style="margin-top:4px">' + _escTip(radio.join(" · ")) + '</div>';
+    var noise = edge.data("noiseDbm");
+    if (cls !== "unknown" && noise != null) {
+      html += '<div style="font-size:0.82em;opacity:0.85">' +
+        _escTip("Noise " + String(noise).replace("-", "−") + " dBm · SNR " + (Number(dbm) - Number(noise)) + " dB") + '</div>';
+    }
+    if (edge.data("ssid")) {
+      html += '<div style="font-size:0.82em;opacity:0.85">SSID <span style="font-family:var(--font-mono,monospace)">' +
+        _escTip(edge.data("ssid")) + '</span></div>';
+    }
+    if (cls === "unknown") {
+      html += '<div style="font-size:0.82em;opacity:0.85;margin-top:4px">Signal strength comes from the firewall’s REST API; SNMP polling carries none.</div>';
+    }
+    var ago = _tipAgo(edge.data("seenAt"));
+    if (ago) html += '<div style="font-size:0.78em;opacity:0.7;margin-top:4px">Seen ' + ago + '</div>';
+    return html;
+  }
+
   function edgeTooltipHtml(cy, edge) {
     if (!cy || !edge) return null;
     var srcId = edge.data("source");
@@ -3215,11 +3711,14 @@
     var html =
       '<div style="font-weight:600">' + _escTip(srcLabel) +
       ' <span style="opacity:0.7">⇄</span> ' + _escTip(tgtLabel) + '</div>';
-    if (ports && ports !== "unknown ↔ unknown") {
+    var isMesh = !!edge.data("isMesh");
+    // A mesh link's label is its SSID, which gets its own row below.
+    if (!isMesh && ports && ports !== "unknown ↔ unknown") {
       html += '<div style="font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px">' +
         _escTip(ports) + '</div>';
     }
     html += '<div style="opacity:0.7;font-size:0.82em;margin-top:2px">' + _escTip(kind) + '</div>';
+    html += isMesh ? _meshTipRows(edge) : (edge.data("isWireless") ? "" : _speedTipRows(edge));
     // Per-side interface detail, each prefixed with its device so the operator
     // can tell which end "port14" / "port52" lives on (srcIf belongs to the
     // source node, tgtIf to the target).
@@ -3227,8 +3726,22 @@
     var td = _formatIfDetail(edge.data("tgtIf"));
     if (sd) html += '<div style="font-size:0.78em;opacity:0.85;margin-top:3px">' +
       '<span style="opacity:0.7">' + _escTip(srcLabel) + ':</span> ' + _escTip(sd) + '</div>';
+    html += _opticsTipRow(edge.data("srcIf"));
     if (td) html += '<div style="font-size:0.78em;opacity:0.85">' +
       '<span style="opacity:0.7">' + _escTip(tgtLabel) + ':</span> ' + _escTip(td) + '</div>';
+    html += _opticsTipRow(edge.data("tgtIf"));
+    // A port receiving below most optics' sensitivity is named once, under
+    // both ends — the same −20 dBm line the asset's Interfaces table tints.
+    var lowRx = [[srcLabel, edge.data("srcIf")], [tgtLabel, edge.data("tgtIf")]].filter(function (p) {
+      var o = p[1] && p[1].optics;
+      return o && typeof o.rxDbm === "number" && o.rxDbm <= OPTICS_RX_LOW_DBM;
+    });
+    if (lowRx.length) {
+      html += '<div style="font-size:0.82em;margin-top:4px;color:var(--color-danger,#dc2626)">' +
+        _escTip(lowRx.map(function (p) { return p[0]; }).join(" and ")) +
+        ' receive' + (lowRx.length === 1 ? "s" : "") + ' below ' + _escTip(_fmtDbm(OPTICS_RX_LOW_DBM)) +
+        ' dBm, past most optics’ sensitivity. Check the fibre, connectors and the far-end transmitter.</div>';
+    }
     return html;
   }
 
@@ -3257,11 +3770,16 @@
       return '<span class="topology-legend-swatch">' + shape + '</span>';
     }
     function edgeSwatch(row) {
-      var dash = row.style === "dashed" ? "4 3" : "0";
+      var w = row.width || 2.4;
+      var dash = row.style === "dashed" ? "5 3" : (row.style === "dotted" ? "0.5 4" : "0");
+      var cap = row.style === "dashed" ? "butt" : "round";
+      var halo = row.halo
+        ? '<line x1="3" y1="6" x2="25" y2="6" stroke="' + row.halo + '" stroke-width="' + (w + 4) + '" stroke-linecap="round"/>'
+        : "";
       return '<span class="topology-legend-swatch">' +
-        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' +
-          '<line x1="2" y1="6" x2="26" y2="6" stroke="' + row.color +
-          '" stroke-width="2.4" stroke-dasharray="' + dash + '" stroke-linecap="round"/>' +
+        '<svg width="28" height="12" viewBox="0 0 28 12" aria-hidden="true">' + halo +
+          '<line x1="3" y1="6" x2="25" y2="6" stroke="' + row.color +
+          '" stroke-width="' + w + '" stroke-dasharray="' + dash + '" stroke-linecap="' + cap + '"/>' +
         '</svg></span>';
     }
     function healthSwatch(row) {
@@ -3288,7 +3806,9 @@
     if (!spec) return "";
     return section("Nodes", spec.nodes, nodeSwatch) +
       section("Monitor health", spec.health, healthSwatch) +
-      section("Edges", spec.edges, edgeSwatch) +
+      section("Wired link speed", (spec.edges || []).filter(function (r) { return r.section === "speed"; }), edgeSwatch) +
+      section("Wireless mesh signal", (spec.edges || []).filter(function (r) { return r.section === "signal"; }), edgeSwatch) +
+      section("Also", (spec.edges || []).filter(function (r) { return r.section !== "speed" && r.section !== "signal"; }), edgeSwatch) +
       section("Location groups", spec.locations, locationSwatch);
   }
 
@@ -3303,8 +3823,167 @@
     return html;
   }
 
+  // ── Device overlap guard ─────────────────────────────────────────────────
+  // No two devices may sit on the same spot on the Device Map. "The same
+  // spot" is the device bodies (width × height, border excluded: a
+  // selected device draws a thicker border, and its footprint must not
+  // change with selection) overlapping — no
+  // clearance: the snap cells are 65 px squares, so two switches (44 px
+  // bodies) on neighbouring cells are 21 px apart and must count as free — two exactly equal x/y is the extreme case, and the one
+  // snapping produces when two devices round to one grid cell.
+  //
+  // separatePositions places `items` IN ORDER (earlier items keep their spot;
+  // a later one that lands on an occupied spot moves) around the `fixed`
+  // boxes, which never move. A displaced item goes to the nearest free spot
+  // on its own lattice — offsets of whole stepX / stepY from where it was
+  // dropped — so a device snapped to the grid stays on the grid. Occupancy is
+  // a bucket hash, so a whole-site pass stays linear at a few hundred nodes.
+  // Pure: shared by the live map (separateNodes) and by the arithmetic snap
+  // of view blobs that are not rendered.
+  var _OVERLAP_GAP = 0;
+  var _OVERLAP_BUCKET = 128;
+  var _OVERLAP_MAX_RING = 12;
+  function _boxesOverlap(a, b, gap) {
+    return Math.abs(a.x - b.x) < (a.w + b.w) / 2 + gap &&
+           Math.abs(a.y - b.y) < (a.h + b.h) / 2 + gap;
+  }
+  function separatePositions(items, opts) {
+    opts = opts || {};
+    var stepX = opts.stepX > 0 ? opts.stepX : 130;
+    var stepY = opts.stepY > 0 ? opts.stepY : 130;
+    var gap = typeof opts.gap === "number" ? opts.gap : _OVERLAP_GAP;
+    var buckets = {};
+    var maxW = 0, maxH = 0;
+    function bucketRange(box) {
+      return {
+        x1: Math.floor((box.x - box.w / 2 - gap) / _OVERLAP_BUCKET),
+        x2: Math.floor((box.x + box.w / 2 + gap) / _OVERLAP_BUCKET),
+        y1: Math.floor((box.y - box.h / 2 - gap) / _OVERLAP_BUCKET),
+        y2: Math.floor((box.y + box.h / 2 + gap) / _OVERLAP_BUCKET),
+      };
+    }
+    function add(box) {
+      if (box.w > maxW) maxW = box.w;
+      if (box.h > maxH) maxH = box.h;
+      var r = bucketRange(box);
+      for (var bx = r.x1; bx <= r.x2; bx++) {
+        for (var by = r.y1; by <= r.y2; by++) {
+          var k = bx + "," + by;
+          (buckets[k] || (buckets[k] = [])).push(box);
+        }
+      }
+    }
+    function collides(box) {
+      // Widen the probe by the largest box seen, so a big neighbour whose
+      // centre is buckets away but whose body reaches here is still found.
+      var probe = { x: box.x, y: box.y, w: box.w + maxW, h: box.h + maxH };
+      var r = bucketRange(probe);
+      for (var bx = r.x1; bx <= r.x2; bx++) {
+        for (var by = r.y1; by <= r.y2; by++) {
+          var list = buckets[bx + "," + by];
+          if (!list) continue;
+          for (var i = 0; i < list.length; i++) {
+            if (_boxesOverlap(box, list[i], gap)) return true;
+          }
+        }
+      }
+      return false;
+    }
+    (opts.fixed || []).forEach(function (f) {
+      add({ x: f.x, y: f.y, w: f.w || 0, h: f.h || 0 });
+    });
+    // Candidate offsets nearest-first (ties: down before up, right before
+    // left), computed once per call.
+    var offsets = [];
+    for (var i = -_OVERLAP_MAX_RING; i <= _OVERLAP_MAX_RING; i++) {
+      for (var j = -_OVERLAP_MAX_RING; j <= _OVERLAP_MAX_RING; j++) {
+        if (i === 0 && j === 0) continue;
+        offsets.push({ dx: i * stepX, dy: j * stepY, d: (i * stepX) * (i * stepX) + (j * stepY) * (j * stepY) });
+      }
+    }
+    offsets.sort(function (a, b) { return a.d - b.d || b.dy - a.dy || b.dx - a.dx; });
+
+    var out = {};
+    var farRight = null;
+    items.forEach(function (it) {
+      var box = { x: it.x, y: it.y, w: it.w || 0, h: it.h || 0 };
+      if (collides(box)) {
+        var found = null;
+        for (var k = 0; k < offsets.length; k++) {
+          var c = { x: it.x + offsets[k].dx, y: it.y + offsets[k].dy, w: box.w, h: box.h };
+          if (!collides(c)) { found = c; break; }
+        }
+        if (!found) {
+          // Everything within the search radius is taken (a pathological
+          // pile-up): park it past the right edge of whatever is placed.
+          if (farRight === null) {
+            farRight = it.x;
+            Object.keys(buckets).forEach(function (key) {
+              buckets[key].forEach(function (b) { if (b.x > farRight) farRight = b.x; });
+            });
+          }
+          farRight += stepX;
+          found = { x: farRight, y: it.y, w: box.w, h: box.h };
+        }
+        box = found;
+      }
+      add(box);
+      out[it.id] = { x: box.x, y: box.y };
+    });
+    return out;
+  }
+
+  function _isLayoutDevice(n) {
+    return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle");
+  }
+  // Live-map wrapper. `moved` (a collection or array of nodes, in priority
+  // order) are the devices allowed to move; every other device holds its
+  // spot. Without `moved`, every device is re-checked in graph order (the
+  // first device on a spot keeps it). Returns the number of devices moved.
+  function separateNodes(cy, moved, opts) {
+    if (!cy) return 0;
+    var list = [];
+    var seen = {};
+    var source = moved ? (moved.toArray ? moved.toArray() : moved) : cy.nodes().toArray();
+    source.forEach(function (n) {
+      if (!n || seen[n.id()] || !_isLayoutDevice(n) || n.removed()) return;
+      seen[n.id()] = true;
+      list.push(n);
+    });
+    if (list.length === 0) return 0;
+    var fixed = [];
+    cy.nodes().forEach(function (n) {
+      if (seen[n.id()] || !_isLayoutDevice(n)) return;
+      var p = n.position();
+      fixed.push({ x: p.x, y: p.y, w: n.width(), h: n.height() });
+    });
+    var items = list.map(function (n) {
+      var p = n.position();
+      return { id: n.id(), x: p.x, y: p.y, w: n.width(), h: n.height() };
+    });
+    var placed = separatePositions(items, {
+      stepX: opts && opts.stepX, stepY: opts && opts.stepY, gap: opts && opts.gap, fixed: fixed,
+    });
+    var count = 0;
+    cy.batch(function () {
+      list.forEach(function (n) {
+        var p = n.position();
+        var q = placed[n.id()];
+        if (q && (q.x !== p.x || q.y !== p.y)) {
+          n.position({ x: q.x, y: q.y });
+          count++;
+        }
+      });
+    });
+    return count;
+  }
+
   window.PolarisTopologyRender = {
+    separatePositions: separatePositions,
+    separateNodes: separateNodes,
     edgeTooltipHtml: edgeTooltipHtml,
+    linkSpeedClass: linkSpeedClass,
+    meshSignalClass: meshSignalClass,
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,
     highlightLinkHover: highlightLinkHover,
@@ -3322,6 +4001,8 @@
     topologyLegendSpec: topologyLegendSpec,
     computeTopologyColumns: computeTopologyColumns,
     computeGroupedLayout: computeGroupedLayout,
+    layoutUpstream: layoutUpstream,
+    applySavedPositions: applySavedPositions,
     markFanOutEdges: markFanOutEdges,
     topologyNodeWeight: topologyNodeWeight,
     computeLocationGroups: computeLocationGroups,

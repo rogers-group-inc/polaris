@@ -973,6 +973,69 @@ describe("fan-out L next to the parent's own APs", () => {
   });
 });
 
+describe("link speed and mesh signal classes", () => {
+  let R: Record<string, any>;
+  beforeAll(() => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const code = readFileSync(resolve(here, "../../public/js/topology-render.js"), "utf8");
+    const sandbox: { window: Record<string, any> } = { window: { POLARIS_HEALTH_COLORS: {} } };
+    vm.createContext(sandbox);
+    vm.runInContext(code, sandbox);
+    R = sandbox.window.PolarisTopologyRender;
+  });
+
+  it("bands an interface speed into the six speed classes", () => {
+    expect(R.linkSpeedClass(1e11)).toBe("10g"); // 100 Gb reads as the top class
+    expect(R.linkSpeedClass(2e10)).toBe("10g"); // a 2 x 10 Gb aggregate
+    expect(R.linkSpeedClass(1e10)).toBe("10g");
+    expect(R.linkSpeedClass(5e9)).toBe("5g");
+    expect(R.linkSpeedClass(2.5e9)).toBe("2g5");
+    expect(R.linkSpeedClass(1e9)).toBe("1g");
+    expect(R.linkSpeedClass(1e8)).toBe("100m");
+    expect(R.linkSpeedClass(1e7)).toBe("10m");
+    for (const v of [null, undefined, 0, -1]) expect(R.linkSpeedClass(v)).toBe("unknown");
+  });
+
+  it("bands a mesh signal at -65 / -72 / -80 dBm, and no reading is unknown", () => {
+    expect(R.meshSignalClass(-50)).toBe("good");
+    expect(R.meshSignalClass(-65)).toBe("good");
+    expect(R.meshSignalClass(-66)).toBe("fair");
+    expect(R.meshSignalClass(-72)).toBe("fair");
+    expect(R.meshSignalClass(-73)).toBe("weak");
+    expect(R.meshSignalClass(-80)).toBe("weak");
+    expect(R.meshSignalClass(-81)).toBe("poor");
+    for (const v of [null, undefined, ""]) expect(R.meshSignalClass(v)).toBe("unknown");
+  });
+
+  it("stamps each wired link with the slower end's speed and each mesh link with its signal", () => {
+    const els = R.buildTopologyElements({
+      fortigate: { id: "fg", hostname: "FG" },
+      switches: [{ id: "sw1", hostname: "SW1" }, { id: "sw2", hostname: "SW2" }],
+      aps: [
+        { id: "ap1", hostname: "AP1", stations: [{ id: "ap2", ssid: "mesh-x", signalDbm: -84, noiseDbm: -95, channel: 149, band: "5GHz", channelWidthMhz: 80 }] },
+        { id: "ap2", hostname: "AP2", stations: [] },
+      ],
+      edges: [
+        { source: "fg", target: "sw1", label: "port1 ↔ port48", verifiedUplink: true,
+          srcIf: { name: "port1", speedBps: 10e9 }, tgtIf: { name: "port48", speedBps: 1e9 } },
+        { source: "sw1", target: "ap1", label: "port5 ↔ lan1" },
+      ],
+      interfaceEdges: [
+        { source: "sw1", target: "sw2", label: "port49 ↔ port50", srcIf: { name: "port49", speedBps: 0 }, tgtIf: { name: "port50", speedBps: 2.5e9 } },
+      ],
+    }) as { data: Record<string, any> }[];
+    const link = (s: string, t: string) => els.find((e) => e.data.source === s && e.data.target === t)!.data;
+    expect(link("fg", "sw1").linkSpeed).toBe("1g"); // the slower end
+    expect(link("fg", "sw1").speedBps).toBe(1e9);
+    expect(link("sw1", "sw2").linkSpeed).toBe("2g5"); // a zero end does not count
+    expect(link("sw1", "ap1").linkSpeed).toBe("unknown");
+    const mesh = link("ap1", "ap2");
+    expect(mesh.linkSpeed).toBeUndefined();
+    expect(mesh.meshSignal).toBe("poor");
+    expect(mesh.channel).toBe(149);
+  });
+});
+
 describe("topology palette by theme family", () => {
   let R: Record<string, any>;
   beforeAll(() => {
@@ -990,28 +1053,45 @@ describe("topology palette by theme family", () => {
     const dark = R.topologyLegendSpec("dark");
     const byLabel = (rows: { label: string; color: string }[]) =>
       Object.fromEntries(rows.map((r) => [r.label, r.color]));
-    expect(byLabel(light.edges)["Switch ↔ switch"]).toBe("#0f766e");
-    expect(byLabel(dark.edges)["Switch ↔ switch"]).toBe("#14b8a6");
+    expect(byLabel(light.edges)["1 Gb"]).toBe("#0f766e");
+    expect(byLabel(dark.edges)["1 Gb"]).toBe("#14b8a6");
+    expect(byLabel(light.edges)["10 Gb"]).toBe("#7c3aed");
+    expect(byLabel(dark.edges)["10 Gb"]).toBe("#a78bfa");
     expect(byLabel(light.locations).Building).toBe("#0369a1");
     expect(byLabel(dark.locations).Building).toBe("#4fc3f7");
   });
 
-  it("the stylesheet draws each link kind in the legend's colour for that family", () => {
+  it("the stylesheet draws each speed and signal in the legend's colour and weight for that family", () => {
     for (const fam of ["light", "dark"]) {
       const sheet = R.topologyStylesheet(fam) as { selector: string; style: Record<string, unknown> }[];
-      const legend = Object.fromEntries(
-        (R.topologyLegendSpec(fam).edges as { label: string; color: string }[]).map((r) => [r.label, r.color]),
-      );
-      const line = (sel: string) => sheet.find((r) => r.selector === sel)!.style["line-color"];
-      expect(line("edge")).toBe(legend["Firewall to switch"]);
-      // One green for a switch-to-switch cable, whichever signal found it.
-      expect(line("edge[isIface = 1]")).toBe(legend["Switch ↔ switch"]);
-      expect(line("edge[isLldp = 1]")).toBe(legend["Switch ↔ switch"]);
-      expect(line("edge[isMclag = 1]")).toBe(legend["MCLAG ICL"]);
-      expect(line("edge[isMesh = 1]")).toBe(legend["AP to AP"]);
-      expect(line("edge[isApLink = 1]")).toBe(legend["AP ↔ switch"]);
-      // No virtual / LLDP / interface-inferred rows any more, and no descriptions.
-      expect(Object.keys(legend)).not.toContain("FortiLink (virtual)");
+      const rows = R.topologyLegendSpec(fam).edges as { key: string; label: string; color: string; width: number; style: string }[];
+      const rule = (sel: string) => sheet.find((r) => r.selector === sel)!.style;
+      for (const row of rows.filter((r) => r.key.startsWith("speed:"))) {
+        const cls = row.key.slice("speed:".length);
+        const st = rule(`edge[linkSpeed = "${cls}"]`);
+        expect(st["line-color"], row.key).toBe(row.color);
+        expect(st.width, row.key).toBe(row.width);
+      }
+      // Every link starts neutral; the neutral is the unknown-speed and good-signal colour.
+      const neutral = rows.find((r) => r.key === "speed:unknown")!.color;
+      expect(rule("edge")["line-color"]).toBe(neutral);
+      expect(rule("edge[isMesh = 1]")["line-color"]).toBe(neutral);
+      expect(rows.find((r) => r.key === "signal:good")!.color).toBe(neutral);
+      for (const cls of ["fair", "weak", "poor"]) {
+        expect(rule(`edge[meshSignal = "${cls}"]`)["line-color"]).toBe(rows.find((r) => r.key === "signal:" + cls)!.color);
+      }
+      // How a link was found no longer colours it.
+      for (const sel of ["edge[isIface = 1]", "edge[isLldp = 1]", "edge[isApLink = 1]"]) {
+        expect(sheet.find((r) => r.selector === sel)).toBeUndefined();
+      }
+      expect(rule("edge[isMclag = 1]")["line-color"]).toBeUndefined();
+      expect(rule("edge[isMclag = 1]")["line-style"]).toBe("dashed");
+      // Warm hues belong to signal alone: no speed shares a signal colour.
+      const speedColors = new Set(rows.filter((r) => r.key.startsWith("speed:")).map((r) => r.color));
+      for (const cls of ["fair", "weak", "poor"]) {
+        expect(speedColors.has(rows.find((r) => r.key === "signal:" + cls)!.color)).toBe(false);
+      }
+      const legend = Object.fromEntries(rows.map((r) => [r.label, r.color]));
       expect(Object.keys(legend)).not.toContain("LLDP");
       const spec = R.topologyLegendSpec(fam);
       for (const sec of ["nodes", "health", "edges", "locations"]) {
@@ -1047,7 +1127,7 @@ describe("topology palette by theme family", () => {
     const spec = R.topologyLegendSpec("dark");
     const html = R.topologyLegendHtml(spec) as string;
     const titles = Array.from(html.matchAll(/topology-legend-section-title">([^<]+)</g), (m) => m[1]);
-    expect(titles).toEqual(["Nodes", "Monitor health", "Edges", "Location groups"]);
+    expect(titles).toEqual(["Nodes", "Monitor health", "Wired link speed", "Wireless mesh signal", "Also", "Location groups"]);
     for (const n of spec.nodes as { label: string }[]) expect(html).toContain(">" + n.label + "<");
 
     const hostile = R.topologyLegendHtml({ nodes: [{ label: "<b>x</b>", kind: "circle", fill: "#000" }], health: [], edges: [] }) as string;

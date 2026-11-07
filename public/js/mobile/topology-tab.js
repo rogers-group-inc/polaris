@@ -52,7 +52,7 @@
   // Must match: the shared saved layout is in these coordinates, and a node
   // the layout has no entry for lands on this grid beside the saved ones.
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
 
   // ─── Lazy loaders ──────────────────────────────────────────────────────
   // Inline-duplicated from map-tab.js to keep each tab module
@@ -396,16 +396,15 @@
     //  - Initial view: the whole graph, as the desktop opens it — or the
     //    searched node when the URL carries ?q=<term>.
     _cy.one("layoutstop", function () {
-      if (savedPositions) {
-        _cy.batch(function () {
-          _cy.nodes().forEach(function (n) {
-            var p = savedPositions[n.id()];
-            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
-          });
-        });
-      }
+      // The desktop's saved spots (pinned: the box-overlap push leaves them),
+      // and a device the save has none for placed beside its saved parent —
+      // the same helper the desktop map uses.
+      var applied = window.PolarisTopologyRender.applySavedPositions(_cy, savedPositions, elements);
       var suppress = locSuppressKinds();
-      window.PolarisTopologyRender.renderLocationGroups(_cy, suppress ? { suppressKinds: suppress } : undefined);
+      window.PolarisTopologyRender.renderLocationGroups(_cy, {
+        suppressKinds: suppress || undefined,
+        fixedIds: applied.pinned,
+      });
       // Cross-box links through the gutters, and any straight link bent
       // around a device it would pass through — with or without boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(_cy);

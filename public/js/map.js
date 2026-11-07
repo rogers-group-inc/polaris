@@ -43,7 +43,9 @@
   // its access switch/AP). depth → x (px between adjacent columns),
   // lane → y (px between stacked nodes in a column).
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  // Square (2026-11-06; rows were 95): a square lattice gives a square snap
+  // grid, and stacked devices room for the name under each icon.
+  var TOPO_ROW_SPACING = 130;
   // Legend overlay: per-user (singleton) — same key for every site, since
   // the legend describes the rendering rules, not site-specific content.
   // Persisted state is `{visible, x, y}` so opening the modal restores the
@@ -56,16 +58,21 @@
   // (snapped positions, drawn lines) persists through the normal layout
   // save.
   //
-  // The GRID has two weights. The thick (major) lines are the column
-  // solver's lattice, TOPO_COL_SPACING × TOPO_ROW_SPACING — where devices
-  // land. The thin (minor) lines split each major cell TOPO_GRID_DIV ways,
-  // or TOPO_GRID_DIV_FINE ways once zoomed in far enough that a fine cell is
-  // TOPO_GRID_FINE_MIN_PX on screen (_topologyGridDiv); thin AND thick lines
+  // The GRID has two weights. The thick (major) lines are where devices
+  // snap: TOPO_SNAP_COL × TOPO_SNAP_ROW, HALF the column solver's lattice
+  // (2026-11-06, was the full lattice) — so every automatically placed
+  // device still sits on a thick line, and an operator gets a cell between
+  // any two of them. The thin (minor) lines split each major cell
+  // TOPO_GRID_DIV ways, or TOPO_GRID_DIV_FINE ways from
+  // TOPO_GRID_FINE_MIN_ZOOM (100%) up (_topologyGridDiv) — 32.5 / 16.25 px
+  // squares; thin AND thick lines
   // together are the lattice line points snap to, so the snap follows the
   // split being drawn.
-  var TOPO_GRID_DIV = 4;
-  var TOPO_GRID_DIV_FINE = 8;
-  var TOPO_GRID_FINE_MIN_PX = 16;
+  var TOPO_SNAP_COL = TOPO_COL_SPACING / 2;  // 65
+  var TOPO_SNAP_ROW = TOPO_ROW_SPACING / 2;  // 65
+  var TOPO_GRID_DIV = 2;
+  var TOPO_GRID_DIV_FINE = 4;
+  var TOPO_GRID_FINE_MIN_ZOOM = 1; // 100% — was ~135% (a 16 px fine cell) until 2026-11-06
   var GRID_STORAGE_KEY = "polaris.topology.grid";                 // default off
   // Snap devices: drags land on the MAJOR lattice on release, and turning it
   // on re-snaps every current position. Same key as the old single "Snap"
@@ -1086,6 +1093,15 @@
         if (k === "z" && !e.shiftKey) { e.preventDefault(); _layoutUndo(); }
         else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); _layoutRedo(); }
       }
+      // Arrow keys move the selected devices — or, with none selected, the
+      // selected line points. Edit mode only, never while typing; Shift
+      // takes a bigger step when snapping is off.
+      if (ARROW_DIRS[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey &&
+          overlay.classList.contains("open") && topoState.editing) {
+        var at = e.target;
+        if (at && (at.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(at.tagName))) return;
+        if (_nudgeSelection(ARROW_DIRS[e.key], e.shiftKey)) e.preventDefault();
+      }
     });
     // When the browser exits fullscreen via Esc / OS gesture, drop the
     // fullscreen class so the modal styling reverts cleanly.
@@ -1169,7 +1185,7 @@
     var font = "system-ui,-apple-system,sans-serif";
     var sections = [
       { title: "Monitor health", rows: spec.health.map(function (h) { return { kind: "dot", color: h.color, label: h.label }; }) },
-      { title: "Links", rows: spec.edges.map(function (e) { return { kind: "line", color: e.color, dashed: e.style === "dashed", label: e.label }; }) },
+      { title: "Links", rows: spec.edges.map(function (e) { return { kind: "line", color: e.color, dashed: e.style !== "solid", label: e.label }; }) },
     ];
     if (spec.locations) {
       sections.push({ title: "Location groups", rows: spec.locations.map(function (l) { return { kind: "box", color: l.color, dashed: l.style === "dashed", label: l.label }; }) });
@@ -1292,7 +1308,7 @@
     var lightSpec = R.topologyLegendSpec("light");
     var keyItems = [];
     spec.health.forEach(function (h) { keyItems.push({ kind: "dot", color: h.color, fill: h.color, text: h.label }); });
-    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style === "dashed", text: e.label }); });
+    lightSpec.edges.forEach(function (e) { keyItems.push({ kind: "line", color: e.color, dashed: e.style !== "solid", text: e.label }); });
     spec.locations.forEach(function (l) { keyItems.push({ kind: "box", color: l.color, dashed: l.style === "dashed", text: l.label }); });
     var meta = [];
     var ext = cyInstance ? cyInstance.extent() : null;
@@ -2017,6 +2033,7 @@
       ["Drag a connection line", "Add a bend point there and move it"],
       ["Click a connection line", "Show its points — drag an end point around a device to attach the line there"],
       ["Delete", "Remove the selected bend point (an end point goes back to automatic)"],
+      ["Arrow keys", "Move the selected devices (or, with none selected, line points) — a grid step with snapping on, 1 px off (Shift 10 px)"],
       ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo a layout change (also the arrows under Done Editing)"],
       ["Grid (top right)", "Show the grid — thick lines where devices snap, thin lines in between"],
       ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
@@ -2641,16 +2658,21 @@
     // Restore saved positions AFTER the dagre layout finishes so any
     // brand-new nodes get a sensible default placement and only the ones
     // the operator dragged previously snap to their stored coordinates.
+    // Saved devices are pinned: the box-overlap push in renderLocationGroups
+    // leaves them (and any box holding one) where the operator put them.
+    var pinnedIds = {};
     cyInstance.one("layoutstop", function () {
       if (!savedPositions) return;
-      cyInstance.batch(function () {
-        cyInstance.nodes().forEach(function (n) {
-          var p = savedPositions[n.id()];
-          if (p && typeof p.x === "number" && typeof p.y === "number") {
-            n.position({ x: p.x, y: p.y });
-          }
-        });
-      });
+      // Saved spots, plus a level-layout spot for any device the save has
+      // none for, kept relative to its nearest saved upstream device
+      // (topology-render.js → applySavedPositions).
+      var applied = window.PolarisTopologyRender.applySavedPositions(cyInstance, savedPositions, elements);
+      pinnedIds = applied.pinned;
+      // A device new since the save can land on a spot a saved device holds
+      // (and an old blob can hold two on one spot): the saved devices keep
+      // their spots, first come first served, and the others step aside.
+      // Display only — it persists with the operator's next save.
+      _separateDevices(applied.restored.concat(applied.placed));
       try { cyInstance.fit(undefined, 30); } catch (e) {}
     });
 
@@ -2724,6 +2746,12 @@
             n.position(_snapPos(n.position()));
           });
         });
+      }
+      // No two devices on one spot: a device dropped (or snapped) onto
+      // another moves to the nearest free spot; the one already there stays.
+      // A box drag's members were separated by the box's `free` handler.
+      if (!evt.target.data("isLocGroup")) {
+        _separateDevices(cyInstance.collection(evt.target).union(cyInstance.nodes(":selected")));
       }
       _markLayoutDirty();
       _layoutHistoryRecordSoon(); // a finished drag is one undo step
@@ -2856,10 +2884,10 @@
     // scope, so only the deeper shapes stay useful.
     if (topoState.hasLocationCodes) {
       var supKinds = _locSuppressKinds();
-      window.PolarisTopologyRender.renderLocationGroups(
-        cyInstance,
-        supKinds ? { suppressKinds: supKinds } : undefined
-      );
+      window.PolarisTopologyRender.renderLocationGroups(cyInstance, {
+        suppressKinds: supKinds || undefined,
+        fixedIds: pinnedIds,
+      });
       // Route cross-group links through the gutters between boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
     } else {
@@ -2948,6 +2976,13 @@
             if (m.length > 0) m.position(_snapPos(m.position()));
           });
         });
+      }
+      // The box's devices are the ones that moved: any that landed on a
+      // device outside the box steps aside (the outside one stays put).
+      if (!topoState.pathOverlay) {
+        _separateDevices((evt.target.data("memberIds") || []).map(function (id) {
+          return cyInstance.getElementById(id);
+        }).filter(function (m) { return m.length > 0; }));
       }
       window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
       window.PolarisTopologyRender.routeInterGroupEdges(cyInstance);
@@ -3191,7 +3226,7 @@
     }
     var z = cyInstance.zoom();
     var pan = cyInstance.pan();
-    var w = TOPO_COL_SPACING * z, h = TOPO_ROW_SPACING * z;
+    var w = TOPO_SNAP_COL * z, h = TOPO_SNAP_ROW * z;
     var div = _topologyGridDiv();
     var mw = w / div, mh = h / div;
     if (Math.min(w, h) < 8) {
@@ -3225,19 +3260,18 @@
     });
     _paintTopologyGrid();
   }
-  // How many ways the thin lines split a major cell at the current zoom: 4,
-  // or 8 once an eighth of the shorter side is TOPO_GRID_FINE_MIN_PX on
-  // screen. The thick lines never move.
+  // How many ways the thin lines split a major cell at the current zoom: 2,
+  // or 4 from TOPO_GRID_FINE_MIN_ZOOM up (a hair of slack, so a wheel zoom
+  // that lands at 0.99999 still counts as 100%). The thick lines never move.
   function _topologyGridDiv() {
     if (!cyInstance) return TOPO_GRID_DIV;
-    var fineCell = Math.min(TOPO_COL_SPACING, TOPO_ROW_SPACING) * cyInstance.zoom() / TOPO_GRID_DIV_FINE;
-    return fineCell >= TOPO_GRID_FINE_MIN_PX ? TOPO_GRID_DIV_FINE : TOPO_GRID_DIV;
+    return cyInstance.zoom() >= TOPO_GRID_FINE_MIN_ZOOM - 1e-6 ? TOPO_GRID_DIV_FINE : TOPO_GRID_DIV;
   }
   // The point a line's bend lands on with "Snap line points" on: the nearest
   // intersection of the thin + thick lines as currently drawn.
   function _snapFine(p) {
     var div = _topologyGridDiv();
-    var sx = TOPO_COL_SPACING / div, sy = TOPO_ROW_SPACING / div;
+    var sx = TOPO_SNAP_COL / div, sy = TOPO_SNAP_ROW / div;
     return { x: Math.round(p.x / sx) * sx, y: Math.round(p.y / sy) * sy };
   }
   function _setTopologyEditing(on) {
@@ -3337,6 +3371,16 @@
   function _layoutHistoryRecordSoon() {
     if (_historyTimer) clearTimeout(_historyTimer);
     _historyTimer = setTimeout(function () { _historyTimer = null; _layoutHistoryRecord(); }, 0);
+  }
+  // Record a pending step NOW. A gesture's handlers all run inside one
+  // emit, so a keyboard nudge can close its step synchronously — left to the
+  // 0 ms timer, a second key press that beats it re-arms the timer and the
+  // two presses fold into one undo step.
+  function _layoutHistoryFlush() {
+    if (!_historyTimer) return;
+    clearTimeout(_historyTimer);
+    _historyTimer = null;
+    _layoutHistoryRecord();
   }
   function _layoutHistoryApply(json) {
     if (!cyInstance || !topoState.siteId) return;
@@ -3514,13 +3558,129 @@
   // ── Snap devices ─────────────────────────────────────────────────────────
   function _readSnapToGrid() { return _readPref(SNAP_STORAGE_KEY); }
 
-  // Nearest grid cell for a pixel model position. The grid IS the column
-  // solver's lattice (TOPO_COL_SPACING × TOPO_ROW_SPACING), so snapped nodes
+  // ── No two devices on one spot ───────────────────────────────────────────
+  // `moved` (nodes, in priority order) may move; every other device holds its
+  // spot. A displaced device goes to the nearest free spot: whole grid cells
+  // when Snap devices is on (so it stays on the grid), a quarter cell when
+  // off (a nudge, not a jump). Returns how many devices moved.
+  // topology-render.js → separatePositions.
+  // An unrendered view blob has no node sizes: size every entry as a switch
+  // body (44; the guard measures bodies, border excluded). Larger (the firewall) would make neighbouring snap
+  // cells — 65 apart — read as one spot; the load-time pass
+  // (layoutstop → _separateDevices) re-checks with real sizes anyway.
+  var TOPO_BLOB_NODE_PX = 44;
+
+  // ── Arrow-key nudge ──────────────────────────────────────────────────────
+  // Arrow keys move what is selected, the same as a drag would:
+  //   devices      Snap devices on → one grid cell (from the cell they are
+  //                on), hopping over occupied cells to the next free one;
+  //                off → 1 px, Shift 10 px, stopping short at a neighbouring
+  //                device. Either way a device never lands on another.
+  //   line points  (only when no device is selected) Snap line points on →
+  //                the next thin/thick line intersection as drawn at this
+  //                zoom; off → 1 px, Shift 10 px.
+  // The move runs through the drag pipeline (grab → move → free → dragfree),
+  // so a line's bends ride along with its devices and the save, the undo
+  // step and the overlap guard are a drag's.
+  var ARROW_DIRS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  var NUDGE_MAX_HOPS = 50;
+  function _isTopoDevice(n) {
+    return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle");
+  }
+  function _nudgeSelection(dir, big) {
+    if (!cyInstance || !topoState.editing || topoState.pathOverlay) return false;
+    var px = big ? 10 : 1;
+    var devices = cyInstance.nodes(":selected").filter(_isTopoDevice);
+    if (devices.length > 0) {
+      var snap = _readSnapToGrid();
+      var sx = snap ? TOPO_SNAP_COL : px;
+      var sy = snap ? TOPO_SNAP_ROW : px;
+      var base = {};
+      var items = devices.map(function (n) {
+        var p = n.position();
+        base[n.id()] = snap ? _snapPos(p) : { x: p.x, y: p.y };
+        return { id: n.id(), w: n.width(), h: n.height() };
+      });
+      var fixed = [];
+      cyInstance.nodes().forEach(function (n) {
+        if (n.selected() || !_isTopoDevice(n)) return;
+        var p = n.position();
+        fixed.push({ x: p.x, y: p.y, w: n.width(), h: n.height() });
+      });
+      function clearAt(dist) {
+        var cand = items.map(function (it) {
+          var b = base[it.id];
+          return { id: it.id, x: b.x + dir[0] * dist, y: b.y + dir[1] * dist, w: it.w, h: it.h };
+        });
+        var out = window.PolarisTopologyRender.separatePositions(cand, { stepX: sx, stepY: sy, fixed: fixed });
+        return cand.every(function (c) { return out[c.id].x === c.x && out[c.id].y === c.y; });
+      }
+      var cell = dir[0] ? sx : sy;
+      var dist;
+      if (snap) {
+        // Grid steps HOP: the first cell in the arrow's direction where the
+        // whole selection is clear of every other device. Nothing within
+        // reach → one cell, and the overlap guard on dragfree places
+        // whatever still collides.
+        dist = cell;
+        for (var k = 1; k <= NUDGE_MAX_HOPS; k++) {
+          if (clearAt(cell * k)) { dist = cell * k; break; }
+        }
+      } else {
+        // Pixel nudges STOP at a neighbour: as far as the step allows
+        // without touching another device — a 10 px nudge never jumps the
+        // selection past a stacked column. Blocked outright → no move.
+        dist = 0;
+        for (var d = cell; d >= 1; d--) {
+          if (clearAt(d)) { dist = d; break; }
+        }
+        if (dist === 0) return true; // swallow the key; nothing to move
+      }
+      devices.emit("grab");
+      cyInstance.batch(function () {
+        devices.forEach(function (n) {
+          var b = base[n.id()];
+          n.position({ x: b.x + dir[0] * dist, y: b.y + dir[1] * dist });
+        });
+      });
+      devices.emit("free");
+      devices[0].emit("dragfree");
+      _layoutHistoryFlush(); // one press = one undo step, however fast they come
+      return true;
+    }
+    var points = cyInstance.nodes('[isEdgeHandle][handleKind = "bend"]:selected');
+    if (points.length === 0) return false;
+    var snapPts = _readPref(SNAP_POINTS_STORAGE_KEY);
+    var div = _topologyGridDiv();
+    var fx = snapPts ? TOPO_SNAP_COL / div : px;
+    var fy = snapPts ? TOPO_SNAP_ROW / div : px;
+    points.emit("grab");
+    points.forEach(function (h) {
+      var p = h.position();
+      var b = snapPts ? _snapFine(p) : p;
+      h.position({ x: b.x + dir[0] * fx, y: b.y + dir[1] * fy });
+    });
+    points.emit("free");
+    points[0].emit("dragfree");
+    _layoutHistoryFlush();
+    return true;
+  }
+  function _separateDevices(moved) {
+    if (!cyInstance || topoState.pathOverlay) return 0;
+    var snap = _readSnapToGrid();
+    return window.PolarisTopologyRender.separateNodes(cyInstance, moved, {
+      stepX: snap ? TOPO_SNAP_COL : TOPO_SNAP_COL / TOPO_GRID_DIV,
+      stepY: snap ? TOPO_SNAP_ROW : TOPO_SNAP_ROW / TOPO_GRID_DIV,
+    });
+  }
+
+  // Nearest grid cell for a pixel model position. The grid is HALF the column
+  // solver's lattice (TOPO_SNAP_COL × TOPO_SNAP_ROW), so snapped nodes
   // line up exactly with auto-laid-out ones.
   function _snapPos(p) {
     return {
-      x: Math.round(p.x / TOPO_COL_SPACING) * TOPO_COL_SPACING,
-      y: Math.round(p.y / TOPO_ROW_SPACING) * TOPO_ROW_SPACING,
+      x: Math.round(p.x / TOPO_SNAP_COL) * TOPO_SNAP_COL,
+      y: Math.round(p.y / TOPO_SNAP_ROW) * TOPO_SNAP_ROW,
     };
   }
   // One-time re-snap when the toggle turns on: every live node in the
@@ -3544,6 +3704,9 @@
         }
       });
     });
+    // Two devices that round to one cell: the first keeps it, the other
+    // takes the nearest free cell.
+    if (_separateDevices(cyInstance.nodes()) > 0) moved = true;
     if (moved) {
       if (topoState.hasLocationCodes) {
         window.PolarisTopologyRender.refreshLocationGroups(cyInstance);
@@ -3564,12 +3727,20 @@
         if (!positions || typeof positions !== "object") return;
         var changed = false;
         var out = {};
+        var items = [];
         Object.keys(positions).forEach(function (id) {
           var p = positions[id];
           if (!p || typeof p.x !== "number" || typeof p.y !== "number") return;
           var s = _snapPos(p);
           out[id] = s;
           if (s.x !== p.x || s.y !== p.y) changed = true;
+          if (id.indexOf("edgepath:") === 0) return; // a line's bend point, not a device
+          items.push({ id: id, x: s.x, y: s.y, w: TOPO_BLOB_NODE_PX, h: TOPO_BLOB_NODE_PX });
+        });
+        var sep = window.PolarisTopologyRender.separatePositions(items, { stepX: TOPO_SNAP_COL, stepY: TOPO_SNAP_ROW });
+        items.forEach(function (it) {
+          var q = sep[it.id];
+          if (q.x !== it.x || q.y !== it.y) { out[it.id] = q; changed = true; }
         });
         if (changed) {
           _layoutDirty[topoState.siteId + "|" + view] = true;
