@@ -1870,6 +1870,11 @@
     if (opts.screenshot) items.push({ label: opts.screenshotLabel || "Copy screenshot", icon: ICON_CAMERA, onSelect: opts.screenshot });
     items.push({ label: "Export PDF", icon: ICON_DOC, onSelect: function () { openPdfDialog(getCtx()); } });
     items.push({ label: "Export to Visio (.vsdx)", icon: ICON_SHAPES, onSelect: function () { exportVisio(getCtx()); } });
+    // A surface's own extra exports (the Device Map topology's anonymised
+    // layout data), after the drawing formats.
+    (opts.extra || []).forEach(function (x) {
+      items.push({ label: x.label, icon: ICON_DOC, onSelect: x.run });
+    });
     showRowMenu(anchor, items, { align: "end", label: "Export" });
   }
 
