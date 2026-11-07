@@ -587,51 +587,12 @@ const HARDCODED_FLOOR: MonitorTierSettings = {
   eventLogCredentialId:      null,
 };
 
-// ─── Legacy global-tier types (transitional, scheduled for removal) ────────
-//
-// The old single-row `monitorSettings` Setting + per-class switch/accessPoint
-// blocks (formerly named fortiswitch/fortiap — see the renameMonitorClassKeys
-// startup job for the JSON-key migration). Kept alive temporarily so the
-// prune helpers and capacityService continue working while the multi-tier
-// retention work seeds new shapes. After the legacy row is fully decoupled
-// these types get removed in a follow-up pass.
-
-/** @deprecated use MonitorTierSettings */
-interface MonitorClassSettings {
-  intervalSeconds:           number;
-  failureThreshold:          number;
-  probeTimeoutMs:            number;
-  sampleRetentionDays:       number;
-  telemetryIntervalSeconds:  number;
-  systemInfoIntervalSeconds: number;
-  telemetryRetentionDays:    number;
-  systemInfoRetentionDays:   number;
-}
-
-/** @deprecated legacy storage shape; new code uses MonitorTierSettings */
-export interface MonitorSettings extends MonitorClassSettings {
-  switch:      MonitorClassSettings;
-  accessPoint: MonitorClassSettings;
-}
-
-const SETTING_KEY = "monitorSettings";
+// The pre-hierarchy single-row `monitorSettings` Setting (and its two
+// deprecated legacy types) was retired 2026-11-06
+// (CQ-B012). migrateMonitorSettingsHierarchy converts and DELETES that row on
+// boot, so nothing at runtime reads it any more; capacity projections use
+// fleetCadences() below — the cadences operators actually configured.
 const MANUAL_SETTING_KEY = "manualMonitorSettings";
-
-// Legacy default shape — maps the new stream-split floor back to the
-// pre-split `telemetryIntervalSeconds` field name that the deprecated
-// MonitorClassSettings + MonitorSettings types still expose. Used only by
-// the transitional legacy-row fallback path (loadLegacyGlobalAsTier +
-// capacityService); new code reads HARDCODED_FLOOR directly.
-const DEFAULT_CLASS_SETTINGS: MonitorClassSettings = {
-  intervalSeconds:           HARDCODED_FLOOR.intervalSeconds,
-  failureThreshold:          HARDCODED_FLOOR.failureThreshold,
-  probeTimeoutMs:            HARDCODED_FLOOR.probeTimeoutMs,
-  sampleRetentionDays:       HARDCODED_FLOOR.sampleRetentionDays,
-  telemetryIntervalSeconds:  HARDCODED_FLOOR.cpuMemoryIntervalSeconds,
-  systemInfoIntervalSeconds: HARDCODED_FLOOR.systemInfoIntervalSeconds,
-  telemetryRetentionDays:    HARDCODED_FLOOR.telemetryRetentionDays,
-  systemInfoRetentionDays:   HARDCODED_FLOOR.systemInfoRetentionDays,
-};
 
 const sysUpTimeOid = "1.3.6.1.2.1.1.3.0";
 
@@ -662,48 +623,6 @@ export function getAdMonitorProtocol(os: string | null | undefined): "winrm" | "
   return null;
 }
 
-function readClassFromJson(v: Record<string, unknown> | undefined, defaults: MonitorClassSettings): MonitorClassSettings {
-  const o = v ?? {};
-  return {
-    intervalSeconds:           toNonNegativeInt(o.intervalSeconds,           defaults.intervalSeconds),
-    failureThreshold:          toNonNegativeInt(o.failureThreshold,          defaults.failureThreshold),
-    probeTimeoutMs:            toNonNegativeInt(o.probeTimeoutMs,            defaults.probeTimeoutMs),
-    sampleRetentionDays:       toNonNegativeInt(o.sampleRetentionDays,       defaults.sampleRetentionDays),
-    telemetryIntervalSeconds:  toNonNegativeInt(o.telemetryIntervalSeconds,  defaults.telemetryIntervalSeconds),
-    systemInfoIntervalSeconds: toNonNegativeInt(o.systemInfoIntervalSeconds, defaults.systemInfoIntervalSeconds),
-    telemetryRetentionDays:    toNonNegativeInt(o.telemetryRetentionDays,    defaults.telemetryRetentionDays),
-    systemInfoRetentionDays:   toNonNegativeInt(o.systemInfoRetentionDays,   defaults.systemInfoRetentionDays),
-  };
-}
-
-export async function getMonitorSettings(): Promise<MonitorSettings> {
-  const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
-  const v = (row?.value as Record<string, unknown> | null) ?? {};
-  // Top-level fields are the baseline default for every class group too —
-  // a fresh install with no per-class entries inherits the operator's
-  // top-level values, not the hard-coded constants.
-  const base = readClassFromJson(v, DEFAULT_CLASS_SETTINGS);
-  // Per-class overrides: prefer the new switch/accessPoint keys; fall back
-  // to the legacy fortiswitch/fortiap keys until renameMonitorClassKeys
-  // (one-shot startup job) rewrites them. After fleet-wide migration this
-  // fallback can go.
-  const swRaw = (v.switch      as Record<string, unknown> | undefined)
-             ?? (v.fortiswitch as Record<string, unknown> | undefined)
-             ?? undefined;
-  const apRaw = (v.accessPoint as Record<string, unknown> | undefined)
-             ?? (v.fortiap     as Record<string, unknown> | undefined)
-             ?? undefined;
-  return {
-    ...base,
-    switch:      readClassFromJson(swRaw, base),
-    accessPoint: readClassFromJson(apRaw, base),
-  };
-}
-
-// The legacy global-tier WRITE path (updateMonitorSettings + mergeClassUpdate)
-// was removed 2026-08 — exported with zero callers since the monitor-settings
-// hierarchy migration; getMonitorSettings (read) stays for capacityService.
-
 // ─── Monitor settings resolver ──────────────────────────────────────────────
 //
 // `resolveMonitorSettings(asset)` is the runtime entry point that walks the
@@ -719,12 +638,10 @@ export async function getMonitorSettings(): Promise<MonitorSettings> {
 // row, or a MonitorClassOverride row. The migration job (step 5) calls
 // `invalidateMonitorSettingsCache()` (no scope = full clear) at the end.
 //
-// Transitional fallback: when the new tier rows aren't seeded yet (i.e. the
-// migration job hasn't run), `loadLegacyGlobalAsTier` reads the old
-// `monitorSettings` Setting row and projects it into a tier-shaped value.
-// Once the migration has run + deleted that row, the loaders fall through to
-// HARDCODED_FLOOR for the brief window where a fresh integration has no
-// monitor settings yet (operators set them as needed via the new routes).
+// A tier with no stored settings resolves to HARDCODED_FLOOR (a fresh
+// integration before an operator sets its cadences, a fresh install's manual
+// tier). The pre-hierarchy legacy row is not consulted: the startup migration
+// converts and deletes it, and invalidates this cache when it does.
 
 const MANUAL_TIER_CACHE_KEY = "__manual__";
 const tierCache = new Map<string, MonitorTierSettings>();
@@ -1094,12 +1011,6 @@ export function defaultPollingForSource(
   return stream === "responseTime" ? "icmp" : null;
 }
 
-async function loadLegacyGlobalAsTier(): Promise<MonitorTierSettings | null> {
-  const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
-  if (!row?.value) return null;
-  return tierFromJson(row.value as Record<string, unknown>);
-}
-
 /**
  * Picks the per-class streams block on the integration config for the given
  * assetType. FMG / FortiGate route firewall→fortigateMonitor, switch→
@@ -1278,8 +1189,8 @@ async function loadIntegrationTierSettings(integrationId: string, assetType: str
   if (ms) {
     result = tierFromJson(ms);
   } else {
-    // Transitional: fall back to the legacy global until the migration runs.
-    result = (await loadLegacyGlobalAsTier()) ?? { ...HARDCODED_FLOOR };
+    // Nothing stored for this tier yet: the hard-coded floor.
+    result = { ...HARDCODED_FLOOR };
   }
   // Per-class streams overlay. Phase 2: when the integration config carries a
   // class-specific streams block for this asset's assetType, its per-stream
@@ -1336,8 +1247,8 @@ async function loadManualTierSettings(): Promise<MonitorTierSettings> {
   if (row?.value) {
     result = tierFromJson(row.value as Record<string, unknown>);
   } else {
-    // Transitional: fall back to the legacy global until the migration runs.
-    result = (await loadLegacyGlobalAsTier()) ?? { ...HARDCODED_FLOOR };
+    // Nothing stored for this tier yet: the hard-coded floor.
+    result = { ...HARDCODED_FLOOR };
   }
   tierCache.set(MANUAL_TIER_CACHE_KEY, result);
   return result;
@@ -1561,6 +1472,81 @@ export interface AssetMonitorContext {
  * ungated, so the asset modal could display a method the runtime silently
  * ignored.
  */
+/** The three fleet-wide cadences the capacity model takes (seconds). */
+export interface FleetCadences {
+  intervalSeconds:           number;
+  telemetryIntervalSeconds:  number;
+  systemInfoIntervalSeconds: number;
+}
+
+/**
+ * The cadences the monitored fleet actually runs at, for capacity projection
+ * (CQ-B012). Resolved through resolveMonitorSettings per configuration — assets
+ * sharing (integration, type, per-asset overrides) resolve once — and combined
+ * as the RATE-weighted mean: N / Σ(1/interval), so N assets at that one interval
+ * produce exactly the fleet's sample rate, which is how the model multiplies it.
+ * A stream an asset has turned off (interval 0) adds no rate. No monitored
+ * asset, or every one off for a stream → that stream's hard-coded floor.
+ *
+ * Before this, capacity read the pre-hierarchy legacy Setting row; the startup
+ * migration deletes that row, so projections had silently used the floor
+ * defaults whatever the operator configured.
+ *
+ * Scale: one findMany of the monitored assets (a narrow select), then one
+ * resolve per distinct configuration — a handful, not one per asset.
+ */
+export async function fleetCadences(): Promise<FleetCadences> {
+  const rows = await prisma.asset.findMany({
+    where: { monitored: true },
+    select: {
+      assetType: true, discoveredByIntegrationId: true,
+      discoveredByIntegration: { select: { type: true } },
+      monitorIntervalSec: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
+      systemInfoIntervalSec: true, lldpIntervalSec: true, storageIntervalSec: true,
+      probeTimeoutMs: true,
+    },
+  });
+  const groups = new Map<string, { ctx: AssetMonitorContext; count: number }>();
+  for (const a of rows) {
+    const ctx = {
+      assetType: a.assetType,
+      discoveredByIntegrationId: a.discoveredByIntegrationId,
+      discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
+      monitorIntervalSec: a.monitorIntervalSec,
+      cpuMemoryIntervalSec: a.cpuMemoryIntervalSec,
+      temperatureIntervalSec: a.temperatureIntervalSec,
+      systemInfoIntervalSec: a.systemInfoIntervalSec,
+      lldpIntervalSec: a.lldpIntervalSec,
+      storageIntervalSec: a.storageIntervalSec,
+      probeTimeoutMs: a.probeTimeoutMs,
+    } as AssetMonitorContext;
+    const key = JSON.stringify(ctx);
+    const g = groups.get(key);
+    if (g) g.count++;
+    else groups.set(key, { ctx, count: 1 });
+  }
+  const acc = {
+    intervalSeconds:           { n: 0, rate: 0 },
+    telemetryIntervalSeconds:  { n: 0, rate: 0 },
+    systemInfoIntervalSeconds: { n: 0, rate: 0 },
+  };
+  for (const { ctx, count } of groups.values()) {
+    const eff = await resolveMonitorSettings(ctx);
+    const add = (k: keyof typeof acc, sec: number) => {
+      if (sec > 0) { acc[k].n += count; acc[k].rate += count / sec; }
+    };
+    add("intervalSeconds", eff.intervalSeconds);
+    add("telemetryIntervalSeconds", eff.cpuMemoryIntervalSeconds);
+    add("systemInfoIntervalSeconds", eff.systemInfoIntervalSeconds);
+  }
+  const mean = (k: keyof typeof acc, floor: number) => (acc[k].rate > 0 ? acc[k].n / acc[k].rate : floor);
+  return {
+    intervalSeconds:           mean("intervalSeconds", HARDCODED_FLOOR.intervalSeconds),
+    telemetryIntervalSeconds:  mean("telemetryIntervalSeconds", HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
+    systemInfoIntervalSeconds: mean("systemInfoIntervalSeconds", HARDCODED_FLOOR.systemInfoIntervalSeconds),
+  };
+}
+
 export async function resolveMonitorSettings(asset: AssetMonitorContext): Promise<ResolvedMonitorSettings> {
   return (await resolveMonitorSettingsCore(asset)).resolved;
 }
