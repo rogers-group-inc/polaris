@@ -101,13 +101,19 @@ deliberately does not restore the old one-second window.
 
 ### What this rule does not reach
 
-**Per-pinned-program telemetry keeps its prime → sleep(300 ms) → read window**
-(`internal/collectors/processtelemetry.go`), and that is not an oversight. A per-process
-percentage is that process's own CPU time over elapsed wall time, so a collector holding
-the core **depresses** other processes' readings rather than inflating them — the
-opposite failure, and a far less misleading one. Carrying per-PID baselines across passes
-is also not free the way a host-wide one is: the pinned set changes, PIDs come and go, and
-a baseline for a PID that exited is a baseline for a different process.
+**Per-pinned-program telemetry kept its prime → sleep(300 ms) → read window until agent
+0.28.4** (`internal/collectors/processtelemetry.go`). The reasoning then was that a
+per-process percentage is that process's own CPU time over elapsed wall time, so a
+collector holding the core **depresses** other processes' readings rather than inflating
+them, and that a per-PID baseline cannot be carried across passes when PIDs come and go.
+The second half turned out to be solvable (CQ-G010): the baseline is keyed by PID **and**
+the process's start time, so a reused PID is recognised as a new process and never
+measured against its predecessor, and baselines for PIDs that have gone are dropped each
+pass. Each pass now reports the delta since the previous one over the whole cadence, with
+nothing blocking. Only a PID with no usable baseline (agent start, a program restart, a
+reused PID) falls back to the short prime → sleep → read, so the first sample after a
+restart is still a number. It still reads gopsutil's per-process counters, not
+`cpu.Percent`, so the package-global trap above does not apply.
 
 ### What operators see
 
