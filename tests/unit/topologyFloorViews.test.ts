@@ -173,14 +173,24 @@ describe("computeFloorViews", () => {
 describe("partitionElementsForFloor", () => {
   const ids = (els: El[]) => els.filter((e) => !e.data.source).map((e) => e.data.id).sort();
 
-  it("floor view: keeps only that floor's tagged devices plus the FortiGate's root portal", () => {
+  // Stubs (2026-11-07, operator: "each group should connect back to the
+  // group of the previous level and next level"): one stub per NEIGHBOURING
+  // GROUP, "← X" for a group this view is fed from (shallower than the member
+  // it links to), "→ X" for one it feeds. A far end with no code at the view's
+  // level shows as its nearest coded group, else as "Base".
+  const G = (key: string) => "portal:group:" + key;
+
+  it("floor view: that floor's devices, the FortiGate stub (s1 links to it), and the next floor's group", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|1");
-    expect(ids(parts)).toEqual(["ap1", "portal:fg", "portal:s2", "s1"]);
+    expect(ids(parts)).toEqual(["ap1", "portal:fg", G("f||shop|2"), "s1"]);
+    expect(parts.find((e) => e.data.id === G("f||shop|2"))!.data).toMatchObject({ isPortal: 1, label: "→ Shop — 2", targetView: "f||shop|2" });
   });
 
-  it("building view: keeps ALL of the building's devices regardless of floor", () => {
+  it("building view: ALL of the building's devices, any floor; an untagged neighbour shows as Base", () => {
     const parts = partitionElementsForFloor(site(), "b||shop");
-    expect(ids(parts)).toEqual(["ap1", "portal:fg", "s1", "s2"]);
+    expect(ids(parts)).toEqual(["ap1", "portal:fg", G("flat"), "s1", "s2"]);
+    // s2's uplink partner "plain" is shallower (it hangs off the FortiGate): the previous level.
+    expect(parts.find((e) => e.data.id === G("flat"))!.data).toMatchObject({ label: "← Base", targetView: "flat", isUpstreamPortal: 1 });
   });
 
   it("an untagged FortiGate is drawn only in Base: other views get a root portal jumping to Base", () => {
@@ -199,20 +209,22 @@ describe("partitionElementsForFloor", () => {
     els[0] = node("fg", "fortigate", { b: "Shop" });
     const parts = partitionElementsForFloor(els, "b||shop");
     expect(parts.find((e) => e.data.id === "fg")!.data.role).toBe("fortigate");
-    expect(ids(parts)).toEqual(["ap1", "fg", "s1", "s2"]); // no portal:o1 from fg's controller link
+    // No stub from fg's own controller links (o1, plain); s2's link to plain is a member's.
+    expect(ids(parts)).toEqual(["ap1", "fg", G("flat"), "s1", "s2"]);
   });
 
-  it("building view: a member's edge to another building becomes a portal to that building's view", () => {
+  it("building view: a member's link to another building becomes that building's group stub", () => {
     const els = site();
     els.push(edge("s2", "o1", { isLldp: 1 }));
     const parts = partitionElementsForFloor(els, "b||shop");
-    const portal = parts.find((e) => e.data.id === "portal:o1")!;
+    const portal = parts.find((e) => e.data.id === G("b||office"))!;
     expect(portal.data.isPortal).toBe(1);
     expect(portal.data.targetView).toBe("b||office");
-    expect(portal.data.label).toBe("→ Office: O1");
+    // o1 hangs off the FortiGate, shallower than s2: Office is the previous level.
+    expect(portal.data.label).toBe("← Office");
   });
 
-  it("area view: keeps every device tagged with the area, any building, and portals out of it", () => {
+  it("area view: every device in the area, a stub per next-level group — an area-less building included", () => {
     const els = [
       node("fg", "fortigate"),
       node("p1", "fortiswitch", { a: "Pugmill", b: "57 Loadout" }),
@@ -225,9 +237,9 @@ describe("partitionElementsForFloor", () => {
       edge("p1", "e1"),
     ];
     const parts = partitionElementsForFloor(els, "a|pugmill");
-    // e1 has no area: its edge is dropped, not stubbed.
-    expect(ids(parts)).toEqual(["p1", "p2", "portal:fg", "portal:m1"]);
-    expect(parts.find((e) => e.data.id === "portal:m1")!.data).toMatchObject({ targetView: "a|mine", label: "→ Mine: M1" });
+    expect(ids(parts)).toEqual(["p1", "p2", "portal:fg", G("a|mine"), G("b||engineering")]);
+    expect(parts.find((e) => e.data.id === G("a|mine"))!.data).toMatchObject({ targetView: "a|mine", label: "→ Mine" });
+    expect(parts.find((e) => e.data.id === G("b||engineering"))!.data).toMatchObject({ targetView: "b||engineering", label: "→ Engineering" });
   });
 
   it("a FortiGate tagged to another floor becomes a root portal jumping to that floor", () => {
@@ -244,19 +256,20 @@ describe("partitionElementsForFloor", () => {
     expect(ids(partitionElementsForFloor(els, "f||shop|2"))).toContain("fg");
   });
 
-  it("excludes untagged devices and drops their edges without a stub", () => {
+  it("excludes untagged devices: links to them go to the Base group stub", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|2");
-    // s2's edge to the untagged "plain" switch vanishes entirely — and no
-    // device on floor 2 links to the FortiGate, so it gets no root portal.
-    expect(ids(parts)).toEqual(["portal:s1", "s2"]);
-    const edgeTargets = parts.filter((e) => e.data.source).map((e) => `${e.data.source}>${e.data.target}`);
-    expect(edgeTargets.some((t) => t.includes("plain"))).toBe(false);
+    // Floor 2 is fed from floor 1 (s1) and from the untagged "plain" switch —
+    // both shallower — and nothing on it links to the FortiGate.
+    expect(ids(parts)).toEqual([G("flat"), G("f||shop|1"), "s2"]);
+    expect(parts.find((e) => e.data.id === G("f||shop|1"))!.data.label).toBe("← Shop — 1");
+    expect(parts.find((e) => e.data.id === G("flat"))!.data.label).toBe("← Base");
+    expect(parts.some((e) => e.data.id === "plain")).toBe(false);
   });
 
   // Operator report (2026-11-07): drilling into Pugmill Loadouts showed a
-  // "→ Base: FG" stub though no switch there links to the FortiGate — it read
-  // as if they all hung straight off the firewall.
-  it("adds no FortiGate stub to a view none of whose devices link to it, and still lays it out", () => {
+  // "→ Base: FG" stub though no switch there links to the FortiGate — they
+  // hang off Scale House, which is now the view's "←" stub.
+  it("a view fed from another group shows that group, not the FortiGate, and is rooted on it", () => {
     const els = [
       node("fg", "fortigate"),
       node("sh", "fortiswitch", { b: "Scale House" }),
@@ -266,37 +279,50 @@ describe("partitionElementsForFloor", () => {
       edge("fg", "sh"), edge("sh", "p57"), edge("sh", "p8"), edge("p57", "ap57"),
     ];
     const parts = partitionElementsForFloor(els, "a|pugmill");
-    expect(ids(parts)).toEqual(["ap57", "p57", "p8"]);
-    // The switches whose uplink is outside the view are its entries...
-    const entry = (id: string) => parts.find((e) => e.data.id === id)!.data.viewEntry;
-    expect(entry("p57")).toBe(1);
-    expect(entry("p8")).toBe(1);
-    expect(entry("ap57")).toBeUndefined();
-    // ...and the solver roots the view on them (no dagre fallback), with no
-    // stand-in node in what it returns.
+    expect(ids(parts)).toEqual(["ap57", "p57", "p8", G("b||scale house")]);
+    expect(parts.find((e) => e.data.id === G("b||scale house"))!.data).toMatchObject({ label: "← Scale House", isUpstreamPortal: 1 });
+    // Both switches link to it — two lines, not one.
+    expect(parts.filter((e) => e.data.source === G("b||scale house") || e.data.target === G("b||scale house")).length).toBe(2);
     const cols = computeTopologyColumns(parts)!;
-    expect(cols).not.toBeNull();
-    expect(Object.keys(cols).sort()).toEqual(["ap57", "p57", "p8"]);
+    expect(Object.keys(cols).sort()).toEqual(["ap57", "p57", "p8", G("b||scale house")]);
+    // The stub it is fed from sits left of what it feeds.
+    expect(cols[G("b||scale house")].depth).toBeLessThan(cols.p57.depth);
     expect(cols.ap57.depth).toBeGreaterThan(cols.p57.depth);
   });
 
-  it("rewires a cross-floor edge to one portal per remote device with a jump target", () => {
+  it("several upstream groups all sit in the first column", () => {
+    const els = [
+      node("fg", "fortigate"),
+      node("sh", "fortiswitch", { b: "Scale House" }),
+      node("oo", "fortiswitch", { b: "Old Office" }),
+      node("p1", "fortiswitch", { a: "Pugmill", b: "57 Loudout" }),
+      node("p2", "fortiswitch", { a: "Pugmill", b: "8s Loadout" }),
+      node("t1", "fortiswitch", { b: "Tower 1" }),
+      edge("fg", "sh"), edge("fg", "oo"), edge("sh", "p1"), edge("oo", "p2"), edge("p2", "t1"),
+    ];
+    const parts = partitionElementsForFloor(els, "a|pugmill");
+    const cols = computeTopologyColumns(parts)!;
+    expect(cols[G("b||scale house")].depth).toBe(cols[G("b||old office")].depth);
+    expect(cols[G("b||scale house")].depth).toBeLessThan(cols.p1.depth);
+    expect(parts.find((e) => e.data.id === G("b||tower 1"))!.data.label).toBe("→ Tower 1");
+    expect(cols[G("b||tower 1")].depth).toBeGreaterThan(cols.p2.depth);
+  });
+
+  it("rewires a cross-floor edge to the remote floor's group stub, with a jump target", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|1");
-    const portal = parts.find((e) => e.data.id === "portal:s2")!;
+    const portal = parts.find((e) => e.data.id === G("f||shop|2"))!;
     expect(portal.data.isPortal).toBe(1);
     expect(portal.data.targetView).toBe("f||shop|2");
-    expect(portal.data.label).toBe("→ Shop — 2: S2");
-    // The s1↔s2 edge now terminates at the portal.
-    const rewired = parts.find((e) => e.data.source === "s1" && e.data.target === "portal:s2");
+    const rewired = parts.find((e) => e.data.source === "s1" && e.data.target === G("f||shop|2"));
     expect(rewired).toBeTruthy();
   });
 
-  it("converges parallel links to the same remote device on a single portal", () => {
+  it("converges every link to one remote group on a single stub, one line per link", () => {
     const els = site();
     els.push(edge("ap1", "s2", { isLldp: 1 })); // second edge crossing to floor 2
     const parts = partitionElementsForFloor(els, "f||shop|1");
-    expect(parts.filter((e) => e.data.id === "portal:s2").length).toBe(1);
-    const portalEdges = parts.filter((e) => e.data.source && e.data.target === "portal:s2");
+    expect(parts.filter((e) => e.data.id === G("f||shop|2")).length).toBe(1);
+    const portalEdges = parts.filter((e) => e.data.source && e.data.target === G("f||shop|2"));
     expect(portalEdges.length).toBe(2);
   });
 
@@ -305,7 +331,7 @@ describe("partitionElementsForFloor", () => {
     const s1s2 = els.find((e) => e.data.id === "e-s1-s2")!;
     s1s2.data.inLoop = 1;
     const parts = partitionElementsForFloor(els, "f||shop|1");
-    const rewired = parts.find((e) => e.data.source === "s1" && e.data.target === "portal:s2")!;
+    const rewired = parts.find((e) => e.data.source === "s1" && e.data.target === G("f||shop|2"))!;
     expect(rewired.data.inLoop).toBe(1);
     expect(rewired.data.isIface).toBe(1);
   });
@@ -317,13 +343,13 @@ describe("partitionElementsForFloor", () => {
     expect(els).toEqual(snapshot);
   });
 
-  it("produces a subgraph the column solver can lay out (rooted on the FG portal, portals as leaves)", () => {
+  it("produces a subgraph the column solver can lay out (rooted on the FG portal, stubs as leaves)", () => {
     const cols = computeTopologyColumns(partitionElementsForFloor(site(), "f||shop|1"))!;
     expect(cols).toBeTruthy();
     expect(cols["portal:fg"].depth).toBe(0);
     expect(cols.s1.depth).toBe(2);
-    // Portal (no role → leaf weight) hangs in the odd column right of s1.
-    expect(cols["portal:s2"].depth).toBe(3);
+    // The next floor's stub (no role → leaf weight) hangs in the odd column right of s1.
+    expect(cols["portal:group:f||shop|2"].depth).toBe(3);
     expect(cols.ap1.depth).toBe(3);
   });
 });

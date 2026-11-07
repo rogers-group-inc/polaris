@@ -2203,6 +2203,20 @@
     };
   }
 
+  // The group a device outside the view is shown as: its group at the
+  // view's own level, else its nearest coded group (floor, then building,
+  // then area), else the untagged rest of the site — Base.
+  function _groupRefFor(d, kind) {
+    var order = kind === "area" ? ["area", "building", "floor"]
+      : kind === "building" ? ["building", "area", "floor"]
+      : ["floor", "building", "area"];
+    for (var i = 0; i < order.length; i++) {
+      var ref = _nodeViewRef(d, order[i]);
+      if (ref) return ref;
+    }
+    return { key: "flat", label: "Base" };
+  }
+
   // Partition a built element set down to one view — a floor view
   // ("f|a|b|f": that floor's tagged devices), a building view ("b|a|b":
   // ALL of that building's tagged devices, any floor) or an area view
@@ -2283,7 +2297,12 @@
       if (viewEntry[d.id]) copy.viewEntry = 1;
       out.push({ data: copy });
     });
-    var portalAdded = {};
+    var groupPortals = {};
+    var portalOrder = [];
+    // Network depth on the WHOLE site decides which neighbouring groups are
+    // upstream (shallower than the member they link to) and which downstream.
+    var siteCols = computeTopologyColumns(elements) || {};
+    function depthOf(id) { return siteCols[id] ? Math.abs(siteCols[id].depth) : Infinity; }
     (elements || []).forEach(function (el) {
       var d = el && el.data;
       if (!d || !d.source || !d.target) return;
@@ -2312,26 +2331,40 @@
       if (nodeById[localId].role === "fortigate") return;
       var remoteId = srcIn ? d.target : d.source;
       var remote = nodeById[remoteId];
-      var remoteRef = remote ? _nodeViewRef(remote, kind) : null;
-      if (!remoteRef) return; // far end untagged at this level — drop, no stub
-      var portalId = "portal:" + remoteId;
-      if (!portalAdded[portalId]) {
-        portalAdded[portalId] = true;
-        out.push({
-          data: {
-            id: portalId,
-            isPortal: 1,
-            label: "→ " + remoteRef.label + ": " + (remote.label || remoteId),
-            targetView: remoteRef.key,
-            remoteAssetId: remoteId,
-          },
-        });
+      if (!remote) return;
+      // One stub per neighbouring GROUP (operator, 2026-11-07: "each group
+      // should connect back to the group of the previous level and next
+      // level"): the far end's group at this view's level, else its nearest
+      // coded group at any level (an area view reaches a building with no
+      // area — Scale House), else the untagged rest of the site ("Base").
+      var g = _groupRefFor(remote, kind);
+      var portalId = "portal:group:" + g.key;
+      var up = depthOf(remoteId) < depthOf(localId);
+      var portal = groupPortals[portalId];
+      if (!portal) {
+        portal = groupPortals[portalId] = { id: portalId, label: g.label, key: g.key, up: false };
+        portalOrder.push(portal);
       }
+      // A group the view's uplinks come from is the PREVIOUS level, even when
+      // it also hangs something off this one.
+      if (up) portal.up = true;
       var e = Object.assign({}, d);
       e.id = "portal-" + e.id;
       if (srcIn) e.target = portalId;
       else e.source = portalId;
       out.push({ data: e });
+    });
+    portalOrder.forEach(function (p) {
+      out.push({
+        data: {
+          id: p.id,
+          isPortal: 1,
+          // ← the group this view is fed from; → a group it feeds.
+          isUpstreamPortal: p.up ? 1 : undefined,
+          label: (p.up ? "← " : "→ ") + p.label,
+          targetView: p.key,
+        },
+      });
     });
     return out;
   }
@@ -2785,11 +2818,24 @@
     // the view (viewEntry), and the anchor is left out of the result.
     var VIEW_ANCHOR = "__view_anchor__";
     var viewEntries = [];
-    if (!rootId) {
+    var hasRealFg = elements.some(function (el) { return el && el.data && !el.data.source && el.data.role === "fortigate"; });
+    if (!hasRealFg) {
+      // A location view: every stub for a group it is FED from (and a direct
+      // FortiGate stub) goes in the first column, rooted together; with no
+      // such stub, the members that link out of the view are the roots.
+      var stubs = [];
       elements.forEach(function (el) {
         var d = el && el.data;
-        if (d && d.id && !d.source && d.viewEntry) viewEntries.push(d.id);
+        if (d && d.id && !d.source && (d.isUpstreamPortal || d.isRootPortal)) stubs.push(d.id);
       });
+      if (stubs.length > 1 || (stubs.length === 1 && !rootPortalId)) {
+        viewEntries = stubs;
+      } else if (!stubs.length) {
+        elements.forEach(function (el) {
+          var d = el && el.data;
+          if (d && d.id && !d.source && d.viewEntry) viewEntries.push(d.id);
+        });
+      }
       if (viewEntries.length) {
         rootId = VIEW_ANCHOR;
         roleById[rootId] = "fortigate";
@@ -3863,9 +3909,12 @@
   // identifies the site: every device, location box and link with its
   // on-screen geometry, but device names, box names, IPs, MACs, serials,
   // asset ids and SSIDs replaced or left out. Devices are aliased by role
-  // (FW-1, SW-3, AP-7, …) and boxes by level (AREA-1, BLDG-2, FLOOR-1, ROOM-1,
-  // JB-1), numbered top-to-bottom, left-to-right, so the aliases read in
-  // screen order. Port names (port49, lan1) are kept: they identify nothing
+  // (SW-3f9a2, AP-07c1e, …) and boxes by level (AREA-…, BLDG-…, FLOOR-…,
+  // ROOM-…, JB-…), the suffix a hash of the asset id / box key SALTED with
+  // the site's firewall id (meta.salt): the same device or box carries the
+  // same alias in every view and every export of that site, so files can be
+  // compared, and nobody without the database can reverse one. (Numbering in
+  // screen order, the first build, named every drill-down "BLDG-1".) Port names (port49, lan1) are kept: they identify nothing
   // and say which cable is which. Pure over the cy instance; `meta` carries
   // what the page knows (the active view key, the pane size).
   var _ANON_ROLE = { fortigate: "FW", fortiswitch: "SW", fortiap: "AP", endpoint: "EP", "remote-asset": "REM", "wireless-station": "STA" };
@@ -3874,6 +3923,30 @@
     meta = meta || {};
     function r1(v) { return typeof v === "number" && isFinite(v) ? Math.round(v * 10) / 10 : null; }
     function byScreen(a, b) { return (a.y - b.y) || (a.x - b.x) || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0); }
+    var salt = String(meta.salt || "");
+    // FNV-1a over salt|text → 5 hex chars; a clash inside one export takes a
+    // -2, -3 … suffix.
+    function hash5(text) {
+      var h = 0x811c9dc5;
+      var str = salt + "|" + text;
+      for (var i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return ("00000" + (h >>> 0).toString(16)).slice(-5);
+    }
+    var usedAlias = {};
+    function uniqueAlias(prefix, text) {
+      var base = prefix + "-" + hash5(text);
+      var a = base, n = 1;
+      while (usedAlias[a] && usedAlias[a] !== text) a = base + "-" + (++n);
+      usedAlias[a] = text;
+      return a;
+    }
+    function keyAlias(key) {
+      if (!key || key === "flat") return "base";
+      return uniqueAlias(_ANON_KIND[key.slice(0, key.indexOf("|"))] || "VIEW", "box:" + key);
+    }
     var healthOf = {};
     Object.keys(HEALTH_NODE_COLORS || {}).forEach(function (k) { healthOf[String(HEALTH_NODE_COLORS[k]).toLowerCase()] = k; });
 
@@ -3903,33 +3976,27 @@
       return { key: key, x: bb ? bb.x1 : Infinity, y: bb ? bb.y1 : Infinity, k: key };
     }).sort(byScreen);
     var boxAlias = {};
-    var kindCount = {};
-    boxOrder.forEach(function (b) {
-      var kind = boxInfo[b.key].kind;
-      kindCount[kind] = (kindCount[kind] || 0) + 1;
-      boxAlias[b.key] = (_ANON_KIND[kind] || "BOX") + "-" + kindCount[kind];
-    });
+    boxOrder.forEach(function (b) { boxAlias[b.key] = keyAlias(b.key); });
 
     // Devices and portals, aliased in screen order.
     var alias = {};
-    var roleCount = {};
-    devices.map(function (n) { return { n: n, x: n.position("x"), y: n.position("y"), k: String(n.id()) }; })
-      .sort(byScreen)
-      .forEach(function (it) {
-        var p = _ANON_ROLE[it.n.data("role")] || "DEV";
-        roleCount[p] = (roleCount[p] || 0) + 1;
-        alias[it.n.id()] = p + "-" + roleCount[p];
-      });
-    var portalCount = 0;
-    portals.map(function (n) { return { n: n, x: n.position("x"), y: n.position("y"), k: String(n.id()) }; })
-      .sort(byScreen)
-      .forEach(function (it) { alias[it.n.id()] = "PORTAL-" + (++portalCount); });
+    devices.forEach(function (n) {
+      alias[n.id()] = uniqueAlias(_ANON_ROLE[n.data("role")] || "DEV", "dev:" + n.id());
+    });
+    // A stub is named for what it stands for: a FortiGate stub as that
+    // device, a group stub as that group's box alias.
+    portals.forEach(function (n) {
+      var d = n.data();
+      alias[n.id()] = d.remoteAssetId
+        ? "STUB:" + uniqueAlias("FW", "dev:" + d.remoteAssetId)
+        : "STUB:" + keyAlias(d.targetView);
+    });
 
     var out = {
       format: "polaris-topology-layout/1",
       exportedAt: new Date().toISOString(),
       anonymised: "device, box and site names, IPs, MACs, serials, asset ids and SSIDs are replaced or left out",
-      view: meta.view ? (meta.view === "flat" ? "base" : (boxAlias[meta.view] || "view")) : null,
+      view: meta.view ? keyAlias(meta.view) : null,
       pane: meta.pane ? { w: Math.round(meta.pane.w), h: Math.round(meta.pane.h) } : null,
       zoom: r1(cy.zoom()),
       devices: [],
@@ -3967,7 +4034,8 @@
       out.portals.push({
         id: alias[n.id()],
         root: n.data("isRootPortal") ? true : undefined,
-        toView: n.data("targetView") === "flat" ? "base" : (boxAlias[n.data("targetView")] || "view"),
+        upstream: n.data("isUpstreamPortal") ? true : undefined,
+        toView: keyAlias(n.data("targetView")),
         x: r1(n.position("x")), y: r1(n.position("y")),
       });
     });

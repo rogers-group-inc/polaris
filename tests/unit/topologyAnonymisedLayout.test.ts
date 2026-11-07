@@ -27,7 +27,7 @@ beforeAll(() => {
   vm.runInContext(readFileSync(resolve(here, "../../public/js/vendor/cytoscape.min.js"), "utf8"), sb);
   vm.runInContext(readFileSync(resolve(here, "../../public/js/topology-render.js"), "utf8"), sb);
   vm.runInContext(
-    "function exportSite(j) {" +
+    "function exportSite(j, salt) {" +
     "  var R = window.PolarisTopologyRender;" +
     "  var els = R.buildTopologyElements(JSON.parse(j));" +
     "  var cols = R.computeGroupedLayout(els);" +
@@ -35,7 +35,7 @@ beforeAll(() => {
     "  var cy = cytoscape({ headless: true, styleEnabled: true, elements: els, style: R.topologyStylesheet('dark', {}), layout: { name: 'preset', positions: pos } });" +
     "  R.renderLocationGroups(cy);" +
     "  var spec = JSON.parse(j); var view = 'a|' + cy.getElementById(spec.switches[0].id).data('locA');" +
-    "  var out = R.anonymisedLayout(cy, { view: view, pane: { w: 1600, h: 900 } });" +
+    "  var out = R.anonymisedLayout(cy, { view: view, salt: salt || 'site-salt-1', pane: { w: 1600, h: 900 } });" +
     "  cy.destroy(); return JSON.stringify(out); }",
     sb,
   );
@@ -82,8 +82,9 @@ describe("anonymisedLayout", () => {
     const out = JSON.parse(sb.exportSite(JSON.stringify(site())));
     expect(out.format).toBe("polaris-topology-layout/1");
     expect(out.pane).toEqual({ w: 1600, h: 900 });
-    const ids = out.devices.map((d: { id: string }) => d.id).sort();
-    expect(ids).toEqual(["AP-1", "AP-2", "FW-1", "SW-1", "SW-2"]);
+    const ids: string[] = out.devices.map((d: { id: string }) => d.id);
+    expect(ids.map((i) => i.split("-")[0]).sort()).toEqual(["AP", "AP", "FW", "SW", "SW"]);
+    for (const i of ids) expect(i).toMatch(/^(FW|SW|AP)-[0-9a-f]{5}$/);
     for (const d of out.devices) {
       expect(typeof d.x).toBe("number");
       expect(d.health).toBe("up");
@@ -92,10 +93,11 @@ describe("anonymisedLayout", () => {
     expect(kinds).toEqual(["area", "area", "building", "building", "building", "building"]);
     // Every building box sits in an area box.
     for (const b of out.boxes.filter((x: { kind: string }) => x.kind === "building")) {
-      expect(String(b.parent)).toMatch(/^AREA-\d+$/);
+      expect(String(b.parent)).toMatch(/^AREA-[0-9a-f]{5}$/);
     }
     // The view key named a real area — exported as its alias.
-    expect(out.view).toMatch(/^AREA-\d+$/);
+    expect(out.view).toMatch(/^AREA-[0-9a-f]{5}$/);
+    expect(out.boxes.map((b: { id: string }) => b.id)).toContain(out.view);
     // Port pairs survive (they identify nothing); the mesh link's SSID does not.
     const ports = out.links.map((l: { ports?: string }) => l.ports).filter(Boolean);
     expect(ports).toEqual(expect.arrayContaining(["port18 ↔ port12", "port7 ↔ lan1", "port9 ↔ port17"]));
@@ -103,8 +105,21 @@ describe("anonymisedLayout", () => {
     expect(mesh.ports).toBeUndefined();
     expect(mesh.signal).toBe("fair");
     for (const l of out.links) {
-      expect(l.a).toMatch(/^(FW|SW|AP|PORTAL)-\d+$/);
-      expect(l.b).toMatch(/^(FW|SW|AP|PORTAL)-\d+$/);
+      expect(l.a).toMatch(/^(STUB:)?(FW|SW|AP|AREA|BLDG|FLOOR|ROOM|JB)-[0-9a-f]{5}$|^STUB:base$/);
+      expect(l.b).toMatch(/^(STUB:)?(FW|SW|AP|AREA|BLDG|FLOOR|ROOM|JB)-[0-9a-f]{5}$|^STUB:base$/);
     }
+  });
+
+  // The first build numbered aliases in screen order per file, so the same
+  // switch was SW-9 in one export and SW-3 in the next, and every drill-down
+  // was "BLDG-1": files from one site could not be compared.
+  it("gives a device and a box the same alias in every export of one site, and different ones elsewhere", () => {
+    const a = JSON.parse(sb.exportSite(JSON.stringify(site()), "site-A"));
+    const b = JSON.parse(sb.exportSite(JSON.stringify(site()), "site-A"));
+    const c = JSON.parse(sb.exportSite(JSON.stringify(site()), "site-B"));
+    const ids = (o: { devices: { id: string }[]; boxes: { id: string }[] }) => [...o.devices.map((d) => d.id), ...o.boxes.map((x) => x.id)].sort();
+    expect(ids(a)).toEqual(ids(b));
+    expect(a.view).toBe(b.view);
+    expect(ids(c)).not.toEqual(ids(a));
   });
 });

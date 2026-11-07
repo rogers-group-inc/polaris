@@ -409,7 +409,7 @@ and an undone change is saved like any other edit.
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
-| **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Each view keeps its own saved layout |
+| **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Instead, every view shows a dashed stub for each neighbouring group: **← Scale House** for a group the view is fed from (drawn on the left, a line from each device that links to it) and **→ Mine** for a group it feeds (on the right). A neighbour with no location code at the view's level shows as its nearest coded group (a building with no area, in an area view), and one with no code at all as **Base**. Tap a stub to open that group's view. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
 | **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
@@ -472,9 +472,11 @@ To export the whole site, zoom out until all of it is in view first.
   for sharing a layout problem (with Polaris's developers, for example) without
   naming your site. Every device, location box and link is in it with its
   on-screen position, size, outline and routed bends, plus each link's kind,
-  speed or mesh signal and port pair. Devices are renamed by type in screen
-  order (`FW-1`, `SW-3`, `AP-7`) and location boxes by level (`AREA-1`,
-  `BLDG-2`, `FLOOR-1`, `ROOM-1`, `JB-1`); hostnames, location names, IP and
+  speed or mesh signal and port pair. Devices are renamed by type
+  (`SW-3f9a2`, `AP-07c1e`) and location boxes by level (`AREA-…`, `BLDG-…`,
+  `FLOOR-…`, `ROOM-…`, `JB-…`). A device or box keeps the same name in every
+  view and every export from the same site, so several files can be read
+  together, and the names mean nothing outside it. Hostnames, location names, IP and
   MAC addresses, serial numbers, asset ids and SSIDs are left out. Port names
   (`port49`, `lan1`) are kept. Look the file over before you share it.
 
