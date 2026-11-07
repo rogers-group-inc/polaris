@@ -125,21 +125,19 @@
   function ensurePanel() {
     var overlay = document.getElementById(OVERLAY_ID);
     if (overlay) return overlay;
-    overlay = document.createElement("div");
-    overlay.id = OVERLAY_ID;
-    overlay.className = "slideover-overlay";
-    overlay.innerHTML =
-      '<div class="slideover" id="tls-pins-panel" role="dialog" aria-labelledby="tls-pins-title" tabindex="-1">' +
-        '<div class="slideover-resize-handle"></div>' +
-        '<div class="slideover-header">' +
-          '<div class="slideover-header-top">' +
-            '<div class="slideover-header-lead"><h3 id="tls-pins-title">Pinned server identities</h3></div>' +
-            '<button class="btn-icon" id="tls-pins-close" title="Close" aria-label="Close pinned server identities">&times;</button>' +
-          "</div>" +
-          '<div class="slideover-meta" id="tls-pins-meta"></div>' +
-          // In the header, not the body, so it stays put while the cards
-          // scroll. A plain flex row rather than .filter-bar: that is the
-          // page-level sticky bar and reads as a slab inside a slide-over.
+    // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+    overlay = buildSlideover({
+      id: "tls-pins-panel",
+      prefix: "tls-pins",
+      overlayId: OVERLAY_ID,
+      dialog: true,
+      title: "Pinned server identities",
+      titleLead: true,
+      closeLabel: "Close pinned server identities",
+      // In the header, not the body, so it stays put while the cards
+      // scroll. A plain flex row rather than .filter-bar: that is the
+      // page-level sticky bar and reads as a slab inside a slide-over.
+      headerHTML:
           '<div id="tls-pins-filters" style="display:flex;gap:6px;margin-top:0.6rem">' +
             '<input type="text" data-pin-filter="q" placeholder="Filter by IP, hostname, thumbprint, subject or key type" ' +
               'aria-label="Filter pinned identities" autocomplete="off" spellcheck="false" ' +
@@ -150,17 +148,14 @@
               '<option value="ssh">SSH host keys</option>' +
               '<option value="archived">Archived (decommissioned)</option>' +
             "</select>" +
-          "</div>" +
-        "</div>" +
-        '<div class="slideover-body" id="tls-pins-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading...</p></div>' +
-        '<div class="slideover-footer"><button type="button" class="btn btn-secondary" id="tls-pins-done">Close</button></div>' +
-      "</div>";
-    document.body.appendChild(overlay);
-    overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
-    document.getElementById("tls-pins-close").addEventListener("click", close);
+          "</div>",
+      bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading...</p>',
+      footer: '<button type="button" class="btn btn-secondary" id="tls-pins-done">Close</button>',
+      footerId: null,
+      close: close,
+      resizeKey: "polaris.panel.width.tlsPins",
+    }).overlay;
     document.getElementById("tls-pins-done").addEventListener("click", close);
-    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, close);
-    if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("tls-pins-panel"), "polaris.panel.width.tlsPins");
     document.getElementById("tls-pins-body").addEventListener("click", onBodyClick);
     var filters = document.getElementById("tls-pins-filters");
     filters.addEventListener("input", function () { renderPanel(lastData); });

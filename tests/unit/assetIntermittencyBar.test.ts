@@ -34,8 +34,14 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { replayProbeStates } from "../../src/services/probeOutageService.js";
 import { resolve } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const chartSharedSrc = readFileSync(resolve(__dirname, "../../public/js/chart-shared.js"), "utf8");
 
 const statesSrc = readFileSync(resolve(__dirname, "../../public/js/monitor-states.js"), "utf8");
 
@@ -228,7 +234,9 @@ describe("_intermittencyStates", () => {
     // and must be the SAME value the response-time chart directly below it uses
     // for the same state, which is the entire reason the two are stacked.
     expect(map).toMatch(/recovering:\s*"rgba\(2,136,209,/);
-    const chartBlue = /var _CHART_RECOVER_COLOR = "(#[0-9a-f]{6})";/.exec(src)![1];
+    // The value lives in chart-shared.js (shared with the phone); assets.js aliases it.
+    expect(src).toContain("var _CHART_RECOVER_COLOR = PolarisChartShared.RECOVER_COLOR;");
+    const chartBlue = /var RECOVER_COLOR = "(#[0-9a-f]{6})";/.exec(chartSharedSrc)![1];
     expect(chartBlue).toBe("#0288d1");
     // Never the muted lavender #9575cd (149,117,205), which means MAINTENANCE
     // elsewhere in the product — the trap the old purple sat one shade from.
@@ -245,7 +253,8 @@ describe("_intermittencyStates", () => {
     // stacked directly below does it in _chartPointColor.
     expect(map).toMatch(/dep:\s*_hexWithAlpha\(_CHART_DEP_COLOR,/);
     // One grey across the strip, that chart, and the alert email's chart.
-    expect(/var _CHART_DEP_COLOR = "(#[0-9a-f]{6})";/.exec(src)![1]).toBe("#9aa0a6");
+    expect(src).toContain("var _CHART_DEP_COLOR = PolarisChartShared.DEP_COLOR;");
+    expect(/var DEP_COLOR = "(#[0-9a-f]{6})";/.exec(chartSharedSrc)![1]).toBe("#9aa0a6");
     // Grey OUTRANKS the amber/down split — a miss nobody is counting against
     // this device says nothing by sitting near the threshold.
     expect(src).toContain("var color = st.dep ? colors.dep : (colors[st.status] || colors.unknown);");

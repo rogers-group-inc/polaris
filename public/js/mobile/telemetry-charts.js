@@ -95,79 +95,14 @@
     return out;
   }
 
-  // Band tables — the desktop's _MEM_BANDS_* (same keys, labels, colours), so
-  // a chip means the same thing on both surfaces.
-  var BANDS_AGENT = [
-    { key: "processes", label: "Processes", color: "#f4a261" },
-    { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
-    { key: "cache",     label: "Cache",     color: "#2a9d8f" },
-  ];
-  var BANDS_VSPHERE = [
-    { key: "consumed",   label: "Consumed",     color: "#f4a261" },
-    { key: "private",    label: "Private",      color: "#f4a261" },
-    { key: "shared",     label: "Shared",       color: "#2a9d8f" },
-    { key: "ballooned",  label: "Ballooned",    color: "#e9c46a" },
-    { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
-    { key: "compressed", label: "Compressed",   color: "#4d96d9" },
-  ];
-  function relabel(map) {
-    return BANDS_AGENT.map(function (b) { return { key: b.key, label: map[b.key] || b.label, color: b.color }; });
-  }
-  var BANDS_TRUENAS = relabel({ processes: "Services", cache: "ZFS Cache" });
-  var BANDS_PROXMOX = relabel({ processes: "Used", cache: "ZFS ARC" });
-  var SWAP_COLOR = "#9c6ade";
-
-  function agentBandsFor(asset) {
-    var v = asset && asset.virtualization;
-    if (v && v.platform === "proxmox" && v.role === "host") return BANDS_PROXMOX;
-    return v && v.platform === "truenas" && v.role === "host" ? BANDS_TRUENAS : BANDS_AGENT;
-  }
-
-  function num(v) {
-    if (v == null || v === "") return null;
-    var n = Number(v);
-    return isFinite(n) ? n : null;
-  }
-
-  /**
-   * One sample → { kind, values, total, inUse, swapUsed, swapTotal }, or null
-   * when it carries no total (a percentage-only source). `values` holds null
-   * for a band the source did not report, distinct from 0 for one it reported
-   * empty. Port of `_memBandsFor` in public/js/assets.js.
-   */
-  function memBandsFor(s) {
-    var total = num(s.memTotalBytes);
-    if (total == null) return null;
-    var vs = {
-      consumed:   num(s.memConsumedBytes),
-      private:    num(s.memPrivateBytes),
-      shared:     num(s.memSharedBytes),
-      ballooned:  num(s.memBalloonedBytes),
-      swapped:    num(s.memSwappedBytes),
-      compressed: num(s.memCompressedBytes),
-    };
-    var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
-    var values, table;
-    if (isVsphere) {
-      values = vs;
-      table = BANDS_VSPHERE;
-    } else {
-      var used = num(s.memUsedBytes);
-      if (used == null) return null;
-      values = { processes: used, buffers: num(s.memBuffersBytes), cache: num(s.memCachedBytes) };
-      table = BANDS_AGENT;
-    }
-    var sum = 0;
-    table.forEach(function (b) { sum += values[b.key] || 0; });
-    return {
-      kind: isVsphere ? "vsphere" : "agent",
-      values: values,
-      total: total,
-      inUse: Math.min(total, sum),
-      swapUsed: num(s.swapUsedBytes),
-      swapTotal: num(s.swapTotalBytes),
-    };
-  }
+  // Band tables and the sample → bands shaping are shared with the desktop
+  // memory chart — public/js/chart-shared.js, loaded before this file — so a
+  // chip means the same thing on both surfaces.
+  var CS = window.PolarisChartShared;
+  var BANDS_VSPHERE = CS.MEM_BANDS_VSPHERE;
+  var SWAP_COLOR = CS.MEM_SWAP_COLOR;
+  var agentBandsFor = CS.memAgentBandsFor;
+  var memBandsFor = CS.memBandsFor;
 
   // ─── Named-series visibility (persisted on this device) ────────────────
   var PREFS_KEY = "polaris-mobile-series-visibility";

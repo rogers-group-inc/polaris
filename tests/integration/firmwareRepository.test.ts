@@ -14,6 +14,7 @@
 import { it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { hashPassword } from "../../src/utils/password.js";
@@ -253,6 +254,22 @@ d("firmware repository routes", () => {
     const promoted = await writer.agent.post(`/api/v1/server-settings/firmware/images/${first.id}/make-primary`).set("X-CSRF-Token", writer.csrf);
     expect(promoted.status).toBe(200);
     expect(promoted.body.image.role).toBe("primary");
+  });
+
+  it("download is a read verb: the reader gets the exact bytes as an attachment; none is refused; a missing id 404s", async () => {
+    const reader = await loginAs(readerU);
+    const list = await reader.agent.get("/api/v1/server-settings/firmware/images").query({ manufacturer: MFR, assetType: "switch", model: "FortiSwitch S108FF" });
+    const img = list.body.images.find((i: { versionLabel: string }) => i.versionLabel === "7.6.9 build1200");
+    const dl = await reader.agent.get(`/api/v1/server-settings/firmware/images/${img.id}/download`)
+      .buffer(true).parse((res, cb) => { const chunks: Buffer[] = []; res.on("data", (c: Buffer) => chunks.push(c)); res.on("end", () => cb(null, Buffer.concat(chunks))); });
+    expect(dl.status).toBe(200);
+    expect(dl.headers["content-type"]).toBe("application/octet-stream");
+    expect(dl.headers["content-disposition"]).toMatch(/^attachment; filename="?FSW_108F-v7-build1200-FORTINET\.out"?/);
+    expect(createHash("sha256").update(dl.body as Buffer).digest("hex")).toBe(img.sha256);
+
+    const none = await loginAs(noneU);
+    expect((await none.agent.get(`/api/v1/server-settings/firmware/images/${img.id}/download`)).status).toBe(403);
+    expect((await reader.agent.get("/api/v1/server-settings/firmware/images/00000000-0000-0000-0000-000000000000/download")).status).toBe(404);
   });
 
   it("bindings: scope validation, one per node, form-mode credentials only, and the effective login on the tree", async () => {

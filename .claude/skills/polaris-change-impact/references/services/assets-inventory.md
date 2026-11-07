@@ -631,9 +631,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **The VLAN fill runs PER SWITCH.** `fillAccessPortVlans` decides whether a switch reports a tagged dimension across that switch's ports; over the merged set one switch's trunks would license filling another switch's uplink rows.
 - **No gate freshness stamp.** The rows are the children's; each carries its own `lastSystemInfoAt`, and polling the gate re-reads none of them (so neither surface offers a Poll button).
 
-**When changing this:** a new child kind (a FortiExtender) is a new `ControllerChildType` and a new row source. A new column the tables show goes in the `select` here AND in the matchers of both UIs (`_childFilterMatches` in `assets.js`, `tableFilterMatches` in `mobile/asset-detail.js` — one rule, two copies).
+**When changing this:** a new child kind (a FortiExtender) is a new `ControllerChildType` and a new row source. A new column the tables show goes in the `select` here AND in the one matcher both UIs call (`PolarisAssetShared.childFilterMatches` in `public/js/asset-shared.js` — `_childFilterMatches` in `assets.js` wraps it, `tableFilterMatches` in `mobile/asset-detail.js` aliases it) and in each UI's call sites.
 
-**Tests:** `tests/unit/controllerChildrenService.test.ts` (stamp OR + live-only + sort, 404, no-identity short-circuit, one-query counts, one IN query per table, the per-switch fill), `tests/unit/mobileAssetTableSheets.test.ts` (the phone buttons + pages), `tests/unit/assetWirelessTreeDom.test.ts` (`_childFilterMatches`).
+**Tests:** `tests/unit/controllerChildrenService.test.ts` (stamp OR + live-only + sort, 404, no-identity short-circuit, one-query counts, one IN query per table, the per-switch fill), `tests/unit/mobileAssetTableSheets.test.ts` (the phone buttons + pages), `tests/unit/assetWirelessTreeDom.test.ts` (`_childFilterMatches`), `tests/unit/assetSharedModules.test.ts` (the shared matcher).
 
 ---
 

@@ -86,7 +86,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { normalizeAgentServerUrl } from "../../utils/agentServerUrl.js";
 import { stripControlChars } from "../../utils/safeText.js";
-import { runtimeIsContainer } from "../../utils/deploymentContext.js";
+import { runtimeIsContainer, describeDatabaseEndpoint } from "../../utils/deploymentContext.js";
 import { hasActiveDiscoveries } from "../../services/discovery/discoveryEngine.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -220,11 +220,9 @@ router.get("/database", async (_req, res, next) => {
     // lifecycle probe so the two cannot disagree about what "15.13" means.
     const shortVersion = parsePostgresVersion(version) ?? version;
 
-    // Parse connection URL for host/port
-    const connUrl = process.env.DATABASE_URL || "";
-    const urlMatch = connUrl.match(/@([^:/?]+)(?::(\d+))?/);
-    const host = urlMatch ? urlMatch[1] : "localhost";
-    const port = urlMatch && urlMatch[2] ? parseInt(urlMatch[2], 10) : 5432;
+    // Host / port for display, parsed with URL (a bracketed IPv6 host and a
+    // socket-only URL both broke the regex this replaced).
+    const { host, port } = describeDatabaseEndpoint(process.env.DATABASE_URL);
 
     // Authoritative SSL state from the live backend, not the URL — `sslmode`
     // has six values (require / verify-ca / verify-full / no-verify / prefer /

@@ -37,6 +37,7 @@ import {
   getFirmwareTree,
   listImages,
   getImage,
+  getImageDownload,
   registerUploadedImage,
   discardIncomingUpload,
   setPrimaryImage,
@@ -264,6 +265,20 @@ firmwareRouter.post("/images", requirePermission("firmware", "write"), uploadSin
 
 firmwareRouter.get("/images/:id", requirePermission("firmware", "read"), handle(async (req, res) => {
   res.json({ image: await getImage(String(req.params.id)) });
+}));
+
+// The image bytes, as an attachment. `read`, not `write`: a role that may see
+// the Repository may take a copy of what is in it (the MIB download precedent).
+// Streamed from disk — an image is up to 300 MiB. `dotfiles: "allow"` because
+// FIRMWARE_DIR may sit under a dot-directory (a worktree, a hidden data dir).
+firmwareRouter.get("/images/:id/download", requirePermission("firmware", "read"), handle(async (req, res) => {
+  const file = await getImageDownload(String(req.params.id));
+  res.attachment(file.filename);
+  await new Promise<void>((resolveSend, rejectSend) => {
+    res.sendFile(file.absPath, { dotfiles: "allow", headers: { "Content-Type": "application/octet-stream" } }, (err) => {
+      if (err && !res.headersSent) rejectSend(err); else resolveSend();
+    });
+  });
 }));
 
 firmwareRouter.post("/images/:id/make-primary", requirePermission("firmware", "write"), handle(async (req, res) => {

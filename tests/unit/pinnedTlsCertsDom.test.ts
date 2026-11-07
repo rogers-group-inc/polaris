@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs";
 
 const SRC = readFileSync(join(process.cwd(), "public", "js", "pinned-tls-certs.js"), "utf-8");
 
@@ -65,7 +66,7 @@ function boot(canManage: boolean) {
       archivedHostPinsList: vi.fn(async () => ({ archivedPins: ARCHIVED })),
     },
   };
-  new Function(SRC)();
+  new Function(SLIDEOVER_BUILDER + "\n" + SRC)();
   g.PolarisPinnedTlsCerts.mount(document.getElementById("host"));
   return g;
 }

@@ -153,6 +153,8 @@ export interface HardwareSensorSampleRow {
   value: number | null;
   unit: string | null;
   alarmStatus: string | null;
+  /** The port a transceiver reading belongs to (business rule 143). */
+  ifName?: string | null;
 }
 
 /** Selection cadence for system-info samples (interface / storage / ipsec).

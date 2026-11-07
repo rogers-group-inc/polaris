@@ -546,7 +546,7 @@
           id: ep.id,
           label: ep.hostname || ep.ipAddress || "endpoint",
           role: "endpoint",
-          nodeColor: endpointNodeColor(leaf),
+          nodeColor: window.PolarisTopologyRender.endpointNodeColor(leaf),
           synthetic: 1,
         },
       });
@@ -609,25 +609,6 @@
     try {
       _cy.animate({ fit: { eles: pathElements, padding: 40 }, duration: 350 });
     } catch (e) { /* fit may fail on single-node paths */ }
-  }
-
-  // Color the synthetic endpoint node by its monitor state — same five-state
-  // palette the firewall / switch / AP nodes use so the path reads as a
-  // single visual scheme. Mirrors desktop's endpointNodeColor.
-  function endpointNodeColor(hop) {
-    // Shared node-health palette (api.js POLARIS_HEALTH_COLORS, re-exposed by
-    // topology-render.js which mobile.html loads).
-    var P = window.POLARIS_HEALTH_COLORS;
-    if (!hop || !hop.monitored) return P.unmonitored;
-    switch (hop.monitorStatus) {
-      case "up":         return P.up;
-      case "warning":    return P.degraded;
-      case "down":       return P.down;
-      case "recovering": return P.recovering;
-      // No verdict rendered — distinct from the grey "no samples" unknown.
-      case "passive":    return P.passive;
-      default:           return P.unknown;
-    }
   }
 
   // Pick the node to focus on initial render. No focusTerm → FortiGate.

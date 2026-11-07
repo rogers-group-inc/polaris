@@ -14,8 +14,8 @@
 
 (function () {
   // Topology node-health palette. Shared by fortinetNodeColor() and the legend
-  // here, AND by map.js's endpointNodeColor() (which loads after this file and
-  // reads it off window.PolarisTopologyRender). These hues are deliberately
+  // here and by endpointNodeColor() below, AND read off
+  // window.PolarisTopologyRender by map.js. These hues are deliberately
   // distinct from the CSS --color-* theme variables and from the assets-page
   // monitor-state palette — do NOT remap them. Extracting them here only
   // deduplicates the literals across the two files; the rendered values are
@@ -23,6 +23,24 @@
   // Canonical hexes live in api.js (POLARIS_HEALTH_COLORS — loaded first on
   // every page); re-exposed here for the topology consumers.
   var HEALTH_NODE_COLORS = window.POLARIS_HEALTH_COLORS;
+
+  // Color the synthetic endpoint node of a path / where-is search by its
+  // monitor state — the same five-state palette the firewall / switch / AP
+  // nodes use, so the path reads as one visual scheme. Shared by the desktop
+  // Device Map (map.js) and the phone's topology tab (mobile/topology-tab.js).
+  function endpointNodeColor(hop) {
+    var P = HEALTH_NODE_COLORS;
+    if (!hop || !hop.monitored) return P.unmonitored;
+    switch (hop.monitorStatus) {
+      case "up":         return P.up;
+      case "warning":    return P.degraded;
+      case "down":       return P.down;
+      case "recovering": return P.recovering;
+      // No verdict rendered — distinct from the grey "no samples" unknown.
+      case "passive":    return P.passive;
+      default:           return P.unknown;
+    }
+  }
 
   // Color a Fortinet-infrastructure node (FortiGate, FortiSwitch, FortiAP)
   // from its monitor health. Same priority as the asset list Status pill:
@@ -3931,6 +3949,7 @@
     topologyLegendRow: topologyLegendRow,
     HEALTH_NODE_COLORS: HEALTH_NODE_COLORS,
     fortinetNodeColor: fortinetNodeColor,
+    endpointNodeColor: endpointNodeColor,
     buildTopologyElements: buildTopologyElements,
     markPhysicalLoops: markPhysicalLoops,
     topologyStylesheet: topologyStylesheet,

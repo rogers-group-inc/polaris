@@ -21,6 +21,11 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 type Outage = { from: string; to: string; kind?: string };
 type Marker = { t: number; dep: boolean };
@@ -53,6 +58,7 @@ beforeAll(() => {
   const g = globalThis as Record<string, unknown>;
   g.window = win;
   g.document = win.document;
+  loadSharedModules();
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/mobile/charts.js"), "utf8"));
   impls.mobile = (win as unknown as { PolarisCharts: { _outageMarkers: MarkersFn } }).PolarisCharts._outageMarkers;
 });

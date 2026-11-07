@@ -21,6 +21,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadSharedModules } from "./_sharedModules.js";
+
+// assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
+// which their pages load first (public/js/chart-shared.js, asset-shared.js).
+loadSharedModules();
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
