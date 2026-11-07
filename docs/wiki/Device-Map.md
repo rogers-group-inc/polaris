@@ -304,6 +304,14 @@ the far side of the area. A chain of switches stays on one straight row, an
 access point beside it moves off that row so that no link runs through a
 device, and devices with no links at all sit in a row under the map.
 
+The map is laid out to the shape of the window it opens in. On a wide screen,
+a box that has to move out of the way moves sideways rather than down, so a
+deep site spreads across the screen instead of stacking into a tall column; on
+a phone held upright the same site comes out taller, and the dashboard widget
+fits its own tile. The shape is decided when the layout is made, so it does not
+change when you resize the window afterwards; **Reset to baseline** lays it out
+again for the window as it is.
+
 A link that leaves a location box goes out through whichever side is nearest
 its target, including the top or bottom, so a building just below a wide area
 is reached by a short drop, not a trip around the area.

@@ -3308,7 +3308,17 @@
     return best;
   }
 
-  function computeGroupedLayout(elements) {
+  // ROW WEIGHT: what one cell moved off the upstream's row costs against one
+  // cell moved right. At 1 a deep site stacked downward into a tall column
+  // (operator screenshot 2026-11-07); the layout is therefore run at several
+  // weights and the one whose overall shape is closest to the target aspect
+  // (the map's container, width / height; 16:9 when not given) is kept —
+  // ties to the lighter weight, which keeps links shorter.
+  var LEVEL_ROW_WEIGHTS = [1, 1.5, 2, 3, 4, 6, 9];
+  var LEVEL_DEFAULT_ASPECT = 16 / 9;
+  function computeGroupedLayout(elements, opts) {
+    var aspect = opts && opts.aspect > 0 && isFinite(opts.aspect) ? opts.aspect : LEVEL_DEFAULT_ASPECT;
+    var rowWeight = 1;
     var global = computeTopologyColumns(elements);
     if (!global) return null;
     var upstream = _upstreamMap(elements, global);
@@ -3507,7 +3517,7 @@
           });
           for (var yi = 0; yi < ys.length; yi++) {
             var y = ys[yi];
-            var cost = dx + Math.abs(y - prefY) + (y < prefY ? 0.01 : 0);
+            var cost = dx + rowWeight * Math.abs(y - prefY) + (y < prefY ? 0.01 : 0);
             if (best && cost >= best.cost) break;
             if (!itemClear(it, x, y)) continue;
             if (up && Math.abs(y + entryRel.y - up.y) < 0.01 && !ownLinkClear(up.x, up.y, x + entryRel.x, up.host)) continue;
@@ -3605,12 +3615,39 @@
       return { w: width, h: height, ext: maxExt + own, rel: out };
     }
 
-    var placed = layout(root).rel;
+    // One run per row weight; keep the shape nearest the target aspect
+    // (compared as log ratios, so 2× too wide and 2× too tall weigh alike).
+    var bestRun = null;
+    LEVEL_ROW_WEIGHTS.forEach(function (w) {
+      rowWeight = w;
+      var rel = layout(root).rel;
+      var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+      Object.keys(rel).forEach(function (id) {
+        var p = rel[id];
+        if (p.x < x1) x1 = p.x;
+        if (p.x > x2) x2 = p.x;
+        if (p.y < y1) y1 = p.y;
+        if (p.y > y2) y2 = p.y;
+      });
+      // Device centres span plus one cell, so a single row is not "infinitely wide".
+      var shape = isFinite(x1) ? (x2 - x1 + 1) / (y2 - y1 + 1) : aspect;
+      var miss = Math.abs(Math.log(shape / aspect));
+      if (!bestRun || miss < bestRun.miss - 1e-9) bestRun = { rel: rel, miss: miss };
+    });
+    var placed = bestRun.rel;
     var positions = {};
     Object.keys(placed).forEach(function (id) {
       positions[id] = { depth: placed[id].x, lane: placed[id].y };
     });
     return positions;
+  }
+
+  // The aspect (width / height) a topology should be laid out for: the
+  // container it is drawn in. Undefined when the element is missing or has no
+  // size yet (hidden), so computeGroupedLayout falls back to 16:9.
+  function layoutAspect(el) {
+    var w = el && el.clientWidth, h = el && el.clientHeight;
+    return w > 0 && h > 0 ? w / h : undefined;
   }
 
   // Upstream (parent) device of every device, from the same pass the level
@@ -4090,6 +4127,7 @@
     separateNodes: separateNodes,
     edgeTooltipHtml: edgeTooltipHtml,
     linkSpeedClass: linkSpeedClass,
+    layoutAspect: layoutAspect,
     meshSignalClass: meshSignalClass,
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,

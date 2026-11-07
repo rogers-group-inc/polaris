@@ -341,7 +341,10 @@
     // right: depth → x, lane → y, at the desktop's spacing. Location-coded
     // sites use the quotient (grouped-box) layout; untagged sites fall
     // through to the flat column solver; no firewall root → dagre LR.
-    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
+    // Laid out for the phone's graph pane: a portrait screen gets a tall map.
+    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements, {
+      aspect: window.PolarisTopologyRender.layoutAspect(document.getElementById("topo-graph")),
+    }) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     var layoutConfig;
     if (columns) {
