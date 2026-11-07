@@ -1527,8 +1527,11 @@
   // corridors (direct at the target's row, above/below the target box,
   // canvas top/bottom) are scored by how many OTHER top-level boxes the
   // three runs would cross plus path length — the cheapest clear channel
-  // wins. Corridor usage is counted so edges sharing a channel fan out in
-  // 9px steps instead of stacking. The polyline is rendered with Cytoscape's
+  // wins. Then, over ALL routed edges at once: the links leaving one box by
+  // one exit in one direction (a BUNDLE) share one trunk line; each peels
+  // off on its own lane near its target; a different bundle never comes
+  // within BUNDLE_GAP of it; and every line touches a device on its own
+  // (END_FAN) so it can be hovered there — operator sketch, 2026-11-07. The polyline is rendered with Cytoscape's
   // `segments` curve style (weights/distances projected onto the S→T line);
   // edges the router can't place (missing boxes) keep the taxi fallback.
   var _ROUTE_MARGIN = 26;   // corridor distance outside a box edge
@@ -1688,13 +1691,7 @@
       var r = _nodeClearance(n);
       return { id: n.id(), x1: p.x - r, y1: p.y - r, x2: p.x + r, y2: p.y + r };
     });
-    var corridorUse = {}; // rounded corridor coordinate -> count (fan-out stagger)
-    function stagger(kind, coord) {
-      var key = kind + ":" + Math.round(coord / 10) * 10;
-      var k = corridorUse[key] || 0;
-      corridorUse[key] = k + 1;
-      return coord + k * 9;
-    }
+    var plans = [];
     cy.edges("[isInterGroup]").forEach(function (e) {
       // An operator-drawn path (topology-edge-editor.js) owns its geometry.
       if (e.data("customPath")) return;
@@ -1792,19 +1789,133 @@
           });
         });
       }
+      plans.push({
+        e: e, S: S, T: T, rS: rS, rT: rT, best: best,
+        trunk: best.kind === "vertical" ? best.ex : cx,
+        srcId: sN.id(), tgtId: tN.id(),
+        // One bundle = the links leaving one source box by the same exit,
+        // heading the same way (up or down): they share one trunk and peel
+        // off near their targets (operator sketch). A link from any other
+        // box is another bundle and never shares that trunk.
+        // A top / bottom exit leaves from the device's own column, so it
+        // bundles per device; a side exit leaves by the box's wall.
+        bundle: (sHull || sN.id()) + "|" + (best.kind === "vertical" ? "v:" + sN.id() : "side") + "|" + (T.x >= S.x ? "R" : "L") + "|" + (best.cy < S.y ? "U" : "D"),
+      });
+    });
+
+    // ── Trunks, lanes and separate ends (operator sketch, 2026-11-07) ──
+    // Links SHARE a line only in the middle and only when they belong
+    // together: one bundle = the links leaving one source box by one exit
+    // in one direction. A bundle's links ride one TRUNK (the vertical out of the source
+    // box) drawn as a single line; a different bundle that would use the
+    // same trunk gets its own, BUNDLE_GAP away — an unrelated line is never
+    // stacked onto another. Where a bundle's links turn toward their targets
+    // each takes its own LANE: the target nearest the trunk the lane nearest
+    // the targets, so branches peel off without crossing. And every line
+    // touches a device on its own: links leaving one device fan out of it,
+    // links entering one device come in side by side — so each can be
+    // hovered right at the icon.
+    var BUNDLE_GAP = 22;
+    var LANE = 16;
+    var END_FAN = 12;
+    function spansOverlap(a1, a2, b1, b2) { return Math.min(a1, a2) < Math.max(b1, b2) && Math.min(b1, b2) < Math.max(a1, a2); }
+    // Bundles in first-seen order, each with its members.
+    var bundleOrder = [];
+    var membersOf = {};
+    plans.forEach(function (pl) {
+      if (!membersOf[pl.bundle]) { membersOf[pl.bundle] = []; bundleOrder.push(pl.bundle); }
+      membersOf[pl.bundle].push(pl);
+    });
+    // Trunks: a bundle's members share its first member's trunk exactly; a
+    // bundle whose trunk would come within BUNDLE_GAP of another bundle's
+    // (over a shared stretch of height) steps away until it is clear.
+    var placedTrunks = [];
+    bundleOrder.forEach(function (bundle) {
+      var ms = membersOf[bundle];
+      var first = ms[0];
+      var dir = first.best.kind === "vertical" || first.T.x >= first.S.x ? 1 : -1;
+      var y1 = Infinity, y2 = -Infinity;
+      ms.forEach(function (pl) {
+        y1 = Math.min(y1, pl.S.y, pl.best.cy);
+        y2 = Math.max(y2, pl.S.y, pl.best.cy);
+      });
+      var x = first.trunk;
+      for (var guard = 0; guard < 60; guard++) {
+        var hit = placedTrunks.some(function (t) { return Math.abs(t.x - x) < BUNDLE_GAP && spansOverlap(y1, y2, t.y1, t.y2); });
+        if (!hit) break;
+        x += BUNDLE_GAP * dir;
+      }
+      placedTrunks.push({ x: x, y1: y1, y2: y2 });
+      ms.forEach(function (pl) { pl.trunkS = x; });
+    });
+    // Lanes: inside a bundle, members whose corridors coincide (within 20 px)
+    // take their own LANE each — the target nearest the trunk the lane
+    // nearest the targets, so branches peel off without crossing. A lane
+    // block that would come within BUNDLE_GAP of another bundle's lane (over
+    // a shared stretch of width) steps away, block and all.
+    var placedLanes = [];
+    bundleOrder.forEach(function (bundle) {
+      var ms = membersOf[bundle].slice();
+      var groups = [];
+      ms.forEach(function (pl) {
+        var g = groups.filter(function (gg) { return Math.abs(gg.cy - pl.best.cy) < 20; })[0];
+        if (!g) { g = { cy: pl.best.cy, members: [] }; groups.push(g); }
+        g.members.push(pl);
+      });
+      groups.forEach(function (g) {
+        g.members.sort(function (p1, p2) {
+          return Math.abs(p1.T.x - p1.trunkS) - Math.abs(p2.T.x - p2.trunkS) || (p1.tgtId < p2.tgtId ? -1 : p1.tgtId > p2.tgtId ? 1 : 0);
+        });
+        // Lanes step AWAY from the targets.
+        var away = g.members[0].T.y < g.cy ? 1 : -1;
+        var shift = 0;
+        function lanesAt(sh) {
+          return g.members.map(function (pl, k) {
+            var ax = pl.best.ax;
+            return { y: g.cy + (sh + k * LANE) * away, x1: Math.min(pl.trunkS, ax), x2: Math.max(pl.trunkS, ax) };
+          });
+        }
+        for (var guard = 0; guard < 60; guard++) {
+          var mine = lanesAt(shift);
+          var hit = mine.some(function (l) {
+            return placedLanes.some(function (o) { return Math.abs(o.y - l.y) < BUNDLE_GAP && spansOverlap(l.x1, l.x2, o.x1, o.x2); });
+          });
+          if (!hit) break;
+          shift += BUNDLE_GAP;
+        }
+        lanesAt(shift).forEach(function (l, k) { g.members[k].cyS = l.y; placedLanes.push(l); });
+      });
+    });
+    // Ends: the k-th link out of / into one device is fanned END_FAN apart.
+    function fanOffset(k) { return k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2) * END_FAN; }
+    var outCount = {}, inCount = {};
+    plans.forEach(function (pl) {
+      var ko = outCount[pl.srcId] || 0; outCount[pl.srcId] = ko + 1;
+      var ki = inCount[pl.tgtId] || 0; inCount[pl.tgtId] = ki + 1;
+      pl.srcFan = fanOffset(ko);
+      pl.tgtFan = fanOffset(ki);
+    });
+
+    plans.forEach(function (pl) {
+      var e = pl.e, S = pl.S, T = pl.T, rS = pl.rS, rT = pl.rT, best = pl.best;
       var cyPick = best.cy;
       var axPick = best.ax;
-      // Fan out edges sharing a corridor — BOTH axes. The horizontal stagger
-      // deliberately includes the "straight into the target row" corridor:
-      // without it, every edge whose corridor is a target row it shares with
-      // other edges collapses onto one combined horizontal line (the first
-      // edge in a 10px bucket keeps the exact coordinate; later ones step
-      // down 9px and take a short vertical jog into their target).
-      var cxS = stagger("v", best.kind === "vertical" ? best.ex : cx);
-      var cyS = stagger("h", cyPick);
+      var cxS = pl.trunkS;
+      var cyS = pl.cyS;
       // Polyline: drop degenerate bends (e.g. corridor == target row).
       var pts = [];
-      if (best.kind !== "vertical" || Math.abs(cxS - S.x) > 0.5) pts.push({ x: cxS, y: S.y });
+      if (best.kind !== "vertical" || Math.abs(cxS - S.x) > 0.5) {
+        // Out of the source on its own row: a second link from this device
+        // leaves END_FAN off it (a short stub out of the icon, then level).
+        var sy = S.y + pl.srcFan;
+        if (pl.srcFan) pts.push({ x: S.x + (cxS >= S.x ? 1 : -1) * (rS + 10), y: sy });
+        pts.push({ x: cxS, y: sy });
+      } else if (pl.srcFan) {
+        // Straight up / down out of the device: fan sideways instead.
+        var dirY = cyS >= S.y ? 1 : -1;
+        cxS = S.x + pl.srcFan;
+        pts.push({ x: cxS, y: S.y + dirY * (rS + 10) });
+      }
       if (Math.abs(cyS - S.y) > 0.5) pts.push({ x: cxS, y: cyS });
       var jog = cyS - T.y;
       if (axPick !== T.x) {
@@ -1820,6 +1931,12 @@
           var jx = T.x + (cxS <= T.x ? -rT : rT);
           pts.push({ x: jx, y: cyS });
           pts.push({ x: jx, y: T.y });
+        } else if (pl.tgtFan) {
+          // A second link into this device comes down beside the first and
+          // turns in just outside the icon.
+          var ax2 = T.x + pl.tgtFan;
+          pts.push({ x: ax2, y: cyS });
+          pts.push({ x: ax2, y: T.y + (cyS < T.y ? -1 : 1) * (rT + 10) });
         } else {
           pts.push({ x: T.x, y: cyS });
         }
@@ -3358,9 +3475,18 @@
     _levelRankMemo = {};
     _depths.forEach(function (d, i) { _levelRankMemo[d] = i; });
     var linkedIds = {};
+    // Every device's linked neighbours (MCLAG peer links included: they are
+    // drawn as straight lines too).
+    var neighborsOf = {};
     (elements || []).forEach(function (el) {
       var d = el && el.data;
-      if (d && d.source && d.target) { linkedIds[d.source] = true; linkedIds[d.target] = true; }
+      if (d && d.source && d.target) {
+        linkedIds[d.source] = true; linkedIds[d.target] = true;
+        if (d.source !== d.target) {
+          (neighborsOf[d.source] = neighborsOf[d.source] || []).push(d.target);
+          (neighborsOf[d.target] = neighborsOf[d.target] || []).push(d.source);
+        }
+      }
     });
 
     // Level + entry device of every box, innermost first.
@@ -3460,6 +3586,23 @@
         }
         return true;
       }
+      // Every link between two devices of this box (each in its own item),
+      // once both ends are placed: when they share a row it is a straight
+      // line, so it is a corridor too — not only the upstream link. A switch
+      // linked sideways to another switch keeps that row clear, and an AP
+      // never sits on it (operator report: PUG57 → its AP → PUG8 read as one
+      // chain on one row).
+      function linkedPlaced(it) {
+        var out = [];
+        Object.keys(it.rel).forEach(function (d) {
+          (neighborsOf[d] || []).forEach(function (n) {
+            if (it.rel[n]) return;
+            var np = devPos(n);
+            if (np) out.push({ d: d, n: n, np: np });
+          });
+        });
+        return out;
+      }
       function addOutbound(it) {
         Object.keys(it.rel).forEach(function (u) {
           if (outboundSet[u]) corridors.push({ row: it.y + it.rel[u].y, x1: it.x + it.rel[u].x, x2: Infinity });
@@ -3469,8 +3612,10 @@
       // the box's right side on its own row: that row stays clear right of it.
       var outboundSet = {};
       Object.keys(itemOfDevice).forEach(function (u) {
-        var kids = childrenOf[u];
-        if (kids && kids.some(function (k) { return itemOfDevice[k] === undefined; })) outboundSet[u] = true;
+        var du = Math.abs(global[u].depth);
+        if ((neighborsOf[u] || []).some(function (k) {
+          return itemOfDevice[k] === undefined && k in global && Math.abs(global[k].depth) >= du;
+        })) outboundSet[u] = true;
       });
 
       function place(it) {
@@ -3488,6 +3633,8 @@
           minX = rankOf(it.level) - rankOf(box.level);
           prefY = 0;
         }
+        var links = linkedPlaced(it);
+        var inbound = u !== undefined && !up && itemOfDevice[u] === undefined;
         var xs = [minX];
         placedItems.forEach(function (q) {
           var xr = q.x + q.w + _levelSep(q.ext, it.ext);
@@ -3521,6 +3668,20 @@
             if (best && cost >= best.cost) break;
             if (!itemClear(it, x, y)) continue;
             if (up && Math.abs(y + entryRel.y - up.y) < 0.01 && !ownLinkClear(up.x, up.y, x + entryRel.x, up.host)) continue;
+            // INBOUND: an uplink OUTSIDE this box comes in from the left on the
+            // entry's row, so nothing placed may sit on that row to its left
+            // (a sibling switch fed from the same outside switch landed on the
+            // first one's row, and its link ran straight through the first).
+            if (inbound && !ownLinkClear(-1e9, y + entryRel.y, x + entryRel.x, null)) continue;
+            var sideBlocked = false;
+            for (var li = 0; li < links.length && !sideBlocked; li++) {
+              var lk = links[li];
+              var dr = it.rel[lk.d];
+              if (Math.abs(y + dr.y - lk.np.y) >= 0.01) continue;
+              var ax1 = Math.min(x + dr.x, lk.np.x), ax2 = Math.max(x + dr.x, lk.np.x);
+              if (!ownLinkClear(ax1, lk.np.y, ax2, lk.np.host)) sideBlocked = true;
+            }
+            if (sideBlocked) continue;
             best = { x: x, y: y, cost: cost };
             break;
           }
@@ -3529,9 +3690,14 @@
         it.x = best.x;
         it.y = best.y;
         placedItems.push(it);
-        if (up && Math.abs(it.y + entryRel.y - up.y) < 0.01) {
-          corridors.push({ row: up.y, x1: up.x, x2: it.x + entryRel.x });
-        }
+        links.forEach(function (lk) {
+          var dr = it.rel[lk.d];
+          var row = it.y + dr.y;
+          if (Math.abs(row - lk.np.y) < 0.01) {
+            corridors.push({ row: row, x1: Math.min(it.x + dr.x, lk.np.x), x2: Math.max(it.x + dr.x, lk.np.x) });
+          }
+        });
+        if (inbound) corridors.push({ row: it.y + entryRel.y, x1: -Infinity, x2: it.x + entryRel.x });
         addOutbound(it);
       }
 

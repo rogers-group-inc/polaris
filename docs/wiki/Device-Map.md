@@ -316,6 +316,17 @@ A link that leaves a location box goes out through whichever side is nearest
 its target, including the top or bottom, so a building just below a wide area
 is reached by a short drop, not a trip around the area.
 
+**Links that travel together share one line, and only in the middle.** The
+links leaving one box in the same direction run up (or across) as a single
+trunk, then each turns off on its own lane near its target, the nearest
+target first, so the branches never cross. Where a line meets a device it is
+always on its own: several links leaving one switch fan out of it side by
+side, and several links into one device come in side by side, so you can
+hover each one right at the icon. A link from a different box never joins
+another box's trunk; it gets its own channel, clearly apart. No device is
+placed on the straight line between two other linked devices, so a chain of
+links always reads as the chain it is.
+
 Because each box is placed by its level and its uplink, not by its row in a
 map-wide column, adding a location code to a device moves only the box that
 device joins or leaves, plus what is placed after it nearby. If the map has a saved
