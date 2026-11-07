@@ -5,45 +5,45 @@ import {
   sfpRoleFromSensorName,
   splitOpticsSamples,
   type EntitySensorLayoutRow,
-  type LayoutInterface,
 } from "../../src/utils/sfpOptics.js";
 
 // One cage's five rows as FortiSwitchOS publishes them (type, units display).
-function cage(start: number, oper: number): EntitySensorLayoutRow[] {
+function cage(start: number): EntitySensorLayoutRow[] {
   return [
-    { index: start,     typeCode: 8, unitsDisplay: "C",     operStatus: oper },
-    { index: start + 1, typeCode: 4, unitsDisplay: "volts", operStatus: oper },
-    { index: start + 2, typeCode: 1, unitsDisplay: "dBm",   operStatus: oper },
-    { index: start + 3, typeCode: 1, unitsDisplay: "dBm",   operStatus: oper },
-    { index: start + 4, typeCode: 5, unitsDisplay: "mAmps", operStatus: oper },
+    { index: start,     typeCode: 8, unitsDisplay: "C" },
+    { index: start + 1, typeCode: 4, unitsDisplay: "volts" },
+    { index: start + 2, typeCode: 1, unitsDisplay: "dBm" },
+    { index: start + 3, typeCode: 1, unitsDisplay: "dBm" },
+    { index: start + 4, typeCode: 5, unitsDisplay: "mAmps" },
   ];
 }
-function ports(n: number, up: number[] = []): LayoutInterface[] {
-  const out: LayoutInterface[] = [{ ifName: "internal", operStatus: 1 }, { ifName: "mgmt", operStatus: 1 }];
-  for (let i = 1; i <= n; i++) out.push({ ifName: `port${i}`, operStatus: up.includes(i) ? 1 : 2 });
+function ports(n: number): string[] {
+  const out = ["internal", "mgmt"];
+  for (let i = 1; i <= n; i++) out.push(`port${i}`);
   return out;
 }
 
 // FSR-112F-POE, 2026-11-06: two chassis temps, two power-input truthvalues,
 // then four seated cages at 8..27 — CLI-confirmed as port9..port12.
 const FSR112F: EntitySensorLayoutRow[] = [
-  { index: 4, typeCode: 8,  unitsDisplay: "Celsius",             operStatus: 1 },
-  { index: 5, typeCode: 8,  unitsDisplay: "Celsius",             operStatus: 1 },
-  { index: 6, typeCode: 12, unitsDisplay: "OK (1) / Not OK (2)", operStatus: 1 },
-  { index: 7, typeCode: 12, unitsDisplay: "OK (1) / Not OK (2)", operStatus: 3 },
-  ...cage(8, 1), ...cage(13, 1), ...cage(18, 1), ...cage(23, 1),
+  { index: 4, typeCode: 8,  unitsDisplay: "Celsius" },
+  { index: 5, typeCode: 8,  unitsDisplay: "Celsius" },
+  { index: 6, typeCode: 12, unitsDisplay: "OK (1) / Not OK (2)" },
+  { index: 7, typeCode: 12, unitsDisplay: "OK (1) / Not OK (2)" },
+  ...cage(8), ...cage(13), ...cage(18), ...cage(23),
 ];
 
-// FSW-148F: chassis temp + fan percent, then cages 1 and 3 seated, 2 and 4 empty.
+// FSW-148F: chassis temp + fan percent, then four cages (2 and 4 empty, which
+// still publish their five rows).
 const FSW148F: EntitySensorLayoutRow[] = [
-  { index: 3, typeCode: 8, unitsDisplay: "Celsius",      operStatus: 1 },
-  { index: 4, typeCode: 1, unitsDisplay: "Percent (%%)", operStatus: 1 },
-  ...cage(5, 1), ...cage(10, 2), ...cage(15, 1), ...cage(20, 2),
+  { index: 3, typeCode: 8, unitsDisplay: "Celsius" },
+  { index: 4, typeCode: 1, unitsDisplay: "Percent (%%)" },
+  ...cage(5), ...cage(10), ...cage(15), ...cage(20),
 ];
 
 describe("attributeSfpSensors", () => {
   it("maps the FSR-112F's four groups to port9..port12, in Tx-then-Rx order", () => {
-    const m = attributeSfpSensors(FSR112F, ports(12, [9, 10, 11, 12]));
+    const m = attributeSfpSensors(FSR112F, ports(12));
     expect(m.get(8)).toEqual({ ifName: "port9", role: "temperature" });
     expect(m.get(15)).toEqual({ ifName: "port10", role: "txPower" });
     expect(m.get(16)).toEqual({ ifName: "port10", role: "rxPower" });
@@ -55,7 +55,7 @@ describe("attributeSfpSensors", () => {
   });
 
   it("keeps an empty cage's group in its position (148F: cages 2 and 4 empty)", () => {
-    const m = attributeSfpSensors(FSW148F, ports(52, [1, 49, 51]));
+    const m = attributeSfpSensors(FSW148F, ports(52));
     expect(m.get(5)?.ifName).toBe("port49");
     expect(m.get(10)?.ifName).toBe("port50");
     expect(m.get(16)).toEqual({ ifName: "port51", role: "voltage" });
@@ -63,33 +63,27 @@ describe("attributeSfpSensors", () => {
     expect(m.has(3) || m.has(4)).toBe(false);
   });
 
-  it("maps nothing when an empty cage would land on a port whose link is up", () => {
-    // port50 up while the 2nd group reads unavailable: the convention is wrong here.
-    expect(attributeSfpSensors(FSW148F, ports(52, [49, 50])).size).toBe(0);
-  });
-
   it("maps nothing when there are fewer portN interfaces than groups", () => {
     expect(attributeSfpSensors(FSR112F, ports(3)).size).toBe(0);
   });
 
   it("maps nothing when the groups are not one unbroken run", () => {
-    const gapped = [...cage(5, 1), { index: 10, typeCode: 8, unitsDisplay: "Celsius", operStatus: 1 }, ...cage(11, 1)];
+    const gapped = [...cage(5), { index: 10, typeCode: 8, unitsDisplay: "Celsius" }, ...cage(11)];
     expect(attributeSfpSensors(gapped, ports(52)).size).toBe(0);
   });
 
   it("maps nothing when a dBm row sits outside every group", () => {
-    const stray = [...cage(5, 1), { index: 10, typeCode: 1, unitsDisplay: "dBm", operStatus: 1 }];
+    const stray = [...cage(5), { index: 10, typeCode: 1, unitsDisplay: "dBm" }];
     expect(attributeSfpSensors(stray, ports(52)).size).toBe(0);
   });
 
   it("maps nothing for a table with a different per-module layout", () => {
-    // Rx before Tx is indistinguishable, but a missing bias row is not the layout.
-    const four = cage(5, 1).slice(0, 4);
+    const four = cage(5).slice(0, 4);   // no bias row
     expect(attributeSfpSensors(four, ports(52)).size).toBe(0);
   });
 
   it("classifies by units display even when every row claims celsius", () => {
-    const stamped = cage(5, 1).map((r) => ({ ...r, typeCode: 8 }));
+    const stamped = cage(5).map((r) => ({ ...r, typeCode: 8 }));
     expect(attributeSfpSensors(stamped, ports(52)).get(7)?.role).toBe("txPower");
   });
 

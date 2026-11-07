@@ -2049,8 +2049,8 @@ model AssetHardwareSensorSample {
   // Written only by the ENTITY-SENSOR collector, and only when
   // utils/sfpOptics.ts → attributeSfpSensors() accepts the device's table: the
   // validated five-rows-per-cage layout (temp, volts, Tx dBm, Rx dBm, bias),
-  // one unbroken run, mapped onto the highest-numbered `portN` interfaces, and
-  // no empty cage landing on a port whose link is up. NULL on every other row.
+  // one unbroken run, mapped onto the highest-numbered `portN` interfaces (at
+  // least N of them). NULL on every other row.
   // A row carrying it is shown on its interface (the Interfaces table's optics
   // columns) instead of in Hardware Sensors.
   //

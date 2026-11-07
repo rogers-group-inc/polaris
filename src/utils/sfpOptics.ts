@@ -21,11 +21,15 @@
  *
  * So the attribution is a convention, guarded (business rule 143): it applies
  * only when the table matches that layout exactly, the groups form one unbroken
- * run, there are at least as many `portN` interfaces as groups, and no empty
- * cage lands on a port whose link is up (an empty cage cannot carry a link —
- * the cheapest contradiction the device itself can show us). Any failure maps
- * nothing, and the readings stay ordinary Hardware Sensors rows; nothing is
- * ever guessed onto a neighbouring port.
+ * run, no dBm row sits outside a group, and there are at least as many `portN`
+ * interfaces as groups. Any failure maps nothing, and the readings stay
+ * ordinary Hardware Sensors rows; nothing is ever guessed onto a neighbouring
+ * port.
+ *
+ * Deliberately NOT a guard: "an unavailable cage on a link-up port". It reads
+ * like a contradiction, but a copper (RJ45) SFP has no digital diagnostics, so
+ * its cage reports unavailable exactly like an empty one while carrying a link
+ * — the check would refuse every switch with a copper SFP in use.
  *
  * Kept dependency-free (no Prisma, no SNMP types) so it unit-tests directly,
  * matching utils/poePorts.ts and utils/hardwareSensors.ts.
@@ -58,14 +62,6 @@ export interface EntitySensorLayoutRow {
   typeCode:     number | null;
   /** entPhySensorUnitsDisplay, or null. */
   unitsDisplay: string | null;
-  /** entPhySensorOperStatus: ok(1) unavailable(2) nonoperational(3). */
-  operStatus:   number | null;
-}
-
-/** An interface as IF-MIB reports it: name and ifOperStatus (up(1) down(2) …). */
-export interface LayoutInterface {
-  ifName:     string;
-  operStatus: number | null;
 }
 
 export interface SfpAttribution {
@@ -107,12 +103,12 @@ function frontPortNumber(ifName: string): number | null {
  * layout is not the one this convention was validated on. Pure.
  *
  * @param rows        every ENTITY-SENSOR row of the device, any order
- * @param interfaces  the device's IF-MIB interfaces (ifName + ifOperStatus)
+ * @param ifNames     the device's IF-MIB interface names
  * @returns           entPhysicalIndex → attribution, for the SFP rows only
  */
 export function attributeSfpSensors(
   rows: readonly EntitySensorLayoutRow[],
-  interfaces: readonly LayoutInterface[],
+  ifNames: readonly string[],
 ): Map<number, SfpAttribution> {
   const out = new Map<number, SfpAttribution>();
   const sorted = [...rows].sort((a, b) => a.index - b.index);
@@ -144,19 +140,12 @@ export function attributeSfpSensors(
   const placed = new Set(blocks.flat().map((r) => r.index));
   if (sorted.some((r) => rowKind(r) === "dbm" && !placed.has(r.index))) return out;
 
-  const ports = interfaces
-    .map((i) => ({ ...i, n: frontPortNumber(i.ifName) }))
-    .filter((i): i is LayoutInterface & { n: number } => i.n != null)
+  const ports = ifNames
+    .map((ifName) => ({ ifName, n: frontPortNumber(ifName) }))
+    .filter((p): p is { ifName: string; n: number } => p.n != null)
     .sort((a, b) => a.n - b.n);
   if (ports.length < blocks.length) return out;
   const cagePorts = ports.slice(ports.length - blocks.length);
-
-  // The contradiction check: an empty cage (every row unavailable) cannot hold
-  // a link, so if its port is up the mapping is wrong for this model.
-  for (let b = 0; b < blocks.length; b++) {
-    const empty = blocks[b].every((r) => r.operStatus === 2);
-    if (empty && cagePorts[b].operStatus === 1) return out;
-  }
 
   blocks.forEach((block, b) => {
     block.forEach((r, k) => out.set(r.index, { ifName: cagePorts[b].ifName, role: SFP_BLOCK_LAYOUT[k] }));

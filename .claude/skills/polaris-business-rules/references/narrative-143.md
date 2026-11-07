@@ -5,11 +5,11 @@
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 143](#rule-143) — A transceiver's DDM readings belong to its port only by the validated cage layout, and only when the device does not contradict it
+- [Rule 143](#rule-143) — A transceiver's DDM readings belong to its port only by the validated cage layout, applied all-or-nothing
 
 <a id="rule-143"></a>
 
-## Rule 143 — A transceiver's DDM readings belong to its port only by the validated cage layout, and only when the device does not contradict it
+## Rule 143 — A transceiver's DDM readings belong to its port only by the validated cage layout, applied all-or-nothing
 
 **The problem.** A FortiSwitch publishes every SFP's digital diagnostics (temperature, supply
 voltage, Tx power, Rx power, laser bias) in ENTITY-SENSOR-MIB, and an operator wants them on the
@@ -36,11 +36,16 @@ refuses — maps nothing, leaving every reading an ordinary Hardware Sensors row
 (a) the groups match the five-row shape exactly (units display first, because FortiSwitchOS has
 stamped one type code on every row; the type code as fallback); (b) they form ONE unbroken run
 of indexes; (c) no dBm row sits outside a group; (d) the device has at least as many `portN`
-interfaces as groups, the cages being the highest-numbered N; (e) no empty cage lands on a port
-whose ifOperStatus is up — an empty cage cannot carry a link, and it is the one contradiction the
-device itself can show. It is all-or-nothing: a refusal never maps some groups and guesses the
-rest. IF-MIB is walked inside the sensor session only when the table has a dBm row, so a device
-without optics pays nothing.
+interfaces as groups, the cages being the highest-numbered N. It is all-or-nothing: a refusal
+never maps some groups and guesses the rest. `ifName` is walked inside the sensor session only
+when the table has a dBm row, so a device without optics pays nothing.
+
+**Rejected guard: "an unavailable cage on a link-up port".** The first build refused the whole
+switch when a cage whose five rows all read unavailable(2) sat on a port with ifOperStatus up, on
+the reasoning that an empty cage cannot carry a link. A copper (RJ45) SFP has no digital
+diagnostics: its cage reads unavailable exactly like an empty one while the port has link, so the
+check would have refused every switch with a copper SFP in use. Removed before merge (2026-11-06,
+the owner's call).
 
 **What an attributed reading becomes.** Its sample stores `ifName` and is named
 `<port> <role>` (`port10 Rx power`, `sfpSensorName`) — the stored name is how history, charts

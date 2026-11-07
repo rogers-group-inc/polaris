@@ -201,7 +201,6 @@ import {
   attributeSfpSensors,
   sfpSensorName,
   type EntitySensorLayoutRow,
-  type LayoutInterface,
   type SfpAttribution,
 } from "../utils/sfpOptics.js";
 import { poeClassLabel, poeIfNameByIndex, poeStatusLabel, poeWalkOutcome } from "../utils/poePorts.js";
@@ -8177,19 +8176,11 @@ async function collectHardwareSensorsSnmpCore(
     index:        Number(idx),
     typeCode:     snmpVbToNumber(typeRaw),
     unitsDisplay: snmpVbToString(unitsDisplays.get(idx)) || null,
-    operStatus:   snmpVbToNumber(opers.get(idx)),
   })).filter((r) => Number.isInteger(r.index));
   let sfpByIndex = new Map<number, SfpAttribution>();
   if (layoutRows.some((r) => unitsDisplayLooksOptical(r.unitsDisplay))) {
-    const [ifNames, ifOpers] = await Promise.all([
-      snmpWalk(session, OID.ifName).catch(() => new Map()),
-      snmpWalk(session, OID.ifOperStatus).catch(() => new Map()),
-    ]);
-    const ifaces: LayoutInterface[] = [...ifNames.entries()].map(([ifIdx, name]) => ({
-      ifName:     snmpVbToString(name),
-      operStatus: snmpVbToNumber(ifOpers.get(ifIdx)),
-    }));
-    sfpByIndex = attributeSfpSensors(layoutRows, ifaces);
+    const ifNames = await snmpWalk(session, OID.ifName).catch(() => new Map());
+    sfpByIndex = attributeSfpSensors(layoutRows, [...ifNames.values()].map((v) => snmpVbToString(v)));
   }
   for (const [idx, typeRaw] of types.entries()) {
     const t = snmpVbToNumber(typeRaw);

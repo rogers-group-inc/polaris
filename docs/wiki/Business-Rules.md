@@ -3135,13 +3135,12 @@ sensors, interfaces, LLDP, MAC tables). See
 ### Rule 143
 
 **A transceiver's readings move onto its port only when the switch's sensor
-table has the known layout, and nothing on the switch contradicts it.** Some
+table has the known layout.** Some
 switches (FortiSwitch among them) publish each SFP's temperature, voltage, Tx
 power, Rx power and bias current over SNMP without saying which port the module
 is in. Polaris places them by layout: five readings per SFP cage, in that order,
 cages in port order, with an empty cage keeping its place; the cages are the
-switch's highest-numbered ports. The layout must match exactly, and no empty cage
-may land on a port that has link. If anything doesn't fit, nothing moves, and
+switch's highest-numbered ports. The layout must match exactly. If anything doesn't fit, nothing moves, and
 the readings stay in **Hardware Sensors** as before. Placed readings are named
 for the port (`port10 Rx power`) and appear in the
 [Interfaces table](Assets#transceiver-readings-in-the-interfaces-table).
