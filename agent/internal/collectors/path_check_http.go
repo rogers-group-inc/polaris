@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -77,6 +78,24 @@ func statusAccepted(code int, ranges []statusRange) bool {
 
 // ─── Body match ───────────────────────────────────────────────────────────
 
+// bodyRegexCache holds each body-expectation pattern compiled once, keyed by
+// the final pattern (the (?i) prefix included), so a check probed every
+// minute stops recompiling its regex every minute (CQ-G011). An edited check
+// gets a new key; the set is bounded by the checks this agent runs, a few.
+var bodyRegexCache sync.Map // string → *regexp.Regexp
+
+func compiledBodyRegex(pat string) (*regexp.Regexp, error) {
+	if v, ok := bodyRegexCache.Load(pat); ok {
+		return v.(*regexp.Regexp), nil
+	}
+	re, err := regexp.Compile(pat)
+	if err != nil {
+		return nil, err
+	}
+	bodyRegexCache.Store(pat, re)
+	return re, nil
+}
+
 // bodyMatches mirrors src/utils/httpCheck.ts bodyMatches plus "exact" (equal
 // after trimming trailing CR/LF, so a health endpoint's "OK\n" matches "OK").
 // Regex is RE2 — the server refuses lookaround / backreferences at save.
@@ -91,7 +110,7 @@ func bodyMatches(body []byte, exp *transport.PathCheckBodyExpect) (bool, error) 
 		if !exp.CaseSensitive {
 			pat = "(?i)" + pat
 		}
-		re, err := regexp.Compile(pat)
+		re, err := compiledBodyRegex(pat)
 		if err != nil {
 			return false, fmt.Errorf("invalid regex pattern: %w", err)
 		}
