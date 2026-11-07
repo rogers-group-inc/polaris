@@ -222,7 +222,7 @@ dispatch:
 		if err != nil {
 			log.Printf("push path-check samples: %v", err)
 		} else if verbose {
-			log.Printf("path-check sent: rows=%d -> accepted=%d rejected=%d", len(samples), resp.Accepted, resp.Rejected)
+			log.Printf("pathCheck: sent rows=%d -> accepted=%d rejected=%d", len(samples), resp.Accepted, resp.Rejected)
 		}
 	}
 	if len(traces) > 0 {
@@ -230,7 +230,7 @@ dispatch:
 		if err != nil {
 			log.Printf("push path-check traceroutes: %v", err)
 		} else if verbose {
-			log.Printf("path-check traceroutes sent: rows=%d -> accepted=%d rejected=%d", len(traces), resp.Accepted, resp.Rejected)
+			log.Printf("pathCheck: traceroutes sent rows=%d -> accepted=%d rejected=%d", len(traces), resp.Accepted, resp.Rejected)
 		}
 	}
 }
