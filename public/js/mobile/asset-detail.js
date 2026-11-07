@@ -1937,6 +1937,26 @@
           + (iface.poeClass ? ' <span class="muted mono" style="font-size:12px;">' + escapeHtml(iface.poeClass) + '</span>' : ''),
       });
     }
+    // Transceiver readings (business rule 143), the desktop table's optics
+    // columns. Rx is tinted past most optics' receive sensitivity.
+    var o = iface.optics || null;
+    if (o) {
+      var fin = function (v) { return typeof v === "number" && isFinite(v); };
+      if (fin(o.rxDbm)) {
+        rows.push({
+          k: "Rx power",
+          html: '<span class="mono"' + (o.rxDbm <= -20 ? ' style="color:var(--color-danger,#dc2626)"' : '') + '>'
+            + escapeHtml(o.rxDbm.toFixed(2) + " dBm") + '</span>',
+        });
+      }
+      row("Tx power", fin(o.txDbm) ? o.txDbm.toFixed(2) + " dBm" : null, true);
+      if (fin(o.temperatureC)) {
+        var TU = window.PolarisTempUnit;
+        row("SFP temp", (TU ? TU.convertCelsius(o.temperatureC) : o.temperatureC).toFixed(1) + " " + (TU ? TU.celsiusLabel() : "°C"), true);
+      }
+      row("SFP voltage", fin(o.voltage) ? o.voltage.toFixed(2) + " V" : null, true);
+      row("Bias", fin(o.biasA) ? (o.biasA * 1000).toFixed(2) + " mA" : null, true);
+    }
     row("In errors",  iface.inErrors  != null ? String(iface.inErrors)  : null);
     row("Out errors", iface.outErrors != null ? String(iface.outErrors) : null);
 

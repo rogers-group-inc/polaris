@@ -13,6 +13,7 @@ import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
+import { splitOpticsSamples } from "../../utils/sfpOptics.js";
 import { requirePermission, hasPermission, credentialUseActor, assertTagChangeAllowed } from "../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope, scheduleCanEditByIds } from "../../services/writeScopeService.js";
 import { scopeAssetParam, scopeAssetIds, requireFleetWide, idsFromBody } from "../middleware/writeScope.js";
@@ -2733,12 +2734,18 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: { mountPath: "asc" },
         })
       : [];
-    const hardwareSensors = latestHwMeta
+    const latestHardwareSensors = latestHwMeta
       ? await prisma.assetHardwareSensorSample.findMany({
           where: { assetId: id, timestamp: latestHwMeta.timestamp },
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
+    // Transceiver readings attributed to a port (business rule 143) leave the
+    // Hardware Sensors list and ride on their interface row instead.
+    const { sensors: hardwareSensors, optics: opticsByIf } = splitOpticsSamples(
+      latestHardwareSensors,
+      new Set(interfaces.map((i) => i.ifName)),
+    );
     // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService),
     // and the active-alert summary of every neighbor that resolved to an
     // asset — the Interfaces table's Neighbor cell draws the same strobing
@@ -2800,6 +2807,9 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         addressingMode: i.addressingMode ?? null,
         poeStatus:   i.poeStatus ?? null,
         poeClass:    i.poeClass  ?? null,
+        // Transceiver DDM readings for an SFP port (business rule 143), from
+        // the latest hardware-sensor pass; null on every other port.
+        optics:      opticsByIf.get(i.ifName) ?? null,
         // Hand-applied and filter-applied tags (business rule 133).
         tags:        interfaceTags.get(i.ifName) ?? [],
       })),
