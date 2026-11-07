@@ -220,7 +220,7 @@ dispatch:
 	if len(samples) > 0 {
 		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "pathCheck", Samples: samples})
 		if err != nil {
-			log.Printf("push path-check samples: %v", err)
+			log.Printf("push pathCheck samples: %v", err)
 		} else if verbose {
 			log.Printf("pathCheck: sent rows=%d -> accepted=%d rejected=%d", len(samples), resp.Accepted, resp.Rejected)
 		}
@@ -228,7 +228,7 @@ dispatch:
 	if len(traces) > 0 {
 		resp, err := client.PushSamples(&transport.SamplesBody{Stream: "pathCheckTraceroute", Samples: traces})
 		if err != nil {
-			log.Printf("push path-check traceroutes: %v", err)
+			log.Printf("push pathCheck traceroutes: %v", err)
 		} else if verbose {
 			log.Printf("pathCheck: traceroutes sent rows=%d -> accepted=%d rejected=%d", len(traces), resp.Accepted, resp.Rejected)
 		}
