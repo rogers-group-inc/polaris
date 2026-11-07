@@ -177,7 +177,7 @@ last attempt. The readers are in `internal/collectors/software*.go`.
 | Phase | Adds |
 |---|---|
 | 3a | HTTP push: enroll, samples (responseTime), heartbeat, config-fetch |
-| 3b (current) | WebSocket pull side: outbound dial w/ pinned TLS, reconnect-with-backoff, probe-now-request / probe-now-response, refresh-config |
+| 3b (current) | WebSocket pull side: outbound dial w/ pinned TLS, reconnect-with-backoff, refresh-config, commands-pending (the probe-now request/response pair was removed in 0.28.3 — never sent by the server, and it only answered the response-time stream) |
 | 4 | Remote install via SSH/WinRM from the Polaris UI |
 | 5 | Telemetry / interfaces / storage / LLDP collectors |
 | 6 | OS event-log collector (opt-in `eventLog` stream): wevtutil (Windows) / journalctl (Linux), per-channel cursor in `eventlog-cursors.json`, server-pushed enable flag + curation filter honored via `applyServerStreams`. Server curates entries into the audit Events tab. |

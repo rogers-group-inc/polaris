@@ -14,13 +14,6 @@
  *  - `detach(managedAgentId, reason)` — remove from the map, close the
  *    socket if still open, stamp `wsDisconnectedAt`, emit `agent.disconnected`.
  *
- *  - `sendProbeNow(managedAgentId, stream, timeoutMs)` — server-initiated
- *    pull. Send a `probe-now-request` frame and await the matching
- *    `probe-now-response` by request-id. Resolves with the result; rejects
- *    on timeout. NOT WIRED to any route: the agent answers the frame, but
- *    `POST /api/v1/assets/:id/probe-now` polls an agent asset through the
- *    normal monitor path. Kept as the server half of that protocol.
- *
  *  - `refreshConfig(managedAgentId)` — send a `refresh-config` frame so
  *    the agent re-fetches /config immediately instead of waiting for its
  *    next poll. Called whenever the operator updates a setting that
@@ -30,8 +23,10 @@
  *
  *   { "type": "<verb>", "id": "<request-id-or-empty>", "payload": {...} }
  *
- * The id field correlates request/response pairs for probe-now; for
- * one-way frames (hello / refresh-config / heartbeat) it's empty/ignored.
+ * Every frame is one-way (hello / refresh-config / commands-pending), so the
+ * id is empty. The probe-now request/response pair that used it was removed
+ * 2026-11-06 with agent 0.28.3: it had no caller, and the agent half only
+ * answered `responseTime` with a check-in round trip.
  *
  * Heartbeat: server sends a ping frame every 30s; the WS library's built-
  * in pong handling tracks liveness. Two missed pongs (60s without any
@@ -50,7 +45,6 @@ import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import { CMD_WAKE_CHANNEL, CFG_REFRESH_CHANNEL } from "./agentCommandWake.js";
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const PROBE_NOW_DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface Session {
   ws:        WebSocket;
@@ -62,8 +56,6 @@ export interface Session {
    */
   assetName: string | null;
   attachedAt: number;
-  // Pending probe-now requests awaiting a matching response.
-  pending:   Map<string, { resolve: (v: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>;
   // Heartbeat ping timer; cleared in detach().
   pingTimer: NodeJS.Timeout | null;
   // Set true when we see a pong for the last ping; reset to false on each ping.
@@ -101,7 +93,6 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     assetId,
     assetName: null, // filled in below, before either event is written
     attachedAt: Date.now(),
-    pending: new Map(),
     pingTimer: null,
     pongSeen: true, // assume alive on attach so we don't kill ourselves on the first ping cycle
   };
@@ -112,8 +103,8 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   // doesn't depend on this for correctness; it's diagnostic.
   safeSend(ws, { type: "hello", id: "", payload: { managedAgentId } });
 
-  // Wire incoming frames (only thing we expect at this layer is
-  // probe-now-response; other frame types are forwarded to handlers).
+  // Wire incoming frames. The agent sends none the server acts on today;
+  // onFrame still parses and validates each one (an agent-controlled payload).
   //
   // close / error / heartbeat are bound to THIS session, not to the agent id.
   // A replaced socket's close event lands asynchronously — after the closing
@@ -231,11 +222,6 @@ export function detach(managedAgentId: string, reason: string, only?: Session): 
 
 function teardown(session: Session, _reason: string): void {
   if (session.pingTimer) clearInterval(session.pingTimer);
-  for (const p of session.pending.values()) {
-    clearTimeout(p.timer);
-    p.reject(new Error("Agent disconnected"));
-  }
-  session.pending.clear();
   try { session.ws.close(); } catch { /* already closed */ }
 }
 
@@ -272,54 +258,12 @@ function onFrame(managedAgentId: string, data: unknown): void {
     logger.warn({ managedAgentId }, "Agent WS frame is not an object with a string type; ignored");
     return;
   }
-  if (frame.type === "probe-now-response") {
-    const session = sessions.get(managedAgentId);
-    if (!session) return;
-    const pending = session.pending.get(frame.id);
-    if (!pending) return; // probably timed out before the response arrived
-    session.pending.delete(frame.id);
-    clearTimeout(pending.timer);
-    pending.resolve(frame.payload);
-  }
-  // Other inbound frame types (hello-ack, etc.) are accepted but ignored
-  // for now — Phase 3b only needs probe-now plumbing.
+  // No inbound frame type is acted on: hello-ack and the like are accepted
+  // and ignored. (The probe-now reply branch went with that protocol.)
+  logger.debug({ managedAgentId, type: frame.type }, "Agent WS frame ignored");
 }
 
 // ─── Server-initiated verbs ───────────────────────────────────────────
-
-interface ProbeNowResult {
-  success:        boolean;
-  responseTimeMs?: number;
-  error?:          string;
-}
-
-/** Server half of the agent's probe-now protocol; no caller yet (see the header). @public */
-export function sendProbeNow(
-  managedAgentId: string,
-  stream: "responseTime" | "telemetry" | "interfaces" | "storage",
-  timeoutMs: number = PROBE_NOW_DEFAULT_TIMEOUT_MS,
-): Promise<ProbeNowResult> {
-  const session = sessions.get(managedAgentId);
-  if (!session) {
-    return Promise.reject(new Error("Agent is not currently attached — try again after the agent reconnects"));
-  }
-
-  const id = randomFrameId();
-  const send = { type: "probe-now-request", id, payload: { stream } };
-
-  return new Promise<ProbeNowResult>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      session.pending.delete(id);
-      reject(new Error(`Agent did not respond to probe-now within ${timeoutMs}ms`));
-    }, timeoutMs);
-    session.pending.set(id, {
-      resolve: (v) => resolve(v as ProbeNowResult),
-      reject,
-      timer,
-    });
-    safeSend(session.ws, send);
-  });
-}
 
 export function refreshConfig(managedAgentId: string): void {
   const session = sessions.get(managedAgentId);
@@ -345,12 +289,6 @@ function safeSend(ws: WebSocket, frame: unknown): void {
   } catch (err) {
     logger.warn({ err }, "Agent WS send failed");
   }
-}
-
-function randomFrameId(): string {
-  // Short id is fine — only needs to be unique within one session's
-  // in-flight set. Crypto-strength isn't required.
-  return Math.random().toString(36).slice(2, 12);
 }
 
 // ─── Cross-process command-wake listener (web/all role) ───────────────

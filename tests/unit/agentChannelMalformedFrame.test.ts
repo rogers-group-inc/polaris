@@ -45,8 +45,8 @@ describe("asFrame", () => {
   });
 
   it("keeps a well-formed frame and defaults a missing id", () => {
-    expect(asFrame({ type: "probe-now-response", id: "r1", payload: { ok: 1 } }))
-      .toEqual({ type: "probe-now-response", id: "r1", payload: { ok: 1 } });
+    expect(asFrame({ type: "status", id: "r1", payload: { ok: 1 } }))
+      .toEqual({ type: "status", id: "r1", payload: { ok: 1 } });
     expect(asFrame({ type: "hello-ack" })).toEqual({ type: "hello-ack", id: "", payload: undefined });
   });
 });
