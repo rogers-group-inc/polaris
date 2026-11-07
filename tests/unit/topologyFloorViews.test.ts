@@ -246,10 +246,38 @@ describe("partitionElementsForFloor", () => {
 
   it("excludes untagged devices and drops their edges without a stub", () => {
     const parts = partitionElementsForFloor(site(), "f||shop|2");
-    // s2's edge to the untagged "plain" switch vanishes entirely.
-    expect(ids(parts)).toEqual(["portal:fg", "portal:s1", "s2"]);
+    // s2's edge to the untagged "plain" switch vanishes entirely — and no
+    // device on floor 2 links to the FortiGate, so it gets no root portal.
+    expect(ids(parts)).toEqual(["portal:s1", "s2"]);
     const edgeTargets = parts.filter((e) => e.data.source).map((e) => `${e.data.source}>${e.data.target}`);
     expect(edgeTargets.some((t) => t.includes("plain"))).toBe(false);
+  });
+
+  // Operator report (2026-11-07): drilling into Pugmill Loadouts showed a
+  // "→ Base: FG" stub though no switch there links to the FortiGate — it read
+  // as if they all hung straight off the firewall.
+  it("adds no FortiGate stub to a view none of whose devices link to it, and still lays it out", () => {
+    const els = [
+      node("fg", "fortigate"),
+      node("sh", "fortiswitch", { b: "Scale House" }),
+      node("p57", "fortiswitch", { a: "Pugmill", b: "57 Loudout" }),
+      node("ap57", "fortiap", { a: "Pugmill", b: "57 Loudout" }),
+      node("p8", "fortiswitch", { a: "Pugmill", b: "8s Loadout" }),
+      edge("fg", "sh"), edge("sh", "p57"), edge("sh", "p8"), edge("p57", "ap57"),
+    ];
+    const parts = partitionElementsForFloor(els, "a|pugmill");
+    expect(ids(parts)).toEqual(["ap57", "p57", "p8"]);
+    // The switches whose uplink is outside the view are its entries...
+    const entry = (id: string) => parts.find((e) => e.data.id === id)!.data.viewEntry;
+    expect(entry("p57")).toBe(1);
+    expect(entry("p8")).toBe(1);
+    expect(entry("ap57")).toBeUndefined();
+    // ...and the solver roots the view on them (no dagre fallback), with no
+    // stand-in node in what it returns.
+    const cols = computeTopologyColumns(parts)!;
+    expect(cols).not.toBeNull();
+    expect(Object.keys(cols).sort()).toEqual(["ap57", "p57", "p8"]);
+    expect(cols.ap57.depth).toBeGreaterThan(cols.p57.depth);
   });
 
   it("rewires a cross-floor edge to one portal per remote device with a jump target", () => {

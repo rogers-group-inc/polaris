@@ -2207,10 +2207,13 @@
   // ("f|a|b|f": that floor's tagged devices), a building view ("b|a|b":
   // ALL of that building's tagged devices, any floor) or an area view
   // ("a|a": every device tagged with that area, any building). The FortiGate
-  // is drawn only in Base and in the views its own codes put it in; in every
-  // other view it is a dashed ROOT portal ("→ Base: FG", isRootPortal) that
-  // keeps the subgraph rooted for the column solver and jumps to where the
-  // FortiGate really lives. Untagged devices appear only in the Flat
+  // is drawn only in Base and in the views its own codes put it in; in
+  // another view it appears as a dashed ROOT portal ("→ Base: FG",
+  // isRootPortal) ONLY when a device in that view links to it directly — a
+  // stub with no such link read as if the view's switches hung straight off
+  // the firewall (operator report, 2026-11-07). Members with any link out of
+  // the view are marked `viewEntry`; a view with no FortiGate is rooted on
+  // them by the column solver. Untagged devices appear only in the Flat
   // view. Edges with both ends in view are kept as-is (loop flags preserved
   // — a physical ring is still a ring even when the view splits it); an edge
   // whose far end carries the same-level code for ANOTHER view is rewired to
@@ -2228,6 +2231,7 @@
     var trueMember = {};
     // FortiGates tagged outside this view → their root portal id.
     var rootPortalFor = {};
+    var outsideFg = {};
     (elements || []).forEach(function (el) {
       var d = el && el.data;
       if (!d || !d.id || d.source) return;
@@ -2237,8 +2241,23 @@
         inView[d.id] = true;
         trueMember[d.id] = true;
       } else if (d.role === "fortigate") {
-        inView[d.id] = true;
-        rootPortalFor[d.id] = "portal:" + d.id;
+        outsideFg[d.id] = true;
+      }
+    });
+    // Which out-of-view FortiGates a member links to (they get a root
+    // portal), and which members link out of the view at all (entries).
+    var viewEntry = {};
+    (elements || []).forEach(function (el) {
+      var d = el && el.data;
+      if (!d || !d.source || !d.target) return;
+      var sm = !!trueMember[d.source], tm = !!trueMember[d.target];
+      if (sm === tm) return;
+      var member = sm ? d.source : d.target;
+      var other = sm ? d.target : d.source;
+      viewEntry[member] = true;
+      if (outsideFg[other] && !rootPortalFor[other]) {
+        inView[other] = true;
+        rootPortalFor[other] = "portal:" + other;
       }
     });
     var out = [];
@@ -2260,7 +2279,9 @@
         });
         return;
       }
-      out.push({ data: Object.assign({}, d) });
+      var copy = Object.assign({}, d);
+      if (viewEntry[d.id]) copy.viewEntry = 1;
+      out.push({ data: copy });
     });
     var portalAdded = {};
     (elements || []).forEach(function (el) {
@@ -2758,6 +2779,24 @@
       if (d.isRootPortal && !rootPortalId) rootPortalId = d.id;
     });
     if (!rootId) rootId = rootPortalId;
+    // A location view whose members never link to the FortiGate has no root
+    // portal (a stub there implied a direct link that does not exist): it is
+    // rooted on an invisible anchor joined to the members that link out of
+    // the view (viewEntry), and the anchor is left out of the result.
+    var VIEW_ANCHOR = "__view_anchor__";
+    var viewEntries = [];
+    if (!rootId) {
+      elements.forEach(function (el) {
+        var d = el && el.data;
+        if (d && d.id && !d.source && d.viewEntry) viewEntries.push(d.id);
+      });
+      if (viewEntries.length) {
+        rootId = VIEW_ANCHOR;
+        roleById[rootId] = "fortigate";
+        nodeIds.push(rootId);
+        adj[rootId] = [];
+      }
+    }
     if (!rootId) return null; // no firewall — let the caller keep dagre
 
     // Mesh pre-pass: a mesh edge (root AP → leaf AP) makes the leaf a mesh
@@ -2837,6 +2876,14 @@
         (physicalAdj[d.source] = physicalAdj[d.source] || []).push(d.target);
         (physicalAdj[d.target] = physicalAdj[d.target] || []).push(d.source);
       }
+    });
+
+    // The view anchor's links: real, verified uplinks for placement purposes.
+    viewEntries.forEach(function (id) {
+      adj[VIEW_ANCHOR].push(id);
+      adj[id].push(VIEW_ANCHOR);
+      (physicalAdj[VIEW_ANCHOR] = physicalAdj[VIEW_ANCHOR] || []).push(id);
+      (physicalAdj[id] = physicalAdj[id] || []).push(VIEW_ANCHOR);
     });
 
     // --- 1. Node-weighted Dijkstra from the firewall -----------------------
@@ -3317,7 +3364,10 @@
     });
 
     var out = {};
-    nodeIds.forEach(function (id) { out[id] = { depth: depth[id], lane: lane[id] }; });
+    nodeIds.forEach(function (id) {
+      if (id === VIEW_ANCHOR) return;
+      out[id] = { depth: depth[id], lane: lane[id] };
+    });
     return out;
   }
 
