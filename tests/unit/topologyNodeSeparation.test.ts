@@ -157,18 +157,29 @@ describe("separateNodes (live Cytoscape)", () => {
     expect(r.pos.dropped).not.toEqual({ x: 0, y: 0 });
   });
 
-  it("ignores group boxes, floor portals and line handles", () => {
+  it("ignores group boxes and line handles", () => {
     const r = sepNodes({
       nodes: [
         node("dev", 0, 0),
         node("hull", 0, 0, { isLocGroup: 1 }),
-        node("portal", 0, 0, { isPortal: 1 }),
         node("handle", 0, 0, { isEdgeHandle: 1 }),
       ],
       opts: GRID,
     });
     expect(r.count).toBe(0);
     expect(r.pos.dev).toEqual({ x: 0, y: 0 });
+  });
+
+  // Operator exports (2026-11-07): a new group stub dropped into a saved
+  // layout sat exactly on a device — the guard skipped stubs.
+  it("moves a stub off a device: stubs take up space too", () => {
+    const r = sepNodes({
+      nodes: [node("dev", 0, 0), node("portal", 0, 0, { isPortal: 1 })],
+      opts: GRID,
+    });
+    expect(r.count).toBe(1);
+    expect(r.pos.dev).toEqual({ x: 0, y: 0 });
+    expect(r.pos.portal).not.toEqual({ x: 0, y: 0 });
   });
 
   it("with no moved list, re-checks every device — first in graph order keeps its spot", () => {

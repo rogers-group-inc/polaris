@@ -101,4 +101,22 @@ describe("applySavedPositions", () => {
     const r = run(site, null);
     expect(r.pos).toEqual(r.auto);
   });
+
+  // Operator exports (2026-11-07): drill-down views saved before group stubs
+  // existed placed a new stub at its spot on an EMPTY map — meaningless in
+  // the saved frame, and here and there exactly on a device.
+  it("puts a stub the save has no spot for beside the saved devices it links to", () => {
+    const els = [
+      n("s1", "fortiswitch"), n("s2", "fortiswitch"),
+      { id: "up", label: "← Scale House", isPortal: 1, isUpstreamPortal: 1, targetView: "b||scale" },
+      { id: "down", label: "→ Mine", isPortal: 1, targetView: "a|mine" },
+      e("up", "s1"), e("s1", "s2"), e("s2", "down"),
+    ];
+    const saved = { s1: { x: 1000, y: 500 }, s2: { x: 1260, y: 760 } };
+    const { pos } = run(els, saved);
+    expect(pos.s1).toEqual({ x: 1000, y: 500 });
+    expect(pos.up).toEqual({ x: 740, y: 500 }); // two columns left, on s1's row
+    expect(pos.down).toEqual({ x: 1520, y: 760 }); // two columns right, on s2's row
+  });
 });
+

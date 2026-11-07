@@ -3527,7 +3527,12 @@
   // weights and the one whose overall shape is closest to the target aspect
   // (the map's container, width / height; 16:9 when not given) is kept —
   // ties to the lighter weight, which keeps links shorter.
-  var LEVEL_ROW_WEIGHTS = [1, 1.5, 2, 3, 4, 6, 9];
+  // A fine ladder: a box moving right vs down is all-or-nothing, so the
+  // in-between shapes (two floors side by side, twice) appear only at
+  // weights between the coarse steps — with [1, 1.5, 2, 3, 4, 6, 9] an
+  // operator's building came out 1.34 or 2.85 for a 1.69 window, never 1.74.
+  // ~85 ms for 78 devices, once per open / reset.
+  var LEVEL_ROW_WEIGHTS = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 11, 13];
   var LEVEL_DEFAULT_ASPECT = 16 / 9;
   function computeGroupedLayout(elements, opts) {
     var aspect = opts && opts.aspect > 0 && isFinite(opts.aspect) ? opts.aspect : LEVEL_DEFAULT_ASPECT;
@@ -3667,11 +3672,22 @@
       // The item's own link, when it lands on its upstream's row, runs
       // straight from the upstream: it must not cross a placed item or ride
       // another corridor.
-      function ownLinkClear(ux, row, xe, hostOfU) {
+      function ownLinkClear(ux, row, xe, hostOfU, uId) {
         if (xe <= ux) return true;
         for (var i = 0; i < placedItems.length; i++) {
           var q = placedItems[i];
-          if (q === hostOfU) continue;
+          if (q === hostOfU) {
+            // The line starts INSIDE this item (a box): it must still clear
+            // every other device in it on that row — a stub's link from a
+            // switch deep in a building ran through its neighbours.
+            var hostClash = Object.keys(q.rel).some(function (dId) {
+              if (dId === uId) return false;
+              var px = q.x + q.rel[dId].x, py = q.y + q.rel[dId].y;
+              return Math.abs(py - row) < 0.5 && px > ux + 0.01 && px < xe - 0.01;
+            });
+            if (hostClash) return false;
+            continue;
+          }
           var sl = _levelLinkSep(q.ext);
           var e = q.ext / LEVEL_CELL_PX;
           if (row > q.y - sl && row < q.y + q.h + sl && ux < q.x + q.w + e - 0.01 && xe > q.x - e + 0.01) return false;
@@ -3731,6 +3747,16 @@
         }
         var links = linkedPlaced(it);
         var inbound = u !== undefined && !up && itemOfDevice[u] === undefined;
+        var sideRows = [];
+        Object.keys(it.rel).forEach(function (d) {
+          if (!(d in global)) return;
+          var dd = Math.abs(global[d].depth);
+          var fromOutside = (neighborsOf[d] || []).some(function (k) {
+            return itemOfDevice[k] === undefined && k in global && Math.abs(global[k].depth) < dd;
+          });
+          if (fromOutside) sideRows.push({ d: d, dir: -1 });
+          if (outboundSet[d]) sideRows.push({ d: d, dir: 1 });
+        });
         var xs = [minX];
         placedItems.forEach(function (q) {
           var xr = q.x + q.w + _levelSep(q.ext, it.ext);
@@ -3763,19 +3789,30 @@
             var cost = dx + rowWeight * Math.abs(y - prefY) + (y < prefY ? 0.01 : 0);
             if (best && cost >= best.cost) break;
             if (!itemClear(it, x, y)) continue;
-            if (up && Math.abs(y + entryRel.y - up.y) < 0.01 && !ownLinkClear(up.x, up.y, x + entryRel.x, up.host)) continue;
+            if (up && Math.abs(y + entryRel.y - up.y) < 0.01 && !ownLinkClear(up.x, up.y, x + entryRel.x, up.host, u)) continue;
             // INBOUND: an uplink OUTSIDE this box comes in from the left on the
             // entry's row, so nothing placed may sit on that row to its left
             // (a sibling switch fed from the same outside switch landed on the
             // first one's row, and its link ran straight through the first).
             if (inbound && !ownLinkClear(-1e9, y + entryRel.y, x + entryRel.x, null)) continue;
+            // Every device in the item with a link leaving this box keeps
+            // that link's row clear: to the left for one coming from a
+            // shallower device outside, to the right for one going out.
+            var sideClash = false;
+            for (var si = 0; si < sideRows.length && !sideClash; si++) {
+              var sr = sideRows[si];
+              var rr = it.rel[sr.d];
+              var xd = x + rr.x, rowd = y + rr.y;
+              if (sr.dir < 0 ? !ownLinkClear(-1e9, rowd, xd, null) : !ownLinkClear(xd, rowd, 1e9, null)) sideClash = true;
+            }
+            if (sideClash) continue;
             var sideBlocked = false;
             for (var li = 0; li < links.length && !sideBlocked; li++) {
               var lk = links[li];
               var dr = it.rel[lk.d];
               if (Math.abs(y + dr.y - lk.np.y) >= 0.01) continue;
               var ax1 = Math.min(x + dr.x, lk.np.x), ax2 = Math.max(x + dr.x, lk.np.x);
-              if (!ownLinkClear(ax1, lk.np.y, ax2, lk.np.host)) sideBlocked = true;
+              if (!ownLinkClear(ax1, lk.np.y, ax2, lk.np.host, lk.n)) sideBlocked = true;
             }
             if (sideBlocked) continue;
             best = { x: x, y: y, cost: cost };
@@ -3794,6 +3831,11 @@
           }
         });
         if (inbound) corridors.push({ row: it.y + entryRel.y, x1: -Infinity, x2: it.x + entryRel.x });
+        sideRows.forEach(function (sr) {
+          if (sr.dir > 0) return; // outbound rows: addOutbound below
+          var rr = it.rel[sr.d];
+          corridors.push({ row: it.y + rr.y, x1: -Infinity, x2: it.x + rr.x });
+        });
         addOutbound(it);
       }
 
@@ -4117,10 +4159,31 @@
           res.restored.push(n);
         }
       });
+      // Which saved devices each node links to (for an unsaved stub).
+      var linked = {};
+      cy.edges().forEach(function (e) {
+        var s = e.source().id(), t = e.target().id();
+        (linked[s] = linked[s] || []).push(t);
+        (linked[t] = linked[t] || []).push(s);
+      });
       cy.nodes().forEach(function (n) {
         var id = n.id();
         if (res.pinned[id]) return;
         res.placed.push(n);
+        if (n.data("isPortal")) {
+          // A stub the save has no spot for goes beside the saved devices it
+          // links to — a "←" stub (fed from) two columns left of the
+          // leftmost, a "→" stub two columns right of the rightmost — on
+          // that device's row. Its spot on an empty map means nothing in the
+          // saved frame and had put it on top of a device.
+          var mates = (linked[id] || []).filter(function (m) { return res.pinned[m] && ok(saved[m]); }).map(function (m) { return saved[m]; });
+          if (mates.length) {
+            var left = n.data("isUpstreamPortal") || n.data("isRootPortal");
+            var pick = mates.reduce(function (b, p) { return left ? (p.x < b.x ? p : b) : (p.x > b.x ? p : b); });
+            n.position({ x: pick.x + (left ? -260 : 260), y: pick.y });
+            return;
+          }
+        }
         var a = up[id];
         for (var guard = 0; a !== undefined && !res.pinned[a] && guard < 256; guard++) a = up[a];
         if (a === undefined || !res.pinned[a] || !auto[a] || !auto[id]) return;
@@ -4509,8 +4572,11 @@
     return out;
   }
 
+  // Stubs (portals) take up space like devices: a new group stub dropped
+  // into a saved layout landed exactly on a device (operator exports,
+  // 2026-11-07) because the guard skipped them.
   function _isLayoutDevice(n) {
-    return !n.data("isLocGroup") && !n.data("isPortal") && !n.data("isEdgeHandle");
+    return !n.data("isLocGroup") && !n.data("isEdgeHandle");
   }
   // Live-map wrapper. `moved` (a collection or array of nodes, in priority
   // order) are the devices allowed to move; every other device holds its
