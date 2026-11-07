@@ -459,6 +459,9 @@ func runAgent(ctx context.Context, confPath string) {
 	}
 
 	client := transport.NewClient(cfg.ServerURL, cfg.Pins(), cfg.BearerToken)
+	// Every request inherits the agent's lifetime: shutdown cancels what is
+	// in flight rather than waiting out the client timeout (CQ-G009).
+	client.BindContext(ctx)
 	// Stamp the ldflag-set version into the client so /enroll and
 	// /heartbeat report the version this binary was built at.
 	client.AgentVersion = version
