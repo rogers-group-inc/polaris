@@ -9346,7 +9346,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // And for interface tags (business rule 133): the column appears once any
   // port carries one. A port gets its first tag from the interface slide-over.
   var showTagsCol = rows.some(function (r) { return Array.isArray(r.tags) && r.tags.length > 0; });
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0);
+  // And for transceiver readings (business rule 143): the five optics columns
+  // appear once any port carries them. Rx / Tx show by default; temperature,
+  // voltage and bias start hidden and are one tick away in the column gear.
+  var showOpticsCols = rows.some(function (r) { return r.optics != null; });
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -9432,6 +9436,34 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       : "var(--color-text-secondary)";
     var cls = iface.poeClass ? ' <span style="color:var(--color-text-secondary)">· ' + escapeHtml(iface.poeClass) + '</span>' : "";
     return '<td class="mono" style="color:' + color + '">' + escapeHtml(LABEL[st] || st) + cls + '</td>';
+  }
+  // Transceiver DDM cells. Rx below RX_LOW_DBM is tinted: that is past the
+  // receive sensitivity of most optics, and the agent's own sensor status
+  // stays "ok" there (it says the sensor works, not that the light is good).
+  var RX_LOW_DBM = -20;
+  function opticsCellsHTML(iface) {
+    if (!showOpticsCols) return "";
+    var o = iface.optics || null;
+    function num(v, digits) { return (typeof v === "number" && isFinite(v)) ? v.toFixed(digits) : null; }
+    function cell(text, extra) { return '<td class="mono"' + (extra || "") + '>' + (text != null ? escapeHtml(text) : "—") + '</td>'; }
+    if (!o) return cell(null) + cell(null) + cell(null) + cell(null) + cell(null);
+    var rx = num(o.rxDbm, 2);
+    var rxLow = typeof o.rxDbm === "number" && o.rxDbm <= RX_LOW_DBM;
+    var rxExtra = rxLow
+      ? ' style="color:var(--color-danger,#dc2626)" title="Receive power is below the sensitivity of most optics (' + RX_LOW_DBM + ' dBm) — check the fibre, connectors and the far-end transmitter"'
+      : "";
+    var tempTxt = null;
+    if (typeof o.temperatureC === "number" && isFinite(o.temperatureC)) {
+      var TU = window.PolarisTempUnit;
+      var tv = TU ? TU.convertCelsius(o.temperatureC) : o.temperatureC;
+      tempTxt = tv.toFixed(1) + " " + (TU ? TU.celsiusLabel() : "°C");
+    }
+    var bias = (typeof o.biasA === "number" && isFinite(o.biasA)) ? (o.biasA * 1000).toFixed(2) : null;
+    return cell(rx, rxExtra) +
+      cell(num(o.txDbm, 2)) +
+      cell(tempTxt) +
+      cell(num(o.voltage, 2) != null ? num(o.voltage, 2) + " V" : null) +
+      cell(bias);
   }
   function vlanCellsHTML(iface) {
     if (!showVlanCols) return "";
@@ -9541,6 +9573,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<td class="mono">' + escapeHtml(iface.macAddress || "—") + "</td>" +
       vlanCellsHTML(iface) +
       poeCellHTML(iface) +
+      opticsCellsHTML(iface) +
       "<td>" + (iface.inOctets  != null ? _fmtBytes(iface.inOctets)  : "—") + "</td>" +
       "<td>" + (iface.outOctets != null ? _fmtBytes(iface.outOctets) : "—") + "</td>" +
       '<td title="In errors / Out errors (cumulative)">' + errs + "</td>" +
@@ -9664,6 +9697,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var port = n.portId || n.portDescription || "";
     return port ? (label + " / " + port) : label;
   }
+  function opticNum(iface, key) {
+    var v = iface.optics ? iface.optics[key] : null;
+    return (typeof v === "number" && isFinite(v)) ? v : null;
+  }
   function _ifaceEntry(iface, group, tree) {
     var alias = (iface.alias && iface.alias.trim()) ? iface.alias.trim() : "";
     var errIn = iface.inErrors != null ? Number(iface.inErrors) : 0;
@@ -9680,6 +9717,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       "native-vlan": iface.nativeVlan != null ? Number(iface.nativeVlan) : null,
       "tagged-vlans": taggedVlanList(iface),
       poe: iface.poeStatus || "",
+      "sfp-rx":    opticNum(iface, "rxDbm"),
+      "sfp-tx":    opticNum(iface, "txDbm"),
+      "sfp-temp":  opticNum(iface, "temperatureC"),
+      "sfp-volts": opticNum(iface, "voltage"),
+      "sfp-bias":  opticNum(iface, "biasA"),
       "in": iface.inOctets != null ? Number(iface.inOctets) : null,
       out: iface.outOctets != null ? Number(iface.outOctets) : null,
       errors: (iface.inErrors != null || iface.outErrors != null) ? (errIn + errOut) : null,
@@ -9821,6 +9863,13 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var poeHeader = showPoeCol
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
+  var opticsHeader = showOpticsCols
+    ? '<th data-col-id="sfp-rx" data-sf-key="sfp-rx" data-sf-type="number" data-sf-nofilter title="Transceiver receive power, from its digital diagnostics. Read from the switch\'s ENTITY-SENSOR table and placed on the port by the cage layout (SNMP names no port for these readings).">Rx (dBm)</th>' +
+      '<th data-col-id="sfp-tx" data-sf-key="sfp-tx" data-sf-type="number" data-sf-nofilter title="Transceiver transmit power, from its digital diagnostics">Tx (dBm)</th>' +
+      '<th data-col-id="sfp-temp" data-sf-key="sfp-temp" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transceiver temperature">SFP Temp</th>' +
+      '<th data-col-id="sfp-volts" data-sf-key="sfp-volts" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transceiver supply voltage">SFP Voltage</th>' +
+      '<th data-col-id="sfp-bias" data-sf-key="sfp-bias" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transmit laser bias current">Bias (mA)</th>'
+    : "";
   container.innerHTML = staleBanner +
     '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">A <strong>Monitored</strong> interface is polled every minute and records <strong>history</strong>; click its button to switch it between Monitored and Unmonitored. Every interface below shows its current state; only monitored ones record history you can chart or alert on throughput.' +
       (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
@@ -9837,6 +9886,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th data-col-id="mac" data-sf-key="mac" data-sf-type="string">MAC</th>' +
       vlanHeader +
       poeHeader +
+      opticsHeader +
       '<th data-col-id="in" data-sf-key="in" data-sf-type="number" data-sf-nofilter>In</th>' +
       '<th data-col-id="out" data-sf-key="out" data-sf-type="number" data-sf-nofilter>Out</th>' +
       '<th data-col-id="errors" data-sf-key="errors" data-sf-type="number" data-sf-nofilter>Errors (in/out)</th>' +

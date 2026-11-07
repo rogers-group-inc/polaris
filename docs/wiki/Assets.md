@@ -890,6 +890,24 @@ on ports too. Deleting it removes the automatic copies and keeps the ones added
 by hand. The `region:` and `azure:` tags are device-only and are refused on a
 port. See [rule 133](Business-Rules#rule-133).
 
+### Transceiver readings in the Interfaces table
+
+On a switch whose SFP diagnostics Polaris can place on a port, the Interfaces
+table gains **Rx (dBm)** and **Tx (dBm)** columns, filled on each SFP port. An
+Rx reading at or below −20 dBm is shown in red: that is below what most optics
+can receive, so check the fibre, the connectors and the far-end transmitter.
+The switch's own sensor status still reads "ok" at that level, because it only
+says the sensor works. **SFP Temp**, **SFP Voltage** and **Bias (mA)** are
+available too; turn them on from the table's column gear. On the phone, the
+interface page lists all five.
+
+Readings placed on a port no longer appear under **Hardware Sensors**. Their
+history keeps recording under the port's name (`port49 Rx power`), so an
+automation can match it with a sensor-name pattern such as `*Rx power`. Placing
+them depends on the switch's sensor table having a known layout; when it
+doesn't, the readings stay in Hardware Sensors. See
+[rule 143](Business-Rules#rule-143).
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 It opens inside the asset details panel, in place of the tabs: use the

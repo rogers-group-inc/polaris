@@ -195,7 +195,14 @@ import {
   entityOperStatusToAlarm,
   entityTypeColumnTrusted,
   pseOperStatusToAlarm,
+  unitsDisplayLooksOptical,
 } from "../utils/hardwareSensors.js";
+import {
+  attributeSfpSensors,
+  sfpSensorName,
+  type EntitySensorLayoutRow,
+  type SfpAttribution,
+} from "../utils/sfpOptics.js";
 import { poeClassLabel, poeIfNameByIndex, poeStatusLabel, poeWalkOutcome } from "../utils/poePorts.js";
 import { entityPhysicalClassLabel, entityPhysicalIsInventory } from "../utils/hardwareSensors.js";
 import { dot3DuplexLabel, ifStatusLabel, snmpIfTypeLabel } from "../utils/ifMib.js";
@@ -4818,6 +4825,8 @@ export interface HardwareSensorSample {
   value:       number | null;
   unit:        string | null;
   alarmStatus: string | null;
+  /** The port a transceiver reading belongs to (business rule 143); absent otherwise. */
+  ifName?:     string | null;
 }
 
 /**
@@ -8160,6 +8169,19 @@ async function collectHardwareSensorsSnmpCore(
       .map((v) => snmpVbToNumber(v))
       .filter((n): n is number => n != null),
   );
+  // Transceiver readings published as anonymous groups of five get their port
+  // (business rule 143). IF-MIB is walked only when the table holds a dBm row
+  // at all, so a device with no optics pays nothing for this.
+  const layoutRows: EntitySensorLayoutRow[] = [...types.entries()].map(([idx, typeRaw]) => ({
+    index:        Number(idx),
+    typeCode:     snmpVbToNumber(typeRaw),
+    unitsDisplay: snmpVbToString(unitsDisplays.get(idx)) || null,
+  })).filter((r) => Number.isInteger(r.index));
+  let sfpByIndex = new Map<number, SfpAttribution>();
+  if (layoutRows.some((r) => unitsDisplayLooksOptical(r.unitsDisplay))) {
+    const ifNames = await snmpWalk(session, OID.ifName).catch(() => new Map());
+    sfpByIndex = attributeSfpSensors(layoutRows, [...ifNames.values()].map((v) => snmpVbToString(v)));
+  }
   for (const [idx, typeRaw] of types.entries()) {
     const t = snmpVbToNumber(typeRaw);
     const oper = snmpVbToNumber(opers.get(idx));
@@ -8171,6 +8193,7 @@ async function collectHardwareSensorsSnmpCore(
       descr,
       typeColumnTrusted,
     });
+    const sfp = sfpByIndex.get(Number(idx));
     const raw = snmpVbToNumber(values.get(idx));
     const scale = snmpVbToNumber(scales.get(idx));   // SI prefix code
     const prec  = snmpVbToNumber(precisions.get(idx)); // decimal-point shift
@@ -8181,11 +8204,16 @@ async function collectHardwareSensorsSnmpCore(
       ? scaleEntitySensor(raw, scale, prec)
       : null;
     out.push({
-      sensorName:  descr || `sensor-${idx}`,
+      // An attributed transceiver reading is named for its port and role; the
+      // agent's own descr for these rows is positional and unreliable.
+      sensorName:  sfp ? sfpSensorName(sfp.ifName, sfp.role) : (descr || `sensor-${idx}`),
       sensorClass,
-      value:       scaled != null && Number.isFinite(scaled) ? Math.round(scaled * 100) / 100 : null,
+      // Six decimals, not two: bias current is stored in BASE amperes, and
+      // rounding 8.98 mA to the hundredth of an amp stored 0.01.
+      value:       scaled != null && Number.isFinite(scaled) ? Math.round(scaled * 1e6) / 1e6 : null,
       unit,
       alarmStatus: entityOperStatusToAlarm(oper),
+      ...(sfp ? { ifName: sfp.ifName } : {}),
     });
   }
   if (out.length > 0) return out;
@@ -10023,6 +10051,7 @@ export async function recordHardwareSensorResult(assetId: string, result: Collec
         value:       s.value,
         unit:        s.unit,
         alarmStatus: s.alarmStatus,
+        ifName:      s.ifName ?? null,
       })),
     );
   }

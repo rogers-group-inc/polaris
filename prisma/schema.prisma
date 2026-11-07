@@ -2045,18 +2045,19 @@ model AssetHardwareSensorSample {
   value       Float?
   unit        String?
   alarmStatus String?
-  // UNUSED — nothing writes or reads this. It was added by migration
-  // 20260810130000 for a display-only "which interface is this sensor on?"
-  // annotation that inferred the interface from the sensor's entPhysicalIndex.
-  // That inference was withdrawn: on FortiSwitchOS the indexes only SOMETIMES
-  // line up with ifIndex (`sensor-15` is not reliably the interface at ifIndex
-  // 15), so the label was wrong often enough to mislead. The column stays
-  // because it is nullable and free, and because DROP COLUMN on a hypertable
-  // with compressed chunks is the DDL this file warns about above — keeping it
-  // also means a future correct implementation needs no migration. Do not
-  // repopulate it without a correlation the device actually guarantees
-  // (ENTITY-MIB entPhysicalContainedIn → entAliasMappingIdentifier, or a
-  // vendor table that names the interface outright).
+  // The port a transceiver (SFP DDM) reading belongs to — business rule 143.
+  // Written only by the ENTITY-SENSOR collector, and only when
+  // utils/sfpOptics.ts → attributeSfpSensors() accepts the device's table: the
+  // validated five-rows-per-cage layout (temp, volts, Tx dBm, Rx dBm, bias),
+  // one unbroken run, mapped onto the highest-numbered `portN` interfaces (at
+  // least N of them). NULL on every other row.
+  // A row carrying it is shown on its interface (the Interfaces table's optics
+  // columns) instead of in Hardware Sensors.
+  //
+  // History: added by migration 20260810130000 for an annotation that inferred
+  // the interface from entPhysicalIndex == ifIndex. That was withdrawn
+  // (97e54fd2) — the indexes only SOMETIMES line up — and the column sat
+  // unused until rule 143. Never repopulate it from an index coincidence.
   ifName      String?
 
   @@id([id, timestamp])
