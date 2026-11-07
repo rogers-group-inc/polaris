@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 
 import pg from "pg";
 import { prisma } from "../db.js";
-import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type MonitorSettings } from "./monitoringService.js";
+import { fleetCadences, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type FleetCadences } from "./monitoringService.js";
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
 import { getTableSizes, getDatabaseSizeBreakdown, type DatabaseSizeBreakdown } from "./dbSizeService.js";
 import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention, type FlatRetentionEntity } from "./sampleRetentionService.js";
@@ -1226,7 +1226,7 @@ export function projectSteadyStateSize(args: {
   /** Monitored assets that can actually produce system-info (interfaces/storage/IPsec).
    *  Same exclusion as telemetryEligibleCount; WinRM/SSH are kept in. */
   systemInfoEligibleCount: number;
-  monitor: MonitorSettings;
+  monitor: FleetCadences;
   retention: SampleRetention;
   /** Measured uncompressed daily bytes per DETAIL table (from settled chunks).
    *  When present for a never-compressing detail tier, used instead of the
@@ -2140,7 +2140,7 @@ export async function getCapacitySnapshot(opts: {
     dbIoState,
     agentCount,
   ] = await Promise.all([
-    getMonitorSettings(),
+    fleetCadences(),
     getSampleRetention(),
     prisma.asset.count({ where: { monitored: true } }),
     prisma.$queryRawUnsafe<{ count: bigint }[]>(telemetryEligibleSQL),
