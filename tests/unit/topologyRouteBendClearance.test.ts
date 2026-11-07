@@ -191,3 +191,22 @@ describe("routeInterGroupEdges keeps every bend outside both end devices", () =>
     expectClear(r);
   });
 });
+
+describe("routeInterGroupEdges leaves a wide box through the side nearest the target", () => {
+  // 2026-11-07: a device deep inside a wide area linked to a building just
+  // below it. The router only knew the box's side facing the target, so the
+  // link ran out Mine's far right wall, down, and all the way back.
+  it("drops out the bottom of the source box when the target sits just below it", () => {
+    const [r] = route({
+      nodes: [
+        node("mcc", 100, 100, { locA: "mine", locAName: "Mine", locB: "surface", locBName: "Surface" }),
+        node("far", 1500, 100, { locA: "mine", locAName: "Mine", locB: "surface", locBName: "Surface" }),
+        node("annex", 160, 500, { locB: "annex", locBName: "MCC Annex" }),
+      ],
+      edges: [{ id: "ie0", source: "mcc", target: "annex" }],
+    });
+    expectClear(r);
+    // No bend anywhere near Mine's far side.
+    for (const p of bends(r)) expect(p.x).toBeLessThan(400);
+  });
+});

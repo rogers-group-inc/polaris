@@ -294,15 +294,23 @@ The asset **Edit** form's Description field shows the same diagram.
 **How the map places devices and boxes.** Every device has a level, which is
 how many hops it is from the FortiGate. Every location box has the level of
 the closest-to-the-FortiGate device inside it. Boxes and devices are laid out
-left to right by level, at every depth of nesting: the areas on the map,
-the buildings inside each area, and so on down. Each one sits on the same
-row as the device it connects to. A chain of switches stays on one straight
-row, and an access point beside it moves to the row below so that no link
-runs through a device.
+at every depth of nesting (the areas on the map, the buildings inside each
+area, and so on down), each one starting a cell per level to the right of the
+device it connects to and on that device's row. When that spot is taken, it
+goes to the nearest free spot beside, below or above whatever is in the way,
+so it stays close to its uplink. A wide area pushes aside only what shares its
+rows: a building fed from the same switch sits next to that switch, not past
+the far side of the area. A chain of switches stays on one straight row, an
+access point beside it moves off that row so that no link runs through a
+device, and devices with no links at all sit in a row under the map.
 
-Because each box is placed by its level and not by the boxes around it,
-adding a location code to a device moves only the box that device joins or
-leaves, plus anything below it in the same column. If the map has a saved
+A link that leaves a location box goes out through whichever side is nearest
+its target, including the top or bottom, so a building just below a wide area
+is reached by a short drop, not a trip around the area.
+
+Because each box is placed by its level and its uplink, not by its row in a
+map-wide column, adding a location code to a device moves only the box that
+device joins or leaves, plus what is placed after it nearby. If the map has a saved
 layout, a code change never moves a device you placed: the new box is drawn
 around the devices where they already are, even if two boxes then overlap.
 A device the saved layout has no spot for is placed next to the device it
