@@ -468,6 +468,15 @@ To export the whole site, zoom out until all of it is in view first.
   in Visio does not drag its links), and text uses Visio's default font. A
   device the edge of the view cuts through comes across whole. The title and summary line sit above the graph, and
   the legend sits in a box at its bottom left, as on the PDF.
+- **Export layout data (anonymised)**: a JSON file of the topology as drawn,
+  for sharing a layout problem (with Polaris's developers, for example) without
+  naming your site. Every device, location box and link is in it with its
+  on-screen position, size, outline and routed bends, plus each link's kind,
+  speed or mesh signal and port pair. Devices are renamed by type in screen
+  order (`FW-1`, `SW-3`, `AP-7`) and location boxes by level (`AREA-1`,
+  `BLDG-2`, `FLOOR-1`, `ROOM-1`, `JB-1`); hostnames, location names, IP and
+  MAC addresses, serial numbers, asset ids and SSIDs are left out. Port names
+  (`port49`, `lan1`) are kept. Look the file over before you share it.
 
 The Application Map has the same menu ([Application Map](Application-Map#export)).
 

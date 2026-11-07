@@ -1296,6 +1296,29 @@
   // legend draws, so the printed key cannot drift from it. Only what is in
   // the viewer (viewport: true → clipSceneToExtent): zoom in, and whatever
   // leaves the view leaves the export — and the device / link count with it.
+  // Export › Layout data: the topology as drawn, anonymised
+  // (topology-render.js → anonymisedLayout) and saved as JSON — for sharing
+  // a layout problem without the site's device or location names.
+  function exportTopologyLayoutData() {
+    var R = window.PolarisTopologyRender;
+    if (!cyInstance || !R || !R.anonymisedLayout) return;
+    var host = document.getElementById("topology-graph");
+    var data = R.anonymisedLayout(cyInstance, {
+      view: _activeViewKey(),
+      pane: host ? { w: host.clientWidth, h: host.clientHeight } : null,
+    });
+    var blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+    var stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "polaris-topology-layout-" + stamp + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+    showToast("Layout data saved — device and location names are replaced with aliases");
+  }
+
   function topologyExportContext() {
     var R = window.PolarisTopologyRender;
     var titleEl = document.getElementById("topology-title");
@@ -3151,6 +3174,7 @@
           { label: "Copy map as image", run: screenshotTopology },
           { label: "Copy screenshot (map + details)", run: screenshotTopologyModal },
         ],
+        extra: [{ label: "Export layout data (anonymised)", run: exportTopologyLayoutData }],
       });
     });
     _setCornerTip(exportBtn, "Export", "Copy a screenshot, or save the view as a PDF or a Visio drawing");

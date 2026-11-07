@@ -3858,6 +3858,154 @@
     return positions;
   }
 
+  // ── Anonymised layout data (Export › Layout data) ───────────────────────
+  // The topology as drawn, for review outside the app with nothing that
+  // identifies the site: every device, location box and link with its
+  // on-screen geometry, but device names, box names, IPs, MACs, serials,
+  // asset ids and SSIDs replaced or left out. Devices are aliased by role
+  // (FW-1, SW-3, AP-7, …) and boxes by level (AREA-1, BLDG-2, FLOOR-1, ROOM-1,
+  // JB-1), numbered top-to-bottom, left-to-right, so the aliases read in
+  // screen order. Port names (port49, lan1) are kept: they identify nothing
+  // and say which cable is which. Pure over the cy instance; `meta` carries
+  // what the page knows (the active view key, the pane size).
+  var _ANON_ROLE = { fortigate: "FW", fortiswitch: "SW", fortiap: "AP", endpoint: "EP", "remote-asset": "REM", "wireless-station": "STA" };
+  var _ANON_KIND = { a: "AREA", b: "BLDG", f: "FLOOR", r: "ROOM", jb: "JB" };
+  function anonymisedLayout(cy, meta) {
+    meta = meta || {};
+    function r1(v) { return typeof v === "number" && isFinite(v) ? Math.round(v * 10) / 10 : null; }
+    function byScreen(a, b) { return (a.y - b.y) || (a.x - b.x) || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0); }
+    var healthOf = {};
+    Object.keys(HEALTH_NODE_COLORS || {}).forEach(function (k) { healthOf[String(HEALTH_NODE_COLORS[k]).toLowerCase()] = k; });
+
+    var all = cy.nodes().filter(function (n) { return !n.data("isEdgeHandle"); });
+    var devices = all.filter(function (n) { return !n.data("isLocGroup") && !n.data("isPortal"); });
+    var portals = all.filter(function (n) { return !!n.data("isPortal"); });
+    var hulls = all.filter(function (n) { return !!n.data("isLocGroup"); });
+
+    // Boxes: every location path any device carries, drawn or not.
+    var boxInfo = {}; // key → { kind, parent, k }
+    devices.forEach(function (n) {
+      var parent = null;
+      _locPath(n.data()).forEach(function (seg) {
+        if (!boxInfo[seg.key]) boxInfo[seg.key] = { kind: seg.key.slice(0, seg.key.indexOf("|")), parent: parent, key: seg.key };
+        parent = seg.key;
+      });
+    });
+    var hullByKey = {};
+    hulls.forEach(function (h) {
+      var id = String(h.id());
+      var key = id.indexOf("locgroup:") === 0 ? id.slice("locgroup:".length) : id;
+      hullByKey[key] = h;
+    });
+    var boxOrder = Object.keys(boxInfo).map(function (key) {
+      var h = hullByKey[key];
+      var bb = h ? h.boundingBox({ includeLabels: false }) : null;
+      return { key: key, x: bb ? bb.x1 : Infinity, y: bb ? bb.y1 : Infinity, k: key };
+    }).sort(byScreen);
+    var boxAlias = {};
+    var kindCount = {};
+    boxOrder.forEach(function (b) {
+      var kind = boxInfo[b.key].kind;
+      kindCount[kind] = (kindCount[kind] || 0) + 1;
+      boxAlias[b.key] = (_ANON_KIND[kind] || "BOX") + "-" + kindCount[kind];
+    });
+
+    // Devices and portals, aliased in screen order.
+    var alias = {};
+    var roleCount = {};
+    devices.map(function (n) { return { n: n, x: n.position("x"), y: n.position("y"), k: String(n.id()) }; })
+      .sort(byScreen)
+      .forEach(function (it) {
+        var p = _ANON_ROLE[it.n.data("role")] || "DEV";
+        roleCount[p] = (roleCount[p] || 0) + 1;
+        alias[it.n.id()] = p + "-" + roleCount[p];
+      });
+    var portalCount = 0;
+    portals.map(function (n) { return { n: n, x: n.position("x"), y: n.position("y"), k: String(n.id()) }; })
+      .sort(byScreen)
+      .forEach(function (it) { alias[it.n.id()] = "PORTAL-" + (++portalCount); });
+
+    var out = {
+      format: "polaris-topology-layout/1",
+      exportedAt: new Date().toISOString(),
+      anonymised: "device, box and site names, IPs, MACs, serials, asset ids and SSIDs are replaced or left out",
+      view: meta.view ? (meta.view === "flat" ? "base" : (boxAlias[meta.view] || "view")) : null,
+      pane: meta.pane ? { w: Math.round(meta.pane.w), h: Math.round(meta.pane.h) } : null,
+      zoom: r1(cy.zoom()),
+      devices: [],
+      boxes: [],
+      portals: [],
+      links: [],
+    };
+    devices.forEach(function (n) {
+      var d = n.data();
+      out.devices.push({
+        id: alias[n.id()],
+        role: d.role || null,
+        health: healthOf[String(d.nodeColor || "").toLowerCase()] || null,
+        x: r1(n.position("x")), y: r1(n.position("y")),
+        w: r1(n.width()), h: r1(n.height()),
+        boxes: _locPath(d).map(function (seg) { return boxAlias[seg.key]; }),
+        viewEntry: d.viewEntry ? true : undefined,
+        hidden: n.visible() ? undefined : true,
+      });
+    });
+    Object.keys(boxInfo).forEach(function (key) {
+      var info = boxInfo[key];
+      var h = hullByKey[key];
+      var bb = h ? h.boundingBox({ includeLabels: false }) : null;
+      out.boxes.push({
+        id: boxAlias[key],
+        kind: _LEVEL_KIND[info.kind] || info.kind,
+        parent: info.parent ? boxAlias[info.parent] : null,
+        drawn: !!h,
+        x1: bb ? r1(bb.x1) : null, y1: bb ? r1(bb.y1) : null, x2: bb ? r1(bb.x2) : null, y2: bb ? r1(bb.y2) : null,
+      });
+    });
+    out.boxes.sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+    portals.forEach(function (n) {
+      out.portals.push({
+        id: alias[n.id()],
+        root: n.data("isRootPortal") ? true : undefined,
+        toView: n.data("targetView") === "flat" ? "base" : (boxAlias[n.data("targetView")] || "view"),
+        x: r1(n.position("x")), y: r1(n.position("y")),
+      });
+    });
+    var linkN = 0;
+    cy.edges().forEach(function (e) {
+      var s = alias[e.source().id()], t = alias[e.target().id()];
+      if (!s || !t) return;
+      var d = e.data();
+      var flags = [];
+      ["isIface", "isLldp", "isVerifiedUplink", "isApLink", "isBridge", "isMesh", "isMclag", "isWireless", "isInterGroup", "isFanOut", "inLoop", "customPath", "detoured"].forEach(function (f) {
+        if (d[f] && d[f] !== 0) flags.push(f.replace(/^is/, "").replace(/^./, function (c) { return c.toLowerCase(); }));
+      });
+      var pts = null;
+      try {
+        var seq = [e.sourceEndpoint()];
+        var curve = e.style("curve-style");
+        var mids = curve === "segments" || curve === "taxi" ? e.segmentPoints() : (curve === "bezier" || curve === "unbundled-bezier" ? e.controlPoints() : null);
+        (mids || []).forEach(function (p) { seq.push(p); });
+        seq.push(e.targetEndpoint());
+        pts = seq.map(function (p) { return { x: r1(p.x), y: r1(p.y) }; });
+      } catch (err) { pts = null; }
+      out.links.push({
+        id: "L-" + (++linkN),
+        a: s, b: t,
+        flags: flags,
+        // A mesh link's label is its SSID — left out; every other label is a port pair.
+        ports: d.isMesh ? undefined : (d.label || undefined),
+        speed: d.linkSpeed || undefined,
+        speedBps: d.speedBps || undefined,
+        signal: d.meshSignal || undefined,
+        signalDbm: d.signalDbm != null ? d.signalDbm : undefined,
+        curve: (function () { try { return e.style("curve-style"); } catch (err) { return null; } })(),
+        points: pts,
+      });
+    });
+    return out;
+  }
+
   // The aspect (width / height) a topology should be laid out for: the
   // container it is drawn in. Undefined when the element is missing or has no
   // size yet (hidden), so computeGroupedLayout falls back to 16:9.
@@ -4344,6 +4492,7 @@
     edgeTooltipHtml: edgeTooltipHtml,
     linkSpeedClass: linkSpeedClass,
     layoutAspect: layoutAspect,
+    anonymisedLayout: anonymisedLayout,
     meshSignalClass: meshSignalClass,
     topologyLegendHtml: topologyLegendHtml,
     linkHoverSet: linkHoverSet,
