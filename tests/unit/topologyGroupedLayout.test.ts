@@ -15,7 +15,8 @@ import vm from "node:vm";
 type El = { data: Record<string, any> };
 type Pos = Record<string, { depth: number; lane: number }>;
 
-let computeGroupedLayout: (els: El[]) => Pos | null;
+let computeGroupedLayout: (els: El[], opts?: { aspect?: number }) => Pos | null;
+let layoutAspect: (el: unknown) => number | undefined;
 let computeTopologyColumns: (els: El[]) => Pos | null;
 
 beforeAll(() => {
@@ -28,6 +29,7 @@ beforeAll(() => {
   const api = sandbox.window.PolarisTopologyRender;
   computeGroupedLayout = api.computeGroupedLayout;
   computeTopologyColumns = api.computeTopologyColumns;
+  layoutAspect = api.layoutAspect;
 });
 
 const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: string }): El => ({
@@ -278,6 +280,32 @@ describe("computeGroupedLayout", () => {
     expect(pos.t1.depth - pos.sh2.depth).toBeLessThanOrEqual(2);
     // ...and off Mine's rows, so its box and Mine's never overlap.
     expect(pos.t1.lane < mine.y1 || pos.t1.lane > mine.y2).toBe(true);
+  });
+  it("lays a deep site out to the shape of its window: wide for a wide screen, tall for a phone", () => {
+    // A core feeding eight buildings, each a switch chain three deep with
+    // an AP: with no aspect weighting it stacked into a tall column
+    // (operator screenshot 2026-11-07, on a 16:9 screen).
+    const els: El[] = [node("fg", "fortigate"), node("core", "fortiswitch", { b: "Core" }), edge("fg", "core")];
+    for (let i = 0; i < 8; i++) {
+      const b = { b: "Building " + i };
+      els.push(node(`s${i}a`, "fortiswitch", b), node(`s${i}b`, "fortiswitch", b), node(`s${i}c`, "fortiswitch", b), node(`ap${i}`, "fortiap", b));
+      els.push(edge("core", `s${i}a`), edge(`s${i}a`, `s${i}b`), edge(`s${i}b`, `s${i}c`), edge(`s${i}c`, `ap${i}`));
+    }
+    const shape = (pos: Pos) => {
+      const b = box(pos, Object.keys(pos));
+      return (b.x2 - b.x1 + 1) / (b.y2 - b.y1 + 1);
+    };
+    const wide = shape(computeGroupedLayout(els, { aspect: 16 / 9 })!);
+    const tall = shape(computeGroupedLayout(els, { aspect: 9 / 16 })!);
+    expect(wide).toBeGreaterThan(1);
+    expect(tall).toBeLessThan(wide);
+    // No aspect given: laid out for 16:9.
+    expect(shape(computeGroupedLayout(els)!)).toBeCloseTo(wide, 5);
+  });
+  it("reads the aspect from the container, or none when it has no size", () => {
+    expect(layoutAspect({ clientWidth: 1600, clientHeight: 900 })).toBeCloseTo(16 / 9, 5);
+    expect(layoutAspect({ clientWidth: 0, clientHeight: 900 })).toBeUndefined();
+    expect(layoutAspect(null)).toBeUndefined();
   });
   it("puts devices with no link in a strip under the site", () => {
     const els = [

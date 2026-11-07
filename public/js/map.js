@@ -2691,7 +2691,11 @@
     // Port labels on bent links sit on their end legs, re-placed as nodes
     // move (see topology-render.js → wireBentEdgeLabels).
     window.PolarisTopologyRender.wireBentEdgeLabels(cyInstance);
-    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
+    // Laid out for the graph pane's shape, so a deep site spreads across a
+    // wide screen instead of stacking down it.
+    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements, {
+      aspect: window.PolarisTopologyRender.layoutAspect(document.getElementById("topology-graph")),
+    }) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     if (columns) {
       var positions = {};

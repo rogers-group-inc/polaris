@@ -261,7 +261,9 @@
     var saved = layouts && layouts[key] && layouts[key].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
-    var columns = R.computeGroupedLayout(elements) || R.computeTopologyColumns(elements);
+    // Laid out for the widget's own tile shape.
+    var columns = R.computeGroupedLayout(elements, { aspect: R.layoutAspect ? R.layoutAspect(container) : undefined }) ||
+      R.computeTopologyColumns(elements);
     var layoutConfig;
     if (columns) {
       var positions = {};
