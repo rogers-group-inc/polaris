@@ -1746,24 +1746,52 @@
       var sideGap = rT + 18;
       var approaches = [T.x, T.x - sideGap, T.x + sideGap];
       var best = null;
+      function scoreRoute(segs, len, pref) {
+        var boxHits = 0, deviceHits = 0;
+        segs.forEach(function (s) {
+          obstacles.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) boxHits++; });
+          devices.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) deviceHits++; });
+        });
+        // A box crossing costs most, a device crossing next; then length,
+        // then the stable preference order (corridor, then straight-in).
+        return boxHits * 100000 + deviceHits * 50000 + len + pref;
+      }
+      // Family A — out the source box's SIDE facing the target (cx), along a
+      // horizontal corridor, into the target down an approach lane.
       candidates.forEach(function (cy0, idx) {
         approaches.forEach(function (ax, aIdx) {
-          // Segments: out of the source, along the corridor, down the
-          // approach lane, and (side lanes only) across into the target.
           var segs = [[cx, S.y, cx, cy0], [cx, cy0, ax, cy0], [ax, cy0, ax, T.y]];
           if (ax !== T.x) segs.push([ax, T.y, T.x, T.y]);
-          var boxHits = 0, deviceHits = 0;
-          segs.forEach(function (s) {
-            obstacles.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) boxHits++; });
-            devices.forEach(function (r) { if (_segIntersectsRect(s[0], s[1], s[2], s[3], r)) deviceHits++; });
-          });
           var len = Math.abs(S.y - cy0) + Math.abs(ax - cx) + Math.abs(T.y - cy0) + Math.abs(T.x - ax);
-          // A box crossing costs most, a device crossing next; then length,
-          // then the stable preference order (corridor, then straight-in).
-          var score = boxHits * 100000 + deviceHits * 50000 + len + idx + aIdx * 0.5;
-          if (!best || score < best.score) best = { cy: cy0, ax: ax, score: score };
+          var score = scoreRoute(segs, len, idx + aIdx * 0.5);
+          if (!best || score < best.score) best = { kind: "side", cy: cy0, ax: ax, score: score };
         });
       });
+      // Family B — out the source box's TOP or BOTTOM: straight up / down
+      // from the device (or a lane just beside it, when a device sits in its
+      // column), then across and in. A target just below a wide box no
+      // longer pays a trip out the box's far side and back.
+      if (bs) {
+        var exLanes = [S.x, S.x - rS - 18, S.x + rS + 18];
+        var vCorridors = [
+          bs.y2 + _ROUTE_MARGIN,                       // just below the source box
+          bs.y1 - _ROUTE_MARGIN - _ROUTE_LABEL_PAD,    // just above it
+          T.y,                                         // the target's own row
+        ];
+        vCorridors.forEach(function (cy0, idx) {
+          exLanes.forEach(function (ex, eIdx) {
+            approaches.forEach(function (ax, aIdx) {
+              var segs = [];
+              if (ex !== S.x) segs.push([S.x, S.y, ex, S.y]);
+              segs.push([ex, S.y, ex, cy0], [ex, cy0, ax, cy0], [ax, cy0, ax, T.y]);
+              if (ax !== T.x) segs.push([ax, T.y, T.x, T.y]);
+              var len = Math.abs(ex - S.x) + Math.abs(cy0 - S.y) + Math.abs(ax - ex) + Math.abs(T.y - cy0) + Math.abs(T.x - ax);
+              var score = scoreRoute(segs, len, 0.25 + idx + eIdx * 0.5 + aIdx * 0.5);
+              if (score < best.score) best = { kind: "vertical", ex: ex, cy: cy0, ax: ax, score: score };
+            });
+          });
+        });
+      }
       var cyPick = best.cy;
       var axPick = best.ax;
       // Fan out edges sharing a corridor — BOTH axes. The horizontal stagger
@@ -1772,11 +1800,11 @@
       // other edges collapses onto one combined horizontal line (the first
       // edge in a 10px bucket keeps the exact coordinate; later ones step
       // down 9px and take a short vertical jog into their target).
-      var cxS = stagger("v", cx);
+      var cxS = stagger("v", best.kind === "vertical" ? best.ex : cx);
       var cyS = stagger("h", cyPick);
       // Polyline: drop degenerate bends (e.g. corridor == target row).
       var pts = [];
-      pts.push({ x: cxS, y: S.y });
+      if (best.kind !== "vertical" || Math.abs(cxS - S.x) > 0.5) pts.push({ x: cxS, y: S.y });
       if (Math.abs(cyS - S.y) > 0.5) pts.push({ x: cxS, y: cyS });
       var jog = cyS - T.y;
       if (axPick !== T.x) {
@@ -3194,16 +3222,23 @@
   //           every laid-out box is a drawn box); a device belongs to its
   //           deepest box, or to the site itself when it carries no code.
   //   PLACE   Inside each box — and the site — the items are its child boxes
-  //           and the devices directly in it. Each item's COLUMN is its level
-  //           (distinct levels rank-compressed, so an empty level costs no
-  //           width); a column is as wide as its widest item, so a wide box
-  //           pushes deeper columns right and flow still reads left to right.
-  //           Within a column, an item sits on the ROW of the device it hangs
-  //           off (its upstream, already placed one or more columns left),
-  //           ties and unrooted items sorted by name; it moves down past any
-  //           item it would overlap in its own column, and past any item in a
-  //           column its link would cross (so a straight link never runs
-  //           through a device).
+  //           and the devices directly in it, placed branch by branch from
+  //           the shallowest (a BFS over the upstream tree). An item's x
+  //           starts one cell per network level (distinct levels rank-
+  //           compressed) right of its UPSTREAM device and it prefers that
+  //           device's ROW; when the spot is taken it takes the cheapest
+  //           free spot — cells moved right + cells moved off the row —
+  //           past, below or above what blocks it. There are NO site-wide
+  //           columns (2026-11-07: a wide area used to push every deeper
+  //           item on the map past its right edge, far from its uplink), so
+  //           a branch sits beside its uplink and depth still reads left to
+  //           right along every branch. Among one upstream's children, one
+  //           with children of its own, else one that skips a level (the
+  //           next switch of a chain), claims the row first, so a switch
+  //           chain stays one flat row; a straight same-row link is a
+  //           corridor nothing may sit across, and a device linking OUT of
+  //           its box keeps its row clear to the right. Devices with no link
+  //           at all go in a strip under the site.
   //   SIZE    Boxes are sized innermost first and placed as one block,
   //           spaced from their siblings by what each one DRAWS (its wall's
   //           reach beyond its devices, _levelSep) rounded up to half cells,
@@ -3234,6 +3269,7 @@
     return Math.max(0.5, _ceilHalf((ext + LEVEL_LINK_GAP) / LEVEL_CELL_PX));
   }
   var _levelMemo = { elements: null, upstream: null };
+  var _levelRankMemo = {};
 
   function _locPath(d) {
     var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", jb = d.locJb || "";
@@ -3304,6 +3340,19 @@
 
     function cmpStr(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
 
+    // Compressed network levels (one cell per distinct depth) and the
+    // devices that have any link at all.
+    var _depths = [];
+    Object.keys(global).forEach(function (id) { if (_depths.indexOf(global[id].depth) < 0) _depths.push(global[id].depth); });
+    _depths.sort(function (a, b) { return a - b; });
+    _levelRankMemo = {};
+    _depths.forEach(function (d, i) { _levelRankMemo[d] = i; });
+    var linkedIds = {};
+    (elements || []).forEach(function (el) {
+      var d = el && el.data;
+      if (d && d.source && d.target) { linkedIds[d.source] = true; linkedIds[d.target] = true; }
+    });
+
     // Level + entry device of every box, innermost first.
     function measure(box) {
       var level = Infinity;
@@ -3347,140 +3396,199 @@
                      w: 0, h: 0, ext: LEVEL_DEVICE_EXT, rel: rel });
       });
 
-      // Columns by level, left to right; a column's x clears the widest
-      // item and the largest wall of the column before it.
-      var levels = [];
-      items.forEach(function (it) { if (levels.indexOf(it.level) < 0) levels.push(it.level); });
-      levels.sort(function (a, b) { return a - b; });
-      var colOf = {};
-      levels.forEach(function (lv, i) { colOf[lv] = i; });
-      var cols = levels.map(function () { return { items: [], x: 0, w: 0, ext: 0, placed: [], reserved: [] }; });
-      items.forEach(function (it) {
-        it.col = colOf[it.level];
-        var c = cols[it.col];
-        c.items.push(it);
-        if (it.w > c.w) c.w = it.w;
-        if (it.ext > c.ext) c.ext = it.ext;
-      });
-      cols.forEach(function (c, i) {
-        c.x = i === 0 ? 0 : cols[i - 1].x + cols[i - 1].w + _levelSep(cols[i - 1].ext, c.ext);
-      });
-
-      // Row of an item's upstream device, when that device sits in an item
-      // of THIS box that is already placed; else null.
-      function upRow(it) {
-        var u = upstream[it.entry];
-        if (u === undefined) return null;
+      // ── Placement: nearest free spot to the uplink ──
+      // Each item's x starts one cell per network level right of its
+      // upstream device (never closer than its wall allows) and it prefers
+      // the upstream's ROW. When that spot is taken it takes the cheapest
+      // free spot — cost = cells moved right + cells moved off the row —
+      // among: further right past what blocks it, or below / above what
+      // blocks it. There are no site-wide columns: a wide box pushes only
+      // what shares its rows, so a branch sits beside its uplink instead of
+      // past the widest box on the map.
+      var levelRank = _levelRankMemo;
+      function rankOf(lv) { return levelRank[lv] !== undefined ? levelRank[lv] : 0; }
+      var placedItems = [];
+      // Straight same-row links (and a device's outbound row) are corridors:
+      // { row, x1, x2 } in cell units; nothing may sit across one.
+      var corridors = [];
+      function devPos(u) {
         var idx = itemOfDevice[u];
         if (idx === undefined) return null;
         var host = items[idx];
-        if (host.y === undefined) return null;
-        return host.y + host.rel[u].y;
+        if (host.x === undefined) return null;
+        return { x: host.x + host.rel[u].x, y: host.y + host.rel[u].y, host: host };
       }
-      // First y ≥ `y` where an item (top y, span h, wall ext) clears every
-      // item placed in column c and every link reserved through it; returns
-      // the y to retry from, or null when y is clear.
-      function clashAt(c, y, h, ext) {
-        for (var i = 0; i < c.placed.length; i++) {
-          var p = c.placed[i];
-          var s = _levelSep(p.ext, ext);
-          if (y < p.y + p.h + s && p.y < y + h + s) return p.y + p.h + s;
+      function itemClear(it, x, y, ignoreHost) {
+        var e = it.ext / LEVEL_CELL_PX;
+        for (var i = 0; i < placedItems.length; i++) {
+          var q = placedItems[i];
+          var sp = _levelSep(q.ext, it.ext);
+          if (x < q.x + q.w + sp && q.x < x + it.w + sp && y < q.y + q.h + sp && q.y < y + it.h + sp) return false;
         }
-        for (var j = 0; j < c.reserved.length; j++) {
-          var r = c.reserved[j];
-          var sl = _levelLinkSep(ext);
-          if (y - sl < r && r < y + h + sl) return r + sl;
+        var sl = _levelLinkSep(it.ext);
+        for (var j = 0; j < corridors.length; j++) {
+          var c = corridors[j];
+          if (c.row > y - sl && c.row < y + it.h + sl && x - e < c.x2 - 0.01 && x + it.w + e > c.x1 + 0.01) return false;
         }
-        return null;
+        return true;
       }
-      // A link on `row` crossing column c: clear of every placed item there.
-      function linkClashAt(c, row) {
-        for (var i = 0; i < c.placed.length; i++) {
-          var p = c.placed[i];
-          var sl = _levelLinkSep(p.ext);
-          if (p.y - sl < row && row < p.y + p.h + sl) return p.y + p.h + sl;
+      // The item's own link, when it lands on its upstream's row, runs
+      // straight from the upstream: it must not cross a placed item or ride
+      // another corridor.
+      function ownLinkClear(ux, row, xe, hostOfU) {
+        if (xe <= ux) return true;
+        for (var i = 0; i < placedItems.length; i++) {
+          var q = placedItems[i];
+          if (q === hostOfU) continue;
+          var sl = _levelLinkSep(q.ext);
+          var e = q.ext / LEVEL_CELL_PX;
+          if (row > q.y - sl && row < q.y + q.h + sl && ux < q.x + q.w + e - 0.01 && xe > q.x - e + 0.01) return false;
         }
-        return null;
+        for (var j = 0; j < corridors.length; j++) {
+          var c = corridors[j];
+          if (Math.abs(c.row - row) < 0.5 && ux < c.x2 - 0.01 && xe > c.x1 + 0.01) return false;
+        }
+        return true;
       }
-      // The SPINE: for each upstream device, its first child item (by level,
-      // then name) that skips columns keeps the upstream's row — the row is
-      // reserved through the columns in between, so leaf APs there step
-      // below it and a switch chain stays one flat row, as the flat solver
-      // drew it. Other children route as fan-out links.
-      var spineOf = {}; // upstream deviceId → item
-      items.forEach(function (it) {
-        var u = upstream[it.entry];
-        var hi = u === undefined ? undefined : itemOfDevice[u];
-        if (hi === undefined || it.col <= items[hi].col + 1) return;
-        var cur = spineOf[u];
-        if (!cur || it.col < cur.col || (it.col === cur.col && (cmpStr(it.name, cur.name) || cmpStr(it.key, cur.key)) < 0)) {
-          spineOf[u] = it;
-        }
-      });
-      // OUTBOUND links: a device here whose child lies OUTSIDE this box
-      // links out through the box's right side on its own row, so that row
-      // is kept clear in every column right of it (an AP beside the core
-      // switch steps below the link to the next building instead of the
-      // link running through it).
-      var outbound = [];
+      function addOutbound(it) {
+        Object.keys(it.rel).forEach(function (u) {
+          if (outboundSet[u]) corridors.push({ row: it.y + it.rel[u].y, x1: it.x + it.rel[u].x, x2: Infinity });
+        });
+      }
+      // A device here whose child lies OUTSIDE this box links out through
+      // the box's right side on its own row: that row stays clear right of it.
+      var outboundSet = {};
       Object.keys(itemOfDevice).forEach(function (u) {
         var kids = childrenOf[u];
-        if (kids && kids.some(function (k) { return itemOfDevice[k] === undefined; })) outbound.push(u);
+        if (kids && kids.some(function (k) { return itemOfDevice[k] === undefined; })) outboundSet[u] = true;
       });
-      function reserveSpines(ci) {
-        Object.keys(spineOf).forEach(function (u) {
-          var it = spineOf[u];
-          var host = items[itemOfDevice[u]];
-          if (host.y === undefined || !(host.col < ci && ci < it.col)) return;
-          cols[ci].reserved.push(host.y + host.rel[u].y);
+
+      function place(it) {
+        var entryRel = it.rel[it.entry];
+        var u = upstream[it.entry];
+        var up = u === undefined ? null : devPos(u);
+        var minX, prefY;
+        if (up) {
+          var lvGap = Math.max(1, rankOf(it.level) - rankOf(global[u].depth));
+          minX = up.x + Math.max(_levelSep(LEVEL_DEVICE_EXT, it.ext), lvGap) - entryRel.x;
+          prefY = up.y - entryRel.y;
+        } else {
+          // Unanchored here (the firewall, or a device whose uplink is
+          // outside this box): one cell per level from this box's shallowest.
+          minX = rankOf(it.level) - rankOf(box.level);
+          prefY = 0;
+        }
+        var xs = [minX];
+        placedItems.forEach(function (q) {
+          var xr = q.x + q.w + _levelSep(q.ext, it.ext);
+          if (xr > minX) xs.push(xr);
         });
-        outbound.forEach(function (u) {
-          var host = items[itemOfDevice[u]];
-          if (host.y === undefined || !(host.col < ci)) return;
-          cols[ci].reserved.push(host.y + host.rel[u].y);
-        });
+        xs.sort(function (a, b) { return a - b; });
+        var best = null;
+        for (var xi = 0; xi < xs.length; xi++) {
+          var x = xs[xi];
+          if (xi > 0 && x === xs[xi - 1]) continue;
+          var dx = x - minX;
+          if (best && dx >= best.cost) break;
+          var ys = [prefY];
+          placedItems.forEach(function (q) {
+            var sp = _levelSep(q.ext, it.ext);
+            ys.push(q.y + q.h + sp, q.y - sp - it.h);
+          });
+          corridors.forEach(function (c) {
+            var sl = _levelLinkSep(it.ext);
+            ys.push(c.row + sl, c.row - sl - it.h);
+          });
+          ys = ys.map(function (v) { return _ceilHalf(v); });
+          ys.sort(function (a, b) {
+            var da = Math.abs(a - prefY) + (a < prefY ? 0.01 : 0);
+            var db = Math.abs(b - prefY) + (b < prefY ? 0.01 : 0);
+            return da - db;
+          });
+          for (var yi = 0; yi < ys.length; yi++) {
+            var y = ys[yi];
+            var cost = dx + Math.abs(y - prefY) + (y < prefY ? 0.01 : 0);
+            if (best && cost >= best.cost) break;
+            if (!itemClear(it, x, y)) continue;
+            if (up && Math.abs(y + entryRel.y - up.y) < 0.01 && !ownLinkClear(up.x, up.y, x + entryRel.x, up.host)) continue;
+            best = { x: x, y: y, cost: cost };
+            break;
+          }
+        }
+        if (!best) best = { x: minX, y: prefY, cost: 0 };
+        it.x = best.x;
+        it.y = best.y;
+        placedItems.push(it);
+        if (up && Math.abs(it.y + entryRel.y - up.y) < 0.01) {
+          corridors.push({ row: up.y, x1: up.x, x2: it.x + entryRel.x });
+        }
+        addOutbound(it);
       }
 
-      var height = 0;
-      cols.forEach(function (c, ci) {
-        reserveSpines(ci);
-        c.items.forEach(function (it) { it.up = upRow(it); });
-        c.items.sort(function (a, b) {
-          var au = a.up === null ? -Infinity : a.up;
-          var bu = b.up === null ? -Infinity : b.up;
-          if (au !== bu) return au - bu;
-          return cmpStr(a.name, b.name) || cmpStr(a.key, b.key);
-        });
-        c.items.forEach(function (it) {
-          var entryRow = it.rel[it.entry].y;
-          var y = Math.max(0, it.up === null ? 0 : it.up - entryRow);
-          var upIdx = it.up === null ? undefined : itemOfDevice[upstream[it.entry]];
-          var fromCol = upIdx === undefined ? ci - 1 : items[upIdx].col;
-          var spineSelf = upIdx !== undefined && spineOf[upstream[it.entry]] === it;
-          for (var guard = 0; guard < 10000; guard++) {
-            var next = clashAt(c, y, it.h, it.ext);
-            // Its link crosses the columns between it and its upstream: the
-            // entry row must clear what is placed there (its own reserved
-            // corridor is, by construction, already clear).
-            for (var k = fromCol + 1; k < ci && next === null; k++) {
-              var hit = linkClashAt(cols[k], y + entryRow);
-              if (hit !== null) next = hit - entryRow;
-              if (next === null && !spineSelf) {
-                // ...and must not ride another link's reserved corridor.
-                for (var q = 0; q < cols[k].reserved.length && next === null; q++) {
-                  if (Math.abs(cols[k].reserved[q] - (y + entryRow)) < 0.5) next = cols[k].reserved[q] + 0.5 - entryRow;
-                }
-              }
-            }
-            if (next === null) break;
-            y = Math.max(y, next);
-          }
-          it.x = c.x;
-          it.y = y;
-          c.placed.push(it);
-          if (y + it.h > height) height = y + it.h;
-        });
+      // Order: branch by branch from the shallowest items (BFS over the
+      // upstream tree); among one upstream's children, those with children
+      // of their own first — the switch chain claims the upstream's row
+      // before its leaf APs, so it stays one flat row — then by level, name.
+      var kidsOfItem = items.map(function () { return []; });
+      var roots = [];
+      items.forEach(function (it, i) {
+        var u = upstream[it.entry];
+        var hi = u === undefined ? undefined : itemOfDevice[u];
+        if (hi === undefined || hi === i) roots.push(it); else kidsOfItem[hi].push(it);
       });
+      items.forEach(function (it, i) {
+        it.idx = i;
+        // The SPINE claim on the upstream's row: a child with children of its
+        // own, else one that skips a level (the next switch of a chain, two
+        // levels on, past its upstream's leaf APs), goes before leaves.
+        var u = upstream[it.entry];
+        var gap = u === undefined ? 0 : rankOf(it.level) - rankOf(global[u].depth);
+        it.spine = kidsOfItem[i].length > 0 ? 2 : (gap >= 2 ? 1 : 0);
+      });
+      function byPriority(a, b) {
+        return (b.spine - a.spine) || (a.level - b.level) || cmpStr(a.name, b.name) || cmpStr(a.key, b.key);
+      }
+      // Unconnected devices (no link at all) are not placed here: the site
+      // root puts them in a strip of their own along the bottom.
+      var loose = [];
+      roots = roots.filter(function (it) {
+        if (box === root && it.key.indexOf("d:") === 0 && !linkedIds[it.entry]) { loose.push(it); return false; }
+        return true;
+      });
+      roots.sort(function (a, b) { return (a.level - b.level) || cmpStr(a.name, b.name) || cmpStr(a.key, b.key); });
+      var queue = roots.slice();
+      for (var qi = 0; qi < queue.length; qi++) {
+        var cur = queue[qi];
+        place(cur);
+        kidsOfItem[cur.idx].slice().sort(byPriority).forEach(function (k) { queue.push(k); });
+      }
+
+      // Normalize: the box's frame starts at its top-left device centre.
+      var minXc = Infinity, minYc = Infinity;
+      placedItems.forEach(function (it) {
+        if (it.x < minXc) minXc = it.x;
+        if (it.y < minYc) minYc = it.y;
+      });
+      if (!isFinite(minXc)) { minXc = 0; minYc = 0; }
+      var width = 0, height = 0;
+      placedItems.forEach(function (it) {
+        it.x -= minXc;
+        it.y -= minYc;
+        if (it.x + it.w > width) width = it.x + it.w;
+        if (it.y + it.h > height) height = it.y + it.h;
+      });
+      // The no-links strip: one row under everything, a cell apart.
+      if (loose.length) {
+        loose.sort(function (a, b) { return cmpStr(a.name, b.name) || cmpStr(a.key, b.key); });
+        var stripY = placedItems.length ? height + 1.5 : 0;
+        loose.forEach(function (it, i) {
+          it.x = i;
+          it.y = stripY;
+          placedItems.push(it);
+          if (it.x > width) width = it.x;
+        });
+        height = stripY;
+      }
 
       var out = {};
       var maxExt = 0;
@@ -3490,7 +3598,6 @@
           out[id] = { x: it.x + it.rel[id].x, y: it.y + it.rel[id].y };
         });
       });
-      var width = cols.length ? cols[cols.length - 1].x + cols[cols.length - 1].w : 0;
       // This box's own wall: the larger of its level's side padding and the
       // name strip on top, beyond the furthest-reaching thing inside it.
       var cfg = LOC_GROUP_KINDS[_LEVEL_KIND[box.key.slice(0, box.key.indexOf("|"))]];

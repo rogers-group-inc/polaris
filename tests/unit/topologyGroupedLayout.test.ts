@@ -255,6 +255,43 @@ describe("computeGroupedLayout", () => {
     expect(pos.ap2.lane).not.toBe(pos.sw.lane);
     expect(pos.ap.lane).not.toBe(pos.ap2.lane);
   });
+  it("puts a branch beside its uplink, not past a wide sibling box", () => {
+    // Scale House feeds a long Mine chain, and — one hop deeper, through a
+    // second Scale House switch — a small Tower 1. With site-wide columns
+    // Tower 1 (a level deeper than Mine) had to start past Mine's right
+    // edge; now it sits next to its uplink and only Mine's rows push it.
+    const els = [
+      node("fg", "fortigate"),
+      node("core", "fortiswitch", { b: "Scale House" }),
+      node("sh2", "fortiswitch", { b: "Scale House" }),
+      ...["m1", "m2", "m3", "m4", "m5", "m6"].map((id) => node(id, "fortiswitch", { a: "Mine", b: "Underground" })),
+      node("t1", "fortiswitch", { b: "Tower 1" }),
+      node("t1ap", "fortiap", { b: "Tower 1" }),
+      edge("fg", "core"),
+      edge("core", "m1"), edge("m1", "m2"), edge("m2", "m3"), edge("m3", "m4"), edge("m4", "m5"), edge("m5", "m6"),
+      edge("core", "sh2"), edge("sh2", "t1"), edge("t1", "t1ap"),
+    ];
+    const pos = computeGroupedLayout(els)!;
+    const mine = box(pos, ["m1", "m2", "m3", "m4", "m5", "m6"]);
+    expect(pos.t1.depth).toBeLessThan(mine.x2);
+    expect(pos.t1.depth).toBeGreaterThan(pos.sh2.depth);
+    expect(pos.t1.depth - pos.sh2.depth).toBeLessThanOrEqual(2);
+    // ...and off Mine's rows, so its box and Mine's never overlap.
+    expect(pos.t1.lane < mine.y1 || pos.t1.lane > mine.y2).toBe(true);
+  });
+  it("puts devices with no link in a strip under the site", () => {
+    const els = [
+      node("fg", "fortigate"), node("sw", "fortiswitch"), node("ap", "fortiap"),
+      node("zz", "fortiswitch"), node("aa", "fortiap"),
+      edge("fg", "sw"), edge("sw", "ap"),
+    ];
+    const pos = computeGroupedLayout(els)!;
+    const linkedBottom = Math.max(pos.fg.lane, pos.sw.lane, pos.ap.lane);
+    expect(pos.aa.lane).toBeGreaterThan(linkedBottom);
+    expect(pos.zz.lane).toBe(pos.aa.lane);
+    expect(pos.aa.depth).toBeLessThan(pos.zz.depth); // by name, from the left
+    expect(Math.min(pos.aa.depth, pos.zz.depth)).toBe(Math.min(pos.fg.depth, pos.sw.depth, pos.ap.depth));
+  });
   it("keeps a link that leaves a box clear of the devices inside it", () => {
     // SW-CORE (in Scale House) links out to the Mine box; the AP beside it in
     // Scale House must not sit on that row.
