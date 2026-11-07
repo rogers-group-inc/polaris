@@ -9445,7 +9445,17 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     if (!showOpticsCols) return "";
     var o = iface.optics || null;
     function num(v, digits) { return (typeof v === "number" && isFinite(v)) ? v.toFixed(digits) : null; }
-    function cell(text, extra) { return '<td class="mono"' + (extra || "") + '>' + (text != null ? escapeHtml(text) : "—") + '</td>'; }
+    // A reading opens its own history (the sensor slide-over), addressed by the
+    // stored sensor name the collector gave it (rule 143's `<port> <role>`).
+    var roleOrder = ["rxPower", "txPower", "temperature", "voltage", "bias"];
+    var cellIdx = 0;
+    function cell(text, extra) {
+      var role = roleOrder[cellIdx++];
+      if (text == null) return '<td class="mono"' + (extra || "") + '>—</td>';
+      return '<td class="mono"' + (extra || "") + '><a href="#" class="iface-optic-link" data-sensor="' +
+        escapeHtml(_sfpSensorName(iface.ifName, role)) + '" title="Show history" style="color:inherit;text-decoration:none">' +
+        escapeHtml(text) + '</a></td>';
+    }
     if (!o) return cell(null) + cell(null) + cell(null) + cell(null) + cell(null);
     var rx = num(o.rxDbm, 2);
     var rxLow = typeof o.rxDbm === "number" && o.rxDbm <= RX_LOW_DBM;
@@ -10297,6 +10307,14 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     // too (_openInterfaceOrNetwork). The already-loaded row rides along so the
     // slide-over can surface current-state fields (VLAN config in particular)
     // that the interface-history endpoint doesn't carry.
+    // A transceiver reading cell — its history in the sensor slide-over.
+    var opticLink = t.closest(".iface-optic-link");
+    if (opticLink) {
+      e.preventDefault();
+      openSensorDetailPanel(asset, opticLink.getAttribute("data-sensor"));
+      return;
+    }
+
     var ifLink = t.closest(".asset-iface-link");
     if (ifLink) {
       e.preventDefault();
@@ -12443,6 +12461,21 @@ function closeSensorPanel() {
   var ov = document.getElementById("sensor-panel-overlay");
   if (ov) ov.classList.remove("open");
   if (_sensorRefreshTimer) { clearTimeout(_sensorRefreshTimer); _sensorRefreshTimer = null; }
+}
+
+// The stored sensor name of a transceiver reading (business rule 143). Mirrors
+// src/utils/sfpOptics.ts → sfpSensorName / SFP_ROLE_LABELS, which the collector
+// writes; tests/unit/sfpOpticsUi.test.ts holds the two in step, because a
+// mismatch opens an empty chart rather than failing.
+var SFP_ROLE_LABELS = {
+  temperature: "SFP temperature",
+  voltage:     "SFP voltage",
+  txPower:     "Tx power",
+  rxPower:     "Rx power",
+  bias:        "Bias current",
+};
+function _sfpSensorName(ifName, role) {
+  return ifName + " " + SFP_ROLE_LABELS[role];
 }
 
 async function openSensorDetailPanel(asset, sensorName) {
@@ -17385,6 +17418,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Errors per interval (in / out)</h5>' +
       '<div id="iface-err-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
       '<div id="iface-err-chart" class="iface-chart-box"></div>' +
+      _ifaceOpticsBlockHTML(asset, ifName, ifaceRow) +
     '</div>';
   document.querySelectorAll(".iface-chart-box").forEach(function (el) {
     el.classList.add("chart-box");
@@ -17456,8 +17490,19 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       _loadInterfaceHistoryFor(asset.id, ifName, { from: fromIso, to: toIso });
     });
   }
-  // Drag-select on either chart applies the selection as the custom range.
-  ["iface-tput-chart", "iface-err-chart"].forEach(function (cid) {
+  // The temperature / voltage / bias links under the optics charts open that
+  // reading's own history, as the Interfaces table cells do.
+  var opticsBlock = document.getElementById("iface-optics-block");
+  if (opticsBlock) {
+    opticsBlock.addEventListener("click", function (e) {
+      var a = e.target.closest(".iface-optic-link");
+      if (!a) return;
+      e.preventDefault();
+      openSensorDetailPanel(asset, a.getAttribute("data-sensor"));
+    });
+  }
+  // Drag-select on any chart applies the selection as the custom range.
+  ["iface-tput-chart", "iface-err-chart", "iface-rx-chart", "iface-tx-chart"].forEach(function (cid) {
     _wireChartDragSelect(document.getElementById(cid), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "iface-range-btn", customBtnId: "btn-iface-custom",
@@ -17524,6 +17569,9 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     }
     // Silent ticks leave stale content in place on transient errors.
   }
+  // The optics charts load on their own: a failed sensor read must not blank
+  // the throughput charts above, nor the other way round.
+  await _loadIfaceOpticsHistory(assetId, ifName, opts, silent);
   if (panelBody) {
     panelBody.scrollTop = savedScroll;
     requestAnimationFrame(function () {
@@ -17538,6 +17586,85 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
   var asset = _currentAssetForRefresh;
   var ms = _refreshIntervalMs(asset && asset.monitorIntervalSec, settings.intervalSeconds, 60);
   _scheduleIfaceRefresh(assetId, ifName, ms);
+}
+
+// ─── Transceiver history on the interface page (business rule 143) ─────────
+// Rx and Tx power for an SFP port, charted from the hardware-sensor samples the
+// collector wrote under the port's name. Drawn only when the port carries
+// optics. They follow the page's range buttons. The temperature, voltage and
+// bias readings are linked rather than charted here, each opening its own
+// history in the sensor slide-over. Optics history records whether or not the
+// interface is pinned: it rides the hardware-sensor stream, not the interface
+// one.
+function _ifaceOpticsBlockHTML(asset, ifName, ifaceRow) {
+  if (!ifaceRow || !ifaceRow.optics) return "";
+  function link(role, label) {
+    return '<a href="#" class="iface-optic-link" data-sensor="' + escapeHtml(_sfpSensorName(ifName, role)) + '">' + label + '</a>';
+  }
+  return '<div id="iface-optics-block" style="margin-top:1.25rem">' +
+    '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.25rem">' +
+      '<h4 style="margin:0">Optical power</h4>' +
+      _streamSourceBadgeHTML(asset, "telemetry") +
+    '</div>' +
+    '<div style="font-size:0.8rem;color:var(--color-text-secondary);margin-bottom:0.25rem">Transceiver history: ' +
+      link("temperature", "Temperature") + ' · ' + link("voltage", "Voltage") + ' · ' + link("bias", "Bias current") +
+    '</div>' +
+    '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Rx power</h5>' +
+    '<div id="iface-rx-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
+    '<div id="iface-rx-chart" class="iface-chart-box"></div>' +
+    '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Tx power</h5>' +
+    '<div id="iface-tx-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
+    '<div id="iface-tx-chart" class="iface-chart-box"></div>' +
+  '</div>';
+}
+
+async function _loadIfaceOpticsHistory(assetId, ifName, opts, silent) {
+  var series = [
+    { role: "rxPower", chart: "iface-rx-chart", stats: "iface-rx-stats" },
+    { role: "txPower", chart: "iface-tx-chart", stats: "iface-tx-stats" },
+  ].filter(function (s) { return document.getElementById(s.chart); });
+  if (series.length === 0) return;
+  await Promise.all(series.map(async function (s) {
+    var chartEl = document.getElementById(s.chart);
+    var statsEl = document.getElementById(s.stats);
+    var sensorName = _sfpSensorName(ifName, s.role);
+    if (!silent) chartEl.textContent = "Loading samples…";
+    // A fresh options object: the history client must not see (or leave) a
+    // sensorName on the interface page's own range options.
+    var q = opts.from && opts.to ? { from: opts.from, to: opts.to } : { range: opts.range || "1h" };
+    q.sensorName = sensorName;
+    try {
+      var data = await api.assets.hardwareHistory(assetId, q);
+      var samples = (data.samples || []).filter(function (x) { return typeof x.value === "number"; });
+      if (statsEl) {
+        var st = data.stats || {};
+        var fmt = function (v) { return typeof v === "number" ? v.toFixed(2) + " dBm" : "—"; };
+        var parts = [
+          { label: "Avg", value: fmt(st.avgValue) },
+          { label: "Min", value: fmt(st.minValue) },
+          { label: "Max", value: fmt(st.maxValue) },
+        ];
+        var tierPart = _tierStatsPart(data);
+        if (tierPart) parts.unshift(tierPart);
+        _renderChartStats(statsEl, _inChartWindow(samples, data.since).length, parts);
+      }
+      if (samples.length === 0) {
+        chartEl.textContent = "No readings in this window.";
+      } else {
+        _renderSensorChart(chartEl, samples, {
+          since: data.since, until: data.until, subject: ifName + " " + SFP_ROLE_LABELS[s.role],
+          unit: "dBm", maxTier: _chartRollupTier(data), maxPrefKey: "assetSensor",
+        });
+      }
+      if (opts.from && opts.to) { chartEl.dataset.from = opts.from; chartEl.dataset.to = opts.to; delete chartEl.dataset.range; }
+      else { chartEl.dataset.range = opts.range || "1h"; delete chartEl.dataset.from; delete chartEl.dataset.to; }
+    } catch (err) {
+      if (!silent) {
+        chartEl.textContent = "Error: " + (err.message || "failed to load");
+        if (statsEl) statsEl.textContent = "";
+      }
+    }
+  }));
 }
 
 // Per-panel state for the Interface Comments editor. Tracks the saved value

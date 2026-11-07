@@ -57,6 +57,19 @@ its interface's `optics` object ONLY when that ifName is in the interface invent
 table shows Rx and Tx by default and temperature, voltage and bias as default-hidden columns; the
 phone's interface page lists all five.
 
+**History (2026-11-06).** A reading's history is read by its stored name through
+`GET /assets/:id/hardware-history?sensorName=` — the same endpoint the Hardware Sensors table
+used. Every optics cell in the Interfaces table opens that history in the sensor slide-over
+(`openSensorDetailPanel`); the desktop interface page charts Rx and Tx under *Optical power*
+(`_ifaceOpticsBlockHTML` / `_loadIfaceOpticsHistory`, on the page's own range), and the phone's
+interface page draws both on one chart with its own range picker. The browser holds its own copy
+of the role labels (`SFP_ROLE_LABELS` in `public/js/assets.js`; the phone spells the Rx / Tx
+names inline), pinned to `sfpSensorName` by `tests/unit/sfpOpticsUi.test.ts` — a drift opens an
+empty chart rather than failing. **History before the rename is not joined:** those samples sit
+under the agent's positional names (`sensor-17`; `Sensor, Type: SFP` shared by several rows
+and different readings), which cannot be attributed after the fact, and sample rows in
+compressed chunks are never rewritten.
+
 **Rejected:** a per-model cage table (a release per model, wrong silently for every model not in
 it); reading port names from entPhysicalName (proven wrong); FortiOS REST through the controlling
 gate as the only source (FortiLink-managed switches only; the endpoint is unverified — it remains

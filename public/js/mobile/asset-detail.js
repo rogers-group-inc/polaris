@@ -2014,6 +2014,16 @@
           + '<div id="iface-err-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-err-sub" style="font-size:12px;margin-top:4px;"></div>'
         : '')
+      // Transceiver history (business rule 143) — recorded on the hardware-
+      // sensor stream, so it shows whether or not the port is monitored, with
+      // its own range picker.
+      + (iface.optics
+        ? ''
+          + '<div style="font-weight:500;margin:16px 0 8px;">Optical power</div>'
+          + rangeSegHtml("iface-optics-seg", RANGES, "1h")
+          + '<div id="iface-optics-chart" style="min-height:120px;"></div>'
+          + '<div class="muted" id="iface-optics-sub" style="font-size:12px;margin-top:4px;"></div>'
+        : '')
       + '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>'
       + neighborHtml;
 
@@ -2027,6 +2037,61 @@
       wireRangeSeg("iface-range-seg", function (r) { loadInterfaceCharts(assetId, iface.ifName, r); });
       loadInterfaceCharts(assetId, iface.ifName, "1h");
     }
+    if (iface.optics && iface.ifName) {
+      wireRangeSeg("iface-optics-seg", function (r) { loadOpticsChart(assetId, iface.ifName, r); });
+      loadOpticsChart(assetId, iface.ifName, "1h");
+    }
+  }
+
+  // Rx and Tx power for an SFP port: two hardware-sensor series addressed by
+  // the names the collector stores (`<port> Rx power` / `<port> Tx power`,
+  // src/utils/sfpOptics.ts → sfpSensorName — the desktop's SFP_ROLE_LABELS).
+  function loadOpticsChart(assetId, ifName, range) {
+    var el = document.getElementById("iface-optics-chart");
+    var sub = document.getElementById("iface-optics-sub");
+    if (!el) return;
+    el.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    if (sub) sub.textContent = "";
+    var current = function () {
+      var seg = document.getElementById("iface-optics-seg");
+      var on = seg && seg.querySelector(".seg-item.on");
+      return _openId === assetId && document.getElementById("iface-optics-chart") === el
+        && on && on.dataset.range === range;
+    };
+    Promise.all([
+      api.assets.hardwareHistory(assetId, { range: range, sensorName: ifName + " Rx power" }),
+      api.assets.hardwareHistory(assetId, { range: range, sensorName: ifName + " Tx power" }),
+      maintWindowsFor(assetId),
+    ]).then(function (got) {
+      if (!current()) return;
+      var rx = got[0] || {}, tx = got[1] || {}, maint = got[2];
+      var pts = function (d) {
+        return (d.samples || []).filter(function (s) { return typeof s.value === "number"; })
+          .map(function (s) { return { ts: s.timestamp, v: s.value }; });
+      };
+      var rxPts = pts(rx), txPts = pts(tx);
+      if (!rxPts.length && !txPts.length) {
+        el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
+        return;
+      }
+      var bounds = rangeBounds(range);
+      el.innerHTML = PolarisCharts.lineChart({
+        maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, height: 120,
+        series: [
+          { values: rxPts, color: "var(--md-primary)",  gapFade: true },
+          { values: txPts, color: "var(--md-tertiary)", gapFade: true },
+        ],
+        yUnit: "dBm",
+        ariaLabel: ifName + " optical power over " + range,
+      });
+      var avg = function (d) { var s = d.stats || {}; return typeof s.avgValue === "number" ? s.avgValue.toFixed(2) + " dBm" : "—"; };
+      if (sub) sub.innerHTML = ''
+        + '<span style="color:var(--md-primary);">Rx avg ' + escapeHtml(avg(rx)) + '</span>'
+        + ' · <span style="color:var(--md-tertiary);">Tx avg ' + escapeHtml(avg(tx)) + '</span>';
+    }).catch(function (err) {
+      if (!current()) return;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load optical history: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
+    });
   }
 
   // The bit-rate unit a peak reads best in; the chart is drawn in that unit
