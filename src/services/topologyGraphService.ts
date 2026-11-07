@@ -31,6 +31,7 @@ import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js"
 import { inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
+import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
 
 // ─── Which of a site's switches an endpoint sits on (business rule 91) ──────
 //
@@ -235,6 +236,40 @@ export type LldpOnlySwitchLink = {
 // these port-id subtypes carry an operator-readable name (not a MAC/address).
 const SYNTHETIC_LLDP_PORT_RE = /^port-\d+$/i;
 const LLDP_PORT_NAME_SUBTYPES = new Set(["interfaceName", "interfaceAlias", "agentCircuitId", "local"]);
+
+/**
+ * Each port's latest transceiver (SFP DDM) readings, keyed `assetId|ifName`,
+ * from recent hardware-sensor rows that carry a port (business rule 143).
+ * Keeps the NEWEST row per (asset, sensor name), then folds an asset's rows
+ * through `splitOpticsSamples` against the ports that asset actually has —
+ * the same read the asset's Interfaces table makes, so a reading lands on a
+ * link only where it would land on that port's row. A row whose port is not
+ * in `interfaceKeys` (`assetId|ifName`) is dropped.
+ */
+export function latestOpticsByPort(
+  rows: ReadonlyArray<{ assetId: string; ifName: string | null; sensorName: string; value: number | null; timestamp: Date }>,
+  interfaceKeys: ReadonlySet<string>,
+): Map<string, InterfaceOptics> {
+  const newest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const k = `${r.assetId}|${r.sensorName}`;
+    const cur = newest.get(k);
+    if (!cur || r.timestamp > cur.timestamp) newest.set(k, r);
+  }
+  const byAsset = new Map<string, Array<(typeof rows)[number]>>();
+  for (const r of newest.values()) {
+    const list = byAsset.get(r.assetId);
+    if (list) list.push(r); else byAsset.set(r.assetId, [r]);
+  }
+  const out = new Map<string, InterfaceOptics>();
+  for (const [assetId, list] of byAsset) {
+    const names = new Set<string>();
+    for (const r of list) if (r.ifName && interfaceKeys.has(`${assetId}|${r.ifName}`)) names.add(r.ifName);
+    if (names.size === 0) continue;
+    for (const [ifName, o] of splitOpticsSamples(list, names).optics) out.set(`${assetId}|${ifName}`, o);
+  }
+  return out;
+}
 
 /**
  * The radio-link detail the Device Map draws a mesh backhaul link from: the
@@ -1431,6 +1466,15 @@ export async function buildSiteTopology(siteId: string) {
         else physicalByParent.set(k, [r.ifName]);
       }
     }
+    // Transceiver readings for the same ports (business rule 143), held to the
+    // same 1 h bound: a link tooltip shows a port's SFP Rx / Tx / temperature
+    // beside its speed. Only rows the collector attributed to a port (ifName
+    // set) are read — a switch without optics contributes nothing.
+    const opticsRows = await prisma.assetHardwareSensorSample.findMany({
+      where: { assetId: { in: siteAssetIds }, ifName: { not: null }, timestamp: { gt: ifMetricStaleCutoff } },
+      select: { assetId: true, ifName: true, sensorName: true, value: true, timestamp: true },
+    });
+    const opticsByPort = latestOpticsByPort(opticsRows, new Set(ifMetricByKey.keys()));
     const ifDetail = (assetId: string, rawName: string | undefined) => {
       if (!assetId || !rawName) return null;
       let name = rawName.trim();
@@ -1441,7 +1485,8 @@ export async function buildSiteTopology(siteId: string) {
       if (members && members.length === 1) name = members[0];
       const m = ifMetricByKey.get(`${assetId}|${name}`);
       if (!m) return null;
-      return { name, ...m };
+      const optics = opticsByPort.get(`${assetId}|${name}`);
+      return optics ? { name, ...m, optics } : { name, ...m };
     };
     const attachIfDetails = (arr: Array<{ source: string; target: string; label?: string }>) => {
       for (const e of arr) {

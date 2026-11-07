@@ -35,7 +35,7 @@ An MCLAG peer link is dashed in its speed's colour. The neutral is the faintest 
 
 The `#topology-edge-tooltip` floating tip. Each value is written out in words beside a short swatch in the link's own colour, so colour is never the only carrier.
 
-- **Cable:** the two ends, the port pair (mono), how it was found, the speed ("10 Gbps · link speed"), then each end's port line (speed, status, errors). Below 1 Gb it adds "Slower than 1 Gb on an infrastructure link. Usually a cable or speed-negotiation fault." With no speed it says "Speed not known".
+- **Cable:** the two ends, the port pair (mono), how it was found, the speed ("10 Gbps · link speed"), then each end's port line (speed, status, errors), and under a port holding an SFP that reports diagnostics, its readings ("SFP Rx −3.21 dBm · Tx −2.08 dBm · 41.2 °C · 3.29 V · 8.98 mA"; Rx at or below −20 dBm in `color-danger`, plus a line naming the end receiving too little light). Below 1 Gb it adds "Slower than 1 Gb on an infrastructure link. Usually a cable or speed-negotiation fault." With no speed it says "Speed not known".
 - **Mesh:** the two ends, "AP to AP — wireless mesh backhaul", the signal in dBm and words ("Poor signal" in the band's colour; "Good signal" in `color-success`), the channel, band and width, noise and SNR, the SSID (mono), and when it was last seen. With no reading: "Signal not reported" and why.
 
 ## Legend

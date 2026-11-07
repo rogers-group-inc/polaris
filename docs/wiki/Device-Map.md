@@ -247,8 +247,13 @@ speed's color, and a link that is part of a switch ring gets a white halo
 
 **Hover a link to see the details.** A cable's tooltip shows its ports, how it
 was found ("found by interface naming", "found by LLDP"), its speed, and each
-port's speed, status and error counts. A cable slower than 1 Gb also says that
-this is usually a cable or speed-negotiation fault. A mesh link's tooltip shows
+port's speed, status and error counts. Where a port holds an SFP transceiver
+that reports its diagnostics (see the Interfaces table on [Assets](Assets)), a line
+under that port adds its receive and transmit power, temperature, voltage and
+laser bias current. A receive power of −20 dBm or lower is shown in red, and
+the tooltip names the end that is receiving too little light. A copper SFP
+reports no diagnostics, so it gets no line. A cable slower than 1 Gb also says
+that this is usually a cable or speed-negotiation fault. A mesh link's tooltip shows
 the signal in dBm and in words, the channel, band and channel width, the noise
 and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
 a section for each: **Wired link speed**, **Wireless mesh signal**, and

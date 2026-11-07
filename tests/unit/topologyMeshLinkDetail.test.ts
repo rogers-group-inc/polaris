@@ -8,7 +8,8 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
-import { meshLinkDetail } from "../../src/services/topologyGraphService.js";
+import { latestOpticsByPort, meshLinkDetail } from "../../src/services/topologyGraphService.js";
+import { sfpSensorName, type SfpOpticRole } from "../../src/utils/sfpOptics.js";
 
 describe("meshLinkDetail", () => {
   it("joins the station's signal to the root radio's channel and width", () => {
@@ -28,5 +29,36 @@ describe("meshLinkDetail", () => {
   it("keeps the signal half when the root's radio row is missing", () => {
     expect(meshLinkDetail({ signalStrength: -60, noise: -92, band: "6GHz" }, undefined))
       .toEqual({ signalDbm: -60, noiseDbm: -92, band: "6GHz", channel: null, channelWidthMhz: null });
+  });
+});
+
+describe("latestOpticsByPort", () => {
+  const T0 = new Date("2026-11-06T12:00:00Z");
+  const T1 = new Date("2026-11-06T12:05:00Z");
+  // Stored names come from the collector's own sfpSensorName, so the test
+  // cannot drift from what rule 143 writes.
+  const row = (assetId: string, ifName: string, role: SfpOpticRole, value: number, timestamp = T1) =>
+    ({ assetId, ifName, sensorName: sfpSensorName(ifName, role), value, timestamp });
+
+  it("folds a port's newest readings into its optics, keyed asset|port", () => {
+    const out = latestOpticsByPort([
+      row("sw1", "port49", "rxPower", -9.5, T0),
+      row("sw1", "port49", "rxPower", -3.2, T1),
+      row("sw1", "port49", "txPower", -2.1),
+      row("sw1", "port49", "temperature", 41),
+    ], new Set(["sw1|port49"]));
+    expect(out.get("sw1|port49")).toMatchObject({ rxDbm: -3.2, txDbm: -2.1, temperatureC: 41 });
+  });
+
+  it("keeps two switches' same-named ports apart", () => {
+    const out = latestOpticsByPort([row("sw1", "port49", "rxPower", -3), row("sw2", "port49", "rxPower", -25)],
+      new Set(["sw1|port49", "sw2|port49"]));
+    expect(out.get("sw1|port49")!.rxDbm).toBe(-3);
+    expect(out.get("sw2|port49")!.rxDbm).toBe(-25);
+  });
+
+  it("drops a reading whose port the switch is not known to have", () => {
+    const out = latestOpticsByPort([row("sw1", "port52", "rxPower", -3)], new Set(["sw1|port49"]));
+    expect(out.size).toBe(0);
   });
 });

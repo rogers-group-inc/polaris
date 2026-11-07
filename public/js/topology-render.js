@@ -3623,6 +3623,37 @@
     }
     return row;
   }
+  // A port's transceiver readings (SFP DDM, business rule 143), one indented
+  // line under its port line: "SFP Rx −3.20 dBm · Tx −2.10 dBm · 41.0 °C ·
+  // 3.30 V · 8.98 mA", each part only when read. Rx at or below
+  // OPTICS_RX_LOW_DBM is red, matching the asset's Interfaces table
+  // (assets.js RX_LOW_DBM). A copper SFP or an empty cage reads nothing and
+  // gets no line.
+  var OPTICS_RX_LOW_DBM = -20;
+  function _fmtDbm(v) { return String(v).replace("-", "−"); }
+  function _opticsTipRow(ifd) {
+    var o = ifd && ifd.optics;
+    if (!o) return "";
+    function num(v) { return typeof v === "number" && isFinite(v); }
+    var parts = [];
+    if (num(o.rxDbm)) {
+      var rx = "Rx " + _fmtDbm(o.rxDbm.toFixed(2)) + " dBm";
+      parts.push(o.rxDbm <= OPTICS_RX_LOW_DBM
+        ? '<span style="color:var(--color-danger,#dc2626);font-weight:600">' + _escTip(rx) + '</span>'
+        : _escTip(rx));
+    }
+    if (num(o.txDbm)) parts.push(_escTip("Tx " + _fmtDbm(o.txDbm.toFixed(2)) + " dBm"));
+    if (num(o.temperatureC)) {
+      var TU = typeof window !== "undefined" ? window.PolarisTempUnit : null;
+      var tv = TU && TU.convertCelsius ? TU.convertCelsius(o.temperatureC) : o.temperatureC;
+      parts.push(_escTip(tv.toFixed(1) + " " + (TU && TU.celsiusLabel ? TU.celsiusLabel() : "°C")));
+    }
+    if (num(o.voltage)) parts.push(_escTip(o.voltage.toFixed(2) + " V"));
+    if (num(o.biasA)) parts.push(_escTip((o.biasA * 1000).toFixed(2) + " mA"));
+    if (!parts.length) return "";
+    return '<div style="font-size:0.78em;opacity:0.85;padding-left:12px">' +
+      '<span style="opacity:0.7">SFP</span> ' + parts.join(" · ") + '</div>';
+  }
   var _SIGNAL_WORD = { good: "Good signal", fair: "Fair signal", weak: "Weak signal", poor: "Poor signal" };
   function _meshTipRows(edge) {
     var ec = EDGE_COLORS[paletteFamily()];
@@ -3695,8 +3726,22 @@
     var td = _formatIfDetail(edge.data("tgtIf"));
     if (sd) html += '<div style="font-size:0.78em;opacity:0.85;margin-top:3px">' +
       '<span style="opacity:0.7">' + _escTip(srcLabel) + ':</span> ' + _escTip(sd) + '</div>';
+    html += _opticsTipRow(edge.data("srcIf"));
     if (td) html += '<div style="font-size:0.78em;opacity:0.85">' +
       '<span style="opacity:0.7">' + _escTip(tgtLabel) + ':</span> ' + _escTip(td) + '</div>';
+    html += _opticsTipRow(edge.data("tgtIf"));
+    // A port receiving below most optics' sensitivity is named once, under
+    // both ends — the same −20 dBm line the asset's Interfaces table tints.
+    var lowRx = [[srcLabel, edge.data("srcIf")], [tgtLabel, edge.data("tgtIf")]].filter(function (p) {
+      var o = p[1] && p[1].optics;
+      return o && typeof o.rxDbm === "number" && o.rxDbm <= OPTICS_RX_LOW_DBM;
+    });
+    if (lowRx.length) {
+      html += '<div style="font-size:0.82em;margin-top:4px;color:var(--color-danger,#dc2626)">' +
+        _escTip(lowRx.map(function (p) { return p[0]; }).join(" and ")) +
+        ' receive' + (lowRx.length === 1 ? "s" : "") + ' below ' + _escTip(_fmtDbm(OPTICS_RX_LOW_DBM)) +
+        ' dBm, past most optics’ sensitivity. Check the fibre, connectors and the far-end transmitter.</div>';
+    }
     return html;
   }
 

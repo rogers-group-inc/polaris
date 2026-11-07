@@ -55,7 +55,11 @@ palette test enforces. MCLAG stays dashed in its speed's colour; the ring halo i
 (`topologyGraphService → meshLinkDetail`, the root AP's `AssetApRadio` for channel and width;
 signal only exists where the controller's REST overlay ran). The tooltip
 (`edgeTooltipHtml` → `_speedTipRows` / `_meshTipRows`) writes every value out in words, so
-colour is never the only carrier. Desktop page and widget only — the phone draws the same
+colour is never the only carrier. Under each end's port line `_opticsTipRow` adds that port's
+SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,
+the Interfaces table's `RX_LOW_DBM`; keep the two equal) in red, plus one line naming the end
+receiving too little light; a port whose readings are all null (copper SFP, empty cage) gets
+no line. Temperature goes through `PolarisTempUnit` when the page loaded it. Desktop page and widget only — the phone draws the same
 colours but has no link tooltip.
 
 **Link and location-box colours are per family** (since 2026-10-16). `EDGE_COLORS.dark` is

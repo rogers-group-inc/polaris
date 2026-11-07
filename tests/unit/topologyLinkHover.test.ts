@@ -231,7 +231,11 @@ describe("link tooltip speed and signal rows", () => {
       layout: { name: "preset" },
       elements: [
         n("s1"), n("s2"), n("a1"), n("a2"), n("a3"),
-        e("fast", "s1", "s2", { label: "port49 ↔ port50", isIface: 1, linkSpeed: "10g", speedBps: 1e10 }),
+        e("fast", "s1", "s2", { label: "port49 ↔ port50", isIface: 1, linkSpeed: "10g", speedBps: 1e10,
+          srcIf: { name: "port49", speedBps: 1e10, operStatus: "up", optics: { rxDbm: -3.2, txDbm: -2.1, temperatureC: 41, voltage: 3.3, biasA: 0.00898 } },
+          tgtIf: { name: "port50", speedBps: 1e10, operStatus: "up", optics: { rxDbm: -24.5, txDbm: -2.4, temperatureC: null, voltage: null, biasA: null } } }),
+        e("copper", "s2", "a2", { label: "port51 ↔ lan1", isApLink: 1, linkSpeed: "1g", speedBps: 1e9,
+          srcIf: { name: "port51", speedBps: 1e9, operStatus: "up", optics: { rxDbm: null, txDbm: null, temperatureC: null, voltage: null, biasA: null } } }),
         e("slow", "s2", "a1", { label: "port7 ↔ lan1", isApLink: 1, linkSpeed: "100m", speedBps: 1e8 }),
         e("unk", "s1", "a1", { label: "unknown ↔ lan1", isApLink: 1, linkSpeed: "unknown", speedBps: null }),
         e("poor", "a1", "a2", { label: "mesh-x", isMesh: 1, meshSignal: "poor", signalDbm: -84, noiseDbm: -95,
@@ -251,6 +255,18 @@ describe("link tooltip speed and signal rows", () => {
     expect(tip("slow")).toContain("<b>100 Mbps</b>");
     expect(tip("slow")).toContain("Slower than 1 Gb");
     expect(tip("unk")).toContain("Speed not known");
+  });
+
+  it("adds each end's SFP readings under its port line, and names a port receiving too little light", () => {
+    const fast = tip("fast");
+    expect(fast).toContain("Rx −3.20 dBm · Tx −2.10 dBm · 41.0 °C · 3.30 V · 8.98 mA");
+    // The far end's Rx is past -20 dBm: red, and named once below.
+    expect(fast).toContain("color:var(--color-danger,#dc2626);font-weight:600\">Rx −24.50 dBm");
+    expect(fast).toContain("S2 receives below −20 dBm");
+    expect(fast.indexOf("S1:")).toBeLessThan(fast.indexOf("Rx −3.20"));
+    // A copper SFP or an empty cage reads nothing: no SFP line, no warning.
+    expect(tip("copper")).not.toContain(">SFP<");
+    expect(tip("slow")).not.toContain(">SFP<");
   });
 
   it("writes a mesh link's signal, radio and SSID, and why a reading is missing", () => {
