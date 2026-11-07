@@ -16,7 +16,7 @@ polaris/
 ├── .env.example
 ├── package.json
 ├── tsconfig.json                    # strict + noUnusedLocals (since 2026-11-04); covers src/ only — tests/ is excluded and is type-checked by nobody
-├── knip.jsonc                       # `npm run check:dead`: dead files / exports / dependencies over src, scripts, prisma, tests (public/ excluded: no module system). src/jobs/*.ts are explicit entries because app.ts loads them through importJob over a string array. `!` marks production entries for `check:dead:prod` (exports only tests reach). Unused exports and types are ERRORS (2026-11-05): un-export a symbol only its file uses, delete one nothing uses; a deliberate exception carries `@public` in its JSDoc with the reason (today `agentChannelService.sendProbeNow`, `credentialService.CredentialConfig`). Pre-commit + CI
+├── knip.jsonc                       # `npm run check:dead`: dead files / exports / dependencies over src, scripts, prisma, tests (public/ excluded: no module system). src/jobs/*.ts are explicit entries because app.ts loads them through importJob over a string array. `!` marks production entries for `check:dead:prod` (exports only tests reach). Unused exports and types are ERRORS (2026-11-05): un-export a symbol only its file uses, delete one nothing uses; a deliberate exception carries `@public` in its JSDoc with the reason (today `credentialService.CredentialConfig`). Pre-commit + CI
 ├── .jscpd.json                      # `npm run check:dup`: duplication REPORT, never a gate (no threshold). maxSize/maxLines raised so assets.js and monitoringService.ts are scanned. JSON to the gitignored audit-reports/jscpd/
 ├── prisma.config.ts                 # Prisma 7 config (datasource URL, seed command)
 ├── prisma/

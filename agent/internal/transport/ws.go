@@ -1,7 +1,7 @@
 // WebSocket client for the agent → Polaris pull side. Held open by the
-// main loop; server pushes `probe-now-request` and `refresh-config` frames
-// down it, agent answers `probe-now-response` and treats refresh-config
-// as a signal to call FetchConfig immediately.
+// main loop; the server pushes `refresh-config` and `commands-pending` frames
+// down it, and the agent treats refresh-config as a signal to call
+// FetchConfig immediately.
 //
 // Auth: bearer rides in `Sec-WebSocket-Protocol` as
 // `polaris-agent.v1.bearer.<token>`. Keeps the token out of URL query

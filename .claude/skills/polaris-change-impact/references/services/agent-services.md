@@ -413,9 +413,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/agentChannelService.ts
 
-**What it owns:** In-memory `managedAgentId → WebSocket` registry for live agents: attach/detach lifecycle, heartbeat ping/pong, server-initiated probe-now requests, config-refresh frames, command-dispatch wake frames, AND the cross-process command-wake LISTENer.
+**What it owns:** In-memory `managedAgentId → WebSocket` registry for live agents: attach/detach lifecycle, heartbeat ping/pong, config-refresh frames, command-dispatch wake frames, AND the cross-process command-wake LISTENer.
 
-**Public API:** `attach`, `detach`, `isAttached`, `sendProbeNow`, `refreshConfig`, `wakeCommands`, `startCommandWakeListener`, and `sendProbeNow` — the server half of the agent's probe-now protocol with NO caller, kept under `@public`
+**Public API:** `attach`, `detach`, `isAttached`, `refreshConfig`, `wakeCommands`, `startCommandWakeListener`
 
 **Cross-service deps:** `prisma` (managed-agent updates, plus the one asset read that NAMES the device), `logEvent`, `maintenanceScheduleService.releaseMaintenanceHold` (business rule 80), `pg` (dedicated LISTEN client), `dbConnections.getDirectDatabaseUrl`, `agentCommandWake.CMD_WAKE_CHANNEL`.
 
@@ -430,7 +430,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **An upgrade the agent abandoned is never attached.** `agentsWs.ts` watches the raw socket for `close` / `end` while `verifyBearer` runs and drops the upgrade when `upgradeAbandoned` says the agent hung up; `attach` itself refuses a socket whose `readyState` is not OPEN, BEFORE it can displace the live session, and writes no event for it.
 - Heartbeat ping interval + pong-timeout force-close and detach a silent agent.
 - Probe-now is request-id correlated with a timeout reject; detach clears pending probes and is a no-op when not attached.
-- Frame envelope is a JSON `{ type, id, payload }` — a wire protocol shared with the Go agent. Frame types: `hello` / `refresh-config` / `probe-now-request` / `commands-pending`.
+- Frame envelope is a JSON `{ type, id, payload }` — a wire protocol shared with the Go agent. Frame types: `hello` / `refresh-config` / `commands-pending`, all one-way (the probe-now request/response pair was removed 2026-11-06, agent 0.28.3).
 - `wakeCommands` is a no-op when the agent isn't attached to THIS process — the NOTIFY reaches whichever process holds the session; the ≤20s command poll is the floor regardless.
 - The command-wake LISTENer uses the DIRECT database URL (session-pinned; PgBouncer transaction pooling breaks LISTEN) and reconnects with a fixed backoff on error.
 

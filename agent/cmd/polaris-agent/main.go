@@ -20,7 +20,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -491,10 +490,11 @@ func runAgent(ctx context.Context, confPath string) {
 	// Step 2 + 3 + 4: three independent loops.
 	//   - responseTimeLoop pushes samples on a fixed interval.
 	//   - heartbeatLoop bumps lastSeenAt + reads any config etag change.
-	//   - wsLoop holds the outbound WebSocket open for on-demand probes.
+	//   - wsLoop holds the outbound WebSocket open for server pushes
+	//     (refresh-config, commands-pending).
 	// Each runs on its own goroutine so a stall in one doesn't starve
-	// the others (a probe-now stuck behind a hung-host check would
-	// silently block heartbeats otherwise).
+	// the others (a hung-host check would otherwise silently block
+	// heartbeats).
 	go responseTimeLoop(ctx, cfg, client)
 	go heartbeatLoop(ctx, cfg, client)
 	go telemetryLoop(ctx, cfg, client)
@@ -1248,10 +1248,10 @@ func pushSystemInfoOne(client *transport.Client) {
 }
 
 // wsLoop holds the outbound WebSocket to Polaris open. Server-pushed
-// frames land in handleServerFrame: `probe-now-request` runs the relevant
-// collector synchronously and writes a `probe-now-response` back through
-// the same socket; `refresh-config` triggers a /config refetch via the
-// HTTP transport.
+// frames land in the handler below; `refresh-config` triggers a /config
+// refetch via the HTTP transport. (The probe-now request frame was removed
+// in 0.28.3: the server never sent it, and it only ever answered the
+// response-time stream.)
 func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 	dialer, err := transport.NewWSDialer(cfg.ServerURL, cfg.Pins(), cfg.BearerToken)
 	if err != nil {
@@ -1307,31 +1307,6 @@ func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 				}
 			}
 			return nil
-		case "probe-now-request":
-			// Operator clicked "Probe now" on the asset details page.
-			// Run the appropriate collector synchronously and emit the
-			// response frame keyed by request id.
-			var payload struct {
-				Stream string `json:"stream"`
-			}
-			_ = json.Unmarshal(f.Payload, &payload)
-			var resp transport.ResponseTimeSample
-			if payload.Stream == "responseTime" {
-				resp = *collectors.ResponseTimeOnce(func() error {
-					_, err := client.Heartbeat()
-					return err
-				})
-			}
-			resPayload, _ := json.Marshal(map[string]any{
-				"success":        resp.Success,
-				"responseTimeMs": resp.ResponseTimeMs,
-				"error":          resp.Error,
-			})
-			return conn.SendFrame(&transport.Frame{
-				Type:    "probe-now-response",
-				ID:      f.ID,
-				Payload: resPayload,
-			})
 		default:
 			log.Printf("ws: unrecognized frame type %q", f.Type)
 			return nil
