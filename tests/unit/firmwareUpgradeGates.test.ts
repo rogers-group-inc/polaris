@@ -319,7 +319,11 @@ describe("the runner", () => {
   });
 });
 
-describe("the runner keeps the maintenance window open until monitoring answers", () => {
+// Real timers on purpose (the recovery wait IS the behaviour under test), so
+// each case spends 1–2 s of wall clock; under a loaded full-suite run that
+// overran the default 5 s three times on 2026-11-06 while passing alone. The
+// 20 s budget is for load, not for a hang: the cases still assert their order.
+describe("the runner keeps the maintenance window open until monitoring answers", { timeout: 20_000 }, () => {
   // A FortiAP's web UI answered the engine while its SNMP agent was still
   // silent, so the hold ended and the misses landed just outside it. The run
   // now waits for the first SUCCESSFUL monitor sample after the engine is done.
