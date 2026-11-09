@@ -9783,8 +9783,7 @@ export async function syncEntraDevices(
     // Phase 4b: SID is now stored as AssetSource.observed.onPremisesSecurityIdentifier
     // on the entra source row; the legacy `sid:<SID>` tag is no longer written.
     // The hybrid-cross-link lookup in `buildEntraSyncIndex` reads from
-    // AssetSource directly. Existing tagged rows are scrubbed by the
-    // `scrubLegacySidGuidTags` startup job.
+    // AssetSource directly.
 
     // Prefer Intune's lastSync (freshest hands-on-device signal) over Entra's sign-in time
     const lastSeenIso = dev.lastSyncDateTime || dev.approximateLastSignInDateTime;
@@ -10620,8 +10619,7 @@ export async function syncActiveDirectoryDevices(
     // Phase 4b: AD GUID lives on AssetSource.externalId (sourceKind="ad")
     // and SID lives on AssetSource.observed.objectSid. Neither needs a
     // mirroring tag any more — the legacy `ad-guid:<guid>` and `sid:<SID>`
-    // tag writes are dropped here. Existing rows are scrubbed by the
-    // `scrubLegacySidGuidTags` startup job.
+    // tag writes are dropped here.
     const tags: string[] = ["activedirectory", "auto-discovered"];
     if (dev.disabled) tags.push("ad-disabled");
 

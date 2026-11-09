@@ -146,6 +146,16 @@ alerts** for the devices it covers (alerts already open stay open and resolve
 normally afterwards) — but the Polaris host restarting is
 something your own automations may notice.
 
+### An install last updated before June 2026
+
+Polaris is pre-1.0 and does not promise a direct update from any older release.
+An install whose code predates **2026-06-03** must first update to commit
+`47dcfb643` (version `0.9.5447`, image tag `sha-47dcfb6`) and start once, so the
+boot-time data conversions removed after it can run; then it updates normally.
+The steps are *Updating an install older than June 2026* in
+**[`docs/UPGRADING.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/UPGRADING.md)**.
+An install updated at any point since then needs nothing extra.
+
 ---
 
 ## Platform Lifecycle

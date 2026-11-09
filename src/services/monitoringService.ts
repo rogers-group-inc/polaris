@@ -597,8 +597,8 @@ const HARDCODED_FLOOR: MonitorTierSettings = {
 
 // The pre-hierarchy single-row `monitorSettings` Setting (and its two
 // deprecated legacy types) was retired 2026-11-06
-// (CQ-B012). migrateMonitorSettingsHierarchy converts and DELETES that row on
-// boot, so nothing at runtime reads it any more; capacity projections use
+// (CQ-B012), and the boot job that converted and deleted it was retired
+// 2026-11-09 (CQ-B013). Nothing at runtime reads it; capacity projections use
 // fleetCadences() below — the cadences operators actually configured.
 const MANUAL_SETTING_KEY = "manualMonitorSettings";
 
@@ -12296,8 +12296,7 @@ export async function recordProbeResult(
   // drains below the threshold — and a miss anywhere in the climb re-locks it
   // at the cap, so a flapping device cannot walk itself out of an outage.
   //
-  // The previous name for `recovering` was "pending"; the
-  // migrateMonitorStatusRename startup job bumps any leftover rows.
+  // The previous name for `recovering` was "pending".
   const nextStatus: MonitorStatus = monitorStatusFor(newCf, result.success, threshold);
 
   // Buffer the sample row — the periodic flush in sampleWriteBuffer will

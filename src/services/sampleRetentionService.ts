@@ -53,8 +53,9 @@
  *
  * Encoding (per tier, and per flat window): positive = N days; 0 = OFF (pruned
  * away — do not keep this tier); FOREVER (-1) = keep forever. NOTE: this flips
- * the legacy meaning of 0 (which meant "keep forever"); the one-shot migration
- * translates legacy 0 → FOREVER. See migrateSampleRetentionToEntities.
+ * the legacy class-shaped row's meaning of 0 (which meant "keep forever"); the
+ * one-shot boot migration that translated it (retired 2026-11-09) mapped
+ * legacy 0 → FOREVER.
  *
  * Defaults: 7 days detail / 30 days hourly / 365 days daily, uniform across
  * entities. Operators tune from the Retention card.
@@ -66,7 +67,7 @@
 
 import { prisma } from "../db.js";
 
-export const SETTING_KEY = "sampleRetention";
+const SETTING_KEY = "sampleRetention";
 
 /** Sentinel: keep this tier forever (never prune). */
 export const FOREVER = -1;
@@ -206,7 +207,7 @@ interface FlatRetention {
  *  (unselected rows are fixed at UNSELECTED_DETAIL_HOURS, no rollup). */
 export const SELECTION_AWARE_ENTITIES: RetentionEntity[] = ["interfaces", "storage", "ipsec"];
 
-export interface TierRetention {
+interface TierRetention {
   detail: number;
   hourly: number;
   daily: number;

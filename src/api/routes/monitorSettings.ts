@@ -63,9 +63,7 @@ const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "d
 // have no integration to inherit from), but nullable at the integration tier
 // — null means "follow this integration's discovery pollInterval", which the
 // resolver derives in loadIntegrationTierSettings. See the "integrationPoll-
-// Interval" provenance label and the migrateSystemInfoCadenceLinkage startup
-// job that retroactively nulls existing 600s defaults so installed fleets
-// pick up the linkage on next deploy.
+// Interval" provenance label.
 const TierSettingsSchema = z.object({
   intervalSeconds:            z.number().int().min(1).max(86400),
   // DORMANT (business rule 36). The missed-poll count belongs to the covering
