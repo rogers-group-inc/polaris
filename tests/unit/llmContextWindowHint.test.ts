@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 
 const js = integrationsSource().replace(/\r\n/g, "\n");
 

@@ -22,7 +22,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import vm from "node:vm";
-import { INTEGRATIONS_FILES, integrationsFileSource } from "./_integrationsSource";
+import { INTEGRATIONS_FILES, integrationsFileSource } from "./_integrationsSource.js";
 
 const PUBLIC = resolve(__dirname, "../../public");
 const INVENTORY = JSON.parse(
