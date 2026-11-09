@@ -32,6 +32,9 @@ import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import { integrationAdapter, type IntegrationType } from "../integrationAdapters.js";
+import { clearStaleMacDeviceStamps } from "./dhcp/staleMacDeviceStamps.js";
+import { persistRunArpTables, stampArpPresence } from "./dhcp/arpTables.js";
+import { reverseDnsForAssets, applyOuiManufacturers } from "./dhcp/dnsOui.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
@@ -70,8 +73,6 @@ import {
   buildConnectionChangedEvent,
   type LogEventInput,
 } from "../eventLogService.js";
-import { getConfiguredResolver } from "../dnsService.js";
-import { lookupOui, lookupOuiOverride } from "../ouiService.js";
 import { clampAcquiredToLastSeen, bumpLastSeen } from "../../utils/assetInvariants.js";
 import { resolveAssetTypeCached, type AssetTypeFacts } from "../../utils/assetTypeMatch.js";
 import { normalizeHardwareSerial, indexUniqueBy } from "../../utils/hardwareIdentity.js";
@@ -123,7 +124,6 @@ import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
-import { persistFortigateArpTables } from "../arpTableService.js";
 import {
   buildMacEvidenceIndex,
   createAdoptionBudget,
@@ -7226,50 +7226,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   //            fresh answer to compare against).
   // ══════════════════════════════════════════════════════════════════════════════
 
-  if (result.inventoryDevices && result.inventoryDevices.length > 0) {
-    const refreshedDevices = new Set(result.inventoryDevices);
-    // LOCAL rows only: a ZTNA-relayed inventory entry doesn't keep a device
-    // stamp alive, so stamps written before the locality gate existed (a dock
-    // MAC "on" a gate three sites away) heal here on the next cycle instead
-    // of surviving as long as the ZTNA session keeps recurring.
-    const seenMacOnDevice = new Set<string>();
-    for (const inv of result.deviceInventory || []) {
-      if (!inv.macAddress || !inv.device) continue;
-      if (!inventorySightingIsLocal(inv, arpMacDeviceIndex)) continue;
-      const mac = inv.macAddress.toUpperCase().replace(/-/g, ":");
-      seenMacOnDevice.add(`${mac}|${inv.device}`);
-    }
-
-    // Stale-device sweep: when a FortiGate previously held a MAC but the
-    // refreshed scrape no longer sees it on that device, clear the per-row
-    // device stamp so the asset detail panel doesn't keep surfacing a
-    // misleading "last seen on FortiGate-X" link. Reconciles directly to
-    // the side table — no asset.update needed (only the relation rows
-    // change, no scalar columns on Asset).
-    const staleSweepReconciles: Array<{ id: string; macs: MacJsonEntry[] }> = [];
-    for (const asset of assetIdx.all()) {
-      const macs = Array.isArray(asset.macAddresses) ? (asset.macAddresses as any[]) : [];
-      if (macs.length === 0) continue;
-      let mutated = false;
-      for (const m of macs) {
-        if (!m.device || !refreshedDevices.has(m.device)) continue;
-        const key = `${m.mac}|${m.device}`;
-        if (!seenMacOnDevice.has(key)) {
-          delete m.device;
-          mutated = true;
-        }
-      }
-      if (mutated) {
-        staleSweepReconciles.push({ id: asset.id, macs });
-        asset.macAddresses = macs;
-      }
-    }
-
-    if (staleSweepReconciles.length > 0) {
-      await batchSettled(staleSweepReconciles, (u) => reconcileMacAddresses(u.id, u.macs));
-      syncLog("info", `Cleared stale MAC device stamps on ${staleSweepReconciles.length} asset(s) across ${refreshedDevices.size} refreshed FortiGate(s)`);
-    }
-  }
+  // Body: discovery/dhcp/staleMacDeviceStamps.ts (CQ-B060).
+  await clearStaleMacDeviceStamps({ result, assetIdx, arpMacDeviceIndex, syncLog });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7c — Observed IPv6 addresses (business rule 125)
@@ -7566,38 +7524,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // run whose real work (subnets, reservations, assets) already landed.
   // ══════════════════════════════════════════════════════════════════════════════
 
-  // No double-write on the finalize pass: the enclosing `mode === "full" ||
-  // mode === "skip-deprecation"` block already excludes it, so FMG writes each
-  // gate's table once as that gate lands and standalone writes once per run.
-  if (isFortinetIntegrationType(integrationType) && (result.arpQueriedDevices?.length ?? 0) > 0) {
-    try {
-      // Device NAME → serial. The ARP row names its gate the way FortiManager
-      // does, and the firewall asset is keyed by serial — resolving through the
-      // hostname instead is the mismatch utils/fortinetParentKey.ts exists to
-      // prevent.
-      const deviceSerials = new Map<string, string>();
-      for (const dev of result.devices || []) {
-        if (dev?.name && dev?.serial) deviceSerials.set(dev.name, dev.serial);
-      }
-      const arpResult = await persistFortigateArpTables({
-        integrationId,
-        rows: result.arpTable || [],
-        answeredDevices: result.arpQueriedDevices || [],
-        deviceSerials,
-        // MAC only — the run's own index, already built and warm.
-        matchAssetByMac: (mac) => assetIdx.findByMac(mac)?.id ?? null,
-        log: syncLog,
-      });
-      if (arpResult.unresolvedDevices.length > 0) {
-        // Expected on the very first cycle for a gate whose firewall asset is
-        // created later in the same run; persistent entries here mean the
-        // fortigate-firewall AssetSource never landed.
-        syncLog("info", `ARP tables: ${arpResult.unresolvedDevices.length} answering FortiGate(s) had no resolvable firewall asset — skipped`);
-      }
-    } catch (err: any) {
-      syncLog("error", `ARP table persist failed: ${err?.message || "Unknown error"}`);
-    }
-  }
+  // Body: discovery/dhcp/arpTables.ts (CQ-B060).
+  await persistRunArpTables({ result, integrationId, integrationType, assetIdx, syncLog });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7.6 — ARP presence evidence for DHCP reservations
@@ -7618,48 +7546,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // can't cross-match.
   // ══════════════════════════════════════════════════════════════════════════════
 
-  if (result.arpTable && result.arpTable.length > 0) {
-    const arpMacByDevIp = new Map<string, string>();
-    for (const row of result.arpTable) {
-      if (!row.ip || !row.fortigateDevice) continue;
-      const macKey = normalizeMacKey(row.mac);
-      if (!macKey) continue;
-      arpMacByDevIp.set(`${row.fortigateDevice.toLowerCase()}|${row.ip}`, macKey);
-    }
-    if (arpMacByDevIp.size > 0) {
-      const arpDevices = [...new Set(result.arpTable.map((r) => r.fortigateDevice).filter(Boolean))];
-      // One indexed query bounded by this device batch's dhcp_reservation
-      // count; matching is O(1) map lookups. Safe at 2000+ reservations.
-      const arpCandidateRows = await prisma.reservation.findMany({
-        where: {
-          status: "active",
-          sourceType: "dhcp_reservation",
-          ipAddress: { not: null },
-          macAddress: { not: null },
-          subnet: { discoveredBy: integrationId, fortigateDevice: { in: arpDevices } },
-        },
-        select: { id: true, ipAddress: true, macAddress: true, subnet: { select: { fortigateDevice: true } } },
-      });
-      const arpConfirmedIds: string[] = [];
-      for (const r of arpCandidateRows) {
-        const dev = r.subnet.fortigateDevice;
-        if (!dev || !r.ipAddress) continue;
-        const arpMac = arpMacByDevIp.get(`${dev.toLowerCase()}|${r.ipAddress}`);
-        if (!arpMac) continue;
-        const resMac = normalizeMacKey(r.macAddress);
-        if (resMac && resMac === arpMac) arpConfirmedIds.push(r.id);
-      }
-      if (arpConfirmedIds.length > 0) {
-        // Same re-arm semantics as a live lease: clearing staleNotifiedAt /
-        // staleSnoozedUntil lets a row that later goes silent alert cleanly.
-        await prisma.reservation.updateMany({
-          where: { id: { in: arpConfirmedIds } },
-          data: { lastSeenArp: new Date(), staleNotifiedAt: null, staleSnoozedUntil: null },
-        });
-        syncLog("info", `ARP presence: ${arpConfirmedIds.length} DHCP reservation(s) confirmed live by FortiGate ARP (IP+MAC match)`);
-      }
-    }
-  }
+  // Body: discovery/dhcp/arpTables.ts (CQ-B060).
+  await stampArpPresence({ result, integrationId, syncLog });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7.7 — Adopt the real MAC onto placeholder-MAC reservations
@@ -7725,95 +7613,22 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   phaseMark("8");
   // ══════════════════════════════════════════════════════════════════════════════
 
-  const DEFAULT_PTR_TTL_S = 3600;
-  const nowMs = Date.now();
   // A scoped run looks up only the assets its gate reported (rule 142).
   const finalizeAssets: any[] = scopedAssets
     ? assetIdx.all().filter((a: any) => scopedAssets.all.has(a.id))
     : assetIdx.all();
-  const assetsNeedingDns = finalizeAssets.filter((a: any) => {
-    if (!a.ipAddress) return false;
-    if (!a.dnsNameFetchedAt) return true;
-    const fetchedMs = new Date(a.dnsNameFetchedAt).getTime();
-    const ttlMs = ((a.dnsNameTtl ?? DEFAULT_PTR_TTL_S) * 1000);
-    return (nowMs - fetchedMs) > ttlMs;
-  });
-  if (assetsNeedingDns.length > 0) {
-    syncLog("info", `DNS lookup: resolving ${assetsNeedingDns.length} assets with expired/missing PTR`);
-    const dnsResolver = await getConfiguredResolver();
-    const dnsResults = await batchSettled(assetsNeedingDns, async (asset: any) => {
-      const fetchedAt = new Date();
-      const records = await dnsResolver.reverse(asset.ipAddress);
-      if (records.length > 0) {
-        await prisma.asset.update({ where: { id: asset.id }, data: { dnsName: records[0].name, dnsNameFetchedAt: fetchedAt, dnsNameTtl: records[0].ttl } });
-        asset.dnsName = records[0].name;
-        return records[0].name;
-      }
-      await prisma.asset.update({ where: { id: asset.id }, data: { dnsNameFetchedAt: fetchedAt, dnsNameTtl: null } });
-      return null;
-    });
-    for (const r of dnsResults) {
-      if (r.status === "fulfilled" && r.value) dnsResolved++;
-    }
-    if (dnsResolved > 0) {
-      syncLog("info", `DNS lookup: resolved ${dnsResolved} of ${assetsNeedingDns.length} assets`);
-    }
-  }
+  // Body: discovery/dhcp/dnsOui.ts (CQ-B060).
+  dnsResolved += await reverseDnsForAssets(finalizeAssets, syncLog);
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 9 — OUI manufacturer lookup & override application
   phaseMark("9");
   // ══════════════════════════════════════════════════════════════════════════════
 
-  // 9a — Apply OUI overrides to assets that already have a manufacturer
-  //       (e.g. "Fortinet" from FMG can be overridden to a custom name; an
-  //       optional device field overrides the asset's model too)
-  const assetsWithMacAndMfg = finalizeAssets.filter((a: any) => a.macAddress && a.manufacturer);
-  if (assetsWithMacAndMfg.length > 0) {
-    const overrideResults = await batchSettled(assetsWithMacAndMfg, async (asset: any) => {
-      const override = await lookupOuiOverride(asset.macAddress);
-      if (!override) return null;
-      const data: { manufacturer?: string; model?: string } = {};
-      if (override.manufacturer !== asset.manufacturer) data.manufacturer = override.manufacturer;
-      if (override.device && override.device !== asset.model) data.model = override.device;
-      if (Object.keys(data).length === 0) return null;
-      await prisma.asset.update({ where: { id: asset.id }, data });
-      if (data.manufacturer) asset.manufacturer = data.manufacturer;
-      if (data.model) asset.model = data.model;
-      return data;
-    });
-    for (const r of overrideResults) {
-      if (r.status === "fulfilled" && r.value) ouiOverridden++;
-    }
-    if (ouiOverridden > 0) {
-      syncLog("info", `OUI overrides: applied to ${ouiOverridden} assets`);
-    }
-  }
-
-  // 9b — OUI lookup for assets still missing a manufacturer.
-  //       Also pick up the override's device field when present (applies
-  //       even if asset already has a model — override wins by design).
-  const assetsNeedingOui = finalizeAssets.filter((a: any) => a.macAddress && !a.manufacturer);
-  if (assetsNeedingOui.length > 0) {
-    syncLog("info", `OUI lookup: resolving ${assetsNeedingOui.length} assets missing manufacturer`);
-    const ouiResults = await batchSettled(assetsNeedingOui, async (asset: any) => {
-      const vendor = await lookupOui(asset.macAddress);
-      if (!vendor) return null;
-      const override = await lookupOuiOverride(asset.macAddress);
-      const data: { manufacturer: string; model?: string } = { manufacturer: vendor };
-      if (override?.device && override.device !== asset.model) data.model = override.device;
-      await prisma.asset.update({ where: { id: asset.id }, data });
-      asset.manufacturer = vendor;
-      if (data.model) asset.model = data.model;
-      return vendor;
-    });
-    for (const r of ouiResults) {
-      if (r.status === "fulfilled" && r.value) ouiResolved++;
-    }
-    if (ouiResolved > 0) {
-      syncLog("info", `OUI lookup: resolved ${ouiResolved} of ${assetsNeedingOui.length} assets`);
-    }
-  }
+  // Body: discovery/dhcp/dnsOui.ts (CQ-B060).
+  const oui = await applyOuiManufacturers(finalizeAssets, syncLog);
+  ouiOverridden += oui.ouiOverridden;
+  ouiResolved += oui.ouiResolved;
 
   } // end Phases 8–9 (full | finalize)
 
