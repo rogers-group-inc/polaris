@@ -363,6 +363,78 @@ export interface DueRunResult {
 }
 
 /**
+ * What one kind of booking hands the shared firing loop: its table's writes
+ * and its start. The firmware booking (rule 93) and the reboot booking (rule
+ * 115, the rule-93 shape) both fire through `fireDueBookings`, so "on time or
+ * not at all" — the grace, the wait on a related run and the claim — is
+ * decided in one place.
+ */
+export interface BookingFiring<T extends { id: string; scheduledFor: Date; error: string | null }> {
+  /** What is booked, named in the missed message ("upgrade", "reboot"). */
+  noun: string;
+  /** `pending` → `started`, conditionally; false when another tick or a cancel got there first. */
+  claim(id: string, now: Date): Promise<boolean>;
+  /** Start the run; a throw refuses it (or makes it wait, per `isConflict`). */
+  start(s: T): Promise<void>;
+  /** The run started: forget the wait reason. Never throws. */
+  clearWait(id: string): Promise<void>;
+  /** A related run is in progress: the booking waits and retries next tick. */
+  isConflict(err: unknown): boolean;
+  /** Back to `pending` with why it waits. Never throws. */
+  wait(id: string, reason: string): Promise<void>;
+  /** A booking that ends without a run: record it, write the Event, email it. */
+  settle(id: string, status: "refused" | "missed", error: string, now: Date): Promise<void>;
+}
+
+/**
+ * Fire due bookings (oldest first, as given) one at a time. A booking first
+ * seen more than LATE_GRACE_MS late is missed; one that was already waiting on
+ * a related run (its `error` says what) keeps waiting past the grace until
+ * CONFLICT_WAIT_MS, then is refused. Otherwise it is claimed and started; a
+ * conflict puts it back to wait, any other failure refuses it — never retried.
+ */
+export async function fireDueBookings<T extends { id: string; scheduledFor: Date; error: string | null }>(
+  due: readonly T[], now: Date, f: BookingFiring<T>,
+): Promise<DueRunResult> {
+  const out: DueRunResult = { started: 0, refused: 0, missed: 0, waiting: 0 };
+  for (const s of due) {
+    const lateMs = now.getTime() - s.scheduledFor.getTime();
+    // A booking that was waiting on a related run keeps waiting past the
+    // grace (its `error` says what it waits for); one first seen this late
+    // means Polaris was not running at its time.
+    const waited = !!s.error;
+    if (!waited && lateMs > LATE_GRACE_MS) {
+      await f.settle(s.id, "missed", `Polaris was not running at the scheduled time and first saw this ${f.noun} ${Math.round(lateMs / 60_000)} min late; it was not started`, now);
+      out.missed++;
+      continue;
+    }
+    if (waited && lateMs > CONFLICT_WAIT_MS) {
+      await f.settle(s.id, "refused", `${s.error} — still waiting ${Math.round(CONFLICT_WAIT_MS / 60_000)} min after the scheduled time, so it was not started`, now);
+      out.refused++;
+      continue;
+    }
+    // Claim. A second tick, or a cancel racing this one, finds it not pending.
+    if (!(await f.claim(s.id, now))) continue;
+    try {
+      await f.start(s);
+      await f.clearWait(s.id);
+      out.started++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (f.isConflict(err)) {
+        // Put it back; it retries next tick until CONFLICT_WAIT_MS.
+        await f.wait(s.id, msg);
+        out.waiting++;
+        continue;
+      }
+      await f.settle(s.id, "refused", msg, now);
+      out.refused++;
+    }
+  }
+  return out;
+}
+
+/**
  * The job's tick. Due bookings oldest first, one at a time — each start is a
  * handful of point queries and then hands off to `setImmediate`, so a batch of
  * fifty is seconds, and sequential is what lets the topology gate see the run
@@ -375,45 +447,19 @@ export async function runDueSchedules(now: Date = new Date()): Promise<DueRunRes
     take: DUE_BATCH,
     select: { id: true, assetId: true, imageId: true, toVersion: true, scheduledFor: true, createdBy: true, error: true, notifyEmails: true, notifyRecipients: true, notifyChannelIds: true },
   });
-  const out: DueRunResult = { started: 0, refused: 0, missed: 0, waiting: 0 };
-  for (const s of due) {
-    const lateMs = now.getTime() - s.scheduledFor.getTime();
-    // A booking that was waiting on a related flash keeps waiting past the
-    // grace (its `error` says what it waits for); one first seen this late
-    // means Polaris was not running at its time.
-    const waited = !!s.error;
-    if (!waited && lateMs > LATE_GRACE_MS) {
-      await settle(s.id, "missed", `Polaris was not running at the scheduled time and first saw this upgrade ${Math.round(lateMs / 60_000)} min late; it was not started`, now);
-      out.missed++;
-      continue;
-    }
-    if (waited && lateMs > CONFLICT_WAIT_MS) {
-      await settle(s.id, "refused", `${s.error} — still waiting ${Math.round(CONFLICT_WAIT_MS / 60_000)} min after the scheduled time, so it was not started`, now);
-      out.refused++;
-      continue;
-    }
-    // Claim. A second tick, or a cancel racing this one, finds it not pending.
-    const claimed = await prisma.firmwareUpgradeSchedule.updateMany({ where: { id: s.id, status: "pending" }, data: { status: "started", firedAt: now } });
-    if (claimed.count === 0) continue;
-    try {
+  return fireDueBookings(due, now, {
+    noun: "upgrade",
+    claim: async (id, at) => (await prisma.firmwareUpgradeSchedule.updateMany({ where: { id, status: "pending" }, data: { status: "started", firedAt: at } })).count > 0,
+    start: async (s) => {
       if (!s.imageId) throw new AppError(409, `The approved image (${s.toVersion}) was deleted from the Repository`);
       // The booking's recipients ride on the run: it emails them "started".
       await startFirmwareUpgrade({ assetId: s.assetId, imageId: s.imageId, actor: s.createdBy, scheduleId: s.id, notifyEmails: s.notifyEmails, notifyRecipients: (s.notifyRecipients as object | null) ?? null, notifyChannelIds: s.notifyChannelIds });
-      await prisma.firmwareUpgradeSchedule.update({ where: { id: s.id }, data: { error: null } }).catch(() => undefined);
-      out.started++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (err instanceof FirmwareRunConflictError) {
-        // Put it back; it retries next tick until CONFLICT_WAIT_MS.
-        await prisma.firmwareUpgradeSchedule.update({ where: { id: s.id }, data: { status: "pending", firedAt: null, error: msg } }).catch(() => undefined);
-        out.waiting++;
-        continue;
-      }
-      await settle(s.id, "refused", msg, now);
-      out.refused++;
-    }
-  }
-  return out;
+    },
+    clearWait: async (id) => { await prisma.firmwareUpgradeSchedule.update({ where: { id }, data: { error: null } }).catch(() => undefined); },
+    isConflict: (err) => err instanceof FirmwareRunConflictError,
+    wait: async (id, reason) => { await prisma.firmwareUpgradeSchedule.update({ where: { id }, data: { status: "pending", firedAt: null, error: reason } }).catch(() => undefined); },
+    settle,
+  });
 }
 
 /** A booking that ends without a run: record it, write the Event, email it. */
