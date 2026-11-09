@@ -13,7 +13,7 @@
 
 **Readers** (files that consume it):
 - `src/services/monitoringService.ts:runMonitorPass()` — Cadence dispatch: heavy cadences gated on `monitorStatus==="up" && !dependencySuppressed`; the probe interval is NOT touched by suppression (`resolveProbeIntervalSec(eff)` takes no asset state — business rule 38(c)).
-- `src/jobs/monitorAssets.ts:publishDueWork()` — Same gate, mirrored for the pg-boss publisher path.
+- `src/services/monitoringService.ts:resolveDueCadences()` — the gate itself (`runsHeavyCadences`), shared by the cursor pass and `src/jobs/monitorAssets.ts:publishDueWork()` (pg-boss) — one implementation, not a mirror.
 - `public/js/assets.js:assetMonitorBadge()` + `_mapAsset()` — Status pill renders slate-blue "Dep. Down" whenever `dependencySuppressed` (suppression outranks the five-state label, including probe-down — the own-probe state moves to the tooltip); the `_monitor` filter array maps suppressed rows to the "Dep. Down" chip, and `monitorClause` in `src/api/routes/assets.ts` mirrors it server-side (directional chips exclude suppressed rows).
 - `public/js/map.js:monitorClass()` / `clusterIcon()` — Pin/cluster colors render slate-blue (`monitor-dep-down`) under the same priority rule (suppressed wins). Cluster aggregation counts suppressed children as dep-down; a non-suppressed probe-down/degraded child still rolls the cluster up red/amber.
 - `public/js/mobile/asset-detail.js:renderMonitorPill()` / `monitorDotCls()` — Same priority + slate-blue treatment on the mobile asset-detail surface.
