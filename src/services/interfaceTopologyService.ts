@@ -23,6 +23,7 @@
 
 import { prisma } from "../db.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
+import { keepsLastKnownLinks } from "../utils/monitorStatus.js";
 import {
   hostnameMatchesFullPeerInterface,
   hostnameMatchesPeerInterface,
@@ -41,6 +42,10 @@ interface InterfaceInferredEdge {
   targetIfName: string | null;
   matchVia: "serial" | "hostname";
   aggregateIndex: number | null;
+  /** Set when the link is drawn from rows older than INTERFACE_STALE_MS that
+   * were kept because one end is dark (keepsLastKnownLinks): the oldest
+   * sighting the edge rests on. Absent on a fresh edge. */
+  lastKnownAt?: Date;
 }
 
 interface InterfaceInferredRemote {
@@ -56,6 +61,9 @@ interface InterfaceInferredRemote {
 export interface InterfaceInferenceResult {
   edges: InterfaceInferredEdge[];
   remoteAssets: Map<string, InterfaceInferredRemote>;
+  /** Fortinet infrastructure assets that are dark (keepsLastKnownLinks), so
+   * the graph builder can apply the same last-known rule to LLDP links. */
+  darkAssetIds: Set<string>;
 }
 
 /**
@@ -68,6 +76,14 @@ export interface InterfaceInferenceResult {
  * picker's 72h.
  */
 const INTERFACE_STALE_MS = 60 * 60 * 1000;
+
+/**
+ * How long a link stays on the map as LAST KNOWN while one of its ends is dark
+ * (keepsLastKnownLinks — Polaris stopped scraping it, so its rows stopped
+ * being refreshed; business rule 144). Past this the link goes the way a stale one always did,
+ * so a site that has been dark for a week does not keep its cabling forever.
+ */
+export const INTERFACE_LAST_KNOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Infer inter-Fortinet topology edges from each seed asset's most recent
@@ -88,8 +104,18 @@ export async function inferInterfaceTopology(
   seedAssetIds: string[],
 ): Promise<InterfaceInferenceResult> {
   if (seedAssetIds.length === 0) {
-    return { edges: [], remoteAssets: new Map() };
+    return { edges: [], remoteAssets: new Map(), darkAssetIds: new Set() };
   }
+
+  // Which of the site's devices are dark (keepsLastKnownLinks). Read on its
+  // own, before any early return: the LLDP switch links the graph builder
+  // draws need it even when no interface here is a peer aggregate (a site of
+  // plain fiber ISLs). One indexed read over the seed ids.
+  const seedMonitor = await prisma.asset.findMany({
+    where: { id: { in: seedAssetIds } },
+    select: { id: true, monitored: true, monitorStatus: true, consecutiveFailures: true, dependencySuppressed: true },
+  });
+  const darkAssetIds = new Set(seedMonitor.filter((a) => keepsLastKnownLinks(a)).map((a) => a.id));
 
   // Current interfaces for the seed set, from the CURRENT-STATE
   // `AssetInterface` table — one row per (assetId, ifName) by construction, so
@@ -109,10 +135,17 @@ export async function inferInterfaceTopology(
   // newest row — so on any PINNED aggregate the topology map silently saw
   // nulls and lost that aggregate's physical members. The current-state table
   // is written only by the full pass, which always populates them.
+  //
+  // Rows up to INTERFACE_LAST_KNOWN_MS old are read; one older than the hour
+  // is used only when an end of the link it proves is dark (checked once the
+  // peer is resolved, below). `persistInterfaceRows` replaces an asset's rows
+  // on every full scrape, so an old row is almost always one whose asset
+  // stopped being scraped — the wider read adds few rows.
   const staleCutoff = new Date(Date.now() - INTERFACE_STALE_MS);
+  const lastKnownCutoff = new Date(Date.now() - INTERFACE_LAST_KNOWN_MS);
   const interfaceRows = await prisma.assetInterface.findMany({
-    where: { assetId: { in: seedAssetIds }, lastSeen: { gt: staleCutoff } },
-    select: { assetId: true, ifName: true, ifType: true, ifParent: true },
+    where: { assetId: { in: seedAssetIds }, lastSeen: { gt: lastKnownCutoff } },
+    select: { assetId: true, ifName: true, ifType: true, ifParent: true, lastSeen: true },
   });
 
   // Aggregate → physical member map. The aggregate name is the inference
@@ -142,16 +175,17 @@ export async function inferInterfaceTopology(
     sourceAssetId: string;
     ifName: string;
     parsed: ParsedPeerInterface;
+    lastSeen: Date;
   };
   const candidates: Candidate[] = [];
   for (const row of interfaceRows) {
     const parsed = parseFortinetPeerInterface(row.ifName);
     if (parsed) {
-      candidates.push({ sourceAssetId: row.assetId, ifName: row.ifName, parsed });
+      candidates.push({ sourceAssetId: row.assetId, ifName: row.ifName, parsed, lastSeen: row.lastSeen });
     }
   }
   if (candidates.length === 0) {
-    return { edges: [], remoteAssets: new Map() };
+    return { edges: [], remoteAssets: new Map(), darkAssetIds };
   }
 
   // Pull every Fortinet infrastructure asset's identity once. Inventory
@@ -172,10 +206,16 @@ export async function inferInterfaceTopology(
       assetType: true,
       manufacturer: true,
       model: true,
+      monitored: true,
+      monitorStatus: true,
+      consecutiveFailures: true,
+      dependencySuppressed: true,
     },
   });
 
   type Inv = (typeof inventory)[number];
+  // A matched peer outside the site (a cross-site trunk) can be dark too.
+  for (const a of inventory) if (keepsLastKnownLinks(a)) darkAssetIds.add(a.id);
 
   const seedSet = new Set(seedAssetIds);
   const remoteAssets = new Map<string, InterfaceInferredRemote>();
@@ -192,6 +232,7 @@ export async function inferInterfaceTopology(
     matched: Inv;
     matchVia: "serial" | "hostname";
     aggregateIndex: number | null;
+    lastSeen: Date;
   };
   const directedHits: DirectedHit[] = [];
 
@@ -236,6 +277,9 @@ export async function inferInterfaceTopology(
 
     if (!matched) continue;
     if (matched.id === c.sourceAssetId) continue;
+    // An hour-old row proves a link only while an end of it is dark: a
+    // device Polaris still scrapes would have refreshed it.
+    if (c.lastSeen <= staleCutoff && !darkAssetIds.has(c.sourceAssetId) && !darkAssetIds.has(matched.id)) continue;
 
     directedHits.push({
       sourceAssetId: c.sourceAssetId,
@@ -244,6 +288,7 @@ export async function inferInterfaceTopology(
       matched,
       matchVia,
       aggregateIndex: c.parsed.aggregateIndex,
+      lastSeen: c.lastSeen,
     });
   }
 
@@ -263,6 +308,8 @@ export async function inferInterfaceTopology(
     if (emitted.has(k) || emitted.has(reverseKey)) continue;
     emitted.add(k);
     const reciprocal = byPair.get(reverseKey) ?? null;
+    // Fresh when either side's row is: the link was seen this hour.
+    const newest = reciprocal && reciprocal.lastSeen > h.lastSeen ? reciprocal.lastSeen : h.lastSeen;
     edges.push({
       sourceAssetId: h.sourceAssetId,
       sourceIfName: preferPhysical(h.sourceAssetId, h.sourceIfName),
@@ -272,6 +319,7 @@ export async function inferInterfaceTopology(
         : null,
       matchVia: h.matchVia,
       aggregateIndex: h.aggregateIndex,
+      ...(newest <= staleCutoff ? { lastKnownAt: newest } : {}),
     });
     if (!seedSet.has(h.matched.id)) {
       remoteAssets.set(h.matched.id, {
@@ -286,5 +334,5 @@ export async function inferInterfaceTopology(
     }
   }
 
-  return { edges, remoteAssets };
+  return { edges, remoteAssets, darkAssetIds };
 }

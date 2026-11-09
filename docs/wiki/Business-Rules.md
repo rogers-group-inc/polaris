@@ -3154,3 +3154,14 @@ switch's highest-numbered ports. The layout must match exactly. If anything does
 the readings stay in **Hardware Sensors** as before. Placed readings are named
 for the port (`port10 Rx power`) and appear in the
 [Interfaces table](Assets#transceiver-readings-in-the-interfaces-table).
+
+### Rule 144
+
+**A link stays on the map as last known while one of its devices is dark.** Polaris
+stops fully polling a switch that is dependency-down, down or recovering, so nothing
+refreshes the evidence for its switch-to-switch links. Instead of dropping those links
+after an hour, the [Device Map](Device-Map) keeps them for up to seven days, drawn with
+long faded dashes, and the link's tooltip says when it was last seen. A link between two
+switches Polaris still polls fully disappears an hour after its evidence goes, as before.
+Discovery's dependency tree keeps the same links, so the switches behind a dark switch
+stay [suppressed](Dependency-Suppression) through a long outage.

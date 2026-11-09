@@ -28,7 +28,7 @@ import { AppError } from "../utils/errors.js";
 import { pairCableMembers, type CableMember } from "../utils/cableMembers.js";
 import { controllerStampWhereOr, readFirewallDeviceName } from "../utils/fortinetParentKey.js";
 import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js";
-import { inferInterfaceTopology } from "./interfaceTopologyService.js";
+import { INTERFACE_LAST_KNOWN_MS, inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
 import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
@@ -230,6 +230,9 @@ export type LldpOnlySwitchLink = {
   target: string;
   sourceIfName: string | null;
   targetIfName: string | null;
+  /** Newest sighting of the pair, when every row for it is older than
+   * `staleCutoff` and the link was kept because an end is dark. */
+  lastKnownAt?: Date;
 };
 
 // The SNMP collector's `port-<ifIndex>` fallback is not a port name, and only
@@ -302,28 +305,42 @@ export function meshLinkDetail(
  * port comes from the peer's own row when it has one, else the advertised
  * name-form port-id. Rows at or before `staleCutoff` are ignored — the LLDP
  * table keeps a vanished neighbor for 48h, and a link must not outlive its
- * cable. Pairs in `coveredPairs` (sorted "a|b") are skipped.
+ * cable — UNLESS `lastKnown` names an end as dark (keepsLastKnownLinks: Polaris
+ * stopped scraping it, so nothing refreshed the row) and the row is newer than
+ * `lastKnown.cutoff`; such a link carries `lastKnownAt`. Pairs in
+ * `coveredPairs` (sorted "a|b") are skipped.
  */
 export function lldpOnlySwitchLinks(
   rows: SwitchLldpRow[],
   switchIds: Set<string>,
   coveredPairs: Set<string>,
   staleCutoff: Date,
+  lastKnown?: { darkIds: Set<string>; cutoff: Date },
 ): LldpOnlySwitchLink[] {
   const realPort = (p: string | null): string | null =>
     p && p.trim() && !SYNTHETIC_LLDP_PORT_RE.test(p) ? p : null;
   const byPair = new Map<string, LldpOnlySwitchLink>();
+  const newestByPair = new Map<string, Date>();
+  const usable = (r: SwitchLldpRow): boolean => {
+    const seen = new Date(r.lastSeen);
+    if (seen > staleCutoff) return true;
+    return !!lastKnown && seen > lastKnown.cutoff &&
+      (lastKnown.darkIds.has(r.assetId) || lastKnown.darkIds.has(r.matchedAssetId as string));
+  };
   const fresh = rows.filter((r) =>
     r.matchedAssetId &&
     r.matchedAssetId !== r.assetId &&
     switchIds.has(r.assetId) &&
     switchIds.has(r.matchedAssetId) &&
-    new Date(r.lastSeen) > staleCutoff,
+    usable(r),
   );
   for (const r of fresh) {
     const peer = r.matchedAssetId as string;
     const pairKey = [r.assetId, peer].sort().join("|");
     if (coveredPairs.has(pairKey)) continue;
+    const seen = new Date(r.lastSeen);
+    const prev = newestByPair.get(pairKey);
+    if (!prev || seen > prev) newestByPair.set(pairKey, seen);
     const advertised =
       r.portIdSubtype && LLDP_PORT_NAME_SUBTYPES.has(r.portIdSubtype) ? realPort(r.portId) : null;
     const link = byPair.get(pairKey);
@@ -346,7 +363,17 @@ export function lldpOnlySwitchLinks(
       if (!link.targetIfName) link.targetIfName = advertised;
     }
   }
+  for (const [pairKey, link] of byPair) {
+    const newest = newestByPair.get(pairKey) as Date;
+    if (newest <= staleCutoff) link.lastKnownAt = newest;
+  }
   return [...byPair.values()];
+}
+
+/** The sentence a last-known link's evidence ends with. */
+function lastKnownNote(at: Date): string {
+  return `\nLast known: the newest evidence is from ${at.toISOString()}. An end of this link is not being fully polled ` +
+    `(dependency-down, down or recovering), so nothing has refreshed it; the link is kept as last seen for up to 7 days.`;
 }
 
 export type MonitorHealth = "up" | "degraded" | "down" | "unknown" | "passive";
@@ -961,6 +988,8 @@ export async function buildSiteTopology(siteId: string) {
       // edge from the parallel-links expansion below (LLDP port-pair evidence).
       matchVia: "serial" | "hostname" | "lldp";
       reason: string;
+      /** ISO time of the newest evidence, on a link kept only because an end is dark. */
+      lastKnownAt?: string;
     };
     const interfaceEdges: InterfaceEdge[] = [];
     const seenIfacePair = new Set<string>();
@@ -1003,7 +1032,8 @@ export async function buildSiteTopology(siteId: string) {
         label: portLabel(e.sourceIfName, e.targetIfName),
         via: "interface",
         matchVia: e.matchVia,
-        reason,
+        reason: e.lastKnownAt ? reason + lastKnownNote(e.lastKnownAt) : reason,
+        ...(e.lastKnownAt ? { lastKnownAt: e.lastKnownAt.toISOString() } : {}),
       });
     }
 
@@ -1085,6 +1115,7 @@ export async function buildSiteTopology(siteId: string) {
       new Set(switches.map((s) => s.id)),
       coveredPairs,
       new Date(Date.now() - 60 * 60 * 1000),
+      { darkIds: ifaceInference.darkAssetIds, cutoff: new Date(Date.now() - INTERFACE_LAST_KNOWN_MS) },
     );
     for (const l of lldpSwitchLinks) {
       const aLabel = switchHostById.get(l.source) || l.source;
@@ -1099,8 +1130,10 @@ export async function buildSiteTopology(siteId: string) {
         reason:
           `Rule: inter-switch link from LLDP (no interface-name match).\n` +
           `Evidence: ${aLabel} and ${bLabel} report each other as LLDP neighbors ` +
-          `(${aLabel} "${l.sourceIfName || "?"}" ↔ ${bLabel} "${l.targetIfName || "?"}"), seen within the last hour. ` +
-          `Neither side carries a FortiOS peer aggregate named after the other, so interface-name inference drew nothing.`,
+          `(${aLabel} "${l.sourceIfName || "?"}" ↔ ${bLabel} "${l.targetIfName || "?"}")${l.lastKnownAt ? "" : ", seen within the last hour"}. ` +
+          `Neither side carries a FortiOS peer aggregate named after the other, so interface-name inference drew nothing.` +
+          (l.lastKnownAt ? lastKnownNote(l.lastKnownAt) : ""),
+        ...(l.lastKnownAt ? { lastKnownAt: l.lastKnownAt.toISOString() } : {}),
       });
     }
 
@@ -1649,6 +1682,11 @@ export async function buildSiteTopology(siteId: string) {
       });
     const expandedSwitchPairs = new Set<string>();
     const memberCableEdges: InterfaceEdge[] = [];
+    // A pair drawn as LAST KNOWN keeps that on every cable it splits into.
+    const lastKnownByPair = new Map<string, string>();
+    for (const e of interfaceEdges) {
+      if (e.lastKnownAt) lastKnownByPair.set([e.source, e.target].sort().join("|"), e.lastKnownAt);
+    }
     for (const [pairKey, ifaceByAsset] of pairIface) {
       const [aId, bId] = pairKey.split("|");
       const lldpByAsset = pairLldp.get(pairKey);
@@ -1681,6 +1719,7 @@ export async function buildSiteTopology(siteId: string) {
           : "";
       const stateNote =
         droppedDown.length > 0 ? `\nIgnored (link down): ${droppedDown.join(", ")}.` : "";
+      const lastKnownAt = lastKnownByPair.get(pairKey);
       for (let i = 0; i < n; i++) {
         const aPort = lines[i].a;
         const bPort = lines[i].b;
@@ -1696,7 +1735,8 @@ export async function buildSiteTopology(siteId: string) {
             `Evidence: ${aLabel} and ${bLabel} are connected over ${n} physical member port${n > 1 ? "s" : ""} ` +
             `(each side's LLDP local ports, else its managed-switch CMDB trunk members); ` +
             `this line is ${aLabel} "${aPort || "?"}" ↔ ${bLabel} "${bPort || "?"}".` +
-            discrepancy + stateNote,
+            discrepancy + stateNote + (lastKnownAt ? lastKnownNote(new Date(lastKnownAt)) : ""),
+          ...(lastKnownAt ? { lastKnownAt } : {}),
         });
       }
     }
