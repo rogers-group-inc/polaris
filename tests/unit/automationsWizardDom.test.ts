@@ -421,8 +421,8 @@ describe("automation wizard DOM render", () => {
     // (so it can't be collected/removed) and carries the moved message
     // template. It covers the ALERT only — every delivery row, the escalation
     // sweep and acknowledge/clear key on Notification.id, so it genuinely
-    // can't be removed. The audit Event moved OUT to a removable
-    // "Create an Event" action in the list below.
+    // can't be removed. Its audit Event is the engine's own (business rule
+    // 146) — there is no "Create an Event" action any more.
     const inapp = doc.querySelector("#aw-step-5 #aw-inapp-card")!;
     expect(inapp).toBeTruthy();
     expect(inapp.classList.contains("aw-action")).toBe(false);
@@ -431,16 +431,11 @@ describe("automation wizard DOM render", () => {
     expect(inapp.textContent).not.toContain("event + in-app alert");
     expect(inapp.querySelector(".aw-action-remove")).toBeFalsy();
 
-    // ...and the Event IS a removable action row, present by default.
-    const eventRow = Array.from(doc.querySelectorAll("#aw-step-5 .aw-action")).find(
-      (r) => (r.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value === "event",
-    );
-    expect(eventRow).toBeTruthy();
-    expect(eventRow!.querySelector(".aw-action-remove")).toBeTruthy();
-    expect(eventRow!.textContent).toContain("notification.triggered");
-    // An audit Event is instantaneous — no chain to chase, and the server
-    // schema gives it no escalation key.
-    expect(eventRow!.querySelector(":scope > .aw-esc-sec")).toBeFalsy();
+    // ...and no "Create an Event" row, nor any way to add one: the card says
+    // the Event happens on its own.
+    const typeOpts = Array.from(doc.querySelectorAll("#aw-step-5 .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
+    expect(typeOpts).not.toContain("event");
+    expect(inapp.textContent).toContain("audit Event");
 
     // Escalation is PER SEVERITY: the base actions section hosts the rule-level
     // chain, each band section its own. NOT the in-app card (it isn't about the
@@ -626,13 +621,13 @@ describe("automation wizard DOM render", () => {
     // who pressed it.
     expect(doc.querySelector('input[name="aw-test-to"]')).toBeNull();
     expect(doc.querySelector("#aw-test-real-warn")).toBeNull();
-    expect(block.textContent).toContain("to you only");
-
-    // The draft carries the default audit-Event action, so the Event test is
-    // offered; api_call/script actions never are (the server refuses to run
-    // them from a button, so a button would be a lie).
+    // This draft has no Notify, so there is nothing to send — and no "Write a
+    // Test Event" button either: the audit Event is no longer an action
+    // (business rule 146). api_call/script are never offered (the server
+    // refuses to run them from a button, so a button would be a lie).
+    expect(block.textContent).toContain("Add a Notify action");
     const labels = Array.from(doc.querySelectorAll(".awtd-btn")).map((b) => b.textContent);
-    expect(labels).toContain("Write a Test Event");
+    expect(labels).not.toContain("Write a Test Event");
     expect(labels.join(" ")).not.toMatch(/script|API/i);
   });
 
@@ -1045,9 +1040,9 @@ describe("automation wizard DOM render", () => {
       { type: "event" },
       { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] },
     ]);
-    expect(p.resetActions).toHaveLength(2);
+    // The retired Event action is dropped on the way (business rule 146).
+    expect(p.resetActions).toHaveLength(1);
     expect(p.resetActions.filter((a: any) => a.type === "notify")).toHaveLength(1);
-    expect(p.resetActions.filter((a: any) => a.type === "event")).toHaveLength(1);
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
@@ -1247,17 +1242,8 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
 
     const typeOf = (row: Element) => (row.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value;
-    // Fires: the default Event row.
-    expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual(["event"]);
-    // Resets: the same default.
-    const resetRows = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"));
-    expect(resetRows.map(typeOf)).toEqual(["event"]);
-    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Runs once when the alert ends");
-
-    // Removing the last row empties the list, and the note says so — there is
-    // no box left to untick.
-    (resetRows[0]!.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 10));
+    // Both lists start EMPTY: the audit Event is the engine's own (rule 146).
+    expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual([]);
     expect(doc.querySelector("#aw-reset-actions > .aw-action")).toBeFalsy();
     expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Nothing happens when this alert ends");
 
@@ -1266,8 +1252,7 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
     const p = savedPayloads[0]! as Record<string, any>;
     expect(p.resetActions).toBeNull();
-    expect(p.actions).toHaveLength(1);
-    expect(p.actions[0]).toMatchObject({ type: "event" });
+    expect(p.actions).toEqual([]);
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
@@ -4396,8 +4381,8 @@ describe("automation export / import / view code", () => {
     expect(file.polarisAutomation).toBe(1);
     const rule = file.rule as Record<string, unknown>;
     expect(rule.name).toBe("Exportable");
-    // No delivery wiring, and the audit Event is explicit rather than omitted.
-    expect(rule.actions).toEqual([{ type: "event" }]);
+    // No delivery wiring; an explicit empty list (rule 146: no Event action).
+    expect(rule.actions).toEqual([]);
     expect(rule.enabled).toBeUndefined();
     expect(JSON.stringify(file)).not.toContain('"c1"'); // the harness's channel id
   });
@@ -5167,7 +5152,9 @@ describe("reboot action", () => {
   });
 
   it("is offered on the trigger's actions but never on the reset list", async () => {
-    await openStep5(memRule([{ type: "event" }]));
+    await openStep5(memRule([]));
+    (doc.querySelector("#aw-add-action") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
     const fireOpts = Array.from(doc.querySelectorAll("#aw-actions > .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
     expect(fireOpts).toContain("reboot");
     (doc.querySelector("#aw-reset-add") as unknown as { click: () => void }).click();

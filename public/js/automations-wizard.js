@@ -1772,9 +1772,9 @@ async function openAutomationWizard(existing, opts) {
       reset: null, // defaulted per trigger type on Step-4 entry
       cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, severityFromPriorityTag: false, repeat: null,
       quietTime: null,
-      // The audit Event is an action now, present by default — a new
-      // automation behaves like every existing one until someone removes it.
-      actions: [{ type: "event" }], escalation: null,
+      // No default action: the audit Event is the engine's own on every fire,
+      // escalation and end (business rule 146), not something to add.
+      actions: [], escalation: null,
     };
   }
   // What the trigger checked when the message template was last written — the
@@ -6756,6 +6756,7 @@ async function openAutomationWizard(existing, opts) {
     // stable id ON THE DRAFT (so the rows and the reset links agree), and a
     // stored reset Notify that is still an exact copy of a trigger Notify — the
     // pre-feature mirror — becomes a link to it, once per draft.
+    stripEventActions();
     ensureNotifyIds();
     if (!draft._resetLinksAdopted) {
       draft._resetLinksAdopted = true;
@@ -6768,14 +6769,14 @@ async function openAutomationWizard(existing, opts) {
     // Sibling of #aw-actions, so collectActionsFrom's :scope > .aw-action
     // never picks it up.
     var isEC = draft.trigger && (draft.trigger.type === "event" || draft.trigger.type === "change");
-    // The in-app alert is genuinely unremovable, unlike the audit Event next to
-    // it: every delivery row hangs off the Notification id, as do the
-    // escalation sweep, acknowledge/clear and the rule state machine. The Event
-    // moved out to a removable "Create an Event" action in the list below.
+    // The in-app alert is genuinely unremovable: every delivery row hangs off
+    // the Notification id, as do the escalation sweep, acknowledge/clear and
+    // the rule state machine. Its audit Event is written by the engine on every
+    // fire, escalation and end (business rule 146) — there is no action for it.
     var cardTitle = "In-app Alert";
     var cardHelp = isEC
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
-      : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
+      : "Every fire creates an in-app alert (the Alerts tab) and an audit Event (the Events tab) — escalations and the alert ending are recorded there too. This is built in and can’t be removed; notifications, API calls and scripts all hang off it. The message template below customizes what the alert and its Event say; leave blank for the default.";
     // The step is a stack of CARDS (the 2026-09-21 mockup): the alert record
     // first — In-app Alert, then the two rows that describe it (Require
     // Acknowledgement, Dependency-Down Bypass) — then, per severity, the Trigger
@@ -6967,7 +6968,7 @@ async function openAutomationWizard(existing, opts) {
       // halves, so a recovery is recorded the way the firing is (the draft's
       // `actions` seeds the same row). Nothing else is added for the operator:
       // a reset Notify comes from + Add Action (business rule 145).
-      ? [{ type: "event" }]
+      ? []
       : (draft.resetActions || []);                         // stored, or explicitly off
     resetHost.innerHTML = "";
     resetSeed.forEach(function (a) { addActionRow(resetHost, a); });
@@ -7939,11 +7940,6 @@ async function openAutomationWizard(existing, opts) {
     var perSev = bandActionsPerSeverityOn();
     var push = function (action, where) {
       idx++;
-      if (action.type === "event") {
-        if (!seen["event"]) { seen["event"] = true; out.push({ key: "event", kind: "event", index: idx, label: "Write a Test Event", detail: "", usedIn: [where] }); }
-        else out.push(null);
-        return;
-      }
       if (action.type !== "notify") return;
       // A button per CHANNEL, not per action: the button names a delivery the
       // operator is about to receive, and a multi-channel action produces one
@@ -8002,7 +7998,7 @@ async function openAutomationWizard(existing, opts) {
     var targets = testDeliveryTargets();
     if (targets.length === 0) {
       box.innerHTML = '<p class="hint" style="margin:0">This automation only creates an in-app alert — there’s nothing to send. ' +
-        'Add a <strong>Notify</strong> or <strong>Create an Event</strong> action on the previous step to test delivery.</p>';
+        'Add a <strong>Notify</strong> action on the previous step to test delivery.</p>';
       return;
     }
     var me = (_ruleRecipientUsers || []).find(function (u) { return u.username === (typeof currentUsername !== "undefined" ? currentUsername : ""); });
@@ -9313,15 +9309,6 @@ async function openAutomationWizard(existing, opts) {
       box.addEventListener("input", syncRebootBits);
       wireRecipBoxes(box.querySelector(".rb-recips"), function () { /* collected on save; the summary names no one */ });
       syncRebootBits();
-    } else if (t === "event") {
-      // Nothing to configure — the severity, message and resource all come from
-      // the fire. The note earns its place because the two trigger families
-      // behave differently: an event/change automation is DRIVEN by Events, so
-      // the engine deliberately writes none of its own (that would loop).
-      var ecTrigger = draft.trigger && (draft.trigger.type === "event" || draft.trigger.type === "change");
-      box.innerHTML = ecTrigger
-        ? '<p style="font-size:0.82rem;color:var(--color-warning,#d97706);margin:0">This automation is triggered BY Events, so it deliberately writes none of its own — an audit Event here would feed back into the trigger. Remove this action; it has no effect.</p>'
-        : '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0">Writes a <strong>notification.triggered</strong> audit Event on every fire, at the alert’s severity, carrying the message from the card above. Visible on the Events tab and forwarded by syslog / SFTP archival. Remove it for a deliberately noisy automation — the in-app alert is unaffected.</p>';
     }
   }
   /** One `detailsMatch` row on the event trigger: a field in the event's own
@@ -9665,6 +9652,32 @@ async function openAutomationWizard(existing, opts) {
   // syncResetLinkFromDom reads the controls back before every re-render, so a
   // re-render (a trigger Notify added, an escalation tier removed) never loses
   // a customized tier.
+
+  /**
+   * Drop the retired "Create an Event" action from every list on the draft
+   * (business rule 146: the engine writes the Event itself). A tier left with
+   * no action did nothing before either, so it goes too.
+   */
+  function stripEventActions() {
+    var keep = function (list) { return (list || []).filter(function (a) { return a && a.type !== "event"; }); };
+    var tiers = function (esc) {
+      if (!esc || !esc.tiers) return esc;
+      var t = esc.tiers.map(function (x) { return Object.assign({}, x, { actions: keep(x.actions) }); })
+        .filter(function (x) { return x.actions.length; });
+      return t.length ? Object.assign({}, esc, { tiers: t }) : null;
+    };
+    if (Array.isArray(draft.actions)) draft.actions = keep(draft.actions);
+    draft.escalation = tiers(draft.escalation);
+    (draft.severityBands || []).forEach(function (b) {
+      if (!b) return;
+      if (Array.isArray(b.actions)) b.actions = keep(b.actions);
+      if (b.escalation) b.escalation = tiers(b.escalation);
+    });
+    if (Array.isArray(draft.resetActions)) {
+      var r = keep(draft.resetActions);
+      draft.resetActions = r.length ? r : null;
+    }
+  }
 
   function newActionId() {
     return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

@@ -3177,3 +3177,12 @@ once, through its own Notify actions or your override for that tier. Tiers the a
 never reached are not told. Each tier's first send writes one `notification.escalated`
 event on the alert, and the alert shows an **ESCALATED** pill
 ([Automation actions](Automation-Actions#a-reset-notify-matches-a-trigger-notify)).
+
+### Rule 146
+
+**An automation's alerts are always on the record.** Every time an automation fires,
+escalates to a new tier, or its alert ends, Polaris writes an event to the
+[Events](Events) page and the device's Events tab. This is built in: there is no
+"Create an Event" action to add or remove any more, and an automation saved with the old
+action simply drops it. The one exception is an automation triggered by events, whose
+alerts write no fired event, because one would feed its own trigger.

@@ -5188,7 +5188,8 @@ async function createGroupAlert(
   // message goes when the hold ends (releaseDueGroupSends), naming whatever
   // has joined by then.
 
-  if (wantsEventAction(lead.actions)) {
+  // Every fire is on the record (business rule 146) — no action gates it.
+  {
     await logEvent({
       action: "notification.triggered",
       resourceType: "notification",
@@ -5689,11 +5690,11 @@ async function fire(
     update: { state: "firing", firedAt: now, lastValue, notificationId: notif.id, conditionMetSince: null, recoveredSince: null, firingSeverity: severity, bandMetSince: metSinceJson(bandMetSince) },
   });
   await enqueueAlertActions(notif.id, actions, ctx, rule, reading);
-  // The audit Event is an ACTION now — present by default, removable for a
-  // deliberately noisy automation. The in-app alert above is not: every
-  // NotificationDelivery hangs off notif.id, as do the escalation sweep,
-  // acknowledge/clear and the state machine.
-  if (wantsEventAction(actions)) {
+  // Every fire is on the record (business rule 146): the audit Event is the
+  // engine's own, as the escalation and end Events are — no action gates it.
+  // (An event/change automation's alerts come from the event tail, which
+  // writes none: one would feed its own trigger.)
+  {
     await logEvent({
       action: "notification.triggered",
       resourceType: "notification",
@@ -5727,11 +5728,6 @@ async function fire(
       details: { ids: [notif.id], count: 1, hasNote: !!inheritedAck.acknowledgeNote, inheritedFrom: [inheritedAck.notificationId] },
     });
   }
-}
-
-/** Does this severity's effective action list ask for the audit Event? */
-function wantsEventAction(actions: AutomationAction[] | null | undefined): boolean {
-  return (actions ?? []).some((a) => a.type === "event");
 }
 
 /** A firing alert crossed into a different band. Update its severity + message,

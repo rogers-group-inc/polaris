@@ -3302,8 +3302,8 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     severity: raw.severity,
     scope: raw.scope,
     reset: normalizeReset(raw.reset, raw.clearBehavior, raw.clearAfterSec),
-    // Legacy body (targets, no actions) folded forward. The audit-Event action
-    // is added by withEventAction() at the call sites, which know the trigger.
+    // Legacy body (targets, no actions) folded forward. The audit Event is the
+    // engine's own (business rule 146), not an action.
     actions: raw.actions ?? targetsToNotifyActions(raw.targets, raw.emailComposition ?? null),
     cooldownSec: raw.cooldownSec ?? null,
     messageTemplate: raw.messageTemplate ?? null,
@@ -3800,20 +3800,34 @@ function validateRuleV2(
  * migration 20260810120000_event_action: the event tail writes no Events, so
  * the action would be dead weight the builder then warns about.
  */
-function withEventAction<T extends { actions: EscalatableAction[] }>(
-  core: T,
-  rawActions: unknown,
-  trigger: unknown,
-): T {
-  if (rawActions !== undefined) return core;
-  if (isEventDrivenTrigger(trigger)) return core;
-  return { ...core, actions: [...core.actions, { type: "event" as const }] };
+/**
+ * Business rule 146: the audit Event is no longer something an automation
+ * chooses — every fire, escalation and end writes one on its own. The retired
+ * `event` action is still ACCEPTED (stored rules, exports and API clients carry
+ * it) but is dropped from the lists that fire and reset, so saved rules
+ * converge on the shape the builder shows. An escalation tier keeps one: a
+ * tier needs at least one action, and there it was always inert.
+ */
+function withoutEventActions<T extends {
+  actions: EscalatableAction[];
+  severityBands?: SeverityBand[] | null;
+  resetActions?: AutomationAction[] | null;
+}>(core: T): T {
+  const drop = <A extends { type: string }>(list: A[] | null | undefined): A[] | null | undefined =>
+    list ? list.filter((a) => a.type !== "event") : list;
+  const resetActions = drop(core.resetActions);
+  return {
+    ...core,
+    actions: drop(core.actions) as EscalatableAction[],
+    ...(core.severityBands ? { severityBands: core.severityBands.map((b) => ({ ...b, actions: drop(b.actions) as EscalatableAction[] })) } : {}),
+    ...(core.resetActions !== undefined ? { resetActions: resetActions?.length ? resetActions : null } : {}),
+  };
 }
 
 export const ruleInputSchema = ruleInputBaseSchema
   .transform((raw): RuleInput => ({
     trigger: collapseCompositeTrigger(raw.trigger),
-    ...withEventAction(normalizeRuleInputCore(raw), raw.actions, raw.trigger),
+    ...withoutEventActions(normalizeRuleInputCore(raw)),
   }))
   .superRefine(validateRuleV2);
 
@@ -3832,7 +3846,7 @@ export const previewInputSchema = ruleInputBaseSchema
     trigger: raw.trigger ? collapseCompositeTrigger(raw.trigger) : undefined,
     id: raw.id,
     ...(raw.carveOutTrigger ? { carveOutTrigger: raw.carveOutTrigger } : {}),
-    ...withEventAction(normalizeRuleInputCore(raw), raw.actions, raw.trigger),
+    ...withoutEventActions(normalizeRuleInputCore(raw)),
   }))
   .superRefine(validateRuleV2);
 
@@ -3905,12 +3919,6 @@ export function normalizeEscalationToV2(escalation: unknown): EscalationV2Config
  * backups). Every reader — engine, escalation sweep, routes — goes through
  * this so v1 and v2 rows behave identically.
  */
-/** event/change triggers — the engine's event tail writes no audit Events. */
-function isEventDrivenTrigger(trigger: unknown): boolean {
-  const t = (trigger as { type?: string } | null | undefined)?.type;
-  return t === "event" || t === "change";
-}
-
 export function normalizeRuleToV2(row: {
   clearBehavior?: string | null;
   clearAfterSec?: number | null;
@@ -3946,13 +3954,9 @@ export function normalizeRuleToV2(row: {
       .map((r) => r.data);
   } else {
     // Pre-v2 row (or a restored pre-upgrade backup): fold legacy targets
-    // forward and re-add the audit Event the engine now gates on, so an
-    // un-migrated row keeps behaving exactly as it did. Mirrors migration
-    // 20260810120000_event_action, carve-out included — an event/change
-    // automation is driven BY Events and the tail writes none.
+    // forward. The audit Event needs no action (business rule 146).
     const targets = Array.isArray(row.targets) ? (row.targets as DeliveryTarget[]) : [];
     actions = targetsToNotifyActions(targets, emailComposition) as EscalatableAction[];
-    if (!isEventDrivenTrigger(row.trigger)) actions = [...actions, { type: "event" as const }];
   }
 
   const severityBands = parseSeverityBands(row.severityBands);
@@ -6284,7 +6288,6 @@ export function buildSchemaCatalog() {
       { type: "notify", label: "Send a notification", requires: "channels", permission: null },
       { type: "api_call", label: "Call an API (HTTP request)", requires: null, permission: null },
       { type: "script", label: "Run a script", requires: "scripts", permission: "automationScripts" },
-      { type: "event", label: "Create an Event", requires: null, permission: null },
       { type: "reboot", label: "Reboot the device", requires: null, permission: "assets" },
     ],
     rebootMeta: {

@@ -51,10 +51,11 @@ email is sent" (the acknowledge link, charts, recipients) only exist once a
 real alert is delivered. Rows marked "Only on reminders" or "Only on
 escalation emails" are blank on the first send.
 
-> The **audit Event** is separate and *is* removable — a "Create an Event"
-> action row, present by default, with no config. It is a no-op on event and
-> change triggers, and flagged as such: an automation that wrote an Event on an
-> event trigger would feed its own trigger.
+> The **audit Event** is not an action. Every fire, every escalation and the
+> alert ending each write one on their own, and nothing turns that off
+> ([rule 146](Business-Rules#rule-146)). The one exception is an automation
+> triggered *by* events: its alerts write no fired event, because one would feed
+> its own trigger. The event that set it off is the record.
 
 ---
 
