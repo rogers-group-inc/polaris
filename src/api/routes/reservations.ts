@@ -43,9 +43,9 @@ const MacAddressSchema = z
 const CreateReservationSchema = z.object({
   subnetId: z.string().uuid(),
   ipAddress: z.string().optional(),
-  hostname: z.string().min(1, "Hostname is required"),
-  owner: z.string().optional(),
-  projectRef: z.string().optional(),
+  hostname: z.string().trim().min(1, "Hostname is required"),
+  owner: z.string().trim().optional(),
+  projectRef: z.string().trim().optional(),
   expiresAt: z.coerce.date().optional(),
   notes: z.string().optional(),
   macAddress: MacAddressSchema,
@@ -62,18 +62,18 @@ const NextAvailablePreviewSchema = z.object({
 
 const NextAvailableSchema = z.object({
   subnetId: z.string().uuid(),
-  hostname: z.string().min(1, "Hostname is required"),
-  owner: z.string().optional(),
-  projectRef: z.string().optional(),
+  hostname: z.string().trim().min(1, "Hostname is required"),
+  owner: z.string().trim().optional(),
+  projectRef: z.string().trim().optional(),
   expiresAt: z.coerce.date().optional(),
   notes: z.string().optional(),
   macAddress: MacAddressSchema,
 });
 
 const UpdateReservationSchema = z.object({
-  hostname: z.string().optional(),
-  owner: z.string().min(1, "Owner is required").optional(),
-  projectRef: z.string().min(1, "Project reference is required").optional(),
+  hostname: z.string().trim().optional(),
+  owner: z.string().trim().min(1, "Owner is required").optional(),
+  projectRef: z.string().trim().min(1, "Project reference is required").optional(),
   expiresAt: z.coerce.date().optional(),
   notes: z.string().optional(),
   // Empty string clears the MAC (only allowed when the subnet is not

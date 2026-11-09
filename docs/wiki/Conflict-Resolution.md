@@ -52,7 +52,10 @@ project reference.
 **A manual reservation.** Discovery finds a DHCP entry, VIP, FortiGate
 interface, FortiSwitch or FortiAP on an address an operator reserved by hand,
 and its hostname, owner or project reference differs. (A FortiSwitch or FortiAP
-on the address *you reserved for it* is not a conflict.)
+on the address *you reserved for it* is not a conflict.) Values that read the
+same are not a difference: leading, trailing, doubled or invisible spaces are
+ignored, and a hostname is compared without regard to case. A card raised
+before this rule closes on the next discovery run or restart.
 
 | Verb | Does |
 |---|---|

@@ -22,6 +22,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { runInstrumentedJob } from "./_metrics.js";
+import { conflictValuesEqual } from "../utils/conflictValue.js";
 
 async function resolveStaleReservationConflicts(): Promise<void> {
   try {
@@ -45,10 +46,13 @@ async function resolveStaleReservationConflicts(): Promise<void> {
         stale.push(c.id);
         continue;
       }
+      // Same comparison discovery raises with (utils/conflictValue.ts), so a
+      // card raised under the old byte-level compare — a trailing space, an
+      // NBSP, a case-only hostname difference — closes on the next restart.
       const stillDiffers = fields.some((f) => {
-        if (f === "hostname") return (c.proposedHostname ?? null) !== (c.reservation!.hostname ?? null);
-        if (f === "owner") return (c.proposedOwner ?? null) !== (c.reservation!.owner ?? null);
-        if (f === "projectRef") return (c.proposedProjectRef ?? null) !== (c.reservation!.projectRef ?? null);
+        if (f === "hostname") return !conflictValuesEqual(f, c.proposedHostname, c.reservation!.hostname);
+        if (f === "owner") return !conflictValuesEqual(f, c.proposedOwner, c.reservation!.owner);
+        if (f === "projectRef") return !conflictValuesEqual(f, c.proposedProjectRef, c.reservation!.projectRef);
         return true;
       });
       if (!stillDiffers) stale.push(c.id);

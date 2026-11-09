@@ -42,6 +42,23 @@ describe("computeConflictFields — differs (default)", () => {
   it("raises a field the proposal blanks out", () => {
     expect(computeConflictFields({ owner: null }, { owner: "netops" })).toEqual(["owner"]);
   });
+
+  // The card renders both columns as HTML, which collapses whitespace: a
+  // difference the operator cannot see is not one they can decide.
+  it("ignores trailing, doubled, non-breaking and zero-width whitespace", () => {
+    expect(computeConflictFields({ hostname: "KRONOS-INTOUCH-DX" }, { hostname: "KRONOS-INTOUCH-DX " })).toEqual([]);
+    expect(computeConflictFields({ hostname: "KRONOS-INTOUCH-DX\u200B" }, { hostname: "KRONOS-INTOUCH-DX" })).toEqual([]);
+    expect(computeConflictFields({ owner: "net\u00A0ops" }, { owner: "net  ops" })).toEqual([]);
+  });
+
+  it("compares the hostname case-insensitively, owner and projectRef case-sensitively", () => {
+    expect(computeConflictFields({ hostname: "kronos-intouch-dx" }, { hostname: "KRONOS-INTOUCH-DX" })).toEqual([]);
+    expect(computeConflictFields({ owner: "NetOps" }, { owner: "netops" })).toEqual(["owner"]);
+  });
+
+  it("still raises a real difference", () => {
+    expect(computeConflictFields({ hostname: "KRONOS-INTOUCH-DX" }, { hostname: "KRONOS-INTOUCH-DY" })).toEqual(["hostname"]);
+  });
 });
 
 describe("computeConflictFields — fill-only (VIP ↔ DHCP merge)", () => {
