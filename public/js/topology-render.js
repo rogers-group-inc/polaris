@@ -1730,6 +1730,118 @@
       e.data("detoured", 1);
     });
   }
+  // A fan-out link (markFanOutEdges) is a taxi line whose turn sits a fixed
+  // half column out from its shallow end — the gutter between a switch and
+  // its own AP column on the solver's grid. Once devices move (the compact
+  // pass, a saved layout, a drag) that turn can land across the switch's
+  // own AP lines or another straight link: operator report 2026-11-09, an
+  // uplink rising out of a closet through its AP fan. This pass checks each
+  // fan-out link's drawn turn against the straight links and devices near
+  // it; when it crosses any, it slides the turn along the span to the
+  // nearest spot with the fewest crossings (devices count 10×) and draws
+  // that as explicit `segments` — the same projection the router uses. A
+  // clear turn is left on its taxi untouched. Re-run after every routing
+  // pass (data turnRetuned is cleared first), so a moved device re-plans it.
+  var _FAN_TURN_STEP = 6;
+  function retuneFanOutTurns(cy) {
+    var fan = cy.edges("[isFanOut = 1]");
+    if (!fan.length) return;
+    var devices = cy.nodes().filter(function (n) {
+      return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.isParent();
+    }).map(function (n) {
+      return { id: n.id(), p: n.position(), r: _nodeClearance(n) };
+    });
+    // Straight lines, trimmed by their end devices' clearance (a run that
+    // starts at a device never "crosses" the links that also start there).
+    var lines = [];
+    cy.edges().forEach(function (e) {
+      if (e.data("isFanOut") || e.data("customPath") || e.isLoop()) return;
+      if (e.data("isInterGroup") && e.style("curve-style") === "segments") return;
+      var a = e.source().position(), b = e.target().position();
+      var L = Math.hypot(b.x - a.x, b.y - a.y);
+      var ra = _nodeClearance(e.source()), rb = _nodeClearance(e.target());
+      if (L <= ra + rb) return;
+      var ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+      var s = [a.x + ux * ra, a.y + uy * ra, b.x - ux * rb, b.y - uy * rb];
+      lines.push({ s: s, x1: Math.min(s[0], s[2]), x2: Math.max(s[0], s[2]), y1: Math.min(s[1], s[3]), y2: Math.max(s[1], s[3]) });
+    });
+    fan.forEach(function (e) {
+      if (e.data("turnRetuned")) {
+        e.removeStyle("curve-style segment-weights segment-distances edge-distances");
+        e.removeData("turnRetuned");
+      }
+      if (e.data("customPath") || e.data("isInterGroup")) return;
+      var horiz = e.data("fanOutDir") !== "vertical";
+      var S = e.source().position(), T = e.target().position();
+      // u = the taxi's primary axis, v = the other.
+      function U(p) { return horiz ? p.x : p.y; }
+      function V(p) { return horiz ? p.y : p.x; }
+      function XY(u, v) { return horiz ? { x: u, y: v } : { x: v, y: u }; }
+      var du = U(T) - U(S);
+      if (Math.abs(du) < 1 || Math.abs(V(T) - V(S)) < 1) return;
+      var dir = du > 0 ? 1 : -1;
+      var halfS = (horiz ? e.source().width() : e.source().height()) / 2;
+      var halfT = (horiz ? e.target().width() : e.target().height()) / 2;
+      var p = Number(e.data("fanOutTurn")) || 0;
+      // Where Cytoscape draws the turn (findTaxiPoints, edge-distances
+      // intersection): measured from the source's boundary, or — negative —
+      // back from the target's.
+      var drawnU = p >= 0 ? U(S) + dir * (halfS + p) : U(T) - dir * (halfT - p);
+      var rS = _nodeClearance(e.source()), rT = _nodeClearance(e.target());
+      var lo = U(S) + dir * (rS + 4), hi = U(T) - dir * (rT + 4);
+      if ((hi - lo) * dir <= 0) return; // ends too close to bend between
+      var box = {
+        x1: Math.min(S.x, T.x), x2: Math.max(S.x, T.x),
+        y1: Math.min(S.y, T.y), y2: Math.max(S.y, T.y),
+      };
+      var near = lines.filter(function (l) { return l.x1 <= box.x2 && l.x2 >= box.x1 && l.y1 <= box.y2 && l.y2 >= box.y1; });
+      var nearDev = devices.filter(function (d) {
+        return d.id !== e.source().id() && d.id !== e.target().id() &&
+          d.p.x + d.r >= box.x1 && d.p.x - d.r <= box.x2 && d.p.y + d.r >= box.y1 && d.p.y - d.r <= box.y2;
+      });
+      function score(u) {
+        var a = XY(u, V(S)), b = XY(u, V(T));
+        var segs = [[S.x, S.y, a.x, a.y], [a.x, a.y, b.x, b.y], [b.x, b.y, T.x, T.y]];
+        var n = 0;
+        segs.forEach(function (s) {
+          near.forEach(function (l) { if (_segsCross(s, l.s)) n++; });
+          nearDev.forEach(function (d) { if (_segDist(d.p, { x: s[0], y: s[1] }, { x: s[2], y: s[3] }) < d.r) n += 10; });
+        });
+        return n;
+      }
+      var base = score(drawnU);
+      if (base === 0) return;
+      var best = { u: drawnU, n: base, off: 0 };
+      for (var u = lo; (hi - u) * dir >= 0; u += dir * _FAN_TURN_STEP) {
+        var n = score(u);
+        var off = Math.abs(u - drawnU);
+        if (n < best.n || (n === best.n && off < best.off)) best = { u: u, n: n, off: off };
+      }
+      if (best.n >= base) return;
+      var pts = [XY(best.u, V(S)), XY(best.u, V(T))];
+      var dx = T.x - S.x, dy = T.y - S.y;
+      var len2 = dx * dx + dy * dy;
+      var norm = Math.sqrt(len2);
+      e.style({
+        "curve-style": "segments",
+        "segment-weights": pts.map(function (q) { return (((q.x - S.x) * dx + (q.y - S.y) * dy) / len2).toFixed(4); }).join(" "),
+        "segment-distances": pts.map(function (q) { return ((((q.y - S.y) * dx - (q.x - S.x) * dy)) / norm).toFixed(1); }).join(" "),
+        "edge-distances": "node-position",
+      });
+      e.data("turnRetuned", 1);
+    });
+  }
+
+  // Do segments p ([x1,y1,x2,y2]) and q properly cross? Touching at an end
+  // or running collinear does not count.
+  function _segsCross(p, q) {
+    function o(ax, ay, bx, by, cx, cy) { return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax); }
+    var d1 = o(q[0], q[1], q[2], q[3], p[0], p[1]);
+    var d2 = o(q[0], q[1], q[2], q[3], p[2], p[3]);
+    var d3 = o(p[0], p[1], p[2], p[3], q[0], q[1]);
+    var d4 = o(p[0], p[1], p[2], p[3], q[2], q[3]);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  }
   // Distance from point p to segment a–b.
   function _segDist(p, a, b) {
     var dx = b.x - a.x, dy = b.y - a.y;
@@ -4465,7 +4577,64 @@
           : '') +
         '. An end is not being polled (dependency-down, down or recovering), so this is where the link was.</div>';
     }
+    html += _loopTipRows(cy, edge);
     return html;
+  }
+
+  // A link on a physical loop (inLoop) also lists the loop's OTHER links —
+  // the same set the hover lights (linkHoverSet), so the tooltip names what
+  // the operator sees glowing. Ordered by walking the ring from the hovered
+  // link's target end, so the rows read around the loop; anything the walk
+  // can't reach in one pass (a loop with chords) follows in hover-set order.
+  // Each row: "B ⇄ C", its port pair, and its speed (written, with the link's
+  // colour as a swatch). Capped so a large meshed fabric can't fill the screen.
+  var LOOP_TIP_MAX_ROWS = 8;
+  function _loopTipRows(cy, edge) {
+    if (!edge.data("inLoop")) return "";
+    var others = linkHoverSet(cy, edge).edges().filter(function (e) { return e.id() !== edge.id(); });
+    if (!others.length) return "";
+    var pool = others.toArray();
+    var ordered = [];
+    var at = edge.data("target");
+    var prev = edge.data("source");
+    while (pool.length) {
+      var idx = -1;
+      for (var i = 0; i < pool.length; i++) {
+        var s = pool[i].data("source"), t = pool[i].data("target");
+        if (s === at || t === at) {
+          // Prefer a link that doesn't step straight back to the device we came from.
+          if (idx === -1 || (s !== prev && t !== prev)) idx = i;
+          if (s !== prev && t !== prev) break;
+        }
+      }
+      if (idx === -1) { ordered = ordered.concat(pool); break; }
+      var next = pool.splice(idx, 1)[0];
+      ordered.push(next);
+      prev = at;
+      at = next.data("source") === at ? next.data("target") : next.data("source");
+    }
+    var ec = EDGE_COLORS[paletteFamily()];
+    function name(id) { return cy.getElementById(id).data("label") || id || "?"; }
+    var html = '<div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(127,127,127,0.35)">' +
+      '<div style="font-weight:600;font-size:0.82em">Part of a ring' +
+      ' <span style="opacity:0.7;font-weight:400">· ' + (others.length + 1) + ' links</span></div>';
+    ordered.slice(0, LOOP_TIP_MAX_ROWS).forEach(function (e) {
+      var cls = e.data("linkSpeed") || "unknown";
+      var sp = cls === "unknown" ? "" : _humanizeSpeedBps(e.data("speedBps"));
+      var ports = String(e.data("label") || "").trim();
+      html += '<div style="display:flex;align-items:baseline;gap:6px;font-size:0.78em;margin-top:2px">' +
+        _tipSwatch(cls === "unknown" ? ec.neutral : ec[cls], !!e.data("isMesh")) +
+        '<span>' + _escTip(name(e.data("source"))) + ' <span style="opacity:0.7">⇄</span> ' + _escTip(name(e.data("target"))) + '</span>' +
+        (ports && ports !== "unknown ↔ unknown" && !e.data("isMesh")
+          ? '<span style="font-family:var(--font-mono,monospace);opacity:0.85">' + _escTip(ports) + '</span>' : '') +
+        (sp ? '<span style="opacity:0.7">' + _escTip(sp) + '</span>' : '') +
+        (e.data("isLastKnown") === 1 ? '<span style="opacity:0.7">last known</span>' : '') +
+        '</div>';
+    });
+    if (ordered.length > LOOP_TIP_MAX_ROWS) {
+      html += '<div style="font-size:0.78em;opacity:0.7;margin-top:2px">+' + (ordered.length - LOOP_TIP_MAX_ROWS) + ' more</div>';
+    }
+    return html + '</div>';
   }
 
   // The legend's body from topologyLegendSpec(): Nodes, Monitor health, Edges
@@ -4745,9 +4914,11 @@
     routeInterGroupEdges: function (cy) {
       routeInterGroupEdges(cy);
       detourStraightEdges(cy);
+      retuneFanOutTurns(cy);
       refreshBentEdgeLabels(cy);
     },
     detourStraightEdges: detourStraightEdges,
+    retuneFanOutTurns: retuneFanOutTurns,
     refreshBentEdgeLabels: refreshBentEdgeLabels,
     wireBentEdgeLabels: wireBentEdgeLabels,
     locationGroupTooltipParts: locationGroupTooltipParts,

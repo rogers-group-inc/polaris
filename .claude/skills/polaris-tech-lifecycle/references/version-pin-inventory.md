@@ -273,7 +273,7 @@ the way `docker-compose.yml` does (business rule 50).
 | `deploy/migrate-to-nginx.sh` | parses the running version for its own gate (`$NGINX_MINOR -lt 30`) | accept-range |
 | `docker-compose.yml` | `image: nginx:stable` | floating |
 | `docs/INSTALL.md` | "nginx ≥ 1.30" and the stable-branch phrasing — five occurrences plus the table row | prose |
-| `public/js/server-settings.js` | "Requires nginx 1.30+" help text beside the HTTP/3 toggle | prose |
+| `public/js/server-settings-ntp-web.js` | "Requires nginx 1.30+" help text beside the HTTP/3 toggle | prose |
 
 **The floor changed meaning on 2026-09-09.** It used to be a **feature** requirement — 1.25 is
 the first branch with stable HTTP/3 — which is why it sat two years past that branch's own EOL

@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 type Tab = {
   cardHTML: () => string;
@@ -61,8 +62,10 @@ beforeAll(() => {
     isAdmin: () => admin,
     api: { serverSettings: { downloadFirmwareImageUrl: (id: string) => "/api/v1/server-settings/firmware/images/" + id + "/download" } },
   });
-  for (const file of ["../../public/js/server-settings.js", "../../public/js/server-settings-firmware.js"]) {
-    (win as unknown as { eval: (s: string) => void }).eval(readFileSync(resolve(__dirname, file), "utf8"));
+  // The whole Server Settings split (the credential form lives in
+  // server-settings-credentials.js), then the firmware module.
+  for (const src of [serverSettingsSource(), readFileSync(resolve(__dirname, "../../public/js/server-settings-firmware.js"), "utf8")]) {
+    (win as unknown as { eval: (s: string) => void }).eval(src);
   }
   sb = win as unknown as Sandbox;
 });

@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { SLIDEOVER_BUILDER } from "./_appShellStubs";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -54,7 +55,7 @@ beforeAll(() => {
   g.formatBytes = (b: unknown) => String(b);
   g.PolarisPrefs = { get: () => null, set: () => {} };
   g.api = { assets: { byTag: (tag: string) => byTag(tag) } };
-  const ss = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+  const ss = serverSettingsSource();
   // eslint-disable-next-line no-eval
   (0, eval)(SLIDEOVER_BUILDER + "\n" + ss);
 });
@@ -76,7 +77,7 @@ describe("the Tags card renders its chips through _tagRegistryChipHTML", () => {
   // passing (they call the helper directly) while the live card showed Edit /
   // Delete on azure: rows, gated on the role instead of the Tags key, and never
   // opened the slide-in. These two assertions are what would have caught it.
-  const src = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+  const src = serverSettingsSource();
 
   it("the card loop calls the helper", () => {
     expect(src).toMatch(/tags\.forEach\(function \(t\) \{ html \+= _tagRegistryChipHTML\(t, canOpenTagAssets\); \}\);/);

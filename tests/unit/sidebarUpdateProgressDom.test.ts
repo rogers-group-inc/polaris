@@ -32,9 +32,10 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
-const SETTINGS_JS = readFileSync(join(process.cwd(), "public", "js", "server-settings.js"), "utf-8");
+const SETTINGS_JS = serverSettingsSource();
 
 /** Pull one function out of app.js so we don't boot the whole page. */
 function extractFn(src: string, name: string): string {

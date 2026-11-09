@@ -22,8 +22,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
-const SETTINGS_JS = readFileSync(join(process.cwd(), "public", "js", "server-settings.js"), "utf-8");
+const SETTINGS_JS = serverSettingsSource();
 
 /** Pull one top-level function out of the file by brace matching (keeping a
  *  leading `async`, which checkForUpdatesUI has). */

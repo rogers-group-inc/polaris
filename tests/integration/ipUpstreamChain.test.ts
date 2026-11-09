@@ -174,11 +174,13 @@ d("ip upstream chain sweep", () => {
     // `partitionAdoptableMacs`, not a blanket no.
     expect(a.macAddress).toBe(MAC);
 
+    // No roam Event: none is written unless an automation uses the "Wireless
+    // AP changed" trigger (notificationChangeEvents.wirelessRoamEventsWanted,
+    // 2026-11-09) — the lastSeenAp stamp above happens regardless.
     const events = await prisma.event.findMany({ where: { resourceId: id, actor: "system:upstream-chain" }, select: { action: true } });
     expect(events.map((e) => e.action).sort()).toEqual([
       "asset.mac.adopted",
       "asset.switch_port.changed",
-      "asset.wireless_ap.changed",
     ]);
   });
 

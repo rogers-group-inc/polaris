@@ -206,7 +206,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The bridge from current-state persist* functions (LLDP/processes/SD-WAN/MCLAG) to the engine's event path — emits one audit Event per diffed change, gated on an active change subscription.
 
-**Public API:** `maybeEmitChangeEvents(action, assetId, assetName, items)`, `ChangeItem`.
+**Public API:** `maybeEmitChangeEvents(action, assetId, assetName, items)`, `ChangeItem`, `wirelessRoamEventsWanted()` (the subscription gate on `asset.wireless_ap.changed` — the one `asset.*.changed` event that is not unconditional; asked once per batch by its three writers, false on a failed lookup).
 
 **Cross-service deps:** `eventLogService.logEventsBatch`, `notificationRuleService.isChangeActionSubscribed`.
 

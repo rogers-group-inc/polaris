@@ -31,6 +31,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -115,7 +116,7 @@ beforeAll(() => {
   // The builder module first — server-settings.js reads it during body assembly,
   // which is the load-order invariant the page's <script> tags encode.
   const cb = readFileSync(resolve(__dirname, "../../public/js/condition-builder.js"), "utf8");
-  const ss = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+  const ss = serverSettingsSource();
   // Indirect eval so both land on globalThis; DOMContentLoaded is never fired,
   // so the page's own boot handler stays inert and only the functions are taken.
   // eslint-disable-next-line no-eval

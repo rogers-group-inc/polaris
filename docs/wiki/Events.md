@@ -243,6 +243,10 @@ The `asset.*.changed` family: `asset.firmware.changed`,
 `asset.gateway_firewall.changed`, `asset.fortilink.changed`, `asset.ha.standby_down` / `_restored`,
 `asset.mac.adopted`, `asset.ip_override.released`.
 
+A roam (`asset.wireless_ap.changed`) is written only while an automation uses
+the **Wireless AP changed** trigger; otherwise wireless clients moving between
+APs would fill this log. The device's current AP still shows on the asset.
+
 ### Path checks
 
 `path_check.path_changed` — a host's traceroute for a

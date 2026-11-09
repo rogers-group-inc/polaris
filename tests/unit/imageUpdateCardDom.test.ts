@@ -14,8 +14,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
-const SETTINGS_JS = readFileSync(join(process.cwd(), "public", "js", "server-settings.js"), "utf-8");
+const SETTINGS_JS = serverSettingsSource();
 
 function extractFn(src: string, name: string): string {
   let start = src.indexOf(`function ${name}(`);
