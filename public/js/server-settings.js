@@ -335,9 +335,11 @@ function initTimezoneDropdown(currentValue) {
         html += '<div class="search-select-group">' + escapeHtml(group) + '</div>';
       }
 
-      html += '<div class="search-select-option" data-value="' + escapeHtml(tz) + '"' +
-        (tz === hidden.value ? ' class="search-select-option selected"' : '') +
-        '>' + escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
+      // One class attribute: a second one (the "selected" copy this used to
+      // append) is ignored by the parser, so the current zone was never
+      // highlighted.
+      html += '<div class="search-select-option' + (tz === hidden.value ? ' selected' : '') +
+        '" data-value="' + escapeHtml(tz) + '">' + escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
       count++;
     }
 

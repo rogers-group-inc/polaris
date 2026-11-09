@@ -14,7 +14,7 @@ import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { findRulesMatchingAsset } from "./notificationRuleService.js";
-import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, ruleAlertsWhenDependencyDown, type Trigger } from "./notificationTypes.js";
+import { effectiveAckNoteForSeverity, parseSeverityBands, alertOwnerOf, isDownDetectionTrigger, ruleAlertsWhenDependencyDown, expandResetActions, parseEscalationFired, type Trigger } from "./notificationTypes.js";
 import { higherAlertSeverity } from "../utils/alertSeverity.js";
 import { recoveredConditionSuffix } from "../utils/triggerSummary.js";
 
@@ -226,6 +226,10 @@ export async function getNotificationForViewer(
       // told yet, so an acknowledger is not surprised that no email arrived.
       quietHeldAt: true,
       quietSummarizedAt: true,
+      // Business rule 145: the page says when the alert has gone over the
+      // reader's head, and how far.
+      escalationTier: true,
+      escalatedAt: true,
       // A rule-less alert (a test fire, or one whose automation was deleted —
       // ruleId is SetNull) has no note policy left to enforce.
       rule: { select: { id: true, name: true, requireAckNote: true, severity: true, severityBands: true } },
@@ -288,8 +292,11 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
     },
     select: {
       id: true, message: true, severity: true, assetId: true, assetHostname: true, dimension: true, templateCtx: true,
-      rule: { select: { id: true, name: true, scope: true, emailComposition: true, resetActions: true } },
-      alertGroup: { select: { id: true, name: true, enabled: true, emailComposition: true, resetActions: true } },
+      // Business rule 145: matched reset rows resolve against the owner's
+      // trigger actions, and an escalation reset reads the tiers that sent.
+      escalationFired: true,
+      rule: { select: { id: true, name: true, scope: true, emailComposition: true, resetActions: true, severity: true, actions: true, severityBands: true, escalation: true } },
+      alertGroup: { select: { id: true, name: true, enabled: true, emailComposition: true, resetActions: true, actions: true, escalation: true } },
     },
     take: 200,
   });
@@ -330,7 +337,7 @@ async function runResetActionsForCleared(ids: string[], actor: string): Promise<
     // the headline the email would state the severity and the hostname and
     // nothing about what happened.
     setRecoverySentence(ctx, `Resolved: ${ctx["rule"] || o.name} — ${ctx["asset"] || "alert"} cleared by ${actor}`);
-    await executeActions(n.id, o.resetActions as never, ctx, {
+    await executeActions(n.id, expandResetActions(o, parseEscalationFired(n.escalationFired)) as never, ctx, {
       // A group has no scope of its own; its members' scopes chose the devices
       // at fire time, and recipientDeviceRegion routing reads the ALERT's own
       // snapshotted region tags either way.

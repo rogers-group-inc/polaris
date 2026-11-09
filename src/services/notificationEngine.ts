@@ -54,6 +54,9 @@ import {
   type ResetConfig,
   type RepeatConfig,
   type AutomationAction,
+  type RuleActionCarrier,
+  expandResetActions,
+  parseEscalationFired,
   type EscalatableAction,
   ruleHasAnyEscalation,
   allRuleActionRefs,
@@ -5209,7 +5212,8 @@ async function createGroupAlert(
   // message goes when the hold ends (releaseDueGroupSends), naming whatever
   // has joined by then.
 
-  if (wantsEventAction(lead.actions)) {
+  // Every fire is on the record (business rule 146) — no action gates it.
+  {
     await logEvent({
       action: "notification.triggered",
       resourceType: "notification",
@@ -5710,11 +5714,11 @@ async function fire(
     update: { state: "firing", firedAt: now, lastValue, notificationId: notif.id, conditionMetSince: null, recoveredSince: null, firingSeverity: severity, bandMetSince: metSinceJson(bandMetSince) },
   });
   await enqueueAlertActions(notif.id, actions, ctx, rule, reading);
-  // The audit Event is an ACTION now — present by default, removable for a
-  // deliberately noisy automation. The in-app alert above is not: every
-  // NotificationDelivery hangs off notif.id, as do the escalation sweep,
-  // acknowledge/clear and the state machine.
-  if (wantsEventAction(actions)) {
+  // Every fire is on the record (business rule 146): the audit Event is the
+  // engine's own, as the escalation and end Events are — no action gates it.
+  // (An event/change automation's alerts come from the event tail, which
+  // writes none: one would feed its own trigger.)
+  {
     await logEvent({
       action: "notification.triggered",
       resourceType: "notification",
@@ -5748,11 +5752,6 @@ async function fire(
       details: { ids: [notif.id], count: 1, hasNote: !!inheritedAck.acknowledgeNote, inheritedFrom: [inheritedAck.notificationId] },
     });
   }
-}
-
-/** Does this severity's effective action list ask for the audit Event? */
-function wantsEventAction(actions: AutomationAction[] | null | undefined): boolean {
-  return (actions ?? []).some((a) => a.type === "event");
 }
 
 /** A firing alert crossed into a different band. Update its severity + message,
@@ -6061,6 +6060,23 @@ function readingFromState(st: { assetId: string | null; dimensionKey: string; la
   };
 }
 
+/**
+ * The reset actions an alert's recovery actually runs (business rule 145) —
+ * `expandResetActions` over the owner's list, reading the alert's fired tiers
+ * only when some reset action asks for an escalation reset (one indexed read,
+ * once per alert, never per tick).
+ */
+async function resetActionsToRun(
+  carrier: RuleActionCarrier & { severity: string },
+  notificationId: string,
+): Promise<AutomationAction[]> {
+  const wantsFired = (carrier.resetActions ?? []).some((a) => a.type === "notify" && !!a.resetEscalation);
+  const fired = wantsFired
+    ? parseEscalationFired((await prisma.notification.findUnique({ where: { id: notificationId }, select: { escalationFired: true } }))?.escalationFired)
+    : [];
+  return expandResetActions(carrier, fired);
+}
+
 async function fireReset(
   rule: DbRule,
   reading: Reading,
@@ -6076,8 +6092,11 @@ async function fireReset(
   // A governed alert's reset actions are its GROUP's (business rule 75), the
   // same answer runResetActionsForCleared gives for an operator's Clear.
   const owner = await groupOwnerOf(rule, st.notificationId);
-  const actions = owner ? owner.resetActions : rule.resetActions;
-  if (!actions?.length) return;
+  if (!(owner ? owner.resetActions : rule.resetActions)?.length) return;
+  // Matched rows follow their trigger action live, and an escalation reset
+  // adds the tiers that sent for THIS alert (business rule 145).
+  const actions = await resetActionsToRun(owner ?? rule, st.notificationId);
+  if (!actions.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const view = await allClearView(rule, st.notificationId, reading);
   const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);

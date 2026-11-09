@@ -74,6 +74,10 @@ vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: vi.fn(async (e: any) => {
     db.events.push(e);
   }),
+  logEventsBatch: vi.fn(async (es: any[]) => {
+    db.events.push(...es);
+    return es.length;
+  }),
 }));
 
 // A script action must never be re-run by a reminder; fail loudly if one is.
@@ -325,6 +329,42 @@ describe("the sweep's repeat pass", () => {
     // level chain's bare numeric tier key, nor with its own `a0:t0`.
     expect(state["a0:repeat"].count).toBe(1);
     expect(state["0"].count).toBe(1);
+  });
+
+  it("a tier's FIRST send writes one Event on the alert and records the tier (business rule 145)", async () => {
+    seedRule({
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 30, actions: [{ type: "notify", channelId: "ch-email", addresses: ["boss@example.com"] }] }] },
+    });
+    seedNotif({ assetId: "asset-1", escalationFired: null, escalationTier: null, escalatedAt: null });
+
+    await runEscalationSweep(NOW);
+
+    const ev = db.events.filter((e) => e.action === "notification.escalated");
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ resourceType: "notification", resourceId: "n1", assetId: "asset-1", level: "warning" });
+    expect(ev[0].details).toMatchObject({ kind: "tier", tiers: [1], severity: "warning" });
+    const data = db.notifUpdates[0].data;
+    expect(data.escalationTier).toBe(1);
+    expect(data.escalatedAt).toEqual(NOW);
+    expect(data.escalationFired).toEqual([{ severity: "warning", chain: "", tier: 0, at: NOW.toISOString() }]);
+  });
+
+  it("a tier's REPEAT run is a reminder of it, not a new escalation: no Event, no record", async () => {
+    seedRule({
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 30, repeatEveryMin: 5, maxRepeats: 3, actions: [{ type: "notify", channelId: "ch-email", addresses: ["boss@example.com"] }] }] },
+    });
+    seedNotif({
+      escalationState: { tiers: { "0": { firstSentAt: minsAgo(10).toISOString(), lastSentAt: minsAgo(6).toISOString(), count: 1 } } },
+      escalationFired: [{ severity: "warning", chain: "", tier: 0, at: minsAgo(10).toISOString() }],
+      escalationTier: 1,
+      escalatedAt: minsAgo(10),
+    });
+
+    await runEscalationSweep(NOW);
+
+    expect(db.deliveries.length).toBeGreaterThan(0);
+    expect(db.events.filter((e) => e.action === "notification.escalated")).toHaveLength(0);
+    expect(db.notifUpdates[0].data.escalationFired).toBeUndefined();
   });
 
   it("does not repeat when the automation has no repeat config", async () => {
