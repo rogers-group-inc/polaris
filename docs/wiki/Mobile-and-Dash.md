@@ -287,8 +287,11 @@ says *Upgrade started*, and the row then follows the run — signing in,
 uploading, erasing / writing / verifying with a percent on a switch,
 rebooting, verifying, waiting for monitoring to answer — and ends on the
 result. The same sheet has a **Schedule for later** box: tick it, pick a
-date and time (your phone's time zone) and who gets the results email, and
-**Schedule** books it instead of starting it. When the device cannot be
+date and time (your phone's time zone) and who gets the emails, and
+**Schedule** books it instead of starting it. Below it, **Email notifications**
+emails the addresses you give when an upgrade started now begins and when it
+finishes; it is always on for a scheduled one. Typing a name in **Email to**
+offers matches from the address book. When the device cannot be
 upgraded right now, the button still shows and the sheet opens with the box
 ticked and locked. A pending booking shows in the row — when, to what
 version, who hears about it — with **Change** and **Cancel**. The button

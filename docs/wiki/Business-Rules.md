@@ -1718,9 +1718,11 @@ above or below it, or its MCLAG peer: then it waits and retries every minute
 for up to two hours past its time. If Polaris was not running at the booked time
 and only gets to it more than 15 minutes late, it is not started. A device has
 at most one scheduled upgrade, and every booking names at least one email
-address. Whatever happens — finished, failed, not started, missed — each
-address gets one results email, in that reader's own time zone when they have a
-Polaris account.
+address. Each address is emailed when the upgrade is booked (and if its time
+or image changes), when it starts, and once with the result — finished, failed,
+not started, missed — in that reader's own time zone when they have a Polaris
+account. An upgrade started now can email the same way, when **Email
+notifications** is ticked: once when it starts and once when it finishes.
 
 See [Assets → Firmware](Assets#firmware).
 

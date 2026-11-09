@@ -57,10 +57,12 @@ beforeEach(() => {
   g.timeAgo = () => "5 minutes ago";
   g.formatBytes = (n: number) => n + " B";
   g.permAtLeast = (key: string, want: string) => RANK[perms[key] ?? "none"]! >= RANK[want]!;
-  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {
+  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwEmailsFieldHTML", "_fwNotifyHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {
     (0, eval)(fnSrc(name));
   }
   (0, eval)(varSrc("_FW_STAGE_LABELS"));
+  (0, eval)(varSrc("_FW_NOTIFY_HINT_NOW"));
+  (0, eval)(varSrc("_FW_NOTIFY_HINT_SCHEDULED"));
 });
 
 const asset = (over: Record<string, unknown> = {}) => ({ id: "a1", hostname: "lab-sw1", ipAddress: "10.0.0.5", serialNumber: "S108FFTF23001234", assetType: "switch", ...over });
@@ -274,6 +276,37 @@ describe("scheduled upgrades: one Upgrade button, a Schedule for later box in it
     expect(host.querySelector('input[name="fw-approve-image"]')).not.toBeNull();
   });
 
+  it("an unticked 'Email notifications' box for a flash now, its recipients pre-filled from the operator's profile and hidden until ticked", () => {
+    const host = dialog(fw(), { defaults: { notifyEmails: ["me@example.com"] } });
+    const box = host.querySelector("#fw-approve-notify") as HTMLInputElement;
+    expect(box).not.toBeNull();
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+    expect(text(box.closest("label"))).toBe("Email notifications");
+    expect((host.querySelector("#fw-notify-fields") as HTMLElement).style.display).toBe("none");
+    // ONE recipients box, outside the schedule fields, shared by now and later.
+    expect(host.querySelectorAll("#fw-sched-emails")).toHaveLength(1);
+    expect(host.querySelector("#fw-sched-fields #fw-sched-emails")).toBeNull();
+    expect(text(host.querySelector("#fw-notify-hint"))).toContain("when the upgrade starts and when it finishes");
+    expect(text(host.querySelector("#fw-notify-hint"))).toContain("address book");
+  });
+
+  it("blocked right now: 'Email notifications' is ticked and locked with the schedule — a booking always emails someone", () => {
+    const blocked = fw({ state: "blocked", available: false, blockers: ["the device is down"] });
+    const host = dialog(blocked, { mode: "schedule-only", defaults: { notifyEmails: ["me@example.com"] } });
+    const box = host.querySelector("#fw-approve-notify") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(true);
+    expect((host.querySelector("#fw-notify-fields") as HTMLElement).style.display).toBe("");
+    expect(text(host.querySelector("#fw-notify-hint"))).toContain("when it is scheduled, when it starts and when it finishes");
+  });
+
+  it("a pending booking still offers 'Email notifications' for a flash now", () => {
+    const host = dialog(fw({ schedule: { id: "s", toVersion: "7.6.8 build1164", scheduledFor: new Date(Date.now() + 3_600_000).toISOString(), notifyEmails: [] } }));
+    expect(host.querySelector("#fw-approve-schedule")).toBeNull();
+    expect(host.querySelector("#fw-approve-notify")).not.toBeNull();
+  });
+
   it("blocked right now: the same Upgrade verb, and the dialog opens with scheduling ticked and locked", () => {
     const blocked = fw({ state: "blocked", available: false, reason: "7.6.8 build1164 is available, but the device is down.", blockers: ["the device is down — an upgrade needs a device that is answering"] });
     const el = render(asset(), blocked);
@@ -293,7 +326,7 @@ describe("scheduled upgrades: one Upgrade button, a Schedule for later box in it
     const box = el.querySelector("#asset-fw-schedule");
     expect(text(box)).toContain("Scheduled: upgrade to 7.6.8 build1164 at");
     expect(text(box)).toContain("(in 9 h)");
-    expect(text(box)).toContain("Results emailed to ops@example.com, noc@example.com · booked by alice");
+    expect(text(box)).toContain("Start and results emailed to ops@example.com, noc@example.com · booked by alice");
     expect(el.querySelector("#btn-fw-schedule-edit")).not.toBeNull();
     expect(el.querySelector("#btn-fw-schedule-cancel")).not.toBeNull();
     const host = dialog(fw({ schedule: booking() }));

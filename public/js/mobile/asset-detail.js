@@ -4440,7 +4440,7 @@
    */
   function startFirmwareFlow(asset, fw, btn, existing) {
     var mode = existing ? "change" : (fw.state === "blocked" ? "schedule-only" : (fw.schedule ? "now-only" : "choose"));
-    var defaultsP = (mode === "choose" || mode === "schedule-only") && api.assets.firmwareScheduleDefaults
+    var defaultsP = mode !== "change" && api.assets.firmwareScheduleDefaults
       ? api.assets.firmwareScheduleDefaults(asset.id).catch(function () { return null; })
       : Promise.resolve(null);
     defaultsP.then(function (defaults) {
@@ -4463,9 +4463,11 @@
         });
         return;
       }
-      api.assets.startFirmwareUpgrade(asset.id, { imageId: fw.image.id }).then(function (res) {
+      var startBody = { imageId: fw.image.id };
+      if (choice.notifyEmails && choice.notifyEmails.length) startBody.notifyEmails = choice.notifyEmails;
+      api.assets.startFirmwareUpgrade(asset.id, startBody).then(function (res) {
         if (_openId !== asset.id) return;
-        PolarisTabs.showSnackbar("Upgrade started");
+        PolarisTabs.showSnackbar(startBody.notifyEmails ? "Upgrade started — emails go to " + startBody.notifyEmails.join(", ") : "Upgrade started");
         var slot = document.getElementById("asset-fw-slot");
         if (slot) slot.innerHTML = fwRunningHtml(res && res.run);
         if (res && res.run) watchFirmwareRun(asset.id, res.run.id);
@@ -4493,6 +4495,9 @@
    * ticked and locked), "change" (a booking's time and recipients), "now-only"
    * (a booking already exists, so no second one is offered).
    */
+  var FW_NOTIFY_HINT_NOW = "Comma-separated; type a name to pick from the address book. Sent when the upgrade starts and when it finishes.";
+  var FW_NOTIFY_HINT_SCHEDULED = "Comma-separated; type a name to pick from the address book. Sent when it is scheduled, starts and finishes, or if it cannot be started. A scheduled upgrade always emails someone.";
+
   function fwConfirmBodyHtml(asset, fw, opts) {
     opts = opts || {};
     var mode = opts.mode || "choose";
@@ -4504,23 +4509,35 @@
     }
     var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
     var emails = existing ? (existing.notifyEmails || []) : ((opts.defaults && opts.defaults.notifyEmails) || []);
+    // One recipients box per sheet (rule 93): inside the booking's fields when
+    // changing a booking, otherwise under "Email notifications".
+    function emailsField(hint) {
+      return '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="fw-sched-emails">Email to</label>'
+        + '<div style="position:relative;"><input type="text" inputmode="email" id="fw-sched-emails" class="input" style="width:100%;" autocomplete="off" placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '"></div>'
+        + '<p id="fw-notify-hint" style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">' + escapeHtml(hint) + '</p>';
+    }
     var fields = ''
       + (fw.blockers && fw.blockers.length ? '<p style="margin:0 0 8px;font-size:13px;color:var(--md-warning);">Right now ' + escapeHtml(fw.blockers.join("; ")) + '. That is checked again when it is due.</p>' : '')
       + '<label style="display:block;font-size:13px;margin-bottom:4px;" for="fw-sched-when">Run at (your time)</label>'
       + '<input type="datetime-local" id="fw-sched-when" class="input" style="width:100%;" min="' + escapeHtml(fwLocalInputValue(new Date(Date.now() + 2 * 60000))) + '" value="' + escapeHtml(fwLocalInputValue(when)) + '">'
-      + '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="fw-sched-emails">Email the results to</label>'
-      + '<input type="email" id="fw-sched-emails" class="input" style="width:100%;" multiple placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '">'
       + '<p style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">Not started if Polaris only gets to it more than 15 minutes late; waits up to 2 hours for an upgrade on a related device.</p>';
+    function notifyBlock(locked) {
+      return '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
+        + '<input type="checkbox" id="fw-confirm-notify"' + (locked ? ' checked disabled' : '') + '> Email notifications</label>'
+        + '<div id="fw-notify-fields" style="' + (locked ? '' : 'display:none;') + '">' + emailsField(locked ? FW_NOTIFY_HINT_SCHEDULED : FW_NOTIFY_HINT_NOW) + '</div>';
+    }
     var schedule;
     if (mode === "change") {
-      schedule = '<div id="fw-sched-fields" style="margin-top:12px;">' + fields + '</div>';
+      schedule = '<div id="fw-sched-fields" style="margin-top:12px;">' + fields + emailsField(FW_NOTIFY_HINT_SCHEDULED) + '</div>';
     } else if (mode === "now-only") {
-      schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">An upgrade is already scheduled — change or cancel it from the OS row.</p>';
+      schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">An upgrade is already scheduled — change or cancel it from the OS row.</p>'
+        + notifyBlock(false);
     } else {
       var locked = mode === "schedule-only";
       schedule = '<label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-size:14px;">'
         + '<input type="checkbox" id="fw-confirm-schedule"' + (locked ? ' checked disabled' : '') + '> Schedule for later</label>'
-        + '<div id="fw-sched-fields" style="margin-top:8px;' + (locked ? '' : 'display:none;') + '">' + fields + '</div>';
+        + '<div id="fw-sched-fields" style="margin-top:8px;' + (locked ? '' : 'display:none;') + '">' + fields + '</div>'
+        + notifyBlock(locked);
     }
     var toVersion = img ? img.versionLabel : (existing ? existing.toVersion : "");
     return ''
@@ -4570,19 +4587,39 @@
       var ok = sheet.querySelector("#fw-confirm-ok");
       var whenEl = sheet.querySelector("#fw-sched-when");
       var emailsEl = sheet.querySelector("#fw-sched-emails");
+      var notify = sheet.querySelector("#fw-confirm-notify");
+      var notifyFields = sheet.querySelector("#fw-notify-fields");
+      var notifyHint = sheet.querySelector("#fw-notify-hint");
+      if (emailsEl && window.PolarisEmailSuggest) window.PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
+      // A booking always emails someone: scheduling ticks and locks the box;
+      // unticking "Schedule for later" puts back the operator's own choice.
+      var notifyChoice = notify ? notify.checked : false;
+      if (notify) notify.addEventListener("change", function () { notifyChoice = notify.checked; });
       function scheduling() { return opts.mode === "change" || !!(later && later.checked); }
+      function emailing() { return scheduling() || !!(notify && notify.checked); }
       function sync() {
         if (later && fields) fields.style.display = later.checked ? "" : "none";
+        if (notify && opts.mode !== "schedule-only") {
+          notify.disabled = scheduling();
+          notify.checked = scheduling() || notifyChoice;
+        }
+        if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
+        if (notifyHint && notify) notifyHint.textContent = scheduling() ? FW_NOTIFY_HINT_SCHEDULED : FW_NOTIFY_HINT_NOW;
         if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Upgrade";
-        ok.disabled = scheduling() && !(whenEl && whenEl.value && emailsEl && fwParseEmails(emailsEl.value).length > 0);
+        var emailsOk = !emailing() || !!(emailsEl && fwParseEmails(emailsEl.value).length > 0);
+        ok.disabled = !emailsOk || (scheduling() && !(whenEl && whenEl.value));
       }
       if (later) later.addEventListener("change", sync);
+      if (notify) notify.addEventListener("change", sync);
       if (whenEl) whenEl.addEventListener("input", sync);
       if (emailsEl) emailsEl.addEventListener("input", sync);
       scrim.addEventListener("click", function () { closeFirmwareConfirm(false); });
       sheet.querySelector("#fw-confirm-cancel").addEventListener("click", function () { closeFirmwareConfirm(false); });
       ok.addEventListener("click", function () {
-        if (!scheduling()) { closeFirmwareConfirm({ now: true }); return; }
+        if (!scheduling()) {
+          closeFirmwareConfirm(emailing() && emailsEl ? { now: true, notifyEmails: fwParseEmails(emailsEl.value) } : { now: true });
+          return;
+        }
         var when = new Date(whenEl.value); // datetime-local parses as the phone's local time
         if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
         closeFirmwareConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) } });

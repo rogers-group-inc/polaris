@@ -1185,6 +1185,13 @@ the model's backup image is also newer than the device, lets you choose that
 instead. Nothing is pushed until you tick that you checked the version and
 platform and click **Approve and upgrade**.
 
+**Email notifications.** Under the warning, tick **Email notifications** to have
+Polaris email when the upgrade **starts** and when it **finishes** (succeeded,
+unverified or failed, with the end of the run log). The **Email to** box is
+filled in with your own profile email; add more addresses separated by commas,
+and start typing a name to pick a Polaris user or an
+[Address Book](Address-Book) contact. Leave the box clear and no email is sent.
+
 **On a FortiGate** the dialog warns that every network, tunnel and device
 behind the gate goes down with it for several minutes, and that Polaris does
 **not** check Fortinet's supported upgrade path — only that the image is
@@ -1271,8 +1278,10 @@ adds:
 
 - **Run at** — a date and time in your browser's time zone (the dialog names
   it). It must be at least a minute ahead and within a year.
-- **Email the results to** — filled in with your own profile email; add more
-  addresses separated by commas. At least one is required.
+- **Email notifications** — ticked and locked: a scheduled upgrade always
+  emails someone. **Email to** is filled in with your own profile email; add
+  more addresses separated by commas, or start typing a name to pick from the
+  address book. At least one is required.
 - If the device is blocked right now, the dialog says why, and that it will be
   checked again when the upgrade is due.
 
@@ -1306,8 +1315,9 @@ When the time comes:
   bound, the image is no longer offered or was deleted — it is **not started**
   and is not retried.
 
-**The results email.** Every recipient gets one email when there is an
-outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
+**The emails.** Every recipient is emailed when the upgrade is **scheduled**
+(and again if its time or image is changed — an address added later gets the
+*scheduled* email), when it **starts**, and when there is an outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
 end of the run log), or was *not started* and why (including *missed* for a
 late start, or a restart of Polaris during the upgrade). Each recipient who
 has a Polaris account sees the times in their own time zone; other addresses

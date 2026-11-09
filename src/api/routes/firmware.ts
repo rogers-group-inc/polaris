@@ -66,6 +66,7 @@ import {
   updateSchedule,
   cancelSchedule,
   defaultRecipientsFor,
+  normalizeRecipients,
   MAX_RECIPIENTS,
 } from "../../services/firmwareScheduleService.js";
 import {
@@ -130,8 +131,11 @@ const RunsQuerySchema = z.object({
   status: z.enum(["queued", "running", "succeeded", "failed", "unverified"]).optional(),
 });
 
+// `notifyEmails` (optional, may be empty): who is emailed that the flash
+// started and how it ended (rule 93) — the dialog's "Email me" box.
 const StartUpgradeSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+  notifyEmails: z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS).optional(),
 });
 
 const AbortRunSchema = z.object({
@@ -350,7 +354,8 @@ firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (
 firmwareAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "upgrade the firmware of devices"), handle(async (req, res) => {
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
-  const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown" });
+  const notifyEmails = normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true });
+  const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown", notifyEmails });
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));

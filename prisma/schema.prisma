@@ -6607,6 +6607,12 @@ model FirmwareUpgradeRun {
   heartbeatAt     DateTime?
   startedAt       DateTime       @default(now())
   finishedAt      DateTime?
+  // Who hears that this run started (and, for a click-to-run flash, how it
+  // ended) — rule 93. Empty = no email. A booked run carries its booking's
+  // recipients; its outcome goes out as the booking's results email instead.
+  notifyEmails    String[]       @default([])
+  notifiedAt      DateTime?      // a click-to-run run's results email, claimed before sending
+  notifyError     String?        @db.Text
   schedule        FirmwareUpgradeSchedule?
   groupMember     FirmwareGroupMember?
 
