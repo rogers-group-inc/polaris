@@ -68,6 +68,16 @@ a note names the token as the thing that unlocks them. See
 **Proxy *with* a token is a legitimate setup** — discovery and writes ride FMG,
 monitoring reaches the gates directly — and keeps the normal REST defaults.
 
+**Management access** — what a device permits on its management surface, which
+decides whether an asset offers **Open HTTPS** and **Open SSH** — is read during
+each gate's own discovery pass, alongside the tables that pass already reads.
+In proxy mode it comes from FortiManager's device database (never the proxy
+lane): the gate's interface table, its FortiAP records, the FortiAP profiles and
+the FortiSwitch local-access policy, so the API user's admin profile needs read
+access to those. In direct mode and on a standalone FortiGate it comes from the
+gate's REST API. A list Polaris cannot read leaves the buttons offered with an
+"unverified" note rather than hidden.
+
 ### Filters
 
 Each filter is an **Include** or **Exclude** list — one mode at a time —

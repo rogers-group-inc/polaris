@@ -30,6 +30,7 @@ import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDete
 import { getFmgWorker } from "./fmgWorker.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
 import { fortiosVlanParentOf } from "../utils/fortiosInterfaceRef.js";
+import { summarizeGateManagementAccess, type DiscoveredManagementAccess } from "./fortinetManagementAccessService.js";
 import {
   discoverDhcpSubnets as discoverViaFortigate,
   testConnection as fgTestConnection,
@@ -54,6 +55,9 @@ export interface FortiManagerConfig {
   adom?: string;            // Administrative Domain (default: "root")
   verifySsl?: boolean;      // Skip TLS verification (default: false)
   mgmtInterface?: string;
+  // Managed-switch interface Polaris reaches switches by (default "internal") —
+  // which half of the local-access policy the switch management-access summary reads.
+  switchManagementInterface?: string;
   interfaceInclude?: string[];  // Interfaces to include for interface IP discovery
   interfaceExclude?: string[];  // Interfaces to exclude from interface IP discovery. Ignored if interfaceInclude is non-empty.
   dhcpInclude?: string[];       // Interfaces to include for DHCP subnet discovery
@@ -1361,6 +1365,13 @@ export interface DiscoveryResult {
   // PROTECT assets from the decommission sweep, and membership must never
   // influence any sweep. Optional by design -- absent = unknown = no
   // constraint, which is what every pre-existing construction site means.
+  // Management-access (`allowaccess`) summaries for the firewalls, switches and
+  // APs this run read, keyed by device serial — built during each gate's own
+  // pass from tables it was already reading (fortinetManagementAccessService →
+  // summarizeGateManagementAccess) and only WRITTEN by sync Phase 13.6. A
+  // device absent here keeps its stored Asset.managementAccess. Optional: every
+  // non-Fortinet construction site means "none".
+  managementAccess?: DiscoveredManagementAccess[];
   managedMembership?: {
     switches: Array<{ device: string; serial: string }>;
     aps: Array<{ device: string; serial: string }>;
@@ -1800,6 +1811,9 @@ interface FmgDeviceCtx {
   localCmdbSwitchSerials: Array<{ device: string; serial: string }>;
   localCmdbApSerials: Array<{ device: string; serial: string }>;
   localVips: DiscoveredVip[];
+  // Device-DB tables read for the management-access summary (null = not read).
+  // See fortinetManagementAccessService → summarizeGateManagementAccess.
+  mgmtAccessRows: { interfaces: any[] | null; wtp: any[] | null; wtpProfile: any[] | null; localAccess: any[] | null };
   flags: {
     didInventory: boolean;
     didSwitchQuery: boolean;
@@ -1831,11 +1845,13 @@ async function fmgStepMgmtIp(ctx: FmgDeviceCtx): Promise<void> {
         method: "get",
         // No name filter — fetch ALL interfaces so we capture every physical
         // MAC (see DiscoveredDevice.interfaceMacs), not just the mgmt one.
-        params: [{ url: `/pm/config/device/${deviceName}/global/system/interface`, fields: ["name", "ip", "macaddr"], loadsub: 0 }],
+        // `allowaccess` feeds the firewall's management-access summary.
+        params: [{ url: `/pm/config/device/${deviceName}/global/system/interface`, fields: ["name", "ip", "macaddr", "allowaccess"], loadsub: 0 }],
       };
       const mgmtIfaceRes = await rpc(baseUrl, mgmtIfacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceList = mgmtIfaceRes.result?.[0]?.data;
       if (Array.isArray(ifaceList)) {
+        ctx.mgmtAccessRows.interfaces = ifaceList as any[];
         const found = (ifaceList as any[]).find((i) => i.name === mgmtIfaceName);
         const rawIp = found
           ? (Array.isArray(found.ip) ? found.ip[0] : (found.ip as string | null))
@@ -2411,7 +2427,8 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
           method: "get",
           params: [{
             url: `/pm/config/device/${deviceName}/vdom/root/wireless-controller/wtp`,
-            fields: ["wtp-id", "name", "location", "comment"],
+            // `wtp-profile` joins each AP to its profile's management access.
+            fields: ["wtp-id", "name", "location", "comment", "wtp-profile"],
             loadsub: 0,
           }],
         },
@@ -2420,6 +2437,7 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
       const apCmdbList = apCmdbRes.result?.[0]?.data;
       if (Array.isArray(apCmdbList)) {
         flags.didApCmdbRoster = true;
+        ctx.mgmtAccessRows.wtp = apCmdbList as any[];
         const descriptionBySerial = new Map<string, string>();
         for (const ap of apCmdbList) {
           // FortiAPs are keyed by serial as `wtp-id` in CMDB (matches what
@@ -2440,6 +2458,44 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
     } catch (err: any) {
       log("discover.fortiaps.cmdb", "info", `${deviceName}: CMDB WTP roster lookup skipped — ${err.message || "Unknown error"}`, deviceName);
     }
+}
+
+// Step 3d.6: the two device-DB tables the management-access summary needs
+// beyond what the steps above already read — AP profiles' `allowaccess` and the
+// switch local-access policy. Native FMG reads (never the proxy lane), each only
+// on a gate with live APs / switches. Each tries the device DB first, then the
+// one other place FortiManager keeps the table (the ADOM object table for a
+// centrally managed wtp-profile; the vdom scope for local-access); a table
+// neither answers stays null and its devices unknown.
+async function fmgStepMgmtAccessTables(ctx: FmgDeviceCtx): Promise<void> {
+  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, localAps, localSwitches, mgmtAccessRows } = ctx;
+  const readTable = async (url: string, fields: string[]): Promise<any[] | null> => {
+    try {
+      const res = await rpc(baseUrl, { id: 18, method: "get", params: [{ url, fields, loadsub: 0 }] }, apiUser, apiToken, verifySsl, signal, integrationId);
+      const data = res.result?.[0]?.data;
+      return Array.isArray(data) && data.length > 0 ? data : null;
+    } catch {
+      return null;
+    }
+  };
+  if (localAps.some((a) => a.device === deviceName)) {
+    const fields = ["name", "allowaccess"];
+    mgmtAccessRows.wtpProfile =
+      (await readTable(`/pm/config/device/${deviceName}/vdom/root/wireless-controller/wtp-profile`, fields))
+      ?? (await readTable(`/pm/config/adom/${adom}/obj/wireless-controller/wtp-profile`, fields));
+    if (!mgmtAccessRows.wtpProfile) {
+      log("discover.mgmtaccess", "info", `${deviceName}: FortiAP profile access not readable from FortiManager — AP management access stays unknown`, deviceName);
+    }
+  }
+  if (localSwitches.some((sw) => sw.device === deviceName)) {
+    const fields = ["name", "mgmt-allowaccess", "internal-allowaccess"];
+    mgmtAccessRows.localAccess =
+      (await readTable(`/pm/config/device/${deviceName}/global/switch-controller/security-policy/local-access`, fields))
+      ?? (await readTable(`/pm/config/device/${deviceName}/vdom/root/switch-controller/security-policy/local-access`, fields));
+    if (!mgmtAccessRows.localAccess) {
+      log("discover.mgmtaccess", "info", `${deviceName}: switch local-access policy not readable from FortiManager — switch management access stays unknown`, deviceName);
+    }
+  }
 }
 
 // Step 3d.5: FortiAP -> FortiSwitch port mapping via the detected-device MAC table. Offline gates skip.
@@ -2798,6 +2854,7 @@ export async function discoverDhcpSubnets(
   const arpTable: DiscoveredArpEntry[] = [];
   const cmdbSwitchSerials: Array<{ device: string; serial: string }> = [];
   const cmdbApSerials: Array<{ device: string; serial: string }> = [];
+  const managementAccess: DiscoveredManagementAccess[] = [];
 
   type DeviceChunk = {
     device: DiscoveredDevice;
@@ -2830,6 +2887,7 @@ export async function discoverDhcpSubnets(
     // Did the native CMDB roster read answer? See the FmgDeviceCtx note.
     didSwitchCmdbRoster: boolean;
     didApCmdbRoster: boolean;
+    managementAccess: DiscoveredManagementAccess[];
   };
   // Top-level aggregates used by syncDhcpSubnets to decommission stale
   // switches/APs only when their controller was reachable.
@@ -2941,6 +2999,7 @@ export async function discoverDhcpSubnets(
         vdom: "root",
         verifySsl: config.fortigateVerifySsl === true,
         mgmtInterface: config.mgmtInterface,
+        switchManagementInterface: config.switchManagementInterface,
         interfaceInclude: config.interfaceInclude,
         interfaceExclude: config.interfaceExclude,
         dhcpInclude: config.dhcpInclude,
@@ -3050,6 +3109,8 @@ export async function discoverDhcpSubnets(
             didDhcpReservationsQuery:    !!fgResult.dhcpReservationsInventoriedDevices    && fgResult.dhcpReservationsInventoriedDevices.length    > 0,
             didDhcpLeasesQuery:          !!fgResult.dhcpLeasesInventoriedDevices          && fgResult.dhcpLeasesInventoriedDevices.length          > 0,
             didArpQuery:                 !!fgResult.arpQueriedDevices                     && fgResult.arpQueriedDevices.length                     > 0,
+            // Built by fortigateService from the tables it read off the gate.
+            managementAccess: fgResult.managementAccess ?? [],
           };
         } catch (err: any) {
           // Cache-miss fallback: only retry when the IP came from the warm
@@ -3127,6 +3188,7 @@ export async function discoverDhcpSubnets(
       localSubnets: [], localInterfaceIps: [], localDhcpEntries: [], localInventory: [],
       localSwitches: [], localAps: [], localSwitchMacTable: [], localArpTable: [],
       localCmdbSwitchSerials: [], localCmdbApSerials: [], localVips: [],
+      mgmtAccessRows: { interfaces: null, wtp: null, wtpProfile: null, localAccess: null },
       // Track whether each inventory query returned a usable response so the
       // sync's decommission pass can distinguish "controller offline" (don't
       // decommission its switches/APs) from "controller responded but no
@@ -3157,6 +3219,7 @@ export async function discoverDhcpSubnets(
     await fmgStepAps(ctx);
     await fmgStepApCmdbRoster(ctx);
     await fmgStepApPortMap(ctx);
+    await fmgStepMgmtAccessTables(ctx);
     await fmgStepArp(ctx);
     await fmgStepGeoFallback(ctx);
     await fmgStepVips(ctx);
@@ -3212,7 +3275,21 @@ export async function discoverDhcpSubnets(
       flags.didArpQuery = false;
     }
 
-    return { device: localDevice, subnets: localSubnets, interfaceIps: localInterfaceIps, dhcpEntries: localDhcpEntries, deviceInventory: localInventory, didInventory: flags.didInventory, fortiSwitches: localSwitches, fortiAps: localAps, vips: localVips, switchMacTable: localSwitchMacTable, arpTable: localArpTable, cmdbSwitchSerials: localCmdbSwitchSerials, cmdbApSerials: localCmdbApSerials, didSwitchQuery: flags.didSwitchQuery, didApQuery: flags.didApQuery, didVipQuery: flags.didVipQuery, didDhcpReservationsQuery: flags.didDhcpReservationsQuery, didDhcpLeasesQuery: flags.didDhcpLeasesQuery, didArpQuery: flags.didArpQuery, didSwitchCmdbRoster: flags.didSwitchCmdbRoster, didApCmdbRoster: flags.didApCmdbRoster };
+    // Management access from the device-DB rows read above (Steps 1, 3d.4,
+    // 3d.6). HA standbys are not summarized — the primary carries the serial.
+    const managementAccess = summarizeGateManagementAccess({
+      firewall: localDevice.serial ? { serial: localDevice.serial, mgmtIp: localDevice.mgmtIp || null } : null,
+      interfaceRows: ctx.mgmtAccessRows.interfaces,
+      mgmtInterfaceName: mgmtIfaceName,
+      aps: localAps.filter((a) => a.device === deviceName).map((a) => ({ serial: a.serial, ipAddress: a.ipAddress || null })),
+      wtpRows: ctx.mgmtAccessRows.wtp,
+      wtpProfileRows: ctx.mgmtAccessRows.wtpProfile,
+      switches: localSwitches.filter((sw) => sw.device === deviceName).map((sw) => ({ serial: sw.serial, ipAddress: sw.ipAddress || null })),
+      localAccessRows: ctx.mgmtAccessRows.localAccess,
+      switchManagementInterface: config.switchManagementInterface,
+    });
+
+    return { managementAccess, device: localDevice, subnets: localSubnets, interfaceIps: localInterfaceIps, dhcpEntries: localDhcpEntries, deviceInventory: localInventory, didInventory: flags.didInventory, fortiSwitches: localSwitches, fortiAps: localAps, vips: localVips, switchMacTable: localSwitchMacTable, arpTable: localArpTable, cmdbSwitchSerials: localCmdbSwitchSerials, cmdbApSerials: localCmdbApSerials, didSwitchQuery: flags.didSwitchQuery, didApQuery: flags.didApQuery, didVipQuery: flags.didVipQuery, didDhcpReservationsQuery: flags.didDhcpReservationsQuery, didDhcpLeasesQuery: flags.didDhcpLeasesQuery, didArpQuery: flags.didArpQuery, didSwitchCmdbRoster: flags.didSwitchCmdbRoster, didApCmdbRoster: flags.didApCmdbRoster };
   }
 
   // Process up to `concurrency` FortiGates in parallel.
@@ -3282,6 +3359,7 @@ export async function discoverDhcpSubnets(
       arpTable.push(...chunk.arpTable);
       cmdbSwitchSerials.push(...chunk.cmdbSwitchSerials);
       cmdbApSerials.push(...chunk.cmdbApSerials);
+      managementAccess.push(...chunk.managementAccess);
       if (chunk.didSwitchQuery) switchInventoriedDevices.add(chunk.device.name);
       if (chunk.didApQuery)     apInventoriedDevices.add(chunk.device.name);
       if (chunk.didVipQuery)                 vipInventoriedDevices.add(chunk.device.name);
@@ -3469,6 +3547,7 @@ export async function discoverDhcpSubnets(
     switchMacTable,
     arpTable,
     arpQueriedDevices: [...arpQueriedDevices],
+    managementAccess,
     managedMembership: {
       switches: cmdbSwitchSerials,
       aps: cmdbApSerials,

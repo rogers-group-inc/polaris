@@ -32,7 +32,7 @@ const NOISE = { "q_origin_key": "k", comment: "noise", uuid: "0f0f", "dns-servic
 
 const CMDB: Record<string, unknown[] | Record<string, unknown>> = {
   "/api/v2/cmdb/system/interface": [
-    { ...NOISE, name: "mgmt", ip: "10.0.0.1 255.255.255.0", macaddr: "04:d5:90:00:00:01", type: "physical", status: "up", mode: "static" },
+    { ...NOISE, name: "mgmt", ip: "10.0.0.1 255.255.255.0", macaddr: "04:d5:90:00:00:01", type: "physical", status: "up", mode: "static", allowaccess: "ping https ssh" },
     { ...NOISE, name: "lan", ip: "192.168.10.1 255.255.255.0", macaddr: "04:d5:90:00:00:02", type: "physical", status: "up", mode: "static",
       "secondary-IP": "enable", secondaryip: [{ id: 1, q_origin_key: 1, ip: "192.168.250.1 255.255.255.0", allowaccess: "" }],
       ipv6: { "ip6-mode": "static", "ip6-address": "::/0", "ip6-extra-addr": [], "ip6-prefix-list": [], "ip6-send-adv": "disable" } },
@@ -61,6 +61,13 @@ const CMDB: Record<string, unknown[] | Record<string, unknown>> = {
   ],
   "/api/v2/cmdb/wireless-controller/wtp": [
     { ...NOISE, "wtp-id": "FP231FTF00000001", name: "ap-1", location: "b:HQ f:1", "wtp-profile": "FAP231F-default", admin: "enable" },
+  ],
+  // The two tables read only for the management-access summary.
+  "/api/v2/cmdb/wireless-controller/wtp-profile": [
+    { ...NOISE, name: "FAP231F-default", allowaccess: "https snmp", "login-passwd-change": "no", "ap-country": "US" },
+  ],
+  "/api/v2/cmdb/switch-controller.security-policy/local-access": [
+    { ...NOISE, name: "default", "mgmt-allowaccess": "https ping ssh", "internal-allowaccess": "https ping" },
   ],
 };
 
@@ -98,6 +105,7 @@ function stubGate(honourFormat: boolean): Map<string, number> {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   _resetFortiosGateState();
   vi.restoreAllMocks();
@@ -105,6 +113,9 @@ afterEach(() => {
 
 describe("standalone discovery's format= lists carry everything discovery reads", () => {
   it("returns the same DiscoveryResult whether or not the gate honours format=", async () => {
+    // Pin the clock: the management-access summaries carry a checkedAt.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-09T12:00:00Z"));
     stubGate(false);
     const whole = await discoverDhcpSubnets(config as any);
     _resetFortiosGateState();
@@ -121,6 +132,19 @@ describe("standalone discovery's format= lists carry everything discovery reads"
     expect(whole.fortiSwitches[0]).toMatchObject({ uplinkPhysicalPort: "port47", description: "b:HQ f:2" });
     expect(whole.devices[0]).toMatchObject({ latitude: 36.1627, longitude: -86.7816 });
     expect(whole.interfaceIps).toEqual(expect.arrayContaining([expect.objectContaining({ ipAddress: "192.168.250.1", role: "secondary" })]));
+
+    // Management access rode the existing interface + wtp reads (allowaccess,
+    // wtp-profile) plus one read each of the profile and local-access tables.
+    const access = Object.fromEntries((whole.managementAccess ?? []).map((m) => [m.serial, m.summary.protocols]));
+    expect(access).toEqual({
+      FGT61FTK00000001: ["ping", "https", "ssh"],
+      FP231FTF00000001: ["https", "snmp"],
+      S248EFTF00000001: ["https", "ping"],
+    });
+    expect(calls.get("/api/v2/cmdb/system/interface")).toBe(1);
+    expect(calls.get("/api/v2/cmdb/wireless-controller/wtp")).toBe(1);
+    expect(calls.get("/api/v2/cmdb/wireless-controller/wtp-profile")).toBe(1);
+    expect(calls.get("/api/v2/cmdb/switch-controller.security-policy/local-access")).toBe(1);
 
     // system/global is read once per run (Step 2 only).
     expect(calls.get("/api/v2/cmdb/system/global")).toBe(1);

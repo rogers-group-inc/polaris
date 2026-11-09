@@ -20,6 +20,7 @@ import { FORTIOS_INTERFACE_CMDB_FORMAT, fortiosVlanParentOf } from "../../src/ut
 import { fortiosSecondaryIpStrings } from "../../src/utils/fortiosSecondaryIp.js";
 import { parseInterfaceIpv6 } from "../../src/utils/fortiosIpv6.js";
 import { parseFortiCmdbInterfaceTable, fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoringService.js";
+import { buildFirewallSummary } from "../../src/services/fortinetManagementAccessService.js";
 
 const NOISE = { mtu: 1500, "mtu-override": "disable", speed: "auto", allowaccess: "ping https", "dhcp-relay-service": "disable",
   vdom: "root", role: "lan", "device-identification": "enable", estimated_upstream_bandwidth: 0, q_origin_key: "x" };
@@ -71,6 +72,16 @@ describe("FORTIOS_INTERFACE_CMDB_FORMAT carries everything the interface readers
       expect(parseInterfaceIpv6(trimmed)).toEqual(parseInterfaceIpv6(full));
     });
     expect(parseInterfaceIpv6(FULL_ROWS[0]).addresses.length).toBeGreaterThan(1);
+  });
+
+  it("discovery's management-access summary reads the same allowaccess off a trimmed row", () => {
+    // The firewall's Open HTTPS / Open SSH buttons come from this read since
+    // Phase 13.6 stopped re-reading the table (fortinetManagementAccessService).
+    for (const full of FULL_ROWS) {
+      const name = String(full.name);
+      expect(buildFirewallSummary(TRIMMED, name, null, "t"), name).toEqual(buildFirewallSummary(FULL_ROWS, name, null, "t"));
+    }
+    expect(buildFirewallSummary(TRIMMED, "wan1", null, "t")?.protocols).toEqual(["ping", "https"]);
   });
 
   it("names the secondary TABLE key, not only the flag", () => {

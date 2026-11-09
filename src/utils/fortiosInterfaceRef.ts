@@ -51,8 +51,13 @@ export function fortiosVlanParentOf(iface: { vlanid?: unknown; interface?: unkno
  * (`secondaryip`, `ipv6`'s ip6-extra-addr / ip6-prefix-list, `member`) come
  * back whole under `format=` — confirmed field-for-field against all five lab
  * gates, 2026-11-04.
+ *
+ * `allowaccess` is the management-access list discovery summarizes for the
+ * firewall's management interface (fortinetManagementAccessService) — read
+ * here so that summary costs no second read of the table.
  */
 export const FORTIOS_INTERFACE_CMDB_FORMAT = [
   "name", "ip", "macaddr", "type", "interface", "vlanid", "switch-controller-mgmt-vlan",
   "secondary-IP", "secondaryip", "ipv6", "member", "alias", "description", "mode", "status", "fortilink",
+  "allowaccess",
 ].join("|");
