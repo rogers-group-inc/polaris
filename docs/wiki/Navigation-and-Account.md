@@ -225,6 +225,14 @@ default is `auto`, which the browser reports. This is the one `/me/*` route with
 no permission gate at all: what zone a timestamp renders in changes nothing
 about which data you can reach.
 
+A few places keep their own clock on purpose: the time axis, hover readout and
+"From … to …" caption of the charts in the desktop asset panel are still drawn
+in the browser's zone (the axis is laid out on the browser's midnights, and the
+readout has to agree with it); the **Current server time** on Server Settings →
+NTP is the server's clock; and dates and times you *type* — a maintenance
+window, a quiet time, a table's date filter — are wall-clock values with no
+zone at all.
+
 **Alert emails are not affected.** An alert is one message to everyone the
 automation names ([rule 25](Business-Rules#rule-25)), so it is written on the
 Polaris server's clock and names that zone in its footer — "Times shown in CDT

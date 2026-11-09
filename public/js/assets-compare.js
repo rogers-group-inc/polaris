@@ -929,7 +929,8 @@ async function _cmpExportPdf() {
     var pageH = doc.internal.pageSize.getHeight();
     var margin = 40;
     var now = new Date();
-    var ts = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+    var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+    var ts = now.toLocaleDateString(undefined, tz) + " " + now.toLocaleTimeString(undefined, tz);
 
     doc.setFontSize(16);
     doc.setTextColor(40, 40, 40);
