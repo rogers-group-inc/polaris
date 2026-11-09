@@ -1242,6 +1242,9 @@
   var LOC_LABEL_GAP = 6;
   var LOC_LABEL_MARGIN_Y = 26;
   var LOC_LABEL_CHAR_PX = 10; // 16 px bold Inter, generous
+  // Side/bottom padding of a box with no box nested in it (see
+  // _layoutLocationGroups) — enough to keep the wall off the icon and label.
+  var LOC_LEAF_PAD = 10;
   function _locLabelMinWidth(label, pad) {
     var t = String(label || "");
     return t ? t.length * LOC_LABEL_CHAR_PX + pad * 2 : 0;
@@ -1293,6 +1296,41 @@
     return order;
   }
 
+  // Merge single-child chains. A group whose members are exactly those of a
+  // group nested inside it (no device of its own and one child box, at every
+  // level down) adds only walls and padding: building › floor › room around
+  // one switch drew three boxes ~21× the icon's area. Every such outer group
+  // is dropped; the deepest group of the chain stays, named as before, and
+  // carries the dropped levels as `absorbed` ([{ kind, name }], outermost
+  // first) so its hover can still name the whole path. Nesting that means
+  // something — two rooms on one floor, a device straight on the floor — has
+  // no identical descendant and is kept. Pure; order kept.
+  function collapseLocationChains(groups) {
+    var sig = groups.map(function (g) { return g.memberIds.slice().sort().join("\n"); });
+    var keepFor = {}; // dropped index → index of the deepest identical descendant
+    groups.forEach(function (g, i) {
+      var best = -1;
+      groups.forEach(function (d, j) {
+        if (j === i || sig[j] !== sig[i] || !_isDescendantScope(g.scope, d.scope)) return;
+        if (best < 0 || d.scope.length > groups[best].scope.length) best = j;
+      });
+      if (best >= 0) keepFor[i] = best;
+    });
+    var rank = function (g) { return (LOC_GROUP_KINDS[g.kind] || LOC_GROUP_KINDS.building).rank; };
+    var out = [];
+    groups.forEach(function (g, i) {
+      if (keepFor[i] !== undefined) return;
+      var absorbed = [];
+      groups.forEach(function (d, j) { if (keepFor[j] === i) absorbed.push(d); });
+      absorbed.sort(function (a, b) { return rank(a) - rank(b); });
+      var copy = {};
+      Object.keys(g).forEach(function (k) { copy[k] = g[k]; });
+      copy.absorbed = absorbed.map(function (d) { return { kind: d.kind, name: d.name }; });
+      out.push(copy);
+    });
+    return out;
+  }
+
   // True when `inner`'s scope nests inside `outer`'s (strict prefix match —
   // a room in building "shop" nests inside building "shop"; a room whose
   // building segment is "" nests inside no building).
@@ -1329,11 +1367,19 @@
       if (coll.length > 0) {
         var bb = coll.boundingBox({ includeLabels: false, includeOverlays: false });
         box = { x1: bb.x1, y1: bb.y1, x2: bb.x2, y2: bb.y2 };
+        // A device's name hangs under its icon; count it DOWNWARD so it
+        // never crosses the bottom wall (a room's 18 px padding was shorter
+        // than the ~20 px label). Sideways a long name still overflows —
+        // counting it would widen every box. 0 headless (no text metrics).
+        var lb = coll.boundingBox({ includeLabels: true, includeOverlays: false });
+        if (isFinite(lb.y2) && lb.y2 > box.y2) box.y2 = lb.y2;
       }
+      var nested = false;
       for (var i = 0; i < fitted.length; i++) {
         var f = fitted[i];
         if (f.rank <= cfg.rank) continue; // only deeper kinds nest inside this one
         if (!_isDescendantScope(scope, f.scope)) continue;
+        nested = true;
         box = box === null
           ? { x1: f.box.x1, y1: f.box.y1, x2: f.box.x2, y2: f.box.y2 }
           : { x1: Math.min(box.x1, f.box.x1), y1: Math.min(box.y1, f.box.y1),
@@ -1346,12 +1392,17 @@
       // level's padding too: that stacked a second empty band under every
       // name (42 px under an area's, 26 under a floor's) before the next
       // wall or device. Sides and bottom keep the level's padding.
+      // A box with no box inside it hugs its devices (LOC_LEAF_PAD): the
+      // per-level padding exists to step nested walls apart, and on a leaf
+      // it only inflates the box:asset ratio (a one-switch room was ~4×
+      // its icon). Boxes holding boxes keep the level's padding.
+      var pad = nested ? cfg.pad : Math.min(cfg.pad, LOC_LEAF_PAD);
       var named = !!n.data("label");
-      var topPad = named ? LOC_LABEL_BAND + LOC_LABEL_GAP : cfg.pad;
-      var w = Math.max((box.x2 - box.x1 + cfg.pad * 2) * cfg.scaleW, _locLabelMinWidth(n.data("label"), cfg.pad));
-      var h = (box.y2 - box.y1 + topPad + cfg.pad) * cfg.scaleH;
+      var topPad = named ? LOC_LABEL_BAND + LOC_LABEL_GAP : pad;
+      var w = Math.max((box.x2 - box.x1 + pad * 2) * cfg.scaleW, _locLabelMinWidth(n.data("label"), pad));
+      var h = (box.y2 - box.y1 + topPad + pad) * cfg.scaleH;
       var cx = (box.x1 + box.x2) / 2;
-      var cyy = ((box.y1 - topPad) + (box.y2 + cfg.pad)) / 2;
+      var cyy = ((box.y1 - topPad) + (box.y2 + pad)) / 2;
       n.position({ x: cx, y: cyy });
       n.style({ width: w, height: h });
       fitted.push({
@@ -1468,8 +1519,8 @@
     removeLocationGroups(cy);
     var suppress = {};
     (opts.suppressKinds || []).forEach(function (k) { suppress[k] = true; });
-    computeLocationGroups(cy).forEach(function (g) {
-      if (suppress[g.kind]) return;
+    var groups = computeLocationGroups(cy).filter(function (g) { return !suppress[g.kind]; });
+    collapseLocationChains(groups).forEach(function (g) {
       var cfg = LOC_GROUP_KINDS[g.kind];
       var color = locGroupColor(g.kind);
       var n = cy.add({
@@ -1481,6 +1532,7 @@
           locScope: g.scope,
           label: g.name || "",
           memberIds: g.memberIds,
+          locAbsorbed: g.absorbed || [],
         },
         selectable: false,
         // Grabbable: dragging a hull moves the box AND its members (the
@@ -1675,13 +1727,16 @@
     var tops = _rectsFor(cy);
     if (tops.length === 0) return;
     var rectById = {};
-    tops.forEach(function (t) { rectById[t.id] = t.box; });
+    // Each device's outermost box, from the box's own member list: after
+    // collapseLocationChains it can be any level (a lone room, not its
+    // building), so it is never derived from the device's area/building.
+    var topOfNode = {};
+    tops.forEach(function (t) {
+      rectById[t.id] = t.box;
+      (cy.getElementById(t.id).data("memberIds") || []).forEach(function (id) { topOfNode[id] = t.id; });
+    });
     function hullIdForNode(n) {
-      var a = n.data("locA");
-      var b = n.data("locB");
-      if (a) return "locgroup:a|" + a;
-      if (b) return "locgroup:b|" + (a || "") + "|" + b;
-      return null;
+      return topOfNode[n.id()] || null;
     }
     // Each device's clearance square (hulls are not devices), measured once.
     var deviceRects = cy.nodes().filter(function (n) {
@@ -1980,6 +2035,13 @@
     var kind = hull.data("locKind");
     var rank = (LOC_GROUP_KINDS[kind] || LOC_GROUP_KINDS.building).rank;
     var parts = [];
+    // Levels merged into a box (collapseLocationChains) are named too.
+    function addAbsorbed(g) {
+      (g.data("locAbsorbed") || []).forEach(function (a) {
+        var aRank = (LOC_GROUP_KINDS[a.kind] || LOC_GROUP_KINDS.building).rank;
+        parts.push({ kind: a.kind, name: a.name || "", color: locGroupColor(a.kind), rank: aRank });
+      });
+    }
     cy.nodes("[isLocGroup]").forEach(function (g) {
       if (g.id() === hull.id()) return;
       var gKind = g.data("locKind");
@@ -1987,7 +2049,9 @@
       if (gRank >= rank) return;
       if (!_isDescendantScope(g.data("locScope") || [], scope)) return;
       parts.push({ kind: gKind, name: g.data("label") || "", color: locGroupColor(gKind), rank: gRank });
+      addAbsorbed(g);
     });
+    addAbsorbed(hull);
     parts.sort(function (a, b) { return a.rank - b.rank; });
     parts.push({ kind: kind, name: hull.data("label") || "", color: locGroupColor(kind), rank: rank });
     return parts;
@@ -4650,6 +4714,7 @@
     markFanOutEdges: markFanOutEdges,
     topologyNodeWeight: topologyNodeWeight,
     computeLocationGroups: computeLocationGroups,
+    collapseLocationChains: collapseLocationChains,
     renderLocationGroups: renderLocationGroups,
     removeLocationGroups: removeLocationGroups,
     refreshLocationGroups: refreshLocationGroups,

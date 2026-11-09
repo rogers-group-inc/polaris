@@ -291,6 +291,12 @@ that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
 
+Boxes are kept as small as their contents allow. When a box holds exactly the
+same devices as the one box inside it (a building with one floor that has one
+room, say), only the innermost box is drawn, under its own name; hover it to
+see the whole path (Building › Floor › Room). A box with no box inside it sits
+close around its devices, and a device's name always stays inside its box.
+
 **How the map places devices and boxes.** Every device has a level, which is
 how many hops it is from the FortiGate. Every location box has the level of
 the closest-to-the-FortiGate device inside it. Boxes and devices are laid out
