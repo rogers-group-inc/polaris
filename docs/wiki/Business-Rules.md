@@ -144,7 +144,9 @@ to carve the others out. See [Automations](Automations#precedence--the-single-mo
 ### Rule 19
 **Severity bands escalate one alert by value, each on its own clock.** Severities
 must strictly increase; thresholds need not be monotonic — the most-severe *met*
-tier wins. **Holds are counted in readings, not seconds.**
+tier wins. **Holds are counted in readings, not seconds.** **(a)** A band is
+left on the same hold it was entered on, so a value idling at a band's line
+doesn't re-send the band's notification every time it climbs back over.
 
 ### Rule 20
 Three operability invariants. **(a)** Network writes serialise per block. **(b)**

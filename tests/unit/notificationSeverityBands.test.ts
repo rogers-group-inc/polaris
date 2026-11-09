@@ -14,6 +14,8 @@ import {
   updateTierMetSince,
   sustainedSeverity,
   tierMetSinceChanged,
+  bandDescent,
+  BAND_DESCENT_KEY_PREFIX,
 } from "../../src/services/notificationTypes.js";
 import { tierForSeverity, bandNotifyOf } from "../../src/services/notificationEngine.js";
 
@@ -288,7 +290,9 @@ describe("updateTierMetSince / sustainedSeverity", () => {
     expect(map.warning).toBe(T0);
   });
 
-  it("de-escalation is immediate — the lower tier's run is already old", () => {
+  // The ENGINE holds the descent (rule 19(a), bandDescent); the ladder alone
+  // still answers "which tier has sustained", and the lower one has.
+  it("the lower tier's run is already old, so the ladder answers it at once", () => {
     let map = updateTierMetSince(null, tiers, 30, T0); // critical (sustain 0)
     map = updateTierMetSince(map, tiers, 8, min(60)); // back to the warning band
     expect(sustainedSeverity(map, tiers, min(60))).toBe("warning");
@@ -314,5 +318,49 @@ describe("bandNotifyOf", () => {
   it("honors an explicit policy", () => {
     expect(bandNotifyOf({ bandNotify: { onIncrease: false, onDecrease: true, onResolved: false, resolvedMode: "dedicated", resolvedActions: [] } } as any))
       .toMatchObject({ onIncrease: false, onDecrease: true, onResolved: false, resolvedMode: "dedicated" });
+  });
+});
+
+describe("bandDescent — business rule 19(a): a band is left on the hold it was entered on", () => {
+  // The incident: memPct > 90 serious, band critical at 95, hold 3 polls.
+  const counted = resolveTierLadder(">", 90, "serious", 360, [{ threshold: 95, severity: "critical", actions: [] } as any], 3);
+  const wall = resolveTierLadder(">", 90, "serious", 300, [{ threshold: 95, severity: "critical", actions: [] } as any]);
+  const NOW = 1_800_000_000_000;
+
+  it("one reading under the band does not ease a counted alert (newest first)", () => {
+    const d = bandDescent({ tiers: counted, current: "critical", value: 94, series: [94, 96, 97, 96], countsReadings: true, metSince: {}, prevMetSince: {}, nowMs: NOW });
+    expect(d.due).toBe(false);
+  });
+
+  it("eases once the value has stayed out of the band for the band's own count", () => {
+    const d = bandDescent({ tiers: counted, current: "critical", value: 93, series: [93, 94, 92, 96], countsReadings: true, metSince: {}, prevMetSince: {}, nowMs: NOW });
+    expect(d.due).toBe(true);
+  });
+
+  it("dead-band readings count toward the descent too", () => {
+    const d = bandDescent({ tiers: counted, current: "critical", value: 80, series: [80, 85, 88], countsReadings: true, metSince: {}, prevMetSince: {}, nowMs: NOW });
+    expect(d.due).toBe(true);
+  });
+
+  it("a wall-clock band starts a descent timer, keeps it, and eases when it has run", () => {
+    const first = bandDescent({ tiers: wall, current: "critical", value: 94, series: null, countsReadings: false, metSince: { serious: NOW - 900_000 }, prevMetSince: null, nowMs: NOW });
+    expect(first.due).toBe(false);
+    expect(first.metSince).toEqual({ serious: NOW - 900_000, [BAND_DESCENT_KEY_PREFIX + "critical"]: NOW });
+    const later = bandDescent({ tiers: wall, current: "critical", value: 94, series: null, countsReadings: false, metSince: { serious: NOW - 900_000 }, prevMetSince: first.metSince, nowMs: NOW + 299_000 });
+    expect(later.due).toBe(false);
+    expect(later.metSince[BAND_DESCENT_KEY_PREFIX + "critical"]).toBe(NOW);
+    const done = bandDescent({ tiers: wall, current: "critical", value: 94, series: null, countsReadings: false, metSince: { serious: NOW - 900_000 }, prevMetSince: later.metSince, nowMs: NOW + 300_000 });
+    expect(done.due).toBe(true);
+    expect(Object.keys(done.metSince)).toEqual(["serious"]);
+  });
+
+  it("the descent timer key never reads as a sustained severity", () => {
+    expect(sustainedSeverity({ [BAND_DESCENT_KEY_PREFIX + "critical"]: NOW - 1e9 }, wall, NOW)).toBeNull();
+  });
+
+  it("a zero hold, or a severity off the ladder, descends at once (pre-19(a) behaviour)", () => {
+    const zero = resolveTierLadder(">", 90, "serious", 0, [{ threshold: 95, severity: "critical", actions: [] } as any]);
+    expect(bandDescent({ tiers: zero, current: "critical", value: 94, series: null, countsReadings: false, metSince: {}, prevMetSince: null, nowMs: NOW }).due).toBe(true);
+    expect(bandDescent({ tiers: counted, current: "error", value: 94, series: [94], countsReadings: true, metSince: {}, prevMetSince: {}, nowMs: NOW }).due).toBe(true);
   });
 });

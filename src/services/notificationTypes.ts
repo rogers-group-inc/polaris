@@ -482,6 +482,63 @@ export function resetSustainPolls(reset: { sustainPolls?: number | null } | null
   return typeof n === "number" && n > 0 ? Math.round(n) : 0;
 }
 
+/** Key prefix, inside `bandMetSince`, of a wall-clock descent timer: when the
+ *  value first stopped satisfying the band the live alert sits at. Never a
+ *  severity name, so `sustainedSeverity` ignores it. */
+export const BAND_DESCENT_KEY_PREFIX = "descent:";
+
+/**
+ * Business rule 19(a) — a band is LEFT on the same hold it was ENTERED on.
+ *
+ * A firing banded alert asked to ease from `current` down to a lower severity
+ * steps down only once the value has stayed OUT of `current`'s tier for that
+ * tier's own hold: `forPolls` consecutive readings off the series when the
+ * tier counts readings and the source has one, else `forDurationSec` of wall
+ * clock timed from a `descent:<severity>` entry carried in the met-since map.
+ *
+ * Without it, one reading under a band's line eased the alert and the next N
+ * readings over it escalated it again — and every escalation re-runs the
+ * band's notify actions (`bandNotify.onIncrease`), so a metric idling at a
+ * band threshold (memory at 95-97% against a 95% critical band) emailed every
+ * few minutes from an alert that never cleared.
+ *
+ * Returns whether the descent is due now and the met-since map to persist
+ * (with the descent entry set while one is pending, dropped otherwise). A
+ * current severity that is not on the ladder, or a hold of zero, descends at
+ * once — the pre-19(a) behaviour.
+ */
+export function bandDescent(opts: {
+  tiers: ResolvedTier[];
+  current: string;
+  value: number | null | undefined;
+  series: readonly (number | string | boolean | null)[] | null | undefined;
+  /** Counted per-tier runs this tick (null = no series / wall-clock ladder). */
+  countsReadings: boolean;
+  /** This tick's rolled-forward met-since map (tier keys only). */
+  metSince: Record<string, number> | null | undefined;
+  /** The map stored on the state row before this tick (carries the timer). */
+  prevMetSince: Record<string, number> | null | undefined;
+  nowMs: number;
+}): { due: boolean; metSince: Record<string, number> } {
+  const base: Record<string, number> = { ...(opts.metSince ?? {}) };
+  const tier = opts.tiers.find((t) => t.severity === opts.current);
+  if (!tier) return { due: true, metSince: base };
+  const inTier = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && numMeets(v, tier.operator, tier.threshold);
+
+  if (opts.countsReadings && tier.forPolls != null && opts.series) {
+    const out = leadingRun(opts.series, (v) => !inTier(v));
+    return { due: out >= Math.max(1, tier.forPolls), metSince: base };
+  }
+
+  const holdMs = Math.max(0, tier.forDurationSec) * 1000;
+  if (holdMs === 0 || inTier(opts.value)) return { due: holdMs === 0, metSince: base };
+  const key = BAND_DESCENT_KEY_PREFIX + tier.severity;
+  const prev = opts.prevMetSince?.[key];
+  const since = typeof prev === "number" && Number.isFinite(prev) && prev <= opts.nowMs ? prev : opts.nowMs;
+  if (opts.nowMs - since >= holdMs) return { due: true, metSince: base };
+  return { due: false, metSince: { ...base, [key]: since } };
+}
+
 /** Whether two met-since maps differ — the engine only writes the state row
  *  when they do, keeping the hot path transition-write-only. */
 export function tierMetSinceChanged(

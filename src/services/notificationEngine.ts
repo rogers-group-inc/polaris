@@ -69,6 +69,7 @@ import {
   resolveTierLadder,
   updateTierMetSince,
   sustainedSeverity,
+  bandDescent,
   tierMetSinceChanged,
   // Grouped alerts (business rule 75) — the pure fold layer. Everything that
   // DECIDES lives there and is unit-tested; this file does the I/O.
@@ -3315,6 +3316,18 @@ async function evaluateThresholdRule(
         ? sustainedSeverityByRun(tierPolls, tiers)
         : sustainedSeverity(metSince, tiers, now.getTime()))
       : null;
+    /** Business rule 19(a): may a FIRING banded alert ease from its current
+     *  band down to `target` yet? Only once the value has stayed out of the
+     *  current band for that band's own hold — else one reading under the line
+     *  eases it and the next hold re-escalates it, re-notifying every time. */
+    const descentTo = (target: string) => {
+      const current = st?.firingSeverity ?? rule.severity;
+      if (!tiers || severityRank(target) >= severityRank(current)) return { due: true, metSince: metSince ?? {} };
+      return bandDescent({
+        tiers, current, value: lastValue, series: reading.series,
+        countsReadings: !!tierPolls, metSince, prevMetSince, nowMs: now.getTime(),
+      });
+    };
     // Business rule 136(e): the Priority tag's severity, when the rule follows
     // it. Never set beside bands (validatePrioritySeverity refuses the pair).
     const prioritySev = prioritySeverityByKey?.get(key) ?? null;
@@ -3407,24 +3420,32 @@ async function evaluateThresholdRule(
           // else keep pending
         }
       } else if (st.state === "firing") {
-        if (hasBands && sustainedSev && sustainedSev !== (st.firingSeverity ?? rule.severity)) {
+        // A move DOWN the ladder waits out the band's hold (rule 19(a)); the
+        // map it returns carries a wall-clock descent timer while one runs.
+        const descent = hasBands && sustainedSev && sustainedSev !== (st.firingSeverity ?? rule.severity)
+          ? descentTo(sustainedSev)
+          : null;
+        const bandMap = descent ? descent.metSince : metSince;
+        const bandMapChanged = !!tiers && tierMetSinceChanged(prevMetSince, bandMap);
+        if (hasBands && sustainedSev && descent?.due) {
           // Crossed into a band that has now held for its own duration —
           // escalate/de-escalate the live alert.
-          await applyBandTransition(rule, reading, st, sustainedSev, now, metSince);
+          await applyBandTransition(rule, reading, st, sustainedSev, now, bandMap);
         } else if (prioritySev && prioritySev !== (st.firingSeverity ?? rule.severity)) {
           // Business rule 136(e): the device's (or port's) Priority tag changed
           // while it was down — the live alert takes the new severity and
           // re-notifies per bandNotify, the way a band crossing does.
           await applyBandTransition(rule, reading, st, prioritySev, now);
-        } else if (st.recoveredSince || metSinceChanged) {
+        } else if (st.recoveredSince || bandMapChanged) {
           // Re-met mid-recovery: cancel the clear-sustain timer (transition-only
           // write — a steadily-firing condition costs nothing per tick). Also
-          // where a climbing-but-not-yet-sustained tier's run is persisted.
+          // where a climbing-but-not-yet-sustained tier's run is persisted, and
+          // a pending descent's timer (rule 19(a)).
           // Under a custom reset condition `recoveredSince` is the RESET tree's
           // sustain timer, not this trigger's, so the trigger re-meeting must
           // not cancel it (parity with the composite path's same contract).
           const data: Prisma.NotificationRuleStateUpdateInput = resetTree ? {} : { recoveredSince: null };
-          if (hasBands) data.bandMetSince = metSinceJson(metSince);
+          if (hasBands) data.bandMetSince = metSinceJson(bandMap);
           Object.assign(data, runPatch()); // the recovery run just broke
           if (Object.keys(data).length) await prisma.notificationRuleState.update({ where: { id: st.id }, data });
         } // same band / firing without a pending recovery → already active; suppress
@@ -3453,14 +3474,17 @@ async function evaluateThresholdRule(
           // that crashes from the critical band straight into the dead band
           // in one tick never passes through the lower bands — parked at the
           // old band it would read critical indefinitely.
-          if (hasBands && (st.firingSeverity ?? rule.severity) !== rule.severity) {
-            await applyBandTransition(rule, reading, st, rule.severity, now, metSince);
-          } else if (st.recoveredSince || metSinceChanged || Object.keys(runPatch()).length) {
+          // Easing waits out the band's hold like any other descent (rule 19(a)).
+          const descent = hasBands && (st.firingSeverity ?? rule.severity) !== rule.severity ? descentTo(rule.severity) : null;
+          const bandMap = descent ? descent.metSince : metSince;
+          if (descent?.due) {
+            await applyBandTransition(rule, reading, st, rule.severity, now, bandMap);
+          } else if (st.recoveredSince || (!!tiers && tierMetSinceChanged(prevMetSince, bandMap)) || Object.keys(runPatch()).length) {
             await prisma.notificationRuleState.update({
               where: { id: st.id },
               // A dead-band reading is neither met nor recovered, so it ends the
               // recovery run (advanceRun zeroes it) without starting a new one.
-              data: { recoveredSince: null, ...(hasBands ? { bandMetSince: metSinceJson(metSince) } : {}), ...runPatch() },
+              data: { recoveredSince: null, ...(hasBands ? { bandMetSince: metSinceJson(bandMap) } : {}), ...runPatch() },
             });
           }
         } else if (sustainPolls > 0) {

@@ -287,3 +287,63 @@ describe("firing state machine — non-auto modes unchanged", () => {
     expect(db.notifications).toHaveLength(2);
   });
 });
+
+describe("firing state machine — band descent hold (business rule 19(a))", () => {
+  // The incident shape: base 90 / band 95, auto reset with a clear line, a
+  // hold on the trigger. A value idling at the band's line must not cycle the
+  // alert between bands (each climb back re-ran the band's notify actions).
+  const banded = () => hostRule(
+    { mode: "auto", clearThreshold: 75 },
+    {
+      trigger: { type: "host_metric", metric: "cpuPct", operator: ">", threshold: 90, aggregation: "latest", windowSec: 0, forDurationSec: 120 },
+      severityBands: [{ threshold: 95, severity: "serious", actions: [] }],
+    },
+  );
+  const step = async (value: number, sec = 60) => {
+    vi.setSystemTime(new Date(Date.now() + sec * 1000));
+    await tick(value);
+  };
+
+  it("a dip under the band and back holds the band — no de-escalation, no re-escalation", async () => {
+    const { logEvent } = await import("../../src/services/eventLogService.js");
+    db.rules = [banded()];
+    await tick(96);
+    await step(96, 120);
+    expect(theState().state).toBe("firing");
+    expect(theState()).toMatchObject({ firingSeverity: "serious" });
+    vi.mocked(logEvent).mockClear();
+
+    await step(94); // under the band for one reading
+    expect(theState()).toMatchObject({ firingSeverity: "serious" });
+    await step(96); // back over it
+    await step(96);
+    expect(theState()).toMatchObject({ firingSeverity: "serious" });
+    expect(activeNotifs()).toHaveLength(1);
+    const moves = vi.mocked(logEvent).mock.calls.filter(([e]: any) => /escalated$/.test(e.action));
+    expect(moves).toHaveLength(0);
+  });
+
+  it("eases once the value has stayed out of the band for the band's hold", async () => {
+    db.rules = [banded()];
+    await tick(96);
+    await step(96, 120);
+    await step(93);  // descent timer starts
+    await step(93);  // 60s out
+    expect(theState()).toMatchObject({ firingSeverity: "serious" });
+    await step(93);  // 120s out — the band's hold
+    expect(theState()).toMatchObject({ firingSeverity: "warning" });
+    expect(activeNotifs()[0].severity).toBe("warning");
+  });
+
+  it("dead-band easing waits out the hold too, and the clear line still clears", async () => {
+    db.rules = [banded()];
+    await tick(96);
+    await step(96, 120);
+    await step(85);  // dead band
+    expect(theState()).toMatchObject({ state: "firing", firingSeverity: "serious" });
+    await step(85, 120);
+    expect(theState()).toMatchObject({ state: "firing", firingSeverity: "warning" });
+    await step(70);
+    expect(theState().state).toBe("clear");
+  });
+});
