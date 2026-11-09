@@ -65,16 +65,17 @@ const MAX_COORD = 1e7;
 const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u001f\\u007f]");
 
 /**
- * A view key is "flat" (the default whole-site view, labelled "Base") or an
- * area/building/floor view key produced by computeFloorViews in
- * topology-render.js: "a|<area>", "b|<area>|<building>" or
- * "f|<area>|<building>|<floor>".
+ * A view key is "flat" (the default whole-site view, labelled "Base") or a
+ * location view key produced by computeFloorViews in topology-render.js:
+ * "a|<area>", "b|<area>|<building>", "f|<area>|<building>|<floor>",
+ * "r|<area>|<building>|<floor>|<room>" or
+ * "jb|<area>|<building>|<floor>|<room>|<jb>" (a skipped level is empty).
  */
 export function isValidViewKey(view: unknown): view is string {
   if (typeof view !== "string") return false;
   if (view.length === 0 || view.length > MAX_VIEW_KEY_LEN) return false;
   if (CONTROL_CHARS_RE.test(view)) return false;
-  return view === "flat" || /^[abf]\|/.test(view);
+  return view === "flat" || /^(?:[abfr]|jb)\|/.test(view);
 }
 
 /**

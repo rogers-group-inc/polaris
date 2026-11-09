@@ -30,6 +30,7 @@ let partitionElementsForFloor: (els: El[], viewKey: string) => El[];
 let compareFloors: (a: string, b: string) => number;
 let viewSwitcherRows: (views: LocView[], activeKey: string) => { key: string; label: string; title: string; active: boolean }[][];
 let computeTopologyColumns: (els: El[]) => Record<string, { depth: number; lane: number }> | null;
+let viewSuppressKinds: (key: string) => string[] | null;
 
 beforeAll(() => {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -44,11 +45,12 @@ beforeAll(() => {
   compareFloors = api.compareFloors;
   viewSwitcherRows = api.viewSwitcherRows;
   computeTopologyColumns = api.computeTopologyColumns;
+  viewSuppressKinds = api.viewSuppressKinds;
 });
 
 // Element builders. loc* are normalized grouping keys; loc*Name the display
 // casing (buildTopologyElements stamps both in production).
-const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: string }): El => ({
+const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: string; r?: string; jb?: string }): El => ({
   data: {
     id,
     role,
@@ -56,6 +58,8 @@ const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: stri
     ...(loc?.a ? { locA: loc.a.toLowerCase(), locAName: loc.a } : {}),
     ...(loc?.b ? { locB: loc.b.toLowerCase(), locBName: loc.b } : {}),
     ...(loc?.f ? { locF: loc.f.toLowerCase(), locFName: loc.f } : {}),
+    ...(loc?.r ? { locR: loc.r.toLowerCase(), locRName: loc.r } : {}),
+    ...(loc?.jb ? { locJb: loc.jb.toLowerCase(), locJbName: loc.jb } : {}),
   },
 });
 const edge = (source: string, target: string, extra?: Record<string, unknown>): El => ({
@@ -403,5 +407,60 @@ describe("viewSwitcherRows — Base, then the next level under each selection", 
 
   it("an unknown active key falls back to Base being lit", () => {
     expect(lit(viewSwitcherRows(plant(), "b|gone|x"))).toEqual(["Base"]);
+  });
+});
+
+// Operator (2026-11-09): "if an asset skips a group, then I'd like to see the
+// next group in the drill down" — an area holding a room with no building
+// offered only its buildings, and rooms / junction boxes had no views at all.
+describe("drill-down through every level, skipping the ones a device does not have", () => {
+  type Chip = { key: string; label: string; title: string; active: boolean };
+  const labels = (rows: Chip[][]) => rows.map((r) => r.map((c) => c.label));
+  const quarry = () => [
+    node("fg", "fortigate"),
+    node("s1", "fortiswitch", { a: "Mine", b: "Shop", f: "1", r: "IDF", jb: "112" }),
+    node("s2", "fortiswitch", { a: "Mine", r: "North Closet" }), // area › room
+    node("s3", "fortiswitch", { a: "Mine", b: "Shop", jb: "305" }), // building › jb
+    node("s4", "fortiswitch", { b: "Office", f: "2" }),
+    edge("fg", "s1"), edge("s1", "s2"), edge("s1", "s3"), edge("fg", "s4"),
+  ];
+
+  it("gives every room and junction box a view, nested under the nearest level the device has", () => {
+    const views = computeFloorViews(quarry()) as unknown as { key: string; kind: string; parentKey: string | null; name: string; label: string }[];
+    const byKey = Object.fromEntries(views.map((v) => [v.key, v]));
+    expect(byKey["r|mine|||north closet"]).toMatchObject({ kind: "room", parentKey: "a|mine", name: "North Closet", label: "Mine — North Closet" });
+    expect(byKey["jb|mine|shop|||305"]).toMatchObject({ kind: "jb", parentKey: "b|mine|shop", name: "305" });
+    expect(byKey["r|mine|shop|1|idf"]).toMatchObject({ parentKey: "f|mine|shop|1" });
+    expect(byKey["jb|mine|shop|1|idf|112"]).toMatchObject({ parentKey: "r|mine|shop|1|idf", label: "Mine — Shop — 1 — IDF — 112" });
+  });
+
+  it("an area lists its buildings AND a room tagged straight in it", () => {
+    expect(labels(viewSwitcherRows(computeFloorViews(quarry()), "a|mine"))).toEqual([
+      ["Base"], ["Mine", "Office"], ["Shop", "North Closet"],
+    ]);
+  });
+
+  it("a building lists its floors AND a junction box tagged straight in it; drilling goes on to rooms and jbs", () => {
+    const views = computeFloorViews(quarry());
+    expect(labels(viewSwitcherRows(views, "b|mine|shop"))[3]).toEqual(["1", "305"]);
+    const jb = viewSwitcherRows(views, "jb|mine|shop|1|idf|112");
+    expect(labels(jb)).toEqual([["Base"], ["Mine", "Office"], ["Shop", "North Closet"], ["1", "305"], ["IDF"], ["112"]]);
+    expect(jb.flat().filter((c) => c.active).map((c) => c.label)).toEqual(["Mine", "Shop", "1", "IDF", "112"]);
+  });
+
+  it("a room view holds that room's devices and its jbs; links out become group stubs", () => {
+    const parts = partitionElementsForFloor(quarry(), "r|mine|||north closet");
+    const ids = parts.filter((e) => !e.data.source).map((e) => e.data.id).sort();
+    // s1 is in room IDF: the stub names its room.
+    expect(ids).toEqual(["portal:group:r|mine|shop|1|idf", "s2"]);
+    expect(partitionElementsForFloor(quarry(), "r|mine|shop|1|idf").some((e) => e.data.id === "s1")).toBe(true);
+  });
+
+  it("each view hides its own box level and every level above it", () => {
+    expect(viewSuppressKinds("flat")).toBeNull();
+    expect(viewSuppressKinds("a|mine")).toEqual(["area"]);
+    expect(viewSuppressKinds("f|mine|shop|1")).toEqual(["area", "building", "floor"]);
+    expect(viewSuppressKinds("r|mine|||north closet")).toEqual(["area", "building", "floor", "room"]);
+    expect(viewSuppressKinds("jb|mine|shop|||305")).toEqual(["area", "building", "floor", "room", "jb"]);
   });
 });

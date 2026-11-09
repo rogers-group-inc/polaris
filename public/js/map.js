@@ -3498,16 +3498,11 @@
     }, true);
   }
 
-  // Which hull tiers to hide for the ACTIVE view: an area view IS the area
-  // (keep buildings and below); a building view IS the area+building (keep
-  // floors/rooms/jbs); a floor view additionally IS the floor (keep
-  // rooms/jbs). Null = flat (Base) view, show everything.
+  // Which box levels to hide for the ACTIVE view: the view IS its level and
+  // every level above it (an area view keeps buildings and below; a room view
+  // keeps only junction boxes). Null = flat (Base) view, show everything.
   function _locSuppressKinds() {
-    var v = topoState.activeView || "flat";
-    if (v === "flat") return null;
-    if (v.charAt(0) === "a") return ["area"];
-    if (v.charAt(0) === "b") return ["area", "building"];
-    return ["area", "building", "floor"];
+    return window.PolarisTopologyRender.viewSuppressKinds(topoState.activeView || "flat");
   }
 
   // ── Location-view switcher ──────────────────────────────────────────────
