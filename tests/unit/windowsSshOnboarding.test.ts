@@ -245,7 +245,7 @@ describe("credential masking", () => {
     const out = stripSecrets({
       id: "x", name: "n", type: "ssh",
       config: { username: "u", privateKey: "SECRET", publicKey: "ssh-ed25519 AAAA= c" },
-      createdAt: new Date(), updatedAt: new Date(),
+      createdBy: null, createdAt: new Date(), updatedAt: new Date(),
     });
     expect(out.config.privateKey).not.toBe("SECRET");
     expect(out.config.publicKey).toBe("ssh-ed25519 AAAA= c");

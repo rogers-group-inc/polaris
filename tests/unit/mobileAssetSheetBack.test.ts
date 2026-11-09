@@ -105,7 +105,6 @@ describe("mobile asset sheet — phone Back", () => {
       a2: { id: "a2", hostname: "SW-2", assetType: "switch", monitored: true, status: "active", monitorStatus: "up", macAddresses: [] },
     };
     g.api = { assets: new Proxy({ get: async (id: string) => assets[id] } as Record<string, any>, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     loadSharedModules();
     new Function(DETAIL_SRC)();
   });

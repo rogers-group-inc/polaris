@@ -57,7 +57,7 @@ const { resolvePgTool, getBackupToolingStatus } = await import("../../src/servic
 
 /** Make `--version` answer with this text for every tool. */
 function versionAnswers(byTool: Record<string, string | Error>) {
-  execFileMock.mockImplementation((file: string, _args: string[], _opts: unknown, cb: Function) => {
+  execFileMock.mockImplementation((file: string, _args: string[], _opts: unknown, cb: (...args: unknown[]) => void) => {
     const key = Object.keys(byTool).find((k) => String(file).includes(k)) ?? "";
     const v = byTool[key];
     if (v instanceof Error) cb(v);

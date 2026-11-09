@@ -172,7 +172,7 @@ describe("the forecast email chart", () => {
   it("projects the trend toward the level, with the change per day in the caption", () => {
     const points = Array.from({ length: 10 }, (_, i) => ({ t: now - (9 - i) * DAY, v: 70 + i * 0.5 }));
     const spec = memoryForecastChartSpec(
-      { points, slopePerDay: 0.5, daysUntilFull: 50, minPoints: 7, lookbackDays: 30 },
+      { points, slopePerDay: 0.5, daysUntilFull: 50, minPoints: 7, lookbackDays: 30, restartedAt: null },
       { targetPct: 85, levelName: "Serious", horizonDays: 14 },
       now,
     );
@@ -187,7 +187,7 @@ describe("the forecast email chart", () => {
 
   it("says so when memory is no longer growing", () => {
     const spec = memoryForecastChartSpec(
-      { points: [{ t: now, v: 70 }], slopePerDay: -0.2, daysUntilFull: null, minPoints: 7, lookbackDays: 30 },
+      { points: [{ t: now, v: 70 }], slopePerDay: -0.2, daysUntilFull: null, minPoints: 7, lookbackDays: 30, restartedAt: null },
       { targetPct: 85, levelName: "Serious", horizonDays: 14 },
       now,
     );

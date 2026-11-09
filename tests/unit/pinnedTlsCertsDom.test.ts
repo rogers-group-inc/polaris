@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SLIDEOVER_BUILDER } from "./_appShellStubs";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs.js";
 
 const SRC = readFileSync(join(process.cwd(), "public", "js", "pinned-tls-certs.js"), "utf-8");
 

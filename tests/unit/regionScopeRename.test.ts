@@ -44,17 +44,6 @@ vi.mock("../../src/db.js", () => ({
         return fn as any;
       }),
     },
-    role: {
-      findMany: vi.fn(async () => store.roles.map((r) => ({ ...r }))),
-      update: vi.fn((args: any) => {
-        const fn = () => {
-          const row = store.roles.find((r) => r.id === args.where.id);
-          if (row) row.regionTags = args.data.regionTags;
-        };
-        pending.push(fn);
-        return fn as any;
-      }),
-    },
     groupMapping: {
       findMany: vi.fn(async () => store.mappings.map((r) => ({ ...r }))),
       update: vi.fn((args: any) => {

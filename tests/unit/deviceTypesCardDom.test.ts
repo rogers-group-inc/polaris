@@ -39,7 +39,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -208,9 +208,7 @@ beforeAll(() => {
 
   const cb = readFileSync(resolve(__dirname, "../../public/js/condition-builder.js"), "utf8");
   const ss = serverSettingsSource();
-  // eslint-disable-next-line no-eval
   (0, eval)(cb);
-  // eslint-disable-next-line no-eval
   (0, eval)(ss);
 });
 

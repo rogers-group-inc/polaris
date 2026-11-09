@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
     asset: { findMany: vi.fn() },
     $transaction: vi.fn(async (ops: unknown[]) => ops),
   },
-  logEventsBatch: vi.fn(async () => 0),
+  logEventsBatch: vi.fn(async (_events: unknown[]) => 0),
   resolveDependencyBlameMany: vi.fn(),
 }));
 

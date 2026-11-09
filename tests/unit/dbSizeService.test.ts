@@ -26,6 +26,8 @@ import { summarizeBuckets, buildTableSizeSql } from "../../src/services/dbSizeSe
 
 const GB = 1024 ** 3;
 
+const NONE_UNANALYZED = { relations: 0, missingBytes: 0 };
+
 describe("summarizeBuckets", () => {
   it("sums every bucket into the total", () => {
     const b = summarizeBuckets(
@@ -35,7 +37,7 @@ describe("summarizeBuckets", () => {
         { bucket: "catalog", bytes: BigInt(GB / 2) },
         { bucket: "other", bytes: BigInt(GB / 4) },
       ],
-      0,
+      NONE_UNANALYZED,
     );
     expect(b.totalBytes).toBe(b.polarisBytes + b.pgbossBytes + b.catalogBytes + b.otherBytes);
     expect(b.totalBytes).toBe(74 * GB + GB / 2 + GB / 4);
@@ -51,7 +53,7 @@ describe("summarizeBuckets", () => {
         { bucket: "polaris", bytes: BigInt(10 * GB) },
         { bucket: "timescale", bytes: BigInt(GB) },
       ],
-      0,
+      NONE_UNANALYZED,
     );
     expect(b.polarisBytes).toBe(10 * GB);
     expect(b.otherBytes).toBe(GB);
@@ -59,7 +61,7 @@ describe("summarizeBuckets", () => {
   });
 
   it("treats a missing bucket as zero rather than NaN", () => {
-    const b = summarizeBuckets([], 0);
+    const b = summarizeBuckets([], NONE_UNANALYZED);
     expect(b.totalBytes).toBe(0);
     expect(b.polarisBytes).toBe(0);
     expect(b.pgbossBytes).toBe(0);

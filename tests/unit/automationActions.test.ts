@@ -40,14 +40,14 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-const logEventMock = vi.fn(async () => {});
+const logEventMock = vi.fn(async (..._a: unknown[]) => {});
 const logEventsBatchMock = vi.fn(async (rows: unknown[]) => rows.length);
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: (...a: unknown[]) => logEventMock(...a),
   logEventsBatch: (rows: unknown[]) => logEventsBatchMock(rows),
 }));
 
-const expandDeliveriesMock = vi.fn(async () => 1);
+const expandDeliveriesMock = vi.fn(async (..._a: unknown[]) => 1);
 vi.mock("../../src/services/notificationRecipientService.js", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, expandDeliveries: (...a: unknown[]) => expandDeliveriesMock(...a) };
@@ -214,7 +214,7 @@ describe("executeActions", () => {
 
 describe("sendApiCall", () => {
   function stubFetch(status = 200) {
-    const fetchMock = vi.fn(async () => ({ ok: status >= 200 && status < 300, status }));
+    const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => ({ ok: status >= 200 && status < 300, status }));
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
   }
@@ -304,7 +304,7 @@ describe("emailSentEventsFor — the asset Event for a sent alert email", () => 
     dimension: null, metric: null, ruleId: "r1", triggeredAt: new Date(), testRun: false,
     members: null, dependencyDown: false, dependencyBlame: null, rule: { name: "Core CPU" },
   };
-  const row = (over: Partial<DeliveryRow> & { notification?: Partial<DeliveryRow["notification"]> } = {}): DeliveryRow => ({
+  const row = (over: Omit<Partial<DeliveryRow>, "notification"> & { notification?: Partial<DeliveryRow["notification"]> } = {}): DeliveryRow => ({
     id: "d1", channelId: "c1", transport: "email", target: "ops@example.com, noc@example.com", attempts: 0,
     meta: { composed: true, to: ["ops@example.com", "noc@example.com"], cc: ["mgr@example.com"], bcc: ["audit@example.com", "x@example.com"], subject: "[WARNING] sw-core-1" },
     ...over,

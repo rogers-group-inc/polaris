@@ -31,7 +31,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 
 const INTG_TS = resolve(__dirname, "../../src/api/routes/integrations.ts");
 const js = integrationsSource().replace(/\r\n/g, "\n");

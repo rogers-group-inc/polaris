@@ -282,7 +282,8 @@ describe("what the asset-type filter puts on the wire", () => {
 describe("the gear's Asset types field + picker", () => {
   const flush = () => new Promise((r) => setTimeout(r, 0));
   type Box = Element & { checked: boolean; click: () => void; dispatchEvent: (e: unknown) => void };
-  const field = (el: Element) => el.querySelector('.widget-filter-field[data-filter="assetTypes"]') as unknown as Box;
+  // `el` is a happy-dom element, so take the one method this needs rather than lib.dom's Element.
+  const field = (el: { querySelector: (sel: string) => unknown }) => el.querySelector('.widget-filter-field[data-filter="assetTypes"]') as unknown as Box;
   const picker = () => doc.querySelector(".widget-filter-picker") as unknown as Element;
   const pickerBoxes = () => Array.from(picker().querySelectorAll("[data-wfp-v]")) as unknown as Box[];
   const untick = (b: Box) => {
@@ -330,7 +331,7 @@ describe("the gear's Asset types field + picker", () => {
     await flush();
     expect(changes).toEqual([
       ["assetTypesOff", ["network_camera"]],
-      ["assetTypes", BUILT_IN_ASSET_TYPES.filter((t) => t !== "network_camera")],
+      ["assetTypes", BUILT_IN_ASSET_TYPES.filter((t: string) => t !== "network_camera")],
     ]);
     const chips = Array.from(field(el).querySelectorAll(".tag-chip-delete")).map((b) => b.getAttribute("data-chip"));
     expect(chips).toEqual([...BUILT_IN_ASSET_TYPES]);

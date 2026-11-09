@@ -20,9 +20,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 const SETTINGS_JS = serverSettingsSource();
 

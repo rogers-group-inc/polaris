@@ -251,7 +251,7 @@ function siteScene() {
       box(10, 10, 110, 80, { id: "r1", members: ["a", "b"] }),
       box(210, 10, 310, 80, { id: "r2", members: ["c"] }),
       box(10, 310, 200, 400, { id: "r3", members: ["d", "e"] }),
-    ].map((b, i) => ({ ...b, label: { lines: [["First", "Second", "R1", "R2", "R3"][i]], pdfLines: [], fontPx: 0.01, valign: "center", halign: "center", mx: 0, my: 0 } })),
+    ].map((b, i) => ({ ...b, label: { lines: [["First", "Second", "R1", "R2", "R3"][i]], pdfLines: [], fontPx: 0.01, valign: "center", halign: "center", mx: 0, my: 0 } })) as Array<Record<string, any>>,
     parents: [],
     nodes: [node("a", 20, 20), node("b", 70, 40), node("c", 250, 30), node("d", 30, 330), node("e", 150, 350), node("s", 250, 340), node("z", 900, 900)],
     edges: [

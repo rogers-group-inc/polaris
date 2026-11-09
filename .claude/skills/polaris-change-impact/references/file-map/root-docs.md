@@ -15,7 +15,9 @@ polaris/
 ├── README.md
 ├── .env.example
 ├── package.json
-├── tsconfig.json                    # strict + noUnusedLocals (since 2026-11-04); covers src/ only — tests/ is excluded and is type-checked by nobody
+├── tsconfig.json                    # strict + noUnusedLocals (since 2026-11-04); the build config — covers src/ only, emits dist/
+├── tsconfig.tests.json              # extends tsconfig.json over src/ + tests/, noEmit, rootDir "." (2026-11-09). `npm run typecheck` runs `tsc --noEmit` then this (`npm run typecheck:tests`), so CI's Typecheck step covers tests/. A test that deliberately passes a wrong type carries a `// @ts-expect-error <reason>`
+├── eslint.config.mjs                # flat config over src/**/*.ts AND tests/**/*.ts (tests since 2026-11-09). `npm run lint` = `eslint src tests --max-warnings 0`, so an unused variable or a stale `eslint-disable` (reportUnusedDisableDirectives) fails it as well as an error. CI Lint step
 ├── knip.jsonc                       # `npm run check:dead`: dead files / exports / dependencies over src, scripts, prisma, tests (public/ excluded: no module system). src/jobs/*.ts are explicit entries because app.ts loads them through importJob over a string array. `!` marks production entries for `check:dead:prod` (exports only tests reach). Unused exports and types are ERRORS (2026-11-05): un-export a symbol only its file uses, delete one nothing uses; a deliberate exception carries `@public` in its JSDoc with the reason (today `credentialService.CredentialConfig`). Pre-commit + CI
 ├── .jscpd.json                      # `npm run check:dup`: duplication REPORT, never a gate (no threshold). maxSize/maxLines raised so assets.js and monitoringService.ts are scanned. JSON to the gitignored audit-reports/jscpd/
 ├── prisma.config.ts                 # Prisma 7 config (datasource URL, seed command). `prisma generate` alone gets a placeholder URL when DATABASE_URL is unset, so `npm ci` works without a .env (tests/unit/prismaConfigGenerateFallback.test.ts); every connecting command still errors on it

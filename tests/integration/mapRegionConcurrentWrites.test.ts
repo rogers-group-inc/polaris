@@ -60,7 +60,7 @@ function movedSquare(marker: number): Array<[number, number]> {
 async function wipe() {
   const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
   const kept = Array.isArray(row?.value)
-    ? (row!.value as MapRegion[]).filter((r) => !NAMES.includes(r.name))
+    ? (row!.value as unknown as MapRegion[]).filter((r) => !NAMES.includes(r.name))
     : [];
   await prisma.setting.upsert({
     where: { key: SETTING_KEY },

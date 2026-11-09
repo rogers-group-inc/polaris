@@ -268,7 +268,7 @@ describe("usage", () => {
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 
-type Behaviour = { error?: string } | { status: number; body: unknown };
+type Behaviour = { error: string } | { status: number; body: unknown };
 
 function fakeHttps(byHost: Record<string, Behaviour>) {
   h.request.mockImplementation((opts: any, cb: (res: any) => void) => {
@@ -278,7 +278,7 @@ function fakeHttps(byHost: Record<string, Behaviour>) {
       const b = byHost[opts.hostname];
       queueMicrotask(() => {
         if (!b || "error" in b) {
-          req.emit("error", Object.assign(new Error(b && "error" in b ? b.error! : "ECONNREFUSED"), { code: b && "error" in b ? b.error : "ECONNREFUSED" }));
+          req.emit("error", Object.assign(new Error(b && "error" in b ? b.error : "ECONNREFUSED"), { code: b && "error" in b ? b.error : "ECONNREFUSED" }));
           return;
         }
         const res = new EventEmitter() as any;

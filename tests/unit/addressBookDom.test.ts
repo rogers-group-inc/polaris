@@ -116,7 +116,7 @@ beforeAll(() => {
       // the stub has to do it: the tab no longer filters what it is handed.
       // `total` is the unpaged match count, which is what the truncation hint
       // reads — returning contacts.length would make the hint untestable.
-      list: async (params?: { q?: string; limit?: number }) => {
+      list: async (params?: { q?: string; limit?: number; origin?: string }) => {
         const term = String(params?.q ?? "").toLowerCase();
         const matched = term
           ? contacts.filter((c) =>
@@ -943,10 +943,6 @@ const SYNCED = {
 };
 
 describe("directory-synced rows", () => {
-  /** A row the sync owns: createdBy is null and origin names the backend. */
-  function peopleRows() {
-    return Array.from(doc.querySelectorAll("#ab-tab-results tbody tr"));
-  }
   const render = () =>
     (window as unknown as { PolarisAddressBook: { renderTab: () => Promise<void> } }).PolarisAddressBook.renderTab();
 

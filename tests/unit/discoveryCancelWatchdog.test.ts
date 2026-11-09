@@ -32,7 +32,7 @@ function makeOpts(overrides: Partial<CancelWatchdogOptions> = {}) {
   const ac = new AbortController();
   const exit = vi.fn();
   const finalizeRun = vi.fn(async () => {});
-  const writeEvent = vi.fn(async () => {});
+  const writeEvent = vi.fn(async (_event: unknown) => {});
   const calls: string[] = [];
   finalizeRun.mockImplementation(async () => { calls.push("finalize"); });
   const releaseQueueJob = vi.fn(async () => { calls.push("release"); return 1; });

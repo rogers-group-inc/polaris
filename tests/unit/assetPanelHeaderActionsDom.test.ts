@@ -70,7 +70,6 @@ function injectLockButton() {
 
 beforeEach(() => {
   document.body.innerHTML = "";
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   g._assetPanelHistory = { entries: [], idx: -1 };
   g._assetPanelWalkDelta = 0;
@@ -194,7 +193,6 @@ describe("asset panel header verbs (Discover Now, Reboot)", () => {
     g._isWorkloadPlatform = () => false;
     g._getServerDiscoveries = () => [];
     g._fwWhenText = () => "soon";
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(
       "var _REBOOT_SCHEDULABLE = { available: true, blocked: true, 'agent-offline': true };\n" +
       VERB_FNS.map(fnSrc).join("\n") + "\n" + VERB_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),
@@ -272,7 +270,6 @@ describe("the reboot dialog's Reason field (rule 115(d))", () => {
     g._fwBrowserZone = () => "UTC";
     // The notify editor (To / Cc / Bcc picker + email channels), loaded before the wizard on the page.
     (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(HINT_VARS + "\n" + DIALOG_FNS.map(fnSrc).join("\n") + "\n" + DIALOG_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
   }
 

@@ -100,7 +100,7 @@ describe("mergeSigningConfig", () => {
 
   it("never persists the keystorePasswordSet UI marker", () => {
     const next = mergeSigningConfig({ keystorePasswordSet: true }, FULL_CONFIG);
-    expect((next as Record<string, unknown>).keystorePasswordSet).toBeUndefined();
+    expect((next as unknown as Record<string, unknown>).keystorePasswordSet).toBeUndefined();
   });
 
   it("trims strings and strips the TSA's trailing slash", () => {

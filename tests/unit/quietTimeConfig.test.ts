@@ -40,7 +40,7 @@ const MONTHLY = { version: 1, kind: "recurring", freq: "monthly", dayOfMonth: 1,
 describe("ruleQuietTimeSchema — what an automation's quietTime column may hold", () => {
   it("accepts the exemption marker, a full policy, and nothing in between", () => {
     expect(ruleQuietTimeSchema.parse({ ignoreGlobal: true })).toEqual({ ignoreGlobal: true });
-    expect(ruleQuietTimeSchema.parse({ windows: [NIGHTLY] }).windows).toHaveLength(1);
+    expect((ruleQuietTimeSchema.parse({ windows: [NIGHTLY] }) as { windows: unknown[] }).windows).toHaveLength(1);
     expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: false })).toThrow();
     expect(() => ruleQuietTimeSchema.parse({ ignoreGlobal: true, windows: [NIGHTLY] })).toThrow();
     expect(() => ruleQuietTimeSchema.parse({})).toThrow();

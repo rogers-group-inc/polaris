@@ -34,6 +34,7 @@
 import type { WinRmConnection } from "../utils/winrm.js";
 import { withSshClient, sshExec, winrmRunPowershell } from "../utils/remoteExec.js";
 import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { toFiniteOrNull } from "../utils/num.js";
 
 export interface AgentlessTelemetry {
   cpuPct: number | null;
@@ -76,11 +77,6 @@ export interface AgentlessHostOpts {
   storage: boolean;
   timeoutMs: number;
 }
-
-const num = (v: unknown): number | null => {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
-};
 
 // ─── Linux: CPU + memory ─────────────────────────────────────────────────────
 //
@@ -199,12 +195,12 @@ export function parseLinuxInterfaces(stdout: string): AgentlessInterface[] {
         break;
       // A virtual or unplugged NIC reports -1 (or nothing at all); only a real
       // negotiated link rate is a reading.
-      case "SPEED": { const n = num(val); cur.speedBps = n != null && n > 0 ? n * 1_000_000 : null; break; }
+      case "SPEED": { const n = toFiniteOrNull(val); cur.speedBps = n != null && n > 0 ? n * 1_000_000 : null; break; }
       case "MAC":  cur.macAddress = val || null; break;
-      case "RXB":  cur.inOctets  = num(val); break;
-      case "TXB":  cur.outOctets = num(val); break;
-      case "RXE":  cur.inErrors  = num(val); break;
-      case "TXE":  cur.outErrors = num(val); break;
+      case "RXB":  cur.inOctets  = toFiniteOrNull(val); break;
+      case "TXB":  cur.outOctets = toFiniteOrNull(val); break;
+      case "RXE":  cur.inErrors  = toFiniteOrNull(val); break;
+      case "TXE":  cur.outErrors = toFiniteOrNull(val); break;
       case "ADDR": if (val) addrs.push(val); break;
     }
   }
@@ -267,12 +263,12 @@ const WINDOWS_CPUMEM_SCRIPT = [
 export function parseWindowsCpuMem(stdout: string): AgentlessTelemetry {
   const o = safeJson(stdout) as Record<string, unknown> | null;
   if (!o) return { cpuPct: null, memUsedBytes: null, memTotalBytes: null, memPct: null };
-  const totalKb = num(o.totalKb);
-  const freeKb = num(o.freeKb);
+  const totalKb = toFiniteOrNull(o.totalKb);
+  const freeKb = toFiniteOrNull(o.freeKb);
   const memTotalBytes = totalKb != null ? totalKb * 1024 : null;
   const memUsedBytes = totalKb != null && freeKb != null ? (totalKb - freeKb) * 1024 : null;
   return {
-    cpuPct: num(o.cpu),
+    cpuPct: toFiniteOrNull(o.cpu),
     memUsedBytes,
     memTotalBytes,
     memPct:
@@ -332,10 +328,10 @@ export function parseWindowsInterfaces(stdout: string): AgentlessInterface[] {
       macAddress: typeof r.mac === "string" && r.mac ? r.mac.replace(/-/g, ":").toLowerCase() : null,
       ipAddress: addr.ipAddress,
       ipv6Address: addr.ipv6Address,
-      inOctets: num(r.rxb),
-      outOctets: num(r.txb),
-      inErrors: num(r.rxe),
-      outErrors: num(r.txe),
+      inOctets: toFiniteOrNull(r.rxb),
+      outOctets: toFiniteOrNull(r.txb),
+      inErrors: toFiniteOrNull(r.rxe),
+      outErrors: toFiniteOrNull(r.txe),
     });
   }
   return out;
@@ -355,9 +351,9 @@ export function parseWindowsStorage(stdout: string): AgentlessMount[] {
   for (const row of arr) {
     const r = row as Record<string, unknown>;
     const mountPath = typeof r.path === "string" ? r.path : "";
-    const size = num(r.size);
+    const size = toFiniteOrNull(r.size);
     if (!mountPath || size == null || size <= 0) continue;
-    const free = num(r.free);
+    const free = toFiniteOrNull(r.free);
     out.push({ mountPath, totalBytes: size, usedBytes: free != null ? size - free : null });
   }
   return out;
@@ -447,7 +443,7 @@ export function parseWindowsEventLog(stdout: string, maxEntries: number): Agentl
       timestamp: typeof r.t === "string" ? r.t : null,
       channel: typeof r.ch === "string" && r.ch ? r.ch : "Application",
       provider: typeof r.prov === "string" ? r.prov : null,
-      eventId: num(r.id),
+      eventId: toFiniteOrNull(r.id),
       level: winEventLevelToLevel(r.lvl),
       message,
     });

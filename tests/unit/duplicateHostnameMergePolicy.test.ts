@@ -21,6 +21,7 @@ function row(over: Partial<DuplicateHostnameAssetRow> & { id: string }): Duplica
     serialNumber: null,
     manufacturer: null,
     model: null,
+    assetType: null,
     os: null,
     osVersion: null,
     assignedTo: null,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickRestApiCredential, restApiCredentialAuth } from "../../src/utils/fortinetRestCredential.js";
+import { pickRestApiCredential, restApiCredentialAuth, type FortinetRestAuth } from "../../src/utils/fortinetRestCredential.js";
 
 describe("pickRestApiCredential", () => {
   it("takes the first restapi-typed credential in the chain", () => {
@@ -53,9 +53,9 @@ describe("restApiCredentialAuth", () => {
   });
 
   it("leaves the port unset for a default-port or absent baseUrl", () => {
-    expect(restApiCredentialAuth({ baseUrl: "https://10.1.1.1", apiToken: "t" }).port).toBeUndefined();
-    expect(restApiCredentialAuth({ baseUrl: "https://10.1.1.1:443", apiToken: "t" }).port).toBeUndefined();
-    expect(restApiCredentialAuth({ apiToken: "t" }).port).toBeUndefined();
+    expect((restApiCredentialAuth({ baseUrl: "https://10.1.1.1", apiToken: "t" }) as FortinetRestAuth).port).toBeUndefined();
+    expect((restApiCredentialAuth({ baseUrl: "https://10.1.1.1:443", apiToken: "t" }) as FortinetRestAuth).port).toBeUndefined();
+    expect((restApiCredentialAuth({ apiToken: "t" }) as FortinetRestAuth).port).toBeUndefined();
   });
 
   it("ignores an unparseable baseUrl rather than failing the whole credential", () => {

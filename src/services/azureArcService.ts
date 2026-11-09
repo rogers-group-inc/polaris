@@ -50,6 +50,7 @@ import { matchesWildcard } from "../utils/integrationFilter.js";
 import { AZURE_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
 import { mapSettledWithConcurrency, mapWithConcurrency } from "../utils/concurrency.js";
+import { parseFiniteOrNull } from "../utils/num.js";
 
 // ─── API versions (verify-on-real-tenant) ───────────────────────────────────
 
@@ -588,15 +589,6 @@ function str(v: unknown): string | null {
   return t.length > 0 ? t : null;
 }
 
-function num(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim() !== "") {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
 /**
  * Read a `detectedProperties` value, tolerating the casing drift between
  * Connected Machine agent versions (`serialNumber` vs `serialnumber`).
@@ -640,8 +632,8 @@ export function normalizeArcMachine(
   const name = str(raw.name) ?? parsed?.name ?? "";
   const vmUuid = normalizeVmUuid(p.vmUuid);
 
-  const memGb = num(detected(dp, "totalPhysicalMemoryInGigabytes"));
-  const memBytes = num(detected(dp, "totalPhysicalMemoryInBytes"))
+  const memGb = parseFiniteOrNull(detected(dp, "totalPhysicalMemoryInGigabytes"));
+  const memBytes = parseFiniteOrNull(detected(dp, "totalPhysicalMemoryInBytes"))
     ?? (memGb !== null ? Math.round(memGb * 1024 * 1024 * 1024) : null);
 
   const tags: Record<string, string> = {};
@@ -674,7 +666,7 @@ export function normalizeArcMachine(
     manufacturer: detected(dp, "manufacturer"),
     model: detected(dp, "model"),
     serialNumber: detected(dp, "serialNumber", "serialnumber"),
-    processorCount: num(detected(dp, "logicalCoreCount", "coreCount", "processorCount")),
+    processorCount: parseFiniteOrNull(detected(dp, "logicalCoreCount", "coreCount", "processorCount")),
     totalPhysicalMemoryBytes: memBytes,
     cloudProvider: detected(dp, "cloudprovider", "cloudProvider"),
     parentClusterResourceId: str(p.parentClusterResourceId),
@@ -992,8 +984,8 @@ export function normalizeArcCluster(raw: any): DiscoveredArcCluster | null {
     kubernetesVersion: str(p.kubernetesVersion),
     distribution: str(p.distribution),
     infrastructure: str(p.infrastructure),
-    totalNodeCount: num(p.totalNodeCount),
-    totalCoreCount: num(p.totalCoreCount),
+    totalNodeCount: parseFiniteOrNull(p.totalNodeCount),
+    totalCoreCount: parseFiniteOrNull(p.totalCoreCount),
     agentVersion: str(p.agentVersion),
     connectivityStatus: str(p.connectivityStatus),
     provisioningState: str(p.provisioningState),
@@ -1051,8 +1043,8 @@ export function normalizeArcVmInstance(raw: any): ArcVmInstance | null {
     vCenterId: str(infra.vCenterId ?? p.vmmServerId),
     inventoryItemId: str(infra.inventoryItemId),
     hostName: str(p.hostName ?? infra.folderPath),
-    cpuCount: num(hw.numCPUs ?? hw.cpuCount),
-    memoryMB: num(hw.memorySizeMB ?? hw.memoryMB),
+    cpuCount: parseFiniteOrNull(hw.numCPUs ?? hw.cpuCount),
+    memoryMB: parseFiniteOrNull(hw.memorySizeMB ?? hw.memoryMB),
     folderPath: str(infra.folderPath),
   };
 }
@@ -1079,7 +1071,7 @@ export function normalizeArcSqlInstance(raw: any): ArcSqlInstance | null {
     patchLevel: str(p.patchLevel),
     status: str(p.status),
     licenseType: str(p.licenseType),
-    vCoreCount: num(p.vCore ?? p.vCoreCount ?? p.cores),
+    vCoreCount: parseFiniteOrNull(p.vCore ?? p.vCoreCount ?? p.cores),
   };
 }
 

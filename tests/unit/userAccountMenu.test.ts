@@ -85,7 +85,6 @@ function open(opts: {
   g.window = globalThis;
   g.open = (url: string, target: string, features: string) => { opened.push({ url, target, features }); return null; };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const openUserMenu = new Function(extractFn("openUserMenu") + "\nreturn openUserMenu;")() as (a: unknown) => void;
   openUserMenu({ id: "badge" });
   return { ...captured, fetches, opened, labels: captured.items.map((i) => (i.separator ? "—" : i.label)) };
@@ -249,7 +248,6 @@ describe("layout preference", () => {
     g.showRowMenu = (_a: unknown, items: Item[], o: Record<string, unknown>) => { menus.push({ items, opts: o }); };
     g.ICONS = { monitor: "<svg id='monitor'/>" };
 
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const api = new Function(
       APP_JS.slice(start, end) + "\n" +
       extractFn("_layoutMenuItem") + "\n" + extractFn("_openLayoutMenu") + "\n" + extractFn("_setLayout") +

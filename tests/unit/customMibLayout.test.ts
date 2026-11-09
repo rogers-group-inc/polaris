@@ -29,7 +29,6 @@ function fnSrc(name: string): string {
 }
 
 const g = globalThis as Record<string, any>;
-// eslint-disable-next-line no-new-func
 new Function(
   "g",
   "var CMIB_WIDTHS = [3, 4, 6, 12];\n" +
@@ -38,7 +37,6 @@ new Function(
 )(g);
 // _cmibMoveWidget / _cmibFindCol read the module-level `_cmib`; bind a fresh
 // one per test.
-// eslint-disable-next-line no-new-func
 const bound = new Function("state", `var _cmib = state;\n${fnSrc("_cmibFindCol")}\n${fnSrc("_cmibMoveWidget")}\nreturn _cmibMoveWidget;`);
 
 const W = (id: string, enabled: boolean | null = false) => ({ id, enabled });
@@ -101,7 +99,6 @@ describe("value display (client: _cwDisplay / _formatDuration)", () => {
     };
   }
   function load(fahrenheit: boolean) {
-    // eslint-disable-next-line no-new-func
     return new Function(
       "window",
       `${fnSrc("_formatNumber")}\n${fnSrc("_formatDuration")}\n${fnSrc("_cwDisplay")}\nreturn { display: _cwDisplay, duration: _formatDuration };`,
@@ -131,7 +128,6 @@ describe("value display (client: _cwDisplay / _formatDuration)", () => {
 });
 
 describe("display-type picker (client)", () => {
-  // eslint-disable-next-line no-new-func
   const picker = new Function(
     "escapeHtml",
     `${lines.find((l) => l.startsWith("var CMIB_DISPLAY_TYPES"))}\n${fnSrc("_cmibCanSwitchType")}\n${fnSrc("_cmibTypePickerHTML")}\nreturn { can: _cmibCanSwitchType, html: _cmibTypePickerHTML };`,

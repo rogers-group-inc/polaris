@@ -13,7 +13,7 @@
  * the rows the suite touches without nuking the user account.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import request from "supertest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";

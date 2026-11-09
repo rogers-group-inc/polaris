@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
     if (id === "old-ssh-cred") return { id, name: "old-ssh", type: "ssh",   config: {} };
     throw new Error("Credential not found");
   }),
-  logEvent:      vi.fn(async () => {}),
+  logEvent:      vi.fn(async (_e: unknown) => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({

@@ -38,6 +38,8 @@
  * `rport`; the xauth spellings `userOf` also reads are unconfirmed fallbacks.
  */
 
+import { toFiniteOrNull } from "./num.js";
+
 /**
  * One row per FortiOS phase-1 IPsec tunnel. `status` rolls phase-2 selectors up
  * to "up" / "down" / "partial". Bytes are summed across every phase-2 selector
@@ -103,11 +105,6 @@ interface Phase1Info {
   remoteAccess: boolean;
 }
 
-function pickFiniteNumber(v: unknown): number | null {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -161,8 +158,8 @@ function rollupProxyIds(t: Record<string, unknown>) {
     if (!p || typeof p !== "object") continue;
     const s = String((p as any).status || "").toLowerCase();
     if (s === "up") upCount++; else downCount++;
-    const ib = pickFiniteNumber((p as any).incoming_bytes);
-    const ob = pickFiniteNumber((p as any).outgoing_bytes);
+    const ib = toFiniteOrNull((p as any).incoming_bytes);
+    const ob = toFiniteOrNull((p as any).outgoing_bytes);
     if (ib != null) { inBytes  += ib; anyBytes = true; }
     if (ob != null) { outBytes += ob; anyBytes = true; }
   }
@@ -255,8 +252,8 @@ export function parseFortiosIpsec(
         r.proxyCount === 0 ? "up" : r.downCount === 0 ? "up" : r.upCount === 0 ? "down" : "partial";
       // Phase-1 byte totals are the authoritative per-peer counters; the
       // phase-2 sum is the fallback for builds that omit them.
-      const inB  = pickFiniteNumber(t.incoming_bytes) ?? (r.anyBytes ? r.inBytes : null);
-      const outB = pickFiniteNumber(t.outgoing_bytes) ?? (r.anyBytes ? r.outBytes : null);
+      const inB  = toFiniteOrNull(t.incoming_bytes) ?? (r.anyBytes ? r.inBytes : null);
+      const outB = toFiniteOrNull(t.outgoing_bytes) ?? (r.anyBytes ? r.outBytes : null);
       const remoteGateway = addr(t.rgwy);
       connections.push({
         name,
@@ -269,7 +266,7 @@ export function parseFortiosIpsec(
         status,
         incomingBytes: inB,
         outgoingBytes: outB,
-        uptimeSec:     pickFiniteNumber(t.creation_time),
+        uptimeSec:     toFiniteOrNull(t.creation_time),
       });
       continue;
     }
@@ -285,7 +282,7 @@ export function parseFortiosIpsec(
       // No phase-2 selectors reported — fall back to the phase-1 connect_count
       // (>0 = up). Some FortiOS releases omit `proxyid` entirely on dial-up
       // tunnels with no active children.
-      const cc = pickFiniteNumber(t.connect_count);
+      const cc = toFiniteOrNull(t.connect_count);
       status = cc != null && cc > 0 ? "up" : "down";
     } else if (r.downCount === 0) status = "up";
     else if (r.upCount === 0)     status = "down";
@@ -343,8 +340,8 @@ export function parseFortiosSslVpn(res: unknown): IpsecConnectionSample[] {
     for (const sub of subs) {
       if (!sub || typeof sub !== "object") continue;
       tunnelIp = tunnelIp ?? addr(sub.aip) ?? addr(sub.assigned_ip);
-      const ib = pickFiniteNumber(sub.in_bytes);
-      const ob = pickFiniteNumber(sub.out_bytes);
+      const ib = toFiniteOrNull(sub.in_bytes);
+      const ob = toFiniteOrNull(sub.out_bytes);
       if (ib != null) inB = (inB ?? 0) + ib;
       if (ob != null) outB = (outB ?? 0) + ob;
     }
@@ -359,7 +356,7 @@ export function parseFortiosSslVpn(res: unknown): IpsecConnectionSample[] {
       status:        "up",
       incomingBytes: inB,
       outgoingBytes: outB,
-      uptimeSec:     pickFiniteNumber(s.duration),
+      uptimeSec:     toFiniteOrNull(s.duration),
     });
   }
   return out;

@@ -53,7 +53,8 @@
 import { basename } from "node:path";
 import type { FirmwareEngineContext, FirmwareEngineResult } from "./types.js";
 import { FirmwareEngineError, sleep } from "./types.js";
-import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, asNumber, type DeviceHttpResponse } from "./deviceHttp.js";
+import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, type DeviceHttpResponse } from "./deviceHttp.js";
+import { parseFiniteOrNull } from "../../utils/num.js";
 import { parseFirmwareVersion, compareFirmwareVersions, formatFirmwareVersion } from "../../utils/firmwareVersion.js";
 
 const AUTH_PATH = "/api/v2/authentication";
@@ -175,7 +176,7 @@ async function gateStatus(c: DeviceHttpClient, ctx: FirmwareEngineContext): Prom
   if (res.status !== 200 || !j) throw new FirmwareEngineError(`unexpected system status answer (${res.status})`, "preflight");
   const results = (j.results && typeof j.results === "object" ? j.results : {}) as Record<string, unknown>;
   const version = asString(j.version);
-  const build = asNumber(j.build);
+  const build = parseFiniteOrNull(j.build);
   return {
     serial: asString(j.serial),
     version: version ? (build !== null ? `${version} build${build}` : version) : null,
@@ -247,10 +248,10 @@ async function gateHaHistory(c: DeviceHttpClient, since: number | null): Promise
   const j = res && res.status === 200 ? jsonOrNull(res.body) : null;
   const r = (j?.results && typeof j.results === "object" ? j.results : null) as Record<string, unknown> | null;
   if (!r || !Array.isArray(r.history)) return null;
-  let newest = asNumber(r.last_change) ?? 0;
+  let newest = parseFiniteOrNull(r.last_change) ?? 0;
   const joinedSince = new Set<string>();
   for (const e of r.history as Array<Record<string, unknown>>) {
-    const t = asNumber(e.time) ?? 0;
+    const t = parseFiniteOrNull(e.time) ?? 0;
     if (t > newest) newest = t;
     const ev = asString(e.event) ?? "";
     const m = /new member '([A-Za-z0-9]+)' joins the cluster/.exec(ev);

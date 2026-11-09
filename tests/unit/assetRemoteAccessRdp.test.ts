@@ -66,7 +66,6 @@ beforeEach(() => {
   localStorage.clear();
 
   for (const fn of ["_assetMgmtAccess", "_managementAccessButtonsHTML", "_rdpFileBody", "_rdpAction", "_rdpUser", "_rdpUri", "_connectHostOk", "_connectUserOk", "_connectRefused", "_doRdpLaunch"]) {
-    // eslint-disable-next-line no-eval
     (0, eval)(fnSrc(fn));
   }
   mgmtAccess = g._assetMgmtAccess;
@@ -227,7 +226,6 @@ describe("_rdpAction / _doRdpLaunch", () => {
 describe("_doSshLaunch: the same refusal on the SSH side (scan finding F257)", () => {
   beforeEach(() => {
     for (const fn of ["_sshPref", "_sshUser", "_sshTarget", "_doSshLaunch"]) {
-      // eslint-disable-next-line no-eval
       (0, eval)(fnSrc(fn));
     }
   });

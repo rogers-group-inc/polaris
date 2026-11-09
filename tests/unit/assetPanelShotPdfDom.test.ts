@@ -34,7 +34,6 @@ function fnSrc(name: string): string {
 }
 
 const FN_NAMES = ["_syncAssetFooterButtons", "_saveCaptureAsPdf", "_assetExportSubject"];
-// eslint-disable-next-line no-new-func
 new Function(FN_NAMES.map(fnSrc).join("\n") + "\n" + FN_NAMES.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
 
 describe("asset header capture buttons", () => {

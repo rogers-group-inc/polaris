@@ -34,8 +34,8 @@ interface DimResult {
 }
 
 let optionsHtml: (res: DimResult | null, current: string) => string;
-let suggestHtml: (res: DimResult | null | { loading: true } | { error: true }, query: string) => string;
-let matchCue: (res: DimResult | null | { loading: true } | { error: true }, value: string) => { text: string; warn: boolean };
+let suggestHtml: (res: DimResult | null | { loading: true } | { error: true }, query: string, dim?: unknown) => string;
+let matchCue: (res: DimResult | null | { loading: true } | { error: true }, value: string, dim?: unknown) => { text: string; warn: boolean };
 let note: (res: DimResult | null | { loading: true } | { error: true }) => { text: string; warn: boolean };
 let narrow: (
   dim: string,

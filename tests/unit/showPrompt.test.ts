@@ -48,7 +48,7 @@ beforeEach(() => {
   g.escapeHtml = (s: unknown) => String(s ?? "");
   g.requestAnimationFrame = (cb: () => void) => { cb(); return 0; };
   doc.body.innerHTML = "";
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   showPrompt = (win as unknown as { showPrompt: typeof showPrompt }).showPrompt;
   expect(typeof showPrompt, "app.js no longer exports showPrompt").toBe("function");
 });

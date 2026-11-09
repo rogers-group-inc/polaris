@@ -34,8 +34,9 @@ outside that pipeline, or after `check:docs` fails.
    [references/check-docs-reference.md](references/check-docs-reference.md)). When
    `docs/wiki/` changed, also run `npm run check:wiki` (sidebar, bare page-name links, `#anchor`
    targets, no relative images; `scripts/check-wiki.mjs`).
-5. Then `npm run typecheck` and the unit suite, then commit (the worktree end-of-work commit
-   per `polaris-worktree-workflow`).
+5. Then `npm run typecheck` (src/ AND tests/ — it chains `typecheck:tests`), `npm run lint`
+   (src/ and tests/, zero warnings) and the unit suite, then commit (the worktree end-of-work
+   commit per `polaris-worktree-workflow`).
 
 ## Routing table — change kind → what to update
 

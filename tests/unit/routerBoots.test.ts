@@ -52,6 +52,7 @@ describe("route path syntax", () => {
           throw new Error(
             `${file}: route path ${JSON.stringify(path)} would throw at Express route registration ` +
             `(this crash-loops polaris-web at boot): ${(err as Error).message}`,
+            { cause: err },
           );
         }
       }

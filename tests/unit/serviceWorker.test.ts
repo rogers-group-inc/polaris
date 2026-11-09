@@ -7,7 +7,7 @@
  * notifications on BOTH surfaces at once (one registration per origin).
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -54,7 +54,6 @@ function makeSelf(opts?: { clients?: any[]; cookie?: string | null; fetchFails?:
     }),
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("self", "fetch", "URL", "Uint8Array", "Object", "JSON", SRC)(
     self, self.fetch, URL, Uint8Array, Object, JSON,
   );

@@ -72,7 +72,6 @@ async function run(opts: { status?: Partial<Status> | null; module?: boolean; ap
   };
   g.api = opts.api === false ? undefined : { totp: { status: statusFn } };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(SRC)() as { wire: () => void; item: () => MenuItem; refresh: () => void };
   mod.wire();
   await Promise.resolve();

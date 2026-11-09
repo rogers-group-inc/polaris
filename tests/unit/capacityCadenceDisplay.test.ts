@@ -13,15 +13,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 const src = serverSettingsSource();
 const lines = src.split(/\r?\n/);
 const start = lines.findIndex((l) => l.startsWith("function _fmtCadenceSec("));
 const end = lines.findIndex((l, i) => i > start && l === "}");
-// eslint-disable-next-line no-new-func
 const fmt = new Function(`${lines.slice(start, end + 1).join("\n")}; return _fmtCadenceSec;`)() as (s: unknown) => string;
 
 describe("Cadences row", () => {

@@ -16,7 +16,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 const db = vi.hoisted(() => ({
   assets: [] as any[],
   lldp: [] as any[],

@@ -550,10 +550,12 @@ dbDescribe("packet counts (ICMP burst rows)", () => {
     expect(rows.map((r) => r.assetId)).toEqual([B, A]);
   });
 
-  it("reads a fully-dark burst run as 100% under includeFullyDown", async () => {
+  it("reads a fully-dark burst run as 100% (no includeFullyDown opt-in needed)", async () => {
     await seedBursts(A, [[5, 0], [5, 0]]);
+    // `includeFullyDown` was retired 2026-09-01 and the query ignored it since;
+    // a dark asset reads 100% on its own.
     const rows = await queryProbeLossRatios({
-      sinceMinutes: 60, assetIds: [A], onlyLossy: true, limit: 10, includeFullyDown: true,
+      sinceMinutes: 60, assetIds: [A], onlyLossy: true, limit: 10,
     });
     expect(pct(rows[0]!)).toBe(100);
   });

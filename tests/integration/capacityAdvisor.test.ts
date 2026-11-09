@@ -12,7 +12,7 @@
  * `dbDescribe` so it skips cleanly when the DB is unreachable.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { it, expect, beforeAll, afterAll } from "vitest";
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbReachable, dbDescribe, ensureTestUser } from "./_helpers.js";

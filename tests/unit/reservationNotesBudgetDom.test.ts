@@ -43,12 +43,9 @@ beforeEach(() => {
   // The shared module is a self-contained IIFE that installs
   // window.PolarisReservationNotes — load it the way the page does.
   const shared = readFileSync(resolve(__dirname, "../../public/js/reservation-notes.js"), "utf8");
-  // eslint-disable-next-line no-eval
   (0, eval)(shared);
   g.escapeHtml = (s: string) => String(s ?? "");
-  // eslint-disable-next-line no-eval
   notesFieldMarkup = (0, eval)(`(${fnSrc("_notesFieldMarkup")})`);
-  // eslint-disable-next-line no-eval
   wireNotesBudget = (0, eval)(`(${fnSrc("_wireNotesBudget")})`);
   document.body.innerHTML = "";
 });

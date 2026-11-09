@@ -19,7 +19,7 @@ const h = vi.hoisted(() => ({
     ipBlock: { findMany: vi.fn(async () => []) },
     subnet: { findMany: vi.fn(async () => []) },
     reservation: { findMany: vi.fn(async () => []) },
-    asset: { findMany: vi.fn(async () => []) },
+    asset: { findMany: vi.fn(async (_args?: any): Promise<any[]> => []) },
     assetSource: { findMany: vi.fn(async () => []) },
     assetMacAddress: { findMany: vi.fn(async () => []) },
     assetAssociatedIp: { findMany: vi.fn(async () => []) },

@@ -111,7 +111,6 @@ beforeEach(() => {
   g.debounce = (fn: (...a: any[]) => void) => fn;
   try { globalThis.localStorage.clear(); } catch { /* happy-dom always has one */ }
 
-  // eslint-disable-next-line no-eval
   (0, eval)(FN_NAMES.map(fnSrc).join("\n\n"));
 
   document.body.innerHTML = '<div id="mount"></div>';

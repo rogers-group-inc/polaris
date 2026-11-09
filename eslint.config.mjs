@@ -24,10 +24,10 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended.map((c) => ({
     ...c,
-    files: ["src/**/*.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts"],
   })),
   {
-    files: ["src/**/*.ts"],
+    files: ["src/**/*.ts", "tests/**/*.ts"],
     rules: {
       // High-value correctness rules kept as errors:
       "no-var": "error",

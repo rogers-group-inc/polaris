@@ -96,7 +96,9 @@ const ASSET = { id: "AST1", assetType: "switch", monitoredInterfaces: ["port2"],
 const PREFS_KEY = "polaris-prefs-asset-interfaces-switch-tester";
 
 let win: Window;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so rows read as
+// standard HTMLElements.
+let doc: Document;
 let putCalls: Record<string, any>[];
 let openedIface: string | null;
 /** What the interface-name click's network fork sees: the viewer's networks grant,
@@ -107,7 +109,7 @@ let menuCalls: { anchor: Element; items: { label: string; onSelect: () => void }
 
 function setup(): void {
   win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   putCalls = [];
   openedIface = null;
   canReadNetworks = false;
@@ -160,7 +162,7 @@ function render(): void {
   g._renderInterfacesTable(doc.getElementById("ifaces"), makeSi(), ASSET);
 }
 
-const allRows = () => Array.from(doc.querySelectorAll("#asset-iface-tbody > tr"));
+const allRows = () => Array.from(doc.querySelectorAll<HTMLElement>("#asset-iface-tbody > tr"));
 const dataRows = () => allRows().filter((tr) => tr.querySelectorAll(":scope > td").length > 1);
 function nameOf(tr: Element): string {
   const a = tr.querySelector(".asset-iface-link, .asset-ipsec-link");
@@ -621,7 +623,6 @@ describe("a member port belongs to its aggregate", () => {
     doc.body.innerHTML = '<div id="ifaces"></div>';
     g._renderInterfacesTable(doc.getElementById("ifaces"), si, ASSET);
   }
-  const pollCellOf = (name: string) => rowFor(name).querySelector(":scope > td")!;
 
   // The elbow is what says "this row hangs off the one above". It was a lone
   // U+2514 at half opacity and read as a stray character; the two-glyph run
@@ -924,7 +925,7 @@ describe("IPv6 column", () => {
   function renderWithV6(ipv6On = true): void {
     // Business rule 128: the install's IPv6 switch, from /auth/me.
     g.polarisIpv6Enabled = ipv6On;
-    const si = makeSi();
+    const si = makeSi() as Omit<ReturnType<typeof makeSi>, "interfaces"> & { interfaces: Record<string, unknown>[] };
     si.interfaces[0] = { ...si.interfaces[0], ipv6Address: "2001:db8::5" };
     si.interfaces[5] = { ...si.interfaces[5], ipAddress: null, ipv6Address: "2001:db8:50::1" };
     doc.body.innerHTML = '<div id="ifaces"></div>';

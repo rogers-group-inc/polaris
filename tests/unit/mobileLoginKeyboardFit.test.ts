@@ -92,7 +92,6 @@ beforeAll(() => {
     confirmTotp: vi.fn(),
   };
   g.PolarisMobile = { boot: vi.fn() };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
 });
 

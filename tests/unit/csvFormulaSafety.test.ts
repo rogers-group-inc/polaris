@@ -20,7 +20,6 @@ beforeAll(() => {
   // function and the row function. Evaluate exactly that span.
   const start = src.indexOf("var _CSV_FORMULA_START");
   const end = src.indexOf("if (typeof window", src.indexOf("function _csvRow"));
-  // eslint-disable-next-line no-eval
   (0, eval)(src.slice(start, end));
 });
 

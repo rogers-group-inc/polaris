@@ -43,6 +43,5 @@ function appOverlaySource(): string {
  * `flashModalCloseBtn` (those three are typeof-guarded inside the function).
  */
 export function installAppOverlay(): void {
-  // eslint-disable-next-line no-eval
   (0, eval)(appOverlaySource());
 }

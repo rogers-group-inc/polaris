@@ -68,7 +68,7 @@ beforeEach(async () => {
   };
 
   doc.body.innerHTML = "<div id='host'></div>";
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   // Editing tags is the Tags key's grant (2026-11-03); without it the picker
   // renders static. These cases are about the editable picker.
   (win as unknown as Record<string, unknown>).currentRolePermissions = { tags: "write" };

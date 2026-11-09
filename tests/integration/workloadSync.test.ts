@@ -26,7 +26,7 @@
 import { it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
-import { syncWorkloadDevices, type WorkloadDiscoveryResult } from "../../src/services/discovery/workloadSync.js";
+import { syncWorkloadDevices, type WorkloadContainer, type WorkloadDiscoveryResult } from "../../src/services/discovery/workloadSync.js";
 
 const d = dbDescribe;
 const NAME = "wl-sync-test";
@@ -59,9 +59,9 @@ beforeEach(async () => {
   integrationId = intg.id;
 });
 
-const ctr = (name: string, state = "running") => ({
+const ctr = (name: string, state = "running"): WorkloadContainer => ({
   platformId: `srv:${name}`, name: `${PREFIX}${name}`, image: `img/${name}`, state: state as any, rawState: state.toUpperCase(),
-  ip: null, updateAvailable: false, version: null, latestVersion: null, memberCount: 1, ports: [], autostart: true,
+  ip: null, networkMode: null, updateAvailable: false, version: null, latestVersion: null, memberCount: 1, ports: [], autostart: true,
 });
 
 function result(over: Partial<WorkloadDiscoveryResult> = {}, containers = [ctr("plex"), ctr("sonarr")]): WorkloadDiscoveryResult {

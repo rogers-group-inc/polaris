@@ -83,7 +83,6 @@ beforeEach(() => {
   // applyTableLayout / PolarisTempUnit are both optional at the call sites.
   delete g.applyTableLayout;
   (globalThis as any).window.PolarisTempUnit = undefined;
-  // eslint-disable-next-line no-new-func
   new Function(SRC)();
 });
 

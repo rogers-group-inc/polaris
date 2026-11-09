@@ -22,10 +22,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 interface Sandbox {
   _mfgMibCellHTML: (readiness: unknown, mibId: string | null, mibStdKey: string | null) => string;

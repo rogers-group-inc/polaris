@@ -29,7 +29,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const SRC = readFileSync(resolve(__dirname, "../../public/js/path-checks.js"), "utf8");
 const g = globalThis as Record<string, any>;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so the test can use
+// the standard HTMLInputElement / HTMLSelectElement casts.
+let doc: Document;
 let toasts: { msg: string; kind?: string }[];
 let posted: any[];
 let seeded = 0;
@@ -41,7 +43,7 @@ let previewRes: any = EMPTY_PREVIEW;
 
 function load(opts: { networkScan?: "read" | "write" } = {}) {
   const win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   toasts = [];
   posted = [];
   g.window = win;

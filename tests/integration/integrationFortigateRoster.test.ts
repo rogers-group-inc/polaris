@@ -31,7 +31,7 @@ beforeAll(async () => {
   fmgId = (await prisma.integration.create({ data: { type: "fortimanager", name: `${NAME} fmg`, config: {}, enabled: true } })).id;
   otherId = (await prisma.integration.create({ data: { type: "fortimanager", name: `${NAME} other`, config: {}, enabled: true } })).id;
   entraId = (await prisma.integration.create({ data: { type: "entraid", name: `${NAME} entra`, config: {}, enabled: true } })).id;
-  const fw = (serial: string, integrationId: string, hostname: string, topo: Record<string, unknown>, status = "active") =>
+  const fw = (serial: string, integrationId: string, hostname: string, topo: Record<string, unknown>, status: "active" | "decommissioned" = "active") =>
     prisma.asset.create({ data: {
       serialNumber: serial, hostname, assetType: "firewall", status, discoveredByIntegrationId: integrationId,
       fortinetTopology: { role: "fortigate", ...topo },

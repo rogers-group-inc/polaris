@@ -41,7 +41,9 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 const SRC = readFileSync(resolve(__dirname, "../../public/js/assets-discovery.js"), "utf8");
 
 const g = globalThis as Record<string, any>;
-let doc: Window["document"];
+// The lib.dom Document view of happy-dom's document, so element casts below
+// (HTMLInputElement, HTMLSelectElement, ...) type-check against lib.dom.
+let doc: Document;
 let toasts: { msg: string; kind?: string }[];
 
 interface Api {
@@ -64,7 +66,7 @@ function load(opts: {
   const scan = opts.scan ?? "write";
   const RANK: Record<string, number> = { none: 0, read: 1, write: 2, fullwrite: 3 };
   const win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   toasts = [];
   g.window = win;
   g.document = doc;
@@ -113,7 +115,7 @@ function load(opts: {
     },
   };
   (0, eval)(SRC);
-  return win.PolarisAssetDiscovery as Api;
+  return (win as unknown as { PolarisAssetDiscovery: Api }).PolarisAssetDiscovery;
 }
 
 const activeStep = () =>

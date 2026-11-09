@@ -75,7 +75,6 @@ beforeEach(() => {
   g.currentUsername = "alice";
   advisories = [];
   g.window._getPlatformAdvisories = () => advisories;
-  // eslint-disable-next-line no-eval
   const exported = eval(`(function () {
     ${varSrc("_ADVISORY_RANK")}
     ${["_platformAdvisoryDismissKey", "_platformAdvisoryPairs", "_platformAdvisoryTint", "_worstAdvisoryRating", "renderPlatformAdvisoryAlert"].map(fnSrc).join("\n")}

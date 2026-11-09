@@ -75,7 +75,7 @@ function expectClear(r: Routed) {
   }
 }
 
-const node = (id: string, x: number, y: number, loc: Record<string, string>) => ({ data: { id, label: id, ...loc }, position: { x, y } });
+const node = (id: string, x: number, y: number, loc: Record<string, string | undefined>) => ({ data: { id, label: id, ...loc }, position: { x, y } });
 
 describe("routeInterGroupEdges keeps every bend outside both end devices", () => {
   it("a second link into an already-used target row (the fanned 9 px jog)", () => {

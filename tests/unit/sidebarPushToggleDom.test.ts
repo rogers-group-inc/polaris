@@ -138,7 +138,6 @@ async function run(opts: {
     },
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(SRC)() as {
     wire: () => void;
     item: (a: unknown) => MenuItem;

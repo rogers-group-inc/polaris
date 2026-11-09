@@ -377,9 +377,7 @@ async function renderPage(opts?: { alert?: any; getFails?: number; ackFails?: { 
     },
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(VIEW_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(PAGE_SRC)();
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));

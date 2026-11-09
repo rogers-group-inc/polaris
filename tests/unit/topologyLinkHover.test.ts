@@ -16,9 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sb: Record<string, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let R: Record<string, any>;
 
 beforeAll(() => {
@@ -58,7 +56,6 @@ function graph() {
     ],
   }));
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ids = (coll: any) => coll.map((x: { id: () => string }) => x.id()).sort();
 
 describe("link hover highlight", () => {

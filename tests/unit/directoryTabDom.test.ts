@@ -15,8 +15,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { resolve } from "node:path";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 import { Window } from "happy-dom";
 import { APP_SHELL_STUBS } from "./_appShellStubs.js";
 

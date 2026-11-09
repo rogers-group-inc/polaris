@@ -125,7 +125,6 @@ beforeEach(() => {
     currentPanelAssetId: null,
   };
   document.body.innerHTML = "";
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
 });
 

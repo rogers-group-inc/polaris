@@ -27,10 +27,10 @@ type Series = { values: Point[]; color?: string; fill?: boolean; gapFade?: boole
 type Prepared = { s: Series; pts: { ts: number; v: number | null; ok: boolean }[] };
 type Charts = {
   lineChart: (opts: Record<string, unknown>) => string;
-  _outageMarkers: (outages: Outage[] | undefined, sampleTimesMs: number[]) => number[];
+  _outageMarkers: (outages: Outage[] | undefined, sampleTimesMs: number[]) => Array<{ t: number; dep: boolean }>;
   _medianCadenceMs: (ts: number[]) => number;
   _seriesPoints: (s: Series) => { ts: number; v: number | null; ok: boolean }[];
-  _applySharedOutageMarkers: (prepared: Prepared[], outages?: Outage[]) => number[];
+  _applySharedOutageMarkers: (prepared: Prepared[], outages?: Outage[]) => Array<{ t: number; dep: boolean }>;
 };
 
 type Outage = { from: string; to: string };
@@ -106,7 +106,7 @@ describe("outageMarkers", () => {
     const ts = minutes(60);
     const sampled = [ts[0], ts[1], ts[50], ts[51]];
     const out = charts._outageMarkers([outage(ts[30], ts[40]), outage(ts[5], ts[10])], sampled);
-    expect(out).toEqual([...out].sort((a, b) => a - b));
+    expect(out).toEqual([...out].sort((a, b) => a.t - b.t));
     expect(out).toHaveLength(4);
   });
 });

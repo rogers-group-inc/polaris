@@ -108,9 +108,9 @@ function setup(): any {
   return new g.TableSF("tb", () => { changes++; });
 }
 
-function th(): Element { return doc.querySelector('th[data-sf-key="ipAddress"]')!; }
+function th() { return doc.querySelector('th[data-sf-key="ipAddress"]')!; }
 function inputs(): any[] { return Array.from(th().querySelectorAll(".sf-ipnet-input")); }
-function click(el: Element | null): void { (el as any).dispatchEvent(new (win as any).Event("click", { bubbles: true })); }
+function click(el: unknown): void { (el as any).dispatchEvent(new (win as any).Event("click", { bubbles: true })); }
 
 describe("TableSF.parseIpNetTerm parity with ipv4TermToMatchPrefixes", () => {
   beforeEach(() => { setup(); });

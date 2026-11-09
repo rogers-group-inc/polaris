@@ -24,7 +24,8 @@ resolved at config-load time, no connection is made) — copy `.env` first.
 ## The checks every change must pass
 
 ```bash
-npm run typecheck                 # tsc, zero errors
+npm run typecheck                 # tsc over src/ and tests/, zero errors
+npm run lint                      # eslint over src/ and tests/, zero warnings
 npx vitest run tests/unit         # unit suite
 npm run check:docs                # structural doc-drift guard (also a pre-commit hook + CI job)
 ```

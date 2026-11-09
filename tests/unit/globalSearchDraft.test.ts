@@ -31,7 +31,7 @@ function storage(store: Record<string, string>) {
 
 function mount(username: string | null, session: Record<string, string> = {}) {
   const win = new Window();
-  const doc = win.document;
+  const doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   Object.defineProperty(globalThis, "navigator", { value: win.navigator, configurable: true, writable: true });
@@ -46,7 +46,7 @@ function mount(username: string | null, session: Record<string, string> = {}) {
   g.api = { search: { query } };
   g.escapeHtml = (s: unknown) => String(s ?? "");
   doc.body.innerHTML = '<div class="page-header"><h2>Assets</h2><div class="page-header-actions"></div></div>';
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   g.currentUsername = username;
   (g.renderGlobalSearch as () => void)();
   const input = doc.getElementById("global-search-input") as HTMLInputElement;

@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 import vm from "node:vm";
 import { DHCP_MONITOR_FORMAT } from "../../src/utils/fortiosIpv6.js";
 import { INVENTORY_QUERY_FORMAT } from "../../src/utils/inventoryLocality.js";

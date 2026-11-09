@@ -146,7 +146,7 @@ describe("SD-WAN Members table — screenshot legibility", () => {
       { timestamp: ts, up: true, outOfSla: false, severity: "warning" },
       { timestamp: ts, up: true, outOfSla: false, severity: "serious" },
     ]);
-    const segs = Array.from(span.querySelectorAll("span[title]")) as HTMLElement[];
+    const segs = Array.from(span.querySelectorAll("span[title]"));
     expect(segs.map((s) => s.getAttribute("style")!.match(/background:([^;"]+)/)![1])).toEqual(["#2ecc40", "#e02020", "#f9a825", "#e65100"]);
     expect(segs[1]!.getAttribute("title")).toContain("out of SLA");
     // Out of SLA is not "up" for the count; the tiered ones still are, and
