@@ -43,7 +43,8 @@ describe("wirelessRoamEventsWanted", () => {
 
 describe("every roam-Event writer asks the gate", () => {
   const read = (p: string) => readFileSync(resolve(__dirname, "../..", p), "utf8");
-  const writers = ["src/services/monitoringService.ts", "src/services/ipUpstreamChainService.ts", "src/services/discovery/discoveryEngine.ts"];
+  // discovery's Phase 11.5 flush lives in discovery/dhcp/changeEvents.ts (CQ-B060).
+  const writers = ["src/services/monitoringService.ts", "src/services/ipUpstreamChainService.ts", "src/services/discovery/dhcp/changeEvents.ts"];
 
   it("each file that builds an \"ap\" connection event also calls wirelessRoamEventsWanted", () => {
     for (const f of writers) {

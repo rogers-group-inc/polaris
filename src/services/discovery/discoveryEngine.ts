@@ -32,15 +32,18 @@ import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import { integrationAdapter, type IntegrationType } from "../integrationAdapters.js";
-import { wirelessRoamEventsWanted } from "../notificationChangeEvents.js";
 import { clearStaleMacDeviceStamps } from "./dhcp/staleMacDeviceStamps.js";
 import { persistRunArpTables, stampArpPresence } from "./dhcp/arpTables.js";
 import { reverseDnsForAssets, applyOuiManufacturers } from "./dhcp/dnsOui.js";
+import { flushChangeEvents, type ChangeBaseline, type ChangeBaselineFields } from "./dhcp/changeEvents.js";
+import { deprecateStaleSubnets, applyAutoMonitorInterfaces } from "./dhcp/subnetSweeps.js";
+import { reserveInterfaceIps } from "./dhcp/interfaceIpReservations.js";
+import { recordObservedIpv6 } from "./dhcp/observedIpv6.js";
+import { adoptPlaceholderMacs } from "./dhcp/placeholderMacAdoption.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps, isIpv6Address } from "../../utils/cidr.js";
-import { collectObservedIpv6Sightings, planObservedIpv6 } from "../../utils/observedIpv6.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
 import { ipv6Enabled } from "../ipv6GateService.js";
 import { normalizeMacsDistinct, macHexKeyOrNull, normalizeMacOrNull, isAllZeroMac } from "../../utils/mac.js";
@@ -70,8 +73,6 @@ import {
   snapshotMaterialAssetFields,
   logDiscoveryAssetCreated,
   logDiscoveryAssetUpdated,
-  buildFirmwareChangedEvent,
-  buildConnectionChangedEvent,
   type LogEventInput,
 } from "../eventLogService.js";
 import { clampAcquiredToLastSeen, bumpLastSeen } from "../../utils/assetInvariants.js";
@@ -126,9 +127,7 @@ import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
 import {
-  buildMacEvidenceIndex,
   createAdoptionBudget,
-  runPlaceholderMacAdoption,
   type AdoptionBudget,
 } from "../placeholderMacAdoptionService.js";
 import { reconcileAllTags, syncAzureTagRegistry } from "../tagAssignmentService.js";
@@ -2889,8 +2888,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // or that change goes unaudited. (Fortinet infra os/osVersion is the one
   // exclusion — it flows through projection + logDiscoveryAssetUpdated, which
   // emits the firmware event itself; recording it here too would double-emit.)
-  type ChangeBaselineFields = "os" | "osVersion" | "lastSeenSwitch" | "lastSeenAp";
-  const changeBaseline = new Map<string, { name: string | null } & Partial<Record<ChangeBaselineFields, unknown>>>();
+  // Field list and map shape shared with the Phase 11.5 flush (dhcp/changeEvents.ts).
+  const changeBaseline: ChangeBaseline = new Map();
   const noteChangeBaseline = (asset: any, fields: ChangeBaselineFields[]): void => {
     if (!asset?.id) return;
     let entry = changeBaseline.get(asset.id);
@@ -3359,46 +3358,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // ══════════════════════════════════════════════════════════════════════════════
 
   if (sweepPhaseEnabled(mode, "2") && knownDeviceNames.size > 0) {
-    // Find stale subnets in-memory first (for the return value).
-    // Roster check is case-insensitive: a subnet's fortigateDevice can carry
-    // FortiOS-cased casing while the FMG roster carries FMG-cased casing
-    // (same device, different source).
-    // An excluded CIDR is out of discovery's hands in BOTH directions
-    // (business rule 42): Phase 1 no longer re-stamps it, so its
-    // `fortigateDevice` is frozen at whichever site claimed it first, and
-    // deprecating the row the moment that one gate leaves the roster would be
-    // discovery acting on a subnet the operator told it to leave alone.
-    const staleSubnets = allSubnets.filter(
-      (s) => s.discoveredBy === integrationId && s.status !== "deprecated" &&
-             s.fortigateDevice && !knownDeviceNamesLc.has(s.fortigateDevice.toLowerCase()) &&
-             !findCoveringExclusion(s.cidr, subnetExclusions)
-    );
-    if (staleSubnets.length > 0) {
-      const staleIds = staleSubnets.map((s) => s.id);
-      await prisma.subnet.updateMany({
-        where: { id: { in: staleIds } },
-        data: { status: "deprecated" },
-      });
-      for (const s of staleSubnets) {
-        deprecated.push(s.cidr);
-        s.status = "deprecated"; // update in-memory
-        logEvent({
-          action: "subnet.deprecated",
-          resourceType: "subnet",
-          resourceId: s.id,
-          resourceName: s.name,
-          actor,
-          message: `Subnet "${s.name}" (${s.cidr}) deprecated — FortiGate "${s.fortigateDevice}" no longer configured in "${integrationName}"`,
-          details: {
-            reason: "device-removed",
-            fortigateDevice: s.fortigateDevice,
-            integrationId,
-            integrationName,
-            cidr: s.cidr,
-          },
-        });
-      }
-    }
+    // Body: discovery/dhcp/subnetSweeps.ts (CQ-B060).
+    await deprecateStaleSubnets({ allSubnets, knownDeviceNamesLc, subnetExclusions, deprecated, integrationId, integrationName, actor });
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -3728,39 +3689,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   //
   // Only applies to fortimanager + fortigate integrations. windowsserver /
   // entraid / activeDirectory don't manage Fortinet hardware.
-  if (sweepPhaseEnabled(mode, "2c") && (isFortinetIntegrationType(integrationType))) {
-    const integ = await prisma.integration.findUnique({
-      where: { id: integrationId },
-      select: { config: true },
-    });
-    const cfg = (integ?.config ?? {}) as Record<string, any>;
-    for (const [klass, blockKey] of [
-      ["fortigate",   "fortigateMonitor"],
-      ["fortiswitch", "fortiswitchMonitor"],
-      ["fortiap",     "fortiapMonitor"],
-    ] as const) {
-      // Same legacy-shape coercion as the on-demand apply route, for the
-      // window between deploy and the one-shot migration sweeping configs.
-      const selection = autoMonitor.coerceLegacySelection(cfg[blockKey]?.autoMonitorInterfaces ?? null);
-      if (!selection) continue;
-      try {
-        const r = await autoMonitor.applyAutoMonitorForClass(integrationId, klass, selection, actor, scopedAssets?.infra);
-        if (r.interfacesAdded > 0) {
-          syncLog("info", `Auto-monitor (${klass}): pinned ${r.interfacesAdded} interface(s) on ${r.devices} device(s)`);
-          await logEvent({
-            action:       "integration.auto_monitor_interfaces.applied",
-            resourceType: "integration",
-            resourceId:   integrationId,
-            resourceName: integrationName,
-            actor,
-            message:      `Auto-monitor interfaces applied for "${integrationName}" (${klass}) — ${r.devices} device(s), ${r.interfacesAdded} interface(s) added`,
-            details:      { class: klass, devices: r.devices, interfacesAdded: r.interfacesAdded },
-          });
-        }
-      } catch (err: any) {
-        syncLog("error", `Auto-monitor (${klass}) failed: ${err?.message || "Unknown error"}`);
-      }
-    }
+  if (sweepPhaseEnabled(mode, "2c")) {
+    // Body: discovery/dhcp/subnetSweeps.ts (CQ-B060).
+    await applyAutoMonitorInterfaces({ integrationId, integrationName, integrationType, actor, scopedInfra: scopedAssets?.infra, syncLog });
   }
 
   } // end mode !== "skip-deprecation" (Phase 2 + 2a + 2b + 2c; "finalize-scoped" runs 2b only — see sweepPhaseEnabled)
@@ -5374,62 +5305,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   phaseMark("4");
   // ══════════════════════════════════════════════════════════════════════════════
 
-  const interfaceRoleLabel = (role: string): string => {
-    if (role === "management") return "Management interface";
-    if (role === "secondary")  return "Secondary IP";
-    return "Interface";
-  };
-
-  for (const ifaceIp of result.interfaceIps) {
-    if (!ifaceIp.ipAddress) continue;
-
-    const matchingSubnet = findSubnetForIp(ifaceIp.ipAddress);
-    if (!matchingSubnet) continue;
-
-    const key = reservationKey(matchingSubnet.id, ifaceIp.ipAddress);
-    const noteText = `${interfaceRoleLabel(ifaceIp.role)} (${ifaceIp.interfaceName}) on ${ifaceIp.device}`;
-    const existingRes = activeResMap.get(key);
-    if (existingRes) {
-      if (existingRes.sourceType === "manual") {
-        const proposed = { hostname: ifaceIp.device, owner: "network-team", projectRef: projectRefLabel, notes: noteText, sourceType: "interface_ip" };
-        await upsertConflict(existingRes.id, integrationId, proposed, existingRes);
-      } else if (existingRes.sourceType === "observed") {
-        // An observed IPv6 sighting is evidence, never a claim (business rule
-        // 125): the gate configuring the address on an interface is the
-        // stronger fact, so the row becomes that, in place.
-        try {
-          const updatedRes = await prisma.reservation.update({
-            where: { id: existingRes.id },
-            data: { sourceType: "interface_ip", hostname: ifaceIp.device, owner: "network-team", projectRef: projectRefLabel, notes: noteText, expiresAt: null },
-          });
-          activeResMap.set(key, updatedRes);
-        } catch (err: any) {
-          syncLog("error", `Failed to convert observed address ${ifaceIp.ipAddress} to an interface IP on ${ifaceIp.device}/${ifaceIp.interfaceName}: ${err.message || "Unknown error"}`);
-        }
-      }
-      continue;
-    }
-
-    try {
-      await releaseDnsResolvedAt(matchingSubnet.id, ifaceIp.ipAddress);
-      const newRes = await prisma.reservation.create({
-        data: {
-          subnetId: matchingSubnet.id,
-          ipAddress: ifaceIp.ipAddress,
-          hostname: ifaceIp.device,
-          owner: "network-team",
-          projectRef: projectRefLabel,
-          notes: noteText,
-          status: "active",
-          sourceType: "interface_ip",
-        },
-      });
-      activeResMap.set(key, newRes);
-      reservationNames.push(`${ifaceIp.ipAddress} (${ifaceIp.device}/${ifaceIp.interfaceName})`);
-    } catch (err: any) {
-      syncLog("error", `Failed to create reservation for interface IP ${ifaceIp.ipAddress} on ${ifaceIp.device}/${ifaceIp.interfaceName}: ${err.message || "Unknown error"}`);
-    }
-  }
+  // Body: discovery/dhcp/interfaceIpReservations.ts (CQ-B060).
+  await reserveInterfaceIps({ result, activeResMap, findSubnetForIp, reservationKey, upsertConflict, projectRefLabel, reservationNames, integrationId, syncLog });
 
   // Phase 4b (removed): per-interface IPs/MACs for the FortiGate asset are now
   // populated by the System tab's interface scrape (monitoringService.collectSystemInfo
@@ -7247,59 +7124,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // index has to judge each); every refresh shares one expiresAt, so the whole
   // steady state is ONE updateMany per run.
   // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const nowMs = Date.parse(now);
-    const plan = planObservedIpv6({
-      sightings: collectObservedIpv6Sightings(result.deviceInventory, result.switchMacTable, nowMs),
-      findSubnetId: (ip) => findSubnetForIp(ip)?.id,
-      activeRow: (subnetId, ip) => activeResMap.get(reservationKey(subnetId, ip)),
-      hostnameForMac: (mac) => assetIdx.findByMac(mac)?.hostname || null,
-      nowMs,
-    });
-    let observedCreated = 0;
-    for (const c of plan.creates) {
-      try {
-        const row = await prisma.reservation.create({
-          data: {
-            subnetId: c.subnetId,
-            ipAddress: c.ip,
-            hostname: c.hostname,
-            macAddress: c.mac,
-            projectRef: projectRefLabel,
-            notes: [
-              `IPv6 address seen in use on ${c.device} (${c.source === "device-inventory" ? "device inventory" : "FortiSwitch detected device"})`,
-              c.mac ? `MAC: ${c.mac}` : null,
-            ].filter(Boolean).join(" — "),
-            status: "active",
-            sourceType: "observed",
-            expiresAt: c.expiresAt,
-          },
-        });
-        activeResMap.set(reservationKey(c.subnetId, c.ip), row);
-        observedCreated++;
-      } catch (err: any) {
-        // P2002: something claimed the address mid-run — that row wins.
-        if (err?.code !== "P2002") syncLog("error", `Failed to record observed IPv6 address ${c.ip}: ${err.message || "Unknown error"}`);
-      }
-    }
-    if (plan.refresh.ids.length > 0) {
-      await prisma.reservation.updateMany({
-        where: { id: { in: plan.refresh.ids }, sourceType: "observed", status: "active" },
-        data: { expiresAt: plan.refresh.expiresAt },
-      });
-    }
-    if (plan.patches.length > 0) {
-      await batchSettled(plan.patches, (p) => prisma.reservation.update({ where: { id: p.id }, data: p.data }));
-    }
-    if (observedCreated > 0 || plan.refresh.ids.length > 0) {
-      syncLog(
-        "info",
-        `Observed IPv6 addresses: ${observedCreated} recorded, ${plan.refresh.ids.length} still in use` +
-          (plan.heldByOtherSource > 0 ? `, ${plan.heldByOtherSource} already held by another source` : "") +
-          (plan.skippedNoSubnet > 0 ? `, ${plan.skippedNoSubnet} outside every known network` : ""),
-      );
-    }
-  }
+  // Body: discovery/dhcp/observedIpv6.ts (CQ-B060).
+  await recordObservedIpv6({ result, now, activeResMap, findSubnetForIp, reservationKey, assetIdx, projectRefLabel, syncLog });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7.5 — Enrich existing assets from FortiSwitch MAC table + FortiGate ARP
@@ -7571,40 +7397,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // device-writing passes.
   // ══════════════════════════════════════════════════════════════════════════════
 
-  if (adoptionBudget && adoptionBudget.remaining > 0 && !signal?.aborted) {
-    // Inventory evidence is locality-filtered: with overlapping RFC1918
-    // subnets, a ZTNA-relayed row can claim (this gate, <client's home IP>)
-    // for an address this gate ALSO serves — exactly the key a placeholder
-    // reservation here would adopt the wrong MAC from. ARP rows are local by
-    // construction and pass through unfiltered.
-    const evidence = buildMacEvidenceIndex(
-      result.arpTable || [],
-      (result.deviceInventory || []).filter((d) => inventorySightingIsLocal(d, arpMacDeviceIndex)),
-    );
-    if (evidence.size > 0) {
-      await runPlaceholderMacAdoption({
-        integrationId,
-        integrationName,
-        evidence,
-        budget: adoptionBudget,
-        actor,
-        signal,
-      })
-        .then((r) => {
-          if (r.attempted > 0) {
-            syncLog(
-              "info",
-              `Placeholder MAC adoption: ${r.adopted} reservation(s) updated to the discovered device's MAC`
-                + (r.failed > 0 ? `, ${r.failed} failed` : "")
-                + (r.deferred > 0 ? `, ${r.deferred} deferred to the next cycle` : ""),
-            );
-          }
-        })
-        .catch((err: any) => {
-          syncLog("error", `Placeholder MAC adoption failed: ${err?.message || "Unknown error"}`);
-        });
-    }
-  }
+  // Body: discovery/dhcp/placeholderMacAdoption.ts (CQ-B060).
+  await adoptPlaceholderMacs({ result, adoptionBudget, arpMacDeviceIndex, integrationId, integrationName, actor, signal, syncLog });
 
   } // end Phases 3–7 (full | skip-deprecation)
 
@@ -7823,46 +7617,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // Events are optimistic with respect to Phase 7.5's batchSettled flush (a
   // write that failed there still reports here) — the same accepted caveat the
   // Arc path carries.
-  if (changeBaseline.size > 0) {
-    try {
-      const changeEvents: LogEventInput[] = [];
-      const roamsWanted = await wirelessRoamEventsWanted();
-      for (const [assetId, baseline] of changeBaseline) {
-        const asset = assetIdx.findById(assetId);
-        if (!asset) continue;
-        const ctx = {
-          assetId,
-          assetName: baseline.name,
-          actor: actor || "system:discovery",
-          source: "fortigate-endpoint",
-          integrationId,
-          integrationName,
-        };
-        if ("os" in baseline || "osVersion" in baseline) {
-          const before: Record<string, unknown> = {};
-          const after: Record<string, unknown> = {};
-          if ("os" in baseline) { before.os = baseline.os; after.os = asset.os ?? null; }
-          if ("osVersion" in baseline) { before.osVersion = baseline.osVersion; after.osVersion = asset.osVersion ?? null; }
-          const ev = buildFirmwareChangedEvent(ctx, before, after);
-          if (ev) changeEvents.push(ev);
-        }
-        if ("lastSeenSwitch" in baseline) {
-          const ev = buildConnectionChangedEvent("switch", ctx, baseline.lastSeenSwitch as string | null, asset.lastSeenSwitch ?? null);
-          if (ev) changeEvents.push(ev);
-        }
-        // A roam Event only while an automation uses the roam trigger
-        // (wirelessRoamEventsWanted, asked once before this loop).
-        if ("lastSeenAp" in baseline && roamsWanted) {
-          const ev = buildConnectionChangedEvent("ap", ctx, baseline.lastSeenAp as string | null, asset.lastSeenAp ?? null);
-          if (ev) changeEvents.push(ev);
-        }
-      }
-      if (changeEvents.length > 0) await logEventsBatch(changeEvents);
-    } catch (err: any) {
-      // Audit rows must never fail the sync.
-      logger.warn({ integrationId, err: err?.message }, "discovery.change_events.flush_failed");
-    }
-  }
+  // Body: discovery/dhcp/changeEvents.ts (CQ-B060).
+  await flushChangeEvents({ changeBaseline, assetIdx, actor, integrationId, integrationName });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 12 — Recompute dependency tree
