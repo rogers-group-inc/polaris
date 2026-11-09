@@ -357,7 +357,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** SoftwareSource, SOFTWARE_SOURCES, softwareScrapeKind, AssetSoftwareInput, softwareKey, storedSoftwareRow, persistAssetSoftware, clearAssetSoftware, sweepOrphanedSoftware, AssetSoftwareView, getAssetSoftware, AGENT_SOFTWARE_FRESH_MS, INTUNE_SOFTWARE_MAX_AGE_MS, IntuneSoftwareCandidate, planIntuneSoftwareFetch, intuneAppToInput, arcSoftwareToInput, syncIntuneSoftware, syncArcSoftware.
 
-**Cross-service deps:** `prisma.assetSoftware` / `assetInventoryScrape` / `assetSource`, `retryOnDeadlock` (utils/dbRetry), `entraIdService.fetchIntuneDetectedApps` (Graph beta `$batch` of `/deviceManagement/managedDevices/{id}/detectedApps`), `azureArcService.fetchArcSoftware` (Log Analytics KQL over `ConfigurationData`).
+**Cross-service deps:** `prisma.assetSoftware` / `assetInventoryScrape` / `assetSource`, `retryOnDeadlock` (utils/dbRetry), `mapWithConcurrency` (utils/concurrency — the Intune / Arc persists, 4 in flight, fail-fast), `entraIdService.fetchIntuneDetectedApps` (Graph beta `$batch` of `/deviceManagement/managedDevices/{id}/detectedApps`), `azureArcService.fetchArcSoftware` (Log Analytics KQL over `ConfigurationData`).
 
 **Used by:**
 - `src/api/routes/agents.ts` — the `softwareInventory` sample-stream arm (`SoftwareSampleSchema`, max 20 000 rows, no min) → `ingestSoftwareInventory` → `persistAssetSoftware(assetId, "agent", rows)`. `GET /agents/config` ships `streams.software {enabled: true, intervalSec: 21600}` — a constant, like `streams.services`, and deliberately not folded into `computeConfigEtag` because it never changes.
