@@ -21,12 +21,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const mocks = vi.hoisted(() => {
   return {
     createMany: {
-      assetMonitorSample:        vi.fn(async () => ({ count: 0 })),
-      assetTelemetrySample:      vi.fn(async () => ({ count: 0 })),
-      assetHardwareSensorSample: vi.fn(async () => ({ count: 0 })),
-      assetInterfaceSample:      vi.fn(async () => ({ count: 0 })),
-      assetStorageSample:     vi.fn(async () => ({ count: 0 })),
-      assetIpsecTunnelSample: vi.fn(async () => ({ count: 0 })),
+      assetMonitorSample:        vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
+      assetTelemetrySample:      vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
+      assetHardwareSensorSample: vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
+      assetInterfaceSample:      vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
+      assetStorageSample:     vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
+      assetIpsecTunnelSample: vi.fn(async (_args: { data: any[] }) => ({ count: 0 })),
     },
     setSampleBufferDepth: vi.fn(),
     startSampleWriteTimer: vi.fn(() => () => 0),
@@ -64,6 +64,7 @@ import {
   shutdownFlushSampleBuffers,
   __test__,
   type MonitorSampleRow,
+  type TelemetrySampleRow,
   type InterfaceSampleRow,
 } from "../../src/services/sampleWriteBuffer.js";
 
@@ -81,11 +82,12 @@ function probeRow(assetId: string, ok: boolean): MonitorSampleRow {
 
 function ifaceRow(assetId: string, ifName: string): InterfaceSampleRow {
   return {
-    assetId, timestamp: now, ifName,
+    assetId, timestamp: now, cadence: "slow", ifName,
     adminStatus: "up", operStatus: "up",
-    speedBps: 1000000000n, ipAddress: null, macAddress: null,
+    speedBps: 1000000000n, duplex: null, ipAddress: null, macAddress: null,
     inOctets: null, outOctets: null, inErrors: null, outErrors: null,
-    ifType: null, ifParent: null, vlanId: null, alias: null, description: null,
+    ifType: null, ifParent: null, vlanId: null, nativeVlan: null, taggedVlans: [], trunksAllVlans: false,
+    alias: null, description: null, addressingMode: null, poeStatus: null, poeClass: null,
   };
 }
 
@@ -107,7 +109,7 @@ describe("sampleWriteBuffer — enqueue + flush", () => {
     enqueueTelemetrySample({
       assetId: "a", timestamp: now,
       cpuPct: 12.5, memPct: 40, memUsedBytes: null, memTotalBytes: null,
-    });
+    } as TelemetrySampleRow);
     enqueueInterfaceSamples([ifaceRow("a", "port1"), ifaceRow("a", "port2")]);
 
     await flushAllSampleBuffers();
@@ -206,7 +208,7 @@ describe("sampleWriteBuffer — shutdown", () => {
     enqueueTelemetrySample({
       assetId: "a", timestamp: now,
       cpuPct: 50, memPct: null, memUsedBytes: null, memTotalBytes: null,
-    });
+    } as TelemetrySampleRow);
     await shutdownFlushSampleBuffers();
     expect(createManyMocks.assetMonitorSample).toHaveBeenCalledTimes(1);
     expect(createManyMocks.assetTelemetrySample).toHaveBeenCalledTimes(1);
@@ -229,11 +231,11 @@ describe("sampleWriteBuffer — multi-table fan-out", () => {
       { assetId: "a", timestamp: now, sensorName: "FAN 1", sensorClass: "fan", value: 8800, unit: "RPM", alarmStatus: "ok" },
     ]);
     enqueueStorageSamples([
-      { assetId: "a", timestamp: now, mountPath: "/", totalBytes: 100n, usedBytes: 30n },
+      { assetId: "a", timestamp: now, cadence: "slow", mountPath: "/", totalBytes: 100n, usedBytes: 30n },
     ]);
     enqueueIpsecTunnelSamples([
       {
-        assetId: "a", timestamp: now, tunnelName: "wan1-to-hq",
+        assetId: "a", timestamp: now, cadence: "slow", tunnelName: "wan1-to-hq",
         parentInterface: "wan1", remoteGateway: "1.2.3.4", status: "up",
         incomingBytes: null, outgoingBytes: null, proxyIdCount: 1,
       },

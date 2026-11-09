@@ -262,7 +262,7 @@ describe("http probe — Test Connection diagnostics (tailoring the check)", () 
   it("carries no diagnostics when the caller didn't ask — the monitor hot path builds none", async () => {
     // The out-param is the only thing that turns this on; probe() omits it.
     const r = await probe({ path: "/healthz" });
-    expect((r as Record<string, unknown>).httpDiagnostics).toBeUndefined();
+    expect((r as unknown as Record<string, unknown>).httpDiagnostics).toBeUndefined();
   });
 
   it("an empty body is reported as empty rather than as a missing response", async () => {

@@ -28,7 +28,7 @@ describe("queueService — discovery queue", () => {
   });
 
   it("accepts the scoped-device param (single-FortiGate re-discovery payload)", async () => {
-    await expect(publishDiscoveryJob("itg-1", "tester", "FGT-X")).resolves.toBe(false);
+    await expect(publishDiscoveryJob("itg-1", "tester", { kind: "fmg-device", deviceName: "FGT-X" })).resolves.toBe(false);
   });
 
   it("failActiveDiscoveryJobs is a no-op returning 0 when pg-boss is off", async () => {

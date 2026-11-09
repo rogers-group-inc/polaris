@@ -23,7 +23,6 @@ const ctxFor = (metric: string) =>
     asset: "WESTON-124F-1",
     metric,
     dimension: "wan1",
-    dimensionLabel: "Interface",
     severity: "critical",
     message: "wan1 is down",
     triggerSummary: "Interface oper status on wan1 is down",

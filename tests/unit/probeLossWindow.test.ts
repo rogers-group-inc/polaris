@@ -139,7 +139,7 @@ describe("probeLossSeriesFrom", () => {
 
   /** An outage: `onset` unstamped misses (the run before the verdict), then
    *  `declared` stamped ones, then clean probes to the end of the window. */
-  const outageThen = (onset: number, declared: number, clean: number) => [
+  const outageThen = (onset: number, declared: number, clean: number): Array<{ timestamp: Date; success: boolean; assetDown?: boolean }> => [
     ...Array.from({ length: onset }, (_, i) => ({ timestamp: min(i), success: false })),
     ...Array.from({ length: declared }, (_, i) => ({ timestamp: min(onset + i), success: false, assetDown: true })),
     ...Array.from({ length: clean }, (_, i) => ({ timestamp: min(onset + declared + i), success: true })),

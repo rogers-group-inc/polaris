@@ -64,7 +64,7 @@ vi.mock("../../src/services/quietTimeHoldService.js", () => ({
 import { executeActions } from "../../src/services/automationActionService.js";
 
 const CTX = { asset: "sw-core-1", value: "95", threshold: "90", severity: "warning", message: "hot", "trigger.summary": "CPU utilization is 95%" };
-const NOTIFY = { type: "notify", channelId: "ch-email", addresses: ["oncall@example.com"] } as const;
+const NOTIFY = { type: "notify" as const, channelId: "ch-email", addresses: ["oncall@example.com"] };
 const WINDOW_END = new Date(2026, 9, 3, 6, 0, 0, 0);
 const HOLD = { source: { kind: "global", id: "g1", name: "Nights" }, config: { windows: [] }, windowEnd: WINDOW_END };
 
@@ -246,7 +246,7 @@ describe("the all-clear of a held alert", () => {
 
 describe("recipient exceptions (business rule 120)", () => {
   const RESOLVED = { ...CTX, severity: "resolved" };
-  const TWO = { ...NOTIFY, addresses: ["oncall@example.com", "noc@example.com"] } as const;
+  const TWO = { ...NOTIFY, addresses: ["oncall@example.com", "noc@example.com"] };
   // noc@ is excepted: held for nothing. Everyone else follows the policy.
   const SPLIT = { ...HOLD, split: true, isHeldFor: (a: string | null) => a !== "noc@example.com" };
 

@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
   prisma: {
     notification: { updateMany: vi.fn() },
   },
-  logEvent: vi.fn(async () => {}),
+  logEvent: vi.fn(async (_event: unknown) => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));

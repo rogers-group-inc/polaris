@@ -68,7 +68,7 @@ function stubFetch(...responses: unknown[]) {
 
 /** The provider each fetch call went to, in order. */
 function providersCalled(mock: Mock): string[] {
-  return mock.mock.calls.map(([url]: [string]) =>
+  return mock.mock.calls.map(([url]) =>
     url.includes("census") ? "census" : "nominatim",
   );
 }
@@ -298,7 +298,7 @@ describe("cache", () => {
     for (const [args] of upsert.mock.calls) {
       expect(args.create).toMatchObject({ latitude: null, longitude: null });
     }
-    expect(upsert.mock.calls.map(([a]: [any]) => a.create.provider)).toEqual([
+    expect(upsert.mock.calls.map(([a]) => a.create.provider)).toEqual([
       "nominatim",
       "census",
     ]);

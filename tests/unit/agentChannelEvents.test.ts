@@ -24,8 +24,8 @@ const h = vi.hoisted(() => ({
     asset:        { findUnique: vi.fn() },
     managedAgent: { update: vi.fn(async () => ({})) },
   },
-  logEvent: vi.fn(async () => {}),
-  releaseMaintenanceHold: vi.fn(async () => true),
+  logEvent: vi.fn(async (_event: unknown) => {}),
+  releaseMaintenanceHold: vi.fn(async (_hold: unknown) => true),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));

@@ -68,8 +68,8 @@ describe("fgRequest — HTTP status → operator message", () => {
 
   it("403 points at the access profile and trusthost, NOT the token", async () => {
     mockStatus(403);
-    const err = await fgRequest(config as any, "GET", "/api/v2/monitor/system/status")
-      .catch((e) => e);
+    const err = (await fgRequest(config as any, "GET", "/api/v2/monitor/system/status")
+      .catch((e: unknown) => e)) as Error;
     expect(err).toBeInstanceOf(AppError);
     expect(err.message).toMatch(/permission denied \(HTTP 403\)/);
     expect(err.message).toMatch(/access profile/);

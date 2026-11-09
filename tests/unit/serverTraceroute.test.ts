@@ -103,7 +103,7 @@ describe("assembleTrace", () => {
     expect(r.hops.map((h) => h.ttl)).toEqual([1]);
   });
   it("gives up after the silent-hop limit and at a stop hop", () => {
-    const raw = Array.from({ length: 20 }, (_, i) => ({ ttl: i + 1, ip: i === 0 ? "10.0.0.1" : null, rttMs: [], stop: false }));
+    const raw = Array.from({ length: 20 }, (_, i) => ({ ttl: i + 1, ip: i === 0 ? "10.0.0.1" : null, rttMs: [] as number[], stop: false }));
     raw.push({ ttl: 21, ip: "8.8.8.8", rttMs: [1], stop: false });
     const r = assembleTrace(raw, "8.8.8.8", O);
     expect(r.complete).toBe(false);

@@ -37,7 +37,10 @@ const savedRole = process.env.POLARIS_ROLE;
 
 /** Fire the registered handler for `event` and return process.exit's argument. */
 function fireAndCaptureExit(event: "unhandledRejection" | "uncaughtException", payload: unknown): number | undefined {
-  const listeners = process.listeners(event) as Array<(arg: unknown) => void>;
+  // One literal per call: process.listeners() has no overload taking the union.
+  const listeners = (event === "unhandledRejection"
+    ? process.listeners("unhandledRejection")
+    : process.listeners("uncaughtException")) as Array<(arg: unknown) => void>;
   expect(listeners.length).toBeGreaterThan(0);
   let exitCode: number | undefined;
   const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {

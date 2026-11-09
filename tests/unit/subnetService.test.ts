@@ -25,7 +25,7 @@ const prisma = {
   // before the rule existed; the exclusion behaviour itself is covered against a
   // real database in tests/integration/subnetExclusions.test.ts.
   subnetExclusion: { findMany: vi.fn(async () => []), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
-  $executeRaw: vi.fn(async () => 1),
+  $executeRaw: vi.fn(async (..._args: unknown[]) => 1),
   $transaction: vi.fn(async (arg: any) =>
     typeof arg === "function" ? arg(prisma) : Promise.all(arg),
   ),

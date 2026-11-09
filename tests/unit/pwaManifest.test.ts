@@ -78,7 +78,7 @@ describe("buildManifest", () => {
 
   it("serializes to valid JSON even with hostile branding text", () => {
     // appName is operator-typed and lands in a JSON document the browser parses.
-    const nasty = `Acme "</script><script>alert(1)</script>" \\   Ltd`;
+    const nasty = `Acme "</script><script>alert(1)</script>" \\ \u2028 Ltd`;
     const built = buildManifest({ appName: nasty, subtitle: "x" }, "v1");
     const round = JSON.parse(JSON.stringify(built));
     expect(round.name).toBe(nasty);

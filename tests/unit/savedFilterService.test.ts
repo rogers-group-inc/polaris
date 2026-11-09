@@ -102,7 +102,7 @@ describe("sanitizeFilterState", () => {
   });
 
   it("drops unknown top-level members instead of persisting them", () => {
-    const state = sanitizeFilterState({ sfFilters: { hostname: "a" }, evil: "payload" }) as Record<string, unknown>;
+    const state = sanitizeFilterState({ sfFilters: { hostname: "a" }, evil: "payload" }) as unknown as Record<string, unknown>;
     expect(Object.keys(state).sort()).toEqual(["sfFilters", "sortDir", "sortKey"]);
   });
 });

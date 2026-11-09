@@ -203,7 +203,7 @@ describe("runDirectorySync — the steady state is free", () => {
     // then bytewise), never the order they were written in. A JSON.stringify
     // comparison called that a change and rewrote every row on every run.
     const p = person();
-    const reordered = Object.fromEntries(Object.entries(p as Record<string, unknown>).reverse());
+    const reordered = Object.fromEntries(Object.entries(p).reverse());
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(p));
     readers.entra.mockResolvedValue([p]);
     stubLocal({

@@ -128,7 +128,7 @@ describe("guardedLookup — a name is judged by what it resolves to", () => {
     });
 
   const answer = (addrs: Array<{ address: string; family: number }>) =>
-    lookupMock.mockImplementation((_h: string, _o: object, cb: Function) => cb(null, addrs));
+    lookupMock.mockImplementation((_h: string, _o: object, cb: (...args: unknown[]) => void) => cb(null, addrs));
 
   it("refuses a name that resolves to loopback", async () => {
     answer([{ address: "127.0.0.1", family: 4 }]);
@@ -168,7 +168,7 @@ describe("guardedLookup — a name is judged by what it resolves to", () => {
   });
 
   it("passes a resolver error through", async () => {
-    lookupMock.mockImplementation((_h: string, _o: object, cb: Function) => cb(new Error("ENOTFOUND")));
+    lookupMock.mockImplementation((_h: string, _o: object, cb: (...args: unknown[]) => void) => cb(new Error("ENOTFOUND")));
     expect((await run("nope.example.com")).err?.message).toBe("ENOTFOUND");
   });
 });

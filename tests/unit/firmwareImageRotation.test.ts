@@ -13,14 +13,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const dirs = vi.hoisted(() => {
-  const os = require("node:os") as typeof import("node:os");
-  const fs = require("node:fs") as typeof import("node:fs");
-  const path = require("node:path") as typeof import("node:path");
+const dirs = await vi.hoisted(async () => {
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "polaris-fw-"));
   fs.mkdirSync(path.join(root, ".incoming"), { recursive: true });
   return { root, incoming: path.join(root, ".incoming") };
@@ -46,7 +45,7 @@ const h = vi.hoisted(() => {
   return {
     state,
     model,
-    logEvent: vi.fn(async () => {}),
+    logEvent: vi.fn(async (_event: unknown) => {}),
     prisma: {
       firmwareImage: model,
       firmwareUpgradeRun: { count: vi.fn(async ({ where }: { where: { imageId: { in: string[] } } }) => where.imageId.in.filter((id) => state.activeRunImageIds.has(id)).length) },

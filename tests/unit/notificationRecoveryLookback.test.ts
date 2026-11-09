@@ -21,10 +21,11 @@ import {
 import type { Trigger, ResetConfig } from "../../src/services/notificationTypes.js";
 
 const MIN = 60_000;
+type MetricTrigger = Extract<Trigger, { type: "asset_metric" }>;
 const lossTrigger = {
   type: "asset_metric", metric: "sdwanPacketLoss", operator: ">=", threshold: 20,
   windowSec: 900, aggregation: "avg", forDurationSec: 0,
-} as unknown as Trigger;
+} as unknown as MetricTrigger;
 
 describe("withRecoveryLookback", () => {
   it("returns the trigger untouched when the reset counts nothing", () => {
@@ -55,7 +56,7 @@ describe("withRecoveryLookback", () => {
   });
 
   it("never narrows a fetch that was already wider", () => {
-    const wide = { ...lossTrigger, windowSec: 3600 } as unknown as Trigger;
+    const wide = { ...lossTrigger, windowSec: 3600 } as unknown as MetricTrigger;
     const reset = { mode: "auto", sustainSec: 120, sustainPolls: 2 } as ResetConfig;
     expect(lookbackMsFor(withRecoveryLookback(wide, reset))).toBe(60 * MIN);
   });

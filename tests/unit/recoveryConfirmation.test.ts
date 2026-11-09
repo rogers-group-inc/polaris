@@ -24,8 +24,12 @@ import {
   type Trigger,
   type ResetConfig,
 } from "../../src/services/notificationTypes.js";
-import { recoveryPollsFor } from "../../src/services/downDetectionService.js";
+import { recoveryPollsFor, type DownDetectionVerdict } from "../../src/services/downDetectionService.js";
 import { recoveredMeets } from "../../src/services/notificationEngine.js";
+
+/** A verdict whose reset states seconds, not a poll count. */
+const secVerdict = (threshold: number, recoverySustainSec: number | null): DownDetectionVerdict =>
+  ({ threshold, recoverySustainSec, recoverySustainPolls: null, severity: "warning" });
 
 const downTrigger = {
   type: "asset_state",
@@ -83,44 +87,44 @@ describe("downRecoveryConsumesSustain — whose sustain the machine served", () 
 describe("recoveryPollsFor — the stored seconds, at this asset's cadence", () => {
   it("converts back to the polls the wizard collected", () => {
     // The wizard multiplied 5 polls by a 60s cadence to store 300.
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 300 }, 60)).toBe(5);
+    expect(recoveryPollsFor(secVerdict(3, 300), 60)).toBe(5);
   });
 
   it("re-reads the count at the cadence the asset is ACTUALLY polled at", () => {
     // The stored seconds are frozen at authoring time; the count is not. A rule
     // written against a 60s fleet still means five polls on a device polled
     // every five minutes — it does not silently become one.
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 300 }, 300)).toBe(3);
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 1500 }, 300)).toBe(5);
+    expect(recoveryPollsFor(secVerdict(3, 300), 300)).toBe(3);
+    expect(recoveryPollsFor(secVerdict(3, 1500), 300)).toBe(5);
   });
 
   it("floors at the missed-poll count — the bucket still has to drain", () => {
     // Asking for fewer answers than it took misses cannot make recovery faster:
     // the leaky bucket owes one answer per miss regardless (business rule 30).
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 60 }, 60)).toBe(3);
-    expect(recoveryPollsFor({ threshold: 5, recoverySustainSec: 120 }, 60)).toBe(5);
+    expect(recoveryPollsFor(secVerdict(3, 60), 60)).toBe(3);
+    expect(recoveryPollsFor(secVerdict(5, 120), 60)).toBe(5);
   });
 
   it("is the plain threshold when the automation asks for no hold", () => {
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: null }, 60)).toBe(3);
+    expect(recoveryPollsFor(secVerdict(3, null), 60)).toBe(3);
   });
 
   it("rounds rather than ceils, so a ragged cadence returns the operator's number", () => {
     // 5 polls × 45s = 225. At 45s that must read back as 5, and ceil() on a
     // cadence that does not divide evenly would quietly make it 6.
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 225 }, 45)).toBe(5);
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 220 }, 45)).toBe(5);
+    expect(recoveryPollsFor(secVerdict(3, 225), 45)).toBe(5);
+    expect(recoveryPollsFor(secVerdict(3, 220), 45)).toBe(5);
   });
 
   it("caps at 100, the same ceiling missedPolls carries", () => {
     // A 24h sustain against a 30s cadence would otherwise park an asset in
     // Recovering for 2880 probes.
-    expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 86400 }, 30)).toBe(100);
+    expect(recoveryPollsFor(secVerdict(3, 86400), 30)).toBe(100);
   });
 
   it("falls back to the threshold on a nonsense cadence rather than dividing by zero", () => {
     for (const bad of [0, -60, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(recoveryPollsFor({ threshold: 3, recoverySustainSec: 300 }, bad)).toBe(3);
+      expect(recoveryPollsFor(secVerdict(3, 300), bad)).toBe(3);
     }
   });
 });

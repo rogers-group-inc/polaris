@@ -155,7 +155,7 @@ describe("splitInterfaceAddresses with IPv6 off", () => {
 });
 
 describe("loss sweep over IPv6", () => {
-  const v6Only = { monitored: true, status: "active", ipAddress: null, ipv6Address: "2001:db8::1" };
+  const v6Only = { id: "a1", monitored: true, status: "active", ipAddress: null, ipv6Address: "2001:db8::1" };
   const eff = { responseTimePolling: "icmp" } as never;
   it("targets the primary IPv6 only while on", () => {
     expect(lossSweepTarget(v6Only, true)).toBe("2001:db8::1");

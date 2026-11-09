@@ -44,7 +44,7 @@ function ov(extra: Partial<MetricOverrideRow> = {}): MetricOverrideRow {
   return {
     id: `o-${nextId++}`, assetType: null, modelPattern: null, symbol: "", symbolB: null,
     mibId: null, mibStdKey: null, type: "scalar", transform: null,
-    aggregate: "none", label: null, parsePattern: null, parseTemplate: null, order: 0, ...extra,
+    aggregate: "none", label: null, parsePattern: null, parseTemplate: null, sensorColumns: null, order: 0, ...extra,
   };
 }
 function row(metricKey: MetricRow["metricKey"], extra: Partial<MetricRow> = {}): MetricRow {
@@ -52,13 +52,13 @@ function row(metricKey: MetricRow["metricKey"], extra: Partial<MetricRow> = {}):
     id: `m-${metricKey}-${nextId++}`, metricKey, defaultSymbol: null, defaultSymbolB: null,
     defaultMibId: null, defaultMibStdKey: null, defaultType: "scalar", defaultTransform: null,
     defaultAggregate: "none", defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null,
-    overrides: [], ...extra,
+    defaultSensorColumns: null, overrides: [], ...extra,
   };
 }
 function profile(manufacturer: string, matchPattern: string | null, metrics: MetricRow[]): ProfileFull {
   return {
     id: `p-${manufacturer}`, manufacturer, matchPattern,
-    createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [], metrics,
+    createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [], widgetLayout: null, metrics,
   };
 }
 
