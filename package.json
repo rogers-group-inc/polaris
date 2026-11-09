@@ -92,7 +92,7 @@
     "@types/supertest": "^7.2.1",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.2",
-    "@vitest/coverage-v8": "^5.0.5",
+    "@vitest/coverage-v8": "^5.1.0",
     "cytoscape": "^3.34.4",
     "cytoscape-dagre": "^4.0.1",
     "dagre": "^0.8.5",
