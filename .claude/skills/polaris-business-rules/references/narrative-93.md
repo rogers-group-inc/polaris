@@ -190,7 +190,7 @@ reason." The last part was already true (refused and missed are emailed, above).
   original point — and unticking puts back the operator's own choice. There is ONE recipients
   field (`#fw-sched-emails`); on a flash now it sits under the notify box, while changing a
   booking keeps it in the schedule fields. The field takes address-book suggestions:
-  `public/js/email-suggest.js` (`PolarisEmailSuggest.attach`) queries `GET /contacts/search`
+  `email-suggest.js` (removed the same day — see below) (`PolarisEmailSuggest.attach`) queries `GET /contacts/search`
   (Polaris users ∪ contacts, NOT the live directory) for the entry being typed and replaces just
   that entry; without `contacts:read` it is a plain text box. The start route takes optional
   `notifyEmails` (normalized with `allowEmpty`).
@@ -198,7 +198,7 @@ reason." The last part was already true (refused and missed are emailed, above).
 Not changed: a GROUP upgrade (rule 122) still sends its one summary email. Pinned by
 `tests/unit/firmwareEmailService.test.ts`, the booking-notice cases in
 `tests/unit/firmwareSchedule.test.ts`, the notify cases in `tests/unit/assetFirmwarePanelDom.test.ts`
-and `tests/unit/mobileFirmwareUpgrade.test.ts`, and `tests/unit/emailSuggest.test.ts`.
+and `tests/unit/mobileFirmwareUpgrade.test.ts`, and `emailSuggest.test.ts` (removed with it).
 
 ### 2026-11-09 (later) — the dialog remembers the last list
 
@@ -213,3 +213,48 @@ An empty send (the box left unticked) does not clear the memory, and the **Email
 notifications** box is still unticked by default for an action now — the list is remembered,
 the decision to email is not. Stored on the user rather than in the browser so the phone and
 the desktop pre-fill the same list.
+
+
+### 2026-11-09 (latest) — the automations' picker, and the email channels chosen
+
+The operator, looking at the plain **Email to** box: "there's no address book button, but the
+typing filter does work. i want the email to to look like how automations do it. also, need to
+choose the channels for this notifications. i don't want to use push notifications for this."
+Asked how far to go, they chose the full automations picker (To / Cc / Bcc, every recipient
+kind) and email channels only. This replaces the earlier same-day pieces above: the plain field
+and `email-suggest.js` (removed), and the plain-list memory
+(`User.lastFirmwareNotifyEmails` / `lastRebootNotifyEmails`, `defaultRecipientsFor` /
+`rememberRecipientsFor` — removed; migration `20261109160000_operation_notify_spec` carries a
+remembered list over as typed addresses).
+
+- **One picker.** The automations wizard's To / Cc / Bcc boxes were lifted out of the wizard's
+  closure into `public/js/recipient-picker.js` (`PolarisRecipientPicker.create(ctx)`); the
+  wizard binds one to its catalogues through getters and keeps its old names as forwards.
+  `notifyEditor` adds the **Send through** channel list and reads the boxes back as the
+  server's `notifySpecSchema`. The phone loads the same file (no Address book button there —
+  the address-book picker is desktop-only) with its own styles in `mobile.css`.
+- **The spec, stored and resolved late.** `services/operationNotifyService.ts`:
+  `prepareNotify` checks the channels and that the To reaches someone NOW (400 otherwise), and
+  the booking / run stores `notifyRecipients` (the spec) and `notifyChannelIds` beside
+  `notifyEmails` (the To it reached, which the booking CHECK counts). `targetFor` resolves the
+  spec again at every send — a role or region reaches whoever holds it then — and falls back
+  to `notifyEmails` when it reaches nobody by then. The dynamic kinds resolve against the
+  device's own region tags and responsible contacts, through
+  `notificationRecipientService.resolveRebootActionRecipients` (the reboot action's resolver).
+- **Channels.** Only enabled SMTP and Microsoft 365 channels are offered or accepted; push,
+  Pushbullet, Teams and Slack are refused (400). Each chosen channel sends; none chosen = the
+  oldest enabled email channel, as before. Chosen channels that are all disabled by send time
+  send NOTHING and say so — an explicit choice is not silently overridden.
+- **Message shape.** With a Cc or Bcc, one message to the whole To line in the install's zone
+  (the automations' contract, rule 25); otherwise one per To address in its reader's zone.
+  `deliverOperationEmail` is the one sender for firmware and reboot emails alike.
+- **The catalogue at `assets:write`.** The dialog's `…/schedules/defaults` now carries the
+  region / role / tag catalogue, the users (no push counts) and the email channels
+  (`notifyDialogDefaults` → `notificationRuleService.listRecipientCatalog`, which
+  `listScopeOptions` now also uses). Names only — the same lists the wizard reads behind
+  `automationManagement:read`; the users are what `/contacts/search` already offers.
+- **Memory.** `User.lastFirmwareNotify` / `lastRebootNotify` hold the spec AND the channels;
+  only a start or booking made with a spec writes it. The group upgrade dialog has no picker,
+  reads the spec's device-free addresses, and no longer writes the memory.
+
+Pinned by `tests/unit/operationNotifyService.test.ts`, the picker cases in `tests/unit/assetFirmwarePanelDom.test.ts`, `tests/unit/mobileFirmwareUpgrade.test.ts`, and the spec case in `tests/integration/firmwareSchedule.test.ts`.

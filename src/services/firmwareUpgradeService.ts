@@ -446,6 +446,13 @@ export interface StartUpgradeInput {
    * outcome when it ends; a booked run's outcome is the booking's email.
    */
   notifyEmails?: string[];
+  /**
+   * The picker's spec behind `notifyEmails` and the email channels it goes out
+   * on (operationNotifyService, 2026-11-09) — resolved again at each send.
+   * Absent = `notifyEmails` alone, on the default channel.
+   */
+  notifyRecipients?: object | null;
+  notifyChannelIds?: string[];
   /** Tests: a fake device and short clocks. */
   overrides?: { scheme?: "https" | "http"; port?: number; timeouts?: Partial<FirmwareEngineTimeouts> };
 }
@@ -608,6 +615,8 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
         startedBy: input.actor,
         heartbeatAt: new Date(),
         notifyEmails: input.notifyEmails ?? [],
+        ...(input.notifyRecipients ? { notifyRecipients: input.notifyRecipients } : {}),
+        notifyChannelIds: input.notifyChannelIds ?? [],
       },
     });
   } catch (err: any) {

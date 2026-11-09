@@ -65,11 +65,10 @@ import {
   createSchedule,
   updateSchedule,
   cancelSchedule,
-  defaultRecipientsFor,
-  rememberRecipientsFor,
   normalizeRecipients,
   MAX_RECIPIENTS,
 } from "../../services/firmwareScheduleService.js";
+import { notifySpecSchema, prepareNotify, rememberNotifyFor, defaultNotifyFor, notifyDialogDefaults } from "../../services/operationNotifyService.js";
 import {
   MAX_GROUP_SIZE,
   MAX_CONCURRENCY,
@@ -137,6 +136,8 @@ const RunsQuerySchema = z.object({
 const StartUpgradeSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
   notifyEmails: z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS).optional(),
+  // The dialog's To / Cc / Bcc picker + email channels (2026-11-09); wins over notifyEmails.
+  notify: notifySpecSchema.optional(),
 });
 
 const AbortRunSchema = z.object({
@@ -151,14 +152,17 @@ const RecipientsSchema = z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS)
 const CreateScheduleSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
   scheduledFor: ScheduledForSchema,
-  notifyEmails: RecipientsSchema,
+  // Plain addresses (the original shape) or the dialog's picker spec — one is needed.
+  notifyEmails: RecipientsSchema.optional(),
+  notify: notifySpecSchema.optional(),
 });
 
 const UpdateScheduleSchema = z.object({
   imageId: z.string().uuid().optional(),
   scheduledFor: ScheduledForSchema.optional(),
   notifyEmails: RecipientsSchema.optional(),
-}).refine((v) => v.imageId || v.scheduledFor || v.notifyEmails, { message: "Nothing to change" });
+  notify: notifySpecSchema.optional(),
+}).refine((v) => v.imageId || v.scheduledFor || v.notifyEmails || v.notify, { message: "Nothing to change" });
 
 const ScheduleListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -355,10 +359,14 @@ firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (
 firmwareAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "upgrade the firmware of devices"), handle(async (req, res) => {
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
-  const notifyEmails = normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true });
-  const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown", notifyEmails });
-  // The caller's next upgrade dialog pre-fills this list (an empty one changes nothing).
-  await rememberRecipientsFor(req.session?.userId, "firmware", notifyEmails);
+  const assetId = String(req.params.id);
+  // Validated (channels, a To that reaches someone) BEFORE anything is flashed.
+  const who = body.data.notify
+    ? await prepareNotify(assetId, body.data.notify)
+    : { notifyEmails: normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true }) };
+  const run = await startFirmwareUpgrade({ assetId, imageId: body.data.imageId, actor: requestActor(req) ?? "unknown", ...who });
+  // The caller's next upgrade dialog pre-fills this.
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "firmware", body.data.notify);
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));
@@ -406,9 +414,11 @@ firmwareAssetRouter.get("/schedules", requirePermission("assets", "read"), handl
   res.json({ schedules: await listSchedulesForAsset(String(req.params.id), q.data.limit ?? 20) });
 }));
 
-// The list the upgrade dialog pre-fills: the caller's last firmware list, else their own email.
+// What the upgrade dialog opens with: the caller's last recipients + channels
+// (else themselves), and the picker's catalogue (regions, roles, tags, users,
+// email channels) — at assets:write, the grant the dialog itself needs.
 firmwareAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
-  res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
+  res.json({ ...(await notifyDialogDefaults(req.session?.userId ?? null, "firmware")), maxRecipients: MAX_RECIPIENTS });
 }));
 
 firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), scopeAssetParam("assets", "schedule firmware upgrades on devices"), handle(async (req, res) => {
@@ -419,10 +429,11 @@ firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), sco
     imageId: body.data.imageId,
     scheduledFor: new Date(body.data.scheduledFor),
     notifyEmails: body.data.notifyEmails,
+    notify: body.data.notify,
     actor: requestActor(req) ?? "unknown",
   });
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
-  await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "firmware", body.data.notify);
   res.status(201).json({ schedule });
 }));
 
@@ -434,10 +445,11 @@ firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", 
     scheduleId: String(req.params.scheduleId),
     scheduledFor: body.data.scheduledFor ? new Date(body.data.scheduledFor) : undefined,
     notifyEmails: body.data.notifyEmails,
+    notify: body.data.notify,
     imageId: body.data.imageId,
     actor: requestActor(req) ?? "unknown",
   });
-  if (body.data.notifyEmails) await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "firmware", body.data.notify);
   res.json({ schedule });
 }));
 
@@ -467,7 +479,8 @@ firmwareGroupRouter.post("/preview", requirePermission("assets", "write"), scope
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   res.json({
     plan: await planGroup(body.data.assetIds),
-    defaults: { notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS, maxConcurrency: MAX_CONCURRENCY },
+    // The group dialog has no picker: the device-free addresses of the caller's last firmware recipients.
+    defaults: { notifyEmails: (await defaultNotifyFor(req.session?.userId ?? null, "firmware")).notifyEmails, maxRecipients: MAX_RECIPIENTS, maxConcurrency: MAX_CONCURRENCY },
   });
 }));
 
@@ -489,7 +502,6 @@ firmwareGroupRouter.post("/", requirePermission("assets", "write"), scopeAssetId
     actor: requestActor(req) ?? "unknown",
   });
   await recordGroupCredentialUse(plan.included.map((m) => m.assetId), credentialUseActor(req));
-  await rememberRecipientsFor(req.session?.userId, "firmware", group.notifyEmails);
   res.status(201).json({ group });
 }));
 

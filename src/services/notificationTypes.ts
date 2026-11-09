@@ -2010,7 +2010,7 @@ export const deliveryTargetSchema = z.object({
 // one-email-per-To-address fan-out. NULL = pre-feature default behavior.
 // Email-only: chat/pushbullet/web_push channels ignore it.
 
-const emailRecipientsSchema = z
+export const emailRecipientsSchema = z
   .object({
     recipientUserIds: z.array(z.string().max(100)).max(500).optional(), // Polaris users → their emails
     addresses: z.array(z.string().email().max(320)).max(100).optional(), // custom email addresses

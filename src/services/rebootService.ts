@@ -507,6 +507,9 @@ export interface StartRebootInput {
    * A booked run's recipients are its booking's, read from the booking.
    */
   notifyEmails?: string[];
+  /** The picker's spec behind notifyEmails + the email channels (operationNotifyService), resolved at each send. */
+  notifyRecipients?: object | null;
+  notifyChannelIds?: string[];
   /** Tests: short clocks. */
   overrides?: { timeouts?: Partial<RebootTimeouts> };
 }
@@ -541,6 +544,8 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
         authority: plan.authority, status: "queued", note, startedBy: input.actor, heartbeatAt: new Date(),
         bootTimeBefore: plan.kind === "agent" ? a.managedAgent?.bootTime ?? null : null,
         notifyEmails: input.scheduleId ? [] : input.notifyEmails ?? [],
+        ...(!input.scheduleId && input.notifyRecipients ? { notifyRecipients: input.notifyRecipients } : {}),
+        notifyChannelIds: input.scheduleId ? [] : input.notifyChannelIds ?? [],
       },
     });
   } catch (err: any) {

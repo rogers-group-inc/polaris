@@ -1094,11 +1094,15 @@ otherwise.
 
 **Email notifications.** Tick **Email notifications** to have Polaris email when
 the reboot is **sent** and when it **ends** (succeeded, unverified or failed).
-**Email to** starts with the list you used for your last reboot (or, the first
-time, your own address) — it is kept apart from the firmware upgrade list; add
-more separated by commas, or start
-typing a name to pick a Polaris user or an [Address Book](Address-Book) contact.
-Leave the box clear and no email is sent.
+Who gets it is set exactly as in an automation's Notify action — **To**, **Cc** and
+**Bcc**, each taking people, addresses, roles, map regions, tags and the device's
+own recipients (*Asset's Region Users*, *Asset's L1 Region Users*, *Asset's
+Responsible Contacts*), by typing or with **Address book** — see
+[Automation Actions](Automation-Actions). **Send through** picks which email
+channels send it (SMTP or Microsoft 365; push and chat channels are not offered).
+Roles, regions and the device's own recipients are worked out when each email is
+sent. The dialog starts with what you used for your last reboot (or, the first
+time, yourself) — kept apart from the firmware upgrade's.
 
 **Reason.** The dialog has a **Reason** field — say why the device is being
 rebooted (one line, up to 500 characters). It is recorded on the asset's
@@ -1198,11 +1202,17 @@ platform and click **Approve and upgrade**.
 
 **Email notifications.** Under the warning, tick **Email notifications** to have
 Polaris email when the upgrade **starts** and when it **finishes** (succeeded,
-unverified or failed, with the end of the run log). The **Email to** box is
-filled in with the addresses you used for your last firmware upgrade (or, the
-first time, your own profile email); add more addresses separated by commas,
-and start typing a name to pick a Polaris user or an
-[Address Book](Address-Book) contact. Leave the box clear and no email is sent.
+unverified or failed, with the end of the run log). Who gets it is set exactly
+as in an automation's Notify action: **To**, **Cc** and **Bcc** boxes that take
+people, addresses, roles, map regions, tags and the device's own recipients
+(*Asset's Region Users*, *Asset's L1 Region Users*, *Asset's Responsible
+Contacts*) — type a name, or use **Address book** ([Address Book](Address-Book)).
+**Send through** picks the email channels that send it (SMTP or Microsoft 365
+only; the oldest is ticked unless you choose). Roles, regions and the device's
+own recipients are worked out when each email is sent, so a later change of who
+holds a role is respected. The dialog starts with what you used for your last
+firmware upgrade (or, the first time, yourself). Leave the box clear and no
+email is sent.
 
 **On a FortiGate** the dialog warns that every network, tunnel and device
 behind the gate goes down with it for several minutes, and that Polaris does
@@ -1291,10 +1301,8 @@ adds:
 - **Run at** — a date and time in your browser's time zone (the dialog names
   it). It must be at least a minute ahead and within a year.
 - **Email notifications** — ticked and locked: a scheduled upgrade always
-  emails someone. **Email to** is filled in with the list you used last time
-  (or your own profile email); add
-  more addresses separated by commas, or start typing a name to pick from the
-  address book. At least one is required.
+  emails someone. The **To** / **Cc** / **Bcc** boxes and **Send through** work
+  as above; **To** must reach at least one address when you book.
 - If the device is blocked right now, the dialog says why, and that it will be
   checked again when the upgrade is due.
 

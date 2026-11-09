@@ -3914,13 +3914,14 @@ model User {
   // Validation is normalizeHiddenMapRegionIds() in userMapViewService.
   hiddenMapRegionIds String[] @default([]) @map("hidden_map_region_ids")
 
-  // The email list this user last sent a firmware upgrade's / a reboot's
-  // notifications to (rules 93 / 115(e), 2026-11-09) — what the next upgrade or
-  // reboot dialog pre-fills, before falling back to their own address. Written
-  // by firmwareScheduleService.rememberRecipientsFor whenever they start or book
-  // one with recipients; never read for anyone else.
-  lastFirmwareNotifyEmails String[] @default([]) @map("last_firmware_notify_emails")
-  lastRebootNotifyEmails   String[] @default([]) @map("last_reboot_notify_emails")
+  // What this user last sent a firmware upgrade's / a reboot's notifications
+  // to — the To / Cc / Bcc picker's spec and the email channels (rules 93 /
+  // 115(e), 2026-11-09) — which the next upgrade or reboot dialog pre-fills
+  // before falling back to themselves. Written by
+  // operationNotifyService.rememberNotifyFor whenever they start or book one
+  // with notifications; never read for anyone else.
+  lastFirmwareNotify Json? @map("last_firmware_notify")
+  lastRebootNotify   Json? @map("last_reboot_notify")
 
   // Flipped true the first time the user actually logs in (lastLogin transitions
   // null → set). Drives the sidebar "new user — review role" notification for
@@ -6621,6 +6622,12 @@ model FirmwareUpgradeRun {
   notifyEmails    String[]       @default([])
   notifiedAt      DateTime?      // a click-to-run run's results email, claimed before sending
   notifyError     String?        @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
   schedule        FirmwareUpgradeSchedule?
   groupMember     FirmwareGroupMember?
 
@@ -6659,6 +6666,12 @@ model FirmwareUpgradeSchedule {
   firedAt      DateTime?             // when the scheduler acted on it (started, refused or missed)
   notifiedAt   DateTime?             // when the results email went out
   notifyError  String?               @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
@@ -6782,6 +6795,12 @@ model RebootRun {
   notifyEmails   String[]        @default([])
   notifiedAt     DateTime?       // its results email, claimed before sending
   notifyError    String?         @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
   schedule       RebootSchedule?
 
   @@index([assetId, startedAt])
@@ -6820,6 +6839,12 @@ model RebootSchedule {
   firedAt      DateTime?
   notifiedAt   DateTime?
   notifyError  String?    @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])

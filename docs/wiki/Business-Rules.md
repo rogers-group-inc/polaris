@@ -1722,7 +1722,10 @@ address. Each address is emailed when the upgrade is booked (and if its time
 or image changes), when it starts, and once with the result — finished, failed,
 not started, missed — in that reader's own time zone when they have a Polaris
 account. An upgrade started now can email the same way, when **Email
-notifications** is ticked: once when it starts and once when it finishes.
+notifications** is ticked: once when it starts and once when it finishes. Who
+is emailed is chosen as in an automation (To / Cc / Bcc, with roles, regions
+and the device's own recipients, worked out when each email is sent), on the
+email channels you pick — never push or chat.
 
 See [Assets → Firmware](Assets#firmware).
 

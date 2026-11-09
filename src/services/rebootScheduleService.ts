@@ -40,9 +40,7 @@ import { logEvent } from "./eventLogService.js";
 import { checkSchedulableReboot, startReboot, RebootRunConflictError, recordRebootCredentialUse } from "./rebootService.js";
 import { resolveRebootNote } from "./rebootSettingsService.js";
 import { normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS, MIN_LEAD_MS, MAX_RECIPIENTS, AUTOMATION_MAX_RECIPIENTS } from "./firmwareScheduleService.js";
-import { applyBrandLetterhead, sendEmailThroughChannel } from "./notificationDeliveryService.js";
-import { resolveSummaryChannel } from "./quietTimeSummaryService.js";
-import { resolveTimeZone, serverTimeZone } from "./userTimezoneService.js";
+import { deliverOperationEmail, prepareNotify, targetFor, type NotifySpec, type NotifyTarget } from "./operationNotifyService.js";
 import { renderRebootResultEmail, type RebootResultEmailInput, type RebootResultOutcome } from "../utils/rebootResultEmailTemplate.js";
 
 const DUE_BATCH = 50;
@@ -70,13 +68,18 @@ export interface RebootScheduleSummary {
   firedAt: Date | null;
   notifiedAt: Date | null;
   notifyError: string | null;
+  /** The picker's To / Cc / Bcc spec, when booked with one (resolved at each send). */
+  notifyRecipients: unknown;
+  /** The email channels it goes out on; empty = the oldest enabled one. */
+  notifyChannelIds: string[];
 }
 
 type Row = RebootScheduleSummary;
 
 function summarize(r: Row): RebootScheduleSummary {
   return {
-    id: r.id, assetId: r.assetId, scheduledFor: r.scheduledFor, notifyEmails: r.notifyEmails, notifyCc: r.notifyCc, notifyBcc: r.notifyBcc, note: r.note, status: r.status, runId: r.runId,
+    id: r.id, assetId: r.assetId, scheduledFor: r.scheduledFor, notifyEmails: r.notifyEmails, notifyCc: r.notifyCc, notifyBcc: r.notifyBcc,
+    notifyRecipients: r.notifyRecipients ?? null, notifyChannelIds: r.notifyChannelIds ?? [], note: r.note, status: r.status, runId: r.runId,
     error: r.error, createdBy: r.createdBy, createdAt: r.createdAt, updatedBy: r.updatedBy, updatedAt: r.updatedAt,
     cancelledBy: r.cancelledBy, cancelledAt: r.cancelledAt, firedAt: r.firedAt, notifiedAt: r.notifiedAt, notifyError: r.notifyError,
   };
@@ -104,7 +107,9 @@ async function getOwn(assetId: string, scheduleId: string): Promise<Row> {
 }
 
 export async function createRebootSchedule(input: {
-  assetId: string; scheduledFor: Date; notifyEmails: string[]; actor: string; now?: Date; context?: Record<string, unknown>;
+  assetId: string; scheduledFor: Date; notifyEmails?: string[]; actor: string; now?: Date; context?: Record<string, unknown>;
+  /** The dialog's picker spec + email channels (operationNotifyService); replaces notifyEmails / Cc / Bcc. */
+  notify?: NotifySpec;
   /** Why (rule 115(d)); refused blank while the install requires a note. */
   note?: string | null;
   /** Cc / Bcc of the results email; an automation's booking only. */
@@ -114,9 +119,11 @@ export async function createRebootSchedule(input: {
 }): Promise<RebootScheduleSummary & { warnings: string[] }> {
   assertSchedulableTime(input.scheduledFor, input.now);
   const max = input.maxRecipients ?? MAX_RECIPIENTS;
-  const recipients = normalizeRecipients(input.notifyEmails, { max });
-  const cc = normalizeRecipients(input.notifyCc ?? [], { max, allowEmpty: true });
-  const bcc = normalizeRecipients(input.notifyBcc ?? [], { max, allowEmpty: true });
+  const prepared = input.notify ? await prepareNotify(input.assetId, input.notify) : null;
+  const recipients = prepared ? prepared.notifyEmails : normalizeRecipients(input.notifyEmails ?? [], { max });
+  // With a spec, Cc / Bcc live in it and are resolved at each send.
+  const cc = prepared ? [] : normalizeRecipients(input.notifyCc ?? [], { max, allowEmpty: true });
+  const bcc = prepared ? [] : normalizeRecipients(input.notifyBcc ?? [], { max, allowEmpty: true });
   const note = await resolveRebootNote(input.note);
   const { plan, warnings } = await checkSchedulableReboot(input.assetId);
   if (await prisma.rebootSchedule.findFirst({ where: { assetId: input.assetId, status: "pending" }, select: { id: true } })) {
@@ -124,7 +131,12 @@ export async function createRebootSchedule(input: {
   }
   let row: Row;
   try {
-    row = await prisma.rebootSchedule.create({ data: { assetId: input.assetId, scheduledFor: input.scheduledFor, notifyEmails: recipients, notifyCc: cc, notifyBcc: bcc, note, createdBy: input.actor } });
+    row = await prisma.rebootSchedule.create({
+      data: {
+        assetId: input.assetId, scheduledFor: input.scheduledFor, notifyEmails: recipients, notifyCc: cc, notifyBcc: bcc, note, createdBy: input.actor,
+        ...(prepared ? { notifyRecipients: prepared.notifyRecipients, notifyChannelIds: prepared.notifyChannelIds } : {}),
+      },
+    });
   } catch (err: any) {
     if (err?.code === "P2002") throw new AppError(409, "A reboot is already scheduled for this device — change or cancel it");
     throw err;
@@ -140,7 +152,7 @@ export async function createRebootSchedule(input: {
     },
   });
   // Off the request path: an SMTP round trip per recipient is not the booker's wait.
-  void notifyRebootBooking(row, "scheduled", recipients, warnings);
+  void notifyRebootBooking(row, "scheduled", null, warnings);
   return { ...summarize(row), warnings };
 }
 
@@ -154,11 +166,15 @@ function bookedByAutomation(createdBy: string): boolean {
  * address added later, "rescheduled" when its time moves. Never throws — a
  * failure is a warning Event and the booking stands.
  */
-async function notifyRebootBooking(s: Row, notice: "scheduled" | "rescheduled", recipients: readonly string[], warnings: readonly string[] = []): Promise<void> {
-  if (recipients.length === 0 || bookedByAutomation(s.createdBy)) return;
+async function notifyRebootBooking(s: Row, notice: "scheduled" | "rescheduled", onlyTo: readonly string[] | null, warnings: readonly string[] = []): Promise<void> {
+  if ((onlyTo && onlyTo.length === 0) || bookedByAutomation(s.createdBy)) return;
   try {
+    const full = await targetFor(s);
+    // An address added to the booking hears it is booked — alone, no Cc.
+    const target: NotifyTarget = onlyTo ? { to: [...onlyTo], cc: [], bcc: [], channelIds: full.channelIds } : full;
+    const recipients = [...target.to, ...target.cc, ...target.bcc];
     const asset = await rebootEmailAsset(s.assetId);
-    const error = await sendRebootEmail([...recipients], [], [], {
+    const error = await sendRebootEmail(target, {
       outcome: notice, scheduled: true, assetId: s.assetId, deviceName: asset.deviceName, model: asset.model,
       method: null, authority: null, error: null, scheduledFor: s.scheduledFor, startedAt: null, finishedAt: null,
       scheduledBy: s.createdBy, note: s.note, warnings: [...warnings], log: [],
@@ -177,6 +193,8 @@ async function notifyRebootBooking(s: Row, notice: "scheduled" | "rescheduled", 
 
 export async function updateRebootSchedule(input: {
   assetId: string; scheduleId: string; scheduledFor?: Date; notifyEmails?: string[];
+  /** The dialog's picker spec + email channels; replaces notifyEmails (and any Cc / Bcc) when given. */
+  notify?: NotifySpec;
   /** Absent = keep the booking's note; present is judged like a new booking's (rule 115(d)). */
   note?: string | null;
   actor: string; now?: Date;
@@ -191,7 +209,10 @@ export async function updateRebootSchedule(input: {
   }
   // An automation's booking may hold a resolved list longer than a person may
   // type; editing it must not be refused for a length the operator inherited.
-  if (input.notifyEmails) data.notifyEmails = normalizeRecipients(input.notifyEmails, { max: Math.max(MAX_RECIPIENTS, current.notifyEmails.length) });
+  if (input.notify) {
+    const p = await prepareNotify(input.assetId, input.notify);
+    Object.assign(data, { notifyEmails: p.notifyEmails, notifyRecipients: p.notifyRecipients, notifyChannelIds: p.notifyChannelIds, notifyCc: [], notifyBcc: [] });
+  } else if (input.notifyEmails) data.notifyEmails = normalizeRecipients(input.notifyEmails, { max: Math.max(MAX_RECIPIENTS, current.notifyEmails.length) });
   const res = await prisma.rebootSchedule.updateMany({ where: { id: current.id, status: "pending" }, data });
   if (res.count === 0) throw new AppError(409, "This reboot has already started or been cancelled");
   const row = await getOwn(input.assetId, input.scheduleId);
@@ -205,7 +226,7 @@ export async function updateRebootSchedule(input: {
     details: { scheduleId: row.id, before: { scheduledFor: current.scheduledFor.toISOString(), notifyEmails: current.notifyEmails, note: current.note }, after: { scheduledFor: row.scheduledFor.toISOString(), notifyEmails: row.notifyEmails, note: row.note } },
   });
   // A new time is news to everyone on it; a new address alone hears it is booked.
-  if (row.scheduledFor.getTime() !== current.scheduledFor.getTime()) void notifyRebootBooking(row, "rescheduled", row.notifyEmails);
+  if (row.scheduledFor.getTime() !== current.scheduledFor.getTime()) void notifyRebootBooking(row, "rescheduled", null);
   else void notifyRebootBooking(row, "scheduled", row.notifyEmails.filter((e) => !current.notifyEmails.includes(e)));
   return summarize(row);
 }
@@ -408,64 +429,38 @@ async function rebootEmailAsset(assetId: string): Promise<{ deviceName: string; 
 }
 
 /**
- * The one sender behind every reboot email. One message per To address, each
- * in that reader's zone — or, with a Cc or Bcc (an automation's booking only),
- * ONE message to the whole To line in the install's zone (the notify action's
- * contract for the same fields, rule 25). Answers null, or why not.
+ * The one sender behind every reboot email: `operationNotifyService
+ * .deliverOperationEmail` — per chosen email channel (the oldest enabled one
+ * when none was chosen), one message per To address in that reader's zone, or,
+ * with a Cc or Bcc, ONE message to the whole To line in the install's zone
+ * (the notify action's contract for the same fields, rule 25). Answers null,
+ * or why not.
  */
-async function sendRebootEmail(to: string[], cc: string[], bcc: string[], facts: Omit<RebootResultEmailInput, "zone">): Promise<string | null> {
-  if (to.length === 0) return null;
-  const channel = await resolveSummaryChannel(null, []);
-  if (!channel) return "no enabled email channel (SMTP or Microsoft 365) is configured";
-  const users = await prisma.user.findMany({ where: { email: { in: to, mode: "insensitive" } }, select: { email: true, timezone: true, detectedTimezone: true } });
-  const zoneOf = new Map<string, string>();
-  for (const u of users) if (u.email) zoneOf.set(u.email.toLowerCase(), resolveTimeZone(u.timezone, u.detectedTimezone));
-  const send = async (recipients: { to: string[]; cc?: string[]; bcc?: string[] }, zone: string) => {
-    const rendered = renderRebootResultEmail({ ...facts, zone });
-    const msg = await applyBrandLetterhead({ ...recipients, subject: rendered.subject, text: rendered.text, html: rendered.html });
-    await sendEmailThroughChannel({ type: channel.type, config: channel.config as Record<string, unknown> }, msg);
-  };
-  const failures: string[] = [];
-  if (cc.length || bcc.length) {
-    try {
-      await send({ to, cc, bcc }, serverTimeZone());
-    } catch (err) {
-      failures.push(String((err as Error)?.message ?? err).slice(0, 200));
-    }
-  } else {
-    for (const address of to) {
-      try {
-        await send({ to: [address] }, zoneOf.get(address) ?? serverTimeZone());
-      } catch (err) {
-        failures.push(`${address}: ${String((err as Error)?.message ?? err).slice(0, 200)}`);
-      }
-    }
-  }
-  return failures.length > 0 ? failures.join("; ") : null;
+async function sendRebootEmail(target: NotifyTarget, facts: Omit<RebootResultEmailInput, "zone">): Promise<string | null> {
+  return deliverOperationEmail(target, (zone) => renderRebootResultEmail({ ...facts, zone }));
 }
 
 async function sendResults(s: Row, facts: Facts): Promise<void> {
   const claimed = await prisma.rebootSchedule.updateMany({ where: { id: s.id, notifiedAt: null }, data: { notifiedAt: new Date() } });
   if (claimed.count === 0) return;
   const asset = await rebootEmailAsset(s.assetId);
-  const cc = s.notifyCc ?? [];
-  const bcc = s.notifyBcc ?? [];
-  const error = await sendRebootEmail(s.notifyEmails, cc, bcc, {
+  const target = await targetFor(s);
+  const error = await sendRebootEmail(target, {
     outcome: facts.outcome, scheduled: true, assetId: s.assetId, deviceName: asset.deviceName, model: asset.model,
     method: facts.method ? METHOD_LABEL[facts.method] ?? facts.method : null, authority: facts.authority,
     error: facts.error, scheduledFor: s.scheduledFor, startedAt: facts.startedAt, finishedAt: facts.finishedAt,
     scheduledBy: s.createdBy, note: s.note, log: facts.log,
   });
   if (error) await recordNotifyError(s, asset.deviceName, error);
-  else logger.info({ scheduleId: s.id, recipients: s.notifyEmails.length + cc.length + bcc.length, outcome: facts.outcome }, "scheduled reboot results emailed");
+  else logger.info({ scheduleId: s.id, recipients: target.to.length + target.cc.length + target.bcc.length, outcome: facts.outcome }, "scheduled reboot results emailed");
 }
 
 // ─── A reboot's own emails (2026-11-09) ──────────────────────────────────────
 
 const RUN_SELECT = {
   id: true, assetId: true, status: true, error: true, method: true, authority: true, note: true, startedBy: true,
-  startedAt: true, finishedAt: true, log: true, notifyEmails: true, notifiedAt: true,
-  schedule: { select: { id: true, scheduledFor: true, createdBy: true, notifyEmails: true } },
+  startedAt: true, finishedAt: true, log: true, notifyEmails: true, notifyRecipients: true, notifyChannelIds: true, notifiedAt: true,
+  schedule: { select: { id: true, scheduledFor: true, createdBy: true, notifyEmails: true, notifyRecipients: true, notifyChannelIds: true } },
 } as const;
 
 async function recordRunEmailFailure(run: { id: string; assetId: string }, deviceName: string, notice: string, recipients: string[], error: string): Promise<void> {
@@ -486,10 +481,12 @@ export async function notifyRebootRunStarted(runId: string): Promise<void> {
   if (!run) return;
   const booked = run.schedule;
   if (booked && bookedByAutomation(booked.createdBy)) return;
-  const to = booked ? booked.notifyEmails : run.notifyEmails;
-  if (to.length === 0) return;
+  if ((booked ? booked.notifyEmails : run.notifyEmails).length === 0) return;
+  // A booking's own To / Cc / Bcc and channels, or the run's.
+  const target = await targetFor(booked ? { ...booked, assetId: run.assetId } : run);
+  const to = [...target.to, ...target.cc, ...target.bcc];
   const asset = await rebootEmailAsset(run.assetId);
-  const error = await sendRebootEmail(to, [], [], {
+  const error = await sendRebootEmail(target, {
     outcome: "started", scheduled: !!booked, assetId: run.assetId, deviceName: asset.deviceName, model: asset.model,
     method: METHOD_LABEL[run.method] ?? run.method, authority: run.authority, error: null,
     scheduledFor: booked?.scheduledFor ?? null, startedAt: run.startedAt, finishedAt: null,
@@ -512,7 +509,7 @@ export async function notifyRebootRunFinished(runId: string): Promise<void> {
   const outcome: RebootResultOutcome = run.status === "succeeded" ? "succeeded" : run.status === "unverified" ? "unverified" : "failed";
   const log = Array.isArray(run.log) ? (run.log as Array<{ t: string; level: string; msg: string }>).slice(-LOG_TAIL) : [];
   const asset = await rebootEmailAsset(run.assetId);
-  const error = await sendRebootEmail(run.notifyEmails, [], [], {
+  const error = await sendRebootEmail(await targetFor(run), {
     outcome, scheduled: false, assetId: run.assetId, deviceName: asset.deviceName, model: asset.model,
     method: METHOD_LABEL[run.method] ?? run.method, authority: run.authority, error: run.error,
     scheduledFor: null, startedAt: run.startedAt, finishedAt: run.finishedAt, scheduledBy: run.startedBy, note: run.note, log,

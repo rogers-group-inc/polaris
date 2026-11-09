@@ -45,6 +45,7 @@ import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { checkSchedulableUpgrade, startFirmwareUpgrade, FirmwareRunConflictError } from "./firmwareUpgradeService.js";
 import { firmwareEmailAsset, sendFirmwareEmail } from "./firmwareEmailService.js";
+import { prepareNotify, targetFor, type NotifySpec, type NotifyTarget } from "./operationNotifyService.js";
 import type { FirmwareResultOutcome } from "../utils/firmwareResultEmailTemplate.js";
 
 /** How late a booking may start (the job ticks every minute; more = Polaris was down). */
@@ -70,6 +71,10 @@ export interface ScheduleSummary {
   toVersion: string;
   scheduledFor: Date;
   notifyEmails: string[];
+  /** The picker's To / Cc / Bcc spec, when the booking was made with one (resolved at each send). */
+  notifyRecipients: unknown;
+  /** The email channels it goes out on; empty = the oldest enabled one. */
+  notifyChannelIds: string[];
   status: string;
   runId: string | null;
   error: string | null;
@@ -89,7 +94,7 @@ type ScheduleRow = ScheduleSummary;
 function summarize(r: ScheduleRow): ScheduleSummary {
   return {
     id: r.id, assetId: r.assetId, imageId: r.imageId, toVersion: r.toVersion, scheduledFor: r.scheduledFor,
-    notifyEmails: r.notifyEmails, status: r.status, runId: r.runId, error: r.error, createdBy: r.createdBy,
+    notifyEmails: r.notifyEmails, notifyRecipients: r.notifyRecipients ?? null, notifyChannelIds: r.notifyChannelIds ?? [], status: r.status, runId: r.runId, error: r.error, createdBy: r.createdBy,
     createdAt: r.createdAt, updatedBy: r.updatedBy, updatedAt: r.updatedAt, cancelledBy: r.cancelledBy,
     cancelledAt: r.cancelledAt, firedAt: r.firedAt, notifiedAt: r.notifiedAt, notifyError: r.notifyError,
   };
@@ -129,38 +134,6 @@ async function assetName(assetId: string): Promise<{ label: string | undefined; 
 
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
-/**
- * What the upgrade / reboot dialog pre-fills: the list this user last sent
- * that kind of notification to (`rememberRecipientsFor`), else their own
- * profile email, when they have one. Empty for an account with neither (an SSO
- * user whose IdP sent none, a bearer token) — the dialog then asks for one.
- */
-export async function defaultRecipientsFor(userId: string | null, kind: RecipientKind = "firmware"): Promise<string[]> {
-  if (!userId) return [];
-  const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, lastFirmwareNotifyEmails: true, lastRebootNotifyEmails: true } });
-  // The list they used last time (2026-11-09), when they have one.
-  const last = (kind === "reboot" ? u?.lastRebootNotifyEmails : u?.lastFirmwareNotifyEmails) ?? [];
-  if (last.length > 0) return last;
-  const e = u?.email?.trim().toLowerCase();
-  return e && EMAIL_RE.test(e) ? [e] : [];
-}
-
-/** Which remembered list: firmware upgrades (single and group) or reboots. */
-export type RecipientKind = "firmware" | "reboot";
-
-/**
- * Remember the list this user just sent an upgrade's / a reboot's emails to,
- * so their next dialog pre-fills it (2026-11-09). Already-normalized input; an
- * empty list (no emails this time) leaves the last one alone. Best-effort: a
- * failed write never fails the upgrade, reboot or booking that called it.
- */
-export async function rememberRecipientsFor(userId: string | null | undefined, kind: RecipientKind, list: readonly string[]): Promise<void> {
-  if (!userId || list.length === 0) return;
-  const data = kind === "reboot" ? { lastRebootNotifyEmails: [...list] } : { lastFirmwareNotifyEmails: [...list] };
-  await prisma.user.update({ where: { id: userId }, data, select: { id: true } })
-    .catch((err) => logger.warn({ err, userId, kind }, "could not remember the notification recipients"));
-}
-
 export async function getPendingSchedule(assetId: string): Promise<ScheduleSummary | null> {
   const r = await prisma.firmwareUpgradeSchedule.findFirst({ where: { assetId, status: "pending" } });
   return r ? summarize(r) : null;
@@ -198,14 +171,27 @@ export interface CreateScheduleInput {
   assetId: string;
   imageId: string;
   scheduledFor: Date;
-  notifyEmails: string[];
+  /** Plain addresses — the API's original shape. Ignored when `notify` is given. */
+  notifyEmails?: string[];
+  /** The dialog's picker spec + email channels (operationNotifyService). */
+  notify?: NotifySpec;
   actor: string;
   now?: Date;
 }
 
+/** What a booking stores for its recipients, from either input shape. */
+async function recipientsFrom(assetId: string, notify: NotifySpec | undefined, emails: string[] | undefined): Promise<{ notifyEmails: string[]; notifyRecipients?: object; notifyChannelIds?: string[] }> {
+  if (notify) {
+    const p = await prepareNotify(assetId, notify);
+    return { notifyEmails: p.notifyEmails, notifyRecipients: p.notifyRecipients, notifyChannelIds: p.notifyChannelIds };
+  }
+  return { notifyEmails: normalizeRecipients(emails ?? []) };
+}
+
 export async function createSchedule(input: CreateScheduleInput): Promise<ScheduleSummary & { warnings: string[] }> {
   assertSchedulableTime(input.scheduledFor, input.now);
-  const recipients = normalizeRecipients(input.notifyEmails);
+  const who = await recipientsFrom(input.assetId, input.notify, input.notifyEmails);
+  const recipients = who.notifyEmails;
   await assertNotInGroup(input.assetId);
   const { approved, fromVersion, warnings } = await checkSchedulableUpgrade(input.assetId, input.imageId);
   if (await prisma.firmwareUpgradeSchedule.findFirst({ where: { assetId: input.assetId, status: "pending" }, select: { id: true } })) {
@@ -220,6 +206,8 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
         toVersion: approved.versionLabel,
         scheduledFor: input.scheduledFor,
         notifyEmails: recipients,
+        ...(who.notifyRecipients ? { notifyRecipients: who.notifyRecipients } : {}),
+        notifyChannelIds: who.notifyChannelIds ?? [],
         createdBy: input.actor,
       },
     });
@@ -236,10 +224,10 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
     actor: input.actor,
     level: "info",
     message: `Firmware upgrade scheduled for ${input.scheduledFor.toISOString()}: ${fromVersion ?? "unknown"} → ${approved.versionLabel} (${approved.role} image); results to ${recipients.join(", ")}`,
-    details: { scheduleId: row.id, imageId: approved.id, toVersion: approved.versionLabel, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients, warnings },
+    details: { scheduleId: row.id, imageId: approved.id, toVersion: approved.versionLabel, scheduledFor: input.scheduledFor.toISOString(), notifyEmails: recipients, notifyRecipients: who.notifyRecipients ?? null, notifyChannelIds: who.notifyChannelIds ?? [], warnings },
   });
   // Off the request path: an SMTP round trip per recipient is not the booker's wait.
-  void notifyBooking(row, "scheduled", recipients, warnings, fromVersion);
+  void notifyBooking(row, "scheduled", null, warnings, fromVersion);
   return { ...summarize(row), warnings };
 }
 
@@ -249,16 +237,20 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Schedu
  * failure is a warning Event, and the booking stands.
  */
 async function notifyBooking(
-  s: Pick<ScheduleRow, "id" | "assetId" | "toVersion" | "scheduledFor" | "createdBy">,
+  s: Pick<ScheduleRow, "id" | "assetId" | "toVersion" | "scheduledFor" | "createdBy" | "notifyEmails" | "notifyRecipients" | "notifyChannelIds">,
   notice: "scheduled" | "rescheduled",
-  recipients: readonly string[],
+  /** Only these To addresses (an address added to the booking) — null = everyone on it. */
+  onlyTo: readonly string[] | null,
   warnings: readonly string[] = [],
   fromVersion: string | null = null,
 ): Promise<void> {
-  if (recipients.length === 0) return;
+  if (onlyTo && onlyTo.length === 0) return;
   try {
+    const full = await targetFor(s);
+    const target: NotifyTarget = onlyTo ? { to: [...onlyTo], cc: [], bcc: [], channelIds: full.channelIds } : full;
+    const recipients = [...target.to, ...target.cc, ...target.bcc];
     const asset = await firmwareEmailAsset(s.assetId);
-    const error = await sendFirmwareEmail(recipients, {
+    const error = await sendFirmwareEmail(target, {
       outcome: notice,
       scheduled: true,
       assetId: s.assetId,
@@ -287,6 +279,8 @@ export interface UpdateScheduleInput {
   scheduleId: string;
   scheduledFor?: Date;
   notifyEmails?: string[];
+  /** The dialog's picker spec + email channels; replaces `notifyEmails` when given. */
+  notify?: NotifySpec;
   imageId?: string;
   actor: string;
   now?: Date;
@@ -296,13 +290,13 @@ export async function updateSchedule(input: UpdateScheduleInput): Promise<Schedu
   const current = await getOwnSchedule(input.assetId, input.scheduleId);
   if (current.status !== "pending") throw new AppError(409, `This upgrade is already ${current.status} and can no longer be changed`);
   await assertNotInGroup(input.assetId);
-  const data: { scheduledFor?: Date; notifyEmails?: string[]; imageId?: string; toVersion?: string; updatedBy: string } = { updatedBy: input.actor };
+  const data: { scheduledFor?: Date; notifyEmails?: string[]; notifyRecipients?: object; notifyChannelIds?: string[]; imageId?: string; toVersion?: string; updatedBy: string } = { updatedBy: input.actor };
   let warnings: string[] = [];
   if (input.scheduledFor) {
     assertSchedulableTime(input.scheduledFor, input.now);
     data.scheduledFor = input.scheduledFor;
   }
-  if (input.notifyEmails) data.notifyEmails = normalizeRecipients(input.notifyEmails);
+  if (input.notify || input.notifyEmails) Object.assign(data, await recipientsFrom(input.assetId, input.notify, input.notifyEmails));
   if (input.imageId && input.imageId !== current.imageId) {
     const checked = await checkSchedulableUpgrade(input.assetId, input.imageId);
     data.imageId = checked.approved.id;
@@ -317,6 +311,7 @@ export async function updateSchedule(input: UpdateScheduleInput): Promise<Schedu
   if (data.scheduledFor && data.scheduledFor.getTime() !== current.scheduledFor.getTime()) changes.push(`time ${current.scheduledFor.toISOString()} → ${data.scheduledFor.toISOString()}`);
   if (data.toVersion && data.toVersion !== current.toVersion) changes.push(`image ${current.toVersion} → ${data.toVersion}`);
   if (data.notifyEmails && data.notifyEmails.join(",") !== current.notifyEmails.join(",")) changes.push(`recipients ${data.notifyEmails.join(", ")}`);
+  if (data.notifyChannelIds && data.notifyChannelIds.join(",") !== current.notifyChannelIds.join(",")) changes.push("email channels");
   const name = await assetName(input.assetId);
   await logEvent({
     action: "firmware.upgrade_rescheduled",
@@ -331,7 +326,7 @@ export async function updateSchedule(input: UpdateScheduleInput): Promise<Schedu
   // A new time or image is news to everyone on it; a new address alone hears
   // only that it is booked.
   const moved = row.scheduledFor.getTime() !== current.scheduledFor.getTime() || row.toVersion !== current.toVersion;
-  if (moved) void notifyBooking(row, "rescheduled", row.notifyEmails, warnings);
+  if (moved) void notifyBooking(row, "rescheduled", null, warnings);
   else void notifyBooking(row, "scheduled", row.notifyEmails.filter((e) => !current.notifyEmails.includes(e)), warnings);
   return { ...summarize(row), warnings };
 }
@@ -378,7 +373,7 @@ export async function runDueSchedules(now: Date = new Date()): Promise<DueRunRes
     where: { status: "pending", scheduledFor: { lte: now } },
     orderBy: { scheduledFor: "asc" },
     take: DUE_BATCH,
-    select: { id: true, assetId: true, imageId: true, toVersion: true, scheduledFor: true, createdBy: true, error: true, notifyEmails: true },
+    select: { id: true, assetId: true, imageId: true, toVersion: true, scheduledFor: true, createdBy: true, error: true, notifyEmails: true, notifyRecipients: true, notifyChannelIds: true },
   });
   const out: DueRunResult = { started: 0, refused: 0, missed: 0, waiting: 0 };
   for (const s of due) {
@@ -403,7 +398,7 @@ export async function runDueSchedules(now: Date = new Date()): Promise<DueRunRes
     try {
       if (!s.imageId) throw new AppError(409, `The approved image (${s.toVersion}) was deleted from the Repository`);
       // The booking's recipients ride on the run: it emails them "started".
-      await startFirmwareUpgrade({ assetId: s.assetId, imageId: s.imageId, actor: s.createdBy, scheduleId: s.id, notifyEmails: s.notifyEmails });
+      await startFirmwareUpgrade({ assetId: s.assetId, imageId: s.imageId, actor: s.createdBy, scheduleId: s.id, notifyEmails: s.notifyEmails, notifyRecipients: (s.notifyRecipients as object | null) ?? null, notifyChannelIds: s.notifyChannelIds });
       await prisma.firmwareUpgradeSchedule.update({ where: { id: s.id }, data: { error: null } }).catch(() => undefined);
       out.started++;
     } catch (err) {
@@ -491,7 +486,7 @@ async function sendResults(s: ScheduleRow, facts: ResultFacts): Promise<void> {
 
   const asset = await firmwareEmailAsset(s.assetId);
   const deviceName = asset.deviceName;
-  const error = await sendFirmwareEmail(s.notifyEmails, {
+  const error = await sendFirmwareEmail(await targetFor(s), {
     outcome: facts.outcome,
     scheduled: true,
     assetId: s.assetId,

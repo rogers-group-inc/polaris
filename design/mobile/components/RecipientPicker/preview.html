@@ -1,0 +1,46 @@
+<!-- @dsCard group="Input" page height=320 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Recipient picker</title>
+<style>
+  /* Preview frame only, not part of the component. */
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; }
+  .pv-cap { font-size: 12px; letter-spacing: .4px; color: var(--md-on-surface-variant); margin: 0 0 8px; }
+  .pv-chans { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 14px; color: var(--md-on-surface); }
+  .pv-chans label { display: flex; gap: 8px; align-items: center; }
+  .pv-hint { margin: 8px 0 0; font-size: 12px; color: var(--md-on-surface-variant); }
+</style>
+</head>
+<body>
+  <p class="pv-cap">Email notifications</p>
+  <div class="na-recips">
+    <div class="na-recip-row">
+      <label class="na-recip-label">To</label>
+      <div class="na-recip-box">
+        <span class="tag-chip"><span style="opacity:.6;font-size:.85em">dynamic:</span> Asset’s L1 Region Users<button type="button" class="tag-chip-delete">&times;</button></span>
+        <span class="tag-chip">Dana Reyes<button type="button" class="tag-chip-delete">&times;</button></span>
+        <input type="text" class="na-recip-input" placeholder="Type a name or address">
+      </div>
+    </div>
+    <div class="na-recip-row">
+      <label class="na-recip-label">Cc</label>
+      <div class="na-recip-box">
+        <span class="tag-chip">noc@example.com<button type="button" class="tag-chip-delete">&times;</button></span>
+        <input type="text" class="na-recip-input">
+      </div>
+    </div>
+    <div class="na-recip-row">
+      <label class="na-recip-label">Bcc</label>
+      <div class="na-recip-box"><input type="text" class="na-recip-input"></div>
+    </div>
+  </div>
+  <div class="pv-chans">
+    <label><input type="checkbox" checked> Office SMTP</label>
+    <label><input type="checkbox"> Polaris mail</label>
+  </div>
+  <p class="pv-hint">Emailed when it is scheduled, starts and finishes, or if it cannot be started.</p>
+</body>
+</html>

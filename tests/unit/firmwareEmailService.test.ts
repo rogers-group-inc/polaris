@@ -159,7 +159,7 @@ describe("finished (a flash started now)", () => {
 describe("sendFirmwareEmail", () => {
   it("draws each reader's times in their own zone when the address is a user's, else the server's", async () => {
     h.state.users = [{ email: "ops@example.com", timezone: "America/New_York", detectedTimezone: null }];
-    const err = await sendFirmwareEmail(["ops@example.com", "noc@example.com"], {
+    const err = await sendFirmwareEmail({ to: ["ops@example.com", "noc@example.com"], cc: [], bcc: [], channelIds: [] }, {
       outcome: "started", scheduled: false, assetId: "asset-1", deviceName: "lab-sw1", model: null, fromVersion: null, toVersion: "7.6.8",
       verifiedVersion: null, result: null, error: null, scheduledFor: null, startedAt: STARTED, finishedAt: null, scheduledBy: "alice", log: [],
     });
@@ -169,7 +169,7 @@ describe("sendFirmwareEmail", () => {
   });
 
   it("an empty list sends nothing and is not an error", async () => {
-    expect(await sendFirmwareEmail([], {} as any)).toBeNull();
+    expect(await sendFirmwareEmail({ to: [], cc: [], bcc: [], channelIds: [] }, {} as any)).toBeNull();
     expect(h.state.sent).toHaveLength(0);
   });
 });

@@ -4440,7 +4440,7 @@
    */
   function startFirmwareFlow(asset, fw, btn, existing) {
     var mode = existing ? "change" : (fw.state === "blocked" ? "schedule-only" : (fw.schedule ? "now-only" : "choose"));
-    var defaultsP = mode !== "change" && api.assets.firmwareScheduleDefaults
+    var defaultsP = api.assets.firmwareScheduleDefaults
       ? api.assets.firmwareScheduleDefaults(asset.id).catch(function () { return null; })
       : Promise.resolve(null);
     defaultsP.then(function (defaults) {
@@ -4449,7 +4449,7 @@
       if (!choice || _openId !== asset.id) return;
       btn.disabled = true;
       if (choice.schedule) {
-        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails };
+        var body = { scheduledFor: choice.schedule.scheduledFor, notify: choice.schedule.notify };
         var call = existing
           ? api.assets.updateFirmwareSchedule(asset.id, existing.id, body)
           : api.assets.scheduleFirmwareUpgrade(asset.id, Object.assign({ imageId: fw.image.id }, body));
@@ -4464,10 +4464,10 @@
         return;
       }
       var startBody = { imageId: fw.image.id };
-      if (choice.notifyEmails && choice.notifyEmails.length) startBody.notifyEmails = choice.notifyEmails;
+      if (choice.notify) startBody.notify = choice.notify;
       api.assets.startFirmwareUpgrade(asset.id, startBody).then(function (res) {
         if (_openId !== asset.id) return;
-        PolarisTabs.showSnackbar(startBody.notifyEmails ? "Upgrade started — emails go to " + startBody.notifyEmails.join(", ") : "Upgrade started");
+        PolarisTabs.showSnackbar(startBody.notify ? "Upgrade started — notifications are on" : "Upgrade started");
         var slot = document.getElementById("asset-fw-slot");
         if (slot) slot.innerHTML = fwRunningHtml(res && res.run);
         if (res && res.run) watchFirmwareRun(asset.id, res.run.id);
@@ -4495,8 +4495,20 @@
    * ticked and locked), "change" (a booking's time and recipients), "now-only"
    * (a booking already exists, so no second one is offered).
    */
-  var FW_NOTIFY_HINT_NOW = "Comma-separated; type a name to pick from the address book. Sent when the upgrade starts and when it finishes.";
-  var FW_NOTIFY_HINT_SCHEDULED = "Comma-separated; type a name to pick from the address book. Sent when it is scheduled, starts and finishes, or if it cannot be started. A scheduled upgrade always emails someone.";
+  var FW_NOTIFY_HINT_NOW = "Emailed when the upgrade starts and when it finishes. Roles, regions and the device’s own recipients are worked out when each email is sent.";
+  var FW_NOTIFY_HINT_SCHEDULED = "Emailed when it is scheduled, starts and finishes, or if it cannot be started. A scheduled upgrade always emails someone.";
+
+  /**
+   * The sheets' notify editor — the desktop's To / Cc / Bcc picker and email
+   * channels (public/js/recipient-picker.js), without the Address book button
+   * (the address-book picker is desktop-only; typing finds the same people).
+   * Built the same way to render and to wire / read.
+   */
+  function opNotifyEditor(prefix, defaults, existing) {
+    var RP = window.PolarisRecipientPicker;
+    if (!RP || !RP.notifyEditor) return null;
+    return RP.notifyEditor({ prefix: prefix, defaults: defaults || {}, spec: existing ? RP.bookingNotifySpec(existing) : null, withBook: false });
+  }
 
   function fwConfirmBodyHtml(asset, fw, opts) {
     opts = opts || {};
@@ -4508,12 +4520,10 @@
       return '<div class="kv-row"><span class="k">' + escapeHtml(k) + '</span><span class="v">' + v + '</span></div>';
     }
     var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
-    var emails = existing ? (existing.notifyEmails || []) : ((opts.defaults && opts.defaults.notifyEmails) || []);
-    // One recipients box per sheet (rule 93): inside the booking's fields when
-    // changing a booking, otherwise under "Email notifications".
+    // Who hears about it: the To / Cc / Bcc picker + email channels (rule 93).
+    var editor = opNotifyEditor("fw", opts.defaults, existing);
     function emailsField(hint) {
-      return '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="fw-sched-emails">Email to</label>'
-        + '<div style="position:relative;"><input type="text" inputmode="email" id="fw-sched-emails" class="input" style="width:100%;" autocomplete="off" placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '"></div>'
+      return '<div style="margin-top:10px;">' + (editor ? editor.html() : '') + '</div>'
         + '<p id="fw-notify-hint" style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">' + escapeHtml(hint) + '</p>';
     }
     var fields = ''
@@ -4528,7 +4538,7 @@
     }
     var schedule;
     if (mode === "change") {
-      schedule = '<div id="fw-sched-fields" style="margin-top:12px;">' + fields + emailsField(FW_NOTIFY_HINT_SCHEDULED) + '</div>';
+      schedule = '<div id="fw-sched-fields" style="margin-top:12px;">' + fields + '</div>' + notifyBlock(true);
     } else if (mode === "now-only") {
       schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">An upgrade is already scheduled — change or cancel it from the OS row.</p>'
         + notifyBlock(false);
@@ -4586,11 +4596,11 @@
       var fields = sheet.querySelector("#fw-sched-fields");
       var ok = sheet.querySelector("#fw-confirm-ok");
       var whenEl = sheet.querySelector("#fw-sched-when");
-      var emailsEl = sheet.querySelector("#fw-sched-emails");
+      var fwEditor = opNotifyEditor("fw", opts.defaults, opts.existing);
       var notify = sheet.querySelector("#fw-confirm-notify");
       var notifyFields = sheet.querySelector("#fw-notify-fields");
       var notifyHint = sheet.querySelector("#fw-notify-hint");
-      if (emailsEl && window.PolarisEmailSuggest) window.PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
+      if (fwEditor && notifyFields) fwEditor.wire(notifyFields, function () { sync(); });
       // A booking always emails someone: scheduling ticks and locks the box;
       // unticking "Schedule for later" puts back the operator's own choice.
       var notifyChoice = notify ? notify.checked : false;
@@ -4606,23 +4616,22 @@
         if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
         if (notifyHint && notify) notifyHint.textContent = scheduling() ? FW_NOTIFY_HINT_SCHEDULED : FW_NOTIFY_HINT_NOW;
         if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Upgrade";
-        var emailsOk = !emailing() || !!(emailsEl && fwParseEmails(emailsEl.value).length > 0);
+        var emailsOk = !emailing() || !!(fwEditor && notifyFields && fwEditor.ready(notifyFields));
         ok.disabled = !emailsOk || (scheduling() && !(whenEl && whenEl.value));
       }
       if (later) later.addEventListener("change", sync);
       if (notify) notify.addEventListener("change", sync);
       if (whenEl) whenEl.addEventListener("input", sync);
-      if (emailsEl) emailsEl.addEventListener("input", sync);
       scrim.addEventListener("click", function () { closeFirmwareConfirm(false); });
       sheet.querySelector("#fw-confirm-cancel").addEventListener("click", function () { closeFirmwareConfirm(false); });
       ok.addEventListener("click", function () {
         if (!scheduling()) {
-          closeFirmwareConfirm(emailing() && emailsEl ? { now: true, notifyEmails: fwParseEmails(emailsEl.value) } : { now: true });
+          closeFirmwareConfirm(emailing() && fwEditor ? { now: true, notify: fwEditor.read(notifyFields) } : { now: true });
           return;
         }
         var when = new Date(whenEl.value); // datetime-local parses as the phone's local time
         if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
-        closeFirmwareConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) } });
+        closeFirmwareConfirm({ schedule: { scheduledFor: when.toISOString(), notify: fwEditor.read(notifyFields) } });
       });
       PolarisTabs.attachSwipeToDismiss(sheet, function () { closeFirmwareConfirm(false); });
       sync();
@@ -4842,7 +4851,7 @@
 
   function startRebootFlow(asset, rb, btn, existing) {
     var mode = existing ? "change" : (!rb.available ? "schedule-only" : (rb.schedule ? "now-only" : "choose"));
-    var defaultsP = mode !== "change" && api.assets.rebootScheduleDefaults
+    var defaultsP = api.assets.rebootScheduleDefaults
       ? api.assets.rebootScheduleDefaults(asset.id).catch(function () { return null; })
       : Promise.resolve(null);
     defaultsP.then(function (defaults) {
@@ -4851,7 +4860,7 @@
       if (!choice || _openId !== asset.id) return;
       btn.disabled = true;
       if (choice.schedule) {
-        var body = { scheduledFor: choice.schedule.scheduledFor, notifyEmails: choice.schedule.notifyEmails, note: choice.note || null };
+        var body = { scheduledFor: choice.schedule.scheduledFor, notify: choice.schedule.notify, note: choice.note || null };
         var call = existing ? api.assets.updateRebootSchedule(asset.id, existing.id, body) : api.assets.scheduleReboot(asset.id, body);
         call.then(function () {
           if (_openId !== asset.id) return;
@@ -4864,10 +4873,10 @@
         return;
       }
       var nowBody = choice.note ? { note: choice.note } : {};
-      if (choice.notifyEmails && choice.notifyEmails.length) nowBody.notifyEmails = choice.notifyEmails;
+      if (choice.notify) nowBody.notify = choice.notify;
       api.assets.startReboot(asset.id, nowBody).then(function (res) {
         if (_openId !== asset.id) return;
-        PolarisTabs.showSnackbar("Reboot sent — Polaris is watching for the device to come back" + (nowBody.notifyEmails ? "; emails go to " + nowBody.notifyEmails.join(", ") : ""));
+        PolarisTabs.showSnackbar("Reboot sent — Polaris is watching for the device to come back" + (nowBody.notify ? "; notifications are on" : ""));
         var slot = document.getElementById("asset-reboot-slot");
         if (slot) slot.innerHTML = rbRunningHtml(res && res.run);
         if (res && res.run) watchRebootRun(asset.id, res.run.id);
@@ -4895,8 +4904,8 @@
    * the box is ticked and locked), "change" (a booking's time and
    * recipients), "now-only" (a booking already exists).
    */
-  var RB_NOTIFY_HINT_NOW = "Comma-separated; type a name to pick from the address book. Sent when the reboot is sent and when the device is back, or did not come back.";
-  var RB_NOTIFY_HINT_SCHEDULED = "Comma-separated; type a name to pick from the address book. Sent when it is scheduled, starts and finishes, or if it cannot be started. A scheduled reboot always emails someone.";
+  var RB_NOTIFY_HINT_NOW = "Emailed when the reboot is sent and when the device is back, or did not come back. Roles, regions and the device’s own recipients are worked out when each email is sent.";
+  var RB_NOTIFY_HINT_SCHEDULED = "Emailed when it is scheduled, starts and finishes, or if it cannot be started. A scheduled reboot always emails someone.";
 
   function rbConfirmBodyHtml(asset, rb, opts) {
     opts = opts || {};
@@ -4921,12 +4930,10 @@
           ? "The FortiSwitch restarts — everything connected through it drops for a few minutes."
           : "The FortiAP restarts — its wireless clients disconnect for a few minutes.";
     var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
-    var emails = existing ? (existing.notifyEmails || []) : ((opts.defaults && opts.defaults.notifyEmails) || []);
-    // One recipients box per sheet: in the booking's fields when changing a
-    // booking, otherwise under "Email notifications".
+    // Who hears about it: the To / Cc / Bcc picker + email channels (rule 93).
+    var editor = opNotifyEditor("rb", opts.defaults, existing);
     function emailsField(hint) {
-      return '<label style="display:block;font-size:13px;margin:10px 0 4px;" for="rb-sched-emails">Email to</label>'
-        + '<div style="position:relative;"><input type="text" inputmode="email" id="rb-sched-emails" class="input" style="width:100%;" autocomplete="off" placeholder="you@example.com" value="' + escapeHtml(emails.join(", ")) + '"></div>'
+      return '<div style="margin-top:10px;">' + (editor ? editor.html() : '') + '</div>'
         + '<p id="rb-notify-hint" style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">' + escapeHtml(hint) + '</p>';
     }
     function notifyBlock(locked) {
@@ -4941,7 +4948,7 @@
       + '<p style="margin:6px 0 0;font-size:12px;color:var(--md-on-surface-variant);">Not sent if Polaris only gets to it more than 15 minutes late.</p>';
     var schedule;
     if (mode === "change") {
-      schedule = '<div id="rb-sched-fields" style="margin-top:12px;">' + fields + emailsField(RB_NOTIFY_HINT_SCHEDULED) + '</div>';
+      schedule = '<div id="rb-sched-fields" style="margin-top:12px;">' + fields + '</div>' + notifyBlock(true);
     } else if (mode === "now-only") {
       schedule = '<p style="margin:12px 0 0;font-size:13px;color:var(--md-on-surface-variant);">A reboot is already scheduled — change or cancel it from the Uptime row.</p>'
         + notifyBlock(false);
@@ -5000,12 +5007,12 @@
       var fields = sheet.querySelector("#rb-sched-fields");
       var ok = sheet.querySelector("#rb-confirm-ok");
       var whenEl = sheet.querySelector("#rb-sched-when");
-      var emailsEl = sheet.querySelector("#rb-sched-emails");
+      var rbEditor = opNotifyEditor("rb", opts.defaults, opts.existing);
       var noteEl = sheet.querySelector("#rb-note");
       var notify = sheet.querySelector("#rb-confirm-notify");
       var notifyFields = sheet.querySelector("#rb-notify-fields");
       var notifyHint = sheet.querySelector("#rb-notify-hint");
-      if (emailsEl && window.PolarisEmailSuggest) window.PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
+      if (rbEditor && notifyFields) rbEditor.wire(notifyFields, function () { sync(); });
       // A booking always emails someone: scheduling ticks and locks the box,
       // and unticking "Schedule for later" puts back the operator's choice.
       var notifyChoice = notify ? notify.checked : false;
@@ -5023,23 +5030,23 @@
         if (notifyHint && notify) notifyHint.textContent = scheduling() ? RB_NOTIFY_HINT_SCHEDULED : RB_NOTIFY_HINT_NOW;
         if (!opts.existing) ok.textContent = scheduling() ? "Schedule" : "Reboot";
         var acked = (!ack || ack.checked) && (!rb.noteRequired || noteValue() !== "");
-        var emailsOk = !emailing() || !!(emailsEl && fwParseEmails(emailsEl.value).length > 0);
+        var emailsOk = !emailing() || !!(rbEditor && notifyFields && rbEditor.ready(notifyFields));
         ok.disabled = !acked || !emailsOk || (scheduling() && !(whenEl && whenEl.value));
       }
       [later, ack, notify].forEach(function (el) { if (el) el.addEventListener("change", sync); });
-      [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+      [whenEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
       scrim.addEventListener("click", function () { closeRebootConfirm(false); });
       sheet.querySelector("#rb-confirm-cancel").addEventListener("click", function () { closeRebootConfirm(false); });
       ok.addEventListener("click", function () {
         if (!scheduling()) {
           var now = { now: true, note: noteValue() };
-          if (emailing() && emailsEl) now.notifyEmails = fwParseEmails(emailsEl.value);
+          if (emailing() && rbEditor) now.notify = rbEditor.read(notifyFields);
           closeRebootConfirm(now);
           return;
         }
         var when = new Date(whenEl.value);
         if (isNaN(when.getTime())) { PolarisTabs.showSnackbar("Pick a date and time", { error: true }); return; }
-        closeRebootConfirm({ schedule: { scheduledFor: when.toISOString(), notifyEmails: fwParseEmails(emailsEl.value) }, note: noteValue() });
+        closeRebootConfirm({ schedule: { scheduledFor: when.toISOString(), notify: rbEditor.read(notifyFields) }, note: noteValue() });
       });
       PolarisTabs.attachSwipeToDismiss(sheet, function () { closeRebootConfirm(false); });
       sync();
