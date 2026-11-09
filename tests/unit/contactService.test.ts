@@ -151,6 +151,43 @@ describe("searchAddressBook", () => {
     expect(out[0].source).toBe("user");
   });
 
+  it("an SSO account that is also a directory entry is found by \"First Last\" (2026-11-09)", async () => {
+    // The account's own name is its username; the GAL row for the same address
+    // carries the person's name. Deduping before matching dropped the GAL row and
+    // then filtered out the account, so only the username found them.
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "u1", username: "jsmith", displayName: null, email: "jsmith@example.com" },
+    ]);
+    prismaMock.contact.findMany.mockResolvedValue([
+      contactRow({ id: "c9", email: "JSmith@example.com", name: "John Smith", origin: "entra" }),
+    ]);
+    const out = await searchAddressBook("John Smith", { includeDirectorySynced: true });
+    expect(out).toHaveLength(1);
+    // Still the ACCOUNT (its id survives an address change), labelled with the name that matched.
+    expect(out[0]).toMatchObject({ source: "user", id: "u1", name: "John Smith" });
+    // …and the username still finds it, under its own name.
+    expect((await searchAddressBook("jsmith", { includeDirectorySynced: true }))[0]).toMatchObject({ source: "user", name: "jsmith" });
+  });
+
+  it("matches every word in any order: \"John Smith\" finds \"Smith, John\" and john.smith@", async () => {
+    prismaMock.user.findMany.mockResolvedValue([
+      { id: "u1", username: "u1", displayName: "Smith, John", email: "u1@example.com" },
+      { id: "u2", username: "u2", displayName: null, email: "john.smith@example.com" },
+      { id: "u3", username: "u3", displayName: "John Smithers-Brown", email: "u3@example.com" },
+      { id: "u4", username: "u4", displayName: "Jane Smith", email: "u4@example.com" },
+    ]);
+    const out = await searchAddressBook("john smith");
+    expect(out.map((e) => e.id).sort()).toEqual(["u1", "u2", "u3"]);
+  });
+
+  it("asks the database for every word of a multi-word query, not the whole string", async () => {
+    await searchAddressBook("John Smith");
+    const where = prismaMock.contact.findMany.mock.calls[0][0].where;
+    expect(where.AND).toHaveLength(2);
+    expect(JSON.stringify(where.AND[0])).toContain('"contains":"john"');
+    expect(JSON.stringify(where.AND[1])).toContain('"contains":"smith"');
+  });
+
   it("matches on name as well as address, case-insensitively", async () => {
     prismaMock.contact.findMany.mockResolvedValue([
       contactRow({ id: "c1", email: "a@example.com", name: "Night Shift" }),
