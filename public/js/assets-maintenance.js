@@ -975,7 +975,7 @@ function _maintLoadIntoEditor(row) {
   var created = row.createdAt ? new Date(row.createdAt) : null;
   banner.textContent = "Editing schedule: " + (row.name || row.id) +
     " — created by " + (owner || "an unknown user") +
-    (created && !isNaN(created.getTime()) ? " on " + created.toLocaleString() : "");
+    (created && !isNaN(created.getTime()) ? " on " + (typeof formatDateTime === "function" ? formatDateTime(created) : created.toLocaleString()) : "");
   banner.style.display = "";
   document.getElementById("maint-save").textContent = "Save Changes";
   document.getElementById("maint-cancel-edit").style.display = "";

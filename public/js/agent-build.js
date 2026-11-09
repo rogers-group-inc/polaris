@@ -31,10 +31,11 @@
   var _installedSummaryPollTimer = null;
   var _agentListPollTimer = null;
 
-  // Lightweight time formatters local to this module so it stays self-
-  // contained — the server-settings.js page has richer formatters (with
-  // TZ override) but integrations.html doesn't need that complexity.
+  // Absolute time in the operator's display timezone (api.js formatDateTime,
+  // CQ-F017); the fallback keeps the module loadable without api.js, which
+  // its tests do.
   function _formatLocalDateTime(iso) {
+    if (typeof formatDateTime === "function") return formatDateTime(iso) || iso || "—";
     try { return new Date(iso).toLocaleString(); }
     catch (_) { return iso || "—"; }
   }

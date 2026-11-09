@@ -27,6 +27,8 @@
 
   function formatDate(value) {
     if (!value) return "never";
+    // The operator's display timezone via api.js formatDateTime (CQ-F017).
+    if (typeof formatDateTime === "function") return formatDateTime(value) || String(value);
     try { return new Date(value).toLocaleString(); } catch (_) { return String(value); }
   }
 

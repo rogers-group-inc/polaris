@@ -3026,7 +3026,7 @@ function renderIntegrationFailedStatus() {
         var sub = typeLabel(i.type);
         if (i.lastTestAt) {
           var when = new Date(i.lastTestAt);
-          if (!isNaN(when.getTime())) sub += ' · last test ' + when.toLocaleString();
+          if (!isNaN(when.getTime())) sub += ' · last test ' + formatDateTime(when);
         } else {
           sub += ' · never tested';
         }
@@ -3146,7 +3146,7 @@ function renderSigningFailureAlert() {
 
   var when = new Date(failure.at);
   var sub = "v" + (failure.version || "?");
-  if (!isNaN(when.getTime())) sub += " · " + when.toLocaleString();
+  if (!isNaN(when.getTime())) sub += " · " + formatDateTime(when);
   container.style.display = "block";
   container.innerHTML =
     '<div class="query-status-header signing-failure-header">' +

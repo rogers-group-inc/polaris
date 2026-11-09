@@ -101,6 +101,7 @@ function setup(): void {
   g.escapeHtml = (s: unknown) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.showToast = () => {};
+  g.formatDateTime = (v: unknown) => new Date(v as string).toISOString();
   g.canManageAssets = () => true;
   g._fmtBytes = (b: number | null) => (b == null ? "—" : `${b}B`);
   g._currentStateStripHTML = () => '<div class="strip"></div>';

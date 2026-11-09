@@ -2507,21 +2507,21 @@ function openEventAssetTrigger(trigger) {
     var device = a.fortigateDevice ? '<div><strong>FortiGate:</strong> ' + escapeHtml(a.fortigateDevice) + '</div>' : "";
     var pushed = a.pushedToName ? '<div><strong>Pushed by:</strong> ' + escapeHtml(a.pushedToName) + '</div>' : "";
     var lastSeen = a.lastSeenLeased
-      ? '<div><strong>Last seen leased:</strong> ' + new Date(a.lastSeenLeased).toLocaleString() + '</div>'
+      ? '<div><strong>Last seen leased:</strong> ' + formatDateTime(a.lastSeenLeased) + '</div>'
       : '<div><strong>Last seen leased:</strong> <span style="color:var(--color-text-tertiary)">never</span></div>';
     // ARP presence evidence (only rendered when it ever fired): the last time
     // discovery saw the owning FortiGate's ARP table bind this IP to the
     // reserved MAC. A stale row showing an old ARP confirmation means the
     // device WAS provably on the wire then and has gone quiet since.
     var arpSeen = a.lastSeenArp
-      ? '<div><strong>Last ARP confirmation:</strong> ' + new Date(a.lastSeenArp).toLocaleString() + '</div>'
+      ? '<div><strong>Last ARP confirmation:</strong> ' + formatDateTime(a.lastSeenArp) + '</div>'
       : '';
     // Cross-signal: when an asset correlated (by MAC/IP) the row is only stale
     // because that asset is also absent — show its lastSeen so the operator
     // sees the device is gone from every signal, not just DHCP.
     var assetSeen = a.assetPresenceMatch
       ? '<div><strong>Matched asset (by ' + escapeHtml(String(a.assetPresenceMatch).toUpperCase()) + '):</strong> ' +
-          (a.assetLastSeen ? 'last seen ' + new Date(a.assetLastSeen).toLocaleString() : '<span style="color:var(--color-text-tertiary)">never seen</span>') + '</div>'
+          (a.assetLastSeen ? 'last seen ' + formatDateTime(a.assetLastSeen) : '<span style="color:var(--color-text-tertiary)">never seen</span>') + '</div>'
       : '';
     var sinceLine = '<div style="color:var(--color-warning, #ffc107);font-weight:500;margin-top:4px">' + a.daysSinceSeen + ' day' + (a.daysSinceSeen === 1 ? "" : "s") + ' without verified presence</div>';
     var labelName = (a.hostname || ip).replace(/"/g, "&quot;");
@@ -2560,7 +2560,7 @@ function openEventAssetTrigger(trigger) {
         lastSeen +
         arpSeen +
         assetSeen +
-        '<div><strong>Created:</strong> ' + new Date(a.createdAt).toLocaleString() + '</div>' +
+        '<div><strong>Created:</strong> ' + formatDateTime(a.createdAt) + '</div>' +
         sinceLine +
       '</div>' +
       '<div class="conflict-card-actions">' + actions + '</div>' +
@@ -2588,7 +2588,7 @@ function openEventAssetTrigger(trigger) {
         + '</div>'
       : "";
     var queuedAt = r.pushQueuedAt
-      ? '<div><strong>Queued:</strong> ' + new Date(r.pushQueuedAt).toLocaleString() + '</div>'
+      ? '<div><strong>Queued:</strong> ' + formatDateTime(r.pushQueuedAt) + '</div>'
       : "";
     var attempts = typeof r.pushAttempts === "number"
       ? '<div><strong>Attempts:</strong> ' + r.pushAttempts + '</div>'

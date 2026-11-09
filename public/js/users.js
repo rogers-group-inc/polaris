@@ -199,13 +199,13 @@ function renderUsersBody() {
       ? '<span class="badge badge-reserved" title="' + escapeHtml(idpProviderLabel(u.authProvider)) + ' SSO">' + escapeHtml(idpProviderLabel(u.authProvider)) + '</span>'
       : '<span class="badge" style="background:var(--color-bg-secondary);color:var(--color-text-secondary)">Local</span>';
     var lastLogin = u.lastLogin
-      ? '<span title="' + escapeHtml(new Date(u.lastLogin).toLocaleString()) + '">' + timeAgo(u.lastLogin) + '</span>'
+      ? '<span title="' + escapeHtml(formatDateTime(u.lastLogin)) + '">' + timeAgo(u.lastLogin) + '</span>'
       : '<span style="color:var(--color-text-tertiary)">Never</span>';
     var displayName = u.displayName ? ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(' + escapeHtml(u.displayName) + ')</span>' : '';
     // Business rule 140: a disabled account cannot sign in by any path.
     if (u.disabledAt) {
       displayName += ' <span class="badge badge-disabled" title="' +
-        escapeHtml("Disabled " + new Date(u.disabledAt).toLocaleString() + (u.disabledBy ? " by " + u.disabledBy : "") + " — cannot sign in") +
+        escapeHtml("Disabled " + formatDateTime(u.disabledAt) + (u.disabledBy ? " by " + u.disabledBy : "") + " — cannot sign in") +
         '">Disabled</span>';
     }
     var onlineDot = u.isOnline

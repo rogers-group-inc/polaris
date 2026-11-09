@@ -1432,7 +1432,7 @@
         '</tr></thead><tbody>' +
         scans.map(function (s) {
           var run = s.latestRun;
-          var when = s.lastRunAt ? new Date(s.lastRunAt).toLocaleString() : "never";
+          var when = s.lastRunAt ? formatDateTime(s.lastRunAt) : "never";
           var result = run
             ? (run.active ? "running — " + (run.scannedCount || 0) + "/" + (run.totalTargets || 0)
                : run.status + " · " + (run.hitCount || 0) + " responder(s)")

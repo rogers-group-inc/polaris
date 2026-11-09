@@ -36,6 +36,9 @@
 
   function el(id) { return document.getElementById(id); }
   function esc(v) { return typeof escapeHtml === "function" ? escapeHtml(String(v == null ? "" : v)) : String(v == null ? "" : v); }
+  // Absolute time in the operator's display timezone (api.js formatDateTime);
+  // the fallback keeps the module loadable without api.js.
+  function fmtWhen(iso) { return typeof formatDateTime === "function" ? formatDateTime(iso) : new Date(iso).toLocaleString(); }
 
   function canWrite() {
     if (typeof permAtLeast === "function") return permAtLeast("serverSettingsSystem", "write");
@@ -256,7 +259,7 @@
           ? '<p style="margin-top:0.75rem;font-size:0.82rem;color:var(--color-text-secondary)">' +
               "High availability is enabled" +
               (_cfg.enabledBy ? " by " + esc(_cfg.enabledBy) : "") +
-              (_cfg.enabledAt ? " on " + esc(new Date(_cfg.enabledAt).toLocaleString()) : "") +
+              (_cfg.enabledAt ? " on " + esc(fmtWhen(_cfg.enabledAt)) : "") +
               ". The credentials and the etcd authority are stored and sealed; re-enabling never rotates them." +
             "</p>"
           : "") +
@@ -389,7 +392,7 @@
             "<td>" + esc(ROLE_LABEL[e.role] || e.role) + " · " + esc(e.nodeName) + "</td>" +
             '<td><span class="badge ' + badge + '">' + esc(e.status) + "</span></td>" +
             '<td class="mono">' + esc(e.registeredFromIp || "—") + "</td>" +
-            "<td>" + esc(when ? new Date(when).toLocaleString() : "—") + "</td>" +
+            "<td>" + esc(when ? fmtWhen(when) : "—") + "</td>" +
           "</tr>";
         }).join("") +
         "</tbody></table></div>"
@@ -604,7 +607,7 @@
       api.ha.mintToken(role)
         .then(function (r) {
           _scripts[role] = { script: r.script, filename: r.filename };
-          showToast("Script generated — valid until " + new Date(r.expiresAt).toLocaleString(), "success");
+          showToast("Script generated — valid until " + fmtWhen(r.expiresAt), "success");
           return load(true);
         })
         .catch(function (err) { showToast((err && err.message) || "Could not generate the script", "error"); });

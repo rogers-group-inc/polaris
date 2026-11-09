@@ -49,6 +49,9 @@
   function can(level) { return typeof permAtLeast === "function" && permAtLeast("firmware", level); }
   function toast(msg, kind) { if (typeof showToast === "function") showToast(msg, kind || "info"); }
   function ago(iso) { return typeof timeAgo === "function" ? timeAgo(iso) : String(iso); }
+  // Absolute time in the operator's display timezone (api.js formatDateTime);
+  // the fallback is for the tests that load this module without api.js.
+  function when(iso) { return typeof formatDateTime === "function" ? formatDateTime(iso) : new Date(iso).toLocaleString(); }
   function bytes(n) {
     if (typeof formatBytes === "function") return formatBytes(n);
     if (!(n >= 0)) return "—";
@@ -229,7 +232,7 @@
       '<td>' + (img.platform ? esc(img.platform) : '<span class="fw-node-meta">unknown</span>') + '</td>' +
       '<td class="fw-file" title="' + esc(img.filename) + '">' + esc(img.filename) + '</td>' +
       '<td>' + esc(bytes(img.sizeBytes)) + '</td>' +
-      '<td title="' + esc(img.uploadedAt ? new Date(img.uploadedAt).toLocaleString() : "") + '">' + esc(img.uploadedBy || "—") + ' · ' + esc(img.uploadedAt ? ago(img.uploadedAt) : "") + '</td>' +
+      '<td title="' + esc(img.uploadedAt ? when(img.uploadedAt) : "") + '">' + esc(img.uploadedBy || "—") + ' · ' + esc(img.uploadedAt ? ago(img.uploadedAt) : "") + '</td>' +
       '<td style="text-align:right;white-space:nowrap">' + verbs + '</td>' +
     '</tr>';
   }
@@ -408,7 +411,7 @@
         '<td>' + esc(who) + '</td>' +
         '<td>' + esc(r.fromVersion || "?") + ' → ' + esc(r.toVersion) + '</td>' +
         '<td><span style="color:' + color + '">' + esc(status) + (r.stage && (status === "running" || status === "queued") ? " · " + esc(r.stage) : "") + '</span></td>' +
-        '<td title="' + esc(r.startedAt ? new Date(r.startedAt).toLocaleString() : "") + '">' + esc(r.startedBy) + ' · ' + esc(r.startedAt ? ago(r.startedAt) : "") + '</td>' +
+        '<td title="' + esc(r.startedAt ? when(r.startedAt) : "") + '">' + esc(r.startedBy) + ' · ' + esc(r.startedAt ? ago(r.startedAt) : "") + '</td>' +
         '<td style="color:var(--color-text-secondary);font-size:0.8rem">' + esc(r.error || "") + '</td>' +
         '<td style="text-align:right"><button type="button" class="btn btn-sm btn-secondary fw-run-view" data-id="' + esc(r.id) + '">View log</button></td>' +
       '</tr>';

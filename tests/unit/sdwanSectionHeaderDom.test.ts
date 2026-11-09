@@ -57,6 +57,7 @@ beforeEach(() => {
   // has to place what it returns.
   g._streamSourceBadgeHTML = () => BADGE;
   g.timeAgo = (t: any) => Math.round((Date.now() - new Date(t).getTime()) / 60000) + "m ago";
+  g.formatDateTime = (v: any) => new Date(v).toISOString();
 
   // eslint-disable-next-line no-eval
   (0, eval)(FN_NAMES.map(fnSrc).join("\n\n"));
