@@ -51,7 +51,8 @@
  * Only on change, never cleared (absence of evidence is not a move), sorted by
  * asset id inside one `$transaction` (the documented lastSeenAp deadlock fix),
  * with one `asset.switch_port.changed` / `asset.wireless_ap.changed` Event per
- * moved value written AFTER the commit through `buildConnectionChangedEvent`.
+ * moved value written AFTER the commit through `buildConnectionChangedEvent` —
+ * the roam one only while an automation uses its trigger (wirelessRoamEventsWanted).
  * The derived MAC IS adopted onto the asset (2026-09; rule 45 originally
  * withheld it). Adoption makes the row eligible for MAC-keyed dedupe and merge,
  * so the hazard is answered by `partitionAdoptableMacs` rather than by a
@@ -81,6 +82,7 @@ import { buildIpContexts } from "./subnetService.js";
 import { reconcileMacAddresses } from "./macAddressService.js";
 import { claimIsOperatorOwned, CLAIM_FRESH_DAYS } from "./duplicateIpConflictService.js";
 import { buildConnectionChangedEvent, buildMacAdoptedEvent, logEventsBatch } from "./eventLogService.js";
+import { wirelessRoamEventsWanted } from "./notificationChangeEvents.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
@@ -626,6 +628,9 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
       ),
     );
     // Audit AFTER the commit — an Event write must not extend the lock window.
+    // A roam Event only while an automation uses the roam trigger (the stamp
+    // itself is unconditional); asked once per chunk.
+    const roamsWanted = await wirelessRoamEventsWanted();
     const events = chunk.flatMap((s) => {
       const ctx = { assetId: s.row.id, assetName: s.row.hostname || s.row.ip, actor: ACTOR, source: SOURCE };
       const out = [];
@@ -636,8 +641,10 @@ export async function resolveIpUpstreamForMaclessAssets(now = new Date()): Promi
       }
       if (s.apName) {
         result.apStamps++;
-        const ev = buildConnectionChangedEvent("ap", ctx, s.row.lastSeenAp, s.apName);
-        if (ev) out.push(ev);
+        if (roamsWanted) {
+          const ev = buildConnectionChangedEvent("ap", ctx, s.row.lastSeenAp, s.apName);
+          if (ev) out.push(ev);
+        }
       }
       if (s.adoptMac) {
         result.macAdopted++;
