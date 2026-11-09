@@ -15915,7 +15915,7 @@ function _rebootControlHTML(a, rb) {
   if (rb.schedule) {
     parts.push('<button type="button" class="badge" id="btn-asset-reboot-scheduled" style="cursor:' + (canAct ? "pointer" : "default") +
       ';border:1px solid var(--color-border);background:transparent;color:var(--color-text-secondary)" title="' +
-      escapeHtml("Results emailed to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
+      escapeHtml("Emails to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
         (rb.schedule.note ? " · reason: " + rb.schedule.note : "") +
         (rb.schedule.error ? " · waiting: " + rb.schedule.error : "") + (canAct ? " — click to change or cancel" : "")) + '">' +
       'Reboot scheduled ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + '</button>');
@@ -15942,8 +15942,13 @@ async function _loadAssetRebootControl(a) {
   if (rb.activeRun) _startRebootPoll(a, rb.activeRun.id);
 }
 
-/** The time + recipients half of the dialog (the firmware booking's fields, worded for a reboot). Pure. */
-function _rebootScheduleFieldsHTML(existing, defaults, warn) {
+/**
+ * The time + recipients half of the dialog (the firmware booking's fields,
+ * worded for a reboot). Pure. `opts.emails === false` leaves the recipients
+ * out — they live under "Email notifications" (`_rebootNotifyHTML`) instead.
+ */
+function _rebootScheduleFieldsHTML(existing, defaults, warn, opts) {
+  var withEmails = !(opts && opts.emails === false);
   var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
   var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
   var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
@@ -15954,10 +15959,37 @@ function _rebootScheduleFieldsHTML(existing, defaults, warn) {
       '<input type="datetime-local" id="rb-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
       '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the reboot is not sent.</p>' +
     '</div>' +
-    '<div class="form-group">' +
-      '<label for="rb-sched-emails">Email the results to</label>' +
-      '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml(emails.join(", ")) + '">' +
-      '<p class="hint" style="margin:0.25rem 0 0">Comma-separated. Sent when the reboot finishes — succeeded or failed — or if it could not be started.</p>' +
+    (withEmails ? _rebootEmailsFieldHTML(emails, _RB_NOTIFY_HINT_SCHEDULED) : '');
+}
+
+var _RB_NOTIFY_HINT_NOW = "Comma-separated; start typing a name to pick from the address book. Sent when the reboot is sent and when the device is back — or did not come back.";
+var _RB_NOTIFY_HINT_SCHEDULED = "Comma-separated; start typing a name to pick from the address book. Sent when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled reboot always emails someone.";
+
+/** The reboot dialog's one recipients box. Pure. */
+function _rebootEmailsFieldHTML(emails, hint) {
+  return '<div class="form-group">' +
+      '<label for="rb-sched-emails">Email to</label>' +
+      '<div style="position:relative">' +
+        '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml((emails || []).join(", ")) + '">' +
+      '</div>' +
+      '<p class="hint" id="rb-notify-hint" style="margin:0.25rem 0 0">' + escapeHtml(hint) + '</p>' +
+    '</div>';
+}
+
+/**
+ * "Email notifications" for a reboot: off by default for a reboot now (emails
+ * when it is sent and when it ends); ticked and locked while "Schedule for
+ * later" is, because a booking always emails someone. Pure.
+ */
+function _rebootNotifyHTML(defaults, locked) {
+  var emails = (defaults && defaults.notifyEmails) || [];
+  return '<div style="margin-top:0.75rem">' +
+      '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
+        '<input type="checkbox" id="rb-notify"' + (locked ? " checked disabled" : "") + '> Email notifications' +
+      '</label>' +
+      '<div id="rb-notify-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' +
+        _rebootEmailsFieldHTML(emails, locked ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW) +
+      '</div>' +
     '</div>';
 }
 
@@ -16019,7 +16051,8 @@ function _rebootModalHTML(a, rb, opts) {
     '</label>';
   var schedulePart;
   if (rb.schedule) {
-    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">A reboot is already scheduled for ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + ' — change or cancel it from the chip beside the button.</p>';
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">A reboot is already scheduled for ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + ' — change or cancel it from the chip beside the button.</p>' +
+      _rebootNotifyHTML(opts.defaults, false);
   } else {
     var locked = mode === "schedule-only";
     schedulePart =
@@ -16027,7 +16060,8 @@ function _rebootModalHTML(a, rb, opts) {
         '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
           '<input type="checkbox" id="rb-schedule"' + (locked ? " checked disabled" : "") + '> Schedule for later' +
         '</label>' +
-        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null) + '</div>' +
+        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null, { emails: false }) + '</div>' +
+        _rebootNotifyHTML(opts.defaults, locked) +
       '</div>';
   }
   return device + warnBox + _rebootNoteFieldHTML(rb, "") + schedulePart;
@@ -16035,8 +16069,10 @@ function _rebootModalHTML(a, rb, opts) {
 
 async function _openRebootModal(a, rb, existing) {
   var mode = existing ? "change" : (rb.available ? "choose" : "schedule-only");
+  // The operator's remembered list (else their own address) pre-fills the
+  // recipients — a booking's, and "Email notifications" for a reboot now.
   var defaults = null;
-  if (existing === null && !rb.schedule) {
+  if (!existing) {
     try { defaults = await api.assets.rebootScheduleDefaults(a.id); } catch (e) { defaults = null; }
   }
   var name = a.hostname || a.ipAddress || "device";
@@ -16054,20 +16090,36 @@ async function _openRebootModal(a, rb, existing) {
   var emailsEl = document.getElementById("rb-sched-emails");
   var noteEl = document.getElementById("rb-note");
   var btn = document.getElementById("btn-rb-go");
+  var notify = document.getElementById("rb-notify");
+  var notifyFields = document.getElementById("rb-notify-fields");
+  var notifyHint = document.getElementById("rb-notify-hint");
+  if (emailsEl && window.PolarisEmailSuggest) PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
   function scheduling() { return mode === "change" || !!(later && later.checked); }
+  // A booking always emails someone: scheduling ticks and locks the box, and
+  // unticking "Schedule for later" puts back the operator's own choice.
+  var notifyChoice = notify ? notify.checked : false;
+  if (notify) notify.addEventListener("change", function () { notifyChoice = notify.checked; });
+  function emailing() { return scheduling() || !!(notify && notify.checked); }
   function noteValue() { return noteEl ? noteEl.value.trim() : ""; }
   function sync() {
     if (fields && later) fields.style.display = later.checked ? "" : "none";
+    if (notify && mode !== "schedule-only") {
+      notify.disabled = scheduling();
+      notify.checked = scheduling() || notifyChoice;
+    }
+    if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
+    if (notifyHint && notify) notifyHint.textContent = scheduling() ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW;
     var acked = (mode === "change" || !!(ack && ack.checked)) && (!rb.noteRequired || noteValue() !== "");
+    var emailsOk = !emailing() || !!(emailsEl && _fwParseEmails(emailsEl.value).length > 0);
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule reboot";
-      btn.disabled = !(acked && whenEl && whenEl.value && emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+      btn.disabled = !(acked && whenEl && whenEl.value && emailsOk);
     } else {
       btn.textContent = "Reboot now";
-      btn.disabled = !acked || !rb.available;
+      btn.disabled = !acked || !rb.available || !emailsOk;
     }
   }
-  [ack, later].forEach(function (el) { if (el) el.addEventListener("change", sync); });
+  [ack, later, notify].forEach(function (el) { if (el) el.addEventListener("change", sync); });
   [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
 
   var cancelBooking = document.getElementById("btn-rb-cancel-booking");
@@ -16095,8 +16147,10 @@ async function _openRebootModal(a, rb, existing) {
       call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
       done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
     } else {
-      call = api.assets.startReboot(a.id, noteValue() ? { note: noteValue() } : {});
-      done = "Reboot sent — Polaris is watching for the device to come back";
+      var nowBody = noteValue() ? { note: noteValue() } : {};
+      if (emailing() && emailsEl) nowBody.notifyEmails = _fwParseEmails(emailsEl.value);
+      call = api.assets.startReboot(a.id, nowBody);
+      done = "Reboot sent — Polaris is watching for the device to come back" + (nowBody.notifyEmails ? "; emails go to " + nowBody.notifyEmails.join(", ") : "");
     }
     btn.disabled = true;
     call.then(function () {

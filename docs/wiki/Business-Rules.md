@@ -2583,6 +2583,12 @@ the reason it was booked with: turning the requirement on later does not stop
 a booking that has none. A reboot an automation books gives the automation's
 name as its reason.
 
+**Who hears about it.** A reboot you book emails its recipients when it is
+booked (and if its time changes), when it starts, and with the result — the
+same as a [scheduled firmware upgrade](#rule-93). A reboot started now emails
+when it is sent and when it ends, if **Email notifications** is ticked. A
+reboot an automation books emails only its result.
+
 ### Rule 116
 
 **No pattern can make Polaris hang.**

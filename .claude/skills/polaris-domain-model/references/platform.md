@@ -706,6 +706,9 @@ RebootRun                       -- One reboot of one asset (business rule 115). 
   startedAt       DateTime
   heartbeatAt     DateTime?
   finishedAt      DateTime?
+  notifyEmails    String[]      -- default []; a reboot started NOW with "Email notifications": who hears it was sent and how it ended. Always empty on a booked run. Migration 20261109130000_reboot_run_notify_emails (rule 115(e))
+  notifiedAt      DateTime?     -- that results email, claimed before sending
+  notifyError     String?
   schedule        RebootSchedule?   -- back-relation: the booking that fired this run
   @@index([assetId, startedAt]); @@index([status])
   @@index([startedAt])          -- the Events page's Calendar tab (operationsCalendarService); migration 20261014130000_operations_calendar

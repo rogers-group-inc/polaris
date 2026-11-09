@@ -260,7 +260,9 @@ describe("asset panel header verbs (Discover Now, Reboot)", () => {
 });
 
 describe("the reboot dialog's Reason field (rule 115(d))", () => {
-  const DIALOG_FNS = ["_rebootNoteFieldHTML", "_rebootMethodText", "_rebootScheduleFieldsHTML", "_rebootModalHTML"];
+  const DIALOG_FNS = ["_rebootNoteFieldHTML", "_rebootMethodText", "_rebootScheduleFieldsHTML", "_rebootEmailsFieldHTML", "_rebootNotifyHTML", "_rebootModalHTML"];
+  // The notify hints are module-level strings the dialog functions read.
+  const HINT_VARS = (assetsSrc.match(/^var _RB_NOTIFY_HINT_\w+ = .*;\r?$/gm) ?? []).join("\n");
 
   function loadDialog() {
     g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
@@ -269,7 +271,7 @@ describe("the reboot dialog's Reason field (rule 115(d))", () => {
     g._fwLocalInputValue = () => "2026-10-26T13:00";
     g._fwBrowserZone = () => "UTC";
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    new Function(DIALOG_FNS.map(fnSrc).join("\n") + "\n" + DIALOG_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
+    new Function(HINT_VARS + "\n" + DIALOG_FNS.map(fnSrc).join("\n") + "\n" + DIALOG_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
   }
 
   const GATE = { id: "a1", hostname: "GATE-1", assetType: "firewall" };
@@ -285,6 +287,35 @@ describe("the reboot dialog's Reason field (rule 115(d))", () => {
     req.innerHTML = g._rebootModalHTML(GATE, { ...RB, noteRequired: true }, { mode: "choose" });
     expect(req.querySelector('label[for="rb-note"]')!.textContent).toContain("*");
     expect(req.textContent).toContain("requires a reason for every reboot");
+  });
+
+  it("Email notifications: unticked for a reboot now, pre-filled, hidden until ticked; ticked and locked when it can only be scheduled", () => {
+    loadDialog();
+    expect(HINT_VARS).toContain("_RB_NOTIFY_HINT_NOW");
+    const now = document.createElement("div");
+    now.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "choose", defaults: { notifyEmails: ["me@example.com"] } });
+    const box = now.querySelector("#rb-notify") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+    expect((now.querySelector("#rb-notify-fields") as HTMLElement).style.display).toBe("none");
+    expect(now.querySelectorAll("#rb-sched-emails")).toHaveLength(1);
+    expect(now.querySelector("#rb-sched-fields #rb-sched-emails")).toBeNull();
+    expect((now.querySelector("#rb-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    expect(now.querySelector("#rb-notify-hint")!.textContent).toContain("when the reboot is sent");
+    const later = document.createElement("div");
+    later.innerHTML = g._rebootModalHTML(GATE, { ...RB, available: false, reason: "The agent is offline." }, { mode: "schedule-only", defaults: { notifyEmails: [] } });
+    const locked = later.querySelector("#rb-notify") as HTMLInputElement;
+    expect(locked.checked).toBe(true);
+    expect(locked.disabled).toBe(true);
+    expect(later.querySelector("#rb-notify-hint")!.textContent).toContain("when it is scheduled");
+  });
+
+  it("changing a booking keeps its recipients in the schedule fields, with no notify box", () => {
+    loadDialog();
+    const wrap = document.createElement("div");
+    wrap.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "change", existing: { scheduledFor: "2026-10-27T02:00:00Z", notifyEmails: ["noc@example.com"], note: null } });
+    expect(wrap.querySelector("#rb-notify")).toBeNull();
+    expect((wrap.querySelector("#rb-sched-fields #rb-sched-emails") as HTMLInputElement).value).toBe("noc@example.com");
   });
 
   it("pre-fills a booking's reason when changing it, and shows the last reboot's reason", () => {

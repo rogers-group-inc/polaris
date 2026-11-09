@@ -6768,6 +6768,12 @@ model RebootRun {
   startedAt      DateTime        @default(now())
   heartbeatAt    DateTime?
   finishedAt     DateTime?
+  // A reboot started NOW with "Email notifications" ticked (2026-11-09): who
+  // is emailed that it was sent and how it ended. Empty = no email, and always
+  // empty on a booked run (its booking holds the recipients).
+  notifyEmails   String[]        @default([])
+  notifiedAt     DateTime?       // its results email, claimed before sending
+  notifyError    String?         @db.Text
   schedule       RebootSchedule?
 
   @@index([assetId, startedAt])

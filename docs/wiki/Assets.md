@@ -1092,6 +1092,12 @@ Before rebooting a FortiGate directly, Polaris checks that the device answering
 reports the asset's serial number and is not in an HA cluster, and refuses
 otherwise.
 
+**Email notifications.** Tick **Email notifications** to have Polaris email when
+the reboot is **sent** and when it **ends** (succeeded, unverified or failed).
+**Email to** starts with your own address; add more separated by commas, or start
+typing a name to pick a Polaris user or an [Address Book](Address-Book) contact.
+Leave the box clear and no email is sent.
+
 **Reason.** The dialog has a **Reason** field — say why the device is being
 rebooted (one line, up to 500 characters). It is recorded on the asset's
 Events, shown beside the last reboot in the dialog and in a run's log, on the
@@ -1103,8 +1109,11 @@ same applies on the phone and over the API ([rule 115](Business-Rules#rule-115))
 A reboot an automation books gives the automation's name as its reason.
 
 **Scheduling a reboot.** Tick **Schedule for later** in the same dialog and give
-a time (your browser's time zone) and who gets the results email, exactly as for
-a [scheduled firmware upgrade](#firmware). While it waits, a **Reboot scheduled
+a time (your browser's time zone) and who gets the emails, exactly as for
+a [scheduled firmware upgrade](#firmware): **Email notifications** is then ticked
+and locked, and the recipients are emailed when it is scheduled (and if its time
+changes), when it starts, and with the result — or why it could not be started.
+A reboot an automation books emails only its result. While it waits, a **Reboot scheduled
 …** chip sits beside the button; click it to change the time, recipients or
 reason, or to **Cancel scheduled reboot**. When the time comes every check is taken again;
 a reboot first reached more than 15 minutes late is not sent, and the recipients

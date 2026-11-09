@@ -312,8 +312,9 @@ allowed to reboot, the row carries **Reboot…** ([Assets → Reboot](Assets#reb
 how the reboot will be sent and what signs it, and says what goes down with it;
 **Reboot** stays greyed out until **I understand this device will go down** is
 ticked. The row then follows the reboot until the device is back, and ends on
-the result. The same sheet has **Schedule for later**, exactly as for a firmware
-upgrade, and a pending reboot shows in the row with **Change** and **Cancel**.
+the result. The same sheet has **Schedule for later** and **Email notifications**, exactly
+as for a firmware upgrade, and a pending reboot shows in the row with **Change**
+and **Cancel**.
 When the device can't be rebooted right now but can be booked (an agent host
 that is offline, say), the row offers **Schedule reboot…** and says why. When
 reboots are not enabled for the device, the row says nothing about rebooting;
