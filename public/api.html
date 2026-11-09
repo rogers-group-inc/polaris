@@ -1745,7 +1745,11 @@
           <div class="endpoint-head"><span class="method m-post">POST</span> /automations/preview
             <span class="gate">automationManagement:write</span></div>
           <p>Dry-run a draft. Accepts a partial draft: <code>{ scope }</code> alone lists the
-            devices it selects; <code>{ trigger, scope }</code> evaluates current readings. Returns
+            devices it selects; <code>{ trigger, scope }</code> evaluates current readings. Add
+            <code>carveOutTrigger</code> (and the rule's <code>id</code> when editing) to a scope-only
+            body to apply the precedence carve-out to the device list without evaluating the
+            trigger: matches a more specific rule owns carry <code>excludedBy</code> and sort last,
+            and <code>coveredAssets</code> counts the rest. Returns
             <code>{ supported, totalEvaluated, totalAssets?, unmonitoredCount?, meetsCount, matches, carveOut?, … }</code>
             — <code>meetsCount</code> is how many readings meet the trigger now, and
             <code>carveOut</code> says which devices a more specific rule already owns. Event and

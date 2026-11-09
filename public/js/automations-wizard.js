@@ -2663,7 +2663,7 @@ async function openAutomationWizard(existing, opts) {
       '</div>' + body;
   }
 
-  openModal(readOnly ? "View automation" : editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true, readOnly: readOnly });
+  openModal(readOnly ? "View automation" : editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true, stepper: true, readOnly: readOnly });
 
   // ── Export / import / view-code (public/js/automations-portability.js) ──
   // Guarded on the global: the wizard is standalone and loads on five pages,
@@ -2944,9 +2944,41 @@ async function openAutomationWizard(existing, opts) {
   // One shell for every preview state — "Checking…", a result, an error — so the
   // box's height comes from the CSS rather than from what came back. Head holds
   // the count line (which may wrap); the matched-device list scrolls in the body.
-  function scopePreviewHtml(headHtml, bodyHtml) {
+  function scopePreviewHtml(headHtml, bodyHtml, noteHtml) {
     return '<p class="aw-preview-head">' + headHtml + '</p>' +
+      (noteHtml ? '<p class="aw-preview-head aw-preview-muted aw-carve-note">' + noteHtml + '</p>' : "") +
       '<div class="aw-preview-body' + (bodyHtml ? ' table-wrapper' : '') + '">' + (bodyHtml || "") + '</div>';
+  }
+  // The Devices step's precedence note (business rule 18): its own line
+  // between the count and the device list, so it is never below the fold.
+  // `carveState`: "set" — the trigger takes part and was sent, so the note
+  // states how many matched devices a more-specific automation owns (left out
+  // of the list) and what this draft takes from less-specific ones; "pending"
+  // — no trigger chosen yet, so the number cannot be known and the note says
+  // when it will be; "exempt" (composite / event / change) — no note.
+  function scopeCarveOutNote(res, carveState) {
+    if (carveState === "pending") {
+      return "The number of devices not included because a more-specific automation covers them is shown once this automation's trigger is set.";
+    }
+    var co = res && res.carveOut;
+    if (carveState !== "set" || !co) return "";
+    var out = [];
+    if (co.carvedOut && co.carvedOut.count) {
+      var by = (co.carvedOut.byRule || []).map(function (b) {
+        return '“' + escapeHtml(b.ruleName) + '” (' + b.count + ')';
+      }).join(", ");
+      out.push('<strong>' + co.carvedOut.count + '</strong> device(s) not included — a more-specific automation already covers them: ' + by + '.' +
+        (res.coveredAssets
+          ? ' This one alerts on the remaining <strong>' + res.coveredAssets + '</strong>.'
+          : ' That leaves <strong>no</strong> device(s) for this one.'));
+    }
+    if (co.carvesFrom && co.carvesFrom.length) {
+      var from = co.carvesFrom.map(function (c) {
+        return '“' + escapeHtml(c.ruleName) + '” (' + c.count + ')';
+      }).join(", ");
+      out.push('This takes devices from less-specific automations: ' + from + '.');
+    }
+    return out.join(" ");
   }
   function scheduleScopePreview() {
     if (scopePreviewTimer) clearTimeout(scopePreviewTimer);
@@ -2961,10 +2993,36 @@ async function openAutomationWizard(existing, opts) {
       // A Path Monitor draft's pool is agent hosts — preview the scope the
       // engine will actually resolve (pathMonitorScopeC).
       var pathPool = isPathTriggerC(draft.trigger);
-      var res = await awPreview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
-      var rows = (res.matches || []).slice(0, 15).map(function (m) {
+      var body = { scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope };
+      // Business rule 18: a more-specific automation watching the same thing
+      // takes the devices it covers from this one. Only single-condition
+      // metric/state triggers take part, and only they are sent — the trigger
+      // rides along for the carve-out alone, it is not evaluated here.
+      // A new draft carries a placeholder trigger until the operator reaches
+      // the trigger step (step 3), so before that the carve-out cannot be known
+      // — the note says so instead of counting against the placeholder. Edits
+      // and clones open with every step visited.
+      var tr = draft.trigger;
+      var carveState = visited < 3 ? "pending"
+        : tr && (tr.type === "asset_metric" || tr.type === "asset_state") ? "set"
+        : "exempt";
+      var res;
+      if (carveState === "set") {
+        var withCarve = Object.assign({}, body, { carveOutTrigger: tr });
+        if (editing && editing.id) withCarve.id = editing.id;
+        // A half-built trigger can fail validation; the device list must not
+        // go dark over it, so fall back to the plain list and say the count
+        // waits on a finished trigger.
+        try { res = await awPreview(withCarve); } catch (_e) { res = await awPreview(body); carveState = "pending"; }
+      } else {
+        res = await awPreview(body);
+      }
+      var carved = res.coveredAssets != null;
+      var owned = (res.matches || []).filter(function (m) { return !m.excludedBy; });
+      var rows = owned.slice(0, 15).map(function (m) {
         return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + '</td></tr>';
       }).join("");
+      var listedTotal = carved ? res.coveredAssets : res.totalEvaluated;
       // MONITORED devices are what the list and the count report — those are
       // what an operator is choosing between. The unmonitored remainder is
       // stated rather than hidden (the filter does select them), but no
@@ -2976,8 +3034,9 @@ async function openAutomationWizard(existing, opts) {
       box.innerHTML = scopePreviewHtml(
         '<strong>' + res.totalEvaluated + '</strong> monitored device(s)' + (pathPool ? ' with the Polaris Agent' : '') + ' match this filter.' +
           (un ? ' <span class="aw-preview-muted">(+' + un + ' unmonitored — automations never fire on those.)</span>' : "") +
-          (res.totalEvaluated > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
-        rows ? '<table><tbody>' + rows + '</tbody></table>' : ""
+          (listedTotal > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
+        rows ? '<table><tbody>' + rows + '</tbody></table>' : "",
+        scopeCarveOutNote(res, carveState)
       );
     } catch (err) {
       box.innerHTML = scopePreviewHtml('<span class="aw-preview-muted">' + escapeHtml(err.message || "Preview unavailable") + '</span>');

@@ -4615,8 +4615,9 @@ function openModal(title, bodyHTML, footerHTML, options) {
   _modalDrag.offsetX = 0;
   _modalDrag.offsetY = 0;
   modal.style.transform = "";
-  modal.classList.remove("modal-wide", "modal-large", "modal-xl");
+  modal.classList.remove("modal-wide", "modal-large", "modal-xl", "modal-stepper");
   if (options && options.wide) modal.classList.add("modal-wide");
+  if (options && options.stepper) modal.classList.add("modal-stepper");
   if (options && options.large) modal.classList.add("modal-large");
   if (options && options.xl) modal.classList.add("modal-xl");
   if (_modalReadOnlyTeardown) { _modalReadOnlyTeardown(); _modalReadOnlyTeardown = null; }

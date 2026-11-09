@@ -3141,6 +3141,11 @@ export type PreviewRuleInput = Omit<RuleInput, "trigger" | "name"> & {
   name: string;
   trigger?: Trigger;
   id?: string;
+  /** Device-list preview only (no `trigger`): the draft's trigger, used solely
+   *  to apply the precedence carve-out (business rule 18) to the listed
+   *  devices. It is never evaluated — the Devices step may run before the
+   *  trigger step is finished. */
+  carveOutTrigger?: Trigger;
 };
 
 /** clearBehavior/clearAfterSec → v2 reset. Also sanitizes a provided reset:
@@ -3782,10 +3787,13 @@ export const previewInputSchema = ruleInputBaseSchema
     trigger: triggerSchema.optional(),
     // When editing, the rule's own id so the carve-out preview excludes itself.
     id: z.string().max(100).optional(),
+    // Device-list preview: the draft's trigger, for the carve-out only.
+    carveOutTrigger: triggerSchema.optional(),
   })
   .transform((raw): PreviewRuleInput => ({
     trigger: raw.trigger ? collapseCompositeTrigger(raw.trigger) : undefined,
     id: raw.id,
+    ...(raw.carveOutTrigger ? { carveOutTrigger: raw.carveOutTrigger } : {}),
     ...withEventAction(normalizeRuleInputCore(raw), raw.actions, raw.trigger),
   }))
   .superRefine(validateRuleV2);

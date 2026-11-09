@@ -173,7 +173,7 @@ padding. Sticky variant of the header: `.page-header-sticky`.
   .modal-body, .modal-footer]`. The header is `color-bg-tertiary` with an `h3`. Footer
   buttons are right-aligned: Cancel (`.btn-secondary`) then the primary action; a third
   action (Test Connection, Back) goes at the far left. Widths: `.modal` 480px,
-  `.modal-wide` 672px, `.modal-large`, `.modal-xl`. Four shapes, all on the Modal page: a
+  `.modal-wide` 672px (`.modal-stepper` 880px for a 7-step wizard), `.modal-large`, `.modal-xl`. Four shapes, all on the Modal page: a
   form; a tabbed dialog (`.modal-body > .page-tabs > .page-tab` + `.page-tab-panel`, the tab
   strip pinned to the top of the body); a wizard (`.modal-body > .stepper >
   .stepper-step > .stepper-num` joined by `.stepper-line`, then one `.step-panel.visible`;
