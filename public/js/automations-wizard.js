@@ -7933,7 +7933,7 @@ async function openAutomationWizard(existing, opts) {
     btn.textContent = "Sending…";
     box.querySelectorAll(".awtd-btn").forEach(function (b) { b.disabled = true; });
     var out = box.querySelector('.awtd-out[data-key="' + target.key + '"]');
-    var stamp = new Date().toLocaleTimeString();
+    var stamp = new Date().toLocaleTimeString(undefined, typeof timeZoneOpts === "function" ? timeZoneOpts() : {});
     try {
       var r = await api.automations.testDelivery({
         rule: testDeliveryPayload(),

@@ -1173,7 +1173,8 @@
     var size = L.size;
     var doc = newDoc(L.orientation, size);
     var now = new Date();
-    var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+    var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+    var timestamp = now.toLocaleDateString(undefined, tz) + " " + now.toLocaleTimeString(undefined, tz);
     var plan = L.plan, area = L.content, bb = scene.bbox;
     var pageNo = 1;
 

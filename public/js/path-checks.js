@@ -568,7 +568,10 @@
   function fmtDay(v) {
     var d = new Date(v);
     if (isNaN(d.getTime())) return "—";
-    try { return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); } catch (_) { return d.toDateString(); }
+    try {
+      return d.toLocaleDateString(undefined, Object.assign({ year: "numeric", month: "short", day: "numeric" },
+        typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
+    } catch (_) { return d.toDateString(); }
   }
 
   function fmtMs(v) { return typeof v === "number" ? (v < 10 ? Math.round(v * 10) / 10 : Math.round(v)) + " ms" : null; }

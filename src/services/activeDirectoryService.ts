@@ -142,6 +142,24 @@ function firstStr(v: unknown): string | null {
 }
 
 /**
+ * The LDAP filter behind the live typeahead. EVERY word of the query must
+ * appear in one of the name / address attributes, in any order — so "John
+ * Smith" finds an account whose displayName is "Smith, John" (or whose
+ * givenName / sn carry the two halves), which one `*john smith*` substring
+ * never did. The same rule as the local address-book search
+ * (contactService.entryMatchesTerms). Each word is escaped (RFC 4515). Pure.
+ */
+export function adSearchFilter(raw: string): string {
+  const words = String(raw ?? "").trim().split(/[\s,;]+/).filter(Boolean).map(escapeLdapFilterValue);
+  const one = (w: string) => `(|(cn=*${w}*)(mail=*${w}*)(displayName=*${w}*)(sAMAccountName=*${w}*)(givenName=*${w}*)(sn=*${w}*))`;
+  const match = words.length > 1 ? `(&${words.map(one).join("")})` : one(words[0] ?? "");
+  return "(&(mail=*)" +
+    "(|(objectClass=user)(objectClass=group)(objectClass=contact))" +
+    match +
+  ")";
+}
+
+/**
  * Search users, mail-enabled groups and contacts under the configured base DN.
  * One search rather than three: AD can OR the object classes in a single
  * filter, and `(mail=*)` drops anything that can't receive email anyway.
@@ -154,13 +172,7 @@ export async function searchDirectoryAd(
   const raw = query.trim();
   if (raw.length < 2) return [];
   if (!config.baseDn) return [];
-  const q = escapeLdapFilterValue(raw);
-
-  const filter =
-    "(&(mail=*)" +
-      "(|(objectClass=user)(objectClass=group)(objectClass=contact))" +
-      `(|(cn=*${q}*)(mail=*${q}*)(displayName=*${q}*)(sAMAccountName=*${q}*))` +
-    ")";
+  const filter = adSearchFilter(raw);
 
   return withBoundLdapClient(config, undefined, async (client) => {
     const { searchEntries } = await client.search(config.baseDn, {

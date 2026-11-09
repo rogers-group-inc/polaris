@@ -479,7 +479,7 @@ async function loadIntegrations() {
       } else {
         var intervalMs = (intg.pollInterval || 4) * 3600000;
         var nextRunMs = intg.lastDiscoveryAt ? new Date(intg.lastDiscoveryAt).getTime() + intervalMs : Date.now();
-        nextDiscoveryText = escapeHtml(new Date(nextRunMs).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }));
+        nextDiscoveryText = escapeHtml(new Date(nextRunMs).toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }, timeZoneOpts())));
       }
 
       // "Avg Discovery Time" row — surfaces the rolling baseline from

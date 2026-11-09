@@ -1503,7 +1503,7 @@ function _ipPanelTimeAgoVerbose(dateStr) {
   if (diff < 5400) return "1 hour ago";
   if (diff < 86400) return Math.floor(diff / 3600) + " hours ago";
   if (diff < 86400 * 7) return Math.floor(diff / 86400) + " days ago";
-  return "on " + new Date(dateStr).toLocaleDateString();
+  return "on " + new Date(dateStr).toLocaleDateString(undefined, timeZoneOpts());
 }
 
 function _renderDiscoveredLine(s) {
@@ -1987,7 +1987,7 @@ function _generateIpPanelPdf(s, allIps) {
   var doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
 
   var now = new Date();
-  var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+  var timestamp = now.toLocaleDateString(undefined, timeZoneOpts()) + " " + now.toLocaleTimeString(undefined, timeZoneOpts());
 
   // Header
   doc.setFontSize(16);

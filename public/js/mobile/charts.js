@@ -397,7 +397,7 @@
       + '</div>';
 
     // X-axis labels — start time at left, end time at right.
-    var crossesDay = new Date(tMin).toDateString() !== new Date(tMax).toDateString();
+    var crossesDay = _crossesDay(tMin, tMax);
     var xLabels = ''
       + '<div class="chart-x-labels">'
       + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin, crossesDay) + '</span>'
@@ -627,7 +627,7 @@
     });
 
     var aria = (opts.ariaLabel || "Chart") + (mspans.length ? " (includes maintenance — polling paused)" : "");
-    var crossesDay = new Date(tMin).toDateString() !== new Date(tMax).toDateString();
+    var crossesDay = _crossesDay(tMin, tMax);
     return ''
       + '<div class="chart-wrap" style="height:' + totalHeight + 'px;padding:' + TOP_GUTTER + 'px ' + RIGHT_GUTTER + 'px ' + BOTTOM_GUTTER + 'px ' + LEFT_GUTTER + 'px;">'
       + '  <div class="chart-y-labels">'
@@ -715,16 +715,24 @@
     if (ts == null || !isFinite(ts)) return "";
     var d = new Date(ts);
     if (isNaN(d.getTime())) return "";
+    var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
     if (spanMs < 36 * 3600 * 1000) {
       if (crossesDay) {
-        return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        return d.toLocaleString([], Object.assign({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, tz));
       }
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return d.toLocaleTimeString([], Object.assign({ hour: "2-digit", minute: "2-digit" }, tz));
     }
     if (spanMs < 31 * 86400 * 1000) {
-      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+      return d.toLocaleDateString([], Object.assign({ month: "short", day: "numeric" }, tz));
     }
-    return d.toLocaleDateString([], { month: "short", year: "numeric" });
+    return d.toLocaleDateString([], Object.assign({ month: "short", year: "numeric" }, tz));
+  }
+
+  // The phone's x axis is just its two end labels (no midnight-aligned ticks),
+  // so they and the "crosses a day" test can follow the display zone outright.
+  function _crossesDay(tMin, tMax) {
+    var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+    return new Date(tMin).toLocaleDateString("en-CA", tz) !== new Date(tMax).toLocaleDateString("en-CA", tz);
   }
 
   window.PolarisCharts = {

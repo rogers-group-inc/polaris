@@ -608,7 +608,8 @@
       function updateClock(unixSec) {
         if (clockEl == null || unixSec == null) return;
         var d = new Date(unixSec * 1000);
-        clockEl.textContent = "RADAR " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: true });
+        clockEl.textContent = "RADAR " + d.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit", hour12: true },
+          typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
         clockEl.style.display = radarEnabled ? "block" : "none";
       }
 

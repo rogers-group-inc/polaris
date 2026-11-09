@@ -1178,8 +1178,8 @@ function openEventAssetTrigger(trigger) {
     if (c.resolvedBy) meta += " by " + escapeHtml(c.resolvedBy);
     if (c.resolvedAt) {
       var ts = new Date(c.resolvedAt);
-      meta += " · " + ts.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-        " " + ts.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      meta += " · " + ts.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric" }, timeZoneOpts())) +
+        " " + ts.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit" }, timeZoneOpts()));
     }
     return '<span class="badge ' + statusClass + '" style="text-transform:capitalize">' + escapeHtml(c.status) + '</span>' +
       (meta ? ' <span style="color:var(--color-text-tertiary);font-size:0.75rem">' + meta + '</span>' : '');
@@ -2698,7 +2698,7 @@ function generateEventPdf(events, label) {
   var doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
 
   var now = new Date();
-  var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+  var timestamp = now.toLocaleDateString(undefined, timeZoneOpts()) + " " + now.toLocaleTimeString(undefined, timeZoneOpts());
 
   doc.setFontSize(16);
   doc.setTextColor(40, 40, 40);

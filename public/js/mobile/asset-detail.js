@@ -4756,7 +4756,8 @@
     } else {
       var at = new Date(asset.lastMonitorAt).getTime();
       var sinceMs = asset.lastRebootAt ? new Date(asset.lastRebootAt).getTime() : (at - Number(asset.lastUptimeSec) * 1000);
-      var since = new Date(sinceMs).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      var since = new Date(sinceMs).toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", hour: "numeric", minute: "2-digit" },
+        typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
       text = '<span id="asset-uptime-text" data-has-uptime="1">' + escapeHtml(formatUptimeShort(secs)) + '</span>'
         + ' <span class="muted">· since ' + escapeHtml(since) + '</span>';
     }
