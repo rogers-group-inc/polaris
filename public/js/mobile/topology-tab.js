@@ -757,15 +757,10 @@
     renderGraph(_topoData);
   }
 
-  // Which hull tiers the view on screen already IS (map.js _locSuppressKinds):
-  // an area view hides the area box, a building view the area and building
-  // boxes, a floor view the floor's too. Null on Base.
+  // Which box levels the view on screen already IS (map.js _locSuppressKinds):
+  // its own level and every level above it. Null on Base.
   function locSuppressKinds() {
-    var v = _activeView || "flat";
-    if (v === "flat") return null;
-    if (v.charAt(0) === "a") return ["area"];
-    if (v.charAt(0) === "b") return ["area", "building"];
-    return ["area", "building", "floor"];
+    return window.PolarisTopologyRender.viewSuppressKinds(_activeView || "flat");
   }
 
   // viewSwitcherRows with Base folded into the first row. Pure.

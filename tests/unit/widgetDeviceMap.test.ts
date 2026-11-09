@@ -325,10 +325,11 @@ describe("Device Map widget — one gate picked", () => {
 
 describe("Device Map widget — location chips, pins and rotation", () => {
   const VIEWS = [
-    { key: "a|mine", kind: "area", areaKey: "mine", buildingKey: "", label: "Mine" },
-    { key: "b|mine|b1", kind: "building", areaKey: "mine", buildingKey: "b1", label: "Mine — B1" },
-    { key: "a|yard", kind: "area", areaKey: "yard", buildingKey: "", label: "Yard" },
-    { key: "b|yard|scale", kind: "building", areaKey: "yard", buildingKey: "scale", label: "Yard — Scale" },
+    // computeFloorViews' shape: ancestors drive nesting, name is the chip text.
+    { key: "a|mine", kind: "area", depth: 0, ancestors: [], name: "Mine", areaKey: "mine", buildingKey: "", label: "Mine" },
+    { key: "b|mine|b1", kind: "building", depth: 1, ancestors: ["a|mine"], name: "B1", areaKey: "mine", buildingKey: "b1", label: "Mine — B1" },
+    { key: "a|yard", kind: "area", depth: 0, ancestors: [], name: "Yard", areaKey: "yard", buildingKey: "", label: "Yard" },
+    { key: "b|yard|scale", kind: "building", depth: 1, ancestors: ["a|yard"], name: "Scale", areaKey: "yard", buildingKey: "scale", label: "Yard — Scale" },
   ];
   const GATE = { gate: { id: "fg-river", name: "RIVERBEND-FG" } };
   type El = { querySelectorAll: (s: string) => ArrayLike<unknown>; querySelector: (s: string) => unknown };

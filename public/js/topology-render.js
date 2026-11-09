@@ -2083,199 +2083,194 @@
     return String(a).localeCompare(String(b));
   }
 
-  // Building label: "Mine — Shop" when an area names it, else "Shop".
-  function buildingViewLabel(areaName, buildingName) {
-    return areaName ? areaName + " — " + buildingName : buildingName;
-  }
-  // Floor label: "<building label> — 2" (the building context implies the
-  // second part is a floor), or "Floor 2" for f:-without-b: (the
-  // unnamed-building bucket, where a bare "2" would be cryptic).
-  function floorViewLabel(buildingLabel, floorName) {
-    return buildingLabel ? buildingLabel + " — " + floorName : "Floor " + floorName;
+  // The drill-down levels, outermost first. A view key is the level's prefix
+  // plus the device's segments down to that level, a missing level an empty
+  // segment — the same keys computeLocationGroups gives its boxes:
+  // area "a|<a>", building "b|<a>|<b>", floor "f|<a>|<b>|<f>",
+  // room "r|<a>|<b>|<f>|<r>", junction box "jb|<a>|<b>|<f>|<r>|<jb>".
+  var VIEW_LEVELS = [
+    { kind: "area", prefix: "a", field: "locA" },
+    { kind: "building", prefix: "b", field: "locB" },
+    { kind: "floor", prefix: "f", field: "locF" },
+    { kind: "room", prefix: "r", field: "locR" },
+    { kind: "jb", prefix: "jb", field: "locJb" },
+  ];
+  var VIEW_LEVEL_BY_PREFIX = {};
+  var VIEW_LEVEL_BY_KIND = {};
+  VIEW_LEVELS.forEach(function (lv, i) { VIEW_LEVEL_BY_PREFIX[lv.prefix] = i; VIEW_LEVEL_BY_KIND[lv.kind] = i; });
+
+  // The level index a view key belongs to ("flat" / unknown → -1).
+  function _viewLevelOf(key) {
+    var s = String(key || "");
+    var p = s.slice(0, s.indexOf("|"));
+    return VIEW_LEVEL_BY_PREFIX[p] != null ? VIEW_LEVEL_BY_PREFIX[p] : -1;
   }
 
-  // Enumerate the location views present in a built element set: one AREA
-  // view per a: value that also carries a b: or f: code, one BUILDING view
-  // per b: value (even without floors) and one FLOOR view per (area,
-  // building, floor). Keys are area-scoped so "Office" in two areas stays
-  // distinct: area "a|<aKey>", building "b|<aKey>|<bKey>", floor
-  // "f|<aKey>|<bKey>|<fKey>". Returns a flat array of
-  //   { key, kind: "area"|"building"|"floor", areaKey, buildingKey,
-  //     areaName, buildingName, floorName?, label }
-  // sorted area → area-view-first → building (unnamed bucket last) →
-  // building-view-first → underground-aware floor order. Empty array when no
-  // node carries a b: or f: code → callers render no switcher (an a: code on
-  // its own never earns one: the area hull already says it on the flat view).
+  // A node's view key at level i, or "" when it carries no code there.
+  function _viewKeyAt(d, i) {
+    if (!d[VIEW_LEVELS[i].field]) return "";
+    var segs = [];
+    for (var j = 0; j <= i; j++) segs.push(d[VIEW_LEVELS[j].field] || "");
+    return VIEW_LEVELS[i].prefix + "|" + segs.join("|");
+  }
+  // The name a level shows on its chip. A floor with no building says so
+  // ("Floor 2"): a bare "2" next to building names would be cryptic.
+  function _viewSegName(d, i) {
+    var lv = VIEW_LEVELS[i];
+    var name = d[lv.field + "Name"] || d[lv.field];
+    return lv.kind === "floor" && !d.locB ? "Floor " + name : name;
+  }
+  // Full label: every level the node HAS, down to i — "Mine — Shop — 2",
+  // "Shop — 1", "Floor 2", "Mine — North Closet" (a room straight in an area).
+  function _viewLabelAt(d, i) {
+    var parts = [];
+    for (var j = 0; j <= i; j++) if (d[VIEW_LEVELS[j].field]) parts.push(_viewSegName(d, j));
+    return parts.join(" — ");
+  }
+
+  // Enumerate the location views present in a built element set: one view
+  // per BUILDING, FLOOR, ROOM and JUNCTION BOX any device names, and one per
+  // AREA that holds a deeper code (an a: code on its own never earns one:
+  // the area box already says it on Base). A device that skips a level hangs
+  // its next level straight under the one above it — a room tagged a:Mine
+  // r:North is a child of the Mine view, not of a building. Returns a flat
+  // array of
+  //   { key, kind, depth (level index), parentKey, ancestors (keys, outer
+  //     first), name (chip text), label (full path), areaKey, buildingKey,
+  //     areaName, buildingName, floorName? }
+  // in display order: a view ahead of what is inside it; at the area level
+  // the area-less ones first, below it the un-coded bucket last; floors
+  // underground-aware, everything else by name. Empty array when no node
+  // carries a code below area → callers render no switcher.
   function computeFloorViews(elements) {
     var byKey = {};
     var out = [];
     (elements || []).forEach(function (el) {
       var d = el && el.data;
       if (!d || !d.id || d.source) return;
-      var a = d.locA || "";
-      var b = d.locB || "";
-      var aName = d.locAName || "";
-      var bName = d.locBName || "";
-      if (a && (b || d.locF)) {
-        var aKey = "a|" + a;
-        if (!byKey[aKey]) {
-          byKey[aKey] = true;
-          out.push({
-            key: aKey,
-            kind: "area",
-            areaKey: a,
-            buildingKey: "",
-            areaName: aName,
-            buildingName: "",
-            label: aName || a,
-          });
+      var deepest = -1;
+      VIEW_LEVELS.forEach(function (lv, i) { if (d[lv.field]) deepest = i; });
+      if (deepest < 1) return; // nothing, or an area alone
+      var ancestors = [];
+      for (var i = 0; i <= deepest; i++) {
+        var key = _viewKeyAt(d, i);
+        if (!key) continue;
+        if (!byKey[key]) {
+          var v = {
+            key: key,
+            kind: VIEW_LEVELS[i].kind,
+            depth: i,
+            parentKey: ancestors.length ? ancestors[ancestors.length - 1] : null,
+            ancestors: ancestors.slice(),
+            name: _viewSegName(d, i),
+            label: _viewLabelAt(d, i),
+            areaKey: d.locA || "",
+            buildingKey: i >= 1 ? d.locB || "" : "",
+            areaName: d.locAName || "",
+            buildingName: i >= 1 ? d.locBName || "" : "",
+            // sort keys: each level's display name ("" = level skipped)
+            _segs: VIEW_LEVELS.slice(0, i + 1).map(function (lv) { return d[lv.field] ? d[lv.field + "Name"] || d[lv.field] : ""; }),
+          };
+          if (i === 2) v.floorName = d.locFName || d.locF;
+          byKey[key] = v;
+          out.push(v);
         }
-      }
-      if (b) {
-        var bKey = "b|" + a + "|" + b;
-        if (!byKey[bKey]) {
-          byKey[bKey] = true;
-          out.push({
-            key: bKey,
-            kind: "building",
-            areaKey: a,
-            buildingKey: b,
-            areaName: aName,
-            buildingName: bName,
-            label: buildingViewLabel(aName, bName),
-          });
-        }
-      }
-      if (d.locF) {
-        var fKey = "f|" + a + "|" + b + "|" + d.locF;
-        if (!byKey[fKey]) {
-          byKey[fKey] = true;
-          out.push({
-            key: fKey,
-            kind: "floor",
-            areaKey: a,
-            buildingKey: b,
-            areaName: aName,
-            buildingName: bName,
-            floorName: d.locFName || d.locF,
-            label: floorViewLabel(buildingViewLabel(aName, bName), d.locFName || d.locF),
-          });
-        }
+        ancestors.push(key);
       }
     });
     out.sort(function (x, y) {
-      if (x.areaName !== y.areaName) return String(x.areaName).localeCompare(String(y.areaName));
-      if ((x.kind === "area") !== (y.kind === "area")) return x.kind === "area" ? -1 : 1; // area view tops its area
-      if (x.buildingName !== y.buildingName) {
-        if (!x.buildingName) return 1; // unnamed-building bucket last
-        if (!y.buildingName) return -1;
-        return x.buildingName.localeCompare(y.buildingName);
+      for (var i = 0; i < VIEW_LEVELS.length; i++) {
+        var xEnd = i >= x._segs.length, yEnd = i >= y._segs.length;
+        if (xEnd && yEnd) return 0;
+        if (xEnd) return -1; // a view ahead of what is inside it
+        if (yEnd) return 1;
+        var a = x._segs[i], b = y._segs[i];
+        if (a === b) continue;
+        // area-less first at the area level; a skipped level last below it
+        if (!a) return i === 0 ? -1 : 1;
+        if (!b) return i === 0 ? 1 : -1;
+        var c = VIEW_LEVELS[i].kind === "floor" ? compareFloors(a, b) : String(a).localeCompare(String(b));
+        if (c) return c;
       }
-      if (x.kind !== y.kind) return x.kind === "building" ? -1 : 1; // building view tops its column
-      return compareFloors(x.floorName || "", y.floorName || "");
+      return 0;
     });
+    out.forEach(function (v) { delete v._segs; });
     return out;
   }
 
   // The location-view switcher's rows, as data: an array of rows (index =
   // depth), each an array of { key, label, title, active } chips.
   //   row 0  "Base" alone (view key "flat" — saved layouts are filed under it)
-  //   row 1  the top level: every area, plus any building tagged with no
-  //          area (on a site with no areas, just the buildings)
-  //   then   only under a selection, the NEXT level of it: the selected
-  //          area's buildings, then the selected building's floors
+  //   row 1  the top level: every view with no parent among `views` (areas,
+  //          plus any building, floor, room or junction box with no area)
+  //   then   for each view on the selected path, the views directly inside
+  //          it — the NEXT level each device has, whatever it is: an area's
+  //          buildings AND any room tagged in the area with no building
   // Every chip on the selected path is active. `views` is computeFloorViews'
-  // output (already in display order); a building with no whole-building
-  // view (the f:-without-b: "Floors" bucket) selects its first floor. Pure.
+  // output (already in display order), or a subset of it — a parent missing
+  // from the subset makes its children top-level (the widget's pinned views).
   function viewSwitcherRows(views, activeKey) {
-    var areas = [];
-    var areasByKey = {};
-    var groups = [];
-    var groupsByKey = {};
-    (views || []).forEach(function (v) {
-      if (v.kind === "area") {
-        var area = { view: v, groups: [] };
-        areasByKey[v.areaKey] = area;
-        areas.push(area);
-        return;
-      }
-      var gKey = v.areaKey + "|" + v.buildingKey;
-      var g = groupsByKey[gKey];
-      if (!g) {
-        g = { areaKey: v.areaKey, name: v.buildingName || "Floors", view: null, floors: [] };
-        groupsByKey[gKey] = g;
-        groups.push(g);
-        if (areasByKey[v.areaKey]) areasByKey[v.areaKey].groups.push(g);
-      }
-      if (v.kind === "building") g.view = v;
-      else g.floors.push(v);
+    var list = views || [];
+    var byKey = {};
+    list.forEach(function (v) { byKey[v.key] = v; });
+    function parentOf(v) {
+      var anc = v.ancestors || [];
+      for (var i = anc.length - 1; i >= 0; i--) if (byKey[anc[i]]) return anc[i];
+      return null;
+    }
+    var children = {};
+    var roots = [];
+    list.forEach(function (v) {
+      var p = parentOf(v);
+      if (p) (children[p] = children[p] || []).push(v);
+      else roots.push(v);
     });
-
-    var activeView = null;
-    (views || []).forEach(function (v) { if (v.key === activeKey) activeView = v; });
-    var activeArea = activeView ? areasByKey[activeView.areaKey] || null : null;
-    var activeGroup = activeView && activeView.kind !== "area"
-      ? groupsByKey[activeView.areaKey + "|" + activeView.buildingKey] || null
-      : null;
-
-    function chip(key, label, title, active) {
-      return { key: key, label: label, title: title, active: !!active };
+    var path = [];
+    var cur = byKey[activeKey] || null;
+    while (cur) { path.unshift(cur); var pk = parentOf(cur); cur = pk ? byKey[pk] : null; }
+    var onPath = {};
+    path.forEach(function (v) { onPath[v.key] = true; });
+    function chip(v) {
+      return { key: v.key, label: v.name || v.label, title: "Show " + v.label, active: !!onPath[v.key] };
     }
-    function groupChip(g) {
-      var target = g.view || g.floors[0];
-      return chip(target.key, g.name, "Show " + target.label, g === activeGroup);
-    }
-
-    var rows = [[chip("flat", "Base", "Whole site", activeKey === "flat" || !activeView)]];
-    var top = areas.map(function (a) {
-      return chip(a.view.key, a.view.label, "Show " + a.view.label, a === activeArea);
+    var rows = [[{ key: "flat", label: "Base", title: "Whole site", active: activeKey === "flat" || !path.length }]];
+    // Top row: areas first, then whatever has no area (each in list order).
+    roots = roots.filter(function (v) { return v.depth === 0; })
+      .concat(roots.filter(function (v) { return v.depth !== 0; }));
+    if (roots.length) rows.push(roots.map(chip));
+    path.forEach(function (v) {
+      if (children[v.key]) rows.push(children[v.key].map(chip));
     });
-    groups.forEach(function (g) { if (!areasByKey[g.areaKey]) top.push(groupChip(g)); });
-    if (top.length) rows.push(top);
-    if (activeArea && activeArea.groups.length) rows.push(activeArea.groups.map(groupChip));
-    // A building's floors. The "Floors" bucket's own chip is already its
-    // first floor, so it earns a row only when there is a second to pick.
-    if (activeGroup && activeGroup.floors.length > (activeGroup.view ? 0 : 1)) {
-      rows.push(activeGroup.floors.map(function (v) {
-        return chip(v.key, v.buildingName ? v.floorName : v.label, "Show only " + v.label, v.key === activeKey);
-      }));
-    }
     return rows;
   }
 
-  // The (kind-appropriate) view key + label a node belongs to, or null when
-  // it carries no code at that level. kind "area" needs locA; "building"
-  // needs locB; "floor" needs locF.
+  // Which box levels a view hides: the view itself IS its level and every
+  // level above it, so only the deeper boxes stay useful. Null for Base.
+  function viewSuppressKinds(key) {
+    var lvl = _viewLevelOf(key);
+    if (lvl < 0) return null;
+    return VIEW_LEVELS.slice(0, lvl + 1).map(function (lv) { return lv.kind; });
+  }
+
+  // The view key + label a node belongs to at `kind`'s level, or null when it
+  // carries no code at that level.
   function _nodeViewRef(d, kind) {
-    var a = d.locA || "";
-    var b = d.locB || "";
-    if (kind === "area") {
-      if (!a) return null;
-      return { key: "a|" + a, label: d.locAName || a };
-    }
-    if (kind === "building") {
-      if (!b) return null;
-      return {
-        key: "b|" + a + "|" + b,
-        label: buildingViewLabel(d.locAName || "", d.locBName || ""),
-      };
-    }
-    if (!d.locF) return null;
-    return {
-      key: "f|" + a + "|" + b + "|" + d.locF,
-      label: floorViewLabel(buildingViewLabel(d.locAName || "", d.locBName || ""), d.locFName || d.locF),
-    };
+    var i = VIEW_LEVEL_BY_KIND[kind];
+    var key = i == null ? "" : _viewKeyAt(d, i);
+    return key ? { key: key, label: _viewLabelAt(d, i) } : null;
   }
 
   // The group a device outside the view is shown as: its group at the
-  // view's own level, else its nearest coded group (floor, then building,
-  // then area), else the untagged rest of the site — Base.
+  // view's own level, else its nearest coded group above it (closest first),
+  // else below it (shallowest first), else the untagged rest of the site —
+  // Base.
   function _groupRefFor(d, kind) {
-    var order = kind === "area" ? ["area", "building", "floor"]
-      : kind === "building" ? ["building", "area", "floor"]
-      : ["floor", "building", "area"];
+    var lvl = VIEW_LEVEL_BY_KIND[kind];
+    var order = [lvl];
+    for (var up = lvl - 1; up >= 0; up--) order.push(up);
+    for (var down = lvl + 1; down < VIEW_LEVELS.length; down++) order.push(down);
     for (var i = 0; i < order.length; i++) {
-      var ref = _nodeViewRef(d, order[i]);
+      var ref = _nodeViewRef(d, VIEW_LEVELS[order[i]].kind);
       if (ref) return ref;
     }
     return { key: "flat", label: "Base" };
@@ -2301,8 +2296,7 @@
   // stubs).
   function partitionElementsForFloor(elements, viewKey) {
     var key = String(viewKey || "");
-    var lead = key.charAt(0);
-    var kind = lead === "a" ? "area" : lead === "b" ? "building" : "floor";
+    var kind = (VIEW_LEVELS[_viewLevelOf(key)] || VIEW_LEVELS[2]).kind;
     var nodeById = {};
     var inView = {};
     // True members (as opposed to a FortiGate standing in as a root portal).
@@ -4734,6 +4728,7 @@
     compareFloors: compareFloors,
     computeFloorViews: computeFloorViews,
     viewSwitcherRows: viewSwitcherRows,
+    viewSuppressKinds: viewSuppressKinds,
     partitionElementsForFloor: partitionElementsForFloor,
   };
 })();

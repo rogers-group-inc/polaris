@@ -106,11 +106,7 @@
 
   // Is view `v` the pinned view `k`, or inside it?
   function viewWithin(v, k) {
-    if (v.key === k) return true;
-    var p = k.split("|");
-    if (p[0] === "a") return v.areaKey === p[1];
-    if (p[0] === "b") return v.kind === "floor" && v.areaKey === p[1] && v.buildingKey === p[2];
-    return false;
+    return v.key === k || (v.ancestors || []).indexOf(k) !== -1;
   }
 
   // The views a viewer may reach: every view, or (restricted) only the pins'.
