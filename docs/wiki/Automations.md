@@ -367,10 +367,11 @@ automation already covers. Carved-out devices are counted in the warning box and
 **left out of the row list** — the list is what the automation *will* alert on.
 
 The **Devices** step's list does the same as soon as the automation has a metric or
-state trigger (editing one, or coming back to the step after choosing it): the count
-line says how many of the matched devices a more-specific automation already covers and
-names it, the list leaves those devices out, and a draft that takes devices from
-less-specific automations names those too. You don't need to exclude them by hand — a
+state trigger (editing one, or coming back to the step after choosing it): a note under
+the count says how many devices are **not included** because a more-specific automation
+already covers them, and names it; the list leaves those devices out, and a draft that
+takes devices from less-specific automations names those too. On a new automation that
+number can't be known until the trigger is chosen, and the note says so. You don't need to exclude them by hand — a
 "does not contain" condition never raises an automation's rank anyway. Composite,
 event and change automations show the plain list, because they take no part in the
 carve-out.

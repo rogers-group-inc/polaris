@@ -5129,10 +5129,13 @@ describe("Devices step precedence carve-out", () => {
       const rows = Array.from(box.querySelectorAll("tbody tr")).map((tr) => tr.textContent);
       expect(rows).toEqual(["kept-fw"]);
       expect(box.textContent).toContain("3 monitored device(s) match this filter.");
-      expect(box.textContent).toContain("2 of them are covered by a more-specific automation");
-      expect(box.textContent).toContain("“FortiAP down” (2)");
-      expect(box.textContent).toContain("remaining 1.");
-      expect(box.textContent).toContain("less-specific automations: “Everything down” (3)");
+      // The count line stays the filter's own; the carve-out is its own note.
+      expect(box.querySelector(".aw-preview-head")!.textContent).not.toContain("not included");
+      const note = box.querySelector(".aw-carve-note")!;
+      expect(note.textContent).toContain("2 device(s) not included — a more-specific automation already covers them");
+      expect(note.textContent).toContain("“FortiAP down” (2)");
+      expect(note.textContent).toContain("remaining 1.");
+      expect(note.textContent).toContain("less-specific automations: “Everything down” (3)");
     } finally {
       previewResponse = DEFAULT_PREVIEW;
     }
@@ -5153,5 +5156,20 @@ describe("Devices step precedence carve-out", () => {
     });
     expect(previewBodies.length).toBeGreaterThan(0);
     for (const b of previewBodies) expect(b.carveOutTrigger).toBeUndefined();
+    expect(doc.querySelector("#aw-scope-preview .aw-carve-note")).toBeNull();
+  });
+
+  it("a new automation says the count waits on its trigger, and sends only the placeholder-free scope", async () => {
+    doc.body.innerHTML = "";
+    previewBodies.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(null);
+    (doc.querySelector("#aw-name") as unknown as { value: string }).value = "new one";
+    (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(doc.querySelector("#aw-step-2.visible")).toBeTruthy();
+    expect(previewBodies.length).toBeGreaterThan(0);
+    for (const b of previewBodies) expect(b.carveOutTrigger).toBeUndefined();
+    expect(doc.querySelector("#aw-scope-preview .aw-carve-note")!.textContent)
+      .toContain("shown once this automation's trigger is set");
   });
 });
