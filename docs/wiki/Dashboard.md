@@ -398,6 +398,11 @@ the time they came back, so you can see what is left. When an Alert Group
 gathers several automations, an **Automation** column names which one raised
 each component.
 
+An orange **ESCALATED** pill (**ESCALATED T2**, **T3**… past the first tier)
+marks an alert whose [escalation](Automation-Escalation#when-an-alert-escalates)
+has sent: someone beyond the first people told has been notified. Hover it for
+when it first escalated.
+
 A **TEST** pill beside the severity marks a delivery test sent from the
 automation wizard ([Automations](Automations)). It is about a made-up device
 (`EXAMPLE-SWITCH-01`), not one of yours, and clears itself an hour after it

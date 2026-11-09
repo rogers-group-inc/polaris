@@ -56,8 +56,9 @@ firing and clearing shows each round there. Every alert **email** that goes out
 adds a `notification.email_sent` row naming the device, the automation and its
 To and Cc recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106). An edit's Action links to what changed, as on the Events page.
 
-An automation only writes its *fired* event when it has a **Create an Event** action;
-the clear is written regardless. Acknowledging or clearing alerts by hand is one
+Every automation writes its *fired* event, its escalations and its clear — there is
+nothing to switch on ([rule 146](Business-Rules#rule-146)). An automation triggered by
+events is the exception for the fired event only: the event that set it off is the record. Acknowledging or clearing alerts by hand is one
 event for the whole selection, so it appears here on the Events page but not on
 each device's tab.
 
@@ -262,10 +263,12 @@ that matches more than 20 enabled checks.
 
 ### Alerting
 
-`notification.triggered` is written by the removable **"Create an Event"**
-action. It is present on every automation by default, and event- and
+`notification.triggered` is written on every fire of every automation
+([rule 146](Business-Rules#rule-146)); there is no setting for it. Event- and
 change-triggered automations are carved out — one that wrote an Event would feed
-its own trigger.
+its own trigger. `notification.escalated` is written once per alert each time a
+new escalation tier first sends (`details.kind: "tier"`), and
+`notification.auto_cleared` / `notification.cleared` when it ends.
 
 `notification.email_sent` records each alert email that was delivered, on the
 device it is about, and names that device in its message so the row reads on

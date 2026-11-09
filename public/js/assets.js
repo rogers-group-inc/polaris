@@ -12239,20 +12239,21 @@ function _chartTimeTicks(t0, t1, innerW) {
       if (Math.floor(span / _CHART_TICK_STEPS_MS[i]) + 1 <= maxTicks) { stepMs = _CHART_TICK_STEPS_MS[i]; break; }
     }
   }
+  // Every tick, label and midnight is in the operator's display timezone
+  // (chart-shared.js zone helpers; the browser's own zone on "auto").
+  var Z = PolarisChartShared;
   if (stepMs != null) {
-    var mid = new Date(t0);
-    mid.setHours(0, 0, 0, 0);
-    var base = mid.getTime();
+    var base = Z.zoneMidnight(t0);
     var ts = base + Math.ceil((t0 - base) / stepMs) * stepMs;
     for (var guard = 0; ts <= t1 && guard < 200; guard++, ts += stepMs) {
-      var d = new Date(ts);
+      var p = Z.zoneParts(ts);
       // A multi-day window names its midnights by date, not "00:00".
-      var atMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      var atMidnight = p.hour === 0 && p.minute === 0;
       out.push({
         ts: ts,
         label: atMidnight && span > dayMs
-          ? (d.getMonth() + 1) + "/" + d.getDate()
-          : _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes()),
+          ? p.month + "/" + p.day
+          : _chartPad2(p.hour) + ":" + _chartPad2(p.minute),
       });
     }
     return out;
@@ -12261,12 +12262,12 @@ function _chartTimeTicks(t0, t1, innerW) {
   for (var k = 0; k < _CHART_TICK_STEPS_DAYS.length; k++) {
     if (Math.floor(span / (_CHART_TICK_STEPS_DAYS[k] * dayMs)) + 1 <= maxTicks) { stepDays = _CHART_TICK_STEPS_DAYS[k]; break; }
   }
-  var day = new Date(t0);
-  day.setHours(0, 0, 0, 0);
-  if (day.getTime() < t0) day.setDate(day.getDate() + 1);
-  for (var g2 = 0; day.getTime() <= t1 && g2 < 200; g2++) {
-    out.push({ ts: day.getTime(), label: (day.getMonth() + 1) + "/" + day.getDate() });
-    day.setDate(day.getDate() + stepDays);
+  var day = Z.zoneMidnight(t0);
+  if (day < t0) day = Z.addZoneDays(day, 1);
+  for (var g2 = 0; day <= t1 && g2 < 200; g2++) {
+    var dp = Z.zoneParts(day);
+    out.push({ ts: day, label: dp.month + "/" + dp.day });
+    day = Z.addZoneDays(day, stepDays);
   }
   return out;
 }
@@ -12293,11 +12294,11 @@ function _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, opts) {
       '<line x1="' + x + '" y1="' + (padT + innerH) + '" x2="' + x + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
       '<text x="' + x + '" y="' + (padT + innerH + 14) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor">' + t.label + '</text>';
     if (opts.dateLine) {
-      var d = new Date(t.ts);
-      var key = d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+      var dp = PolarisChartShared.zoneParts(t.ts);
+      var key = dp.year + "-" + dp.month + "-" + dp.day;
       if (key !== prevDay) {
         out +=
-          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + (d.getMonth() + 1) + "/" + d.getDate() + '</text>';
+          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + dp.month + "/" + dp.day + '</text>';
         prevDay = key;
       }
     }
@@ -12342,25 +12343,26 @@ function _inChartWindow(points, since, tsKey) {
 // the tick labels themselves already encode the date, so the per-line
 // "M/D" label is suppressed but the dashed line stays as a day separator.
 function _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) {
-  var first = new Date(t0);
-  first.setHours(0, 0, 0, 0);
-  if (first.getTime() <= t0) first.setDate(first.getDate() + 1);
+  // Midnights of the operator's display timezone, like the ticks.
+  var Z = PolarisChartShared;
+  var d = Z.zoneMidnight(t0);
+  if (d <= t0) d = Z.addZoneDays(d, 1);
   var withLabel = (t1 - t0) <= 4 * 86400000;
   var out = "";
-  var d = first;
   var safety = 0;
-  while (d.getTime() < t1 && safety++ < 64) {
-    var x = padL + ((d.getTime() - t0) / (t1 - t0)) * innerW;
+  while (d < t1 && safety++ < 64) {
+    var x = padL + ((d - t0) / (t1 - t0)) * innerW;
     out +=
       '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (padT + innerH) +
       '" stroke="rgba(127,127,127,0.55)" stroke-width="1" stroke-dasharray="3,3"/>';
     if (withLabel) {
-      var label = (d.getMonth() + 1) + "/" + d.getDate();
+      var dp = Z.zoneParts(d);
+      var label = dp.month + "/" + dp.day;
       out +=
         '<text x="' + (x + 4) + '" y="' + (padT + 11) +
         '" font-size="10" fill="currentColor" opacity="0.7">' + label + '</text>';
     }
-    d.setDate(d.getDate() + 1);
+    d = Z.addZoneDays(d, 1);
   }
   return out;
 }
@@ -13407,11 +13409,15 @@ function _fmtBitsPerSecAxis(bps) {
   if (bps >= 1_000)         return pick(bps / 1_000,         "Kbps");
   return Math.round(bps) + " bps";
 }
+// A chart point's time, on the same display-timezone clock as the axis under
+// it (chart-shared.js zone helpers; CQ-F017). Every chart tooltip uses it.
 function _fmtTooltipTs(ts) {
   function p(n) { return n < 10 ? "0" + n : String(n); }
   var d = new Date(ts);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-    " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+  var z = PolarisChartShared.zoneParts(d.getTime());
+  return d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric" }, tz)) +
+    " " + p(z.hour) + ":" + p(z.minute) + ":" + p(z.second);
 }
 
 /**
@@ -13667,10 +13673,13 @@ function _chartRangeLabel(container) {
   if (ds.from && ds.to) { from = new Date(ds.from); to = new Date(ds.to); }
   else if (ds.geomT0 && ds.geomT1) { from = new Date(Number(ds.geomT0)); to = new Date(Number(ds.geomT1)); }
   if (!from || !to || isNaN(+from) || isNaN(+to)) return "";
-  var dateOpts = { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" };
-  var sameDay = from.toDateString() === to.toDateString();
+  // The display timezone, like the axis ticks the caption describes.
+  var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+  var dateOpts = Object.assign({ month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" },
+    typeof timeZoneOpts === "function" ? timeZoneOpts() : {});
+  var sameDay = PolarisChartShared.zoneDayKey(from.getTime()) === PolarisChartShared.zoneDayKey(to.getTime());
   var toText = sameDay
-    ? to.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    ? to.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit" }, tz))
     : to.toLocaleString(undefined, dateOpts);
   return "From " + from.toLocaleString(undefined, dateOpts) + " to " + toText;
 }
@@ -17063,9 +17072,7 @@ function _renderMonitorChart(container, data, transitions) {
   });
 
   function fmtTooltipTs(ts) {
-    var d = new Date(ts);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-      " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+    return _fmtTooltipTs(ts);
   }
   function hitAttrs(s, i) {
     var missedOnly = ptIsFailure(s) && thresholdKnown && statusAt(i) !== "down";
@@ -26643,6 +26650,13 @@ function _loadAssetNotificationsTab(assetId) {
         // Raised for this device while it was dependency-down (business rule
         // 78): the same slate badge the Status pill wears, beside the
         // severity, so the row reads as that state at a glance.
+        // An escalation tier has sent for this alert (business rule 145) —
+        // the same ESCALATED pill the Active Alerts widget wears.
+        var escBadge = n.escalationTier
+          ? ' <span class="badge badge-escalated" title="' + escapeHtml("Escalated — tier " + n.escalationTier + " has been notified" +
+              (n.escalatedAt ? " (first escalation " + new Date(n.escalatedAt).toLocaleString() + ")" : "")) + '">ESCALATED' +
+            (n.escalationTier > 1 ? " T" + n.escalationTier : "") + '</span>'
+          : "";
         var depBadge = n.dependencyDown
           ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device. No reminders or escalation until the upstream recovers.">Dep. Down</span>'
           : "";
@@ -26672,7 +26686,7 @@ function _loadAssetNotificationsTab(assetId) {
           : "";
         return '<tr' + (hasMenu ? ' data-row-menu-row' : '') + '>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + maintPill + groupPill + '</td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + escBadge + depBadge + maintPill + groupPill + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + msgCell + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';

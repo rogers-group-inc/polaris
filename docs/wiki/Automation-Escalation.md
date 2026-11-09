@@ -41,6 +41,17 @@ Each tier (**+ Escalation Action**; up to five per chain) carries:
 The chain as a whole carries **Stop escalating when**: *Acknowledged (or
 cleared)*, the default, or *Cleared only — acknowledging does not stop it*.
 
+### When an alert escalates
+
+The first time a tier sends for an alert, Polaris writes a
+`notification.escalated` event on the alert and its device, naming the tier
+([Events](Events)). Repeats of the same tier write nothing more. The alert then
+wears an orange **ESCALATED** pill (**ESCALATED T2** from the second tier up)
+on the [Active Alerts widget](Dashboard), the device's Alerts tab, the phone and
+the acknowledge page, so whoever picks it up can see who has already been told.
+When the alert ends, a reset Notify can tell those tiers too
+([Resetting the escalation](Automation-Actions#resetting-the-escalation)).
+
 ### The pattern this exists for
 
 > The trigger notifies `Asset's L1 Region Users` — the site's own people.

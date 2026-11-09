@@ -268,34 +268,17 @@
 
   // ── Strip ──────────────────────────────────────────────────────────────────
 
-  /** Keep only the reference-free `event` action, and drop its escalation
-   *  (a chain's tiers require >= 1 action, so a chain cannot be emptied — it
-   *  must be deleted whole). */
+  /** Every action is delivery wiring this install may not have, so none is
+   *  exported — each is named as a dependency instead. The retired `event`
+   *  action is dropped silently: the engine writes the audit Event itself
+   *  (business rule 146), so an imported automation still logs every fire. */
   function portableActions(actions, label, cat, deps) {
-    var kept = [];
     (Array.isArray(actions) ? actions : []).forEach(function (a, i) {
       var l = label + " " + (i + 1);
-      if (isPlainObject(a) && a.type === "event") {
-        kept.push({ type: "event" });
-        if (a.escalation) recordEscalationDeps(a.escalation, l, cat, deps);
-        return;
-      }
-      recordActionDeps(a, l, cat, deps);
+      if (isPlainObject(a) && a.type !== "event") recordActionDeps(a, l, cat, deps);
       if (a && a.escalation) recordEscalationDeps(a.escalation, l, cat, deps);
     });
-    return kept;
-  }
-
-  /**
-   * The top-level action list must always carry the audit Event. An automation
-   * whose every action was delivery wiring strips to an empty list, and an empty
-   * list saves a rule that writes a Notification row (so it looks like it fired)
-   * while logging nothing — the server only re-injects the Event for an
-   * `undefined` actions field, which the wizard draft never produces.
-   */
-  function withAuditEvent(actions) {
-    var has = actions.some(function (a) { return a && a.type === "event"; });
-    return has ? actions : [{ type: "event" }].concat(actions);
+    return [];
   }
 
   /**
@@ -431,8 +414,8 @@
       // Carried verbatim: it names nothing install-specific — it is a
       // statement about the alert record's shape, like requireAckNote above.
       groupByAsset: src.groupByAsset === true,
-      // (A) ALWAYS explicit, and never empty — see withAuditEvent.
-      actions: withAuditEvent(portableActions(src.actions, "Action", cat, deps)),
+      // (A) ALWAYS explicit: an imported automation starts with no actions.
+      actions: portableActions(src.actions, "Action", cat, deps),
     };
     if (out.reset && out.reset.condition) scrubTriggerTree(out.reset.condition, cat, deps, blanked);
 

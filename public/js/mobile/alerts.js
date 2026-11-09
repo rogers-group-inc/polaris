@@ -410,8 +410,13 @@
     var dep = n.dependencyDown
       ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down">Dep. Down</span>'
       : "";
+    // An escalation tier has sent (business rule 145) — the desktop pill.
+    var esc = n.escalationTier
+      ? ' <span class="badge badge-escalated" title="Escalated — tier ' + escapeHtml(String(n.escalationTier)) + ' has been notified">ESCALATED' +
+        (n.escalationTier > 1 ? " T" + escapeHtml(String(n.escalationTier)) : "") + '</span>'
+      : "";
     return '<div class="card-filled alert-item" style="--alert-flag-color:' + sevColor(sev) + '">'
-      + '<div class="alert-sev">' + escapeHtml(sev) + dep + '</div>'
+      + '<div class="alert-sev">' + escapeHtml(sev) + esc + dep + '</div>'
       + '<div class="alert-msg">' + escapeHtml(n.message || "") + '</div>'
       + (meta ? '<div class="alert-meta">' + escapeHtml(meta) + '</div>' : "")
       + ackBlock
