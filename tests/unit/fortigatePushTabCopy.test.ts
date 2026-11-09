@@ -31,10 +31,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
-const INTG_JS = resolve(__dirname, "../../public/js/integrations.js");
 const INTG_TS = resolve(__dirname, "../../src/api/routes/integrations.ts");
-const js = readFileSync(INTG_JS, "utf8").replace(/\r\n/g, "\n");
+const js = integrationsSource().replace(/\r\n/g, "\n");
 const ts = readFileSync(INTG_TS, "utf8").replace(/\r\n/g, "\n");
 
 type Forms = {
