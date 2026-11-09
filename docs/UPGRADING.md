@@ -20,10 +20,54 @@ underneath the app rather than the app itself.
 | put an existing HA cluster's Patroni REST API on TLS | *Patroni REST API over TLS* |
 | run `update-linux.sh` / `setup-rhel-ha.sh` safely | *Run the manual updater's reviewed copy* |
 | turn on IPv6 for an existing Docker / podman install | *Turning on IPv6 in an existing container install* |
+| update an install last updated before June 2026 | *Updating an install older than June 2026* |
 
 Each one stops the service, so each one wants a maintenance window. None of them
 is on a schedule — do them when the Platform Lifecycle card (Server Settings →
 Maintenance) says the component is past, or approaching, its end of life.
+
+---
+
+## Updating an install older than June 2026
+
+Polaris is pre-1.0 and does not promise a direct update from any older release.
+The boot-time jobs that converted April–June 2026 data shapes (monitor-settings
+hierarchy and per-class streams, the per-entity sample-retention setting, the
+`pending` → `recovering` monitor state, asset-source backfills, legacy tag
+scrubs and similar) were removed on 2026-11-09. An install whose code predates
+**2026-06-03** has never run them, and a current release will not.
+
+Such an install updates in two steps:
+
+1. **Update to the last release that still carries those jobs** — commit
+   `4fef024e7` (version `0.9.5420`) — and let every role start once, so the
+   jobs run.
+   - git-based installs (RHEL / Ubuntu). The updaters always move to the
+     branch tip, so this step is by hand. Take a backup first.
+
+     ```bash
+     sudo systemctl stop polaris.target
+     cd /opt/polaris
+     sudo -u polaris git fetch origin
+     sudo -u polaris git checkout 4fef024e7
+     sudo -u polaris npm ci --include=dev
+     sudo -u polaris npm run build
+     sudo -u polaris npx prisma migrate deploy
+     sudo systemctl start polaris.target
+     journalctl -u polaris-web -n 100 --no-pager   # wait for startup to finish
+     ```
+   - Docker / podman: set `POLARIS_IMAGE=ghcr.io/rogers-group-inc/polaris:sha-4fef024`
+     in `.env`, then `docker compose up -d` (or `podman compose up -d`), and
+     wait for the web container to finish starting.
+2. **Then update normally.** A git checkout goes back to its branch first
+   (`sudo -u polaris git checkout main`), then the in-app updater. A container
+   install removes the `POLARIS_IMAGE` line (back to `:latest`) and pulls.
+
+The intermediate commit needs the same runtime floor as today (Node 22.12+,
+PostgreSQL 17 with TimescaleDB); move the runtime first, using the sections
+below, if the install is older than that too.
+
+An install updated at any point since 2026-06-03 needs neither step.
 
 ---
 
