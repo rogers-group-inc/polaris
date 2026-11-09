@@ -69,6 +69,7 @@ import {
   type GenericApiNetworkQueryResult,
 } from "../genericApiService.js";
 import { computeConflictFields, upsertConflict } from "./discoveryEngine.js";
+import { makeSyncLog } from "./syncLog.js";
 
 /** The sourceTypes this sync writes — and the only ones it ever updates or releases. */
 export const GENERIC_API_FEED_SOURCE_TYPES = ["dhcp_lease", "dhcp_reservation", "external"] as const;
@@ -150,9 +151,7 @@ export async function syncGenericApiNetwork(
     addressesCreated: 0, addressesUpdated: 0, addressesReleased: 0, conflicts: 0, skipped: [],
   };
   if (results.length === 0) return summary;
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   for (const r of results) {
     if (r.error) syncLog("error", `Network query "${r.query.name || r.query.kind}" failed: ${r.error}`);
   }
