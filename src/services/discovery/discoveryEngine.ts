@@ -31,10 +31,10 @@ import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
+import { integrationAdapter } from "../integrationAdapters.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
-import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps, isIpv6Address } from "../../utils/cidr.js";
 import { collectObservedIpv6Sightings, planObservedIpv6 } from "../../utils/observedIpv6.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
@@ -588,29 +588,12 @@ async function buildArpSweepTargets(
  * so `lastTestOk` changes only when an operator tests.
  */
 export async function runPreflightTest(integration: { id: string; type: string; config: unknown }): Promise<{ ok: boolean; message: string; version?: string }> {
-  const config = integration.config as Record<string, unknown>;
-  if (integration.type === "fortimanager") return fortimanager.testConnection(config as any, integration.id);
-  if (integration.type === "fortigate") return fortigate.testConnection(config as any);
-  if (integration.type === "windowsserver") return windowsServer.testConnection(config as any);
-  if (integration.type === "entraid") return entraId.testConnection(config as any);
-  if (integration.type === "activedirectory") return activeDirectory.testConnection(config as any);
-  if (integration.type === "vcenter") return vcenter.testConnection(config as any);
-  if (integration.type === "azurearc") return azureArc.testConnection(config as any);
-  if (integration.type === "unraid") return unraid.testConnection(config as any);
-  if (integration.type === "truenas") return truenas.testConnection(config as any);
-  if (integration.type === "proxmox") return proxmox.testConnection(config as any);
-  if (integration.type === "llm") return llm.testConnection(config as any);
-  if (integration.type === GENERIC_API_TYPE) return genericApi.testConnection(config as any);
-  return { ok: false, message: `Unknown integration type: ${integration.type}` };
+  // One dispatch, shared with the unsaved-form POST /integrations/test
+  // (services/integrationAdapters.ts, CQ-B064).
+  const adapter = integrationAdapter(integration.type);
+  if (!adapter) return { ok: false, message: `Unknown integration type: ${integration.type}` };
+  return adapter.testConnection(integration.config as Record<string, unknown>, integration.id);
 }
-
-/**
- * Integration types with nothing to discover — the AI assistant's LLM server
- * (rule 95). Checked first in triggerDiscovery, because its type dispatch
- * ends in a FortiManager `else` that would otherwise run FMG discovery
- * against an LLM host.
- */
-const NON_DISCOVERABLE_INTEGRATION_TYPES: ReadonlySet<string> = new Set(["llm"]);
 
 /**
  * Enqueue a discovery run. Validates the integration config (fast 400 for the
@@ -629,7 +612,12 @@ export async function triggerDiscovery(
 ): Promise<boolean> {
   const integration = await prisma.integration.findUnique({ where: { id: integrationId } });
   if (!integration) throw new AppError(404, "Integration not found");
-  if (NON_DISCOVERABLE_INTEGRATION_TYPES.has(integration.type)) {
+  // Every type's discovery facts live in its adapter (CQ-B064). An unknown
+  // type is refused here: runDiscovery's collector dispatch ends in a
+  // FortiManager `else` and would otherwise aim FMG discovery at it.
+  const adapter = integrationAdapter(integration.type);
+  if (!adapter) throw new AppError(400, `${integration.name} has an unknown integration type (${integration.type})`);
+  if (!adapter.discovery) {
     throw new AppError(400, `${integration.name} is not a discovery integration — there is nothing to discover`);
   }
 
@@ -640,49 +628,11 @@ export async function triggerDiscovery(
     throw new AppError(400, `A ${opts.scope.kind} scope cannot run against a ${integration.type} integration`);
   }
 
-  const config = integration.config as Record<string, unknown>;
-  // Hostless types (Entra ID, Azure Arc) authenticate against a fixed
-  // Microsoft endpoint with an app registration — they carry no `host`, so
-  // they must NOT fall into the else branch below, which demands one.
-  if (integration.type === "entraid" || integration.type === "azurearc") {
-    if (!config.tenantId) throw new AppError(400, "Integration has no tenant ID configured");
-    if (!config.clientId) throw new AppError(400, "Integration has no client ID configured");
-    if (!config.clientSecret) throw new AppError(400, "Integration has no client secret configured");
-  } else {
-    if (!config.host) throw new AppError(400, "Integration has no host configured");
-    if (integration.type === "fortimanager" && !config.apiToken) throw new AppError(400, "Integration has no API token configured");
-    if (integration.type === "fortigate" && !config.apiToken) throw new AppError(400, "Integration has no API token configured");
-    if (integration.type === "windowsserver" && !config.username) throw new AppError(400, "Integration has no username configured");
-    if (integration.type === "activedirectory") {
-      if (!config.bindDn) throw new AppError(400, "Integration has no bind DN configured");
-      if (!config.bindPassword) throw new AppError(400, "Integration has no bind password configured");
-      if (!config.baseDn) throw new AppError(400, "Integration has no base DN configured");
-    }
-    if (integration.type === "vcenter") {
-      if (!config.username) throw new AppError(400, "Integration has no username configured");
-      if (!config.password) throw new AppError(400, "Integration has no password configured");
-    }
-    if (isWorkloadPlatform(integration.type) && !config.apiToken) {
-      throw new AppError(400, "Integration has no API key configured");
-    }
-    if (integration.type === "proxmox" && !config.apiTokenId) {
-      throw new AppError(400, "Integration has no API token ID configured");
-    }
-    // Generic API: the mapping is what makes a record an asset, so a run with
-    // nothing mapped for the identity would read the feed and write nothing.
-    // A network-only feed (readDevices off, rule 100(j)) needs a network or
-    // monitor query instead — otherwise the run reads nothing at all.
-    if (integration.type === GENERIC_API_TYPE) {
-      if (config.readDevices === false) {
-        const nq = Array.isArray(config.networkQueries) ? config.networkQueries.length : 0;
-        if (nq === 0) throw new AppError(400, "Integration reads no devices and has no network queries — there is nothing to discover");
-      } else {
-        const fm = (config.fieldMap ?? {}) as Record<string, unknown>;
-        const idField = (config.identityField as string | undefined) ?? "id";
-        if (!fm[idField]) throw new AppError(400, `Integration has no path mapped for its identity field (${idField})`);
-      }
-    }
-  }
+  // The fields a run cannot start without — per type, in its adapter (hostless
+  // Entra ID / Azure Arc ask for an app registration, everything else a host
+  // first, then its own credentials).
+  const missing = adapter.discovery.missingConfig(integration.config as Record<string, unknown>);
+  if (missing) throw new AppError(400, missing);
 
   // Coalesce concurrent triggers. The scheduler already gates on
   // isDiscoveryRunning, but the manual route doesn't — and a re-trigger
@@ -741,10 +691,10 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   const integrationName = integration.name;
   const integrationType = integration.type;
   const label = actor === "auto-discovery" ? "Scheduled" : "Manual";
-  const baseKindLabel = (integration.type === "entraid" || integration.type === "activedirectory"
-    || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type)
-    || integration.type === GENERIC_API_TYPE)
-    ? "device discovery" : "DHCP discovery";
+  // An inventory source discovers devices; a gate / DHCP server, networks.
+  // From the adapter (CQ-B064) — the same fact `assetsOnly` reads below.
+  const discoveryKind = integrationAdapter(integration.type)?.discovery?.kind ?? "dhcp";
+  const baseKindLabel = discoveryKind === "assets" ? "device discovery" : "DHCP discovery";
   // Scoped runs label every start/complete/abort/error Event with the device.
   const kindLabel = scopeDeviceName ? `${baseKindLabel} (device "${scopeDeviceName}")` : baseKindLabel;
 
@@ -1157,9 +1107,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // the address-book directory sync — i.e. the entire per-class Monitoring
     // tab for an asset-only type. (The fourth is narrower still: only the two
     // DIRECTORY types have a directory of people to sync.)
-    const assetsOnly = integration.type === "entraid" || integration.type === "activedirectory"
-      || integration.type === "vcenter" || integration.type === "azurearc" || isWorkloadPlatform(integration.type)
-      || integration.type === GENERIC_API_TYPE;
+    const assetsOnly = discoveryKind === "assets";
 
     // ── AD/Entra post-sync passes (agent auto-deploy + interface/storage
     // auto-monitor) ──────────────────────────────────────────────────────────
@@ -2563,10 +2511,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     // and throwing would discard a fully-committed sync's result.
     if (name !== "__end__") throwIfAborted(signal, `sync phase "${name}"`);
   };
-  const integrationLabel =
-    integrationType === "windowsserver" ? "Windows Server" :
-    integrationType === "fortigate" ? "FortiGate" :
-    "FortiManager";
+  // The product name from the type's adapter (CQ-B064); FortiManager stays the
+  // fallback this ternary always had.
+  const integrationLabel = integrationAdapter(integrationType)?.label ?? "FortiManager";
   const projectRefLabel = `${integrationLabel} Integration`;
   const created: string[] = [];
   const updated: string[] = [];

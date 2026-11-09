@@ -285,6 +285,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **One entry per HA cluster** (both members carry the cluster's one name); the primary describes it, a standby only when no primary row exists.
 - Decommissioned firewalls are left out. The picker is a suggestion list: the field always accepts a typed name, and a failed lookup only removes suggestions.
 
+## services/integrationAdapters.ts
+
+**What it owns:** the per-type facts the backend's integration DISPATCH needs, one entry per type (CQ-B064, 2026-11-09): the product label, the connection test, and the discovery facts (none for the AI assistant; otherwise `kind` "dhcp" — a gate / DHCP server going through `syncDhcpSubnets` — or "assets" — an inventory source with the asset-only post-sync passes — and `missingConfig`, the first field a run cannot start without).
+
+**Public API:** `INTEGRATION_TYPES`, `IntegrationType`, `INTEGRATION_ADAPTERS`, `IntegrationAdapter`, `integrationAdapter(type)`.
+
+**Cross-service deps:** each integration's service (`testConnection` only) and `utils/genericApiSource.GENERIC_API_TYPE`. Imports no discovery code, so the services it imports may not import it back (none do).
+
+**Used by:** `src/services/discovery/discoveryEngine.ts` → `runPreflightTest` (stored test), `triggerDiscovery` (unknown-type and non-discoverable refusals, `missingConfig`), `runDiscovery` (`discoveryKind` → the "device / DHCP discovery" label and `assetsOnly`), `syncDhcpSubnets` (`integrationLabel`); `src/api/routes/integrations.ts` → `POST /test` (the unsaved-form test, indexed by the Zod-parsed type).
+
+**Invariants:**
+- **Typed per type, both ways.** `INTEGRATION_ADAPTERS` is `{ [K in IntegrationType]: … }`, so a type in `INTEGRATION_TYPES` without an entry does not compile; `POST /test` indexes it with `CreateIntegrationSchema`'s parsed `input.type`, so a schema literal without an entry does not compile either. `tests/unit/integrationAdapters.test.ts` pins the two lists equal at runtime and every label equal to `public/js/integrations.js → _INTEGRATION_PRODUCTS`.
+- **Only FortiManager receives the integration id** in `testConnection` (its proxy-mode concurrency gate is per integration); the draft test passes none.
+- **An unknown stored type is refused by `triggerDiscovery`** (400), never left to `runDiscovery`'s collector dispatch, whose last branch is FortiManager.
+- `missingConfig` messages are operator-facing and pinned word for word in the test.
+
+**When changing this:**
+- A new integration type: add it to `INTEGRATION_TYPES` and give it an entry — the compiler then points at this file. The rest of `cross-cutting/integration-type-onboarding.md` (collectors in `runDiscovery`, the `/:id/query` proxy, projection, polling, the frontend modal) is still a checklist.
+- Moving another per-type chain here (the `/:id/query` proxy, `runDiscovery`'s collector branches) is the rest of CQ-B064; keep each per-type difference a field, not a type check at the call site.
+
+---
+
 ## services/integrationHealthService.ts
 
 **What it owns:** the payload behind `GET /api/v1/integrations/health-summary` — the sidebar's 30-second poll, running on every page for every signed-in session. Two unrelated signals share one response deliberately: `failed` (enabled integrations whose most recent connection test failed) and `proxyAdvice` (enabled FortiManager integrations still on the proxy transport whose fleet has outgrown it). Neither is worth a second poll.

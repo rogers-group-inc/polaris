@@ -17,7 +17,6 @@ import * as fortimanager from "../../services/fortimanagerService.js";
 import { getFmgActivityForIntegration } from "../../services/fmgActivityService.js";
 import { getIntegrationHealthSummary } from "../../services/integrationHealthService.js";
 import * as fortigate from "../../services/fortigateService.js";
-import * as windowsServer from "../../services/windowsServerService.js";
 import * as entraId from "../../services/entraIdService.js";
 import * as activeDirectory from "../../services/activeDirectoryService.js";
 import * as vcenter from "../../services/vcenterService.js";
@@ -55,6 +54,7 @@ import {
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
 import { checkForSlowRuns, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
+import { INTEGRATION_ADAPTERS } from "../../services/integrationAdapters.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
@@ -2931,7 +2931,6 @@ router.post("/test", async (req, res, next) => {
       restoreStoredSecrets(cfg, storedCfg, ["apiToken", "clientSecret"], llmComparable(cfg));
     }
     const input = CreateIntegrationSchema.parse(req.body);
-    let result: { ok: boolean; message: string; version?: string };
 
     // If an existing integration id is provided, merge unmasked secrets
     // from the stored config when the form fields were left blank.
@@ -2955,33 +2954,11 @@ router.post("/test", async (req, res, next) => {
       }
     }
 
-    if (input.type === "fortimanager") {
-      result = await fortimanager.testConnection(input.config);
-    } else if (input.type === "fortigate") {
-      result = await fortigate.testConnection(input.config);
-    } else if (input.type === "windowsserver") {
-      result = await windowsServer.testConnection(input.config);
-    } else if (input.type === "entraid") {
-      result = await entraId.testConnection(input.config);
-    } else if (input.type === "activedirectory") {
-      result = await activeDirectory.testConnection(input.config);
-    } else if (input.type === "vcenter") {
-      result = await vcenter.testConnection(input.config);
-    } else if (input.type === "azurearc") {
-      result = await azureArc.testConnection(input.config);
-    } else if (input.type === "unraid") {
-      result = await unraid.testConnection(input.config as unraid.UnraidConfig);
-    } else if (input.type === "truenas") {
-      result = await truenas.testConnection(input.config as truenas.TrueNasConfig);
-    } else if (input.type === "proxmox") {
-      result = await proxmox.testConnection(input.config as proxmox.ProxmoxConfig);
-    } else if (input.type === "llm") {
-      result = await llm.testConnection(input.config);
-    } else if (input.type === "genericapi") {
-      result = await genericApi.testConnection(input.config as genericApi.GenericApiConfig);
-    } else {
-      result = { ok: false, message: `Unknown integration type: ${(input as any).type}` };
-    }
+    // The same per-type dispatch as the stored-integration test, minus the id:
+    // this is an unsaved draft (services/integrationAdapters.ts, CQ-B064).
+    // Indexed by the Zod-parsed literal, so a type added to
+    // CreateIntegrationSchema without an adapter does not compile.
+    const result = await INTEGRATION_ADAPTERS[input.type].testConnection(input.config);
 
     // If this test was tied to an existing integration and passed, stamp the
     // card's last-tested fields so the UI and the discovery gate see the
