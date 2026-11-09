@@ -11,10 +11,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
-const js = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8").replace(/\r\n/g, "\n");
+const js = integrationsSource().replace(/\r\n/g, "\n");
 
 function grab(name: string): string {
   const i = js.indexOf("\nfunction " + name + "(");

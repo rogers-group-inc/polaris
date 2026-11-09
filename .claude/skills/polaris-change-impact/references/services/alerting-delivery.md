@@ -112,7 +112,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 - **A contact dies only when its LAST provenance row goes.** Every delete is `origin: { not: "manual" }` AND `directorySources: { none: {} }`, which makes removing an adopted or hand-added row structurally impossible even on a bug.
 - **The steady state must stay free.** The diff compares the stored `observed` blob and skips anything identical, so an unchanged directory issues zero writes. A test asserts it; keep it, or every discovery cycle rewrites the whole roster.
 
-**When changing this:** adding a field to `DirectoryPerson` means adding it to BOTH readers (a field only one populates projects as null wherever the other ranks first) and deciding whether it belongs on the `Contact` row — anything that lands there is employee PII in every backup. Adding an exclusion means adding it to `normalizeDirectorySyncFilter`, to the Zod block in `integrations.ts`, and to the Directory tab in `integrations.js`, or the control exists in exactly one of the three places.
+**When changing this:** adding a field to `DirectoryPerson` means adding it to BOTH readers (a field only one populates projects as null wherever the other ranks first) and deciding whether it belongs on the `Contact` row — anything that lands there is employee PII in every backup. Adding an exclusion means adding it to `normalizeDirectorySyncFilter`, to the Zod block in `integrations.ts`, and to the Directory tab in `integrations-feature-tabs.js`, or the control exists in exactly one of the three places.
 
 ## services/directorySearchService.ts
 
@@ -529,6 +529,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 - Destination secrets live ONLY on the channel — delivery rows reference the channel by id, never copy its secrets.
 
 **When changing this:** add a new channel type by extending `CHANNEL_TYPES` + `CHANNEL_TYPE_META` (+ `CHANNEL_TRANSPORT`) in `notificationTypes`, a sender under `notificationChannels/`, and a dispatch arm in `notificationDeliveryService`. Mark secret fields `secret:true` so masking covers them.
+- Unit tests: `tests/unit/notificationChannelService.test.ts` — masking, mask-echo keeps the secret but not toward a new host (rule 111), VAPID keys never client-set, disable never deletes keys, test push scope.
 
 ---
 

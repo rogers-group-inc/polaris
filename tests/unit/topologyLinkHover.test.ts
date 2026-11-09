@@ -280,3 +280,61 @@ describe("link tooltip speed and signal rows", () => {
     expect(none).toContain("Channel 36");
   });
 });
+
+describe("link tooltip on a physical loop", () => {
+  // A ring A–B–C–D–A with port pairs + speeds, a tail D–E, and a 10-switch
+  // ring for the row cap.
+  function ringGraph() {
+    const n = (id: string) => ({ data: { id, label: "SW-" + id } });
+    const e = (id: string, s: string, t: string, extra: Record<string, unknown> = {}) => ({ data: { id, source: s, target: t, ...extra } });
+    const big = Array.from({ length: 10 }, (_, i) => `R${i}`);
+    return sb.make(JSON.stringify({
+      headless: true,
+      styleEnabled: true,
+      layout: { name: "preset" },
+      elements: [
+        n("A"), n("B"), n("C"), n("D"), n("E"), ...big.map(n),
+        e("ab", "A", "B", { inLoop: 1, label: "port1 ↔ port2", linkSpeed: "10g", speedBps: 1e10 }),
+        e("bc", "B", "C", { inLoop: 1, label: "port3 ↔ port4", linkSpeed: "1g", speedBps: 1e9 }),
+        e("cd", "C", "D", { inLoop: 1, label: "port5 ↔ port6", linkSpeed: "unknown", isLastKnown: 1 }),
+        e("da", "D", "A", { inLoop: 1, label: "port7 ↔ port8", linkSpeed: "1g", speedBps: 1e9 }),
+        e("de", "D", "E", { label: "port9 ↔ port10", linkSpeed: "1g", speedBps: 1e9 }),
+        ...big.map((id, i) => e(`r${i}`, id, big[(i + 1) % big.length], { inLoop: 1, label: `p${i}a ↔ p${i}b` })),
+      ],
+    }));
+  }
+  const tip = (id: string) => {
+    const cy = ringGraph();
+    return R.edgeTooltipHtml(cy, cy.$id(id)) as string;
+  };
+
+  it("lists the loop's other links, read around the ring from the hovered link", () => {
+    const html = tip("ab");
+    expect(html).toContain("Part of a ring");
+    expect(html).toContain("· 4 links");
+    const bc = html.indexOf("port3 ↔ port4");
+    const cd = html.indexOf("port5 ↔ port6");
+    const da = html.indexOf("port7 ↔ port8");
+    expect(bc).toBeGreaterThan(-1);
+    expect(bc).toBeLessThan(cd);
+    expect(cd).toBeLessThan(da);
+    // The hovered link is the header, not a ring row; the tail is not in the ring.
+    expect(html.split("port1 ↔ port2").length).toBe(2);
+    expect(html).not.toContain("port9 ↔ port10");
+    expect(html).toContain("SW-B <span style=\"opacity:0.7\">⇄</span> SW-C");
+    expect(html).toContain(">1 Gbps<");
+    expect(html).toContain(">last known<");
+  });
+
+  it("a link off the loop gets no ring section", () => {
+    expect(tip("de")).not.toContain("Part of a ring");
+  });
+
+  it("caps a large ring's rows and counts the rest", () => {
+    const html = tip("r0");
+    expect(html).toContain("· 10 links");
+    expect(html).toContain("+1 more");
+    expect(html).toContain("p1a ↔ p1b");
+    expect(html).not.toContain("p9a ↔ p9b"); // the last row of the walk is the one cut
+  });
+});

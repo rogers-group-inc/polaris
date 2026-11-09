@@ -42,8 +42,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
 const callFortiOs = vi.hoisted(() => vi.fn());
 
@@ -346,7 +345,7 @@ describe("release", () => {
 });
 
 describe("the tab copy names the group the schema names", () => {
-  const js = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8");
+  const js = integrationsSource();
   const fn = js.split("function quarantinePushFormHTML(")[1]!.slice(0, 4000);
 
   it("asks for WiFi & Switch Controller, per access_group: wifi", () => {

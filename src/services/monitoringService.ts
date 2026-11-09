@@ -142,7 +142,7 @@ import {
   descrReadDue,
   type SysDescrDetail,
 } from "../utils/snmpDescrIdentity.js";
-import { maybeEmitChangeEvents, type ChangeItem } from "./notificationChangeEvents.js";
+import { maybeEmitChangeEvents, wirelessRoamEventsWanted, type ChangeItem } from "./notificationChangeEvents.js";
 import { isChangeActionSubscribed } from "./notificationRuleService.js";
 import { logger } from "../utils/logger.js";
 import { adBindFallbackAllowed, adBindFallbackIntegration } from "../utils/adBindFallback.js";
@@ -11753,7 +11753,9 @@ async function persistWirelessStations(
       );
       // Roam audit — AFTER the transaction commits, never inside it (an event
       // write must not extend the lock window these rows are contended on).
-      const roamEvents = orderedStamps.flatMap(([endpointId, ap]) => {
+      // Written only while an automation uses the roam trigger: unconditional,
+      // every client's every roam flooded the Events log (2026-11-09).
+      const roamEvents = !(await wirelessRoamEventsWanted()) ? [] : orderedStamps.flatMap(([endpointId, ap]) => {
         const p = priorById.get(endpointId)!;
         const ev = buildConnectionChangedEvent(
           "ap",

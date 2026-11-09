@@ -10,13 +10,14 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 import { Window } from "happy-dom";
 import { APP_SHELL_STUBS } from "./_appShellStubs.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
-const SRC = readFileSync(resolve(__dirname, "../../public/js/integrations.js"), "utf8");
+const SRC = integrationsSource();
 // The polling vocabulary (_POLLING_COMPAT, _streamAllowedMethods, the dropdown)
 // moved to polling-methods.js, which every page loads before integrations.js.
 const POLLING_SRC = readFileSync(resolve(__dirname, "../../public/js/polling-methods.js"), "utf8");

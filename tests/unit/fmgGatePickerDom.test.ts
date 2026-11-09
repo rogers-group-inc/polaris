@@ -12,9 +12,9 @@
  * matcher it calls are sliced out of the source and evaluated with a stub api.
  */
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
 const here = dirname(fileURLToPath(import.meta.url));
 let wire: (id: string) => void;
@@ -30,7 +30,7 @@ function slice(src: string, start: string, end: string): string {
 }
 
 beforeAll(() => {
-  const src = readFileSync(resolve(here, "../../public/js/integrations.js"), "utf8");
+  const src = integrationsSource();
   const matcher = slice(src, "var FMG_GATE_SUGGEST_CAP", "// </fortinet-query-presets>");
   const picker = slice(src, "function _wireFmgGatePicker(", "\nfunction openApiQueryModal(");
   const api = {

@@ -13,6 +13,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -37,7 +38,7 @@ describe("the registry covers every integration type", () => {
   });
 
   it("labels each type with the product name the integration modal shows", () => {
-    const js = read("public/js/integrations.js");
+    const js = integrationsSource();
     const block = js.slice(js.indexOf("var _INTEGRATION_PRODUCTS = {"), js.indexOf("};", js.indexOf("var _INTEGRATION_PRODUCTS = {")));
     const ui = Object.fromEntries([...block.matchAll(/(\w+):\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]));
     for (const t of INTEGRATION_TYPES) expect(INTEGRATION_ADAPTERS[t].label, t).toBe(ui[t]);

@@ -553,7 +553,7 @@ Sugar over the change Events Polaris emits:
 | `wireless_station_connected` | |
 | `firmware_changed` | firmware / OS version changed |
 | `switch_port_changed` | |
-| `wireless_ap_changed` | a roam |
+| `wireless_ap_changed` | a wireless client roamed to another AP. Roams are recorded **only while an automation uses this trigger** — with none, Polaris writes no roam Events at all |
 | `gateway_firewall_changed` | the gate in front of the device changed |
 | `fortilink_changed` | controller link changed |
 
