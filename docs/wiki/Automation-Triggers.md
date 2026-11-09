@@ -760,8 +760,12 @@ its own accent-coloured block.
 | Actions | tiers can share the base actions, or have their own — see [Actions](Automation-Actions) |
 
 One alert **climbs and eases in place** rather than firing several.
-De-escalation is immediate, and the hysteresis dead band eases to the base
-severity.
+An alert **leaves a band on the same hold it entered on**: it eases to a
+lower tier only after the value has stayed below the band for "Sustained for".
+One reading under the line therefore doesn't drop it, and climbing straight
+back doesn't send the tier's notification again. In the hysteresis dead band
+(below the trigger, above the clear line) it eases to the base severity on the
+same hold.
 
 A new tier defaults one rank above the previous, so adding one changes nothing
 until you edit its value.

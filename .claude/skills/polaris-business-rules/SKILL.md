@@ -133,7 +133,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 16 | Maintenance windows pause everything; status flips are scheduler-managed — what a window DOES (37 is the gate that reads it; 80 the holds) | invariants-12-29 | narrative-12-24 |
 | 17 | ARP presence evidence for stale reservations; the sweep is opt-in | invariants-12-29 | narrative-12-24 |
 | 18 | Automation precedence is same-trigger, most-specific-wins | invariants-12-29 | narrative-12-24 |
-| 19 | Severity bands escalate one alert by value, each on its own clock | invariants-12-29 | narrative-12-24 |
+| 19 | Severity bands escalate one alert by value, each on its own clock; (a) a band is left on the hold it was entered on (`bandDescent`) | invariants-12-29 | narrative-12-24 |
 | 20 | Subnet writes serialize per block (a); secrets are encrypted at rest (b); a backup you cannot restore is not a backup (c) | invariants-12-29 | narrative-12-24 |
 | 21 | SSH host-key verification fails closed (opt-in until rule 113 made it the default) | invariants-12-29 | narrative-12-24 |
 | 22 | The Sources column is `location \|\| learnedLocation`, operator-ordered | invariants-12-29 | narrative-12-24 |
