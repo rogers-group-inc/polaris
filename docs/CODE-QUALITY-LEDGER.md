@@ -202,7 +202,7 @@ production caller at all, move the test onto the real code path and delete the f
 | id | kind | where | summary | risk | effort | tier | status | verified-by |
 |---|---|---|---|---|---|---|---|---|
 | CQ-F050 | structure | `assets.js` (30.7k lines, 774 top-level functions) | About 30 responsibility clusters; split into `assets-*.js` on the `assets-tabs.js` pattern with a load-order test. | H | L | 3 | verified | read |
-| CQ-F051 | structure | `server-settings.js` (12.8k), `automations-wizard.js` (10.3k, one IIFE), `integrations.js` (10k), `app.js` (6.6k; several notice sections appear twice) | Same treatment, one file per session. | M | L | 3 | verified; `server-settings.js` fixed@0572ba8b5 (core + 8 tab files: ntp-web, maintenance, customization, identification, mibs, credentials, api-tokens, profiles; load-order + inventory test `tests/unit/serverSettingsSplit.test.ts`; docs 3053e20d5) — `automations-wizard.js`, `integrations.js`, `app.js` remain | read |
+| CQ-F051 | structure | `server-settings.js` (12.8k), `automations-wizard.js` (10.3k, one IIFE), `integrations.js` (10k), `app.js` (6.6k; several notice sections appear twice) | Same treatment, one file per session. | M | L | 3 | verified; `server-settings.js` fixed@0572ba8b5 (core + 8 tab files: ntp-web, maintenance, customization, identification, mibs, credentials, api-tokens, profiles; load-order + inventory test `tests/unit/serverSettingsSplit.test.ts`; docs 3053e20d5); `integrations.js` fixed@c520b3be9 (core + 5 files: feature-tabs, monitoring, forms, generic-api, query; loaded on all seven pages and the asset panel bundle; load-order + inventory test `tests/unit/integrationsSplit.test.ts`; docs e519c98b3) — `automations-wizard.js`, `app.js` remain | read |
 
 ## Go agent (G)
 

@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 import vm from "node:vm";
 import { DHCP_MONITOR_FORMAT } from "../../src/utils/fortiosIpv6.js";
 import { INVENTORY_QUERY_FORMAT } from "../../src/utils/inventoryLocality.js";
@@ -52,7 +53,7 @@ class MemoryStorage {
 }
 
 beforeAll(() => {
-  const src = read("public/js/integrations.js");
+  const src = integrationsSource();
   const start = src.indexOf("// <fortinet-query-presets>");
   const end = src.indexOf("// </fortinet-query-presets>");
   expect(start).toBeGreaterThan(-1);
