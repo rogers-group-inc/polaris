@@ -60,7 +60,6 @@ const READONLY_IDENTITY: DashRoleIdentity = {
     permissions: { assets: "read", deviceMap: "read", savedDashboards: "read" },
     updatedAt: "2026-01-01T00:00:00.000Z",
   },
-  regionTags: [],
 };
 
 function dashApp() {
