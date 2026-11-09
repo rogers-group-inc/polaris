@@ -46,6 +46,7 @@ import { parseStatusSpec, statusInRanges, MAX_BODY_BYTES, MAX_EXCERPT_CHARS, typ
 import { parseDigestChallenge, buildDigestAuthorization, newCnonce } from "../utils/digestAuth.js";
 import { burstPingHost } from "../utils/icmpPing.js";
 import { traceFromServer } from "../utils/serverTraceroute.js";
+import { withTimeout } from "../utils/timeout.js";
 import { getAppVersion } from "../utils/version.js";
 import type { AgentCheckDef } from "./pathCheckService.js";
 import type { PathCheckSampleInput, PathCheckTracerouteInput } from "./pathCheckIngestService.js";
@@ -149,18 +150,6 @@ interface Resolved { ip: string | null; dnsMs: number | null; error: string | nu
 
 function msSince(t: bigint): number {
   return Math.round(Number(process.hrtime.bigint() - t) / 1000) / 1000;
-}
-
-async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      p,
-      new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`${what} timed out after ${ms} ms`)), ms); }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 /** Test seams: the resolver, this host's addresses, and the refusal (tests

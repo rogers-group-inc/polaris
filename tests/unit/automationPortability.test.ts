@@ -279,8 +279,8 @@ describe("every export is a valid import", () => {
 
 // ─── (A) actions must be explicit ────────────────────────────────────────────
 
-describe("(A) the audit Event action is always explicit", () => {
-  it("keeps actions: [{type:'event'}] when every other action was stripped", () => {
+describe("(A) the action list is explicit and empty", () => {
+  it("exports actions: [] — every action is wiring, and the audit Event needs none (rule 146)", () => {
     const { rule } = P.stripForExport(
       {
         name: "n",
@@ -291,21 +291,17 @@ describe("(A) the audit Event action is always explicit", () => {
       },
       CATALOGS,
     );
-    // NOT omitted, and NOT an empty array: the server only re-injects the audit
-    // Event when `actions` is undefined, and the wizard draft turns an absent
-    // list into [] before it ever reaches the server.
-    expect(rule.actions).toEqual([{ type: "event" }]);
+    expect(rule.actions).toEqual([]);
   });
 
-  it("never emits an empty actions array", () => {
+  it("always emits an explicit (never absent) actions array", () => {
     for (const body of Object.values(fixtures())) {
       const { rule } = P.stripForExport(body, CATALOGS);
       expect(Array.isArray(rule.actions)).toBe(true);
-      expect((rule.actions as unknown[]).length).toBeGreaterThan(0);
     }
   });
 
-  it("drops a kept event action's escalation chain rather than emptying it", () => {
+  it("drops the retired event action, chain and all", () => {
     const { rule } = P.stripForExport(
       {
         name: "n",
@@ -316,7 +312,7 @@ describe("(A) the audit Event action is always explicit", () => {
       },
       CATALOGS,
     );
-    expect(rule.actions).toEqual([{ type: "event" }]);
+    expect(rule.actions).toEqual([]);
     expect(ruleInputSchema.safeParse(rule).success).toBe(true);
   });
 });
@@ -684,7 +680,7 @@ describe("parseImportFile", () => {
     const r = P.parseImportFile(hostile, "Hostile.json", TRIGGER_TYPES);
     expect(JSON.stringify(r.rule)).not.toContain("someone-elses-channel");
     expect(JSON.stringify(r.rule)).not.toContain("their-script");
-    expect(r.rule.actions).toEqual([{ type: "event" }]);
+    expect(r.rule.actions).toEqual([]);
   });
 
   it("rejects invalid JSON with a message naming the problem", () => {

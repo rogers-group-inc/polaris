@@ -85,7 +85,7 @@ import {
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { resolveQuietHold, newQuietHoldMemo, primeQuietHoldAssets, type QuietHold } from "./quietTimeHoldService.js";
 import type { QuietSend } from "../utils/quietTime.js";
-import { logEvent } from "./eventLogService.js";
+import { logEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
 import { isSuppressedForNotifications } from "./notificationEngine.js";
 import { pathCheckIdsInMaintenance } from "./maintenanceScheduleService.js";
 import { executeActions } from "./automationActionService.js";
@@ -100,6 +100,9 @@ import {
   normalizeEscalationToV2,
   escalationChainsForSeverity,
   escalationTierStateKey,
+  parseEscalationFired,
+  appendEscalationFired,
+  type EscalationFiredRecord,
   type EmailComposition,
   type EscalationV2Config,
   type EscalatableAction,
@@ -352,6 +355,8 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     select: {
       id: true, ruleId: true, alertGroupId: true, assetId: true, assetHostname: true, severity: true, message: true,
       triggeredAt: true, acknowledged: true, templateCtx: true, escalationState: true,
+      // Business rule 145: the tiers that ever sent, and the pill's level.
+      escalationFired: true, escalationTier: true, escalatedAt: true,
       // The fire-time asset-region snapshot (already region:-stripped) —
       // recipientDeviceRegion routing; survives asset deletion.
       regionTags: true,
@@ -391,7 +396,9 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     ? await pathCheckIdsInMaintenance()
     : new Set<string>();
 
-  const stateUpdates: { id: string; state: EscalationState }[] = [];
+  const stateUpdates: { id: string; state: EscalationState; fired?: { list: EscalationFiredRecord[]; tier: number; at: Date | null } }[] = [];
+  /** One Event per alert that reached a NEW tier this sweep (business rule 145). */
+  const tierEvents: LogEventInput[] = [];
   let tierRuns = 0;
   let repeatRuns = 0;
 
@@ -482,6 +489,11 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     // hold is time nobody knew, and must not count toward a tier or reminder.
     if (n.firstSentAt && n.firstSentAt.getTime() > startAt.getTime()) startAt = n.firstSentAt;
     let dirty = false;
+    // Business rule 145: tiers reaching their FIRST send this sweep.
+    let fired = parseEscalationFired(n.escalationFired);
+    let firedChanged = false;
+    let topTier = n.escalationTier ?? 0;
+    const newTiers: number[] = [];
 
     for (const chain of chains) {
       // stopOn is per chain: an acknowledged alert stops "acknowledge" chains
@@ -533,6 +545,13 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
           };
           dirty = true;
           tierRuns++;
+          // A tier's FIRST send is an escalation (business rule 145); its
+          // repeats are reminders and add nothing here.
+          if (!prev) {
+            const next = appendEscalationFired(fired, { severity: n.severity, chain: chain.key, tier: idx, at: now.toISOString() });
+            if (next !== fired) { fired = next; firedChanged = true; newTiers.push(idx + 1); }
+            if (idx + 1 > topTier) topTier = idx + 1;
+          }
         }
       }
     }
@@ -627,7 +646,28 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
       dirty = true;
     }
 
-    if (dirty) stateUpdates.push({ id: n.id, state });
+    if (firedChanged) {
+      tierEvents.push({
+        action: "notification.escalated",
+        resourceType: "notification",
+        resourceId: n.id,
+        resourceName: rule.name,
+        actor: "system:notification-escalation",
+        level: "warning",
+        assetId: n.assetId,
+        message:
+          `Alert escalated to tier ${Math.max(...newTiers)}${n.assetHostname ? ` on ${n.assetHostname}` : ""} — ${rule.name}` +
+          (n.acknowledged ? " (acknowledged; this chain escalates until cleared)" : " (unhandled)"),
+        details: { kind: "tier", tiers: newTiers, severity: n.severity, assetId: n.assetId, assetHostname: n.assetHostname },
+      });
+    }
+    if (dirty) {
+      stateUpdates.push({
+        id: n.id,
+        state,
+        ...(firedChanged ? { fired: { list: fired, tier: topTier, at: n.escalatedAt ? null : now } } : {}),
+      });
+    }
   }
 
   // NOT `tierRuns === 0 && repeatRuns === 0`: a quiet hold produces a state
@@ -639,7 +679,19 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
   if (stateUpdates.length > 0) {
     await prisma.$transaction(
       stateUpdates.map((u) =>
-        prisma.notification.update({ where: { id: u.id }, data: { escalationState: u.state as unknown as Prisma.InputJsonValue } }),
+        prisma.notification.update({
+          where: { id: u.id },
+          data: {
+            escalationState: u.state as unknown as Prisma.InputJsonValue,
+            ...(u.fired
+              ? {
+                  escalationFired: u.fired.list as unknown as Prisma.InputJsonValue,
+                  escalationTier: u.fired.tier,
+                  ...(u.fired.at ? { escalatedAt: u.fired.at } : {}),
+                }
+              : {}),
+          },
+        }),
       ),
     );
   }
@@ -659,15 +711,13 @@ export async function runEscalationSweep(now = new Date()): Promise<number> {
     }).catch(() => {});
   }
 
-  if (tierRuns > 0) {
-    await logEvent({
-      action: "notification.escalated",
-      resourceType: "notification",
-      actor: "system:notification-escalation",
-      level: "info",
-      message: `Escalation: ${tierRuns} tier run(s) executed for ${stateUpdates.length} unhandled notification(s)`,
-      details: { tierRuns, notifications: stateUpdates.length },
-    }).catch(() => {});
+  // One Event PER ALERT that reached a new tier (business rule 145) — on the
+  // alert and its device, so the Events tab, the asset's history and an event
+  // automation can all see which alert went over whose head. A tier's REPEAT
+  // runs are not new escalations and write nothing. Batched: one insert however
+  // many alerts escalated in the sweep.
+  if (tierEvents.length > 0) {
+    await logEventsBatch(tierEvents).catch(() => 0);
   }
 
   // A SEPARATE action from notification.escalated on purpose: sharing one

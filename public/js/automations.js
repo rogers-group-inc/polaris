@@ -343,7 +343,8 @@ var _rulesPage = 1;
     var counts = {};
     var tally = function (list) {
       (list || []).forEach(function (a) {
-        if (!a || !a.type) return;
+        // The retired "event" action does nothing (business rule 146).
+        if (!a || !a.type || a.type === "event") return;
         counts[a.type] = (counts[a.type] || 0) + 1;
       });
     };

@@ -52,7 +52,7 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}), logEventsBatch: vi.fn(async (es: unknown[]) => es.length) }));
 
 import { runEscalationSweep, tierIsDue } from "../../src/services/notificationEscalationService.js";
 
