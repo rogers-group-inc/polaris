@@ -18,6 +18,15 @@
 //
 // Then the session moves in with a plain `cd .claude/worktrees/<slug>` (Bash) — the harness makes
 // that the working directory and the require-worklock hook guards every edit.
+//
+// A LARGE project (a code-quality review, a migration in many batches) gets a parent:
+//
+//   worktree-start.mjs <parent> "<purpose>" --parent        home worktree: PARENT file, no WORKLOCK,
+//                                                            no Prisma client — nothing is edited there
+//   worktree-start.mjs <batch> "<purpose>" --under <parent>  sub-worktree <parent>-<batch>, from main
+//
+// Each sub-worktree merges straight to main and is removed as usual; the parent is never offered
+// by the merge menu nor removed by a push (worktree-keep.mjs) until the user deletes PARENT.
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -34,15 +43,22 @@ function run(cmd, args, opts = {}) {
 
 const argv = process.argv.slice(2);
 const flags = new Set(argv.filter((a) => a.startsWith("--")));
-const baseIdx = argv.indexOf("--base");
-const base = baseIdx >= 0 ? argv[baseIdx + 1] : "main";
-const positional = argv.filter((a, i) => !a.startsWith("--") && !(baseIdx >= 0 && i === baseIdx + 1));
-const [slug, purpose] = positional;
+const valueOf = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
+const valueIdx = new Set(["--base", "--under"].map((f) => argv.indexOf(f)).filter((i) => i >= 0).map((i) => i + 1));
+const base = valueOf("--base") ?? "main";
+const under = valueOf("--under");
+const isParent = flags.has("--parent");
+const positional = argv.filter((a, i) => !a.startsWith("--") && !valueIdx.has(i));
+const [given, purpose] = positional;
+const USAGE = `usage: worktree-start.mjs <slug> "<purpose>" [--env] [--install] [--base <ref>] [--parent | --under <parent>]`;
 
-if (!slug || !purpose) die(`usage: worktree-start.mjs <slug> "<purpose>" [--env] [--install] [--base <ref>]`);
-if (!/^[a-z0-9][a-z0-9.-]{0,62}$/.test(slug)) die(`slug "${slug}" must be lowercase letters, digits, dots and dashes`);
-if (!base) die("--base needs a ref");
-for (const f of flags) if (!["--env", "--install", "--base"].includes(f)) die(`unknown flag ${f}`);
+if (!given || !purpose) die(USAGE);
+if (!/^[a-z0-9][a-z0-9.-]{0,62}$/.test(given)) die(`slug "${given}" must be lowercase letters, digits, dots and dashes`);
+if (flags.has("--base") && !valueOf("--base")) die("--base needs a ref");
+if (flags.has("--under") && !under) die("--under needs the parent's slug");
+if (isParent && under) die("--parent and --under are exclusive (a parent has no parent)");
+for (const f of flags) if (!["--env", "--install", "--base", "--parent", "--under"].includes(f)) die(`unknown flag ${f}`);
+const slug = under && !given.startsWith(`${under}-`) ? `${under}-${given}` : given;
 
 // The main checkout is the parent of the common git dir, wherever this runs from.
 const commonDir = run("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
@@ -55,11 +71,40 @@ const branch = `worktree-${slug}`;
 if (existsSync(path)) die(`${path} already exists — pick another slug, or work in that worktree`);
 const branchExists = spawnSync("git", ["-C", main, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).status === 0;
 if (branchExists) die(`branch ${branch} already exists — pick another slug`);
+if (under && !existsSync(join(main, ".claude", "worktrees", under, "PARENT"))) {
+  die(`no parent worktree "${under}" (.claude/worktrees/${under}/PARENT) — start it with --parent first`);
+}
+
+// A chat opened in the parent reads CLAUDE.md and the skills from the parent's checkout, so keep
+// it at main: the parent never has commits of its own, so a fast-forward always applies.
+let parentNote = "";
+if (under) {
+  const parentPath = join(main, ".claude", "worktrees", under);
+  const ff = spawnSync("git", ["-C", parentPath, "merge", "--ff-only", "-q", "main"], { encoding: "utf8" });
+  parentNote = ff.status === 0
+    ? `parent ${under} fast-forwarded to main (its chat reads current skills)`
+    : `parent ${under} NOT fast-forwarded (${(ff.stderr || "").trim().split("\n")[0]}) — it has commits or changes of its own; it should not`;
+}
 
 run("git", ["-C", main, "worktree", "add", "-q", "-b", branch, path, base]);
-writeFileSync(join(path, "WORKLOCK"), `${new Date().toISOString()} ${purpose}\n`);
+const short = run("git", ["-C", path, "rev-parse", "--short", "HEAD"]);
 
-const steps = [`worktree ${path}`, `branch ${branch} from ${base} @ ${run("git", ["-C", path, "rev-parse", "--short", "HEAD"])}`, "WORKLOCK written"];
+if (isParent) {
+  writeFileSync(join(path, "PARENT"), `${new Date().toISOString()} ${purpose}\n`);
+  const p = path.replace(/\\/g, "/");
+  process.stdout.write(
+    `  ✓ parent worktree ${path}\n  ✓ branch ${branch} from ${base} @ ${short} (stays empty — batches merge straight to main)\n  ✓ PARENT written\n\n` +
+    `Open the project's long-running chat HERE so it is filed under this folder:\n` +
+    `  VS Code:  code ${p}      CLI:  cd ${p} && claude\n` +
+    `Each batch:  node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <batch> "<purpose>" --under ${slug}\n` +
+    `Merge / push never remove this worktree; retire it by deleting PARENT when the project is done.\n`,
+  );
+  process.exit(0);
+}
+
+writeFileSync(join(path, "WORKLOCK"), `${new Date().toISOString()} ${purpose}\n`);
+const steps = [`worktree ${path}`, `branch ${branch} from ${base} @ ${short}${under ? ` (a batch of ${under})` : ""}`, "WORKLOCK written"];
+if (parentNote) steps.push(parentNote);
 
 if (flags.has("--env")) {
   const src = join(main, ".env");

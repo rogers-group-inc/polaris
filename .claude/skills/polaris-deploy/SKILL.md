@@ -78,7 +78,10 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
 4. **End-of-work commit**: `rm WORKLOCK`, commit everything pending (one logical change per
    commit). A `DEVLOCK` means a dev stack is up: `podman compose -f compose.dev.yml -p
    polaris-<slug> down -v`, delete the lock, then commit.
-5. **Merge this chat's worktree — and only it.** In the main checkout (`git -C <main-checkout>
+5. **Merge this chat's worktree — and only it.** "This chat's worktree" is the one holding the
+   task's commits. In a chat that lives in a **parent** worktree (`PARENT` at its root — a large
+   project, `worktree-start.mjs --parent`) that is the current batch, `<parent>-<batch>`, never
+   the parent itself: the parent has no commits and is the chat's home. In the main checkout (`git -C <main-checkout>
    …`; a legacy `EnterWorktree` session must `ExitWorktree` (keep) first — its Bash guard
    refuses git aimed at the main checkout). **Before merging**, `git fetch origin` and check `git log origin/main..main`: it must
    be empty. Commits there were merged by someone else and would ride along on this push — stop,
@@ -89,7 +92,11 @@ only things that stop the pipeline are a failing check, a merge conflict, or `ma
    on `main`.
 6. **Push** per push-protocol.md § 1–2: `git push origin main` (stop and report if `main` is
    behind `origin/main`). Clean-up (§ 3) covers **this worktree and its branch only** — not
-   other `worktree-*` branches that happen to be fully merged.
+   other `worktree-*` branches that happen to be fully merged — and only when
+   `worktree-keep.mjs <path>` says `remove`. It says `keep` for a PARENT and for a worktree a
+   chat is FILED under: the code-quality review's chat vanished from VS Code on 2026-11-05 when
+   this step removed the worktree it had been filed under (the retired EnterWorktree re-filed a
+   chat under its first worktree). Report a kept one, with the reason, and move on.
 7. **Publish the wiki — do not ask.** Run `npm run wiki:publish` from the main checkout (plan
    only: it fetches, diffs `origin/main`'s `docs/wiki/` against the live wiki and changes
    nothing). **Publish only when it needs updating:** if the plan says "the wiki is current",

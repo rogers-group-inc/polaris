@@ -20,7 +20,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 3. **A dev environment = `DEVLOCK` at the worktree root + one podman stack per worktree.**
 4. **"merge"** → the merge protocol below (numbered menu of unlocked worktrees).
    **"push"** → the push protocol below (push main, clean up what was merged).
-5. **Lock files are gitignored and never committed.** Content: one line, ISO timestamp +
+5. **Lock files (and `PARENT`) are gitignored and never committed.** Content: one line, ISO timestamp +
    purpose. A lock older than the chat that made it is stale; the merge menu shows its age.
 6. **Record every error you hit** as one file in `error-log/` beside the memory directory
    (`~/.claude/projects/<this project>/error-log/`, outside the repo, never committed; its
@@ -37,6 +37,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 | the push and clean-up steps | [references/push-protocol.md](references/push-protocol.md) |
 | creating a worktree in one call (worktree + branch + WORKLOCK + Prisma client [+ .env, npm ci]) | [scripts/worktree-start.mjs](scripts/worktree-start.mjs) |
 | the enforcement hook and how it is registered | [scripts/require-worklock.mjs](scripts/require-worklock.mjs) |
+| may this worktree be removed? (lock / `PARENT` / a chat filed under its folder → keep) — merge, push and `/polaris-deploy` ask it | [scripts/worktree-keep.mjs](scripts/worktree-keep.mjs) |
 | the Bash hook that refuses heredoc programs / risky file writes / repo appends (→ Shell notes) | [scripts/refuse-risky-heredoc.mjs](scripts/refuse-risky-heredoc.mjs) |
 
 ## Start of a task (short form)
@@ -54,6 +55,24 @@ the main checkout's `.env` (tests against a DB, a dev stack); `--install` runs `
 dependency change — otherwise Node resolves `node_modules` up-tree from the main checkout).
 Then, as its own Bash call, `cd` to the path it prints; the harness makes that the working
 directory. Edit with absolute paths under it.
+
+**A large project** (a code-quality review, anything run as many batches over days) gets a
+**parent** worktree: `worktree-start.mjs <project> "<purpose>" --parent` writes `PARENT` (no
+`WORKLOCK`, no Prisma client — nothing is edited there), and the user opens the project's
+long-running chat in that folder, so Claude Code files the chat there. Each batch is
+`worktree-start.mjs <batch> "<purpose>" --under <project>` → `<project>-<batch>` from local
+`main`; it merges straight to `main` and is removed like any other worktree. Each `--under`
+first fast-forwards the parent to `main`, so a chat opened there reads current CLAUDE.md and
+skills (the parent never has commits of its own; edit only in batches). The parent is
+never offered by the merge menu nor removed by a push or `/polaris-deploy` — `worktree-keep.mjs`
+says `keep` for it — until the user retires it by deleting `PARENT`. The plan and its progress
+live in a committed doc on `main` (the code-quality review's is `docs/CODE-QUALITY-LEDGER.md`),
+not on the parent's branch, which stays empty. **Why:** Claude Code lists a chat under the
+folder it is filed in; the code-quality review's chat was filed under its first batch worktree
+(`cq-guards`, by the retired EnterWorktree tool), and its own `/polaris-deploy` removed that
+worktree on 2026-11-05, so the chat vanished from VS Code. A chat launched from the main
+checkout and moving between worktrees with `cd` stays filed under the main checkout, which is
+never removed — the parent is for a chat you want opened beside its project.
 
 **Do not use the `EnterWorktree` tool, or the Agent tool's `isolation: "worktree"`.** Retired
 2026-11-04: they refused to start on a lowercase-`c:\` launch, put the session under a Bash
@@ -107,7 +126,9 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
 
 1. `git worktree list --porcelain`; for each non-main worktree check for `WORKLOCK` / `DEVLOCK`.
 2. Print a **numbered list of the unlocked worktrees** (branch · commits ahead of main · last
-   subject · dirty?) and, un-numbered, the locked ones with each lock's age.
+   subject · dirty?) and, un-numbered, the locked ones with each lock's age. A `PARENT`
+   worktree is never numbered: list it as a project with its `<parent>-<batch>` worktrees
+   beneath (those are numbered as usual and merge straight to main).
 3. The user picks numbers. For each pick, in order: commit anything pending in that worktree;
    from the main checkout `git merge --no-ff worktree-<slug>`; on conflict stop and report.
 4. **Review what landed against the skills**: read each merged branch as one diff and ask what
@@ -126,7 +147,9 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
    when this push is the last stage of `/polaris-deploy` — its audit already ran in the worktree).
 2. `git push origin main`.
 3. For each worktree merged in this session (plus any `worktree-*` branch already fully merged,
-   `git branch --merged main` — but under `/polaris-deploy` only the chat's own): refuse if a lock file is present; check for directory junctions;
+   `git branch --merged main` — but under `/polaris-deploy` only the chat's own): refuse unless
+   `scripts/worktree-keep.mjs <path>` prints `remove` (a lock, a `PARENT`, or a chat filed
+   under the folder all mean keep); check for directory junctions;
    `podman compose -p polaris-<slug> down -v` if a stack lingers; `git worktree unlock <path>`
    (a legacy EnterWorktree lock; ignore "is not locked"); `git worktree remove <path>`;
    `git branch -d worktree-<slug>`. Report what was removed.
