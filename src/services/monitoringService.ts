@@ -28,6 +28,7 @@ import { trimTrailing } from "../utils/trimTrailing.js";
 import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
+import type { Prisma } from "../generated/prisma/client.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
@@ -14119,10 +14120,24 @@ export const MONITOR_CANDIDATE_WHERE = {
  */
 /** The cursor pass's candidate load — mirrored (deliberately, see the note in
  *  monitorAssets.ts publishDueWork) by the pg-boss publisher's own query. */
-async function loadMonitorPassCandidates() {
-  return prisma.asset.findMany({
-    where: MONITOR_CANDIDATE_WHERE,
-    select: {
+/**
+ * The ONE candidate select both monitor paths load: the cursor pass
+ * (loadMonitorPassCandidates → computeDueWork) and the pg-boss publisher
+ * (jobs/monitorAssets.ts publishDueWork). Two hand-kept copies drifted three
+ * ways before this existed (CQ-B035): the publisher never selected
+ * `monitored`, so lossSweepIncludes dropped every asset and pg-boss mode
+ * published no loss sweep at all; and neither copy selected every per-asset
+ * override the resolver reads, so an unselected column read as "inherit" and
+ * the due-check ran an operator's per-asset processes / event-log interval or
+ * per-stream REST credential as if it were not set.
+ *
+ * The `satisfies` clause is the guard: every AssetMonitorContext key except
+ * the derived `discoveredByIntegrationType` must be selected, so adding a
+ * resolver input without selecting it here is a type error rather than a
+ * silently wrong cadence. All scalars, mostly null: at 2000 assets the cost
+ * is a few dozen KB per tick, against no JSON blob at all.
+ */
+const MONITOR_PASS_CANDIDATE_SELECT = {
       id: true,
       // Redundant against MONITOR_CANDIDATE_WHERE, and selected anyway so the
       // shared eligibility predicates can be EVALUATED here rather than
@@ -14177,7 +14192,27 @@ async function loadMonitorPassCandidates() {
       // (resolveSdwanIntervalSec), not a per-asset column.
       lastSdwanAt: true,
       dependencySuppressed: true,
-    },
+      // Dedicated LLDP + Storage cadences (pg-boss only — the cursor pass
+      // carries both as systemInfo side effects): their anchors.
+      lastLldpAt: true, lastStorageAt: true,
+      // Every remaining resolver input (the satisfies clause below enforces
+      // it): per-asset interval / timeout overrides, MIB ids, and the
+      // per-stream credential ids — an own REST token keeps `rest_api` where
+      // the integration cannot make a FortiOS call (resolveStream).
+      lldpIntervalSec: true, storageIntervalSec: true,
+      processesIntervalSec: true, eventLogIntervalSec: true,
+      cpuMemoryTimeoutMs: true, temperatureTimeoutMs: true, systemInfoTimeoutMs: true,
+      processesTimeoutMs: true, eventLogTimeoutMs: true,
+      responseTimeMibId: true, cpuMemoryMibId: true, temperatureMibId: true,
+      interfacesMibId: true, lldpMibId: true, processesMibId: true,
+      responseTimeCredentialId: true, cpuMemoryCredentialId: true, temperatureCredentialId: true,
+      interfacesCredentialId: true, lldpCredentialId: true,
+} satisfies Prisma.AssetSelect & Record<Exclude<keyof AssetMonitorContext, "discoveredByIntegrationType">, true>;
+
+export async function loadMonitorPassCandidates() {
+  return prisma.asset.findMany({
+    where: MONITOR_CANDIDATE_WHERE,
+    select: MONITOR_PASS_CANDIDATE_SELECT,
   });
 }
 export type MonitorPassCandidate = Awaited<ReturnType<typeof loadMonitorPassCandidates>>[number];
@@ -14235,6 +14270,223 @@ export interface DueMonitorWork {
 }
 
 /**
+ * Is a cadence due? `intervalSec <= 0` disables the cadence; a never-stamped
+ * anchor is due at once. The one arithmetic every per-asset cadence uses.
+ */
+function cadenceDue(last: Date | null | undefined, intervalSec: number, now: Date): boolean {
+  if (intervalSec <= 0) return false;
+  if (!last) return true;
+  return now.getTime() - last.getTime() >= intervalSec * 1000;
+}
+
+/**
+ * THE SWEEP CADENCE for one pass: the operator's interval, floored at what the
+ * installed pinger can actually finish for a fleet this size. Without fping the
+ * fallback forks per host, so a large fleet genuinely cannot hold 60s.
+ * `candidateCount` is the fleet rather than the sweep-eligible subset, which
+ * errs toward the wider interval: the eligible set is not known until the
+ * due loop has run. Resolved once per pass by both monitor paths.
+ */
+export async function passSweepIntervalSec(candidateCount: number): Promise<number> {
+  return resolveSweepIntervalSec(configuredSweepIntervalSec(), candidateCount, await detectFping());
+}
+
+/** Per-pass inputs to resolveDueCadences, computed once by the caller. */
+export interface DuePassContext {
+  enabled: Set<MonitorCadence>;
+  now: Date;
+  /** Assets with a manufacturer custom widget switched on (business rule 130). */
+  widgetAssetIds: Set<string>;
+  /** passSweepIntervalSec() for this pass. */
+  sweepIntervalSec: number;
+}
+
+/** Which cadences one asset is due, already filtered by `enabled`. */
+export interface DueCadences {
+  probe: boolean;
+  /** Resolved probe cadence (resolveProbeIntervalSec); rides the probe job. */
+  probeIntervalSec: number;
+  /** The address an ICMP probe dials when it is batched; null = one job per asset. */
+  probeBatchTarget: string | null;
+  telemetry: boolean;
+  systemInfo: boolean;
+  fastFiltered: boolean;
+  /** pg-boss only: the cursor pass never enables lldp / storage. */
+  lldp: boolean;
+  storage: boolean;
+  processes: boolean;
+  eventLog: boolean;
+  customWidget: boolean;
+  sdwan: boolean;
+  lossSample: boolean;
+}
+
+/**
+ * The due decision for ONE candidate, shared by the cursor pass
+ * (computeDueWork) and the pg-boss publisher (jobs/monitorAssets.ts
+ * publishDueWork). The two due-sets are contractually identical, and until
+ * this existed they were two hand-kept copies that drifted (CQ-B035): the
+ * publisher still excluded managed FortiAPs from REST telemetry four months
+ * after the cursor path started collecting it. Callers only decide what to DO
+ * with a due cadence (a work item, a pg-boss job, a batch entry).
+ *
+ * DB-read-only: resolves the effective settings through the four-tier
+ * hierarchy (memoized per (integration|manual, assetType) bucket) and applies
+ * the cadence + eligibility gates. Returns `eff` because the publisher labels
+ * each job with the resolved transport.
+ */
+export async function resolveDueCadences(
+  a: MonitorPassCandidate,
+  ctx: DuePassContext,
+): Promise<{ eff: ResolvedMonitorSettings; due: DueCadences }> {
+  const { enabled, now } = ctx;
+  const isDue = (last: Date | null | undefined, intervalSec: number) => cadenceDue(last, intervalSec, now);
+  const eff = await resolveMonitorSettings({
+    ...a,
+    discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
+  });
+
+  // Probe cadence is the resolved intervalSeconds in every state — no backoff
+  // for down hosts, and no acceleration while a failure/recovery run is being
+  // confirmed. Down-host suppression below stops heavy cadences regardless;
+  // the cheap response-time probe keeps firing at base cadence so recovery is
+  // detected within one tick — dependency-suppressed assets included, since
+  // their own count is what lets them leave Dep. Down with their parent
+  // (business rule 38(c)). Extra resolution DURING a run is the ICMP loss
+  // sweep's job (utils/lossSweep.ts): it feeds packet loss only and never
+  // touches the state machine's counters.
+  const probeIntervalSec = resolveProbeIntervalSec(eff);
+  const probeDue = isDue(a.lastMonitorAt, probeIntervalSec);
+  // Pragmatic stream-split: CPU/memory's cadence is the unified "telemetry
+  // due" trigger; collectTelemetry still pulls temperature on the same
+  // session. Due off the ATTEMPT stamps (business rule 118): a failure waits
+  // one cadence like a success does. The success stamps are the UI's.
+  const telemetryDue  = isDue(a.lastTelemetryAttemptAt,  eff.cpuMemoryIntervalSeconds);
+  const systemInfoDue = isDue(a.lastSystemInfoAttemptAt, eff.systemInfoIntervalSeconds);
+  const hasFastPin =
+    (Array.isArray(a.monitoredInterfaces)   && a.monitoredInterfaces.length   > 0) ||
+    (Array.isArray(a.monitoredStorage)      && a.monitoredStorage.length      > 0) ||
+    (Array.isArray(a.monitoredIpsecTunnels) && a.monitoredIpsecTunnels.length > 0);
+
+  // Pre-queue eligibility. collectTelemetry / collectSystemInfo return
+  // {supported:false} for these cases, which means neither attempt stamp ever
+  // advances and the asset sits in the work queue on EVERY heavy tick —
+  // permanently inflating pass duration (cursor) or the queue (pg-boss).
+  //
+  // Managed FortiSwitches are not directly REST-able: their telemetry and
+  // system-info endpoints live on the parent FortiGate, and the
+  // controller-status table reports up/down only. Managed FortiAPs DO have
+  // REST telemetry (collectTelemetryFortiapRest, piggybacking on
+  // /api/v2/monitor/wifi/managed_ap), so the telemetry gate excludes switches
+  // only; system info excludes both. Operators who want more flip the
+  // integration's FortiSwitches/APs subtab to direct SNMP.
+  // "vcenter" (hypervisor-view quickStats) deliberately passes — it delivers
+  // telemetry via the per-integration warm cache. ssh / winrm pass too
+  // (agentlessHostService); icmp carries no payload.
+  const isManagedSwitchOrAp = a.assetType === "switch" || a.assetType === "access_point";
+  const canTelemetry =
+    eff.cpuMemoryPolling !== null &&
+    eff.cpuMemoryPolling !== "icmp" &&
+    !(eff.cpuMemoryPolling === "rest_api" && a.assetType === "switch");
+  // systemInfo carries three streams (interfaces / lldp / storage); runnable
+  // when ANY is enabled — collectSystemInfo gates each stream internally.
+  const anySysInfoStream =
+    eff.interfacesPolling !== null ||
+    eff.lldpPolling       !== null ||
+    eff.storagePolling    !== null;
+  const canSystemInfo =
+    anySysInfoStream &&
+    !(eff.interfacesPolling === "rest_api" && isManagedSwitchOrAp);
+
+  // Heavy-cadence suppression: confirmed up AND not dependency-suppressed
+  // (or passive with a last probe that succeeded — its charts keep filling).
+  // See runsHeavyCadences for the per-state rationale. The cheap probe keeps
+  // firing in every state so recovery is detected within one cadence.
+  const isUp = runsHeavyCadences(a);
+
+  // The probe gates on its resolved method like every stream below —
+  // "disabled" means don't poll, and queueing it anyway is what let an
+  // off-switch read as an outage.
+  const probe = probeDue && enabled.has("probe") && responseTimeProbeShouldQueue(eff.responseTimePolling);
+  // ICMP is the ONE transport where a single process serves many hosts (one
+  // fping per timeout bucket), so it is batched. Every other transport needs
+  // its own authenticated conversation and stays one item per asset. The
+  // target is the IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
+  const probeBatchTarget = probe && eff.responseTimePolling === "icmp" ? dial(a) : null;
+
+  // Fast-cadence pinned scrape rides the probe cadence. Skipped while the
+  // full systemInfo pass is due — same OIDs twice, and the full pass covers
+  // the pinned subset. `systemInfoDue` is the asset's overall due state, not
+  // whether THIS pass handles systemInfo, so it holds across the light and
+  // heavy loops: fast-filtered waits until systemInfo stamps its attempt.
+  const fastFiltered =
+    probeDue && hasFastPin && canSystemInfo && !systemInfoDue && isUp && enabled.has("fastFiltered");
+
+  // Dedicated LLDP + Storage cadences (pg-boss only; the cursor systemInfo
+  // walk covers both as session-coalesced side effects, and the persisters
+  // are idempotent against the overlap). isUp-gated: heavy walks. Storage's
+  // own queue covers SNMP and the agentless transports only — agent hosts push
+  // on their own schedule and vCenter storage rides the system-info pass.
+  const lldp =
+    isUp && enabled.has("lldp") && !!eff.lldpPolling && eff.lldpPolling !== "disabled" &&
+    isDue(a.lastLldpAt, eff.lldpIntervalSeconds);
+  const storage =
+    isUp && enabled.has("storage") &&
+    (eff.storagePolling === "snmp" || eff.storagePolling === "ssh" || eff.storagePolling === "winrm") &&
+    isDue(a.lastStorageAt, eff.storageIntervalSeconds);
+
+  // Agentless processes (ssh/winrm only — agent hosts self-collect). Due when
+  // the inventory interval elapsed OR pins / mapped names arm the 60s
+  // sub-pass; runProcessesFor re-derives which sub-passes to run and stamps
+  // the anchors even on failure, so a bad credential cannot re-queue every
+  // tick. isUp: authenticated transports do not hammer unconfirmed hosts.
+  const procPins = ((a.monitoredProcesses?.length ?? 0) + (a.mappedProcesses?.length ?? 0)) > 0;
+  const processes =
+    isUp && enabled.has("processes") &&
+    (eff.processesPolling === "ssh" || eff.processesPolling === "winrm") &&
+    (isDue(a.lastProcessesAt, eff.processesIntervalSeconds) ||
+      (procPins && isDue(a.lastProcessPinsAt, PROCESS_PINS_INTERVAL_SEC)));
+  // Agentless event log — same shape and gate; runEventLogFor re-checks the
+  // agentEventLog master switch and stamps its anchor even on failure.
+  const eventLog =
+    isUp && enabled.has("eventLog") &&
+    (eff.eventLogPolling === "ssh" || eff.eventLogPolling === "winrm") &&
+    isDue(a.lastEventLogAt, eff.eventLogIntervalSeconds);
+  // Manufacturer custom widgets (business rule 130): only for an asset with a
+  // widget switched on, at the hardware-sensor interval. No polling-method
+  // gate — the per-asset switch is the gate.
+  const customWidget =
+    isUp && enabled.has("customWidget") && ctx.widgetAssetIds.has(a.id) &&
+    isDue(a.lastCustomWidgetAttemptAt, customWidgetIntervalSec(eff));
+  // SD-WAN (FortiOS SLA + rule selection), on the light loop so a 60s interval
+  // lands on time. The interval is read AFTER resolveMonitorSettings above,
+  // which warms the sidecar it lives in.
+  const sdwanIntervalSec = resolveSdwanIntervalSec(a);
+  const sdwan =
+    isUp && enabled.has("sdwan") &&
+    sdwanShouldQueue(a, eff, sdwanIntervalSec) &&
+    isDue(a.lastSdwanAt, sdwanIntervalSec);
+  // ICMP loss sweep: a uniform burst at EVERY eligible asset, whatever state it
+  // is in — deliberately NOT gated on isUp or monitorStatus; the old sampler's
+  // warning/recovering window was itself the bias that got it disabled
+  // (utils/lossSweep.ts). Its own anchor, independent of `probe`.
+  const lossSample =
+    enabled.has("lossSample") &&
+    lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
+    lossSweepIsDue(a.lastLossSampleAt, now, ctx.sweepIntervalSec);
+
+  return {
+    eff,
+    due: {
+      probe, probeIntervalSec, probeBatchTarget,
+      telemetry: telemetryDue && canTelemetry && isUp && enabled.has("telemetry"),
+      systemInfo: systemInfoDue && canSystemInfo && isUp && enabled.has("systemInfo"),
+      fastFiltered, lldp, storage, processes, eventLog, customWidget, sdwan, lossSample,
+    },
+  };
+}
+
+/**
  * The due-set computation extracted from runMonitorPass (2026-08; unit tests
  * in tests/unit/computeDueWork.test.ts pin the eligibility semantics).
  * DB-READ-ONLY: resolves each candidate's effective settings (cached) and
@@ -14254,12 +14506,6 @@ export async function computeDueWork(
   // rule 130) — loaded once per pass by the caller, never per asset here.
   widgetAssetIds: Set<string> = new Set(),
 ): Promise<DueMonitorWork> {
-  function isDue(last: Date | null, intervalSec: number): boolean {
-    if (intervalSec <= 0) return false;
-    if (!last) return true;
-    return now.getTime() - last.getTime() >= intervalSec * 1000;
-  }
-
   const probes: MonitorWork[]       = [];
   const fastFiltereds: MonitorWork[] = [];
   const telemetries: MonitorWork[]  = [];
@@ -14270,216 +14516,32 @@ export async function computeDueWork(
   const lossSamples: MonitorWork[] = [];
   const customWidgetWork: MonitorWork[] = [];
   const probeBatch: ProbeBatchItem[] = [];
-  // Same cadence resolution the pg-boss publisher makes — the operator's
-  // interval floored at what the installed pinger can finish for this fleet
-  // size. Keep the two in lockstep like every other cadence decision.
-  const sweepIntervalSec = resolveSweepIntervalSec(
-    configuredSweepIntervalSec(),
-    candidates.length,
-    await detectFping(),
-  );
+  // Same sweep cadence the pg-boss publisher resolves (passSweepIntervalSec).
+  const ctx: DuePassContext = {
+    enabled, now, widgetAssetIds,
+    sweepIntervalSec: await passSweepIntervalSec(candidates.length),
+  };
   for (const a of candidates) {
-    // Resolve effective settings through the four-tier hierarchy. Internally
-    // memoized — first asset in a (integration|manual, assetType) bucket
-    // pays for the DB read; everything else hits the in-memory cache.
-    const eff = await resolveMonitorSettings({
-      ...a,
-      discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
-    });
-    // Probe cadence is the resolved intervalSeconds — no backoff for down
-    // hosts, and no acceleration while a failure/recovery run is being
-    // confirmed. Down-host suppression below stops heavy cadences regardless;
-    // the cheap response-time probe keeps firing at base cadence so recovery is
-    // detected within one tick — dependency-suppressed assets included, since
-    // their own count is what lets them leave Dep. Down with their parent
-    // (business rule 38(c)).
-    //
-    // Extra resolution DURING a run is the ICMP loss sampler's job
-    // (utils/lossSweep.ts, queued below): it feeds packet-loss statistics
-    // only and never touches the state machine's counters.
-    //
-    // The clamp lives in `resolveProbeIntervalSec` (shared with the pg-boss
-    // publisher's mirrored due-calc in jobs/monitorAssets.ts, which must stay
-    // byte-identical in behavior — the two paths' due-sets are contractually
-    // the same).
-    const probeIntervalSec = resolveProbeIntervalSec(eff);
-    const probe      = isDue(a.lastMonitorAt,    probeIntervalSec);
-    // Pragmatic stream-split: the dispatcher tick treats CPU/memory's
-    // cadence as the unified "telemetry due" trigger. collectTelemetry
-    // still pulls temperature on the same session — operators who want a
-    // shorter temperature cadence get the per-stream column today but the
-    // independent timer lands in a follow-up commit when the collector
-    // loop splits.
-    //
-    // Due off the ATTEMPT stamps (business rule 118): a failure waits one
-    // cadence like a success does. The success stamps are the UI's.
-    const telemetry  = isDue(a.lastTelemetryAttemptAt,  eff.cpuMemoryIntervalSeconds);
-    const systemInfo = isDue(a.lastSystemInfoAttemptAt, eff.systemInfoIntervalSeconds);
-    const hasFastPin =
-      (Array.isArray(a.monitoredInterfaces)   && a.monitoredInterfaces.length   > 0) ||
-      (Array.isArray(a.monitoredStorage)      && a.monitoredStorage.length      > 0) ||
-      (Array.isArray(a.monitoredIpsecTunnels) && a.monitoredIpsecTunnels.length > 0);
-
-    // Pre-queue eligibility. collectTelemetry / collectSystemInfo return
-    // {supported:false} immediately for these cases, which means neither
-    // attempt stamp ever advances and the asset sits in
-    // the work queue on EVERY heavy tick — permanently inflating pass duration
-    // and degrading the effective cadence for assets that DO produce data.
-    //
-    // Managed FortiSwitches / FortiAPs aren't directly REST-able: their
-    // telemetry and system-info endpoints live on the parent FortiGate, not on
-    // the asset's own IP. Operators who want telemetry on these devices flip
-    // the integration's FortiSwitches/APs subtab to direct SNMP (which changes
-    // the resolved telemetryPolling / interfacesPolling to "snmp").
-    //
-    // icmp / winrm / ssh don't deliver telemetry yet (collectTelemetry returns
-    // {supported:false} for those methods regardless of assetType).
-    const isManagedSwitchOrAp = a.assetType === "switch" || a.assetType === "access_point";
-    // Managed FortiSwitches still have no REST telemetry path (the
-    // controller-status table reports up/down only). Managed FortiAPs DO
-    // have REST telemetry via collectTelemetryFortiapRest piggybacking on
-    // /api/v2/monitor/wifi/managed_ap, so the rest_api gate excludes
-    // switches only — APs are enqueued and dispatched.
-    // "vcenter" (hypervisor-view quickStats) deliberately passes this gate —
-    // it delivers telemetry via the per-integration warm cache.
-    // ssh / winrm used to be excluded here because no collector existed for
-    // them; agentlessHostService supplies one now, so they enqueue like any
-    // other transport. icmp still carries no payload.
-    const canTelemetry =
-      eff.cpuMemoryPolling !== null &&
-      eff.cpuMemoryPolling !== "icmp"  &&
-      !(eff.cpuMemoryPolling === "rest_api" && a.assetType === "switch");
-    // systemInfo is supported for winrm/ssh paths; only exclude the REST API
-    // + managed-switch/AP combination that has no direct endpoint. Treat the
-    // tick as runnable when ANY of the three streams it carries
-    // (interfaces / lldp / storage) is enabled — collectSystemInfo gates
-    // each stream internally (storage rows are dropped when storagePolling
-    // isn't SNMP; LLDP / interface paths each check their own resolved
-    // method). Today collectSystemInfo still bails when interfacesPolling
-    // is null even if storage/lldp would otherwise pull, so the OR here
-    // is forward-looking — fleets that want storage on SNMP also set
-    // interfacesPolling=snmp in practice, which both source defaults
-    // (FMG/FortiGate → rest_api, AD/Entra/manual → null + operator opt-in)
-    // already converge to.
-    const anySysInfoStream =
-      eff.interfacesPolling !== null ||
-      eff.lldpPolling       !== null ||
-      eff.storagePolling    !== null;
-    const canSystemInfo =
-      anySysInfoStream &&
-      !(eff.interfacesPolling === "rest_api" && isManagedSwitchOrAp);
-
-    // Heavy-cadence suppression. Telemetry / systemInfo / fastFiltered run
-    // ONLY while the asset is confirmed up AND not dependency-suppressed.
-    // Every other state (warning / pending / down / unknown) suppresses
-    // them, AND a confirmed-down upstream parent suppresses them too.
-    // Rationale:
-    //   - "down": stale by definition; full SNMP walks just burn worker
-    //     time on a host that's about to time out three more times.
-    //   - "warning": the asset has missed at least one probe; its data is
-    //     in flux. Heavy cadences resume once a full recovery (cs reaches
-    //     threshold) flips the asset back to "up".
-    //   - "pending": brand-new or recovering; not yet confirmed up.
-    //   - "unknown": never been probed; let the response-time probe alone
-    //     establish a baseline before scheduling heavy walks.
-    //   - dependencySuppressed: parent is confirmed down; if the asset's
-    //     own probe still answers via a redundant path the response-time
-    //     stream catches it; heavy walks against an unreachable upstream
-    //     mostly time out and waste worker budget.
-    //   - "passive": no down-detection automation covers the asset, so there
-    //     is no verdict to consult. It is still being polled and its charts
-    //     are meant to keep filling, so we fall back to the raw signal we do
-    //     have — its last probe succeeded (consecutiveFailures === 0). Without
-    //     that fallback every passive device's CPU / interface / storage chart
-    //     would silently go flat, with nothing erroring.
-    // The cheap probe keeps firing in every state so recovery can be
-    // detected within one tick of the resolved cadence.
-    // KEEP IN LOCKSTEP with the pg-boss publisher in jobs/monitorAssets.ts —
-    // both call the shared predicate for exactly that reason.
-    const isUp = runsHeavyCadences(a);
-    // The probe gates on its resolved method the same way lldp / storage /
-    // processes below already do — "disabled" means don't poll, and queueing it
-    // anyway is what let an off-switch read as an outage.
-    const probeMethodOk = responseTimeProbeShouldQueue(eff.responseTimePolling);
-    if (probe && enabled.has("probe") && probeMethodOk) {
-      // ICMP is batched (one fping per timeout bucket serves the whole chunk),
-      // so it leaves the per-item work array entirely — same split the pg-boss
-      // publisher makes. Every other transport needs its own authenticated
-      // conversation and stays one work item per asset.
-      const batchTarget = eff.responseTimePolling === "icmp" ? dial(a) : null;
-      if (batchTarget) {
-        probeBatch.push({ id: a.id, target: batchTarget, timeoutMs: eff.probeTimeoutMs, intervalSec: probeIntervalSec });
+    // The decision is resolveDueCadences, shared with the pg-boss publisher;
+    // this loop only turns each due cadence into a work item.
+    const { eff, due } = await resolveDueCadences(a, ctx);
+    if (due.probe) {
+      if (due.probeBatchTarget) {
+        probeBatch.push({ id: a.id, target: due.probeBatchTarget, timeoutMs: eff.probeTimeoutMs, intervalSec: due.probeIntervalSec });
       } else {
         probes.push({ id: a.id, kind: "probe" });
       }
     }
-    if (telemetry  && canTelemetry  && enabled.has("telemetry")  && isUp)        telemetries.push({ id: a.id, kind: "telemetry" });
-    if (systemInfo && canSystemInfo && enabled.has("systemInfo") && isUp)        systemInfos.push({ id: a.id, kind: "systemInfo" });
-    // Fast-cadence pinned scrape rides the response-time cadence (default 60s).
-    // Skip it when the full systemInfo pass is also due — they'd hit the same
-    // OIDs twice and the full pass already covers the pinned subset. The
-    // `systemInfo` boolean here reflects the asset's overall due state, not
-    // whether THIS pass is going to handle systemInfo, so the gating works
-    // correctly even when light + heavy passes run on different ticking
-    // loops: when systemInfo is due, fast-filtered is skipped on this and
-    // every following light tick until systemInfo runs and stamps its attempt
-    // (success or failure — rule 118).
-    if (probe && hasFastPin && canSystemInfo && !systemInfo && isUp && enabled.has("fastFiltered")) {
-      fastFiltereds.push({ id: a.id, kind: "fastFiltered" });
-    }
-    // Agentless processes cadence (ssh/winrm only — unlike lldp/storage there
-    // is no systemInfo side effect to ride, so cursor mode dispatches it
-    // explicitly). Due when the inventory interval elapsed OR the 60s
-    // pinned/mapped sub-pass is owed; runProcessesFor re-derives which
-    // sub-passes to run. isUp gate: authenticated transports shouldn't hammer
-    // hosts that aren't confirmed up. Keep this block in sync with
-    // publishDueWork in monitorAssets.ts.
-    if (enabled.has("processes") && isUp &&
-        (eff.processesPolling === "ssh" || eff.processesPolling === "winrm")) {
-      const procPins =
-        ((a.monitoredProcesses?.length ?? 0) + (a.mappedProcesses?.length ?? 0)) > 0;
-      const processesDue =
-        isDue(a.lastProcessesAt, eff.processesIntervalSeconds) ||
-        (procPins && isDue(a.lastProcessPinsAt, PROCESS_PINS_INTERVAL_SEC));
-      if (processesDue) processesWork.push({ id: a.id, kind: "processes" });
-    }
-    // Agentless event-log cadence — same shape and the same isUp gate. Keep in
-    // sync with publishDueWork in monitorAssets.ts.
-    if (enabled.has("eventLog") && isUp &&
-        (eff.eventLogPolling === "ssh" || eff.eventLogPolling === "winrm") &&
-        isDue(a.lastEventLogAt, eff.eventLogIntervalSeconds)) {
-      eventLogWork.push({ id: a.id, kind: "eventLog" });
-    }
-    // Manufacturer custom widgets (business rule 130): only for an asset with a
-    // widget switched on, at the hardware-sensor interval, isUp-gated like
-    // every authenticated stream. No polling-method gate — the switch is the
-    // gate. Keep in sync with publishDueWork in monitorAssets.ts.
-    if (enabled.has("customWidget") && isUp && widgetAssetIds.has(a.id) &&
-        isDue(a.lastCustomWidgetAttemptAt, customWidgetIntervalSec(eff))) {
-      customWidgetWork.push({ id: a.id, kind: "customWidget" });
-    }
-    // SD-WAN cadence (FortiOS SLA + rule selection). Rides the light loop so a
-    // 60s interval lands on time; isUp gate like every authenticated stream.
-    // The interval is read AFTER resolveMonitorSettings above, which is what
-    // warms the sidecar it lives in. Keep in sync with publishDueWork.
-    const sdwanIntervalSec = resolveSdwanIntervalSec(a);
-    if (enabled.has("sdwan") && isUp &&
-        sdwanShouldQueue(a, eff, sdwanIntervalSec) &&
-        isDue(a.lastSdwanAt, sdwanIntervalSec)) {
-      sdwanWork.push({ id: a.id, kind: "sdwan" });
-    }
-    // ICMP loss sweep: a uniform burst at EVERY eligible asset, whatever state
-    // it is in — see utils/lossSweep.ts for why the old warning/recovering
-    // window was itself the bias that got the sampler disabled. Independent of
-    // `probe` above: its own anchor, and it never touches the counters, so both
-    // can be due on the same tick. These ids are swept in BATCHES rather than
-    // dispatched per asset (see runMonitorPass), which is the whole reason a
-    // fleet-wide window is affordable.
-    if (enabled.has("lossSample") &&
-        lossSweepIncludes(a, eff, undefined, ipv6Dialable()) &&
-        lossSweepIsDue(a.lastLossSampleAt, now, sweepIntervalSec)) {
-      lossSamples.push({ id: a.id, kind: "lossSample" });
-    }
+    if (due.telemetry)    telemetries.push({ id: a.id, kind: "telemetry" });
+    if (due.systemInfo)   systemInfos.push({ id: a.id, kind: "systemInfo" });
+    if (due.fastFiltered) fastFiltereds.push({ id: a.id, kind: "fastFiltered" });
+    if (due.processes)    processesWork.push({ id: a.id, kind: "processes" });
+    if (due.eventLog)     eventLogWork.push({ id: a.id, kind: "eventLog" });
+    if (due.customWidget) customWidgetWork.push({ id: a.id, kind: "customWidget" });
+    if (due.sdwan)        sdwanWork.push({ id: a.id, kind: "sdwan" });
+    // Swept in BATCHES rather than dispatched per asset (see runMonitorPass),
+    // which is the whole reason a fleet-wide window is affordable.
+    if (due.lossSample)   lossSamples.push({ id: a.id, kind: "lossSample" });
   }
   // Cursor-mode starvation guard. runMonitorPass awaits the WHOLE pass before
   // returning and the light tick holds a `running` guard, so a site-wide outage

@@ -16,6 +16,8 @@ import { dbDescribe, dbReachable } from "./_helpers.js";
 import { prisma } from "../../src/db.js";
 import {
   computeDueWork,
+  resolveDueCadences,
+  loadMonitorPassCandidates,
   resolveMonitorSettings,
   invalidateMonitorSettingsCache,
   type MonitorPassCandidate,
@@ -509,5 +511,111 @@ dbDescribe("SD-WAN due-set", () => {
       now,
     );
     expect(heavy.sdwanWork).toEqual([]);
+  });
+});
+
+// ─── The shared decision (CQ-B035) ───────────────────────────────────────────
+// The pg-boss publisher and the cursor pass used to keep their own candidate
+// select and due-check "in lockstep" by comment, and drifted: the publisher
+// excluded REST FortiAPs from telemetry, its select had no `monitored` (so the
+// loss sweep dropped every asset in pg-boss mode), and neither select carried
+// every per-asset override the resolver reads. Both now call
+// loadMonitorPassCandidates + resolveDueCadences; these pin what only the
+// publisher exercises and what only a real row proves.
+
+dbDescribe("resolveDueCadences — the decision both monitor paths share", () => {
+  const ctx = (enabled: MonitorCadence[], widgetAssetIds = new Set<string>()) => ({
+    enabled: new Set<MonitorCadence>(enabled), now, widgetAssetIds, sweepIntervalSec: 60,
+  });
+
+  it("REST FortiAP telemetry is due — the publisher's old copy still excluded it", async () => {
+    const { due } = await resolveDueCadences(
+      cand({ cpuMemoryPolling: "rest_api", assetType: "access_point" }), ctx(["telemetry"]),
+    );
+    expect(due.telemetry).toBe(true);
+    const sw = await resolveDueCadences(
+      cand({ cpuMemoryPolling: "rest_api", assetType: "switch" }), ctx(["telemetry"]),
+    );
+    expect(sw.due.telemetry).toBe(false);
+  });
+
+  it("lldp and storage (pg-boss only) gate on method, isUp and their own anchors", async () => {
+    const eff = await resolveMonitorSettings({ ...cand(), discoveredByIntegrationType: null } as never);
+    const on = ctx(["lldp", "storage"]);
+    const base = cand({ lldpPolling: "snmp", storagePolling: "snmp", lastLldpAt: null, lastStorageAt: null } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(base, on)).due).toMatchObject({ lldp: true, storage: true });
+
+    // Fresh anchors: not due.
+    const fresh = cand({
+      lldpPolling: "snmp", storagePolling: "snmp",
+      lastLldpAt: ago(Math.max(1, eff.lldpIntervalSeconds - 5)), lastStorageAt: ago(Math.max(1, eff.storageIntervalSeconds - 5)),
+    } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(fresh, on)).due).toMatchObject({ lldp: false, storage: false });
+
+    // Not up: neither. Storage on REST / agent: not on this queue.
+    const down = cand({ lldpPolling: "snmp", storagePolling: "snmp", monitorStatus: "down", consecutiveSuccesses: 0 } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(down, on)).due).toMatchObject({ lldp: false, storage: false });
+    const agent = cand({ storagePolling: "agent" } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(agent, on)).due.storage).toBe(false);
+
+    // The cursor pass never requests them, so computeDueWork has nowhere to put them.
+    expect((await resolveDueCadences(base, ctx(["systemInfo"]))).due).toMatchObject({ lldp: false, storage: false });
+  });
+
+  it("honours a per-asset processes / event-log interval override", async () => {
+    const eff = await resolveMonitorSettings({ ...cand(), discoveredByIntegrationType: null } as never);
+    // Anchors stamped a little inside the inherited interval: not due on the
+    // inherited cadence, due on a per-asset one that is shorter than the gap.
+    const gapProc = Math.max(2, Math.floor(eff.processesIntervalSeconds / 2));
+    const gapLog  = Math.max(2, Math.floor(eff.eventLogIntervalSeconds / 2));
+    const inherited = cand({
+      processesPolling: "ssh", lastProcessesAt: ago(gapProc),
+      eventLogPolling: "ssh", lastEventLogAt: ago(gapLog),
+    } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(inherited, ctx(["processes", "eventLog"]))).due)
+      .toMatchObject({ processes: false, eventLog: false });
+
+    const overridden = cand({
+      processesPolling: "ssh", lastProcessesAt: ago(gapProc), processesIntervalSec: gapProc - 1,
+      eventLogPolling: "ssh", lastEventLogAt: ago(gapLog), eventLogIntervalSec: gapLog - 1,
+    } as Partial<MonitorPassCandidate>);
+    expect((await resolveDueCadences(overridden, ctx(["processes", "eventLog"]))).due)
+      .toMatchObject({ processes: true, eventLog: true });
+  });
+});
+
+dbDescribe("loadMonitorPassCandidates — the one select", () => {
+  const HOST = `cdw-load-${Date.now()}`;
+  let id = "";
+
+  beforeAll(async () => {
+    id = (await prisma.asset.create({
+      data: {
+        hostname: HOST, assetType: "server", status: "active", ipAddress: "10.255.77.9",
+        monitored: true, processesPolling: "ssh", eventLogPolling: "ssh",
+        processesIntervalSec: 120, eventLogIntervalSec: 240,
+      },
+    })).id;
+  });
+
+  afterAll(async () => {
+    await prisma.asset.deleteMany({ where: { hostname: HOST } });
+  });
+
+  it("carries `monitored`, so the loss sweep sees the asset (pg-boss mode published none)", async () => {
+    const row = (await loadMonitorPassCandidates()).find((c) => c.id === id);
+    expect(row?.monitored).toBe(true);
+    const { due } = await resolveDueCadences(row!, {
+      enabled: new Set<MonitorCadence>(["lossSample"]), now, widgetAssetIds: new Set(), sweepIntervalSec: 60,
+    });
+    expect(due.lossSample).toBe(true);
+  });
+
+  it("carries the per-asset overrides the resolver reads", async () => {
+    const row = (await loadMonitorPassCandidates()).find((c) => c.id === id);
+    expect(row).toMatchObject({ processesIntervalSec: 120, eventLogIntervalSec: 240 });
+    const eff = await resolveMonitorSettings({ ...row!, discoveredByIntegrationType: null });
+    expect(eff.processesIntervalSeconds).toBe(120);
+    expect(eff.eventLogIntervalSeconds).toBe(240);
   });
 });
