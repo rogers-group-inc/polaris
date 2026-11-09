@@ -59,6 +59,14 @@ describe("server traceroute — one probe in flight", () => {
     expect(spawn.mock.calls[0][1]).not.toContain("-N");
   });
 
+  it("leaves no rDNS deadline timer pending once the trace returns (CQ-B029: each hop's 1 s timer used to linger)", async () => {
+    spawn.mockImplementation(() => child(HOPS));
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const before = timers();
+    await traceFromServer("8.8.8.8", O);
+    expect(timers()).toBe(before);
+  });
+
   it("keeps -N when a retry without it finds nothing either (a target that is simply dark)", async () => {
     spawn.mockImplementation(() => child(""));
     await traceFromServer("8.8.8.8", O);

@@ -31,6 +31,7 @@
 import pg from "pg";
 import { logger } from "./logger.js";
 import { getDirectDatabaseUrl } from "./dbConnections.js";
+import { withTimeout, TimeoutError } from "./timeout.js";
 
 type ReadinessReason = "in-recovery" | "db-error" | "timeout";
 
@@ -92,24 +93,14 @@ export async function checkReadiness(
   probe:     ReadinessProbe = defaultProbe,
   timeoutMs: number         = READINESS_TIMEOUT_MS,
 ): Promise<ReadinessResult> {
-  let timer: NodeJS.Timeout | undefined;
   try {
-    const timeout = new Promise<"timeout">((resolve) => {
-      timer = setTimeout(() => resolve("timeout"), timeoutMs);
-      // Do not hold the event loop open on this timer: a scrape that races
-      // process shutdown must not delay the exit.
-      timer.unref?.();
-    });
-    const outcome = await Promise.race([
-      probe().then((primary): boolean => primary),
-      timeout,
-    ]);
-    if (outcome === "timeout") return { ready: false, reason: "timeout" };
-    return outcome ? { ready: true } : { ready: false, reason: "in-recovery" };
+    // withTimeout clears and unrefs its timer: a scrape that races process
+    // shutdown must not delay the exit.
+    const primary = await withTimeout(probe(), timeoutMs, "readiness probe");
+    return primary ? { ready: true } : { ready: false, reason: "in-recovery" };
   } catch (err: any) {
+    if (err instanceof TimeoutError) return { ready: false, reason: "timeout" };
     logger.warn({ err: err?.message }, "readiness probe failed");
     return { ready: false, reason: "db-error" };
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }

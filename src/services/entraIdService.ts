@@ -17,6 +17,7 @@ import { matchesWildcard } from "../utils/integrationFilter.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
 import { sleep } from "../utils/sleep.js";
+import { mapWithConcurrency } from "../utils/concurrency.js";
 // Pure headers→ms backoff policy, shared so the two Azure surfaces cannot
 // diverge on throttle handling. See the note on graphRequest.
 import { throttleDelayMs } from "./azureArcService.js";
@@ -860,19 +861,15 @@ async function graphBatchGet(
     }
   };
 
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < batches.length && !signal?.aborted) {
-      const ids = batches[next++];
-      try {
-        await runBatch(ids);
-      } catch (err: any) {
-        failedBatches++;
-        lastError = err?.message || "Unknown error";
-      }
+  await mapWithConcurrency(batches, ETHERNET_MAC_BATCH_CONCURRENCY, async (ids) => {
+    if (signal?.aborted) return;
+    try {
+      await runBatch(ids);
+    } catch (err: any) {
+      failedBatches++;
+      lastError = err?.message || "Unknown error";
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(ETHERNET_MAC_BATCH_CONCURRENCY, batches.length) }, worker));
+  });
   return { bodies: out, failedBatches, batchCount: batches.length, lastError };
 }
 

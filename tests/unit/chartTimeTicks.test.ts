@@ -18,7 +18,7 @@
  * timezone the suite runs in.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -30,12 +30,25 @@ function slice(startsWith: string, endsWith: string): string {
   return lines.slice(start, end).join("\n");
 }
 const pad2 = lines.find((l) => l.startsWith("function _chartPad2("));
+const chartShared = readFileSync(resolve(__dirname, "../../public/js/chart-shared.js"), "utf8");
+// The axis reads the operator's display timezone through chart-shared.js's
+// zone helpers, which ask api.js timeZoneOpts(). `zone.tz` switches it: ""
+// is "auto" (the browser's own zone — every case above the display-zone
+// block), anything else an IANA zone.
+const zone = { tz: "" };
 const api = new Function(
+  "zone",
+  "var window = {};\n" +
+  "function timeZoneOpts() { return zone.tz ? { timeZone: zone.tz } : {}; }\n" +
+  `${chartShared}\nvar PolarisChartShared = window.PolarisChartShared;\n` +
   `${pad2}\n${slice("var _CHART_TICK_STEPS_MS", "function _chartXScale(")}\n` +
-  "return { ticks: _chartTimeTicks, svg: _chartXTicksSVG };",
-)() as {
+  `${slice("function _dateChangeMarkers(", "// ─── Maintenance-window chart bands")}\n` +
+  "return { ticks: _chartTimeTicks, svg: _chartXTicksSVG, markers: _dateChangeMarkers, Z: PolarisChartShared };",
+)(zone) as {
   ticks: (t0: number, t1: number, innerW: number) => { ts: number; label: string }[];
   svg: (t0: number, t1: number, padL: number, padT: number, innerW: number, innerH: number, opts?: { dateLine?: boolean }) => string;
+  markers: (t0: number, t1: number, padL: number, padT: number, innerW: number, innerH: number) => string;
+  Z: { zoneMidnight: (ts: number) => number; addZoneDays: (ts: number, n: number) => number; zoneParts: (ts: number) => { hour: number; day: number; month: number } };
 };
 
 const at = (m: number, d: number, h = 0, min = 0) => new Date(2026, m - 1, d, h, min).getTime();
@@ -117,5 +130,67 @@ describe("_chartXTicksSVG", () => {
     const svg = api.svg(at(9, 22, 18), at(9, 23, 6), 56, 10, 1000, 134, { dateLine: true });
     const dates = anchors(svg).filter((l) => /^\d+\/\d+$/.test(l.label)).map((l) => l.label);
     expect(dates).toEqual(["9/22", "9/23"]);
+  });
+});
+
+// ─── On the operator's display timezone (CQ-F017) ─────────────────────────────
+// The axis used to be laid out on the BROWSER's zone while every other
+// timestamp moved to the display zone. These windows are built from UTC
+// instants in zones the suite does not run in (UTC in CI), so a browser-zone
+// axis fails them.
+describe("the axis on a display timezone", () => {
+  const H = 3600000;
+  const D = 86400000;
+  afterEach(() => { zone.tz = ""; });
+
+  it("ticks a 7-day window at the display zone's midnights (Asia/Kolkata, +05:30)", () => {
+    zone.tz = "Asia/Kolkata";
+    const t0 = Date.UTC(2026, 8, 15, 18, 30); // 9/16 00:00 IST
+    const ticks = api.ticks(t0, t0 + 7 * D, 1000);
+    expect(ticks.map((t) => t.label)).toEqual(["9/16", "9/17", "9/18", "9/19", "9/20", "9/21", "9/22", "9/23"]);
+    for (const t of ticks) expect((t.ts + 5.5 * H) % D).toBe(0);
+  });
+
+  it("ticks a day on the display zone's whole hours, which are UTC half-hours there", () => {
+    zone.tz = "Asia/Kolkata";
+    const t0 = Date.UTC(2026, 8, 20, 0, 0);
+    const ticks = api.ticks(t0, t0 + D, 1000);
+    expect(ticks.length).toBeGreaterThan(3);
+    for (const t of ticks) {
+      expect(t.label).toMatch(/^\d\d:00$/);
+      expect(t.ts % H).toBe(30 * 60 * 1000);
+    }
+  });
+
+  it("draws the midnight lines and their dates in the display zone", () => {
+    zone.tz = "Asia/Kolkata";
+    const t0 = Date.UTC(2026, 8, 20, 12, 0); // 9/20 17:30 IST
+    const svg = api.markers(t0, t0 + D, 56, 10, 1000, 134);
+    const labels = [...svg.matchAll(/>(\d+\/\d+)</g)].map((m) => m[1]);
+    expect(labels).toEqual(["9/21"]);
+    const x = Number(svg.match(/<line x1="([\d.]+)"/)![1]);
+    // 9/21 00:00 IST is 6.5 h into the window.
+    expect(x).toBeCloseTo(56 + (6.5 / 24) * 1000, 5);
+  });
+
+  it("steps whole calendar days across a DST change, never 24 h (America/New_York, 2026-11-01)", () => {
+    zone.tz = "America/New_York";
+    const oct31 = api.Z.zoneMidnight(Date.UTC(2026, 9, 31, 12));
+    expect(oct31).toBe(Date.UTC(2026, 9, 31, 4)); // 00:00 EDT
+    const nov1 = api.Z.addZoneDays(oct31, 1);
+    const nov2 = api.Z.addZoneDays(oct31, 2);
+    expect(nov1).toBe(Date.UTC(2026, 10, 1, 4)); // 00:00 EDT
+    expect(nov2).toBe(Date.UTC(2026, 10, 2, 5)); // 00:00 EST — a 25 h day
+    // A week across the change ticks at every local midnight, before and after.
+    const t0 = api.Z.zoneMidnight(Date.UTC(2026, 9, 29, 12));
+    const ticks = api.ticks(t0, api.Z.addZoneDays(t0, 7), 1000);
+    expect(ticks.map((t) => t.label)).toEqual(["10/29", "10/30", "10/31", "11/1", "11/2", "11/3", "11/4", "11/5"]);
+    for (const t of ticks) expect(api.Z.zoneParts(t.ts).hour).toBe(0);
+  });
+
+  it("on auto the helpers are the browser's own Date calls", () => {
+    const t = new Date(2026, 8, 20, 15, 45, 12).getTime();
+    expect(api.Z.zoneParts(t)).toMatchObject({ month: 9, day: 20, hour: 15 });
+    expect(api.Z.zoneMidnight(t)).toBe(new Date(2026, 8, 20).getTime());
   });
 });

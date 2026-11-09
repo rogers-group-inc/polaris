@@ -1566,18 +1566,43 @@ function _scheduleMacHide(tooltip) {
   }, 100);
 }
 
-function _handleMacEnter(e) {
+function _macTriggerEnter(trigger) {
   clearTimeout(_macTooltipShowTimer);
-  var trigger = e.currentTarget;
   _macTooltipShowTimer = setTimeout(function () {
     _showMacTooltip(trigger);
   }, _MAC_TOOLTIP_SHOW_DELAY);
 }
 
-function _handleMacLeave(e) {
+function _macTriggerLeave(trigger) {
   clearTimeout(_macTooltipShowTimer);
-  var tooltip = e.currentTarget._tooltip || e.currentTarget.querySelector('.mac-tooltip');
+  var tooltip = trigger._tooltip || trigger.querySelector('.mac-tooltip');
   if (tooltip) _scheduleMacHide(tooltip);
+}
+
+// The hover pills are delegated from their container (the Assets list's tbody,
+// the asset panel's body), not bound per pill on every paint (CQ-F042).
+// mouseenter / mouseleave do not bubble, so the pair below rebuilds them from
+// mouseover / mouseout: a `.mac-hover-trigger` is entered or left when the
+// pointer crosses its edge — the event's target is inside it and the
+// relatedTarget is not. Every trigger crossed is reported, outermost first on
+// the way in and innermost first on the way out, as the native events order
+// nested ones. Bound with these named functions, so adding them to the same
+// container again is a no-op.
+function _macTriggersCrossed(e) {
+  var crossed = [];
+  var rel = e.relatedTarget;
+  for (var n = e.target; n && n !== e.currentTarget && n.nodeType === 1; n = n.parentNode) {
+    if (n.classList.contains('mac-hover-trigger') && !(rel && n.contains(rel))) crossed.push(n);
+  }
+  return crossed;
+}
+
+function _handleMacOver(e) {
+  _macTriggersCrossed(e).reverse().forEach(_macTriggerEnter);
+}
+
+function _handleMacOut(e) {
+  _macTriggersCrossed(e).forEach(_macTriggerLeave);
 }
 
 function _handleCopyClick(e) {
@@ -2121,10 +2146,7 @@ function renderAssetsPage() {
       '<td>' + (a.lastSeen ? formatDate(a.lastSeen) : "-") + '</td>' +
       '</tr>';
   }).join("");
-  tbody.querySelectorAll('.mac-hover-trigger').forEach(function (el) {
-    el.addEventListener('mouseenter', _handleMacEnter);
-    el.addEventListener('mouseleave', _handleMacLeave);
-  });
+  _wireHoverTriggersIn(tbody);
   _assetsUpdateSelectAll();
   _renderAssetsPageControls();
 }
@@ -11254,8 +11276,25 @@ function _renderWirelessTree(container, radios, stations, asset, filter) {
       '<th style="text-align:right">Power / Signal</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div>';
 
-  container.querySelectorAll(".wireless-expand-toggle").forEach(function (tog) {
-    tog.addEventListener("click", function (e) {
+  _wireWirelessBody(container, asset, collapsed);
+}
+
+// The Wireless tab body's two verbs — a radio / SSID row's ▶ / ▼ and a
+// matched client's endpoint link — delegated from the body and bound once
+// (CQ-F042): the tree and the flat list repaint whole on every keystroke in the
+// tab's filter box. The latest paint's asset and collapsed set ride on the
+// element, so the one listener always acts on what is on screen.
+function _wireWirelessBody(container, asset, collapsed) {
+  if (!container) return;
+  container._wirelessState = { asset: asset, collapsed: collapsed };
+  if (container.getAttribute("data-wireless-wired") === "1") return;
+  container.setAttribute("data-wireless-wired", "1");
+  container.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || typeof t.closest !== "function") return;
+    var st = container._wirelessState || {};
+    var tog = t.closest(".wireless-expand-toggle");
+    if (tog && container.contains(tog)) {
       e.stopPropagation();
       var parentKey = tog.getAttribute("data-parent");
       var expanded = tog.textContent.trim() === "▼";
@@ -11265,17 +11304,19 @@ function _renderWirelessTree(container, radios, stations, asset, filter) {
         if (row.getAttribute("data-parent") !== parentKey) return;
         row.style.display = expanded ? "none" : "";
       });
-      if (expanded) collapsed.add(parentKey); else collapsed.delete(parentKey);
-      _setCollapsedIfaces(asset && asset.id, collapsed, "wireless");
-    });
-  });
-
-  container.querySelectorAll(".asset-station-link").forEach(function (link) {
-    link.addEventListener("click", function (e) {
+      if (st.collapsed) {
+        if (expanded) st.collapsed.add(parentKey); else st.collapsed.delete(parentKey);
+        _setCollapsedIfaces(st.asset && st.asset.id, st.collapsed, "wireless");
+      }
+      return;
+    }
+    // Click-through on a matched endpoint opens that asset's own details.
+    var link = t.closest(".asset-station-link");
+    if (link && container.contains(link)) {
       e.preventDefault();
-      var assetId = link.getAttribute("data-asset-id");
-      if (assetId) openViewModal(assetId);
-    });
+      var linkedId = link.getAttribute("data-asset-id");
+      if (linkedId) openViewModal(linkedId);
+    }
   });
 }
 
@@ -11492,14 +11533,8 @@ function _renderWirelessFlatTable(container, stations, asset, filter) {
   }
 
   // Click-through on matched-endpoint links — opens the endpoint asset's
-  // own details modal directly. Same pattern as the LLDP neighbor links.
-  container.querySelectorAll(".asset-station-link").forEach(function (link) {
-    link.addEventListener("click", function (e) {
-      e.preventDefault();
-      var linkedId = link.getAttribute("data-asset-id");
-      if (linkedId) openViewModal(linkedId);
-    });
-  });
+  // own details modal directly; delegated with the tree's (_wireWirelessBody).
+  _wireWirelessBody(container, asset, null);
 }
 
 // ─── Custom MIB tab (Slice 7) ────────────────────────────────────────────
@@ -12239,20 +12274,21 @@ function _chartTimeTicks(t0, t1, innerW) {
       if (Math.floor(span / _CHART_TICK_STEPS_MS[i]) + 1 <= maxTicks) { stepMs = _CHART_TICK_STEPS_MS[i]; break; }
     }
   }
+  // Every tick, label and midnight is in the operator's display timezone
+  // (chart-shared.js zone helpers; the browser's own zone on "auto").
+  var Z = PolarisChartShared;
   if (stepMs != null) {
-    var mid = new Date(t0);
-    mid.setHours(0, 0, 0, 0);
-    var base = mid.getTime();
+    var base = Z.zoneMidnight(t0);
     var ts = base + Math.ceil((t0 - base) / stepMs) * stepMs;
     for (var guard = 0; ts <= t1 && guard < 200; guard++, ts += stepMs) {
-      var d = new Date(ts);
+      var p = Z.zoneParts(ts);
       // A multi-day window names its midnights by date, not "00:00".
-      var atMidnight = d.getHours() === 0 && d.getMinutes() === 0;
+      var atMidnight = p.hour === 0 && p.minute === 0;
       out.push({
         ts: ts,
         label: atMidnight && span > dayMs
-          ? (d.getMonth() + 1) + "/" + d.getDate()
-          : _chartPad2(d.getHours()) + ":" + _chartPad2(d.getMinutes()),
+          ? p.month + "/" + p.day
+          : _chartPad2(p.hour) + ":" + _chartPad2(p.minute),
       });
     }
     return out;
@@ -12261,12 +12297,12 @@ function _chartTimeTicks(t0, t1, innerW) {
   for (var k = 0; k < _CHART_TICK_STEPS_DAYS.length; k++) {
     if (Math.floor(span / (_CHART_TICK_STEPS_DAYS[k] * dayMs)) + 1 <= maxTicks) { stepDays = _CHART_TICK_STEPS_DAYS[k]; break; }
   }
-  var day = new Date(t0);
-  day.setHours(0, 0, 0, 0);
-  if (day.getTime() < t0) day.setDate(day.getDate() + 1);
-  for (var g2 = 0; day.getTime() <= t1 && g2 < 200; g2++) {
-    out.push({ ts: day.getTime(), label: (day.getMonth() + 1) + "/" + day.getDate() });
-    day.setDate(day.getDate() + stepDays);
+  var day = Z.zoneMidnight(t0);
+  if (day < t0) day = Z.addZoneDays(day, 1);
+  for (var g2 = 0; day <= t1 && g2 < 200; g2++) {
+    var dp = Z.zoneParts(day);
+    out.push({ ts: day, label: dp.month + "/" + dp.day });
+    day = Z.addZoneDays(day, stepDays);
   }
   return out;
 }
@@ -12293,11 +12329,11 @@ function _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH, opts) {
       '<line x1="' + x + '" y1="' + (padT + innerH) + '" x2="' + x + '" y2="' + (padT + innerH + 3) + '" stroke="rgba(127,127,127,0.4)"/>' +
       '<text x="' + x + '" y="' + (padT + innerH + 14) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor">' + t.label + '</text>';
     if (opts.dateLine) {
-      var d = new Date(t.ts);
-      var key = d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate();
+      var dp = PolarisChartShared.zoneParts(t.ts);
+      var key = dp.year + "-" + dp.month + "-" + dp.day;
       if (key !== prevDay) {
         out +=
-          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + (d.getMonth() + 1) + "/" + d.getDate() + '</text>';
+          '<text x="' + x + '" y="' + (padT + innerH + 26) + '" text-anchor="' + anchor + '" font-size="10" fill="currentColor" opacity="0.7">' + dp.month + "/" + dp.day + '</text>';
         prevDay = key;
       }
     }
@@ -12342,25 +12378,26 @@ function _inChartWindow(points, since, tsKey) {
 // the tick labels themselves already encode the date, so the per-line
 // "M/D" label is suppressed but the dashed line stays as a day separator.
 function _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) {
-  var first = new Date(t0);
-  first.setHours(0, 0, 0, 0);
-  if (first.getTime() <= t0) first.setDate(first.getDate() + 1);
+  // Midnights of the operator's display timezone, like the ticks.
+  var Z = PolarisChartShared;
+  var d = Z.zoneMidnight(t0);
+  if (d <= t0) d = Z.addZoneDays(d, 1);
   var withLabel = (t1 - t0) <= 4 * 86400000;
   var out = "";
-  var d = first;
   var safety = 0;
-  while (d.getTime() < t1 && safety++ < 64) {
-    var x = padL + ((d.getTime() - t0) / (t1 - t0)) * innerW;
+  while (d < t1 && safety++ < 64) {
+    var x = padL + ((d - t0) / (t1 - t0)) * innerW;
     out +=
       '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (padT + innerH) +
       '" stroke="rgba(127,127,127,0.55)" stroke-width="1" stroke-dasharray="3,3"/>';
     if (withLabel) {
-      var label = (d.getMonth() + 1) + "/" + d.getDate();
+      var dp = Z.zoneParts(d);
+      var label = dp.month + "/" + dp.day;
       out +=
         '<text x="' + (x + 4) + '" y="' + (padT + 11) +
         '" font-size="10" fill="currentColor" opacity="0.7">' + label + '</text>';
     }
-    d.setDate(d.getDate() + 1);
+    d = Z.addZoneDays(d, 1);
   }
   return out;
 }
@@ -13407,11 +13444,15 @@ function _fmtBitsPerSecAxis(bps) {
   if (bps >= 1_000)         return pick(bps / 1_000,         "Kbps");
   return Math.round(bps) + " bps";
 }
+// A chart point's time, on the same display-timezone clock as the axis under
+// it (chart-shared.js zone helpers; CQ-F017). Every chart tooltip uses it.
 function _fmtTooltipTs(ts) {
   function p(n) { return n < 10 ? "0" + n : String(n); }
   var d = new Date(ts);
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-    " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+  var z = PolarisChartShared.zoneParts(d.getTime());
+  return d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric" }, tz)) +
+    " " + p(z.hour) + ":" + p(z.minute) + ":" + p(z.second);
 }
 
 /**
@@ -13667,10 +13708,13 @@ function _chartRangeLabel(container) {
   if (ds.from && ds.to) { from = new Date(ds.from); to = new Date(ds.to); }
   else if (ds.geomT0 && ds.geomT1) { from = new Date(Number(ds.geomT0)); to = new Date(Number(ds.geomT1)); }
   if (!from || !to || isNaN(+from) || isNaN(+to)) return "";
-  var dateOpts = { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" };
-  var sameDay = from.toDateString() === to.toDateString();
+  // The display timezone, like the axis ticks the caption describes.
+  var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+  var dateOpts = Object.assign({ month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" },
+    typeof timeZoneOpts === "function" ? timeZoneOpts() : {});
+  var sameDay = PolarisChartShared.zoneDayKey(from.getTime()) === PolarisChartShared.zoneDayKey(to.getTime());
   var toText = sameDay
-    ? to.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+    ? to.toLocaleTimeString(undefined, Object.assign({ hour: "2-digit", minute: "2-digit" }, tz))
     : to.toLocaleString(undefined, dateOpts);
   return "From " + from.toLocaleString(undefined, dateOpts) + " to " + toText;
 }
@@ -17063,9 +17107,7 @@ function _renderMonitorChart(container, data, transitions) {
   });
 
   function fmtTooltipTs(ts) {
-    var d = new Date(ts);
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
-      " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+    return _fmtTooltipTs(ts);
   }
   function hitAttrs(s, i) {
     var missedOnly = ptIsFailure(s) && thresholdKnown && statusAt(i) !== "down";
@@ -21476,12 +21518,12 @@ function _screenshotTableElText(tableEl, label, opts) {
   }, "image/png");
 }
 
+// Delegated (see _macTriggersCrossed): covers every hover pill the container
+// holds now or is repainted with later. Safe to call on every paint.
 function _wireHoverTriggersIn(container) {
   if (!container) return;
-  container.querySelectorAll('.mac-hover-trigger').forEach(function (el) {
-    el.addEventListener('mouseenter', _handleMacEnter);
-    el.addEventListener('mouseleave', _handleMacLeave);
-  });
+  container.addEventListener('mouseover', _handleMacOver);
+  container.addEventListener('mouseout', _handleMacOut);
 }
 
 function ipViewRow(asset) {
@@ -29073,7 +29115,10 @@ async function _loadAssetMacTable(assetId) {
         showUnattributed = !showUnattributed;
         renderTable();
       });
-      wireGroupToggles();
+      _wireGroupToggles(bodyEl, {
+        toggle: ".mactable-group-toggle", entry: ".mactable-entry",
+        expandTitle: "Expand entries", collapseTitle: "Collapse entries",
+      });
       // The Device column's links had no listener anywhere until the ARP Table
       // tab arrived needing the same pivot — they rendered as anchors and did
       // nothing when clicked.
@@ -29124,21 +29169,6 @@ async function _loadAssetMacTable(assetId) {
         '<td>' + escapeHtml(e.status) + '</td>' +
         '<td>' + dev + '</td>' +
       '</tr>';
-    }
-
-    // Per-group show/hide toggles rows in place rather than re-rendering, so
-    // an open group survives the unattributed Show/Hide flip above it.
-    function wireGroupToggles() {
-      mount.querySelectorAll(".mactable-group-toggle").forEach(function (tog) {
-        tog.addEventListener("click", function () {
-          var key = tog.getAttribute("data-group");
-          var expanded = tog.textContent.trim() === "▼";
-          tog.textContent = expanded ? "▶" : "▼";
-          tog.title = expanded ? "Expand entries" : "Collapse entries";
-          mount.querySelectorAll('.mactable-entry[data-group="' + CSS.escape(key) + '"]')
-            .forEach(function (row) { row.style.display = expanded ? "none" : ""; });
-        });
-      });
     }
 
     render();
@@ -29235,15 +29265,9 @@ function _childTabShell(mount, kind, assetId, title, placeholder, children, rend
   function rerender() {
     renderBody(filter, bodyEl, countsEl, noteEl, rerender);
     _wireAssetPivotLinks(bodyEl);
-    bodyEl.querySelectorAll(".childtab-group-toggle").forEach(function (tog) {
-      tog.addEventListener("click", function () {
-        var key = tog.getAttribute("data-group");
-        var expanded = tog.textContent.trim() === "▼";
-        tog.textContent = expanded ? "▶" : "▼";
-        tog.title = expanded ? "Expand" : "Collapse";
-        bodyEl.querySelectorAll('.childtab-entry[data-group="' + CSS.escape(key) + '"]')
-          .forEach(function (row) { row.style.display = expanded ? "none" : ""; });
-      });
+    _wireGroupToggles(bodyEl, {
+      toggle: ".childtab-group-toggle", entry: ".childtab-entry",
+      expandTitle: "Expand", collapseTitle: "Collapse",
     });
   }
   var box = document.getElementById(kind + "-filter-" + assetId);
@@ -29485,14 +29509,43 @@ function _arpAgeLabel(sec) {
 // Shared pivot wiring for the `.asset-link` anchors the MAC Table and ARP
 // Table tabs render. MAC Table emitted these from the day it shipped with
 // nothing listening, so its Device column looked clickable and did nothing.
+//
+// Delegated from the container and bound once (CQ-F042): the three tables
+// repaint their body on every keystroke in their filter box, and a core
+// switch's table runs to thousands of rows. The named handler makes a second
+// call on the same container a no-op, so callers wire it on every paint.
 function _wireAssetPivotLinks(container) {
   if (!container) return;
-  container.querySelectorAll(".asset-link").forEach(function (link) {
-    link.addEventListener("click", function (e) {
-      e.preventDefault();
-      var id = link.getAttribute("data-asset-id");
-      if (id) openViewModal(id);
-    });
+  container.addEventListener("click", _handleAssetPivotClick);
+}
+
+function _handleAssetPivotClick(e) {
+  var link = e.target && typeof e.target.closest === "function" ? e.target.closest(".asset-link") : null;
+  if (!link || !e.currentTarget.contains(link)) return;
+  e.preventDefault();
+  var id = link.getAttribute("data-asset-id");
+  if (id) openViewModal(id);
+}
+
+// The ▶ / ▼ group toggle of the MAC Table, ARP Table and managed-children
+// tables: shows or hides its group's entry rows in place (so an open group
+// survives a repaint of something above it). Delegated from the body the
+// table is painted into, bound once per body (a data flag, since each table
+// passes its own selectors); `opts` = { toggle, entry, expandTitle,
+// collapseTitle }, `entry` being the entry-row class whose data-group the
+// toggle's data-group names.
+function _wireGroupToggles(container, opts) {
+  if (!container || container.getAttribute("data-group-toggles-wired") === "1") return;
+  container.setAttribute("data-group-toggles-wired", "1");
+  container.addEventListener("click", function (e) {
+    var tog = e.target && typeof e.target.closest === "function" ? e.target.closest(opts.toggle) : null;
+    if (!tog || !container.contains(tog)) return;
+    var key = tog.getAttribute("data-group");
+    var expanded = tog.textContent.trim() === "▼";
+    tog.textContent = expanded ? "▶" : "▼";
+    tog.title = expanded ? opts.expandTitle : opts.collapseTitle;
+    container.querySelectorAll(opts.entry + '[data-group="' + CSS.escape(key) + '"]')
+      .forEach(function (row) { row.style.display = expanded ? "none" : ""; });
   });
 }
 
@@ -29707,7 +29760,10 @@ async function _loadAssetArpTable(assetId, range) {
             (showLastSeen ? '<th>Last seen</th>' : '') +
             '<th>Device</th>' +
           '</tr></thead><tbody>' + groups.map(groupHtml).join("") + '</tbody></table></div>';
-      wireGroupToggles();
+      _wireGroupToggles(bodyEl, {
+        toggle: ".arptable-group-toggle", entry: ".arptable-entry",
+        expandTitle: "Expand entries", collapseTitle: "Collapse entries",
+      });
       _wireAssetPivotLinks(bodyEl);
     }
 
@@ -29809,21 +29865,6 @@ async function _loadAssetArpTable(assetId, range) {
           : '') +
         '<td>' + dev + '</td>' +
       '</tr>';
-    }
-
-    // Toggles rows in place rather than re-rendering, so an open group
-    // survives - same approach as the MAC Table tab.
-    function wireGroupToggles() {
-      mount.querySelectorAll(".arptable-group-toggle").forEach(function (tog) {
-        tog.addEventListener("click", function () {
-          var key = tog.getAttribute("data-group");
-          var expanded = tog.textContent.trim() === "▼";
-          tog.textContent = expanded ? "▶" : "▼";
-          tog.title = expanded ? "Expand entries" : "Collapse entries";
-          mount.querySelectorAll('.arptable-entry[data-group="' + CSS.escape(key) + '"]')
-            .forEach(function (row) { row.style.display = expanded ? "none" : ""; });
-        });
-      });
     }
 
     render();

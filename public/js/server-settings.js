@@ -335,9 +335,11 @@ function initTimezoneDropdown(currentValue) {
         html += '<div class="search-select-group">' + escapeHtml(group) + '</div>';
       }
 
-      html += '<div class="search-select-option" data-value="' + escapeHtml(tz) + '"' +
-        (tz === hidden.value ? ' class="search-select-option selected"' : '') +
-        '>' + escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
+      // One class attribute: a second one (the "selected" copy this used to
+      // append) is ignored by the parser, so the current zone was never
+      // highlighted.
+      html += '<div class="search-select-option' + (tz === hidden.value ? ' selected' : '') +
+        '" data-value="' + escapeHtml(tz) + '">' + escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
       count++;
     }
 
@@ -347,13 +349,18 @@ function initTimezoneDropdown(currentValue) {
 
     dropdown.innerHTML = html;
     highlightIdx = -1;
+  }
 
-    // Wire click handlers
-    dropdown.querySelectorAll(".search-select-option").forEach(function (opt) {
-      opt.addEventListener("mousedown", function (e) {
-        e.preventDefault(); // prevent blur
-        selectTz(opt.getAttribute("data-value"));
-      });
+  // Picking an option: one delegated listener on the dropdown, bound once
+  // (CQ-F042). renderOptions repaints every zone (~400 of them) on each
+  // keystroke, and used to bind a listener per option per keystroke.
+  if (dropdown.dataset.tzWired !== "1") {
+    dropdown.dataset.tzWired = "1";
+    dropdown.addEventListener("mousedown", function (e) {
+      var opt = e.target && typeof e.target.closest === "function" ? e.target.closest(".search-select-option") : null;
+      if (!opt || !dropdown.contains(opt)) return;
+      e.preventDefault(); // prevent blur
+      selectTz(opt.getAttribute("data-value"));
     });
   }
 
