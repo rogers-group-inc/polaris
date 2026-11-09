@@ -8489,8 +8489,8 @@ var _FMG_PROXY_PRESET_QUERIES = [
     ], null, 2),
   },
   // ── A managed FortiGate's configuration, read natively from FortiManager ──
-  _fmgNativePreset("Management interfaces (IP + MAC) on device", {
-    url: "/pm/config/device/<device-name>/global/system/interface", fields: ["name", "ip", "macaddr"], loadsub: 0,
+  _fmgNativePreset("Management interfaces (IP + MAC + access) on device", {
+    url: "/pm/config/device/<device-name>/global/system/interface", fields: ["name", "ip", "macaddr", "allowaccess"], loadsub: 0,
   }),
   _fmgNativePreset("Coordinates (system global) on device", {
     url: "/pm/config/device/<device-name>/global/system/global",
@@ -8510,7 +8510,23 @@ var _FMG_PROXY_PRESET_QUERIES = [
     url: "/pm/config/device/<device-name>/global/switch-controller/managed-switch", fields: ["switch-id", "sn", "name"], loadsub: 0,
   }),
   _fmgNativePreset("Configured FortiAPs on device", {
-    url: "/pm/config/device/<device-name>/vdom/root/wireless-controller/wtp", fields: ["wtp-id", "name", "location", "comment"], loadsub: 0,
+    url: "/pm/config/device/<device-name>/vdom/root/wireless-controller/wtp", fields: ["wtp-id", "name", "location", "comment", "wtp-profile"], loadsub: 0,
+  }),
+  // Management access (Open HTTPS / Open SSH): discovery reads the device DB
+  // first and falls back to the second query of each pair.
+  _fmgNativePreset("FortiAP profile access on device", {
+    url: "/pm/config/device/<device-name>/vdom/root/wireless-controller/wtp-profile", fields: ["name", "allowaccess"], loadsub: 0,
+  }),
+  _fmgNativePreset("FortiAP profile access (ADOM objects)", {
+    url: "/pm/config/adom/<adom>/obj/wireless-controller/wtp-profile", fields: ["name", "allowaccess"], loadsub: 0,
+  }),
+  _fmgNativePreset("FortiSwitch local-access policy on device", {
+    url: "/pm/config/device/<device-name>/global/switch-controller/security-policy/local-access",
+    fields: ["name", "mgmt-allowaccess", "internal-allowaccess"], loadsub: 0,
+  }),
+  _fmgNativePreset("FortiSwitch local-access policy on device (vdom)", {
+    url: "/pm/config/device/<device-name>/vdom/root/switch-controller/security-policy/local-access",
+    fields: ["name", "mgmt-allowaccess", "internal-allowaccess"], loadsub: 0,
   }),
   // ── A managed FortiGate's live state, through FortiManager's proxy ──
   // Discovery adds "&ipv6=true" when IPv6 is on for the install.
@@ -8534,7 +8550,7 @@ var _FGT_PRESET_QUERIES = [
   { name: "Coordinates (system global)", method: "GET", path: "/api/v2/cmdb/system/global", query: "vdom=root\nformat=gui-device-latitude|gui-device-longitude|latitude|longitude" },
   // The attributes discovery and monitoring read (IP, MAC, VLAN, parent, the
   // `secondaryip` table + its `secondary-IP` flag, ipv6, members, status).
-  { name: "Interfaces, VLANs and secondary IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root\nformat=name|ip|macaddr|type|interface|vlanid|switch-controller-mgmt-vlan|secondary-IP|secondaryip|ipv6|member|alias|description|mode|status|fortilink" },
+  { name: "Interfaces, VLANs and secondary IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root\nformat=name|ip|macaddr|type|interface|vlanid|switch-controller-mgmt-vlan|secondary-IP|secondaryip|ipv6|member|alias|description|mode|status|fortilink|allowaccess" },
   { name: "Interface IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root\nformat=name|ip|type|status|vdom" },
   { name: "DHCP servers", method: "GET", path: "/api/v2/cmdb/system.dhcp/server", query: "vdom=root\nformat=id|interface|netmask|ip-range|reserved-address" },
   { name: "DHCPv6 servers", method: "GET", path: "/api/v2/cmdb/system.dhcp6/server", query: "vdom=root" },
@@ -8547,7 +8563,9 @@ var _FGT_PRESET_QUERIES = [
   { name: "FortiSwitch config (descriptions, uplink ports)", method: "GET", path: "/api/v2/cmdb/switch-controller/managed-switch", query: "vdom=root\nformat=sn|switch-id|name|description|ports" },
   { name: "FortiSwitch MAC table (detected devices)", method: "GET", path: "/api/v2/monitor/switch-controller/detected-device", query: "vdom=root\nformat=mac|switch_id|port_name|vlan_id|last_seen|ipv4_address|ipv6_address|device_name|host_src|device_type|os_name|is_fortilink_peer" },
   { name: "Managed FortiAPs", method: "GET", path: "/api/v2/monitor/wifi/managed_ap", query: "vdom=root\nformat=name|wtp_id|serial|model|wtp_profile|ip_addr|ip_address|local_ipv4_address|local_ipv4_addr|local_addr|wtp_ip|connecting_ip|connecting_from|base_mac|board_mac|mac|status|state|os_version|version|firmware_version|lldp|mesh_uplink|parent_wtp_id|wan_status|cpu_usage|mem_free|mem_total|sensors_temperatures|radio" },
-  { name: "FortiAP config (locations)", method: "GET", path: "/api/v2/cmdb/wireless-controller/wtp", query: "vdom=root\nformat=wtp-id|location|comment" },
+  { name: "FortiAP config (locations, profiles)", method: "GET", path: "/api/v2/cmdb/wireless-controller/wtp", query: "vdom=root\nformat=wtp-id|location|comment|wtp-profile" },
+  { name: "FortiAP profile access", method: "GET", path: "/api/v2/cmdb/wireless-controller/wtp-profile", query: "vdom=root\nformat=name|allowaccess" },
+  { name: "FortiSwitch local-access policy", method: "GET", path: "/api/v2/cmdb/switch-controller.security-policy/local-access", query: "vdom=root\nformat=name|mgmt-allowaccess|internal-allowaccess" },
   // Not read by discovery; kept for troubleshooting.
   { name: "Routing table (IPv4)", method: "GET", path: "/api/v2/monitor/router/ipv4", query: "vdom=root" },
 ];
@@ -8579,11 +8597,15 @@ var _FMG_PRESET_QUERIES = _FMG_PROXY_PRESET_QUERIES.concat(_FMG_DIRECT_PRESET_QU
 // 5: every FortiManager discovery query, with discovery's exact parameters.
 // 6: the interface read names the `secondaryip` table; the proxied switch read
 //    carries discovery's format= and no datasource=1.
-var _FMG_QUERIES_VERSION = 6;
+// 7: management access moved into discovery — allowaccess on the interface
+//    read, wtp-profile on the AP read, the AP profile + switch local-access reads.
+var _FMG_QUERIES_VERSION = 7;
 // 2: every standalone FortiGate discovery query; ARP moved to network/arp.
 // 3: interface, DHCP server, VIP, switch and AP config reads carry discovery's
 //    format= lists (datasource=1 dropped).
-var _FGT_QUERIES_VERSION = 3;
+// 4: management access moved into discovery (allowaccess, wtp-profile, the AP
+//    profile and switch local-access reads).
+var _FGT_QUERIES_VERSION = 4;
 
 function _substituteFmgAdom(paramsStr, adom) {
   return String(paramsStr).replace(/<adom>/g, adom || "root");

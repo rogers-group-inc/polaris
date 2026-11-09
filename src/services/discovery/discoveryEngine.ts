@@ -115,7 +115,7 @@ import * as agentAutoDeploy from "../agentAutoDeployService.js";
 import * as presenceVerification from "../presenceVerificationService.js";
 import * as directorySync from "../directorySyncService.js";
 import { recomputeDependencyTree } from "../dependencyTreeService.js";
-import { collectManagementAccess, type DeviceAccessGroup } from "../fortinetManagementAccessService.js";
+import type { ManagementAccessSummary } from "../fortinetManagementAccessService.js";
 import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
 import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
 import { reconcileMapRegions } from "../mapRegionService.js";
@@ -8098,74 +8098,49 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
 
     phaseMark("13.6");
-    // Phase 13.6 — Read management-access (`allowaccess`) config for Fortinet
-    // devices and stamp Asset.managementAccess. Firewall: the operator-named
-    // management interface's allowaccess. FortiAP: the AP's wtp-profile
-    // allowaccess. FortiSwitch: the switch's internal/custom interface (best
-    // effort — see fortinetManagementAccessService). Drives the slide-over's
-    // Open HTTPS / Open SSH buttons + the FortiAP "SNMP not enabled" warning.
-    // Read-only; never writes the device. FMG/FortiGate only. Best-effort —
-    // failures are logged and never block the sync. Gated like Phases 12/13;
-    // reads only the devices in `result`, so a scoped run reads its one gate.
-    if (isFortinetIntegrationType(integrationType)) {
+    // Phase 13.6 — Write the management-access (`allowaccess`) summaries each
+    // gate's own discovery pass built (result.managementAccess; see
+    // fortinetManagementAccessService → summarizeGateManagementAccess) onto
+    // Asset.managementAccess. Firewall: the operator-named management
+    // interface's allowaccess. FortiAP: its wtp-profile's allowaccess.
+    // FortiSwitch: the controller's local-access policy. Drives the
+    // slide-over's Open HTTPS / Open SSH buttons + the FortiAP "SNMP not
+    // enabled" warning. No device or FortiManager call happens here — until
+    // 2026-11 this phase re-read every gate after discovery finished. A device
+    // absent from the list (its table was not read) keeps what it had.
+    // FMG/FortiGate only; gated like Phases 12/13; a scoped run's result
+    // carries its one gate. Best-effort — never blocks the sync.
+    if (isFortinetIntegrationType(integrationType) && (result.managementAccess?.length ?? 0) > 0) {
       try {
-        const integrationRow = await prisma.integration.findUnique({
-          where: { id: integrationId },
-          select: { id: true, type: true, config: true },
-        });
-        if (integrationRow) {
-          const cfg = (integrationRow.config ?? {}) as Record<string, any>;
-          const groupMap = new Map<string, DeviceAccessGroup>();
-          const ensureGroup = (name: string): DeviceAccessGroup => {
-            let g = groupMap.get(name);
-            if (!g) { g = { deviceName: name, firewall: null, switches: [], aps: [] }; groupMap.set(name, g); }
-            return g;
-          };
-          for (const dev of result.devices) {
-            if (dev?.name && dev?.serial) ensureGroup(dev.name).firewall = { serial: dev.serial, mgmtIp: dev.mgmtIp || null };
-          }
-          for (const sw of result.fortiSwitches || []) {
-            if (sw?.device && sw?.serial) ensureGroup(sw.device).switches.push({ serial: sw.serial, ipAddress: sw.ipAddress || null });
-          }
-          for (const ap of result.fortiAps || []) {
-            if (ap?.device && ap?.serial) ensureGroup(ap.device).aps.push({ serial: ap.serial, ipAddress: ap.ipAddress || null });
-          }
-
-          if (groupMap.size > 0) {
-            const summaries = await collectManagementAccess(integrationRow, [...groupMap.values()], {
-              mgmtInterface: typeof cfg.mgmtInterface === "string" ? cfg.mgmtInterface : null,
-              switchManagementInterface: typeof cfg.switchManagementInterface === "string" ? cfg.switchManagementInterface : null,
-            });
-            if (summaries.size > 0) {
-              // Map device serial → assetId via the AssetSource rows discovery
-              // just wrote (externalId === serial for these sourceKinds), then
-              // batch the Asset.managementAccess writes in chunked transactions
-              // (no per-row awaits — bounded at the 2000-asset end of the range).
-              const sources = await prisma.assetSource.findMany({
-                where: {
-                  integrationId,
-                  sourceKind: { in: ["fortigate-firewall", "fortiswitch", "fortiap"] },
-                  externalId: { in: [...summaries.keys()] },
-                },
-                select: { assetId: true, externalId: true },
-              });
-              const seen = new Set<string>();
-              const updates: Array<ReturnType<typeof prisma.asset.update>> = [];
-              for (const src of sources) {
-                const summary = summaries.get(src.externalId);
-                if (!summary || seen.has(src.assetId)) continue;
-                seen.add(src.assetId);
-                updates.push(prisma.asset.update({ where: { id: src.assetId }, data: { managementAccess: summary as any } }));
-              }
-              for (const chunk of chunkArray(updates, 200)) {
-                await prisma.$transaction(chunk);
-              }
-              if (updates.length > 0) syncLog("info", `Management-access: read allowaccess for ${updates.length} device(s)`);
-            }
-          }
+        const summaries = new Map<string, ManagementAccessSummary>();
+        for (const m of result.managementAccess!) {
+          if (m?.serial && !summaries.has(m.serial)) summaries.set(m.serial, m.summary);
         }
+        // Map device serial → assetId via the AssetSource rows discovery wrote
+        // (externalId === serial for these sourceKinds), then batch the writes
+        // in chunked transactions (no per-row awaits — bounded at 2000 assets).
+        const sources = await prisma.assetSource.findMany({
+          where: {
+            integrationId,
+            sourceKind: { in: ["fortigate-firewall", "fortiswitch", "fortiap"] },
+            externalId: { in: [...summaries.keys()] },
+          },
+          select: { assetId: true, externalId: true },
+        });
+        const seen = new Set<string>();
+        const updates: Array<ReturnType<typeof prisma.asset.update>> = [];
+        for (const src of sources) {
+          const summary = summaries.get(src.externalId);
+          if (!summary || seen.has(src.assetId)) continue;
+          seen.add(src.assetId);
+          updates.push(prisma.asset.update({ where: { id: src.assetId }, data: { managementAccess: summary as any } }));
+        }
+        for (const chunk of chunkArray(updates, 200)) {
+          await prisma.$transaction(chunk);
+        }
+        if (updates.length > 0) syncLog("info", `Management-access: recorded allowaccess for ${updates.length} device(s)`);
       } catch (err: any) {
-        syncLog("error", `Management-access read failed: ${err?.message || "Unknown error"}`);
+        syncLog("error", `Management-access write failed: ${err?.message || "Unknown error"}`);
       }
     }
 

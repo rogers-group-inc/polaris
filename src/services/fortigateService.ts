@@ -58,6 +58,7 @@ import { findFortiswitchUplinkPorts, fortiswitchDiscoveryRow, FORTISWITCH_DISCOV
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
 import { fortiosVlanParentOf, FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
+import { summarizeGateManagementAccess } from "./fortinetManagementAccessService.js";
 
 // `format=` filters for the standalone discovery CMDB reads below. Each names
 // exactly the attributes its reader uses; FortiOS returns a listed child table
@@ -70,7 +71,11 @@ export const DHCP_SERVER_DISCOVERY_FORMAT = ["id", "interface", "netmask", "ip-r
 /** firewall/vip: the same six attributes FortiManager's native VIP read asks for. */
 export const FIREWALL_VIP_DISCOVERY_FORMAT = ["name", "extip", "mappedip", "extintf", "type", "realservers"].join("|");
 /** wireless-controller/wtp: the AP serial and its description (`location`, legacy `comment`). */
-export const FORTIAP_WTP_DISCOVERY_FORMAT = ["wtp-id", "location", "comment"].join("|");
+export const FORTIAP_WTP_DISCOVERY_FORMAT = ["wtp-id", "location", "comment", "wtp-profile"].join("|");
+/** wireless-controller/wtp-profile: each profile's management access, for the AP management-access summary. */
+export const FORTIAP_WTP_PROFILE_ACCESS_FORMAT = ["name", "allowaccess"].join("|");
+/** switch-controller.security-policy/local-access: the managed-switch management-access policy. */
+export const SWITCH_LOCAL_ACCESS_FORMAT = ["name", "mgmt-allowaccess", "internal-allowaccess"].join("|");
 
 export interface FortiGateConfig {
   host: string;
@@ -93,6 +98,10 @@ export interface FortiGateConfig {
   // ARP-resolve every reserved IP so live-but-quiet devices (statically
   // configured, ICMP-firewalled) land in the table. See arpPrimeService.ts.
   arpSweepIps?: string[];
+  // The managed-switch interface Polaris reaches switches by (Integration
+  // config, both Fortinet types; default "internal") — picks which half of the
+  // local-access policy the switch management-access summary reads.
+  switchManagementInterface?: string;
 }
 
 /**
@@ -524,7 +533,7 @@ async function fetchFortiapDescriptions(
   config: FortiGateConfig,
   queryBase: Record<string, string>,
   signal: AbortSignal | undefined,
-): Promise<{ ok: boolean; descriptions: Map<string, string>; serials: string[] }> {
+): Promise<{ ok: boolean; descriptions: Map<string, string>; serials: string[]; rows: any[] | null }> {
   const out = new Map<string, string>();
   // Every wtp-id seen, not just the ones carrying a description -- the
   // description map is deliberately sparse, so it can never double as a roster.
@@ -535,7 +544,7 @@ async function fetchFortiapDescriptions(
       query: { ...queryBase, format: FORTIAP_WTP_DISCOVERY_FORMAT },
       signal,
     });
-    if (!Array.isArray(rows)) return { ok, descriptions: out, serials };
+    if (!Array.isArray(rows)) return { ok, descriptions: out, serials, rows: null };
     ok = true;
     for (const row of rows) {
       const serial = String(row?.["wtp-id"] || "").trim();
@@ -546,8 +555,38 @@ async function fetchFortiapDescriptions(
       const description = location || comment;
       if (description) out.set(serial.toUpperCase(), description);
     }
+    // The rows also carry `wtp-profile`, which the AP management-access summary
+    // joins on — handed back whole so that summary needs no second wtp read.
+    return { ok, descriptions: out, serials, rows };
   } catch { /* best-effort — leave AP descriptions null */ }
-  return { ok, descriptions: out, serials };
+  return { ok, descriptions: out, serials, rows: null };
+}
+
+/**
+ * One best-effort CMDB table read for the management-access summary
+ * (fortinetManagementAccessService). Null on any failure — the summary then
+ * leaves the devices it would have described unknown or untouched.
+ */
+async function fetchMgmtAccessTable(
+  config: FortiGateConfig,
+  path: "/api/v2/cmdb/wireless-controller/wtp-profile" | "/api/v2/cmdb/switch-controller.security-policy/local-access",
+  queryBase: Record<string, string>,
+  signal: AbortSignal | undefined,
+): Promise<any[] | null> {
+  try {
+    const rows = path === "/api/v2/cmdb/wireless-controller/wtp-profile"
+      ? await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/wireless-controller/wtp-profile", {
+          query: { ...queryBase, format: FORTIAP_WTP_PROFILE_ACCESS_FORMAT },
+          signal,
+        })
+      : await fgRequest<any[]>(config, "GET", "/api/v2/cmdb/switch-controller.security-policy/local-access", {
+          query: { ...queryBase, format: SWITCH_LOCAL_ACCESS_FORMAT },
+          signal,
+        });
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -595,6 +634,9 @@ interface FgtChainCtx {
     switchDevices: string[];
     apDevices: string[];
   };
+  // Tables read for the management-access summary (null = not read).
+  // See fortinetManagementAccessService → summarizeGateManagementAccess.
+  mgmtAccessRows: { wtp: any[] | null; wtpProfile: any[] | null; localAccess: any[] | null };
   flags: {
     didSwitchQuery: boolean;
     didApQuery: boolean;
@@ -813,7 +855,7 @@ async function fgtChainInventory(ctx: FgtChainCtx): Promise<void> {
 
 // Chain C: managed FortiSwitches (3d) → FortiAPs (3e) → AP→switch-port map (3e.5), serial intra-chain.
 async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
-  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, fortiSwitches, fortiAps, switchMacTable, flags, membership } = ctx;
+  const { config, queryBase, signal, log, deviceName, deviceHostname, deviceSerial, fortiSwitches, fortiAps, switchMacTable, flags, membership, mgmtAccessRows } = ctx;
       // Step 3d: Managed FortiSwitches
       try {
         const swResults = await fgRequest<any[]>(config, "GET", "/api/v2/monitor/switch-controller/managed-switch/status", {
@@ -852,6 +894,11 @@ async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
         switchCount++;
       }
     }
+    // The controller's switch local-access policy, for the switches'
+    // management-access summary. Only on a gate that manages switches.
+    if (switchCount > 0) {
+      mgmtAccessRows.localAccess = await fetchMgmtAccessTable(config, "/api/v2/cmdb/switch-controller.security-policy/local-access", queryBase, signal);
+    }
     log("discover.fortiswitches", "info", `${deviceHostname}: Found ${switchCount} managed FortiSwitch(es)`, deviceHostname);
   } catch (err: any) {
     // 404 means switch-controller not licensed/available — downgrade to info.
@@ -875,6 +922,11 @@ async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
       // fallback), not the monitor endpoint — one extra best-effort read per run.
       const apCmdb = await fetchFortiapDescriptions(config, queryBase, signal);
       const descriptionBySerial = apCmdb.descriptions;
+      mgmtAccessRows.wtp = apCmdb.rows;
+      // AP profiles' management access — only on a gate that has APs.
+      if (apResults.length > 0) {
+        mgmtAccessRows.wtpProfile = await fetchMgmtAccessTable(config, "/api/v2/cmdb/wireless-controller/wtp-profile", queryBase, signal);
+      }
       if (apCmdb.ok) {
         membership.apDevices.push(deviceName);
         for (const serial of apCmdb.serials) {
@@ -1281,12 +1333,14 @@ export async function discoverDhcpSubnets(
   const membership: FgtChainCtx["membership"] = {
     switches: [], aps: [], switchDevices: [], apDevices: [],
   };
+  const mgmtAccessRows: FgtChainCtx["mgmtAccessRows"] = { wtp: null, wtpProfile: null, localAccess: null };
   const ctx: FgtChainCtx = {
     config, queryBase, signal, log,
     deviceName, deviceHostname, deviceSerial, mgmtIfaceName, interfaceListPromise,
     discovered, devices, interfaceIps, dhcpEntries, deviceInventory, inventoryDevices,
     fortiSwitches, fortiAps, vips, switchMacTable, arpTable, dhcpInterfaceNames,
     membership,
+    mgmtAccessRows,
     flags,
   };
 
@@ -1352,6 +1406,21 @@ export async function discoverDhcpSubnets(
            matchesInventoryFilter(d.interfaceName, config)
   );
 
+  // Management access, from the tables this pass already read (Step 2's
+  // interface table, Chain C's wtp / wtp-profile / local-access reads). Sync
+  // Phase 13.6 writes it; nothing re-reads the gate for it.
+  const managementAccess = summarizeGateManagementAccess({
+    firewall: deviceSerial ? { serial: deviceSerial, mgmtIp: devices[0]?.mgmtIp || null } : null,
+    interfaceRows: await interfaceListPromise.catch(() => null),
+    mgmtInterfaceName: mgmtIfaceName,
+    aps: fortiAps.map((a) => ({ serial: a.serial, ipAddress: a.ipAddress || null })),
+    wtpRows: mgmtAccessRows.wtp,
+    wtpProfileRows: mgmtAccessRows.wtpProfile,
+    switches: fortiSwitches.map((sw) => ({ serial: sw.serial, ipAddress: sw.ipAddress || null })),
+    localAccessRows: mgmtAccessRows.localAccess,
+    switchManagementInterface: config.switchManagementInterface,
+  });
+
   const excluded = discovered.length - filteredSubnets.length;
   log("discover.filter", "info", `Filter complete: ${filteredSubnets.length} subnet(s) included, ${excluded} excluded, ${dhcpEntries.length} DHCP entries, ${filteredInventory.length} inventory device(s)`);
 
@@ -1385,6 +1454,7 @@ export async function discoverDhcpSubnets(
     // what the decommission sweep vouches for -- cmdbSwitchSerials/cmdbApSerials
     // stay empty here for exactly the reason documented above.
     managedMembership: membership,
+    managementAccess,
     switchInventoriedDevices: flags.didSwitchQuery ? [deviceName] : [],
     apInventoriedDevices:     flags.didApQuery     ? [deviceName] : [],
     vipInventoriedDevices:                 flags.didVipQuery                 ? [deviceName] : [],
