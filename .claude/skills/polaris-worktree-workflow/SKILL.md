@@ -114,7 +114,8 @@ push. The steps stay here for a commit made outside that pipeline.
 
 ```
 /polaris-docs-sync                            # refresh the skill entries the change touched
-npm run check:docs && npm run typecheck && npx vitest run tests/unit
+npm run check:docs && npm run typecheck && npm run lint && npx vitest run tests/unit
+# typecheck and lint both cover tests/ as well as src/ (since 2026-11-09)
 # and, when the work touched a route / service / contract, the suite CI gates the image on:
 #   DATABASE_URL=… npx vitest run tests/integration --no-file-parallelism   (needs a real DB)
 rm WORKLOCK

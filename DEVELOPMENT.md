@@ -163,7 +163,7 @@ runbook in `docs/INSTALL.md` → "Networks that inspect TLS". Do not reach for
 |---|---|
 | `npm run dev` | Dev server with hot reload (`tsx watch`, reads `.env`) |
 | `npm test` / `npm run test:watch` | Vitest (+ Supertest) |
-| `npm run typecheck` / `npm run lint` | `tsc --noEmit` / eslint |
+| `npm run typecheck` / `npm run lint` | `tsc --noEmit` over src/, then `tsconfig.tests.json` over src/ + tests/ / eslint over src/ + tests/ (zero warnings) |
 | `npm run db:migrate` | `prisma migrate dev` (create + apply migrations) |
 | `npm run db:seed` | Seed example data |
 
