@@ -26915,7 +26915,9 @@ function _assetEventsTabHTML(assetId) {
         '</tbody>' +
       '</table>' +
     '</div>' +
-    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.75rem 0 0;flex:none"></div>' +
+    // renderPageControls draws into this (grid, 10px top margin — the gap
+    // the old 0.75rem padding gave).
+    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;flex:none"></div>' +
   '</div>';
 }
 
@@ -27009,53 +27011,15 @@ async function _loadAssetEventsTabFor() {
   }
 }
 
+// The shared list pager (app.js renderPageControls, CQ-F019) — page
+// navigation only; the tab's own Show N selector sits above the table.
 function _renderAssetEventsPagination() {
-  var container = document.getElementById("asset-view-events-pagination");
-  if (!container) return;
-  var total = _assetEventsTotal;
   var pageSize = _assetEventsPageSize;
-  var totalPages = Math.max(1, Math.ceil(total / pageSize));
   var currentPage = Math.floor(_assetEventsOffset / pageSize) + 1;
-
-  var pageButtons = "";
-  var startPage = Math.max(1, currentPage - 2);
-  var endPage = Math.min(totalPages, startPage + 4);
-  if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
-  if (startPage > 1) {
-    pageButtons += '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="1">1</button>';
-    if (startPage > 2) pageButtons += '<span style="color:var(--color-text-tertiary)">…</span>';
-  }
-  for (var p = startPage; p <= endPage; p++) {
-    pageButtons += p === currentPage
-      ? '<button class="btn btn-primary btn-sm ae-page-btn" data-page="' + p + '" disabled>' + p + '</button>'
-      : '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="' + p + '">' + p + '</button>';
-  }
-  if (endPage < totalPages) {
-    if (endPage < totalPages - 1) pageButtons += '<span style="color:var(--color-text-tertiary)">…</span>';
-    pageButtons += '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="' + totalPages + '">' + totalPages + '</button>';
-  }
-
-  container.innerHTML =
-    '<button class="btn btn-secondary btn-sm ae-page-prev" ' + (currentPage <= 1 ? 'disabled' : '') + '>&laquo; Prev</button>' +
-    pageButtons +
-    '<button class="btn btn-secondary btn-sm ae-page-next" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next &raquo;</button>' +
-    '<span style="font-size:0.82rem;color:var(--color-text-tertiary);margin-left:8px">' + total + ' events</span>';
-
-  var prev = container.querySelector(".ae-page-prev");
-  if (prev) prev.addEventListener("click", function () {
-    if (_assetEventsOffset >= pageSize) { _assetEventsOffset -= pageSize; _loadAssetEventsTabFor(); }
-  });
-  var next = container.querySelector(".ae-page-next");
-  if (next) next.addEventListener("click", function () {
-    if (_assetEventsOffset + pageSize < total) { _assetEventsOffset += pageSize; _loadAssetEventsTabFor(); }
-  });
-  container.querySelectorAll(".ae-page-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var page = parseInt(btn.getAttribute("data-page"), 10);
-      _assetEventsOffset = (page - 1) * pageSize;
-      _loadAssetEventsTabFor();
-    });
-  });
+  renderPageControls("asset-view-events-pagination", _assetEventsTotal, pageSize, currentPage, function (page) {
+    _assetEventsOffset = (page - 1) * pageSize;
+    _loadAssetEventsTabFor();
+  }, null, { itemLabel: "events" });
 }
 
 function _saveAssetEventsPrefs() {

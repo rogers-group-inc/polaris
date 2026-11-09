@@ -252,72 +252,16 @@ var _eventsSF = null;
 
   }
 
+  // The shared list pager (app.js renderPageControls, CQ-F019). No size
+  // selector or action buttons: Show N / Refresh / Clear Filters live in the
+  // tab row (#filter-pagesize etc.), and there is no #pagination-top, so only
+  // the bottom row renders. renderPageControls re-measures the sticky wrapper.
   function renderPagination() {
-    var containers = [];
-    var mainEl = document.getElementById("pagination");
-    if (mainEl) containers.push(mainEl);
-    var topEl = document.getElementById("pagination-top");
-    if (topEl) containers.push(topEl);
-    if (containers.length === 0) return;
-
-    var totalPages = Math.max(1, Math.ceil(currentTotal / pageSize));
     var currentPage = Math.floor(currentOffset / pageSize) + 1;
-
-    // Build page number buttons
-    var pageButtons = "";
-    var startPage = Math.max(1, currentPage - 2);
-    var endPage = Math.min(totalPages, startPage + 4);
-    if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
-
-    if (startPage > 1) {
-      pageButtons += '<button class="btn btn-secondary btn-sm page-btn" data-page="1">1</button>';
-      if (startPage > 2) pageButtons += '<span style="color:var(--color-text-tertiary)">...</span>';
-    }
-
-    for (var p = startPage; p <= endPage; p++) {
-      if (p === currentPage) {
-        pageButtons += '<button class="btn btn-primary btn-sm page-btn" data-page="' + p + '" disabled>' + p + '</button>';
-      } else {
-        pageButtons += '<button class="btn btn-secondary btn-sm page-btn" data-page="' + p + '">' + p + '</button>';
-      }
-    }
-
-    if (endPage < totalPages) {
-      if (endPage < totalPages - 1) pageButtons += '<span style="color:var(--color-text-tertiary)">...</span>';
-      pageButtons += '<button class="btn btn-secondary btn-sm page-btn" data-page="' + totalPages + '">' + totalPages + '</button>';
-    }
-
-    var html =
-      '<button class="btn btn-secondary btn-sm page-prev" ' + (currentPage <= 1 ? 'disabled' : '') + '>&laquo; Prev</button>' +
-      pageButtons +
-      '<button class="btn btn-secondary btn-sm page-next" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next &raquo;</button>' +
-      '<span style="font-size:0.82rem;color:var(--color-text-tertiary);margin-left:8px">' + currentTotal + ' events</span>';
-
-    containers.forEach(function (container) {
-      container.innerHTML = html;
-      container.querySelector(".page-prev").addEventListener("click", function () {
-        if (currentOffset >= pageSize) {
-          currentOffset -= pageSize;
-          loadEvents();
-        }
-      });
-      container.querySelector(".page-next").addEventListener("click", function () {
-        if (currentOffset + pageSize < currentTotal) {
-          currentOffset += pageSize;
-          loadEvents();
-        }
-      });
-      container.querySelectorAll(".page-btn").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          var page = parseInt(btn.getAttribute("data-page"), 10);
-          currentOffset = (page - 1) * pageSize;
-          loadEvents();
-        });
-      });
-    });
-    // Events renders its own pagination (predates renderPageControls), so the
-    // sticky-wrapper re-measure hooked into renderPageControls runs here instead.
-    sizeStickyTableWrappers();
+    renderPageControls("pagination", currentTotal, pageSize, currentPage, function (page) {
+      currentOffset = (page - 1) * pageSize;
+      loadEvents();
+    }, null, { itemLabel: "events" });
   }
 
   // Page size + Refresh — the only non-TableSF controls left. Every other
