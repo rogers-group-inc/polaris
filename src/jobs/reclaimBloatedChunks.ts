@@ -45,7 +45,7 @@ import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { isHypertable, ALL_HYPERTABLE_CANDIDATES } from "../services/timescaleService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { sleep } from "../utils/sleep.js";
 
 const INTERVAL_MS = 6 * 60 * 60 * 1000;      // every 6h — fast self-heal without hammering locks
@@ -176,29 +176,24 @@ async function reclaim(candidates: BloatCandidate[]): Promise<{ count: number; r
   return { count, reclaimedBytes };
 }
 
-async function runReclaimBloatedChunks(): Promise<void> {
-  try {
-    await runInstrumentedJob("reclaimBloatedChunks", async () => {
-      const candidates = await findBloatedChunks();
-      if (candidates.length === 0) return;
-      const totalOnDisk = candidates.reduce((a, c) => a + c.onDiskBytes, 0);
-      logger.info(
-        { chunks: candidates.length, onDiskBytes: totalOnDisk },
-        "Found bloated compressed chunk(s); reclaiming",
-      );
-      const { count, reclaimedBytes } = await reclaim(candidates);
-      if (count > 0) {
-        logger.info({ count, reclaimedBytes }, "reclaimBloatedChunks complete");
-      }
-    });
-  } catch (err) {
-    logger.error({ err }, "reclaimBloatedChunks job failed");
-  }
-}
-
 // Delay the first run past boot so it doesn't race the compression self-heal
-// pass, then run every 6h.
-setTimeout(() => {
-  void runReclaimBloatedChunks();
-  setInterval(() => void runReclaimBloatedChunks(), INTERVAL_MS);
-}, STARTUP_DELAY_MS);
+// pass, then run every 6h from there.
+defineJob({
+  name: "reclaimBloatedChunks",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: STARTUP_DELAY_MS,
+  intervalAfterFirstRun: true,
+  run: async () => {
+    const candidates = await findBloatedChunks();
+    if (candidates.length === 0) return;
+    const totalOnDisk = candidates.reduce((a, c) => a + c.onDiskBytes, 0);
+    logger.info(
+      { chunks: candidates.length, onDiskBytes: totalOnDisk },
+      "Found bloated compressed chunk(s); reclaiming",
+    );
+    const { count, reclaimedBytes } = await reclaim(candidates);
+    if (count > 0) {
+      logger.info({ count, reclaimedBytes }, "reclaimBloatedChunks complete");
+    }
+  },
+});

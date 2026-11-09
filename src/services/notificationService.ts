@@ -23,7 +23,7 @@ import { recoveredConditionSuffix } from "../utils/triggerSummary.js";
 // because several modules already import them from this path.
 export { REGION_TAG_PREFIX, stripRegionPrefix } from "../utils/tagNormalize.js";
 
-export interface ListFilters {
+interface ListFilters {
   severity?: string[];
   acknowledged?: boolean;
   assetId?: string;
@@ -100,7 +100,7 @@ type RowWithRulePolicy = { severity: string; rule?: RulePolicyRow | null; alertG
  *  Resolved from whoever OWNS the alert's delivery — its group, else its
  *  automation. Owner-less rows (test alerts, deleted automations) read false —
  *  see the ACK_POLICY_INCLUDE note. */
-export function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
+function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
   const owner = alertOwnerOf({
     severity: row.severity,
     rule: row.rule ? { ...row.rule, severityBands: parseSeverityBands(row.rule.severityBands) } : null,
@@ -114,7 +114,7 @@ export function ackNotePolicyOf(row: RowWithRulePolicy): boolean {
  *  page's "Automation" row, the Active Alerts widget's title. A grouped alert
  *  is named by its group: that is the thing the operator configured and the
  *  thing one acknowledgement covers. */
-export function alertOwnerNameOf(row: RowWithRulePolicy): { name: string | null; kind: "rule" | "group" | null } {
+function alertOwnerNameOf(row: RowWithRulePolicy): { name: string | null; kind: "rule" | "group" | null } {
   const owner = alertOwnerOf({ severity: row.severity, rule: row.rule ?? null, alertGroup: row.alertGroup ?? null });
   return owner ? { name: owner.name, kind: owner.kind } : { name: null, kind: null };
 }
@@ -442,7 +442,7 @@ export async function acknowledgeNotifications(
  * dependency-flavoured alert or a wizard test. Shared by the cascade and the
  * fire-time lookup so the two can never disagree about which alert counts.
  */
-export const ROOT_DOWN_ALERT_WHERE = {
+const ROOT_DOWN_ALERT_WHERE = {
   cleared: false,
   dependencyDown: false,
   testRun: false,

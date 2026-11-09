@@ -25,7 +25,7 @@
  */
 
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import {
   reconcileSerialConflicts,
   logScanFailure,
@@ -34,21 +34,20 @@ import {
 const INTERVAL_MS = 30 * 60 * 1000;
 const FIRST_RUN_DELAY_MS = 90_000;
 
-async function detectSerialConflicts(): Promise<void> {
-  try {
-    await runInstrumentedJob("detectSerialConflicts", async () => {
-      const result = await reconcileSerialConflicts();
-      if (result.raised || result.closed || result.contestedSerials || result.duplicateSerials) {
-        logger.info(result, "serial conflict reconcile complete");
-      }
-    });
-  } catch (err) {
-    logScanFailure(err);
-  }
-}
-
 // Delayed first run, and later than the duplicate-IP sweep's: this one reads
 // claims that the boot-time discovery runs are still writing, and a pass that
 // sees one gate's roster but not the other's would raise nothing anyway.
-setTimeout(detectSerialConflicts, FIRST_RUN_DELAY_MS);
-setInterval(detectSerialConflicts, INTERVAL_MS);
+defineJob({
+  name: "detectSerialConflicts",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: FIRST_RUN_DELAY_MS,
+  run: async () => {
+    const result = await reconcileSerialConflicts();
+    if (result.raised || result.closed || result.contestedSerials || result.duplicateSerials) {
+      logger.info(result, "serial conflict reconcile complete");
+    }
+  },
+  onError: (err: any) => {
+    logScanFailure(err);
+  },
+});

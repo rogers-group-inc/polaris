@@ -40,7 +40,6 @@ import {
   callFortiOs,
   normalizeMac,
   type Transport,
-  type FortiOsReservedAddress,
 } from "./reservationPushService.js";
 
 // ─── FortiOS live monitor shape (subset) ────────────────────────────────────

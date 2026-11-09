@@ -26,17 +26,17 @@ import (
 // server's SystemInfoSchema and projection's truthy-check expect).
 type SystemInfo struct {
 	Hostname      string `json:"hostname,omitempty"`
-	OS            string `json:"os,omitempty"`             // human-readable: "Red Hat Enterprise Linux 8.10"
-	OSVersion     string `json:"osVersion,omitempty"`      // bare version: "8.10"
-	KernelVersion string `json:"kernelVersion,omitempty"`  // "4.18.0-553.el8"
-	KernelArch    string `json:"kernelArch,omitempty"`     // "x86_64"
-	Manufacturer  string `json:"manufacturer,omitempty"`   // DMI sys_vendor
-	Model         string `json:"model,omitempty"`          // DMI product_name
-	SerialNumber  string `json:"serialNumber,omitempty"`   // DMI product_serial
-	BiosVersion   string `json:"biosVersion,omitempty"`    // DMI bios_version
+	OS            string `json:"os,omitempty"`            // human-readable: "Red Hat Enterprise Linux 8.10"
+	OSVersion     string `json:"osVersion,omitempty"`     // bare version: "8.10"
+	KernelVersion string `json:"kernelVersion,omitempty"` // "4.18.0-553.el8"
+	KernelArch    string `json:"kernelArch,omitempty"`    // "x86_64"
+	Manufacturer  string `json:"manufacturer,omitempty"`  // DMI sys_vendor
+	Model         string `json:"model,omitempty"`         // DMI product_name
+	SerialNumber  string `json:"serialNumber,omitempty"`  // DMI product_serial
+	BiosVersion   string `json:"biosVersion,omitempty"`   // DMI bios_version
 	PrimaryMAC    string `json:"primaryMac,omitempty"`
 	PrimaryIP     string `json:"primaryIp,omitempty"`
-	AgentVersion  string `json:"agentVersion,omitempty"`   // stamped by caller from main.version
+	AgentVersion  string `json:"agentVersion,omitempty"` // stamped by caller from main.version
 }
 
 // SystemInfoOnce snapshots the host's identity right now. agentVersion

@@ -490,8 +490,8 @@
           });
         };
         el.addEventListener("click", onClick);
-        var timer = setInterval(refresh, PolarisWidgets.REFRESH.normal);
-        ctx.onUnmount(function () { clearInterval(timer); el.removeEventListener("click", onClick); });
+        PolarisWidgets.pollVisible(ctx, refresh, PolarisWidgets.REFRESH.normal);
+        ctx.onUnmount(function () { el.removeEventListener("click", onClick); });
       },
 
       renderPreview: function (el) {

@@ -37,7 +37,7 @@ export interface AgentEventLogConfig {
   perAssetHourlyCap: number;
 }
 
-export const DEFAULT_AGENT_EVENT_LOG_CONFIG: AgentEventLogConfig = {
+const DEFAULT_AGENT_EVENT_LOG_CONFIG: AgentEventLogConfig = {
   enabled: false,
   minLevel: "error",
   windowsChannels: ["System", "Application"],

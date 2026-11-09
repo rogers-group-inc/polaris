@@ -106,7 +106,7 @@ Rules:
   or chart palette by brightness — never compare against a theme id. The CSS
   does the same with `:is([data-theme="morning"],[data-theme="noon"])`; match
   that pattern for any new daylight override.
-- **Adding a theme** = one `THEMES` entry in `public/js/app.js`, one token block in
+- **Adding a theme** = one `THEMES` entry (and its `THEME_BAND_POS` position) in `public/js/theme-core.js`, one token block in
   the CSS, one id in `theme-init.js`'s `KNOWN` list. Nothing else.
 - `setTheme(id)` persists to `localStorage["polaris-theme"]` and fires a
   `themechange` event on `document` (`detail: {theme, family}`) — listen for it
@@ -309,7 +309,7 @@ record id.
 | Attribute | Effect |
 |---|---|
 | `data-sf-key="dotted.path"` | sortable + filterable; supports `block.name`, `_count.items` |
-| `data-sf-type` | `string` (default) · `number` · `date` · `ip` · `array` |
+| `data-sf-type` | `string` (default) · `number` · `date` · `ip` · `array` · `natural` (digits sort as numbers, whitespace ignored: port1, port 2, port10) |
 | `data-sf-options="a\|b=Label B\|c"` | multi-select checkbox popover instead of a text box — use for every enum column |
 | `data-sf-nofilter` | sortable, no filter control (numeric columns where a box is noise) |
 | `data-col-id="name"` | stable column id for resize/visibility prefs — always set it |

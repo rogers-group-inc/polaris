@@ -34,7 +34,7 @@ export async function retryOnDeadlock<T>(op: () => Promise<T>): Promise<T> {
   throw lastErr;
 }
 
-export function extractPgCode(err: unknown): string | null {
+function extractPgCode(err: unknown): string | null {
   if (!err || typeof err !== "object") return null;
   // Prisma surfaces driver errors with the original SQLSTATE under a few
   // possible paths depending on the adapter version. Be defensive about

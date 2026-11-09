@@ -599,9 +599,11 @@ removed (**×**). The addresses come from a lease or
 reservation the device is holding, the address a FortiGate sees it using, ARP
 entries (a card's secondary addresses), the interface table of a monitored
 device, the interfaces the device's own Polaris Agent reports (source *Agent*),
-and anything typed by hand. Each address names where it came from, the
-network it sits in (its name, range and VLAN), the gate that reported it, wired
-or wireless when known, and when it was last seen.
+and anything typed by hand. Each address carries a chip beside its confidence
+score naming the VLAN of the network it sits in (the network's range when it
+has no VLAN; hover the chip for the network's name and range), then where it
+came from, the gate that reported it, wired or wireless when known, and when it
+was last seen.
 A FortiGate's addresses for a card leave the list once that gate stops
 reporting them ([rule 102](Business-Rules#rule-102)). Opening the details also
 checks the DHCP leases and reservations against IPAM: an address IPAM has
@@ -783,7 +785,7 @@ polls failing (minutes)* ([Automation triggers](Automation-Triggers#telemetryfai
 against a second axis on the right. It takes the same colours as the response
 line, so both say the same thing about the same minutes: green while the
 device is up, grey while its parent was down, blue while it climbs back, amber
-or the outage colour while polls are being missed. A key under the chart names
+or the outage colour while polls are being missed. A key above the chart names
 the colours it actually drew. That axis tops out at the worst loss in
 the window (4 %, 8 %, 12 %, 20 %, 40 %, 60 %, 80 % or 100 %), so small loss
 stays readable instead of hugging the bottom. Check the scale before comparing
@@ -795,6 +797,27 @@ one-hour view, longer on longer ranges; the tooltip names it), and the line
 breaks where nothing was probed rather than dropping to 0 %. The **Packet
 loss** figure above the chart is the same measurement over the whole window.
 Hovering a response-time point still says whether *that poll* was missed.
+
+**Longer ranges draw a dashed max line.** Once a range is longer than the
+detail you keep (with the default
+[retention](Server-Settings#retention), the **30d** range and any longer
+custom window), a chart plots one point per hour or per day, and each point is
+the *average* of that hour or day — a five-minute spike disappears into it. So
+those ranges also draw a fine dashed line, in the same colour and under the
+solid one, through the **highest reading in each hour or day**. It is drawn on
+Response time, CPU (the average and every core you have switched on), the
+CPU of the combined CPU & Memory chart, interface throughput (in and out),
+hardware sensors, and SD-WAN Performance SLA latency and jitter. The legend
+gets a **Max (hourly peak)** or **Max (daily peak)** chip: click it to hide or
+show the dashed lines. While they are shown, the chart's scale includes the
+peaks; hidden, it fits the averages, so the solid line fills the chart. Your
+choice is remembered per chart for your user in this browser. Hovering a point
+on these ranges names both readings — *avg* and *max* — whether the dashed
+line is shown or not. Shorter ranges plot every poll, so they have no max line
+and no chip. Per-core CPU history and interface peaks are kept from the update
+that added the max line onward; that update fills in the last few days from
+the detailed samples still on hand, and a stretch older than that shows the
+average alone (the CPU chart says so when a range has no per-core figures).
 An Unraid, TrueNAS or Proxmox VE workload with no address of its own charts its
 response time at **0 ms**: its up/down is the platform's state read, which has
 no latency ([Polling methods](Polling-Methods#the-unraid-and-truenas-methods),
@@ -866,6 +889,31 @@ it is briefly missing from a scrape. Renaming a tag in the registry renames it
 on ports too. Deleting it removes the automatic copies and keeps the ones added
 by hand. The `region:` and `azure:` tags are device-only and are refused on a
 port. See [rule 133](Business-Rules#rule-133).
+
+### Transceiver readings in the Interfaces table
+
+On a switch whose SFP diagnostics Polaris can place on a port, the Interfaces
+table gains **Rx (dBm)** and **Tx (dBm)** columns, filled on each SFP port. An
+Rx reading at or below −20 dBm is shown in red: that is below what most optics
+can receive, so check the fibre, the connectors and the far-end transmitter.
+The switch's own sensor status still reads "ok" at that level, because it only
+says the sensor works. **SFP Temp**, **SFP Voltage** and **Bias (mA)** are
+available too; turn them on from the table's column gear. On the phone, the
+interface page lists all five.
+
+**History.** Click any of those readings in the table to open its history.
+An SFP port's interface page also charts **Rx power** and **Tx power** under
+*Optical power*, following the page's range buttons, with links to the
+temperature, voltage and bias history. The phone's interface page has the same
+Rx/Tx chart. This history is kept whether or not the interface is monitored:
+it is recorded with the hardware sensors, not with the interface.
+
+Readings placed on a port no longer appear under **Hardware Sensors**. Their
+history keeps recording under the port's name (`port49 Rx power`), so an
+automation can match it with a sensor-name pattern such as `*Rx power`. Placing
+them depends on the switch's sensor table having a known layout; when it
+doesn't, the readings stay in Hardware Sensors. See
+[rule 143](Business-Rules#rule-143).
 
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
@@ -962,6 +1010,11 @@ of the combined CPU & Memory chart (prefixed *Memory —* there).
   Processes band, so page cache never reads as a leak.
 - It needs **7 days** of history before it says anything; until then the
   headline reads *Forecast needs 7 days of history — N so far*.
+- A **reboot restarts the forecast**: memory before the restart says nothing
+  about the host after it. Polaris knows the device rebooted from its
+  uptime, and fits only the days since. Until there are 7 of them again the
+  headline reads *Forecast restarted at the reboot on Nov 5 — needs 7 days
+  of history — N so far*.
 - When a **Memory utilization** automation covers the device, the headline
   counts down to that automation's **next level** instead of to full, in that
   level's severity colour. For example, *Days until Serious: 12 · trend:
@@ -1857,12 +1910,32 @@ and one line naming which two sources decided it. Two rules outrank the order:
 catch-all counts as empty — so a specific type on either side wins, and no merge
 path writes `other` over a real type.
 
+**MAC addresses on this asset** (shown when the asset has two or more MACs)
+lists each MAC with the address it last held, the VLAN of that address's network,
+the FortiGate that saw it and when it was first and last seen. When several
+devices that share a name ended up on one asset, select their rows (click a row;
+right-click for the menu) and choose **Split each into its own asset**, or use a
+row's **Split** button. Each MAC becomes its own asset named after this one plus
+the last three octets of its MAC (*iPhone-717C43*), taking the addresses on it,
+their IP history and any DHCP reservation on it; monitoring, credentials, tags
+and notes stay here. This asset is renamed the same way when its name came from
+discovery ([rule 91](Business-Rules#rule-91)). The primary MAC, and a MAC the
+device reports as its own, cannot be split. Splitting needs Read-Write on Assets
+for this asset; **Merge asset** puts them back together.
+
 Below the source cards, **Firewall Sightings** lists each FortiGate that has
 handed the device an address: one row per gate and kind, so a gate that holds
 both a DHCP reservation and a lease for the device shows both, each with its
-address, network and VLAN. **IP History** lists every address the device has held,
+address, network and VLAN. Click a FortiGate name to open that firewall (right-click
+it, or anywhere on its row, for Open HTTPS / Open SSH and Copy name), and click a
+network / VLAN to open that network scrolled to the row's IP address, highlighted
+(right-click for Copy name); a gate or network
+Polaris does not hold stays plain text. **IP History** lists every address the device has held,
 with the **VLAN** of the network each one sits in (hover it for the network's
 name and range) and when it was first and last seen.
+
+On this tab, clicking any IP address or MAC address (in the sightings, IP History
+or a source card) copies it to the clipboard.
 
 The inverse is **Split**, shown to the admin role on each non-manual source
 card of an asset with more than one source: it detaches that
@@ -1891,6 +1964,16 @@ duration baseline, and **skips all four asset-only post-sync passes** — agent
 auto-deploy, interface/storage auto-monitor, presence verification and directory
 sync — which read the database fleet-wide. Auto-deploy in particular would start
 agent installs across the whole fleet from one click.
+
+On a FortiGate (and so on its switches and access points) the run is the
+gate's **full** discovery, dependency tree included — see
+[Discovery → Discover Now on a FortiGate](Discovery#discover-now-on-a-fortigate).
+It does not poll: CPU, memory, interfaces, LLDP and the other monitoring
+readings keep their own schedules.
+
+If the run cannot start, the toast says why — most often **"A discovery is
+already running for …"**: wait for that run to finish (the sidebar shows it),
+then try again.
 
 On an Unraid or TrueNAS SCALE VM or container, and on any Proxmox VE node, VM or
 container, **Discover Now is disabled**: the integration's own **Discover**

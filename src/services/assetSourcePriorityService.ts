@@ -32,7 +32,7 @@ import {
 } from "../utils/assetSourceLocation.js";
 import { setLearnedLocationPriority } from "../utils/assetProjection.js";
 
-export const ASSET_SOURCE_PRIORITY_KEY = "assetSourcePriority";
+const ASSET_SOURCE_PRIORITY_KEY = "assetSourcePriority";
 
 // 30s: this is read once per discovery run and once per settings GET, never on
 // a hot path, so the TTL only bounds how long a just-saved order can look
@@ -43,11 +43,7 @@ const store = createSettingStore<SourceLocationPriority>({
   parse: normalizeSourceLocationPriority,
 });
 
-export function invalidateSourcePriorityCache(): void {
-  store.invalidate();
-}
-
-export async function getSourceLocationPriority(): Promise<SourceLocationPriority> {
+async function getSourceLocationPriority(): Promise<SourceLocationPriority> {
   return store.get();
 }
 

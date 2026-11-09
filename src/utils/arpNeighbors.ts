@@ -34,7 +34,7 @@ export interface ArpNeighborEntry {
 }
 
 /** ipNetToPhysicalType / ipNetToMediaType — shared enum across both tables. */
-export const NEIGHBOR_TYPE = { other: 1, invalid: 2, dynamic: 3, static: 4, local: 5 } as const;
+const NEIGHBOR_TYPE = { other: 1, invalid: 2, dynamic: 3, static: 4, local: 5 } as const;
 
 /**
  * ipNetToPhysicalState. `invalid(5)` and `incomplete(7)` are DROPPED at
@@ -42,7 +42,7 @@ export const NEIGHBOR_TYPE = { other: 1, invalid: 2, dynamic: 3, static: 4, loca
  * asked and nothing answered — so storing it would put an address in the tab
  * that was never actually resolved to that MAC.
  */
-export const NEIGHBOR_STATE = {
+const NEIGHBOR_STATE = {
   reachable: 1, stale: 2, delay: 3, probe: 4, invalid: 5, unknown: 6, incomplete: 7,
 } as const;
 

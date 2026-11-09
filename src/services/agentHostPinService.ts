@@ -35,7 +35,7 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { forgetCachedHostKey } from "./sshHostKeyService.js";
-import { forgetCachedCertPin } from "./tlsCertPinService.js";
+import { forgetCachedCertPin, normalizeFingerprint } from "./tlsCertPinService.js";
 
 export const DECOMMISSIONED_AGENT_COLLISION_REASON = "decommissioned-agent-checkin";
 
@@ -226,6 +226,24 @@ export async function previewDecommissionPins(assetIds: string[]): Promise<Decom
 }
 
 /**
+ * The IPv4 address rule 40(k) released from this asset on its latest
+ * decommission — `details.previousIpAddress` of its newest `asset.ip_released`
+ * Event (src/db.ts writes it right after the decommissioning write lands), or
+ * null when there is none. One indexed read ((assetId, timestamp)); only a
+ * decommissioned asset with no address left pays it.
+ */
+export async function releasedAddressOf(assetId: string): Promise<string | null> {
+  const ev = await prisma.event.findFirst({
+    where: { assetId, action: "asset.ip_released" },
+    orderBy: { timestamp: "desc" },
+    select: { details: true },
+  });
+  const d = ev?.details;
+  const ip = d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>).previousIpAddress : null;
+  return typeof ip === "string" && ip.trim() ? ip.trim() : null;
+}
+
+/**
  * Move the asset's pins into its agent's archive. Idempotent: an asset with no
  * agent, or whose archive is already held, is left alone (returns null).
  */
@@ -236,13 +254,19 @@ export async function archiveAgentHostPins(
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
     select: {
-      id: true, hostname: true, ipAddress: true, dnsName: true,
+      id: true, hostname: true, ipAddress: true, dnsName: true, status: true,
       managedAgent: { select: { id: true, hostPinsArchivedAt: true } },
     },
   });
   if (!asset?.managedAgent || asset.managedAgent.hostPinsArchivedAt) return null;
 
-  const hosts = assetPinHosts(asset);
+  // Rule 40(k) clears ipAddress on the very write that decommissions, so by
+  // the time either archive writer runs the address the pins are keyed on is
+  // gone from the row. Read it back from that write's `asset.ip_released`
+  // Event, the audit record of exactly which address was released.
+  const ipAddress = asset.ipAddress
+    ?? (asset.status === "decommissioned" ? await releasedAddressOf(asset.id) : null);
+  const hosts = assetPinHosts({ ...asset, ipAddress });
   const shared = await hostsClaimedElsewhere(asset.id, hosts);
   const own = hosts.filter((h) => !shared.has(h));
   const { ssh, tls } = await livePinRows(own);
@@ -372,10 +396,6 @@ export async function resolvePendingCheckinConflicts(assetId: string, resolvedBy
 /** A raise per agent at most this often per process; a pending row is refreshed, not duplicated. */
 const CHECKIN_THROTTLE_MS = 10 * 60 * 1000;
 const lastCheckinRaise = new Map<string, number>();
-
-export function _resetCheckinThrottle(): void {
-  lastCheckinRaise.clear();
-}
 
 /**
  * Called from agentTokenService.verifyBearer when an authenticated agent's
@@ -604,7 +624,7 @@ export async function listArchivedHostPins(): Promise<ArchivedHostPin[]> {
  */
 export function pinFingerprintQuery(raw: string): { hex: string | null; ssh: string | null } | null {
   const q = raw.trim();
-  const hex = /^[0-9a-f:\s-]+$/i.test(q) ? q.replace(/[^0-9a-f]/gi, "").toUpperCase() : "";
+  const hex = /^[0-9a-f:\s-]+$/i.test(q) ? normalizeFingerprint(q) : "";
   const body = q.replace(/^sha256:/i, "");
   const ssh = /^[A-Za-z0-9+/]+=*$/.test(body) ? body.replace(/=+$/, "") : "";
   const out = { hex: hex.length >= 8 ? hex : null, ssh: ssh.length >= 8 ? ssh : null };
@@ -681,7 +701,7 @@ export async function findAssetsByPinFingerprint(raw: string, limit = 8): Promis
   for (const a of archives) {
     for (const p of parseArchivedPins(a.archivedHostPins)) {
       const hit = p.kind === "tls"
-        ? !!fq.hex && normalizeHex(p.fingerprint).includes(fq.hex)
+        ? !!fq.hex && normalizeFingerprint(p.fingerprint).includes(fq.hex)
         : !!fq.ssh && p.fingerprint.includes(fq.ssh);
       if (hit) push({ assetId: a.assetId, kind: p.kind, host: p.host, port: p.port, archived: true });
     }
@@ -689,6 +709,3 @@ export async function findAssetsByPinFingerprint(raw: string, limit = 8): Promis
   return out;
 }
 
-function normalizeHex(fp: string): string {
-  return fp.replace(/[^0-9a-f]/gi, "").toUpperCase();
-}

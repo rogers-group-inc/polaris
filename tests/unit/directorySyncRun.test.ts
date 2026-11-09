@@ -198,6 +198,29 @@ describe("runDirectorySync — the steady state is free", () => {
     expect(prismaMock.directoryContactSource.update).not.toHaveBeenCalled();
   });
 
+  it("writes NOTHING when the stored blob comes back from jsonb with its keys reordered (CQ-B054)", async () => {
+    // PostgreSQL jsonb returns object keys in its own order (shorter first,
+    // then bytewise), never the order they were written in. A JSON.stringify
+    // comparison called that a change and rewrote every row on every run.
+    const p = person();
+    const reordered = Object.fromEntries(Object.entries(p as Record<string, unknown>).reverse());
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(p));
+    readers.entra.mockResolvedValue([p]);
+    stubLocal({
+      provenance: [{ externalId: "e1", contactId: "c1", observed: reordered }],
+      contactsByEmail: [{ id: "c1", email: "jane@example.com", origin: "entra" }],
+      projectionRows: [{
+        id: "c1", name: "Jane Doe", kind: "person", jobTitle: null, department: null,
+        phone: null, description: null, origin: "entra",
+        directorySources: [{ sourceKind: "entra", observed: p }],
+      }],
+    });
+
+    const out = await runDirectorySync(OPTS);
+    expect(out.unchanged).toBe(1);
+    expect(prismaMock.directoryContactSource.update).not.toHaveBeenCalled();
+  });
+
   it("updates the provenance blob when the directory changed something", async () => {
     const before = person({ jobTitle: "Operator" });
     const after = person({ jobTitle: "Plant Operator" });

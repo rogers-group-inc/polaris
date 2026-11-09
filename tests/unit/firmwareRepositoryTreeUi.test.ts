@@ -59,7 +59,7 @@ beforeAll(() => {
     calloutHTML: (_v: string, title: string, body: string) => `<div class="callout"><b>${title}</b> ${body}</div>`,
     permAtLeast: (key: string, want: string) => key === "firmware" && RANK[level] >= RANK[want],
     isAdmin: () => admin,
-    api: {},
+    api: { serverSettings: { downloadFirmwareImageUrl: (id: string) => "/api/v1/server-settings/firmware/images/" + id + "/download" } },
   });
   for (const file of ["../../public/js/server-settings.js", "../../public/js/server-settings-firmware.js"]) {
     (win as unknown as { eval: (s: string) => void }).eval(readFileSync(resolve(__dirname, file), "utf8"));
@@ -195,6 +195,14 @@ describe("the tree", () => {
     expect(rows[0]!.querySelector(".fw-image-promote")).toBeNull();
     expect(rows[1]!.querySelector(".fw-image-promote")).not.toBeNull();
     expect(rows[0]!.querySelector(".fw-image-del")).not.toBeNull();
+    // Download sits immediately left of Delete, on every row.
+    const verbs0 = Array.from(rows[0]!.querySelectorAll("td:last-child .btn")).map((b) => text(b));
+    expect(verbs0).toEqual(["Download", "Delete"]);
+    const verbs1 = Array.from(rows[1]!.querySelectorAll("td:last-child .btn")).map((b) => text(b));
+    expect(verbs1).toEqual(["Make primary", "Download", "Delete"]);
+    const dl = rows[0]!.querySelector(".fw-image-download")!;
+    expect(dl.getAttribute("href")).toBe("/api/v1/server-settings/firmware/images/" + rows[0]!.getAttribute("data-image-id") + "/download");
+    expect(dl.getAttribute("download")).toMatch(/\.out$/);
     expect(text(node(renderCard(), "Fortinet", "switch", "FortiSwitch S108FF"))).toMatch(/Each platform keeps two images/);
   });
 
@@ -372,6 +380,8 @@ describe("gating on the firmware key", () => {
     expect(root.querySelector(".fw-image-promote")).toBeNull();
     expect(root.querySelector(".fw-model-purge")).toBeNull();
     expect(root.querySelector(".fw-binding-edit")).toBeNull();
+    // Download is a read-rung verb: every image row offers it.
+    expect(node(root, "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images .fw-image-download")).toHaveLength(2);
     // The facts are still all there to read.
     expect(Array.from(node(root, "Fortinet", "switch", "FortiSwitch S108FF").querySelectorAll(".fw-images tbody tr"))).toHaveLength(2);
   });

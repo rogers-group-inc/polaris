@@ -26,50 +26,74 @@
  * if the fleet ever grows large enough that one pass exceeds 30 minutes.
  * Best-effort — failures are logged but don't crash the process.
  *
+ * Every rollup pass in this process (hourly, daily, and the one-shot
+ * max-line backfill) runs through one in-process queue (`serialized`), so a
+ * boot-time daily tick never upserts the same buckets concurrently with an
+ * hourly tick or the backfill.
+ *
+ * Max-line backfill (one-shot): after an hourly tick, while the
+ * `rollupMaxLinesBackfilledAt` marker Setting is unset, the hourly tick
+ * also runs `runMaxLineBackfillOnce` (sampleRollupService) — the recent past
+ * of the telemetry + interface rollups rebuilt in one-day slices so the new
+ * max / per-core columns are filled. Its failure is logged and does NOT
+ * fail the hourly tick; the marker stays unset, so the next tick retries.
+ *
  * Import this module from src/app.ts to activate.
  */
 
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
-import { rollupHourly, rollupDaily, type RollupResult } from "../services/sampleRollupService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import {
+  rollupHourly,
+  rollupDaily,
+  runMaxLineBackfillOnce,
+  type RollupResult,
+} from "../services/sampleRollupService.js";
+import { defineJob } from "./_defineJob.js";
 
 const HOURLY_INTERVAL_MS = 30 * 60 * 1000;
 const HOURLY_BOOT_DELAY_MS = 60 * 1000;
 const DAILY_BOOT_DELAY_MS = 90 * 1000;
 
-let runningHourly = false;
-let runningDaily  = false;
-
-async function tickHourly(): Promise<void> {
-  if (runningHourly) return;
-  runningHourly = true;
-  try {
-    await runInstrumentedJob("sampleRollup.hourly", async () => {
-      const results = await rollupHourly();
-      await stampLastSuccess("hourly", results);
-      logResults("hourly", results);
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "sampleRollup.hourly tick failed (non-fatal)");
-  } finally {
-    runningHourly = false;
-  }
+// One queue for every rollup pass in this process. A failed pass does not
+// poison the queue: the next one still runs.
+let queue: Promise<unknown> = Promise.resolve();
+function serialized<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
 }
 
-async function tickDaily(): Promise<void> {
-  if (runningDaily) return;
-  runningDaily = true;
+async function runHourly(): Promise<void> {
+  await serialized(async () => {
+    const results = await rollupHourly();
+    await stampLastSuccess("hourly", results);
+    logResults("hourly", results);
+  });
+  await serialized(runMaxLineBackfillStep);
+}
+
+async function runDaily(): Promise<void> {
+  await serialized(async () => {
+    const results = await rollupDaily();
+    await stampLastSuccess("daily", results);
+    logResults("daily", results);
+  });
+}
+
+/** The one-shot max-line backfill, riding the hourly tick until it succeeds
+ *  once. Never throws: a failure is logged and retried next tick. */
+async function runMaxLineBackfillStep(): Promise<void> {
   try {
-    await runInstrumentedJob("sampleRollup.daily", async () => {
-      const results = await rollupDaily();
-      await stampLastSuccess("daily", results);
-      logResults("daily", results);
-    });
-  } catch (err: any) {
-    logger.error({ err: err?.message ?? String(err) }, "sampleRollup.daily tick failed (non-fatal)");
-  } finally {
-    runningDaily = false;
+    const out = await runMaxLineBackfillOnce();
+    if (!out.ran) return;
+    logger.info(
+      { days: out.days, hourlyRows: out.hourlyRows, dailyRows: out.dailyRows, durationMs: out.durationMs },
+      "Max-line rollup backfill complete: telemetry per-core vectors and interface peak rates rebuilt for the recent past " +
+        "(this also rewrites interface hourly rows the pre-f465ae05b rollup failed to write)",
+    );
+  } catch (err) {
+    logger.error({ err }, "Max-line rollup backfill failed; it will retry on the next hourly tick");
   }
 }
 
@@ -124,11 +148,21 @@ function msUntilNextUtc(hourUtc: number, minuteUtc: number): number {
 }
 
 // ── Schedule ─────────────────────────────────────────────────────────────────
-setTimeout(tickHourly, HOURLY_BOOT_DELAY_MS);
-setInterval(tickHourly, HOURLY_INTERVAL_MS);
+defineJob({
+  name: "sampleRollup.hourly",
+  intervalMs: HOURLY_INTERVAL_MS,
+  firstRunDelayMs: HOURLY_BOOT_DELAY_MS,
+  run: runHourly,
+});
 
-setTimeout(tickDaily, DAILY_BOOT_DELAY_MS);
-setTimeout(() => {
-  void tickDaily();
-  setInterval(tickDaily, 24 * 3600 * 1000);
-}, msUntilNextUtc(2, 30));
+// Daily tier: anchored at 02:30 UTC, then every 24 h from there — plus one
+// catch-up pass shortly after boot. The boot pass goes through the same
+// handle, so it shares the overlap skip with the anchored schedule.
+const daily = defineJob({
+  name: "sampleRollup.daily",
+  intervalMs: 24 * 3600 * 1000,
+  firstRunDelayMs: msUntilNextUtc(2, 30),
+  intervalAfterFirstRun: true,
+  run: runDaily,
+});
+setTimeout(() => void daily.tick(), DAILY_BOOT_DELAY_MS);

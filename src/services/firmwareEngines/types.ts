@@ -23,7 +23,7 @@ export type FirmwareEngineKind = "fortiswitch-https" | "fortiap-https" | "fortig
  */
 export type FirmwareRunStage = "preflight" | "staging" | "compat" | "deploying" | "rebooting" | "verifying" | "recovering";
 
-export type FirmwareEngineOutcome = "upgraded" | "already-current" | "failed" | "unverified";
+type FirmwareEngineOutcome = "upgraded" | "already-current" | "failed" | "unverified";
 
 export interface FirmwareEngineTimeouts {
   /** One request/response, and the login probe (capped at probeMs). */

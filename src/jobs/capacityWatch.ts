@@ -22,7 +22,6 @@
  * Import this module from src/app.ts to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import {
   getCapacitySnapshotWithAdvisor,
   recordCapacityTransition,
@@ -30,47 +29,43 @@ import {
 } from "../services/capacityService.js";
 import { computePgTuning, pgTuningToAdvisorShape } from "../services/pgTuningService.js";
 import { setDbPoolGauges, setCapacityGauges } from "../metrics.js";
-import { runInstrumentedJob } from "./_metrics.js";
-
-async function runCapacityWatch(): Promise<void> {
-  try {
-    await runInstrumentedJob("capacityWatch", async () => {
-      // Three counts and one pg_settings read — cheap at any fleet size, and
-      // without it the job could never see `pg_tuning_needed` while the page
-      // could. The two-pass orchestrator also refreshes the Capacity Advisor
-      // cache, so the Maintenance tab's first load does not wait on it, and
-      // this 10-min tick is what warms the pg_stat_database rate baseline so
-      // the first measured disk-I/O verdict lands.
-      const tuning = await computePgTuning();
-      const { snapshot: snap } = await getCapacitySnapshotWithAdvisor({
-        pgTuningNeeded: tuning?.pgTuningNeeded ?? false,
-        pgTuning: pgTuningToAdvisorShape(tuning),
-      });
-      await recordCapacityTransition(snap);
-      setDbPoolGauges(snap.database.connectionPool);
-      setCapacityGauges({
-        severity: snap.severity,
-        volumes: snap.appHost.volumes.map(v => ({
-          volume: v.paths[0] ?? "(unknown)",
-          roles: v.roles.join(","),
-          freeBytes: v.freeBytes,
-          totalBytes: v.totalBytes,
-        })),
-        sampleTables: snap.database.sampleTables.map(t => ({
-          table: t.name,
-          deadTupRatio: t.deadTupRatio,
-        })),
-        databaseSizeBytes: snap.database.sizeBytes,
-        steadyStateSizeBytes: snap.workload.steadyStateSizeBytes,
-      });
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "capacityWatch job failed (non-fatal)");
-  }
-}
+import { defineJob } from "./_defineJob.js";
 
 // Run once on startup after a short delay so the DB connection is ready, then
 // every 10 minutes. The startup pass also establishes the baseline severity
 // stored in the `capacity.lastSeverity` Setting on first boot.
-setTimeout(runCapacityWatch, 60_000);
-setInterval(runCapacityWatch, CAPACITY_WATCH_INTERVAL_MS);
+defineJob({
+  name: "capacityWatch",
+  intervalMs: CAPACITY_WATCH_INTERVAL_MS,
+  firstRunDelayMs: 60_000,
+  run: async () => {
+    // Three counts and one pg_settings read — cheap at any fleet size, and
+    // without it the job could never see `pg_tuning_needed` while the page
+    // could. The two-pass orchestrator also refreshes the Capacity Advisor
+    // cache, so the Maintenance tab's first load does not wait on it, and
+    // this 10-min tick is what warms the pg_stat_database rate baseline so
+    // the first measured disk-I/O verdict lands.
+    const tuning = await computePgTuning();
+    const { snapshot: snap } = await getCapacitySnapshotWithAdvisor({
+      pgTuningNeeded: tuning?.pgTuningNeeded ?? false,
+      pgTuning: pgTuningToAdvisorShape(tuning),
+    });
+    await recordCapacityTransition(snap);
+    setDbPoolGauges(snap.database.connectionPool);
+    setCapacityGauges({
+      severity: snap.severity,
+      volumes: snap.appHost.volumes.map(v => ({
+        volume: v.paths[0] ?? "(unknown)",
+        roles: v.roles.join(","),
+        freeBytes: v.freeBytes,
+        totalBytes: v.totalBytes,
+      })),
+      sampleTables: snap.database.sampleTables.map(t => ({
+        table: t.name,
+        deadTupRatio: t.deadTupRatio,
+      })),
+      databaseSizeBytes: snap.database.sizeBytes,
+      steadyStateSizeBytes: snap.workload.steadyStateSizeBytes,
+    });
+  },
+});

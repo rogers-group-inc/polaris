@@ -4,6 +4,7 @@
  * Authenticates via bearer token (API key) rather than session-based login.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
@@ -24,7 +25,7 @@ import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
-import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial } from "../utils/fortiswitchCmdb.js";
+import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { getFmgWorker } from "./fmgWorker.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
@@ -42,7 +43,7 @@ import {
 // that keys by "FortiGate device name" must lowercase the key so writes from
 // either source land in the same bucket; original casing is preserved on the
 // raw device object and the asset row for logging and Event messages.
-export const fmgNameKey = (n: string | null | undefined): string =>
+const fmgNameKey = (n: string | null | undefined): string =>
   String(n ?? "").toLowerCase();
 
 export interface FortiManagerConfig {
@@ -487,14 +488,6 @@ function markRetryable<E extends object>(err: E): E {
   return err;
 }
 
-function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) { resolve(); return; }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-  });
-}
-
 async function rpcInner(
   url: string,
   payload: JsonRpcRequest,
@@ -517,7 +510,7 @@ async function rpcInner(
         { url: describeRpcParams(payload), attempt: attempt + 1, backoffMs, message: (err as Error)?.message },
         "fmg rpc: transient failure — backing off then retrying",
       );
-      await sleepWithAbort(backoffMs, externalSignal);
+      await sleep(backoffMs, externalSignal);
     }
   }
   throw lastErr;
@@ -1700,7 +1693,7 @@ export function parseFmgVariableDynamicMapping(varData: any): Map<string, string
  * defined on this ADOM. Best-effort: any RPC/parse failure yields an empty map
  * so discovery proceeds with the existing fallbacks. Never throws.
  */
-export async function fetchFmgMetavarCoordMap(
+async function fetchFmgMetavarCoordMap(
   config: FortiManagerConfig,
   latMetavar: string,
   lngMetavar: string,
@@ -1756,7 +1749,7 @@ export async function fetchFmgMetavarCoordMap(
  * `mr` (minor release), `patch`. Returns "" when the major version is missing
  * or unparseable so the caller can fall back to other sources.
  */
-export function buildFmgOsVersion(raw: any): string {
+function buildFmgOsVersion(raw: any): string {
   const major = Number(raw?.os_ver);
   if (!Number.isFinite(major) || major <= 0) return "";
   const mr = Number(raw?.mr);
@@ -1983,7 +1976,6 @@ async function fmgStepDhcpMonitor(ctx: FmgDeviceCtx): Promise<void> {
       const leaseRes = await rpc(baseUrl, leasePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       flags.didDhcpLeasesQuery = true;
       const leaseData = leaseRes.result?.[0]?.data;
-      const monitorStatus = Array.isArray(leaseData) ? leaseData[0]?.status?.code : undefined;
       const rawResults = Array.isArray(leaseData)
         ? leaseData[0]?.response?.results
         : (leaseData as any)?.response?.results;
@@ -2073,13 +2065,16 @@ async function fmgStepInterfaceIps(ctx: FmgDeviceCtx): Promise<void> {
       const ifacePayload: JsonRpcRequest = {
         id: 3,
         method: "get",
-        // secondary-ip is a child mkey table on system/interface — each row
-        // carries its own `ip` (in "x.x.x.x y.y.y.y" form). Asking for the
-        // parent field returns the whole nested array as embedded JSON.
+        // The secondary addresses are the child table `secondaryip` — each
+        // row { id, ip: [addr, mask], … }; `secondary-IP` is only the 0 / 1
+        // flag (read off a production FortiManager 2026-11-04). Asking for
+        // the table field returns the whole nested array. This list named
+        // only `secondary-ip`, a key FortiManager does not have, so the table
+        // never came back and every gate's secondaries were dropped.
         // `ipv6` is the interface's IPv6 sub-object (addresses, RA prefixes —
-        // business rule 125), returned whole like secondary-ip.
-        // `type` + `interface` give a VLAN interface's parent (rule 137).
-        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"] }],
+        // business rule 125), returned whole; unset child tables in it are
+        // null, not []. `type` + `interface` give a VLAN's parent (rule 137).
+        params: [{ url: `/pm/config/device/${deviceName}/vdom/root/system/interface`, fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondaryip", "ipv6"] }],
       };
       const ifaceRes = await rpc(baseUrl, ifacePayload, apiUser, apiToken, verifySsl, signal, integrationId);
       const ifaceData = ifaceRes.result?.[0]?.data;
@@ -2250,7 +2245,11 @@ async function fmgStepSwitches(ctx: FmgDeviceCtx): Promise<void> {
               data: {
                 target: [`/adom/${adom}/device/${deviceName}`],
                 action: "get",
-                resource: "/api/v2/cmdb/switch-controller/managed-switch?datasource=1",
+                // Only what discovery reads (serials, description, the ports
+                // table) — utils/fortiswitchCmdb.ts → FORTISWITCH_DISCOVERY_CMDB_FORMAT.
+                // No `datasource=1`: its per-reference annotations are ~18% of
+                // the response and nothing reads them.
+                resource: `/api/v2/cmdb/switch-controller/managed-switch?format=${FORTISWITCH_DISCOVERY_CMDB_FORMAT}`,
               },
             }],
           };
@@ -2445,7 +2444,7 @@ async function fmgStepApCmdbRoster(ctx: FmgDeviceCtx): Promise<void> {
 
 // Step 3d.5: FortiAP -> FortiSwitch port mapping via the detected-device MAC table. Offline gates skip.
 async function fmgStepApPortMap(ctx: FmgDeviceCtx): Promise<void> {
-  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitches, localSwitchMacTable } = ctx;
+  const { adom, baseUrl, apiUser, apiToken, verifySsl, signal, integrationId, log, deviceName, offline, localAps, localSwitchMacTable } = ctx;
     // Step 3d.5: FortiAP → FortiSwitch port mapping via detected-device MAC table
     // Pulls all switch port MAC learnings in one shot and matches each AP's base_mac
     // to its switch + port. APs not seen on any managed switch stay un-peered and
@@ -2507,7 +2506,7 @@ async function fmgStepArp(ctx: FmgDeviceCtx): Promise<void> {
         const { sent, dropped } = await primeArpCache(sweepIps);
         if (sent > 0) {
           log("discover.arp", "info", `${deviceName}: ARP presence sweep — probed ${sent} reserved IP(s)${dropped > 0 ? ` (${dropped} over cap, skipped)` : ""}`, deviceName);
-          await sleepWithAbort(ARP_SETTLE_MS, signal);
+          await sleep(ARP_SETTLE_MS, signal);
         }
       }
       const arpPayload: JsonRpcRequest = {
@@ -2761,7 +2760,7 @@ export async function discoverDhcpSubnets(
         ? `"${scopeDeviceName}" is excluded by the integration's device include/exclude filter`
         : `"${scopeDeviceName}" was not found in the ADOM "${adom}" device roster`;
       log("discover.devices", "error", `Scoped re-discovery failed: ${why}`);
-      throw new Error(`Scoped re-discovery failed: ${why}`);
+      throw new AppError(404, `Scoped re-discovery failed: ${why}`);
     }
     // Phrasing matters: the run accumulator parses "Found <n> managed device"
     // out of this progress message to set totalDevices.
@@ -2904,7 +2903,6 @@ export async function discoverDhcpSubnets(
     if (signal?.aborted) return null;
 
     log("discover.device.start", "info", `Starting discovery for ${deviceName}`, deviceName);
-    const devStartMs = Date.now();
 
     // Direct mode: skip FMG entirely for per-device calls. Use the FortiGate's
     // real management-interface IP (resolved through FMG's interface config —
@@ -3258,9 +3256,11 @@ export async function discoverDhcpSubnets(
         config.dhcpInclude,
         config.dhcpExclude,
       );
+      // Membership by object identity, as a Set (CQ-B055; includes() was O(n^2)).
+      const keptDevSubnets = new Set(filteredDevSubnets);
       const excludedDevIfaces = new Set(
         chunk.subnets
-          .filter((s) => !filteredDevSubnets.includes(s))
+          .filter((s) => !keptDevSubnets.has(s))
           .map((s) => `${s.fortigateDevice}/${s.name}`)
       );
       const filteredDevInventory = chunk.deviceInventory.filter(

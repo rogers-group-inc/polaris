@@ -146,7 +146,7 @@ export interface ReservationAlertEntry {
   assetPresenceMatch: AssetPresenceMatch;
 }
 
-export type AssetPresenceMatch = "mac" | "ip" | null;
+type AssetPresenceMatch = "mac" | "ip" | null;
 
 interface AssetPresence {
   lastSeen: Date | null;

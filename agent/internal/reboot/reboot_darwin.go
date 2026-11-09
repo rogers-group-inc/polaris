@@ -3,6 +3,7 @@
 package reboot
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,13 +23,20 @@ func markerPresent() bool {
 
 func capable() bool { return markerPresent() }
 
+// shutdownCommandTimeout bounds the shutdown call itself, not the reboot.
+const shutdownCommandTimeout = 30 * time.Second
+
 func reboot(delay time.Duration, _ string) error {
 	if !markerPresent() {
 		return fmt.Errorf("reboots are not enabled on this host (no %s)", markerPath)
 	}
 	time.Sleep(delay)
-	if out, err := exec.Command("/sbin/shutdown", "-r", "now").CombinedOutput(); err != nil {
-		return fmt.Errorf("shutdown refused the reboot: %v: %s", err, strings.TrimSpace(string(out)))
+	// shutdown returns once the reboot is scheduled; bound it (CQ-G012) so a
+	// wedged one is reported instead of holding the command forever.
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownCommandTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "/sbin/shutdown", "-r", "now").CombinedOutput(); err != nil {
+		return fmt.Errorf("shutdown refused the reboot: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -25,7 +25,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 
 **Screenshots (rule 95(l), 2026-10-26):** a user `ChatMessage` may carry `images: ChatImage[]` (`{ mimeType, base64 }`). `chatCompletionRound` sends `toOpenAiMessages(messages)` — a user turn with images becomes content parts, text first, then one `image_url` data URL per image (Azure OpenAI, Ollama, LM Studio and vLLM vision models all read that shape); every other message passes through unchanged. `toAnthropicRequest` puts `{ type: "image", source: { type: "base64" } }` blocks BEFORE the text on that user turn. `acceptsImages(config)` is the one answer to "may this model be sent images": the operator's `LlmConfig.acceptsImages` when it is a boolean, else true only for `provider: "azure"` + `azureApiShape: "anthropic"`.
 
-**Public API:** LlmConfig, LlmProvider, LLM_DEFAULTS, AZURE_DEFAULTS, AZURE_API_VERSION_RE, isAzureProvider, acceptsImages, toOpenAiMessages, ChatImage, azureScope, ANTHROPIC_MAX_TOKENS, isAnthropicShape, anthropicBaseUrl, toAnthropicRequest, estimateTokens, SMALL_CONTEXT_WINDOW, recoverTextToolCalls, ChatMessage, ChatToolDef, ChatToolCall, CompletionRound, ToolCallingSupport, LlmModelInfo, LlmTestResult, normalizeBasePath, azureChatPath, chatCompletionsPath, parseAzureEndpoint, llmAuthHeaders, getAzureEntraToken, _clearEntraTokenCache, describeEndpoint, upstreamError, looksLikeEmbeddingModel, ollamaCapabilities, listModels, matchModelId, pickDefaultModel, probeToolCalling, testConnection, describeModels, resolveChatModel, _clearResolvedModelCache, applyStreamChunk, _clearTemperatureRefusals, chatCompletionRound.
+**Public API:** LlmConfig, LlmProvider, LLM_DEFAULTS, AZURE_DEFAULTS, AZURE_API_VERSION_RE, isAzureProvider, acceptsImages, toOpenAiMessages, ChatImage, azureScope, ANTHROPIC_MAX_TOKENS, isAnthropicShape, anthropicBaseUrl, toAnthropicRequest, estimateTokens, SMALL_CONTEXT_WINDOW, recoverTextToolCalls, ChatMessage, ChatToolDef, ChatToolCall, CompletionRound, ToolCallingSupport, LlmModelInfo, LlmTestResult, normalizeBasePath, azureChatPath, chatCompletionsPath, parseAzureEndpoint, llmAuthHeaders, getAzureEntraToken, _clearEntraTokenCache, describeEndpoint, upstreamError, looksLikeEmbeddingModel, ollamaCapabilities, listModels, matchModelId, pickDefaultModel, probeToolCalling, testConnection, resolveChatModel, _clearResolvedModelCache, applyStreamChunk, _clearTemperatureRefusals, chatCompletionRound.
 
 **Cross-service deps:** none (utils/errors, utils/logger, utils/entraClientCredentials; npm `@anthropic-ai/sdk` + `@anthropic-ai/foundry-sdk` for the Claude shape).
 
@@ -34,7 +34,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - src/api/routes/assistant.ts → POST /conversations/:id/messages — acceptsImages, the 409 before an image is stored
 - src/services/llmIntegrationService.ts → checkLlmToolCalling — listModels / matchModelId / pickDefaultModel / probeToolCalling
 - src/api/routes/integrations.ts → POST /:id/test, POST /test — the llm branch of Test Connection
-- src/services/discovery/discoveryEngine.ts → runPreflightTest — the 10-minute integrationConnectionTester re-test
+- src/services/discovery/discoveryEngine.ts → runPreflightTest — the stored-integration Test Connection (`POST /:id/test`)
 
 **Invariants:**
 - Speaks ONE dialect (OpenAI-compatible). Ollama-native `/api/chat` is not supported; Ollama's `/v1` is.
@@ -42,7 +42,6 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - A 401/403 from the model server becomes "refused the API key" (Azure: worded by auth mode); nothing upstream is echoed beyond 300 characters.
 - `apiToken` is sent as `Authorization: Bearer` only when set (most local servers need none); on Azure it is the `api-key` header and is never sent in Entra mode.
 - The Entra access token and the client secret are never logged or put in an error message (`tests/unit/llmAzureFoundry.test.ts`).
-- Every `integrationConnectionTester` tick (10 min) re-runs `testConnection`, so an enabled Azure integration makes one tiny billed chat call per tick.
 
 **When changing this:**
 - A new provider dialect is a new branch HERE, not in the chat service — the orchestrator only sees `chatCompletionRound`. Azure (rule 95(j)) is the worked example: path, auth headers, model discovery, Test Connection and error wording all dispatch on `isAzureProvider`.

@@ -255,3 +255,29 @@ Scope, deliberately narrow: only the "FortiSwitch" family. A FortiAP's own row i
 Consequence: a twin minted before this change is never refreshed again. On the switch's next pass 91(g)'s ghost sweep absorbs it when the gate's lease or ARP gives the switch the same MAC; otherwise it stays until an operator deletes it (it will not be re-created).
 
 Rejected alternative: matching the client-list row to the switch by serial + address. Sound, but it keeps a second, redundant record of the switch flowing through every endpoint phase for no gain, and needs the serial field's name confirmed per FortiOS build.
+
+### 91(i) — devices that share a discovered name are named apart by MAC (2026-11-06)
+
+After 91(f) stopped fusing every "iPhone" into one asset, each device became its own asset — and every one of them was named "iPhone". The owner asked that a device discovered under a name another asset already carries be named `<name>-<MAC>`, and that the first one be renamed the same way: one iPhone stays "iPhone"; the moment a second appears, both become `iPhone-F2BC27` / `iPhone-717C43`.
+
+Decisions (owner, 2026-11-06): the suffix is the last three octets, upper-case, no separators (the full MAC only when two in one family collide). Randomized (private) MACs get no special treatment: they become assets like any other unless the integration's device filter excludes them. Only a name discovery gave is renamed — an operator's rename (`hostnameOverride`) or a name from Entra / AD / vCenter / the agent / a Generic API feed belongs to that source; renaming a server because a docked laptop's lease reused its name would be wrong.
+
+Why after the flush, and why the in-memory row: the fortigate-endpoint AssetSource echoes `Asset.hostname` into its observed blob from the `AssetIndex` copy (Phase 10), and Phase 11 re-projects the hostname from that blob. Renaming only the database row would have the same run write the bare name back.
+
+Scale: one `findMany` per 100 created hostnames, only on a run that created assets; at 2000 assets that is a handful of indexed lookups per run (`@@index([hostname])`).
+
+Rejected alternatives: suffixing every detected-device asset (noise for the many names that are unique); a per-run shared-name count (a name shared across runs, the usual case, would never be seen); renaming in Phase 11's projection (it runs for every touched asset, not only the ones whose family changed).
+
+Found while verifying (integration, same day): every new asset is born with a `manual` placeholder AssetSource, and a hand-made asset keeps only that row, so an empty-or-placeholder source list cannot say "discovery named this". The first cut treated it as eligible and would have renamed a hand-made asset sharing the name. Eligibility now needs a real `fortigate-endpoint` source, or creation by the asking pass (whose source Phase 10 stamps later).
+
+Not done here: splitting assets fused before 91(f) — the per-MAC Split on the Sources tab — is designed on a canvas and follows separately.
+
+### 91(j) — a MAC can be split off onto an asset of its own (2026-11-06)
+
+91(f) stopped new fusing, but assets fused before it kept every MAC they had collected — one "iPhone" with a hundred phones' MACs and leases — and the MAC rung keeps matching those MACs to it. The owner asked for the Sources tab to show the different MACs so they could be split to their own assets, and for the split to name them apart the 91(i) way. The design was mocked on a canvas (the per-MAC table and the confirmation) and approved before it was built.
+
+Why a new endpoint rather than the existing source Split: that one re-points a single AssetSource row and nothing else — no MAC, address or history — and the fortigate-endpoint source is keyed on the asset's PRIMARY MAC (one row), so a fused asset has nothing per-MAC to split by source.
+
+Decisions: the primary MAC stays (it is what the original is); a MAC the device reports as its own (an interface port range, an agent / Intune / vCenter NIC) is never another device; a quarantined asset is refused because its MACs are pushed to the gate and a split would orphan them; IP history moves only for addresses nothing left on the original holds; the new asset's primary MAC must be the split MAC, because discovery's fortigate-endpoint upsert moves that source to whichever asset holds the MAC as primary and would otherwise pull it back. The original's primary MAC is NOT recomputed: `selectPrimaryMac` ranks hardware-reported MACs first, and a split recomputing it would quietly change what the original is known by (the integration test caught this on the first cut).
+
+Rejected alternatives: extending the source Split (it has no per-MAC handle); recomputing the original's primary (above); moving sightings (they are per gate, not per MAC).

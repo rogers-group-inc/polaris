@@ -22,7 +22,10 @@
  *     `responseTimeMs`, `cpuPct`, `celsius`, `usedBytes`. On rollup tier
  *     those values are bucket averages instead of point measurements;
  *     `min*` / `max*` siblings + `sampleCount` are added so tooltips can
- *     show the bucket spread.
+ *     show the bucket spread (and the chart can draw a max line). Telemetry
+ *     rollups also carry `cpuCorePcts` (the per-core bucket AVERAGE, same
+ *     field as detail's point readings, null slots = cores with no reading)
+ *     and `cpuCoreMaxPcts` (the per-core bucket max).
  *
  *   - Counter tables (interface, ipsec): rollup samples ADD pre-computed
  *     rate fields (`inBytesPerSec`, `outBytesPerSec`, ..., or
@@ -33,7 +36,9 @@
  *     the rate is what the chart actually plots. The frontend branches
  *     on `bucketSeconds > 0` to read the rate fields directly instead of
  *     diffing consecutive cumulative samples (which is what detail tier
- *     still needs).
+ *     still needs). Interface rollups add `maxInBytesPerSec` /
+ *     `maxOutBytesPerSec` — the bucket's highest per-poll rate, which the
+ *     first/last endpoints cannot recover.
  *
  * BigInt → number coercion at the boundary, same as the existing
  * `bigIntToNumber()` helper in routes/assets.ts. Octets up to 2^53-1
@@ -42,7 +47,7 @@
 
 import { prisma } from "../db.js";
 import type { SampleTier } from "./sampleQueryRouter.js";
-import { coreVector } from "../utils/cpuCores.js";
+import { coreVector, coreVectorWithGaps } from "../utils/cpuCores.js";
 import { sdwanSegmentVerdict, type SdwanStripMetric, type SdwanStripSample, type SdwanStripTier } from "../utils/sdwanDimensions.js";
 import { severityRank } from "./notificationTypes.js";
 import { probeLossSeriesFrom } from "./alertChartService.js";
@@ -126,7 +131,7 @@ async function readDetailWithAnchor<T extends { timestamp: Date }>(
 
 // ─── Monitor history (response time) ─────────────────────────────────────────
 
-export interface MonitorHistoryRow {
+interface MonitorHistoryRow {
   timestamp:      Date;
   success?:       boolean;   // detail only
   /** Detail only — a failure taken while the parent was dark (drawn grey). */
@@ -377,14 +382,19 @@ export async function readLastMonitorSuccessAt(assetId: string, since: Date): Pr
 
 // ─── Telemetry history (CPU + memory) ────────────────────────────────────────
 
-export interface TelemetryHistoryRow {
+interface TelemetryHistoryRow {
   timestamp:        Date;
   cpuPct:           number | null;
-  // Per-logical-core utilisation, index = core id. DETAIL TIER ONLY — the
-  // rollups do not carry it, so this is undefined on hourly/daily and the
-  // CPU chart falls back to the aggregate line and says why. null (rather
-  // than undefined) means the tier COULD carry it and this source did not.
-  cpuCorePcts?:     number[] | null;
+  // Per-logical-core utilisation, index = core id. On detail a point
+  // reading (finite numbers only); on hourly/daily the bucket's per-core
+  // AVERAGE, where a core with no reading in the bucket is a null slot so
+  // later cores keep their index. null = no per-core data for this row (the
+  // source reports none, or the bucket was rolled up before the rollups
+  // carried per-core vectors).
+  cpuCorePcts?:     (number | null)[] | null;
+  // Rollup tiers only: the bucket's per-core MAXIMUM, indexed like
+  // cpuCorePcts (same null-slot rule). Absent on detail.
+  cpuCoreMaxPcts?:  (number | null)[] | null;
   memPct:           number | null;
   memUsedBytes:     number | null;
   memTotalBytes:    number | null;
@@ -512,6 +522,7 @@ export async function readTelemetryHistory(
     avgMemCompressedBytes: bigint | null;
     avgMemConsumedBytes: bigint | null;
     avgSessionCount: number | null; minSessionCount: number | null; maxSessionCount: number | null;
+    avgCpuCorePcts: unknown; maxCpuCorePcts: unknown;
   }>>(
     `SELECT "bucketStart", "sampleCount",
             "avgCpuPct", "minCpuPct", "maxCpuPct",
@@ -521,7 +532,8 @@ export async function readTelemetryHistory(
             "avgSwapUsedBytes", "lastSwapTotalBytes",
             "avgMemPrivateBytes", "avgMemSharedBytes", "avgMemBalloonedBytes",
             "avgMemSwappedBytes", "avgMemCompressedBytes", "avgMemConsumedBytes",
-            "avgSessionCount", "minSessionCount", "maxSessionCount"
+            "avgSessionCount", "minSessionCount", "maxSessionCount",
+            "avgCpuCorePcts", "maxCpuCorePcts"
      FROM "${table}"
      WHERE "assetId" = $1 AND "bucketStart" >= $2 AND "bucketStart" <= $3
      ORDER BY "bucketStart" ASC`,
@@ -545,10 +557,11 @@ export async function readTelemetryHistory(
       memPct:        r.avgMemPct,
       memUsedBytes:  bn(r.avgMemUsedBytes),
       memTotalBytes: bn(r.lastMemTotalBytes),
-      // cpuCorePcts is deliberately ABSENT on the rollup tiers (not null):
-      // the chart distinguishes "this tier cannot carry per-core" from
-      // "this source does not report per-core" and words its note
-      // differently for each.
+      // Per-core vectors: the bucket average under the detail field name, so
+      // the per-core chart renders rollup buckets unchanged, plus the
+      // per-core max for the max line. Null slots are gaps (see the row type).
+      cpuCorePcts:    coreVectorWithGaps(r.avgCpuCorePcts),
+      cpuCoreMaxPcts: coreVectorWithGaps(r.maxCpuCorePcts),
       memBuffersBytes: bn(r.avgMemBuffersBytes),
       memCachedBytes:  bn(r.avgMemCachedBytes),
       memFreeBytes:    bn(r.avgMemFreeBytes),
@@ -588,7 +601,7 @@ export async function readTelemetryHistory(
 // `sensorClass` lets the UI group/label. `alarmStatus` rides the detail tier
 // only (not aggregatable). The rollup tiers carry avg/min/max of `value`.
 
-export interface HardwareSensorHistoryRow {
+interface HardwareSensorHistoryRow {
   timestamp:    Date;
   sensorName:   string;
   sensorClass:  string;
@@ -862,6 +875,11 @@ export interface InterfaceHistoryRow {
   outBytesPerSec?: number | null;
   inErrorsPerSec?:  number | null;
   outErrorsPerSec?: number | null;
+  // Rollup tier only: the highest per-poll rate inside the bucket (bytes/sec),
+  // beside the bucket-average inBytesPerSec / outBytesPerSec. null when the
+  // bucket held no usable consecutive pair, or predates the column.
+  maxInBytesPerSec?:  number | null;
+  maxOutBytesPerSec?: number | null;
   sampleCount?:    number;
 }
 
@@ -931,6 +949,8 @@ export async function readInterfaceHistory(
     lastAlias: string | null;
     lastDescription: string | null;
     lastBucketSampleAt: Date;
+    maxInBytesPerSec: number | null;
+    maxOutBytesPerSec: number | null;
   }>>(
     `SELECT "bucketStart", "sampleCount",
             "firstInOctets", "lastInOctets",
@@ -941,7 +961,8 @@ export async function readInterfaceHistory(
             "lastAdminStatus", "lastOperStatus",
             "lastIpAddress", "lastIpv6Address", "lastMacAddress",
             "lastAlias", "lastDescription",
-            "lastBucketSampleAt"
+            "lastBucketSampleAt",
+            "maxInBytesPerSec", "maxOutBytesPerSec"
      FROM "${table}"
      WHERE "assetId" = $1 AND "ifName" = $2 AND "bucketStart" >= $3 AND "bucketStart" <= $4
      ORDER BY "bucketStart" ASC`,
@@ -967,6 +988,8 @@ export async function readInterfaceHistory(
       outBytesPerSec:  rate(bn(r.firstOutOctets), bn(r.lastOutOctets), startMs, lastMs),
       inErrorsPerSec:  rate(bn(r.firstInErrors),  bn(r.lastInErrors),  startMs, lastMs),
       outErrorsPerSec: rate(bn(r.firstOutErrors), bn(r.lastOutErrors), startMs, lastMs),
+      maxInBytesPerSec:  r.maxInBytesPerSec,
+      maxOutBytesPerSec: r.maxOutBytesPerSec,
       sampleCount:     r.sampleCount,
     };
   });
@@ -1273,7 +1296,7 @@ export async function readPathCheckHistory(
 // Rollup buckets are written on completed boundaries, so the stitch is exact
 // up to the newest partial bucket — the UI presents the count as approximate.
 
-export interface StreamHistorySummary {
+interface StreamHistorySummary {
   oldestAt: Date | null;
   newestAt: Date | null;
   sampleCount: number;
@@ -1396,7 +1419,7 @@ export function sdwanMemberLinkState(
   return { linkState: iface.operStatus === "up" ? "up" : "down", linkSource: "interface" };
 }
 
-export interface SdwanMemberHealthCheck {
+interface SdwanMemberHealthCheck {
   healthCheck: string;
   state:       string;        // "up" | "down"
   latencyMs:   number | null;
@@ -1425,7 +1448,7 @@ export interface SdwanMemberRow {
 }
 
 /** One scrape of one member on the Health Check Status strip. */
-export interface SdwanStripSegment {
+interface SdwanStripSegment {
   timestamp: Date;
   /** Alive in every health check it belongs to. */
   up:        boolean;

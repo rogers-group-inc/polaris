@@ -61,7 +61,7 @@ import { detectFping } from "../utils/burstPing.js";
 import { responseTimeProbeShouldQueue } from "../utils/pollingCompatibility.js";
 import { runsHeavyCadences } from "../utils/monitorStatus.js";
 import { setMonitoredAssets, setMonitorWorkers } from "../metrics.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { assetDialAddress } from "../utils/assetDialAddress.js";
@@ -104,8 +104,6 @@ setMonitorWorkers({
   systemInfo:   HEAVY_CONCURRENCY,
 });
 
-let runningProbe = false;
-let runningHeavy = false;
 
 /**
  * pg-boss publisher. Queries the same candidate set as runMonitorPass, runs
@@ -479,79 +477,69 @@ async function publishDueWork(cadences: MonitorCadence[]): Promise<void> {
   setMonitoredAssets(total, { up, down, passive, unknown: total - up - down - passive });
 }
 
-async function probeTick(): Promise<void> {
-  if (runningProbe) return;
-  runningProbe = true;
-  try {
-    await runInstrumentedJob("monitorAssets.probe", async () => {
-      if (getBootTimeMode() === "pgboss") {
-        await publishDueWork(["probe", "fastFiltered", "sdwan", "lossSample"]);
-      } else {
-        const stats = await runMonitorPass({
-          cadences: ["probe", "fastFiltered", "sdwan", "lossSample"],
-          concurrency: PROBE_CONCURRENCY,
-        });
-        if (stats.probed > 0 || stats.fastFiltered.collected > 0 || stats.sdwan.collected > 0 || stats.lossSample.collected > 0) {
-          logger.debug({ stats }, "Light monitor pass complete");
-        }
+// Light loop: response time, fast-filtered interfaces, SD-WAN, loss samples.
+// Runs at import, then every PROBE_TICK_MS; defineJob skips a tick while the
+// previous pass is still publishing / probing.
+defineJob({
+  name: "monitorAssets.probe",
+  intervalMs: PROBE_TICK_MS,
+  firstRunDelayMs: 0,
+  run: async () => {
+    if (getBootTimeMode() === "pgboss") {
+      await publishDueWork(["probe", "fastFiltered", "sdwan", "lossSample"]);
+    } else {
+      const stats = await runMonitorPass({
+        cadences: ["probe", "fastFiltered", "sdwan", "lossSample"],
+        concurrency: PROBE_CONCURRENCY,
+      });
+      if (stats.probed > 0 || stats.fastFiltered.collected > 0 || stats.sdwan.collected > 0 || stats.lossSample.collected > 0) {
+        logger.debug({ stats }, "Light monitor pass complete");
       }
-    });
-  } catch (err) {
-    logger.error({ err }, "Light monitor tick failed");
-  } finally {
-    runningProbe = false;
-  }
-}
+    }
+  },
+});
 
-async function heavyTick(): Promise<void> {
-  if (runningHeavy) return;
-  runningHeavy = true;
-  try {
-    await runInstrumentedJob("monitorAssets.heavy", async () => {
-      if (getBootTimeMode() === "pgboss") {
-        // Phase 2 carve-out: LLDP + Storage publish on the heavy tick alongside
-        // telemetry + systemInfo. Cursor mode keeps the legacy
-        // ["telemetry", "systemInfo"] set for those two — the cursor pass
-        // doesn't drive the LLDP/Storage queues (pg-boss-only); the existing
-        // systemInfo walk picks up LLDP + Storage as session-coalesced side
-        // effects on cursor installs. The agentless "processes" and "eventLog"
-        // cadences have NO side effect to ride, so they dispatch explicitly in
-        // BOTH modes.
-        // Manufacturer custom widgets (business rule 130) have no side effect to
-        // ride either, so they dispatch in BOTH modes too.
-        await publishDueWork(["telemetry", "systemInfo", "lldp", "storage", "processes", "eventLog", "customWidget"]);
-      } else {
-        const stats = await runMonitorPass({
-          cadences: ["telemetry", "systemInfo", "processes", "eventLog", "customWidget"],
-          concurrency: HEAVY_CONCURRENCY,
-        });
-        if (stats.telemetry.collected > 0 || stats.systemInfo.collected > 0 || stats.processes.collected > 0) {
-          logger.debug({ stats }, "Heavy monitor pass complete");
-        }
+// Heavy loop: telemetry, system info, LLDP / storage / processes / event log,
+// custom widgets, and the fleet-coordinated retention prune.
+defineJob({
+  name: "monitorAssets.heavy",
+  intervalMs: HEAVY_TICK_MS,
+  firstRunDelayMs: 0,
+  run: async () => {
+    if (getBootTimeMode() === "pgboss") {
+      // Phase 2 carve-out: LLDP + Storage publish on the heavy tick alongside
+      // telemetry + systemInfo. Cursor mode keeps the legacy
+      // ["telemetry", "systemInfo"] set for those two — the cursor pass
+      // doesn't drive the LLDP/Storage queues (pg-boss-only); the existing
+      // systemInfo walk picks up LLDP + Storage as session-coalesced side
+      // effects on cursor installs. The agentless "processes" and "eventLog"
+      // cadences have NO side effect to ride, so they dispatch explicitly in
+      // BOTH modes.
+      // Manufacturer custom widgets (business rule 130) have no side effect to
+      // ride either, so they dispatch in BOTH modes too.
+      await publishDueWork(["telemetry", "systemInfo", "lldp", "storage", "processes", "eventLog", "customWidget"]);
+    } else {
+      const stats = await runMonitorPass({
+        cadences: ["telemetry", "systemInfo", "processes", "eventLog", "customWidget"],
+        concurrency: HEAVY_CONCURRENCY,
+      });
+      if (stats.telemetry.collected > 0 || stats.systemInfo.collected > 0 || stats.processes.collected > 0) {
+        logger.debug({ stats }, "Heavy monitor pass complete");
       }
-      // Fleet-coordinated retention prune. runRetentionPrune owns the
-      // due-check (persisted timestamp) + the cross-replica advisory lock, so
-      // this is cheap and safe to call every heavy tick: the common not-due
-      // path is a single indexed Setting read, and at most one monitor replica
-      // fleet-wide ever runs the actual prune. (Replaces the old in-memory
-      // `lastPruneAt = 0` trigger that fired on every process boot and, under a
-      // restart loop, fanned into the 2026-06-17 DELETE pile-up.)
-      const prune = await runRetentionPrune();
-      if (!prune.skipped && (prune.monitor > 0 || prune.telemetry > 0 || prune.systemInfo > 0)) {
-        logger.info(
-          { pruned: prune.monitor, telPruned: prune.telemetry, sysPruned: prune.systemInfo },
-          "Pruned old monitor samples",
-        );
-      }
-    });
-  } catch (err) {
-    logger.error({ err }, "Heavy monitor tick failed");
-  } finally {
-    runningHeavy = false;
-  }
-}
-
-probeTick();
-heavyTick();
-setInterval(probeTick, PROBE_TICK_MS);
-setInterval(heavyTick, HEAVY_TICK_MS);
+    }
+    // Fleet-coordinated retention prune. runRetentionPrune owns the
+    // due-check (persisted timestamp) + the cross-replica advisory lock, so
+    // this is cheap and safe to call every heavy tick: the common not-due
+    // path is a single indexed Setting read, and at most one monitor replica
+    // fleet-wide ever runs the actual prune. (Replaces the old in-memory
+    // `lastPruneAt = 0` trigger that fired on every process boot and, under a
+    // restart loop, fanned into the 2026-06-17 DELETE pile-up.)
+    const prune = await runRetentionPrune();
+    if (!prune.skipped && (prune.monitor > 0 || prune.telemetry > 0 || prune.systemInfo > 0)) {
+      logger.info(
+        { pruned: prune.monitor, telPruned: prune.telemetry, sysPruned: prune.systemInfo },
+        "Pruned old monitor samples",
+      );
+    }
+  },
+});

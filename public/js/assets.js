@@ -101,6 +101,127 @@ function _setChartRangePref(key, range) {
     localStorage.setItem("polaris-prefs-charts-" + currentUsername, JSON.stringify(p));
   } catch (_) {}
 }
+
+// ─── Bucket-peak (max) line on rollup tiers ────────────────────────────────
+//
+// On the hourly and daily tiers a chart's solid line is each bucket's
+// AVERAGE, which flattens a five-minute spike to nothing over an hour. The
+// rollups keep each bucket's MAX as well, so every rollup chart draws it as a
+// fine dashed line (`2 3` — finer than the response-time chart's `4,3`
+// packet-loss dash, which is what keeps the two apart) in its series' colour,
+// UNDER the average. It is a NAMED series: one toggle per chart, persisted per
+// user in the charts prefs map under "<chartKey>:max", default on — unlike a
+// per-dimension (core) toggle, which is not persisted. Its chip only exists on
+// a rollup tier, where there is a max to draw. Hiding it rescales the y-axis
+// to the averages; the tooltip names both readings either way, so a huge max
+// never hides the average and switching the line off never hides the peak.
+
+// "hourly" | "daily" when the history payload reads a rollup tier, else null.
+function _chartRollupTier(data) {
+  if (!data) return null;
+  if (data.tier === "hourly" || data.tier === "daily") return data.tier;
+  var bs = typeof data.bucketSeconds === "number" ? data.bucketSeconds : 0;
+  if (bs > 0) return bs >= 86400 ? "daily" : "hourly";
+  return null;
+}
+function _getMaxLinePref(chartKey) {
+  return _getChartRangePref(chartKey + ":max", "on") !== "off";
+}
+function _setMaxLinePref(chartKey, on) {
+  _setChartRangePref(chartKey + ":max", on ? "on" : "off");
+}
+// The legend chip: a short dashed-line swatch instead of a colour square (the
+// line takes each series' colour, so no single colour names it). Its off look
+// mirrors _seriesChipHTML — the strikethrough carries the state, the label
+// keeps most of its ink because the chip is the only route back.
+//
+// The swatch is a CSS-gradient dash (2px on, 3px off — the line's own
+// `2 3`), NOT an inline <svg>: the chip sits inside the chart container ahead
+// of the plot, and the drag-select, tooltip and camera all find the plot with
+// container.querySelector("svg") — a swatch svg would win that lookup.
+// `color` is the swatch: the series colour on a single-series chart, so the
+// key matches the line it toggles. Omitted where the max lines come in several
+// colours (cores, members, in/out) and the swatch can only say "all of them":
+// the primary text colour then, never grey, which is the Parent down colour.
+// A gradient reference (severity shading) cannot be a CSS background, so it
+// falls back to the accent the un-shaded line uses.
+function _maxLineChipHTML(chartKey, tier, on, color) {
+  var sw = !color ? "var(--color-text-primary)" : (/^url\(/.test(color) ? "var(--color-accent)" : color);
+  var span = tier === "daily" ? "day" : "hour";
+  return '<span class="chart-max-chip" data-max-chart="' + escapeHtml(chartKey) + '"' +
+    ' title="' + escapeHtml((on ? "Click to hide" : "Click to show") + " the dashed line of each " + span + "'s highest reading") + '"' +
+    ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;user-select:none' +
+    (on ? '' : ';opacity:0.8;text-decoration:line-through') + '">' +
+    '<span class="chart-max-swatch" aria-hidden="true" style="width:15px;height:2px;flex:0 0 auto;' +
+      'background-image:linear-gradient(to right,' + sw + ' 0,' + sw + ' 2px,transparent 2px,transparent 5px);' +
+      'background-size:5px 2px;background-repeat:repeat-x' + (on ? '' : ';opacity:0.45') + '"></span>' +
+    escapeHtml("Max (" + tier + " peak)") + '</span>';
+}
+// A chip-only legend row for a chart whose own legend lives inside its SVG
+// (CPU & Memory, interface throughput) or that has none (hardware sensor).
+// Empty off a rollup tier.
+function _maxLineLegendRowHTML(chartKey, tier, color) {
+  if (!tier) return "";
+  return '<div class="chart-max-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
+    _maxLineChipHTML(chartKey, tier, _getMaxLinePref(chartKey), color) + '</div>';
+}
+// Wires every Max chip for `chartKey` under `root`: flip the pref, re-render.
+function _wireMaxLineChip(root, chartKey, rerender) {
+  if (!root) return;
+  root.querySelectorAll(".chart-max-chip").forEach(function (chip) {
+    if (chip.getAttribute("data-max-chart") !== chartKey) return;
+    chip.addEventListener("click", function () {
+      _setMaxLinePref(chartKey, !_getMaxLinePref(chartKey));
+      rerender();
+    });
+  });
+}
+// The dashed max line. `pts` is in time order, each `{x, y, color?}` or null —
+// a null (a bucket with no max: written before the column existed, or a
+// response-time bucket with no successes) BREAKS the line rather than bridging
+// it. A per-point `color` splits the line where it changes; the segment into a
+// point takes that point's colour. Goes inside the chart's clip-path group,
+// before the average line it sits under.
+function _maxLineSVG(pts, color, opts) {
+  opts = opts || {};
+  var width = opts.width || 1.25;
+  var opacity = opts.opacity != null ? opts.opacity : 0.85;
+  var extra = opts.attrs || "";
+  var out = "";
+  var run = [];
+  function cOf(p) { return p.color || color; }
+  function poly(list) {
+    out += '<polyline class="chart-max-line"' + extra + ' points="' +
+      list.map(function (p) { return p.x + "," + p.y; }).join(" ") +
+      '" fill="none" stroke="' + cOf(list[list.length - 1]) + '" stroke-width="' + width +
+      '" stroke-dasharray="2 3" stroke-linejoin="round" opacity="' + opacity + '"/>';
+  }
+  function flush() {
+    if (run.length === 1) {
+      // A lone bucket between two gaps: a dash needs two points, so a dot.
+      out += '<circle class="chart-max-line"' + extra + ' cx="' + run[0].x + '" cy="' + run[0].y + '" r="' + width +
+        '" fill="' + cOf(run[0]) + '" opacity="' + opacity + '"/>';
+    } else if (run.length > 1) {
+      var start = 0;
+      for (var j = 2; j < run.length; j++) {
+        if (cOf(run[j]) !== cOf(run[j - 1])) { poly(run.slice(start, j)); start = j - 1; }
+      }
+      poly(run.slice(start));
+    }
+    run = [];
+  }
+  (pts || []).forEach(function (p) {
+    if (!p || !isFinite(p.x) || !isFinite(p.y)) { flush(); return; }
+    run.push(p);
+  });
+  flush();
+  return out;
+}
+// Tooltip fragment naming both readings of a rollup bucket: "<avg> avg · <max> max".
+function _avgMaxText(avgText, maxText) {
+  return escapeHtml(avgText) + ' avg<span style="color:var(--color-text-secondary)"> · ' +
+    escapeHtml(maxText != null && maxText !== "" ? maxText : "—") + ' max</span>';
+}
 // Storage chart view mode (Used % vs Used bytes). Single string per user
 // because operators tend to think in one mental model across the whole
 // fleet, not per-asset.
@@ -318,9 +439,16 @@ function _chartClipAttr(id) {
   return 'clip-path="url(#' + id + ')"';
 }
 
+// The four verdict hexes below, the outage-marker helpers, _inChartWindow,
+// _derivePerIntervalSeries and the memory band tables live ONCE in
+// public/js/chart-shared.js (PolarisChartShared), shared with the phone; the
+// asset-detail helpers likewise in public/js/asset-shared.js. Here they are
+// aliases and three-line wrappers that keep the desktop names, so both
+// modules must load before this file (tests/unit/assetSharedModules.test.ts).
+//
 // Failed-poll color shared by every failure-aware chart element (red baseline
 // dots, fade-to-red line segments). Matches the danger hue the tooltips use.
-var _CHART_FAIL_COLOR = "#d32f2f";
+var _CHART_FAIL_COLOR = PolarisChartShared.FAIL_COLOR;
 
 // The dependency-down grey. A probe that missed while the asset was
 // dependency-suppressed (its parent was dark) draws the SAME dive as an
@@ -330,7 +458,7 @@ var _CHART_FAIL_COLOR = "#d32f2f";
 // unexplained outage. Flat hex like _CHART_FAIL_COLOR: it has to read on all
 // three themes and is duplicated in utils/sparklineSvg.ts (DEP_COLOR) so the
 // alert email and the device page draw one outage the same way.
-var _CHART_DEP_COLOR = "#9aa0a6";
+var _CHART_DEP_COLOR = PolarisChartShared.DEP_COLOR;
 
 // The response-time series is drawn in the UP green rather than the theme
 // accent, so the one chart that is ABOUT reachability speaks the same four
@@ -354,7 +482,7 @@ var _CHART_UP_COLOR = "var(--color-success)";
 // transition markers spend the same hue on this chart, but at a lighter opacity
 // and as full-height dashed lines with a dot above the plot — different shape,
 // different weight, and never on the baseline where a missed poll sits.
-var _CHART_MISS_COLOR = "#ffc107";
+var _CHART_MISS_COLOR = PolarisChartShared.MISS_COLOR;
 
 // A poll that ANSWERED while missed polls are still outstanding. Same meaning
 // and same hue as the blue cell on the Last-30-min strip: the device is
@@ -376,7 +504,7 @@ var _CHART_MISS_COLOR = "#ffc107";
 // used for the same state all along. Convergent, NOT shared: that map is
 // deliberately its own palette (see the comment on it in api.js) — do not make
 // either one read the other.
-var _CHART_RECOVER_COLOR = "#0288d1";
+var _CHART_RECOVER_COLOR = PolarisChartShared.RECOVER_COLOR;
 
 /**
  * "#rrggbb" + alpha → "rgba(r,g,b,a)". Exists because the Last-30-min strip
@@ -406,20 +534,7 @@ function _hexWithAlpha(hex, alpha) {
 // while the bucket was still above the threshold read `down`, and with no way to
 // paint an `ok` point in the down colour it fell through to the series green.
 function _chartPointColor(p, seriesColor) {
-  if (p.ok) return p.rec ? _CHART_RECOVER_COLOR : seriesColor;
-  // Grey outranks the amber/down split: a miss the upstream explains is not
-  // being counted against this device at all, so how close it sits to the
-  // threshold says nothing worth colouring.
-  if (p.dep) return _CHART_DEP_COLOR;
-  // `down` is set only by the charts that resolved the covering automation's
-  // count (today: response time). Everywhere else it is undefined and the miss
-  // stays red, which is what every other chart has always drawn.
-  //
-  // `downColor` is that automation's SEVERITY colour: Down is not inherently
-  // red, red is what `critical` looks like. Absent ⇒ the red, which is both the
-  // critical colour and the right answer for a miss no automation was resolved
-  // for (see PolarisChartSeverity.downColorOf).
-  return p.down === false ? _CHART_MISS_COLOR : (p.downColor || _CHART_FAIL_COLOR);
+  return PolarisChartShared.chartPointColor(p, seriesColor);
 }
 
 // Failure-aware line rendering. `pts` is a time-ordered list of
@@ -472,15 +587,7 @@ function _failureDotsSVG(pts) {
 // timestamps to have a meaningful middle. Sizes the hole test in
 // _seriesReportedThrough below.
 function _medianCadenceMs(timestampsMs) {
-  if (!timestampsMs || timestampsMs.length < 3) return 0;
-  var dts = [];
-  for (var i = 1; i < timestampsMs.length; i++) {
-    var dt = timestampsMs[i] - timestampsMs[i - 1];
-    if (dt > 0) dts.push(dt);
-  }
-  if (!dts.length) return 0;
-  dts.sort(function (a, b) { return a - b; });
-  return dts[Math.floor(dts.length / 2)];
+  return PolarisChartShared.medianCadenceMs(timestampsMs);
 }
 
 // Missed-poll markers for the streams that carry no per-sample success flag —
@@ -521,25 +628,7 @@ function _medianCadenceMs(timestampsMs) {
 // Diving a line that has data would misreport the data we are actually holding.
 // See _seriesReportedThrough for what "kept reporting" means.
 function _outageMarkers(outages, sampleTimesMs) {
-  if (!outages || !outages.length) return [];
-  var times = (sampleTimesMs || []).slice().sort(function (a, b) { return a - b; });
-  var cadenceMs = _medianCadenceMs(times);
-  var markers = [];
-  outages.forEach(function (o) {
-    var from = +new Date(o.from);
-    var to   = +new Date(o.to);
-    var dep  = o.kind === "dependency";
-    if (!isFinite(from) || !isFinite(to)) return;
-    // Skip the WHOLE window, not merely its edges. Dropping just the end
-    // markers would still leave any interior samples in place, and the line
-    // would dive at the window's start, climb back for each of them, and dive
-    // again — a zigzag that claims an outage and shows readings through it at
-    // the same time.
-    if (_seriesReportedThrough(times, cadenceMs, from, to)) return;
-    markers.push({ t: from, dep: dep });
-    if (to > from) markers.push({ t: to, dep: dep });
-  });
-  return markers.sort(function (a, b) { return a.t - b.t; });
+  return PolarisChartShared.outageMarkers(outages, sampleTimesMs);
 }
 
 // Did the series keep reporting through the outage [from, to]? Two pieces of
@@ -567,15 +656,7 @@ function _outageMarkers(outages, sampleTimesMs) {
 // bucket, i.e. the next bucket's start, so the neighbour lookups are
 // inclusive and the interior test is strict.
 function _seriesReportedThrough(times, cadenceMs, from, to) {
-  var prev = null, next = null;
-  for (var i = 0; i < times.length; i++) {
-    var t = times[i];
-    if (t > from && t < to) return true;
-    if (t <= from) prev = t;
-    if (t >= to && next === null) next = t;
-  }
-  if (!(cadenceMs > 0) || prev === null || next === null) return false;
-  return next - prev <= cadenceMs * 1.5;
+  return PolarisChartShared.seriesReportedThrough(times, cadenceMs, from, to);
 }
 
 // The three things every chart does with those markers, kept together so a new
@@ -2275,14 +2356,6 @@ function assetNetworkCellHTML(a) {
   return '<span title="' + escapeHtml(ctx.subnetCidr) + '">' + escapeHtml(name || ctx.subnetCidr) + '</span>';
 }
 
-function _viewLeaseActionHTML(a) {
-  if (!a.ipAddress) return '';
-  var ctx = a.ipContext;
-  if (!ctx || !ctx.subnetId) return '';
-  var title = 'View this IP in ' + (ctx.subnetCidr || 'its network');
-  return '<button class="btn btn-sm btn-secondary" onclick="viewAssetLease(' + jsArg(a.id) + ')" title="' + escapeHtml(title) + '">View Lease</button>';
-}
-
 function viewAssetLease(id) {
   var a = (_assetsData || []).find(function (x) { return x.id === id; });
   // Fall back to the asset currently shown in the details slide-over — it
@@ -2305,28 +2378,15 @@ function viewAssetLease(id) {
 
 function _ensureLeasePanelDOM() {
   if (document.getElementById("lease-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "lease-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="lease-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="lease-panel-title">Lease</h3>' +
-          '<button class="btn-icon" id="lease-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="lease-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="lease-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="lease-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeLeasePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "lease-panel",
+    title: "Lease",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeLeasePanel,
+    resizeKey: "polaris.panel.width.lease",
   });
-  document.getElementById("lease-panel-close").addEventListener("click", closeLeasePanel);
-  initSlideoverResize(document.getElementById("lease-panel"), "polaris.panel.width.lease");
 }
 
 function closeLeasePanel() {
@@ -6204,7 +6264,7 @@ async function openViewModal(id, opts) {
       tabs.push({ key: "devicequery", label: "Device Query", html: tabbedBodyHTML("asset-dq", deviceQueryTabs) });
     }
     // Sources tab — discovery-source provenance lives last.
-    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId) });
+    tabs.push({ key: "sources", label: "Sources", html: _assetSourcesTabHTML(sources, a.id, sightings, ipHistory, a.discoveredByIntegrationId, a) });
     // The strip's order is decided here, not by push order (operator decision
     // 2026-11-04): General, System, SD-WAN, IPsec, ARP Table, MAC Table,
     // Wireless, Events, Alerts, Sources. The tabs that list does not name
@@ -6945,11 +7005,24 @@ function _agentStatusLabel(s) {
   }
 }
 
+// The SAME mapping as agent-build.js → _agentStatusBadge (the Agents settings
+// page): a status reads the same colour wherever it is shown (CQ-F021 — an
+// upgrade_failed agent read red there and grey here). tests/unit/
+// agentStatusColorParity.test.ts fails if the two drift apart.
 function _agentStatusColor(s) {
-  if (s === "active") return "var(--color-success)";
-  if (s === "failed" || s === "uninstall_failed") return "var(--color-danger)";
-  if (s === "revoked") return "var(--color-warning)";
-  return "var(--color-text-secondary)";
+  switch (s) {
+    case "active":            return "var(--color-success)";
+    case "failed":
+    case "upgrade_failed":
+    case "uninstall_failed":  return "var(--color-danger)";
+    case "revoked":           return "var(--color-warning)";
+    case "pending":
+    case "uploading":
+    case "enrolling":
+    case "upgrading":
+    case "uninstalling":      return "var(--color-accent)";
+    default:                  return "var(--color-text-tertiary)";
+  }
 }
 
 // Asset-source kinds the agent can be installed on — mirrors the "agent"
@@ -7735,8 +7808,7 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
 
 /** "YYYY-MM-DDTHH:MM" in the browser's zone — a datetime-local input's value. */
 function _fwLocalInputValue(d) {
-  function p(n) { return (n < 10 ? "0" : "") + n; }
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+  return PolarisAssetShared.fwLocalInputValue(d);
 }
 
 function _fwBrowserZone() {
@@ -7745,15 +7817,7 @@ function _fwBrowserZone() {
 
 /** "Tue, Oct 7, 2026, 2:00 AM CDT (in 9 h)" — the booking as the reader's clock shows it. */
 function _fwWhenText(iso) {
-  var d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
-  var mins = Math.round((d.getTime() - Date.now()) / 60000);
-  var rel = mins <= 0 ? "due now"
-    : mins < 60 ? "in " + mins + " min"
-    : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h"
-    : "in " + Math.round(mins / 1440) + " days";
-  return txt + " (" + rel + ")";
+  return PolarisAssetShared.fwWhenText(iso);
 }
 
 function _fwScheduleHTML(sched, canFlash) {
@@ -7774,7 +7838,7 @@ function _fwScheduleHTML(sched, canFlash) {
 }
 
 function _fwParseEmails(text) {
-  return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+  return PolarisAssetShared.fwParseEmails(text);
 }
 
 async function _cancelFirmwareSchedule(a, sched) {
@@ -9282,7 +9346,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // And for interface tags (business rule 133): the column appears once any
   // port carries one. A port gets its first tag from the interface slide-over.
   var showTagsCol = rows.some(function (r) { return Array.isArray(r.tags) && r.tags.length > 0; });
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0);
+  // And for transceiver readings (business rule 143): the five optics columns
+  // appear once any port carries them. Rx / Tx show by default; temperature,
+  // voltage and bias start hidden and are one tick away in the column gear.
+  var showOpticsCols = rows.some(function (r) { return r.optics != null; });
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -9368,6 +9436,44 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       : "var(--color-text-secondary)";
     var cls = iface.poeClass ? ' <span style="color:var(--color-text-secondary)">· ' + escapeHtml(iface.poeClass) + '</span>' : "";
     return '<td class="mono" style="color:' + color + '">' + escapeHtml(LABEL[st] || st) + cls + '</td>';
+  }
+  // Transceiver DDM cells. Rx below RX_LOW_DBM is tinted: that is past the
+  // receive sensitivity of most optics, and the agent's own sensor status
+  // stays "ok" there (it says the sensor works, not that the light is good).
+  var RX_LOW_DBM = -20;
+  function opticsCellsHTML(iface) {
+    if (!showOpticsCols) return "";
+    var o = iface.optics || null;
+    function num(v, digits) { return (typeof v === "number" && isFinite(v)) ? v.toFixed(digits) : null; }
+    // A reading opens its own history (the sensor slide-over), addressed by the
+    // stored sensor name the collector gave it (rule 143's `<port> <role>`).
+    var roleOrder = ["rxPower", "txPower", "temperature", "voltage", "bias"];
+    var cellIdx = 0;
+    function cell(text, extra) {
+      var role = roleOrder[cellIdx++];
+      if (text == null) return '<td class="mono"' + (extra || "") + '>—</td>';
+      return '<td class="mono"' + (extra || "") + '><a href="#" class="iface-optic-link" data-sensor="' +
+        escapeHtml(_sfpSensorName(iface.ifName, role)) + '" title="Show history" style="color:inherit;text-decoration:none">' +
+        escapeHtml(text) + '</a></td>';
+    }
+    if (!o) return cell(null) + cell(null) + cell(null) + cell(null) + cell(null);
+    var rx = num(o.rxDbm, 2);
+    var rxLow = typeof o.rxDbm === "number" && o.rxDbm <= RX_LOW_DBM;
+    var rxExtra = rxLow
+      ? ' style="color:var(--color-danger,#dc2626)" title="Receive power is below the sensitivity of most optics (' + RX_LOW_DBM + ' dBm) — check the fibre, connectors and the far-end transmitter"'
+      : "";
+    var tempTxt = null;
+    if (typeof o.temperatureC === "number" && isFinite(o.temperatureC)) {
+      var TU = window.PolarisTempUnit;
+      var tv = TU ? TU.convertCelsius(o.temperatureC) : o.temperatureC;
+      tempTxt = tv.toFixed(1) + " " + (TU ? TU.celsiusLabel() : "°C");
+    }
+    var bias = (typeof o.biasA === "number" && isFinite(o.biasA)) ? (o.biasA * 1000).toFixed(2) : null;
+    return cell(rx, rxExtra) +
+      cell(num(o.txDbm, 2)) +
+      cell(tempTxt) +
+      cell(num(o.voltage, 2) != null ? num(o.voltage, 2) + " V" : null) +
+      cell(bias);
   }
   function vlanCellsHTML(iface) {
     if (!showVlanCols) return "";
@@ -9477,6 +9583,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<td class="mono">' + escapeHtml(iface.macAddress || "—") + "</td>" +
       vlanCellsHTML(iface) +
       poeCellHTML(iface) +
+      opticsCellsHTML(iface) +
       "<td>" + (iface.inOctets  != null ? _fmtBytes(iface.inOctets)  : "—") + "</td>" +
       "<td>" + (iface.outOctets != null ? _fmtBytes(iface.outOctets) : "—") + "</td>" +
       '<td title="In errors / Out errors (cumulative)">' + errs + "</td>" +
@@ -9600,6 +9707,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
     var port = n.portId || n.portDescription || "";
     return port ? (label + " / " + port) : label;
   }
+  function opticNum(iface, key) {
+    var v = iface.optics ? iface.optics[key] : null;
+    return (typeof v === "number" && isFinite(v)) ? v : null;
+  }
   function _ifaceEntry(iface, group, tree) {
     var alias = (iface.alias && iface.alias.trim()) ? iface.alias.trim() : "";
     var errIn = iface.inErrors != null ? Number(iface.inErrors) : 0;
@@ -9616,6 +9727,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       "native-vlan": iface.nativeVlan != null ? Number(iface.nativeVlan) : null,
       "tagged-vlans": taggedVlanList(iface),
       poe: iface.poeStatus || "",
+      "sfp-rx":    opticNum(iface, "rxDbm"),
+      "sfp-tx":    opticNum(iface, "txDbm"),
+      "sfp-temp":  opticNum(iface, "temperatureC"),
+      "sfp-volts": opticNum(iface, "voltage"),
+      "sfp-bias":  opticNum(iface, "biasA"),
       "in": iface.inOctets != null ? Number(iface.inOctets) : null,
       out: iface.outOctets != null ? Number(iface.outOctets) : null,
       errors: (iface.inErrors != null || iface.outErrors != null) ? (errIn + errOut) : null,
@@ -9757,6 +9873,13 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   var poeHeader = showPoeCol
     ? '<th data-col-id="poe" data-sf-key="poe" data-sf-options="" title="Power over Ethernet: detection status and the negotiated power CLASS (a budget bracket, e.g. class3 = up to 12.95 W at the powered device). POWER-ETHERNET-MIB defines no per-port wattage, so no draw is shown. SNMP only.">PoE</th>'
     : "";
+  var opticsHeader = showOpticsCols
+    ? '<th data-col-id="sfp-rx" data-sf-key="sfp-rx" data-sf-type="number" data-sf-nofilter title="Transceiver receive power, from its digital diagnostics. Read from the switch\'s ENTITY-SENSOR table and placed on the port by the cage layout (SNMP names no port for these readings).">Rx (dBm)</th>' +
+      '<th data-col-id="sfp-tx" data-sf-key="sfp-tx" data-sf-type="number" data-sf-nofilter title="Transceiver transmit power, from its digital diagnostics">Tx (dBm)</th>' +
+      '<th data-col-id="sfp-temp" data-sf-key="sfp-temp" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transceiver temperature">SFP Temp</th>' +
+      '<th data-col-id="sfp-volts" data-sf-key="sfp-volts" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transceiver supply voltage">SFP Voltage</th>' +
+      '<th data-col-id="sfp-bias" data-sf-key="sfp-bias" data-sf-type="number" data-sf-nofilter data-col-default-hidden="true" title="Transmit laser bias current">Bias (mA)</th>'
+    : "";
   container.innerHTML = staleBanner +
     '<p class="hint" style="margin:0 0 0.4rem 0;font-size:0.76rem">A <strong>Monitored</strong> interface is polled every minute and records <strong>history</strong>; click its button to switch it between Monitored and Unmonitored. Every interface below shows its current state; only monitored ones record history you can chart or alert on throughput.' +
       (ipsecCount > 0 ? ' ' + _ipsecTabPointerHTML(ipsecCount) : '') + '</p>' +
@@ -9764,7 +9887,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th title="Monitored interfaces are polled every minute and record history. Unmonitored interfaces still show current state here, but record no history to chart." style="width:112px" data-col-id="poll" data-col-required="true" data-col-no-resize="true">' +
         '<button type="button" class="iface-mon-toggle iface-mon-all" id="iface-poll-all" title="Switch every listed interface (rows hidden by a filter keep their current setting)"' + (canEdit ? '' : ' disabled') + '>Monitor all</button>' +
       '</th>' +
-      '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="string">Interface</th>' +
+      '<th data-col-id="ifname" data-col-required="true" data-sf-key="ifname" data-sf-type="natural">Interface</th>' +
       '<th data-col-id="status" data-sf-key="status" data-sf-options="">Status</th>' +
       '<th data-col-id="speed" data-sf-key="speed" data-sf-type="number" data-sf-nofilter>Speed</th>' +
       '<th data-col-id="ip" data-sf-key="ip" data-sf-type="ip">IP</th>' +
@@ -9773,6 +9896,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       '<th data-col-id="mac" data-sf-key="mac" data-sf-type="string">MAC</th>' +
       vlanHeader +
       poeHeader +
+      opticsHeader +
       '<th data-col-id="in" data-sf-key="in" data-sf-type="number" data-sf-nofilter>In</th>' +
       '<th data-col-id="out" data-sf-key="out" data-sf-type="number" data-sf-nofilter>Out</th>' +
       '<th data-col-id="errors" data-sf-key="errors" data-sf-type="number" data-sf-nofilter>Errors (in/out)</th>' +
@@ -10183,6 +10307,14 @@ function _wireInterfacesTable(container, si, asset, rows, state) {
     // too (_openInterfaceOrNetwork). The already-loaded row rides along so the
     // slide-over can surface current-state fields (VLAN config in particular)
     // that the interface-history endpoint doesn't carry.
+    // A transceiver reading cell — its history in the sensor slide-over.
+    var opticLink = t.closest(".iface-optic-link");
+    if (opticLink) {
+      e.preventDefault();
+      openSensorDetailPanel(asset, opticLink.getAttribute("data-sensor"));
+      return;
+    }
+
     var ifLink = t.closest(".asset-iface-link");
     if (ifLink) {
       e.preventDefault();
@@ -10329,10 +10461,8 @@ function _storagePctCell(pct) {
 // FAULTED…, Unraid's array state STARTED / STOPPED, a disk's DISK_OK…),
 // coloured by whether it reads healthy. Unknown words stay neutral.
 function _storageHealthCell(h) {
-  var s = String(h).toUpperCase();
-  var good = /^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s);
-  var bad = /(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s);
-  var color = good ? "var(--color-success,#46a758)" : bad ? "var(--color-danger,#e5484d)" : "var(--color-text-secondary)";
+  var state = PolarisAssetShared.storageHealthState(h);
+  var color = state === "good" ? "var(--color-success,#46a758)" : state === "bad" ? "var(--color-danger,#e5484d)" : "var(--color-text-secondary)";
   return '<span style="color:' + color + '">' + escapeHtml(h) + '</span>';
 }
 
@@ -10345,21 +10475,11 @@ function _storageHealthCell(h) {
 // Inventory, not a time series: it is as fresh as the last discovery run.
 
 function _poolMemberUnhealthy(m) {
-  var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
-  var h = String(m.health || "").toUpperCase();
-  return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
-    (m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
+  return PolarisAssetShared.poolMemberUnhealthy(m);
 }
 
 function _poolScanText(scan) {
-  if (!scan) return "";
-  var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
-  var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
-  var state = scan.state === "running"
-    ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
-    : (scan.state || "—");
-  var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
-  return kind + ": " + state + when + errs;
+  return PolarisAssetShared.poolScanText(scan);
 }
 
 function _poolLayoutsHTML(rows, details) {
@@ -10881,27 +11001,7 @@ function _radioPowerLabel(r) {
  * with the station count.
  */
 function _buildWirelessTree(radios, stations) {
-  var byBssid = {}, byRadioSsid = {};
-  var nodes = radios.map(function (r) {
-    var vapNodes = (r.vaps || []).map(function (v) {
-      var node = { vap: v, stations: [] };
-      if (v.bssid) byBssid[String(v.bssid).toUpperCase()] = node;
-      if (v.ssid)  byRadioSsid[r.radioIndex + "\u0000" + String(v.ssid).toLowerCase()] = node;
-      return node;
-    });
-    return { radio: r, vaps: vapNodes };
-  });
-
-  var unplaced = [];
-  stations.forEach(function (s) {
-    var node = s.bssid ? byBssid[String(s.bssid).toUpperCase()] : null;
-    if (!node && s.radioId != null && s.ssid) {
-      node = byRadioSsid[s.radioId + "\u0000" + String(s.ssid).toLowerCase()];
-    }
-    if (node) node.stations.push(s);
-    else unplaced.push(s);
-  });
-  return { radios: nodes, unplaced: unplaced };
+  return PolarisAssetShared.buildWirelessTree(radios, stations);
 }
 
 /** The matched-endpoint cell shared by the tree and the flat station table. */
@@ -12177,16 +12277,7 @@ function _chartTimeBounds(samples, since, until) {
 // figure counts a reading the operator cannot see. `tsKey` names the
 // timestamp field when it is not `timestamp`.
 function _inChartWindow(points, since, tsKey) {
-  var list = points || [];
-  if (since == null) return list;
-  var t0 = typeof since === "number" ? since : new Date(since).getTime();
-  if (!isFinite(t0)) return list;
-  var key = tsKey || "timestamp";
-  return list.filter(function (p) {
-    var v = p && p[key];
-    var t = typeof v === "number" ? v : new Date(v).getTime();
-    return !(t < t0);
-  });
+  return PolarisChartShared.inChartWindow(points, since, tsKey);
 }
 
 // Vertical dashed indicator at each local-midnight inside (t0, t1). The
@@ -12352,36 +12443,39 @@ function _severityChartLayer(kind, tiers, minV, maxV, geo) {
 
 function _ensureSensorPanelDOM() {
   if (document.getElementById("sensor-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "sensor-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="sensor-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="sensor-panel-title">Sensor</h3>' +
-          '<button class="btn-icon" id="sensor-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="sensor-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="sensor-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="sensor-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeSensorPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "sensor-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Sensor",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeSensorPanel,
+    resizeKey: "polaris.panel.width.sensor",
   });
-  document.getElementById("sensor-panel-close").addEventListener("click", closeSensorPanel);
-  wireSlideoverEscape(overlay, closeSensorPanel);
-  initSlideoverResize(document.getElementById("sensor-panel"), "polaris.panel.width.sensor");
 }
 
 function closeSensorPanel() {
   var ov = document.getElementById("sensor-panel-overlay");
   if (ov) ov.classList.remove("open");
   if (_sensorRefreshTimer) { clearTimeout(_sensorRefreshTimer); _sensorRefreshTimer = null; }
+}
+
+// The stored sensor name of a transceiver reading (business rule 143). Mirrors
+// src/utils/sfpOptics.ts → sfpSensorName / SFP_ROLE_LABELS, which the collector
+// writes; tests/unit/sfpOpticsUi.test.ts holds the two in step, because a
+// mismatch opens an empty chart rather than failing.
+var SFP_ROLE_LABELS = {
+  temperature: "SFP temperature",
+  voltage:     "SFP voltage",
+  txPower:     "Tx power",
+  rxPower:     "Rx power",
+  bias:        "Bias current",
+};
+function _sfpSensorName(ifName, role) {
+  return ifName + " " + SFP_ROLE_LABELS[role];
 }
 
 async function openSensorDetailPanel(asset, sensorName) {
@@ -12529,6 +12623,9 @@ async function _loadSensorHistoryFor(assetId, sensorName, range, callOpts) {
       samples = samples.map(function (s) {
         var c = {}; for (var k in s) if (Object.prototype.hasOwnProperty.call(s, k)) c[k] = s[k];
         c.value = TU.convertCelsius(s.value);
+        // The rollup bucket's peak moves with its average, or the dashed max
+        // line would sit on a °C scale over an °F axis.
+        if (typeof s.maxValue === "number") c.maxValue = TU.convertCelsius(s.maxValue);
         return c;
       });
     }
@@ -12560,6 +12657,11 @@ async function _loadSensorHistoryFor(assetId, sensorName, range, callOpts) {
       until:   data.until,
       subject: sensorName,
       unit:    unit,
+      // Rollup tier → the dashed bucket-peak line (`maxValue`) + its chip.
+      // Only this caller passes it; the process charts that share the
+      // renderer draw no max.
+      maxTier: _chartRollupTier(data),
+      maxPrefKey: "assetSensor",
       tiers:   convTiers(_sensorSevTiers.key === assetId + "|" + sensorName ? _sensorSevTiers.tiers : []),
     };
     _renderSensorChart(chartEl, samples, chartOpts);
@@ -12643,7 +12745,18 @@ function _renderSensorChart(container, samples, opts) {
   var spanMs = t1 - t0, oneDayMs = 86400000;
   var pad2 = _chartPad2;
 
+  // Rollup tiers (opts.maxTier, set by the hardware-sensor loader only): each
+  // bucket's peak (`maxValue`, already in the display unit) as a dashed line
+  // under the average. While shown, the visible window's peaks join the
+  // y-domain so the line is never clipped off the top; hidden, the axis fits
+  // the averages alone.
+  var maxTier = opts.maxPrefKey ? opts.maxTier || null : null;
+  var showMax = !!maxTier && _getMaxLinePref(opts.maxPrefKey);
+  function maxOf(s) { return typeof s.maxValue === "number" && isFinite(s.maxValue) ? s.maxValue : null; }
   var allC = samples.map(function (s) { return s.value; });
+  if (showMax) {
+    _inChartWindow(samples, opts.since).forEach(function (s) { var m = maxOf(s); if (m != null) allC.push(m); });
+  }
   var minC = Math.min.apply(null, allC);
   var maxC = Math.max.apply(null, allC);
   if (minC === maxC) {
@@ -12661,9 +12774,11 @@ function _renderSensorChart(container, samples, opts) {
 
   var pts = samples.map(function (s) { return xFor(s.timestamp) + "," + yFor(s.value); }).join(" ");
   var hits = samples.map(function (s) {
+    var m = maxOf(s);
     return '<circle class="chart-hit" cx="' + xFor(s.timestamp) + '" cy="' + yFor(s.value) + '" r="6" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(s.timestamp)) + '"' +
-      ' data-c="' + s.value + '"/>';
+      ' data-c="' + s.value + '"' +
+      (maxTier ? ' data-cmax="' + (m != null ? m : "") + '"' : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -12696,7 +12811,17 @@ function _renderSensorChart(container, samples, opts) {
   var sev = _severityChartLayer("sensor", opts.tiers, minC, maxC, {
     padL: padL, padT: padT, innerW: innerW, innerH: innerH, W: W, padR: padR, yFor: yFor, unit: unit,
   });
+  // The max line takes the same stroke as the average — the severity gradient
+  // when an automation watches the sensor (it is in user space, so a peak that
+  // climbs into a tier is coloured by that tier), the accent otherwise.
+  var maxSvg = showMax
+    ? _maxLineSVG(samples.map(function (s) {
+        var m = maxOf(s);
+        return m == null ? null : { x: xFor(s.timestamp), y: yFor(m) };
+      }), sev.stroke)
+    : "";
   container.innerHTML =
+    (maxTier ? _maxLineLegendRowHTML(opts.maxPrefKey, maxTier, sev.stroke) : "") +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       sev.defs +
@@ -12705,6 +12830,7 @@ function _renderSensorChart(container, samples, opts) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         sev.lines +
+        maxSvg +
         '<polyline points="' + pts + '" fill="none" stroke="' + sev.stroke + '" stroke-width="1.5"/>' +
         samples.map(function (s) { return '<circle cx="' + xFor(s.timestamp) + '" cy="' + yFor(s.value) + '" r="1.5" fill="' + sev.stroke + '"/>'; }).join("") +
         hits +
@@ -12716,10 +12842,15 @@ function _renderSensorChart(container, samples, opts) {
   container.style.justifyContent = "flex-start";
 
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  if (maxTier) _wireMaxLineChip(container, opts.maxPrefKey, function () { _renderSensorChart(container, samples, opts); });
   _wireChartTooltip(container, function (target) {
     var c = Number(target.getAttribute("data-c"));
+    var cmax = target.getAttribute("data-cmax");
+    var sfx = unit ? " " + unit : "";
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>' + _hwFmtNum(c) + (unit ? " " + unit : "") + '</div>';
+      '<div>' + (cmax != null
+        ? _avgMaxText(_hwFmtNum(c) + sfx, cmax !== "" ? _hwFmtNum(Number(cmax)) + sfx : null)
+        : _hwFmtNum(c) + sfx) + '</div>';
   });
   _addChartScreenshotButton(container, opts.subject || "Sensor", { yAxis: (unit ? "Reading (" + unit + ")" : "Reading"), subject: opts.subject, getStats: _statsSummaryFrom("sensor-stats") });
   _observeChartResize(container, function (c) { _renderSensorChart(c, samples, opts); });
@@ -12748,15 +12879,6 @@ function _vcPowerBadge(state) {
   var label = s === "POWERED_ON" ? "Powered On" : s === "POWERED_OFF" ? "Powered Off" : s === "SUSPENDED" ? "Suspended" : (state || "—");
   var color = s === "POWERED_ON" ? "var(--color-success,#4caf50)" : s === "SUSPENDED" ? "var(--color-warning,#ffb74d)" : "var(--color-text-tertiary)";
   return '<span style="color:' + color + '">●</span> ' + escapeHtml(label);
-}
-
-function _vcUsageBar(usedBytes, totalBytes) {
-  if (usedBytes == null || totalBytes == null || !(totalBytes > 0)) return "";
-  var pct = Math.min(100, Math.max(0, (usedBytes / totalBytes) * 100));
-  var color = pct >= 90 ? "var(--color-danger,#ef5350)" : pct >= 75 ? "var(--color-warning,#ffb74d)" : "var(--color-primary,#4fc3f7)";
-  return '<div style="background:var(--color-surface);border:1px solid var(--color-border);border-radius:4px;height:6px;overflow:hidden;min-width:70px">' +
-    '<div style="width:' + pct.toFixed(1) + '%;height:100%;background:' + color + '"></div></div>' +
-    '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' + pct.toFixed(0) + '%</span>';
 }
 
 // ─── Workload section (Unraid / TrueNAS SCALE) ─────────────────────────────
@@ -13904,14 +14026,26 @@ function _renderSystemChart(container, data, asset, si) {
   });
   var sortedHits = Object.keys(byTs).map(function (k) { return byTs[k]; })
                          .sort(function (a, b) { return new Date(a.ts).getTime() - new Date(b.ts).getTime(); });
+  // Rollup tiers: CPU's bucket peak (`maxCpuPct`) as a dashed line under the
+  // CPU average. CPU only — memory moves too slowly within a bucket for its
+  // peak to say anything the average does not. The axis is a fixed 0–100 %.
+  var rollupTier = _chartRollupTier(data);
+  var showMax = !!rollupTier && _getMaxLinePref("assetSystem");
   var hits = sortedHits.map(function (h, i) {
     var x = xFor(h.ts);
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].ts) + x) / 2;
     var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].ts) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     var s = h.sample;
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.ts)) + '"' +
       ' data-cpu="' + (h.cpu != null ? h.cpu : "") + '"' +
+      (rollupTier ? ' data-cpu-max="' + (typeof s.maxCpuPct === "number" ? s.maxCpuPct : "") + '"' : '') +
       ' data-mem="' + (h.mem != null ? h.mem : "") + '"' +
       ' data-mb="' + (typeof s.memUsedBytes === "number" ? s.memUsedBytes : "") + '"' +
       ' data-mt="' + (typeof s.memTotalBytes === "number" ? s.memTotalBytes : "") + '"/>';
@@ -13944,8 +14078,14 @@ function _renderSystemChart(container, data, asset, si) {
   var clipId = _chartClipId("system");
   var cpuLine = _failureAwareSeriesSVG(failAwarePts(cpuValues), cpuColor, clipId + "-cpu");
   var memLine = _failureAwareSeriesSVG(failAwarePts(memValues), memColor, clipId + "-mem");
+  var cpuMaxSvg = showMax
+    ? _maxLineSVG(samples.map(function (s) {
+        return typeof s.maxCpuPct === "number" && isFinite(s.maxCpuPct) ? { x: xFor(s.timestamp), y: yFor(s.maxCpuPct) } : null;
+      }), cpuColor)
+    : "";
   container.innerHTML =
     chartStaleBanner +
+    _maxLineLegendRowHTML("assetSystem", rollupTier, cpuColor) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + cpuLine.defs + memLine.defs + '</defs>' +
@@ -13953,6 +14093,7 @@ function _renderSystemChart(container, data, asset, si) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        cpuMaxSvg +
         cpuLine.segments +
         memLine.segments +
         cpuValues.map(function (e) { return '<circle cx="' + xFor(e.s.timestamp) + '" cy="' + yFor(e.v) + '" r="1.5" fill="' + cpuColor + '"/>'; }).join("") +
@@ -13972,6 +14113,7 @@ function _renderSystemChart(container, data, asset, si) {
   container.style.justifyContent = "flex-start";
   container.style.flexDirection = "column";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  _wireMaxLineChip(container, "assetSystem", function () { _renderSystemChart(container, data, asset, si); });
 
   _wireChartTooltip(container, function (target) {
     var ts = target.getAttribute("data-ts");
@@ -13979,6 +14121,7 @@ function _renderSystemChart(container, data, asset, si) {
       return _missTooltipHTML(target);
     }
     var cpuRaw = target.getAttribute("data-cpu");
+    var cpuMaxRaw = target.getAttribute("data-cpu-max");
     var memRaw = target.getAttribute("data-mem");
     var mb = target.getAttribute("data-mb");
     var mt = target.getAttribute("data-mt");
@@ -13987,8 +14130,11 @@ function _renderSystemChart(container, data, asset, si) {
       memLine += " (" + _fmtBytes(Number(mb)) + " / " + _fmtBytes(Number(mt)) + ")";
     }
     memLine += "</div>";
+    var cpuTxt = cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—";
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>' +
-      '<div>CPU: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</div>' +
+      '<div>CPU: ' + (cpuMaxRaw != null
+        ? _avgMaxText(cpuTxt, cpuMaxRaw !== "" ? Number(cpuMaxRaw).toFixed(1) + "%" : null)
+        : cpuTxt) + '</div>' +
       memLine;
   });
   _addChartScreenshotButton(container, "CPU & Memory", { yAxis: "Utilization (%)", getStats: _statsSummaryFrom("asset-system-summary") });
@@ -14093,6 +14239,7 @@ function _renderCpuChart(container, data, asset, si) {
   var avgVisible = !hidden.avg;
   var visibleCores = 0;
   for (var vc = 0; vc < coreCount; vc++) if (coreVisible(vc)) visibleCores++;
+  var rollupTier = _chartRollupTier(data);
 
   var yMin = 0, yMax = 100;
   var xFor = _chartXScale(padL, innerW, t0, t1);
@@ -14128,11 +14275,24 @@ function _renderCpuChart(container, data, asset, si) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sortedHits[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sortedHits.length - 1 ? (W - padR) : (xFor(sortedHits[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     var cores = Array.isArray(h.s.cpuCorePcts) ? h.s.cpuCorePcts.join(",") : "";
+    // Rollup peaks ride the hit too, so the tooltip names avg AND max whether
+    // or not the max line is shown.
+    var coreMaxes = Array.isArray(h.s.cpuCoreMaxPcts) ? h.s.cpuCoreMaxPcts.map(function (v) { return typeof v === "number" ? v : ""; }).join(",") : "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '"' +
       ' data-cpu="' + (h.v != null ? h.v : "") + '"' +
-      ' data-cores="' + escapeHtml(cores) + '"/>';
+      ' data-cores="' + escapeHtml(cores) + '"' +
+      (rollupTier
+        ? ' data-cpu-max="' + (typeof h.s.maxCpuPct === "number" ? h.s.maxCpuPct : "") + '"' +
+          ' data-core-max="' + escapeHtml(coreMaxes) + '"'
+        : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -14162,6 +14322,34 @@ function _renderCpuChart(container, data, asset, si) {
   // host has — switching sixty-three of them off should leave the survivor
   // solid, which is what makes hiding the rest worth doing.
   var restOpacity = visibleCores <= 4 ? 0.85 : visibleCores <= 16 ? 0.62 : visibleCores <= 48 ? 0.45 : 0.32;
+  // Rollup tiers: each bucket's peak as a dashed line under its average —
+  // the aggregate's from `maxCpuPct`, each DRAWN core's from
+  // `cpuCoreMaxPcts` (same indexing as `cpuCorePcts`; absent on buckets
+  // written before per-core rollups, which simply draw no core max). The axis
+  // is a fixed 0–100 %, so showing or hiding the peaks never rescales it.
+  var showMax = !!rollupTier && _getMaxLinePref("assetCpu");
+  var coreMaxSvg = "";
+  var avgMaxSvg = "";
+  if (showMax) {
+    if (avgVisible) {
+      avgMaxSvg = _maxLineSVG(samples.map(function (s) {
+        return typeof s.maxCpuPct === "number" && isFinite(s.maxCpuPct) ? { x: xFor(s.timestamp), y: yFor(s.maxCpuPct) } : null;
+      }), _CPU_AVG_COLOR);
+    }
+    for (var mc = 0; mc < coreCount; mc++) {
+      if (!coreVisible(mc) || !coreSeries[mc].length) continue;
+      coreMaxSvg += _maxLineSVG(samples.map(function (s) {
+        var v = Array.isArray(s.cpuCoreMaxPcts) ? s.cpuCoreMaxPcts[mc] : null;
+        return typeof v === "number" && isFinite(v) ? { x: xFor(s.timestamp), y: yFor(v) } : null;
+      }), _cpuCoreColor(mc, coreCount), {
+        width: 1,
+        // Never more ink than the core's own line: 64 dashed lines at 0.85
+        // would be the wall the thinning below exists to avoid.
+        opacity: restOpacity,
+        attrs: ' data-core="' + mc + '"',
+      });
+    }
+  }
   var coreLinesSvg = "";
   if (coreSeries) {
     for (var c = 0; c < coreCount; c++) {
@@ -14178,7 +14366,7 @@ function _renderCpuChart(container, data, asset, si) {
   var chartStaleBanner = _staleBannerHTML(asset && asset.id, asset, "telemetry", si && si.lastTelemetryAt, _streamFailureError(si, "telemetry"));
   container.innerHTML =
     chartStaleBanner +
-    _cpuLegendHTML(coreCount, hidden, data, asset) +
+    _cpuLegendHTML(coreCount, hidden, data, asset, rollupTier ? { tier: rollupTier, on: showMax } : null) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + avgLine.defs + '</defs>' +
@@ -14186,7 +14374,9 @@ function _renderCpuChart(container, data, asset, si) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        coreMaxSvg +
         coreLinesSvg +
+        avgMaxSvg +
         // The aggregate goes ON TOP of the cores and gets the only dots, so
         // it stays findable in the thicket. It is also the only failure-aware
         // line, so hiding it hides the outage markers with it — which is the
@@ -14211,16 +14401,24 @@ function _renderCpuChart(container, data, asset, si) {
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
 
   _wireCpuLegend(container, data, asset, si, coreCount);
+  _wireMaxLineChip(container, "assetCpu", function () { _renderCpuChart(container, data, asset, si); });
 
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
     var ts = target.getAttribute("data-ts");
     var cpuRaw = target.getAttribute("data-cpu");
     var off = _cpuHiddenCores(container);
+    // Rollup buckets: avg AND max per drawn series (data-cpu-max is only
+    // stamped on a rollup tier).
+    var rollupHit = target.hasAttribute("data-cpu-max");
+    var pctTxt = function (raw) { return raw !== "" && raw != null ? Number(raw).toFixed(1) + "%" : null; };
     var html = '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(ts)) + '</div>';
     if (!off.avg) {
-      html += '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
+      html += rollupHit
+        ? '<div><strong>Average: ' + _avgMaxText(pctTxt(cpuRaw) || "—", pctTxt(target.getAttribute("data-cpu-max"))) + '</strong></div>'
+        : '<div><strong>Average: ' + (cpuRaw !== "" ? Number(cpuRaw).toFixed(1) + "%" : "—") + '</strong></div>';
     }
+    var coreMaxRaw = rollupHit ? (target.getAttribute("data-core-max") || "").split(",") : [];
     var coresRaw = target.getAttribute("data-cores");
     if (coresRaw) {
       var vals = coresRaw.split(",").map(Number);
@@ -14235,7 +14433,8 @@ function _renderCpuChart(container, data, asset, si) {
       var rows = shown.slice().sort(function (a, b) { return b.v - a.v; }).slice(0, 6);
       rows.forEach(function (r) {
         html += '<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:' +
-          _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' + r.v.toFixed(1) + '%</div>';
+          _cpuCoreColor(r.i, vals.length) + '"></span>Core ' + r.i + ': ' +
+          (rollupHit ? _avgMaxText(r.v.toFixed(1) + "%", pctTxt(coreMaxRaw[r.i])) : r.v.toFixed(1) + '%') + '</div>';
       });
       if (shown.length > rows.length) {
         html += '<div style="color:var(--color-text-tertiary)">+' + (shown.length - rows.length) + ' more</div>';
@@ -14255,7 +14454,10 @@ function _renderCpuChart(container, data, asset, si) {
 // Legend for the CPU chart. Rendered as HTML above the SVG rather than as
 // <text> inside it because it has to WRAP — 64 core chips on one SVG line
 // run off the edge of the panel — and because the chips are interactive.
-function _cpuLegendHTML(coreCount, hidden, data, asset) {
+// `max` ({ tier, on }) adds the rollup tier's one Max chip, which switches the
+// aggregate's AND every core's dashed peak line together. It is a separate
+// class from the core chips, so "Show all" and isolate never touch it.
+function _cpuLegendHTML(coreCount, hidden, data, asset, max) {
   var anyHidden = Object.keys(hidden).length > 0;
   var chips = _seriesChipHTML("avg", "Average", _CPU_AVG_COLOR, !hidden.avg,
     "Click to hide the cross-core average", "cpu-legend-chip");
@@ -14263,6 +14465,7 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
     chips += _seriesChipHTML(String(c), String(c), _cpuCoreColor(c, coreCount), !hidden[String(c)],
       "Click to hide core " + c + " · double-click to show only this core", "cpu-legend-chip");
   }
+  if (max && max.tier) chips += _maxLineChipHTML("assetCpu", max.tier, max.on);
   // Only offered once something is off. At 64 cores an isolate is one
   // double-click and 63 chips of undoing, so the way back has to be one
   // click too.
@@ -14270,14 +14473,17 @@ function _cpuLegendHTML(coreCount, hidden, data, asset) {
     chips += '<span class="cpu-legend-all" title="Show every series again"' +
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
-  // Why a range can show no cores even on a source that reports them:
-  // per-core data is kept on the DETAIL tier only, whichever source sent it. Saying so beats letting the operator conclude the source
-  // stopped reporting them. A source that never reports cores gets no note
-  // — "pick a shorter range" would send a FortiGate operator nowhere.
+  // Why a range can show no cores even on a source that reports them: the
+  // rollup buckets carry per-core vectors only for data written since
+  // per-core rollups shipped, so an older hourly/daily range has none.
+  // Shown only when the rollup samples actually lack them (coreCount 0).
+  // Saying so beats letting the operator conclude the source stopped
+  // reporting them. A source that never reports cores gets no note — "pick
+  // a shorter range" would send a FortiGate operator nowhere.
   var note = "";
   if (coreCount === 0 && data && data.tier && data.tier !== "detail" && _telemetrySplitsCpuMemory(asset)) {
     note = '<div style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px">' +
-      'Per-core detail is not kept in ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
+      'Per-core detail is not kept in these ' + escapeHtml(data.tier) + ' buckets — showing the cross-core average. Pick a shorter range to see individual cores.' +
       '</div>';
   }
   return '<div class="cpu-legend" style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:2px">' +
@@ -14364,11 +14570,7 @@ function _seriesChipHTML(key, label, color, on, title, cls) {
 // colour this chart has always used, and the two tables never co-occur, so
 // "the big one at the bottom" reads the same on any asset. No band may be
 // red (missed poll) or grey (dependency down).
-var _MEM_BANDS_AGENT = [
-  { key: "processes", label: "Processes", color: "#f4a261" },
-  { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
-  { key: "cache",     label: "Cache",     color: "#2a9d8f" },
-];
+var _MEM_BANDS_AGENT = PolarisChartShared.MEM_BANDS_AGENT;
 
 // vSphere. A VM fills private / shared / ballooned / swapped / compressed
 // against its CONFIGURED RAM; an ESXi host fills consumed / ballooned /
@@ -14380,41 +14582,22 @@ var _MEM_BANDS_AGENT = [
 // They are the hypervisor taking memory back from a guest under pressure,
 // and they are invisible to anything running inside that guest — an agent on
 // the same VM cannot see them and must not be made to guess.
-var _MEM_BANDS_VSPHERE = [
-  { key: "consumed",   label: "Consumed",   color: "#f4a261" },
-  { key: "private",    label: "Private",    color: "#f4a261" },
-  { key: "shared",     label: "Shared",     color: "#2a9d8f" },
-  { key: "ballooned",  label: "Ballooned",  color: "#e9c46a" },
-  { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
-  { key: "compressed", label: "Compressed", color: "#4d96d9" },
-];
+var _MEM_BANDS_VSPHERE = PolarisChartShared.MEM_BANDS_VSPHERE;
 // A TrueNAS host fills the agent's columns in TrueNAS's own words — what its
 // dashboard calls Services and ZFS Cache (the ARC). Same keys and colours, so
 // a chip toggled on one host stays toggled on the next; the ARC is
 // reclaimable like page cache, so it ships off for the same reason.
-var _MEM_BANDS_TRUENAS = _MEM_BANDS_AGENT.map(function (b) {
-  var label = b.key === "processes" ? "Services" : b.key === "cache" ? "ZFS Cache" : b.label;
-  return { key: b.key, label: label, color: b.color };
-});
+var _MEM_BANDS_TRUENAS = PolarisChartShared.MEM_BANDS_TRUENAS;
 
 // A Proxmox node: Proxmox's own "used" with the ZFS ARC carved out of it.
-var _MEM_BANDS_PROXMOX = _MEM_BANDS_AGENT.map(function (b) {
-  var label = b.key === "processes" ? "Used" : b.key === "cache" ? "ZFS ARC" : b.label;
-  return { key: b.key, label: label, color: b.color };
-});
+var _MEM_BANDS_PROXMOX = PolarisChartShared.MEM_BANDS_PROXMOX;
 
 function _memAgentBandsFor(asset) {
-  var v = asset && asset.virtualization;
-  if (v && v.platform === "proxmox" && v.role === "host") return _MEM_BANDS_PROXMOX;
-  return v && v.platform === "truenas" && v.role === "host" ? _MEM_BANDS_TRUENAS : _MEM_BANDS_AGENT;
+  return PolarisChartShared.memAgentBandsFor(asset);
 }
 
-var _MEM_SWAP_COLOR  = "#9c6ade";
+var _MEM_SWAP_COLOR = PolarisChartShared.MEM_SWAP_COLOR;
 var _MEM_TOTAL_COLOR = "rgba(127,127,127,0.55)";
-
-function _numOrNull(v) {
-  return typeof v === "number" && isFinite(v) ? v : null;
-}
 
 // Shapes one sample into the band values the chart stacks, and says which
 // VOCABULARY those values are in.
@@ -14432,51 +14615,7 @@ function _numOrNull(v) {
 // the window reported at all, which is what collapses a bytes-only source
 // to the single band it can honestly draw.
 function _memBandsFor(s) {
-  var total = _numOrNull(s.memTotalBytes);
-  if (total == null) return null;
-
-  var vs = {
-    consumed:   _numOrNull(s.memConsumedBytes),
-    private:    _numOrNull(s.memPrivateBytes),
-    shared:     _numOrNull(s.memSharedBytes),
-    ballooned:  _numOrNull(s.memBalloonedBytes),
-    swapped:    _numOrNull(s.memSwappedBytes),
-    compressed: _numOrNull(s.memCompressedBytes),
-  };
-  var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
-
-  var values, table;
-  if (isVsphere) {
-    values = vs;
-    table = _MEM_BANDS_VSPHERE;
-  } else {
-    var used = _numOrNull(s.memUsedBytes);
-    if (used == null) return null;
-    values = {
-      processes: used,
-      buffers:   _numOrNull(s.memBuffersBytes),
-      cache:     _numOrNull(s.memCachedBytes),
-    };
-    table = _MEM_BANDS_AGENT;
-  }
-
-  var sum = 0;
-  table.forEach(function (b) { sum += values[b.key] || 0; });
-  return {
-    kind:   isVsphere ? "vsphere" : "agent",
-    table:  table,
-    values: values,
-    total:  total,
-    // Free is DERIVED from the total rather than trusted from the row: it is
-    // the one band the chart does not draw (it is the gap above the stack),
-    // so a free figure that disagreed with total-minus-the-rest would show
-    // up in the tooltip contradicting the picture beside it. The agent's own
-    // memFreeBytes and vSphere's untouched remainder are both this number.
-    free:      Math.max(0, total - sum),
-    inUse:     Math.min(total, sum),
-    swapUsed:  _numOrNull(s.swapUsedBytes),
-    swapTotal: _numOrNull(s.swapTotalBytes),
-  };
+  return PolarisChartShared.memBandsFor(s);
 }
 
 // Splits a run of points wherever an outage falls between two consecutive
@@ -14591,7 +14730,13 @@ function _memForecastHeadlineHTML(fc) {
   if (signal === "insufficient") {
     var have = fc && fc.points ? fc.points.length : 0;
     var need = (fc && fc.minPoints) || 7;
-    return '<span style="color:' + muted + '">Forecast needs ' + need + ' days of history — ' + have + ' so far</span>';
+    // A reboot restarts the forecast (memoryForecastService): say so, or the
+    // operator reads a device with weeks of history as "1 so far".
+    var since = fc && fc.restartedAt ? new Date(fc.restartedAt) : null;
+    var why = since && !isNaN(since.getTime())
+      ? 'Forecast restarted at the reboot on ' + since.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ' — needs '
+      : 'Forecast needs ';
+    return '<span style="color:' + muted + '">' + why + need + ' days of history — ' + have + ' so far</span>';
   }
   // A memory automation watches this device: count down to its next level,
   // in that level's severity colour — "Days until Serious: 12", the number a
@@ -14884,6 +15029,12 @@ function _renderMemoryChart(container, data, asset, si) {
     var x = xFor(r.ts);
     var leftEdge  = i === 0 ? padL : (xFor(rows[i - 1].ts) + x) / 2;
     var rightEdge = i === rows.length - 1 ? (W - padR) : (xFor(rows[i + 1].ts) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     // One attribute per REPORTED band, indexed by its position in
     // `reported`, so the tooltip walks that list and neither vocabulary
     // needs its own hard-coded row set — and a switched-off band still has
@@ -15095,6 +15246,12 @@ function _renderMemoryPctChart(container, data, asset, si) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sorted[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sorted.length - 1 ? (W - padR) : (xFor(sorted[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '" data-mem="' + h.v + '"/>';
   }).join("");
@@ -15186,6 +15343,12 @@ function _renderSessionsChart(container, data, asset) {
     var x = xFor(h.s.timestamp);
     var leftEdge  = i === 0 ? padL : (xFor(sorted[i - 1].s.timestamp) + x) / 2;
     var rightEdge = i === sorted.length - 1 ? (W - padR) : (xFor(sorted[i + 1].s.timestamp) + x) / 2;
+    // A sample outside the plotted window (the fetch can return one older
+    // than its start) puts x outside the plot: clamp the band, and draw none
+    // left with no width — a negative SVG width is a console error.
+    leftEdge = Math.max(padL, leftEdge);
+    rightEdge = Math.min(W - padR, rightEdge);
+    if (!(rightEdge > leftEdge)) return "";
     return '<rect class="chart-hit" x="' + leftEdge + '" y="' + padT + '" width="' + (rightEdge - leftEdge) + '" height="' + innerH + '" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(h.s.timestamp)) + '" data-sc="' + h.v + '"/>';
   }).join("");
@@ -15227,36 +15390,6 @@ function _renderSessionsChart(container, data, asset) {
   });
   _addChartScreenshotButton(container, "Active Sessions", { yAxis: "Sessions" });
   _observeChartResize(container, function (c) { _renderSessionsChart(c, data, asset); });
-}
-
-// Human-readable label for the polling method behind the response-time
-// chart. Reads the per-asset responseTimePolling override first; falls
-// back to the source default ("rest_api" for Fortinet, "icmp" for the
-// rest). Coarse view — full provenance is in /effective-monitor-settings,
-// but a label that's right 95% of the time is good enough for a chart
-// caption.
-function _probeMethodLabel(a) {
-  if (!a) return "—";
-  // Source default for response time is ICMP on EVERY source kind, Fortinet
-  // included (defaultPollingForSource) — this used to claim rest_api for the
-  // two Fortinet sources and so mislabelled every gate that had no explicit
-  // per-asset override, which is most of them.
-  var polling = a.responseTimePolling || "icmp";
-  switch (polling) {
-    case "rest_api":     return "REST API";
-    case "snmp":         return "SNMP GET";
-    case "winrm":        return "WinRM";
-    case "ssh":          return "SSH";
-    case "icmp":         return "ICMP ping";
-    case "fortimanager": return "FortiManager roster";
-    case "vcenter":      return "vCenter";
-    case "unraid":       return "Unraid";
-    case "truenas":      return "TrueNAS";
-    case "proxmox":      return "Proxmox";
-    case "genericapi":   return "Generic API";
-    case "agent":        return "Polaris Agent";
-    default:             return polling;
-  }
 }
 
 // Per-stream polling-method + asset-source resolver used by the chart badges
@@ -16215,11 +16348,13 @@ function assetMonitoringViewHTML(a) {
     customPanel +
     '<div id="asset-monitor-stale"></div>' +
     '<div id="asset-monitor-stats" style="display:flex;gap:1.25rem;flex-wrap:wrap;font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem"></div>' +
+    // Filled by _renderMonitorChart with a key for the colours it drew (and
+    // the Max chip on a rollup tier). Above the plot, where every other
+    // chart's legend sits; it must stay the chart's previous sibling.
+    '<div class="chart-state-legend"></div>' +
     '<div id="asset-monitor-chart" class="chart-box" style="min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--color-text-secondary);font-size:0.85rem">' +
       'Loading samples…' +
     '</div>' +
-    // Filled by _renderMonitorChart with a key for the colours it drew.
-    '<div class="chart-state-legend"></div>' +
     '</div>'
   );
 }
@@ -16639,27 +16774,34 @@ function _toLocalDatetimeInput(d) {
     "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 
-// The key under a chart — one entry per colour the chart actually DREW, never
+// The key above a chart — one entry per colour the chart actually DREW, never
 // the whole vocabulary: a key naming a colour the reader cannot find is noise.
 // `entries` are { label, color, style } with style "line" | "dash" | "band";
 // the alert email draws the same key into its PNG (legendSvg in
 // utils/sparklineSvg.ts), with the same names.
-function _chartStateLegendHTML(entries) {
-  if (!entries || !entries.length) return "";
-  return '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.72rem;color:var(--color-text-secondary);margin-top:4px">' +
+// `extraHTML` (optional) is appended to the row — the response-time chart's
+// Max chip on a rollup tier. The row sits above the plot.
+function _chartStateLegendHTML(entries, extraHTML) {
+  if ((!entries || !entries.length) && !extraHTML) return "";
+  entries = entries || [];
+  return '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:0.72rem;color:var(--color-text-secondary);margin-bottom:4px">' +
     entries.map(function (e) {
       var swatch = e.style === "band"
         ? '<span style="width:12px;height:9px;flex:0 0 auto;background:' + e.color + ';border:1px dashed ' + (e.border || e.color) + '"></span>'
         : '<span style="width:14px;height:0;flex:0 0 auto;border-top:2px ' + (e.style === "dash" ? "dashed" : "solid") + ' ' + e.color + '"></span>';
       return '<span style="display:inline-flex;align-items:center;gap:5px">' + swatch + escapeHtml(e.label) + '</span>';
     }).join("") +
+    (extraHTML || "") +
   '</div>';
 }
 
 function _renderMonitorChart(container, data, transitions) {
   var samples = (data && data.samples) || [];
-  var legendSlot = container.nextElementSibling && container.nextElementSibling.classList.contains("chart-state-legend")
-    ? container.nextElementSibling : null;
+  // The key sits ABOVE the plot, as every other chart's legend does (the CPU
+  // chart's chips, the SD-WAN member legend): it is the chart's previous
+  // sibling in the section markup (assetMonitorViewHTML).
+  var legendSlot = container.previousElementSibling && container.previousElementSibling.classList.contains("chart-state-legend")
+    ? container.previousElementSibling : null;
   if (legendSlot) legendSlot.innerHTML = "";
   if (samples.length === 0) {
     container.textContent = "No samples in this range yet.";
@@ -16715,6 +16857,21 @@ function _renderMonitorChart(container, data, transitions) {
 
   var oks = samples.filter(ptHasResponse);
   var maxRtt = oks.length ? Math.max.apply(null, oks.map(function (s) { return s.responseTimeMs; })) : 100;
+  // Rollup tiers: each bucket's peak as a dashed line (_maxLineSVG), and the
+  // axis grows to hold it while it is shown — never clipped off the top.
+  // Only buckets with a success have a max worth drawing; only those inside
+  // the visible window may raise the axis (_inChartWindow).
+  var rollupTier = _chartRollupTier(data);
+  var showMax = !!rollupTier && _getMaxLinePref("assetMonitor");
+  function ptMax(s) {
+    return ptHasResponse(s) && typeof s.maxResponseTimeMs === "number" && isFinite(s.maxResponseTimeMs) ? s.maxResponseTimeMs : null;
+  }
+  if (showMax) {
+    _inChartWindow(oks, data && data.since).forEach(function (s) {
+      var m = ptMax(s);
+      if (m != null && m > maxRtt) maxRtt = m;
+    });
+  }
   if (maxRtt < 50) maxRtt = 50;
   // round up to a tidy ceiling
   var step = maxRtt > 1000 ? 250 : maxRtt > 200 ? 50 : 10;
@@ -16775,10 +16932,19 @@ function _renderMonitorChart(container, data, transitions) {
   );
   var statusAt = function (i) { return (states[i] && states[i].status) || "up"; };
   var linePts = [];
+  // The max line takes the SAME per-bucket colour as the average point beside
+  // it (Up green, or the recovering blue on the climb back), and breaks on a
+  // bucket with no success — there is no peak response in a bucket that got
+  // none.
+  var maxPts = [];
   samples.forEach(function (s, i) {
     if (ptHasResponse(s)) {
-      linePts.push({ x: xFor(s.timestamp), y: yFor(s.responseTimeMs), ok: true, rec: statusAt(i) === "recovering" });
+      var okPt = { x: xFor(s.timestamp), y: yFor(s.responseTimeMs), ok: true, rec: statusAt(i) === "recovering" };
+      linePts.push(okPt);
+      var m = ptMax(s);
+      maxPts.push(m == null ? null : { x: okPt.x, y: yFor(m), color: _chartPointColor(okPt, _CHART_UP_COLOR) });
     } else if (ptIsFailure(s)) {
+      maxPts.push(null);
       linePts.push({
         x: xFor(s.timestamp), y: padT + innerH, ok: false,
         dep: ptIsDependency(s),
@@ -16984,6 +17150,7 @@ function _renderMonitorChart(container, data, transitions) {
       yTitle +
       xTitle +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        (showMax ? _maxLineSVG(maxPts, _CHART_UP_COLOR) : "") +
         line.segments +
         // Drawn from linePts, not `oks`: same points, but these carry the
         // `rec` flag, so a dot on the climb back out is purple like its segment
@@ -17022,7 +17189,11 @@ function _renderMonitorChart(container, data, transitions) {
     if (maintLayer) keyEntries.push({ label: "Maintenance", color: "rgba(149,117,205,0.14)", border: "rgba(149,117,205,0.45)", style: "band" });
     if (transitionLayer) keyEntries.push({ label: "Polling change", color: "rgba(255,193,7,0.9)", style: "dash" });
     var onlyUp = keyEntries.length === 1 && keyEntries[0].label === "Up";
-    legendSlot.innerHTML = onlyUp ? "" : _chartStateLegendHTML(keyEntries);
+    // The Max chip rides the key row on a rollup tier, so the row exists even
+    // when the chart drew nothing but Up.
+    legendSlot.innerHTML = _chartStateLegendHTML(onlyUp ? [] : keyEntries,
+      rollupTier ? _maxLineChipHTML("assetMonitor", rollupTier, showMax, _CHART_UP_COLOR) : "");
+    _wireMaxLineChip(legendSlot, "assetMonitor", function () { _renderMonitorChart(container, data, transitions); });
   }
 
   var tip = container.querySelector(".monitor-tooltip");
@@ -17064,16 +17235,18 @@ function _renderMonitorChart(container, data, transitions) {
         ? "missed poll — " + missedN + " outstanding"
         : "no response · Down";
     if (target.getAttribute("data-rollup") === "1") {
-      // Aggregated bucket: avg (+ min/max band) and the bucket's packet-loss %.
+      // Aggregated bucket: avg AND max (whether or not the max line is
+      // shown, so a huge peak never hides the average reading), the min, and
+      // the bucket's packet-loss %.
       var mn = target.getAttribute("data-min");
       var mx = target.getAttribute("data-max");
       var loss = parseFloat(target.getAttribute("data-loss") || "0");
-      var band = (mn !== "" && mx !== "") ? ' <span style="color:var(--color-text-secondary)">(' + escapeHtml(mn) + '–' + escapeHtml(mx) + ' ms)</span>' : '';
-      var rRttLine = ok && rtt !== "" ? (escapeHtml(rtt) + " ms avg" + band) : '<span ' + danger + '>' + missText + '</span>';
+      var rRttLine = ok && rtt !== "" ? _avgMaxText(rtt + " ms", mx !== "" ? mx + " ms" : null) : '<span ' + danger + '>' + missText + '</span>';
       var rLossLine = loss > 0 ? '<span ' + danger + '>' + loss.toFixed(1) + '%</span>' : '0%';
       tip.innerHTML =
         '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(fmtTooltipTs(ts)) + '</div>' +
         '<div>Response: ' + rRttLine + '</div>' +
+        (ok && mn !== "" ? '<div>Min: ' + escapeHtml(mn) + ' ms</div>' : '') +
         '<div>Missed polls: ' + rLossLine + '</div>';
       tip.style.display = "block";
       positionTip(evt);
@@ -17275,6 +17448,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Errors per interval (in / out)</h5>' +
       '<div id="iface-err-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
       '<div id="iface-err-chart" class="iface-chart-box"></div>' +
+      _ifaceOpticsBlockHTML(asset, ifName, ifaceRow) +
     '</div>';
   document.querySelectorAll(".iface-chart-box").forEach(function (el) {
     el.classList.add("chart-box");
@@ -17346,8 +17520,19 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       _loadInterfaceHistoryFor(asset.id, ifName, { from: fromIso, to: toIso });
     });
   }
-  // Drag-select on either chart applies the selection as the custom range.
-  ["iface-tput-chart", "iface-err-chart"].forEach(function (cid) {
+  // The temperature / voltage / bias links under the optics charts open that
+  // reading's own history, as the Interfaces table cells do.
+  var opticsBlock = document.getElementById("iface-optics-block");
+  if (opticsBlock) {
+    opticsBlock.addEventListener("click", function (e) {
+      var a = e.target.closest(".iface-optic-link");
+      if (!a) return;
+      e.preventDefault();
+      openSensorDetailPanel(asset, a.getAttribute("data-sensor"));
+    });
+  }
+  // Drag-select on any chart applies the selection as the custom range.
+  ["iface-tput-chart", "iface-err-chart", "iface-rx-chart", "iface-tx-chart"].forEach(function (cid) {
     _wireChartDragSelect(document.getElementById(cid), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "iface-range-btn", customBtnId: "btn-iface-custom",
@@ -17392,7 +17577,7 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     _populateInterfaceCommentEditor(assetId, ifName, data, { silent: silent });
     _renderIfaceLldpBlock(data.lldpNeighbors || []);
     _renderIfaceAddressHistory(visRaw, _ifacePanelRow);
-    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages };
+    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages, maxTier: _chartRollupTier(data) };
     _renderIfaceThroughputChart(tputEl, derived, ifaceOpts);
     _renderIfaceErrorChart(errEl, derived, ifaceOpts);
     // Stash the active selection on each chart container so silent ticks /
@@ -17414,6 +17599,9 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     }
     // Silent ticks leave stale content in place on transient errors.
   }
+  // The optics charts load on their own: a failed sensor read must not blank
+  // the throughput charts above, nor the other way round.
+  await _loadIfaceOpticsHistory(assetId, ifName, opts, silent);
   if (panelBody) {
     panelBody.scrollTop = savedScroll;
     requestAnimationFrame(function () {
@@ -17428,6 +17616,85 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
   var asset = _currentAssetForRefresh;
   var ms = _refreshIntervalMs(asset && asset.monitorIntervalSec, settings.intervalSeconds, 60);
   _scheduleIfaceRefresh(assetId, ifName, ms);
+}
+
+// ─── Transceiver history on the interface page (business rule 143) ─────────
+// Rx and Tx power for an SFP port, charted from the hardware-sensor samples the
+// collector wrote under the port's name. Drawn only when the port carries
+// optics. They follow the page's range buttons. The temperature, voltage and
+// bias readings are linked rather than charted here, each opening its own
+// history in the sensor slide-over. Optics history records whether or not the
+// interface is pinned: it rides the hardware-sensor stream, not the interface
+// one.
+function _ifaceOpticsBlockHTML(asset, ifName, ifaceRow) {
+  if (!ifaceRow || !ifaceRow.optics) return "";
+  function link(role, label) {
+    return '<a href="#" class="iface-optic-link" data-sensor="' + escapeHtml(_sfpSensorName(ifName, role)) + '">' + label + '</a>';
+  }
+  return '<div id="iface-optics-block" style="margin-top:1.25rem">' +
+    '<div style="display:flex;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.25rem">' +
+      '<h4 style="margin:0">Optical power</h4>' +
+      _streamSourceBadgeHTML(asset, "telemetry") +
+    '</div>' +
+    '<div style="font-size:0.8rem;color:var(--color-text-secondary);margin-bottom:0.25rem">Transceiver history: ' +
+      link("temperature", "Temperature") + ' · ' + link("voltage", "Voltage") + ' · ' + link("bias", "Bias current") +
+    '</div>' +
+    '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Rx power</h5>' +
+    '<div id="iface-rx-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
+    '<div id="iface-rx-chart" class="iface-chart-box"></div>' +
+    '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Tx power</h5>' +
+    '<div id="iface-tx-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
+    '<div id="iface-tx-chart" class="iface-chart-box"></div>' +
+  '</div>';
+}
+
+async function _loadIfaceOpticsHistory(assetId, ifName, opts, silent) {
+  var series = [
+    { role: "rxPower", chart: "iface-rx-chart", stats: "iface-rx-stats" },
+    { role: "txPower", chart: "iface-tx-chart", stats: "iface-tx-stats" },
+  ].filter(function (s) { return document.getElementById(s.chart); });
+  if (series.length === 0) return;
+  await Promise.all(series.map(async function (s) {
+    var chartEl = document.getElementById(s.chart);
+    var statsEl = document.getElementById(s.stats);
+    var sensorName = _sfpSensorName(ifName, s.role);
+    if (!silent) chartEl.textContent = "Loading samples…";
+    // A fresh options object: the history client must not see (or leave) a
+    // sensorName on the interface page's own range options.
+    var q = opts.from && opts.to ? { from: opts.from, to: opts.to } : { range: opts.range || "1h" };
+    q.sensorName = sensorName;
+    try {
+      var data = await api.assets.hardwareHistory(assetId, q);
+      var samples = (data.samples || []).filter(function (x) { return typeof x.value === "number"; });
+      if (statsEl) {
+        var st = data.stats || {};
+        var fmt = function (v) { return typeof v === "number" ? v.toFixed(2) + " dBm" : "—"; };
+        var parts = [
+          { label: "Avg", value: fmt(st.avgValue) },
+          { label: "Min", value: fmt(st.minValue) },
+          { label: "Max", value: fmt(st.maxValue) },
+        ];
+        var tierPart = _tierStatsPart(data);
+        if (tierPart) parts.unshift(tierPart);
+        _renderChartStats(statsEl, _inChartWindow(samples, data.since).length, parts);
+      }
+      if (samples.length === 0) {
+        chartEl.textContent = "No readings in this window.";
+      } else {
+        _renderSensorChart(chartEl, samples, {
+          since: data.since, until: data.until, subject: ifName + " " + SFP_ROLE_LABELS[s.role],
+          unit: "dBm", maxTier: _chartRollupTier(data), maxPrefKey: "assetSensor",
+        });
+      }
+      if (opts.from && opts.to) { chartEl.dataset.from = opts.from; chartEl.dataset.to = opts.to; delete chartEl.dataset.range; }
+      else { chartEl.dataset.range = opts.range || "1h"; delete chartEl.dataset.from; delete chartEl.dataset.to; }
+    } catch (err) {
+      if (!silent) {
+        chartEl.textContent = "Error: " + (err.message || "failed to load");
+        if (statsEl) statsEl.textContent = "";
+      }
+    }
+  }));
 }
 
 // Per-panel state for the Interface Comments editor. Tracks the saved value
@@ -17617,41 +17884,7 @@ async function _saveIfaceComment() {
 // in this bucket" — same semantic as detail tier's "errors in this
 // interval", just at a coarser granularity.
 function _derivePerIntervalSeries(samples, data) {
-  if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
-    var bucketSec = data.bucketSeconds;
-    return (samples || []).map(function (s) {
-      var inBps  = typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null;
-      var outBps = typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null;
-      var inErr  = typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null;
-      var outErr = typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null;
-      return { timestamp: s.timestamp, inBps: inBps, outBps: outBps, inErr: inErr, outErr: outErr };
-    });
-  }
-  var out = [];
-  for (var i = 1; i < samples.length; i++) {
-    var prev = samples[i - 1];
-    var cur  = samples[i];
-    var dtMs = new Date(cur.timestamp) - new Date(prev.timestamp);
-    if (dtMs <= 0) continue;
-    var dtSec = dtMs / 1000;
-    function delta(a, b) {
-      if (typeof a !== "number" || typeof b !== "number") return null;
-      var d = b - a;
-      return d < 0 ? null : d;
-    }
-    var inOct  = delta(prev.inOctets,  cur.inOctets);
-    var outOct = delta(prev.outOctets, cur.outOctets);
-    var inErr  = delta(prev.inErrors,  cur.inErrors);
-    var outErr = delta(prev.outErrors, cur.outErrors);
-    out.push({
-      timestamp: cur.timestamp,
-      inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
-      outBps: outOct != null ? (outOct * 8) / dtSec : null,
-      inErr:  inErr,
-      outErr: outErr,
-    });
-  }
-  return out;
+  return PolarisChartShared.derivePerIntervalSeries(samples, data);
 }
 
 function _renderIfaceThroughputStats(container, rawSamples, derived, data) {
@@ -17866,6 +18099,19 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var maxV = 0;
   inSeries.forEach (function (d) { if (d.inBps  > maxV) maxV = d.inBps;  });
   outSeries.forEach(function (d) { if (d.outBps > maxV) maxV = d.outBps; });
+  // Rollup tiers (opts.maxTier): each bucket's peak rate as a dashed line
+  // under its average. While shown, the visible window's peaks join the axis
+  // so the line is never clipped off the top; hidden, it fits the averages.
+  var maxTier = opts.maxTier || null;
+  var showMax = !!maxTier && _getMaxLinePref("assetInterface");
+  function finiteOrNull(v) { return typeof v === "number" && isFinite(v) ? v : null; }
+  if (showMax) {
+    _inChartWindow(derived, opts.since).forEach(function (d) {
+      var a = finiteOrNull(d.inMaxBps), b = finiteOrNull(d.outMaxBps);
+      if (a != null && a > maxV) maxV = a;
+      if (b != null && b > maxV) maxV = b;
+    });
+  }
   if (maxV < 1000) maxV = 1000;
   function tidyCeil(n) {
     var exp = Math.pow(10, Math.floor(Math.log10(n)));
@@ -17904,10 +18150,14 @@ function _renderIfaceThroughputChart(container, derived, opts) {
     if (!hasIn && !hasOut) return "";
     // Anchor the hit at whichever line is higher so the cursor lands close to a visible curve.
     var hi = hasIn && hasOut ? Math.max(d.inBps, d.outBps) : (hasIn ? d.inBps : d.outBps);
+    var inMx = finiteOrNull(d.inMaxBps), outMx = finiteOrNull(d.outMaxBps);
     return '<circle class="chart-hit" cx="' + xFor(d.timestamp) + '" cy="' + yFor(hi) + '" r="6" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + escapeHtml(String(d.timestamp)) + '"' +
       ' data-in="'  + (hasIn  ? d.inBps  : "") + '"' +
-      ' data-out="' + (hasOut ? d.outBps : "") + '"/>';
+      ' data-out="' + (hasOut ? d.outBps : "") + '"' +
+      (maxTier
+        ? ' data-in-max="' + (inMx != null ? inMx : "") + '" data-out-max="' + (outMx != null ? outMx : "") + '"'
+        : '') + '/>';
   }).join("");
 
   var ticks = "";
@@ -17931,7 +18181,15 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   var clipId = _chartClipId("ifaceTp");
   var inLine  = _failureAwareSeriesSVG(failAwarePts(inSeries,  "inBps"),  inColor,  clipId + "-in");
   var outLine = _failureAwareSeriesSVG(failAwarePts(outSeries, "outBps"), outColor, clipId + "-out");
+  function maxPts(key) {
+    return derived.map(function (d) {
+      var v = finiteOrNull(d[key]);
+      return v == null ? null : { x: xFor(d.timestamp), y: yFor(v) };
+    });
+  }
+  var maxSvg = showMax ? _maxLineSVG(maxPts("inMaxBps"), inColor) + _maxLineSVG(maxPts("outMaxBps"), outColor) : "";
   container.innerHTML =
+    _maxLineLegendRowHTML("assetInterface", maxTier) +
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
       '<defs>' + inLine.defs + outLine.defs + '</defs>' +
@@ -17939,6 +18197,7 @@ function _renderIfaceThroughputChart(container, derived, opts) {
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
+        maxSvg +
         inLine.segments +
         outLine.segments +
         inSeries .map(function (d) { return '<circle cx="' + xFor(d.timestamp) + '" cy="' + yFor(d.inBps)  + '" r="1.5" fill="' + inColor  + '"/>'; }).join("") +
@@ -17953,15 +18212,22 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   container.style.alignItems = "stretch";
   container.style.justifyContent = "flex-start";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
+  if (maxTier) _wireMaxLineChip(container, "assetInterface", function () { _renderIfaceThroughputChart(container, derived, opts); });
   _wireChartTooltip(container, function (target) {
     if (target.getAttribute("data-miss") === "1") {
       return _missTooltipHTML(target);
     }
     var inV  = target.getAttribute("data-in");
     var outV = target.getAttribute("data-out");
+    // Rollup buckets name avg AND peak (data-in-max is only stamped there).
+    function cell(v, mx) {
+      var avg = v !== "" ? _fmtBitsPerSec(Number(v)) : "—";
+      if (mx == null) return avg;
+      return _avgMaxText(avg, mx !== "" ? _fmtBitsPerSec(Number(mx)) : null);
+    }
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>Input: '  + (inV  !== "" ? _fmtBitsPerSec(Number(inV))  : "—") + '</div>' +
-      '<div>Output: ' + (outV !== "" ? _fmtBitsPerSec(Number(outV)) : "—") + '</div>';
+      '<div>Input: '  + cell(inV,  target.getAttribute("data-in-max"))  + '</div>' +
+      '<div>Output: ' + cell(outV, target.getAttribute("data-out-max")) + '</div>';
   });
   _addChartScreenshotButton(container, "Throughput", { yAxis: "Throughput (bits/s)", subject: opts.subject, getStats: _statsSummaryFrom("iface-tput-stats") });
   _observeChartResize(container, function (c) { _renderIfaceThroughputChart(c, derived, opts); });
@@ -18085,30 +18351,18 @@ function _renderIfaceErrorChart(container, derived, opts) {
 
 function _ensureIpsecPanelDOM() {
   if (document.getElementById("ipsec-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "ipsec-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="ipsec-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="ipsec-panel-title">IPsec tunnel</h3>' +
-          '<button class="btn-icon" id="ipsec-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="ipsec-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="ipsec-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="ipsec-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeIpsecPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "ipsec-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "IPsec tunnel",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeIpsecPanel,
+    resizeKey: "polaris.panel.width.ipsec",
   });
-  document.getElementById("ipsec-panel-close").addEventListener("click", closeIpsecPanel);
-  wireSlideoverEscape(overlay, closeIpsecPanel);
-  initSlideoverResize(document.getElementById("ipsec-panel"), "polaris.panel.width.ipsec");
 }
 
 function closeIpsecPanel() {
@@ -18528,12 +18782,8 @@ function _renderIpsecBpsChart(container, derived, side, opts) {
 // loss charts over time). Data comes from the perf-SLA + sdwan-rule sample
 // streams via the asset history endpoints.
 
-var _SDWAN_MEMBER_COLORS = ["#2a9d8f", "#4361ee", "#f4a261", "#9b5de5", "#e76f51", "#43aa8b", "#577590", "#bc6c25"];
 function _sdwanMemberColor(name, members) {
-  if (!name) return "#7b8794";
-  var idx = (members || []).indexOf(name);
-  if (idx < 0) idx = 0;
-  return _SDWAN_MEMBER_COLORS[idx % _SDWAN_MEMBER_COLORS.length];
+  return PolarisAssetShared.sdwanMemberColor(name, members);
 }
 
 // Compact "Health Check Status" strip — one segment per recent scrape.
@@ -18999,7 +19249,11 @@ async function _loadPerfSlaForHealthCheck(assetId, hcName, members, range) {
       return { label: r.link, color: _sdwanMemberColor(r.link, memberNames), samples: r.samples, data: r.data };
     });
     var first = results.find(function (r) { return r.data; }) || results[0];
-    var copts = { since: first && first.data ? first.data.since : undefined, until: first && first.data ? first.data.until : undefined, subject: hcName };
+    var copts = {
+      since: first && first.data ? first.data.since : undefined, until: first && first.data ? first.data.until : undefined, subject: hcName,
+      // Rollup tier → dashed bucket-peak lines on latency and jitter.
+      maxTier: _chartRollupTier(first && first.data),
+    };
     var thr = members[0] || {};
     // Stash render state so the clickable legend can re-render all three charts
     // on toggle. Reset per-member visibility whenever the health-check changes.
@@ -19047,8 +19301,11 @@ function _renderAllPerfSlaCharts() {
   var latEl  = document.getElementById("sdwan-latency-chart");
   var jitEl  = document.getElementById("sdwan-jitter-chart");
   var lossEl = document.getElementById("sdwan-loss-chart");
-  if (latEl)  _renderPerfSlaMultiChart(latEl,  ps.series, "latencyMs",  { label: "Latency", unit: "ms", threshold: ps.thr.latencyThresholdMs }, ps.copts);
-  if (jitEl)  _renderPerfSlaMultiChart(jitEl,  ps.series, "jitterMs",   { label: "Jitter",  unit: "ms", threshold: ps.thr.jitterThresholdMs }, ps.copts);
+  // maxKey: the rollup bucket's peak, drawn dashed under each member's
+  // average. Not on packet loss — its average is already the figure that
+  // matters, and a 100 % peak in one sample would read as an outage.
+  if (latEl)  _renderPerfSlaMultiChart(latEl,  ps.series, "latencyMs",  { label: "Latency", unit: "ms", threshold: ps.thr.latencyThresholdMs, maxKey: "maxLatencyMs" }, ps.copts);
+  if (jitEl)  _renderPerfSlaMultiChart(jitEl,  ps.series, "jitterMs",   { label: "Jitter",  unit: "ms", threshold: ps.thr.jitterThresholdMs, maxKey: "maxJitterMs" }, ps.copts);
   if (lossEl) _renderPerfSlaMultiChart(lossEl, ps.series, "packetLoss", { label: "Packet loss", unit: "%", threshold: ps.thr.packetLossThreshold }, ps.copts);
 }
 
@@ -19066,12 +19323,18 @@ function _renderPerfSlaLegend(el, series) {
     return _seriesChipHTML(s.label, s.label, s.color, !hidden.has(s.label),
       "Click to hide " + s.label + " · double-click to show only this member", "sdwan-legend-chip");
   }).join("");
+  // One Max chip for the latency AND jitter charts on a rollup tier — a
+  // separate control from the member chips, so isolate / Show all leave it be.
+  var maxTier = _sdwanTabState && _sdwanTabState.perfSla && _sdwanTabState.perfSla.copts
+    ? _sdwanTabState.perfSla.copts.maxTier : null;
+  if (maxTier) chips += _maxLineChipHTML("assetSdwan", maxTier, _getMaxLinePref("assetSdwan"));
   if (hidden.size) {
     chips += '<span class="sdwan-legend-all" title="Show every member again"' +
       ' style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;color:var(--color-accent)">Show all</span>';
   }
   el.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:0.72rem;color:var(--color-text-secondary);margin:0.25rem 0 0.35rem">' +
     chips + '</div>';
+  if (maxTier) _wireMaxLineChip(el, "assetSdwan", _renderAllPerfSlaCharts);
   // A double-click also fires two clicks — defer the single-click toggle just
   // past the double-click window (as _wireCpuLegend does) so an isolate does
   // not first hide the member it was aimed at.
@@ -19131,11 +19394,18 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   opts = opts || {};
   meta = meta || {};
   // Build per-series value arrays; drop members with no numeric points.
+  // Rollup tiers (opts.maxTier) with a meta.maxKey: each member's bucket
+  // peak, kept on the value so the dashed line, the axis and the tooltip
+  // read the same figure. Null on a bucket with no max.
+  var maxTier = meta.maxKey ? opts.maxTier || null : null;
+  var showMax = !!maxTier && _getMaxLinePref("assetSdwan");
   var drawn = series.map(function (s) {
     return {
       label: s.label, color: s.color,
-      values: s.samples.map(function (x) { return { ts: x.timestamp, v: x[metricKey] }; })
-                        .filter(function (e) { return typeof e.v === "number"; }),
+      values: s.samples.map(function (x) {
+        var m = maxTier ? x[meta.maxKey] : null;
+        return { ts: x.timestamp, v: x[metricKey], m: typeof m === "number" && isFinite(m) ? m : null };
+      }).filter(function (e) { return typeof e.v === "number"; }),
     };
   }).filter(function (s) { return s.values.length; });
   if (!drawn.length) { container.textContent = "No samples in this range yet."; return; }
@@ -19156,6 +19426,13 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   // rest (fall back to all members when everything is hidden).
   var maxV = 1;
   (visible.length ? visible : drawn).forEach(function (s) { s.values.forEach(function (e) { if (e.v > maxV) maxV = e.v; }); });
+  // Shown peaks join the axis (visible window only) so the dashed line is
+  // never clipped off the top; hidden, the axis fits the averages + SLA line.
+  if (showMax) {
+    visible.forEach(function (s) {
+      _inChartWindow(s.values, opts.since, "ts").forEach(function (e) { if (e.m != null && e.m > maxV) maxV = e.m; });
+    });
+  }
   if (hasThreshold) maxV = Math.max(maxV, meta.threshold * 1.05);
   function tidyCeil(n) { var exp = Math.pow(10, Math.floor(Math.log10(n))); var mant = n / exp; var step = mant <= 1 ? 1 : mant <= 2 ? 2 : mant <= 5 ? 5 : 10; return step * exp; }
   var ceil = tidyCeil(maxV);
@@ -19168,11 +19445,19 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       '<line x1="' + padL + '" y1="' + ty + '" x2="' + (W - padR) + '" y2="' + ty + '" stroke="#e9a23b" stroke-width="1.25" stroke-dasharray="5,4"/>' +
       '<text x="' + (W - padR) + '" y="' + (ty - 3) + '" text-anchor="end" font-size="9" fill="#e9a23b">SLA ' + (Math.round(meta.threshold * 100) / 100) + ' ' + escapeHtml(meta.unit || "") + '</text>';
   }
+  // Every member's max line goes in first, so all of them sit UNDER every
+  // average line rather than one member's peak covering another's average.
+  var maxSvg = showMax
+    ? visible.map(function (s) {
+        return _maxLineSVG(s.values.map(function (e) { return e.m == null ? null : { x: xFor(e.ts), y: yFor(e.m) }; }), s.color);
+      }).join("")
+    : "";
   var seriesSvg = visible.map(function (s) {
     var pts = s.values.map(function (e) { return xFor(e.ts) + "," + yFor(e.v); }).join(" ");
     var dots = s.values.map(function (e) {
       return '<circle class="chart-hit" cx="' + xFor(e.ts) + '" cy="' + yFor(e.v) + '" r="5" fill="transparent" style="cursor:crosshair"' +
-        ' data-ts="' + escapeHtml(String(e.ts)) + '" data-v="' + e.v + '" data-member="' + escapeHtml(s.label) + '"/>';
+        ' data-ts="' + escapeHtml(String(e.ts)) + '" data-v="' + e.v + '" data-member="' + escapeHtml(s.label) + '"' +
+        (maxTier ? ' data-vmax="' + (e.m != null ? e.m : "") + '"' : '') + '/>';
     }).join("");
     return '<polyline points="' + pts + '" fill="none" stroke="' + s.color + '" stroke-width="1.5"/>' + dots;
   }).join("");
@@ -19194,6 +19479,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
       '<g ' + _chartClipAttr(clipId) + '>' +
         thresholdLine +
+        maxSvg +
         seriesSvg +
       '</g>' +
     '</svg>' + CHART_TOOLTIP_HTML;
@@ -19202,9 +19488,14 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   container.style.justifyContent = "flex-start";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
   _wireChartTooltip(container, function (target) {
+    var unitSfx = meta.unit ? " " + meta.unit : "";
+    var vmax = target.getAttribute("data-vmax");
+    var reading = vmax != null
+      ? _avgMaxText(target.getAttribute("data-v") + unitSfx, vmax !== "" ? vmax + unitSfx : null)
+      : escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "");
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(target.getAttribute("data-member")) + '</div>' +
       '<div>' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>' + escapeHtml(meta.label || metricKey) + ': ' + escapeHtml(target.getAttribute("data-v")) + ' ' + escapeHtml(meta.unit || "") + '</div>';
+      '<div>' + escapeHtml(meta.label || metricKey) + ': ' + reading + '</div>';
   });
   _addChartScreenshotButton(container, "SD-WAN " + (meta.label || metricKey), { yAxis: (meta.label || "") + " (" + (meta.unit || "") + ")", subject: opts.subject, getStats: _perfSlaShotStats });
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
@@ -19219,30 +19510,18 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
 
 function _ensureStoragePanelDOM() {
   if (document.getElementById("storage-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "storage-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="storage-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="storage-panel-title">Storage</h3>' +
-          '<button class="btn-icon" id="storage-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="storage-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="storage-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="storage-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeStoragePanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "storage-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Storage",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: closeStoragePanel,
+    resizeKey: "polaris.panel.width.storage",
   });
-  document.getElementById("storage-panel-close").addEventListener("click", closeStoragePanel);
-  wireSlideoverEscape(overlay, closeStoragePanel);
-  initSlideoverResize(document.getElementById("storage-panel"), "polaris.panel.width.storage");
 }
 
 function closeStoragePanel() {
@@ -21380,8 +21659,22 @@ var _MAC_ROW_IPS_VISIBLE = 3;
 var _ADDRESS_PRIMARY_BADGE = '<span class="address-primary-badge" title="The address monitoring probes">&#9733; Primary</span>';
 var _ADDRESS_PRIMARY_IPV6_BADGE = '<span class="address-primary-badge" title="The asset&#39;s primary IPv6 — polled only when the asset has no IPv4">&#9733; Primary IPv6</span>';
 
+// The IPAM network the address sits in (server-resolved, gate-aware), as a
+// chip beside the score: "VLAN n", or the CIDR when the network has no VLAN.
+// Its title names the network in full. Plain title, not a hover — hovers
+// can't nest inside the IPs hover.
+function _addressNetworkChipHTML(net) {
+  if (!net || !(net.name || net.cidr)) return '';
+  var hasVlan = net.vlan != null;
+  var label = hasVlan ? 'VLAN ' + String(net.vlan) : (net.cidr || net.name);
+  var title = [net.name, net.cidr, hasVlan ? 'VLAN ' + String(net.vlan) : null]
+    .filter(function (s) { return s; }).join(' · ');
+  return '<span class="addr-net-chip" title="' + escapeHtml(title) + '">' + escapeHtml(label) + '</span>';
+}
+
 // One address in the IPs hover: the IP, its score chip (plain — hovers can't
-// nest), the MAC it is on, provenance, and the star or "Set as primary".
+// nest), its network chip, the MAC it is on, provenance, and the star or
+// "Set as primary".
 function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   var bits = [];
   bits.push(r.mac
@@ -21389,13 +21682,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
     : 'no MAC');
   var label = formatAddressSource(r.source);
   if (label) bits.push(escapeHtml(label));
-  // The IPAM network the address sits in (server-resolved, gate-aware).
-  if (r.network && (r.network.name || r.network.cidr)) {
-    var netBits = escapeHtml(r.network.name || r.network.cidr) +
-      (r.network.name && r.network.cidr ? ' <span class="mono">' + escapeHtml(r.network.cidr) + '</span>' : '');
-    if (r.network.vlan != null) netBits += ' VLAN ' + escapeHtml(String(r.network.vlan));
-    bits.push(netBits);
-  }
+  var netChip = _addressNetworkChipHTML(r.network);
   if (r.device) bits.push(escapeHtml(r.device));
   // The interface's primary address gets a pill; its secondary addresses get
   // none (FortiOS names them; other collectors leave the role unknown).
@@ -21418,6 +21705,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
         : '');
     return '<div class="mac-tooltip-row">' +
       '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
+      netChip +
       '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
       v6Star +
     '</div>';
@@ -21432,6 +21720,7 @@ function _addressTooltipRowHTML(asset, r, isPrimary, pinnable) {
   return '<div class="mac-tooltip-row">' +
     '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</span>' +
     addressConfidenceChipHTML(asset, r.ip, { plain: true }) +
+    netChip +
     '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + bits.join(' &middot; ') + '</span></span>' +
     star +
   '</div>';
@@ -22522,26 +22811,6 @@ async function singleForwardLookup(id, name) {
 }
 
 /* ─── OUI Lookup ────────────────────────────────────────────────────────── */
-
-async function bulkOuiLookup() {
-  // The lookup itself is server-side and scans the whole fleet (ouiLookupAll),
-  // so the confirm can't be scoped to the current page — ask generically and
-  // let the server report how many were missing / resolved.
-  var ok = await showConfirm("Run OUI manufacturer lookup for all assets missing a manufacturer?");
-  if (!ok) return;
-
-  try {
-    var result = await api.assets.ouiLookupAll();
-    if (!result.total) {
-      showToast("All assets with MACs already have a manufacturer", "success");
-    } else {
-      showToast("OUI resolved " + result.resolved + " of " + result.total + " assets", "success");
-    }
-    if (result.resolved > 0) loadAssets();
-  } catch (err) {
-    showToast(err.message, "error");
-  }
-}
 
 async function singleOuiLookup(id, mac) {
   try {
@@ -23827,7 +24096,6 @@ function _wireSnmpWalkTab(a) {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  function _isUploadedMib(mibId) { return mibId && !mibId.startsWith("std:"); }
   // "MIB-aware" — std AND uploaded MIBs both render the browse tree and
   // walk through the symbol-resolving endpoint. Raw OID mode (no MIB) is
   // the only branch that stays on numeric input + raw walk.
@@ -24168,9 +24436,31 @@ function _formatSourceObservedValue(v) {
     // Pretty-print ISO timestamps; raw-show short strings; mono-format obvious
     // identifiers so they're easy to read at a glance.
     if (/^\d{4}-\d{2}-\d{2}T/.test(v)) return escapeHtml(formatDate(v));
+    if (_isCopyableAddress(v)) return _sourceAddressCopyHTML(v);
     return escapeHtml(v);
   }
+  // A list of addresses (a source's MACs, its IPs): one click-to-copy value each.
+  if (Array.isArray(v) && v.length && v.every(function (x) { return typeof x === "string" && _isCopyableAddress(x); })) {
+    return v.map(_sourceAddressCopyHTML).join(", ");
+  }
   return '<code class="mono" style="font-size:0.78rem">' + escapeHtml(JSON.stringify(v)) + '</code>';
+}
+
+// Is this observed value an IP address (v4 / v6, optionally with a /prefix)
+// or a MAC address? Those are click-to-copy on the Sources tab. A shape check
+// only: the value is copied verbatim, never parsed (IP math lives server-side).
+var _SOURCE_IPV4_RE = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\/\d{1,2})?$/;
+var _SOURCE_IPV6_RE = /^[0-9a-f:.]{2,45}(?:%[\w.-]+)?(?:\/\d{1,3})?$/i;
+var _SOURCE_MAC_RE = /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}$/i;
+function _isCopyableAddress(v) {
+  var t = String(v).trim();
+  if (!t) return false;
+  if (_SOURCE_MAC_RE.test(t) || _SOURCE_IPV4_RE.test(t)) return true;
+  // IPv6: hex groups with "::" or all eight groups (so "12:30:45" is not one).
+  return _SOURCE_IPV6_RE.test(t) && (t.indexOf("::") !== -1 || (t.match(/:/g) || []).length === 7);
+}
+function _sourceAddressCopyHTML(v) {
+  return '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(v) + '">' + escapeHtml(v) + '</span>';
 }
 
 // Status pip rendered next to each row in the dependency tree. Mirrors the
@@ -24484,28 +24774,114 @@ function _wireDependencyTreeLinks(rootEl) {
 // Shared markup for the per-firewall DHCP sighting table. Used by the Sources
 // tab (general-visibility "found by N firewalls" history) and the Quarantine
 // tab's fan-out section.
+//
+// The FortiGate and VLAN cells are row-menu triggers: a click opens what they
+// name (the gate's asset, the network), a right click shows the menu (the
+// gate's Open HTTPS / Open SSH too). The server resolves each gate name to
+// its asset (`fortigateAsset`) and each address to its network (`subnetId`);
+// an unresolved one stays plain text. A row whose gate resolved carries the
+// row-menu-row marker, so a double click / right click anywhere on it is
+// the gate's. The IP is click-to-copy (the slide-over body's copy handler).
+var _sightingMenuRows = {};
+var _sightingMenuSeq = 0;
+
 function _sightingsTableHTML(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     return '<p class="empty-state" style="margin:0">No firewall sightings recorded.</p>';
   }
   return '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>FortiGate</th><th>IP Address</th><th>VLAN</th><th>Source</th><th>Last Seen</th></tr></thead><tbody>' +
     rows.map(function (s) {
+      var key = "s" + (++_sightingMenuSeq);
+      _sightingMenuRows[key] = s;
+      var gateName = s.fortigateDevice || "?";
+      var gateRef = s.fortigateAsset && s.fortigateAsset.id ? s.fortigateAsset : null;
+      var gateCell = gateRef
+        ? '<button type="button" class="row-menu-trigger" aria-haspopup="menu" data-sighting-gate="' + key + '" title="Open this FortiGate. Right-click for more">' + escapeHtml(gateName) + '</button>'
+        : '<span title="No firewall in inventory matches this FortiGate name">' + escapeHtml(gateName) + '</span>';
       var vlanCell = "—";
       if (s.subnetName || s.vlan != null) {
         var parts = [];
         if (s.subnetName) parts.push(escapeHtml(s.subnetName));
-        if (s.vlan != null) parts.push("VLAN " + s.vlan);
+        if (s.vlan != null) parts.push("VLAN " + escapeHtml(String(s.vlan)));
         vlanCell = parts.join(" · ");
+        if (s.subnetId && _canOpenSightingNetwork()) {
+          vlanCell = '<button type="button" class="row-menu-trigger" aria-haspopup="menu" data-sighting-net="' + key + '" title="Open this network. Right-click for more">' + vlanCell + '</button>';
+        }
       }
-      return '<tr>' +
-        '<td>' + escapeHtml(s.fortigateDevice || "?") + '</td>' +
-        '<td>' + escapeHtml(s.ipAddress || "—") + '</td>' +
+      var ipCell = s.ipAddress
+        ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(s.ipAddress) + '">' + escapeHtml(s.ipAddress) + '</span>'
+        : "—";
+      return (gateRef ? '<tr data-row-menu-row>' : '<tr>') +
+        '<td>' + gateCell + '</td>' +
+        '<td>' + ipCell + '</td>' +
         '<td>' + vlanCell + '</td>' +
         '<td><span class="badge badge-type">' + escapeHtml(s.source || "?") + '</span></td>' +
         '<td>' + (s.lastSeen ? formatDate(s.lastSeen) : "—") + '</td>' +
       '</tr>';
     }).join("") +
     '</tbody></table>';
+}
+
+// Opening a network panel reads the network list (subnets:read); without it
+// the VLAN stays plain text rather than offering a panel that 403s.
+function _canOpenSightingNetwork() {
+  return typeof permAtLeast === "function" && permAtLeast("subnets", "read") &&
+    typeof PolarisPanels !== "undefined" && typeof PolarisPanels.openNetwork === "function";
+}
+
+function _sightingGateMenuItems(s) {
+  var items = _upstreamMenuItems(s.fortigateAsset);
+  if (!items.length) return items;
+  items.push({ separator: true });
+  items.push({
+    label: "Copy name",
+    onSelect: function () { copyTextToClipboard(s.fortigateDevice || ""); },
+  });
+  return items;
+}
+
+function _sightingNetworkMenuItems(s) {
+  var label = s.subnetName || (s.vlan != null ? "VLAN " + s.vlan : "network");
+  return [
+    {
+      label: "Open network",
+      primary: true,
+      title: "Open " + label + " in its network panel" + (s.ipAddress ? ", at " + s.ipAddress : ""),
+      // The network was matched BY this IP (it holds it), so the panel can
+      // scroll to and highlight that row. subnetCidr saves the panel a fetch
+      // to find the right page; openNetwork looks it up when it is absent.
+      onSelect: function () {
+        PolarisPanels.openNetwork(s.subnetId, s.ipAddress
+          ? { focusIp: s.ipAddress, subnetCidr: s.subnetCidr || undefined }
+          : undefined);
+      },
+    },
+    { separator: true },
+    {
+      label: "Copy name",
+      onSelect: function () { copyTextToClipboard(label); },
+    },
+  ];
+}
+
+// One document listener for every rendered sightings table (Sources tab,
+// Quarantine tab). Guarded so a second evaluation of this file can't stack it.
+if (typeof document !== "undefined" && document.addEventListener && typeof window !== "undefined" && !window.__polarisSightingMenus) {
+  window.__polarisSightingMenus = true;
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var btn = t && typeof t.closest === "function" ? t.closest("[data-sighting-gate], [data-sighting-net]") : null;
+    if (!btn) return;
+    var gateKey = btn.getAttribute("data-sighting-gate");
+    var s = _sightingMenuRows[gateKey || btn.getAttribute("data-sighting-net")];
+    if (!s) return;
+    e.preventDefault();
+    if (gateKey) {
+      showRowMenu(btn, _sightingGateMenuItems(s), { label: "Actions for " + (s.fortigateDevice || "FortiGate") });
+    } else {
+      showRowMenu(btn, _sightingNetworkMenuItems(s), { label: "Actions for " + (s.subnetName || "network") });
+    }
+  });
 }
 
 // Shared markup for the IP-history table (IPs this asset has held over time).
@@ -24520,7 +24896,7 @@ function _ipHistoryTableHTML(rows) {
       var net = h.network || null;
       var vlanTitle = net ? ' title="' + escapeHtml((net.name || "") + (net.cidr ? " " + net.cidr : "")) + '"' : '';
       return '<tr>' +
-        '<td class="mono">' + escapeHtml(h.ip || "-") + '</td>' +
+        '<td>' + (h.ip ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(h.ip) + '">' + escapeHtml(h.ip) + '</span>' : "-") + '</td>' +
         '<td' + vlanTitle + '>' + (h.vlan != null ? escapeHtml(String(h.vlan)) : "-") + '</td>' +
         '<td>' + (h.firstSeen ? escapeHtml(formatDate(h.firstSeen)) : "-") + '</td>' +
         '<td>' + (h.lastSeen ? escapeHtml(formatDate(h.lastSeen)) : "-") + '</td>' +
@@ -25315,30 +25691,18 @@ async function _loadServiceLogsFor(assetId, unit, platform) {
 // detail panel's nested-slideover + range-button pattern.
 function _ensureProcPanelDOM() {
   if (document.getElementById("proc-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "proc-panel-overlay";
-  overlay.className = "slideover-overlay slideover-nested";
-  // Stacks by DOM order like every slide-over — raiseSlideover on open.
-  overlay.innerHTML =
-    '<div class="slideover" id="proc-panel" style="z-index:1100">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="proc-panel-title">Process</h3>' +
-          '<button class="btn-icon" id="proc-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="proc-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="proc-panel-body"><p class="empty-state" style="padding:1rem 1.25rem">Loading…</p></div>' +
-      '<div class="slideover-footer" id="proc-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) _closeProcPanel(); });
-  document.getElementById("proc-panel-close").addEventListener("click", _closeProcPanel);
-  wireSlideoverEscape(overlay, _closeProcPanel);
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("proc-panel"), "polaris.panel.width.process");
-  }
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Stacks by DOM order like every slide-over — raiseSlideover on open.
+  buildSlideover({
+    id: "proc-panel",
+    overlayClass: "slideover-nested",
+    panelStyle: "z-index:1100",
+    title: "Process",
+    bodyHTML: '<p class="empty-state" style="padding:1rem 1.25rem">Loading…</p>',
+    footer: true,
+    close: _closeProcPanel,
+    resizeKey: "polaris.panel.width.process",
+  });
 }
 
 function _closeProcPanel() {
@@ -26544,11 +26908,10 @@ function _assetEventsTabHTML(assetId) {
           '<th style="width:140px" data-col-id="action"    data-sf-key="action"    data-sf-type="string">Action</th>' +
           '<th style="width:100px" data-col-id="resource"  data-sf-key="resourceType" data-sf-type="string">Resource</th>' +
           '<th                      data-col-id="message"  data-sf-key="message"   data-sf-type="string">Message</th>' +
-          '<th style="width:100px" data-col-id="user"      data-sf-key="actor"     data-sf-type="string">User</th>' +
-          '<th style="width:60px"  data-col-id="actions" data-col-required="true"></th>' +
+          '<th style="width:100px" data-col-fit="content" data-col-id="user" data-sf-key="actor"     data-sf-type="string">User</th>' +
         '</tr></thead>' +
         '<tbody id="asset-view-events-tbody">' +
-          '<tr><td colspan="7" class="empty-state">Loading…</td></tr>' +
+          '<tr><td colspan="6" class="empty-state">Loading…</td></tr>' +
         '</tbody>' +
       '</table>' +
     '</div>' +
@@ -26566,18 +26929,21 @@ function _renderAssetEventRow(ev, idx) {
   var resourceLabel = ev.resourceType || "-";
   var resourceName = ev.resourceName ? ' <span style="color:var(--color-text-tertiary);font-size:0.8rem">(' + escapeHtml(ev.resourceName) + ')</span>' : "";
 
-  var detailBtn = ev.details && ev.details.changes
-    ? '<button class="btn btn-secondary btn-sm btn-event-detail" data-event-idx="' + idx + '" style="padding:2px 8px;font-size:0.75rem">Detail</button>'
-    : '';
+  // An event with a field-by-field change list opens it from the Action text
+  // (and a double click on the row) — the Events page's gesture, no column.
+  var hasChanges = !!(ev.details && ev.details.changes);
+  var actionCell = hasChanges
+    ? '<button type="button" class="row-menu-trigger ev-detail-trigger" data-event-idx="' + idx + '" ' +
+        'aria-haspopup="menu" aria-expanded="false" title="View what changed">' + escapeHtml(ev.action || "") + '</button>'
+    : escapeHtml(ev.action || "");
 
-  return '<tr>' +
+  return '<tr' + (hasChanges ? ' data-row-menu-row' : '') + '>' +
     '<td style="font-family:var(--font-mono);font-size:0.82rem;white-space:nowrap">' + escapeHtml(timeStr) + '</td>' +
     '<td><span class="badge ' + levelClass + '">' + levelLabel + '</span></td>' +
-    '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ev.action || "") + '</td>' +
+    '<td style="font-family:var(--font-mono);font-size:0.82rem">' + actionCell + '</td>' +
     '<td>' + escapeHtml(resourceLabel) + resourceName + '</td>' +
     '<td>' + escapeHtml(ev.message || "") + '</td>' +
     '<td>' + escapeHtml(ev.actor || "-") + '</td>' +
-    '<td>' + detailBtn + '</td>' +
     '</tr>';
 }
 
@@ -26636,10 +27002,10 @@ async function _loadAssetEventsTabFor() {
     _assetEventsCurrentPage = events;
     tbody.innerHTML = events.length
       ? events.map(_renderAssetEventRow).join("")
-      : '<tr><td colspan="7" class="empty-state">No events found</td></tr>';
+      : '<tr><td colspan="6" class="empty-state">No events found</td></tr>';
     _renderAssetEventsPagination();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">Failed to load events</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load events</td></tr>';
   }
 }
 
@@ -26777,10 +27143,13 @@ function _wireAssetEventsTab(assetId) {
 
   var tbody = document.getElementById("asset-view-events-tbody");
   if (tbody) tbody.addEventListener("click", function (e) {
-    var detailBtn = e.target.closest(".btn-event-detail");
-    if (!detailBtn) return;
-    var idx = parseInt(detailBtn.getAttribute("data-event-idx"), 10);
-    if (_assetEventsCurrentPage[idx]) _showAssetEventDetail(_assetEventsCurrentPage[idx]);
+    var detail = e.target.closest(".ev-detail-trigger");
+    if (!detail) return;
+    var ev = _assetEventsCurrentPage[parseInt(detail.getAttribute("data-event-idx"), 10)];
+    if (!ev) return;
+    showRowMenu(detail, [
+      { label: "View Changes", primary: true, onSelect: function () { _showAssetEventDetail(ev); } },
+    ], { label: "Actions for " + (ev.action || "event") });
   });
 }
 
@@ -26985,7 +27354,253 @@ function _showAssetEventDetail(ev) {
   openModal(title, body, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
 }
 
-function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoveringIntegrationId) {
+// ─── Split a MAC off onto its own asset (business rule 91(j)) ────────────────
+// The Sources tab lists every MAC on the asset with the address it last held,
+// the gate that saw it and when. A MAC seen by a lease or a gate's client list
+// can be split onto a new asset — the recovery for devices fused before rule
+// 91(f). The primary MAC stays, and a MAC the device reports as its own (an
+// interface port, an agent / Intune / vCenter NIC, a range) is never another
+// device. Click a row to select it, click the MAC to copy, right-click for the
+// menu; the bulk bar splits every selected MAC at once.
+var _MAC_SPLIT_OWN_SOURCES = { "monitor-interface": 1, "polaris-agent": 1, "intune-ethernet": 1, "intune-wifi": 1, "vcenter-vnic": 1 };
+var _MAC_SPLIT_VISIBLE = 6;
+var _macSplitState = {}; // assetId → { asset, sources, ipHistory, selected: {mac:1}, expanded }
+
+function _macSplitRefusal(asset, m) {
+  if (m.macEnd) return "A MAC range is the device's own ports";
+  if (asset.macAddress && String(m.mac).toUpperCase() === String(asset.macAddress).toUpperCase()) return "The primary MAC stays: split the others off";
+  if (_MAC_SPLIT_OWN_SOURCES[m.source]) return "The device reports this MAC as its own";
+  return null;
+}
+
+function _macSplitCanAct(asset) {
+  return typeof canEditAsset === "function" && canEditAsset(asset) &&
+    asset.status !== "decommissioned" && !asset.quarantinedAt;
+}
+
+// "iPhone" for "iPhone-F2BC27" (rule 91(i) suffix), else the name itself.
+function _macSplitBase(hostname) {
+  var m = /^(.+)-([0-9a-f]{6}|[0-9a-f]{12})$/i.exec(hostname || "");
+  return m ? m[1] : (hostname || "");
+}
+
+function _macSplitSuffix(mac) {
+  return String(mac || "").replace(/[^0-9a-f]/gi, "").toUpperCase().slice(-6);
+}
+
+function _macSplitAddrsByMac(asset) {
+  var by = {};
+  (asset.associatedIps || []).forEach(function (r) {
+    if (!r.mac) return;
+    var k = String(r.mac).toUpperCase();
+    (by[k] = by[k] || []).push(r);
+  });
+  Object.keys(by).forEach(function (k) {
+    by[k].sort(function (a, b) { return String(b.lastSeen || "").localeCompare(String(a.lastSeen || "")); });
+  });
+  return by;
+}
+
+function _assetMacSplitSectionHTML(asset, sources, ipHistory) {
+  var macs = Array.isArray(asset && asset.macAddresses) ? asset.macAddresses : [];
+  if (macs.length < 2) return "";
+  var st = _macSplitState[asset.id] || { selected: {}, expanded: false };
+  st.asset = asset; st.sources = sources || []; st.ipHistory = ipHistory || [];
+  _macSplitState[asset.id] = st;
+  return '<div id="asset-mac-split-' + escapeHtml(asset.id) + '" data-shot-section="macSplit" data-shot-label="MAC addresses">' +
+    _assetMacSplitInnerHTML(asset.id) + '</div>';
+}
+
+function _assetMacSplitInnerHTML(assetId) {
+  var st = _macSplitState[assetId];
+  var asset = st.asset;
+  var canAct = _macSplitCanAct(asset);
+  var primary = asset.macAddress ? String(asset.macAddress).toUpperCase() : "";
+  var byMac = _macSplitAddrsByMac(asset);
+  var macs = asset.macAddresses.slice().sort(function (a, b) {
+    var ap = String(a.mac).toUpperCase() === primary, bp = String(b.mac).toUpperCase() === primary;
+    if (ap !== bp) return ap ? -1 : 1;
+    return String(b.lastSeen || "").localeCompare(String(a.lastSeen || ""));
+  });
+  var shown = st.expanded ? macs : macs.slice(0, _MAC_SPLIT_VISIBLE);
+  var selCount = Object.keys(st.selected).length;
+
+  var rows = shown.map(function (m) {
+    var mac = String(m.mac).toUpperCase();
+    var why = _macSplitRefusal(asset, m);
+    var addrs = byMac[mac] || [];
+    var last = addrs[0] || null;
+    var first = addrs.reduce(function (acc, r) { return r.firstSeen && (!acc || r.firstSeen < acc) ? r.firstSeen : acc; }, null);
+    var badges = "";
+    if (mac === primary) badges += ' <span class="badge badge-active" title="The MAC this asset is known by">Primary</span>';
+    else if (why && (m.macEnd || _MAC_SPLIT_OWN_SOURCES[m.source])) badges += ' <span class="badge badge-readonly" title="' + escapeHtml(why) + '">Own port</span>';
+    var ipCell = last
+      ? '<span class="mono copy-cell" title="Click to copy" data-copy="' + escapeHtml(last.ip) + '" onclick="event.stopPropagation()">' + escapeHtml(last.ip) + '</span>' +
+        (typeof _addressNetworkChipHTML === "function" ? _addressNetworkChipHTML(last.network) : "")
+      : '<span class="hint">no address</span>';
+    var seenBy = [];
+    var gate = (last && last.device) || m.device;
+    if (gate) seenBy.push(escapeHtml(gate));
+    if (last && last.medium) seenBy.push(escapeHtml(last.medium));
+    if (!seenBy.length && m.source) seenBy.push(escapeHtml(formatMacSource(m.source)));
+    var action = why
+      ? '<span class="hint" title="' + escapeHtml(why) + '">' + (mac === primary ? "Stays" : "—") + '</span>'
+      : (canAct ? '<button type="button" class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); openMacSplitConfirm(' + jsArg(assetId) + ', [' + jsArg(mac) + '])">Split</button>' : '');
+    var selectable = canAct && !why;
+    return '<tr data-mac="' + escapeHtml(mac) + '"' + (st.selected[mac] ? ' class="selected"' : '') +
+      (selectable ? ' onclick="_macSplitToggle(' + jsArg(assetId) + ', ' + jsArg(mac) + ')"' : '') +
+      ' oncontextmenu="_macSplitRowMenu(event, ' + jsArg(assetId) + ', ' + jsArg(mac) + ')">' +
+      '<td class="mono"><span class="copy-cell" title="Click to copy" data-copy="' + escapeHtml(mac) + '" onclick="event.stopPropagation()">' + escapeHtml(mac) + '</span>' + badges + '</td>' +
+      '<td>' + ipCell + '</td>' +
+      '<td>' + (seenBy.join(' &middot; ') || '—') + '</td>' +
+      '<td>' + (first ? escapeHtml(formatDate(first)) : '—') + '</td>' +
+      '<td>' + (m.lastSeen ? escapeHtml(formatDate(m.lastSeen)) : '—') + '</td>' +
+      '<td class="actions">' + action + '</td>' +
+    '</tr>';
+  }).join("");
+  if (!st.expanded && macs.length > _MAC_SPLIT_VISIBLE) {
+    rows += '<tr><td colspan="6" class="empty-state" style="padding:0.5rem"><button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitExpand(' + jsArg(assetId) + ')">Show ' + (macs.length - _MAC_SPLIT_VISIBLE) + ' more</button></td></tr>';
+  }
+
+  var bulk = canAct
+    ? '<div class="bulk-bar' + (selCount ? '' : ' bulk-bar-idle') + '" style="margin-bottom:0.4rem">' +
+        '<span class="bulk-bar-count">' + (selCount ? selCount + ' selected' : 'Click rows to select MACs to split') + '</span>' +
+        (selCount
+          ? '<button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitSelected(' + jsArg(assetId) + ')">Split each into its own asset</button>' +
+            '<button type="button" class="btn btn-sm btn-secondary" onclick="_macSplitClear(' + jsArg(assetId) + ')">Clear</button>'
+          : '') +
+      '</div>'
+    : '';
+  var base = _macSplitBase(asset.hostname) || "the device";
+  return '<div class="section-block" style="margin-bottom:1rem">' +
+    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.6rem;margin-bottom:0.25rem">' +
+      '<div class="section-label" style="margin:0">MAC addresses on this asset</div>' +
+      '<span class="hint">' + macs.length + ' MACs' + (primary ? ' · 1 primary' : '') + '</span>' +
+    '</div>' +
+    '<p class="hint" style="margin:0 0 0.6rem">Each MAC was seen by a DHCP lease, a FortiGate&#39;s client list or the device itself. ' +
+      'If some are different devices that share a name, split them: each gets its own asset named ' + escapeHtml(base) + '-&lt;last 3 octets&gt;.</p>' +
+    bulk +
+    '<div class="table-wrapper"><table><thead><tr><th>MAC</th><th>Last IP</th><th>Seen by</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+function _macSplitRerender(assetId) {
+  var host = document.getElementById("asset-mac-split-" + assetId);
+  if (host && _macSplitState[assetId]) host.innerHTML = _assetMacSplitInnerHTML(assetId);
+}
+
+function _macSplitToggle(assetId, mac) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  if (st.selected[mac]) delete st.selected[mac]; else st.selected[mac] = 1;
+  _macSplitRerender(assetId);
+}
+
+function _macSplitClear(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  st.selected = {};
+  _macSplitRerender(assetId);
+}
+
+function _macSplitExpand(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  st.expanded = true;
+  _macSplitRerender(assetId);
+}
+
+function _macSplitSelected(assetId) {
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  openMacSplitConfirm(assetId, Object.keys(st.selected));
+}
+
+function _macSplitRowMenu(ev, assetId, mac) {
+  ev.preventDefault();
+  var st = _macSplitState[assetId];
+  if (!st) return;
+  var m = st.asset.macAddresses.find(function (x) { return String(x.mac).toUpperCase() === mac; });
+  var why = m ? _macSplitRefusal(st.asset, m) : "Not on this asset";
+  var items = [{ label: "Copy MAC", onSelect: function () { _macSplitCopy(mac); } }];
+  if (_macSplitCanAct(st.asset)) {
+    items.unshift({ label: "Split into its own asset", disabled: !!why, title: why || "", onSelect: function () { openMacSplitConfirm(assetId, [mac]); } });
+  }
+  showRowMenu(ev.currentTarget, items, { menuAt: { x: ev.clientX, y: ev.clientY } });
+}
+
+function _macSplitCopy(text) {
+  try {
+    navigator.clipboard.writeText(text).then(function () { showToast("Copied " + text); });
+  } catch (e) { /* clipboard unavailable */ }
+}
+
+// The asset would be renamed only when its name is discovery's (rule 91(i)):
+// no operator rename, and a FortiGate endpoint source with nothing better.
+function _macSplitOriginalRenames(asset, sources) {
+  if (asset.hostnameOverride || !asset.hostname) return false;
+  if (_macSplitBase(asset.hostname) !== asset.hostname) return false;
+  var kinds = (sources || []).map(function (s) { return s.sourceKind; }).filter(function (k) { return k !== "manual"; });
+  return kinds.length > 0 && kinds.every(function (k) { return k === "fortigate-endpoint"; });
+}
+
+function openMacSplitConfirm(assetId, macs) {
+  var st = _macSplitState[assetId];
+  if (!st || !macs || !macs.length) return;
+  var asset = st.asset;
+  var byMac = _macSplitAddrsByMac(asset);
+  var base = _macSplitBase(asset.hostname) || "";
+  var kept = {};
+  (asset.associatedIps || []).forEach(function (r) { if (!r.mac || macs.indexOf(String(r.mac).toUpperCase()) === -1) kept[r.ip] = 1; });
+  var rows = macs.map(function (mac) {
+    var ips = (byMac[mac] || []).map(function (r) { return r.ip; });
+    var hist = (st.ipHistory || []).filter(function (h) { return ips.indexOf(h.ip) !== -1 && !kept[h.ip]; }).length;
+    var takes = [];
+    if (ips.length) takes.push(ips.slice(0, 2).map(escapeHtml).join(", ") + (ips.length > 2 ? " +" + (ips.length - 2) : ""));
+    if (hist) takes.push(hist + " history row" + (hist === 1 ? "" : "s"));
+    return '<tr><td class="mono">' + escapeHtml(mac) + '</td>' +
+      '<td class="mono">' + escapeHtml(base ? base + "-" + _macSplitSuffix(mac) : "(no name)") + '</td>' +
+      '<td>' + (takes.join(" · ") || '<span class="hint">the MAC only</span>') + '</td></tr>';
+  }).join("");
+  var renameHTML = _macSplitOriginalRenames(asset, st.sources) && asset.macAddress
+    ? '<div class="form-group" style="margin:0"><label>This asset</label>' +
+        '<div class="form-value"><span class="mono">' + escapeHtml(asset.hostname) + '</span> → <span class="mono">' + escapeHtml(asset.hostname + "-" + _macSplitSuffix(asset.macAddress)) + '</span></div>' +
+        '<div class="hint">Renamed because its name came from a DHCP lease or a FortiGate&#39;s client list. A name you set yourself is never changed.</div></div>'
+    : '<div class="form-group" style="margin:0"><label>This asset</label><div class="form-value"><span class="mono">' + escapeHtml(asset.hostname || asset.id) + '</span> keeps its name.</div></div>';
+  var n = macs.length;
+  var label = "Split " + n + " MAC" + (n === 1 ? "" : "s");
+  var body =
+    '<div style="display:flex;flex-direction:column;gap:0.9rem">' +
+      '<p style="margin:0">Each MAC below becomes its own asset. What moves with it: the MAC, the addresses on it, their IP history and any DHCP reservation on it. Monitoring, credentials, tags and notes stay here.</p>' +
+      '<div class="table-wrapper"><table><thead><tr><th>MAC</th><th>New asset</th><th>Takes</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      renameHTML +
+      '<div class="hint">Discovery keeps each MAC on its new asset from now on. Merge asset puts them back together.</div>' +
+    '</div>';
+  var footer =
+    '<button class="btn btn-secondary" id="mac-split-cancel">Cancel</button>' +
+    '<button class="btn btn-primary" id="mac-split-go">' + label + '</button>';
+  openModal(n === 1 ? "Split this MAC into its own asset?" : "Split " + n + " MACs into their own assets?", body, footer, { wide: true });
+  document.getElementById("mac-split-cancel").onclick = closeModal;
+  document.getElementById("mac-split-go").onclick = async function () {
+    var btn = this;
+    btn.disabled = true; btn.textContent = "Splitting…";
+    try {
+      var result = await api.assets.splitMacs(assetId, macs);
+      closeModal();
+      st.selected = {};
+      var made = (result && result.created) || [];
+      showToast(made.length === 1 ? "Split onto " + (made[0].hostname || "a new asset") : "Split onto " + made.length + " new assets");
+      if (typeof loadAssets === "function") { try { await loadAssets(); } catch (e) { /* not on the Assets page */ } }
+      openViewModal(assetId);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = label;
+      showToast(err.message || "Split failed", "error");
+    }
+  };
+}
+
+function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoveringIntegrationId, asset) {
   sources = Array.isArray(sources) ? sources : [];
   sightings = Array.isArray(sightings) ? sightings : [];
   ipHistory = Array.isArray(ipHistory) ? ipHistory : [];
@@ -27102,7 +27717,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
     );
   }).join("");
   return '<div data-shot-section="sources" data-shot-label="Discovery Sources">' +
-    mergeToolbar + _assetSourceStateSummaryHTML(sources) + sourceCards +
+    mergeToolbar + (asset ? _assetMacSplitSectionHTML(asset, sources, ipHistory) : '') + _assetSourceStateSummaryHTML(sources) + sourceCards +
   '</div>' + historyHTML;
 }
 
@@ -27435,33 +28050,6 @@ function _agentScriptOptionsFor(os) {
 // single-option select per OS in the common (one-variant) case.
 function _agentScriptHasChoicesFor(os) {
   return (_agentInstallScriptsCache.list || []).filter(function (s) { return s.osPlatform === os; }).length > 1;
-}
-
-function _credentialOptionsFor(type, selectedId) {
-  var opts = '<option value="">— select credential —</option>';
-  _credentialCache.list
-    .filter(function (c) { return c.type === type; })
-    .forEach(function (c) {
-      opts += '<option value="' + escapeHtml(c.id) + '"' + (selectedId === c.id ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>';
-    });
-  return opts;
-}
-
-// All credential types in one picker, with the type tagged on each label so
-// the operator can pick the credential that matches their chosen polling
-// method. Used by the asset edit modal's Monitoring tab — picking a SNMP
-// credential alongside polling=winrm is silently ignored at probe time, but
-// that's the operator's call to make.
-function _credentialOptionsForAny(selectedId) {
-  var opts = '<option value="">— none —</option>';
-  _credentialCache.list.forEach(function (c) {
-    var typeLabel = (c.type || "").toUpperCase();
-    opts += '<option value="' + escapeHtml(c.id) + '"' +
-      (selectedId === c.id ? " selected" : "") + '>' +
-      escapeHtml(c.name) + ' · ' + escapeHtml(typeLabel) +
-      '</option>';
-  });
-  return opts;
 }
 
 // ─── Monitoring Settings Modal ──────────────────────────────────────────────
@@ -27859,20 +28447,6 @@ function _monsetManualSectionHTML(v) {
   '</div>';
 }
 
-// Renders one numeric input with label + range hint. `warnUnder500` adds a
-// soft warning indicator when the current value is below 500ms — used for
-// probeTimeoutMs per the spec.
-function _monsetField(id, label, unit, value, min, max, warnUnder500) {
-  var v = (value === null || value === undefined) ? "" : value;
-  var warn = warnUnder500 && Number(v) > 0 && Number(v) < 500;
-  var warnIcon = warn ? ' <span title="Probes will likely false-fail under healthy network conditions at this timeout" style="color:var(--color-warning);font-weight:700">⚠</span>' : "";
-  return '<div class="form-group">' +
-    '<label for="' + id + '">' + escapeHtml(label) + warnIcon + '</label>' +
-    '<input type="number" id="' + id + '" min="' + min + '" max="' + max + '" value="' + escapeHtml(String(v)) + '">' +
-    (unit ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin-top:2px">' + escapeHtml(unit) + '</div>' : '') +
-  '</div>';
-}
-
 function _monsetReadField(id, fallback) {
   var el = document.getElementById(id);
   if (!el || el.value === "") return fallback;
@@ -27958,59 +28532,6 @@ function _monsetOverridesSectionHTML(rows) {
       '</tr></thead>' +
       '<tbody id="monset-overrides-tbody">' + rowHTML + '</tbody>' +
     '</table>' +
-  '</div>';
-}
-
-function _monsetOverrideSummary(o) {
-  var parts  = [];
-  var labels = {
-    intervalSeconds:           "probe",
-    // Dormant field — kept in the label map so an install that stored this
-    // override before 2026-08-19 still gets a readable summary chip for it.
-    fastConfirmIntervalSec:    "confirm-reprobe",
-    probeTimeoutMs:            "probe-timeout",
-    cpuMemoryTimeoutMs:        "cpu-mem-timeout",
-    temperatureTimeoutMs:      "temp-timeout",
-    systemInfoTimeoutMs:       "sysinfo-timeout",
-    cpuMemoryIntervalSeconds:  "cpu-mem",
-    temperatureIntervalSeconds: "temp",
-    systemInfoIntervalSeconds: "sysinfo",
-    responseTimePolling:       "rt-poll",
-    cpuMemoryPolling:          "cpu-mem-poll",
-    temperaturePolling:        "temp-poll",
-    interfacesPolling:         "if-poll",
-    lldpPolling:               "lldp-poll",
-    storagePolling:            "storage-poll",
-  };
-  Object.keys(labels).forEach(function (k) {
-    if (o[k] !== null && o[k] !== undefined) parts.push(labels[k] + "=" + o[k]);
-  });
-  return parts.length === 0 ? "(empty — all fields inherited)" : parts.join(", ");
-}
-
-// Warning banner shown inside the class-override editor when the operator picks
-// (class=switch|access_point) + (source=FMG/FortiGate integration whose
-// per-class `enabled` flag — fortiswitchMonitor.enabled / fortiapMonitor.enabled
-// — is false). In that state discovery never stamps `Asset.monitorCredentialId`
-// on the managed switch/AP rows, so a class override with no per-stream
-// credential set will fall through to the integration's top-level
-// `monitorCredentialId` (the FortiGate's SNMP credential) — usually wrong for
-// FortiLink-side switches/APs. Returns empty string when the warning doesn't apply.
-function _monsetDirectPollWarningHTML(integrationId, assetType) {
-  if (assetType !== "switch" && assetType !== "access_point") return "";
-  if (!integrationId || integrationId === "null") return "";
-  var intg = _monsetIntegrations.find(function (i) { return i.id === integrationId; });
-  if (!intg) return "";
-  if (intg.type !== "fortimanager" && intg.type !== "fortigate") return "";
-  var cfg = intg.config || {};
-  var blockKey = assetType === "switch" ? "fortiswitchMonitor" : "fortiapMonitor";
-  var block = cfg[blockKey] || {};
-  if (block.enabled === true) return "";
-  var classLabel = assetType === "switch" ? "FortiSwitches" : "FortiAPs";
-  return '<div id="monset-ov-direct-poll-warning-inner" style="margin:0.25rem 0 0.75rem 0;padding:0.5rem 0.75rem;background:rgba(245,158,11,0.08);border:1px solid var(--color-warning);border-radius:4px;color:var(--color-warning);font-size:0.82rem">' +
-    '&#9888; <strong>Direct Polling is off</strong> for ' + escapeHtml(classLabel) + ' on this integration. ' +
-    'Discovery won\'t stamp an SNMP credential on the asset row, so a class override without an explicit per-stream credential will fall through to the FortiGate\'s SNMP credential (usually wrong for FortiLink-side ' + escapeHtml(classLabel.toLowerCase()) + '). ' +
-    'Either set the per-stream credentials below, or enable Direct Polling under the integration\'s ' + escapeHtml(classLabel) + ' subtab.' +
   '</div>';
 }
 
@@ -28657,18 +29178,7 @@ function _childTabShell(mount, kind, assetId, title, placeholder, children, rend
 // the rule "a0" would hit BA:01 through "ba01", which no one typing a0 means.
 // `filter` is already lower-cased.
 function _childFilterMatches(textParts, macParts, filter) {
-  if (!filter) return true;
-  if (textParts.concat(macParts).join(" ").toLowerCase().indexOf(filter) !== -1) return true;
-  var compact = filter.replace(/[\s:.\-]/g, "");
-  if (compact.length < 2 || !/^[0-9a-f]+$/.test(compact)) return false;
-  return macParts.some(function (m) {
-    if (!m) return false;
-    var hex = String(m).toLowerCase().replace(/[:.\-]/g, "");
-    for (var at = hex.indexOf(compact); at !== -1; at = hex.indexOf(compact, at + 1)) {
-      if (at % 2 === 0) return true;
-    }
-    return false;
-  });
+  return PolarisAssetShared.childFilterMatches(textParts, macParts, filter);
 }
 
 async function _loadAssetChildWireless(assetId) {
@@ -28882,12 +29392,7 @@ function _wireAssetArpTableTab(assetId) {
 // "45s" / "12m" / "3h 04m". FortiOS reports the age in seconds; anything
 // non-numeric is absent rather than zero, so it renders as a dash.
 function _arpAgeLabel(sec) {
-  if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
-  if (sec < 60) return Math.round(sec) + "s";
-  if (sec < 3600) return Math.floor(sec / 60) + "m";
-  var h = Math.floor(sec / 3600);
-  var m = Math.floor((sec % 3600) / 60);
-  return h + "h " + String(m).padStart(2, "0") + "m";
+  return PolarisAssetShared.arpAgeLabel(sec);
 }
 
 // Shared pivot wiring for the `.asset-link` anchors the MAC Table and ARP
@@ -29271,7 +29776,7 @@ var _IPSEC_KIND_LABELS = {
 };
 
 function _ipsecIsRemoteAccess(c) {
-  return c.kind === "remote-access" || c.kind === "ssl-vpn";
+  return PolarisAssetShared.ipsecIsRemoteAccess(c);
 }
 
 function _ipsecTabEligible(payload) {
@@ -29289,11 +29794,7 @@ var _assetIpsecAsset = {};
 
 // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up.
 function _ipsecUptimeLabel(since) {
-  if (!since) return null;
-  var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
-  if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
-  if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
-  return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
+  return PolarisAssetShared.ipsecUptimeLabel(since);
 }
 
 // The monitor badges, so up / down read the way they do on every asset row.

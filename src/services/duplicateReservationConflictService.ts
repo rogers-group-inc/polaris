@@ -45,6 +45,7 @@ import { isAllZeroMac, normalizeMacOrNull } from "../utils/mac.js";
 import { buildInfraParentIndex, parentAssetWhereOr, resolveInfraParentAsset } from "../utils/fortinetParentKey.js";
 import { logEvent } from "./eventLogService.js";
 import { releaseReservation } from "./reservationService.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 export const DUPLICATE_RESERVATION_COLLISION_REASON = "duplicate-reservation";
 
@@ -309,7 +310,7 @@ export async function reconcileDuplicateReservationConflicts(): Promise<Duplicat
     const open = pendingByAsset.get(group.assetId);
     if (open) {
       if (reservationSetKey(conflictReservationsOf(open)) !== reservationSetKey(group.reservations) ||
-          JSON.stringify(open.proposedAssetFields) !== JSON.stringify(proposedAssetFields)) {
+          !jsonEqual(open.proposedAssetFields, proposedAssetFields)) {
         await prisma.conflict.update({ where: { id: open.id }, data: { proposedAssetFields } });
         result.refreshed++;
       }

@@ -203,7 +203,7 @@ function validateIconKey(scope: IconScope, manufacturer: string, typeOrModel: st
   return key;
 }
 
-export function validateUpload(input: UploadedIcon): void {
+function validateUpload(input: UploadedIcon): void {
   validateIconKey(input.scope, input.manufacturer, input.typeOrModel);
   if (!ALLOWED_MIME_TYPES.has(input.mimeType)) {
     throw new AppError(400, `Unsupported image format "${input.mimeType}" — allowed: PNG, JPEG, WebP, SVG`);

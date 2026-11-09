@@ -18,10 +18,10 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 |---|---|
 | **Timestamp** | |
 | **Level** | `info` · `warning` · `error` |
-| **Action** | a dotted verb — `reservation.created`, `asset.firmware.changed`, `monitor.status_changed` |
+| **Action** | a dotted verb — `reservation.created`, `asset.firmware.changed`, `monitor.status_changed`. On an edit that recorded what changed, the verb is a link: click it (or double-click the row) for the field-by-field **Before** / **After** of the change |
 | **Resource** | the entity type |
 | **Resource Name** | for an alert row, the automation |
-| **Device** | the device the event is about, by its current hostname — on an alert's fire, clear or email row too, where Resource Name is the automation. Click it to open the device. Filterable by hostname or IP; not sortable |
+| **Device** | the device the event is about, by its current hostname — on an alert's fire, clear or email row too, where Resource Name is the automation. Click it to open the device; right-click it for the same menu the device has on the [Assets](Assets) list. Filterable by hostname or IP; not sortable |
 | **Message** | |
 | **User** | the actor |
 
@@ -54,7 +54,7 @@ discovery and change events, **and its alerts** — an automation firing
 `notification` with the automation's name beside it. A device whose alert keeps
 firing and clearing shows each round there. Every alert **email** that goes out
 adds a `notification.email_sent` row naming the device, the automation and its
-To and Cc recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106).
+To and Cc recipients (Bcc is only counted) — see [rule 106](Business-Rules#rule-106). An edit's Action links to what changed, as on the Events page.
 
 An automation only writes its *fired* event when it has a **Create an Event** action;
 the clear is written regardless. Acknowledging or clearing alerts by hand is one

@@ -76,6 +76,12 @@ vi.mock("../../src/db.js", () => ({
         if (s) Object.assign(s, data);
         return s;
       },
+      updateMany: async ({ where, data }: any) => {
+        const ids: string[] = where.id?.in ?? [];
+        let count = 0;
+        for (const s of db.states) if (ids.includes(s.id)) { Object.assign(s, data); count++; }
+        return { count };
+      },
       delete: async ({ where }: any) => {
         const i = db.states.findIndex((x) => x.id === where.id);
         if (i >= 0) db.states.splice(i, 1);

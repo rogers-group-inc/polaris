@@ -21,8 +21,9 @@ import { pushDeepLinkUrl } from "../utils/notificationTemplate.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { restoreStoredSecrets } from "../utils/secretDestination.js";
 import { asObject } from "../utils/object.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
-export const MASK = SECRET_MASK;
+const MASK = SECRET_MASK;
 
 type ChannelRow = {
   id: string;
@@ -103,15 +104,6 @@ function maskRow(row: ChannelRow) {
 export async function listChannels() {
   const rows = (await prisma.notificationChannel.findMany({ orderBy: { createdAt: "asc" } })) as ChannelRow[];
   return rows.map(maskRow);
-}
-
-/** Lightweight {id,name,type,enabled} list for the rule-builder channel picker. */
-export async function listChannelsForBuilder() {
-  const rows = await prisma.notificationChannel.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, type: true, enabled: true },
-  });
-  return rows.map((r) => ({ ...r, transport: isChannelType(r.type) ? CHANNEL_TRANSPORT[r.type as ChannelType] : "unknown" }));
 }
 
 export async function getChannel(id: string) {
@@ -216,8 +208,8 @@ const WEB_PUSH_CHANNEL_NAME = "Web Push";
 /** VAPID requires a mailto:/https: contact URI. Derive one; the sender also
  *  has its own fallback, so this is never load-bearing. */
 function defaultVapidSubject(): string {
-  const base = process.env.POLARIS_PUBLIC_URL;
-  if (base && /^https:/i.test(base)) return base.replace(/\/$/, "");
+  const base = publicBaseUrl();
+  if (base && /^https:/i.test(base)) return base;
   return "mailto:polaris@localhost";
 }
 

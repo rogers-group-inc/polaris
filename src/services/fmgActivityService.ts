@@ -22,12 +22,12 @@ const HEARTBEAT_MS = 2_000;
 // Snapshots older than this are reported as stale by the read API. Chosen as
 // 5× HEARTBEAT_MS so a transient hiccup doesn't flap the UI between
 // fresh/stale, but a genuinely-down heartbeat process surfaces inside ~10 s.
-export const STALENESS_MS = 10_000;
+const STALENESS_MS = 10_000;
 
 // The worker's own lane-state shape — see fmgWorker.FmgLaneState.
-export type FmgWorkerActivity = FmgLaneState;
+type FmgWorkerActivity = FmgLaneState;
 
-export interface FmgActivitySnapshot {
+interface FmgActivitySnapshot {
   updatedAt: string;
   role: PolarisRole;
   integrations: Record<string, FmgWorkerActivity>;
@@ -80,14 +80,6 @@ export function startFmgActivityHeartbeat(): void {
   }, HEARTBEAT_MS);
   // Allow process to exit even if this timer is the only thing pending.
   heartbeatTimer.unref?.();
-}
-
-/** Test-only. */
-export function stopFmgActivityHeartbeatForTests(): void {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
 }
 
 /**

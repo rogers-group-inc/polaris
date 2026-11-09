@@ -13,7 +13,7 @@
  * saves the Description Sync tab (which writes all three keys explicitly).
  */
 
-export type DescriptionSyncRole = "fortigate" | "fortiswitch" | "fortiap";
+type DescriptionSyncRole = "fortigate" | "fortiswitch" | "fortiap";
 
 export interface DescriptionSyncFlags {
   fortigate: boolean;
@@ -21,7 +21,7 @@ export interface DescriptionSyncFlags {
   fortiap: boolean;
 }
 
-export const DESCRIPTION_SYNC_CONFIG_KEYS: Record<DescriptionSyncRole, string> = {
+const DESCRIPTION_SYNC_CONFIG_KEYS: Record<DescriptionSyncRole, string> = {
   fortigate: "syncFortigateDescriptions",
   fortiswitch: "syncSwitchDescriptions",
   fortiap: "syncApDescriptions",

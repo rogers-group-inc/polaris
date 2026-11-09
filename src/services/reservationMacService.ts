@@ -27,7 +27,7 @@ import {
   normalizePlaceholderPrefix,
 } from "../utils/mac.js";
 
-export const RESERVATION_MAC_PLACEHOLDER_KEY = "reservationMacPlaceholder";
+const RESERVATION_MAC_PLACEHOLDER_KEY = "reservationMacPlaceholder";
 
 export interface ReservationMacPlaceholderSettings {
   prefix: string;
@@ -40,7 +40,7 @@ export interface ReservationMacPlaceholderSettings {
  * the adoption predicate, where an unparseable prefix would make
  * `isPlaceholderMac` answer false for everything and quietly disable adoption.
  */
-export function normalizeReservationMacSettings(raw: unknown): ReservationMacPlaceholderSettings {
+function normalizeReservationMacSettings(raw: unknown): ReservationMacPlaceholderSettings {
   const obj = (raw ?? {}) as Record<string, unknown>;
   return { prefix: normalizePlaceholderPrefix(obj.prefix) ?? DEFAULT_PLACEHOLDER_MAC_PREFIX };
 }
@@ -50,10 +50,6 @@ const store = createSettingStore<ReservationMacPlaceholderSettings>({
   ttlMs: 30_000,
   parse: normalizeReservationMacSettings,
 });
-
-export function invalidateReservationMacCache(): void {
-  store.invalidate();
-}
 
 export async function getReservationMacSettings(): Promise<ReservationMacPlaceholderSettings> {
   return store.get();

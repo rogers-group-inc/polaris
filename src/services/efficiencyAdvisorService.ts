@@ -31,6 +31,8 @@
  * ADVISOR_PERSONA; the canned voice picks the `letDown` lines.
  */
 
+import { escapeRegExp } from "../utils/regex.js";
+
 export type SignOffCategory =
   | "congratulation"
   | "backToWork"
@@ -377,7 +379,7 @@ export function pickCategory(s: TurnSignals): SignOffCategory | null {
 }
 
 function templateMatches(template: string, line: string): boolean {
-  const parts = template.split("{topic}").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const parts = template.split("{topic}").map((p) => escapeRegExp(p));
   return new RegExp(`^${parts.join(".+")}$`).test(line);
 }
 

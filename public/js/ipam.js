@@ -79,10 +79,6 @@
     return allowed[0] || "networks";
   }
 
-  function tabButton(name) {
-    return document.querySelector('#ipam-tabs .page-tab[data-tab="' + name + '"]');
-  }
-
   function setActiveButton(name) {
     Array.prototype.forEach.call(document.querySelectorAll("#ipam-tabs .page-tab"), function (btn) {
       btn.classList.toggle("active", btn.getAttribute("data-tab") === name);

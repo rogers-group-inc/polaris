@@ -14,28 +14,23 @@
  * (self-heal).
  *
  * Serialization lives inside reconcileMaintenance() (in-flight runs coalesce
- * queued callers), so this tick needs no `running` guard of its own.
+ * queued callers); defineJob's overlap skip sits on top of that.
  *
  * Import this module from src/app.ts to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { reconcileMaintenance } from "../services/maintenanceScheduleService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 30 * 1000;
 
-async function tick(): Promise<void> {
-  try {
-    await runInstrumentedJob("maintenanceScheduler", async () => {
-      await reconcileMaintenance();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message ?? String(err) }, "maintenanceScheduler tick failed (non-fatal)");
-  }
-}
-
 // Short boot delay so Prisma is connected and one-shot startup migrations
 // have settled before the first fleet-wide pass.
-setTimeout(tick, 15_000);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "maintenanceScheduler",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 15_000,
+  run: async () => {
+    await reconcileMaintenance();
+  },
+});

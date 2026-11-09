@@ -43,6 +43,13 @@ const FN_NAMES = [
   "_renderAllPerfSlaCharts",
   "_renderPerfSlaLegend",
   "_perfSlaShotStats",
+  // The rollup Max chip's helpers (the chip is absent without a rollup tier).
+  "_getChartRangePref",
+  "_setChartRangePref",
+  "_getMaxLinePref",
+  "_setMaxLinePref",
+  "_maxLineChipHTML",
+  "_wireMaxLineChip",
 ];
 
 const sample = { timestamp: "2026-09-24T00:00:00Z", latencyMs: 10, jitterMs: 1, packetLoss: 0 };
@@ -125,5 +132,24 @@ describe("Performance SLA shared legend", () => {
   it("screenshot stats name the members the capture shows", () => {
     g._sdwanTabState.hiddenMembers = new Set(["wan2"]);
     expect(g._perfSlaShotStats()).toBe("120 samples · Members: wan1");
+  });
+
+  it("carries ONE Max chip on a rollup tier, which persists and re-renders the charts", () => {
+    g.currentUsername = "tester";
+    localStorage.clear();
+    g._renderAllPerfSlaCharts();
+    expect(legend().querySelector(".chart-max-chip")).toBeNull();
+    g._sdwanTabState.perfSla.copts = { maxTier: "hourly" };
+    g._renderAllPerfSlaCharts();
+    const max = legend().querySelectorAll(".chart-max-chip");
+    expect(max).toHaveLength(1);
+    expect(max[0]!.textContent).toBe("Max (hourly peak)");
+    chartCalls = [];
+    (max[0] as HTMLElement).click();
+    expect(chartCalls).toHaveLength(3);
+    expect(JSON.parse(localStorage.getItem("polaris-prefs-charts-tester") || "{}")["assetSdwan:max"]).toBe("off");
+    // Member visibility is untouched by it.
+    expect(g._sdwanTabState.hiddenMembers.size).toBe(0);
+    expect((legend().querySelector(".chart-max-chip") as HTMLElement).style.textDecoration).toBe("line-through");
   });
 });

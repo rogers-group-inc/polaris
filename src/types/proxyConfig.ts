@@ -15,7 +15,7 @@
 
 export type TlsProtocol = "TLSv1.2" | "TLSv1.3";
 
-export interface ProxyConfigHsts {
+interface ProxyConfigHsts {
   enabled: boolean;
   maxAgeSeconds: number;
   includeSubDomains: boolean;

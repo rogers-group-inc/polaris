@@ -1,7 +1,7 @@
 // WebSocket client for the agent → Polaris pull side. Held open by the
-// main loop; server pushes `probe-now-request` and `refresh-config` frames
-// down it, agent answers `probe-now-response` and treats refresh-config
-// as a signal to call FetchConfig immediately.
+// main loop; the server pushes `refresh-config` and `commands-pending` frames
+// down it, and the agent treats refresh-config as a signal to call
+// FetchConfig immediately.
 //
 // Auth: bearer rides in `Sec-WebSocket-Protocol` as
 // `polaris-agent.v1.bearer.<token>`. Keeps the token out of URL query
@@ -34,11 +34,11 @@ import (
 )
 
 const (
-	wsPath                = "/api/v1/agents/ws"
-	wsHandshakeTimeout    = 10 * time.Second
-	wsReadDeadlineWindow  = 90 * time.Second // server pings every 30s; 3× buys 60s of jitter slack
-	wsBackoffMinSec       = 1
-	wsBackoffMaxSec       = 60
+	wsPath               = "/api/v1/agents/ws"
+	wsHandshakeTimeout   = 10 * time.Second
+	wsReadDeadlineWindow = 90 * time.Second // server pings every 30s; 3× buys 60s of jitter slack
+	wsBackoffMinSec      = 1
+	wsBackoffMaxSec      = 60
 )
 
 // Frame is the small JSON envelope every WS payload uses.
@@ -54,7 +54,7 @@ type FrameHandler func(ctx context.Context, conn *WSConn, f *Frame) error
 
 // WSConn wraps one live WebSocket connection. The main loop creates one,
 // runs the read pump, and discards it on disconnect. NewWSDialer returns
-// a fresh WSConn each time Dial succeeds.
+// a fresh WSConn each time dial succeeds.
 type WSConn struct {
 	conn *websocket.Conn
 	// send is the only writer path; the read pump pushes responses back
@@ -79,9 +79,9 @@ func (c *WSConn) SendFrame(f *Frame) error {
 // WSDialer holds the per-process state needed to (re)establish a WS
 // connection: the URL, the bearer, and the pinned TLS config.
 type WSDialer struct {
-	wssURL  string
-	bearer  string
-	dialer  *websocket.Dialer
+	wssURL string
+	bearer string
+	dialer *websocket.Dialer
 }
 
 // NewWSDialer builds a dialer with TLS pinned to ANY fingerprint in certPins.
@@ -112,9 +112,9 @@ func NewWSDialer(baseURL string, certPins []string, bearer string) (*WSDialer, e
 	}, nil
 }
 
-// Dial opens a fresh WS connection. On success the caller MUST call
+// dial opens a fresh WS connection. On success the caller MUST call
 // Run() (which returns when the connection ends).
-func (d *WSDialer) Dial(ctx context.Context) (*WSConn, error) {
+func (d *WSDialer) dial(ctx context.Context) (*WSConn, error) {
 	header := http.Header{}
 	// gorilla picks up Subprotocols from the Dialer; we don't have to
 	// stamp Sec-WebSocket-Protocol manually.
@@ -199,7 +199,7 @@ func (c *WSConn) Run(ctx context.Context, handler FrameHandler) error {
 	}
 }
 
-// RunWithReconnect runs Dial + Run in a loop, sleeping with exponential
+// RunWithReconnect runs dial + Run in a loop, sleeping with exponential
 // backoff between attempts. Returns only when ctx is done.
 func (d *WSDialer) RunWithReconnect(ctx context.Context, handler FrameHandler) {
 	attempt := 0
@@ -207,7 +207,7 @@ func (d *WSDialer) RunWithReconnect(ctx context.Context, handler FrameHandler) {
 		if ctx.Err() != nil {
 			return
 		}
-		conn, err := d.Dial(ctx)
+		conn, err := d.dial(ctx)
 		if err != nil {
 			attempt++
 			sleep := backoffFor(attempt)

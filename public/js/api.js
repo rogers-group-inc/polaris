@@ -125,8 +125,13 @@ function timeZoneOpts() {
 if (typeof window !== "undefined") window.timeZoneOpts = timeZoneOpts;
 
 // Compact relative time ("5s ago" / "5m ago" / "3h ago" / "2d ago").
+// Empty or unparseable input renders as "" (it used to read "NaNd ago"); the
+// three mobile formatTimeAgo wrappers that added this guard are gone.
 function timeAgo(dateStr) {
-  var diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (!dateStr) return "";
+  var t = new Date(dateStr).getTime();
+  if (isNaN(t)) return "";
+  var diff = Math.floor((Date.now() - t) / 1000);
   if (diff < 0) return "just now";
   if (diff < 60) return diff + "s ago";
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
@@ -900,6 +905,7 @@ const api = {
     getSightings:         (id)  => request("GET", `/assets/${id}/sightings`),
     getSources:           (id)  => request("GET", `/assets/${id}/sources`),
     splitSource:          (id, sourceId) => request("POST", `/assets/${id}/sources/${sourceId}/split`),
+    splitMacs:            (id, macs) => request("POST", `/assets/${id}/macs/split`, { macs }),
     merge:                (id, body) => request("POST", `/assets/${id}/merge`, body),
     pollingHistory:       (id)  => request("GET", `/assets/${id}/polling-history`),
     getDependencies:      (id)  => request("GET", `/assets/${id}/dependencies`),
@@ -1121,10 +1127,10 @@ const api = {
     cancelRebootSchedule:   (id, sid)       => _bookingWrite(request("DELETE", `/assets/${id}/reboot/schedules/${encodeURIComponent(sid)}`)),
     setAgentReboot:         (id, enabled)   => request("PUT",    `/assets/${id}/reboot/agent`, { enabled: !!enabled }),
     // Polaris Agent — operator-facing endpoints (see the polaris-agent skill "Polaris
-    // Agent API surface"). `agent.get` returns 404 when no agent is
-    // installed yet; the caller should treat that as "no install" rather
-    // than an error, so this helper resolves null on the "No agent
-    // installed" response instead of throwing.
+    // Agent API surface"). GET answers 204 when no agent is installed, which
+    // request() resolves to null (since 2026-11-06 — it was a 404 that put a
+    // red line in the console on every agent-less asset panel). The 404
+    // branch below stays for a server that has not been updated yet.
     agent:                (id) => request("GET", `/assets/${id}/agent`).catch((err) => {
       var msg = (err && err.message) ? err.message : "";
       if (/no agent installed/i.test(msg)) return null;
@@ -1492,7 +1498,9 @@ const api = {
       return _uploadWithProgress("/server-settings/firmware/images", formData, onProgress);
     },
     deleteFirmwareImage:  (id)   => request("DELETE", `/server-settings/firmware/images/${encodeURIComponent(id)}`),
-    promoteFirmwareImage: (id)   => request("POST",   `/server-settings/firmware/images/${encodeURIComponent(id)}/make-primary`),
+    // An <a href download> target, not a fetch: the browser streams it to disk.
+    downloadFirmwareImageUrl: (id) => API_BASE + "/server-settings/firmware/images/" + encodeURIComponent(id) + "/download",
+    promoteFirmwareImage: (id)   => request("POST",  `/server-settings/firmware/images/${encodeURIComponent(id)}/make-primary`),
     purgeFirmwareModel:   (body) => request("POST",   "/server-settings/firmware/models/purge", body),
     setFirmwareBinding:   (body) => request("PUT",    "/server-settings/firmware/bindings", body),
     listFirmwareRuns:     (params) => request("GET",  "/server-settings/firmware/runs" + toQuery(params)),

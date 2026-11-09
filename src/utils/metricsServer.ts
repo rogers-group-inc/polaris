@@ -21,6 +21,7 @@
 import http from "node:http";
 import { renderMetrics } from "../metrics.js";
 import { logger } from "./logger.js";
+import { bearerSatisfies, metricsToken } from "./endpointTokens.js";
 
 export interface MetricsServer {
   /** Underlying http.Server — exposed so callers/tests can close it. */
@@ -43,7 +44,6 @@ export async function startMetricsOnlyServer(
   port: number,
   bind: string = "127.0.0.1",
 ): Promise<MetricsServer> {
-  const expected = process.env.METRICS_TOKEN || "";
   const server = http.createServer(async (req, res) => {
     try {
       if (req.method !== "GET" || req.url !== "/metrics") {
@@ -51,14 +51,12 @@ export async function startMetricsOnlyServer(
         res.end();
         return;
       }
-      if (expected) {
-        const auth = req.headers.authorization || "";
-        const supplied = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-        if (supplied !== expected) {
-          res.statusCode = 401;
-          res.end();
-          return;
-        }
+      // Read per request (not captured at bind) and compared in constant
+      // time — the same gate as the web role's /metrics (utils/endpointTokens.ts).
+      if (!bearerSatisfies(req.headers.authorization, metricsToken())) {
+        res.statusCode = 401;
+        res.end();
+        return;
       }
       const { contentType, body } = await renderMetrics();
       res.setHeader("Content-Type", contentType);

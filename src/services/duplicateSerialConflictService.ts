@@ -103,7 +103,7 @@ export const CLAIM_FRESH_DAYS = 2;
 
 /** Claims nothing has re-asserted in this long are deleted outright — the
  *  freshness cutoff already ignores them; this just keeps the table bounded. */
-export const CLAIM_PRUNE_DAYS = 30;
+const CLAIM_PRUNE_DAYS = 30;
 
 /**
  * Statuses whose devices are not worth reporting a contested claim about.
@@ -118,7 +118,7 @@ export const CLAIM_PRUNE_DAYS = 30;
  * operator has written off (`decommissioned`) or switched off (`disabled`)
  * drops out.
  */
-export const CLAIM_EXCLUDED_STATUSES = ["decommissioned", "disabled"] as const;
+const CLAIM_EXCLUDED_STATUSES = ["decommissioned", "disabled"] as const;
 
 /**
  * How many assets may share one serial before the serial itself is the suspect
@@ -185,7 +185,7 @@ export interface ControllerClaimRow {
   } | null;
 }
 
-export interface StoredClaimant {
+interface StoredClaimant {
   controllerKey: string;
   controllerDevice: string;
   controllerSerial: string | null;
@@ -336,7 +336,7 @@ export function claimantSetKey(claimants: Array<{ controllerKey: string }>): str
     .join("|");
 }
 
-export interface DuplicateSerialMember {
+interface DuplicateSerialMember {
   assetId: string;
   hostname: string | null;
   assetType: string;
@@ -462,12 +462,12 @@ export function conflictSerialOf(conflict: { proposedAssetFields: unknown }): st
   return typeof v === "string" && v ? v : null;
 }
 
-export function conflictClaimantsOf(conflict: { proposedAssetFields: unknown }): StoredClaimant[] {
+function conflictClaimantsOf(conflict: { proposedAssetFields: unknown }): StoredClaimant[] {
   const p = conflictProposed(conflict);
   return Array.isArray(p.claimants) ? (p.claimants as StoredClaimant[]) : [];
 }
 
-export function conflictMembersOf(conflict: { proposedAssetFields: unknown }): DuplicateSerialMember[] {
+function conflictMembersOf(conflict: { proposedAssetFields: unknown }): DuplicateSerialMember[] {
   const p = conflictProposed(conflict);
   return Array.isArray(p.members) ? (p.members as DuplicateSerialMember[]) : [];
 }
@@ -562,7 +562,7 @@ export async function recordControllerClaims(inputs: ControllerClaimInput[]): Pr
 }
 
 /** Drop claims nothing has re-asserted in `CLAIM_PRUNE_DAYS`. */
-export async function pruneStaleControllerClaims(now: Date = new Date()): Promise<number> {
+async function pruneStaleControllerClaims(now: Date = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - CLAIM_PRUNE_DAYS * 24 * 60 * 60 * 1000);
   const { count } = await prisma.assetControllerClaim.deleteMany({
     where: { lastSeen: { lt: cutoff } },
@@ -572,7 +572,7 @@ export async function pruneStaleControllerClaims(now: Date = new Date()): Promis
 
 // ─── Loads ───────────────────────────────────────────────────────────────────
 
-export async function loadFreshControllerClaims(cutoff: Date): Promise<ControllerClaimRow[]> {
+async function loadFreshControllerClaims(cutoff: Date): Promise<ControllerClaimRow[]> {
   const rows = await prisma.assetControllerClaim.findMany({
     where: { lastSeen: { gte: cutoff } },
     select: {
@@ -604,7 +604,7 @@ export async function loadFreshControllerClaims(cutoff: Date): Promise<Controlle
  *   2. `resolveInfraParentAsset` over the firewall assets, which covers a gate
  *      whose claim carries only a name (FMG device name first, hostname next).
  */
-export async function loadControllerContext(claims: ControllerClaimRow[]): Promise<ControllerContext> {
+async function loadControllerContext(claims: ControllerClaimRow[]): Promise<ControllerContext> {
   const assetIdByControllerKey = new Map<string, string>();
   const nameByAssetId = new Map<string, string | null>();
   const integrationNameById = new Map<string, string>();
@@ -682,7 +682,7 @@ export async function loadControllerContext(claims: ControllerClaimRow[]): Promi
  * defaults) makes every actual decision on the rows that come back. Reads only
  * — no writes here, so the db.ts extensions this bypasses do not matter.
  */
-export async function loadDuplicateSerialAssets(): Promise<DuplicateSerialAssetRow[]> {
+async function loadDuplicateSerialAssets(): Promise<DuplicateSerialAssetRow[]> {
   const excluded = [...CLAIM_EXCLUDED_STATUSES];
   const rows = await prisma.$queryRaw<DuplicateSerialAssetRow[]>`
     SELECT a."id", a."hostname", a."serialNumber", a."assetType",

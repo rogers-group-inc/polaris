@@ -31,13 +31,14 @@
  * one stores.
  */
 
+import { chunkArray } from "../utils/chunk.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
 import { bumpContactCache, normalizeContactEmail } from "./contactService.js";
-import { listDirectorySources } from "./directorySearchService.js";
 import { listDirectoryPeople as listDirectoryPeopleEntra } from "./entraIdService.js";
 import { listDirectoryPeople as listDirectoryPeopleAd } from "./activeDirectoryService.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 /**
  * One directory entry as the bulk readers report it. A superset of the live
@@ -349,12 +350,6 @@ function tryNormalizeEmail(raw: unknown): string | null {
   }
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 /** Do two projections differ in any field the Contact row stores? */
 function projectionDiffers(row: {
   name: string | null; kind: string; jobTitle: string | null;
@@ -460,7 +455,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
   // ── 5. Create the contacts that don't exist yet ───────────────────────────
   const desiredEmails = [...desired.values()].map((d) => d.email);
   const existingByEmail = new Map<string, { id: string; origin: string }>();
-  for (const batch of chunk(desiredEmails, WRITE_CHUNK * 5)) {
+  for (const batch of chunkArray(desiredEmails, WRITE_CHUNK * 5)) {
     const rows = await prisma.contact.findMany({
       where: { email: { in: batch } },
       select: { id: true, email: true, origin: true },
@@ -469,7 +464,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
   }
 
   const toCreate = [...desired.values()].filter((d) => !existingByEmail.has(d.email));
-  for (const batch of chunk(toCreate, WRITE_CHUNK)) {
+  for (const batch of chunkArray(toCreate, WRITE_CHUNK)) {
     // skipDuplicates covers the race with a concurrent operator create; the
     // re-read below then finds whichever row won.
     const createdBatch = await prisma.contact.createMany({
@@ -513,7 +508,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
       provenanceCreates.push({ integrationId, externalId, sourceKind, contactId: contact.id, observed: d.entry });
     } else if (
       prior.contactId !== contact.id ||
-      JSON.stringify(prior.observed) !== JSON.stringify(d.entry)
+      !jsonEqual(prior.observed, d.entry) // key-order-blind: `observed` comes back from jsonb reordered
     ) {
       // The address moved to a different contact, or the directory changed
       // something. Anything else is a no-op: comparing the blob is what keeps a
@@ -522,10 +517,10 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
     }
   }
 
-  for (const batch of chunk(provenanceCreates, WRITE_CHUNK)) {
+  for (const batch of chunkArray(provenanceCreates, WRITE_CHUNK)) {
     await prisma.directoryContactSource.createMany({ data: batch as never, skipDuplicates: true });
   }
-  for (const batch of chunk(provenanceUpdates, WRITE_CHUNK)) {
+  for (const batch of chunkArray(provenanceUpdates, WRITE_CHUNK)) {
     await prisma.$transaction(batch.map((u) => prisma.directoryContactSource.update({
       where: { integrationId_externalId: { integrationId, externalId: u.externalId } },
       data: { contactId: u.contactId, observed: u.observed as never, lastSeenAt: new Date() },
@@ -547,7 +542,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
       const orphanCandidates = new Set(
         ownProvenance.filter((p) => !desired.has(p.externalId)).map((p) => p.contactId),
       );
-      for (const batch of chunk(goneExternalIds, WRITE_CHUNK)) {
+      for (const batch of chunkArray(goneExternalIds, WRITE_CHUNK)) {
         await prisma.directoryContactSource.deleteMany({
           where: { integrationId, externalId: { in: batch } },
         });
@@ -556,7 +551,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
       // other directory's, typically. `directorySources: { none: {} }` is what
       // makes that true without a second query, and `origin: { not: "manual" }`
       // makes deleting an adopted row structurally impossible even on a bug.
-      for (const batch of chunk([...orphanCandidates], WRITE_CHUNK)) {
+      for (const batch of chunkArray([...orphanCandidates], WRITE_CHUNK)) {
         const res = await prisma.contact.deleteMany({
           where: { id: { in: batch }, origin: { not: "manual" }, directorySources: { none: {} } },
         });
@@ -568,7 +563,7 @@ export async function runDirectorySync(opts: RunDirectorySyncOptions): Promise<D
 
   // ── 8. Re-project every touched contact from its FULL source set ─────────
   const touched = [...touchedContactIds];
-  for (const batch of chunk(touched, WRITE_CHUNK)) {
+  for (const batch of chunkArray(touched, WRITE_CHUNK)) {
     const rows = await prisma.contact.findMany({
       where: { id: { in: batch }, origin: { not: "manual" } },
       select: {
@@ -641,7 +636,7 @@ export async function purgeDirectoryContacts(
   await prisma.directoryContactSource.deleteMany({ where: { integrationId } });
 
   let deleted = 0;
-  for (const batch of chunk(contactIds, WRITE_CHUNK)) {
+  for (const batch of chunkArray(contactIds, WRITE_CHUNK)) {
     const res = await prisma.contact.deleteMany({
       where: { id: { in: batch }, origin: { not: "manual" }, directorySources: { none: {} } },
     });
@@ -659,16 +654,4 @@ export async function purgeDirectoryContacts(
     details: { deleted, provenanceRows: owned.length, reason },
   });
   return deleted;
-}
-
-/**
- * True when at least one enabled integration has the sync switched on.
- *
- * Delegates to the directory enumeration in directorySearchService rather than
- * repeating the query: the address book's source tabs read the same rows to
- * decide which directories to offer, and two copies of "what counts as a
- * directory" is how a newly supported backend gets tabs but no sync flag.
- */
-export async function directorySyncAvailable(): Promise<boolean> {
-  return (await listDirectorySources()).some((s) => s.sync);
 }

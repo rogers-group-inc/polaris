@@ -10,27 +10,17 @@
  * Import this module from src/app.ts (startBackgroundJobs) to activate it.
  */
 
-import { logger } from "../utils/logger.js";
 import { runPendingServerScripts } from "../services/automationScriptRunner.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 5 * 1000;
-let running = false;
-
-async function runAutomationScripts(): Promise<void> {
-  if (running) return; // a long script must not stack ticks
-  running = true;
-  try {
-    await runInstrumentedJob("runAutomationScripts", async () => {
-      await runPendingServerScripts();
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "runAutomationScripts job failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
-
-// Boot delay so the engine has had a chance to enqueue runs.
-setTimeout(runAutomationScripts, 40_000);
-setInterval(runAutomationScripts, INTERVAL_MS);
+// Boot delay so the engine has had a chance to enqueue runs. defineJob's
+// overlap skip is what keeps a long script from stacking ticks.
+defineJob({
+  name: "runAutomationScripts",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 40_000,
+  run: async () => {
+    await runPendingServerScripts();
+  },
+});

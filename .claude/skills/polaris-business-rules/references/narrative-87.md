@@ -117,6 +117,11 @@ in between so the button does not re-offer a flash that already happened.
 (2026-09-25). Seeded `fullwrite` for admin-equivalent roles and `none` for everyone else
 including `readonly`: nothing in the catalogue implied this act before, so nothing derives it,
 and even the read rung shows new information (which devices are behind on firmware).
+**Download is a read verb (operator, 2026-11-06):** "allow repository read only to download the
+images." `GET /server-settings/firmware/images/:id/download` rides `firmware:read`, and every
+image row shows Download just left of Delete (Delete and Make primary stay `write`). A
+firmware image is vendor code, not a secret; the MIB download is the precedent.
+
 **Superseded 2026-09-26 by the operator:** "the rbac for repository: they can see the
 repository; read-write can upload new firmware to the repository; asset read-write are able to
 flash firmware." The flash is now `assets:write` and the card's reads `assets:read`; the

@@ -134,22 +134,6 @@ function _polarisReadMibFourStream(idPrefix) {
   };
 }
 
-// Read per-stream credential IDs from selects rendered by _polarisPollingFourStreamHTML
-// (class override tier only — opts.showCredRows must have been true).
-function _polarisReadCredFourStream(idPrefix) {
-  function credVal(stream) {
-    var el = document.getElementById(idPrefix + stream + "Cred");
-    return el ? (el.value || null) : undefined;
-  }
-  return {
-    responseTimeCredentialId: credVal("responseTime"),
-    cpuMemoryCredentialId:    credVal("telemetry"),
-    temperatureCredentialId:  credVal("temperature"),
-    interfacesCredentialId:   credVal("interfaces"),
-    lldpCredentialId:         credVal("lldp"),
-  };
-}
-
 document.addEventListener("DOMContentLoaded", function () {
   // Guard: this file is also loaded on assets.html for its monitoring form
   // helpers; only run the integrations-page init when the list element exists.
@@ -6901,10 +6885,6 @@ function _productForType(type) {
   return _INTEGRATION_PRODUCTS[type] || "FortiManager";
 }
 
-function _titleForType(type, action) {
-  return action + " " + _productForType(type) + " Integration";
-}
-
 // What a Test Connection request actually needs, as [fieldId, label] so the
 // toast can NAME what is missing instead of firing a doomed request and
 // reporting the server's error as if it were news.
@@ -8518,7 +8498,7 @@ var _FMG_PROXY_PRESET_QUERIES = [
   }),
   _fmgNativePreset("Interfaces, VLANs and secondary IPs on device", {
     url: "/pm/config/device/<device-name>/vdom/root/system/interface",
-    fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondary-ip", "ipv6"],
+    fields: ["name", "ip", "type", "interface", "vlanid", "switch-controller-mgmt-vlan", "secondaryip", "ipv6"],
   }),
   _fmgNativePreset("DHCP servers on device", { url: "/pm/config/device/<device-name>/vdom/root/system/dhcp/server" }),
   _fmgNativePreset("DHCPv6 servers on device", { url: "/pm/config/device/<device-name>/vdom/root/system/dhcp6/server" }),
@@ -8538,7 +8518,7 @@ var _FMG_PROXY_PRESET_QUERIES = [
   _fmgProxyPreset("Endpoint devices on device", "/api/v2/monitor/user/device/query?format=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address"),
   _fmgProxyPreset("ARP table on device", "/api/v2/monitor/network/arp"),
   _fmgProxyPreset("Managed FortiSwitches on device", "/api/v2/monitor/switch-controller/managed-switch/status?format=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status"),
-  _fmgProxyPreset("FortiSwitch config (descriptions, uplink ports) on device", "/api/v2/cmdb/switch-controller/managed-switch?datasource=1"),
+  _fmgProxyPreset("FortiSwitch config (descriptions, uplink ports) on device", "/api/v2/cmdb/switch-controller/managed-switch?format=sn|switch-id|name|description|ports"),
   _fmgProxyPreset("FortiSwitch MAC table (detected devices) on device", "/api/v2/monitor/switch-controller/detected-device?format=mac|switch_id|port_name|vlan_id|last_seen|ipv4_address|ipv6_address|device_name|host_src|device_type|os_name|is_fortilink_peer"),
   _fmgProxyPreset("Managed FortiAPs on device", "/api/v2/monitor/wifi/managed_ap?format=name|wtp_id|serial|model|wtp_profile|ip_addr|ip_address|local_ipv4_address|local_ipv4_addr|local_addr|wtp_ip|connecting_ip|connecting_from|base_mac|board_mac|mac|status|state|os_version|version|firmware_version|lldp|mesh_uplink|parent_wtp_id|wan_status|cpu_usage|mem_free|mem_total|sensors_temperatures|radio"),
   // Not read by discovery; kept for troubleshooting.
@@ -8552,21 +8532,22 @@ var _FGT_PRESET_QUERIES = [
   { name: "System status", method: "GET", path: "/api/v2/monitor/system/status", query: "vdom=root" },
   { name: "HA peers", method: "GET", path: "/api/v2/monitor/system/ha-peer", query: "vdom=root" },
   { name: "Coordinates (system global)", method: "GET", path: "/api/v2/cmdb/system/global", query: "vdom=root\nformat=gui-device-latitude|gui-device-longitude|latitude|longitude" },
-  // Discovery reads every interface field (IP, MAC, VLAN, parent, secondary-IP, ipv6).
-  { name: "Interfaces, VLANs and secondary IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root" },
+  // The attributes discovery and monitoring read (IP, MAC, VLAN, parent, the
+  // `secondaryip` table + its `secondary-IP` flag, ipv6, members, status).
+  { name: "Interfaces, VLANs and secondary IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root\nformat=name|ip|macaddr|type|interface|vlanid|switch-controller-mgmt-vlan|secondary-IP|secondaryip|ipv6|member|alias|description|mode|status|fortilink" },
   { name: "Interface IPs", method: "GET", path: "/api/v2/cmdb/system/interface", query: "vdom=root\nformat=name|ip|type|status|vdom" },
-  { name: "DHCP servers", method: "GET", path: "/api/v2/cmdb/system.dhcp/server", query: "vdom=root" },
+  { name: "DHCP servers", method: "GET", path: "/api/v2/cmdb/system.dhcp/server", query: "vdom=root\nformat=id|interface|netmask|ip-range|reserved-address" },
   { name: "DHCPv6 servers", method: "GET", path: "/api/v2/cmdb/system.dhcp6/server", query: "vdom=root" },
   // Discovery adds ipv6=true when IPv6 is on for the install.
   { name: "DHCP leases", method: "GET", path: "/api/v2/monitor/system/dhcp", query: "vdom=root\nformat=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci|type" },
-  { name: "Firewall VIPs", method: "GET", path: "/api/v2/cmdb/firewall/vip", query: "vdom=root" },
+  { name: "Firewall VIPs", method: "GET", path: "/api/v2/cmdb/firewall/vip", query: "vdom=root\nformat=name|extip|mappedip|extintf|type|realservers" },
   { name: "Endpoint devices", method: "GET", path: "/api/v2/monitor/user/device/query", query: "vdom=root\nformat=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address" },
   { name: "ARP table", method: "GET", path: "/api/v2/monitor/network/arp", query: "vdom=root" },
   { name: "Managed FortiSwitches", method: "GET", path: "/api/v2/monitor/switch-controller/managed-switch/status", query: "vdom=root\nformat=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status" },
-  { name: "FortiSwitch config (descriptions, uplink ports)", method: "GET", path: "/api/v2/cmdb/switch-controller/managed-switch", query: "vdom=root\ndatasource=1" },
+  { name: "FortiSwitch config (descriptions, uplink ports)", method: "GET", path: "/api/v2/cmdb/switch-controller/managed-switch", query: "vdom=root\nformat=sn|switch-id|name|description|ports" },
   { name: "FortiSwitch MAC table (detected devices)", method: "GET", path: "/api/v2/monitor/switch-controller/detected-device", query: "vdom=root\nformat=mac|switch_id|port_name|vlan_id|last_seen|ipv4_address|ipv6_address|device_name|host_src|device_type|os_name|is_fortilink_peer" },
   { name: "Managed FortiAPs", method: "GET", path: "/api/v2/monitor/wifi/managed_ap", query: "vdom=root\nformat=name|wtp_id|serial|model|wtp_profile|ip_addr|ip_address|local_ipv4_address|local_ipv4_addr|local_addr|wtp_ip|connecting_ip|connecting_from|base_mac|board_mac|mac|status|state|os_version|version|firmware_version|lldp|mesh_uplink|parent_wtp_id|wan_status|cpu_usage|mem_free|mem_total|sensors_temperatures|radio" },
-  { name: "FortiAP config (locations)", method: "GET", path: "/api/v2/cmdb/wireless-controller/wtp", query: "vdom=root\ndatasource=1" },
+  { name: "FortiAP config (locations)", method: "GET", path: "/api/v2/cmdb/wireless-controller/wtp", query: "vdom=root\nformat=wtp-id|location|comment" },
   // Not read by discovery; kept for troubleshooting.
   { name: "Routing table (IPv4)", method: "GET", path: "/api/v2/monitor/router/ipv4", query: "vdom=root" },
 ];
@@ -8596,9 +8577,13 @@ var _FMG_PRESET_QUERIES = _FMG_PROXY_PRESET_QUERIES.concat(_FMG_DIRECT_PRESET_QU
 // _makeSavedQueryStore), except one saved under a preset's exact name and
 // mode, which the new preset replaces.
 // 5: every FortiManager discovery query, with discovery's exact parameters.
-var _FMG_QUERIES_VERSION = 5;
+// 6: the interface read names the `secondaryip` table; the proxied switch read
+//    carries discovery's format= and no datasource=1.
+var _FMG_QUERIES_VERSION = 6;
 // 2: every standalone FortiGate discovery query; ARP moved to network/arp.
-var _FGT_QUERIES_VERSION = 2;
+// 3: interface, DHCP server, VIP, switch and AP config reads carry discovery's
+//    format= lists (datasource=1 dropped).
+var _FGT_QUERIES_VERSION = 3;
 
 function _substituteFmgAdom(paramsStr, adom) {
   return String(paramsStr).replace(/<adom>/g, adom || "root");

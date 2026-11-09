@@ -33,6 +33,7 @@ import { MAX_EXCERPT_CHARS } from "../utils/httpCheck.js";
 import { logEvent } from "./eventLogService.js";
 import { enqueuePathCheckSamples, type PathCheckSampleRow } from "./sampleWriteBuffer.js";
 import { recordPathCheckSamples, recordPathCheckPathChange } from "../metrics.js";
+import { sortOldestFirst } from "../utils/sortByTime.js";
 
 /** A path change within this long of the last one for the same (host, check)
  *  is recorded (the traceroute row keeps it) but writes no second Event — ECMP
@@ -78,7 +79,7 @@ export interface PathCheckSampleInput {
   tracerouteRan?: boolean;
 }
 
-export interface TracerouteHopInput {
+interface TracerouteHopInput {
   ttl: number;
   ip?: string | null;
   rdns?: string | null;
@@ -96,7 +97,7 @@ export interface PathCheckTracerouteInput {
 }
 
 /** A hop as stored: the agent's reading plus what Polaris knows about the IP. */
-export interface StoredHop {
+interface StoredHop {
   ttl: number;
   ip: string | null;
   rdns: string | null;
@@ -151,7 +152,7 @@ export function pathHashOf(hops: ReadonlyArray<{ ip: string | null }>): string {
 
 // ─── Hop resolution ─────────────────────────────────────────────────────────
 
-export interface HopContext {
+interface HopContext {
   assetId: string | null;
   hostname: string | null;
   monitorStatus: string | null;
@@ -168,7 +169,7 @@ export interface HopContext {
  * it has no index on ip, and "who held this address last month" is not what a
  * hop on a live path is.
  */
-export async function resolveHopContexts(ips: readonly string[]): Promise<Map<string, HopContext>> {
+async function resolveHopContexts(ips: readonly string[]): Promise<Map<string, HopContext>> {
   const distinct = [...new Set(ips.filter((ip) => !!ip && isValidIpAddress(ip)))];
   const out = new Map<string, HopContext>();
   if (distinct.length === 0) return out;
@@ -345,7 +346,7 @@ export async function ingestPathCheckTraceroutes(
   const hostLabel = isServer ? POLARIS_SERVER_LABEL : asset?.hostname || asset?.ipAddress || assetId;
 
   // Oldest first so each item is compared against the one before it.
-  const ordered = [...accepted].sort((a, b) => sampleTime(a.timestamp, now).getTime() - sampleTime(b.timestamp, now).getTime());
+  const ordered = sortOldestFirst([...accepted], (s) => sampleTime(s.timestamp, now));
   const creates: Parameters<typeof prisma.assetPathCheckTraceroute.createMany>[0]["data"] = [];
   const state = new Map<string, { hash: string | null; hops: StoredHop[] | null; lastEventAt: Date | null; lastAt: Date | null; complete: boolean | null; hopCount: number | null }>();
   const events: Promise<void>[] = [];

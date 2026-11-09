@@ -18,7 +18,7 @@ import { resolve } from "node:path";
 const APP_JS = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
 
 /** One top-level `function name(...) {...}` declaration, source text and all. */
-export function extractAppFn(name: string): string {
+function extractAppFn(name: string): string {
   const start = APP_JS.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`${name} not found in public/js/app.js`);
   let depth = 0;
@@ -62,3 +62,11 @@ export const APP_SHELL_STUBS: string = [
   "function showRowMenu(){}",
   "function isLightTheme(){ return false; }",
 ].join("\n");
+
+/**
+ * app.js's slide-over factory (CQ-F025), verbatim. A page script that builds
+ * its slide-over through buildSlideover needs it in scope to open the panel;
+ * it reaches raiseSlideover / wireSlideoverEscape / initSlideoverResize only
+ * behind typeof guards, so a harness stubs (or omits) those as it likes.
+ */
+export const SLIDEOVER_BUILDER: string = extractAppFn("buildSlideover");

@@ -28,6 +28,22 @@ export function coreVector(v: unknown): number[] | null {
   return out;
 }
 
+/** The rollup-tier sibling of `coreVector`. A rollup bucket's per-core vector
+ *  (`avgCpuCorePcts` / `maxCpuCorePcts`) holds a JSON null in the slot of a
+ *  core that had no reading in the bucket, so later cores keep their index —
+ *  those gaps survive as null. Any other non-finite element becomes a gap too.
+ *  Not an array, empty, or no finite number at all → null ("no per-core
+ *  data"). The chart renderers skip a non-number slot. */
+export function coreVectorWithGaps(v: unknown): (number | null)[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  let any = false;
+  const out = v.map((x) => {
+    if (typeof x === "number" && Number.isFinite(x)) { any = true; return x; }
+    return null;
+  });
+  return any ? out : null;
+}
+
 /** A condition on a core reads "over" the line unless it is `<` / `<=`. */
 export function coreConditionIsBelow(operator: string): boolean {
   return operator === "<" || operator === "<=";

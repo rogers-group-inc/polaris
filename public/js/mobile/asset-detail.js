@@ -98,6 +98,24 @@
 //     full observed key/value table)
 
 (function () {
+  // Helpers shared with the desktop slide-over — public/js/asset-shared.js and
+  // public/js/chart-shared.js, loaded before this file (mobile.html). One copy
+  // per helper; the desktop's assets.js calls the same ones.
+  var AS = window.PolarisAssetShared, CS = window.PolarisChartShared;
+  var inWindow = CS.inChartWindow;
+  var deriveInterfaceSeries = CS.derivePerIntervalSeries;
+  var sdwanColor = AS.sdwanMemberColor;
+  var ipsecIsRemoteAccess = AS.ipsecIsRemoteAccess;
+  var ipsecUptime = AS.ipsecUptimeLabel;
+  var memberUnhealthy = AS.poolMemberUnhealthy;
+  var poolScanText = AS.poolScanText;
+  var tableFilterMatches = AS.childFilterMatches;
+  var arpAgeLabel = AS.arpAgeLabel;
+  var buildWirelessTree = AS.buildWirelessTree;
+  var fwLocalInputValue = AS.fwLocalInputValue;
+  var fwWhenText = AS.fwWhenText;
+  var fwParseEmails = AS.fwParseEmails;
+
   // Chart ranges — every chart's segmented control offers the same five
   // (Response Time, CPU + Memory, the interface page, a volume's usage, and
   // SD-WAN), the presets every history endpoint accepts (src/utils/chartRange.ts).
@@ -116,18 +134,6 @@
     if (!span) return null;
     var to = Date.now();
     return { from: to - span, to: to };
-  }
-
-  // The rows a stats line may count: those at or after the window's left edge.
-  // History endpoints return lookback rows before `since` only so the line
-  // enters from the edge (lineChart keeps them off-plot) — the phone half of
-  // `_inChartWindow` in public/js/assets.js.
-  function inWindow(points, since, tsKey) {
-    var list = points || [];
-    var t0 = since == null ? NaN : +new Date(since);
-    if (!isFinite(t0)) return list;
-    var key = tsKey || "timestamp";
-    return list.filter(function (p) { return !(+new Date(p && p[key]) < t0); });
   }
 
   // Maintenance windows for the open asset, fetched ONCE per sheet open and
@@ -160,8 +166,10 @@
     return _maintWindows.promise;
   }
 
-  // Human labels for AssetSource.sourceKind — mirrors `_assetSourceLabels` in
-  // the desktop assets.js so both surfaces name discovery sources the same.
+  // Human labels for AssetSource.sourceKind — the same map as `_assetSourceLabels`
+  // in public/js/app.js (which the phone does not load), so both surfaces name
+  // discovery sources the same. tests/unit/assetSharedModules.test.ts fails when
+  // the two differ (the phone had lost the two self-report kinds, 2026-11-06).
   var SOURCE_LABELS = {
     "entra":              "Microsoft Entra ID",
     "intune":             "Microsoft Intune",
@@ -170,6 +178,8 @@
     "fortiswitch":        "FortiSwitch",
     "fortiap":            "FortiAP",
     "fortigate-endpoint": "FortiGate / FortiManager (endpoint)",
+    "snmp-sysdescr":      "Device self-report (SNMP sysDescr)",
+    "fortinet-live":      "Device self-report (FortiOS firmware)",
     "vcenter-vm":         "VMware vCenter (VM)",
     "vcenter-host":       "VMware vCenter (ESXi host)",
     "arc":                "Azure Arc",
@@ -177,16 +187,6 @@
     "polaris-agent":      "Polaris Agent",
     "manual":             "Manual / other",
   };
-
-  // SD-WAN member palette — mirrors `_SDWAN_MEMBER_COLORS` in the desktop
-  // assets.js so a given WAN member gets the same color on both surfaces.
-  var _SDWAN_MEMBER_COLORS = ["#2a9d8f", "#4361ee", "#f4a261", "#9b5de5", "#e76f51", "#43aa8b", "#577590", "#bc6c25"];
-  function sdwanColor(name, names) {
-    if (!name) return "#7b8794";
-    var i = (names || []).indexOf(name);
-    if (i < 0) i = 0;
-    return _SDWAN_MEMBER_COLORS[i % _SDWAN_MEMBER_COLORS.length];
-  }
 
   // Per-asset cache of the SD-WAN gate fetch (members + rules + perf-SLA
   // links) so renderSdwanPage draws the current-state lists without a
@@ -221,9 +221,31 @@
         // (the operator-pinned fast-poll subset); expanded shows every up
         // interface. Persists per asset for the lifetime of the SPA mount.
         interfacesShowAll: false,
+        // The Max chip's choice per chart (`monitor`, `telemetry`, `cpu`,
+        // `iface`, `sdwan-lat`, `sdwan-jit`): true = the dashed bucket-max
+        // lines are hidden; absent = shown (the default). Kept here, like
+        // `cpuHidden`, because the phone has no per-user prefs store — so it
+        // lasts for this asset for the life of the SPA mount.
+        maxOff: {},
       };
     }
     return _mounts[id];
+  }
+
+  // The Max chip's per-chart choice on a mount state (see `maxOff` above).
+  function maxShown(st, key) { return !(st && st.maxOff && st.maxOff[key]); }
+  function toggleMax(st, key) {
+    if (!st.maxOff) st.maxOff = {};
+    st.maxOff[key] = !st.maxOff[key];
+  }
+  // Guarded so a page (or a test) carrying a slimmer PolarisCharts still draws.
+  function isRollup(resp) {
+    return window.PolarisCharts && PolarisCharts.isRollup
+      ? PolarisCharts.isRollup(resp)
+      : !!(resp && typeof resp.bucketSeconds === "number" && resp.bucketSeconds > 0);
+  }
+  function wireMaxToggle(host, onToggle) {
+    if (window.PolarisCharts && PolarisCharts.wireMaxToggle) PolarisCharts.wireMaxToggle(host, onToggle);
   }
 
   // ─── Three-state slide-up sheet ────────────────────────────────────────
@@ -1373,7 +1395,7 @@
     row("Location", asset.location || asset.learnedLocation);
     row("Department", asset.department);
     row("Assigned to", asset.assignedTo);
-    row("Last seen", formatTimeAgo(asset.lastSeen));
+    row("Last seen", timeAgo(asset.lastSeen));
     row("Last seen port", asset.lastSeenSwitch
       ? '<span class="mono">' + escapeHtml(asset.lastSeenSwitch) + '</span>'
       : null);
@@ -1451,8 +1473,22 @@
         dd.threshold, dd.recoveryPolls,
       );
       var samples = [];
+      // A rollup bucket's MAX rides beside its average as a dashed line in
+      // the same verdict colour (Up green, or Recovering for a bucket the
+      // replay calls recovering). A bucket with no successes has no max — the
+      // dashed line breaks there, as it does for one rolled up before the max
+      // was kept.
+      var rollup = isRollup(resp);
+      var maxPts = [];
       (resp.samples || []).forEach(function (s, i) {
         var status = (states[i] && states[i].status) || "up";
+        if (rollup) {
+          maxPts.push({
+            ts: s.timestamp,
+            v: hasResponse(s) && typeof s.maxResponseTimeMs === "number" ? s.maxResponseTimeMs : null,
+            rec: status === "recovering",
+          });
+        }
         if (hasResponse(s)) samples.push({ ts: s.timestamp, v: s.responseTimeMs, rec: status === "recovering" });
         else if (isFailure(s)) {
           samples.push({
@@ -1464,10 +1500,13 @@
       });
       if (chartHost) {
         var bounds = rangeBounds(range);
-        chartHost.innerHTML = PolarisCharts.lineChart({
+        var drawMonitor = function () { chartHost.innerHTML = PolarisCharts.lineChart({
           // The Up green rather than the app accent, mirroring desktop: the one
           // chart about reachability speaks the same colours as the status pill.
-          series: [{ values: samples, color: "var(--md-success)", fill: true }],
+          series: [{ values: samples, color: "var(--md-success)", fill: true, max: rollup ? maxPts : null }],
+          showMax: maxShown(st, "monitor"),
+          // The Max chip sits under the colour key (lineChart places it).
+          maxToggle: rollup,
           // Polling stops for a maintenance window, so the series has a hole
           // there; the band says why.
           maintenance: maint,
@@ -1479,7 +1518,9 @@
           // The key for the colours drawn — the same names the desktop chart
           // and the alert email use.
           legend: { series: "Up" },
-        });
+        }); };
+        drawMonitor();
+        wireMaxToggle(chartHost, function () { toggleMax(st, "monitor"); drawMonitor(); });
       }
       if (sub) {
         var stats = resp.stats || {};
@@ -1535,11 +1576,24 @@
       // range change keeps them.
       if (chartHost && window.PolarisTelemetryCharts && PolarisTelemetryCharts.splits(method, asset)) {
         if (!st.cpuHidden) st.cpuHidden = {};
+        if (!st.maxOff) st.maxOff = {};
+        // telemetry-charts.js handles its own Max chip; drop any combined-
+        // chart handler a previous render left on this host.
+        wireMaxToggle(chartHost, null);
         PolarisTelemetryCharts.render(chartHost, {
-          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden,
+          resp: resp, maint: maint, asset: asset, range: range, bounds: bounds, hidden: st.cpuHidden, maxOff: st.maxOff,
         });
       } else if (chartHost) {
-        chartHost.innerHTML = PolarisCharts.lineChart({
+        // The CPU line's rollup buckets carry their MAX (dashed); memory's
+        // is not drawn on the combined chart.
+        var telRollup = isRollup(resp);
+        var cpuMax = telRollup
+          ? samples.map(function (s) { return { ts: s.timestamp, v: typeof s.maxCpuPct === "number" ? s.maxCpuPct : null }; })
+          : null;
+        chartHost._telemetryCtx = null;   // a split render's legend handler stands down
+        var drawTelemetry = function () { chartHost.innerHTML = PolarisCharts.lineChart({
+          showMax: maxShown(st, "telemetry"),
+          maxToggle: telRollup,
           maintenance: maint,
           from: bounds && bounds.from,
           to: bounds && bounds.to,
@@ -1550,14 +1604,16 @@
           // dive across.
           outages: resp.outages,
           series: [
-            { values: cpuSeries, color: "var(--md-primary)", gapFade: true },
+            { values: cpuSeries, color: "var(--md-primary)", gapFade: true, max: cpuMax },
             { values: memSeries, color: "var(--md-tertiary)", gapFade: true },
           ],
           height: 120,
           yMin: 0, yMax: 100,
           yUnit: "%",
           ariaLabel: "CPU and memory over " + range,
-        });
+        }); };
+        drawTelemetry();
+        wireMaxToggle(chartHost, function () { toggleMax(st, "telemetry"); drawTelemetry(); });
       }
       if (sub) {
         var stats = resp.stats || {};
@@ -1881,6 +1937,26 @@
           + (iface.poeClass ? ' <span class="muted mono" style="font-size:12px;">' + escapeHtml(iface.poeClass) + '</span>' : ''),
       });
     }
+    // Transceiver readings (business rule 143), the desktop table's optics
+    // columns. Rx is tinted past most optics' receive sensitivity.
+    var o = iface.optics || null;
+    if (o) {
+      var fin = function (v) { return typeof v === "number" && isFinite(v); };
+      if (fin(o.rxDbm)) {
+        rows.push({
+          k: "Rx power",
+          html: '<span class="mono"' + (o.rxDbm <= -20 ? ' style="color:var(--color-danger,#dc2626)"' : '') + '>'
+            + escapeHtml(o.rxDbm.toFixed(2) + " dBm") + '</span>',
+        });
+      }
+      row("Tx power", fin(o.txDbm) ? o.txDbm.toFixed(2) + " dBm" : null, true);
+      if (fin(o.temperatureC)) {
+        var TU = window.PolarisTempUnit;
+        row("SFP temp", (TU ? TU.convertCelsius(o.temperatureC) : o.temperatureC).toFixed(1) + " " + (TU ? TU.celsiusLabel() : "°C"), true);
+      }
+      row("SFP voltage", fin(o.voltage) ? o.voltage.toFixed(2) + " V" : null, true);
+      row("Bias", fin(o.biasA) ? (o.biasA * 1000).toFixed(2) + " mA" : null, true);
+    }
     row("In errors",  iface.inErrors  != null ? String(iface.inErrors)  : null);
     row("Out errors", iface.outErrors != null ? String(iface.outErrors) : null);
 
@@ -1938,6 +2014,16 @@
           + '<div id="iface-err-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-err-sub" style="font-size:12px;margin-top:4px;"></div>'
         : '')
+      // Transceiver history (business rule 143) — recorded on the hardware-
+      // sensor stream, so it shows whether or not the port is monitored, with
+      // its own range picker.
+      + (iface.optics
+        ? ''
+          + '<div style="font-weight:500;margin:16px 0 8px;">Optical power</div>'
+          + rangeSegHtml("iface-optics-seg", RANGES, "1h")
+          + '<div id="iface-optics-chart" style="min-height:120px;"></div>'
+          + '<div class="muted" id="iface-optics-sub" style="font-size:12px;margin-top:4px;"></div>'
+        : '')
       + '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>'
       + neighborHtml;
 
@@ -1951,47 +2037,61 @@
       wireRangeSeg("iface-range-seg", function (r) { loadInterfaceCharts(assetId, iface.ifName, r); });
       loadInterfaceCharts(assetId, iface.ifName, "1h");
     }
+    if (iface.optics && iface.ifName) {
+      wireRangeSeg("iface-optics-seg", function (r) { loadOpticsChart(assetId, iface.ifName, r); });
+      loadOpticsChart(assetId, iface.ifName, "1h");
+    }
   }
 
-  // Counter samples → per-interval rates. Mirrors _derivePerIntervalSeries in
-  // public/js/assets.js: a rolled-up window (bucketSeconds set) already carries
-  // per-second rates; raw samples are cumulative counters, differenced pairwise,
-  // with a counter reset (negative delta) dropped rather than drawn as a spike.
-  // Errors come out as a count per interval, not per second.
-  function deriveInterfaceSeries(samples, data) {
-    samples = samples || [];
-    if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
-      var bucketSec = data.bucketSeconds;
-      return samples.map(function (s) {
-        return {
-          ts: s.timestamp,
-          inBps:  typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null,
-          outBps: typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null,
-          inErr:  typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null,
-          outErr: typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null,
-        };
+  // Rx and Tx power for an SFP port: two hardware-sensor series addressed by
+  // the names the collector stores (`<port> Rx power` / `<port> Tx power`,
+  // src/utils/sfpOptics.ts → sfpSensorName — the desktop's SFP_ROLE_LABELS).
+  function loadOpticsChart(assetId, ifName, range) {
+    var el = document.getElementById("iface-optics-chart");
+    var sub = document.getElementById("iface-optics-sub");
+    if (!el) return;
+    el.innerHTML = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
+    if (sub) sub.textContent = "";
+    var current = function () {
+      var seg = document.getElementById("iface-optics-seg");
+      var on = seg && seg.querySelector(".seg-item.on");
+      return _openId === assetId && document.getElementById("iface-optics-chart") === el
+        && on && on.dataset.range === range;
+    };
+    Promise.all([
+      api.assets.hardwareHistory(assetId, { range: range, sensorName: ifName + " Rx power" }),
+      api.assets.hardwareHistory(assetId, { range: range, sensorName: ifName + " Tx power" }),
+      maintWindowsFor(assetId),
+    ]).then(function (got) {
+      if (!current()) return;
+      var rx = got[0] || {}, tx = got[1] || {}, maint = got[2];
+      var pts = function (d) {
+        return (d.samples || []).filter(function (s) { return typeof s.value === "number"; })
+          .map(function (s) { return { ts: s.timestamp, v: s.value }; });
+      };
+      var rxPts = pts(rx), txPts = pts(tx);
+      if (!rxPts.length && !txPts.length) {
+        el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
+        return;
+      }
+      var bounds = rangeBounds(range);
+      el.innerHTML = PolarisCharts.lineChart({
+        maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, height: 120,
+        series: [
+          { values: rxPts, color: "var(--md-primary)",  gapFade: true },
+          { values: txPts, color: "var(--md-tertiary)", gapFade: true },
+        ],
+        yUnit: "dBm",
+        ariaLabel: ifName + " optical power over " + range,
       });
-    }
-    function delta(a, b) {
-      if (typeof a !== "number" || typeof b !== "number") return null;
-      return b - a < 0 ? null : b - a;
-    }
-    var out = [];
-    for (var i = 1; i < samples.length; i++) {
-      var prev = samples[i - 1], cur = samples[i];
-      var dtSec = (new Date(cur.timestamp) - new Date(prev.timestamp)) / 1000;
-      if (!(dtSec > 0)) continue;
-      var inOct = delta(prev.inOctets, cur.inOctets);
-      var outOct = delta(prev.outOctets, cur.outOctets);
-      out.push({
-        ts: cur.timestamp,
-        inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
-        outBps: outOct != null ? (outOct * 8) / dtSec : null,
-        inErr:  delta(prev.inErrors,  cur.inErrors),
-        outErr: delta(prev.outErrors, cur.outErrors),
-      });
-    }
-    return out;
+      var avg = function (d) { var s = d.stats || {}; return typeof s.avgValue === "number" ? s.avgValue.toFixed(2) + " dBm" : "—"; };
+      if (sub) sub.innerHTML = ''
+        + '<span style="color:var(--md-primary);">Rx avg ' + escapeHtml(avg(rx)) + '</span>'
+        + ' · <span style="color:var(--md-tertiary);">Tx avg ' + escapeHtml(avg(tx)) + '</span>';
+    }).catch(function (err) {
+      if (!current()) return;
+      el.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load optical history: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
+    });
   }
 
   // The bit-rate unit a peak reads best in; the chart is drawn in that unit
@@ -2034,40 +2134,62 @@
       var common = { maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120 };
 
       var inPts = [], outPts = [], peak = 0, inSum = 0, inN = 0, outSum = 0, outN = 0;
+      // Rollup only: each bucket's MAX rate as a dashed companion, and the
+      // peak of those maxes (counted like `peak`).
+      var rollup = isRollup(data);
+      var inMax = [], outMax = [], maxPeak = 0;
       var t0 = data.since != null ? +new Date(data.since) : NaN;
       d.forEach(function (p) {
         // Lookback points are drawn (off-plot, so the line enters from the
         // edge) but never counted in the averages or the axis peak.
-        var counted = !(+new Date(p.ts) < t0);
-        if (p.inBps != null)  { inPts.push({ ts: p.ts, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
-        if (p.outBps != null) { outPts.push({ ts: p.ts, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
+        var counted = !(+new Date(p.timestamp) < t0);
+        if (p.inBps != null)  { inPts.push({ ts: p.timestamp, v: p.inBps });  if (counted) { inSum += p.inBps;  inN++;  if (p.inBps > peak) peak = p.inBps; } }
+        if (p.outBps != null) { outPts.push({ ts: p.timestamp, v: p.outBps }); if (counted) { outSum += p.outBps; outN++; if (p.outBps > peak) peak = p.outBps; } }
+        if (rollup) {
+          inMax.push({ ts: p.timestamp, v: p.inMaxBps != null ? p.inMaxBps : null });
+          outMax.push({ ts: p.timestamp, v: p.outMaxBps != null ? p.outMaxBps : null });
+          if (counted && p.inMaxBps != null && p.inMaxBps > maxPeak) maxPeak = p.inMaxBps;
+          if (counted && p.outMaxBps != null && p.outMaxBps > maxPeak) maxPeak = p.outMaxBps;
+        }
       });
       if (!inPts.length && !outPts.length) {
         tputEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
       } else {
-        var sc = bpsScale(peak);
-        var scaled = function (pts) { return pts.map(function (p) { return { ts: p.ts, v: p.v / sc.div }; }); };
-        tputEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
-          series: [
-            { values: scaled(inPts),  color: "var(--md-primary)",  gapFade: true },
-            { values: scaled(outPts), color: "var(--md-tertiary)", gapFade: true },
-          ],
-          // An idle port peaks at 0 — give it a 0–1 axis, not lineChart's
-          // -1–1 for a flat line.
-          yMin: 0, yMax: peak > 0 ? undefined : 1, yUnit: sc.unit,
-          ariaLabel: ifName + " throughput over " + range,
-        }));
+        var ist = mountState(assetId);
+        var drawTput = function () {
+          var showMax = maxShown(ist, "iface");
+          // The unit follows what the axis actually spans: the maxes too
+          // while they are shown.
+          var top = showMax ? Math.max(peak, maxPeak) : peak;
+          var sc = bpsScale(top);
+          var scaled = function (pts) { return pts.map(function (p) { return { ts: p.ts, v: p.v == null ? null : p.v / sc.div }; }); };
+          tputEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
+            series: [
+              { values: scaled(inPts),  color: "var(--md-primary)",  gapFade: true, max: rollup ? scaled(inMax) : null },
+              { values: scaled(outPts), color: "var(--md-tertiary)", gapFade: true, max: rollup ? scaled(outMax) : null },
+            ],
+            showMax: showMax,
+            maxToggle: rollup,
+            // An idle port peaks at 0 — give it a 0–1 axis, not lineChart's
+            // -1–1 for a flat line.
+            yMin: 0, yMax: top > 0 ? undefined : 1, yUnit: sc.unit,
+            ariaLabel: ifName + " throughput over " + range,
+          }));
+        };
+        drawTput();
+        wireMaxToggle(tputEl, function () { toggleMax(ist, "iface"); drawTput(); });
+        // The true peak is the largest bucket max when the tier keeps one.
         if (tputSub) tputSub.innerHTML = ''
           + '<span style="color:var(--md-primary);">in avg ' + escapeHtml(fmtBps(inN ? inSum / inN : 0)) + '</span>'
           + ' · <span style="color:var(--md-tertiary);">out avg ' + escapeHtml(fmtBps(outN ? outSum / outN : 0)) + '</span>'
-          + ' · peak ' + escapeHtml(fmtBps(peak));
+          + ' · peak ' + escapeHtml(fmtBps(Math.max(peak, maxPeak)));
       }
 
       var inE = [], outE = [], inTot = 0, outTot = 0;
       d.forEach(function (p) {
-        var counted = !(+new Date(p.ts) < t0);
-        if (p.inErr != null)  { inE.push({ ts: p.ts, v: p.inErr });  if (counted) inTot += p.inErr; }
-        if (p.outErr != null) { outE.push({ ts: p.ts, v: p.outErr }); if (counted) outTot += p.outErr; }
+        var counted = !(+new Date(p.timestamp) < t0);
+        if (p.inErr != null)  { inE.push({ ts: p.timestamp, v: p.inErr });  if (counted) inTot += p.inErr; }
+        if (p.outErr != null) { outE.push({ ts: p.timestamp, v: p.outErr }); if (counted) outTot += p.outErr; }
       });
       if (!inE.length && !outE.length) {
         errEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
@@ -2114,7 +2236,6 @@
     "advpn-spoke": "ADVPN spoke", "advpn-shortcut": "ADVPN shortcut", "dialup-peer": "Dial-up peer",
     "remote-access": "FortiClient (IPsec)", "ssl-vpn": "FortiClient (SSL-VPN)",
   };
-  function ipsecIsRemoteAccess(c) { return c.kind === "remote-access" || c.kind === "ssl-vpn"; }
   // The payload the gate fetched, per asset — the page draws from it.
   var _ipsecCache = Object.create(null);
 
@@ -2149,16 +2270,6 @@
     if (peers) bits.push(peers + " peer" + (peers === 1 ? "" : "s"));
     if (users) bits.push(users + " user" + (users === 1 ? "" : "s"));
     return bits.join(" · ");
-  }
-
-  // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up
-  // (the desktop's _ipsecUptimeLabel).
-  function ipsecUptime(since) {
-    if (!since) return "";
-    var sec = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
-    if (sec < 3600) return Math.max(1, Math.floor(sec / 60)) + "m";
-    if (sec < 86400) return Math.floor(sec / 3600) + "h " + String(Math.floor((sec % 3600) / 60)).padStart(2, "0") + "m";
-    return Math.floor(sec / 86400) + "d " + String(Math.floor((sec % 86400) / 3600)).padStart(2, "0") + "h";
   }
 
   // up / down as every asset dot reads; "dynamic" (a dial-up template working
@@ -2474,37 +2585,16 @@
   // The desktop's healthy / failing words (_storageHealthCell): a pool's,
   // a group's, a drive's or a SMART verdict. Unknown words stay neutral.
   function healthClass(h) {
-    var s = String(h || "").toUpperCase();
-    if (/^(ONLINE|HEALTHY|STARTED|DISK_OK|OK|PASSED)$/.test(s)) return "poe-ok";
-    if (/(FAULT|UNAVAIL|REMOVED|OFFLINE|DEGRADED|FAIL|INVALID|DSBL|WRONG|STOPPED)/.test(s)) return "poe-fault";
-    return "poe-idle";
+    var st = AS.storageHealthState(h);
+    return st === "good" ? "poe-ok" : st === "bad" ? "poe-fault" : "poe-idle";
   }
   function healthPill(h) {
     return h ? '<span class="poe-label ' + healthClass(h) + '">' + escapeHtml(h) + '</span>' : "";
   }
 
-  // The desktop's _poolMemberUnhealthy, word for word.
-  function memberUnhealthy(m) {
-    var errs = (m.readErrors || 0) + (m.writeErrors || 0) + (m.checksumErrors || 0) + (m.errors || 0);
-    var h = String(m.health || "").toUpperCase();
-    return errs > 0 || (h !== "" && !/^(ONLINE|DISK_OK|AVAIL|INUSE)$/.test(h)) ||
-      (!!m.smart && !/^(OK|PASSED|UNKNOWN)$/i.test(m.smart));
-  }
   function poolUnhealthy(pool) {
     return (pool.health && !/^(ONLINE|STARTED|DISK_OK)$/i.test(pool.health)) ||
       (pool.groups || []).some(function (g) { return (g.members || []).some(memberUnhealthy); });
-  }
-
-  // The desktop's _poolScanText.
-  function poolScanText(scan) {
-    if (!scan) return "";
-    var kind = scan.kind === "parity-check" ? "Parity check" : scan.kind === "resilver" ? "Resilver" : scan.kind === "scrub" ? "Scrub" : (scan.kind || "Scan");
-    var when = scan.at ? " " + (scan.state === "running" ? "started " : "") + timeAgo(scan.at) : "";
-    var state = scan.state === "running"
-      ? "running" + (scan.percent != null ? " (" + Number(scan.percent).toFixed(1) + "%)" : "")
-      : (scan.state || "—");
-    var errs = scan.errors != null ? ", " + scan.errors + " error" + (scan.errors === 1 ? "" : "s") : "";
-    return kind + ": " + state + when + errs;
   }
 
   function hostPools(v) {
@@ -3068,37 +3158,51 @@
     var maintP = maintWindowsFor(assetId).then(function (w) { maint = w; });
     Promise.all(members.map(function (m) {
       return api.assets.perfSlaHistory(assetId, m.healthCheck, m.link, { range: range })
-        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [], since: data && data.since }; })
+        .then(function (data) { return { link: m.link, samples: (data && data.samples) || [], since: data && data.since, rollup: isRollup(data) }; })
         .catch(function () { return { link: m.link, samples: [] }; });
     })).then(function (results) { return maintP.then(function () { return results; }); }).then(function (results) {
       // Bail if the operator switched health-check/range or closed the sheet
       // while this fetch was in flight.
       if (!_sdwanSheetState || _sdwanSheetState.hcName !== hcName || _sdwanSheetState.range !== range) return;
 
-      function chartFor(host, key, unit, yMax) {
+      // `maxKey` names the rollup bucket's MAX field, drawn as each member's
+      // dashed companion on a rollup tier (latency, jitter — not packet loss);
+      // `toggleKey` is the chart's own entry in the mount state's `maxOff`.
+      var sst = mountState(assetId);
+      function chartFor(host, key, unit, yMax, maxKey, toggleKey) {
+        var rollup = !!maxKey && results.some(function (r) { return r.rollup; });
         var series = results.map(function (r) {
           return {
             color: sdwanColor(r.link, memberNames),
             values: r.samples
               .filter(function (s) { return s[key] != null; })
               .map(function (s) { return { ts: s.timestamp, v: s[key] }; }),
+            max: rollup && r.rollup
+              ? r.samples.map(function (s) { return { ts: s.timestamp, v: typeof s[maxKey] === "number" ? s[maxKey] : null }; })
+              : null,
           };
         });
         var bounds = rangeBounds(range);
-        host.innerHTML = PolarisCharts.lineChart({
-          series: series,
-          maintenance: maint,
-          from: bounds && bounds.from,
-          to: bounds && bounds.to,
-          height: 120,
-          yMin: 0,
-          yMax: yMax,
-          yUnit: unit,
-          ariaLabel: hcName + " " + key + " over " + range,
-        });
+        var draw = function () {
+          host.innerHTML = PolarisCharts.lineChart({
+            series: series,
+            showMax: maxShown(sst, toggleKey),
+            maxToggle: rollup,
+            maintenance: maint,
+            from: bounds && bounds.from,
+            to: bounds && bounds.to,
+            height: 120,
+            yMin: 0,
+            yMax: yMax,
+            yUnit: unit,
+            ariaLabel: hcName + " " + key + " over " + range,
+          });
+        };
+        draw();
+        if (toggleKey) wireMaxToggle(host, function () { toggleMax(sst, toggleKey); draw(); });
       }
-      chartFor(latEl,  "latencyMs",  "ms", undefined);
-      chartFor(jitEl,  "jitterMs",   "ms", undefined);
+      chartFor(latEl,  "latencyMs",  "ms", undefined, "maxLatencyMs", "sdwan-lat");
+      chartFor(jitEl,  "jitterMs",   "ms", undefined, "maxJitterMs",  "sdwan-jit");
       chartFor(lossEl, "packetLoss", "%",  100);
 
       // Legend — one colored chip per member.
@@ -3336,28 +3440,6 @@
     return ((_tableSheet && _tableSheet.filterText) || "").trim().toLowerCase();
   }
 
-  // Partial match for every table filter box — the desktop's
-  // _childFilterMatches (assets.js); change one, change both. Plain substring
-  // over every field, so a middle fragment of an IP ("41.30") or a
-  // colon-separated MAC ("a0:12") hits; MAC fields are ALSO compared with
-  // separators stripped, so "a012", "a0-12" and "a0.12" find …:A0:12:… — a
-  // separator-free match must start on an octet (even offset), or "a0" would
-  // hit BA:01 through "ba01". `filter` is already lower-cased.
-  function tableFilterMatches(textParts, macParts, filter) {
-    if (!filter) return true;
-    if (textParts.concat(macParts).join(" ").toLowerCase().indexOf(filter) !== -1) return true;
-    var compact = filter.replace(/[\s:.\-]/g, "");
-    if (compact.length < 2 || !/^[0-9a-f]+$/.test(compact)) return false;
-    return macParts.some(function (m) {
-      if (!m) return false;
-      var hex = String(m).toLowerCase().replace(/[:.\-]/g, "");
-      for (var at = hex.indexOf(compact); at !== -1; at = hex.indexOf(compact, at + 1)) {
-        if (at % 2 === 0) return true;
-      }
-      return false;
-    });
-  }
-
   // Groups start collapsed on a big table (a core gate's cache runs into the
   // thousands); a filter, or a table that fits on a screen, opens them all.
   function groupsStartExpanded(groups, filter) {
@@ -3382,15 +3464,6 @@
   ];
   var ARP_RANGE_DAYS = { current: 0, "1h": 1 / 24, "12h": 0.5, "24h": 1, "7d": 7, "30d": 30 };
   var _arpRange = Object.create(null);   // per asset, for the SPA lifetime
-
-  function arpAgeLabel(sec) {
-    if (typeof sec !== "number" || !isFinite(sec) || sec < 0) return null;
-    if (sec < 60) return Math.round(sec) + "s";
-    if (sec < 3600) return Math.floor(sec / 60) + "m";
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    return h + "h " + String(m).padStart(2, "0") + "m";
-  }
 
   function cadenceLabel(sec) {
     if (typeof sec !== "number" || !isFinite(sec) || sec <= 0) return null;
@@ -3437,7 +3510,7 @@
       // cache that ages out in minutes, so absence here proves little.
       var cad = cadenceLabel(data && data.pollIntervalSec);
       var metaBits = [];
-      metaBits.push(data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "never read");
+      metaBits.push(data && data.collectedAt ? "read " + escapeHtml(timeAgo(data.collectedAt)) : "never read");
       metaBits.push(cad ? "every " + escapeHtml(cad) : "on discovery only");
       var metaHead = metaBits.join(" · ");
       var metaNote = '<br><span style="opacity:.8;">Each read is a snapshot and a FortiGate ages entries out in about 1–5 minutes, so short-lived entries can be missing.</span>';
@@ -3475,7 +3548,7 @@
             var sub = ['<span class="mono">' + escapeHtml(e.macAddress || "—") + '</span>'];
             var age = arpAgeLabel(e.ageSec);
             if (age) sub.push("age " + escapeHtml(age));
-            if (showLastSeen && e.lastSeen) sub.push("seen " + escapeHtml(formatTimeAgo(e.lastSeen)));
+            if (showLastSeen && e.lastSeen) sub.push("seen " + escapeHtml(timeAgo(e.lastSeen)));
             var dev = matchedDeviceHtml(e.matchedAsset);
             if (dev) sub.push(dev);
             return tableRowHtml(escapeHtml(e.ipAddress), sub.join(" · "));
@@ -3513,7 +3586,7 @@
       if (!body) return;
 
       var cad = cadenceLabel(data && data.pollIntervalSec);
-      var metaHead = (data && data.collectedAt ? "read " + escapeHtml(formatTimeAgo(data.collectedAt)) : "no entries recorded yet")
+      var metaHead = (data && data.collectedAt ? "read " + escapeHtml(timeAgo(data.collectedAt)) : "no entries recorded yet")
         + " · " + (cad ? "every " + escapeHtml(cad) : "not polled");
 
       if (!entries.length) {
@@ -3522,7 +3595,7 @@
         var lastPass = data && data.lastSystemInfoAt;
         body.innerHTML = tableMsg("No forwarding-database entries. This is collected over SNMP on the system-info cadence; a switch polled via its parent FortiGate reports none."
           + (lastPass
-              ? " The last system-info pass ran " + escapeHtml(formatTimeAgo(lastPass)) + " and returned none."
+              ? " The last system-info pass ran " + escapeHtml(timeAgo(lastPass)) + " and returned none."
               : " No system-info pass has completed against this switch yet."));
         return;
       }
@@ -3613,26 +3686,6 @@
     return "";
   }
 
-  function buildWirelessTree(radios, stations) {
-    var byBssid = {}, byRadioSsid = {};
-    var nodes = radios.map(function (r) {
-      var vapNodes = (r.vaps || []).map(function (v) {
-        var node = { vap: v, stations: [] };
-        if (v.bssid) byBssid[String(v.bssid).toUpperCase()] = node;
-        if (v.ssid)  byRadioSsid[r.radioIndex + "\u0000" + String(v.ssid).toLowerCase()] = node;
-        return node;
-      });
-      return { radio: r, vaps: vapNodes };
-    });
-    var unplaced = [];
-    stations.forEach(function (s) {
-      var node = s.bssid ? byBssid[String(s.bssid).toUpperCase()] : null;
-      if (!node && s.radioId != null && s.ssid) node = byRadioSsid[s.radioId + "\u0000" + String(s.ssid).toLowerCase()];
-      if (node) node.stations.push(s); else unplaced.push(s);
-    });
-    return { radios: nodes, unplaced: unplaced };
-  }
-
   function wirelessStationRow(s) {
     var sub = [];
     if (s.staIpAddr) sub.push('<span class="mono">' + escapeHtml(s.staIpAddr) + '</span>');
@@ -3687,7 +3740,7 @@
       if (!body) return;
       var controls = document.getElementById("table-sheet-controls");
       var lastAt = (si && si.lastSystemInfoAt) || null;
-      var metaHead = (lastAt ? "read " + escapeHtml(formatTimeAgo(lastAt)) : "never collected")
+      var metaHead = (lastAt ? "read " + escapeHtml(timeAgo(lastAt)) : "never collected")
         + " · " + radios.length + " radio" + (radios.length === 1 ? "" : "s");
       var meshRole = wirelessMeshRoleHtml(_assetCache[assetId], stations);
 
@@ -3808,7 +3861,7 @@
     if (child.ipAddress) bits.push('<span class="mono">' + escapeHtml(child.ipAddress) + '</span>');
     if (child.model) bits.push(escapeHtml(child.model));
     bits.push(child.monitored
-      ? (child.lastSystemInfoAt ? "read " + escapeHtml(formatTimeAgo(child.lastSystemInfoAt)) : "never collected")
+      ? (child.lastSystemInfoAt ? "read " + escapeHtml(timeAgo(child.lastSystemInfoAt)) : "never collected")
       : "not monitored");
     return '<div class="muted" style="padding:2px 0 6px 24px;font-size:13px;">' + bits.join(" · ") + '</div>';
   }
@@ -3818,7 +3871,7 @@
     children.forEach(function (c) {
       if (c.lastSystemInfoAt && (!newest || c.lastSystemInfoAt > newest)) newest = c.lastSystemInfoAt;
     });
-    return newest ? "newest read " + escapeHtml(formatTimeAgo(newest)) : "no child polled yet";
+    return newest ? "newest read " + escapeHtml(timeAgo(newest)) : "no child polled yet";
   }
 
   function loadChildWirelessSheet(assetId) {
@@ -3999,7 +4052,7 @@
           bits.push('<span style="color:' + col + ';font-weight:500;">' + escapeHtml(s.state.label) + '</span>');
         }
         if (s.integration && s.integration.name) bits.push(escapeHtml(s.integration.name));
-        if (s.lastSeen) bits.push("seen " + escapeHtml(formatTimeAgo(s.lastSeen)));
+        if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
         var inferred = s.inferred ? ' <span class="muted" style="font-size:12px;font-weight:400;">· inferred</span>' : '';
         var extId = s.externalId
           ? '<div class="mono" style="font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.externalId) + '</div>'
@@ -4046,7 +4099,7 @@
         if (s.vlan != null) netParts.push("VLAN " + escapeHtml(String(s.vlan)));
         if (netParts.length) bits.push(netParts.join(" "));
         if (s.source) bits.push(escapeHtml(s.source));
-        if (s.lastSeen) bits.push("seen " + escapeHtml(formatTimeAgo(s.lastSeen)));
+        if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
         html += ''
           + '<div class="list-item two-line" style="padding-left:16px;padding-right:16px;">'
           + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#i-router"/></svg></span>'
@@ -4085,7 +4138,7 @@
           + '  <span class="leading"><svg viewBox="0 0 24 24"><use href="#i-history"/></svg></span>'
           + '  <div class="content">'
           + '    <div class="headline mono">' + escapeHtml(r.ip || "") + '</div>'
-          + '    <div class="supporting">' + escapeHtml((r.source ? r.source + " · " : "") + (formatTimeAgo(r.lastSeen) || "")) + '</div>'
+          + '    <div class="supporting">' + escapeHtml((r.source ? r.source + " · " : "") + (timeAgo(r.lastSeen) || "")) + '</div>'
           + '  </div>'
           + '</div>'
           + (i < rows.length - 1 ? '<div class="list-divider"></div>' : '');
@@ -4332,26 +4385,6 @@
           + '<button class="btn btn-outlined" id="asset-fw-sched-cancel">Cancel</button></div>'
         : '')
       + '</div>';
-  }
-
-  /** "YYYY-MM-DDTHH:MM" in the phone's zone — a datetime-local input's value. Pure. */
-  function fwLocalInputValue(d) {
-    function p(n) { return (n < 10 ? "0" : "") + n; }
-    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
-  }
-
-  /** "Tue, Oct 7, 2:00 AM (in 9 h)". Pure. */
-  function fwWhenText(iso) {
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-    var mins = Math.round((d.getTime() - Date.now()) / 60000);
-    var rel = mins <= 0 ? "due now" : mins < 60 ? "in " + mins + " min" : mins < 48 * 60 ? "in " + Math.round(mins / 60) + " h" : "in " + Math.round(mins / 1440) + " days";
-    return txt + " (" + rel + ")";
-  }
-
-  function fwParseEmails(text) {
-    return String(text || "").split(/[\s,;]+/).map(function (s) { return s.trim(); }).filter(Boolean);
   }
 
   function loadFirmwareRow(id, asset) {
@@ -5061,7 +5094,7 @@
       if (asset.maintenanceReturnStatus) bits.push("returns to " + asset.maintenanceReturnStatus);
       // The last poll predates the window — still worth showing, since it
       // says how long polling has been paused.
-      if (asset.lastMonitorAt) bits.push("last poll " + formatTimeAgo(asset.lastMonitorAt));
+      if (asset.lastMonitorAt) bits.push("last poll " + timeAgo(asset.lastMonitorAt));
       return bits.join(" · ");
     }
     if (asset.dependencySuppressed) {
@@ -5071,17 +5104,11 @@
       if (asset.monitorStatus) bits.push("own probe " + monitorStatusLabel(asset.monitorStatus).toLowerCase());
     }
     if (asset.responseTimePolling) bits.push(asset.responseTimePolling);
-    if (asset.lastMonitorAt) bits.push("last poll " + formatTimeAgo(asset.lastMonitorAt));
+    if (asset.lastMonitorAt) bits.push("last poll " + timeAgo(asset.lastMonitorAt));
     return bits.join(" · ");
   }
 
   // api.js timeAgo with the mobile guard for empty/unparseable timestamps.
-  function formatTimeAgo(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return timeAgo(iso);
-  }
   // formatDate is the shared mobileFormatDate global from api.js (local-time
   // YYYY-MM-DD). Was a UTC .toISOString().slice here — local is the correct
   // day for the operator's "Acquired" display.

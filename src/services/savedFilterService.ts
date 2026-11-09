@@ -52,7 +52,7 @@ import { assertFolderTarget, listVisibleFolders, type SavedFolderDto } from "./s
  * rejected, so adding saved filters to another list page is a one-line change
  * here plus the frontend wiring — no new permission key, no role migration.
  */
-export const SAVED_FILTER_SCOPES: Record<string, string> = {
+const SAVED_FILTER_SCOPES: Record<string, string> = {
   assets: "assets",
 };
 
@@ -60,11 +60,11 @@ export const MAX_NAME_LEN = 60;
 /** Filter columns per preset — far above any real table's column count. */
 export const MAX_FILTER_KEYS = 60;
 /** Values inside a filter (a multi-select's checked options). */
-export const MAX_FILTER_VALUES = 200;
+const MAX_FILTER_VALUES = 200;
 /** Per-string cap (a typed substring, a date, a column key). */
 export const MAX_VALUE_LEN = 300;
 /** Presets one user may own per scope — a bound on list-render cost. */
-export const MAX_PRESETS_PER_USER = 100;
+const MAX_PRESETS_PER_USER = 100;
 
 // C0 range + DEL. Never legitimate in an operator-typed preset name, and a
 // public preset's name is rendered into every other operator's menu.

@@ -14,7 +14,7 @@ import { AppError } from "../utils/errors.js";
 
 const SETTING_KEY = "networkAllocationTemplates";
 
-export interface TemplateEntry {
+interface TemplateEntry {
   /** True if this row only reserves space (no subnet created). */
   skip?: boolean;
   /** Required unless `skip` is true. */

@@ -55,12 +55,6 @@
   }
   // escapeHtml is the canonical global from api.js (loaded first on every page).
   // api.js timeAgo with the mobile guard for empty/unparseable timestamps.
-  function formatTimeAgo(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return timeAgo(iso);
-  }
   function loadingHtml() {
     return '<div class="loading-screen" style="padding:48px 0;"><div class="spinner"></div></div>';
   }
@@ -130,7 +124,7 @@
             + '  <div class="content">'
             + '    <div class="headline">' + escapeHtml(prettyAction(e.action)) + (e.resourceName ? " · " + escapeHtml(e.resourceName) : "") + '</div>'
             + '    <div class="supporting" style="white-space:normal;">' + escapeHtml(e.message || "") + '</div>'
-            + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(formatTimeAgo(e.timestamp)) + (e.actor ? " · " + escapeHtml(e.actor) : "") + '</div>'
+            + '    <div class="supporting mono" style="font-size:12px;color:var(--md-on-surface-variant);margin-top:4px;">' + escapeHtml(timeAgo(e.timestamp)) + (e.actor ? " · " + escapeHtml(e.actor) : "") + '</div>'
             + '  </div>'
             + '</button>'
             + (i < events.length - 1 ? '<div class="list-divider"></div>' : '');
@@ -350,10 +344,14 @@
       // form, matching the desktop, whose logout lands on the form-less
       // /signed-out.html.
       PolarisAuth.markSignedOut();
+      // Raw fetch on purpose (CQ-F026): api.js's request() sends a 401 to the
+      // desktop /login.html; an expired session must still log out and reboot here.
       fetch("/api/v1/auth/logout", { method: "POST", headers: _csrfHeaders() })
         .finally(function () { window.PolarisMobile.boot(); });
     });
 
+    // Raw fetch on purpose (CQ-F026): the version line is decoration and must
+    // fail silently — through api.js a 401 would redirect the whole app.
     fetch("/api/v1/auth/me").then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
       if (!data || !data.version) return;
       var v = data.version;

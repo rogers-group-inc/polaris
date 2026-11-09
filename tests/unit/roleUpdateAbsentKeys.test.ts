@@ -7,7 +7,7 @@
  * `normalizePermissions` defaults a missing key to "none" — so an
  * administrator editing an unrelated cell silently revoked the new grant.
  * First seen with 20261103170000_dangerous_act_keys: admin would have lost
- * Merge Assets / Agent Deploy / Clear Alerts by renaming a role. Revoking is
+ * Merge Assets / Agent Deploy / Alert Clear by renaming a role. Revoking is
  * still a statement: post the key at "none".
  */
 

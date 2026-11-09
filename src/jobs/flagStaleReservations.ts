@@ -17,25 +17,21 @@
 
 import { logger } from "../utils/logger.js";
 import { flagStaleReservations } from "../services/reservationStaleService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-async function runFlagStaleReservations(): Promise<void> {
-  try {
-    await runInstrumentedJob("flagStaleReservations", async () => {
-      const emitted = await flagStaleReservations();
-      if (emitted > 0) {
-        logger.info({ emitted }, "Flagged stale DHCP reservations");
-      }
-    });
-  } catch (err) {
-    logger.error(err, "Error running stale-reservation flag job");
-  }
-}
 
 // Run once on startup (after a short delay so the DB connection is ready),
 // then every 6 hours. The startup delay matches the pruneEvents pattern's
 // implicit ordering — both jobs import-and-run at module load time.
-setTimeout(runFlagStaleReservations, 30_000);
-setInterval(runFlagStaleReservations, INTERVAL_MS);
+defineJob({
+  name: "flagStaleReservations",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 30_000,
+  run: async () => {
+    const emitted = await flagStaleReservations();
+    if (emitted > 0) {
+      logger.info({ emitted }, "Flagged stale DHCP reservations");
+    }
+  },
+});

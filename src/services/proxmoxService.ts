@@ -111,7 +111,7 @@ function translateNetworkError(err: any, host: string, port: number): AppError {
 }
 
 /** An API answer that is about the request, not the connection. */
-export class ProxmoxApiError extends AppError {
+class ProxmoxApiError extends AppError {
   constructor(httpStatus: number, message: string, readonly pveStatus: number) {
     super(httpStatus, message);
   }
@@ -470,7 +470,7 @@ export function parseProxmoxPools(
 }
 
 /** `/nodes/{n}/disks/list` → disks for the hardware view (no temperatures — the API publishes none). */
-export function parseProxmoxDisks(list: unknown): WorkloadDisk[] {
+function parseProxmoxDisks(list: unknown): WorkloadDisk[] {
   return ((Array.isArray(list) ? list : []) as any[]).map((d) => {
     const serial = str(d?.serial);
     return {

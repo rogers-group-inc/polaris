@@ -4,6 +4,7 @@
  * POST / PUT / DELETE require assets admin role.
  */
 
+import { intQuery, boolQuery } from "../../utils/queryParams.js";
 import { tryCompileSafeRegex } from "../../utils/safeRegex.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
 import { mapWithConcurrency } from "../../utils/concurrency.js";
+import { splitOpticsSamples } from "../../utils/sfpOptics.js";
 import { requirePermission, hasPermission, credentialUseActor, assertTagChangeAllowed } from "../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope, scheduleCanEditByIds } from "../../services/writeScopeService.js";
 import { scopeAssetParam, scopeAssetIds, requireFleetWide, idsFromBody } from "../middleware/writeScope.js";
@@ -45,7 +47,7 @@ import {
   UNMONITORABLE_STATUSES,
 } from "../../utils/assetInvariants.js";
 import { getIpHistory, getHistorySettings, updateHistorySettings, pruneOldHistory } from "../../services/assetIpHistoryService.js";
-import { getSightingsForAsset, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
+import { getSightingsForDisplay, getSightingSettings, updateSightingSettings } from "../../services/assetSightingService.js";
 import { readAssetIpsec, readLatestIpsecTunnels } from "../../services/ipsecConnectionService.js";
 import { getAssetSoftware } from "../../services/softwareInventoryService.js";
 import { getInventoryPresence } from "../../services/serviceInventoryService.js";
@@ -57,7 +59,7 @@ import {
 } from "../../services/assetQuarantineService.js";
 import { syncDescriptionsOnSave } from "../../services/descriptionSyncService.js";
 import { descriptionSyncEnabledForRole } from "../../utils/descriptionSyncFlags.js";
-import { cidrContains, isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
+import { isIpv6Address, isValidIpAddress, ipv4TermToMatchPrefixes } from "../../utils/cidr.js";
 import { buildIpContexts, networksForAddresses } from "../../services/subnetService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../services/monitorOverrideService.js";
@@ -67,6 +69,7 @@ import { reconcileMapRegions, assertAddedRegionTagsNameARegion } from "../../ser
 import { isAzureTag, withArcOwnedTags } from "../../utils/tagNormalize.js";
 import { bulkEditAssetTags } from "../../services/assetBulkTagService.js";
 import { mergeAssets, MERGEABLE_FIELDS, type MergeableField, type FieldWinner } from "../../services/assetMergeService.js";
+import { splitMacsToNewAssets } from "../../services/assetMacSplitService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../../utils/assetSourceState.js";
 import { resolvePendingIpOverrideConflicts } from "../../services/ipOverrideService.js";
@@ -181,6 +184,7 @@ import { DISCOVERED_ADDRESS_SOURCES, reconcileAddressesWithIpam } from "../../se
 import { buildAddressConfidence, confidenceToJson, checkAddressConfidence } from "../../services/addressConfidenceService.js";
 import { assertIpChangeMayRetargetIntegrationToken as assertIpChangeMayRetargetIntegrationTokenUtil } from "../../utils/integrationTokenTarget.js";
 import { assertCredentialInAssetScope } from "../../services/assetCredentialScopeService.js";
+import { publicBaseUrl } from "../../utils/publicUrl.js";
 
 const router = Router();
 
@@ -2377,14 +2381,14 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetP
         message: `Discovery blocked: ${filterAsset.hostname || deviceName} — ${reason}`,
         details: { integrationId: integration.id, integrationType: integration.type, deviceName, reason },
       });
-      res.status(409).json({ message: reason });
+      res.status(409).json({ error: reason });
       return;
     }
 
     // Pre-check for a friendly message; triggerDiscovery's coalescing return
     // is the authoritative guard (closes the TOCTOU window).
     if (await isRunActive(integration.id)) {
-      res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });
+      res.status(409).json({ error: `A discovery is already running for "${integration.name}" — try again when it finishes` });
       return;
     }
     // requestActor covers bearer-token callers ("api:<token name>") as well
@@ -2397,7 +2401,7 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetP
       ? await triggerDiscovery(integration.id, actor, { scope, scopeLabel: deviceName })
       : await triggerDiscovery(integration.id, actor);
     if (!started) {
-      res.status(409).json({ message: `A discovery is already running for "${integration.name}" — try again when it finishes` });
+      res.status(409).json({ error: `A discovery is already running for "${integration.name}" — try again when it finishes` });
       return;
     }
 
@@ -2730,12 +2734,18 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
           orderBy: { mountPath: "asc" },
         })
       : [];
-    const hardwareSensors = latestHwMeta
+    const latestHardwareSensors = latestHwMeta
       ? await prisma.assetHardwareSensorSample.findMany({
           where: { assetId: id, timestamp: latestHwMeta.timestamp },
           orderBy: [{ sensorClass: "asc" }, { sensorName: "asc" }],
         })
       : [];
+    // Transceiver readings attributed to a port (business rule 143) leave the
+    // Hardware Sensors list and ride on their interface row instead.
+    const { sensors: hardwareSensors, optics: opticsByIf } = splitOpticsSamples(
+      latestHardwareSensors,
+      new Set(interfaces.map((i) => i.ifName)),
+    );
     // VLAN id -> name for the Native / Tagged VLAN pills (vlanNameService),
     // and the active-alert summary of every neighbor that resolved to an
     // asset — the Interfaces table's Neighbor cell draws the same strobing
@@ -2797,6 +2807,9 @@ router.get("/:id/system-info", requirePermission("assets", "read"), async (req, 
         addressingMode: i.addressingMode ?? null,
         poeStatus:   i.poeStatus ?? null,
         poeClass:    i.poeClass  ?? null,
+        // Transceiver DDM readings for an SFP port (business rule 143), from
+        // the latest hardware-sensor pass; null on every other port.
+        optics:      opticsByIf.get(i.ifName) ?? null,
         // Hand-applied and filter-applied tags (business rule 133).
         tags:        interfaceTags.get(i.ifName) ?? [],
       })),
@@ -3829,7 +3842,7 @@ router.get("/:id/path-check-traceroutes", requirePermission("assets", "read"), a
     const id = req.params.id as string;
     const checkId = req.query.checkId ? String(req.query.checkId) : null;
     if (!checkId) throw new AppError(400, "checkId query parameter is required");
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const limit = intQuery(req.query.limit, { fallback: 10, min: 1, max: 50 })!;
     const traceroutes = await prisma.assetPathCheckTraceroute.findMany({
       where: { assetId: id, checkId },
       orderBy: { timestamp: "desc" },
@@ -4161,9 +4174,9 @@ router.get("/:id/process-logs", requirePermission("assets", "read"), async (req,
     const id = req.params.id as string;
     const name = req.query.name ? String(req.query.name) : null;
     if (!name) throw new AppError(400, "name query parameter is required");
-    const limit = Math.min(2000, Math.max(1, parseInt(String(req.query.limit ?? "500"), 10) || 500));
+    const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
-    const onlyFlagged = String(req.query.flagged ?? "") === "1";
+    const onlyFlagged = boolQuery(req.query.flagged);
     const rows = await prisma.assetProcessLogSample.findMany({
       where: { assetId: id, name, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
       orderBy: { timestamp: "desc" },
@@ -4190,9 +4203,9 @@ router.get("/:id/service-logs", requirePermission("assets", "read"), async (req,
     const id = req.params.id as string;
     const unit = req.query.unit ? String(req.query.unit) : null;
     if (!unit) throw new AppError(400, "unit query parameter is required");
-    const limit = Math.min(2000, Math.max(1, parseInt(String(req.query.limit ?? "500"), 10) || 500));
+    const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
-    const onlyFlagged = String(req.query.flagged ?? "") === "1";
+    const onlyFlagged = boolQuery(req.query.flagged);
     const rows = await prisma.assetServiceLogSample.findMany({
       where: { assetId: id, unit, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
       orderBy: { timestamp: "desc" },
@@ -5494,6 +5507,23 @@ router.post("/import-pdf", requirePermission("assets", "write"), requireFleetWid
 // permanently wrong asset record that looks correct. `:mac` names the row's
 // START key, so removing an interface-scrape RANGE row removes the whole
 // [mac, macEnd] block.
+// Business rule 91(j): split one or more MACs off this asset, each onto a new
+// asset of its own (named apart by MAC, rule 91(i)). Same gate as removing a
+// MAC: it edits this asset; the new assets are owned by the caller.
+const splitMacsSchema = z.object({
+  macs: z.array(z.string().min(1).max(64)).min(1).max(500),
+});
+router.post("/:id/macs/split", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
+  try {
+    const id = z.string().min(1).parse(req.params.id);
+    const { macs } = splitMacsSchema.parse(req.body);
+    const result = await splitMacsToNewAssets({ assetId: id, macs, actor: requestActor(req) || null });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete("/:id/macs/:mac", requirePermission("assets", "write"), scopeAssetParam("assets", "edit assets"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
@@ -5760,44 +5790,16 @@ router.delete("/:id", requirePermission("assets", "write"), scopeAssetParam("ass
 // ─── Quarantine + sightings ─────────────────────────────────────────────
 
 // GET /api/v1/assets/:id/sightings — DHCP sighting history (any auth user)
-// Each sighting is decorated with subnet name + VLAN resolved from the stored
-// IP against subnets discovered on the same FortiGate, so the Quarantine tab
-// can show "what was seen and on which VLAN" without a second round-trip.
+// Each sighting is decorated with its network (name, VLAN, id) resolved from
+// the stored IP against networks discovered on the same FortiGate, and the
+// firewall asset its gate name resolves to, so the FortiGate and VLAN cells
+// can open what they name (assetSightingService.getSightingsForDisplay).
 router.get("/:id/sightings", requirePermission("assetsQuarantine", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
     const exists = await prisma.asset.findUnique({ where: { id }, select: { id: true } });
     if (!exists) throw new AppError(404, "Asset not found");
-    const sightings = await getSightingsForAsset(id);
-
-    const devices = Array.from(
-      new Set(sightings.map((s) => s.fortigateDevice).filter(Boolean)),
-    );
-    const subnets = devices.length
-      ? await prisma.subnet.findMany({
-          where: { fortigateDevice: { in: devices } },
-          select: { cidr: true, name: true, vlan: true, fortigateDevice: true },
-        })
-      : [];
-
-    const enriched = sightings.map((s) => {
-      let subnetName: string | null = null;
-      let vlan: number | null = null;
-      if (s.ipAddress) {
-        const match = subnets.find(
-          (sub) =>
-            sub.fortigateDevice === s.fortigateDevice &&
-            cidrContains(sub.cidr, `${s.ipAddress}/32`),
-        );
-        if (match) {
-          subnetName = match.name ?? null;
-          vlan = match.vlan ?? null;
-        }
-      }
-      return { ...s, subnetName, vlan };
-    });
-
-    res.json(enriched);
+    res.json(await getSightingsForDisplay(id));
   } catch (err) {
     next(err);
   }
@@ -7131,7 +7133,14 @@ router.get("/:id/agent", requirePermission("assets", "read"), async (req, res, n
   try {
     const assetId = req.params.id as string;
     const row = await prisma.managedAgent.findUnique({ where: { assetId } });
-    if (!row) return res.status(404).json({ error: "No agent installed for this asset" });
+    // No agent is an ordinary answer, not an error: 204 No Content. The asset
+    // panel asks this for every device it opens, and a 404 here put a red
+    // "Failed to load resource" line in the browser console on every
+    // agent-less panel (found by scripts/smoke-frontend.mjs, 2026-11-06).
+    // api.js maps a 204 to null, which is what its callers already expect.
+    // The ACTION routes below (retry, upgrade, uninstall …) keep their 404:
+    // acting on an agent that is not there is an error.
+    if (!row) return res.status(204).end();
     // Strip secret-bearing fields before serializing.
     const {
       enrollmentTokenHash: _eh, enrollmentTokenPrefix: _ep,
@@ -7232,7 +7241,7 @@ router.post("/:id/agent/install", requirePermission("agentDeploy", "write"), asy
     // every remote install it produces an agent that connection-refuses
     // against its own loopback. Refuse early when ALL the above sources
     // fail for a remote-host install.
-    if (!process.env.POLARIS_PUBLIC_URL && !process.env.POLARIS_PUBLIC_HOST) {
+    if (!publicBaseUrl() && !process.env.POLARIS_PUBLIC_HOST) {
       const targetHost = assetDialAddress(asset, ipv6Dialable()) || asset.dnsName || asset.hostname || "";
       const isSameBox = targetHost === "127.0.0.1" || targetHost === "::1" ||
                         targetHost === "localhost" || targetHost.toLowerCase() === "localhost.localdomain";
@@ -7463,7 +7472,7 @@ router.delete("/:id/agent", requirePermission("agentDeploy", "write"), async (re
   try {
     const assetId = req.params.id as string;
     const actor = requestActor(req) || "unknown";
-    const force = String(req.query.force ?? "").toLowerCase() === "true";
+    const force = boolQuery(req.query.force);
 
     const row = await prisma.managedAgent.findUnique({ where: { assetId } });
     if (!row) throw new AppError(404, "No agent installed for this asset");

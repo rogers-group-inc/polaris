@@ -81,7 +81,7 @@ export const FUNCTION_SECTIONS = [
   { id: "everywhere", label: "Every page" },
 ] as const;
 
-export type FunctionSectionId = (typeof FUNCTION_SECTIONS)[number]["id"];
+type FunctionSectionId = (typeof FUNCTION_SECTIONS)[number]["id"];
 
 export interface FunctionKeyDef {
   key: string;
@@ -203,8 +203,8 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // "may create assets" stay separable.
   { key: "networkScan", section: "assets", label: "Network Discovery", description: "Active sweeps of operator-supplied IP ranges. Read-Write = run and manage your own; Full Read-Write = anyone's.", hasOwnershipDimension: true },
   { key: "assetMonitorSettings", section: "assets", label: "Asset Monitor Settings", description: "Monitor cadence and retention overrides per asset, class, integration or manual. Full Read-Write = outage simulation.", alsoOn: ["integrations"] },
-  { key: "alerts", section: "assets", label: "Alerts", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges alerts on devices you added or that carry one of your tags; Full Read-Write acknowledges any. Clearing is its own key.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["dashboard"] },
-  { key: "alertClear", section: "assets", label: "Clear Alerts", description: "Clear (dismiss) triggered alerts. Acknowledging stays on Alerts Read-Write.", levels: WRITE_ONLY, alsoOn: ["dashboard"] },
+  { key: "alerts", section: "assets", label: "Alert Acknowledgement", description: "Triggered automation instances. Read-Only views; Read-Write acknowledges alerts on devices you added or that carry one of your tags; Full Read-Write acknowledges any. Clearing is Alert Clear.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["dashboard"] },
+  { key: "alertClear", section: "assets", label: "Alert Clear", description: "Clear (dismiss) triggered alerts. Acknowledging stays on Alert Acknowledgement Read-Write.", levels: WRITE_ONLY, alsoOn: ["dashboard"] },
   { key: "maintenanceManagement", section: "assets", label: "Maintenance Schedules", description: "Maintenance windows that pause monitoring and alerts, including per-asset maintenance mode. Read-Write = windows you created, or on explicitly chosen devices you added or that carry one of your tags; Full Read-Write = any window and filter-based windows.", hasOwnershipDimension: true, tagScoped: true, alsoOn: ["events", "pathMonitor"] },
 
   // ── Events ────────────────────────────────────────────────────────────────
@@ -285,7 +285,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
 
 const FUNCTION_KEY_SET = new Set(FUNCTION_KEYS.map(f => f.key));
 
-export function isValidFunctionKey(key: string): boolean {
+function isValidFunctionKey(key: string): boolean {
   return FUNCTION_KEY_SET.has(key);
 }
 
@@ -372,7 +372,7 @@ export function permissionOf(
   return "none";
 }
 
-export function isValidAccessLevel(level: string): level is AccessLevel {
+function isValidAccessLevel(level: string): level is AccessLevel {
   return level === "none" || level === "read" || level === "write" || level === "fullwrite";
 }
 

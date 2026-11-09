@@ -144,10 +144,6 @@ export async function getRole(id: string): Promise<RoleSummary> {
   return summarize(row);
 }
 
-export async function getRoleByName(name: string) {
-  return prisma.role.findUnique({ where: { name } });
-}
-
 async function nameCollides(name: string, excludeId?: string): Promise<boolean> {
   const lc = name.toLowerCase();
   if (RESERVED_NAMES_LC.has(lc)) return true;

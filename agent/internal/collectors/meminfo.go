@@ -86,16 +86,16 @@ func memBreakdownFrom(vm *mem.VirtualMemoryStat, cacheOverride uint64) MemBreakd
 	return b
 }
 
-// MemBreakdownOnce takes one reading. Best-effort throughout: a platform that
-// cannot answer returns Ok=false rather than a half-filled struct, because a
-// cache band of zero is indistinguishable from "this host caches nothing" on
-// the chart and the second reading is a lie.
-func MemBreakdownOnce() MemBreakdown {
-	vm, err := mem.VirtualMemory()
-	if err != nil {
-		return MemBreakdown{}
-	}
+// memBreakdownOf builds the breakdown from a VirtualMemory reading the caller
+// already took (telemetry reads it once per tick and shares it). Best-effort
+// throughout: a platform that cannot answer returns Ok=false rather than a
+// half-filled struct, because a cache band of zero is indistinguishable from
+// "this host caches nothing" on the chart and the second reading is a lie.
+func memBreakdownOf(vm *mem.VirtualMemoryStat) MemBreakdown {
 	b := memBreakdownFrom(vm, platformCacheBytes())
+	if !b.Ok {
+		return b
+	}
 
 	// Swap / page file. Independent of the physical breakdown — a host with
 	// no swap configured reports a total of 0, which is a fact worth sending

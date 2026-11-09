@@ -62,7 +62,7 @@ import {
   removeWindowsStageDir,
   STAGED_SCRIPT_PRELUDE,
 } from "../utils/remoteStaging.js";
-import { getPublicUrlPort } from "../utils/publicUrl.js";
+import { derivePolarisPort, getPublicUrlPort, publicBaseUrl } from "../utils/publicUrl.js";
 import { getServerCertHostnames, getServerCertFingerprint } from "./certInfo.js";
 import { assetSourceKindFromIntegrationType, isPollingMethodCompatible } from "../utils/pollingCompatibility.js";
 import {
@@ -1443,9 +1443,6 @@ export function uninstallerScript(platform: "linux" | "darwin", scriptId?: strin
   }
 }
 
-// Privilege-tier → systemd [Service] block mapping lives in utils/agentUnit.ts
-// (pure, unit-tested there). Re-exported for callers that import from here.
-export { normalizePrivilegeTier };
 export type { AgentPrivilegeTier };
 
 // Polaris Agent installer for Linux (systemd), parameterized by privilege tier.
@@ -1705,7 +1702,7 @@ export function inferOwnServerUrlSync(): string {
   // Every candidate is normalized: this string is written into agent.conf and
   // pasted into installer scripts, so one that fails the allowlist is skipped
   // for the next source rather than used.
-  const fromEnv = normalizeAgentServerUrl(process.env.POLARIS_PUBLIC_URL);
+  const fromEnv = normalizeAgentServerUrl(publicBaseUrl());
   if (fromEnv) return fromEnv;
   const httpsPort = getPublicUrlPort();
   const hostnames = getServerCertHostnames();
@@ -1714,9 +1711,9 @@ export function inferOwnServerUrlSync(): string {
     const fromCert = preferred ? normalizeAgentServerUrl(`https://${preferred}:${httpsPort}`) : null;
     if (fromCert) return fromCert;
   }
-  const port = process.env.PORT ?? "3000";
+  const port = derivePolarisPort();
   const host = process.env.POLARIS_PUBLIC_HOST ?? "localhost";
-  return normalizeAgentServerUrl(`https://${host}:${port}`) ?? `https://localhost:${port.replace(/\D/g, "") || "3000"}`;
+  return normalizeAgentServerUrl(`https://${host}:${port}`) ?? `https://localhost:${port}`;
 }
 
 interface AgentManifest {

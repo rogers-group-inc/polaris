@@ -44,7 +44,7 @@ export const DISCOVERED_ADDRESS_SOURCES = ["dhcp-lease", "dhcp-reservation", "de
 export type DiscoveredAddressSource = (typeof DISCOVERED_ADDRESS_SOURCES)[number];
 
 /** A discovered row no gate has re-reported for this long is swept. */
-export const DISCOVERED_ROW_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const DISCOVERED_ROW_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 /** At most one age sweep per process per this interval. */
 const AGE_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 let lastAgeSweepMs = 0;

@@ -70,10 +70,10 @@ import type {
 } from "./monitoringService.js";
 
 /** The method name — the same word as the integration type. */
-export const GENERIC_API_POLLING_METHOD = "genericapi";
+const GENERIC_API_POLLING_METHOD = "genericapi";
 
-export const FLEET_TTL_MS = 30_000;
-export const ASSET_TTL_MS = 30_000;
+const FLEET_TTL_MS = 30_000;
+const ASSET_TTL_MS = 30_000;
 /** One OAuth token / header set per integration for this long — never a token per request. */
 const HEADERS_TTL_MS = 5 * 60_000;
 
@@ -138,7 +138,7 @@ function queryHash(q: GenericApiMonitorQuery, cfg: GenericApiConfig): string {
 
 // ─── Reading one asset ────────────────────────────────────────────────────────
 
-export type GenericApiMonitorReading =
+type GenericApiMonitorReading =
   | { kind: "doc"; doc: unknown; query: GenericApiMonitorQuery; integrationId: string; integrationName: string }
   | { kind: "absent"; error: string }
   | { kind: "unreachable"; error: string }
@@ -258,7 +258,7 @@ async function readQuery(assetId: string, row: SourceRow, q: GenericApiMonitorQu
  * rows whose integration has a query for the stream (an asset two feeds both
  * list is read through whichever was configured for it).
  */
-export async function readGenericApiAsset(assetId: string, stream: GenericApiMonitorStream): Promise<GenericApiMonitorReading> {
+async function readGenericApiAsset(assetId: string, stream: GenericApiMonitorStream): Promise<GenericApiMonitorReading> {
   const rows = await loadSourceRows(assetId);
   for (const row of rows) {
     if (!row.integration || row.integration.type !== GENERIC_API_TYPE) continue;
@@ -274,7 +274,7 @@ export async function readGenericApiAsset(assetId: string, stream: GenericApiMon
 // ─── Value reading (pure) ─────────────────────────────────────────────────────
 
 /** A number at the path: a numeric string ("42.5", "42.5 %") counts; anything else is null. */
-export function readNumber(doc: unknown, path: string | undefined): number | null {
+function readNumber(doc: unknown, path: string | undefined): number | null {
   const s = readJsonPathString(doc, path);
   if (s === null) return null;
   const n = Number.parseFloat(s.replace(/,/g, ""));
@@ -334,7 +334,7 @@ function str(row: unknown, path: string | undefined): string | null {
 }
 
 /** "up" / "down" from the usual spellings; anything else is kept, lower-cased. */
-export function normalizeOperStatus(v: string | null): string | null {
+function normalizeOperStatus(v: string | null): string | null {
   if (v === null) return null;
   const s = v.trim().toLowerCase();
   if (["true", "up", "1", "online", "connected", "active", "enabled"].includes(s)) return "up";

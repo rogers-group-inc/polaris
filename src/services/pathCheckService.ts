@@ -63,22 +63,23 @@ import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestS
 import { getPathCheckMaintenanceStates, dropPathCheckFromSchedules } from "./maintenanceScheduleService.js";
 
 import { runServerCheck, type RunCapture } from "./pathCheckServerRunner.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
-export { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL };
+export { POLARIS_SERVER_SUBJECT,  };
 
 // ─── Vocabulary ─────────────────────────────────────────────────────────────
 
 export const CHECK_KINDS = ["http", "https", "tcp", "icmp"] as const;
 export type CheckKind = (typeof CHECK_KINDS)[number];
 export const BODY_MATCH_MODES = ["contains", "regex", "exact"] as const;
-export type BodyMatchMode = (typeof BODY_MATCH_MODES)[number];
+type BodyMatchMode = (typeof BODY_MATCH_MODES)[number];
 
-export const MIN_INTERVAL_SEC = 60;
-export const MAX_INTERVAL_SEC = 3600;
-export const MIN_TIMEOUT_MS = 500;
-export const MAX_TIMEOUT_MS = 30_000;
+const MIN_INTERVAL_SEC = 60;
+const MAX_INTERVAL_SEC = 3600;
+const MIN_TIMEOUT_MS = 500;
+const MAX_TIMEOUT_MS = 30_000;
 /** Fleet-wide cap on ENABLED checks — each one is traffic from every member. */
-export const MAX_ENABLED_CHECKS = 50;
+const MAX_ENABLED_CHECKS = 50;
 /** Per-agent cap. The agent itself stops at 64; this is the operative one. */
 export const MAX_CHECKS_PER_AGENT = 20;
 /** First agent version whose config loop runs path checks. */
@@ -86,7 +87,7 @@ export const MIN_AGENT_PATH_CHECK_VERSION = "0.21.0";
 /** Preview / results list caps. */
 const PREVIEW_ROW_CAP = 100;
 
-export interface CheckBodyMatch {
+interface CheckBodyMatch {
   mode: BodyMatchMode;
   pattern: string;
   caseSensitive: boolean;
@@ -95,11 +96,9 @@ export interface CheckBodyMatch {
 }
 
 export const HTTP_METHODS = ["GET", "HEAD"] as const;
-export type HttpMethod = (typeof HTTP_METHODS)[number];
-/** Redirect hops a check that follows redirects takes at most. */
-export const MAX_REDIRECTS = 5;
+type HttpMethod = (typeof HTTP_METHODS)[number];
 
-export interface CheckHttpConfig {
+interface CheckHttpConfig {
   /** Accepted status spec, e.g. "200,204,300-399". Empty = any 2xx. */
   expectStatus: string;
   bodyMatch: CheckBodyMatch | null;
@@ -108,7 +107,7 @@ export interface CheckHttpConfig {
   method?: HttpMethod;
   /** Sent as Host (and the TLS SNI name) instead of the URL's host — test one backend by address. */
   hostHeader?: string | null;
-  /** Follow up to MAX_REDIRECTS redirects and judge the LAST response. Default off. */
+  /** Follow up to 5 redirects (pathCheckServerRunner MAX_REDIRECTS) and judge the LAST response. Default off. */
   followRedirects?: boolean;
 }
 
@@ -122,7 +121,7 @@ export interface CheckHttpConfig {
 export const MIN_AGENT_REQUEST_OPTIONS_VERSION = "0.23.0";
 
 /** The credential authModes a path check may authenticate with. */
-export const PATH_CHECK_AUTH_MODES = ["bearer", "basic", "digest"] as const;
+const PATH_CHECK_AUTH_MODES = ["bearer", "basic", "digest"] as const;
 
 export interface CheckTracerouteConfig {
   enabled: boolean;
@@ -132,7 +131,7 @@ export interface CheckTracerouteConfig {
   probeTimeoutMs: number;
 }
 
-export const DEFAULT_TRACEROUTE: CheckTracerouteConfig = {
+const DEFAULT_TRACEROUTE: CheckTracerouteConfig = {
   enabled: true,
   everyNRuns: 5,
   maxHops: 30,
@@ -309,7 +308,7 @@ async function polarisOwnHosts(): Promise<Set<string>> {
       out.add(new URL(raw).hostname.replace(/^\[|\]$/g, "").toLowerCase());
     } catch { /* not a URL */ }
   };
-  addUrlHost(process.env.POLARIS_PUBLIC_URL);
+  addUrlHost(publicBaseUrl());
   try {
     const row = await prisma.setting.findUnique({ where: { key: AGENT_SERVER_URL_SETTING_KEY } });
     const v = row?.value as unknown;
@@ -327,7 +326,7 @@ async function polarisOwnHosts(): Promise<Set<string>> {
 }
 
 /** Refuse a target host literal Polaris will not aim agents at. */
-export async function assertTargetHostAllowed(host: string): Promise<void> {
+async function assertTargetHostAllowed(host: string): Promise<void> {
   const h = host.trim().toLowerCase();
   if (isBlockedOutboundHost(h)) {
     throw new AppError(400, `"${host}" is a loopback / link-local / metadata / multicast address and cannot be a check target`);
@@ -647,7 +646,7 @@ async function noteCredentialUse(credentialId: string, kind: string, target: str
   await recordCredentialUse(opts.useActor, via, [{ credentialId, destination: `${kind} ${target}` }]);
 }
 
-export const CREDENTIAL_USE_MESSAGE =
+const CREDENTIAL_USE_MESSAGE =
   "Using a stored credential in a path check needs at least Read-Only on Credentials";
 
 /**
@@ -668,7 +667,7 @@ async function assertMayUseCredential(_credentialId: string, opts: CheckWriteOpt
   throw new AppError(403, CREDENTIAL_USE_MESSAGE);
 }
 
-export const SERVER_SOURCE_PERMISSION_MESSAGE =
+const SERVER_SOURCE_PERMISSION_MESSAGE =
   "Running a check from this Polaris server also needs Read-Write on Network Discovery — ask an administrator, or run it from agent hosts only";
 
 function assertMayRunOnServer(opts: CheckWriteOpts | undefined): void {

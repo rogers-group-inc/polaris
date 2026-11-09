@@ -1,31 +1,41 @@
 /**
  * tests/unit/themeBandParity.test.ts
  *
- * The sidebar band and the phone's theme strip are the same control on two
- * screens: one artwork, one clock, one direction of travel. They are
- * implemented twice because mobile.html loads none of the desktop's JavaScript
- * and vice versa — the same reason THEMES and MOBILE_THEMES are two lists —
- * so nothing but a test can stop the two halves drifting apart.
+ * The sidebar band, the Dash wallboard's corner ribbon and the phone's theme
+ * strip are the same control on three surfaces: one artwork, one clock, one
+ * direction of travel. Until CQ-F023 each surface carried its own copy of the
+ * engine (app.js, dash-boot.js, mobile/app.js — none of those documents loads
+ * another's JavaScript) and this test held the copies' numbers equal. Now the
+ * engine lives ONCE, in public/js/theme-core.js, which every one of those
+ * pages loads before its host script; each host only builds it with
+ * createThemeEngine({ track, control, measure?, onApply }).
  *
- * What drift looks like: the same theme sitting under the marker at a
- * different place on a phone than on a desk, a theme added to one screen and
- * not the other, or one side's travel quietly running the day backwards. None
- * of those break a page, which is why none of them would be noticed.
+ * What drift would look like now: a host growing its own copy back (a second
+ * position table, its own leg length, its own travel loop), or a page that
+ * loads the host without the core — which only fails at runtime, in a
+ * browser. Both are pinned here, alongside the CSS numbers the engine's
+ * timers must match.
  *
- * This reads both files as text rather than importing them — neither is a
- * module, and evaluating them needs a DOM each. The position tables are lifted
- * verbatim and compared.
+ * Every file is read as text — none is a module, and evaluating them needs a
+ * DOM. The position table is lifted verbatim.
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const CORE_JS = readFileSync(join(process.cwd(), "public", "js", "theme-core.js"), "utf-8");
+const DASH_JS = readFileSync(join(process.cwd(), "public", "js", "dash-boot.js"), "utf-8");
 const MOBILE_APP_JS = readFileSync(
   join(process.cwd(), "public", "js", "mobile", "app.js"),
   "utf-8",
 );
+const HOSTS: Array<[string, string]> = [
+  ["app.js", APP_JS],
+  ["dash-boot.js", DASH_JS],
+  ["mobile/app.js", MOBILE_APP_JS],
+];
 
 /** Lifts `var <name> = { … };` and evaluates just that literal. */
 function positions(src: string, name: string): Record<string, number> {
@@ -37,29 +47,78 @@ function positions(src: string, name: string): Record<string, number> {
   return new Function(`return ${literal};`)() as Record<string, number>;
 }
 
-const DESKTOP = positions(APP_JS, "THEME_BAND_POS");
-const PHONE = positions(MOBILE_APP_JS, "THEME_STRIP_POS");
+const POS = positions(CORE_JS, "THEME_BAND_POS");
 
-describe("the band and the strip read the same clock", () => {
-  it("places every theme at the same point on the strip", () => {
-    // Not "close enough": these are the same engraving at the same anchor, so
-    // any difference at all is one side having been edited alone.
-    expect(DESKTOP).toEqual(PHONE);
-  });
+/** Every page whose script list loads `src`, with its HTML. */
+function pagesLoading(src: string): Array<[string, string]> {
+  const dir = join(process.cwd(), "public");
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".html"))
+    .map((f) => [f, readFileSync(join(dir, f), "utf-8")] as [string, string])
+    .filter(([, html]) => html.includes(`<script src="${src}"></script>`));
+}
 
-  it("names the same set of themes on both screens", () => {
-    // A theme added to one list and not the other renders a control that
-    // travels to a position nothing selects, or one that cannot reach a
-    // palette the other screen offers.
-    expect(Object.keys(DESKTOP).sort()).toEqual(Object.keys(PHONE).sort());
-  });
-
-  it("steps by exactly a quarter of the strip on both", () => {
-    const order = ["noon", "afternoon", "nightfall", "morning"];
-    for (const table of [DESKTOP, PHONE]) {
-      for (let i = 1; i < order.length; i++) {
-        expect(table[order[i]] - table[order[i - 1]]).toBeCloseTo(0.25, 10);
+describe("the band, the ribbon and the strip read the same clock", () => {
+  it("keeps ONE engine: no host carries its own copy", () => {
+    // Each line below was once duplicated in a host. One growing back means
+    // a surface can drift from the others again without anything failing.
+    for (const [name, js] of HOSTS) {
+      for (const copy of [
+        "var THEMES = [",
+        "var TRANSIT_THEMES = [",
+        "var THEME_BAND_POS = {",
+        "var THEME_STRIP_POS = {",
+        "var THEME_FADE_MS",
+        "var THEME_LEG_MS",
+        "var GLOW_MS",
+        "function _beginThemeFade(",
+        "function _markGlowTurn(",
+        "function _themeViewTransitions(",
+        "while (forward <= 0)",
+        'localStorage.setItem("polaris-theme"',
+      ]) {
+        expect(js, `${name} re-declares ${copy}`).not.toContain(copy);
       }
+      expect(js, `${name} builds no engine`).toContain("createThemeEngine({");
+    }
+  });
+
+  it("loads theme-core.js before the host on every page that runs one", () => {
+    // A page that loads the host without the core only fails in a browser:
+    // createThemeEngine is undefined and the page's whole boot stops there.
+    const hosts = ["/js/app.js", "/js/dash-boot.js", "/js/mobile/app.js"];
+    let pages = 0;
+    for (const host of hosts) {
+      for (const [page, html] of pagesLoading(host)) {
+        pages++;
+        const core = html.indexOf('<script src="/js/theme-core.js"></script>');
+        const at = html.indexOf(`<script src="${host}"></script>`);
+        expect(core, `${page} does not load theme-core.js`).toBeGreaterThan(-1);
+        expect(core, `${page} loads theme-core.js after ${host}`).toBeLessThan(at);
+        // theme-init.js (pre-paint, in <head>) stays first where a page has it.
+        const init = html.indexOf('<script src="/js/theme-init.js"></script>');
+        if (init > -1) expect(init, page).toBeLessThan(core);
+      }
+    }
+    // 13 app pages + dash.html + mobile.html at the time of writing.
+    expect(pages).toBeGreaterThanOrEqual(15);
+    expect(pagesLoading("/js/dash-boot.js").map(([p]) => p)).toEqual(["dash.html"]);
+    expect(pagesLoading("/js/mobile/app.js").map(([p]) => p)).toEqual(["mobile.html"]);
+  });
+
+  it("drives each surface's own track and control", () => {
+    expect(APP_JS).toContain('track: ".theme-band-track",');
+    expect(APP_JS).toContain('control: ".theme-band",');
+    expect(DASH_JS).toContain('track: ".theme-band-track",');
+    expect(DASH_JS).toContain('control: ".theme-band",');
+    expect(MOBILE_APP_JS).toContain('track: ".theme-strip-track",');
+    expect(MOBILE_APP_JS).toContain('control: ".theme-strip",');
+  });
+
+  it("steps by exactly a quarter of the strip", () => {
+    const order = ["noon", "afternoon", "nightfall", "morning"];
+    for (let i = 1; i < order.length; i++) {
+      expect(POS[order[i]] - POS[order[i - 1]]).toBeCloseTo(0.25, 10);
     }
   });
 
@@ -96,19 +155,16 @@ describe("the band and the strip read the same clock", () => {
     expect(Math.abs(desk.w / desk.h - phone.w / phone.h)).toBeLessThan(0.01);
   });
 
-  it("gives both the same 800ms travel, matching the palette crossfade", () => {
-    expect(APP_JS).toContain("var THEME_FADE_MS = 800;");
-    expect(MOBILE_APP_JS).toContain("var THEME_FADE_MS = 800;");
+  it("gives the travel 800ms, matching the palette crossfade", () => {
+    expect(CORE_JS).toContain("var THEME_FADE_MS = 800;");
   });
 
-  it("rounds the sun's glow on morning -> noon on both, keyed on the glow's own 2 s", () => {
-    // The shape is a keyframe animation on data-glow-turn, which both scripts
-    // hold for GLOW_MS. Noon's rule must not transition the glow's size: a
+  it("rounds the sun's glow on morning -> noon on both screens, keyed on the glow's own 2 s", () => {
+    // The shape is a keyframe animation on data-glow-turn, which the engine
+    // holds for GLOW_MS. Noon's rule must not transition the glow's size: a
     // running transition outranks the animation and would flatten the circle.
-    for (const js of [APP_JS, MOBILE_APP_JS]) {
-      expect(js).toContain("var GLOW_MS = 2000;");
-      expect(js).toContain('root.setAttribute("data-glow-turn", fromId + "-" + toId);');
-    }
+    expect(CORE_JS).toContain("var GLOW_MS = 2000;");
+    expect(CORE_JS).toContain('root.setAttribute("data-glow-turn", fromId + "-" + toId);');
     for (const name of ["styles.css", "mobile.css"]) {
       // Line endings normalised: the multi-line snippets below are written with
       // "\n", and a Windows checkout (core.autocrlf) has "\r\n" — it failed
@@ -225,59 +281,47 @@ describe("the band and the strip read the same clock", () => {
     }
   });
 
-  it("slows the same step on both, by the same amount, in JS and CSS alike", () => {
+  it("slows the same step on both screens, by the same amount, in JS and CSS alike", () => {
     // Nightfall -> morning takes 1.6 s. The JS holds the fading attribute (and
     // the seam) that long; the CSS gives the palette and the travel the same
     // duration. A mismatch either cuts the fade short or lands the band early.
-    const decl = "var THEME_LEG_MS = { morning: 1600 };";
-    expect(APP_JS).toContain(decl);
-    expect(MOBILE_APP_JS).toContain(decl);
+    expect(CORE_JS).toContain("var THEME_LEG_MS = { morning: 1600 };");
     const styles = readFileSync(join(process.cwd(), "public", "css", "styles.css"), "utf-8");
     const mobile = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
     expect(styles).toContain('html[data-theme-fading][data-theme="morning"] .theme-band-track { transition-duration: 1600ms; }');
     expect(mobile).toContain('html[data-theme-fading][data-theme="morning"] .theme-strip-track { transition-duration: 1600ms; }');
   });
 
-  it("anchors both tracks one strip width left of the marker", () => {
+  it("anchors every track one strip width left of the centre", () => {
     // The `+ 1` is the anchor, and it is what the three copies of the art
-    // exist to cover. Drop it on one side and that screen shows bare surface
-    // beside the engraving as the position nears the seam.
-    const anchor = "getBoundingClientRect().width / 2 - (";
-    expect(APP_JS).toContain(anchor + "_bandPos + 1) * stripW");
-    expect(MOBILE_APP_JS).toContain(anchor + "_stripPos + 1) * stripW");
+    // exist to cover. Drop it and the screen shows bare surface beside the
+    // engraving as the position nears the seam.
+    expect(CORE_JS).toContain("var x = measure(win) / 2 - (pos + 1) * stripW;");
+    // Rendered widths by default (the sidebar and the phone).
+    expect(CORE_JS).toContain("function _rectWidth(el) { return el.getBoundingClientRect().width; }");
+    expect(CORE_JS).toContain("var measure = host.measure || _rectWidth;");
   });
 
-  it("normalises the seam by a whole strip on both", () => {
-    expect(APP_JS).toContain("_bandPos -= 1;");
-    expect(MOBILE_APP_JS).toContain("_stripPos -= 1;");
+  it("normalises the seam by a whole strip", () => {
+    expect(CORE_JS).toContain("pos -= 1;");
   });
 
-  it("travels forward only on both", () => {
+  it("travels forward only", () => {
     // The loop that keeps adding a whole strip until the target is ahead is
     // the entire reason the day reads as moving one way.
-    expect(APP_JS).toContain("while (forward <= 0) forward += 1;");
-    expect(MOBILE_APP_JS).toContain("while (forward <= 0) forward += 1;");
+    expect(CORE_JS).toContain("while (forward <= 0) forward += 1;");
   });
 
-  it("runs the Dash wallboard's corner band on the same clock as the sidebar's", () => {
-    // dash.html loads dash-boot.js INSTEAD of app.js, so its corner ribbon
-    // carries a third copy of the engine. Same positions, same leg lengths,
-    // same forward-only travel and seam, or the wallboard shows a different
-    // hour for the same theme than the sidebar does.
-    const dash = readFileSync(join(process.cwd(), "public", "js", "dash-boot.js"), "utf-8");
-    expect(positions(dash, "THEME_BAND_POS")).toEqual(DESKTOP);
-    for (const decl of [
-      "var THEME_FADE_MS = 800;",
-      "var THEME_LEG_MS = { morning: 1600 };",
-      "var GLOW_MS = 2000;",
-      'root.setAttribute("data-glow-turn", fromId + "-" + toId);',
-      "while (forward <= 0) forward += 1;",
-      "_bandPos -= 1;",
-      // Layout widths, not getBoundingClientRect: the ribbon is rotated 45°.
-      "_layoutWidth(win) / 2 - (_bandPos + 1) * stripW",
-    ]) {
-      expect(dash, decl).toContain(decl);
-    }
+  it("measures the Dash wallboard's rotated ribbon by layout width", () => {
+    // dash.html loads dash-boot.js INSTEAD of app.js; its corner ribbon runs
+    // the shared engine, so it reads the same clock as the sidebar. The ONE
+    // deliberate difference: the ribbon is rotated 45° and
+    // getBoundingClientRect answers a rotated element's axis-aligned box, so
+    // the wallboard hands the engine layout widths.
+    expect(DASH_JS).toContain("function _layoutWidth(el) { return parseFloat(getComputedStyle(el).width) || 0; }");
+    expect(DASH_JS).toContain("measure: _layoutWidth,");
+    expect(APP_JS).not.toContain("measure:");
+    expect(MOBILE_APP_JS).not.toContain("measure:");
     const html = readFileSync(join(process.cwd(), "public", "dash.html"), "utf-8");
     expect(html).toContain('class="theme-band theme-band-corner"');
     expect(html.match(/time-strip-desktop\.webp" width="1676" height="64"/g)?.length).toBe(3);
@@ -288,7 +332,7 @@ describe("the band and the strip read the same clock", () => {
     // Material greys and still "works", which is how nightfall shipped grey
     // on the phone beside the desktop's indigo.
     const css = readFileSync(join(process.cwd(), "public", "css", "mobile.css"), "utf-8");
-    for (const id of Object.keys(PHONE)) {
+    for (const id of Object.keys(POS)) {
       const start = css.indexOf(`[data-theme="${id}"] {`);
       expect(start, `no [data-theme="${id}"] block in mobile.css`).toBeGreaterThan(-1);
       const block = css.slice(start, css.indexOf("}", start));

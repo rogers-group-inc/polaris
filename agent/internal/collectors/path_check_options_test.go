@@ -41,7 +41,7 @@ func TestValidateCheckDefRequestOptions(t *testing.T) {
 	for _, c := range cases {
 		d := base
 		c.mut(&d)
-		if err := ValidateCheckDef(&d); (err == nil) != c.ok {
+		if err := validateCheckDef(&d); (err == nil) != c.ok {
 			t.Errorf("%s: err=%v, want ok=%v", c.name, err, c.ok)
 		}
 	}

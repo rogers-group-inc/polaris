@@ -146,7 +146,7 @@
   // Same spacing as the Device Map modal and the phone (map.js,
   // mobile/topology-tab.js), so a saved layout lands where it was saved.
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
   // In load order: dagre before its Cytoscape adapter (which registers itself
   // on window.cytoscape), the renderer before the line editor it is read by.
   var TOPO_SCRIPTS = [
@@ -261,7 +261,9 @@
     var saved = layouts && layouts[key] && layouts[key].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
-    var columns = R.computeGroupedLayout(elements) || R.computeTopologyColumns(elements);
+    // Laid out for the widget's own tile shape.
+    var columns = R.computeGroupedLayout(elements, { aspect: R.layoutAspect ? R.layoutAspect(container) : undefined }) ||
+      R.computeTopologyColumns(elements);
     var layoutConfig;
     if (columns) {
       var positions = {};
@@ -286,15 +288,11 @@
     // Registered BEFORE the layout runs: a preset layout is synchronous and
     // would emit layoutstop before a later listener attached.
     cy.one("layoutstop", function () {
-      if (savedPositions) {
-        cy.batch(function () {
-          cy.nodes().forEach(function (n) {
-            var p = savedPositions[n.id()];
-            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
-          });
-        });
-      }
-      R.renderLocationGroups(cy);
+      // The page's saved spots (pinned: the box-overlap push leaves them), and
+      // a device the save has none for placed beside its saved parent — the
+      // same helper the Device Map page uses.
+      var applied = R.applySavedPositions(cy, savedPositions, elements);
+      R.renderLocationGroups(cy, { fixedIds: applied.pinned });
       // Cross-box links through the gutters, and any straight link bent
       // around a device it would pass through — with or without boxes.
       R.routeInterGroupEdges(cy);
@@ -710,7 +708,7 @@
 
     // Device health colours move: refresh on the slow widget cadence, keeping
     // the viewer's zoom and pan.
-    var timer = setInterval(function () { if (!document.hidden) load(); }, PolarisWidgets.REFRESH.slow);
+    var stopPoll = PolarisWidgets.pollVisible(null, load, PolarisWidgets.REFRESH.slow);
     // The legend's swatches are per theme family, like the graph's colours.
     function onTheme() { if (window.PolarisTopologyRender) fillLegend(); render(); }
     document.addEventListener("themechange", onTheme);
@@ -728,7 +726,7 @@
       resize: function () { if (cy) try { cy.resize(); cy.fit(undefined, 30); } catch (_) {} },
       close: function () {
         closed = true;
-        clearInterval(timer);
+        stopPoll();
         if (rotateTimer) clearInterval(rotateTimer);
         document.removeEventListener("themechange", onTheme);
         try { ro.disconnect(); } catch (_) {}
@@ -1101,15 +1099,13 @@
       });
       ro.observe(el);
 
-      var siteTimer = setInterval(function () {
-        // A backgrounded window has nobody watching the map; the shared memo
-        // already collapses concurrent instances into one request.
-        if (document.hidden) return;
+      PolarisWidgets.pollVisible(ctx, function () {
+        // pollVisible skips a hidden tab; the shared memo collapses concurrent
+        // instances into one request.
         PolarisWidgets.getMapSites(PolarisWidgets.regionNamesForConfig(config)).then(function (sites) { buildMarkers(sites); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
 
       ctx.onUnmount(function () {
-        clearInterval(siteTimer);
         if (pane) { pane.close(); pane = null; }
         full.dispose();
         try { ro.disconnect(); } catch (_) {}

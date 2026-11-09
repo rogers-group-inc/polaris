@@ -32,7 +32,7 @@ import { AppError } from "../utils/errors.js";
 
 export const DASH_SETTING_KEY = "dashConfig";
 
-export type DashIpScope = "rfc1918" | "all" | "custom";
+type DashIpScope = "rfc1918" | "all" | "custom";
 
 export interface DashSettings {
   /** Master switch for the /dash wallboard surface. */

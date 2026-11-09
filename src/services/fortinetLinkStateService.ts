@@ -81,7 +81,7 @@ import { recordFortilinkState } from "../metrics.js";
 import { reconcileFortinetLiveVersions, type FortinetLiveVersionReading } from "./fortinetLiveVersionService.js";
 
 /** The three values `Asset.fortilinkStatus` can hold. null = never swept. */
-export type FortilinkStatus = "up" | "down" | "unknown";
+type FortilinkStatus = "up" | "down" | "unknown";
 
 /** Upstream timeout for one controller inventory call. Matches the probe. */
 const CONTROLLER_TIMEOUT_MS = 20_000;

@@ -111,7 +111,7 @@ const API_PATTERN_ALLOWLIST = [/^\/map\/sites\/[^/]+\/topology$/];
  * matches a real IPv6 source against a v4 entry, and fails closed on an empty
  * or invalid list.
  */
-export function isSourceAllowed(ip: string, settings: DashSettings): boolean {
+function isSourceAllowed(ip: string, settings: DashSettings): boolean {
   return ipInScope(ip, settings.ipScope, settings.allowedCidrs);
 }
 
@@ -160,25 +160,28 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
   // operator chose app-level gating over nginx allow/deny; a true edge silent-
   // drop would be a firewall rule.) The disabled state still returns a plain
   // 403 so an admin configuring the toggle gets a clear message.
-  app.use((req: Request, _res: Response, next: NextFunction) => {
-    settingsProvider()
-      .then((settings) => {
-        if (!settings.enabled) {
-          next(
-            new AppError(
-              403,
-              "The Dash wallboard is disabled — an administrator can enable it under Server Settings → Web Server",
-            ),
-          );
-          return;
-        }
-        if (isSourceAllowed(req.ip ?? "", settings)) {
-          next();
-          return;
-        }
-        dropConnection(req);
-      })
-      .catch(next);
+  app.use(async (req: Request, _res: Response, next: NextFunction) => {
+    let settings: Awaited<ReturnType<typeof settingsProvider>>;
+    try {
+      settings = await settingsProvider();
+    } catch (err) {
+      next(err);
+      return;
+    }
+    if (!settings.enabled) {
+      next(
+        new AppError(
+          403,
+          "The Dash wallboard is disabled — an administrator can enable it under Server Settings → Web Server",
+        ),
+      );
+      return;
+    }
+    if (isSourceAllowed(req.ip ?? "", settings)) {
+      next();
+      return;
+    }
+    dropConnection(req);
   });
 
   // ── Security headers / compression ────────────────────────────────────────
@@ -222,7 +225,7 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
   // ── 4. API: readonly identity + exact-path allowlist + the real routers ──
   const api = express.Router();
 
-  api.use((req: Request, res: Response, next: NextFunction) => {
+  api.use(async (req: Request, res: Response, next: NextFunction) => {
     // Blanket no-store — the radar-tile handler overrides with an immutable
     // max-age (frame tiles never change; see weather.ts).
     res.setHeader("Cache-Control", "no-store");
@@ -234,30 +237,34 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
       next(new AppError(404, "Not found"));
       return;
     }
-    identityProvider()
-      .then((identity) => {
-        req.roleSnapshot = identity.snapshot;
-        next();
-      })
-      .catch(next);
+    let identity: Awaited<ReturnType<typeof identityProvider>>;
+    try {
+      identity = await identityProvider();
+    } catch (err) {
+      next(err);
+      return;
+    }
+    req.roleSnapshot = identity.snapshot;
+    next();
   });
 
   // Synthetic identity — mirrors the GET /api/v1/auth/me response shape
   // (src/api/routes/auth.ts) so dash-boot.js parses it exactly like app.js
   // parses the real endpoint. The "user" is the readonly role itself.
-  api.get("/auth/me", (req: Request, res: Response, next: NextFunction) => {
-    identityProvider()
-      .then(({ snapshot }) => {
-        res.json({
-          authenticated: true,
-          username: "dash",
-          authProvider: "local",
-          role: { ...snapshot, color: null },
-          regionTags: { user: [], group: [], effective: [] },
-          otherTags: { user: [], group: [], effective: [] },
-        });
-      })
-      .catch(next);
+  api.get("/auth/me", async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { snapshot } = await identityProvider();
+      res.json({
+        authenticated: true,
+        username: "dash",
+        authProvider: "local",
+        role: { ...snapshot, color: null },
+        regionTags: { user: [], group: [], effective: [] },
+        otherTags: { user: [], group: [], effective: [] },
+      });
+    } catch (err) {
+      next(err);
+    }
   });
 
   // Branding is public on the main app too — same dynamic-import pattern as

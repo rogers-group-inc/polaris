@@ -20,7 +20,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -197,12 +196,12 @@ var loopPhaseSec = map[string]int{
 	// loop and a 300 s loop two seconds apart slip through: every cadence
 	// here is a multiple of 60, so a pair's spacing is whatever their phases
 	// differ by, forever, regardless of which group they came from.
-	"responseTime":       0,  // owns zero; everything else is measured around it
-	"command":            2,  // 20 s poll, one cheap GET
+	"responseTime":       0, // owns zero; everything else is measured around it
+	"command":            2, // 20 s poll, one cheap GET
 	"heartbeat":          4,
 	"telemetry":          8,  // cheap now: counter read + push, no sample window
 	"systemInfo":         13, // full host enumeration
-	"pathCheck":       16, // network-bound; see path_check.go
+	"pathCheck":          16, // network-bound; see path_check.go
 	"interfaces":         18,
 	"storage":            22,
 	"softwareInventory":  23, // registry walk / dpkg-query or rpm; collects every 6 h
@@ -460,6 +459,9 @@ func runAgent(ctx context.Context, confPath string) {
 	}
 
 	client := transport.NewClient(cfg.ServerURL, cfg.Pins(), cfg.BearerToken)
+	// Every request inherits the agent's lifetime: shutdown cancels what is
+	// in flight rather than waiting out the client timeout (CQ-G009).
+	client.BindContext(ctx)
 	// Stamp the ldflag-set version into the client so /enroll and
 	// /heartbeat report the version this binary was built at.
 	client.AgentVersion = version
@@ -491,10 +493,11 @@ func runAgent(ctx context.Context, confPath string) {
 	// Step 2 + 3 + 4: three independent loops.
 	//   - responseTimeLoop pushes samples on a fixed interval.
 	//   - heartbeatLoop bumps lastSeenAt + reads any config etag change.
-	//   - wsLoop holds the outbound WebSocket open for on-demand probes.
+	//   - wsLoop holds the outbound WebSocket open for server pushes
+	//     (refresh-config, commands-pending).
 	// Each runs on its own goroutine so a stall in one doesn't starve
-	// the others (a probe-now stuck behind a hung-host check would
-	// silently block heartbeats otherwise).
+	// the others (a hung-host check would otherwise silently block
+	// heartbeats).
 	go responseTimeLoop(ctx, cfg, client)
 	go heartbeatLoop(ctx, cfg, client)
 	go telemetryLoop(ctx, cfg, client)
@@ -668,18 +671,32 @@ func interfacesLoop(ctx context.Context, cfg *config.Config, client *transport.C
 // when the kernel gives up; the loop itself continues to the next tick.
 const collectionTimeout = 30 * time.Second
 
-func pushInterfacesOne(client *transport.Client) {
-	type res struct{ s []*transport.InterfaceSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.InterfacesOnce()} }()
-	var r res
+// collectWithDeadline runs one collector pass, giving up after d (CQ-G006 —
+// the ten loops each carried their own copy of this). ok=false means the
+// deadline passed: the collector's goroutine is left to finish on its own,
+// because what it blocks in (statfs, ioctl, a package database) cannot be
+// cancelled; the buffered channel lets it exit whenever it does.
+func collectWithDeadline[T any](d time.Duration, collect func() T) (T, bool) {
+	ch := make(chan T, 1)
+	go func() { ch <- collect() }()
+	t := time.NewTimer(d)
+	defer t.Stop()
 	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	case v := <-ch:
+		return v, true
+	case <-t.C:
+		var zero T
+		return zero, false
+	}
+}
+
+func pushInterfacesOne(client *transport.Client) {
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.InterfaceSample { return collectors.InterfacesOnce() })
+	if !ok {
 		log.Printf("push interfaces samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		if verbose {
 			log.Printf("interfaces: collector returned 0 rows — nothing to send")
 		}
@@ -687,14 +704,14 @@ func pushInterfacesOne(client *transport.Client) {
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "interfaces",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push interfaces samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("interfaces sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("interfaces sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -709,17 +726,12 @@ func storageLoop(ctx context.Context, cfg *config.Config, client *transport.Clie
 }
 
 func pushStorageOne(client *transport.Client) {
-	type res struct{ s []*transport.StorageSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.StorageOnce()} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.StorageSample { return collectors.StorageOnce() })
+	if !ok {
 		log.Printf("push storage samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		if verbose {
 			log.Printf("storage: collector returned 0 rows — nothing to send")
 		}
@@ -727,14 +739,14 @@ func pushStorageOne(client *transport.Client) {
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "storage",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push storage samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("storage sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("storage sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -765,29 +777,24 @@ func pushEventLogOne(client *transport.Client, stateDir string) {
 	// Guard the OS collector with the shared 30 s timeout — wevtutil /
 	// journalctl can stall on a wedged subsystem; the spawned goroutine leaks
 	// on timeout but the loop continues (same trade-off as interfaces/storage).
-	type res struct{ s []*transport.EventLogSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.EventLogOnce(stateDir, filter)} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.EventLogSample { return collectors.EventLogOnce(stateDir, filter) })
+	if !ok {
 		log.Printf("push eventLog samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		return // no new entries — normal, send nothing
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "eventLog",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push eventLog samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("eventLog sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("eventLog sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -808,29 +815,24 @@ func pushProcessInventoryOne(client *transport.Client) {
 	if !loadProcessesCfg().enabled {
 		return // processes stream not resolved to agent — nothing to collect
 	}
-	type res struct{ s []*transport.ProcessSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ProcessInventoryOnce()} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ProcessSample { return collectors.ProcessInventoryOnce() })
+	if !ok {
 		log.Printf("push processInventory samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if r.s == nil {
+	if rows == nil {
 		return // collector failed to read the process table — skip (don't wipe inventory)
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "processInventory",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push processInventory samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("processInventory sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("processInventory sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -864,19 +866,14 @@ func softwareInventoryLoop(ctx context.Context, cfg *config.Config, client *tran
 }
 
 func pushSoftwareInventoryOne(client *transport.Client) {
-	type res struct{ s []*transport.SoftwareSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.SoftwareInventoryOnce()} }()
-	var r res
-	select {
-	case r = <-ch:
 	// A dpkg/rpm query on a host with thousands of packages can outlast the
 	// shared 30 s budget; the Linux reader caps its own subprocess at 60 s.
-	case <-time.After(2 * collectionTimeout):
+	rows, ok := collectWithDeadline(2*collectionTimeout, func() []*transport.SoftwareSample { return collectors.SoftwareInventoryOnce() })
+	if !ok {
 		log.Printf("push softwareInventory samples: collector timed out after %.0fs", (2 * collectionTimeout).Seconds())
 		return
 	}
-	if r.s == nil {
+	if rows == nil {
 		// No supported package database, or the read failed. Never push an
 		// empty list for that — the server would delete the whole inventory.
 		if verbose {
@@ -886,14 +883,14 @@ func pushSoftwareInventoryOne(client *transport.Client) {
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "softwareInventory",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push softwareInventory samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("softwareInventory sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("softwareInventory sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -904,17 +901,12 @@ func pushServiceInventoryOne(client *transport.Client) {
 		}
 		return // services stream not enabled — nothing to collect
 	}
-	type res struct{ s []*transport.ServiceSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ServiceInventoryOnce()} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ServiceSample { return collectors.ServiceInventoryOnce() })
+	if !ok {
 		log.Printf("push serviceInventory samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if r.s == nil {
+	if rows == nil {
 		// No service manager, or enumeration failed (the collector logs the
 		// specific reason). Skip rather than push an empty set — a full-replace
 		// with zero rows would wipe the asset's inventory server-side.
@@ -925,14 +917,14 @@ func pushServiceInventoryOne(client *transport.Client) {
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "serviceInventory",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push serviceInventory samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("serviceInventory sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("serviceInventory sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -954,31 +946,24 @@ func pushProcessTelemetryOne(client *transport.Client) {
 	for _, p := range pc.pinned {
 		names = append(names, p.Name)
 	}
-	type res struct {
-		s []*transport.ProcessTelemetrySample
-	}
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ProcessTelemetryOnce(names)} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ProcessTelemetrySample { return collectors.ProcessTelemetryOnce(names) })
+	if !ok {
 		log.Printf("push processTelemetry samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		return
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "processTelemetry",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push processTelemetry samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("processTelemetry sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("processTelemetry sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -996,29 +981,24 @@ func pushProcessLogOne(client *transport.Client, stateDir string) {
 	if !pc.enabled || len(pc.pinned) == 0 {
 		return
 	}
-	type res struct{ s []*transport.ProcessLogSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ProcessLogOnce(stateDir, pc.pinned, 0)} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ProcessLogSample { return collectors.ProcessLogOnce(stateDir, pc.pinned, 0) })
+	if !ok {
 		log.Printf("push processLog samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		return
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "processLog",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push processLog samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("processLog sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("processLog sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -1037,29 +1017,24 @@ func pushServiceLogOne(client *transport.Client, stateDir string) {
 	if !sc.enabled || len(sc.monitored) == 0 {
 		return
 	}
-	type res struct{ s []*transport.ServiceLogSample }
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ServiceLogOnce(stateDir, sc.monitored, 0)} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ServiceLogSample { return collectors.ServiceLogOnce(stateDir, sc.monitored, 0) })
+	if !ok {
 		log.Printf("push serviceLog samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		return
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "serviceLog",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push serviceLog samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("serviceLog sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("serviceLog sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -1082,33 +1057,28 @@ func pushProcessConnectionsOne(client *transport.Client) {
 	if len(pc.mapped) == 0 && len(sc.mapped) == 0 {
 		return
 	}
-	type res struct {
-		s []*transport.ProcessConnectionSample
-	}
-	ch := make(chan res, 1)
-	go func() { ch <- res{collectors.ProcessConnectionsOnce(pc.mapped, sc.mapped)} }()
-	var r res
-	select {
-	case r = <-ch:
-	case <-time.After(collectionTimeout):
+	rows, ok := collectWithDeadline(collectionTimeout, func() []*transport.ProcessConnectionSample {
+		return collectors.ProcessConnectionsOnce(pc.mapped, sc.mapped)
+	})
+	if !ok {
 		log.Printf("push processConnections samples: collector timed out after %.0fs", collectionTimeout.Seconds())
 		return
 	}
 	// Zero rows → no push: absence never deletes server-side (rows age out),
 	// so an empty scrape has nothing to say.
-	if len(r.s) == 0 {
+	if len(rows) == 0 {
 		return
 	}
 	resp, err := client.PushSamples(&transport.SamplesBody{
 		Stream:  "processConnections",
-		Samples: r.s,
+		Samples: rows,
 	})
 	if err != nil {
 		log.Printf("push processConnections samples: %v", err)
 		return
 	}
 	if verbose {
-		log.Printf("processConnections sent: rows=%d -> accepted=%d rejected=%d", len(r.s), resp.Accepted, resp.Rejected)
+		log.Printf("processConnections sent: rows=%d -> accepted=%d rejected=%d", len(rows), resp.Accepted, resp.Rejected)
 	}
 }
 
@@ -1248,10 +1218,10 @@ func pushSystemInfoOne(client *transport.Client) {
 }
 
 // wsLoop holds the outbound WebSocket to Polaris open. Server-pushed
-// frames land in handleServerFrame: `probe-now-request` runs the relevant
-// collector synchronously and writes a `probe-now-response` back through
-// the same socket; `refresh-config` triggers a /config refetch via the
-// HTTP transport.
+// frames land in the handler below; `refresh-config` triggers a /config
+// refetch via the HTTP transport. (The probe-now request frame was removed
+// in 0.28.3: the server never sent it, and it only ever answered the
+// response-time stream.)
 func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 	dialer, err := transport.NewWSDialer(cfg.ServerURL, cfg.Pins(), cfg.BearerToken)
 	if err != nil {
@@ -1307,31 +1277,6 @@ func wsLoop(ctx context.Context, cfg *config.Config, client *transport.Client) {
 				}
 			}
 			return nil
-		case "probe-now-request":
-			// Operator clicked "Probe now" on the asset details page.
-			// Run the appropriate collector synchronously and emit the
-			// response frame keyed by request id.
-			var payload struct {
-				Stream string `json:"stream"`
-			}
-			_ = json.Unmarshal(f.Payload, &payload)
-			var resp transport.ResponseTimeSample
-			if payload.Stream == "responseTime" {
-				resp = *collectors.ResponseTimeOnce(func() error {
-					_, err := client.Heartbeat()
-					return err
-				})
-			}
-			resPayload, _ := json.Marshal(map[string]interface{}{
-				"success":        resp.Success,
-				"responseTimeMs": resp.ResponseTimeMs,
-				"error":          resp.Error,
-			})
-			return conn.SendFrame(&transport.Frame{
-				Type:    "probe-now-response",
-				ID:      f.ID,
-				Payload: resPayload,
-			})
 		default:
 			log.Printf("ws: unrecognized frame type %q", f.Type)
 			return nil

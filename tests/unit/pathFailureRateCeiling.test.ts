@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   prisma: {
     notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
+    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
     notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
     asset: { findMany: vi.fn(), findUnique: vi.fn() },
     // A Path Monitor rule's pool is agent hosts (pathMonitorScope) — the
@@ -152,7 +152,8 @@ describe("a path check in maintenance (business rule 135)", () => {
     }]);
     runsWhere([[CHECK, 10, 0]]);
     await evaluateAllNotificationRules();
-    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s2");
+    // One statement for every held path's pending row (CQ-B050).
+    const upd = h.prisma.notificationRuleState.updateMany.mock.calls.find((c: any) => c[0].where.id.in.includes("s2"));
     expect(upd?.[0].data).toMatchObject({ state: "clear", conditionMetSince: null });
   });
 });

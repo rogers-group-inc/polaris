@@ -25,6 +25,7 @@ import {
   hostPinsForAsset,
   listArchivedHostPins,
   findAssetsByPinFingerprint,
+  releasedAddressOf,
   DECOMMISSIONED_AGENT_COLLISION_REASON,
 } from "../../src/services/agentHostPinService.js";
 import { searchAll } from "../../src/services/searchService.js";
@@ -128,6 +129,22 @@ d("agent host pin archive (business rule 123)", () => {
     expect(await prisma.sshHostKey.count({ where: { host: IP } })).toBe(1);
   });
 
+  it("archives on the address rule 40(k) released, unless a replacement now holds it", async () => {
+    // No decommission yet → no released address on record.
+    expect(await releasedAddressOf(assetId)).toBeNull();
+    await prisma.asset.update({ where: { id: assetId }, data: { status: "decommissioned" } });
+    expect((await prisma.asset.findUnique({ where: { id: assetId } }))?.ipAddress).toBeNull();
+    expect(await releasedAddressOf(assetId)).toBe(IP);
+
+    // A replacement device took the released address before the archive ran:
+    // its pin protects that device, so it stays (rule 123(a)).
+    await prisma.asset.create({ data: { hostname: `${PREFIX}replacement`, assetType: "server", status: "active", ipAddress: IP } });
+    const archived = await archiveAgentHostPins(assetId, "tester");
+    expect(archived?.archived).toHaveLength(0);
+    expect(archived?.leftShared).toEqual([IP]);
+    expect(await prisma.sshHostKey.count({ where: { host: IP } })).toBe(1);
+  });
+
   it("never overwrites a key pinned on the endpoint while the asset was away", async () => {
     await archiveAgentHostPins(assetId, "tester");
     await prisma.sshHostKey.create({ data: { host: IP, port: 22, keyType: "ssh-ed25519", fingerprint: "SHA256:aNewMachine" } });
@@ -140,9 +157,13 @@ d("agent host pin archive (business rule 123)", () => {
 
   it("the reconcile pass archives for a status written outside the PUT route, and reinstates on return", async () => {
     await prisma.asset.updateMany({ where: { id: assetId }, data: { status: "decommissioned" } });
+    // Rule 40(k): the status write itself released the address.
+    expect((await prisma.asset.findUnique({ where: { id: assetId } }))?.ipAddress).toBeNull();
+    expect(await releasedAddressOf(assetId)).toBe(IP);
     await reconcileAgentHostPins();
     expect((await prisma.managedAgent.findUnique({ where: { id: agentId } }))?.hostPinsArchivedAt).not.toBeNull();
     expect(await prisma.sshHostKey.count({ where: { host: IP } })).toBe(0);
+    expect(await prisma.tlsCertPin.count({ where: { host: IP } })).toBe(0);
 
     await prisma.asset.updateMany({ where: { id: assetId }, data: { status: "active" } });
     await reconcileAgentHostPins();
@@ -193,6 +214,9 @@ d("agent host pin archive (business rule 123)", () => {
     const { agent, csrf } = await authedAgent(app);
     const down = await agent.put(`/api/v1/assets/${assetId}`).set("X-CSRF-Token", csrf).send({ status: "decommissioned" });
     expect(down.status).toBe(200);
+    // Rule 40(k) released the address on that same write, before the archive
+    // ran; the archive still found the pins keyed on it (rule 123).
+    expect((await prisma.asset.findUnique({ where: { id: assetId } }))?.ipAddress).toBeNull();
     expect(await prisma.sshHostKey.count({ where: { host: IP } })).toBe(0);
 
     const pins = await agent.get(`/api/v1/assets/${assetId}/host-pins`);
@@ -226,7 +250,14 @@ d("agent host pin archive (business rule 123)", () => {
     const allowed = { blocks: true, subnets: true, reservations: true, assets: true, sites: true, ipsec: true };
     const hit = (await searchAll("AA AA AA AA AA", { ...allowed, pins: true })).assets.find((h) => h.id === assetId);
     expect(hit?.subtitle).toContain(`TLS certificate ${IP}:5986`);
-    expect((await searchAll("AA AA AA AA AA", { ...allowed, pins: false })).assets.find((h) => h.id === assetId)).toBeUndefined();
+    // Without the pins gate the PIN path is closed: no hit for this asset may
+    // come from its certificate. Asserted on the pin subtitle, not on absence —
+    // the suite shares one database and runs background jobs, so another
+    // file's rows (a tag, a source, a MAC range) can legitimately make this
+    // asset match "aa" through the ordinary asset search; asserting absence
+    // made this case fail ~1 run in 3-5 and blocked CI image builds.
+    const ungated = (await searchAll("AA AA AA AA AA", { ...allowed, pins: false })).assets.find((h) => h.id === assetId);
+    expect(ungated?.subtitle ?? "").not.toContain("TLS certificate");
     expect((await searchAll("AA AA AA AA AA", { ...allowed, assets: false, pins: true })).assets).toEqual([]);
 
     // Archived on decommission: still found, by the archive, and listed.

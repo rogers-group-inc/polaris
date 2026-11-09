@@ -191,3 +191,88 @@ describe("routeInterGroupEdges keeps every bend outside both end devices", () =>
     expectClear(r);
   });
 });
+
+describe("routeInterGroupEdges leaves a wide box through the side nearest the target", () => {
+  // 2026-11-07: a device deep inside a wide area linked to a building just
+  // below it. The router only knew the box's side facing the target, so the
+  // link ran out Mine's far right wall, down, and all the way back.
+  it("drops out the bottom of the source box when the target sits just below it", () => {
+    const [r] = route({
+      nodes: [
+        node("mcc", 100, 100, { locA: "mine", locAName: "Mine", locB: "surface", locBName: "Surface" }),
+        node("far", 1500, 100, { locA: "mine", locAName: "Mine", locB: "surface", locBName: "Surface" }),
+        node("annex", 160, 500, { locB: "annex", locBName: "MCC Annex" }),
+      ],
+      edges: [{ id: "ie0", source: "mcc", target: "annex" }],
+    });
+    expectClear(r);
+    // No bend anywhere near Mine's far side.
+    for (const p of bends(r)) expect(p.x).toBeLessThan(400);
+  });
+});
+
+/**
+ * Bundling (operator sketch, 2026-11-07): links share a line only in the
+ * middle — the links leaving one box in one direction ride ONE trunk and
+ * peel off on their own lanes near their targets. Lines are separate where
+ * they touch a device, and a link from another box never joins the trunk.
+ */
+describe("routeInterGroupEdges bundles only what belongs together", () => {
+  function path(r: Routed): Pt[] { return [r.S, ...bends(r), r.T]; }
+  // The x of a route's longest vertical run: its trunk.
+  function trunkX(r: Routed): number {
+    const p = path(r);
+    let best = { len: -1, x: NaN };
+    for (let i = 1; i < p.length; i++) {
+      if (Math.abs(p[i].x - p[i - 1].x) < 0.5) {
+        const len = Math.abs(p[i].y - p[i - 1].y);
+        if (len > best.len) best = { len, x: p[i].x };
+      }
+    }
+    return best.x;
+  }
+  const scale = { locB: "scale", locBName: "Scale House" };
+  const spec = {
+    nodes: [
+      node("s1", 100, 600, scale),
+      node("s2", 100, 700, scale),
+      node("t1", 500, 100, { locB: "t1", locBName: "Tower 1" }),
+      node("t2", 800, 100, { locB: "t2", locBName: "Tower 2" }),
+      node("t3", 1100, 100, { locB: "t3", locBName: "Tower 3" }),
+    ],
+    edges: [
+      { id: "a", source: "s1", target: "t1" },
+      { id: "b", source: "s1", target: "t2" },
+      { id: "c", source: "s2", target: "t3" },
+      { id: "d", source: "s2", target: "t2" },
+    ],
+  };
+
+  it("links leaving one box the same way share one trunk", () => {
+    const routed = route(spec);
+    routed.forEach(expectClear);
+    const xs = routed.map(trunkX);
+    for (const x of xs) expect(Math.abs(x - xs[0])).toBeLessThan(0.5);
+  });
+
+  it("keeps the lines separate where they leave and enter a device", () => {
+    const byId = Object.fromEntries(route(spec).map((r) => [r.id, r]));
+    // Two links out of s1: their first bends differ.
+    const a0 = bends(byId.a)[0], b0 = bends(byId.b)[0];
+    expect(Math.hypot(a0.x - b0.x, a0.y - b0.y)).toBeGreaterThan(8);
+    // Two links into t2: their last bends differ.
+    const bl = bends(byId.b).at(-1)!, dl = bends(byId.d).at(-1)!;
+    expect(Math.hypot(bl.x - dl.x, bl.y - dl.y)).toBeGreaterThan(8);
+  });
+
+  it("never puts a link from another box on that trunk", () => {
+    const other = { locB: "other", locBName: "Other Shed" };
+    const routed = route({
+      nodes: [...spec.nodes, node("o1", 100, 1000, other)],
+      edges: [...spec.edges, { id: "z", source: "o1", target: "t1" }],
+    });
+    const byId = Object.fromEntries(routed.map((r) => [r.id, r]));
+    expect(Math.abs(trunkX(byId.z) - trunkX(byId.a))).toBeGreaterThanOrEqual(20);
+  });
+});
+

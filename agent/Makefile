@@ -73,4 +73,17 @@ dev:
 winres:
 	cd cmd/polaris-agent && go run github.com/tc-hib/go-winres@v0.3.3 make --in winres.json --arch amd64,arm64 --file-version $(VERSION) --product-version $(VERSION)
 
-.PHONY: all linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64 clean dev winres
+# Formatting, static checks and tests, exactly as the CI test job runs them
+# (.github/workflows/docker-publish.yml). Run on Linux or in CI: on a Windows
+# checkout with core.autocrlf=true every .go file is CRLF in the working tree
+# and gofmt lists all of them. Never `gofmt -w` a whole package there.
+fmt-check:
+	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+
+vet:
+	go vet ./...
+
+test:
+	go test ./...
+
+.PHONY: all linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64 clean dev winres fmt-check vet test

@@ -21,9 +21,9 @@
  */
 
 /** FORTINET-FORTIAP-MIB::fapRadioEntry, 1.3.6.1.4.1.12356.120.4.1.1 */
-export const FAP_RADIO_ENTRY = "1.3.6.1.4.1.12356.120.4.1.1";
+const FAP_RADIO_ENTRY = "1.3.6.1.4.1.12356.120.4.1.1";
 /** FORTINET-FORTIAP-MIB::fapVapEntry, 1.3.6.1.4.1.12356.120.7.1.1 */
-export const FAP_VAP_ENTRY = "1.3.6.1.4.1.12356.120.7.1.1";
+const FAP_VAP_ENTRY = "1.3.6.1.4.1.12356.120.7.1.1";
 
 /**
  * The columns Polaris walks. INDEX columns are deliberately absent: both

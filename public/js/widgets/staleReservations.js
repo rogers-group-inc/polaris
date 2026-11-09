@@ -54,10 +54,9 @@
 
     renderInstance: function (el, config, data, ctx) {
       renderRows(el, data.rows || [], data.total || 0, config && config.rowLimit);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         fetchStale().then(function (d) { renderRows(el, (d && d.rows) || [], (d && d.total) || 0, config && config.rowLimit); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
-      ctx.onUnmount(function () { clearInterval(timer); });
     },
 
     renderPreview: function (el) {

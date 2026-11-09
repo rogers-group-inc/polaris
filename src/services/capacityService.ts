@@ -41,7 +41,7 @@ import { fileURLToPath } from "node:url";
 
 import pg from "pg";
 import { prisma } from "../db.js";
-import { getMonitorSettings, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type MonitorSettings } from "./monitoringService.js";
+import { fleetCadences, RETENTION_PRUNE_INTERVAL_MS, SDWAN_INTERVAL_DEFAULT_SEC, type FleetCadences } from "./monitoringService.js";
 import { isTimescaleAvailable, isHypertable, ALL_HYPERTABLE_CANDIDATES, getEffectiveCompressAfterDays } from "./timescaleService.js";
 import { getTableSizes, getDatabaseSizeBreakdown, type DatabaseSizeBreakdown } from "./dbSizeService.js";
 import { getSampleRetention, SELECTION_AWARE_ENTITIES, UNSELECTED_DETAIL_HOURS, type RetentionEntity, type RetentionTier, type SampleRetention, type FlatRetentionEntity } from "./sampleRetentionService.js";
@@ -52,8 +52,10 @@ import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { getDirectDatabaseUrl, isPgbouncerMode } from "../utils/dbConnections.js";
 import { logEvent } from "./eventLogService.js";
+import type { HandlerTimeoutPressure } from "./capacityAdvisorService.js";
 import { detectFping } from "../utils/burstPing.js";
 import { configuredSweepIntervalSec, resolveSweepIntervalSec } from "../utils/lossSweep.js";
+import { healthToken, metricsToken } from "../utils/endpointTokens.js";
 import {
   deriveDbIoVerdict,
   IO_VERDICT_STALE_MS,
@@ -74,7 +76,7 @@ export type Severity = "ok" | "watch" | "warning" | "critical";
 // downstream comparisons + persistence + metrics stay consistent. The two
 // legacy names are intentionally narrowed off the exported `Severity` type so
 // new code can't introduce them.
-export function normalizeSeverity(s: unknown): Severity {
+function normalizeSeverity(s: unknown): Severity {
   if (s === "critical" || s === "warning" || s === "watch" || s === "ok") return s;
   if (s === "red") return "critical";
   if (s === "amber") return "warning";
@@ -262,7 +264,7 @@ function readPendingRootHelpers(): Array<{ path: string; sha256: string }> {
   }
 }
 
-export interface CapacityReason {
+interface CapacityReason {
   severity: "watch" | "warning" | "critical";
   code: string;
   message: string;
@@ -274,9 +276,9 @@ export interface CapacityReason {
   family?: string;
 }
 
-export type VolumeRole = "app" | "state" | "backups" | "db";
+type VolumeRole = "app" | "state" | "backups" | "db";
 
-export interface VolumeStat {
+interface VolumeStat {
   /** All Polaris-named paths that resolve to this filesystem. */
   paths: string[];
   /** Roles this volume serves (deduped). Useful for the operator-facing label. */
@@ -503,7 +505,7 @@ export interface CapacitySnapshot {
 // Detail tier rows are the raw per-cadence samples (rate driven by the
 // monitor cadence settings). Hourly tier is a fixed 24 buckets/day per
 // (asset, extra-key) cell; daily tier is 1 bucket/day per (asset, extra-key).
-export const SAMPLE_TABLES: Array<{
+const SAMPLE_TABLES: Array<{
   name: string;
   entity: RetentionEntity;
   tier:   RetentionTier;
@@ -1224,7 +1226,7 @@ export function projectSteadyStateSize(args: {
   /** Monitored assets that can actually produce system-info (interfaces/storage/IPsec).
    *  Same exclusion as telemetryEligibleCount; WinRM/SSH are kept in. */
   systemInfoEligibleCount: number;
-  monitor: MonitorSettings;
+  monitor: FleetCadences;
   retention: SampleRetention;
   /** Measured uncompressed daily bytes per DETAIL table (from settled chunks).
    *  When present for a never-compressing detail tier, used instead of the
@@ -1418,7 +1420,7 @@ export interface AdvisorGapsForReasons {
   /** Cadences whose observed p90 has climbed toward the pg-boss handler timeout
    *  cap (`pgboss.queue.expire_seconds`). Non-empty fires the
    *  `monitor_handler_timeout_pressure` watch reason. */
-  handlerTimeoutPressure?: import("./capacityAdvisorService.js").HandlerTimeoutPressure[];
+  handlerTimeoutPressure?: HandlerTimeoutPressure[];
 }
 
 // Stable family key for a volume. The collapse pass groups every disk reason
@@ -1821,7 +1823,7 @@ function computeReasons(
   // Watch-severity: Maintenance-tab warning + audit Event, no navbar
   // banner. Operators who deliberately want either endpoint open (some
   // L4 health probes can't carry a header) can ignore the warning.
-  if (!process.env.METRICS_TOKEN || process.env.METRICS_TOKEN.trim() === "") {
+  if (!metricsToken()) {
     reasons.push({
       severity: "watch",
       code: "metrics_token_unset",
@@ -1836,7 +1838,7 @@ function computeReasons(
         "`Authorization: Bearer <token>` — see docs/grafana/README.md.",
     });
   }
-  if (!process.env.HEALTH_TOKEN || process.env.HEALTH_TOKEN.trim() === "") {
+  if (!healthToken()) {
     reasons.push({
       severity: "watch",
       code: "health_token_unset",
@@ -2023,7 +2025,7 @@ const SEVERITY_RANK: Record<Severity, number> = {
  * Stable order: preserves the input order of winners. Each family's winner
  * stays where its highest-severity representative appeared in the input.
  */
-export function collapseReasonsByFamily(reasons: CapacityReason[]): CapacityReason[] {
+function collapseReasonsByFamily(reasons: CapacityReason[]): CapacityReason[] {
   // First pass: bucket by family, track the winning index within each bucket.
   const buckets = new Map<string, CapacityReason[]>();
   const order: Array<{ family: string | null; reason: CapacityReason }> = [];
@@ -2138,7 +2140,7 @@ export async function getCapacitySnapshot(opts: {
     dbIoState,
     agentCount,
   ] = await Promise.all([
-    getMonitorSettings(),
+    fleetCadences(),
     getSampleRetention(),
     prisma.asset.count({ where: { monitored: true } }),
     prisma.$queryRawUnsafe<{ count: bigint }[]>(telemetryEligibleSQL),

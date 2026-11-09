@@ -23,7 +23,10 @@ import { Window } from "happy-dom";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
-const APP_SRC = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+// The page order: the shared theme engine (theme-core.js) runs before app.js.
+const APP_SRC =
+  readFileSync(resolve(__dirname, "../../public/js/theme-core.js"), "utf8") + "\n" +
+  readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
 
 interface MenuItem {
   label?: string;
@@ -613,7 +616,7 @@ describe("double click anywhere on a data-row-menu-row", () => {
 // open and the whole-row right-click menu; pin the count per file.
 describe("list pages that open on double click and menu on right click", () => {
   const cases: Array<[string, number]> = [
-    ["public/js/assets.js", 1],
+    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row)
     ["public/js/users.js", 3],
     ["public/js/automations.js", 1],
     ["public/js/blocks.js", 1],

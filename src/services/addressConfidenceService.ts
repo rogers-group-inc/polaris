@@ -347,7 +347,7 @@ export interface AddressCheckResult {
 }
 
 /** How long the pre-save probe waits for its one echo. */
-export const ADDRESS_CHECK_PROBE_TIMEOUT_MS = 2000;
+const ADDRESS_CHECK_PROBE_TIMEOUT_MS = 2000;
 
 /**
  * The pre-apply check for a pin or a typed address: the candidate's evidence
@@ -388,7 +388,7 @@ export async function checkAddressConfidence(
 }
 
 /** How far back the seed looks for the last failed probe. */
-export const POLLING_SEED_LOOKBACK_DAYS = 30;
+const POLLING_SEED_LOOKBACK_DAYS = 30;
 
 /**
  * Seed the polling run (Asset.ipConfirmedFor / ipConfirmedSince) for monitored

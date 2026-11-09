@@ -379,8 +379,8 @@ export async function listSubnets(filter: ListSubnetsFilter = {}) {
         // network had churned, and the utilization beside it would have been
         // over 100%. A whole-subnet reservation (ipAddress = null) is excluded
         // deliberately — it consumes no individual address and already shows as
-        // status "reserved". Same numerator as ipService.subnetCapacity and the
-        // IP panel's footer bar, which is what keeps the three agreeing.
+        // status "reserved". Same numerator as the IP panel's footer bar, which is
+        // what keeps the two agreeing.
         _count: {
           select: { reservations: { where: { status: "active", ipAddress: { not: null } } } },
         },
@@ -598,7 +598,7 @@ export async function allocateNextSubnet(
  * allocations so later templates land on a clean boundary. The route layer
  * validates that `name` is present whenever `skip` is not true.
  */
-export interface BulkAllocateEntry {
+interface BulkAllocateEntry {
   skip?: boolean;
   name?: string;
   prefixLength: number;

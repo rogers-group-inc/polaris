@@ -46,10 +46,10 @@ import {
 } from "../utils/fortinetParentKey.js";
 
 /** Which side of the VIP the asset's address sits on. */
-export type AssetVipRole = "external" | "mapped" | "realserver";
+type AssetVipRole = "external" | "mapped" | "realserver";
 
 /** One VIP (or virtual server) touching one of the asset's addresses. */
-export interface AssetVipEntry {
+interface AssetVipEntry {
   /** The asset address this entry was found on. */
   ip: string;
   /** The containing network, for the "which network" half of the answer. */

@@ -48,8 +48,6 @@ export const BUILT_IN_ASSET_TYPES = [
   "container",
 ] as const;
 
-export type BuiltInAssetType = (typeof BUILT_IN_ASSET_TYPES)[number];
-
 /**
  * True when `name` carries no classification: empty, or the `other`
  * catch-all. "other" means "not yet classified", not "classified as other",
@@ -87,12 +85,6 @@ export function setAssetTypeRegistry(entries: Iterable<{ name: string; label: st
 export function isKnownAssetType(name: string | null | undefined): boolean {
   if (!name) return false;
   if (_registry !== null) return _registry.has(name);
-  return (BUILT_IN_ASSET_TYPES as readonly string[]).includes(name);
-}
-
-/** Returns true when `name` matches one of the eight historical built-ins. */
-export function isBuiltInAssetType(name: string | null | undefined): name is BuiltInAssetType {
-  if (!name) return false;
   return (BUILT_IN_ASSET_TYPES as readonly string[]).includes(name);
 }
 

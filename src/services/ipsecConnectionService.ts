@@ -23,7 +23,7 @@ import type { IpsecConnectionSample } from "../utils/fortiosIpsec.js";
 import { resolveIpsToAssets } from "./applicationMapService.js";
 
 /** A hub terminating thousands of FortiClient users is the realistic top end. */
-export const MAX_IPSEC_CONNECTIONS_PER_ASSET = 5000;
+const MAX_IPSEC_CONNECTIONS_PER_ASSET = 5000;
 const INSERT_CHUNK = 1000;
 
 const SSL_KIND = "ssl-vpn";

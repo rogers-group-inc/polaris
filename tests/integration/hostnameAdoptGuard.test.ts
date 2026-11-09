@@ -135,6 +135,10 @@ const refusals = (id: string) =>
 const assetsNamed = () =>
   prisma.asset.findMany({ where: { hostname: HOST }, select: { id: true, macAddress: true, ipAddress: true } });
 
+// The name and its MAC-suffixed forms (rule 91(i) names same-named devices apart).
+const assetsInFamily = () =>
+  prisma.asset.findMany({ where: { hostname: { startsWith: HOST } }, select: { id: true, hostname: true, macAddress: true, ipAddress: true } });
+
 d("a DHCP hostname is never a match (business rules 91(b), 91(f))", () => {
   it("monitored asset + hostname-only lease: nothing on the asset changes, no MAC row, no warning", async () => {
     const id = await seedServer(true);
@@ -183,9 +187,14 @@ d("a DHCP hostname is never a match (business rules 91(b), 91(f))", () => {
     expect(after?.lastSeenSwitch).toBeNull();
     expect(after?.macAddressRows.map((r) => r.mac)).toEqual([REAL]);
 
+    // The server has no discovery source, so it keeps its name; the new
+    // device is named apart by MAC (rule 91(i)).
     const named = await assetsNamed();
-    expect(named).toHaveLength(2);
-    const other = named.find((a) => a.id !== id);
+    expect(named.map((a) => a.id)).toEqual([id]);
+    const family = await assetsInFamily();
+    expect(family).toHaveLength(2);
+    const other = family.find((a) => a.id !== id);
+    expect(other?.hostname).toBe(`${HOST}-910BEE`);
     expect(other?.macAddress).toBe(CLAIMANT);
     expect(other?.ipAddress).toBe(IP_CLAIMANT);
   });
@@ -196,9 +205,11 @@ d("a DHCP hostname is never a match (business rules 91(b), 91(f))", () => {
     const rows = macs.map((m, i) => inv({ macAddress: m, ipAddress: `10.91.191.${50 + i}` }));
     await run([], rows);
     await run([], rows);
-    const named = await assetsNamed();
-    expect(named).toHaveLength(1 + macs.length);
-    expect(new Set(named.map((a) => a.macAddress))).toEqual(new Set([REAL, ...macs]));
+    const family = await assetsInFamily();
+    expect(family).toHaveLength(1 + macs.length);
+    expect(new Set(family.map((a) => a.macAddress))).toEqual(new Set([REAL, ...macs]));
+    // Rule 91(i): each new device carries its MAC; the second run renames nothing.
+    expect(new Set(family.map((a) => a.hostname))).toEqual(new Set([HOST, `${HOST}-910F01`, `${HOST}-910F02`, `${HOST}-910F03`]));
   });
 
   it("protected asset + MAC match: unchanged behaviour — the address may move", async () => {

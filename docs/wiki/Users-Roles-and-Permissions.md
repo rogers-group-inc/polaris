@@ -255,11 +255,11 @@ are.
 | **`admin`** | **protected** — cannot be edited or deleted, and is hidden from the list | every key at its **top rung** |
 | **`readonly`** | protected — like `admin`, hidden from the Roles list | `read` on everything non-admin, `none` on admin-only keys |
 | **`networkadmin`** | editable, not deletable | IP space / integrations / map regions / conflicts at write; `subnets` + `reservations` at **Full RW**; assets, topology layouts and maintenance windows at write |
-| **`assetsadmin`** | editable, not deletable | assets / quarantine / monitor settings / maintenance / automations at write; **Clear Alerts**; own-row write on networks, reservations and **credentials**; integrations readable |
+| **`assetsadmin`** | editable, not deletable | assets / quarantine / monitor settings / maintenance / automations at write; **Alert Clear**; own-row write on networks, reservations and **credentials**; integrations readable |
 | **`user`** | editable, not deletable | own-network / own-reservation write; read elsewhere |
 
 Only **`admin`** holds **Merge Assets**, **Agent Deploy** and **Tags** Read-Write;
-`admin` and `assetsadmin` hold **Clear Alerts**. The update of 2026-11-03 seeded
+`admin` and `assetsadmin` hold **Alert Clear**. The update of 2026-11-03 seeded
 each act key onto exactly the roles that held the rung it used to live on, so
 nobody gained or lost an act — except tagging, which left `assets:write` on
 purpose (above).

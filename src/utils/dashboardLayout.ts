@@ -29,14 +29,14 @@ export const MAX_DASHBOARDS = 24;
 /** Operator-typed dashboard name. Same ceiling as a saved filter's. */
 export const MAX_DASHBOARD_NAME_LEN = 60;
 
-export const WidgetInstanceSchema = z.object({
+const WidgetInstanceSchema = z.object({
   id:     z.string().uuid("widget id must be a uuid"),
   type:   z.string().min(1).max(64),
   height: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   config: z.record(z.unknown()).default({}),
 });
 
-export const ColumnSchema = z.object({
+const ColumnSchema = z.object({
   id:      z.string().uuid("column id must be a uuid"),
   width:   z.union([z.literal(3), z.literal(4), z.literal(6), z.literal(12)]),
   widgets: z.array(WidgetInstanceSchema).max(MAX_WIDGETS),
@@ -57,5 +57,4 @@ export const ColumnsSchema = z
     }
   });
 
-export type DashboardWidgetInstanceInput = z.infer<typeof WidgetInstanceSchema>;
 export type DashboardColumnInput = z.infer<typeof ColumnSchema>;

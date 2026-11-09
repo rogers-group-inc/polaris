@@ -39,7 +39,7 @@
  */
 
 /** How a contributor derives its value from the source's observed blob. */
-export type LocationContributorMode = "field" | "label";
+type LocationContributorMode = "field" | "label";
 
 export interface LocationContributor {
   /** AssetSource.sourceKind — the priority-list entry key. */

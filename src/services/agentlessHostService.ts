@@ -89,7 +89,7 @@ const num = (v: unknown): number | null => {
 // ONE command is the cheapest honest answer; the alternative (persisting the
 // previous read per asset) would make the collector stateful for no gain.
 // `LC_ALL=C` keeps the numeric formatting predictable.
-export const LINUX_CPUMEM_COMMAND =
+const LINUX_CPUMEM_COMMAND =
   "LC_ALL=C sh -c 'grep -w ^cpu /proc/stat; sleep 1; grep -w ^cpu /proc/stat; echo ---; cat /proc/meminfo'";
 
 /** One `cpu  <user> <nice> <system> <idle> <iowait> <irq> <softirq> <steal>` row. */
@@ -217,7 +217,7 @@ export function parseLinuxInterfaces(stdout: string): AgentlessInterface[] {
 // -P forces POSIX single-line output (a long device name otherwise wraps and
 // breaks column parsing), -k fixes the unit at 1K blocks, -T names the FS type
 // so pseudo-filesystems can be dropped.
-export const LINUX_STORAGE_COMMAND = "LC_ALL=C df -PkT";
+const LINUX_STORAGE_COMMAND = "LC_ALL=C df -PkT";
 
 // Kernel bookkeeping, not storage. Reporting tmpfs/devtmpfs as mounts fills the
 // System tab with rows nobody can act on, and /proc is always 0 bytes.
@@ -257,7 +257,7 @@ export function parseLinuxStorage(stdout: string): AgentlessMount[] {
 // would also lose per-stream failure isolation. ConvertTo-Json with an explicit
 // -Depth because the defaults truncate nested objects silently; `@()` forces an
 // array so a single-row result still parses as one.
-export const WINDOWS_CPUMEM_SCRIPT = [
+const WINDOWS_CPUMEM_SCRIPT = [
   "$ErrorActionPreference='SilentlyContinue'",
   "$os=Get-CimInstance Win32_OperatingSystem",
   "$cpu=(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor|?{$_.Name -eq '_Total'}).PercentProcessorTime",
@@ -341,7 +341,7 @@ export function parseWindowsInterfaces(stdout: string): AgentlessInterface[] {
   return out;
 }
 
-export const WINDOWS_STORAGE_SCRIPT = [
+const WINDOWS_STORAGE_SCRIPT = [
   "$ErrorActionPreference='SilentlyContinue'",
   "@(Get-Volume|?{$_.DriveType -eq 'Fixed' -and $_.Size -gt 0}|%{[pscustomobject]@{" +
     "path=$(if($_.DriveLetter){\"$($_.DriveLetter):\"}else{$_.Path});size=$_.Size;free=$_.SizeRemaining}})" +

@@ -1242,13 +1242,13 @@ function buildEntraProxyTab(s) {
  * Settings now points here rather than keeping a second editor for one row.
  */
 function buildSettingsTab(s, policy, loginAccess, passkeys) {
-  return sectionHeading("Session", true) + buildSessionSection(s) +
-    sectionHeading("Password Complexity") + buildPasswordPolicySection(policy) +
-    sectionHeading("Trusted Networks for Login") + buildLoginAccessSection(loginAccess) +
-    sectionHeading("Passkeys") + buildPasskeySection(passkeys);
+  return usersSettingsHeading("Session", true) + buildSessionSection(s) +
+    usersSettingsHeading("Password Complexity") + buildPasswordPolicySection(policy) +
+    usersSettingsHeading("Trusted Networks for Login") + buildLoginAccessSection(loginAccess) +
+    usersSettingsHeading("Passkeys") + buildPasskeySection(passkeys);
 }
 
-function sectionHeading(text, first) {
+function usersSettingsHeading(text, first) {
   return '<h4 style="font-size:0.88rem;font-weight:600;margin:' + (first ? "0" : "1.75rem") + ' 0 0.75rem;color:var(--color-text-primary);' +
     'border-bottom:1px solid var(--color-border);padding-bottom:0.4rem">' + escapeHtml(text) + '</h4>';
 }
@@ -1456,7 +1456,6 @@ function wirePasswordChecks(inputId, containerId) { PolarisPasswordSelf.wire(inp
 function checkPasswordField(pw, containerId) { return PolarisPasswordSelf.check(pw, containerId); }
 function passwordMatchHTML(containerId) { return PolarisPasswordSelf.matchHTML(containerId); }
 function wirePasswordMatch(pwId, confirmId, containerId) { PolarisPasswordSelf.wireMatch(pwId, confirmId, containerId); }
-function checkPasswordMatch(pw, confirm, containerId) { return PolarisPasswordSelf.checkMatch(pw, confirm, containerId); }
 
 // ─── Roles section ─────────────────────────────────────────────────────────
 
@@ -1897,6 +1896,13 @@ function closeRoleSlideover() {
   }, 250);
 }
 
+// Escape closes the role panel when topmost, like every other slide-over
+// (CQ-F025). Wired ONCE with a lookup: the overlay is re-rendered on every
+// open, so a per-open wire would leave a stale listener behind each time.
+if (typeof wireSlideoverEscape === "function") {
+  wireSlideoverEscape(function () { return document.getElementById("role-slideover-overlay"); }, closeRoleSlideover);
+}
+
 function buildRoleSlideoverHtml(role, isCreate, isProtected, permissions) {
   var titleText = isCreate ? "New Role" : ("Role: " + (role ? role.name : ""));
   var builtInBadge = role && role.isBuiltIn ? ' <span class="badge" style="background:var(--color-bg-secondary);color:var(--color-text-secondary);font-size:0.7em">Built-in</span>' : "";
@@ -2094,89 +2100,6 @@ function _tagScopePickerHtml(idPrefix, seeded) {
     '<p class="hint">Changing tags needs Read-Write on Tags.</p>';
 }
 
-function regionPickerHtml(idPrefix, selected) {
-  var sel = Array.isArray(selected) ? selected.slice() : [];
-  var selSet = {};
-  sel.forEach(function (n) { selSet[n.toLowerCase()] = true; });
-
-  var catalogLoaded = !!(window.PolarisRegionPills && window.PolarisRegionPills.isLoaded());
-  var known = {};
-  Object.keys(_regionByName).forEach(function (n) { known[n.toLowerCase()] = true; });
-
-  // With no catalogue nothing can be judged missing, so every assignment is
-  // carried in the same chip row -- kept, removable, and honestly labeled.
-  var orphans = catalogLoaded
-    ? sel.filter(function (n) { return !known[String(n).toLowerCase()]; })
-    : sel.slice();
-  var orphanNote = catalogLoaded
-    ? 'Unknown region tags (no longer in the map). Click × to remove.'
-    : 'Assigned region tags. The map-region list could not be read (requires Map Regions read), so these cannot be matched against it here.';
-  var orphanHtml = orphans.length
-    ? '<div style="margin-bottom:0.5rem">' +
-        '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin-bottom:0.25rem">' + escapeHtml(orphanNote) + '</div>' +
-        orphans.map(function (n) {
-          return '<span class="badge hue-pill region-chip" data-region="' + escapeHtml(n) + '" data-selected="1" style="--hue:#9e9e9e;display:inline-flex;align-items:center;gap:0.35rem;padding:0.2rem 0.5rem;margin:0.15rem 0.25rem 0.15rem 0">' +
-            escapeHtml(n) +
-            ' <button type="button" class="region-chip-remove" aria-label="Remove" style="background:none;border:none;cursor:pointer;color:inherit;padding:0;font-size:1.1em;line-height:1">&times;</button>' +
-          '</span>';
-        }).join("") +
-      '</div>'
-    : '';
-
-  // Same distinction: an empty catalogue is only "none drawn yet" when we
-  // actually read it.
-  var emptyNote = catalogLoaded
-    ? 'No map regions defined yet. Create regions on the Device Map first.'
-    : 'Map regions unavailable. Listing them requires Map Regions read; existing assignments above are unaffected.';
-  var available = _regionList.length === 0
-    ? '<div style="font-size:0.85rem;color:var(--color-text-tertiary);padding:0.5rem;border:1px dashed var(--color-border);border-radius:6px">' + escapeHtml(emptyNote) + '</div>'
-    : '<div class="region-pill-grid" style="display:flex;flex-wrap:wrap;gap:0.4rem">' +
-        _regionList.map(function (n) {
-          var hex = regionColorFor(n);
-          var isSel = selSet[n.toLowerCase()];
-          // Selected / not selected ride .hue-strong / .hue-off (styles.css),
-          // which also keep the label legible whatever colour the region has.
-          return '<button type="button" class="badge hue-pill ' + (isSel ? "hue-strong" : "hue-off") + ' region-chip" data-region="' + escapeHtml(n) + '" data-selected="' + (isSel ? "1" : "0") + '" data-color="' + escapeHtml(hex) + '" style="--hue:' + escapeHtml(hex) + ';cursor:pointer;padding:0.3rem 0.7rem;font-size:0.78rem;font-weight:600;text-transform:capitalize">' +
-            escapeHtml(n) +
-          '</button>';
-        }).join("") +
-      '</div>';
-
-  return '<div id="' + idPrefix + '" class="region-picker">' +
-    orphanHtml +
-    available +
-  '</div>';
-}
-
-// Event delegation for any region picker on the page (handles dynamic create).
-document.addEventListener("click", function (e) {
-  var removeBtn = e.target.closest(".region-chip-remove");
-  if (removeBtn) {
-    var orphan = removeBtn.closest(".region-chip");
-    if (orphan) orphan.remove();
-    e.preventDefault();
-    return;
-  }
-  var pill = e.target.closest(".region-picker .region-chip");
-  if (!pill || pill.getAttribute("data-selected") === null) return;
-  // Orphan rows have no data-color and only respond to the × button above.
-  if (!pill.hasAttribute("data-color")) return;
-  var nowSel = pill.getAttribute("data-selected") !== "1";
-  pill.setAttribute("data-selected", nowSel ? "1" : "0");
-  pill.classList.toggle("hue-strong", nowSel);
-  pill.classList.toggle("hue-off", !nowSel);
-});
-
-function collectRegionPicker(idPrefix) {
-  var picker = document.getElementById(idPrefix);
-  if (!picker) return [];
-  var out = [];
-  picker.querySelectorAll(".region-chip[data-selected='1']").forEach(function (c) {
-    out.push(c.getAttribute("data-region"));
-  });
-  return out;
-}
-
 // ─── Tag picker (registry catalogue + free-form additions) ───────────────
 // Parallel dimension to region tags, and the same interaction: every tag in
 // the registry renders as a toggleable pill in its own color, click selects.
@@ -2185,11 +2108,9 @@ function collectRegionPicker(idPrefix) {
 // assignment alone. Used in the role slide-over, the per-user tag modal, and
 // the Group Mappings slide-over.
 
-// The one category the tag registry refuses hand-created rows in: every tag in
-// it is minted by a Device Map region save (REGION_TAG_CATEGORY in
-// mapRegionService, which is the authority). Mirrored here so the Category box
-// never suggests it.
-var REGION_TAG_CATEGORY = "Map Regions";
+// REGION_TAG_CATEGORY (the one category the registry refuses hand-created
+// rows in; mapRegionService is the authority) comes from app.js, which loads
+// first on this page. It used to be re-declared here as well.
 
 // Catalogue state. Loaded once per page load by loadTagList().
 var _tagList = [];              // registry tag names, category-then-name order
@@ -2274,8 +2195,8 @@ function otherTagsPickerHtml(idPrefix, selected) {
   // Assignments the registry doesn't carry stay as removable chips above the
   // grid — the assignment is real whether or not a Tag row backs it. With no
   // catalogue nothing can be judged unregistered, so every assignment lands
-  // in that row and the note says why: the same distinction regionPickerHtml
-  // draws between "not in the map" and "could not read the map".
+  // in that row and the note says why ("not in the registry" and "could not
+  // read the registry" are different claims).
   var unregistered = _tagCatalogLoaded
     ? sel.filter(function (n) { return !_tagByName[String(n).toLowerCase()]; })
     : sel.slice();

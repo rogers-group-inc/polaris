@@ -25,7 +25,7 @@
  *     automation severity tier the readings cross, else green.
  */
 
-export const SDWAN_TERM_SEPARATOR = "|";
+const SDWAN_TERM_SEPARATOR = "|";
 
 /** The terms of an SD-WAN dimension filter value — split on "|", trimmed,
  *  blanks dropped. An unset / blank value is no terms (= matches everything). */

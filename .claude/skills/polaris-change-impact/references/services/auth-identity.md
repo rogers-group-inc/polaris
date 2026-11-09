@@ -43,7 +43,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Azure AD (Entra) SAML 2.0 SSO configuration, SAML response validation, user provisioning on first login.
 
-**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfigured, isAzureSsoConfiguredAsync, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
+**Public API:** getSsoSettings, updateSsoSettings, isAzureSsoConfiguredAsync, getSamlLoginUrl, validateSamlResponse, getSamlLogoutUrl, findOrProvisionSamlUser, SsoSettings.
 
 **Cross-service deps:** None (SAML + database; no service-to-service calls).
 
@@ -445,7 +445,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** CRUD over the `Role` table for the dynamic-role RBAC model — enforces protected/built-in/custom invariants, normalizes the permission matrix + tags, emits `role.*` Events, and bumps the role-version cache so live sessions refresh.
 
-**Public API:** `RoleSummary`, `CreateRoleInput`, `UpdateRoleInput`, `listRoles`, `getRole`, `getRoleByName`, `createRole`, `updateRole`, `deleteRole`, `countAdminEquivalentUsers`, `isAdminEquivalentRole`
+**Public API:** `RoleSummary`, `CreateRoleInput`, `UpdateRoleInput`, `listRoles`, `getRole`, `createRole`, `updateRole`, `deleteRole`, `countAdminEquivalentUsers`, `isAdminEquivalentRole`
 
 **Cross-service deps:** `prisma`, `AppError`, `logEvent`, `tagNormalize`, `bumpRoleVersion` + `normalizePermissions` + `FUNCTION_KEYS` (permissions middleware).
 
@@ -475,6 +475,39 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A new table whose rows `assertOwnership` guards by `createdBy` MUST join the transaction here, or a re-used username inherits its rows.
 - A new way to create or rename a local account must call `assertUsernameNotReserved`. SSO / LDAP provisioning cannot produce `:` (USERNAME_SAFE_RE).
+## services/accountSelfService.ts
+
+**What it owns:** A signed-in user managing their OWN account — the self-service half of `src/api/routes/auth.ts`, extracted 2026-11-06 (CQ-B044): changing a local password (business rule 61), TOTP enrol / confirm / self-disable / status, and the passkey-registration password step-up (business rule 108). Every User read and write those routes made, and every check that decides their outcome.
+
+**Public API:** `changeOwnPassword(userId, current, next)`, `startTotpEnrollment(userId)`, `confirmTotpEnrollment(userId, code)`, `disableOwnTotp(userId, code, isBackupCode)`, `getTotpStatus(userId)`, `getOwnAuthProvider(userId)`, `verifyPasskeyStepUp(userId, currentPassword, ip)`, `findPasskeyRegistrant(userId)`.
+
+**Cross-service deps:** totpService (secret, QR, code step, backup codes), totpStepService (`claimTotpStep` — single-use codes), passwordPolicyService (`assertPasswordMeetsPolicy`), `utils/password.ts`, `utils/loginLockout.ts`, `utils/secretBox.ts`, eventLogService.
+
+**Used by:** `src/api/routes/auth.ts` — PUT /password, POST /totp/enroll, POST /totp/confirm, DELETE /totp, GET /totp/status, GET /passkeys, POST /passkeys/register/options, POST /passkeys/register.
+
+**Invariants:**
+- `User.totpSecret` is a scalar column outside db.ts's JSON-blob seal extension: `startTotpEnrollment` seals it, confirm / disable open it (the login challenge in auth.ts opens it too).
+- Request-bound work stays in the ROUTE: rotating the session, revoking the other sessions and clearing the lockout + pending MFA after a password change, `req.session.mfaVerified = true` after confirm, and the success Events (`user.password_changed`, `auth.totp.enrolled`, `auth.totp.disabled`, `user.passkey_registered`) that carry `req.ip`. The one Event this service writes is the step-up failure, because it is part of the check.
+- A self-disable needs a code that claims its TOTP step (single use) or a valid backup code — a stolen session cannot drop MFA.
+
+**When changing this:** the admin-side counterparts (reset another user's password / TOTP) live in routes/users.ts and are NOT this service; the login flows' User reads and writes are `services/loginUserService.ts` (CQ-B044 part 3).
+
+## services/loginUserService.ts
+
+**What it owns:** The User reads and writes of the sign-in flows — password step, TOTP step, passkey sign-in, passkey second factor, forced password change — and `/auth/me`, extracted from `src/api/routes/auth.ts` (CQ-B044 part 3, 2026-11-06). Data access plus ONE decision: the first-login role-review stamp, which the password step and the passkey sign-in each spelled out before.
+
+**Public API:** `findUserWithRoleByUsername(username)`, `findUserWithRoleById(id)`, `recordSuccessfulLogin(user, { stampFirstLogin?, rehashPassword?, remainingBackupCodes? })`, `setPasswordHash(userId, newPassword)`.
+
+**Cross-service deps:** `utils/password.ts` (`hashPassword`).
+
+**Used by:** `src/api/routes/auth.ts` — POST /login, /login/totp, /passkeys/login (passkey sign-in), /login/passkey (passkey second factor), /login/password-change, GET /me.
+
+**Invariants:**
+- Only the FIRST step of a sign-in passes `stampFirstLogin` (the password step, a passkey sign-in): the stamp is `lastLogin === null`, and the second-factor step runs after that write has already set it. Admins are never stamped.
+- Everything request-bound stays in the ROUTE and in its original order: session regeneration, the pending-MFA token consume (a forced change consumes only AFTER the write lands, so a failed write leaves a retryable token), the lockout counter (cleared only when no second factor is owed, or by the second factor), and the passkey ceremony.
+
+**When changing this:** a new sign-in path calls `recordSuccessfulLogin` — never a raw `lastLogin` write — and decides deliberately whether it is a first step.
+
 ## services/totpService.ts
 
 **What it owns:** RFC 6238 TOTP secret generation, enrollment QR codes, time-windowed code verification (±30s), and argon2id-hashed backup code generation and consumption.

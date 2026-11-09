@@ -19,6 +19,7 @@ import { severityCss } from "./severityStyle.js";
 import { assetOpenPath } from "./assetOpenLink.js";
 import { daysUntilFull } from "./linearTrend.js";
 import type { ForecastLevel } from "../services/notificationTypes.js";
+import { publicBaseUrl } from "./publicUrl.js";
 
 /** A severity as a level's name — "serious" → "Serious". */
 function levelName(severity: string): string {
@@ -71,7 +72,7 @@ export const TEMPLATE_VARIABLE_SECTIONS = [
   { key: "escalation", label: "Reminders & escalation" },
   { key: "email", label: "Email furniture" },
 ] as const;
-export type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number]["key"];
+type TemplateVariableSection = (typeof TEMPLATE_VARIABLE_SECTIONS)[number]["key"];
 
 /**
  * Which triggers can give a token a value — answered per trigger by
@@ -100,7 +101,7 @@ export type TemplateVariableScope =
  *   reminder    only on a reminder
  *   update      only on a grouped alert's [UPDATED] send
  */
-export type TemplateVariableSentOn = "delivery" | "escalation" | "reminder" | "update";
+type TemplateVariableSentOn = "delivery" | "escalation" | "reminder" | "update";
 
 export interface TemplateVariable {
   token: string;
@@ -347,7 +348,7 @@ function dependencyReasonPhrase(reason: DependencyTemplateParts["reason"]): stri
 }
 
 /** The `{dependency.summary}` sentence — the whole notice, or nothing. */
-export function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
+function dependencySummarySentence(asset: string, d: DependencyTemplateParts | null | undefined): string {
   if (!d) return "";
   const who = asset || "The device";
   if (!d.upstream) return `DEPENDENCY DOWN — ${who} is unreachable because a device above it is down`;
@@ -375,7 +376,7 @@ export function dependencyTriggerSummary(d: DependencyTemplateParts | null | und
  * this rather than replacing their words — and it must be the MESSAGE that
  * carries it, because push, Slack, Teams and Pushbullet send nothing else.
  */
-export function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
+function dependencyHeadline(d: DependencyTemplateParts | null | undefined): string {
   if (!d) return "";
   const s = dependencyTriggerSummary(d);
   return "DEPENDENCY DOWN" + s.slice("Dependency down".length);
@@ -957,9 +958,9 @@ export function templateNeedsAsset(templates: Array<string | null | undefined>):
  *  (null when POLARIS_PUBLIC_URL is unset). Renamed page; the server keeps a
  *  permanent /notifications.html redirect for links already delivered. */
 export function notificationsPageUrl(): string | null {
-  const base = process.env.POLARIS_PUBLIC_URL;
+  const base = publicBaseUrl();
   if (!base) return null;
-  return `${base.replace(/\/$/, "")}/automations.html`;
+  return `${base}/automations.html`;
 }
 
 /**
@@ -969,9 +970,9 @@ export function notificationsPageUrl(): string | null {
  * Null when POLARIS_PUBLIC_URL is unset (a relative URL is useless in mail).
  */
 export function assetPageUrl(assetId: string | null | undefined): string | null {
-  const base = process.env.POLARIS_PUBLIC_URL;
+  const base = publicBaseUrl();
   if (!base || !assetId) return null;
-  return `${base.replace(/\/$/, "")}${assetPath(assetId)}`;
+  return `${base}${assetPath(assetId)}`;
 }
 
 /** The acknowledge page's path for ONE alert. Shared by both callers below. */
@@ -991,9 +992,9 @@ function ackPath(notificationId: string): string {
  * fanning the send out one message per person (business rule 25).
  */
 export function ackUrlForEmail(notificationId: string): string | null {
-  const base = process.env.POLARIS_PUBLIC_URL;
+  const base = publicBaseUrl();
   if (!base) return null;
-  return `${base.replace(/\/$/, "")}${ackPath(notificationId)}`;
+  return `${base}${ackPath(notificationId)}`;
 }
 
 /**
@@ -1003,9 +1004,9 @@ export function ackUrlForEmail(notificationId: string): string | null {
  * public URL.
  */
 export function ackUrlForPush(notificationId: string): string {
-  const base = process.env.POLARIS_PUBLIC_URL;
+  const base = publicBaseUrl();
   const path = ackPath(notificationId);
-  return base ? `${base.replace(/\/$/, "")}${path}` : path;
+  return base ? `${base}${path}` : path;
 }
 
 /**
@@ -1051,9 +1052,9 @@ function assetPath(assetId: string): string {
  */
 export function assetUrlForPush(assetId: string | null | undefined): string | null {
   if (!assetId) return null;
-  const base = process.env.POLARIS_PUBLIC_URL;
+  const base = publicBaseUrl();
   const path = assetPath(assetId);
-  return base ? `${base.replace(/\/$/, "")}${path}` : path;
+  return base ? `${base}${path}` : path;
 }
 
 const ACK_TOKEN_RE = /\{ack\}/g;
@@ -1096,8 +1097,8 @@ export function normalizePushSurface(value: unknown): PushSurface {
  */
 export function pushDeepLinkUrl(surface: unknown): string {
   const path = PUSH_DEEP_LINK_PATHS[normalizePushSurface(surface)];
-  const base = process.env.POLARIS_PUBLIC_URL;
-  return base ? `${base.replace(/\/$/, "")}${path}` : path;
+  const base = publicBaseUrl();
+  return base ? `${base}${path}` : path;
 }
 
 /** "92m" → "1h 32m"-style elapsed formatting for {escalation.elapsed}. */

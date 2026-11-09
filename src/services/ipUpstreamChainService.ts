@@ -92,7 +92,7 @@ import {
  *  answering (offline gate, switch dropped from monitoring) — not that the
  *  device is still there. Generous because discovery cadence is the
  *  integration's pollInterval, which operators set to hours. */
-export const EVIDENCE_FRESH_MS = 24 * 60 * 60 * 1000;
+const EVIDENCE_FRESH_MS = 24 * 60 * 60 * 1000;
 
 /** Rows per IN clause. */
 const IN_CHUNK = 500;
@@ -110,7 +110,7 @@ const ACTOR = "system:upstream-chain";
 /** Source tag on the `AssetMacAddress` row written when a MAC is adopted, so
  *  the side table says the MAC came from a gate's ARP cache rather than from
  *  the device itself. NOT a hardware source — see `isHardwareMacSource`. */
-export const ADOPTED_MAC_SOURCE = "ip-upstream-arp";
+const ADOPTED_MAC_SOURCE = "ip-upstream-arp";
 
 /** Side-table writes issued in parallel per batch (two round-trips each). */
 const MAC_ROW_CONCURRENCY = 25;
@@ -147,7 +147,7 @@ export interface FdbRowLite {
   lastSeen: Date;
 }
 
-export interface StationRowLite {
+interface StationRowLite {
   apAssetId: string;
   staMacAddr: string;
   staIpAddr: string | null;
@@ -314,7 +314,7 @@ export function stampChanged(prev: string | null | undefined, next: string): boo
 // ─── The sweep ───────────────────────────────────────────────────────────────
 
 /** Every network-present asset with an address and no MAC. */
-export async function loadMaclessClaims(): Promise<MaclessClaimRow[]> {
+async function loadMaclessClaims(): Promise<MaclessClaimRow[]> {
   return prisma.$queryRaw<MaclessClaimRow[]>`
     SELECT a.id, a.hostname, a."ipAddress" AS ip, a."ipSource", a."ipOverride",
            a."lastSeen", h."lastSeen" AS "ipLastSeen",

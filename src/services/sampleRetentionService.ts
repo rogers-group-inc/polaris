@@ -198,7 +198,7 @@ export type FlatRetentionEntity = "appMapConnections" | "arpEntries" | "pathChec
 
 export const FLAT_RETENTION_ENTITIES: FlatRetentionEntity[] = ["appMapConnections", "arpEntries", "pathCheckTraceroutes"];
 
-export interface FlatRetention {
+interface FlatRetention {
   days: number;
 }
 
@@ -397,9 +397,4 @@ export async function getAppMapConnectionRetentionDays(): Promise<number> {
  */
 export async function getArpEntryRetentionDays(): Promise<number> {
   return (await getSampleRetention()).arpEntries.days;
-}
-
-/** Configured window (days) for path-check traceroute snapshots. */
-export async function getPathCheckTracerouteRetentionDays(): Promise<number> {
-  return (await getSampleRetention()).pathCheckTraceroutes.days;
 }

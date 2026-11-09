@@ -826,7 +826,6 @@ function _buildClient(base: PrismaClient) {
           const createdSrc = typeof args?.data?.ipSource === "string" ? args.data.ipSource : "manual";
           releaseAddressOnDecommission(args?.data);
           const result = await query(args);
-          const d = args.data as Record<string, unknown> | undefined;
           const ip = createdIp ?? undefined;
           if (ip) {
             recordIpHistory(base, (result as any).id, ip, createdSrc);

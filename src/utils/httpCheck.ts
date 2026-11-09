@@ -61,7 +61,7 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_EXCERPT_CHARS = 4 * 1024;
 
 /** How `expectBody` is compared against the response body. */
-export type HttpMatchMode = "contains" | "regex";
+type HttpMatchMode = "contains" | "regex";
 
 /**
  * The AUTHENTICATION half — what an `http`-typed Credential stores, and all it
@@ -158,7 +158,7 @@ export const HTTP_CREDENTIAL_AUTH_MODES: readonly HttpAuthMode[] = ["bearer", "b
  * declines to use it), instead of inferring Basic from the username/password
  * pair it happens to carry.
  */
-export const HTTP_AUTH_MODES: readonly HttpAuthMode[] = ["none", "bearer", "basic", "digest", "form"];
+const HTTP_AUTH_MODES: readonly HttpAuthMode[] = ["none", "bearer", "basic", "digest", "form"];
 
 /** True for the device-admin-login mode that only the firmware repository may use. */
 export function isDeviceLoginCredential(config: HttpAuthConfig | null | undefined): boolean {

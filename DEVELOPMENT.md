@@ -267,6 +267,34 @@ hostnames, serials, addresses and (once GAL directory sync has run) employee nam
 be published along with the image. The script header lists the pages it does not yet cover
 and what each would need.
 
+### Frontend smoke test in a real browser
+
+Unit tests run `public/js` in happy-dom, which cannot see a script that throws on one page, a
+load-order mistake, a failed request, or a theme engine that will not move.
+`scripts/smoke-frontend.mjs` drives the same seeded stack with real Chrome and fails on any
+of them. Run it after a frontend refactor, before the updater takes it to production:
+
+```bash
+npm install --no-save playwright
+node scripts/smoke-frontend.mjs --base http://127.0.0.1:3000 \
+     --dash http://127.0.0.1:3001 --out audit-reports/smoke
+```
+
+It signs in once and reuses the session (a login per page trips the login rate limiter),
+finds the desktop pages by scanning `public/*.html` for the ones that load `app.js`, and
+checks every one for errors and failed requests. It then exercises:
+
+- the theme band on desktop, wallboard and phone;
+- the slide-overs' Escape and the asset panel's on-demand bundle;
+- the phone's asset sheet.
+
+Every check is printed and written to `<out>/report.json`, with a screenshot per step. It
+exits 1 on any failure.
+
+The wallboard section needs the Dash wallboard enabled (Server Settings → Web Server), or
+pass `--no-dash`. Like the screenshot script it uses the local Chrome, so `playwright install`
+is not needed.
+
 ### Mock switches, access points and a FortiGate for the firmware repository
 
 Server Settings → Repository and the asset Firmware card (business rule 87) can be driven

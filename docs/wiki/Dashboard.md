@@ -114,7 +114,7 @@ imported tab is not linked to anything: it is yours to change.
 | **Active Alerts** | alerts your automations have raised from a reading or a state change and nothing has cleared, most severe first — **with Acknowledge and Clear in place** |
 | **Event Alerts** | the same, for alerts raised by **event-triggered** automations — an agent disconnecting, a failed sync, a discovery error. These used to share Active Alerts behind a Show / Hide setting; add this widget wherever you want them |
 | **Down Assets** | monitored assets currently down, newest outages first, grouped by site or division. Dependency-down assets are excluded unless the gear says otherwise. An outage whose alert has been acknowledged stays listed but is greyed out, with an **ack** pill naming who took it, so unowned outages stand out. Hover the pill to read the acknowledgement note |
-| **Sites With Issues** | sites with assets down or in warning, worst first; expand for the nodes |
+| **Sites With Issues** | sites where an asset carries an active alert, worst alert severity first, with a count per severity; expand for the alerted nodes. A missed poll alone does not list a site |
 | **Asset Types** | breakdown of monitored assets by type; click a slice to drill into the matching asset list |
 
 ### Performance
@@ -282,6 +282,14 @@ The filters combine: a widget narrowed by region *and* type shows what matches
 both.
 
 ## Reading the widgets correctly
+
+**Widgets refresh on their own while you look, and pause while you don't.**
+Each widget re-reads on a cadence set by how fast its subject moves: every
+10 seconds (a running discovery), 30 seconds (outages, alerts) or a minute
+(rankings, forecasts, maps). A dashboard in a background browser tab, a
+minimised window or a wallboard whose screen went to sleep stops asking the
+server; when it comes back into view, every widget that missed a refresh
+re-reads at once, so what you see is never older than one interval.
 
 **"Monitored" means monitored.** Nearly every widget counts only assets with
 `monitored = true`. A device you stopped polling drops out of these counts —

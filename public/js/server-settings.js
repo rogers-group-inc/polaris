@@ -1564,11 +1564,6 @@ function _capacityUnlistedRow(label, bytes, hint) {
     '</tr>';
 }
 
-function _capacityFormatPct(num, denom) {
-  if (denom == null || denom <= 0) return "—";
-  return Math.round((num / denom) * 100) + "%";
-}
-
 function _capacitySeverityLabel(s) {
   // Accept both the new vocabulary (critical/warning/watch/ok) and the
   // legacy color names (red/amber) so a stale snapshot returned from an
@@ -5148,25 +5143,12 @@ function renderIdentificationTab() {
         html += '<p style="font-size:0.82rem;color:var(--color-text-tertiary);font-style:italic;margin:0.25rem 0 0">No tags — category will be removed on save</p>';
       } else {
         html += '<div class="tag-chip-list">';
-        tags.forEach(function (t) {
-          // .hue-pill (styles.css) draws the chip from `--hue` alone and keeps
-          // the label legible whatever colour the operator picked.
-          var hueStyle = tagHueStyle(t.color);
-          var colorStyle = hueStyle ? ' style="' + hueStyle + '"' : '';
-          // Either filter shape counts — a tag written before the condition-tree
-          // cutover still auto-assigns through the folded-forward flat blob.
-          var managed = !!(t.assetCondition || (t.criteria && t.criteria.rules && t.criteria.rules.length));
-          var autoMark = managed
-            ? '<span title="Auto-assigned by filter" style="margin-right:4px">&#9881;</span>'
-            : '';
-          html += '<span class="tag-chip' + (hueStyle ? ' hue-pill hue-strong' : '') + '"' + colorStyle + '>' +
-            autoMark +
-            escapeHtml(t.name) +
-            (isAdmin() ? '<button class="tag-chip-edit" data-tag-id="' + t.id + '" title="Edit" style="margin-left:4px;background:none;border:none;color:inherit;cursor:pointer;font-size:0.75rem;opacity:0.7;padding:0">&#9998;</button>' : '') +
-            // Business rule 136: a built-in Priority tag is never deleted.
-            (isAdmin() && !t.builtIn ? '<button class="tag-chip-delete" data-tag-id="' + t.id + '" title="Delete">&times;</button>' : '') +
-          '</span>';
-        });
+          // ONE chip renderer: _tagRegistryChipHTML (azure: rows read-only, the
+          // Tags key gates the verbs, built-ins keep Delete off, and the chip
+          // opens the assets slide-in). A merge on 2026-10-16 put an inline
+          // copy back here that had none of that; tagRegistryChipDom.test.ts
+          // now fails if the markup is ever written twice again.
+          tags.forEach(function (t) { html += _tagRegistryChipHTML(t, canOpenTagAssets); });
         html += '</div>';
       }
       html += '</div>';
@@ -8000,26 +7982,15 @@ var _tagAssetsCurrent = null;
 
 function _ensureTagAssetsPanelDOM() {
   if (document.getElementById("tag-assets-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "tag-assets-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="tag-assets-panel" role="dialog" aria-labelledby="tag-assets-title" tabindex="-1">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="tag-assets-title">Tag</h3>' +
-          '<button class="btn-icon" id="tag-assets-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="tag-assets-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="tag-assets-body"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeTagAssetsPanel(); });
-  document.getElementById("tag-assets-close").addEventListener("click", closeTagAssetsPanel);
-  wireSlideoverEscape(overlay, closeTagAssetsPanel);
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+  buildSlideover({
+    id: "tag-assets-panel",
+    prefix: "tag-assets",
+    dialog: true,
+    title: "Tag",
+    close: closeTagAssetsPanel,
+    resizeKey: "polaris.panel.width.tagassets",
+  });
 
   var body = document.getElementById("tag-assets-body");
   var openRow = function (row) {
@@ -8040,10 +8011,6 @@ function _ensureTagAssetsPanelDOM() {
     var row = e.target.closest ? e.target.closest("[data-asset-id]") : null;
     if (row) { e.preventDefault(); openRow(row); }
   });
-
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("tag-assets-panel"), "polaris.panel.width.tagassets");
-  }
 }
 
 function closeTagAssetsPanel() {
@@ -8165,28 +8132,17 @@ var _credUsageReturnFocus = null;
 
 function _ensureCredUsagePanelDOM() {
   if (document.getElementById("cred-usage-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "cred-usage-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="cred-usage-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="cred-usage-title">Credential usage</h3>' +
-          '<button class="btn-icon" id="cred-usage-close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="cred-usage-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="cred-usage-body"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) { if (e.target === overlay) closeCredUsagePanel(); });
-  document.getElementById("cred-usage-close").addEventListener("click", closeCredUsagePanel);
-  // Escape only when this panel is topmost — the asset panel a row opens
-  // stacks over it (wireSlideoverEscape / isTopmostSlideover, app.js).
-  wireSlideoverEscape(overlay, closeCredUsagePanel);
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Escape only when this panel is topmost — the asset panel a row
+  // opens stacks over it.
+  buildSlideover({
+    id: "cred-usage-panel",
+    prefix: "cred-usage",
+    title: "Credential usage",
+    closeTitle: null,
+    close: closeCredUsagePanel,
+    resizeKey: "polaris.panel.width.credusage",
+  });
 
   // Click-through to asset details, in place over this panel: PolarisPanels
   // (app.js) loads assets.js on demand on the Server Settings page. The
@@ -8203,10 +8159,6 @@ function _ensureCredUsagePanelDOM() {
     }
     window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
   });
-
-  if (typeof initSlideoverResize === "function") {
-    initSlideoverResize(document.getElementById("cred-usage-panel"), "polaris.panel.width.credusage");
-  }
 }
 
 function closeCredUsagePanel() {

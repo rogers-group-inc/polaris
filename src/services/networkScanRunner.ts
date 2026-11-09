@@ -68,7 +68,7 @@ import {
  * "what is at this address".
  */
 export const SCAN_METHODS = ["icmp", "snmp", "restapi", "ssh", "winrm"] as const;
-export type ScanMethodType = (typeof SCAN_METHODS)[number];
+type ScanMethodType = (typeof SCAN_METHODS)[number];
 
 export interface ScanMethod {
   type: ScanMethodType;
@@ -110,9 +110,9 @@ export interface ScanHit {
  * a deliberate sweep rather than a background pass, and the liveness stage is
  * what decides whether a /16 takes 25 minutes or four hours.
  */
-export const SCAN_PING_CONCURRENCY = 64;
+const SCAN_PING_CONCURRENCY = 64;
 /** ICMP timeout. Short: a live host on a local segment answers in ms. */
-export const SCAN_PING_TIMEOUT_MS = 1500;
+const SCAN_PING_TIMEOUT_MS = 1500;
 /**
  * Echoes sent to an address before it is called silent. Two, not one: the first
  * echo to a quiet host on a ROUTED subnet is routinely lost while the gateway
@@ -172,13 +172,13 @@ export async function checkLiveness(
  * is an authentication attempt plus (for SNMP) three walks, and this is the
  * stage that shows up on an IDS.
  */
-export const SCAN_IDENTIFY_CONCURRENCY = 12;
+const SCAN_IDENTIFY_CONCURRENCY = 12;
 /** Rows per inventory walk. Bounded again by the parser's own caps. */
-export const SCAN_WALK_MAX_ROWS = 800;
+const SCAN_WALK_MAX_ROWS = 800;
 /** Hits recorded on the run row. Beyond this the operator has bigger problems. */
-export const SCAN_MAX_HITS = 2000;
+const SCAN_MAX_HITS = 2000;
 /** Minimum gap between progress UPDATEs on the run row. */
-export const SCAN_PROGRESS_FLUSH_MS = 2000;
+const SCAN_PROGRESS_FLUSH_MS = 2000;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

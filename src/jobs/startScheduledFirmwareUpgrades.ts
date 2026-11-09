@@ -16,36 +16,28 @@
 import { logger } from "../utils/logger.js";
 import { runDueSchedules } from "../services/firmwareScheduleService.js";
 import { runDueGroupSchedules } from "../services/firmwareGroupService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000;
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return; // a slow SMTP send on a refusal must not stack ticks
-  running = true;
-  try {
-    await runInstrumentedJob("startScheduledFirmwareUpgrades", async () => {
-      const res = await runDueSchedules();
-      if (res.started + res.refused + res.missed > 0) {
-        logger.info(res, "scheduled firmware upgrades fired");
-      }
-      // Group upgrades (rule 122): start due groups, then advance every
-      // running one. A member's run ending also advances its group at once;
-      // this tick is what retries a waiting member and survives a restart.
-      const groups = await runDueGroupSchedules();
-      if (groups.started + groups.missed > 0) {
-        logger.info(groups, "group firmware upgrades fired");
-      }
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "startScheduledFirmwareUpgrades job failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
 
 // Boot delay: after the DB is ready and after failOrphanedFirmwareRuns has
 // swept the runs a restart left behind (it runs once at boot, on this role).
-setTimeout(tick, 45_000);
-setInterval(tick, INTERVAL_MS);
+// defineJob's overlap skip keeps a slow SMTP send on a refusal from stacking ticks.
+defineJob({
+  name: "startScheduledFirmwareUpgrades",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 45_000,
+  run: async () => {
+    const res = await runDueSchedules();
+    if (res.started + res.refused + res.missed > 0) {
+      logger.info(res, "scheduled firmware upgrades fired");
+    }
+    // Group upgrades (rule 122): start due groups, then advance every
+    // running one. A member's run ending also advances its group at once;
+    // this tick is what retries a waiting member and survives a restart.
+    const groups = await runDueGroupSchedules();
+    if (groups.started + groups.missed > 0) {
+      logger.info(groups, "group firmware upgrades fired");
+    }
+  },
+});

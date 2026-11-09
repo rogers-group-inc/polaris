@@ -424,6 +424,13 @@ Pin from the asset's own tabs, from an integration's auto-monitor pass
 Samples land in TimescaleDB hypertables and are rolled up hourly and daily.
 Retention is tiered and configured at **Server Settings → Retention**.
 
+Each hourly and daily summary covers exactly one clock hour or one UTC day. It
+keeps the average, minimum and maximum of a reading (counters keep their first
+and last values, from which throughput is worked out), plus each CPU core's
+average and peak and each monitored interface's peak throughput between two
+polls. A chart on a range that reads these summaries draws the average as its
+line and the peak as a dashed max line ([Assets → System](Assets#system)).
+
 Prune is by `drop_chunks`, never by row delete — sample tables carry **no
 foreign key to Asset** and are never row-updated where a row could sit in a
 compressed chunk. That is why deleting an asset does not cascade into its

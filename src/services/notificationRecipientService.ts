@@ -377,7 +377,7 @@ export async function listRecipientUsers(): Promise<{ id: string; username: stri
  * deduped, lower-cased address list. Shared by the rule-level cc/bcc and the
  * escalation sweep's tier recipients.
  */
-export async function resolveEmailRecipients(r: EmailRecipients | null | undefined): Promise<string[]> {
+async function resolveEmailRecipients(r: EmailRecipients | null | undefined): Promise<string[]> {
   if (!r) return [];
   const out = new Set<string>();
   for (const a of r.addresses ?? []) if (a.trim()) out.add(a.trim().toLowerCase());
@@ -437,7 +437,7 @@ export function dedupeEmailRecipients(to: string[], cc: string[], bcc: string[])
  * or tag a person. Shared by the notify expander and the reboot action's
  * results recipients, so the two cannot disagree about who "L1" is.
  */
-export async function usersAtDeviceRegionLevels(
+async function usersAtDeviceRegionLevels(
   assetRegionTags: string[],
   levels: number[],
   index: RegionLevelIndex,
@@ -548,7 +548,7 @@ export async function resolveRebootActionRecipients(
  * then contacts. Re-setting an existing key keeps its original position, so a
  * composed email's To line reads exactly as it did before.
  */
-export function buildAddressOwnerMap(
+function buildAddressOwnerMap(
   users: RecipientUser[],
   typed: string[] | undefined,
   contacts: string[] | undefined,

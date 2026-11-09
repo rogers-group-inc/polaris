@@ -37,7 +37,13 @@
 
   // SolarWinds status palette. "maint" matches the assets-page purple
   // maintenance pill (rgba(149,117,205) base).
-  var COLOR = { up: "#00c853", degraded: "#ffd600", down: "#ff1744", unknown: "#757575", dep: "#607d8b", maint: "#9575cd" };
+  // The SAME health palette as the Site Map page's pins (map.css .fg-marker)
+  // and the Device Map's nodes: api.js POLARIS_HEALTH_COLORS, loaded first on
+  // both pages that host this widget (index.html, dash.html). A state reads the
+  // same colour on every map (operator decision 2026-11-05 — the widget used to
+  // paint brighter #00c853 / #ffd600 / #ff1744 pins than the page).
+  var HP = window.POLARIS_HEALTH_COLORS;
+  var COLOR = { up: HP.up, degraded: HP.degraded, down: HP.down, unknown: HP.unmonitored, dep: HP.depDown, maint: HP.maintenance };
 
   function healthKey(site) {
     // A maintenance window is planned downtime: the scheduler pauses polling
@@ -203,7 +209,7 @@
           var line = document.createElementNS(SVGNS, "line");
           line.setAttribute("x1", p.x); line.setAttribute("y1", p.y);
           line.setAttribute("x2", tx); line.setAttribute("y2", ty);
-          line.setAttribute("stroke", "#ff1744");
+          line.setAttribute("stroke", COLOR.down);
           line.setAttribute("stroke-width", "1.5");
           line.setAttribute("stroke-dasharray", "3 3");
           line.setAttribute("opacity", m._acked ? "0.35" : "0.9");
@@ -723,15 +729,13 @@
       });
       ro.observe(el);
 
-      var siteTimer = setInterval(function () {
-        // A backgrounded window has nobody watching the map; the shared memo
-        // already collapses concurrent instances into one request.
-        if (document.hidden) return;
+      PolarisWidgets.pollVisible(ctx, function () {
+        // pollVisible skips a hidden tab; the shared memo collapses concurrent
+        // instances into one request.
         PolarisWidgets.getMapSites(PolarisWidgets.regionNamesForConfig(config)).then(function (sites) { buildMarkers(sites); }).catch(function () {});
       }, PolarisWidgets.REFRESH.slow);
 
       ctx.onUnmount(function () {
-        clearInterval(siteTimer);
         clearTimeout(tempTimer); clearTimeout(radarTimer); clearTimeout(radarAnimTimer);
         document.removeEventListener("keydown", onKeydown);
         try { ro.disconnect(); } catch (_) {}

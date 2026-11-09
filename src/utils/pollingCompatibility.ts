@@ -280,7 +280,7 @@ export function isPollingMethodCompatible(source: AssetSourceKind, method: Polli
  * STREAM_METHODS entries so the unrestricted streams keep allowing every other
  * method.)
  */
-export const VCENTER_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
+const VCENTER_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
   "responseTime", "cpuMemory", "interfaces", "storage",
 ]);
 
@@ -295,7 +295,7 @@ export const VCENTER_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
  * So the method answers exactly one question, "does FMG still see this chassis",
  * and is scoped to the one stream that asks it.
  */
-export const FORTIMANAGER_STREAMS: ReadonlySet<Stream> = new Set<Stream>(["responseTime"]);
+const FORTIMANAGER_STREAMS: ReadonlySet<Stream> = new Set<Stream>(["responseTime"]);
 
 /**
  * Streams the "unraid" / "truenas" methods can serve: vCenter's four plus
@@ -306,7 +306,7 @@ export const FORTIMANAGER_STREAMS: ReadonlySet<Stream> = new Set<Stream>(["respo
  * VM has no temperature) — a stream it cannot answer for a class simply comes
  * back empty, as vCenter's do.
  */
-export const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
+const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
   "responseTime", "cpuMemory", "interfaces", "storage", "temperature",
 ]);
 
@@ -316,7 +316,7 @@ export const WORKLOAD_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
  * per-disk SMART read, and nothing else is exposed), so there is no
  * temperature stream.
  */
-export const PROXMOX_STREAMS: ReadonlySet<Stream> = VCENTER_STREAMS;
+const PROXMOX_STREAMS: ReadonlySet<Stream> = VCENTER_STREAMS;
 
 /**
  * Streams the "genericapi" method can serve — every one a monitor query can
@@ -324,7 +324,7 @@ export const PROXMOX_STREAMS: ReadonlySet<Stream> = VCENTER_STREAMS;
  * the same AssetLldpNeighbor rows SNMP and FortiOS write (source "genericapi").
  * Processes and the event log are not mappable from a feed.
  */
-export const GENERICAPI_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
+const GENERICAPI_STREAMS: ReadonlySet<Stream> = new Set<Stream>([
   "responseTime", "cpuMemory", "interfaces", "storage", "temperature", "lldp",
 ]);
 

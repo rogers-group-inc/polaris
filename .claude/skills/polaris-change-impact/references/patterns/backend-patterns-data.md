@@ -46,7 +46,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns. Copy the canonical's sh
 - **A leaf half attaches with ONE parent, and that's a semantic decision, not a simplification.** The multi-parent rule here is all-down, which models REDUNDANT parents (a dual-homed switch). Series relationships — an endpoint under an access switch under a gate — must NOT be expressed by listing both: "some parent is ok" would then be satisfied by the healthy gate while the switch the device actually hangs off is dead. Resolve the most-specific parent only and let the chain do the rest (the switch is itself suppressed by its gate). Whenever you add a signal to such a half, it takes a place in the precedence ladder rather than becoming a co-parent.
 - **Override resolution at read time.** When loading effective parents, "if any override row exists for an asset, use the override set; else use the computed set." Empty override set = explicit "no parents" pin. Read-time resolution avoids any write coupling between operator edits and discovery cycles.
 - **Reconciler is the source of truth for runtime state; event hook is a latency optimization.** The 60s `reconcileDependencySuppression()` walks every monitored asset in BFS layer order, computes desired suppression under the domain rule (here: all-down multi-parent), writes only diffs. The event hook (`propagateAfterStatusChange`) calls the same reconciler on every probe-result transition for sub-second propagation, but correctness never depends on it firing — server restart mid-transition / race / dropped event are all caught by the next periodic tick.
-- **Discovery hook runs at the END of the discovery function**, after all asset writes and projection-apply phases — not interleaved. Gated on `mode in {full, finalize}` so per-device skip-deprecation passes don't trigger partial recomputes.
+- **Discovery hook runs at the END of the discovery function**, after all asset writes and projection-apply phases — not interleaved. Gated on `finalizePhasesEnabled(mode)` (`full` / `finalize` / `finalize-scoped` — a scoped Discover Now recomputes too, business rule 142) so per-device skip-deprecation passes don't trigger partial recomputes.
 - **One-shot startup backfill** (`backfillDependencyTree.ts`) runs `recomputeDependencyTree()` 30 s after boot so existing installs see populated rows without waiting for the next scheduled discovery cycle.
 
 **When adding a new instance:**
@@ -246,5 +246,15 @@ Docs a new table owes: an the skill references (formerly ARCHITECTURE.md) "Core 
 - Decide early whether the alerting dimension is the device or a sub-row. If it's a sub-row, give it real columns in its own table (indexed `(assetId, <probeId>, timestamp)`) rather than a JSON array on an existing sample table: the engine reads it every 60s and the builder needs a `GROUP BY` for its picker.
 - A boolean stream gets NO rollup companions — an average over 0/1 is a duty cycle, not a state. Register it in `STANDALONE_SAMPLE_TABLES` and prune it on an umbrella window (see "Tiered time-series rollups" for the tiered alternative).
 - Mirror any mode-set change into the client's label/needs-values tables (`STATE_MODE_LABELS`, `STATE_MODES_WITH_VALUES`, `_stateMapSummary` in `public/js/server-settings.js`).
+
+---
+
+## "Did this stored JSON blob change?" (compare key-order-blind)
+
+**Canonical:** `src/utils/jsonEqual.ts → jsonEqual(a, b)`. Every change-detection check on a Prisma `Json` column — skip a write when nothing moved, retire only on a real reshape, log a change set — compares through it.
+
+- **Never `JSON.stringify(a) !== JSON.stringify(b)` against a value read from the database.** A `Json` column is PostgreSQL `jsonb`, which stores object keys in its own order (shorter keys first, then bytewise): `{"field","op","value"}` comes back as `{"op","field","value"}`. The string compare then reports a change on EVERY pass — CQ-B054 (2026-11-05) found it rewriting every directory provenance row on every sync, refreshing every pending duplicate-reservation conflict every pass, and retiring a group's live alerts on unrelated saves.
+- `jsonEqual` keeps JSON semantics otherwise: arrays stay order-sensitive (a reordered list IS a change), `undefined` drops, a Date compares as its ISO string.
+- A regression test stores the blob with its keys reversed and asserts no write — `tests/unit/directorySyncRun.test.ts` ("keys reordered") is the model; it fails against the string compare.
 
 ---

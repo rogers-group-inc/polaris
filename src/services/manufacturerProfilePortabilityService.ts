@@ -46,8 +46,8 @@ import {
   type ProfileFull,
 } from "./manufacturerProfileService.js";
 
-export const PROFILE_FILE_FORMAT = "polaris.manufacturer-profile";
-export const PROFILE_FILE_VERSION = 1;
+const PROFILE_FILE_FORMAT = "polaris.manufacturer-profile";
+const PROFILE_FILE_VERSION = 1;
 
 // ─── File shape ───────────────────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ const MibRefSchema = z.object({
   manufacturer: z.string().max(200).nullable(),
   model:        z.string().max(200).nullable(),
 });
-export type MibRef = z.infer<typeof MibRefSchema>;
+type MibRef = z.infer<typeof MibRefSchema>;
 
 const RowFieldsSchema = {
   symbol:        z.string().max(200).nullable(),
@@ -142,7 +142,7 @@ const LayoutSchema = z.object({
   })).max(48),
 });
 
-export const ProfileFileSchema = z.object({
+const ProfileFileSchema = z.object({
   format:       z.literal(PROFILE_FILE_FORMAT),
   version:      z.literal(PROFILE_FILE_VERSION),
   exportedAt:   z.string().optional(),
@@ -271,9 +271,9 @@ export async function exportProfile(profileId: string, opts: { withIds?: boolean
 
 // ─── Preview ──────────────────────────────────────────────────────────────
 
-export type ImportItemKind = "settings" | "metric" | "override" | "widget" | "layout";
+type ImportItemKind = "settings" | "metric" | "override" | "widget" | "layout";
 
-export interface ImportItem {
+interface ImportItem {
   id:       string;
   kind:     ImportItemKind;
   label:    string;

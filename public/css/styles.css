@@ -432,7 +432,7 @@
    engraved sun face, the red-rust of late afternoon, the moon face, dawn gold,
    in that order and a quarter of the strip apart. Every theme's palette was
    drawn from one of those positions, so each theme OWNS its place along the
-   strip (THEME_BAND_POS in app.js) and a click travels the band to bring that
+   strip (THEME_BAND_POS in theme-core.js) and a click travels the band to bring that
    place to the centre of the window.
 
    Only a slice is in the rail: a ~1450px strip in a ~204px window, so the day
@@ -444,7 +444,7 @@
 
    Four things not to break:
    - The band travels, the window does not, and it only ever travels ONE way.
-     See _advanceThemeBands() in app.js, which keeps adding forward distance so
+     See travel() in theme-core.js, which keeps adding forward distance so
      the wrap nightfall round to morning carries on through the day instead of
      rewinding through the afternoon.
    - The track holds the art THREE times. It is anchored one strip width left
@@ -3937,13 +3937,6 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
 .sfo-warn p { margin: 0 0 0.35rem; }
 .sfo-warn p:last-child { margin: 0; }
 
-/* Variants for menus that live at the bottom or left edge of a container (the
-   asset slide-over footer's Export / SSH menus open upward): drop-up opens
-   above the button; anchor-left pins the menu to the button's left edge for
-   buttons sitting near a container's left edge. */
-.btn-dropdown-menu.drop-up { top: auto; bottom: calc(100% + 4px); }
-.btn-dropdown-menu.anchor-left { left: 0; right: auto; }
-
 /* ─── Searchable Select ───────────────────────────────────────────────────── */
 .search-select {
   position: relative;
@@ -4055,9 +4048,6 @@ html[data-page-top-curtain]:has(.folder-card)::after { display: none; }
      per-theme "this floats above the page" value. */
   box-shadow: var(--shadow-md);
 }
-/* A table that stands as a page's own card (the Users page's Users, Roles and
-   Group Mappings) lifts like the sidebar and the Server Settings card. */
-.table-wrapper.lift-card { box-shadow: var(--shadow-lift); }
 /* A page-level table outside a folder card (the Users page's three) wears the
    folder card's FROSTED glass, not the bare wrapper's tint-only fill: the
    --panel-glass-blur saturate() is what warms the rail and the folder card, so
@@ -6140,6 +6130,23 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
 }
 .addr-conf-penalty { color: var(--color-warning); font-size: 0.72rem; }
 
+/* The network chip beside the score in the IPs hover: "VLAN n" (or the CIDR
+ * when the network has no VLAN); its title names the network in full.
+ * Neutral — it is a fact about the address, not a judgement of it. */
+.addr-net-chip {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.5;
+  margin-left: 6px;
+  white-space: nowrap;
+  cursor: default;
+  color: var(--color-text-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary) 35%, transparent);
+}
+
 /* ─── Dependency Tree block (asset details General tab) ──────────────────────
  * Compact vertical tree: parents above the current asset, children below. The
  * current asset is rendered bold and unclickable; everything else is a
@@ -6335,19 +6342,6 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   padding: 0.5rem;
   box-shadow: var(--shadow-card);
 }
-.overview-grid {
-  display: grid;
-  grid-template-columns: 1fr 1.8fr;
-  gap: 12px;
-  margin-bottom: 1.5rem;
-  align-items: start;
-}
-.overview-grid-2col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  align-items: start;
-}
 .legend-item {
   display: flex;
   align-items: center;
@@ -6360,15 +6354,6 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
   height: 8px;
   border-radius: 2px;
   flex-shrink: 0;
-}
-.stacked-bar {
-  display: flex;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-.stacked-bar-segment {
-  transition: flex 0.4s ease;
 }
 .block-util-item {
   padding: 12px 0;
@@ -7642,21 +7627,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   background: rgba(2, 136, 209, 0.18) !important;
 }
 
-.subnet-name-link,
-.asset-name-link {
-  color: var(--color-accent);
-  text-decoration: none;
-  cursor: pointer;
-}
-.subnet-name-link:hover,
-.asset-name-link:hover {
-  text-decoration: underline;
-}
-.subnet-name-link strong,
-.asset-name-link strong {
-  font-weight: 600;
-  color: inherit;
-}
 .slideover-pagination {
   display: flex;
   align-items: center;
@@ -7677,19 +7647,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4.5px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
 
-/* ─── New Dashboard (2×2 card grid) ────────────────────────────────────── */
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  align-items: start;
-}
-.dashboard-card {
-  min-height: 280px;
-  display: flex;
-  flex-direction: column;
-}
-.dashboard-card > *:last-child { flex: 1; min-height: 0; }
 #monitor-alerts, #recent-reservations, #block-util {
   overflow-y: auto;
   max-height: 520px;
@@ -7850,9 +7807,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 
 /* ─── Responsive ───────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
-  .overview-grid { grid-template-columns: 1fr; }
-  .overview-grid-2col { grid-template-columns: 1fr; }
-  .dashboard-grid { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 700px) {
@@ -8948,7 +8902,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 @keyframes sitemap-pulse-ring { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(4); opacity: 0; } }
 .sitemap-pulse {
   width: 22px; height: 22px; border-radius: 50%;
-  background: #ff1744; animation: sitemap-pulse-ring 2s ease-out infinite; pointer-events: none;
+  background: #c62828; animation: sitemap-pulse-ring 2s ease-out infinite; pointer-events: none; /* POLARIS_HEALTH_COLORS.down, the pin it rings */
 }
 
 /* Home/reset-view control button under the Leaflet +/− zoom control. */
@@ -8982,7 +8936,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
    and draggable so overlapping labels can be pulled apart. The static tail is
    hidden here; a dashed leader line (.sitemap-leaders) connects it to its dot
    instead, so the connection holds even after the label is dragged aside. */
-.leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #ff1744; color: #ff6b85; pointer-events: auto; cursor: grab; }
+.leaflet-tooltip.sitemap-tip-down { background: rgba(40,8,12,0.92); border-color: #c62828; color: #ff6b85; pointer-events: auto; cursor: grab; }
 .leaflet-tooltip.sitemap-tip-down.dragging { cursor: grabbing; }
 .leaflet-tooltip.sitemap-tip-down.leaflet-tooltip-top::before { display: none; }
 /* Acknowledged outage: same label, faded (the dot drops its pulse ring). */

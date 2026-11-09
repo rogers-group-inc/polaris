@@ -284,7 +284,7 @@ export async function readProbeOutages(
 }
 
 /** Tier-explicit variant — used by callers that already picked a probe tier. */
-export async function readProbeOutagesAtTier(
+async function readProbeOutagesAtTier(
   assetId: string,
   since: Date,
   until: Date,

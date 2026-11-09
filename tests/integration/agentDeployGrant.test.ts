@@ -144,6 +144,15 @@ d("Polaris Agent deployment needs the agentDeploy key", () => {
     expect(res.status).not.toBe(403);
   });
 
+  // 2026-11-06: no agent is an ordinary answer, not an error. A 404 here put a
+  // red console line on every agent-less asset panel; api.js maps 204 → null.
+  it("GET /assets/:id/agent answers 204 with no body for an asset with no agent", async () => {
+    const s = await loginAs(assetsWriteUser);
+    const res = await s.agent.get("/api/v1/assets/" + assetId + "/agent");
+    expect(res.status).toBe(204);
+    expect(res.text ?? "").toBe("");
+  });
+
   it("integrations=write cannot turn auto-deploy ON", async () => {
     const s = await loginAs(integrationsWriteUser);
     const res = await s.agent

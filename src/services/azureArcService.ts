@@ -44,6 +44,7 @@
  * agent version, so every read of it is optional and defensive.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { AZURE_TAG_PREFIX } from "../utils/tagNormalize.js";
@@ -368,14 +369,6 @@ export function throttleDelayMs(headers: {
 }
 
 const MAX_THROTTLE_RETRIES = 3;
-
-async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return;
-  await new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-  });
-}
 
 interface ArmRequestOptions {
   // PUT is reachable ONLY from dispatchRunCommand at the bottom of this file.
@@ -1685,7 +1678,7 @@ export interface ArcSoftwareRow {
 }
 
 /** KQL: the Arc machines a workspace holds a software snapshot for. Pure. */
-export function buildArcSoftwareMachinesQuery(): string {
+function buildArcSoftwareMachinesQuery(): string {
   return [
     "ConfigurationData",
     "| where ConfigDataType == \"Software\"",

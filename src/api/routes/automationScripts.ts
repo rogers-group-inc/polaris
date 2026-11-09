@@ -20,6 +20,7 @@
  * additionally gated in the rules route.
  */
 
+import { intQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requirePermission } from "../middleware/permissions.js";
@@ -38,7 +39,7 @@ import {
   MAX_SCRIPT_TIMEOUT_SEC,
 } from "../../services/automationScriptService.js";
 
-export const automationScriptsRouter = Router();
+const automationScriptsRouter = Router();
 
 const scriptInputSchema = z.object({
   name: z.string().min(1).max(200),
@@ -68,7 +69,7 @@ automationScriptsRouter.get("/runs", requirePermission("automationScripts", "rea
         scriptId: req.query.scriptId ? String(req.query.scriptId) : undefined,
         notificationId: req.query.notificationId ? String(req.query.notificationId) : undefined,
         status: req.query.status ? String(req.query.status) : undefined,
-        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        limit: intQuery(req.query.limit),
       }),
     });
   } catch (err) { next(err); }

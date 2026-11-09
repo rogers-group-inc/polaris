@@ -30,7 +30,7 @@ import {
 } from "../api/middleware/permissions.js";
 
 export const GROUP_MAPPING_PROVIDERS = ["oidc", "ldap", "saml", "entra-proxy"] as const;
-export type GroupMappingProvider = (typeof GROUP_MAPPING_PROVIDERS)[number];
+type GroupMappingProvider = (typeof GROUP_MAPPING_PROVIDERS)[number];
 
 const GROUP_KEY_MAX_LEN = 512; // LDAP DNs can be long
 const DESCRIPTION_MAX = 200;

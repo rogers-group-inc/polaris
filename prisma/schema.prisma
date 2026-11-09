@@ -1518,11 +1518,10 @@ model AssetTelemetrySample {
   // PerformanceManager's real-time `cpu.usage` instances). Every other
   // transport leaves it null, which is why it is nullable jsonb rather than a
   // Float[] — a scalar list cannot express "this source does not break CPU
-  // down by core" distinctly from "this host has no cores". DETAIL TIER ONLY:
-  // the hourly/daily rollups do not carry it (element-wise averaging of a
-  // variable-length array across every asset in the fleet is the one
-  // aggregate that does not pay for itself), so a range that resolves to a
-  // rollup tier charts the aggregate `cpuPct` alone and the chart says so.
+  // down by core" distinctly from "this host has no cores". The hourly/daily
+  // rollups carry it element-wise as avgCpuCorePcts / maxCpuCorePcts (since
+  // 20261106120000_rollup_max_lines); buckets rolled up before that read
+  // NULL, and a range that resolves to them charts the aggregate alone.
   cpuCorePcts   Json?
   // Memory BREAKDOWN (bytes) — the parts `memUsedBytes` is not. Filled by the
   // agent, and by a TrueNAS host (ZFS ARC as cached, buffers null). The four
@@ -2046,18 +2045,19 @@ model AssetHardwareSensorSample {
   value       Float?
   unit        String?
   alarmStatus String?
-  // UNUSED — nothing writes or reads this. It was added by migration
-  // 20260810130000 for a display-only "which interface is this sensor on?"
-  // annotation that inferred the interface from the sensor's entPhysicalIndex.
-  // That inference was withdrawn: on FortiSwitchOS the indexes only SOMETIMES
-  // line up with ifIndex (`sensor-15` is not reliably the interface at ifIndex
-  // 15), so the label was wrong often enough to mislead. The column stays
-  // because it is nullable and free, and because DROP COLUMN on a hypertable
-  // with compressed chunks is the DDL this file warns about above — keeping it
-  // also means a future correct implementation needs no migration. Do not
-  // repopulate it without a correlation the device actually guarantees
-  // (ENTITY-MIB entPhysicalContainedIn → entAliasMappingIdentifier, or a
-  // vendor table that names the interface outright).
+  // The port a transceiver (SFP DDM) reading belongs to — business rule 143.
+  // Written only by the ENTITY-SENSOR collector, and only when
+  // utils/sfpOptics.ts → attributeSfpSensors() accepts the device's table: the
+  // validated five-rows-per-cage layout (temp, volts, Tx dBm, Rx dBm, bias),
+  // one unbroken run, mapped onto the highest-numbered `portN` interfaces (at
+  // least N of them). NULL on every other row.
+  // A row carrying it is shown on its interface (the Interfaces table's optics
+  // columns) instead of in Hardware Sensors.
+  //
+  // History: added by migration 20260810130000 for an annotation that inferred
+  // the interface from entPhysicalIndex == ifIndex. That was withdrawn
+  // (97e54fd2) — the indexes only SOMETIMES line up — and the column sat
+  // unused until rule 143. Never repopulate it from an index coincidence.
   ifName      String?
 
   @@id([id, timestamp])
@@ -3204,6 +3204,13 @@ model AssetTelemetrySampleHourly {
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
+  // Per-core CPU vectors (jsonb arrays, index = core id, like the detail
+  // row's cpuCorePcts): the bucket's per-core average and per-core maximum,
+  // rounded to 2 decimals. A core with no reading in the bucket is a JSON
+  // null in its slot so later cores never shift left. NULL when the source
+  // reports no per-core data.
+  avgCpuCorePcts    Json?
+  maxCpuCorePcts    Json?
 
   @@id([id, bucketStart])
   @@unique([bucketStart, assetId])
@@ -3240,6 +3247,9 @@ model AssetTelemetrySampleDaily {
   avgSessionCount   Float?
   minSessionCount   Float?
   maxSessionCount   Float?
+  // Per-core vectors: hourly averages weighted by sampleCount, max of maxes.
+  avgCpuCorePcts    Json?
+  maxCpuCorePcts    Json?
 
   @@id([id, bucketStart])
   @@unique([bucketStart, assetId])
@@ -3325,6 +3335,11 @@ model AssetInterfaceSampleHourly {
   // counter-rate denominator so rate is correct for partial buckets at the
   // leading edge of the time series.
   lastBucketSampleAt DateTime
+  // Peak per-poll throughput inside the bucket (BYTES/sec), from consecutive
+  // fast-cadence detail rows of the same interface, attributed to the bucket
+  // of the later row. Counter resets and non-positive time deltas dropped.
+  maxInBytesPerSec   Float?
+  maxOutBytesPerSec  Float?
 
   @@id([id, bucketStart])
   @@unique([bucketStart, assetId, ifName])
@@ -3361,6 +3376,9 @@ model AssetInterfaceSampleDaily {
   lastPoeStatus      String?
   lastPoeClass       String?
   lastBucketSampleAt DateTime
+  // MAX of the hourly peaks.
+  maxInBytesPerSec   Float?
+  maxOutBytesPerSec  Float?
 
   @@id([id, bucketStart])
   @@unique([bucketStart, assetId, ifName])

@@ -48,7 +48,7 @@ guessing protection for GUI and SSH logins, not a fix.
 A stale token was the trigger, but two things Polaris did turned any trigger into a long outage,
 and per Fortinet the trigger does not even have to be Polaris's fault:
 
-1. **Concurrency.** Discovery fans out seven parallel chains per gate, and the monitor passes
+1. **Concurrency.** Discovery fans out six parallel chains per gate (seven until 2026-11-04), and the monitor passes
    fire several calls at once and overlap discovery. One bad moment, a transient http_authd
    failure included, therefore produced three or more failures in the same instant, which is
    the whole threshold.

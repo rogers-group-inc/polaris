@@ -79,7 +79,7 @@ export interface UpstreamAssetRef {
 }
 
 /** One upstream row: the name as displayed, plus the asset it resolved to. */
-export interface UpstreamEntry {
+interface UpstreamEntry {
   /** The device name exactly as the General tab renders it. */
   name: string;
   /** Switch only — the port half of `lastSeenSwitch`, when it carried one. */
@@ -421,4 +421,34 @@ export function pickFirewallEntry(
   if (subnetGate) return subnetGate;
   const newest = sightings.find((s) => s.fortigateDevice.trim());
   return newest ? entryFor(newest, resolve(newest.fortigateDevice.trim())) : null;
+}
+
+/**
+ * Resolve FortiGate DEVICE NAMES (as `AssetFortigateSighting.fortigateDevice`
+ * stores them — FortiManager's device name, not necessarily the gate's
+ * hostname) to the firewall assets behind them, for the Firewall Sightings
+ * table's per-row verbs. Same `fortinetParentKey` precedence as the Last Seen
+ * Firewall row; one candidate query for every name. A name that resolves to
+ * nothing is simply absent from the map — the UI keeps it as plain text.
+ */
+export async function resolveFirewallRefsByName(names: string[]): Promise<Map<string, UpstreamAssetRef>> {
+  const out = new Map<string, UpstreamAssetRef>();
+  const unique = [...new Set(names.map((n) => (typeof n === "string" ? n.trim() : "")).filter(Boolean))];
+  if (unique.length === 0) return out;
+  const branches = unique
+    .map((name) => parentAssetWhereOr({ name }))
+    .filter((or) => or.length > 0)
+    .map((or) => ({ assetType: "firewall", OR: or }));
+  if (branches.length === 0) return out;
+  const candidates = (await prisma.asset.findMany({
+    where: { OR: branches },
+    select: ASSET_SELECT,
+  })) as CandidateRow[];
+  const index = buildInfraParentIndex(candidates);
+  for (const name of unique) {
+    const hit = resolveInfraParentAsset(index, { name }, "firewall");
+    const row = hit ? candidates.find((c) => c.id === hit.id) : undefined;
+    if (row) out.set(name, toRef(row));
+  }
+  return out;
 }

@@ -34,6 +34,7 @@
  * precedent).
  */
 
+import { boolQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
 import { assertOwnership, hasPermission, requireOwnership, requirePermission } from "../middleware/permissions.js";
@@ -109,7 +110,7 @@ function canSeeDirectory(req: Parameters<typeof hasPermission>[0]): boolean {
   return hasPermission(req, "automationManagement", "read");
 }
 
-export const contactsRouter = Router();
+const contactsRouter = Router();
 
 /**
  * One page of the address book. `q` filters on email or name SERVER-side.
@@ -156,7 +157,7 @@ contactsRouter.get("/", requirePermission("contacts", "read"), async (req, res, 
 contactsRouter.get("/search", contactSearchLimiter, requirePermission("contacts", "read"), async (req, res, next) => {
   try {
     const q = typeof req.query.q === "string" ? req.query.q : "";
-    const wantDirectory = req.query.directory === "1" || req.query.directory === "true";
+    const wantDirectory = boolQuery(req.query.directory);
     const directoryVisible = canSeeDirectory(req);
     const entries = await searchAddressBook(q, {
       callerUsername: req.session?.username ?? null,

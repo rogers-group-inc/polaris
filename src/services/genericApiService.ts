@@ -44,8 +44,8 @@ import { validateStateMap } from "../utils/stateProbes.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-export type GenericApiAuthType = "none" | "bearer" | "basic" | "header" | "query" | "oauth2";
-export type GenericApiPaginationMode = "none" | "page" | "offset" | "cursor" | "link";
+type GenericApiAuthType = "none" | "bearer" | "basic" | "header" | "query" | "oauth2";
+type GenericApiPaginationMode = "none" | "page" | "offset" | "cursor" | "link";
 export type GenericApiIdentityField = "id" | "serialNumber" | "macAddress" | "hostname";
 
 /** The asset fields a record can be mapped onto, each by a JSON path. */
@@ -80,7 +80,7 @@ export type GenericApiField = (typeof GENERIC_API_FIELDS)[number];
  * MAIN query alone, before any detail request is made: a detail request that
  * fails can cost a record some fields, never its asset.
  */
-export const GENERIC_API_DETAIL_FIELDS = GENERIC_API_FIELDS.filter((f) => f !== "id");
+const GENERIC_API_DETAIL_FIELDS = GENERIC_API_FIELDS.filter((f) => f !== "id");
 
 /**
  * A second request made once per record, its path built from that record
@@ -90,7 +90,7 @@ export const GENERIC_API_DETAIL_FIELDS = GENERIC_API_FIELDS.filter((f) => f !== 
  * mapped here wins over the same field from the main query (and a later
  * detail query over an earlier one) whenever it yields a value.
  */
-export interface GenericApiDetailQuery {
+interface GenericApiDetailQuery {
   name?: string;
   path: string;
   method?: "GET" | "POST";
@@ -98,7 +98,7 @@ export interface GenericApiDetailQuery {
   fieldMap?: Partial<Record<GenericApiField, string>>;
 }
 
-export interface GenericApiPagination {
+interface GenericApiPagination {
   mode: GenericApiPaginationMode;
   /** page: the page-number parameter. offset: the offset parameter. */
   pageParam?: string;
@@ -114,7 +114,7 @@ export interface GenericApiPagination {
   maxPages?: number;
 }
 
-export interface GenericApiHeader {
+interface GenericApiHeader {
   name: string;
   value: string;
 }
@@ -139,7 +139,7 @@ export const GENERIC_API_MONITOR_STREAMS = [
 export type GenericApiMonitorStream = (typeof GENERIC_API_MONITOR_STREAMS)[number];
 
 /** The keys each stream's `map` may name, and the ones it must. */
-export const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys: readonly string[]; required: readonly string[][] }> = {
+const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys: readonly string[]; required: readonly string[][] }> = {
   responseTime: { keys: ["up", "latencyMs", "uptimeSec"], required: [["up"]] },
   cpuMemory:    { keys: ["cpuPct", "memPct", "memUsed", "memTotal", "memFree"], required: [["cpuPct", "memPct", "memUsed"]] },
   interfaces:   {
@@ -155,11 +155,8 @@ export const GENERIC_API_MONITOR_FIELDS: Record<GenericApiMonitorStream, { keys:
   widgets:      { keys: [], required: [] },
 };
 
-/** Streams whose document holds a LIST of rows (`itemsPath`). */
-export const GENERIC_API_LIST_STREAMS: ReadonlySet<GenericApiMonitorStream> = new Set(["interfaces", "storage", "temperature", "lldp"]);
-
 /** The integration-tier polling key each stream's default lives under (widgets have none). */
-export const GENERIC_API_STREAM_POLLING_KEY: Partial<Record<GenericApiMonitorStream, string>> = {
+const GENERIC_API_STREAM_POLLING_KEY: Partial<Record<GenericApiMonitorStream, string>> = {
   responseTime: "responseTimePolling",
   cpuMemory:    "cpuMemoryPolling",
   interfaces:   "interfacesPolling",
@@ -235,7 +232,7 @@ export const GENERIC_API_NETWORK_KINDS = ["subnets", "leases", "reservations", "
 export type GenericApiNetworkKind = (typeof GENERIC_API_NETWORK_KINDS)[number];
 
 /** The keys each kind's `map` may name, and the groups of which one is required. */
-export const GENERIC_API_NETWORK_FIELDS: Record<GenericApiNetworkKind, { keys: readonly string[]; required: readonly string[][] }> = {
+const GENERIC_API_NETWORK_FIELDS: Record<GenericApiNetworkKind, { keys: readonly string[]; required: readonly string[][] }> = {
   subnets:      { keys: ["cidr", "network", "prefixLength", "netmask", "name", "vlan", "purpose"], required: [["cidr", "network"]] },
   leases:       { keys: ["ipAddress", "macAddress", "hostname", "expiresAt"], required: [["ipAddress"]] },
   reservations: { keys: ["ipAddress", "macAddress", "hostname"], required: [["ipAddress"]] },
@@ -778,7 +775,7 @@ function scheme(config: GenericApiConfig): "https" | "http" {
 }
 
 /** The endpoint's origin, e.g. "https://inv.example.com:8443". */
-export function endpointOrigin(config: GenericApiConfig): string {
+function endpointOrigin(config: GenericApiConfig): string {
   const host = (config.host ?? "").trim();
   const bracketed = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   const port = config.port ?? (scheme(config) === "https" ? 443 : 80);
@@ -896,7 +893,7 @@ function describeHttpFailure(status: number, text: string, what: string): AppErr
 }
 
 /** OAuth 2.0 client-credentials grant. The token lives for one run; nothing caches it. */
-export async function fetchOauthToken(config: GenericApiConfig, signal?: AbortSignal): Promise<string> {
+async function fetchOauthToken(config: GenericApiConfig, signal?: AbortSignal): Promise<string> {
   if (!config.tokenUrl?.trim()) throw new AppError(400, "OAuth token URL is required");
   let url: URL;
   try { url = new URL(config.tokenUrl.trim()); } catch { throw new AppError(400, `OAuth token URL "${config.tokenUrl}" is not a URL`); }
@@ -1464,7 +1461,7 @@ async function testDeviceRead(config: GenericApiConfig, headers: Record<string, 
   }
 }
 
-export interface GenericApiNetworkPreview {
+interface GenericApiNetworkPreview {
   name: string;
   kind: GenericApiNetworkKind;
   ok: boolean;
@@ -1474,7 +1471,7 @@ export interface GenericApiNetworkPreview {
 }
 
 /** Each network query's first page, mapped — the Preview tab's network half and Test Connection's. */
-export async function previewGenericApiNetwork(
+async function previewGenericApiNetwork(
   config: GenericApiConfig,
   headers: Record<string, string>,
   limit = 10,

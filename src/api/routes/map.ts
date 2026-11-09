@@ -26,22 +26,12 @@
  * a live device.
  */
 
-import { EXCLUDED_LIFECYCLE_STATUSES } from "../../utils/assetInvariants.js";
 import { Router } from "express";
 import { z } from "zod";
-import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
-import { controllerStampWhereOr, readFirewallDeviceName } from "../../utils/fortinetParentKey.js";
-import {
-  attributeEndpointToSiteSwitch,
-  buildSiteEndpointAttribution,
-  buildSiteTopology,
-  monitorStatusToHealth,
-  fetchRecentSampleStats,
-  portOfLastSeenSwitch,
-} from "../../services/topologyGraphService.js";
+import { buildSiteTopology } from "../../services/topologyGraphService.js";
+import { listMapSites, getSiteLayoutOwner, searchSiteEndpoints } from "../../services/mapSitesService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
-import { downAlertAcknowledgedByAsset } from "../../services/nocDashboardService.js";
 import {
   saveLayout,
   saveCheckpoint,
@@ -137,88 +127,13 @@ router.get("/sites", async (req, res, next) => {
     const regionNames = typeof regionRaw === "string" && regionRaw.length
       ? regionRaw.split(",").map((s) => s.trim()).filter(Boolean)
       : [];
-    const regionWhere = regionNames.length
-      ? { tags: { hasSome: regionNames.map((n) => "region:" + n) } }
-      : {};
-    const sites = await prisma.asset.findMany({
-      where: {
-        assetType: "firewall",
-        latitude: { not: null },
-        longitude: { not: null },
-        status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-        ...regionWhere,
-      },
-      select: {
-        id: true,
-        hostname: true,
-        // Rule 141 (e): `canEditLayout` per site is judged on these.
-        createdBy: true,
-        tags: true,
-        serialNumber: true,
-        model: true,
-        ipAddress: true,
-        latitude: true,
-        longitude: true,
-        status: true,
-        monitorStatus: true,
-        lastSeen: true,
-        learnedLocation: true,
-        monitored: true,
-        dependencyLayer: true,
-        dependencySuppressed: true,
-      },
-      orderBy: { hostname: "asc" },
-    });
-
-    const monitorStats = await fetchRecentSampleStats(
-      sites.filter((s) => s.monitored).map((s) => s.id),
-    );
-
-    // Acknowledged-ness of each DOWN site's down alert, so the map widgets can
-    // fade an outage someone already owns. Bounded to the down sites only.
-    const downAck = await downAlertAcknowledgedByAsset(
-      sites.filter((s) => s.monitored && s.monitorStatus === "down").map((s) => s.id),
-    );
-
-    // Subnet counts per FortiGate — the `fortigateDevice` column on Subnet
-    // stores the FMG-side device name, which (for auto-discovered FortiGates)
-    // matches the Asset's hostname or learnedLocation. One query, grouped.
-    const hostnames = sites.map((s) => s.hostname).filter((h): h is string => !!h);
-    const subnetCounts = hostnames.length
-      ? await prisma.subnet.groupBy({
-          by: ["fortigateDevice"],
-          where: { fortigateDevice: { in: hostnames } },
-          _count: { _all: true },
-        })
-      : [];
-    const countByName = new Map<string, number>();
-    for (const row of subnetCounts) {
-      if (row.fortigateDevice) countByName.set(row.fortigateDevice, row._count._all);
-    }
-
+    const sites = await listMapSites(regionNames);
     // Rule 141 (e): may THIS caller save the site's topology layout?
     const layoutScope = await resolveWriteScope(req, "deviceMap");
-    res.json(
-      sites.map((s) => {
-        const stats = s.monitored ? monitorStats.get(s.id) : null;
-        return {
-          canEditLayout: inWriteScope(layoutScope, { createdBy: s.createdBy, tags: s.tags }),
-          ...s,
-          subnetCount: s.hostname ? countByName.get(s.hostname) ?? 0 : 0,
-          // Derive the dot's health from Asset.monitorStatus (the five-state
-          // machine), NOT the raw 10-sample window — so the Status Map's red
-          // "down" dots agree with the Down Assets / Status Summary widgets,
-          // which key off monitorStatus. The recent sample counts still ride
-          // along for the tooltip's "X/Y samples failed" detail.
-          monitorHealth: s.monitored ? monitorStatusToHealth(s.monitorStatus) : null,
-          monitorRecentSamples: stats?.samples ?? 0,
-          monitorRecentFailures: stats?.failures ?? 0,
-          // true = the down alert is acknowledged; false = unacknowledged;
-          // absent = no active down alert (or the site isn't down).
-          ...(downAck.has(s.id) ? { alertAcknowledged: downAck.get(s.id) } : {}),
-        };
-      }),
-    );
+    res.json(sites.map((s) => ({
+      canEditLayout: inWriteScope(layoutScope, { createdBy: s.createdBy, tags: s.tags }),
+      ...s,
+    })));
   } catch (err) {
     next(err);
   }
@@ -237,7 +152,7 @@ router.get("/sites/:id/topology", async (req, res, next) => {
     // the topology, so the page need not cross-reference the sites list.
     const [topo, site] = await Promise.all([
       buildSiteTopology(req.params.id),
-      prisma.asset.findUnique({ where: { id: req.params.id as string }, select: { createdBy: true, tags: true } }),
+      getSiteLayoutOwner(req.params.id as string),
     ]);
     const canEditLayout = site ? inWriteScope(await resolveWriteScope(req, "deviceMap"), site) : false;
     res.json({ ...(topo as object), canEditLayout });
@@ -260,86 +175,7 @@ router.get("/sites/:id/topology/search", async (req, res, next) => {
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
     if (!q) return res.json({ q: "", results: [] });
 
-    const fg = await prisma.asset.findFirst({
-      where: { id, status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },
-      select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true },
-    });
-    if (!fg || fg.assetType !== "firewall") throw new AppError(404, "FortiGate not found");
-
-    // Match children by serial / FMG device name / hostname — hostname alone
-    // misses every install whose FMG device name differs from the gate's
-    // configured hostname. See utils/fortinetParentKey.ts.
-    const controllerKeyOr = controllerStampWhereOr({
-      hostname: fg.hostname,
-      serialNumber: fg.serialNumber,
-      deviceName: readFirewallDeviceName(fg.fortinetTopology),
-    });
-    const siblingSwitches = controllerKeyOr.length > 0
-      ? await prisma.asset.findMany({
-          where: {
-            assetType: "switch",
-            AND: [{ OR: controllerKeyOr }],
-            status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-          },
-          select: { id: true, hostname: true },
-        })
-      : [];
-    // Which switch an endpoint sits on is its `switch-port` dependency edge,
-    // or a hostname prefix only when the name is unique fleet-wide (business
-    // rule 91 — the per-site "IDF-1" of a FortiLink fleet). Same rule as the
-    // topology payload's `endpointCount` / `endpoints[]`.
-    const attribution = await buildSiteEndpointAttribution(siblingSwitches);
-    if (attribution.whereOr.length === 0) return res.json({ q, results: [] });
-
-    // Site attribution AND substring match across common identity fields.
-    // Capped at 25 results — search is for finding a specific endpoint, not
-    // for browsing.
-    const matches = await prisma.asset.findMany({
-      where: {
-        assetType: { notIn: ["firewall", "switch", "access_point"] },
-        status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-        OR: attribution.whereOr,
-        AND: [
-          {
-            OR: [
-              { hostname:    { contains: q, mode: "insensitive" } },
-              { ipAddress:   { contains: q, mode: "insensitive" } },
-              { macAddress:  { contains: q, mode: "insensitive" } },
-              { assignedTo:  { contains: q, mode: "insensitive" } },
-              { dnsName:     { contains: q, mode: "insensitive" } },
-            ],
-          },
-        ],
-      },
-      select: {
-        id: true, hostname: true, ipAddress: true, macAddress: true,
-        assetType: true, assignedTo: true, lastSeenSwitch: true, lastSeen: true,
-        dependencyParents: attribution.edgeSelect,
-      },
-      orderBy: { lastSeen: "desc" },
-      take: 25,
-    });
-
-    const switchHostById = new Map<string, string | null>();
-    for (const s of siblingSwitches) switchHostById.set(s.id, s.hostname);
-    const results = matches.map((m) => {
-      const switchId = attributeEndpointToSiteSwitch(m, attribution);
-      return {
-        id:         m.id,
-        hostname:   m.hostname,
-        ipAddress:  m.ipAddress,
-        macAddress: m.macAddress,
-        assetType:  String(m.assetType),
-        assignedTo: m.assignedTo,
-        switchId,
-        // The RESOLVED switch's name — the same string as the stamp except
-        // when two sites share it, where this is the one the device sits on.
-        switchHostname: switchId ? (switchHostById.get(switchId) ?? null) : null,
-        port: portOfLastSeenSwitch(m.lastSeenSwitch),
-        lastSeen:   m.lastSeen,
-      };
-    });
-    res.json({ q, results });
+    res.json(await searchSiteEndpoints(id, q));
   } catch (err) {
     next(err);
   }

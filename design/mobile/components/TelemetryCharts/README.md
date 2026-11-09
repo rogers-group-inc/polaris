@@ -35,3 +35,11 @@ every other source keeps the single combined CPU + memory % chart. Drawn by
 - `.ty-body-s.muted` lines close each chart: the figures (average, max, the busiest
   core; in use of installed, peak) and, when they apply, why a series is missing —
   per-core detail not kept at a long range, or a source that reports a total only.
+- **Max line on the 30d range** (the second preview) — where the chart reads hourly or
+  daily buckets, each drawn series also gets a dashed `2 3` companion through the bucket's
+  MAXIMUM: the series' colour, thinner and fainter, under every average, broken where a
+  bucket has no max. A `Max` `.chip` with a dashed swatch, beside `Avg` in the CPU legend
+  (under the chart on Response Time, interface throughput and SD-WAN), toggles every max
+  line; the axis spans the peaks only while they show. The choice is kept per asset for the
+  session, not stored. Detail ranges show neither. The rollup-tier per-core note shows only
+  when the buckets carry no per-core figures.

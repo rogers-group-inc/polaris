@@ -29,38 +29,17 @@ var _ipPanelFocusIp = null;
 
 function _ensurePanelDOM() {
   if (document.getElementById("ip-panel-overlay")) return;
-  var overlay = document.createElement("div");
-  overlay.id = "ip-panel-overlay";
-  overlay.className = "slideover-overlay";
-  overlay.innerHTML =
-    '<div class="slideover" id="ip-panel">' +
-      '<div class="slideover-resize-handle"></div>' +
-      '<div class="slideover-header">' +
-        '<div class="slideover-header-top">' +
-          '<h3 id="ip-panel-title"></h3>' +
-          '<button class="btn-icon" id="ip-panel-close" title="Close">&times;</button>' +
-        '</div>' +
-        '<div class="slideover-meta" id="ip-panel-meta"></div>' +
-      '</div>' +
-      '<div class="slideover-body" id="ip-panel-body">' +
-        '<p class="empty-state">Loading...</p>' +
-      '</div>' +
-      '<div class="slideover-footer" id="ip-panel-footer"></div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) closeIpPanel();
+  // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
+  // (app.js). Escape goes to the topmost layer only — this panel can open over
+  // the asset panel (an interface's "Open network") and under a modal (Reserve
+  // IP), and in both cases the key belongs to whatever is on top.
+  buildSlideover({
+    id: "ip-panel",
+    bodyHTML: '<p class="empty-state">Loading...</p>',
+    footer: true,
+    close: closeIpPanel,
+    resizeKey: "polaris.panel.width.ip",
   });
-  document.getElementById("ip-panel-close").addEventListener("click", closeIpPanel);
-
-  // Escape closes the panel when it is the topmost layer — this panel can now
-  // open over the asset panel (an interface's "Open network") and under a
-  // modal (Reserve IP), and in both cases the key belongs to whatever is on
-  // top (isTopmostSlideover, app.js).
-  wireSlideoverEscape(overlay, closeIpPanel);
-
-  initSlideoverResize(document.getElementById("ip-panel"), "polaris.panel.width.ip");
 }
 
 function openIpPanel(subnetId, opts) {

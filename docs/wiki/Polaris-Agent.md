@@ -543,6 +543,12 @@ threshold:
 This needs agent 0.20.0 or later. An agent below that takes a single 1-second
 sample once a minute until it is upgraded.
 
+The CPU figure for each **pinned program** works the same way from agent
+0.28.4: the average over the minute since its previous sample. Before 0.28.4
+it was a 0.3-second sample. The first reading after the program (or the
+agent) starts is still a short sample, because there is no previous one to
+measure from.
+
 ### Per-core CPU and the memory breakdown
 
 An agent-monitored host's Assets → System tab splits **CPU & Memory into two

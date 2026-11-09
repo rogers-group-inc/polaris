@@ -226,10 +226,10 @@
         PolarisWidgets.openAssetDetail(link.getAttribute("data-asset-id"));
       };
       el.addEventListener("click", onClick);
-      var timer = setInterval(function () {
+      PolarisWidgets.pollVisible(ctx, function () {
         PolarisWidgets.getNocSummary(PolarisWidgets.nocFilterOpts(config), ["downInterfaces", "downIpsecTunnels"]).then(function (d) { render(el, mergeRows(d, config), config); }).catch(function () {});
       }, PolarisWidgets.REFRESH.normal);
-      ctx.onUnmount(function () { clearInterval(timer); el.removeEventListener("click", onClick); });
+      ctx.onUnmount(function () { el.removeEventListener("click", onClick); });
     },
 
     renderPreview: function (el) {

@@ -86,7 +86,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A pin discovery is still trying to move is never auto-released. The guard stamps `primaryAddressContestedAt` whenever a write staged a DIFFERENT address than the pin (not on a follow, not on a staged clear); `releaseConfirmedPins` filters on it in the `findMany` (null, or older than `PIN_CONTEST_WINDOW_MS`), and `pinPrimaryAddress` / `CLEAR_PRIMARY_ADDRESS_PIN` null it. Without the condition a release hands the address straight back to the choice the operator overrode (prod: a pin released on ARP evidence, and the next discovery put the asset back on the detected-device address). The window is longer than any sane discovery interval, so "no contest inside it" means discovery ran and agreed, not that it has not run.
 - Events: `asset.primary_address.pinned`, `asset.primary_address.unpinned`, `asset.primary_address.followed`, `asset.primary_address.released`.
 
-**When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. `projectionDriftService` and discovery Phase 11 re-projection skip `ipAddress` while pinned; a new projection writer needs the same skip.
+**When changing this:** the guard's extra read (`AssetAssociatedIp` for (asset, pinned mac)) happens only for a PINNED asset's IP-staging write, so the cost scales with pinned assets, not the fleet — keep it that way. Anything else that writes `ipAddress` as an operator action must spread `CLEAR_PRIMARY_ADDRESS_PIN` or the guard rewrites it back. Discovery Phase 11 re-projection skips `ipAddress` while pinned; a new projection writer needs the same skip.
 
 ---
 
@@ -148,6 +148,23 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:** a new managed tag prefix (see [asset-tag-mutators](../cross-cutting/asset-tag-mutators.md)) decides whether a bulk replace may strip it — add it to `REPLACE_PRESERVED_PREFIXES` and to the modal hint in `openBulkTagsModal` if not. Scale: one `findMany` over the selection and ≤ N/50 transactions; at 2000 selected that is 40 transactions of 50 single-row updates.
 
 ---
+
+## services/tagRegistryService.ts
+
+**What it owns:** The tag registry (`Tag` rows) and the `tagSettings` Setting, extracted from `src/api/routes/tags.ts` (CQ-B044, 2026-11-06). Create / rename / recolour / move / re-filter / delete a tag, with every guard and audit Event that used to live in the route.
+
+**Public API:** `listTagRegistry`, `createTag(body, actor)`, `updateTag(id, body, actor)`, `deleteTag(id, actor)`, `getTagSettings`, `updateTagSettings(enforce, actor)`.
+
+**Cross-service deps:** tagAssignmentService (`normalizeTagCondition`, `normalizeCriteria`, `reconcileTag`, `tagIsManaged`, `stripTagAssignments`, `tagFilterView`), mapRegionService (`REGION_TAG_CATEGORY`), notificationTypes (`scopeConditionStats`), `utils/tagNormalize.ts`, eventLogService.
+
+**Used by:** `src/api/routes/tags.ts` (mounted at /server-settings/tags, gated on the `tags` key).
+
+**Invariants:**
+- `region:` names (any category, case-insensitive) and the Map Regions category belong to the Device Map; `azure:` names belong to the Arc sync and a mirrored row is read-only; a built-in Priority tag keeps its name, category and colour (rule 136) and cannot be deleted.
+- A rename rewrites the string across `ip_blocks`, `subnets`, `assets`, `asset_interface_tags` (rule 133) and `network_tag_assignments` (rule 137); the last two drop the old row where the new name already exists on the same key.
+- A filter change or rename re-runs `reconcileTag` best-effort; the periodic job is the safety net.
+
+**When changing this:** a new guard belongs here, not in the route; keep the 409 messages — the registry UI shows them verbatim.
 
 ## services/tagAssignmentService.ts
 
@@ -399,7 +416,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The operator-settable priority behind the assets table's **Sources** column — which discovery source's "where was this learned?" answer wins when an asset is known to several at once. One Setting row (`assetSourcePriority`, `{order[], integrationPrefix}`) over `createSettingStore` with a 30s TTL. The catalogue of who can contribute what is the pure `utils/assetSourceLocation.ts`; this service owns persistence, validation, audit, and installing the order into the projection.
 
-**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `invalidateSourcePriorityCache()`, `ASSET_SOURCE_PRIORITY_KEY`
+**Public API:** `getSourceLocationPriority()`, `getSourcePrioritySettings()`, `saveSourceLocationPriority(input, actor)`, `refreshProjectionPriority()`, `ASSET_SOURCE_PRIORITY_KEY`
 
 **Cross-service deps:** `settingsStore.createSettingStore`, `eventLogService.logEvent`, `utils/assetSourceLocation` (catalogue + normalizer), `utils/assetProjection.setLearnedLocationPriority` (the install seam).
 
@@ -428,15 +445,16 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Records DHCP-only (asset, FortiGate) sightings to drive quarantine fan-out targeting.
 
-**Public API:** `recordSightings(), computeFreshestGateChanges(), getSightingsForAsset(), getQuarantineCandidates(), getSightingSettings(), updateSightingSettings()`
+**Public API:** `recordSightings(), computeFreshestGateChanges(), getSightingsForAsset(), getSightingsForDisplay(), getQuarantineCandidates(), getSightingSettings(), updateSightingSettings()`
 
-**Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization).
+**Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization), `assetUpstreamService.resolveFirewallRefsByName` + `utils/cidr.cidrContains` (`getSightingsForDisplay` only).
 
-**Used by:** `src/services/discovery/discoveryEngine.ts — batch-record sightings after DHCP discovery sync`, `src/api/routes/assets.ts — fetch sighting list for Quarantine tab`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
+**Used by:** `src/services/discovery/discoveryEngine.ts — batch-record sightings after DHCP discovery sync`, `src/api/routes/assets.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
 
 **Invariants:**
 - Sightings are keyed by `(assetId, fortigateDevice, source)` (migration `20261103090000_sightings_per_binding_kind`): a gate holding both a lease and a reservation for the device keeps a row for each, so Firewall Sightings shows both. Within a batch the latest `seenAt` per key wins. Until 2026-11-03 the key was (asset, gate) and `dhcp_reservation` won a tie, which hid the lease — often the address the device was actually using.
 - Readers that want "the gate" must take the freshest row PER GATE: `getQuarantineCandidates` collapses by gate (one quarantine push per gate), and the dependency / search / upstream readers already order by `lastSeen`. `assetMergeService`'s side-table move keys sightings on `["fortigateDevice", "source"]`.
+- `getSightingsForDisplay()` decorates each row with its network (`subnetName` / `vlan` / `subnetId` / `subnetCidr`: the network on the SAME gate whose CIDR holds the row's IP — the VLAN cell's Open network passes the row's IP as `focusIp` plus `subnetCidr` so the panel lands on that row) and `fortigateAsset` (the gate name resolved through `fortinetParentKey`, or null) — three queries whatever the row count. The table's FortiGate and VLAN cells open those; an unresolved one stays text.
 - `getQuarantineCandidates()` filters by `sightingMaxAgeDays` Setting (default 180; 0 = no filter); stored rows never auto-prune.
 - Only DHCP evidence qualifies (transit via System tab interface scrape intentionally excluded per design).
 - Every caller of `recordSightings()` must dedupe + normalize before passing; batch upsert handles dedup again for safety.
@@ -498,7 +516,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** `resolveAssetUpstream(assetId, {includeFirewall, includeSubnetGate})` — turning the three UPSTREAM device NAMES the asset-details General tab renders (Last Seen Switch / AP / Firewall) into the Asset rows behind them, so those rows can carry verbs (open the device, open its HTTPS UI, SSH to it) instead of being text an operator re-finds by hand in the Assets list. Since 2026-09 it also answers the firewall row for a device NO gate has ever sighted, from IPAM (business rule 55). Since 2026-11-04 a managed FortiSwitch / FortiAP's firewall row is its CONTROLLER gate, and a sighting whose gate is gone is passed over.
 
-**Public API:** `resolveAssetUpstream`, the pure `splitLastSeenSwitch` and `pickFirewallEntry`, and the `AssetUpstream` / `UpstreamEntry` / `UpstreamAssetRef` types.
+**Public API:** `resolveAssetUpstream`, `resolveFirewallRefsByName(names)` (gate device names → firewall `UpstreamAssetRef`s in one candidate query; an unresolved name is absent from the map — used by `assetSightingService.getSightingsForDisplay`), the pure `splitLastSeenSwitch` and `pickFirewallEntry`, and the `AssetUpstream` / `UpstreamEntry` / `UpstreamAssetRef` types.
 
 **Cross-service deps:** `utils/fortinetParentKey.ts` (`parentAssetWhereOr` + `buildInfraParentIndex` + `resolveInfraParentAsset` — the shared precedence, never a bare hostname match), `fortinetManagementAccessService.shapeManagementAccessForClient` (the four fields the client's remote-access gate reads), `ipUpstreamChainService.resolveOwningGateContexts` (the IPAM fallback — the same resolver the rule 45 sweep and the endpoint dependency tier use). Reads `Asset` + `AssetFortigateSighting` + (via that resolver) `Subnet` directly; writes nothing.
 
@@ -613,9 +631,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **The VLAN fill runs PER SWITCH.** `fillAccessPortVlans` decides whether a switch reports a tagged dimension across that switch's ports; over the merged set one switch's trunks would license filling another switch's uplink rows.
 - **No gate freshness stamp.** The rows are the children's; each carries its own `lastSystemInfoAt`, and polling the gate re-reads none of them (so neither surface offers a Poll button).
 
-**When changing this:** a new child kind (a FortiExtender) is a new `ControllerChildType` and a new row source. A new column the tables show goes in the `select` here AND in the matchers of both UIs (`_childFilterMatches` in `assets.js`, `tableFilterMatches` in `mobile/asset-detail.js` — one rule, two copies).
+**When changing this:** a new child kind (a FortiExtender) is a new `ControllerChildType` and a new row source. A new column the tables show goes in the `select` here AND in the one matcher both UIs call (`PolarisAssetShared.childFilterMatches` in `public/js/asset-shared.js` — `_childFilterMatches` in `assets.js` wraps it, `tableFilterMatches` in `mobile/asset-detail.js` aliases it) and in each UI's call sites.
 
-**Tests:** `tests/unit/controllerChildrenService.test.ts` (stamp OR + live-only + sort, 404, no-identity short-circuit, one-query counts, one IN query per table, the per-switch fill), `tests/unit/mobileAssetTableSheets.test.ts` (the phone buttons + pages), `tests/unit/assetWirelessTreeDom.test.ts` (`_childFilterMatches`).
+**Tests:** `tests/unit/controllerChildrenService.test.ts` (stamp OR + live-only + sort, 404, no-identity short-circuit, one-query counts, one IN query per table, the per-switch fill), `tests/unit/mobileAssetTableSheets.test.ts` (the phone buttons + pages), `tests/unit/assetWirelessTreeDom.test.ts` (`_childFilterMatches`), `tests/unit/assetSharedModules.test.ts` (the shared matcher).
 
 ---
 
@@ -724,7 +742,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** IEEE OUI database download and CSV parsing; lazy in-memory lookup map; admin-editable overrides (prefix → manufacturer+device); cache persistence via Setting table.
 
-**Public API:** lookupOui, lookupOuiBatch, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
+**Public API:** lookupOui, lookupOuiOverride, refreshOuiDatabase, getOuiStatus, OuiOverride, getOuiOverrides, setOuiOverride, deleteOuiOverride.
 
 **Used by:**
 - src/api/routes/assets.ts — GET /assets/:id, look up MAC OUI (vendor name)
@@ -736,7 +754,6 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - IEEE database is downloaded from standards-oui.ieee.org/oui/oui.csv; stored as JSON in Setting table; loaded on-demand into module-level in-memory map (singleton pattern, reset only on refresh).
 - Prefix format: "AABBCC" (6 hex chars); input normalization handles colon/dash/mixed-case (AA:BB:CC, aa-bb-cc, etc.).
 - Overrides take priority over IEEE DB; back-compat layer supports legacy bare-string overrides (migrate to {manufacturer, device?} shape on load).
-- lookupOuiBatch() avoids repeated DB reads; used by discovery to tag multiple assets in one pass.
 - refreshOuiDatabase() runs at startup (skip if <6 days old) and weekly; on 30s HTTP timeout, entire refresh fails (not incremental).
 
 **When changing this:**
@@ -745,6 +762,51 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Test batch lookup (multiple MACs in one call).
 - Check CSV parser for quoted fields (commas inside quotes should not split).
 - Ensure refresh doesn't block startup; use timeout so network failures don't hang boot.
+
+---
+
+## services/assetMacSplitService.ts
+
+**What it owns:** Business rule 91(j) — splitting MACs off an asset onto assets of their own (the recovery for devices fused before 91(f)).
+
+**Public API:** `splitMacsToNewAssets({ assetId, macs, actor })` → `{ originalAssetId, created[], renamed[] }`; pure `macSplitRefusal(row, primaryMac)` and `hostnameBase(hostname)`.
+
+**Cross-service deps:** prisma (`asset`, `assetMacAddress`, `assetAssociatedIp`, `assetIpHistory`, `assetSource`) in one `$transaction`; `primaryAddressService` (`CLEAR_PRIMARY_ADDRESS_PIN`, `bestListedAddress`); `hostnameMacSuffixService.planHostnameMacSuffixes` (naming, after the transaction); `utils/macAddresses.ts` (`HARDWARE_MAC_SOURCES`, `INTERFACE_MAC_SOURCE`, `selectPrimaryMac`); `eventLogService.logEvent` (`asset.mac_split`, `asset.renamed_by_mac`).
+
+**Used by:** `api/routes/assets.ts` — `POST /assets/:id/macs/split`; `public/js/assets.js` → `_assetMacSplitSectionHTML` / `openMacSplitConfirm` on the Sources tab.
+
+**Invariants:**
+- **The new asset's `macAddress` is the split MAC.** `upsertFortigateEndpointSource` re-binds by primary MAC; anything else lets the next discovery run pull the moved source back.
+- **The original keeps its primary MAC** (only an asset with none gets one from `selectPrimaryMac`) — recomputing would let a hardware-reported NIC take over what the asset is known by.
+- History moves only for addresses no remaining address row holds; sightings and quarantine never move; a quarantined asset is refused.
+- Renames are single-row `asset.update`s so rule 134 (open alerts follow a rename) fires.
+
+**When changing this:**
+- A new per-MAC side table (anything with `assetId` + a MAC column) must be moved here too, and named in rule 91(j).
+- Keep `macSplitRefusal` and the client's `_macSplitRefusal` in `public/js/assets.js` in step (the client hides the button; the server refuses).
+
+---
+
+## services/hostnameMacSuffixService.ts
+
+**What it owns:** Business rule 91(i) — telling apart devices that share a discovered hostname. Given the hostnames a discovery pass just created, it reads each name's live family (the bare name and its MAC-suffixed forms) and returns the renames that give every bare-named, discovery-named member a `<name>-<last 3 MAC octets>` suffix.
+
+**Public API:** `planHostnameMacSuffixes(created: {id, hostname}[])` (one `asset.findMany` per 100 names; returns `PlannedRename[]`, writes nothing), `planFamilyRenames(base, members)` (pure), `isSuffixEligible(member)` (pure). Name math in `utils/hostnameMacSuffix.ts` (`macNameSuffix`, `suffixedHostname`, `isHostnameFamilyMember`).
+
+**Cross-service deps:** prisma.asset (read, with `sources.sourceKind`). No writes — the caller applies the renames.
+
+**Used by:** `services/discovery/discoveryEngine.ts` — Phase 7 of `syncDhcpSubnets`, after its deferred writes flush: applies each rename to the row AND the in-memory `AssetIndex` copy, logs `asset.discovery_updated`.
+
+**Invariants:**
+- **Only discovery's own names move.** `hostnameOverride` set, no primary MAC, or no real `fortigate-endpoint` source (the `manual` placeholder every asset is born with does not count — a hand-made asset carries only that) ⇒ never renamed; the family still counts it, so a new device beside it is still suffixed. An asset the calling pass created is eligible before Phase 10 stamps its source — the caller passes `{ id, hostname }` so the service can tell.
+- **A family of one is left alone**, and an already-suffixed member is never renamed again. A suffix another member holds falls back to the full 12-hex MAC; if that is taken too, nothing.
+- **The in-memory rename is load-bearing.** Phase 10 builds the fortigate-endpoint observed blob from the `AssetIndex` row and Phase 11 projects the hostname from it; renaming only the DB row is undone in the same run.
+- Decommissioned assets are outside every family.
+
+**When changing this:**
+- Adding a source kind whose name may be suffixed: extend `SUFFIXABLE_SOURCE_KINDS` and check `assetProjection.ts` ranks it below every directory source.
+- Calling it from another creation path (a split, another integration): pass only the hostnames created, and rename the caller's in-memory copies the same way.
+- Rule 134 (open alerts follow a rename) fires from the `asset.update` — keep the writes as single-row updates, not `updateMany`.
 
 ---
 
@@ -769,30 +831,5 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Hostname priority rule changes in `assetProjection.ts` change what this prints — the two are the same function on purpose; don't fork it.
 - Adding a caller: pass only pinned ids (the query cost is proportional to the id set), and keep `hostnameDiscovered` as the wire field name — the frontend helper keys on it plus `hostnameOverride`.
 - `ASSET_LIST_SELECT` must keep `hostnameOverride`: it is both the render gate and the id filter.
-
----
-
-## services/projectionDriftService.ts
-
-**What it owns:** Best-effort fire-and-forget shadow drift detection after successful AssetSource upserts; logs disagreements only (observability, no behavior change).
-
-**Public API:** `detectAndLogDrift(assetId, integrationKind)`
-
-**Cross-service deps:** None (uses `projectAssetFromSources()` utility + pino logger).
-
-**Used by:** (Not yet called; Phase 3b shadow phase pending Phase 3b.1 actual write implementation)
-
-**Invariants:**
-- Fire-and-forget: any internal error is swallowed via `logger.warn()`; drift detection failures must never break the Asset write.
-- Drift is asymmetric: projection has X ≠ Y on asset → logged; projection has X, asset null → logged; projection null → silent (no comment = no disagreement).
-- Logs to pino with `event: "asset.projection.drift"` (NOT audit Event table); high volume during full sweeps, operators grep app logs.
-- Compared fields: hostname, serialNumber, manufacturer, model, os, osVersion, learnedLocation, ipAddress, latitude, longitude (match `ProjectedAsset` keys). latitude/longitude are SKIPPED when `Asset.coordSource === "manual"`, hostname is SKIPPED when `Asset.hostnameOverride` is set, and ipAddress is SKIPPED when `Asset.ipOverride` is set, the asset is pinned blank (`Asset.ipBlankPinned`), or a primary address is pinned (`Asset.primaryAddressIp`, business rule 102) — an operator pin deliberately diverges from the projection (the db.ts guard re-asserts it over discovery writes), so it's not drift (the IP disagreement already surfaces as an ip-override Conflict instead).
-- Logs include `assetId, integrationKind, drifts[]` with per-field projected/current/winningSource provenance.
-
-**When changing this:**
-- Sync `PROJECTED_FIELDS` list against `ProjectedAsset` interface additions (assetProjection.ts).
-- If projection rules change in `projectAssetFromSources()`, review which drifts are expected (e.g. hostname tiebreak logic).
-- Check pino logger setup in `src/utils/logger.ts` for structured field compatibility.
-- Once Phase 3b.1 write is implemented, wire `detectAndLogDrift()` into the post-upsert callback in discovery sync paths.
 
 ---

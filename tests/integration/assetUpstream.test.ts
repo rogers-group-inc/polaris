@@ -257,3 +257,31 @@ d("GET /assets/:id/upstream", () => {
     expect(out!.switch!.asset!.id).toBe(sw);
   });
 });
+
+d("GET /assets/:id/sightings — FortiGate and VLAN cells resolve to what they name", () => {
+  it("decorates each sighting with its gate's asset and its network's id", async () => {
+    const block = await prisma.ipBlock.create({ data: { name: "sightings-test-block", cidr: "10.77.0.0/16", ipVersion: "v4" } });
+    try {
+      const subnet = await prisma.subnet.create({
+        data: { blockId: block.id, cidr: "10.77.5.0/24", name: "Staff", vlan: 50, fortigateDevice: FMG_DEVICE_NAME },
+      });
+      await prisma.assetFortigateSighting.updateMany({
+        where: { assetId: endpoint, fortigateDevice: FMG_DEVICE_NAME },
+        data: { ipAddress: "10.77.5.44" },
+      });
+      const { agent } = await authedAgent(app);
+      const res = await agent.get(`/api/v1/assets/${endpoint}/sightings`);
+      expect(res.status).toBe(200);
+      const live = res.body.find((s: any) => s.fortigateDevice === FMG_DEVICE_NAME);
+      // Resolved by FMG device name, not hostname — the gate's hostname differs.
+      expect(live.fortigateAsset).toMatchObject({ id: gate, assetType: "firewall" });
+      expect(live.fortigateAsset.managementAccess).toMatchObject({ https: true, ssh: true });
+      expect(live).toMatchObject({ subnetId: subnet.id, subnetName: "Staff", vlan: 50, subnetCidr: "10.77.5.0/24" });
+      // A gate not in inventory stays a name with no asset; no address, no network.
+      const gone = res.body.find((s: any) => s.fortigateDevice === "DECOMMISSIONED-FGT");
+      expect(gone).toMatchObject({ fortigateAsset: null, subnetId: null, vlan: null });
+    } finally {
+      await prisma.ipBlock.delete({ where: { id: block.id } });
+    }
+  });
+});

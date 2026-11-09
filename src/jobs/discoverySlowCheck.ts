@@ -15,21 +15,16 @@
  */
 
 import { checkForSlowRuns, expireVerboseLogging } from "../services/discovery/discoveryEngine.js";
-import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 30 * 1000;
 
-async function tick(): Promise<void> {
-  try {
-    await runInstrumentedJob("discoverySlowCheck", async () => {
-      // Independent of each other — one supervises in-flight runs, the other
-      // expires the verbose-logging window.
-      await Promise.all([checkForSlowRuns(), expireVerboseLogging()]);
-    });
-  } catch (err) {
-    logger.error(err, "Discovery slow-check job failed");
-  }
-}
-
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "discoverySlowCheck",
+  intervalMs: INTERVAL_MS,
+  run: async () => {
+    // Independent of each other — one supervises in-flight runs, the other
+    // expires the verbose-logging window.
+    await Promise.all([checkForSlowRuns(), expireVerboseLogging()]);
+  },
+});

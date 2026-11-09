@@ -45,6 +45,7 @@ import { sendWebhook } from "./notificationChannels/webhookChannel.js";
 import { sendPushbullet } from "./notificationChannels/pushbulletChannel.js";
 import { sendWebPush, type WebPushError } from "./notificationChannels/webPushChannel.js";
 import { sendApiCall } from "./notificationChannels/apiCallChannel.js";
+import { AppError } from "../utils/errors.js";
 
 const MAX_ATTEMPTS = 3;
 const BATCH_SIZE = 200;
@@ -564,12 +565,12 @@ export async function sendEmailThroughChannel(
       msg,
     );
   } else {
-    throw new Error(`channel type "${channel.type}" cannot send email`);
+    throw new AppError(400, `channel type "${channel.type}" cannot send email`);
   }
 }
 
 /** Append the acknowledge line to a plain-text body. Pure. */
-export function appendAckLine(text: string, ackUrl: string | null): string {
+function appendAckLine(text: string, ackUrl: string | null): string {
   if (!ackUrl) return text;
   return `${text}\n\nAcknowledge this alert: ${ackUrl}`;
 }
@@ -689,7 +690,7 @@ export function readPushFallback(meta: unknown): PushFallback | null {
  *  stamp, the key the email footer scopes itself by. Null on a row queued
  *  before the stamp existed, which widens the footer back to the whole alert
  *  rather than emptying it. */
-export function readDispatch(meta: unknown): string | null {
+function readDispatch(meta: unknown): string | null {
   const d = (meta as { dispatch?: unknown } | null | undefined)?.dispatch;
   return typeof d === "string" && d ? d : null;
 }

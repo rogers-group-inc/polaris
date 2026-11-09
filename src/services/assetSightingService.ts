@@ -21,8 +21,10 @@
 import { prisma } from "../db.js";
 import { bareFortinetDeviceName } from "../utils/assetSourceLocation.js";
 import { buildFirewallChangedEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
+import { resolveFirewallRefsByName, type UpstreamAssetRef } from "./assetUpstreamService.js";
+import { cidrContains } from "../utils/cidr.js";
 
-export type SightingSource = "dhcp_lease" | "dhcp_reservation";
+type SightingSource = "dhcp_lease" | "dhcp_reservation";
 
 export interface SightingInput {
   assetId: string;
@@ -291,6 +293,52 @@ export async function getSightingsForAsset(assetId: string): Promise<AssetSighti
   return prisma.assetFortigateSighting.findMany({
     where: { assetId },
     orderBy: { lastSeen: "desc" },
+  });
+}
+
+/** A sighting as the Firewall Sightings table draws it. */
+export interface AssetSightingForDisplay extends AssetSighting {
+  /** Name of the network on the same gate whose CIDR holds `ipAddress`. */
+  subnetName: string | null;
+  vlan: number | null;
+  /** That network's id — the VLAN cell opens it. */
+  subnetId: string | null;
+  /** That network's CIDR — lets the panel open on the page holding `ipAddress`. */
+  subnetCidr: string | null;
+  /** The firewall asset `fortigateDevice` resolves to; null when none does. */
+  fortigateAsset: UpstreamAssetRef | null;
+}
+
+/**
+ * The sighting history decorated for display: each row's network (resolved
+ * from its IP against the networks discovered on the SAME gate) and the
+ * firewall asset its gate name resolves to, so the FortiGate and VLAN cells
+ * can open what they name. Three queries regardless of row count.
+ */
+export async function getSightingsForDisplay(assetId: string): Promise<AssetSightingForDisplay[]> {
+  const sightings = await getSightingsForAsset(assetId);
+  const devices = [...new Set(sightings.map((s) => s.fortigateDevice).filter(Boolean))];
+  const [subnets, gates] = await Promise.all([
+    devices.length
+      ? prisma.subnet.findMany({
+          where: { fortigateDevice: { in: devices } },
+          select: { id: true, cidr: true, name: true, vlan: true, fortigateDevice: true },
+        })
+      : Promise.resolve([]),
+    resolveFirewallRefsByName(devices),
+  ]);
+  return sightings.map((s) => {
+    const match = s.ipAddress
+      ? subnets.find((sub) => sub.fortigateDevice === s.fortigateDevice && cidrContains(sub.cidr, `${s.ipAddress}/32`))
+      : undefined;
+    return {
+      ...s,
+      subnetName: match?.name ?? null,
+      vlan: match?.vlan ?? null,
+      subnetId: match?.id ?? null,
+      subnetCidr: match?.cidr ?? null,
+      fortigateAsset: gates.get(s.fortigateDevice.trim()) ?? null,
+    };
   });
 }
 

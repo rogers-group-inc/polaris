@@ -75,79 +75,34 @@
     return out;
   }
 
-  // Band tables — the desktop's _MEM_BANDS_* (same keys, labels, colours), so
-  // a chip means the same thing on both surfaces.
-  var BANDS_AGENT = [
-    { key: "processes", label: "Processes", color: "#f4a261" },
-    { key: "buffers",   label: "Buffers",   color: "#8ab17d" },
-    { key: "cache",     label: "Cache",     color: "#2a9d8f" },
-  ];
-  var BANDS_VSPHERE = [
-    { key: "consumed",   label: "Consumed",     color: "#f4a261" },
-    { key: "private",    label: "Private",      color: "#f4a261" },
-    { key: "shared",     label: "Shared",       color: "#2a9d8f" },
-    { key: "ballooned",  label: "Ballooned",    color: "#e9c46a" },
-    { key: "swapped",    label: "Host-swapped", color: "#9c6ade" },
-    { key: "compressed", label: "Compressed",   color: "#4d96d9" },
-  ];
-  function relabel(map) {
-    return BANDS_AGENT.map(function (b) { return { key: b.key, label: map[b.key] || b.label, color: b.color }; });
-  }
-  var BANDS_TRUENAS = relabel({ processes: "Services", cache: "ZFS Cache" });
-  var BANDS_PROXMOX = relabel({ processes: "Used", cache: "ZFS ARC" });
-  var SWAP_COLOR = "#9c6ade";
-
-  function agentBandsFor(asset) {
-    var v = asset && asset.virtualization;
-    if (v && v.platform === "proxmox" && v.role === "host") return BANDS_PROXMOX;
-    return v && v.platform === "truenas" && v.role === "host" ? BANDS_TRUENAS : BANDS_AGENT;
-  }
-
-  function num(v) {
-    if (v == null || v === "") return null;
-    var n = Number(v);
-    return isFinite(n) ? n : null;
-  }
-
   /**
-   * One sample → { kind, values, total, inUse, swapUsed, swapTotal }, or null
-   * when it carries no total (a percentage-only source). `values` holds null
-   * for a band the source did not report, distinct from 0 for one it reported
-   * empty. Port of `_memBandsFor` in public/js/assets.js.
+   * Rollup buckets' per-core MAX (`cpuCoreMaxPcts`, indexed like
+   * `cpuCorePcts`) → one [{ts, v}] series per core for the first `n` cores.
+   * A core with no max in a bucket gets v: null, which breaks its dashed line.
+   * Null when no sample carries the field (detail tier, or an older server).
    */
-  function memBandsFor(s) {
-    var total = num(s.memTotalBytes);
-    if (total == null) return null;
-    var vs = {
-      consumed:   num(s.memConsumedBytes),
-      private:    num(s.memPrivateBytes),
-      shared:     num(s.memSharedBytes),
-      ballooned:  num(s.memBalloonedBytes),
-      swapped:    num(s.memSwappedBytes),
-      compressed: num(s.memCompressedBytes),
-    };
-    var isVsphere = Object.keys(vs).some(function (k) { return vs[k] != null; });
-    var values, table;
-    if (isVsphere) {
-      values = vs;
-      table = BANDS_VSPHERE;
-    } else {
-      var used = num(s.memUsedBytes);
-      if (used == null) return null;
-      values = { processes: used, buffers: num(s.memBuffersBytes), cache: num(s.memCachedBytes) };
-      table = BANDS_AGENT;
-    }
-    var sum = 0;
-    table.forEach(function (b) { sum += values[b.key] || 0; });
-    return {
-      kind: isVsphere ? "vsphere" : "agent",
-      values: values,
-      total: total,
-      inUse: Math.min(total, sum),
-      swapUsed: num(s.swapUsedBytes),
-      swapTotal: num(s.swapTotalBytes),
-    };
+  function coreMaxSeries(samples, n) {
+    if (!n || !(samples || []).some(function (s) { return Array.isArray(s.cpuCoreMaxPcts); })) return null;
+    var out = [];
+    for (var c = 0; c < n; c++) out.push([]);
+    samples.forEach(function (s) {
+      var m = Array.isArray(s.cpuCoreMaxPcts) ? s.cpuCoreMaxPcts : [];
+      for (var c = 0; c < n; c++) {
+        var v = m[c];
+        out[c].push({ ts: s.timestamp, v: typeof v === "number" && isFinite(v) ? v : null });
+      }
+    });
+    return out;
   }
+
+  // Band tables and the sample → bands shaping are shared with the desktop
+  // memory chart — public/js/chart-shared.js, loaded before this file — so a
+  // chip means the same thing on both surfaces.
+  var CS = window.PolarisChartShared;
+  var BANDS_VSPHERE = CS.MEM_BANDS_VSPHERE;
+  var SWAP_COLOR = CS.MEM_SWAP_COLOR;
+  var agentBandsFor = CS.memAgentBandsFor;
+  var memBandsFor = CS.memBandsFor;
 
   // ─── Named-series visibility (persisted on this device) ────────────────
   var PREFS_KEY = "polaris-mobile-series-visibility";
@@ -220,18 +175,33 @@
       .filter(function (s) { return s.cpuPct != null; })
       .map(function (s) { return { ts: s.timestamp, v: s.cpuPct }; });
 
+    // A rollup tier carries each bucket's MAX beside its average: the dashed
+    // companions (lineChart's `max`), for the average and for each DRAWN core.
+    var resp = ctx.resp;
+    var rollup = !!(resp && typeof resp.bucketSeconds === "number" && resp.bucketSeconds > 0);
+    var avgMax = rollup
+      ? samples.map(function (s) { return { ts: s.timestamp, v: typeof s.maxCpuPct === "number" ? s.maxCpuPct : null }; })
+      : null;
+    var coreMax = rollup ? coreMaxSeries(samples, n) : null;
+    var maxOff = ctx.maxOff || {};
+    var showMax = !maxOff.cpu;
+
     var shownCores = 0;
     for (var c = 0; c < n; c++) if (!hidden[String(c)]) shownCores++;
     var series = [];
     for (var ci = 0; ci < n; ci++) {
       if (hidden[String(ci)]) continue;
-      series.push({ values: cores[ci], color: coreColor(ci, n), width: 1.1, opacity: shownCores > 1 ? 0.55 : 1 });
+      series.push({ values: cores[ci], color: coreColor(ci, n), width: 1.1, opacity: shownCores > 1 ? 0.55 : 1, max: coreMax ? coreMax[ci] : null });
     }
     // Last, so it draws on top.
-    if (!hidden.avg) series.push({ values: avg, color: "var(--md-primary)", gapFade: true, width: 2.2 });
+    if (!hidden.avg) series.push({ values: avg, color: "var(--md-primary)", gapFade: true, width: 2.2, max: avgMax });
+    var hasMax = series.some(function (s) {
+      return (s.max || []).some(function (p) { return p.v != null; });
+    });
 
     var chart = PolarisCharts.lineChart({
       series: series,
+      showMax: showMax,
       maintenance: ctx.maint,
       from: ctx.bounds && ctx.bounds.from,
       to: ctx.bounds && ctx.bounds.to,
@@ -243,15 +213,19 @@
     });
 
     var chips = chipHTML("cpu", "avg", "Avg", "var(--md-primary)", !hidden.avg);
+    // Beside Avg, so it is in reach without scrolling past 64 cores.
+    if (hasMax && PolarisCharts.maxChipHTML) chips += PolarisCharts.maxChipHTML(showMax);
     for (var k = 0; k < n; k++) chips += chipHTML("cpu", String(k), "Core " + k, coreColor(k, n), !hidden[String(k)]);
     // Outside the scrolling row, so it is in reach however many cores there are.
     var showAll = Object.keys(hidden).some(function (key) { return hidden[key]; })
       ? '<button type="button" class="btn btn-text" data-series-all="cpu" style="height:32px;padding:0 12px;flex:0 0 auto;">Show all</button>'
       : '';
 
-    // Per-core figures live on the detail tier only, so a rollup range has
-    // none even on a source that reports them. Said only for a split source
-    // (this one) and only off the detail tier.
+    // Rollup buckets carry per-core averages (and maxes) since the max-line
+    // change, so the note is only for rollup samples that still lack them —
+    // buckets rolled up before then, or an older server. `n` is 0 exactly when
+    // no sample carries `cpuCorePcts`. Said only for a split source (this one)
+    // and only off the detail tier.
     var tier = ctx.resp && ctx.resp.tier;
     var note = !n && tier && tier !== "detail"
       ? "Per-core detail is not kept in " + tier + " buckets, so this is the cross-core average. Pick a shorter range to see each core."
@@ -436,6 +410,15 @@
       if (!t) return;
       var ctx = host._telemetryCtx;
       if (!ctx) return;
+      // The Max chip: every dashed bucket-max line on the CPU chart at once.
+      // Its own key on the caller's per-asset state, so Show all (which is
+      // about cores) leaves it alone.
+      if (t.closest("[data-max-toggle]")) {
+        if (!ctx.maxOff) ctx.maxOff = {};
+        ctx.maxOff.cpu = !ctx.maxOff.cpu;
+        draw(host);
+        return;
+      }
       var all = t.closest("[data-series-all]");
       if (all) {
         Object.keys(ctx.hidden).forEach(function (k) { delete ctx.hidden[k]; });
@@ -455,7 +438,9 @@
   /**
    * Draw both charts into `host`. ctx: { resp (telemetry-history payload),
    * maint, asset, range, bounds, hidden (the caller's per-asset core
-   * visibility object — mutated by the legend) }.
+   * visibility object — mutated by the legend), maxOff (the caller's
+   * per-asset bucket-max choice, `{ cpu: true }` = hidden — mutated by the
+   * Max chip) }.
    */
   function render(host, ctx) {
     if (!host) return;
@@ -469,6 +454,7 @@
     render: render,
     // exported for unit tests
     _coreSeries: coreSeries,
+    _coreMaxSeries: coreMaxSeries,
     _coreColor: coreColor,
     _memBandsFor: memBandsFor,
     _agentBandsFor: agentBandsFor,

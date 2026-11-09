@@ -20,7 +20,7 @@ export interface GlobalUtilization {
   blockUtilization: BlockUtilizationSummary[];
 }
 
-export interface RecentReservation {
+interface RecentReservation {
   id: string;
   subnetCidr: string;
   subnetName: string;
@@ -49,7 +49,7 @@ export interface RecentManualReservation {
   expiresAt: Date | null;
 }
 
-export interface BlockUtilizationSummary {
+interface BlockUtilizationSummary {
   id: string;
   name: string;
   cidr: string;

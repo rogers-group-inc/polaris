@@ -32,7 +32,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import type { Prisma } from "../generated/prisma/client.js";
 
-export interface TopologyNodePosition {
+interface TopologyNodePosition {
   x: number;
   y: number;
 }
@@ -55,9 +55,9 @@ export const MAX_LAYOUT_NODES = 3000;
 /** View-key length cap (floor-view keys embed operator location-code text). */
 export const MAX_VIEW_KEY_LEN = 200;
 /** Node-id key length cap (real ids are UUIDs; leave slack for synthetics). */
-export const MAX_NODE_ID_LEN = 300;
+const MAX_NODE_ID_LEN = 300;
 /** Coordinate magnitude cap — pixel model coords; nothing sane approaches this. */
-export const MAX_COORD = 1e7;
+const MAX_COORD = 1e7;
 
 // Control characters (C0 range + DEL) are never legitimate in a view key —
 // keys derive from operator-typed location codes, which locKey() has already

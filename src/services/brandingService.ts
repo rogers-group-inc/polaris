@@ -73,7 +73,7 @@ const DEFAULT_LOGO_URLS = [
   "/logo.png", // retired 2026-08; still stored by installs seeded before then
 ] as const;
 
-export const DEFAULT_LOGO_URL: string = DEFAULT_LOGO_URLS[0];
+const DEFAULT_LOGO_URL: string = DEFAULT_LOGO_URLS[0];
 
 export const BRANDING_DEFAULTS: BrandingSettings = {
   appName: "Polaris",
@@ -143,7 +143,7 @@ export function logoVersionStamp(mtimeMs: number, size: number, appVersion: stri
 }
 
 /** The custom logo's version, or null with no custom logo or no readable file. */
-export async function getLogoVersion(logoUrl: string): Promise<string | null> {
+async function getLogoVersion(logoUrl: string): Promise<string | null> {
   if (!hasCustomLogo(logoUrl)) return null;
   try {
     // Lazy: appIconService imports this module, so a static import here would

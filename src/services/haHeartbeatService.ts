@@ -56,7 +56,7 @@ import { logger } from "../utils/logger.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import { STATE_DIR } from "../utils/paths.js";
 
-export const ACTIVE_INSTANCE_KEY = "ha.activeInstance";
+const ACTIVE_INSTANCE_KEY = "ha.activeInstance";
 export const WAL_SAMPLES_KEY     = "ha.walSamples";
 
 /**
@@ -65,7 +65,7 @@ export const WAL_SAMPLES_KEY     = "ha.walSamples";
  * the whole state dir, and nothing serves it over HTTP (unlike
  * STATE_DIR/public/uploads).
  */
-export const INSTANCE_ID_FILE = resolve(STATE_DIR, "data", "instance-id");
+const INSTANCE_ID_FILE = resolve(STATE_DIR, "data", "instance-id");
 
 /** How often the job re-stamps the row. */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -192,7 +192,7 @@ export function resolveInstanceId(file: string = INSTANCE_ID_FILE): string {
 }
 
 /** This process's identity, as stamped and as compared. */
-export function getSelfIdentity(): InstanceIdentity {
+function getSelfIdentity(): InstanceIdentity {
   return { instanceId: resolveInstanceId(), hostname: os.hostname() };
 }
 
@@ -234,12 +234,6 @@ export function evaluateHeartbeat(
   // toward "someone else is live" is the safe direction here.
   if (ageMs > CONFLICT_WINDOW_MS) return { conflict: false, ageMs };
   return { conflict: true, holder: stamp.hostname, holderInstanceId: stamp.instanceId, ageMs };
-}
-
-/** Read the current stamp, or null when the row is absent/unparseable. */
-export async function readActiveInstance(): Promise<ActiveInstanceStamp | null> {
-  const row = await prisma.setting.findUnique({ where: { key: ACTIVE_INSTANCE_KEY } });
-  return parseStamp(row?.value ?? undefined);
 }
 
 /**

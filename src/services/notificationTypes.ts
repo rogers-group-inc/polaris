@@ -26,7 +26,6 @@ import {
   type QuietTimeConfig,
   type RuleQuietTime,
   MAX_QUIET_WINDOWS,
-  type QuietConfig,
 } from "../utils/quietTime.js";
 // The wizard picks quiet windows in the SERVER's wall clock and has no
 // business asking the maintenance router for the time — that route is gated on
@@ -38,7 +37,7 @@ import { serverClockInfo } from "../utils/maintenanceRecurrence.js";
 // audit-Event level vocabulary the `event` trigger's minLevel filters against.
 export const SEVERITIES = ["notice", "informational", "warning", "serious", "critical"] as const;
 // Audit-Event levels (logEvent), used only by the event-trigger minLevel filter.
-export const EVENT_LEVELS = ["info", "warning", "error"] as const;
+const EVENT_LEVELS = ["info", "warning", "error"] as const;
 
 /**
  * The asset Event the delivery drain writes for every alert email it sends
@@ -54,8 +53,8 @@ export function eventFeedsAutomations(action: string): boolean {
   return action !== ALERT_EMAIL_SENT_ACTION;
 }
 export const CLEAR_BEHAVIORS = ["manual", "auto", "timed"] as const;
-export const COMPARATORS = [">", ">=", "<", "<=", "==", "!="] as const;
-export const AGGREGATIONS = ["latest", "avg", "median", "min", "max"] as const;
+const COMPARATORS = [">", ">=", "<", "<=", "==", "!="] as const;
+const AGGREGATIONS = ["latest", "avg", "median", "min", "max"] as const;
 
 export type Severity = (typeof SEVERITIES)[number];
 export type Comparator = (typeof COMPARATORS)[number];
@@ -529,7 +528,7 @@ export const ASSET_METRICS = [
  * chart's threshold shading, and the value/unit hints. Everything that offers
  * those checks this set rather than testing metric names inline.
  */
-export const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "pathOk"] as const;
+const BOOLEAN_METRICS = ["customStateValue", "hwSensorAlarm", "pathOk"] as const;
 
 export function isBooleanMetric(metric: string | null | undefined): boolean {
   return !!metric && (BOOLEAN_METRICS as readonly string[]).includes(metric);
@@ -543,7 +542,7 @@ export function isBooleanMetric(metric: string | null | undefined): boolean {
  * information than a metric-wide default. `trueIsProblem` picks the value the
  * builder pre-selects.
  */
-export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLabel: string; trueIsProblem: boolean }> = {
+const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLabel: string; trueIsProblem: boolean }> = {
   hwSensorAlarm: { trueLabel: "Alarm", falseLabel: "OK", trueIsProblem: true },
   // 1 = the run met every expectation (status, body, TLS, connect / echo).
   pathOk: { trueLabel: "Reachable", falseLabel: "Unreachable", trueIsProblem: false },
@@ -571,7 +570,7 @@ export const BOOLEAN_METRIC_LABELS: Record<string, { trueLabel: string; falseLab
 export const PATH_METRICS = [
   "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
 ] as const;
-export const PATH_CHANGE_TYPES = ["path_check_path_changed"] as const;
+const PATH_CHANGE_TYPES = ["path_check_path_changed"] as const;
 
 /** What the server's readings are called ({asset}, the alert's hostname). */
 export const PATH_SERVER_LABEL = "Polaris server";
@@ -694,7 +693,7 @@ export const ASSET_STATE_FIELDS = [
 
 // ─── Host-metric trigger ────────────────────────────────────────────────────
 // Polaris host health from HostMetricsSample.
-export const HOST_METRICS = [
+const HOST_METRICS = [
   "cpuPct", "memUsedPct", "memUsedBytes", "loadAvg1", "loadAvg5", "loadAvg15", "procRssBytes",
 ] as const;
 
@@ -1005,8 +1004,8 @@ const changeTrigger = z.object({
 // to the legacy single trigger, keeping per-dimension alerting + hysteresis
 // for the common case regardless of which client authored the rule.
 
-export const TRIGGER_GROUP_OPS = ["and", "or"] as const;
-export type TriggerGroupOp = (typeof TRIGGER_GROUP_OPS)[number];
+const TRIGGER_GROUP_OPS = ["and", "or"] as const;
+type TriggerGroupOp = (typeof TRIGGER_GROUP_OPS)[number];
 
 // Leaves are the existing threshold conditions minus the hold in BOTH its
 // spellings (the sustain applies to the whole composite, not per leaf) — a leaf
@@ -1014,7 +1013,7 @@ export type TriggerGroupOp = (typeof TRIGGER_GROUP_OPS)[number];
 const compositeAssetMetricLeaf = assetMetricTrigger.omit({ forDurationSec: true, forPolls: true, includeServer: true });
 const compositeAssetStateLeaf = assetStateTrigger.omit({ forDurationSec: true, forPolls: true });
 const compositeHostMetricLeaf = hostMetricTrigger.omit({ forDurationSec: true, forPolls: true });
-export const compositeLeafSchema = z.discriminatedUnion("type", [
+const compositeLeafSchema = z.discriminatedUnion("type", [
   compositeAssetMetricLeaf,
   compositeAssetStateLeaf,
   compositeHostMetricLeaf,
@@ -1032,7 +1031,7 @@ export function isTriggerLeaf(node: TriggerConditionGroup | CompositeLeaf): node
   return "type" in node;
 }
 
-export const triggerConditionGroupSchema: z.ZodType<TriggerConditionGroup> = z.lazy(() =>
+const triggerConditionGroupSchema: z.ZodType<TriggerConditionGroup> = z.lazy(() =>
   z
     .object({
       op: z.enum(TRIGGER_GROUP_OPS),
@@ -1068,7 +1067,7 @@ export const triggerSchema = z.discriminatedUnion("type", [
 export type CompositeTrigger = z.infer<typeof compositeTrigger>;
 
 /** Depth (root group = 1) + leaf count for a composite trigger tree. */
-export function triggerConditionStats(node: { op: TriggerGroupOp; children: (TriggerConditionGroup | CompositeLeaf)[] }): {
+function triggerConditionStats(node: { op: TriggerGroupOp; children: (TriggerConditionGroup | CompositeLeaf)[] }): {
   depth: number;
   leaves: number;
 } {
@@ -1089,7 +1088,7 @@ export function triggerConditionStats(node: { op: TriggerGroupOp; children: (Tri
  * composite, 1 leaf ⇒ per-dimension legacy" invariant holds for every author
  * (wizard or raw API).
  */
-export function collapseCompositeTrigger(trigger: Trigger): Trigger {
+function collapseCompositeTrigger(trigger: Trigger): Trigger {
   if (trigger.type !== "composite") return trigger;
   let op = trigger.op;
   let children = trigger.children;
@@ -1110,7 +1109,7 @@ const COMPOSITE_MAX_DEPTH = 3;
 const COMPOSITE_MAX_LEAVES = 10;
 
 /** Structural caps + kind coherence for a composite trigger (save + preview). */
-export function validateCompositeTrigger(trigger: CompositeTrigger, ctx: z.RefinementCtx): void {
+function validateCompositeTrigger(trigger: CompositeTrigger, ctx: z.RefinementCtx): void {
   const stats = triggerConditionStats(trigger);
   if (stats.depth > COMPOSITE_MAX_DEPTH) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["trigger"], message: `condition groups nest at most ${COMPOSITE_MAX_DEPTH} deep` });
@@ -1149,7 +1148,7 @@ export function validateCompositeTrigger(trigger: CompositeTrigger, ctx: z.Refin
 }
 
 /** Flatten a composite tree's leaves in document order. */
-export function collectTriggerLeaves(node: { children: (TriggerConditionGroup | CompositeLeaf)[] }): CompositeLeaf[] {
+function collectTriggerLeaves(node: { children: (TriggerConditionGroup | CompositeLeaf)[] }): CompositeLeaf[] {
   const out: CompositeLeaf[] = [];
   for (const c of node.children) {
     if (isTriggerLeaf(c)) out.push(c);
@@ -1170,7 +1169,7 @@ export function collectTriggerLeaves(node: { children: (TriggerConditionGroup | 
 // AND the engine's post-SQL filter, so the semantics can't drift.
 
 export const SCOPE_GROUP_OPS = ["and", "or", "none", "notAll"] as const;
-export type ScopeGroupOp = (typeof SCOPE_GROUP_OPS)[number];
+type ScopeGroupOp = (typeof SCOPE_GROUP_OPS)[number];
 
 const STRING_OPS = ["equals", "notEquals", "contains", "notContains", "startsWith", "endsWith"] as const;
 
@@ -1190,8 +1189,8 @@ const STRING_OPS = ["equals", "notEquals", "contains", "notContains", "startsWit
  * (scopeRelationIndex.ts) stamps the verdict under `subnetNameLeafKey`, and an
  * undecorated row reads as "in no such subnet".
  */
-export const SUBNET_NAME_OPS = ["inSubnetNamed", "notInSubnetNamed"] as const;
-export const SUBNET_RANGE_OPS = ["inRange", "notInRange"] as const;
+const SUBNET_NAME_OPS = ["inSubnetNamed", "notInSubnetNamed"] as const;
+const SUBNET_RANGE_OPS = ["inRange", "notInRange"] as const;
 const SUBNET_OPS = ["inCidr", "notInCidr", ...SUBNET_RANGE_OPS, ...SUBNET_NAME_OPS] as const;
 
 export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
@@ -1245,7 +1244,7 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   status: ["equals", "notEquals"],
   assetId: ["equals", "notEquals"],
 };
-export const SCOPE_FIELDS = Object.keys(SCOPE_FIELD_OPS);
+const SCOPE_FIELDS = Object.keys(SCOPE_FIELD_OPS);
 
 /**
  * Fields whose VALUE is a CIDR (or a bare IP, read as a host route) rather than
@@ -1311,7 +1310,7 @@ export const DEVICE_FILTER_FIELD_OPS: Record<string, readonly string[]> = {
   // Device-filter only — the automations scope never asked for it.
   nativeVlan: ["equals", "notEquals"],
 };
-export const DEVICE_FILTER_FIELDS = Object.keys(DEVICE_FILTER_FIELD_OPS);
+const DEVICE_FILTER_FIELDS = Object.keys(DEVICE_FILTER_FIELD_OPS);
 
 /** Fields the extended vocabulary adds — the ones automations can't produce. */
 export const DEVICE_FILTER_ONLY_FIELDS = DEVICE_FILTER_FIELDS.filter((f) => !SCOPE_FIELDS.includes(f));
@@ -1448,7 +1447,6 @@ export const RELATION_CONDITION_FIELDS: Record<string, { relation: "interfaces" 
   // with yes / no. See `agentInstalled` in SCOPE_FIELD_OPS.
   agentInstalled: { relation: "managedAgent", column: "installStatus" },
 };
-export const RELATION_CONDITION_FIELD_NAMES = Object.keys(RELATION_CONDITION_FIELDS);
 
 /** Does this tree ask about the interface inventory? */
 export function conditionNeedsInterfaces(cond: ScopeConditionGroup | null | undefined): boolean {
@@ -1880,7 +1878,7 @@ export const CHANNEL_TRANSPORT: Record<ChannelType, "email" | "webhook" | "web_p
 };
 /** Channel types whose target routes to recipients (tags / addresses); the rest
  *  post to the channel's own fixed destination (URL / token). */
-export const RECIPIENT_ROUTED_TYPES: ChannelType[] = ["smtp", "oauth_m365", "web_push"];
+const RECIPIENT_ROUTED_TYPES: ChannelType[] = ["smtp", "oauth_m365", "web_push"];
 
 // Display metadata for the Delivery-tab add/edit modal: per-type label + the
 // config fields (key, label, kind, whether it's a masked secret).
@@ -2044,7 +2042,7 @@ export const emailCompositionSchema = z
 // Tier channels must be email-type (validated at rule save). Tier subject/body
 // overrides fall back to the rule's emailComposition, then the defaults.
 // Swept by the escalateNotifications job (60s).
-export const escalationTierSchema = z
+const escalationTierSchema = z
   .object({
     afterMin: z.number().int().min(1).max(10080), // ≤ 1 week
     channelId: z.string().min(1).max(100),
@@ -2077,8 +2075,8 @@ export const escalationSchema = z
 // ruleInputSchema folds old POST bodies into v2, so pre-rename API clients and
 // the pre-wizard UI keep working against the alias paths.
 
-export const RESET_MODES = ["manual", "auto", "timed", "condition", "event"] as const;
-export type ResetMode = (typeof RESET_MODES)[number];
+const RESET_MODES = ["manual", "auto", "timed", "condition", "event"] as const;
+type ResetMode = (typeof RESET_MODES)[number];
 
 /**
  * Trigger types a custom reset CONDITION tree can be attached to: the ones that
@@ -2090,9 +2088,9 @@ export type ResetMode = (typeof RESET_MODES)[number];
  * agree on it: validateRuleV2, the wizard-facing `resetModesByTriggerType`
  * catalog, and the engine's decision to run the reset-tree pass at all.
  */
-export const TRIGGER_TYPES_WITH_RESET_CONDITIONS = ["asset_metric", "asset_state", "host_metric", "composite"] as const;
+const TRIGGER_TYPES_WITH_RESET_CONDITIONS = ["asset_metric", "asset_state", "host_metric", "composite"] as const;
 
-export function triggerTypeAllowsResetCondition(type: string): boolean {
+function triggerTypeAllowsResetCondition(type: string): boolean {
   return (TRIGGER_TYPES_WITH_RESET_CONDITIONS as readonly string[]).includes(type);
 }
 
@@ -2108,9 +2106,9 @@ export function triggerTypeAllowsResetCondition(type: string): boolean {
  * reading, and letting an unrelated Event clear a live threshold alert would
  * hide a device that is still over the line.
  */
-export const TRIGGER_TYPES_WITH_RESET_EVENT = ["event", "change"] as const;
+const TRIGGER_TYPES_WITH_RESET_EVENT = ["event", "change"] as const;
 
-export function triggerTypeAllowsResetEvent(type: string): boolean {
+function triggerTypeAllowsResetEvent(type: string): boolean {
   return (TRIGGER_TYPES_WITH_RESET_EVENT as readonly string[]).includes(type);
 }
 
@@ -2140,7 +2138,7 @@ export const RESET_EVENT_SUGGESTIONS: Record<string, string> = {
   "capacity.severity_changed": "capacity.severity_recovered",
 };
 
-export const resetEventSchema = z
+const resetEventSchema = z
   .object({
     // Glob over Event.action, same vocabulary as the event trigger.
     actionPattern: z.string().min(1).max(200),
@@ -2149,7 +2147,7 @@ export const resetEventSchema = z
   })
   .strict();
 
-export const resetSchema = z
+const resetSchema = z
   .object({
     mode: z.enum(RESET_MODES).default("manual"),
     // auto only — hysteresis: the alert recovers when the value no longer
@@ -2183,8 +2181,8 @@ export const resetSchema = z
   })
   .strict();
 
-export const API_CALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-export const SCRIPT_RUN_TARGETS = ["server", "agent"] as const;
+const API_CALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+const SCRIPT_RUN_TARGETS = ["server", "agent"] as const;
 // Interpreter vocabulary for the AutomationScript registry (owned here — the
 // vocabulary file — so the catalog, the script service, and the routes never
 // drift; the Go agent mirrors this list in scriptexec).
@@ -2281,7 +2279,7 @@ export function notifyChannelIds(a: { channelId: string; channelIds?: string[] |
 // API response, and restored on save only for the same url (business rule
 // 114(h), utils/actionHeaderMask.ts). The URL is static (no {token}s) so the SSRF host check at save time checks
 // what actually gets fetched; only bodyTemplate takes template tokens.
-export const apiCallActionSchema = z
+const apiCallActionSchema = z
   .object({
     type: z.literal("api_call"),
     method: z.enum(API_CALL_METHODS).default("POST"),
@@ -2302,7 +2300,7 @@ export const apiCallActionSchema = z
   })
   .strict();
 
-export const scriptActionSchema = z
+const scriptActionSchema = z
   .object({
     type: z.literal("script"),
     scriptId: z.string().min(1).max(100), // AutomationScript registry id
@@ -2321,7 +2319,7 @@ export const scriptActionSchema = z
 // every NotificationDelivery hangs off its id, as do the escalation sweep,
 // acknowledge/clear and the rule state machine — so a notify/api_call action
 // could not exist without it. Only the audit Event is optional.
-export const eventActionSchema = z
+const eventActionSchema = z
   .object({
     type: z.literal("event"),
   })
@@ -2345,7 +2343,7 @@ export const eventActionSchema = z
 // To, never written by the builder. At least one To source is required —
 // enforced in assertActionRefs, since a refinement here would take this
 // schema out of the discriminated union.
-export const REBOOT_WHEN = ["now", "at"] as const;
+const REBOOT_WHEN = ["now", "at"] as const;
 export const rebootActionSchema = z
   .object({
     type: z.literal("reboot"),
@@ -2388,7 +2386,7 @@ export const actionSchema = z.discriminatedUnion("type", [
 // shape. The stored/input escalation stays on the legacy schema until the
 // escalation-v2 phase flips the sweep onto executeActions; the v2 schema +
 // normalizeEscalationToV2 land now so the conversion is testable and shared.
-export const escalationTierV2Schema = z
+const escalationTierV2Schema = z
   .object({
     afterMin: z.number().int().min(1).max(10080),
     actions: z.array(actionSchema).min(1).max(10),
@@ -2458,17 +2456,11 @@ export type RepeatConfig = z.infer<typeof repeatConfigSchema>;
  * the toggle on changes nothing by itself), and strips it from all of them when
  * the toggle is off — the same on/off contract `actions` already has.
  */
-export const bandFollowUpSchema = z
+const bandFollowUpSchema = z
   .object({
     requireAckNote: z.boolean().default(false),
   })
   .strict();
-
-export type BandFollowUp = z.infer<typeof bandFollowUpSchema>;
-
-/** Re-exported so the sweep and the schema route can name the quiet-time
- *  shape without reaching past this module for half of one config. */
-export type { QuietConfig };
 
 // ─── Per-action escalation (escalatable actions) ────────────────────────────
 // A rule's top-level actions and each severity band's actions may carry their
@@ -2503,12 +2495,12 @@ const perActionEscalation = z.union([escalationSchema, escalationV2Schema]).opti
  */
 const perActionRepeat = repeatConfigSchema.optional().nullable();
 
-export const notifyActionEscalatableSchema = notifyActionSchema.extend({
+const notifyActionEscalatableSchema = notifyActionSchema.extend({
   escalation: perActionEscalation,
   repeat: perActionRepeat,
 });
-export const apiCallActionEscalatableSchema = apiCallActionSchema.extend({ escalation: perActionEscalation });
-export const scriptActionEscalatableSchema = scriptActionSchema.extend({ escalation: perActionEscalation });
+const apiCallActionEscalatableSchema = apiCallActionSchema.extend({ escalation: perActionEscalation });
+const scriptActionEscalatableSchema = scriptActionSchema.extend({ escalation: perActionEscalation });
 
 export const escalatableActionSchema = z.discriminatedUnion("type", [
   notifyActionEscalatableSchema,
@@ -2530,7 +2522,7 @@ export type EscalatableAction = z.infer<typeof escalatableActionSchema>;
 // monotonic in the operator direction, severities strictly increasing above
 // the base) is enforced in validateRuleV2 (discriminated-union members can't
 // carry a superRefine, and the base severity lives on the rule).
-export const severityBandSchema = z
+const severityBandSchema = z
   .object({
     threshold: z.number(),
     severity: z.enum(SEVERITIES),
@@ -2556,7 +2548,7 @@ export type SeverityBand = z.infer<typeof severityBandSchema>;
 // (below tier 0) alert notifies. onIncrease/onResolved default on; onDecrease
 // off (page when it worsens, not when it eases). resolvedMode picks whether the
 // all-clear reuses the last-fired band's actions or a dedicated list.
-export const bandNotifySchema = z
+const bandNotifySchema = z
   .object({
     onIncrease: z.boolean().default(true),
     onDecrease: z.boolean().default(false),
@@ -2573,14 +2565,11 @@ export type DeliveryTarget = z.infer<typeof deliveryTargetSchema>;
 export type EmailRecipients = z.infer<typeof emailRecipientsSchema>;
 export type EmailComposition = z.infer<typeof emailCompositionSchema>;
 export type EscalationTier = z.infer<typeof escalationTierSchema>;
-export type EscalationConfig = z.infer<typeof escalationSchema>;
+type EscalationConfig = z.infer<typeof escalationSchema>;
 export type ResetConfig = z.infer<typeof resetSchema>;
-export type NotifyAction = z.infer<typeof notifyActionSchema>;
+type NotifyAction = z.infer<typeof notifyActionSchema>;
 export type ApiCallAction = z.infer<typeof apiCallActionSchema>;
-export type ScriptAction = z.infer<typeof scriptActionSchema>;
-export type RebootAction = z.infer<typeof rebootActionSchema>;
 export type AutomationAction = z.infer<typeof actionSchema>;
-export type EscalationTierV2 = z.infer<typeof escalationTierV2Schema>;
 export type EscalationV2Config = z.infer<typeof escalationV2Schema>;
 
 // ─── Specificity ranking (automation precedence / carve-out) ────────────────
@@ -2606,7 +2595,7 @@ export const SCOPE_RANK = {
 } as const;
 
 /** Ladder for the wizard's "Specificity: …" indicator (least → most). */
-export const SCOPE_RANK_LADDER: { key: keyof typeof SCOPE_RANK; label: string }[] = [
+const SCOPE_RANK_LADDER: { key: keyof typeof SCOPE_RANK; label: string }[] = [
   { key: "allAssets", label: "All assets" },
   { key: "assetType", label: "Device type" },
   { key: "os", label: "Operating system" },
@@ -4094,7 +4083,7 @@ export function repeatStateKey(actionIdx: number): string {
  * it as one (the engine's fire path owns the audit Event), so including it would
  * only mislead a reader.
  */
-export const REPEATABLE_ACTION_TYPES = ["notify"] as const;
+const REPEATABLE_ACTION_TYPES = ["notify"] as const;
 
 /**
  * All escalation chains active at a given alert severity — mirrors the
@@ -4113,7 +4102,7 @@ export const REPEATABLE_ACTION_TYPES = ["notify"] as const;
  * more than one place. A second copy is how a reminder would come to notify a
  * different set of people than the alert did.
  */
-export function effectiveActionsForSeverity(
+function effectiveActionsForSeverity(
   rule: RuleActionCarrier & { severity: string },
   severity: string,
 ): EscalatableAction[] {
@@ -4158,7 +4147,7 @@ export function effectiveAckNoteForSeverity(
  * at all — but nothing is migrated behind the operator's back, and a rule the
  * builder has not touched keeps behaving exactly as it did.
  */
-export function repeatForAction(
+function repeatForAction(
   rule: { repeat?: RepeatConfig | null },
   action: { type: string; repeat?: RepeatConfig | null },
 ): RepeatConfig | null {
@@ -4366,7 +4355,7 @@ export function followUpPolicy(
  *  ABOUT a device", which is what the asset-details Alerts tab asks — and an
  *  all-assets `integration.discover.error` automation is about an integration,
  *  not about each of 2000 devices it would otherwise be listed under. */
-export const ASSET_SCOPED_TRIGGER_TYPES = ["asset_metric", "asset_state", "change"] as const;
+const ASSET_SCOPED_TRIGGER_TYPES = ["asset_metric", "asset_state", "change"] as const;
 
 /** Whether a trigger selects devices via `scope` (composite depends on kind). */
 export function isAssetScopedTrigger(trigger: Trigger): boolean {
@@ -4426,7 +4415,7 @@ export function forecastDaysOf(trigger: unknown): number {
  * forecast follows a memory-utilization automation's percentages. Exposed on
  * /automations/schema as `forecastLevelSources`.
  */
-export const FORECAST_LEVEL_SOURCE_METRICS: Record<string, string> = { memForecastPct: "memPct" };
+const FORECAST_LEVEL_SOURCE_METRICS: Record<string, string> = { memForecastPct: "memPct" };
 
 /** One level a forecast counts down to: a tier's threshold, its severity, and
  *  whether its comparison is strict (`>`) or not (`>=`). */
@@ -4796,7 +4785,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
 // builder only shows the applicable ones.
 /** Case-insensitive substring test used by every `*Pattern` dimension filter.
  *  An unset needle matches everything (the filter is optional). */
-export function dimensionSubstringMatch(haystack: string | null | undefined, needle?: string | null): boolean {
+function dimensionSubstringMatch(haystack: string | null | undefined, needle?: string | null): boolean {
   if (!needle) return true;
   return (haystack ?? "").toLowerCase().includes(needle.toLowerCase());
 }
@@ -4885,7 +4874,7 @@ export function pathCheckFilterMatches(
 // sample table. Device-identifier dimensions are NOT
 // listed per metric/field — DEVICE_FILTER_DIMENSIONS below applies to every
 // asset leaf uniformly.
-export const FIELD_DIMENSIONS: Record<string, string[]> = {
+const FIELD_DIMENSIONS: Record<string, string[]> = {
   ifOperStatus: ["ifNamePattern"],
   ifAdminStatus: ["ifNamePattern"],
   ifIpAddress: ["ifNamePattern"],
@@ -5064,7 +5053,7 @@ export function triggerDimensionApplicable(metricOrField: string, dimension: str
  * ask "does this trigger raise one alert per interface?", which is what decides
  * whether a custom reset condition clears one alert or all of them.
  */
-export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
+const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   ifOperStatus: ["ifNamePattern"],
   ifAdminStatus: ["ifNamePattern"],
   ifIpAddress: ["ifNamePattern"],
@@ -5805,7 +5794,7 @@ export function alertOwnerOf(n: AlertOwnerSources | null | undefined): DeliveryO
 
 /** What one dimension of a reading IS, in an operator's words — so a surface can
  *  say "one alert per interface" without hardcoding the vocabulary. */
-export const DIMENSION_NOUNS: Record<string, string> = {
+const DIMENSION_NOUNS: Record<string, string> = {
   ifNamePattern: "interface",
   sensorClass: "sensor",
   sensorNamePattern: "sensor",
@@ -5872,7 +5861,7 @@ export function dimensionNounOf(
  * Deliberately not a METRIC_DIMENSIONS entry: that would give the metric a
  * dimension space and a filter input, and there is one alert per device here.
  */
-export const METRIC_COMPONENT_NOUNS: Record<string, string> = {
+const METRIC_COMPONENT_NOUNS: Record<string, string> = {
   cpuCorePct: "CPU cores",
 };
 

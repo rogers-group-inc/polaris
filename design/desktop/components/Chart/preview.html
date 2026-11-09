@@ -13,6 +13,14 @@
   .demo-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 16px; }
   .demo-swatch { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--color-text-secondary); }
   .demo-swatch i { width: 26px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+  /* The key row and Max chip, as _chartStateLegendHTML / _maxLineChipHTML draw them (inline styles in the app). */
+  .demo-key { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.72rem; color: var(--color-text-secondary); margin-bottom: 2px; }
+  .demo-key-item { display: inline-flex; align-items: center; gap: 4px; }
+  .demo-key-line { width: 15px; height: 2px; flex: 0 0 auto; }
+  .demo-max-chip { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; user-select: none; }
+  .demo-max-chip.off { opacity: 0.8; text-decoration: line-through; }
+  .demo-max-dash { width: 15px; height: 2px; flex: 0 0 auto; background-image: linear-gradient(to right, var(--color-success) 0, var(--color-success) 2px, transparent 2px, transparent 5px); background-size: 5px 2px; background-repeat: repeat-x; }
+  .demo-max-chip.off .demo-max-dash { opacity: 0.45; }
 </style>
 </head>
 <body>
@@ -91,6 +99,69 @@
   </div>
 
   <div class="card" style="margin-top:16px">
+    <div class="card-title">Longer ranges: the dashed max line</div>
+    <p class="hint">
+      Past the detail tier (with default retention, 30d and longer) a point is an hourly or daily
+      bucket and the solid line is its <em>average</em>, which flattens a spike to nothing. Each such
+      chart also draws the bucket's <em>maximum</em> as a fine dashed line (<code>stroke-dasharray="2 3"</code>,
+      finer than the packet-loss dash) in the series' own colour, under the average. A bucket with no max
+      breaks the line rather than bridging it. The <strong>Max (hourly peak)</strong> /
+      <strong>Max (daily peak)</strong> chip in the chart's key toggles it, remembered per user per chart;
+      while shown, the y axis includes the peaks. The tooltip names avg and max either way. Detail-tier
+      ranges have no max line and no chip.
+    </p>
+    <div class="demo-head">
+      <h4>Response Time</h4>
+      <span class="badge badge-readonly">ICMP · every 1m · Class</span>
+      <div class="demo-ranges">
+        <button class="btn btn-sm btn-secondary">1h</button>
+        <button class="btn btn-sm btn-secondary">12h</button>
+        <button class="btn btn-sm btn-secondary">24h</button>
+        <button class="btn btn-sm btn-secondary">7d</button>
+        <button class="btn btn-sm btn-primary">30d</button>
+        <button class="btn btn-sm btn-secondary">Custom&hellip;</button>
+      </div>
+    </div>
+    <div class="demo-stats">
+      <span><strong>720</strong> samples</span>
+      <span><strong>Avg:</strong> 4.4 ms</span>
+      <span><strong>Max:</strong> 68 ms</span>
+      <span><strong>Packet loss:</strong> 0.1%</span>
+    </div>
+    <!-- the key sits ABOVE the plot, between the stats line and the chart box, and carries the Max chip -->
+    <div class="demo-key">
+      <span class="demo-key-item"><span class="demo-key-line" style="background:var(--color-success)"></span>Up</span>
+      <span class="demo-max-chip" title="Click to hide the dashed line of each hour's highest reading"><span class="demo-max-dash" aria-hidden="true"></span>Max (hourly peak)</span>
+    </div>
+    <div class="chart-box">
+      <svg viewBox="0 0 760 220" width="100%" role="img" aria-label="Response time over 30 days on hourly buckets: the average as a solid line, each bucket's maximum as a dashed line under it" style="display:block;font-family:var(--font-sans)">
+        <g stroke="var(--color-border-light)" stroke-width="1">
+          <line x1="44" y1="20" x2="714" y2="20"></line>
+          <line x1="44" y1="60" x2="714" y2="60"></line>
+          <line x1="44" y1="100" x2="714" y2="100"></line>
+          <line x1="44" y1="140" x2="714" y2="140"></line>
+          <line x1="44" y1="180" x2="714" y2="180"></line>
+        </g>
+        <g font-size="10" fill="var(--color-text-tertiary)" text-anchor="end">
+          <text x="38" y="24">80 ms</text><text x="38" y="64">60</text><text x="38" y="104">40</text><text x="38" y="144">20</text><text x="38" y="184">0</text>
+        </g>
+        <g font-size="10" fill="var(--color-text-tertiary)" text-anchor="middle">
+          <text x="44.0" y="200">Oct 7</text><text x="200.3" y="200">Oct 14</text><text x="356.7" y="200">Oct 21</text><text x="513.0" y="200">Oct 28</text><text x="669.3" y="200">Nov 4</text>
+        </g>
+        <!-- bucket max: dashed, the series colour, UNDER the average; broken where a bucket has no max -->
+        <polyline fill="none" stroke="var(--color-success)" stroke-width="1.25" stroke-dasharray="2 3" stroke-linejoin="round" opacity="0.85" points="44.0,159.6 66.3,157.1 88.7,163.9 111.0,166.2 133.3,161.7 155.7,153.9 178.0,76 200.3,159.9 222.7,156.9 245.0,157.7 267.3,161.9 289.7,152.9 312.0,153.3 334.3,118 356.7,92 379.0,157.3 401.3,149.3 423.7,150.7"></polyline>
+        <polyline fill="none" stroke="var(--color-success)" stroke-width="1.25" stroke-dasharray="2 3" stroke-linejoin="round" opacity="0.85" points="468.3,148.4 490.7,161.6 513.0,159.9 535.3,44 557.7,163.7 580.0,158.2 602.3,166.4 624.7,154.3 647.0,104 669.3,156.6 691.7,149.5 714.0,159.4"></polyline>
+        <!-- bucket average: the solid series line, on top -->
+        <polyline fill="none" stroke="var(--color-success)" stroke-width="1.6" points="44.0,172.3 66.3,173.0 88.7,171.0 111.0,173.3 133.3,171.5 155.7,172.1 178.0,173.4 200.3,171.6 222.7,173.5 245.0,171.9 267.3,173.3 289.7,173.2 312.0,171.9 334.3,170.3 356.7,173.1 379.0,172.7 401.3,171.1 423.7,169.8 446.0,171.3 468.3,172.0 490.7,169.7 513.0,173.4 535.3,170.2 557.7,172.4 580.0,173.0 602.3,173.1 624.7,172.4 647.0,170.3 669.3,172.9 691.7,171.3 714.0,171.0"></polyline>
+      </svg>
+    </div>
+    <div class="demo-key" style="margin-top:8px">
+      <span class="demo-max-chip off"><span class="demo-max-dash" aria-hidden="true"></span>Max (hourly peak)</span>
+      <span>&mdash; switched off: struck through, the dash faded; the chart drops the dashed lines and rescales to the averages.</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <div class="card-title">Colour vocabulary</div>
     <div class="demo-swatches">
       <div class="demo-swatch"><i style="background:var(--color-success)"></i>Up (response time only)</div>
@@ -100,6 +171,7 @@
       <div class="demo-swatch"><i style="background:#9aa0a6"></i>Dependency down, not polled</div>
       <div class="demo-swatch"><i style="background:#9575cd;opacity:0.5"></i>Maintenance band</div>
       <div class="demo-swatch"><i style="background:repeating-linear-gradient(90deg,#ab47bc 0 6px,transparent 6px 10px)"></i>Packet loss (right axis)</div>
+      <div class="demo-swatch"><i style="background:repeating-linear-gradient(90deg,var(--color-success) 0 2px,transparent 2px 5px)"></i>Bucket max, dashed (rollup ranges)</div>
       <div class="demo-swatch"><i style="background:var(--color-accent)"></i>Any other series</div>
     </div>
     <p class="hint" style="margin-top:10px">

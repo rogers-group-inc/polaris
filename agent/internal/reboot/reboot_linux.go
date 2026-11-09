@@ -63,7 +63,7 @@ func reboot(delay time.Duration, _ string) error {
 	// Reboot(interactive=false): polkit decides without prompting anyone.
 	if out, err := busctl(ctx, "call", "org.freedesktop.login1", "/org/freedesktop/login1",
 		"org.freedesktop.login1.Manager", "Reboot", "b", "false"); err != nil {
-		return fmt.Errorf("logind refused the reboot: %v: %s", err, out)
+		return fmt.Errorf("logind refused the reboot: %w: %s", err, out)
 	}
 	return nil
 }

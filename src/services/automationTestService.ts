@@ -54,8 +54,9 @@ import { allRuleActionRefs, notifyChannelIds, dimensionNounOf, ruleAlertsWhenDep
 import { triggerSummary } from "../utils/triggerSummary.js";
 import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, SAMPLE_UPSTREAM_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 
-export type TestTarget = "delivery" | "event";
+type TestTarget = "delivery" | "event";
 
 /** Which action of the draft to test — an index into the canonical walk. */
 export interface TestActionPath {
@@ -317,7 +318,7 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   const ok = sent > 0 && failed.length === 0;
   // The acknowledge link resolves against POLARIS_PUBLIC_URL; without one a
   // relative path in an inbox points at nothing, so the button renders away.
-  const ackLinksEnabled = Boolean(process.env.POLARIS_PUBLIC_URL);
+  const ackLinksEnabled = publicBaseUrl() !== null;
 
   await logEvent({
     action: "automation.test_delivery",

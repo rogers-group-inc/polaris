@@ -75,8 +75,32 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Unused files, unused / unlisted dependencies and unresolved imports
+      # fail; unused exports are warnings until the code-quality ledger's
+      # un-export batch lands (knip.jsonc, docs/CODE-QUALITY-LEDGER.md).
+      - name: Dead code (knip)
+        run: npm run check:dead
+
       - name: Run unit tests
         run: npx vitest run tests/unit
+
+      # The Go agent: nothing checked it before 2026-11-04 but the nightly
+      # CodeQL scan. go-version-file keeps this out of the Go pin family
+      # (agent/go.mod is already a check:versions site).
+      - name: Set up Go (agent)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Agent gofmt / vet / tests
+        working-directory: agent
+        run: make fmt-check vet test
+
+      # A report, never a gate: .jscpd.json has no threshold, so this exits 0.
+      # The summary table in the log is the trend to watch.
+      - name: Duplication report (informational)
+        run: npm run check:dup -- --reporters console --silent
 
   integration:
     runs-on: ubuntu-24.04
@@ -154,19 +178,23 @@ jobs:
       # `source: "versioned-dir"` resolution production uses. The runner image
       # normally carries the PGDG list already (its own PostgreSQL comes from
       # there); add it when absent, because Ubuntu's archive has no 17.
+      # Every download retries: one dropped connection to postgresql.org
+      # (curl exit 56 on 2026-11-05, twice) failed the integration job and so
+      # skipped the image build for those pushes.
       - name: Install PostgreSQL 17 client
         run: |
           set -euo pipefail
           if [ ! -x /usr/lib/postgresql/17/bin/pg_dump ]; then
             if ! ls /etc/apt/sources.list.d/ | grep -qi pgdg; then
               sudo install -d /usr/share/postgresql-common/pgdg
-              curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 \
+                https://www.postgresql.org/media/keys/ACCC4CF8.asc \
                 | sudo tee /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc > /dev/null
               echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
                 | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
             fi
-            sudo apt-get update -qq
-            sudo apt-get install -y postgresql-client-17
+            sudo apt-get -o Acquire::Retries=5 update -qq
+            sudo apt-get -o Acquire::Retries=5 install -y postgresql-client-17
           fi
           # Assert it, rather than trusting the install: a silent miss here
           # reappears as an unexplained backup refusal three jobs later.

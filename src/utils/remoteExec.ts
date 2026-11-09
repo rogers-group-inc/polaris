@@ -143,16 +143,6 @@ export function sftpPut(client: SshClient, remotePath: string, body: Buffer, mod
   });
 }
 
-/** Connect + run one command in a single call (credential-config flavor). */
-export function sshRunOne(
-  host: string,
-  credConfig: Record<string, unknown>,
-  cmd: string,
-  timeoutMs: number,
-): Promise<ExecResult> {
-  return withSshClient(host, credConfig, (client) => sshExec(client, cmd, timeoutMs));
-}
-
 /**
  * Run a PowerShell script over WinRM via -EncodedCommand (UTF-16-LE base64 —
  * immune to cmd.exe/WS-Man quoting). Keep scripts compact: WinRS routes the

@@ -155,11 +155,11 @@ describe("legend hover highlight", () => {
         n("a1", { role: "fortiap", nodeColor: H.up }),
         n("a2", { role: "fortiap", nodeColor: H.maintenance }),
         n("box", { isLocGroup: 1, locKind: "building", nodeColor: H.up }),
-        e("up", "fg", "s1", { isVerifiedUplink: 1, isIface: 0, isApLink: 0, inLoop: 0 }),
-        e("sw", "s1", "s2", { isIface: 1, isApLink: 0, inLoop: 1 }),
-        e("ll", "s2", "s1", { isLldp: 1, inLoop: 1 }),
-        e("ap", "s2", "a1", { isApLink: 1 }),
-        e("me", "a1", "a2", { isMesh: 1, isApLink: 0 }),
+        e("up", "fg", "s1", { isVerifiedUplink: 1, isIface: 0, isApLink: 0, inLoop: 0, linkSpeed: "10g" }),
+        e("sw", "s1", "s2", { isIface: 1, isApLink: 0, inLoop: 1, linkSpeed: "1g" }),
+        e("ll", "s2", "s1", { isLldp: 1, inLoop: 1, linkSpeed: "1g" }),
+        e("ap", "s2", "a1", { isApLink: 1, linkSpeed: "unknown" }),
+        e("me", "a1", "a2", { isMesh: 1, isApLink: 0, meshSignal: "unknown" }),
       ],
     }));
   }
@@ -176,6 +176,12 @@ describe("legend hover highlight", () => {
     expect(m("edge:apLink")).toEqual(["ap"]);
     expect(m("edge:mesh")).toEqual(["me"]);
     expect(m("edge:loop")).toEqual(["ll", "sw"]);
+    expect(m("speed:10g")).toEqual(["up"]);
+    expect(m("speed:1g")).toEqual(["ll", "sw"]);
+    expect(m("speed:unknown")).toEqual(["ap"]);
+    // "Good" lights the mesh links drawn like it, no reading included.
+    expect(m("signal:good")).toEqual(["me"]);
+    expect(m("signal:poor")).toEqual([]);
     expect(m("loc:building")).toEqual(["box"]);
     expect(m("loc:floor")).toEqual([]);
   });
@@ -186,7 +192,7 @@ describe("legend hover highlight", () => {
       { selector: "edge", style: { "line-color": "#6a7388" } },
       { selector: "#ap", style: { "line-color": "#3b82f6" } },
     ]);
-    R.highlightLegendHover(cy, "edge:apLink");
+    R.highlightLegendHover(cy, "speed:unknown");
     expect(ids(cy.elements(".link-hover"))).toEqual(["ap"]);
     expect(cy.$id("ap").data("hoverGlow")).toBe(cy.$id("ap").style("line-color"));
     R.highlightLegendHover(cy, "role:fortigate");
@@ -196,15 +202,84 @@ describe("legend hover highlight", () => {
     expect(cy.$id("ap").data("hoverGlow")).toBeUndefined();
   });
 
-  it("every legend row carries a key legendMatch understands, and Mesh reads AP to AP", () => {
+  it("every legend row carries a key legendMatch understands", () => {
     const spec = R.topologyLegendSpec("dark");
     const html: string = R.topologyLegendHtml(spec);
     const rows = (html.match(/class="topology-legend-row"/g) || []).length;
     const keyed = [...html.matchAll(/data-legend-key="([^"]+)"/g)].map((x) => x[1]);
     expect(keyed.length).toBe(rows);
-    expect(keyed).toContain("edge:mesh");
-    expect(spec.edges.find((r: { key: string }) => r.key === "edge:mesh").label).toBe("AP to AP");
+    for (const k of ["speed:10g", "speed:10m", "speed:unknown", "signal:good", "signal:poor", "edge:mclag", "edge:loop"]) {
+      expect(keyed).toContain(k);
+    }
     const cy = legendGraph();
     for (const k of keyed) expect(() => R.legendMatch(cy, k)).not.toThrow();
+  });
+});
+
+/**
+ * The link tooltip writes out what the link's colour means: a wired link's
+ * speed (or that none is known), a mesh link's signal in dBm and words, its
+ * channel / band / width, and — with no signal reading — why there is none.
+ */
+describe("link tooltip speed and signal rows", () => {
+  function tipGraph() {
+    const n = (id: string) => ({ data: { id, label: id.toUpperCase() } });
+    const e = (id: string, s: string, t: string, extra: Record<string, unknown>) => ({ data: { id, source: s, target: t, ...extra } });
+    return sb.make(JSON.stringify({
+      headless: true,
+      styleEnabled: true,
+      layout: { name: "preset" },
+      elements: [
+        n("s1"), n("s2"), n("a1"), n("a2"), n("a3"),
+        e("fast", "s1", "s2", { label: "port49 ↔ port50", isIface: 1, linkSpeed: "10g", speedBps: 1e10,
+          srcIf: { name: "port49", speedBps: 1e10, operStatus: "up", optics: { rxDbm: -3.2, txDbm: -2.1, temperatureC: 41, voltage: 3.3, biasA: 0.00898 } },
+          tgtIf: { name: "port50", speedBps: 1e10, operStatus: "up", optics: { rxDbm: -24.5, txDbm: -2.4, temperatureC: null, voltage: null, biasA: null } } }),
+        e("copper", "s2", "a2", { label: "port51 ↔ lan1", isApLink: 1, linkSpeed: "1g", speedBps: 1e9,
+          srcIf: { name: "port51", speedBps: 1e9, operStatus: "up", optics: { rxDbm: null, txDbm: null, temperatureC: null, voltage: null, biasA: null } } }),
+        e("slow", "s2", "a1", { label: "port7 ↔ lan1", isApLink: 1, linkSpeed: "100m", speedBps: 1e8 }),
+        e("unk", "s1", "a1", { label: "unknown ↔ lan1", isApLink: 1, linkSpeed: "unknown", speedBps: null }),
+        e("poor", "a1", "a2", { label: "mesh-x", isMesh: 1, meshSignal: "poor", signalDbm: -84, noiseDbm: -95,
+          channel: 149, band: "5GHz", channelWidthMhz: 80, ssid: "mesh-x" }),
+        e("none", "a1", "a3", { label: "mesh-y", isMesh: 1, meshSignal: "unknown", signalDbm: null, channel: 36, band: "5GHz" }),
+      ],
+    }));
+  }
+  const tip = (id: string) => {
+    const cy = tipGraph();
+    return R.edgeTooltipHtml(cy, cy.$id(id)) as string;
+  };
+
+  it("names a wired link's speed, flags a slow one, and says when none is known", () => {
+    expect(tip("fast")).toContain("<b>10 Gbps</b>");
+    expect(tip("fast")).not.toContain("Slower than 1 Gb");
+    expect(tip("slow")).toContain("<b>100 Mbps</b>");
+    expect(tip("slow")).toContain("Slower than 1 Gb");
+    expect(tip("unk")).toContain("Speed not known");
+  });
+
+  it("adds each end's SFP readings under its port line, and names a port receiving too little light", () => {
+    const fast = tip("fast");
+    expect(fast).toContain("Rx −3.20 dBm · Tx −2.10 dBm · 41.0 °C · 3.30 V · 8.98 mA");
+    // The far end's Rx is past -20 dBm: red, and named once below.
+    expect(fast).toContain("color:var(--color-danger,#dc2626);font-weight:600\">Rx −24.50 dBm");
+    expect(fast).toContain("S2 receives below −20 dBm");
+    expect(fast.indexOf("S1:")).toBeLessThan(fast.indexOf("Rx −3.20"));
+    // A copper SFP or an empty cage reads nothing: no SFP line, no warning.
+    expect(tip("copper")).not.toContain(">SFP<");
+    expect(tip("slow")).not.toContain(">SFP<");
+  });
+
+  it("writes a mesh link's signal, radio and SSID, and why a reading is missing", () => {
+    const poor = tip("poor");
+    expect(poor).toContain("−84 dBm");
+    expect(poor).toContain("Poor signal");
+    expect(poor).toContain("Channel 149 · 5 GHz · 80 MHz wide");
+    expect(poor).toContain("SNR 11 dB");
+    expect(poor).toContain(">mesh-x<");
+    expect(poor).not.toContain("font-family:var(--font-mono,monospace);font-size:0.82em;margin-top:2px");
+    const none = tip("none");
+    expect(none).toContain("Signal not reported");
+    expect(none).toContain("REST API");
+    expect(none).toContain("Channel 36");
   });
 });

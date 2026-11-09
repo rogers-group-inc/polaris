@@ -96,7 +96,7 @@ function headline(input: FirmwareGroupResultEmailInput, c: GroupCounts): { label
   return { label: "Group upgrade succeeded", color: "#15803d" };
 }
 
-export function firmwareGroupResultSubject(input: FirmwareGroupResultEmailInput): string {
+function firmwareGroupResultSubject(input: FirmwareGroupResultEmailInput): string {
   const c = countGroupMembers(input.members);
   const what = input.outcome === "missed" ? "was missed"
     : input.outcome === "cancelled" ? "was stopped"

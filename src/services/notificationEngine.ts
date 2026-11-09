@@ -155,13 +155,13 @@ import { scopeMatchesAsset, type ScopeAsset } from "./notificationRuleService.js
 // Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame, newBlameLoadCache, type BlameLoadCache } from "./dependencyTreeService.js";
-import { dependencyTriggerSummary, type DependencyTemplateParts } from "../utils/notificationTemplate.js";
+import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { decorateRelationLeafHits } from "./scopeRelationIndex.js";
 import { ipInCidr, bareInterfaceIp, mostSpecificContaining } from "../utils/cidr.js";
 import { sdwanDimensionTerms } from "../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../utils/priorityTags.js";
 import { computeStorageForecast } from "./storageForecastService.js";
-import { computeMemoryForecast, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
+import { computeMemoryForecastDetail, computeMemoryProjection, forecastLevelReading } from "./memoryForecastService.js";
 import { buildComposedEmail, scopeRegionTagsOf } from "./notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "./automationActionService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
@@ -172,6 +172,7 @@ import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreLi
 import { sdwanDimensionMatch, sdwanChildrenYielding } from "../utils/sdwanDimensions.js";
 import {
   buildTemplateContext,
+  forecastCountdown,
   renderNotificationTemplate,
   templateNeedsAsset,
   setRecoverySentence,
@@ -1610,11 +1611,19 @@ async function resolveAssetMetricReadings(
       // apply — the daily averages already smooth; an asset whose memory isn't
       // growing (or has <7 daily points) produces NO reading, so "days <= N"
       // rules stay silent for healthy hosts. One reading per device.
-      const fc = await computeMemoryForecast(ids);
-      return fc.map((r) => {
+      // A host REBOOTED inside the lookback restarts its fit (the reboot
+      // emptied memory) and, until it has a forecast again, reads null, so
+      // a live alert on it ends instead of freezing at the pre-reboot count.
+      const fc = await computeMemoryForecastDetail(ids);
+      const readings: Reading[] = fc.rows.map((r) => {
         const a = index.get(r.assetId)!;
         return { assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: r.daysUntilFull };
       });
+      for (const id of fc.restartedWithoutForecast) {
+        const a = index.get(id);
+        if (a) readings.push({ assetId: a.id, hostname: a.hostname, tags: a.tags, dimKey: "", dimLabel: "", value: null });
+      }
+      return readings;
     }
     case "memForecastPct": {
       // Forecast metric over the trigger's horizon (FORECAST_HORIZON_METRICS):
@@ -3270,6 +3279,8 @@ async function evaluateThresholdRule(
   // finding the alert a contribution should join costs ZERO extra queries.
   const groupBuf: GroupBuffer | null = ruleGroupsByAsset(rule) ? new Map() : null;
   const liveByAsset = await liveAlertsByAsset(rule, states, tickIndex);
+  /** Firing memory-forecast alerts whose countdown may have moved (refreshForecastCountdowns). */
+  const forecastLive: Array<{ st: { id: string; notificationId: string | null; firingSeverity: string | null }; reading: Reading }> = [];
 
   for (const reading of frozenReadings.length ? [...readings, ...frozenReadings] : readings) {
     const key = `${reading.assetId || ""}|${reading.dimKey}`;
@@ -3417,6 +3428,10 @@ async function evaluateThresholdRule(
           Object.assign(data, runPatch()); // the recovery run just broke
           if (Object.keys(data).length) await prisma.notificationRuleState.update({ where: { id: st.id }, data });
         } // same band / firing without a pending recovery → already active; suppress
+        // A memory forecast's live alert COUNTS DOWN: "Days until Serious: 6"
+        // must read 5 tomorrow, though nothing above changed. Queued here and
+        // rewritten after the loop, only when the countdown moved.
+        if (reading.forecast && st.notificationId && !groupBuf) forecastLive.push({ st, reading });
       }
     } else {
       // condition not met for this reading
@@ -3487,6 +3502,7 @@ async function evaluateThresholdRule(
   // they cannot see these rows and have no business with them: a contribution
   // that only just fired has not gone out of scope or been superseded.
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
+  if (forecastLive.length) await refreshForecastCountdowns(rule, forecastLive, now);
 
   // Suppressed assets produced no fire-side readings this tick. Reset their
   // `pending` rows — the debounce restarts from scratch after the window, a
@@ -3495,13 +3511,16 @@ async function evaluateThresholdRule(
   // retires an alert, though fresh evidence may recover one in the loop above),
   // or retired by the suppression sweep (clearSuppressedAlerts, run ahead of
   // this tick) when the asset is dark behind a parent that is down.
-  for (const st of states) {
-    if (st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
-      await prisma.notificationRuleState.update({
-        where: { id: st.id },
-        data: { state: "clear", conditionMetSince: null },
-      });
-    }
+  // One statement, not one per row (CQ-B050): every row gets the same data, and
+  // a maintenance window opening on a large group resets them all at once.
+  const suppressedPendingIds = states
+    .filter((st) => st.state === "pending" && st.assetId && suppressedIds.has(st.assetId))
+    .map((st) => st.id);
+  if (suppressedPendingIds.length) {
+    await prisma.notificationRuleState.updateMany({
+      where: { id: { in: suppressedPendingIds } },
+      data: { state: "clear", conditionMetSince: null },
+    });
   }
 
   // Carved-out assets: a more-specific same-signature automation has taken them
@@ -3641,15 +3660,17 @@ async function evaluateThresholdRule(
     ? await pathCheckIdsInMaintenance()
     : null;
   if (pathHeld?.size) {
+    const heldPendingIds: string[] = [];
     for (const st of states) {
       if (!pathHeld.has(st.dimensionKey)) continue;
       seen.add(`${st.assetId ?? ""}|${st.dimensionKey}`);
-      if (st.state === "pending") {
-        await prisma.notificationRuleState.update({
-          where: { id: st.id },
-          data: { state: "clear", conditionMetSince: null },
-        });
-      }
+      if (st.state === "pending") heldPendingIds.push(st.id);
+    }
+    if (heldPendingIds.length) {
+      await prisma.notificationRuleState.updateMany({
+        where: { id: { in: heldPendingIds } },
+        data: { state: "clear", conditionMetSince: null },
+      });
     }
   }
 
@@ -4286,10 +4307,14 @@ async function evaluateCompositeRule(
   // Suppressed assets: reset pending rows (the debounce restarts after the
   // window). Firing rows belong to the suppression sweep — same contract as
   // the per-reading path.
-  for (const st of states) {
-    if (st.dimensionKey === "" && st.state === "pending" && st.assetId && suppressedIds.has(st.assetId)) {
-      await prisma.notificationRuleState.update({ where: { id: st.id }, data: { state: "clear", conditionMetSince: null } });
-    }
+  const compositeSuppressedIds = states
+    .filter((st) => st.dimensionKey === "" && st.state === "pending" && st.assetId && suppressedIds.has(st.assetId))
+    .map((st) => st.id);
+  if (compositeSuppressedIds.length) {
+    await prisma.notificationRuleState.updateMany({
+      where: { id: { in: compositeSuppressedIds } },
+      data: { state: "clear", conditionMetSince: null },
+    });
   }
 
   // GROUPED ALERTS (business rule 75): land this composite's contributions
@@ -4439,28 +4464,6 @@ function tierLadderFor(rule: DbRule): ResolvedTier[] | null {
 function seriesRun(reading: Reading, meets: (v: number | string | boolean | null) => boolean): number | null {
   if (!reading.series) return null;
   return leadingRun(reading.series, meets);
-}
-
-/**
- * The run behind a reading for one side of the decision (met, or recovered),
- * resolving the series and current-state families into one answer.
- *
- * `stateRun` / `lastAt` are the state row's counters, read only when there is
- * no series. `advanced` says whether the current-state counter moved, i.e.
- * whether the caller has anything to persist — a repeat of the same poll writes
- * nothing, which is what keeps the hot path transition-write-only.
- */
-function runFor(
-  reading: Reading,
-  meets: boolean,
-  predicate: (v: number | string | boolean | null) => boolean,
-  stateRun: number,
-  lastAt: Date | null | undefined,
-): { run: number; advanced: boolean; stateful: boolean } {
-  const s = seriesRun(reading, predicate);
-  if (s !== null) return { run: s, advanced: false, stateful: false };
-  const stepped = advanceRun(stateRun, meets, reading.readingAt, lastAt);
-  return { run: stepped.run, advanced: stepped.advanced, stateful: true };
 }
 
 /**
@@ -5383,7 +5386,7 @@ async function neverAnnounced(notificationId: string): Promise<boolean> {
 }
 
 /** Is this grouped alert still waiting to send its first message? */
-export function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
+function firstSendHeld(row: { firstSendDueAt?: Date | null; firstSentAt?: Date | null }): boolean {
   return !!row.firstSendDueAt && !row.firstSentAt;
 }
 
@@ -5808,6 +5811,77 @@ async function applyBandTransition(
       details: { ruleId: rule.id, assetId: reading.assetId || null, dimension: reading.dimKey, severity: newSeverity, from: st.firingSeverity },
     }).catch(() => {});
   }
+}
+
+/**
+ * Keep a live memory-forecast alert's countdown current. The alert fires once,
+ * but "Days until Serious: 6" is a statement about TODAY — while the trend
+ * holds, tomorrow it is 5, and a reminder, the in-app card and the alert list
+ * must say so. Nothing else on a steadily-firing alert changes, so the engine's
+ * ordinary "already active; suppress" path left the fire-time number in place
+ * for the life of the alert.
+ *
+ * In place, like a band change, but QUIET: no re-notify, no escalation reset, no
+ * Event (nothing about the alert changed state). One `findMany` over the
+ * forecast rule's live alerts per tick, and a rebuild + write only for an
+ * alert whose level or whole-day count actually moved, which is about once
+ * a day per alert. Grouped alerts (business rule 75) are left to their own
+ * member bookkeeping and keep the fire-time countdown.
+ */
+async function refreshForecastCountdowns(
+  rule: DbRule,
+  live: Array<{ st: { id: string; notificationId: string | null; firingSeverity: string | null }; reading: Reading }>,
+  now: Date,
+): Promise<void> {
+  if (rule.trigger.type !== "asset_metric") return;
+  const ids = live.map((l) => l.st.notificationId).filter((x): x is string => !!x);
+  if (!ids.length) return;
+  const rows = await prisma.notification.findMany({
+    where: { id: { in: ids }, cleared: false, groupKey: null },
+    select: { id: true, severity: true, message: true, templateCtx: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const levels = forecastLevelsOf(rule.trigger, rule.severity, rule.severityBands);
+  for (const { st, reading } of live) {
+    const notif = st.notificationId ? byId.get(st.notificationId) : undefined;
+    if (!notif || !reading.forecast) continue;
+    const stored = (notif.templateCtx ?? null) as Record<string, string> | null;
+    if (!forecastCountdownMoved(stored, { ...reading.forecast, levels }, notif.severity)) continue;
+    const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
+    const parts = readingContextParts(rule, reading, now);
+    parts.severity = notif.severity;
+    applyFollowUpPolicy(parts, rule, notif.severity);
+    const ctx = buildTemplateContext({ ...parts, assetDetail: detail });
+    await applySensorUnitToSummary(rule, reading, ctx);
+    const message = renderMessage(rule, reading, ctx);
+    ctx["message"] = message;
+    // The snapshot is ALWAYS written for a forecast, even on a rule that would
+    // not otherwise keep one (ruleWantsContext): it is where the countdown
+    // shown last is remembered, so the next tick's comparison costs no rebuild.
+    await prisma.notification.updateMany({
+      where: { id: notif.id, cleared: false },
+      data: { message, templateCtx: ctx as any },
+    });
+  }
+}
+
+/**
+ * Has a live forecast alert's countdown moved since it was last rendered? The
+ * stored snapshot's `forecast.level` / `forecast.days` against what the trend
+ * says now. A snapshot without them (an alert from before countdowns were kept
+ * current, or a rule that stored none) counts as moved, once. Pure.
+ */
+export function forecastCountdownMoved(
+  stored: Record<string, string> | null,
+  forecast: { usedPct: number; slopePerDay: number; levels: ForecastLevel[] },
+  severity: string,
+): boolean {
+  const now = forecastCountdown(forecast, severity);
+  // No countdown to show (the trend stopped growing). The reading then goes
+  // null and the ordinary recovery path ends the alert; nothing to rewrite.
+  if (!now) return false;
+  if (!stored || stored["forecast.days"] == null) return true;
+  return stored["forecast.days"] !== now.days || stored["forecast.level"] !== now.level;
 }
 
 /**
@@ -6854,7 +6928,7 @@ export function clearAssetDetailCache(): void {
   _assetDetailCache.clear();
   _blameCache = newBlameLoadCache();
 }
-export async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
+async function assetDetail(assetId: string): Promise<AssetDetailRow | null> {
   if (_assetDetailCache.has(assetId)) return _assetDetailCache.get(assetId)!;
   const a = await prisma.asset.findUnique({ where: { id: assetId }, select: ASSET_DETAIL_SELECT });
   const row = a ? { ...a, status: String(a.status) } : null;
@@ -6922,7 +6996,7 @@ export type MaintenanceSpan = { startedAt: Date; endedAt: Date | null };
  * clears within the tick still leaks — a separate problem, and not one any
  * table here can answer.
  */
-export async function loadMaintenanceSpansForEvents(
+async function loadMaintenanceSpansForEvents(
   assetIds: string[],
   from: Date,
   to: Date,

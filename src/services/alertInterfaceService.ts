@@ -49,7 +49,7 @@ import { fortiapInterfaceAliases } from "../utils/fortiapInterfaceAlias.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
 
 /** The interface-facts tokens, resolved at delivery like `{chart.*}`. */
-export const INTERFACE_TOKENS = ["interface.lldp", "interface.ip"] as const;
+const INTERFACE_TOKENS = ["interface.lldp", "interface.ip"] as const;
 export type InterfaceToken = (typeof INTERFACE_TOKENS)[number];
 
 /**

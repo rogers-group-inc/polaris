@@ -83,7 +83,7 @@ export function ownerKindOf(row: OwnedRow): SavedOwnerKind {
   return "none";
 }
 
-export function isOwnerless(row: OwnedRow): boolean {
+function isOwnerless(row: OwnedRow): boolean {
   return ownerKindOf(row) === "none";
 }
 
@@ -112,7 +112,7 @@ export function canTake(row: OwnedRow, viewer: SavedViewer | null): boolean {
 }
 
 /** The owner's display name — the role's LIVE name when it was loaded. */
-export function ownerDisplayName(row: OwnedRow): string {
+function ownerDisplayName(row: OwnedRow): string {
   if (row.ownerRoleId && row.ownerRole?.name) return row.ownerRole.name;
   return row.ownerName;
 }

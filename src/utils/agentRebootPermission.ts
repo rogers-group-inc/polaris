@@ -30,9 +30,9 @@ export const LINUX_REBOOT_MARKER = "/etc/polaris-agent-reboot.enabled";
 export const LINUX_POLKIT_RULE = "/etc/polkit-1/rules.d/50-polaris-agent-reboot.rules";
 export const LINUX_POLKIT_PKLA = "/etc/polkit-1/localauthority/50-local.d/50-polaris-agent-reboot.pkla";
 /** Relative to %ProgramData% — inside the agent's conf dir, so the uninstaller's removal of that dir takes it too. */
-export const WINDOWS_REBOOT_MARKER_REL = "Polaris\\agent\\reboot.enabled";
+const WINDOWS_REBOOT_MARKER_REL = "Polaris\\agent\\reboot.enabled";
 /** The macOS LaunchDaemon runs as root; the marker is the whole opt-in there. */
-export const DARWIN_REBOOT_MARKER = "/etc/polaris-agent/reboot.enabled";
+const DARWIN_REBOOT_MARKER = "/etc/polaris-agent/reboot.enabled";
 
 export const LOGIND_REBOOT_ACTIONS = [
   "org.freedesktop.login1.reboot",

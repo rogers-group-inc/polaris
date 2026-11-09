@@ -42,7 +42,7 @@ import { AppError } from "../utils/errors.js";
 import { SECRET_MASK, isMaskedSecret } from "../utils/secretMask.js";
 import { validateBackupPassword } from "../utils/backupPassword.js";
 
-export const BACKUP_SCHEDULE_SETTING_KEY = "backupSchedule";
+const BACKUP_SCHEDULE_SETTING_KEY = "backupSchedule";
 
 export interface BackupSchedule {
   enabled: boolean;
@@ -114,10 +114,6 @@ export async function getBackupSchedule(): Promise<BackupSchedule> {
 export async function getBackupScheduleMasked(): Promise<BackupSchedule> {
   const s = await store.get();
   return { ...s, passphrase: s.passphrase ? SECRET_MASK : null };
-}
-
-export function invalidateBackupScheduleCache(): void {
-  store.invalidate();
 }
 
 /**
@@ -227,7 +223,7 @@ export function isScheduledBackupDue(schedule: BackupSchedule, now: Date): boole
  * logs whatever this throws.
  */
 export async function copyBackupOffHost(sourcePath: string, filename: string, copyToDir: string): Promise<string> {
-  if (!existsSync(sourcePath)) throw new Error(`backup file ${sourcePath} vanished before the off-host copy`);
+  if (!existsSync(sourcePath)) throw new AppError(500, `backup file ${sourcePath} vanished before the off-host copy`);
   await mkdir(copyToDir, { recursive: true });
   const dest = join(copyToDir, filename);
   await copyFile(sourcePath, dest);

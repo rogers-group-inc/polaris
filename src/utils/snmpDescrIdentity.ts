@@ -40,8 +40,6 @@
  *    whose only consumer is this comment.
  */
 
-import { normalizeManufacturer } from "./manufacturerNormalize.js";
-
 /** What a vendor's own sysDescr format can tell us, beyond the raw text. */
 export interface SysDescrDetail {
   /** The vendor, spelled the way this file's parser owns it. */

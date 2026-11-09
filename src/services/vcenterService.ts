@@ -31,6 +31,7 @@
  * vCenter) with a `${integrationId}:${moref}` fallback — see pickVmExternalId.
  */
 
+import { escapeRegExp } from "../utils/regex.js";
 import { request as httpsRequest } from "node:https";
 import { AppError } from "../utils/errors.js";
 import { xmlEscape } from "../utils/winrm.js";
@@ -49,7 +50,7 @@ export interface VcenterConfig {
   vmExclude?: string[]; // Ignored when vmInclude is non-empty
 }
 
-export interface DiscoveredVcenterCluster {
+interface DiscoveredVcenterCluster {
   moref: string; // "domain-c8"
   name: string;
 }
@@ -70,7 +71,7 @@ export interface DiscoveredVcenterHost {
   portgroups: VcenterHostPortgroup[] | null;
 }
 
-export interface VcenterVmDisk {
+interface VcenterVmDisk {
   key: string; // hardware device key, e.g. "2000"
   label: string; // "Hard disk 1"
   capacityBytes: number | null;
@@ -580,7 +581,7 @@ export function parseObjRef(block: string): string | null {
 /** Read a scalar propSet value by property name from an object block. Exported for tests. */
 export function parsePropValue(block: string, name: string): string | null {
   const re = new RegExp(
-    `<propSet><name>${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
+    `<propSet><name>${escapeRegExp(name)}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
   );
   return block.match(re)?.[1]?.trim() ?? null;
 }
@@ -595,7 +596,7 @@ function parsePropNumber(block: string, name: string): number | null {
 /** The raw propSet XML (nested values like `host` mounts or `info`) by property name. */
 function parsePropXml(block: string, name: string): string | null {
   const re = new RegExp(
-    `<propSet><name>${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
+    `<propSet><name>${escapeRegExp(name)}</name><val[^>]*>([\\s\\S]*?)</val></propSet>`,
   );
   return block.match(re)?.[1] ?? null;
 }
@@ -711,11 +712,6 @@ async function resolvePerfCounters(
   return counters;
 }
 
-/** Drop the memoized counter table (tests, and a config change that repoints the host). */
-export function _resetPerfCounterMemo(): void {
-  perfCounterMemo.clear();
-}
-
 /**
  * Parse a QueryPerf response into per-entity readings. Exported for tests.
  *
@@ -799,7 +795,7 @@ export function parsePerfResponse(xml: string, counters: VcenterPerfCounters): M
  * quickStats, which is already being fetched, so asking perf for them would
  * be a second answer to a question we have.
  */
-export async function fetchVcenterPerfSamples(
+async function fetchVcenterPerfSamples(
   config: VcenterConfig,
   session: SoapSession,
   entityType: "VirtualMachine" | "HostSystem",

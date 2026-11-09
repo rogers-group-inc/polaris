@@ -39,7 +39,6 @@ import { logEvent } from "./eventLogService.js";
 import { isValidCidr, normalizeCidr, detectIpVersion } from "../utils/cidr.js";
 import {
   findCoveringExclusion,
-  exclusionsOverlapping,
   type ExclusionLike,
 } from "../utils/subnetExclusion.js";
 
@@ -56,7 +55,7 @@ export interface SubnetExclusionRow {
   updatedAt: Date;
 }
 
-export interface ExclusionMatch {
+interface ExclusionMatch {
   id: string;
   cidr: string;
   name: string;
@@ -92,13 +91,6 @@ export interface UpdateExclusionInput {
  */
 export async function loadExclusions(): Promise<SubnetExclusionRow[]> {
   return prisma.subnetExclusion.findMany({ orderBy: { cidr: "asc" } });
-}
-
-/** Exclusions to treat as taken space when allocating inside `scopeCidr`. */
-export async function loadExclusionsOverlapping(
-  scopeCidr: string,
-): Promise<SubnetExclusionRow[]> {
-  return exclusionsOverlapping(scopeCidr, await loadExclusions());
 }
 
 /**

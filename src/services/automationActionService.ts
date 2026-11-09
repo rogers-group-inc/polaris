@@ -50,6 +50,7 @@ import { resolveQuietHold, resolveQuietWindow, type QuietHold, type QuietSource 
 import { formatLocalIsoMinute } from "../utils/maintenanceRecurrence.js";
 import { isOperatorSubject } from "../utils/alertEmailTemplate.js";
 import { logger } from "../utils/logger.js";
+import { AppError } from "../utils/errors.js";
 import {
   actionsToTargets,
   notifyChannelIds,
@@ -367,7 +368,7 @@ export async function executeActions(
         // the reboot scheduler — never sent inline. A skip (already booked,
         // rebooted within the gap) is an Event, not a failure, and does not
         // count as executed; a refused gate throws into the catch below.
-        if (!exec.assetId) throw new Error("the alert has no device to reboot");
+        if (!exec.assetId) throw new AppError(422, "the alert has no device to reboot");
         // The results recipients resolve NOW, against the triggering device —
         // "Asset's L1 Region Users" means the people who own THIS box — and
         // the booking stores plain addresses, like an operator's booking.
@@ -378,7 +379,7 @@ export async function executeActions(
         });
         // The booking's invariant is that someone always hears the outcome; a
         // To that resolved to nobody is a failed action, not a silent reboot.
-        if (recips.to.length === 0) throw new Error("the reboot's To recipients resolved to no email address — nothing was booked");
+        if (recips.to.length === 0) throw new AppError(422, "the reboot's To recipients resolved to no email address — nothing was booked");
         const { bookRebootFromAutomation } = await import("./rebootScheduleService.js");
         const res = await bookRebootFromAutomation({
           assetId: exec.assetId,
@@ -471,7 +472,7 @@ export async function executeActions(
  * direction — a false positive drops every push-preferring recipient from an
  * email-only alert, and nothing anywhere reports the omission.
  */
-export async function actionsCarryBothMethods(actions: AutomationAction[]): Promise<boolean> {
+async function actionsCarryBothMethods(actions: AutomationAction[]): Promise<boolean> {
   const ids = Array.from(
     new Set(actions.flatMap((a) => (a.type === "notify" ? notifyChannelIds(a) : []))),
   );
@@ -503,7 +504,7 @@ export async function actionsCarryBothMethods(actions: AutomationAction[]): Prom
  * reached anyone; one the window-end release sent has). Chat rows have no reader to tell
  * apart, so they are skipped when the chat send was held and never went live.
  */
-export async function heldFireAudience(
+async function heldFireAudience(
   notificationId: string,
 ): Promise<{ addresses: Set<string>; userIds: Set<string>; chat: boolean } | null> {
   const rows = await prisma.notificationDelivery.findMany({

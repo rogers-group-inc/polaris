@@ -28,6 +28,22 @@
  * because the daily bucket for today (and, until the daily job's next run,
  * yesterday) can lag behind. One aggregate query via regr_slope — ~32 rows per
  * asset, flat at 2000 assets. READ-ONLY.
+ *
+ * A REBOOT RESTARTS THE FIT. A reboot empties memory, so the trend before it
+ * says nothing about the host after it: a leak climbing 0.4 %/day for three
+ * weeks and then cleared by a restart would otherwise keep counting down to
+ * "Days until Serious: 2" from a host sitting at 50 %. Only points after the
+ * host's last boot are fitted (`boot` in dailyPointsCte), so a rebooted host
+ * has no forecast until it has MEMORY_FORECAST_MIN_POINTS days of its own
+ * again. The boot instant comes from the device's uptime: the earlier of
+ * `lastRebootAt` (stamped when monitoring saw the uptime drop) and
+ * `lastMonitorAt - lastUptimeSec`. Both can only land at or after the true
+ * boot (a stale uptime reading pushes the second later, never earlier), so the
+ * earlier one is the closer. Gated on `lastRebootAt` inside the lookback, so a
+ * failed or uptime-less probe that advances `lastMonitorAt` alone cannot
+ * invent a reboot. A host restarted inside the lookback still RETURNS a row
+ * with no forecast while it rebuilds history, so the automation's reading is
+ * null and a live forecast alert ends rather than freezing at its last count.
  */
 
 import { prisma } from "../db.js";
@@ -46,8 +62,16 @@ export interface MemoryForecastRow {
   points: number;
 }
 
+/** The fleet-wide days-until-full answer, plus the hosts a reboot left without one. */
+export interface MemoryForecastDetail {
+  rows: MemoryForecastRow[];
+  /** Hosts rebooted inside the lookback that have no forecast: the automation
+   *  reads them as null (an alert on them ends) instead of reading nothing. */
+  restartedWithoutForecast: string[];
+}
+
 /** Trend lookback (days) — the storage forecast's window. */
-export const MEMORY_FORECAST_LOOKBACK_DAYS = 30;
+const MEMORY_FORECAST_LOOKBACK_DAYS = 30;
 /** Minimum distinct daily points for a fit (a fresh install / new asset stays quiet). */
 export const MEMORY_FORECAST_MIN_POINTS = 7;
 /** Forecasts beyond this horizon are dropped — beyond a year is noise, not planning. */
@@ -69,12 +93,22 @@ function pctExpr(alias: string): string {
  * the automation compares. `$1` is always the lookback in days; the filter
  * argument narrows both arms (it must reference the alias `r`).
  */
-function dailyPointsCte(filter: string): string {
-  return `WITH hourly AS (
+function dailyPointsCte(filter: string, bootFilter: string): string {
+  return `WITH boot AS (
+       -- The host's last boot inside the lookback (see header): the fit starts there.
+       SELECT a.id AS "assetId",
+              LEAST(a."lastRebootAt", a."lastMonitorAt" - a."lastUptimeSec" * interval '1 second') AS at
+       FROM "assets" a
+       WHERE a."lastRebootAt" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval${bootFilter}
+     ),
+     hourly AS (
        SELECT r."assetId" AS "assetId", date_trunc('day', r."bucketStart") AS day,
               ${pctExpr("r")} AS pct, r."sampleCount" AS n
        FROM "asset_telemetry_samples_hourly" r
+       LEFT JOIN boot b ON b."assetId" = r."assetId"
        WHERE r."bucketStart" > date_trunc('day', (now() AT TIME ZONE 'UTC')) - interval '${HOURLY_TAIL_DAYS - 1} days'${filter}
+         -- An hour that began before the boot mixes the two hosts; drop it.
+         AND (b.at IS NULL OR r."bucketStart" >= b.at)
      ),
      pts AS (
        -- Recent days from the hourly tier (prio 0), weighted by sample count
@@ -86,7 +120,12 @@ function dailyPointsCte(filter: string): string {
        UNION ALL
        SELECT r."assetId", r."bucketStart" AS day, 1 AS prio, ${pctExpr("r")} AS pct
        FROM "asset_telemetry_samples_daily" r
+       LEFT JOIN boot b ON b."assetId" = r."assetId"
        WHERE r."bucketStart" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval${filter}
+         -- The boot day's daily bucket mixes the two hosts too; it starts the
+         -- day after (the hourly tail rebuilds a recent boot day from its
+         -- post-boot hours).
+         AND (b.at IS NULL OR r."bucketStart" > date_trunc('day', b.at))
      ),
      dedup AS (
        -- A recent day can be in both tiers; the hourly-derived one is the
@@ -102,11 +141,14 @@ interface FitRow {
   slope_per_day: number | null;
   points: number;
   last_pct: number | null;
+  /** The boot the fit starts at, when the host rebooted inside the lookback. */
+  restarted_at: Date | null;
 }
 
 /** Every asset's fit with enough points, ANY slope (`growingOnly` narrows it
- *  in SQL). One aggregate query — the shared read behind both fleet-wide
- *  answers below. */
+ *  in SQL), plus every host rebooted inside the lookback whatever its points
+ *  (zero included — `points` 0, `last_pct` null). One aggregate query — the
+ *  shared read behind both fleet-wide answers below. */
 async function loadFits(
   assetIds: string[] | null,
   lookbackDays: number,
@@ -116,16 +158,24 @@ async function loadFits(
   const params: unknown[] = [String(lookbackDays), minPoints];
   if (assetIds) params.push(assetIds);
   const filter = assetIds ? ` AND r."assetId" = ANY($3::text[])` : "";
+  const bootFilter = assetIds ? ` AND a.id = ANY($3::text[])` : "";
   return prisma.$queryRawUnsafe<FitRow[]>(
-    `${dailyPointsCte(filter)}
-     SELECT "assetId",
-            regr_slope(pct, extract(epoch from day)::float8 / 86400.0) AS slope_per_day,
-            count(*)::int AS points,
-            (ARRAY_AGG(pct ORDER BY day DESC))[1] AS last_pct
-     FROM dedup
-     GROUP BY 1
-     HAVING count(*) >= $2${growingOnly ? `
-        AND regr_slope(pct, extract(epoch from day)::float8 / 86400.0) > 0` : ""}`,
+    `${dailyPointsCte(filter, bootFilter)},
+     fits AS (
+       SELECT "assetId",
+              regr_slope(pct, extract(epoch from day)::float8 / 86400.0) AS slope_per_day,
+              count(*)::int AS points,
+              (ARRAY_AGG(pct ORDER BY day DESC))[1] AS last_pct
+       FROM dedup
+       GROUP BY 1
+     )
+     SELECT COALESCE(f."assetId", b."assetId") AS "assetId",
+            f.slope_per_day, COALESCE(f.points, 0)::int AS points, f.last_pct,
+            b.at AS restarted_at
+     FROM fits f
+     FULL JOIN boot b ON b."assetId" = f."assetId"
+     WHERE (COALESCE(f.points, 0) >= $2${growingOnly ? ` AND f.slope_per_day > 0` : ""})
+        OR b."assetId" IS NOT NULL`,
     ...params,
   );
 }
@@ -213,6 +263,13 @@ export async function computeMemoryProjection(
   const rows = await loadFits(assetIds, lookbackDays, minPoints, false);
   const out: MemoryProjectionRow[] = [];
   for (const r of rows) {
+    if (r.points < minPoints) {
+      // Rebooted and still rebuilding history: no projection, so a live
+      // forecast alert ends instead of freezing at its last countdown.
+      const used = r.last_pct == null ? 0 : Number(r.last_pct);
+      out.push({ assetId: r.assetId, projectedPct: null, usedPct: Math.round(used * 10) / 10, slopePctPerDay: 0 });
+      continue;
+    }
     if (r.last_pct == null) continue;
     const used = Number(r.last_pct);
     const slope = r.slope_per_day == null ? 0 : Number(r.slope_per_day);
@@ -231,14 +288,30 @@ export async function computeMemoryForecast(
   lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
   minPoints: number = MEMORY_FORECAST_MIN_POINTS,
 ): Promise<MemoryForecastRow[]> {
-  if (assetIds && assetIds.length === 0) return [];
+  return (await computeMemoryForecastDetail(assetIds, lookbackDays, minPoints)).rows;
+}
+
+/** `computeMemoryForecast`, plus the rebooted hosts left without a forecast —
+ *  what the memDaysUntilFull automation reads, so a reboot ends its alert. */
+export async function computeMemoryForecastDetail(
+  assetIds: string[] | null = null,
+  lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
+  minPoints: number = MEMORY_FORECAST_MIN_POINTS,
+): Promise<MemoryForecastDetail> {
+  if (assetIds && assetIds.length === 0) return { rows: [], restartedWithoutForecast: [] };
   const rows = await loadFits(assetIds, lookbackDays, minPoints, true);
 
   const out: MemoryForecastRow[] = [];
+  const restarted: string[] = [];
   for (const r of rows) {
-    if (r.slope_per_day == null || r.last_pct == null) continue;
-    const days = daysUntilFull({ slopePerDay: Number(r.slope_per_day), currentUsed: Number(r.last_pct), totalBytes: 100 });
-    if (days == null || days > MEMORY_FORECAST_MAX_DAYS) continue;
+    const growing = r.points >= minPoints && r.slope_per_day != null && Number(r.slope_per_day) > 0 && r.last_pct != null;
+    const days = growing
+      ? daysUntilFull({ slopePerDay: Number(r.slope_per_day), currentUsed: Number(r.last_pct), totalBytes: 100 })
+      : null;
+    if (days == null || days > MEMORY_FORECAST_MAX_DAYS) {
+      if (r.restarted_at) restarted.push(r.assetId);
+      continue;
+    }
     out.push({
       assetId: r.assetId,
       daysUntilFull: Math.round(days * 10) / 10,
@@ -248,7 +321,7 @@ export async function computeMemoryForecast(
     });
   }
   out.sort((a, b) => a.daysUntilFull - b.daysUntilFull);
-  return out;
+  return { rows: out, restartedWithoutForecast: restarted };
 }
 
 /** One asset's memory forecast, with the daily points it was fitted on. */
@@ -265,6 +338,9 @@ export interface MemoryForecastSeries {
   /** Thresholds the fit used, so a reader can say "needs N days of history". */
   minPoints: number;
   lookbackDays: number;
+  /** The boot the fit restarted at (ISO), when the host rebooted inside the
+   *  lookback — so the chart can say why the history is short. */
+  restartedAt: string | null;
 }
 
 /**
@@ -277,8 +353,9 @@ export function memoryForecastFromDailyPoints(
   points: TrendPoint[],
   minPoints: number = MEMORY_FORECAST_MIN_POINTS,
   lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
+  restartedAt: string | null = null,
 ): MemoryForecastSeries {
-  const base = { points, minPoints, lookbackDays };
+  const base = { points, minPoints, lookbackDays, restartedAt };
   if (points.length < minPoints) return { ...base, slopePerDay: null, daysUntilFull: null };
   const slope = leastSquaresSlopePerDay(points);
   if (slope == null) return { ...base, slopePerDay: null, daysUntilFull: null };
@@ -299,16 +376,22 @@ export async function loadMemoryForecastSeries(
   assetId: string,
   lookbackDays: number = MEMORY_FORECAST_LOOKBACK_DAYS,
 ): Promise<MemoryForecastSeries> {
-  const rows = await prisma.$queryRawUnsafe<Array<{ day: Date; pct: number | null }>>(
-    `${dailyPointsCte(` AND r."assetId" = $2`)}
-     SELECT day, pct FROM dedup ORDER BY day`,
+  const rows = await prisma.$queryRawUnsafe<Array<{ day: Date | null; pct: number | null; restarted_at: Date | null }>>(
+    `${dailyPointsCte(` AND r."assetId" = $2`, ` AND a.id = $2`)}
+     SELECT day, pct, NULL::timestamp AS restarted_at FROM dedup
+     UNION ALL
+     -- The boot itself, so a host rebooted with no points yet still says so.
+     SELECT NULL, NULL, at FROM boot
+     ORDER BY 1 NULLS FIRST`,
     String(lookbackDays),
     assetId,
   );
   const points: TrendPoint[] = [];
+  let restartedAt: string | null = null;
   for (const r of rows) {
-    if (r.pct == null) continue;
+    if (r.restarted_at) restartedAt = new Date(r.restarted_at).toISOString();
+    if (r.pct == null || r.day == null) continue;
     points.push({ t: new Date(r.day).getTime(), v: Number(r.pct) });
   }
-  return memoryForecastFromDailyPoints(points, MEMORY_FORECAST_MIN_POINTS, lookbackDays);
+  return memoryForecastFromDailyPoints(points, MEMORY_FORECAST_MIN_POINTS, lookbackDays, restartedAt);
 }

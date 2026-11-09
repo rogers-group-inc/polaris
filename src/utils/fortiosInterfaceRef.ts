@@ -30,3 +30,29 @@ export function fortiosVlanParentOf(iface: { vlanid?: unknown; interface?: unkno
   if (!Number.isInteger(vid) || vid < 1 || vid > 4094) return null;
   return fortiosInterfaceRef(iface.interface);
 }
+
+/**
+ * The attributes Polaris reads off a FortiOS REST `/api/v2/cmdb/system/interface`
+ * row, as that endpoint's `format=` filter. Without it a gate returns every one
+ * of the row's ~228 attributes; with it, these plus `q_origin_key` — about a
+ * fifth of the bytes (HUB1-a 7.6.8: 254 KB → 57 KB for 34 interfaces).
+ *
+ * Every reader of that endpoint passes this, so a field one of them needs and
+ * this list lacks is silently absent, never an error. Add the field here first:
+ *   - discovery (fortigateService → discoverDhcpSubnets: mgmt IP / MACs, then
+ *     interface IPs, VLANs and parents, secondaries, IPv6);
+ *   - monitoring (monitoringService → parseFortiCmdbInterfaceTable: type,
+ *     parent, members, alias, description, mode, admin status, addresses;
+ *     fortilinkInterfaceNamesFromCmdb: fortilink + members).
+ *
+ * Both secondary spellings are asked for: on FortiOS REST the TABLE is
+ * `secondaryip` and `secondary-IP` is the enable flag (lab, 7.6.8 and 8.0.1),
+ * and utils/fortiosSecondaryIp.ts takes whichever is an array. Nested tables
+ * (`secondaryip`, `ipv6`'s ip6-extra-addr / ip6-prefix-list, `member`) come
+ * back whole under `format=` — confirmed field-for-field against all five lab
+ * gates, 2026-11-04.
+ */
+export const FORTIOS_INTERFACE_CMDB_FORMAT = [
+  "name", "ip", "macaddr", "type", "interface", "vlanid", "switch-controller-mgmt-vlan",
+  "secondary-IP", "secondaryip", "ipv6", "member", "alias", "description", "mode", "status", "fortilink",
+].join("|");

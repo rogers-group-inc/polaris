@@ -52,7 +52,7 @@
   // Must match: the shared saved layout is in these coordinates, and a node
   // the layout has no entry for lands on this grid beside the saved ones.
   var TOPO_COL_SPACING = 130;
-  var TOPO_ROW_SPACING = 95;
+  var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
 
   // ─── Lazy loaders ──────────────────────────────────────────────────────
   // Inline-duplicated from map-tab.js to keep each tab module
@@ -341,7 +341,10 @@
     // right: depth → x, lane → y, at the desktop's spacing. Location-coded
     // sites use the quotient (grouped-box) layout; untagged sites fall
     // through to the flat column solver; no firewall root → dagre LR.
-    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements) ||
+    // Laid out for the phone's graph pane: a portrait screen gets a tall map.
+    var columns = window.PolarisTopologyRender.computeGroupedLayout(elements, {
+      aspect: window.PolarisTopologyRender.layoutAspect(document.getElementById("topo-graph")),
+    }) ||
       window.PolarisTopologyRender.computeTopologyColumns(elements);
     var layoutConfig;
     if (columns) {
@@ -396,16 +399,15 @@
     //  - Initial view: the whole graph, as the desktop opens it — or the
     //    searched node when the URL carries ?q=<term>.
     _cy.one("layoutstop", function () {
-      if (savedPositions) {
-        _cy.batch(function () {
-          _cy.nodes().forEach(function (n) {
-            var p = savedPositions[n.id()];
-            if (p && typeof p.x === "number" && typeof p.y === "number") n.position({ x: p.x, y: p.y });
-          });
-        });
-      }
+      // The desktop's saved spots (pinned: the box-overlap push leaves them),
+      // and a device the save has none for placed beside its saved parent —
+      // the same helper the desktop map uses.
+      var applied = window.PolarisTopologyRender.applySavedPositions(_cy, savedPositions, elements);
       var suppress = locSuppressKinds();
-      window.PolarisTopologyRender.renderLocationGroups(_cy, suppress ? { suppressKinds: suppress } : undefined);
+      window.PolarisTopologyRender.renderLocationGroups(_cy, {
+        suppressKinds: suppress || undefined,
+        fixedIds: applied.pinned,
+      });
       // Cross-box links through the gutters, and any straight link bent
       // around a device it would pass through — with or without boxes.
       window.PolarisTopologyRender.routeInterGroupEdges(_cy);
@@ -547,7 +549,7 @@
           id: ep.id,
           label: ep.hostname || ep.ipAddress || "endpoint",
           role: "endpoint",
-          nodeColor: endpointNodeColor(leaf),
+          nodeColor: window.PolarisTopologyRender.endpointNodeColor(leaf),
           synthetic: 1,
         },
       });
@@ -610,25 +612,6 @@
     try {
       _cy.animate({ fit: { eles: pathElements, padding: 40 }, duration: 350 });
     } catch (e) { /* fit may fail on single-node paths */ }
-  }
-
-  // Color the synthetic endpoint node by its monitor state — same five-state
-  // palette the firewall / switch / AP nodes use so the path reads as a
-  // single visual scheme. Mirrors desktop's endpointNodeColor.
-  function endpointNodeColor(hop) {
-    // Shared node-health palette (api.js POLARIS_HEALTH_COLORS, re-exposed by
-    // topology-render.js which mobile.html loads).
-    var P = window.POLARIS_HEALTH_COLORS;
-    if (!hop || !hop.monitored) return P.unmonitored;
-    switch (hop.monitorStatus) {
-      case "up":         return P.up;
-      case "warning":    return P.degraded;
-      case "down":       return P.down;
-      case "recovering": return P.recovering;
-      // No verdict rendered — distinct from the grey "no samples" unknown.
-      case "passive":    return P.passive;
-      default:           return P.unknown;
-    }
   }
 
   // Pick the node to focus on initial render. No focusTerm → FortiGate.

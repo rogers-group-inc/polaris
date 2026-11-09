@@ -1645,6 +1645,26 @@ switch list. A duplicate created before this change is not refreshed again:
 the next discovery run merges it into the switch when the gate's lease or ARP
 entry gives the switch the same MAC, and otherwise you can delete it.
 
+**91(i) Devices that share a discovered name are named apart by MAC.** When
+discovery finds a device under a name another asset already carries (every
+"iPhone", for example), it adds the last three octets of each device's MAC to
+the name: the first iPhone becomes *iPhone-F2BC27* and the new one
+*iPhone-717C43*. A third device with that name is added the same way. Only names
+discovery gave from a DHCP lease or a FortiGate's client list are changed: a
+name you typed, or one that came from Entra ID, Active Directory, vCenter, a
+Polaris Agent or a Generic API feed, is never changed. If a better source later
+reports the device, its name replaces the suffixed one. Open alerts follow the
+new name.
+
+**91(j) A MAC can be split off onto an asset of its own.** An asset that
+collected the MACs of several devices before 91(f) — one *iPhone* holding many
+phones — keeps them until they are split. The **Sources** tab lists every MAC on
+the asset; split one and it becomes its own asset, taking the addresses on it,
+their IP history and any DHCP reservation on it, named the 91(i) way. The
+primary MAC stays, and a MAC the device reports as its own (an interface port,
+or a network card the Polaris Agent, Intune or vCenter reports) is never another
+device, so it cannot be split. A quarantined asset must be released first.
+
 ### Rule 92
 **Quiet time withholds the send, never the alert — and what it withheld is
 reported when it ends.** A quiet time belongs to an automation (its Quiet time
@@ -3066,7 +3086,7 @@ and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-acco
 **A dangerous act is its own key, a tag is an administrator's grant, and a
 role carries no tags.** Merging two asset records (**Merge Assets**),
 deploying the Polaris Agent (**Agent Deploy**) and clearing an alert
-(**Clear Alerts**) are permissions of their own rather than the Full
+(**Alert Clear**) are permissions of their own rather than the Full
 read-write rung of Assets and Alerts; the update gave each one to exactly the
 roles that held that rung, so nobody gained or lost an act. Putting a tag on
 anything — a device, a port, a network, a block, a user, a group mapping — or
@@ -3099,3 +3119,28 @@ your tag — and then every binding in it may be released or revoked, on any
 FortiGate. See
 [Users, Roles and Permissions](Users-Roles-and-Permissions#tags-are-an-administrators-grant)
 and [Conflict resolution](Conflict-Resolution#two-dhcp-reservations-on-one-device).
+
+### Rule 142
+
+**Discover Now on a FortiGate is that gate's full discovery.** Every step the
+integration's own Discover runs after collecting data also runs, limited to that
+gate and what sits behind it: retiring switches and access points the gate no
+longer manages and a chassis replaced under the gate's name, interface
+auto-monitor, DNS and vendor lookups, **the dependency tree**, region and
+criteria tags, management access and description sync. It never judges another
+gate, and it never runs the monitoring polls (CPU, memory, response time,
+sensors, interfaces, LLDP, MAC tables). See
+[Discovery](Discovery#discover-now-on-a-fortigate).
+
+### Rule 143
+
+**A transceiver's readings move onto its port only when the switch's sensor
+table has the known layout.** Some
+switches (FortiSwitch among them) publish each SFP's temperature, voltage, Tx
+power, Rx power and bias current over SNMP without saying which port the module
+is in. Polaris places them by layout: five readings per SFP cage, in that order,
+cages in port order, with an empty cage keeping its place; the cages are the
+switch's highest-numbered ports. The layout must match exactly. If anything doesn't fit, nothing moves, and
+the readings stay in **Hardware Sensors** as before. Placed readings are named
+for the port (`port10 Rx power`) and appear in the
+[Interfaces table](Assets#transceiver-readings-in-the-interfaces-table).

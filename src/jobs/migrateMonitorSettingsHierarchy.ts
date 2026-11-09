@@ -31,6 +31,7 @@
  * Safe to re-run after a partial failure (each step checks for existing rows).
  */
 
+import { toNonNegativeInt } from "../utils/num.js";
 import { logger } from "../utils/logger.js";
 import { prisma } from "../db.js";
 import { invalidateMonitorSettingsCache } from "../services/monitoringService.js";
@@ -63,22 +64,17 @@ const HARDCODED_FLOOR: TierShape = {
   systemInfoRetentionDays:   30,
 };
 
-function toInt(raw: unknown, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
-}
-
 function readTier(v: Record<string, unknown> | null | undefined): TierShape {
   const o = v ?? {};
   return {
-    intervalSeconds:           toInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
-    failureThreshold:          toInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
-    probeTimeoutMs:            toInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
-    telemetryIntervalSeconds:  toInt(o.telemetryIntervalSeconds,  HARDCODED_FLOOR.telemetryIntervalSeconds),
-    systemInfoIntervalSeconds: toInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
-    sampleRetentionDays:       toInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
-    telemetryRetentionDays:    toInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
-    systemInfoRetentionDays:   toInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
+    intervalSeconds:           toNonNegativeInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
+    failureThreshold:          toNonNegativeInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
+    probeTimeoutMs:            toNonNegativeInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
+    telemetryIntervalSeconds:  toNonNegativeInt(o.telemetryIntervalSeconds,  HARDCODED_FLOOR.telemetryIntervalSeconds),
+    systemInfoIntervalSeconds: toNonNegativeInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
+    sampleRetentionDays:       toNonNegativeInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
+    telemetryRetentionDays:    toNonNegativeInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
+    systemInfoRetentionDays:   toNonNegativeInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
   };
 }
 

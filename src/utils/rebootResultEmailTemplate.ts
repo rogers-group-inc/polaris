@@ -52,12 +52,12 @@ const HEADLINE: Record<RebootResultOutcome, { label: string; color: string }> = 
   missed:     { label: "Reboot missed",      color: "#b45309" },
 };
 
-export function rebootResultSubject(input: Pick<RebootResultEmailInput, "outcome" | "deviceName">): string {
+function rebootResultSubject(input: Pick<RebootResultEmailInput, "outcome" | "deviceName">): string {
   const what = { succeeded: "succeeded", unverified: "finished unverified", failed: "FAILED", refused: "was not started", missed: "was missed" }[input.outcome];
   return `[Polaris] Scheduled reboot ${what}: ${input.deviceName}`;
 }
 
-export function rebootResultSummary(input: RebootResultEmailInput): string {
+function rebootResultSummary(input: RebootResultEmailInput): string {
   switch (input.outcome) {
     case "succeeded":  return "The device went down and came back.";
     case "unverified": return `The reboot was sent, but Polaris could not confirm it happened${input.error ? ` (${input.error})` : ""}. Check the device.`;

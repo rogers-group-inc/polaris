@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   prisma: {
     notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
+    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
     notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
     asset: { findMany: vi.fn(), findUnique: vi.fn() },
     event: { findMany: vi.fn() },
@@ -130,13 +130,16 @@ describe("threshold-rule suppression", () => {
 
     await evaluateAllNotificationRules();
 
-    // pending → clear
-    expect(h.prisma.notificationRuleState.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "st-pending" }, data: expect.objectContaining({ state: "clear" }) }),
+    // pending → clear, in one statement (CQ-B050)
+    expect(h.prisma.notificationRuleState.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["st-pending"] } }, data: expect.objectContaining({ state: "clear" }) }),
     );
     // firing row untouched: a maintenance window freezes a live alert, it
     // never retires it (business rule 16).
-    const touchedIds = h.prisma.notificationRuleState.update.mock.calls.map((c) => c[0].where.id);
+    const touchedIds = [
+      ...h.prisma.notificationRuleState.update.mock.calls.map((c: any) => c[0].where.id),
+      ...h.prisma.notificationRuleState.updateMany.mock.calls.flatMap((c: any) => c[0].where.id.in),
+    ];
     expect(touchedIds).not.toContain("st-firing");
     expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
     expect(h.prisma.notification.create).not.toHaveBeenCalled();

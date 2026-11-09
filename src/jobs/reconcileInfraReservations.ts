@@ -23,26 +23,22 @@
 
 import { reconcileOrphanedInfraReservations } from "../services/reservationService.js";
 import { logger } from "../utils/logger.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-
-async function reconcileInfraReservations(): Promise<void> {
-  try {
-    await runInstrumentedJob("reconcileInfraReservations", async () => {
-      const result = await reconcileOrphanedInfraReservations();
-      if (result.released > 0 || result.failed > 0) {
-        logger.info(result, "Reconciled orphaned managed-device reservations");
-      }
-    });
-  } catch (err) {
-    logger.warn({ err }, "reconcileInfraReservations tick failed (non-fatal)");
-  }
-}
 
 // Delayed first run: at boot the discovery integrations haven't necessarily
 // synced yet, and "no managed device holds this address" is exactly the state a
 // half-populated database is in. Waiting a few minutes keeps the weaker of the
 // two release signals from firing on a cold start.
-setTimeout(reconcileInfraReservations, 5 * 60 * 1000);
-setInterval(reconcileInfraReservations, INTERVAL_MS);
+defineJob({
+  name: "reconcileInfraReservations",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 5 * 60 * 1000,
+  run: async () => {
+    const result = await reconcileOrphanedInfraReservations();
+    if (result.released > 0 || result.failed > 0) {
+      logger.info(result, "Reconciled orphaned managed-device reservations");
+    }
+  },
+});

@@ -62,7 +62,7 @@ import { assertFolderTarget, listVisibleFolders, type SavedFolderDto } from "./s
 export { normalizeName };
 
 /** Dashboards one user may own — a bound on list-render cost. */
-export const MAX_SAVED_DASHBOARDS_PER_USER = 50;
+const MAX_SAVED_DASHBOARDS_PER_USER = 50;
 
 export type SavedDashboardVisibility = "private" | "public";
 
@@ -180,11 +180,6 @@ async function loadVisible(id: string, viewer: SavedViewer | null): Promise<Row>
   const row = await load(id);
   if (!canSee(row, viewer)) throw new AppError(404, "Saved dashboard not found");
   return row;
-}
-
-/** Load one row (no visibility check). */
-export async function getSavedDashboard(id: string): Promise<Row> {
-  return load(id);
 }
 
 /**

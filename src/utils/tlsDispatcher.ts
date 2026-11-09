@@ -95,7 +95,7 @@ function subjectOf(cert: { subject?: Record<string, unknown> } | null | undefine
  * 113(e)): trust on first use per host:port, refuse a changed certificate
  * before anything is sent. Same undici copy as `tlsFetch` (see the header).
  */
-export function pinnedTlsDispatcher(): Dispatcher {
+function pinnedTlsDispatcher(): Dispatcher {
   if (!pinnedAgent) {
     // No TLS session resumption: a resumed session presents no certificate to
     // check (getPeerCertificate is empty), the same reason PinnedTlsAgent sets

@@ -115,8 +115,8 @@ export function sameFields<T>(a: T, b: T, fields: readonly (keyof T)[]): boolean
  * rewrites, which nothing that reads it (a table refreshed every five minutes,
  * a top-5 ranking) can tell from noise.
  */
-export const CPU_DEAD_BAND_POINTS = 1;
-export const MEMORY_DEAD_BAND_RATIO = 0.02;
+const CPU_DEAD_BAND_POINTS = 1;
+const MEMORY_DEAD_BAND_RATIO = 0.02;
 
 /** CPU within the dead band of the stored value (null only matches null). Pure. */
 export function cpuWithinBand(stored: unknown, next: unknown): boolean {

@@ -31,6 +31,9 @@ vi.mock("../../src/db.js", () => ({
     monitorClassOverride: {
       findFirst: vi.fn(),
     },
+    asset: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -38,6 +41,7 @@ import {
   resolveMonitorSettings,
   resolveMonitorSettingsWithProvenance,
   invalidateMonitorSettingsCache,
+  fleetCadences,
 } from "../../src/services/monitoringService.js";
 import { prisma } from "../../src/db.js";
 
@@ -236,11 +240,14 @@ describe("resolveMonitorSettings — tier-3 fallback", () => {
     expect(out).toEqual({ ...FLOOR, ...MANUAL_POLLING_DEFAULT });
   });
 
-  it("falls back to legacy monitorSettings row when manualMonitorSettings is unseeded", async () => {
-    // Transitional behaviour during/after the step-5 migration: if the new
-    // manual-tier row hasn't been written yet, the loader should still find
-    // the legacy global row and project it.
+  it("never reads the retired legacy monitorSettings row: an unseeded manual tier is the floor (CQ-B012)", async () => {
+    // The pre-hierarchy single-row Setting is retired: the startup migration
+    // converts and deletes it, and the resolver no longer falls back to it.
+    // Even if one were still present, an unseeded manual tier resolves to
+    // the hard-coded floor.
+    const readKeys: string[] = [];
     (prisma.setting.findUnique as any).mockImplementation(async (args: any) => {
+      readKeys.push(args.where.key);
       if (args.where.key === "manualMonitorSettings") return null;
       if (args.where.key === "monitorSettings") return { key: "monitorSettings", value: TUNED_TIER };
       return null;
@@ -256,7 +263,8 @@ describe("resolveMonitorSettings — tier-3 fallback", () => {
       systemInfoIntervalSec:     null,
       probeTimeoutMs:            null,
     });
-    expect(out).toEqual({ ...TUNED_TIER, ...MANUAL_POLLING_DEFAULT });
+    expect(out).toEqual({ ...FLOOR, ...MANUAL_POLLING_DEFAULT });
+    expect(readKeys).not.toContain("monitorSettings");
   });
 
   it("integration tier when asset.discoveredByIntegrationId is set", async () => {
@@ -755,5 +763,57 @@ describe("resolveMonitorSettingsWithProvenance — labels each field", () => {
     expect(out.inheritPolling.provenance.cpuMemoryPolling).toBe("default");
     // The fold's guarantee: the UI payload IS the runtime resolution.
     expect(await resolveMonitorSettings(ctx)).toEqual(out.resolved);
+  });
+});
+
+// CQ-B012: the capacity model's cadences come from what the fleet is actually
+// configured to run, not from the retired legacy Setting row (which the
+// startup migration deletes, leaving every projection on the floor defaults).
+describe("fleetCadences", () => {
+  const asset = (over: Record<string, unknown> = {}) => ({
+    assetType: "server", discoveredByIntegrationId: null, discoveredByIntegration: null,
+    monitorIntervalSec: null, cpuMemoryIntervalSec: null, temperatureIntervalSec: null,
+    systemInfoIntervalSec: null, lldpIntervalSec: null, storageIntervalSec: null, probeTimeoutMs: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    (prisma.setting.findUnique as any).mockResolvedValue(null);
+    (prisma.monitorClassOverride.findFirst as any).mockResolvedValue(null);
+  });
+
+  it("is the floor when nothing is monitored", async () => {
+    (prisma.asset.findMany as any).mockResolvedValue([]);
+    expect(await fleetCadences()).toEqual({
+      intervalSeconds: FLOOR.intervalSeconds,
+      telemetryIntervalSeconds: FLOOR.cpuMemoryIntervalSeconds,
+      systemInfoIntervalSeconds: FLOOR.systemInfoIntervalSeconds,
+    });
+  });
+
+  it("uses the configured manual tier, not the floor", async () => {
+    (prisma.setting.findUnique as any).mockImplementation(async (args: any) =>
+      args.where.key === "manualMonitorSettings"
+        ? { key: "manualMonitorSettings", value: { ...FLOOR, intervalSeconds: 10 } }
+        : null);
+    (prisma.asset.findMany as any).mockResolvedValue([asset(), asset()]);
+    const out = await fleetCadences();
+    expect(out.intervalSeconds).toBe(10);
+  });
+
+  it("is the rate-weighted mean: N / Σ(1/interval), so N × it is the fleet's rate", async () => {
+    // Two assets on the floor's interval, one overridden to 10 s.
+    (prisma.asset.findMany as any).mockResolvedValue([asset(), asset(), asset({ monitorIntervalSec: 10 })]);
+    const floor = FLOOR.intervalSeconds;
+    const expected = 3 / (2 / floor + 1 / 10);
+    expect((await fleetCadences()).intervalSeconds).toBeCloseTo(expected, 9);
+  });
+
+  it("resolves each distinct configuration once, however many assets share it", async () => {
+    (prisma.asset.findMany as any).mockResolvedValue(Array.from({ length: 500 }, () => asset()));
+    await fleetCadences();
+    // The manual tier is loaded once (then cached) — not 500 times.
+    const manualReads = (prisma.setting.findUnique as any).mock.calls.filter((c: any[]) => c[0].where.key === "manualMonitorSettings");
+    expect(manualReads.length).toBeLessThanOrEqual(1);
   });
 });

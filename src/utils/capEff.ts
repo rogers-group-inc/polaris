@@ -15,8 +15,8 @@
  */
 
 /** Linux capability bit numbers (include/uapi/linux/capability.h). */
-export const CAP_DAC_READ_SEARCH_BIT = 2;
-export const CAP_SYS_PTRACE_BIT = 19;
+const CAP_DAC_READ_SEARCH_BIT = 2;
+const CAP_SYS_PTRACE_BIT = 19;
 
 export interface DecodedCapEff {
   sysPtrace: boolean;

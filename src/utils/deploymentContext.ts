@@ -8,7 +8,9 @@
  * shows a more general suggestion.
  *
  *   dbIsLocal()          — is DATABASE_URL pointing at this same host?
- *   runtimeIsContainer() — is Polaris running in Docker / Kubernetes?
+ *   runtimeIsContainer() — is Polaris running in Docker / Podman / Kubernetes?
+ *                          Also THE container test for Restart (rule 99), the
+ *                          OS lifecycle probe and the HA install-shape check.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -17,6 +19,33 @@ import { URL } from "node:url";
 
 let cachedDbIsLocal: boolean | null = null;
 let cachedRuntimeIsContainer: boolean | null = null;
+
+/** The state directory Polaris's Dockerfile and compose files pin. */
+const CONTAINER_STATE_DIR = "/app/state";
+
+/** Test hook: forget the cached answers so a test can re-probe. */
+export function resetDeploymentContextCache(): void {
+  cachedDbIsLocal = null;
+  cachedRuntimeIsContainer = null;
+}
+
+/**
+ * Host and port of a PostgreSQL connection URL, for display. Parsed with URL —
+ * never a regex — so a bracketed IPv6 host survives, and a socket-only URL
+ * (`postgresql:///polaris?host=/var/run/postgresql`) says "local socket"
+ * rather than inventing localhost:5432.
+ */
+export function describeDatabaseEndpoint(url: string | undefined): { host: string; port: number | null } {
+  if (!url) return { host: "unknown", port: null };
+  try {
+    const u = new URL(url);
+    const socketHost = u.searchParams.get("host");
+    if (!u.hostname) return { host: socketHost ? `local socket (${socketHost})` : "local socket", port: null };
+    return { host: u.hostname.replace(/^\[|\]$/g, ""), port: u.port ? Number(u.port) : 5432 };
+  } catch {
+    return { host: "unknown", port: null };
+  }
+}
 
 function collectLocalAddresses(): Set<string> {
   const out = new Set<string>(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
@@ -65,9 +94,18 @@ export function runtimeIsContainer(): boolean {
     cachedRuntimeIsContainer = true;
     return cachedRuntimeIsContainer;
   }
-  // POLARIS_STATE_DIR is set by Polaris's own Docker image (polaris-deploy -> env-vars.md). Strong
-  // proxy when the other two miss.
-  if (process.env.POLARIS_STATE_DIR) {
+  // Podman writes /run/.containerenv instead of /.dockerenv — and under
+  // cgroup v2 its /proc/1/cgroup is just "0::/", so the check below misses it.
+  if (existsSync("/run/.containerenv")) {
+    cachedRuntimeIsContainer = true;
+    return cachedRuntimeIsContainer;
+  }
+  // Polaris's own image pins POLARIS_STATE_DIR to /app/state. Only THAT value
+  // is a container signal: the variable is also documented for BARE-METAL
+  // installs that must keep state outside /opt (SELinux / STIG / a separate
+  // volume), and treating any value as "container" refused Restart, refused
+  // HA and mis-graded the OS on exactly those hosts (CQ-B042, 2026-11-06).
+  if ((process.env.POLARIS_STATE_DIR ?? "").trim().replace(/\/+$/, "") === CONTAINER_STATE_DIR) {
     cachedRuntimeIsContainer = true;
     return cachedRuntimeIsContainer;
   }

@@ -16,30 +16,21 @@
 
 import { logger } from "../utils/logger.js";
 import { reconcileDnsResolvedForAllAssets } from "../services/dnsResolvedReservationService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-let running = false;
 
-async function runReconcile(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("reconcileDnsResolvedReservations", async () => {
-      const counts = await reconcileDnsResolvedForAllAssets();
-      if (counts.created > 0 || counts.updated > 0 || counts.released > 0) {
-        logger.info(
-          { event: "dns_resolved.reconciled", ...counts },
-          `Reconciled dns_resolved reservations: created=${counts.created} updated=${counts.updated} released=${counts.released} scanned=${counts.scanned}`,
-        );
-      }
-    });
-  } catch (err) {
-    logger.error(err, "Error running dns_resolved reservation reconcile job");
-  } finally {
-    running = false;
-  }
-}
-
-setTimeout(runReconcile, 30_000);
-setInterval(runReconcile, INTERVAL_MS);
+defineJob({
+  name: "reconcileDnsResolvedReservations",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 30_000,
+  run: async () => {
+    const counts = await reconcileDnsResolvedForAllAssets();
+    if (counts.created > 0 || counts.updated > 0 || counts.released > 0) {
+      logger.info(
+        { event: "dns_resolved.reconciled", ...counts },
+        `Reconciled dns_resolved reservations: created=${counts.created} updated=${counts.updated} released=${counts.released} scanned=${counts.scanned}`,
+      );
+    }
+  },
+});

@@ -32,7 +32,7 @@ import pg from "pg";
 import { logger } from "./logger.js";
 import { getDirectDatabaseUrl } from "./dbConnections.js";
 
-export type ReadinessReason = "in-recovery" | "db-error" | "timeout";
+type ReadinessReason = "in-recovery" | "db-error" | "timeout";
 
 export interface ReadinessResult {
   ready:   boolean;
@@ -42,7 +42,7 @@ export interface ReadinessResult {
 /** Resolves true when the local database is a writable primary. */
 export type ReadinessProbe = () => Promise<boolean>;
 
-export const READINESS_TIMEOUT_MS = 2000;
+const READINESS_TIMEOUT_MS = 2000;
 
 // Lazily created so importing this module never opens a connection (tests,
 // non-HTTP roles, and the setup wizard all import the app graph).
@@ -112,11 +112,4 @@ export async function checkReadiness(
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-/** Test seam: drop the memoized pool so a suite can swap DATABASE_URL. */
-export async function resetReadinessPoolForTests(): Promise<void> {
-  const pool = readinessPool;
-  readinessPool = null;
-  if (pool) await pool.end().catch(() => {});
 }

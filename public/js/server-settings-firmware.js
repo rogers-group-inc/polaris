@@ -216,8 +216,11 @@
       : "";
     var missing = img.fileMissing ? ' <span class="fw-pill fw-warn-pill" title="The image bytes are gone from disk (data/firmware). Upload it again.">File missing</span>' : "";
     var verbs = "";
+    if (can("write") && img.role === "backup") verbs += '<button type="button" class="btn btn-sm btn-secondary fw-image-promote" data-id="' + esc(img.id) + '" data-label="' + esc(img.versionLabel) + '">Make primary</button> ';
+    // Download is a read-rung verb: everyone who sees the row may take a copy.
+    // A plain link, never fetch-to-blob — an image is up to 300 MiB.
+    if (!img.fileMissing) verbs += '<a class="btn btn-sm btn-secondary fw-image-download" href="' + esc(api.serverSettings.downloadFirmwareImageUrl(img.id)) + '" download="' + esc(img.filename) + '">Download</a> ';
     if (can("write")) {
-      if (img.role === "backup") verbs += '<button type="button" class="btn btn-sm btn-secondary fw-image-promote" data-id="' + esc(img.id) + '" data-label="' + esc(img.versionLabel) + '">Make primary</button> ';
       verbs += '<button type="button" class="btn btn-sm btn-danger fw-image-del" data-id="' + esc(img.id) + '" data-role="' + esc(img.role) + '" data-label="' + esc(img.versionLabel) + '">Delete</button>';
     }
     return '<tr data-image-id="' + esc(img.id) + '">' +
@@ -773,31 +776,23 @@
 
   function ensureAssetListDOM() {
     if (document.getElementById("fw-assets-overlay")) return;
-    var overlay = document.createElement("div");
-    overlay.id = "fw-assets-overlay";
-    overlay.className = "slideover-overlay";
-    overlay.innerHTML =
-      '<div class="slideover" id="fw-assets-panel" role="dialog" aria-labelledby="fw-assets-title" tabindex="-1">' +
-        '<div class="slideover-resize-handle"></div>' +
-        '<div class="slideover-header">' +
-          '<div class="slideover-header-top">' +
-            '<h3 id="fw-assets-title">Devices</h3>' +
-            '<button class="btn-icon" id="fw-assets-close" aria-label="Close">&times;</button>' +
-          '</div>' +
-          '<div class="slideover-meta" id="fw-assets-meta"></div>' +
-        '</div>' +
-        '<div class="slideover-body">' +
-          '<div style="padding:1rem 1.25rem">' +
-            '<input type="search" id="fw-assets-filter" placeholder="Filter by hostname, IP, model, serial or version" style="width:100%;margin-bottom:0.75rem">' +
-            '<div id="fw-assets-body"></div>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    overlay.addEventListener("click", function (e) { if (e.target === overlay) closeAssetList(); });
-    document.getElementById("fw-assets-close").addEventListener("click", closeAssetList);
-    if (typeof wireSlideoverEscape === "function") wireSlideoverEscape(overlay, closeAssetList);
+    // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover (app.js).
+    buildSlideover({
+      id: "fw-assets-panel",
+      prefix: "fw-assets",
+      dialog: true,
+      title: "Devices",
+      closeTitle: null,
+      closeLabel: "Close",
+      bodyId: null,
+      bodyHTML:
+        '<div style="padding:1rem 1.25rem">' +
+          '<input type="search" id="fw-assets-filter" placeholder="Filter by hostname, IP, model, serial or version" style="width:100%;margin-bottom:0.75rem">' +
+          '<div id="fw-assets-body"></div>' +
+        '</div>',
+      close: closeAssetList,
+      resizeKey: "polaris.panel.width.firmwareassets",
+    });
 
     var body = document.getElementById("fw-assets-body");
     var openRow = function (row) {
@@ -815,8 +810,6 @@
     document.getElementById("fw-assets-filter").addEventListener("input", function (e) {
       renderAssetList(body, _listRows, e.target.value);
     });
-
-    if (typeof initSlideoverResize === "function") initSlideoverResize(document.getElementById("fw-assets-panel"), "polaris.panel.width.firmwareassets");
   }
 
   function closeAssetList() {

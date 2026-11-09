@@ -14,26 +14,17 @@
 
 import { logger } from "../utils/logger.js";
 import { runDueRebootSchedules } from "../services/rebootScheduleService.js";
-import { runInstrumentedJob } from "./_metrics.js";
+import { defineJob } from "./_defineJob.js";
 
 const INTERVAL_MS = 60 * 1000;
-let running = false;
-
-async function tick(): Promise<void> {
-  if (running) return;
-  running = true;
-  try {
-    await runInstrumentedJob("startScheduledReboots", async () => {
-      const res = await runDueRebootSchedules();
-      if (res.started + res.refused + res.missed > 0) logger.info(res, "scheduled reboots fired");
-    });
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "startScheduledReboots job failed (non-fatal)");
-  } finally {
-    running = false;
-  }
-}
 
 // Boot delay: after failOrphanedRebootRuns has swept what a restart left behind.
-setTimeout(tick, 50_000);
-setInterval(tick, INTERVAL_MS);
+defineJob({
+  name: "startScheduledReboots",
+  intervalMs: INTERVAL_MS,
+  firstRunDelayMs: 50_000,
+  run: async () => {
+    const res = await runDueRebootSchedules();
+    if (res.started + res.refused + res.missed > 0) logger.info(res, "scheduled reboots fired");
+  },
+});

@@ -114,7 +114,7 @@ export function parseMib(raw: string): ParsedMib {
 // the heavier parser cannot break uploads (the upload hot path stays on
 // the lighter validator).
 
-export type MibBaseType =
+type MibBaseType =
   | "INTEGER"
   | "OCTET STRING"
   | "Counter32"
@@ -128,22 +128,22 @@ export type MibBaseType =
   | "SEQUENCE OF"
   | "OTHER";
 
-export type MibAccess =
+type MibAccess =
   | "read-only"
   | "read-write"
   | "read-create"
   | "not-accessible"
   | "accessible-for-notify";
 
-export type MibStatus = "current" | "deprecated" | "obsolete";
+type MibStatus = "current" | "deprecated" | "obsolete";
 
-export type MibSymbolKind =
+type MibSymbolKind =
   | "object-type"
   | "object-identity"
   | "notification-type"
   | "module-identity";
 
-export interface MibEnumValue {
+interface MibEnumValue {
   label: string;
   value: number;
 }
@@ -302,13 +302,6 @@ function parseIndexNames(body: string): string[] | null {
     if (t) out.push(t);
   }
   return out.length > 0 ? out : null;
-}
-
-interface RawObjectDecl {
-  name: string;
-  kind: MibSymbolKind;
-  body: string;       // text between the keyword and `::=`
-  oidParts: string[]; // raw `::= { ... }` body split into tokens
 }
 
 // Master regex for OBJECT-TYPE / OBJECT-IDENTITY / NOTIFICATION-TYPE /
@@ -658,6 +651,24 @@ export async function createMib(input: CreateMibInput): Promise<MibUploadResult>
     /* registry refresh is best-effort; the row is stored either way */
   }
   return { ...created, symbolCount, unresolvedCount, unresolvedRoots };
+}
+
+/**
+ * The asset a MIB object walk targets — the fields the walk dials (IPv4, else
+ * the primary IPv6 under rule 128) and labels with. 404 when it does not exist.
+ */
+export async function findMibWalkAsset(assetId: string): Promise<{
+  id: string;
+  hostname: string | null;
+  ipAddress: string | null;
+  ipv6Address: string | null;
+}> {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  return asset;
 }
 
 export async function deleteMib(id: string): Promise<void> {

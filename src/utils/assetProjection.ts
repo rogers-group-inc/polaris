@@ -124,11 +124,6 @@ export type AssetSourceKind =
  */
 export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "fortinet-live"];
 
-/** True when this kind's presence means "something still holds this device". */
-export function sourceClaimsExistence(kind: string): boolean {
-  return !ENRICHMENT_SOURCE_KINDS.includes(kind as AssetSourceKind);
-}
-
 export interface AssetSourceForProjection {
   sourceKind: AssetSourceKind | string;
   inferred: boolean;
@@ -145,7 +140,7 @@ export interface AssetSourceForProjection {
   lastSeen?: Date | null;
 }
 
-export interface ProjectedAsset {
+interface ProjectedAsset {
   hostname: string | null;
   serialNumber: string | null;
   manufacturer: string | null;
@@ -169,7 +164,7 @@ export interface ProjectedAsset {
   productType: string | null;
 }
 
-export type ProjectionProvenance = Partial<Record<keyof ProjectedAsset, AssetSourceKind | string>>;
+type ProjectionProvenance = Partial<Record<keyof ProjectedAsset, AssetSourceKind | string>>;
 
 export interface ProjectionResult {
   projected: ProjectedAsset;
@@ -630,11 +625,6 @@ export function setLearnedLocationPriority(config: SourceLocationPriority): void
   activeLearnedLocationRules = buildLearnedLocationRules(config);
 }
 
-/** The order currently in force — for diagnostics / the settings GET. */
-export function getLearnedLocationPriority(): SourceLocationPriority {
-  return activeLocationPriority;
-}
-
 /**
  * Product type: the device's own words, and nobody else's.
  *
@@ -868,8 +858,8 @@ export function projectAssetFromSources(
   // Microsoft froze at "Windows 10" when Windows 11 shipped, so the winning
   // value is wrong on every Windows 11 client regardless of which source won.
   // Corrected here rather than only on the way to the DB so this function's
-  // output is what projectionDriftService compares against the stored row —
-  // normalizing one side only would report permanent drift every cycle.
+  // output agrees with the stored row and with every conflict proposal built
+  // from it — normalizing one side only would make them disagree.
   // No-op for non-Windows, Windows Server, and undeterminable builds.
   {
     const fixed = normalizeWindowsOs({ os: projected.os, osVersion: projected.osVersion });

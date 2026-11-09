@@ -18,6 +18,7 @@
  * notificationService; region scope via regionScopeService.
  */
 
+import { intQuery, boolQuery } from "../../utils/queryParams.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { requirePermission, callerIsAdminEquivalent } from "../middleware/permissions.js";
@@ -33,7 +34,7 @@ import {
 } from "../../services/notificationService.js";
 import { getEffectiveRegionTags } from "../../services/regionScopeService.js";
 
-export const notificationsRouter = Router();
+const notificationsRouter = Router();
 
 /**
  * The region scope the alert READS apply to this caller. Empty = unrestricted.
@@ -70,12 +71,12 @@ notificationsRouter.get("/", requirePermission("alerts", "read"), async (req, re
         assetId: typeof req.query.assetId === "string" ? req.query.assetId : undefined,
         region: csvList(req.query.region),
         search: typeof req.query.search === "string" ? req.query.search : undefined,
-        includeCleared: req.query.includeCleared === "true",
+        includeCleared: boolQuery(req.query.includeCleared),
       },
       sortBy: typeof req.query.sortBy === "string" ? req.query.sortBy : undefined,
       sortDir: req.query.sortDir === "asc" ? "asc" : "desc",
-      limit: req.query.limit ? parseInt(String(req.query.limit), 10) : undefined,
-      offset: req.query.offset ? parseInt(String(req.query.offset), 10) : undefined,
+      limit: intQuery(req.query.limit),
+      offset: intQuery(req.query.offset),
     });
     // Rule 141 (e): per-row verbs for THIS caller (clear also needs its key).
     const rows = (result as { notifications: Array<{ id: string }> }).notifications;

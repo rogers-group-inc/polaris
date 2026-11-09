@@ -49,6 +49,7 @@ const INFLIGHT_STATUSES = ["pending", "uploading", "enrolling"];
 // Single source of truth for the platform union is the install-script
 // catalog (this file re-exports it for its existing importers).
 import type { AgentOsPlatform } from "./agentInstallScripts.js";
+import { publicBaseUrl } from "../utils/publicUrl.js";
 export type { AgentOsPlatform };
 export type AgentTransport = "ssh" | "winrm";
 
@@ -116,7 +117,7 @@ export async function checkAutoDeployPreconditions(): Promise<{ ok: true } | { o
   if (!fingerprint) {
     return { ok: false, reason: "HTTPS is not running — agent install requires TLS for the cert pin" };
   }
-  if (!process.env.POLARIS_PUBLIC_URL && !process.env.POLARIS_PUBLIC_HOST) {
+  if (!publicBaseUrl() && !process.env.POLARIS_PUBLIC_HOST) {
     const hosts = getServerCertHostnames();
     const certHost = hosts?.dnsSans[0] || hosts?.cn || hosts?.ipSans[0] || null;
     if (!certHost || certHost === "localhost" || certHost === "127.0.0.1" || certHost === "::1") {

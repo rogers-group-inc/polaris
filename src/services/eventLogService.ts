@@ -14,6 +14,7 @@
 
 import { prisma } from "../db.js";
 import { getCachedRetentionSettings } from "./eventArchiveService.js";
+import { jsonEqual } from "../utils/jsonEqual.js";
 
 const LEVEL_ORDER: Record<string, number> = { info: 0, warning: 1, error: 2 };
 
@@ -315,7 +316,7 @@ export function computeMaterialAssetChanges(
     if (!(f in after)) continue; // discovery didn't touch this field this write
     const a = (before as any)[f] ?? null;
     const b = (after as any)[f] ?? null;
-    if (JSON.stringify(a) !== JSON.stringify(b)) changes[f] = { from: a, to: b };
+    if (!jsonEqual(a, b)) changes[f] = { from: a, to: b };
   }
   return Object.keys(changes).length ? changes : undefined;
 }
@@ -441,7 +442,7 @@ export function computeFirmwareChange(
     const b = (after as any)[f] ?? null;
     if (a === null) continue; // first learn, not an upgrade
     if (b === null) continue; // a source going quiet is not a downgrade
-    if (JSON.stringify(a) !== JSON.stringify(b)) changes[f] = { from: a, to: b };
+    if (!jsonEqual(a, b)) changes[f] = { from: a, to: b };
   }
   return Object.keys(changes).length ? changes : undefined;
 }

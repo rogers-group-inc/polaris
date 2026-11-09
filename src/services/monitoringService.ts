@@ -23,13 +23,13 @@
  * transitions emit one as well.
  */
 
+import { toNonNegativeInt } from "../utils/num.js";
 import { trimTrailing } from "../utils/trimTrailing.js";
 import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
 import { chunkArray } from "../utils/chunk.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
 import { performance } from "node:perf_hooks";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
@@ -82,6 +82,7 @@ import {
 } from "../utils/snmpIpAddressTable.js";
 import { parseInterfaceIpv6 } from "../utils/fortiosIpv6.js";
 import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
+import { FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
 import { applyTransform } from "../utils/symbolTransforms.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { expandMacRange } from "../utils/macAddresses.js";
@@ -106,13 +107,16 @@ import { burstPing, pingTargets, detectFping } from "../utils/burstPing.js";
 import { stampsRecoveryAnchor } from "../utils/probeLossAnchor.js";
 import { pollingRunStart } from "../utils/addressConfidence.js";
 import {
-  fortiosBool,
   parseFortiosMemberList,
   buildFortiswitchTrunkMembers,
   findFortiswitchUplinkPorts,
   parseFortiswitchMclagPeers,
   parseFortiswitchPortDescriptions,
+  parseFortiswitchPortVlan,
+  fortiosVlanIdByName,
+  FORTISWITCH_MONITOR_PORT_FORMAT,
   type FortiswitchMclagPeer,
+  type FortiswitchPortVlan,
 } from "../utils/fortiswitchCmdb.js";
 // Re-exported so existing import sites (unit tests, etc.) keep resolving these
 // from monitoringService; implementations live in utils/fortiswitchCmdb.ts.
@@ -191,7 +195,14 @@ import {
   entityOperStatusToAlarm,
   entityTypeColumnTrusted,
   pseOperStatusToAlarm,
+  unitsDisplayLooksOptical,
 } from "../utils/hardwareSensors.js";
+import {
+  attributeSfpSensors,
+  sfpSensorName,
+  type EntitySensorLayoutRow,
+  type SfpAttribution,
+} from "../utils/sfpOptics.js";
 import { poeClassLabel, poeIfNameByIndex, poeStatusLabel, poeWalkOutcome } from "../utils/poePorts.js";
 import { entityPhysicalClassLabel, entityPhysicalIsInventory } from "../utils/hardwareSensors.js";
 import { dot3DuplexLabel, ifStatusLabel, snmpIfTypeLabel } from "../utils/ifMib.js";
@@ -513,7 +524,7 @@ export interface MonitorTierSettings {
   eventLogCredentialId:      string | null;
 }
 
-export type MonitorOverrideSettings = Partial<MonitorTierSettings>;
+type MonitorOverrideSettings = Partial<MonitorTierSettings>;
 
 /** Final per-asset shape after the resolver walks all four tiers. */
 export type ResolvedMonitorSettings = MonitorTierSettings;
@@ -583,51 +594,12 @@ const HARDCODED_FLOOR: MonitorTierSettings = {
   eventLogCredentialId:      null,
 };
 
-// ─── Legacy global-tier types (transitional, scheduled for removal) ────────
-//
-// The old single-row `monitorSettings` Setting + per-class switch/accessPoint
-// blocks (formerly named fortiswitch/fortiap — see the renameMonitorClassKeys
-// startup job for the JSON-key migration). Kept alive temporarily so the
-// prune helpers and capacityService continue working while the multi-tier
-// retention work seeds new shapes. After the legacy row is fully decoupled
-// these types get removed in a follow-up pass.
-
-/** @deprecated use MonitorTierSettings */
-export interface MonitorClassSettings {
-  intervalSeconds:           number;
-  failureThreshold:          number;
-  probeTimeoutMs:            number;
-  sampleRetentionDays:       number;
-  telemetryIntervalSeconds:  number;
-  systemInfoIntervalSeconds: number;
-  telemetryRetentionDays:    number;
-  systemInfoRetentionDays:   number;
-}
-
-/** @deprecated legacy storage shape; new code uses MonitorTierSettings */
-export interface MonitorSettings extends MonitorClassSettings {
-  switch:      MonitorClassSettings;
-  accessPoint: MonitorClassSettings;
-}
-
-const SETTING_KEY = "monitorSettings";
+// The pre-hierarchy single-row `monitorSettings` Setting (and its two
+// deprecated legacy types) was retired 2026-11-06
+// (CQ-B012). migrateMonitorSettingsHierarchy converts and DELETES that row on
+// boot, so nothing at runtime reads it any more; capacity projections use
+// fleetCadences() below — the cadences operators actually configured.
 const MANUAL_SETTING_KEY = "manualMonitorSettings";
-
-// Legacy default shape — maps the new stream-split floor back to the
-// pre-split `telemetryIntervalSeconds` field name that the deprecated
-// MonitorClassSettings + MonitorSettings types still expose. Used only by
-// the transitional legacy-row fallback path (loadLegacyGlobalAsTier +
-// capacityService); new code reads HARDCODED_FLOOR directly.
-const DEFAULT_CLASS_SETTINGS: MonitorClassSettings = {
-  intervalSeconds:           HARDCODED_FLOOR.intervalSeconds,
-  failureThreshold:          HARDCODED_FLOOR.failureThreshold,
-  probeTimeoutMs:            HARDCODED_FLOOR.probeTimeoutMs,
-  sampleRetentionDays:       HARDCODED_FLOOR.sampleRetentionDays,
-  telemetryIntervalSeconds:  HARDCODED_FLOOR.cpuMemoryIntervalSeconds,
-  systemInfoIntervalSeconds: HARDCODED_FLOOR.systemInfoIntervalSeconds,
-  telemetryRetentionDays:    HARDCODED_FLOOR.telemetryRetentionDays,
-  systemInfoRetentionDays:   HARDCODED_FLOOR.systemInfoRetentionDays,
-};
 
 const sysUpTimeOid = "1.3.6.1.2.1.1.3.0";
 
@@ -658,54 +630,6 @@ export function getAdMonitorProtocol(os: string | null | undefined): "winrm" | "
   return null;
 }
 
-function readClassFromJson(v: Record<string, unknown> | undefined, defaults: MonitorClassSettings): MonitorClassSettings {
-  const o = v ?? {};
-  return {
-    intervalSeconds:           toPositiveInt(o.intervalSeconds,           defaults.intervalSeconds),
-    failureThreshold:          toPositiveInt(o.failureThreshold,          defaults.failureThreshold),
-    probeTimeoutMs:            toPositiveInt(o.probeTimeoutMs,            defaults.probeTimeoutMs),
-    sampleRetentionDays:       toPositiveInt(o.sampleRetentionDays,       defaults.sampleRetentionDays),
-    telemetryIntervalSeconds:  toPositiveInt(o.telemetryIntervalSeconds,  defaults.telemetryIntervalSeconds),
-    systemInfoIntervalSeconds: toPositiveInt(o.systemInfoIntervalSeconds, defaults.systemInfoIntervalSeconds),
-    telemetryRetentionDays:    toPositiveInt(o.telemetryRetentionDays,    defaults.telemetryRetentionDays),
-    systemInfoRetentionDays:   toPositiveInt(o.systemInfoRetentionDays,   defaults.systemInfoRetentionDays),
-  };
-}
-
-export async function getMonitorSettings(): Promise<MonitorSettings> {
-  const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
-  const v = (row?.value as Record<string, unknown> | null) ?? {};
-  // Top-level fields are the baseline default for every class group too —
-  // a fresh install with no per-class entries inherits the operator's
-  // top-level values, not the hard-coded constants.
-  const base = readClassFromJson(v, DEFAULT_CLASS_SETTINGS);
-  // Per-class overrides: prefer the new switch/accessPoint keys; fall back
-  // to the legacy fortiswitch/fortiap keys until renameMonitorClassKeys
-  // (one-shot startup job) rewrites them. After fleet-wide migration this
-  // fallback can go.
-  const swRaw = (v.switch      as Record<string, unknown> | undefined)
-             ?? (v.fortiswitch as Record<string, unknown> | undefined)
-             ?? undefined;
-  const apRaw = (v.accessPoint as Record<string, unknown> | undefined)
-             ?? (v.fortiap     as Record<string, unknown> | undefined)
-             ?? undefined;
-  return {
-    ...base,
-    switch:      readClassFromJson(swRaw, base),
-    accessPoint: readClassFromJson(apRaw, base),
-  };
-}
-
-// The legacy global-tier WRITE path (updateMonitorSettings + mergeClassUpdate)
-// was removed 2026-08 — exported with zero callers since the monitor-settings
-// hierarchy migration; getMonitorSettings (read) stays for capacityService.
-
-function toPositiveInt(v: unknown, fallback: number): number {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return fallback;
-  return Math.floor(n);
-}
-
 // ─── Monitor settings resolver ──────────────────────────────────────────────
 //
 // `resolveMonitorSettings(asset)` is the runtime entry point that walks the
@@ -721,12 +645,10 @@ function toPositiveInt(v: unknown, fallback: number): number {
 // row, or a MonitorClassOverride row. The migration job (step 5) calls
 // `invalidateMonitorSettingsCache()` (no scope = full clear) at the end.
 //
-// Transitional fallback: when the new tier rows aren't seeded yet (i.e. the
-// migration job hasn't run), `loadLegacyGlobalAsTier` reads the old
-// `monitorSettings` Setting row and projects it into a tier-shaped value.
-// Once the migration has run + deleted that row, the loaders fall through to
-// HARDCODED_FLOOR for the brief window where a fresh integration has no
-// monitor settings yet (operators set them as needed via the new routes).
+// A tier with no stored settings resolves to HARDCODED_FLOOR (a fresh
+// integration before an operator sets its cadences, a fresh install's manual
+// tier). The pre-hierarchy legacy row is not consulted: the startup migration
+// converts and deletes it, and invalidates this cache when it does.
 
 const MANUAL_TIER_CACHE_KEY = "__manual__";
 const tierCache = new Map<string, MonitorTierSettings>();
@@ -887,32 +809,32 @@ function tierFromJson(v: Record<string, unknown> | null | undefined): MonitorTie
   const legacyInterval = toPositiveIntOr(o.telemetryIntervalSeconds, null);
   const legacyTimeout  = toPositiveIntOr(o.telemetryTimeoutMs,        null);
   return {
-    intervalSeconds:            toPositiveInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
-    failureThreshold:           toPositiveInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
-    fastConfirmIntervalSec:     toPositiveInt(o.fastConfirmIntervalSec,    HARDCODED_FLOOR.fastConfirmIntervalSec),
-    probeTimeoutMs:             toPositiveInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
-    cpuMemoryTimeoutMs:         toPositiveInt(o.cpuMemoryTimeoutMs,        legacyTimeout  ?? HARDCODED_FLOOR.cpuMemoryTimeoutMs),
-    temperatureTimeoutMs:       toPositiveInt(o.temperatureTimeoutMs,      legacyTimeout  ?? HARDCODED_FLOOR.temperatureTimeoutMs),
-    systemInfoTimeoutMs:        toPositiveInt(o.systemInfoTimeoutMs,       HARDCODED_FLOOR.systemInfoTimeoutMs),
-    cpuMemoryIntervalSeconds:   toPositiveInt(o.cpuMemoryIntervalSeconds,  legacyInterval ?? HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
-    temperatureIntervalSeconds: toPositiveInt(o.temperatureIntervalSeconds, legacyInterval ?? HARDCODED_FLOOR.temperatureIntervalSeconds),
-    systemInfoIntervalSeconds:  toPositiveInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
+    intervalSeconds:            toNonNegativeInt(o.intervalSeconds,           HARDCODED_FLOOR.intervalSeconds),
+    failureThreshold:           toNonNegativeInt(o.failureThreshold,          HARDCODED_FLOOR.failureThreshold),
+    fastConfirmIntervalSec:     toNonNegativeInt(o.fastConfirmIntervalSec,    HARDCODED_FLOOR.fastConfirmIntervalSec),
+    probeTimeoutMs:             toNonNegativeInt(o.probeTimeoutMs,            HARDCODED_FLOOR.probeTimeoutMs),
+    cpuMemoryTimeoutMs:         toNonNegativeInt(o.cpuMemoryTimeoutMs,        legacyTimeout  ?? HARDCODED_FLOOR.cpuMemoryTimeoutMs),
+    temperatureTimeoutMs:       toNonNegativeInt(o.temperatureTimeoutMs,      legacyTimeout  ?? HARDCODED_FLOOR.temperatureTimeoutMs),
+    systemInfoTimeoutMs:        toNonNegativeInt(o.systemInfoTimeoutMs,       HARDCODED_FLOOR.systemInfoTimeoutMs),
+    cpuMemoryIntervalSeconds:   toNonNegativeInt(o.cpuMemoryIntervalSeconds,  legacyInterval ?? HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
+    temperatureIntervalSeconds: toNonNegativeInt(o.temperatureIntervalSeconds, legacyInterval ?? HARDCODED_FLOOR.temperatureIntervalSeconds),
+    systemInfoIntervalSeconds:  toNonNegativeInt(o.systemInfoIntervalSeconds, HARDCODED_FLOOR.systemInfoIntervalSeconds),
     // Phase 1 wrote lldpIntervalSeconds / lldpTimeoutMs / storageIntervalSeconds
     // / storageTimeoutMs as additive flat keys on the integration-tier JSON
     // before the per-class streams blocks existed. Continue to read them here
     // as the integration-tier default; per-class streams entries override at
     // dispatch time via loadIntegrationTierSettings(.., assetType).
-    lldpIntervalSeconds:        toPositiveInt(o.lldpIntervalSeconds,       HARDCODED_FLOOR.lldpIntervalSeconds),
-    lldpTimeoutMs:              toPositiveInt(o.lldpTimeoutMs,             HARDCODED_FLOOR.lldpTimeoutMs),
-    storageIntervalSeconds:     toPositiveInt(o.storageIntervalSeconds,    HARDCODED_FLOOR.storageIntervalSeconds),
-    storageTimeoutMs:           toPositiveInt(o.storageTimeoutMs,          HARDCODED_FLOOR.storageTimeoutMs),
-    processesIntervalSeconds:   toPositiveInt(o.processesIntervalSeconds,  HARDCODED_FLOOR.processesIntervalSeconds),
-    processesTimeoutMs:         toPositiveInt(o.processesTimeoutMs,        HARDCODED_FLOOR.processesTimeoutMs),
-    eventLogIntervalSeconds:    toPositiveInt(o.eventLogIntervalSeconds,   HARDCODED_FLOOR.eventLogIntervalSeconds),
-    eventLogTimeoutMs:          toPositiveInt(o.eventLogTimeoutMs,         HARDCODED_FLOOR.eventLogTimeoutMs),
-    sampleRetentionDays:        toPositiveInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
-    telemetryRetentionDays:     toPositiveInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
-    systemInfoRetentionDays:    toPositiveInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
+    lldpIntervalSeconds:        toNonNegativeInt(o.lldpIntervalSeconds,       HARDCODED_FLOOR.lldpIntervalSeconds),
+    lldpTimeoutMs:              toNonNegativeInt(o.lldpTimeoutMs,             HARDCODED_FLOOR.lldpTimeoutMs),
+    storageIntervalSeconds:     toNonNegativeInt(o.storageIntervalSeconds,    HARDCODED_FLOOR.storageIntervalSeconds),
+    storageTimeoutMs:           toNonNegativeInt(o.storageTimeoutMs,          HARDCODED_FLOOR.storageTimeoutMs),
+    processesIntervalSeconds:   toNonNegativeInt(o.processesIntervalSeconds,  HARDCODED_FLOOR.processesIntervalSeconds),
+    processesTimeoutMs:         toNonNegativeInt(o.processesTimeoutMs,        HARDCODED_FLOOR.processesTimeoutMs),
+    eventLogIntervalSeconds:    toNonNegativeInt(o.eventLogIntervalSeconds,   HARDCODED_FLOOR.eventLogIntervalSeconds),
+    eventLogTimeoutMs:          toNonNegativeInt(o.eventLogTimeoutMs,         HARDCODED_FLOOR.eventLogTimeoutMs),
+    sampleRetentionDays:        toNonNegativeInt(o.sampleRetentionDays,       HARDCODED_FLOOR.sampleRetentionDays),
+    telemetryRetentionDays:     toNonNegativeInt(o.telemetryRetentionDays,    HARDCODED_FLOOR.telemetryRetentionDays),
+    systemInfoRetentionDays:    toNonNegativeInt(o.systemInfoRetentionDays,   HARDCODED_FLOOR.systemInfoRetentionDays),
     responseTimePolling:        readPollingFromJson(pollingBlock, "responseTime") ?? readPollingFromJson(flat, "responseTimePolling"),
     cpuMemoryPolling:           readPollingFromJson(pollingBlock, "cpuMemory")    ?? readPollingFromJson(flat, "cpuMemoryPolling")    ?? readPollingFromJson(pollingBlock, "telemetry") ?? readPollingFromJson(flat, "telemetryPolling"),
     temperaturePolling:         readPollingFromJson(pollingBlock, "temperature")  ?? readPollingFromJson(flat, "temperaturePolling")  ?? readPollingFromJson(pollingBlock, "telemetry") ?? readPollingFromJson(flat, "telemetryPolling"),
@@ -984,7 +906,7 @@ function readMibIdFromJson(v: unknown): string | null {
  * Shared by the source default and the resolver's validity gate so the two
  * cannot disagree about what is collectable.
  */
-export function fortiosRestUsable(stream: Stream, assetType: string | null | undefined): boolean {
+function fortiosRestUsable(stream: Stream, assetType: string | null | undefined): boolean {
   const isManagedChild = assetType === "switch" || assetType === "access_point";
   return stream === "responseTime" && isManagedChild;
 }
@@ -1094,12 +1016,6 @@ export function defaultPollingForSource(
   // device, so nothing beyond the ICMP response time is collected until an
   // operator picks a transport and a credential for it.
   return stream === "responseTime" ? "icmp" : null;
-}
-
-async function loadLegacyGlobalAsTier(): Promise<MonitorTierSettings | null> {
-  const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
-  if (!row?.value) return null;
-  return tierFromJson(row.value as Record<string, unknown>);
 }
 
 /**
@@ -1280,8 +1196,8 @@ async function loadIntegrationTierSettings(integrationId: string, assetType: str
   if (ms) {
     result = tierFromJson(ms);
   } else {
-    // Transitional: fall back to the legacy global until the migration runs.
-    result = (await loadLegacyGlobalAsTier()) ?? { ...HARDCODED_FLOOR };
+    // Nothing stored for this tier yet: the hard-coded floor.
+    result = { ...HARDCODED_FLOOR };
   }
   // Per-class streams overlay. Phase 2: when the integration config carries a
   // class-specific streams block for this asset's assetType, its per-stream
@@ -1338,8 +1254,8 @@ async function loadManualTierSettings(): Promise<MonitorTierSettings> {
   if (row?.value) {
     result = tierFromJson(row.value as Record<string, unknown>);
   } else {
-    // Transitional: fall back to the legacy global until the migration runs.
-    result = (await loadLegacyGlobalAsTier()) ?? { ...HARDCODED_FLOOR };
+    // Nothing stored for this tier yet: the hard-coded floor.
+    result = { ...HARDCODED_FLOOR };
   }
   tierCache.set(MANUAL_TIER_CACHE_KEY, result);
   return result;
@@ -1444,6 +1360,27 @@ async function loadClassOverride(
   return result;
 }
 
+/**
+ * The Asset columns a probe or collector load leaves out (CQ-B051). Asset is
+ * the widest table in the schema (~170 columns); these five JSON blobs are the
+ * bulk of a row and nothing on the probe / collector path reads them —
+ * typecheck proves it: every load below carries `omit: PROBE_ASSET_OMIT`, so a
+ * collector that starts reading one fails to compile instead of silently
+ * getting undefined. That is why this is an OMIT and not a hand-listed
+ * `select`: a forgotten column in a select reads as "inherit" at run time
+ * (2026-09 audit), a wrongly omitted one here is a type error.
+ *
+ * `fortinetTopology` is NOT omitted: the FortiSwitch / FortiAP collectors read
+ * their controller gate from it (resolveFortinetParent and friends).
+ */
+export const PROBE_ASSET_OMIT = {
+  associatedUsers:   true,
+  virtualization:    true,
+  descriptionSync:   true,
+  managementAccess:  true,
+  quarantineTargets: true,
+} as const;
+
 /** Minimal asset shape the resolver needs. */
 export interface AssetMonitorContext {
   assetType:                 string;
@@ -1542,6 +1479,81 @@ export interface AssetMonitorContext {
  * ungated, so the asset modal could display a method the runtime silently
  * ignored.
  */
+/** The three fleet-wide cadences the capacity model takes (seconds). */
+export interface FleetCadences {
+  intervalSeconds:           number;
+  telemetryIntervalSeconds:  number;
+  systemInfoIntervalSeconds: number;
+}
+
+/**
+ * The cadences the monitored fleet actually runs at, for capacity projection
+ * (CQ-B012). Resolved through resolveMonitorSettings per configuration — assets
+ * sharing (integration, type, per-asset overrides) resolve once — and combined
+ * as the RATE-weighted mean: N / Σ(1/interval), so N assets at that one interval
+ * produce exactly the fleet's sample rate, which is how the model multiplies it.
+ * A stream an asset has turned off (interval 0) adds no rate. No monitored
+ * asset, or every one off for a stream → that stream's hard-coded floor.
+ *
+ * Before this, capacity read the pre-hierarchy legacy Setting row; the startup
+ * migration deletes that row, so projections had silently used the floor
+ * defaults whatever the operator configured.
+ *
+ * Scale: one findMany of the monitored assets (a narrow select), then one
+ * resolve per distinct configuration — a handful, not one per asset.
+ */
+export async function fleetCadences(): Promise<FleetCadences> {
+  const rows = await prisma.asset.findMany({
+    where: { monitored: true },
+    select: {
+      assetType: true, discoveredByIntegrationId: true,
+      discoveredByIntegration: { select: { type: true } },
+      monitorIntervalSec: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
+      systemInfoIntervalSec: true, lldpIntervalSec: true, storageIntervalSec: true,
+      probeTimeoutMs: true,
+    },
+  });
+  const groups = new Map<string, { ctx: AssetMonitorContext; count: number }>();
+  for (const a of rows) {
+    const ctx = {
+      assetType: a.assetType,
+      discoveredByIntegrationId: a.discoveredByIntegrationId,
+      discoveredByIntegrationType: a.discoveredByIntegration?.type ?? null,
+      monitorIntervalSec: a.monitorIntervalSec,
+      cpuMemoryIntervalSec: a.cpuMemoryIntervalSec,
+      temperatureIntervalSec: a.temperatureIntervalSec,
+      systemInfoIntervalSec: a.systemInfoIntervalSec,
+      lldpIntervalSec: a.lldpIntervalSec,
+      storageIntervalSec: a.storageIntervalSec,
+      probeTimeoutMs: a.probeTimeoutMs,
+    } as AssetMonitorContext;
+    const key = JSON.stringify(ctx);
+    const g = groups.get(key);
+    if (g) g.count++;
+    else groups.set(key, { ctx, count: 1 });
+  }
+  const acc = {
+    intervalSeconds:           { n: 0, rate: 0 },
+    telemetryIntervalSeconds:  { n: 0, rate: 0 },
+    systemInfoIntervalSeconds: { n: 0, rate: 0 },
+  };
+  for (const { ctx, count } of groups.values()) {
+    const eff = await resolveMonitorSettings(ctx);
+    const add = (k: keyof typeof acc, sec: number) => {
+      if (sec > 0) { acc[k].n += count; acc[k].rate += count / sec; }
+    };
+    add("intervalSeconds", eff.intervalSeconds);
+    add("telemetryIntervalSeconds", eff.cpuMemoryIntervalSeconds);
+    add("systemInfoIntervalSeconds", eff.systemInfoIntervalSeconds);
+  }
+  const mean = (k: keyof typeof acc, floor: number) => (acc[k].rate > 0 ? acc[k].n / acc[k].rate : floor);
+  return {
+    intervalSeconds:           mean("intervalSeconds", HARDCODED_FLOOR.intervalSeconds),
+    telemetryIntervalSeconds:  mean("telemetryIntervalSeconds", HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
+    systemInfoIntervalSeconds: mean("systemInfoIntervalSeconds", HARDCODED_FLOOR.systemInfoIntervalSeconds),
+  };
+}
+
 export async function resolveMonitorSettings(asset: AssetMonitorContext): Promise<ResolvedMonitorSettings> {
   return (await resolveMonitorSettingsCore(asset)).resolved;
 }
@@ -1564,7 +1576,7 @@ export async function resolveMonitorSettings(asset: AssetMonitorContext): Promis
  *                           applies (may itself be null = stream not
  *                           delivered for this source kind)
  */
-export type ProvenanceTier = "asset" | "class" | "integration" | "integration-class" | "manual" | "integrationPollInterval" | "default";
+type ProvenanceTier = "asset" | "class" | "integration" | "integration-class" | "manual" | "integrationPollInterval" | "default";
 
 export interface ResolvedSettingsWithProvenance {
   resolved:        ResolvedMonitorSettings;
@@ -2143,6 +2155,7 @@ export async function probeAsset(
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: {
         monitorCredential: true,
         responseTimeCredential: true,
@@ -2531,7 +2544,7 @@ function fortinetUptimeSecondsFromStatus(res: any): number | null {
 // probe rate stays bounded by controller-count, not device-count — important
 // for FMG proxy mode (concurrency = 1).
 
-export interface FortinetControllerEntry {
+interface FortinetControllerEntry {
   /** True when the controller reports this device as currently online. */
   connected: boolean;
   /** Raw status string the controller reported, surfaced in failure errors. */
@@ -3521,17 +3534,12 @@ async function fetchFortinetWifiClients(
 // Managed FortiSwitches expose interface counters via SNMP IF-MIB, but the
 // per-port VLAN config (native PVID + tagged allow-list) lives only on the
 // parent FortiGate's CMDB at /api/v2/cmdb/switch-controller/managed-switch.
-// One CMDB call per controller carries every managed switch's ports, so we
-// cache it per (integration, controller) with the same 30s TTL the inventory
-// fetcher uses. Best-effort — overlay failures never break the interface
-// scrape. SNMP-monitored non-Fortinet switches don't get VLAN data here
-// (Q-BRIDGE-MIB would be the cross-vendor path; out of scope for v1).
-
-interface FortiswitchPortVlan {
-  nativeVlan: number | null;
-  taggedVlans: number[];
-  trunksAllVlans: boolean;
-}
+// Read per controller as: the switch list (serials only), each switch's
+// `ports` child table with only the parsed attributes, and the gate's VLAN
+// interfaces (name → id). Cached per (integration, controller) with the same
+// 30s TTL the inventory fetcher uses. Best-effort — overlay failures never
+// break the interface scrape. SNMP-monitored non-Fortinet switches don't get
+// VLAN data here (they get Q-BRIDGE-MIB, collectPortVlansSnmp).
 
 // Per-switch view of the controller's managed-switch CMDB: per-port VLAN
 // config plus the trunk → physical-member-ports map. The trunk map is the
@@ -3570,57 +3578,47 @@ function fortiswitchPortsCacheKey(integrationId: string, deviceName: string): st
   return `${integrationId}::${deviceName}::fsw-ports`;
 }
 
-// "all"-sentinel detector for FortiOS VLAN list fields. Older FortiOS
-// versions return the literal string "all" instead of an empty array +
-// sibling allowed-vlans-all="enable". Either form must map to "this port
-// trunks every VLAN."
-function isFortiosVlanListAll(raw: unknown): boolean {
-  if (typeof raw === "string") return raw.trim().toLowerCase() === "all";
-  return false;
-}
+// VLAN parsing (names → ids, ranges, the "all" sentinel) lives in
+// utils/fortiswitchCmdb.ts → parseFortiswitchPortVlan.
 
-// FortiOS reports allowed-vlans / untagged-vlans in several shapes depending
-// on version + datasource flag: array of objects with vlan-id / id, array of
-// raw numbers, or a comma-separated string with "10-20" ranges. The "all"
-// sentinel is detected separately by `isFortiosVlanListAll` + the sibling
-// `allowed-vlans-all` field (see fetchFortiswitchControllerPortsCmdb); here
-// it's dropped to `[]` because we can't surface "every VLAN" as a finite
-// int list.
-function parseFortiosVlanList(raw: unknown): number[] {
-  const out = new Set<number>();
-  const push = (n: unknown): void => {
-    const v = typeof n === "number" ? n : Number(n);
-    if (Number.isFinite(v) && Number.isInteger(v) && v >= 1 && v <= 4094) out.add(v);
-  };
-  if (raw == null) return [];
-  if (Array.isArray(raw)) {
-    for (const entry of raw) {
-      if (entry == null) continue;
-      if (typeof entry === "number" || typeof entry === "string") {
-        push(entry);
-        continue;
-      }
-      const obj = entry as Record<string, unknown>;
-      const id = obj["vlan-id"] ?? obj.vlanid ?? obj.id ?? obj.vlan;
-      if (id !== undefined) push(id);
+/**
+ * Turn the per-switch reads into the per-switch ports view. Pure, exported for
+ * tests: `switches` are the managed-switch rows (serial keys only), `portsBySwitchId`
+ * each switch's `ports` child table, keyed by its `switch-id`, and
+ * `vlanIdByName` the controller's VLAN interfaces (fortiosVlanIdByName). A
+ * switch whose ports read failed is absent from `portsBySwitchId` and is left
+ * out of the result, as a switch with no `ports` always was.
+ */
+export function buildFortiswitchControllerPortsMap(
+  switches: unknown[],
+  portsBySwitchId: ReadonlyMap<string, unknown[]>,
+  vlanIdByName: ReadonlyMap<string, number>,
+): FortiswitchControllerPortsMap {
+  const map: FortiswitchControllerPortsMap = new Map();
+  for (const row of switches) {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const serial = String(r.sn || r["switch-id"] || r.name || "").trim();
+    const portsRaw = portsBySwitchId.get(String(r["switch-id"] ?? ""));
+    if (!serial || !Array.isArray(portsRaw)) continue;
+    const portMap = new Map<string, FortiswitchPortVlan>();
+    for (const p of portsRaw) {
+      const portName = String((p as Record<string, unknown>)?.["port-name"] ?? "").trim();
+      if (!portName) continue;
+      portMap.set(portName, parseFortiswitchPortVlan(p, vlanIdByName));
     }
-  } else if (typeof raw === "string") {
-    const s = raw.trim();
-    if (!s || s.toLowerCase() === "all") return [];
-    for (const part of s.split(",")) {
-      const p = part.trim();
-      if (!p) continue;
-      if (p.includes("-")) {
-        const [a, b] = p.split("-").map((x) => Number(x.trim()));
-        if (Number.isFinite(a) && Number.isFinite(b) && a <= b) {
-          for (let i = a; i <= b; i++) push(i);
-        }
-      } else {
-        push(p);
-      }
-    }
+    // Trunk → physical-member map: operator LACP bundles (`members`) +
+    // FortiLink auto-ISL uplinks (`isl-local-trunk-name` on each physical
+    // member). The interface overlay uses this to back-fill ifParent so
+    // the topology renderer swaps the opaque trunk name for the real
+    // physical port. See buildFortiswitchTrunkMembers. (The child read lists
+    // trunk rows first rather than last; physical ports keep their order, and
+    // the ISL members are physical ports, so the map is unchanged.)
+    const trunkMembers = buildFortiswitchTrunkMembers(portsRaw);
+    const mclagPeers = parseFortiswitchMclagPeers(portsRaw);
+    const descriptionByPort = parseFortiswitchPortDescriptions(portsRaw);
+    map.set(serial.toUpperCase(), { vlanByPort: portMap, trunkMembers, mclagPeers, descriptionByPort });
   }
-  return Array.from(out).sort((a, b) => a - b);
+  return map;
 }
 
 async function fetchFortiswitchControllerPortsCmdb(
@@ -3638,49 +3636,40 @@ async function fetchFortiswitchControllerPortsCmdb(
 
   const fetchPromise = (async (): Promise<FortiswitchControllerPortsMap> => {
     try {
-      // datasource=1 expands range syntax in allowed-vlans / untagged-vlans
-      // into individual {vlan-id} entries on the versions that support it;
-      // older FortiOS ignores the flag and returns the raw string, which the
-      // parser above handles too.
-      const path = "/api/v2/cmdb/switch-controller/managed-switch?datasource=1";
-      const rawRows = await fetchViaFortinetTransport(integration, deviceName, path, timeoutMs, "FortiSwitch CMDB ports fetch");
-      const rows = unwrapFortiosRows(rawRows);
-      const map: FortiswitchControllerPortsMap = new Map();
-      for (const row of rows) {
-        const r = row as Record<string, unknown>;
-        const serial = String(r.sn || r["switch-id"] || r.name || "").trim();
-        if (!serial) continue;
-        const portsRaw = r.ports;
-        if (!Array.isArray(portsRaw)) continue;
-        const portMap = new Map<string, FortiswitchPortVlan>();
-        for (const p of portsRaw) {
-          const port = p as Record<string, unknown>;
-          const portName = String(port["port-name"] ?? "").trim();
-          if (!portName) continue;
-          const nativeRaw = port.vlan;
-          const native = typeof nativeRaw === "number" ? nativeRaw : Number(nativeRaw);
-          const nativeVlan = Number.isFinite(native) && Number.isInteger(native) && native >= 1 && native <= 4094 ? native : null;
-          const allowed   = parseFortiosVlanList(port["allowed-vlans"]);
-          const untagged  = new Set(parseFortiosVlanList(port["untagged-vlans"]));
-          const tagged    = allowed.filter((v) => !untagged.has(v));
-          // Trunk-all detection: newer FortiOS exposes a sibling boolean
-          // (`allowed-vlans-all: "enable"`), older versions stuff the
-          // string `"all"` directly into `allowed-vlans`. Honor either.
-          const trunksAllVlans =
-            fortiosBool(port["allowed-vlans-all"]) ||
-            isFortiosVlanListAll(port["allowed-vlans"]);
-          portMap.set(portName, { nativeVlan, taggedVlans: tagged, trunksAllVlans });
-        }
-        // Trunk → physical-member map: operator LACP bundles (`members`) +
-        // FortiLink auto-ISL uplinks (`isl-local-trunk-name` on each physical
-        // member). The interface overlay uses this to back-fill ifParent so
-        // the topology renderer swaps the opaque trunk name for the real
-        // physical port. See buildFortiswitchTrunkMembers.
-        const trunkMembers = buildFortiswitchTrunkMembers(portsRaw);
-        const mclagPeers = parseFortiswitchMclagPeers(portsRaw);
-        const descriptionByPort = parseFortiswitchPortDescriptions(portsRaw);
-        map.set(serial.toUpperCase(), { vlanByPort: portMap, trunkMembers, mclagPeers, descriptionByPort });
-      }
+      // Three reads instead of one whole-table read (HUB1-a, two 48-port
+      // switches: 342 KB → 57 KB, faster too). `format=` cannot reach inside
+      // the parent's `ports` (~106 attributes a port); addressing each
+      // switch's `ports` child table lets it. No `datasource=1`: on a
+      // FortiLink switch it expands nothing — the VLAN fields are interface
+      // NAMES with or without it — so the names are resolved here instead.
+      //   1. the switch list, serial keys only (throws as the old read did);
+      const switchRows = unwrapFortiosRows(await fetchViaFortinetTransport(
+        integration, deviceName, "/api/v2/cmdb/switch-controller/managed-switch?format=switch-id|sn|name",
+        timeoutMs, "FortiSwitch CMDB list fetch"));
+      //   2. each switch's ports, only the attributes the parsers read — a
+      //      failed switch is left out rather than failing the controller;
+      //   3. the gate's VLAN interfaces, name → id (best-effort: without it
+      //      only numeric VLAN references resolve, as before).
+      const [portsBySwitchId, vlanIdByName] = await Promise.all([
+        Promise.all(switchRows.map(async (row) => {
+          const id = String((row as Record<string, unknown>)?.["switch-id"] ?? "").trim();
+          if (!id) return null;
+          try {
+            const raw = await fetchViaFortinetTransport(integration, deviceName,
+              `/api/v2/cmdb/switch-controller/managed-switch/${encodeURIComponent(id)}/ports?format=${FORTISWITCH_MONITOR_PORT_FORMAT}`,
+              timeoutMs, "FortiSwitch CMDB ports fetch");
+            return [id, unwrapFortiosRows(raw)] as const;
+          } catch (err) {
+            logger.debug({ err, deviceName, switchId: id }, "FortiSwitch ports read failed — that switch gets no CMDB overlay this pass");
+            return null;
+          }
+        })).then((pairs) => new Map(pairs.filter((p): p is readonly [string, unknown[]] => p !== null))),
+        fetchViaFortinetTransport(integration, deviceName, "/api/v2/cmdb/system/interface?format=name|vlanid",
+          timeoutMs, "FortiGate VLAN interface fetch")
+          .then((raw) => fortiosVlanIdByName(unwrapFortiosRows(raw)))
+          .catch(() => new Map<string, number>()),
+      ]);
+      const map = buildFortiswitchControllerPortsMap(switchRows, portsBySwitchId, vlanIdByName);
 
       fortiswitchControllerPortsCache.set(cacheKey, { fetchedAt: Date.now(), ports: map });
       return map;
@@ -4179,7 +4168,7 @@ async function probeSnmp(
   timeoutMs: number,
   wantDescr = false,
 ): Promise<ProbeResult> {
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   return withSnmpGate(host, port, () => new Promise<ProbeResult>((resolve) => {
     // Reset start INSIDE the gate so reported responseTimeMs reflects only
     // the device round-trip, not the FIFO wait behind a concurrent heavy
@@ -4244,7 +4233,7 @@ async function probeSnmp(
 
 async function probeWinRm(host: string, config: Record<string, unknown>, start: number, timeoutMs: number): Promise<ProbeResult> {
   const useHttps = config.useHttps !== false;
-  const port = toPositiveInt(config.port, useHttps ? 5986 : 5985);
+  const port = toNonNegativeInt(config.port, useHttps ? 5986 : 5985);
   const username = String(config.username || "");
   const password = String(config.password || "");
   if (!username || !password) return finish(start, false, "WinRM credential incomplete");
@@ -4300,7 +4289,7 @@ async function probeWinRm(host: string, config: Record<string, unknown>, start: 
 }
 
 async function probeSsh(host: string, config: Record<string, unknown>, start: number, timeoutMs: number): Promise<ProbeResult> {
-  const port = toPositiveInt(config.port, 22);
+  const port = toNonNegativeInt(config.port, 22);
   const username = String(config.username || "");
   const password = typeof config.password === "string" ? config.password : "";
   const privateKey = typeof config.privateKey === "string" ? config.privateKey : "";
@@ -4446,7 +4435,7 @@ interface RawHttpExchange {
   truncated: boolean;
 }
 
-export async function probeHttp(
+async function probeHttp(
   host: string,
   config: Record<string, unknown>,
   start: number,
@@ -4822,11 +4811,9 @@ export interface HardwareSensorSample {
   value:       number | null;
   unit:        string | null;
   alarmStatus: string | null;
+  /** The port a transceiver reading belongs to (business rule 143); absent otherwise. */
+  ifName?:     string | null;
 }
-
-// IpsecTunnelSample / IpsecConnectionSample live with their parser in
-// utils/fortiosIpsec.ts; re-exported here for the existing importers.
-export type { IpsecTunnelSample, IpsecConnectionSample };
 
 /**
  * One SD-WAN Performance SLA health-check reading for a single WAN member.
@@ -4903,7 +4890,7 @@ export interface LldpNeighborSample {
  * colon-uppercase before persist; the persist layer resolves
  * `matchedAssetId` by MAC lookup against the endpoint inventory.
  */
-export interface WirelessStationSample {
+interface WirelessStationSample {
   staMacAddr:      string;
   staIpAddr?:      string | null;
   ssid?:           string | null;
@@ -4920,7 +4907,7 @@ export interface WirelessStationSample {
 }
 
 /** One field-replaceable unit from ENTITY-MIB entPhysicalTable. */
-export interface PhysicalEntitySample {
+interface PhysicalEntitySample {
   entIndex:    number;
   entClass:    string;
   descr:       string | null;
@@ -5060,7 +5047,7 @@ const TELEMETRY_ASSET_INCLUDE = {
 } as const;
 
 function loadTelemetryAsset(assetId: string) {
-  return prisma.asset.findUnique({ where: { id: assetId }, include: TELEMETRY_ASSET_INCLUDE });
+  return prisma.asset.findUnique({ where: { id: assetId }, omit: PROBE_ASSET_OMIT, include: TELEMETRY_ASSET_INCLUDE });
 }
 
 /** One row of TELEMETRY_ASSET_INCLUDE — what the collectors accept preloaded. */
@@ -5324,9 +5311,10 @@ async function collectHardwareSensorsViaSnmpSession(
  * tunnels are pinned — the endpoint can be slow on busy gateways and we don't
  * want to hammer it from the fast cadence unless asked.
  */
-export async function collectFastFiltered(assetId: string): Promise<CollectionResult<SystemInfoSample>> {
+async function collectFastFiltered(assetId: string): Promise<CollectionResult<SystemInfoSample>> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
   });
   if (!asset)            return { supported: false, error: "Asset not found" };
@@ -5779,6 +5767,7 @@ export async function collectSystemInfo(assetId: string): Promise<CollectionResu
   const endLoad = startPhase("systeminfo.load_asset");
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { monitorCredential: true, interfacesCredential: true, lldpCredential: true, discoveredByIntegration: true },
   });
   endLoad({ found: !!asset });
@@ -6566,7 +6555,7 @@ async function collectSystemInfoFortinet(
   // interfaces[] (matching the prior behavior where monitor failure with
   // no interfaces threw, but partial success returned).
   const endCmdb = startPhase("systeminfo.rest.cmdb_interface");
-  const cmdbInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root" }, timeoutMs })
+  const cmdbInterfacePromise = fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root", format: FORTIOS_INTERFACE_CMDB_FORMAT }, timeoutMs })
     .catch(() => null as any)
     .then((res) => { endCmdb({ ok: res != null }); return res; });
   // Software switch members (applyFortiSoftwareSwitchMembers). Best-effort: a
@@ -6678,7 +6667,7 @@ async function collectSystemInfoFortinet(
  * but builds its own FortiGateConfig from the integration so the caller
  * doesn't have to.
  */
-export async function collectLldpOnlyFortinet(
+async function collectLldpOnlyFortinet(
   host: string,
   integration: { type: string; config: Record<string, unknown> },
   timeoutMs?: number,
@@ -6799,7 +6788,7 @@ export function fortilinkInterfaceNamesFromCmdb(cmdbRes: unknown): Set<string> {
  * failure degrades to "collect all LLDP" rather than dropping neighbors.
  */
 async function fetchFortilinkInterfaceSet(fg: FortiGateConfig, timeoutMs?: number): Promise<Set<string>> {
-  const res = await fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root" }, timeoutMs })
+  const res = await fgRequest<any>(fg, "GET", "/api/v2/cmdb/system/interface", { query: { vdom: "root", format: FORTIOS_INTERFACE_CMDB_FORMAT }, timeoutMs })
     .catch(() => null as any);
   return fortilinkInterfaceNamesFromCmdb(res);
 }
@@ -7439,7 +7428,7 @@ const OID = {
 };
 
 function buildSnmpSession(host: string, config: Record<string, unknown>, timeoutMs?: number): any {
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   const version = config.version === "v3" ? "v3" : "v2c";
   // Caller-supplied timeout (resolved from the per-stream tier hierarchy)
   // overrides the legacy floor — but only when positive. A 0 or negative
@@ -7611,7 +7600,7 @@ async function withSnmpSession<T>(host: string, config: Record<string, unknown>,
   // doesn't overlap with the cheap response-time probe on the same agent.
   // probeSnmp (which builds its own session for the sysUpTime get) also
   // acquires the same gate — both paths key on host:port so they FIFO.
-  const port = toPositiveInt(config.port, 161);
+  const port = toNonNegativeInt(config.port, 161);
   return withSnmpGate(host, port, async () => {
     const session = buildSnmpSession(host, config, timeoutMs);
     // net-snmp emits 'error' rather than throwing for socket/listener errors;
@@ -7626,7 +7615,7 @@ async function withSnmpSession<T>(host: string, config: Record<string, unknown>,
   }, gateWaitTimeoutMs);
 }
 
-export interface SnmpWalkRow {
+interface SnmpWalkRow {
   oid: string;
   type: string;
   value: string;
@@ -7671,7 +7660,6 @@ function snmpVarbindToPrintable(vb: { type: number; value: unknown }): string {
       return `${v[0]}.${v[1]}.${v[2]}.${v[3]}`;
     }
     const text = v.toString("utf8");
-    // eslint-disable-next-line no-control-regex
     if (/^[\x09\x0a\x0d\x20-\x7e]*$/.test(text)) return trimTrailing(text, " ");
     return v.toString("hex").match(/.{1,2}/g)?.join(" ").toUpperCase() || "";
   }
@@ -8167,6 +8155,19 @@ async function collectHardwareSensorsSnmpCore(
       .map((v) => snmpVbToNumber(v))
       .filter((n): n is number => n != null),
   );
+  // Transceiver readings published as anonymous groups of five get their port
+  // (business rule 143). IF-MIB is walked only when the table holds a dBm row
+  // at all, so a device with no optics pays nothing for this.
+  const layoutRows: EntitySensorLayoutRow[] = [...types.entries()].map(([idx, typeRaw]) => ({
+    index:        Number(idx),
+    typeCode:     snmpVbToNumber(typeRaw),
+    unitsDisplay: snmpVbToString(unitsDisplays.get(idx)) || null,
+  })).filter((r) => Number.isInteger(r.index));
+  let sfpByIndex = new Map<number, SfpAttribution>();
+  if (layoutRows.some((r) => unitsDisplayLooksOptical(r.unitsDisplay))) {
+    const ifNames = await snmpWalk(session, OID.ifName).catch(() => new Map());
+    sfpByIndex = attributeSfpSensors(layoutRows, [...ifNames.values()].map((v) => snmpVbToString(v)));
+  }
   for (const [idx, typeRaw] of types.entries()) {
     const t = snmpVbToNumber(typeRaw);
     const oper = snmpVbToNumber(opers.get(idx));
@@ -8178,6 +8179,7 @@ async function collectHardwareSensorsSnmpCore(
       descr,
       typeColumnTrusted,
     });
+    const sfp = sfpByIndex.get(Number(idx));
     const raw = snmpVbToNumber(values.get(idx));
     const scale = snmpVbToNumber(scales.get(idx));   // SI prefix code
     const prec  = snmpVbToNumber(precisions.get(idx)); // decimal-point shift
@@ -8188,11 +8190,16 @@ async function collectHardwareSensorsSnmpCore(
       ? scaleEntitySensor(raw, scale, prec)
       : null;
     out.push({
-      sensorName:  descr || `sensor-${idx}`,
+      // An attributed transceiver reading is named for its port and role; the
+      // agent's own descr for these rows is positional and unreliable.
+      sensorName:  sfp ? sfpSensorName(sfp.ifName, sfp.role) : (descr || `sensor-${idx}`),
       sensorClass,
-      value:       scaled != null && Number.isFinite(scaled) ? Math.round(scaled * 100) / 100 : null,
+      // Six decimals, not two: bias current is stored in BASE amperes, and
+      // rounding 8.98 mA to the hundredth of an amp stored 0.01.
+      value:       scaled != null && Number.isFinite(scaled) ? Math.round(scaled * 1e6) / 1e6 : null,
       unit,
       alarmStatus: entityOperStatusToAlarm(oper),
+      ...(sfp ? { ifName: sfp.ifName } : {}),
     });
   }
   if (out.length > 0) return out;
@@ -9479,7 +9486,7 @@ async function collectFastFilteredSnmp(
  * routed LLDP to SNMP. Opens its own SNMP session — cheap enough; LLDP walks
  * are normally ~6 columns and finish in a few hundred ms.
  */
-export async function collectLldpOnlySnmp(
+async function collectLldpOnlySnmp(
   host: string,
   config: Record<string, unknown>,
   timeoutMs?: number,
@@ -10030,6 +10037,7 @@ export async function recordHardwareSensorResult(assetId: string, result: Collec
         value:       s.value,
         unit:        s.unit,
         alarmStatus: s.alarmStatus,
+        ifName:      s.ifName ?? null,
       })),
     );
   }
@@ -11023,7 +11031,7 @@ export async function persistAssetProcesses(
 
 // ─── Application Map: process connection persistence ─────────────────────────
 
-export type ProcessConnectionKind = "listen" | "outbound" | "inbound";
+type ProcessConnectionKind = "listen" | "outbound" | "inbound";
 
 export interface ProcessConnectionInput {
   /** AssetProcess.name key — same program-name space as the pin arrays. */
@@ -11432,6 +11440,7 @@ export async function persistManagedApLldpNeighbors(
 ): Promise<"persisted" | "skipped"> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { discoveredByIntegration: { select: { type: true } } },
   });
   if (!asset) return "skipped";
@@ -12478,7 +12487,7 @@ export async function recordProbeResult(
  * Runs only on those edges, so it is one indexed read (Event
  * @@index([assetId, timestamp])) per edge, never per poll.
  */
-export async function logStatusEventIfPaired(assetId: string, next: "up" | "down", input: LogEventInput): Promise<void> {
+async function logStatusEventIfPaired(assetId: string, next: "up" | "down", input: LogEventInput): Promise<void> {
   try {
     const last = await prisma.event.findFirst({
       where: { assetId, action: "monitor.status_changed" },
@@ -13291,6 +13300,7 @@ export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promi
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, lldpCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13408,6 +13418,7 @@ export async function runStorageFor(assetId: string, labels: WorkItemLabels): Pr
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13540,6 +13551,7 @@ export async function runEventLogFor(assetId: string, labels: WorkItemLabels): P
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, eventLogCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13657,6 +13669,7 @@ export function sdwanShouldQueue(
 export async function resolveSdwanPollIntervalForAsset(assetId: string): Promise<number | null> {
   const asset = await prisma.asset.findUnique({
     where: { id: assetId },
+    omit: PROBE_ASSET_OMIT,
     include: { discoveredByIntegration: { select: { type: true } } },
   });
   if (!asset || !asset.monitored || asset.status === "decommissioned" || asset.status === "disabled") return null;
@@ -13685,6 +13698,7 @@ export async function runSdwanFor(assetId: string, labels: WorkItemLabels): Prom
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, interfacesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -13751,6 +13765,7 @@ export async function runProcessesFor(assetId: string, labels: WorkItemLabels): 
   try {
     const asset = await prisma.asset.findUnique({
       where: { id: assetId },
+      omit: PROBE_ASSET_OMIT,
       include: { monitorCredential: true, processesCredential: true, discoveredByIntegration: true },
     });
     if (!asset || !asset.monitored) {
@@ -14011,7 +14026,7 @@ export async function runLossSweepFor(assetIds: string[], labels: WorkItemLabels
  * fallback. Used by `runStorageFor` to walk just the storage table without
  * incurring the full IF-MIB / LLDP-MIB session cost.
  */
-export async function collectStorageOnlySnmp(
+async function collectStorageOnlySnmp(
   host: string,
   config: Record<string, unknown>,
   manufacturer: string | null | undefined,
@@ -14104,7 +14119,7 @@ export const MONITOR_CANDIDATE_WHERE = {
  */
 /** The cursor pass's candidate load — mirrored (deliberately, see the note in
  *  monitorAssets.ts publishDueWork) by the pg-boss publisher's own query. */
-export async function loadMonitorPassCandidates() {
+async function loadMonitorPassCandidates() {
   return prisma.asset.findMany({
     where: MONITOR_CANDIDATE_WHERE,
     select: {
@@ -14167,8 +14182,8 @@ export async function loadMonitorPassCandidates() {
 }
 export type MonitorPassCandidate = Awaited<ReturnType<typeof loadMonitorPassCandidates>>[number];
 
-export type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
-export type MonitorWork = { id: string; kind: MonitorWorkKind };
+type MonitorWorkKind = "probe" | "telemetry" | "systemInfo" | "fastFiltered" | "processes" | "eventLog" | "sdwan" | "lossSample" | "customWidget";
+type MonitorWork = { id: string; kind: MonitorWorkKind };
 /**
  * Effective probe spacing in seconds for one asset.
  *
@@ -14802,7 +14817,7 @@ async function pruneSelectionAwareDetail(
  * Each tier reads its own retention values from the global setting. 0 (or
  * negative) disables retention for that class within the tier.
  */
-export async function pruneMonitorSamples(): Promise<number> {
+async function pruneMonitorSamples(): Promise<number> {
   const r = (await getSampleRetention()).assets;
   const [detail, hourly, daily] = await Promise.all([
     pruneTierByDays((w) => prisma.assetMonitorSample.deleteMany({       where: w as any }), r.detail, "timestamp",   "asset_monitor_samples"),
@@ -14820,7 +14835,7 @@ export async function pruneMonitorSamples(): Promise<number> {
  * card. Hardware sensors are gauges with no selection split, so they prune
  * uniformly like cpuMem.
  */
-export async function pruneTelemetrySamples(): Promise<number> {
+async function pruneTelemetrySamples(): Promise<number> {
   const ret = await getSampleRetention();
   const cm = ret.cpuMem;
   const hw = ret.hardware;
@@ -14848,7 +14863,7 @@ export async function pruneTelemetrySamples(): Promise<number> {
  * they're pruned by their own helper and only consume the DETAIL retention
  * tier (no rollups for LLDP — it's current-state, not time-series).
  */
-export async function pruneSystemInfoSamples(): Promise<number> {
+async function pruneSystemInfoSamples(): Promise<number> {
   const r = await getSampleRetention();
   const [
     iDetail, iHourly, iDaily, sDetail, sHourly, sDaily, ipDetail, ipHourly, ipDaily,

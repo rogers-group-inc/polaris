@@ -219,7 +219,7 @@ describe("Events Alerts panel", () => {
 
     it("opens the asset in place on a left click on its name, without a fetch", async () => {
       const { win, opened, menus } = await bootCard(null);
-      const name = win.document.querySelector('[data-conflict-asset="a2"]') as unknown as HTMLElement;
+      const name = win.document.querySelector('[data-event-asset="a2"]') as unknown as HTMLElement;
       expect(name.classList.contains("row-menu-trigger")).toBe(true);
       name.click();
       await settle();
@@ -230,7 +230,7 @@ describe("Events Alerts panel", () => {
     it("shows the asset's row menu at the pointer on a right click", async () => {
       const at = { x: 40, y: 50 };
       const { win, opened, menus } = await bootCard(at);
-      (win.document.querySelector('[data-conflict-asset="a1"]') as unknown as HTMLElement).click();
+      (win.document.querySelector('[data-event-asset="a1"]') as unknown as HTMLElement).click();
       await settle();
       expect(opened).toEqual([]);
       expect(menus).toEqual([{ labels: ["Open", "Edit"], at }]);

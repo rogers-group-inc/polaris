@@ -24,7 +24,7 @@ import {
 } from "../types/proxyConfig.js";
 import { AppError } from "../utils/errors.js";
 
-export const SETTING_KEY = "proxyConfig";
+const SETTING_KEY = "proxyConfig";
 
 const CACHE_TTL_MS = 5000;
 let cache: { value: ProxyConfig; fetchedAt: number } | null = null;

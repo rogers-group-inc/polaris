@@ -141,7 +141,7 @@ func validDef() transport.PathCheckDef {
 
 func TestValidateCheckDef(t *testing.T) {
 	d := validDef()
-	if err := ValidateCheckDef(&d); err != nil {
+	if err := validateCheckDef(&d); err != nil {
 		t.Fatal(err)
 	}
 	bad := []func(*transport.PathCheckDef){
@@ -158,7 +158,7 @@ func TestValidateCheckDef(t *testing.T) {
 	for i, mut := range bad {
 		d := validDef()
 		mut(&d)
-		if err := ValidateCheckDef(&d); err == nil {
+		if err := validateCheckDef(&d); err == nil {
 			t.Errorf("case %d should be refused", i)
 		}
 	}

@@ -15,7 +15,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { assetDialAddress } from "../../utils/assetDialAddress.js";
 import { ipv6Dialable } from "../../services/ipv6GateService.js";
@@ -26,6 +25,7 @@ import {
   getMib,
   createMib,
   deleteMib,
+  findMibWalkAsset,
   getMibFacets,
   parseMibStructured,
   MIB_MAX_BYTES,
@@ -388,11 +388,7 @@ async function runMibWalk(opts: {
     throw new AppError(400, `Object "${objectName}" cannot be resolved to a numeric OID${unresolvedOidSuffix}`);
   }
 
-  const asset = await prisma.asset.findUnique({
-    where: { id: assetId },
-    select: { id: true, hostname: true, ipAddress: true, ipv6Address: true },
-  });
-  if (!asset) throw new AppError(404, "Asset not found");
+  const asset = await findMibWalkAsset(assetId);
   // IPv4, else (IPv6 on) the primary IPv6 — business rule 128.
   const walkHost = assetDialAddress(asset, ipv6Dialable());
   if (!walkHost) throw new AppError(400, "Asset has no IP address to walk");

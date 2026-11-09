@@ -23,7 +23,7 @@
  *    touched.
  *
  * users.js is a classic browser script; an indirect eval puts its top-level
- * declarations on globalThis — the usersRegionPicker.test.ts idiom.
+ * declarations on globalThis — the usersRowMenu.test.ts idiom.
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
@@ -97,6 +97,9 @@ beforeAll(() => {
   g.currentUsername = "alice";
   g.formatDate = () => "";
   g.regionPillsHtml = () => "";
+  // An app.js global (users.js stopped re-declaring it): app.js loads first on
+  // the Users page, so the picker reads it from there.
+  g.REGION_TAG_CATEGORY = "Map Regions";
   g.TableSF = function () {};
   g.setupColumnLayout = () => null;
   g.userReady = Promise.resolve();

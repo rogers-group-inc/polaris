@@ -6,6 +6,7 @@
  * and tracks progress via a status file that survives restarts.
  */
 
+import { sleep } from "../utils/sleep.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -34,6 +35,7 @@ import { resolveDashPort } from "../utils/dashConfig.js";
 import { createBackup } from "./backupService.js";
 import { logEvent } from "./eventLogService.js";
 import { fetchImageBuildInfo } from "../utils/imageRegistry.js";
+import { isProxyMode } from "../utils/proxyMode.js";
 
 /**
  * Every shell-out in this file goes through `execAsync`, which is a thin
@@ -188,8 +190,6 @@ function isTimeoutKill(err: any): boolean {
 function registryAnsweredWith404(err: any): boolean {
   return /\bE404\b|404 Not Found/i.test(String(err?.stderr || err?.stdout || err?.message || ""));
 }
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The default re-run advice is written for `npm ci`; steps with different economics pass their own. */
 const WARM_CACHE_ADVICE =
@@ -1468,7 +1468,7 @@ const UPDATE_SYNC_HELPER = "/usr/local/sbin/polaris-update-sync";
  * it fails like before (self-exit; the web role alone restarts) and the
  * operator runs a setup script or deploy/update-linux.sh once. Pure.
  */
-export function bootstrapUpdateSyncScript(appDir: string): string {
+function bootstrapUpdateSyncScript(appDir: string): string {
   return [
     "set -e",
     `install -o root -g root -m 0755 ${appDir}/deploy/scripts/polaris-update-sync.sh ${UPDATE_SYNC_HELPER}`,
@@ -1526,7 +1526,7 @@ export async function restartService() {
   // running) rather than fail the whole restart. Mirrors
   // deploy/update-linux.sh:sync_nginx_config() so manual + in-app paths
   // land the same end state.
-  const proxyMode = Boolean(process.env.POLARIS_PROXY_CERT_PATH);
+  const proxyMode = isProxyMode();
   // Render the operator's proxyConfig into /etc/nginx/conf.d/polaris.conf
   // before spawning the transient unit. Only fires when managedMode=true
   // — pre-adoption installs see their hand-edited file left alone, and
