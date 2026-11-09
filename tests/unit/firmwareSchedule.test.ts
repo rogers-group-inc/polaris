@@ -117,8 +117,6 @@ import {
   cancelSchedule,
   runDueSchedules,
   notifyScheduledRunFinished,
-  defaultRecipientsFor,
-  rememberRecipientsFor,
   LATE_GRACE_MS,
   CONFLICT_WAIT_MS,
 } from "../../src/services/firmwareScheduleService.js";
@@ -206,29 +204,6 @@ describe("booking", () => {
     h.checkSchedulableUpgrade.mockRejectedValueOnce(new h.FakeAppError(400, "Image x is not offered for this device"));
     await expect(book()).rejects.toThrow(/not offered/);
     expect(h.state.rows).toHaveLength(0);
-  });
-
-  it("pre-fills the booker's own profile email, lower-cased", async () => {
-    h.state.remembered = {};
-    expect(await defaultRecipientsFor("user-1")).toEqual(["ops@example.com"]);
-    expect(await defaultRecipientsFor(null)).toEqual([]);
-  });
-
-  it("pre-fills the list the user last used instead, one list for upgrades and one for reboots", async () => {
-    h.state.remembered = {};
-    await rememberRecipientsFor("user-1", "firmware", ["noc@example.com", "ops@example.com"]);
-    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
-    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["ops@example.com"]);
-    await rememberRecipientsFor("user-1", "reboot", ["oncall@example.com"]);
-    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["oncall@example.com"]);
-    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
-  });
-
-  it("an empty list, or no signed-in user (a bearer token), remembers nothing", async () => {
-    h.state.remembered = { lastFirmwareNotifyEmails: ["noc@example.com"] };
-    await rememberRecipientsFor("user-1", "firmware", []);
-    await rememberRecipientsFor(null, "firmware", ["x@example.com"]);
-    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com"]);
   });
 });
 
@@ -332,7 +307,7 @@ describe("firing (runDueSchedules)", () => {
     const at = new Date(LATER.getTime() + 20_000);
     expect((await runDueSchedules(at)).started).toBe(1);
     // The booking's recipients ride on the run, which emails them "started".
-    expect(h.startFirmwareUpgrade).toHaveBeenCalledWith({ assetId: "asset-1", imageId: "img-primary", actor: "alice", scheduleId: s.id, notifyEmails: ["ops@example.com"] });
+    expect(h.startFirmwareUpgrade).toHaveBeenCalledWith({ assetId: "asset-1", imageId: "img-primary", actor: "alice", scheduleId: s.id, notifyEmails: ["ops@example.com"], notifyRecipients: null, notifyChannelIds: [] });
     expect(h.state.rows[0].status).toBe("started");
     expect(h.state.rows[0].firedAt).toEqual(at);
     // A second tick finds nothing pending.

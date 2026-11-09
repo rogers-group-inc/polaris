@@ -57,10 +57,12 @@ beforeEach(() => {
   g.timeAgo = () => "5 minutes ago";
   g.formatBytes = (n: number) => n + " B";
   g.permAtLeast = (key: string, want: string) => RANK[perms[key] ?? "none"]! >= RANK[want]!;
-  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwEmailsFieldHTML", "_fwNotifyHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {
+  for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwNotifyEditor", "_fwNotifyHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {
     (0, eval)(fnSrc(name));
   }
   (0, eval)(varSrc("_FW_STAGE_LABELS"));
+  // The notify editor (To / Cc / Bcc picker + email channels) lives in recipient-picker.js.
+  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
   (0, eval)(varSrc("_FW_NOTIFY_HINT_NOW"));
   (0, eval)(varSrc("_FW_NOTIFY_HINT_SCHEDULED"));
 });
@@ -258,8 +260,20 @@ describe("scheduled upgrades: one Upgrade button, a Schedule for later box in it
     expect(el.querySelector("#asset-fw-schedule")).toBeNull();
   });
 
+  // GET …/schedules/defaults: the remembered spec (else the operator), the
+  // picker's catalogue, and the email channels (oldest first).
+  const DEFAULTS = {
+    notify: { to: { recipientUserIds: ["u-me"], recipientDeviceRegionLevels: [1] }, cc: { addresses: ["noc@example.com"] }, bcc: null, channelIds: [] },
+    notifyEmails: ["me@example.com"],
+    users: [{ id: "u-me", username: "me", displayName: "Me Myself", email: "me@example.com" }],
+    catalog: { roles: [], regions: [], regionLevels: { maxLevel: 2, byName: {} }, tagCatalog: [] },
+    channels: [{ id: "ch-smtp", name: "Office SMTP", type: "smtp" }, { id: "ch-m365", name: "M365", type: "oauth_m365" }],
+  };
+  const pills = (host: Element, field: string) =>
+    Array.from(host.querySelectorAll(`.na-recip-box[data-field="${field}"] > .tag-chip`)).map((c) => c.getAttribute("data-label"));
+
   it("the dialog carries an unticked 'Schedule for later' box whose time and recipient fields stay hidden until ticked", () => {
-    const host = dialog(fw(), { defaults: { notifyEmails: ["me@example.com"] } });
+    const host = dialog(fw(), { defaults: DEFAULTS });
     const box = host.querySelector("#fw-approve-schedule") as HTMLInputElement;
     expect(box).not.toBeNull();
     expect(box.checked).toBe(false);
@@ -270,30 +284,36 @@ describe("scheduled upgrades: one Upgrade button, a Schedule for later box in it
     const when = host.querySelector("#fw-sched-when") as HTMLInputElement;
     expect(when.getAttribute("type")).toBe("datetime-local");
     expect(when.value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
-    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    // Who hears about it is the notify block, not the schedule fields.
+    expect(host.querySelector("#fw-sched-fields .na-recip-box")).toBeNull();
     // The image approval is the same either way.
     expect(host.querySelector("#fw-approve-ack")).not.toBeNull();
     expect(host.querySelector('input[name="fw-approve-image"]')).not.toBeNull();
   });
 
-  it("an unticked 'Email notifications' box for a flash now, its recipients pre-filled from the operator's profile and hidden until ticked", () => {
-    const host = dialog(fw(), { defaults: { notifyEmails: ["me@example.com"] } });
+  it("an unticked 'Email notifications' box for a flash now: the automations' To / Cc / Bcc picker, pre-filled from the remembered spec, and the email channels", () => {
+    const host = dialog(fw(), { defaults: DEFAULTS });
     const box = host.querySelector("#fw-approve-notify") as HTMLInputElement;
     expect(box).not.toBeNull();
     expect(box.checked).toBe(false);
     expect(box.disabled).toBe(false);
     expect(text(box.closest("label"))).toBe("Email notifications");
     expect((host.querySelector("#fw-notify-fields") as HTMLElement).style.display).toBe("none");
-    // ONE recipients box, outside the schedule fields, shared by now and later.
-    expect(host.querySelectorAll("#fw-sched-emails")).toHaveLength(1);
-    expect(host.querySelector("#fw-sched-fields #fw-sched-emails")).toBeNull();
+    // The automations picker: three pill boxes, every kind (a user, the device's L1 region users) in To.
+    expect(host.querySelectorAll("#fw-notify-recips .na-recip-box")).toHaveLength(3);
+    expect(pills(host, "to")).toEqual(["Asset’s L1 Region Users", "Me Myself"]);
+    expect(pills(host, "cc")).toEqual(["noc@example.com"]);
+    expect(pills(host, "bcc")).toEqual([]);
+    // The email channels — never push — the oldest ticked when the spec names none.
+    const chans = Array.from(host.querySelectorAll("#fw-notify-channels [data-notify-channel]")) as HTMLInputElement[];
+    expect(chans.map((c) => [c.getAttribute("data-notify-channel"), c.checked])).toEqual([["ch-smtp", true], ["ch-m365", false]]);
+    expect(text(host.querySelector("#fw-notify-channels"))).toContain("Microsoft 365");
     expect(text(host.querySelector("#fw-notify-hint"))).toContain("when the upgrade starts and when it finishes");
-    expect(text(host.querySelector("#fw-notify-hint"))).toContain("address book");
   });
 
   it("blocked right now: 'Email notifications' is ticked and locked with the schedule — a booking always emails someone", () => {
     const blocked = fw({ state: "blocked", available: false, blockers: ["the device is down"] });
-    const host = dialog(blocked, { mode: "schedule-only", defaults: { notifyEmails: ["me@example.com"] } });
+    const host = dialog(blocked, { mode: "schedule-only", defaults: DEFAULTS });
     const box = host.querySelector("#fw-approve-notify") as HTMLInputElement;
     expect(box.checked).toBe(true);
     expect(box.disabled).toBe(true);
@@ -336,10 +356,42 @@ describe("scheduled upgrades: one Upgrade button, a Schedule for later box in it
 
   it("Change… opens the dialog straight on the schedule fields, pre-filled from the booking", () => {
     const b = booking({ scheduledFor: "2030-01-02T08:30:00Z" });
-    const host = dialog(fw({ schedule: b }), { mode: "change", existing: b });
+    const host = dialog(fw({ schedule: b }), { mode: "change", existing: b, defaults: DEFAULTS });
     expect(host.querySelector("#fw-approve-schedule")).toBeNull();
     expect((host.querySelector("#fw-sched-when") as HTMLInputElement).value).toBe(g._fwLocalInputValue(new Date("2030-01-02T08:30:00Z")));
-    expect((host.querySelector("#fw-sched-emails") as HTMLInputElement).value).toBe("ops@example.com, noc@example.com");
+    // A booking made with plain addresses shows them as address pills — its own, not the remembered spec.
+    expect(pills(host, "to")).toEqual(["ops@example.com", "noc@example.com"]);
+    expect((host.querySelector("#fw-approve-notify") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("Change… on a booking made with the picker shows its spec and its channels", () => {
+    const b = booking({
+      notifyRecipients: { to: { recipientDeviceRegion: true, addresses: ["ops@example.com"] }, cc: null, bcc: { addresses: ["audit@example.com"] } },
+      notifyChannelIds: ["ch-m365"],
+    });
+    const host = dialog(fw({ schedule: b }), { mode: "change", existing: b, defaults: DEFAULTS });
+    expect(pills(host, "to")).toEqual(["Asset’s Region Users", "ops@example.com"]);
+    expect(pills(host, "bcc")).toEqual(["audit@example.com"]);
+    const chans = Array.from(host.querySelectorAll("#fw-notify-channels [data-notify-channel]")) as HTMLInputElement[];
+    expect(chans.filter((c) => c.checked).map((c) => c.getAttribute("data-notify-channel"))).toEqual(["ch-m365"]);
+  });
+
+  it("reads the picker back as the server's notify spec", () => {
+    const host = dialog(fw(), { defaults: DEFAULTS });
+    document.body.appendChild(host);
+    const ed = g._fwNotifyEditor(DEFAULTS, null);
+    const fields = host.querySelector("#fw-notify-fields") as HTMLElement;
+    expect(ed.ready(fields)).toBe(true);
+    expect(ed.read(fields)).toEqual({
+      to: { recipientUserIds: ["u-me"], recipientDeviceRegionLevels: [1] },
+      cc: { addresses: ["noc@example.com"] },
+      bcc: null,
+      channelIds: ["ch-smtp"],
+    });
+    // Nothing in To, or no channel ticked: not ready.
+    (host.querySelector('#fw-notify-channels [data-notify-channel="ch-smtp"]') as HTMLInputElement).checked = false;
+    expect(ed.ready(fields)).toBe(false);
+    host.remove();
   });
 
   it("changing a booking when nothing is offered any more keeps its image, by name", () => {

@@ -49,6 +49,9 @@ beforeAll(() => {
   sandbox.setTimeout = setTimeout;
   sandbox.clearTimeout = clearTimeout;
   vm.createContext(sandbox);
+  // The pill vocabulary lives in recipient-picker.js, which every page loads
+  // before the wizard (2026-11-09).
+  new vm.Script(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"), { filename: "recipient-picker.js" }).runInContext(sandbox);
   new vm.Script(src, { filename: "automations-wizard.js" }).runInContext(sandbox);
   const api = (sandbox.window as Record<string, unknown>).PolarisAutomationRecipients as {
     ruleRecipientGroups: typeof ruleRecipientGroups;

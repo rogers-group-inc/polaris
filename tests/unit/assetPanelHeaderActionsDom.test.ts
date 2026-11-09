@@ -260,7 +260,7 @@ describe("asset panel header verbs (Discover Now, Reboot)", () => {
 });
 
 describe("the reboot dialog's Reason field (rule 115(d))", () => {
-  const DIALOG_FNS = ["_rebootNoteFieldHTML", "_rebootMethodText", "_rebootScheduleFieldsHTML", "_rebootEmailsFieldHTML", "_rebootNotifyHTML", "_rebootModalHTML"];
+  const DIALOG_FNS = ["_rebootNoteFieldHTML", "_rebootMethodText", "_rebootScheduleFieldsHTML", "_rebootNotifyEditor", "_rebootNotifyHTML", "_rebootModalHTML"];
   // The notify hints are module-level strings the dialog functions read.
   const HINT_VARS = (assetsSrc.match(/^var _RB_NOTIFY_HINT_\w+ = .*;\r?$/gm) ?? []).join("\n");
 
@@ -270,6 +270,8 @@ describe("the reboot dialog's Reason field (rule 115(d))", () => {
     g._fwWhenText = () => "soon";
     g._fwLocalInputValue = () => "2026-10-26T13:00";
     g._fwBrowserZone = () => "UTC";
+    // The notify editor (To / Cc / Bcc picker + email channels), loaded before the wizard on the page.
+    (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(HINT_VARS + "\n" + DIALOG_FNS.map(fnSrc).join("\n") + "\n" + DIALOG_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"))();
   }
@@ -289,33 +291,48 @@ describe("the reboot dialog's Reason field (rule 115(d))", () => {
     expect(req.textContent).toContain("requires a reason for every reboot");
   });
 
-  it("Email notifications: unticked for a reboot now, pre-filled, hidden until ticked; ticked and locked when it can only be scheduled", () => {
+  // GET …/reboot/schedules/defaults: the remembered spec, the catalogue, the email channels.
+  const DEFAULTS = {
+    notify: { to: { addresses: ["me@example.com"], recipientAssetContacts: true }, cc: null, bcc: null, channelIds: ["ch-2"] },
+    users: [],
+    catalog: { roles: [], regions: [], regionLevels: { maxLevel: 1, byName: {} }, tagCatalog: [] },
+    channels: [{ id: "ch-1", name: "Office SMTP", type: "smtp" }, { id: "ch-2", name: "M365", type: "oauth_m365" }],
+  };
+  const pills = (host: Element, field: string) =>
+    Array.from(host.querySelectorAll(`.na-recip-box[data-field="${field}"] > .tag-chip`)).map((c) => c.getAttribute("data-label"));
+
+  it("Email notifications: unticked for a reboot now, the To / Cc / Bcc picker + email channels pre-filled, hidden until ticked; ticked and locked when it can only be scheduled", () => {
     loadDialog();
     expect(HINT_VARS).toContain("_RB_NOTIFY_HINT_NOW");
     const now = document.createElement("div");
-    now.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "choose", defaults: { notifyEmails: ["me@example.com"] } });
+    now.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "choose", defaults: DEFAULTS });
     const box = now.querySelector("#rb-notify") as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(box.disabled).toBe(false);
     expect((now.querySelector("#rb-notify-fields") as HTMLElement).style.display).toBe("none");
-    expect(now.querySelectorAll("#rb-sched-emails")).toHaveLength(1);
-    expect(now.querySelector("#rb-sched-fields #rb-sched-emails")).toBeNull();
-    expect((now.querySelector("#rb-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    expect(now.querySelectorAll("#rb-notify-recips .na-recip-box")).toHaveLength(3);
+    expect(now.querySelector("#rb-sched-fields .na-recip-box")).toBeNull();
+    expect(pills(now, "to")).toEqual(["Asset’s Responsible Contacts", "me@example.com"]);
+    const chans = Array.from(now.querySelectorAll("#rb-notify-channels [data-notify-channel]")) as HTMLInputElement[];
+    expect(chans.map((c) => c.checked)).toEqual([false, true]);
     expect(now.querySelector("#rb-notify-hint")!.textContent).toContain("when the reboot is sent");
     const later = document.createElement("div");
-    later.innerHTML = g._rebootModalHTML(GATE, { ...RB, available: false, reason: "The agent is offline." }, { mode: "schedule-only", defaults: { notifyEmails: [] } });
+    later.innerHTML = g._rebootModalHTML(GATE, { ...RB, available: false, reason: "The agent is offline." }, { mode: "schedule-only", defaults: DEFAULTS });
     const locked = later.querySelector("#rb-notify") as HTMLInputElement;
     expect(locked.checked).toBe(true);
     expect(locked.disabled).toBe(true);
     expect(later.querySelector("#rb-notify-hint")!.textContent).toContain("when it is scheduled");
   });
 
-  it("changing a booking keeps its recipients in the schedule fields, with no notify box", () => {
+  it("changing a booking shows ITS recipients — an automation's Cc / Bcc included — with the notify box locked on", () => {
     loadDialog();
     const wrap = document.createElement("div");
-    wrap.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "change", existing: { scheduledFor: "2026-10-27T02:00:00Z", notifyEmails: ["noc@example.com"], note: null } });
-    expect(wrap.querySelector("#rb-notify")).toBeNull();
-    expect((wrap.querySelector("#rb-sched-fields #rb-sched-emails") as HTMLInputElement).value).toBe("noc@example.com");
+    wrap.innerHTML = g._rebootModalHTML(GATE, RB, { mode: "change", defaults: DEFAULTS, existing: { scheduledFor: "2026-10-27T02:00:00Z", notifyEmails: ["noc@example.com"], notifyCc: ["boss@example.com"], notifyBcc: [], note: null } });
+    const box = wrap.querySelector("#rb-notify") as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(true);
+    expect(pills(wrap, "to")).toEqual(["noc@example.com"]);
+    expect(pills(wrap, "cc")).toEqual(["boss@example.com"]);
   });
 
   it("pre-fills a booking's reason when changing it, and shows the last reboot's reason", () => {

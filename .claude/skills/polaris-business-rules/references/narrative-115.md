@@ -99,7 +99,7 @@ The operator, right after asking for the same on firmware upgrades (rule 93's 20
 section): "i also want to do the same stuff for rebooting assets". So the reboot dialog —
 desktop and phone — gets the same **Email notifications** box (unticked for a reboot now,
 ticked and locked while **Schedule for later** is), one **Email to** field with address-book
-suggestions (`public/js/email-suggest.js`), and the same emails: booked / rescheduled / started
+suggestions (`email-suggest.js` (removed the same day — see below)), and the same emails: booked / rescheduled / started
 / outcome for a booking, started / outcome for a reboot now (`RebootRun.notifyEmails`,
 migration `20261109130000_reboot_run_notify_emails`; `POST /assets/:id/reboot` takes optional
 `notifyEmails`).
@@ -134,3 +134,15 @@ An empty send (the box left unticked) does not clear the memory, and the **Email
 notifications** box is still unticked by default for an action now — the list is remembered,
 the decision to email is not. Stored on the user rather than in the browser so the phone and
 the desktop pre-fill the same list.
+
+
+### 2026-11-09 (latest) — the automations' picker and chosen email channels
+
+Rule 93's same-day section applies to reboots unchanged: the reboot dialog and the phone sheet
+use `PolarisRecipientPicker.notifyEditor`, a booking or a reboot now stores the picker spec
+(`notifyRecipients`) and the email channels (`notifyChannelIds`) and resolves the spec at each
+send, the remembered spec is `User.lastRebootNotify`, and the sender is
+`operationNotifyService.deliverOperationEmail`. Changing an automation's booking from the
+dialog shows its stored To / Cc / Bcc as address pills; saving it replaces them with the spec.
+Pinned by the notify cases in `tests/unit/assetPanelHeaderActionsDom.test.ts` and
+`tests/unit/mobileUptimeReboot.test.ts`.

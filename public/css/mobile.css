@@ -3440,3 +3440,81 @@ html:active-view-transition-type(polaris-theme)::view-transition-new(polaris-the
   50%      { box-shadow: 0 0 12px 2px color-mix(in srgb, var(--md-primary) 70%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) { .chat-ralph.on { animation: none; } }
+
+/* ─── Recipient picker (To / Cc / Bcc pill boxes) ───────────────────────
+   public/js/recipient-picker.js — the desktop automations picker, used by the
+   firmware-upgrade and reboot sheets' "Email notifications" (rules 93 /
+   115(e)). The markup is the desktop's (.na-recip-*, .tag-chip, .aw-suggest);
+   these give it the phone's tokens. No Address book button on the phone. */
+.na-recips { display: flex; flex-direction: column; gap: 6px; }
+.na-recip-row { display: flex; align-items: flex-start; gap: 8px; }
+.na-recip-label { flex: 0 0 34px; padding-top: 9px; font-size: 13px; color: var(--md-on-surface-variant); }
+.na-recip-box {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--md-outline);
+  border-radius: var(--shape-sm);
+  background: transparent;
+}
+.na-recip-box:focus-within { border-color: var(--md-primary); }
+.na-recip-input {
+  flex: 1 1 110px;
+  min-width: 80px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--md-on-surface);
+  font: inherit;
+  font-size: 15px;
+  padding: 4px 2px;
+}
+.na-recip-input::placeholder { color: var(--md-on-surface-variant); }
+.na-recip-box .tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 4px 3px 10px;
+  border-radius: 99px;
+  font-size: 13px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  overflow-wrap: anywhere;
+}
+.na-recip-box .tag-chip.na-unknown { border: 1px dashed currentColor; opacity: 0.75; }
+.na-recip-box .tag-chip-delete,
+.na-recip-box .na-chip-save {
+  min-width: 28px;
+  min-height: 28px;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.aw-suggest {
+  display: none;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 1300;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--md-surface-cont-high);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--shape-sm);
+  box-shadow: var(--elev-3);
+}
+.aw-suggest.open { display: block; }
+.aw-suggest-item { padding: 10px 12px; font-size: 14px; color: var(--md-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aw-suggest-item.active { background: color-mix(in srgb, var(--md-primary) 12%, transparent); }
+.aw-suggest-empty { padding: 10px 12px; font-size: 13px; color: var(--md-on-surface-variant); }

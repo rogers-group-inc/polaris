@@ -289,9 +289,11 @@ rebooting, verifying, waiting for monitoring to answer — and ends on the
 result. The same sheet has a **Schedule for later** box: tick it, pick a
 date and time (your phone's time zone) and who gets the emails, and
 **Schedule** books it instead of starting it. Below it, **Email notifications**
-emails the addresses you give when an upgrade started now begins and when it
-finishes; it is always on for a scheduled one. Typing a name in **Email to**
-offers matches from the address book. When the device cannot be
+emails when an upgrade started now begins and when it finishes; it is always on
+for a scheduled one. It has the desktop's **To** / **Cc** / **Bcc** boxes —
+type a name, address, role or region, or "asset's" for the device's own
+recipients — and **Send through** for the email channels. The address-book
+picker is desktop-only; typing finds the same people. When the device cannot be
 upgraded right now, the button still shows and the sheet opens with the box
 ticked and locked. A pending booking shows in the row — when, to what
 version, who hears about it — with **Change** and **Cancel**. The button

@@ -1,0 +1,47 @@
+<!-- @dsCard group="Forms" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Recipient picker</title>
+<style>body { padding: 24px; max-width: 720px; } .card { margin-bottom: 16px; } .pv-hint { font-size: 0.8rem; opacity: .75; margin: 0.35rem 0 0; }</style>
+</head>
+<body>
+  <div class="page-header"><h2>Recipient picker</h2></div>
+
+  <div class="card">
+    <div class="card-title">Email notifications — To / Cc / Bcc and the email channels</div>
+    <div class="na-recips">
+      <div class="na-recip-row">
+        <label class="na-recip-label">To</label>
+        <div class="na-recip-box">
+          <span class="tag-chip"><span style="opacity:.6;font-size:.85em">dynamic:</span> Asset’s L1 Region Users<button type="button" class="tag-chip-delete">&times;</button></span>
+          <span class="tag-chip"><span style="opacity:.6;font-size:.85em">role:</span> Network On-Call<button type="button" class="tag-chip-delete">&times;</button></span>
+          <span class="tag-chip">Dana Reyes<button type="button" class="tag-chip-delete">&times;</button></span>
+          <input type="text" class="na-recip-input" placeholder="Type a name, address, role, region or “asset’s…”">
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm">Address book</button>
+      </div>
+      <div class="na-recip-row">
+        <label class="na-recip-label">Cc</label>
+        <div class="na-recip-box">
+          <span class="tag-chip">noc@example.com<button type="button" class="na-chip-save">&plus;</button><button type="button" class="tag-chip-delete">&times;</button></span>
+          <input type="text" class="na-recip-input">
+        </div>
+      </div>
+      <div class="na-recip-row">
+        <label class="na-recip-label">Bcc</label>
+        <div class="na-recip-box"><input type="text" class="na-recip-input"></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Send through</label>
+      <div style="display:flex;flex-wrap:wrap;gap:0.4rem 1rem">
+        <label style="display:flex;gap:0.5rem;align-items:center"><input type="checkbox" checked> Office SMTP <span style="opacity:.6;font-size:.85em">SMTP</span></label>
+        <label style="display:flex;gap:0.5rem;align-items:center"><input type="checkbox"> Polaris mail <span style="opacity:.6;font-size:.85em">Microsoft 365</span></label>
+      </div>
+    </div>
+    <p class="pv-hint">Emailed when it is scheduled, when it starts and when it finishes. Roles, regions and the device’s own recipients are worked out when each email is sent.</p>
+  </div>
+</body>
+</html>

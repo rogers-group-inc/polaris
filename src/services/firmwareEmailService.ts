@@ -3,14 +3,13 @@
  * upgrade email (business rule 93), and the notices for a flash started from
  * the card NOW with "Email me" ticked.
  *
- * `sendFirmwareEmail` renders `utils/firmwareResultEmailTemplate.ts` once per
- * recipient — each reader in their own zone when the address is a Polaris
- * user's, else the install's — and sends it through the install's oldest
- * enabled email channel (`resolveSummaryChannel`, the quiet-time summary's
- * resolver), letterheaded by `applyBrandLetterhead`. A per-reader message,
- * not a split alert, so rule 25 is untouched. It never throws for a delivery
- * problem: it answers with what went wrong (no channel, or the addresses that
- * failed) and the caller records it.
+ * `sendFirmwareEmail` renders `utils/firmwareResultEmailTemplate.ts` and
+ * hands it to `operationNotifyService.deliverOperationEmail` with a target —
+ * To / Cc / Bcc and the chosen email channels, resolved from what the booking
+ * or run stored (`targetFor`, 2026-11-09). One message per To address in that
+ * reader's zone, or ONE message when there is a Cc / Bcc; the oldest enabled
+ * email channel when none was chosen. It never throws for a delivery problem:
+ * it answers with what went wrong and the caller records it.
  *
  * Who calls it:
  *   firmwareScheduleService — a booking's scheduled / rescheduled notice and
@@ -29,9 +28,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
-import { applyBrandLetterhead, sendEmailThroughChannel } from "./notificationDeliveryService.js";
-import { resolveSummaryChannel } from "./quietTimeSummaryService.js";
-import { resolveTimeZone, serverTimeZone } from "./userTimezoneService.js";
+import { deliverOperationEmail, targetFor, type NotifyTarget } from "./operationNotifyService.js";
 import { renderFirmwareResultEmail, type FirmwareResultEmailInput, type FirmwareResultOutcome } from "../utils/firmwareResultEmailTemplate.js";
 
 const LOG_TAIL = 15;
@@ -49,34 +46,14 @@ export async function firmwareEmailAsset(assetId: string): Promise<FirmwareEmail
 }
 
 /**
- * Send one email per recipient. `facts` is everything but the reader's zone.
- * Answers null when every message went, else why not — "no enabled email
- * channel …" or "<address>: <error>; …" for the ones that failed (the rest
- * still went).
+ * Send the email to a target — its To / Cc / Bcc on its channels
+ * (`operationNotifyService.deliverOperationEmail`: one message per To address
+ * in that reader's zone, or ONE message when there is a Cc / Bcc). `facts` is
+ * everything but the reader's zone. Answers null when every message went, else
+ * why not.
  */
-export async function sendFirmwareEmail(recipients: readonly string[], facts: Omit<FirmwareResultEmailInput, "zone">): Promise<string | null> {
-  if (recipients.length === 0) return null;
-  const channel = await resolveSummaryChannel(null, []);
-  if (!channel) return "no enabled email channel (SMTP or Microsoft 365) is configured";
-
-  const users = await prisma.user.findMany({
-    where: { email: { in: [...recipients], mode: "insensitive" } },
-    select: { email: true, timezone: true, detectedTimezone: true },
-  });
-  const zoneOf = new Map<string, string>();
-  for (const u of users) if (u.email) zoneOf.set(u.email.toLowerCase(), resolveTimeZone(u.timezone, u.detectedTimezone));
-
-  const failures: string[] = [];
-  for (const address of recipients) {
-    try {
-      const rendered = renderFirmwareResultEmail({ ...facts, zone: zoneOf.get(address) ?? serverTimeZone() });
-      const msg = await applyBrandLetterhead({ to: [address], subject: rendered.subject, text: rendered.text, html: rendered.html });
-      await sendEmailThroughChannel({ type: channel.type, config: channel.config as Record<string, unknown> }, msg);
-    } catch (err) {
-      failures.push(`${address}: ${String((err as Error)?.message ?? err).slice(0, 200)}`);
-    }
-  }
-  return failures.length > 0 ? failures.join("; ") : null;
+export async function sendFirmwareEmail(target: NotifyTarget, facts: Omit<FirmwareResultEmailInput, "zone">): Promise<string | null> {
+  return deliverOperationEmail(target, (zone) => renderFirmwareResultEmail({ ...facts, zone }));
 }
 
 // ─── A flash's own recipients ────────────────────────────────────────────────
@@ -84,7 +61,7 @@ export async function sendFirmwareEmail(recipients: readonly string[], facts: Om
 const RUN_SELECT = {
   id: true, assetId: true, status: true, result: true, error: true, fromVersion: true, toVersion: true,
   verifiedVersion: true, startedBy: true, startedAt: true, finishedAt: true, log: true,
-  notifyEmails: true, notifiedAt: true,
+  notifyEmails: true, notifyRecipients: true, notifyChannelIds: true, notifiedAt: true,
   schedule: { select: { id: true, scheduledFor: true, createdBy: true } },
 } as const;
 
@@ -111,7 +88,7 @@ export async function notifyRunStarted(runId: string): Promise<void> {
   const run = await prisma.firmwareUpgradeRun.findUnique({ where: { id: runId }, select: RUN_SELECT });
   if (!run || run.notifyEmails.length === 0) return;
   const asset = await firmwareEmailAsset(run.assetId);
-  const error = await sendFirmwareEmail(run.notifyEmails, {
+  const error = await sendFirmwareEmail(await targetFor(run), {
     outcome: "started",
     scheduled: !!run.schedule,
     assetId: run.assetId,
@@ -147,7 +124,7 @@ export async function notifyRunFinished(runId: string): Promise<void> {
   const outcome: FirmwareResultOutcome = run.status === "succeeded" ? "succeeded" : run.status === "unverified" ? "unverified" : "failed";
   const asset = await firmwareEmailAsset(run.assetId);
   const log = Array.isArray(run.log) ? (run.log as Array<{ t: string; level: string; msg: string }>).slice(-LOG_TAIL) : [];
-  const error = await sendFirmwareEmail(run.notifyEmails, {
+  const error = await sendFirmwareEmail(await targetFor(run), {
     outcome,
     scheduled: false,
     assetId: run.assetId,

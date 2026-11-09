@@ -52,7 +52,13 @@ const firmwareUpgrade = vi.fn(async () => availability);
 const startFirmwareUpgrade = vi.fn(async () => ({ run: { id: "run-1", status: "queued", stage: null, progress: null, toVersion: IMAGE.versionLabel } }));
 const firmwareUpgradeRun = vi.fn(async () => ({ run: runs.length > 1 ? runs.shift() : runs[0] }));
 // Scheduled upgrades (business rule 93).
-const firmwareScheduleDefaults = vi.fn(async () => ({ notifyEmails: ["me@example.com"] }));
+const firmwareScheduleDefaults = vi.fn(async () => ({
+  notify: { to: { addresses: ["me@example.com"] }, cc: null, bcc: null, channelIds: [] },
+  notifyEmails: ["me@example.com"],
+  users: [],
+  catalog: { roles: [], regions: [], regionLevels: { maxLevel: 1, byName: {} }, tagCatalog: [] },
+  channels: [{ id: "ch-1", name: "Office SMTP", type: "smtp" }],
+}));
 const scheduleFirmwareUpgrade = vi.fn(async (_id: string, body: any) => ({ schedule: { id: "sch-1", ...body } }));
 const updateFirmwareSchedule = vi.fn(async (_id: string, _sid: string, body: any) => ({ schedule: { id: "sch-1", ...body } }));
 const cancelFirmwareSchedule = vi.fn(async () => ({ schedule: { id: "sch-1", status: "cancelled" } }));
@@ -86,6 +92,18 @@ const osRow = () => Array.from(document.querySelectorAll(".kv-row")).find((r) =>
 const upgradeBtn = () => document.getElementById("asset-fw-upgrade-btn") as HTMLButtonElement | null;
 const confirmSheet = () => document.getElementById("fw-confirm-sheet");
 const text = (el: Element | null | undefined) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+
+// The To / Cc / Bcc picker (public/js/recipient-picker.js): pills read and typed.
+const toPills = (prefix: string) =>
+  Array.from(document.querySelectorAll(`#${prefix}-notify-recips .na-recip-box[data-field="to"] > .tag-chip`)).map((c) => c.getAttribute("data-value"));
+function typeTo(prefix: string, address: string) {
+  const input = document.querySelector(`#${prefix}-notify-recips .na-recip-box[data-field="to"] .na-recip-input`) as HTMLInputElement;
+  input.value = address;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+}
+function clearTo(prefix: string) {
+  document.querySelectorAll(`#${prefix}-notify-recips .na-recip-box[data-field="to"] [data-na-del]`).forEach((b) => (b as HTMLElement).click());
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -169,7 +187,7 @@ describe("the confirm", () => {
 });
 
 describe("Email notifications (rule 93, 2026-11-09)", () => {
-  it("unticked by default; ticking it reveals the recipients and Upgrade sends them with the start", async () => {
+  it("unticked by default; ticking it reveals the To / Cc / Bcc picker and the channels, and Upgrade sends the spec with the start", async () => {
     runs = [{ id: "run-1", status: "running", stage: "deploying", progress: null, toVersion: IMAGE.versionLabel }];
     await openAsset("sw");
     upgradeBtn()!.click();
@@ -180,12 +198,17 @@ describe("Email notifications (rule 93, 2026-11-09)", () => {
     notify.checked = true;
     notify.dispatchEvent(new Event("change"));
     expect((document.getElementById("fw-notify-fields") as HTMLElement).style.display).toBe("");
-    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
-    emails.value = "ops@example.com, noc@example.com";
-    emails.dispatchEvent(new Event("input"));
+    // Pre-filled from the remembered spec; no Address book button on the phone.
+    expect(toPills("fw")).toEqual(["me@example.com"]);
+    expect(document.querySelector("#fw-notify-recips .na-book")).toBeNull();
+    typeTo("fw", "ops@example.com");
+    expect(toPills("fw")).toEqual(["me@example.com", "ops@example.com"]);
     (document.getElementById("fw-confirm-ok") as HTMLButtonElement).click();
     await flush();
-    expect(startFirmwareUpgrade).toHaveBeenCalledWith("sw", { imageId: "img-primary", notifyEmails: ["ops@example.com", "noc@example.com"] });
+    expect(startFirmwareUpgrade).toHaveBeenCalledWith("sw", {
+      imageId: "img-primary",
+      notify: { to: { addresses: ["me@example.com", "ops@example.com"] }, cc: null, bcc: null, channelIds: ["ch-1"] },
+    });
   });
 
   it("ticked with no address, Upgrade is disabled; ticking 'Schedule for later' locks the box on", async () => {
@@ -193,8 +216,7 @@ describe("Email notifications (rule 93, 2026-11-09)", () => {
     upgradeBtn()!.click();
     await flush();
     const notify = document.getElementById("fw-confirm-notify") as HTMLInputElement;
-    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
-    emails.value = "";
+    clearTo("fw");
     notify.checked = true;
     notify.dispatchEvent(new Event("change"));
     expect((document.getElementById("fw-confirm-ok") as HTMLButtonElement).disabled).toBe(true);
@@ -296,7 +318,7 @@ describe("Schedule for later", () => {
     await flush();
     expect(fields.style.display).toBe("");
     expect(text(okBtn())).toBe("Schedule");
-    expect((document.getElementById("fw-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    expect(toPills("fw")).toEqual(["me@example.com"]);
     expect((document.getElementById("fw-sched-when") as HTMLInputElement).value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
   });
 
@@ -309,7 +331,7 @@ describe("Schedule for later", () => {
     okBtn().click();
     await flush();
     expect(startFirmwareUpgrade).not.toHaveBeenCalled();
-    expect(scheduleFirmwareUpgrade).toHaveBeenCalledWith("sw", { imageId: IMAGE.id, scheduledFor: new Date("2030-01-02T03:30").toISOString(), notifyEmails: ["me@example.com"] });
+    expect(scheduleFirmwareUpgrade).toHaveBeenCalledWith("sw", { imageId: IMAGE.id, scheduledFor: new Date("2030-01-02T03:30").toISOString(), notify: { to: { addresses: ["me@example.com"] }, cc: null, bcc: null, channelIds: ["ch-1"] } });
     expect(g.PolarisTabs.showSnackbar).toHaveBeenCalledWith(expect.stringContaining("Upgrade scheduled for"));
   });
 
@@ -318,9 +340,7 @@ describe("Schedule for later", () => {
     upgradeBtn()!.click();
     await flush();
     box()!.click();
-    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
-    emails.value = "";
-    emails.dispatchEvent(new Event("input"));
+    clearTo("fw");
     expect(okBtn().disabled).toBe(true);
   });
 
@@ -353,10 +373,11 @@ describe("Schedule for later", () => {
     await flush();
     expect(text(confirmSheet()!.querySelector(".sheet-title"))).toBe("Change scheduled upgrade");
     expect(box()).toBeNull();
-    expect((document.getElementById("fw-sched-emails") as HTMLInputElement).value).toBe("ops@example.com");
+    // The booking's own recipients, not the remembered spec.
+    expect(toPills("fw")).toEqual(["ops@example.com"]);
     okBtn().click();
     await flush();
-    expect(updateFirmwareSchedule).toHaveBeenCalledWith("sw", "sch-1", expect.objectContaining({ notifyEmails: ["ops@example.com"] }));
+    expect(updateFirmwareSchedule).toHaveBeenCalledWith("sw", "sch-1", expect.objectContaining({ notify: expect.objectContaining({ to: { addresses: ["ops@example.com"] } }) }));
     expect(scheduleFirmwareUpgrade).not.toHaveBeenCalled();
   });
 

@@ -360,7 +360,7 @@ export async function listScopeOptions(): Promise<{
   // event and change triggers fire on them. The subnet list is IPAM, not
   // inventory, so it is unfiltered by the same reasoning.
   const monitoredOnly = { monitored: true } as const;
-  const [mfrRows, modelRows, ifNameRows, ssidRows, nativeVlans, subnets, ipBlocks, regions, regionLevelsOut, roles, tagRows] = await Promise.all([
+  const [mfrRows, modelRows, ifNameRows, ssidRows, nativeVlans, subnets, ipBlocks, recipientCatalog] = await Promise.all([
     prisma.asset.findMany({
       select: { manufacturer: true },
       distinct: ["manufacturer"],
@@ -411,6 +411,38 @@ export async function listScopeOptions(): Promise<{
       select: { id: true, name: true, cidr: true },
       orderBy: { cidr: "asc" },
     }),
+    // The recipient catalogue (regions, their levels, roles, tags) — shared
+    // with the firmware-upgrade / reboot dialogs' picker (listRecipientCatalog).
+    listRecipientCatalog(),
+  ]);
+  return {
+    manufacturers: mfrRows.map((r) => r.manufacturer).filter((m): m is string => !!m && m.trim() !== ""),
+    models: modelRows.map((r) => r.model).filter((m): m is string => !!m && m.trim() !== ""),
+    interfaceNames: ifNameRows.map((r) => r.ifName).filter((n) => !!n && n.trim() !== ""),
+    ssids: ssidRows.map((r) => r.ssid).filter((n): n is string => !!n && n.trim() !== ""),
+    nativeVlans,
+    subnets,
+    ipBlocks,
+    ...recipientCatalog,
+  };
+}
+
+/**
+ * What a recipient picker needs to name non-address recipients: the map-region
+ * catalogue (bare names) with each region's nesting level, the roles (by id),
+ * and the tag registry minus the Map Regions category. Part of
+ * `listScopeOptions` (the automations wizard), and on its own the catalogue the
+ * firmware-upgrade and reboot dialogs' picker reads at `assets:write`
+ * (operationNotifyService.notifyPickerCatalog) — the wizard's whole payload
+ * would run the fleet-wide distinct queries for nothing.
+ */
+export async function listRecipientCatalog(): Promise<{
+  regions: string[];
+  regionLevels: { maxLevel: number; byName: Record<string, number> };
+  roles: { id: string; name: string }[];
+  tagCatalog: { name: string; category: string }[];
+}> {
+  const [regions, regionLevelsOut, roles, tagRows] = await Promise.all([
     // The map-region catalogue rides THIS payload rather than being fetched
     // from GET /map/regions, which is gated `mapRegions:read` — an operator who
     // can build an automation may not hold that key, and the region picker
@@ -448,13 +480,6 @@ export async function listScopeOptions(): Promise<{
       .catch(() => [] as { name: string; category: string | null }[]),
   ]);
   return {
-    manufacturers: mfrRows.map((r) => r.manufacturer).filter((m): m is string => !!m && m.trim() !== ""),
-    models: modelRows.map((r) => r.model).filter((m): m is string => !!m && m.trim() !== ""),
-    interfaceNames: ifNameRows.map((r) => r.ifName).filter((n) => !!n && n.trim() !== ""),
-    ssids: ssidRows.map((r) => r.ssid).filter((n): n is string => !!n && n.trim() !== ""),
-    nativeVlans,
-    subnets,
-    ipBlocks,
     // Bare names — how User/GroupMapping.regionTags store them. The
     // `region:` prefix exists only on ASSET tags.
     regions: regions.map((r) => r.name).filter((n) => !!n && n.trim() !== "").sort(),

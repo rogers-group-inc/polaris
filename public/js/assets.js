@@ -7651,7 +7651,8 @@ function _fwApprovalModalHTML(a, fw, opts) {
 
   var schedulePart;
   if (mode === "change") {
-    schedulePart = '<div id="fw-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _fwScheduleFieldsHTML(fw, existing, opts.defaults) + '</div>';
+    schedulePart = '<div id="fw-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _fwScheduleFieldsHTML(fw, existing, opts.defaults) + '</div>' +
+      _fwNotifyHTML(opts.defaults, true, existing);
   } else if (fw.group) {
     schedulePart = '<p class="hint" style="margin:0.75rem 0 0">This device is in a group upgrade on ' + escapeHtml(fw.group.gateName) +
       ' (' + escapeHtml(fw.group.status === "running" ? "running now" : _fwWhenText(fw.group.scheduledFor)) + ') — scheduling it is done by the group.</p>' +
@@ -7688,15 +7689,13 @@ function _fwApprovalModalHTML(a, fw, opts) {
 }
 
 /**
- * The time and recipients a booking needs. `existing` pre-fills them when a
- * booking is being changed; otherwise the time defaults to the next whole hour
- * and the recipients to the booker's own email (`defaults`).
+ * The time a booking runs at. `existing` pre-fills it when a booking is being
+ * changed; otherwise the next whole hour. Who hears about it is the "Email
+ * notifications" block (`_fwNotifyHTML`), shared with a flash now.
  */
-function _fwScheduleFieldsHTML(fw, existing, defaults, opts) {
-  var withEmails = !(opts && opts.emails === false);
+function _fwScheduleFieldsHTML(fw, existing) {
   var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
   var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
-  var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
   var zone = _fwBrowserZone();
   var warn = (fw.blockers && fw.blockers.length)
     ? '<div class="hint" style="margin:0 0 0.6rem;color:var(--color-warning)">Right now ' + escapeHtml(fw.blockers.join("; ")) + '. That is checked again when the upgrade is due — if it still holds then, the upgrade is not started and the recipients are told why.</div>'
@@ -7706,38 +7705,45 @@ function _fwScheduleFieldsHTML(fw, existing, defaults, opts) {
       '<label for="fw-sched-when">Run at</label>' +
       '<input type="datetime-local" id="fw-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
       '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the upgrade is not started. If an upgrade on a related device is still running, this one waits up to 2 hours for it.</p>' +
-    '</div>' +
-    (withEmails ? _fwEmailsFieldHTML(emails, _FW_NOTIFY_HINT_SCHEDULED) : '');
+    '</div>';
 }
 
-var _FW_NOTIFY_HINT_NOW = "Comma-separated; start typing a name to pick from the address book. Sent when the upgrade starts and when it finishes — succeeded or failed.";
-var _FW_NOTIFY_HINT_SCHEDULED = "Comma-separated; start typing a name to pick from the address book. Sent when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled upgrade always emails someone.";
+var _FW_NOTIFY_HINT_NOW = "Emailed when the upgrade starts and when it finishes — succeeded or failed. Roles, regions and the device’s own recipients are worked out when each email is sent.";
+var _FW_NOTIFY_HINT_SCHEDULED = "Emailed when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled upgrade always emails someone. Roles, regions and the device’s own recipients are worked out when each email is sent.";
 
-/** The recipients box (one per dialog — its id is what the dialog reads). */
-function _fwEmailsFieldHTML(emails, hint) {
-  return '<div class="form-group">' +
-      '<label for="fw-sched-emails">Email to</label>' +
-      '<div style="position:relative">' +
-        '<input type="text" id="fw-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml((emails || []).join(", ")) + '">' +
-      '</div>' +
-      '<p class="hint" id="fw-notify-hint" style="margin:0.25rem 0 0">' + escapeHtml(hint) + '</p>' +
-    '</div>';
+/**
+ * The notify editor for this dialog — the automations' To / Cc / Bcc picker
+ * plus the email channels (public/js/recipient-picker.js). Built the same way
+ * to render and to wire / read, so the pure HTML function and the opener agree.
+ * `existing` = the booking being changed (its own recipients), else the
+ * operator's remembered ones from `defaults`.
+ */
+function _fwNotifyEditor(defaults, existing) {
+  if (!window.PolarisRecipientPicker || !PolarisRecipientPicker.notifyEditor) return null;
+  return PolarisRecipientPicker.notifyEditor({
+    prefix: "fw",
+    defaults: defaults || {},
+    spec: existing ? PolarisRecipientPicker.bookingNotifySpec(existing) : null,
+    withBook: !!(window.PolarisAddressBook && typeof permAtLeast === "function" && permAtLeast("contacts", "read")),
+  });
 }
 
 /**
  * "Email notifications" (rule 93): off by default for a flash now — ticking it
  * emails the recipients when the flash starts and when it ends; always on, and
- * locked, while "Schedule for later" is ticked, because a booking must email
- * someone. Pre-filled with the operator's own profile email.
+ * locked, while "Schedule for later" is ticked (and when changing a booking),
+ * because a booking must email someone. Pre-filled with what the operator used
+ * last time, else themselves.
  */
-function _fwNotifyHTML(defaults, locked) {
-  var emails = (defaults && defaults.notifyEmails) || [];
+function _fwNotifyHTML(defaults, locked, existing) {
+  var ed = _fwNotifyEditor(defaults, existing);
   return '<div style="margin-top:0.75rem">' +
       '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
         '<input type="checkbox" id="fw-approve-notify"' + (locked ? " checked disabled" : "") + '> Email notifications' +
       '</label>' +
       '<div id="fw-notify-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' +
-        _fwEmailsFieldHTML(emails, locked ? _FW_NOTIFY_HINT_SCHEDULED : _FW_NOTIFY_HINT_NOW) +
+        (ed ? ed.html() : '') +
+        '<p class="hint" id="fw-notify-hint" style="margin:0.35rem 0 0">' + escapeHtml(locked ? _FW_NOTIFY_HINT_SCHEDULED : _FW_NOTIFY_HINT_NOW) + '</p>' +
       '</div>' +
     '</div>';
 }
@@ -7754,12 +7760,11 @@ function _fwSelectedApproval() {
  */
 async function _openFirmwareApprovalModal(a, fw, existing) {
   var mode = existing ? "change" : (fw.state === "blocked" ? "schedule-only" : "choose");
-  // The operator's own address pre-fills the recipients — a booking's, and the
-  // "Email notifications" box of a flash now (rule 93).
+  // What the notify editor opens with — the operator's last recipients (else
+  // themselves) and the picker's catalogue: regions, roles, tags, users and the
+  // email channels (rule 93). Needed when changing a booking too.
   var defaults = null;
-  if (!existing) {
-    try { defaults = await api.assets.firmwareScheduleDefaults(a.id); } catch (e) { defaults = null; }
-  }
+  try { defaults = await api.assets.firmwareScheduleDefaults(a.id); } catch (e) { defaults = null; }
   var title = (existing ? "Change scheduled upgrade — " : "Firmware upgrade — ") + (a.hostname || a.ipAddress || "device");
   var footer =
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
@@ -7771,11 +7776,11 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
   var later = document.getElementById("fw-approve-schedule");
   var fields = document.getElementById("fw-sched-fields");
   var whenEl = document.getElementById("fw-sched-when");
-  var emailsEl = document.getElementById("fw-sched-emails");
   var notify = document.getElementById("fw-approve-notify");
   var notifyFields = document.getElementById("fw-notify-fields");
   var notifyHint = document.getElementById("fw-notify-hint");
-  if (emailsEl && window.PolarisEmailSuggest) PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
+  var editor = _fwNotifyEditor(defaults, existing);
+  if (editor && notifyFields) editor.wire(notifyFields, function () { sync(); });
   // Changing a booking pre-selects the image it was approved with, and that
   // approval stands — the box is ticked; picking another image unticks it.
   var bookedImage = existing ? existing.imageId : null;
@@ -7800,7 +7805,7 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
     if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
     if (notifyHint && notify) notifyHint.textContent = scheduling() ? _FW_NOTIFY_HINT_SCHEDULED : _FW_NOTIFY_HINT_NOW;
     var imageOk = !fw.image || !!(ack && ack.checked && sel);
-    var emailsOk = !emailing() || !!(emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+    var emailsOk = !emailing() || !!(editor && notifyFields && editor.ready(notifyFields));
     var version = sel ? sel.version : (existing ? existing.toVersion : "");
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule upgrade to " + version;
@@ -7818,7 +7823,6 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
   if (later) later.addEventListener("change", sync);
   if (notify) notify.addEventListener("change", sync);
   if (whenEl) whenEl.addEventListener("input", sync);
-  if (emailsEl) emailsEl.addEventListener("input", sync);
   document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
 
   btn.addEventListener("click", function () {
@@ -7827,16 +7831,16 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
     if (scheduling()) {
       var when = new Date(whenEl.value); // datetime-local parses as the browser's local time
       if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
-      var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value) };
+      var body = { scheduledFor: when.toISOString(), notify: editor.read(notifyFields) };
       if (sel && (!existing || sel.imageId !== existing.imageId)) body.imageId = sel.imageId;
       call = existing ? api.assets.updateFirmwareSchedule(a.id, existing.id, body) : api.assets.scheduleFirmwareUpgrade(a.id, body);
       done = existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + when.toLocaleString();
     } else {
       if (!sel) return;
       var startBody = { imageId: sel.imageId };
-      if (emailing() && emailsEl) startBody.notifyEmails = _fwParseEmails(emailsEl.value);
+      if (emailing() && editor) startBody.notify = editor.read(notifyFields);
       call = api.assets.startFirmwareUpgrade(a.id, startBody);
-      done = startBody.notifyEmails ? "Upgrade started — emails go to " + startBody.notifyEmails.join(", ") : "Upgrade started";
+      done = startBody.notify ? "Upgrade started — notifications are on" : "Upgrade started";
     }
     btn.disabled = true;
     call.then(function () {
@@ -15943,52 +15947,51 @@ async function _loadAssetRebootControl(a) {
 }
 
 /**
- * The time + recipients half of the dialog (the firmware booking's fields,
- * worded for a reboot). Pure. `opts.emails === false` leaves the recipients
- * out — they live under "Email notifications" (`_rebootNotifyHTML`) instead.
+ * The time half of the dialog (the firmware booking's field, worded for a
+ * reboot). Pure. Who hears about it is the "Email notifications" block
+ * (`_rebootNotifyHTML`), shared with a reboot now.
  */
-function _rebootScheduleFieldsHTML(existing, defaults, warn, opts) {
-  var withEmails = !(opts && opts.emails === false);
+function _rebootScheduleFieldsHTML(existing, defaults, warn) {
   var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
   var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
-  var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
   var zone = _fwBrowserZone();
   return (warn ? '<div class="hint" style="margin:0 0 0.6rem;color:var(--color-warning)">Right now: ' + escapeHtml(warn) + ' That is checked again when the reboot is due — if it still holds then, nothing is sent and the recipients are told why.</div>' : '') +
     '<div class="form-group">' +
       '<label for="rb-sched-when">Reboot at</label>' +
       '<input type="datetime-local" id="rb-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
       '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the reboot is not sent.</p>' +
-    '</div>' +
-    (withEmails ? _rebootEmailsFieldHTML(emails, _RB_NOTIFY_HINT_SCHEDULED) : '');
+    '</div>';
 }
 
-var _RB_NOTIFY_HINT_NOW = "Comma-separated; start typing a name to pick from the address book. Sent when the reboot is sent and when the device is back — or did not come back.";
-var _RB_NOTIFY_HINT_SCHEDULED = "Comma-separated; start typing a name to pick from the address book. Sent when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled reboot always emails someone.";
+var _RB_NOTIFY_HINT_NOW = "Emailed when the reboot is sent and when the device is back — or did not come back. Roles, regions and the device’s own recipients are worked out when each email is sent.";
+var _RB_NOTIFY_HINT_SCHEDULED = "Emailed when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled reboot always emails someone. Roles, regions and the device’s own recipients are worked out when each email is sent.";
 
-/** The reboot dialog's one recipients box. Pure. */
-function _rebootEmailsFieldHTML(emails, hint) {
-  return '<div class="form-group">' +
-      '<label for="rb-sched-emails">Email to</label>' +
-      '<div style="position:relative">' +
-        '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml((emails || []).join(", ")) + '">' +
-      '</div>' +
-      '<p class="hint" id="rb-notify-hint" style="margin:0.25rem 0 0">' + escapeHtml(hint) + '</p>' +
-    '</div>';
+/** The reboot dialog's notify editor — the firmware dialog's, prefixed "rb" (see `_fwNotifyEditor`). */
+function _rebootNotifyEditor(defaults, existing) {
+  if (!window.PolarisRecipientPicker || !PolarisRecipientPicker.notifyEditor) return null;
+  return PolarisRecipientPicker.notifyEditor({
+    prefix: "rb",
+    defaults: defaults || {},
+    spec: existing ? PolarisRecipientPicker.bookingNotifySpec(existing) : null,
+    withBook: !!(window.PolarisAddressBook && typeof permAtLeast === "function" && permAtLeast("contacts", "read")),
+  });
 }
 
 /**
  * "Email notifications" for a reboot: off by default for a reboot now (emails
  * when it is sent and when it ends); ticked and locked while "Schedule for
- * later" is, because a booking always emails someone. Pure.
+ * later" is, and when changing a booking, because a booking always emails
+ * someone. Pure.
  */
-function _rebootNotifyHTML(defaults, locked) {
-  var emails = (defaults && defaults.notifyEmails) || [];
+function _rebootNotifyHTML(defaults, locked, existing) {
+  var ed = _rebootNotifyEditor(defaults, existing);
   return '<div style="margin-top:0.75rem">' +
       '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
         '<input type="checkbox" id="rb-notify"' + (locked ? " checked disabled" : "") + '> Email notifications' +
       '</label>' +
       '<div id="rb-notify-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' +
-        _rebootEmailsFieldHTML(emails, locked ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW) +
+        (ed ? ed.html() : '') +
+        '<p class="hint" id="rb-notify-hint" style="margin:0.35rem 0 0">' + escapeHtml(locked ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW) + '</p>' +
       '</div>' +
     '</div>';
 }
@@ -16040,7 +16043,8 @@ function _rebootModalHTML(a, rb, opts) {
     '</dl></div>';
   if (mode === "change") {
     return device + _rebootNoteFieldHTML(rb, existing && existing.note) +
-      '<div id="rb-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _rebootScheduleFieldsHTML(existing, opts.defaults, null) + '</div>';
+      '<div id="rb-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _rebootScheduleFieldsHTML(existing, opts.defaults, null) + '</div>' +
+      _rebootNotifyHTML(opts.defaults, true, existing);
   }
   var warnBox =
     '<div class="alert alert-warning" style="padding:0.6rem 0.75rem;border-radius:6px;background:rgba(214,137,16,0.12);border:1px solid var(--color-warning,#d68910);font-size:0.82rem;margin:0.5rem 0 0.75rem">' +
@@ -16060,7 +16064,7 @@ function _rebootModalHTML(a, rb, opts) {
         '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
           '<input type="checkbox" id="rb-schedule"' + (locked ? " checked disabled" : "") + '> Schedule for later' +
         '</label>' +
-        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null, { emails: false }) + '</div>' +
+        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null) + '</div>' +
         _rebootNotifyHTML(opts.defaults, locked) +
       '</div>';
   }
@@ -16069,12 +16073,10 @@ function _rebootModalHTML(a, rb, opts) {
 
 async function _openRebootModal(a, rb, existing) {
   var mode = existing ? "change" : (rb.available ? "choose" : "schedule-only");
-  // The operator's remembered list (else their own address) pre-fills the
-  // recipients — a booking's, and "Email notifications" for a reboot now.
+  // What the notify editor opens with — the operator's last reboot recipients
+  // (else themselves) and the picker's catalogue, incl. the email channels.
   var defaults = null;
-  if (!existing) {
-    try { defaults = await api.assets.rebootScheduleDefaults(a.id); } catch (e) { defaults = null; }
-  }
+  try { defaults = await api.assets.rebootScheduleDefaults(a.id); } catch (e) { defaults = null; }
   var name = a.hostname || a.ipAddress || "device";
   var title = existing ? "Change scheduled reboot — " + name : "Reboot — " + name;
   var footer =
@@ -16087,13 +16089,13 @@ async function _openRebootModal(a, rb, existing) {
   var later = document.getElementById("rb-schedule");
   var fields = document.getElementById("rb-sched-fields");
   var whenEl = document.getElementById("rb-sched-when");
-  var emailsEl = document.getElementById("rb-sched-emails");
   var noteEl = document.getElementById("rb-note");
   var btn = document.getElementById("btn-rb-go");
   var notify = document.getElementById("rb-notify");
   var notifyFields = document.getElementById("rb-notify-fields");
   var notifyHint = document.getElementById("rb-notify-hint");
-  if (emailsEl && window.PolarisEmailSuggest) PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
+  var editor = _rebootNotifyEditor(defaults, existing);
+  if (editor && notifyFields) editor.wire(notifyFields, function () { sync(); });
   function scheduling() { return mode === "change" || !!(later && later.checked); }
   // A booking always emails someone: scheduling ticks and locks the box, and
   // unticking "Schedule for later" puts back the operator's own choice.
@@ -16110,7 +16112,7 @@ async function _openRebootModal(a, rb, existing) {
     if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
     if (notifyHint && notify) notifyHint.textContent = scheduling() ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW;
     var acked = (mode === "change" || !!(ack && ack.checked)) && (!rb.noteRequired || noteValue() !== "");
-    var emailsOk = !emailing() || !!(emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+    var emailsOk = !emailing() || !!(editor && notifyFields && editor.ready(notifyFields));
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule reboot";
       btn.disabled = !(acked && whenEl && whenEl.value && emailsOk);
@@ -16120,7 +16122,7 @@ async function _openRebootModal(a, rb, existing) {
     }
   }
   [ack, later, notify].forEach(function (el) { if (el) el.addEventListener("change", sync); });
-  [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
+  [whenEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
 
   var cancelBooking = document.getElementById("btn-rb-cancel-booking");
   if (cancelBooking) {
@@ -16143,14 +16145,14 @@ async function _openRebootModal(a, rb, existing) {
     if (scheduling()) {
       var when = new Date(whenEl.value); // datetime-local parses as the browser's local time
       if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
-      var body = { scheduledFor: when.toISOString(), notifyEmails: _fwParseEmails(emailsEl.value), note: noteValue() || null };
+      var body = { scheduledFor: when.toISOString(), notify: editor.read(notifyFields), note: noteValue() || null };
       call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
       done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
     } else {
       var nowBody = noteValue() ? { note: noteValue() } : {};
-      if (emailing() && emailsEl) nowBody.notifyEmails = _fwParseEmails(emailsEl.value);
+      if (emailing() && editor) nowBody.notify = editor.read(notifyFields);
       call = api.assets.startReboot(a.id, nowBody);
-      done = "Reboot sent — Polaris is watching for the device to come back" + (nowBody.notifyEmails ? "; emails go to " + nowBody.notifyEmails.join(", ") : "");
+      done = "Reboot sent — Polaris is watching for the device to come back" + (nowBody.notify ? "; notifications are on" : "");
     }
     btn.disabled = true;
     call.then(function () {

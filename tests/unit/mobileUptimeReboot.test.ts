@@ -58,7 +58,13 @@ let firmware: any;
 const rebootFn = vi.fn(async () => reboot);
 const startReboot = vi.fn(async () => ({ run: { id: "rb-1", status: "queued", stage: null } }));
 const rebootRun = vi.fn(async () => ({ run: { id: "rb-1", status: "rebooting", stage: "down" } }));
-const rebootScheduleDefaults = vi.fn(async () => ({ notifyEmails: ["me@example.com"] }));
+const rebootScheduleDefaults = vi.fn(async () => ({
+  notify: { to: { addresses: ["me@example.com"] }, cc: null, bcc: null, channelIds: [] },
+  notifyEmails: ["me@example.com"],
+  users: [],
+  catalog: { roles: [], regions: [], regionLevels: { maxLevel: 1, byName: {} }, tagCatalog: [] },
+  channels: [{ id: "ch-1", name: "Office SMTP", type: "smtp" }],
+}));
 const scheduleReboot = vi.fn(async (_id: string, body: any) => ({ schedule: { id: "s-1", ...body } }));
 const firmwareUpgrade = vi.fn(async () => firmware);
 
@@ -88,6 +94,18 @@ async function openAsset(id: string) {
 }
 const rowNamed = (k: string) => Array.from(document.querySelectorAll(".kv-row")).find((r) => r.querySelector(".k")?.textContent === k) as HTMLElement | undefined;
 const text = (el: Element | null | undefined) => (el?.textContent || "").replace(/\s+/g, " ").trim();
+
+// The To / Cc / Bcc picker (public/js/recipient-picker.js): pills read and typed.
+const toPills = (prefix: string) =>
+  Array.from(document.querySelectorAll(`#${prefix}-notify-recips .na-recip-box[data-field="to"] > .tag-chip`)).map((c) => c.getAttribute("data-value"));
+function typeTo(prefix: string, address: string) {
+  const input = document.querySelector(`#${prefix}-notify-recips .na-recip-box[data-field="to"] .na-recip-input`) as HTMLInputElement;
+  input.value = address;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+}
+function clearTo(prefix: string) {
+  document.querySelectorAll(`#${prefix}-notify-recips .na-recip-box[data-field="to"] [data-na-del]`).forEach((b) => (b as HTMLElement).click());
+}
 const btn = () => document.getElementById("asset-reboot-btn") as HTMLButtonElement | null;
 const sheet = () => document.getElementById("rb-confirm-sheet");
 
@@ -180,7 +198,7 @@ describe("rebooting from the phone", () => {
     expect(text(document.getElementById("asset-reboot-slot"))).toContain("Rebooting — device is down");
   });
 
-  it("Email notifications: unticked by default; ticked, it needs an address and sends the list with the reboot", async () => {
+  it("Email notifications: unticked by default; ticked, it needs a To and sends the picker's spec with the reboot", async () => {
     await openAsset("gate");
     btn()!.click();
     await flush();
@@ -192,17 +210,14 @@ describe("rebooting from the phone", () => {
     expect((document.getElementById("rb-notify-fields") as HTMLElement).style.display).toBe("none");
     notify.checked = true;
     notify.dispatchEvent(new Event("change"));
-    const emails = document.getElementById("rb-sched-emails") as HTMLInputElement;
     const ok = document.getElementById("rb-confirm-ok") as HTMLButtonElement;
-    emails.value = "";
-    emails.dispatchEvent(new Event("input"));
+    clearTo("rb");
     expect(ok.disabled).toBe(true);
-    emails.value = "ops@example.com, noc@example.com";
-    emails.dispatchEvent(new Event("input"));
+    typeTo("rb", "ops@example.com");
     expect(ok.disabled).toBe(false);
     ok.click();
     await flush();
-    expect(startReboot).toHaveBeenCalledWith("gate", { notifyEmails: ["ops@example.com", "noc@example.com"] });
+    expect(startReboot).toHaveBeenCalledWith("gate", { notify: { to: { addresses: ["ops@example.com"] }, cc: null, bcc: null, channelIds: ["ch-1"] } });
   });
 
   it("Cancel sends nothing", async () => {
@@ -227,10 +242,10 @@ describe("rebooting from the phone", () => {
     ack.dispatchEvent(new Event("change"));
     const ok = document.getElementById("rb-confirm-ok") as HTMLButtonElement;
     expect(text(ok)).toBe("Schedule");
-    expect((document.getElementById("rb-sched-emails") as HTMLInputElement).value).toBe("me@example.com");
+    expect(toPills("rb")).toEqual(["me@example.com"]);
     ok.click();
     await flush();
-    expect(scheduleReboot).toHaveBeenCalledWith("gate", expect.objectContaining({ notifyEmails: ["me@example.com"], scheduledFor: expect.stringMatching(/Z$/), note: null }));
+    expect(scheduleReboot).toHaveBeenCalledWith("gate", expect.objectContaining({ notify: expect.objectContaining({ to: { addresses: ["me@example.com"] } }), scheduledFor: expect.stringMatching(/Z$/), note: null }));
     expect(startReboot).not.toHaveBeenCalled();
   });
 
