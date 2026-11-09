@@ -5171,6 +5171,21 @@ async function _openAssetOverridesSlideover(scope) {
         if (a.cpuMemoryTimeoutMs     != null) bits.push("cpu-mem-timeout=" + a.cpuMemoryTimeoutMs + "ms");
         if (a.temperatureTimeoutMs   != null) bits.push("temp-timeout=" + a.temperatureTimeoutMs + "ms");
         if (a.systemInfoTimeoutMs    != null) bits.push("sysinfo-timeout=" + a.systemInfoTimeoutMs + "ms");
+        // The streams added after this list was written — every column
+        // monitorSettingsService.ASSET_OVERRIDE_COLUMNS returns, so an asset
+        // listed for one of them never shows an empty summary.
+        if (a.lldpIntervalSec        != null) bits.push("lldp=" + a.lldpIntervalSec + "s");
+        if (a.storageIntervalSec     != null) bits.push("storage=" + a.storageIntervalSec + "s");
+        if (a.processesIntervalSec   != null) bits.push("processes=" + a.processesIntervalSec + "s");
+        if (a.eventLogIntervalSec    != null) bits.push("event-log=" + a.eventLogIntervalSec + "s");
+        if (a.customWidgetIntervalSec != null) bits.push("custom-widget=" + a.customWidgetIntervalSec + "s");
+        if (a.processesTimeoutMs     != null) bits.push("processes-timeout=" + a.processesTimeoutMs + "ms");
+        if (a.eventLogTimeoutMs      != null) bits.push("event-log-timeout=" + a.eventLogTimeoutMs + "ms");
+        [["responseTimePolling", "response"], ["cpuMemoryPolling", "cpu-mem"], ["temperaturePolling", "temp"],
+         ["interfacesPolling", "interfaces"], ["lldpPolling", "lldp"], ["storagePolling", "storage"],
+         ["processesPolling", "processes"], ["eventLogPolling", "event-log"]].forEach(function (p) {
+          if (a[p[0]] != null) bits.push(p[1] + " via " + a[p[0]]);
+        });
         return '<tr style="cursor:pointer" data-asset-link="' + escapeHtml(a.id) + '">' +
           '<td style="padding:6px 8px"><a href="#" onclick="return false">' + escapeHtml(a.hostname || "(no hostname)") + '</a></td>' +
           '<td style="padding:6px 8px;font-family:var(--font-mono)">' + escapeHtml(a.ipAddress || "-") + '</td>' +

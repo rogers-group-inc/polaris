@@ -377,6 +377,24 @@ export async function deleteClassOverride(
 // assets are individually deviating from the settings inherited at this
 // scope" — and the operator can click through to fix each one.
 
+/**
+ * Every per-asset monitor override column on Asset: a cadence, a timeout or a
+ * polling method the asset sets for itself instead of inheriting. ONE list for
+ * both the filter and the select of listAssetOverrides — the two were separate
+ * hand lists, and every stream added since (LLDP / storage / processes / event
+ * log intervals, the processes and event-log methods and timeouts, the
+ * custom-widget interval) was missing from both, so an asset overriding only
+ * one of those never appeared under "Show other asset overrides".
+ */
+const ASSET_OVERRIDE_COLUMNS = [
+  "monitorIntervalSec", "cpuMemoryIntervalSec", "temperatureIntervalSec", "systemInfoIntervalSec",
+  "lldpIntervalSec", "storageIntervalSec", "processesIntervalSec", "eventLogIntervalSec", "customWidgetIntervalSec",
+  "probeTimeoutMs", "cpuMemoryTimeoutMs", "temperatureTimeoutMs", "systemInfoTimeoutMs",
+  "processesTimeoutMs", "eventLogTimeoutMs",
+  "responseTimePolling", "cpuMemoryPolling", "temperaturePolling", "interfacesPolling",
+  "lldpPolling", "storagePolling", "processesPolling", "eventLogPolling",
+] as const;
+
 export async function listAssetOverrides(
   integrationIdParam: unknown,
   assetTypeParam: unknown,
@@ -384,27 +402,14 @@ export async function listAssetOverrides(
   const assetType = typeof assetTypeParam === "string" ? assetTypeParam : undefined;
 
   const where: Record<string, unknown> = {
-    OR: [
-      { monitorIntervalSec:     { not: null } },
-      { cpuMemoryIntervalSec:   { not: null } },
-      { temperatureIntervalSec: { not: null } },
-      { systemInfoIntervalSec:  { not: null } },
-      { probeTimeoutMs:         { not: null } },
-      { cpuMemoryTimeoutMs:     { not: null } },
-      { temperatureTimeoutMs:   { not: null } },
-      { systemInfoTimeoutMs:    { not: null } },
-      { responseTimePolling:    { not: null } },
-      { cpuMemoryPolling:       { not: null } },
-      { temperaturePolling:     { not: null } },
-      { interfacesPolling:      { not: null } },
-      { lldpPolling:            { not: null } },
-      { storagePolling:         { not: null } },
-    ],
+    OR: ASSET_OVERRIDE_COLUMNS.map((col) => ({ [col]: { not: null } })),
   };
   if (integrationIdParam === "null") where.discoveredByIntegrationId = null;
   else if (typeof integrationIdParam === "string") where.discoveredByIntegrationId = integrationIdParam;
   if (assetType) where.assetType = assetType;
 
+  const overrideSelect = Object.fromEntries(ASSET_OVERRIDE_COLUMNS.map((col) => [col, true])) as
+    { [K in (typeof ASSET_OVERRIDE_COLUMNS)[number]]: true };
   return prisma.asset.findMany({
     where,
     select: {
@@ -413,20 +418,7 @@ export async function listAssetOverrides(
       ipAddress:                true,
       ipv6Address:              true, // business rule 128 — an IPv6-only asset is dialled on it
       assetType:                true,
-      monitorIntervalSec:       true,
-      cpuMemoryIntervalSec:     true,
-      temperatureIntervalSec:   true,
-      systemInfoIntervalSec:    true,
-      probeTimeoutMs:           true,
-      cpuMemoryTimeoutMs:       true,
-      temperatureTimeoutMs:     true,
-      systemInfoTimeoutMs:      true,
-      responseTimePolling:      true,
-      cpuMemoryPolling:         true,
-      temperaturePolling:       true,
-      interfacesPolling:        true,
-      lldpPolling:              true,
-      storagePolling:           true,
+      ...overrideSelect,
       discoveredByIntegrationId: true,
     },
     orderBy: { hostname: "asc" },

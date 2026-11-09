@@ -529,6 +529,7 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 - Destination secrets live ONLY on the channel — delivery rows reference the channel by id, never copy its secrets.
 
 **When changing this:** add a new channel type by extending `CHANNEL_TYPES` + `CHANNEL_TYPE_META` (+ `CHANNEL_TRANSPORT`) in `notificationTypes`, a sender under `notificationChannels/`, and a dispatch arm in `notificationDeliveryService`. Mark secret fields `secret:true` so masking covers them.
+- Unit tests: `tests/unit/notificationChannelService.test.ts` — masking, mask-echo keeps the secret but not toward a new host (rule 111), VAPID keys never client-set, disable never deletes keys, test push scope.
 
 ---
 
