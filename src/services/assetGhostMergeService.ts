@@ -14,8 +14,7 @@
  * dedup and just keeps getting freshened by the lease pathway.
  *
  * Callers: the inline ghost sweep in the FortiSwitch / FortiAP discovery
- * loops (`syncDhcpSubnets` in src/services/discovery/discoveryEngine.ts) and the
- * one-shot `mergeFortiswitchEndpointGhosts` startup job.
+ * loops (`syncDhcpSubnets` in src/services/discovery/discoveryEngine.ts).
  *
  * Distinct from `assetMergeService.mergeAssets` (the operator-driven merge)
  * on purpose: that path RE-BINDS the ghost's AssetSource rows onto the

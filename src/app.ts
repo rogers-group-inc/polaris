@@ -1214,28 +1214,17 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // the next boot.
       "./jobs/seedVendorMibs.js",
       "./jobs/seedManufacturerProfiles.js",
-      "./jobs/backfillManufacturerProfileMemoryComposition.js",
-      "./jobs/migrateMonitorSettingsHierarchy.js",
-      "./jobs/renameMonitorClassKeys.js",
-      "./jobs/migrateSampleRetentionToEntities.js",
-      "./jobs/migrateMonitorStatusRename.js",
-      "./jobs/migrateAutoMonitorInterfacesShape.js",
-      "./jobs/migrateSystemInfoCadenceLinkage.js",
-      "./jobs/migrateMonitorSettingsPerClass.js",
-      "./jobs/backfillAssetSources.js",
-      "./jobs/scrubLegacySidGuidTags.js",
-      "./jobs/backfillFortigateEndpointSources.js",
-      "./jobs/fixInfraAssetTypes.js",
-      "./jobs/mergeFortiswitchEndpointGhosts.js",
+      // The April–June 2026 one-shot conversions (monitor-settings hierarchy,
+      // per-class streams, sample-retention entities, asset-source backfills,
+      // legacy tag scrubs, …) were retired 2026-11-09 (CQ-B013). An install
+      // that last updated before 2026-06-03 must pass through an intermediate
+      // release first — docs/UPGRADING.md.
       "./jobs/backfillDependencyTree.js",
-      "./jobs/backfillMonitorStatusChangedAt.js",
       // Rule 103: polling credit from existing probe history, so devices that
       // answered for months don't start at zero. Not marker-guarded — it only
       // touches assets whose run is still empty. See its header.
       "./jobs/seedAddressPollingRuns.js",
       "./jobs/backfillInterfaceInventory.js",
-      "./jobs/rasterizeStoredSvgIcons.js",
-      "./jobs/clampAssetAcquiredAt.js",
       // Deliberately not marker-guarded — one indexed UPDATE that keeps
       // "an unmonitorable status cannot be monitored" true across upgrades
       // and raw-SQL writers. See its header.

@@ -179,7 +179,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`.
 
-**Used by:** `src/services/sampleQueryRouter.ts`, `src/api/routes/serverSettings.ts` (`GET`/`PUT /sample-retention`), `src/services/capacityService.ts` + `src/services/monitoringService.ts`, `src/jobs/migrateSampleRetentionToEntities.ts`.
+**Used by:** `src/services/sampleQueryRouter.ts`, `src/api/routes/serverSettings.ts` (`GET`/`PUT /sample-retention`), `src/services/capacityService.ts` + `src/services/monitoringService.ts`.
 
 **Invariants:**
 - Encoding: positive = N days, 0 = tier off (pruned), `FOREVER` = -1 (keep forever); short in-process cache TTL, invalidated on every write; partial PUT merges into stored value.

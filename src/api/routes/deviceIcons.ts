@@ -146,10 +146,10 @@ router.delete("/:id", requirePermission("deviceIcons", "write"), async (req, res
 // fetches across re-renders.
 //
 // SVG uploads are transparently rasterized to PNG at upload time (see
-// deviceIconService.uploadIcon + rasterizeStoredSvgIcons backfill), so
-// in practice this endpoint only serves raster formats. The SVG branch
-// below stays as defense-in-depth in case a legacy row slips past the
-// backfill (e.g. resvg refused to parse a malformed SVG).
+// deviceIconService.uploadIcon), so in practice this endpoint only serves
+// raster formats. The SVG branch below stays as defense-in-depth for a
+// legacy row stored before upload-time rasterization (e.g. one resvg
+// refused to parse when the retired boot backfill ran).
 router.get("/:id/image", requireAuth, async (req, res, next) => {
   try {
     const img = await getIconImage(String(req.params.id));

@@ -16,10 +16,9 @@
   - fireDnsResolvedRelease() (delete branch only) releases any owned `dns_resolved` rows before the row is removed
 - `src/utils/manufacturerNormalize.ts` — normalizeManufacturer() pure function (cached alias map, no DB access)
 - `src/utils/osNormalize.ts` — normalizeOsInData() / normalizeWindowsOs() pure functions (no DB access, no row read — see the entry below for why)
-- `src/utils/assetInvariants.ts` — clampAcquiredToLastSeen() logic (not hooked yet; job applies it at startup); the pure operator-pin appliers enforceOperatorOverrides() calls, including applyPrimaryAddressPin + PIN_FOLLOW_STALE_MS
+- `src/utils/assetInvariants.ts` — clampAcquiredToLastSeen() logic (not an extension hook: every Asset writer that stages `acquiredAt` or `lastSeen` calls it — the asset routes, assetMergeService, conflictResolutionService and each discovery create/update path); the pure operator-pin appliers enforceOperatorOverrides() calls, including applyPrimaryAddressPin + PIN_FOLLOW_STALE_MS
 - `src/utils/assetSourceDerivation.ts` — deriveAssetSources() pure function producing AssetSource rows from legacy tags
-- `src/jobs/normalizeManufacturers.ts` — One-shot startup: seeds default aliases, loads cache, backfills existing Assets
-- `src/jobs/clampAssetAcquiredAt.ts` — One-shot startup: clamps acquiredAt ≤ lastSeen for pre-existing rows
+- `src/jobs/normalizeManufacturers.ts` — Every-boot startup: seeds default aliases, loads cache, backfills existing Assets
 
 **Readers** (files that consume it):
 - Any code path that writes to Asset (discovery, UI routes, jobs) gets the extension hooks applied automatically.
@@ -28,12 +27,12 @@
 
 **Invariants:**
 - Every Asset create/update that touches manufacturer will have the value normalized by the alias map at write time (no raw "Fortinet, Inc." rows survive).
-- clampAcquiredToLastSeen is gated by a marker key (job doesn't re-run); startup check will warn if marker is missing.
+- clampAcquiredToLastSeen runs at the writers, not in the extension; the boot job that repaired pre-invariant rows (`clampAssetAcquiredAt`) was retired 2026-11-09 (CQ-B013), so a NEW Asset writer that stages `acquiredAt` must call it itself.
 - IP history is fire-and-forget best-effort; a transient DB error doesn't block the underlying Asset write.
 - **Fire-and-forget means UNORDERED, not just error-swallowing — and that is the half that bites.** `recordIpHistory()` is not awaited, so its `INSERT ... ON CONFLICT` is still in flight when the caller's `asset.create` / `update` has already resolved. Anything that reads or deletes `AssetIpHistory` immediately after an Asset write is racing it: `tests/integration/ipUpstreamChain.test.ts` deleted the row to model "no history for this address", WON the race, and the upsert then landed on top with `lastSeen = now`, which made a deliberately month-old claim read as FRESH and failed a test about rule 40 staleness for reasons nothing in the test could explain. The fix pattern is to wait for the row to APPEAR (proving the single in-flight upsert has landed) and only then write it, which `dropIpHistory()` in that file does. A bare `deleteMany` after an Asset write that carries an IP is never safe, and neither is asserting the row's absence. **Nor is a bare `updateMany`** — backdating the row to model a stale claim is the same race with the same tell, and it cost CI two red `Build and publish Polaris image` runs on 2026-09-18 before `tests/integration/ipamOwningGateUpstream.test.ts` grew `ageIpHistory()`, the update-shaped twin of `dropIpHistory()`. Both assert the row appeared rather than falling through on a timed-out poll: a poll that gives up and then writes nothing leaves the test green, the upsert lands a moment later, and the flake returns with nothing pointing here. Same shape as `fireDnsResolvedReconcile()` above — see cross-cutting/dns-resolved-reservations for the reservation-side version of the same race.
-- shadowWriteAssetSources uses the same derivation rules as the backfill job; updates only refresh metadata (syncedAt, lastSeen, integrationId), never overwrite observed JSON that came from discovery.
+- shadowWriteAssetSources derives from the legacy tag / assetTag conventions (`deriveAssetSources`); updates only refresh metadata (syncedAt, lastSeen, integrationId), never overwrite observed JSON that came from discovery. (The boot backfill that ran the same derivation over pre-existing rows, `backfillAssetSources`, was retired 2026-11-09 — CQ-B013.)
 - A decommissioned asset carries no `ipAddress` (rule 40(k)); a new decommission path needs nothing of its own as long as it writes through the extended client. Raw SQL that sets status bypasses it.
-- updateMany doesn't trigger shadowWriteAssetSources (rare on identity fields; backfill catches drift on next startup).
+- updateMany doesn't trigger shadowWriteAssetSources (rare on identity fields; every discovery pathway upserts its own AssetSource rows, so the next run heals drift).
 - Extension runs AFTER the query executes; result reflects the DB commit state, not pre-normalization input.
 
 **When changing this:**

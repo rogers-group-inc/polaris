@@ -41,7 +41,6 @@
 
 import { Resvg } from "@resvg/resvg-js";
 import { prisma } from "../db.js";
-import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { isKnownAssetType } from "../utils/assetTypes.js";
@@ -293,41 +292,6 @@ export async function uploadIcon(input: UploadedIcon): Promise<DeviceIconSummary
     },
   });
   return summarize(row);
-}
-
-// One-shot backfill: convert any DeviceIcon rows still stored as SVG
-// into PNG using the same rasterizer the upload path uses. Idempotent
-// via the mimeType filter — second-run finds zero rows. Best-effort
-// per-row: a single malformed SVG doesn't abort the rest of the
-// migration; failures are logged and the row is left alone.
-export async function rasterizeStoredSvgIcons(): Promise<{ converted: number; failed: number }> {
-  const rows = await prisma.deviceIcon.findMany({
-    where: { mimeType: "image/svg+xml" },
-    select: { id: true, filename: true, data: true },
-  });
-  let converted = 0;
-  let failed = 0;
-  for (const row of rows) {
-    try {
-      const png = rasterizeSvgToPng(Buffer.from(row.data));
-      const pngBytes = new Uint8Array(png.byteLength);
-      pngBytes.set(png);
-      await prisma.deviceIcon.update({
-        where: { id: row.id },
-        data: {
-          mimeType: "image/png",
-          filename: row.filename.replace(/\.svg$/i, "") + ".png",
-          data: pngBytes,
-          size: png.length,
-        },
-      });
-      converted++;
-    } catch (err) {
-      failed++;
-      logger.warn({ err, iconId: row.id }, "deviceIconService backfill: failed to rasterize SVG icon");
-    }
-  }
-  return { converted, failed };
 }
 
 export async function listIcons(): Promise<DeviceIconSummary[]> {
