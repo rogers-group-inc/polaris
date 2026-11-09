@@ -262,14 +262,12 @@ describe("listAssetOverrides", () => {
     expect(m.assetFindMany.mock.calls[0][0].select.ipv6Address).toBe(true);
   });
 
-  // SUSPECTED GAP (not fixed — tests-only change, see CQ-T010 in
-  // docs/CODE-QUALITY-LEDGER.md): the OR list predates the processes /
-  // eventLog streams and the per-stream lldp / storage / processes / eventLog
-  // intervals. An asset whose ONLY override is one of those columns never
-  // appears in the "Asset Overrides" list, so an operator auditing deviations
-  // at a scope cannot see it. Flip to `it` once the OR list (and the select)
-  // cover every per-asset override column on Asset.
-  it.fails("finds an asset whose only per-asset override is a newer stream's polling method or interval", async () => {
+  // Was a bug until 2026-11-09 (found by CQ-T010): the OR list predated the
+  // processes / eventLog streams and the per-stream lldp / storage /
+  // processes / eventLog intervals, so an asset whose ONLY override was one of
+  // those never appeared in the "Asset Overrides" list. Filter and select now
+  // share ASSET_OVERRIDE_COLUMNS.
+  it("finds an asset whose only per-asset override is a newer stream's polling method or interval", async () => {
     await svc.listAssetOverrides(undefined, undefined);
     const or = m.assetFindMany.mock.calls[0][0].where.OR as Array<Record<string, unknown>>;
     const cols = or.map((c) => Object.keys(c)[0]);

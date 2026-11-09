@@ -89,13 +89,12 @@ describe("WinRM exchange", () => {
     expect(Buffer.from(m[1], "base64").toString("utf16le")).toContain("Get-DhcpServerv4Scope");
   });
 
-  // BUG (not fixed — tests-only change, see CQ-T010 in the ledger): winrmExec
-  // arms its 15 s timeout and the caller-signal abort listener BEFORE
-  // winrmCreateShell, but clears them only in the finally that wraps the
-  // later steps. A failed shell create (401, refused, bad response) leaves
-  // the timer pending and the listener attached to the discovery signal.
-  // Flip to `it` once the create step sits inside the try.
-  it.fails("leaves no pending timer behind when the shell create fails", async () => {
+  // Was a bug until 2026-11-09 (found by CQ-T010): winrmExec armed its 15 s
+  // timeout and the caller-signal abort listener BEFORE winrmCreateShell but
+  // cleared them only in the finally around the later steps, so a failed
+  // shell create (401, refused, bad response) left both behind. The create
+  // now sits inside the try.
+  it("leaves no pending timer behind when the shell create fails", async () => {
     vi.useFakeTimers();
     try {
       failAction = "Create";

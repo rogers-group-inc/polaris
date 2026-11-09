@@ -601,7 +601,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `getRecentManualReservations(limit, sourceTypes?)` — default `sourceTypes=undefined` filters to `["manual"]` (back-compat); explicit array narrows or broadens; empty array disables the filter entirely. Caller (the dashboard route) validates source-type values against the known enum before passing through.
 
 **When changing this:**
-- Unit tests: `tests/unit/utilizationService.test.ts` — status buckets, used-percent (IPv6 exact), the Recently Reserved filter; one `it.fails` for `getBlockUtilization`'s `activeReservations` counting released rows.
+- Unit tests: `tests/unit/utilizationService.test.ts` — status buckets, used-percent (IPv6 exact), the Recently Reserved filter, and `getBlockUtilization`'s `activeReservations` counting only status "active" rows (it counted released ones until 2026-11-09).
 - Test large fleet performance (blocks query with full subnet tree may be slow with 100k+ subnets)
 - Verify usagePercent calculation (allocatedAddresses / blockAddresses) matches business intent
 - Check that deprecated subnets are correctly filtered from block capacity

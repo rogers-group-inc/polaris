@@ -221,7 +221,9 @@ export async function getBlockUtilization(blockId: string) {
     include: {
       subnets: {
         include: {
-          _count: { select: { reservations: true } },
+          // Active only: released rows are kept (rule 69 — a count is of
+          // addresses HELD), so counting every row overstated the field's name.
+          _count: { select: { reservations: { where: { status: "active" } } } },
         },
         orderBy: { cidr: "asc" },
       },

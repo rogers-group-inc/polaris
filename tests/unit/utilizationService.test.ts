@@ -163,13 +163,11 @@ describe("getBlockUtilization", () => {
     expect(r!.subnets[0]).toMatchObject({ usableHosts: 254, activeReservations: 3 });
   });
 
-  // BUG (not fixed — tests-only change, see CQ-T010 in the ledger): the field
-  // is named `activeReservations`, but the `_count` select counts EVERY
-  // reservation on the subnet. Released rows are kept (status "released"),
-  // so a network whose leases have churned reports far more "active"
-  // reservations than it holds. Flip to `it` once the count is filtered to
-  // status "active".
-  it.fails("counts only ACTIVE reservations toward activeReservations", async () => {
+  // Was a bug until 2026-11-09 (found by CQ-T010): `activeReservations`
+  // counted EVERY reservation on the subnet, released rows included (they are
+  // kept, status "released"), so a churned network reported far more than it
+  // holds. The count is filtered to status "active" (rule 69).
+  it("counts only ACTIVE reservations toward activeReservations", async () => {
     m.blockFindUnique.mockResolvedValue({ id: "b1", subnets: [] });
     await svc.getBlockUtilization("b1");
     const include = m.blockFindUnique.mock.calls[0][0].include;
