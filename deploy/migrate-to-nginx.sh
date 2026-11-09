@@ -314,6 +314,7 @@ if trusted_sync_helper || { [[ -f "$SYNC_HELPER" ]] && bootstrap_sync_helper && 
 elif [[ ! -e "$SYNC_HELPER" ]]; then
   warn "No $SYNC_HELPER on this host — installing the nginx helpers from $APP_DIR/deploy WITHOUT review."
   install -o root -g root -m 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
+  install -o root -g root -m 0644 "$APP_DIR/deploy/polaris-nginx-apply@.service"   /etc/systemd/system/polaris-nginx-apply@.service
   install -o root -g root -m 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx"        /etc/sudoers.d/polaris-nginx
   install -o root -g root -m 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf"  /etc/tmpfiles.d/polaris-nginx.conf
   install -o root -g root -m 0644 "$SHIPPED_DROPIN" "$NGINX_DROPIN_FILE"

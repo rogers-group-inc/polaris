@@ -228,12 +228,15 @@ block carries `100m` takes switch and AP images but refuses a FortiGate image
 over 100 MB at nginx, and the upload's error message says so — re-apply the **Web Server** tab, or change the number
 by hand as below.
 
-**Known problem on systemd installs (the split-role layout):** neither the
-update nor the Web Server tab's **Save & Apply** can currently rewrite nginx
-there, and Save & Apply shows *Internal server error*. Until that is fixed, add
-the location by hand as root: back up `/etc/nginx/conf.d/polaris.conf`, paste
-this inside the `server { }` block after `location / { … }`, then run
-`nginx -t && systemctl reload nginx`.
+**On a systemd install that predates the fix for this,** neither the update
+nor the Web Server tab's **Save & Apply** could rewrite nginx, and Save & Apply
+showed *Internal server error*. Update Polaris, then run
+`sudo /usr/local/sbin/polaris-update-sync --apply-helpers` (run it a second
+time if the first run installs a newer `polaris-update-sync`); after that, Save
+& Apply on the **Web Server** tab installs the current config, firmware
+location included. To add only the location by hand instead: back up
+`/etc/nginx/conf.d/polaris.conf`, paste this inside the `server { }` block
+after `location / { … }`, then run `nginx -t && systemctl reload nginx`.
 
 ```
   location = /api/v1/server-settings/firmware/images {

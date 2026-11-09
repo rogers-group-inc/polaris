@@ -1,0 +1,31 @@
+[Unit]
+Description=Polaris — nginx GUI operation (%i)
+Documentation=https://github.com/rogers-group-inc/polaris
+# Started by polaris-web (the polaris user) for the Web Server tab — Save &
+# Apply, certificate rotation, reload, the listener check — through the scoped
+# polkit grant in /etc/polkit-1/rules.d/49-polaris.rules, which allows exactly
+# the instances apply-config, rotate-cert, reload and verify-listening-<port>.
+# Business rule 117(o).
+#
+# Why a unit and not `sudo /usr/local/sbin/polaris-nginx-apply`: polaris-web runs under
+# ProtectSystem=strict, and a sudo from inside it inherits that mount
+# namespace, so even root saw /etc/nginx, /run and /var/log/nginx read-only
+# and every apply failed. A started unit runs in its own namespace, with no
+# sandbox, because its whole job is writing nginx's files.
+#
+# The wrapper validates the instance itself (it is the same root-owned script
+# sudoers granted); polaris supplies only the staged files under
+# /run/polaris-nginx-stage, which the wrapper content-checks (rule 117(m)).
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/polaris-nginx-apply %i
+TimeoutStartSec=60
+# The caller reads the result from here: polaris owns the directory (tmpfiles),
+# so it can remove a stale file before starting the instance, and the file is
+# root-written 0644 so it can read it after.
+StandardOutput=truncate:/run/polaris-nginx-stage/%i.out
+StandardError=inherit
+SyslogIdentifier=polaris-nginx-apply
+
+# No [Install] section: never enabled, only started on demand.

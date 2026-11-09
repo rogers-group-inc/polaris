@@ -1336,7 +1336,10 @@ Click **Adopt managed mode** to unlock. From there:
 - **Save & Apply** stages a rendered config to `/run/polaris-nginx-stage/`,
   validates via `nginx -t`, atomic-renames into place, and `systemctl reload
   nginx`s. The wrapper rolls back to the most recent `.bak` if `nginx -t`
-  fails.
+  fails. The root steps run in `polaris-nginx-apply@<step>.service`, which
+  the scoped polkit rule lets the `polaris` account start. If Save & Apply
+  says to approve the held root helpers, run
+  `sudo /usr/local/sbin/polaris-update-sync --apply-helpers`.
 - **Rotate certificate** orchestrates the dual-pin workflow: upload cert+key
   → stage the new pin on every active agent via `/agents/cert-pins/bulk-add`
   (so they accept both old + new) → swap the cert file + reload nginx →

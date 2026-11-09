@@ -671,8 +671,11 @@ polaris-updater` shows the `REFUSED:` line. A drop-in you add yourself under
 
 **Root helpers wait for you.** A few files are run by root directly, so their
 content cannot be checked: `/usr/local/sbin/polaris-nginx-apply`,
-`/usr/local/sbin/polaris-update-sync`, `/etc/polkit-1/rules.d/49-polaris.rules`
-and, on an HA node, `/usr/local/sbin/polaris-ha-role`,
+`/usr/local/sbin/polaris-update-sync`, `/etc/polkit-1/rules.d/49-polaris.rules`,
+`/etc/systemd/system/polaris-nginx-apply@.service` (the unit the Web Server
+tab's Save & Apply starts — offered only by a `polaris-update-sync` new enough
+to know it, so the first `--apply-helpers` after it ships may need a second
+run) and, on an HA node, `/usr/local/sbin/polaris-ha-role`,
 `polaris-ha-role.{service,timer}`, `/usr/local/sbin/polaris-ha-ssh-wrapper` and
 `patroni.service.d/10-polaris.conf`. The in-app updater never installs a new
 version of them: the `polaris` account writes `/opt/polaris` and may start the

@@ -479,7 +479,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/privilegedSysadmin.ts
 
-**What it owns:** Thin TypeScript wrapper around the `sudo /usr/local/sbin/polaris-nginx-apply` shell script — stages files into the run dir and spawns the privileged wrapper with bounded output capture. The wrapper (not this module) is the entire privileged surface.
+**What it owns:** Thin TypeScript glue around the root `/usr/local/sbin/polaris-nginx-apply` shell script — stages files into `/run/polaris-nginx-stage` and runs the wrapper as root with bounded output capture. **Preferred path: START `polaris-nginx-apply@<op>.service`** (`deploy/polaris-nginx-apply@.service`, a root oneshot; instances `apply-config` / `rotate-cert` / `reload` / `verify-listening-<port>`, the only ones the polkit rule allows) and read the wrapper's output from `/run/polaris-nginx-stage/<op>.out`, which the unit writes (`StandardOutput=truncate:`). **Fallback** while that unit is not installed (the administrator has not approved the held root helper): `sudo -n` the wrapper, as before. The wrapper (not this module) is the entire privileged surface. Business rule 117(o).
 
 **Public API:** `NginxApplySubcommand`, `WrapperResult`, `runNginxApply`, `stageNginxConfig`, `stageCertAndKey`, `isWrapperAvailable`
 
@@ -490,9 +490,12 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **Invariants:**
 - All subcommand/arg validation lives in the shell script — this module only stages files + spawns; captured output is size-capped with a truncation flag.
 - Stage dir/files are written with restrictive modes; `ensureStageDir` is a defensive fallback when systemd-tmpfiles didn't run.
+- **The sudo path cannot work from a shipped `polaris-web.service`.** That unit is `ProtectSystem=strict`; a sudo inherits its mount namespace, so even root sees `/etc/nginx`, `/run` and `/var/log/nginx` read-only. The web unit lists `-/run/polaris-nginx-stage` in `ReadWritePaths` so THIS process can stage; root's half must run in the started unit. Every Save & Apply and every managed-mode update render failed on systemd installs from the split-role cutover (2026-05-27) until 2026-11-09.
+- A stale `<op>.out` is removed before each start, so an earlier run's output is never read as this one's. A polkit refusal (start denied, no output file) and a read-only failure on the sudo path both come back with the `polaris-update-sync --apply-helpers` hint.
 
 **When changing this:**
 - `isWrapperAvailable()` lets route handlers short-circuit on dev boxes that lack the wrapper.
+- A new wrapper subcommand needs: a `case` in `deploy/scripts/polaris-nginx-apply.sh` (one argument — a unit instance carries one), an instance in the polkit regex (`deploy/polkit/49-polaris.rules`), and `instanceFor` here. `tests/unit/nginxApplyUnit.test.ts` evaluates the polkit rule and checks the web unit covers every `/run` path this module and `updateService` write.
 
 ---
 

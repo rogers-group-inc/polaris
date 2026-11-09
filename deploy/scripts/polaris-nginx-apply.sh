@@ -264,5 +264,9 @@ case "$subcommand" in
   rotate-cert)      do_rotate_cert ;;
   reload)           do_reload ;;
   verify-listening) do_verify_listening "$@" ;;
+  # The instance form polaris-nginx-apply@verify-listening-<port>.service
+  # passes (one argument; a unit instance cannot carry two). The port is
+  # validated by do_verify_listening exactly as in the two-argument form.
+  verify-listening-*) do_verify_listening "${subcommand#verify-listening-}" ;;
   *)                usage ;;
 esac
