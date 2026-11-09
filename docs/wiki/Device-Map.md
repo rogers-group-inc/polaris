@@ -377,7 +377,8 @@ was saved also steps aside if its automatic spot is now taken.
 **Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a
 line to show its points: a dot for each bend and a ring where it meets each
-device. Drag a ring around the device's edge to attach the line at that spot;
+device. A line the map routed itself shows a dot on each of its corners straight
+away; moving or deleting one makes the line yours, keeping its other corners. Drag a ring around the device's edge to attach the line at that spot;
 it stays on the device's outline, so the line never comes loose. A bend stays
 where you put it when you move one of the line's devices, and moves with the
 line when you move both devices together. Select a point and press

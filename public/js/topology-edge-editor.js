@@ -367,7 +367,12 @@
       var ap = attachPoints(e, path);
       var sp = ap.s, tp = ap.t;
       specs.push({ id: handleId(key, "s"), kind: "source", index: -1, x: sp.x, y: sp.y });
-      path.bends.forEach(function (b, i) {
+      // A line nobody has drawn shows the corners the router / fan-out gave
+      // it, as bends ready to drag: moving (or deleting) one takes the whole
+      // shape over (seedFromRendered), in the same order, so its index holds.
+      // Before, only the two end points showed until a first drag on the line.
+      var bends = isEmptyPath(path) ? renderedCorners(e) : path.bends;
+      bends.forEach(function (b, i) {
         specs.push({ id: handleId(key, "b" + i), kind: "bend", index: i, x: b.x, y: b.y });
       });
       specs.push({ id: handleId(key, "t"), kind: "target", index: -1, x: tp.x, y: tp.y });
@@ -442,14 +447,20 @@
     function seedFromRendered(key) {
       var path = pathFor(key);
       if (!isEmptyPath(path)) return path;
-      var e = edgeByKey[key];
+      path.bends = renderedCorners(edgeByKey[key]);
+      return path;
+    }
+    // The corners a line is drawn with right now (none for a straight one).
+    function renderedCorners(e) {
+      var out = [];
+      if (!e || e.removed()) return out;
       var cs = e.style("curve-style");
       if ((cs === "taxi" || cs === "segments") && e.segmentPoints) {
         (e.segmentPoints() || []).slice(0, MAX_BENDS).forEach(function (p) {
-          if (_finitePoint(p)) path.bends.push({ x: p.x, y: p.y });
+          if (_finitePoint(p)) out.push({ x: p.x, y: p.y });
         });
       }
-      return path;
+      return out;
     }
 
     // ── Events ──
@@ -617,6 +628,8 @@
       var kind = h.data("handleKind");
       var path = pathFor(key);
       if (kind === "bend") {
+        // A generated corner moved for the first time: own the whole shape.
+        if (isEmptyPath(path)) seedFromRendered(key);
         var i = h.data("bendIndex");
         if (!path.bends[i]) return;
         var p = h.position();
@@ -686,9 +699,11 @@
         var drop = {};
         sel.forEach(function (h) {
           var key = h.data("pathKey");
+          var kind = h.data("handleKind");
+          // Deleting a generated corner: own the shape, minus that corner.
+          if (kind === "bend" && isEmptyPath(paths[key])) seedFromRendered(key);
           var path = paths[key];
           if (!path) return;
-          var kind = h.data("handleKind");
           if (kind === "bend") (drop[key] = drop[key] || []).push(h.data("bendIndex"));
           else path[kind === "source" ? "s" : "t"] = null;
           drop[key] = drop[key] || [];
