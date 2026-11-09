@@ -204,7 +204,10 @@ switch's APs stack beneath it in the column to its right. A link that leaves
 a switch for a child switch on another row turns up or down right next to the
 switch and runs along the child's row, so it never shares a line with the
 switch's straight link to the next switch along, and lines travel the gutters
-instead of cutting across other devices. Drag anything to override the
+instead of cutting across other devices. Once devices have moved (a saved
+layout, a drag), that turn can land across the switch's own AP lines or another
+straight link; the turn then slides along the link to the nearest spot that
+crosses nothing. Drag anything to override the
 layout; the positions are saved per site.
 
 Decommissioned and disabled devices are never drawn, including as the far end
