@@ -385,6 +385,23 @@ asset's Events tab alike). "Show N" below names the control, not a label.
 
 ---
 
+## Per-row listeners in a table that repaints (delegate from the container)
+
+**What it is:** a row's controls — its name trigger, a switch, a ▶ / ▼ group toggle, a pivot link, a hover pill, a card's verb buttons — handled by ONE listener on the element the rows are painted into, bound once, instead of a `querySelectorAll(...).forEach(addEventListener)` loop run after every paint (CQ-F042, 2026-11-09). It matters where the table repaints often: on every page / sort / filter change (the Assets and Automations lists), on every keystroke in a filter box (MAC Table, ARP Table, the firewall's child tabs, Wireless, the NTP timezone picker), or after every verb over a list that can run to thousands (the Events Alerts panel's conflict cards).
+
+**Canonical implementation:** `public/js/automations.js → _wireRulesTable()` (a static tbody, a `data-rules-wired` flag, `change` + `click` dispatched to `onRuleToggle` / `onRuleMenu`); `public/js/assets.js → _wireGroupToggles()` (one shared helper for the three grouped tables' toggles, data-flag guarded, selectors passed in) and `_wireAssetPivotLinks()` / `_wireHoverTriggersIn()` (named handlers — `addEventListener` with the same function is a no-op, so they are safe to call on every paint, the Assets list tbody's existing `_handleCopyClick` arrangement); `public/js/events.js` → the conflicts block's `CARD_ACTIONS` selector → handler table. Pinned by `tests/unit/automationsRulesDelegationDom.test.ts`, `assetsRowDelegationDom.test.ts`, `eventsCardDelegationDom.test.ts`, `timezoneDropdownDom.test.ts`.
+
+**Key conventions:**
+- **The handler gets the element its per-row listener used to sit on**: `e.target.closest(<the same selector>)`, then `container.contains(el)`. Never read `this` / `currentTarget` (that is the container now).
+- **Bind once.** Either a named module-level handler (re-adding it is a no-op) or a `data-*-wired` flag on the container. A container rebuilt by its parent's render (the ARP Table's body div) is simply bound again with it — the flag lives on the element, so a fresh element gets a fresh listener.
+- **Per-paint state rides on the element**, not in the listener's closure: `_wireWirelessBody` writes the latest paint's `{ asset, collapsed }` onto the body before its flag check, so the one listener acts on what is on screen. Closures over module state (`_rules`, `canEditRules`) need nothing.
+- **`stopPropagation` / `preventDefault` keep their meaning.** Called in the container's listener they still stop the event before the document (row selection, the row-menu `contextmenu` / `dblclick` replays) and still cancel a link — but anything BETWEEN the row and the container would now run first, so keep the container the nearest stable ancestor.
+- **The standard row gestures need no change.** app.js replays a right click / double click as a bubbling `click` on the row's trigger, which reaches a delegated listener synchronously while `rowMenuGesture()` is still set.
+- **mouseenter / mouseleave do not bubble.** Rebuild them from `mouseover` / `mouseout` with the crossed-edge test (`_macTriggersCrossed`: the target is inside the trigger and the `relatedTarget` is not), nested triggers outermost-first on the way in.
+- **Enter in a row's field** is a delegated `keydown` that finds the row's own button (`[data-dupip-input]` → its row's `[data-dupip-apply]`).
+
+**When NOT to use it:** a handful of buttons wired once per modal / card render that only an edit repaints (Server Settings' tag, alias, MIB, device-type, icon, credential and backup lists; the Automations channel and script lists; range-button groups; one-off menus). Delegation saves nothing there and moves the code away from the markup.
+
 ## Row context menu (per-row verbs behind the row name)
 
 **What it is:** A list row’s actions (Open / Edit / Clone / Delete) reached by RIGHT-clicking the row’s **name** — a plain left click does the row’s primary verb (Open) — instead of a trailing Actions column of buttons. One affordance per row, no column competing with the data for width, and a verb can be added without re-cutting the table layout. The same helper backs the page-header **account menu**, which is the pattern applied off a table: one identity affordance carrying the actions that belong to it.

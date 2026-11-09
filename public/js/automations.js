@@ -774,59 +774,77 @@ var _rulesPage = 1;
         '<td>' + escapeHtml(r.createdBy || "-") + '</td>' +
         '</tr>';
     }).join("");
-    tbody.querySelectorAll(".rule-enabled-toggle").forEach(function (cb) {
-      cb.addEventListener("change", async function () {
-        var r = _rules.find(function (x) { return x.id === cb.dataset.id; });
-        if (!r) return;
-        var desired = cb.checked;
-        // Disabling is a removal as far as down detection is concerned — the
-        // resolver only reads ENABLED rules.
-        if (!desired) {
-          var warn = await downDetectionRemovalWarning(r.id);
-          if (warn && !(await showConfirm('Disable automation "' + r.name + '"?' + warn))) {
-            cb.checked = true;
-            return;
-          }
-        }
-        cb.disabled = true;
-        try {
-          await api.automations.update(r.id, _ruleToInput(r, { enabled: desired }));
-          r.enabled = desired;
-          showToast("Automation " + (desired ? "enabled" : "disabled"), "success");
-          loadRules();
-        } catch (err) {
-          cb.checked = !desired;
-          cb.disabled = false;
-          showToast(err.message || "Update failed", "error");
-        }
-      });
+    _wireRulesTable(tbody);
+  }
+
+  // The table's two per-row controls, delegated from the tbody and bound once
+  // (CQ-F042): the list repaints on every page, sort and filter change, and
+  // the tbody (static in automations.html) outlives every paint. Each handler
+  // gets the control its per-row listener used to sit on.
+  function _wireRulesTable(tbody) {
+    if (!tbody || tbody.dataset.rulesWired === "1") return;
+    tbody.dataset.rulesWired = "1";
+    tbody.addEventListener("change", function (e) {
+      var cb = e.target && typeof e.target.closest === "function" ? e.target.closest(".rule-enabled-toggle") : null;
+      if (cb && tbody.contains(cb)) onRuleToggle(cb);
     });
-    tbody.querySelectorAll(".rule-menu").forEach(function (b) {
-      b.addEventListener("click", function () {
-        var r = _rules.find(function (x) { return x.id === b.dataset.id; });
-        if (!r) return;
-        if (!canEditRules) {
-          var viewItems = [
-            { label: "View", primary: true, title: "See how this automation is configured", onSelect: function () { openWizardFor(r, { readOnly: true }); } },
-          ].concat(portabilityMenuItems(r));
-          showRowMenu(b, viewItems, { label: "Actions for " + r.name });
-          return;
-        }
-        showRowMenu(b, [
-          { label: "Edit", primary: true, onSelect: function () { openWizardFor(r); } },
-          {
-            label: "Clone",
-            title: "Create a disabled copy of this automation",
-            // Name is uniquified HERE, not in the wizard: this is the only side
-            // holding the full rule list (_rules is every row, not the page slice).
-            onSelect: function () { openWizardFor(r, { clone: true, name: cloneName(r.name, _rules.map(function (x) { return x.name; })) }); },
-          },
-        ].concat(portabilityMenuItems(r), [
-          { separator: true },
-          { label: "Delete", danger: true, onSelect: function () { confirmDeleteRule(r); } },
-        ]), { label: "Actions for " + r.name });
-      });
+    tbody.addEventListener("click", function (e) {
+      var b = e.target && typeof e.target.closest === "function" ? e.target.closest(".rule-menu") : null;
+      if (b && tbody.contains(b)) onRuleMenu(b);
     });
+  }
+
+  // Enabled switch: confirm a disable that removes down detection, then save.
+  async function onRuleToggle(cb) {
+    var r = _rules.find(function (x) { return x.id === cb.dataset.id; });
+    if (!r) return;
+    var desired = cb.checked;
+    // Disabling is a removal as far as down detection is concerned — the
+    // resolver only reads ENABLED rules.
+    if (!desired) {
+      var warn = await downDetectionRemovalWarning(r.id);
+      if (warn && !(await showConfirm('Disable automation "' + r.name + '"?' + warn))) {
+        cb.checked = true;
+        return;
+      }
+    }
+    cb.disabled = true;
+    try {
+      await api.automations.update(r.id, _ruleToInput(r, { enabled: desired }));
+      r.enabled = desired;
+      showToast("Automation " + (desired ? "enabled" : "disabled"), "success");
+      loadRules();
+    } catch (err) {
+      cb.checked = !desired;
+      cb.disabled = false;
+      showToast(err.message || "Update failed", "error");
+    }
+  }
+
+  // The name: Edit (primary) / Clone / … / Delete, or View for a read-only role.
+  function onRuleMenu(b) {
+    var r = _rules.find(function (x) { return x.id === b.dataset.id; });
+    if (!r) return;
+    if (!canEditRules) {
+      var viewItems = [
+        { label: "View", primary: true, title: "See how this automation is configured", onSelect: function () { openWizardFor(r, { readOnly: true }); } },
+      ].concat(portabilityMenuItems(r));
+      showRowMenu(b, viewItems, { label: "Actions for " + r.name });
+      return;
+    }
+    showRowMenu(b, [
+      { label: "Edit", primary: true, onSelect: function () { openWizardFor(r); } },
+      {
+        label: "Clone",
+        title: "Create a disabled copy of this automation",
+        // Name is uniquified HERE, not in the wizard: this is the only side
+        // holding the full rule list (_rules is every row, not the page slice).
+        onSelect: function () { openWizardFor(r, { clone: true, name: cloneName(r.name, _rules.map(function (x) { return x.name; })) }); },
+      },
+    ].concat(portabilityMenuItems(r), [
+      { separator: true },
+      { label: "Delete", danger: true, onSelect: function () { confirmDeleteRule(r); } },
+    ]), { label: "Actions for " + r.name });
   }
 
   /** Catalogs for the export strip. The list page holds channels and the
