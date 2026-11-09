@@ -37,11 +37,12 @@ import { persistRunArpTables, stampArpPresence } from "./dhcp/arpTables.js";
 import { reverseDnsForAssets, applyOuiManufacturers } from "./dhcp/dnsOui.js";
 import { flushChangeEvents, type ChangeBaseline, type ChangeBaselineFields } from "./dhcp/changeEvents.js";
 import { deprecateStaleSubnets, applyAutoMonitorInterfaces } from "./dhcp/subnetSweeps.js";
+import { reserveInterfaceIps } from "./dhcp/interfaceIpReservations.js";
+import { recordObservedIpv6 } from "./dhcp/observedIpv6.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps, isIpv6Address } from "../../utils/cidr.js";
-import { collectObservedIpv6Sightings, planObservedIpv6 } from "../../utils/observedIpv6.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
 import { ipv6Enabled } from "../ipv6GateService.js";
 import { normalizeMacsDistinct, macHexKeyOrNull, normalizeMacOrNull, isAllZeroMac } from "../../utils/mac.js";
@@ -5305,62 +5306,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   phaseMark("4");
   // ══════════════════════════════════════════════════════════════════════════════
 
-  const interfaceRoleLabel = (role: string): string => {
-    if (role === "management") return "Management interface";
-    if (role === "secondary")  return "Secondary IP";
-    return "Interface";
-  };
-
-  for (const ifaceIp of result.interfaceIps) {
-    if (!ifaceIp.ipAddress) continue;
-
-    const matchingSubnet = findSubnetForIp(ifaceIp.ipAddress);
-    if (!matchingSubnet) continue;
-
-    const key = reservationKey(matchingSubnet.id, ifaceIp.ipAddress);
-    const noteText = `${interfaceRoleLabel(ifaceIp.role)} (${ifaceIp.interfaceName}) on ${ifaceIp.device}`;
-    const existingRes = activeResMap.get(key);
-    if (existingRes) {
-      if (existingRes.sourceType === "manual") {
-        const proposed = { hostname: ifaceIp.device, owner: "network-team", projectRef: projectRefLabel, notes: noteText, sourceType: "interface_ip" };
-        await upsertConflict(existingRes.id, integrationId, proposed, existingRes);
-      } else if (existingRes.sourceType === "observed") {
-        // An observed IPv6 sighting is evidence, never a claim (business rule
-        // 125): the gate configuring the address on an interface is the
-        // stronger fact, so the row becomes that, in place.
-        try {
-          const updatedRes = await prisma.reservation.update({
-            where: { id: existingRes.id },
-            data: { sourceType: "interface_ip", hostname: ifaceIp.device, owner: "network-team", projectRef: projectRefLabel, notes: noteText, expiresAt: null },
-          });
-          activeResMap.set(key, updatedRes);
-        } catch (err: any) {
-          syncLog("error", `Failed to convert observed address ${ifaceIp.ipAddress} to an interface IP on ${ifaceIp.device}/${ifaceIp.interfaceName}: ${err.message || "Unknown error"}`);
-        }
-      }
-      continue;
-    }
-
-    try {
-      await releaseDnsResolvedAt(matchingSubnet.id, ifaceIp.ipAddress);
-      const newRes = await prisma.reservation.create({
-        data: {
-          subnetId: matchingSubnet.id,
-          ipAddress: ifaceIp.ipAddress,
-          hostname: ifaceIp.device,
-          owner: "network-team",
-          projectRef: projectRefLabel,
-          notes: noteText,
-          status: "active",
-          sourceType: "interface_ip",
-        },
-      });
-      activeResMap.set(key, newRes);
-      reservationNames.push(`${ifaceIp.ipAddress} (${ifaceIp.device}/${ifaceIp.interfaceName})`);
-    } catch (err: any) {
-      syncLog("error", `Failed to create reservation for interface IP ${ifaceIp.ipAddress} on ${ifaceIp.device}/${ifaceIp.interfaceName}: ${err.message || "Unknown error"}`);
-    }
-  }
+  // Body: discovery/dhcp/interfaceIpReservations.ts (CQ-B060).
+  await reserveInterfaceIps({ result, activeResMap, findSubnetForIp, reservationKey, upsertConflict, projectRefLabel, reservationNames, integrationId, syncLog });
 
   // Phase 4b (removed): per-interface IPs/MACs for the FortiGate asset are now
   // populated by the System tab's interface scrape (monitoringService.collectSystemInfo
@@ -7178,59 +7125,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // index has to judge each); every refresh shares one expiresAt, so the whole
   // steady state is ONE updateMany per run.
   // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const nowMs = Date.parse(now);
-    const plan = planObservedIpv6({
-      sightings: collectObservedIpv6Sightings(result.deviceInventory, result.switchMacTable, nowMs),
-      findSubnetId: (ip) => findSubnetForIp(ip)?.id,
-      activeRow: (subnetId, ip) => activeResMap.get(reservationKey(subnetId, ip)),
-      hostnameForMac: (mac) => assetIdx.findByMac(mac)?.hostname || null,
-      nowMs,
-    });
-    let observedCreated = 0;
-    for (const c of plan.creates) {
-      try {
-        const row = await prisma.reservation.create({
-          data: {
-            subnetId: c.subnetId,
-            ipAddress: c.ip,
-            hostname: c.hostname,
-            macAddress: c.mac,
-            projectRef: projectRefLabel,
-            notes: [
-              `IPv6 address seen in use on ${c.device} (${c.source === "device-inventory" ? "device inventory" : "FortiSwitch detected device"})`,
-              c.mac ? `MAC: ${c.mac}` : null,
-            ].filter(Boolean).join(" — "),
-            status: "active",
-            sourceType: "observed",
-            expiresAt: c.expiresAt,
-          },
-        });
-        activeResMap.set(reservationKey(c.subnetId, c.ip), row);
-        observedCreated++;
-      } catch (err: any) {
-        // P2002: something claimed the address mid-run — that row wins.
-        if (err?.code !== "P2002") syncLog("error", `Failed to record observed IPv6 address ${c.ip}: ${err.message || "Unknown error"}`);
-      }
-    }
-    if (plan.refresh.ids.length > 0) {
-      await prisma.reservation.updateMany({
-        where: { id: { in: plan.refresh.ids }, sourceType: "observed", status: "active" },
-        data: { expiresAt: plan.refresh.expiresAt },
-      });
-    }
-    if (plan.patches.length > 0) {
-      await batchSettled(plan.patches, (p) => prisma.reservation.update({ where: { id: p.id }, data: p.data }));
-    }
-    if (observedCreated > 0 || plan.refresh.ids.length > 0) {
-      syncLog(
-        "info",
-        `Observed IPv6 addresses: ${observedCreated} recorded, ${plan.refresh.ids.length} still in use` +
-          (plan.heldByOtherSource > 0 ? `, ${plan.heldByOtherSource} already held by another source` : "") +
-          (plan.skippedNoSubnet > 0 ? `, ${plan.skippedNoSubnet} outside every known network` : ""),
-      );
-    }
-  }
+  // Body: discovery/dhcp/observedIpv6.ts (CQ-B060).
+  await recordObservedIpv6({ result, now, activeResMap, findSubnetForIp, reservationKey, assetIdx, projectRefLabel, syncLog });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7.5 — Enrich existing assets from FortiSwitch MAC table + FortiGate ARP
