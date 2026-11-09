@@ -31,7 +31,7 @@ import { isWorkloadPlatform } from "../../utils/workloadSources.js";
 import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
-import { integrationAdapter } from "../integrationAdapters.js";
+import { integrationAdapter, type IntegrationType } from "../integrationAdapters.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
@@ -670,6 +670,11 @@ export async function triggerDiscovery(
  * progress accumulator (flushed to the row), and cancellation (polls the row's
  * cancelRequested flag and aborts its local AbortController).
  */
+/** The `never` arm of runDiscovery's collector dispatch: unreachable for a known type. */
+function unhandledCollector(type: never): never {
+  throw new AppError(400, `No discovery collector for integration type "${String(type)}"`);
+}
+
 export async function runDiscovery(integrationId: string, actor: string, scope?: DiscoveryScope): Promise<void> {
   const integration = await prisma.integration.findUnique({ where: { id: integrationId } });
   if (!integration) {
@@ -877,7 +882,13 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       syncTotals.skipped.push(...r.skipped);
     };
 
-    if (integration.type === "entraid") {
+    // The collector dispatch is exhaustive over IntegrationType (CQ-B064): the
+    // last branch used to be a bare `else` that ran FortiManager discovery
+    // for ANY type no branch above named. `collectorType` narrows through the
+    // chain, so a new type with no branch reaches unhandledCollector(never) —
+    // a compile error — and an unknown stored type fails the run instead.
+    const collectorType = integration.type as IntegrationType;
+    if (collectorType === "entraid") {
       // Entra ID discovery produces assets only — no subnets, reservations, or VIPs.
       // What each intune row already holds, so the per-device Ethernet MAC
       // read skips devices that have not synced since. A scoped run reads its
@@ -902,7 +913,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
           intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,
         });
       }
-    } else if (integration.type === "activedirectory") {
+    } else if (collectorType === "activedirectory") {
       // Active Directory discovery produces assets only — no subnets, reservations, or VIPs.
       const result = await activeDirectory.discoverDevices(config as any, ac.signal, onProgress, scope?.kind === "ad-object" ? { objectGuid: scope.objectGuid } : undefined);
       if (!ac.signal.aborted) {
@@ -912,7 +923,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
-    } else if (integration.type === "vcenter") {
+    } else if (collectorType === "vcenter") {
       // vCenter discovery produces assets only — VMs + ESXi hosts (plus the
       // current-state datastore table). No subnets, reservations, or VIPs.
       const vcTarget = vcenterScopeTarget(scope);
@@ -924,7 +935,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
-    } else if (isWorkloadPlatform(integration.type)) {
+    } else if (isWorkloadPlatform(collectorType)) {
       // Unraid / TrueNAS SCALE / Proxmox VE produce assets only — the host(s),
       // the VMs and the containers / Apps — through ONE shared sync
       // (discovery/workloadSync.ts). No scoped mode: the whole inventory is one
@@ -944,7 +955,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.skipped.push(...r.skipped);
         syncTotals.decommissionedAssets.push(...r.decommissioned);
       }
-    } else if (integration.type === GENERIC_API_TYPE) {
+    } else if (collectorType === GENERIC_API_TYPE) {
       // Generic API ("build your own"): an operator-described REST feed,
       // mapped record by record onto assets (services/genericApiService.ts →
       // discovery/genericApiSync.ts). Assets only, no scoped mode — the feed
@@ -976,7 +987,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
           syncTotals.skipped.push(...n.skipped);
         }
       }
-    } else if (integration.type === "azurearc") {
+    } else if (collectorType === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
       // subnets, reservations, or VIPs.
       // Arc's sync needs no scoped mode: it has NO fleet-absence passes — it
@@ -1003,7 +1014,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
           scoped: scope?.kind === "arc-machine", signal: ac.signal, log: onProgress,
         });
       }
-    } else if (integration.type === "windowsserver") {
+    } else if (collectorType === "windowsserver") {
       const subnets = await windowsServer.discoverDhcpScopes(config as any, ac.signal);
       const wsHost = (config as any).host as string;
       discoveryResult = { subnets, devices: [], interfaceIps: [], dhcpEntries: [], deviceInventory: [], inventoryDevices: [], knownDeviceNames: wsHost ? [wsHost] : [], knownDeviceSerials: [], fortiSwitches: [], fortiAps: [], vips: [], switchMacTable: [], arpTable: [], arpQueriedDevices: [], cmdbSwitchSerials: [], cmdbApSerials: [], switchInventoriedDevices: [], apInventoriedDevices: [], vipInventoriedDevices: [], dhcpReservationsInventoriedDevices: [], dhcpLeasesInventoriedDevices: [] };
@@ -1013,7 +1024,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
       syncTotals.updated.push(...r.updated);
       syncTotals.skipped.push(...r.skipped);
       syncTotals.deprecated.push(...r.deprecated);
-    } else if (integration.type === "fortigate") {
+    } else if (collectorType === "fortigate") {
       // Single FortiGate — no per-device iteration, sync the full result in one pass.
       // ARP presence sweep (opt-in): one device, so flatten the per-device
       // target map into a single list and ride it on the config object.
@@ -1032,7 +1043,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
         syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
       }
-    } else {
+    } else if (collectorType === "fortimanager") {
       // FortiManager: onDeviceComplete fires after each managed FortiGate is queried,
       // syncing subnets/assets/reservations incrementally.
       //
@@ -1100,6 +1111,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
         syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
       }
+    } else if (collectorType === "llm") {
+      // triggerDiscovery refuses it; a replayed or hand-queued job must not run.
+      throw new AppError(400, `${integrationName} is not a discovery integration — there is nothing to discover`);
+    } else {
+      unhandledCollector(collectorType);
     }
 
     // This one line gates the four post-sync passes below — agent
