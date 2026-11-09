@@ -63,7 +63,7 @@ beforeEach(() => {
   g.roleBadgeStyleFromColor = () => "";
 
   doc.body.innerHTML = "<div id='host'></div>";
-  try { (0, eval)(USERS_SRC); } catch (_e) { /* users.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(USERS_SRC); } catch { /* users.js boot wiring touches page-specific DOM */ }
   (win as unknown as Record<string, unknown>)._matrixSpec = matrixSpec;
   g._matrixSpec = matrixSpec;
 });

@@ -72,7 +72,9 @@ const SRC =
     .map((n) => `globalThis.${n} = ${n};`).join("\n");
 
 let win: Window;
-let doc: Window["document"];
+// The lib.dom view of happy-dom's document, so the lib.dom element casts
+// below (HTMLElement, HTMLSelectElement, ...) type-check.
+let doc: Document;
 let navigatedTo: string[];
 /** The <script> elements _loadPanelScript handed to body.appendChild, in order. */
 let appended: any[];
@@ -86,7 +88,7 @@ function setup(url = "https://polaris.test/events.html"): void {
       navigation: { disableMainFrameNavigation: true, disableChildFrameNavigation: true },
     },
   });
-  doc = win.document;
+  doc = win.document as unknown as Document;
   navigatedTo = [];
   appended = [];
   g.window = win;

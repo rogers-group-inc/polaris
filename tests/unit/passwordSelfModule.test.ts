@@ -66,7 +66,6 @@ function load(opts: { changeError?: string; revoked?: number; policy?: Record<st
   };
   g.closeModal = () => { document.body.innerHTML = ""; };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const mod = (globalThis as Record<string, unknown>).PolarisPasswordSelf as Record<string, any>;
   return { ...h, mod, onChange: () => { h.changed++; } };

@@ -39,7 +39,6 @@ beforeAll(() => {
     },
   };
   const escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line no-new-func
   wire = new Function("api", "escapeHtml", matcher + "\n" + picker + "\nreturn _wireFmgGatePicker;")(api, escapeHtml);
 });
 

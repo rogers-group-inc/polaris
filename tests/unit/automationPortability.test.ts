@@ -68,7 +68,6 @@ beforeAll(() => {
   const code = readFileSync(resolve(here, "../../public/js/automations-portability.js"), "utf8");
   const g = globalThis as Record<string, unknown>;
   g.window = {};
-  // eslint-disable-next-line no-eval
   (0, eval)(code);
   P = (g.window as { PolarisAutomationPortability: Portability }).PolarisAutomationPortability;
 });
@@ -508,7 +507,7 @@ describe("an exported file carries no secrets and no install-specific ids", () =
 
   it("empties each severity band's actions but keeps its threshold ladder", () => {
     const s = P.stripForExport(fixtures()["numeric metric with severity bands"], CATALOGS);
-    const bands = s.rule.severityBands as { threshold: number; severity: string; actions: unknown[]; escalation?: unknown }[];
+    const bands = s.rule.severityBands as { threshold: number; severity: string; actions: unknown[]; escalation?: unknown; forDurationSec?: number }[];
     expect(bands.map((b) => [b.severity, b.threshold])).toEqual([
       ["serious", 90],
       ["critical", 95],

@@ -32,11 +32,8 @@ function load() {
   g.timeAgo = () => "just now";
   g.PolarisRouter = { go: vi.fn() };
   g.PolarisTabs = { showSnackbar: vi.fn(), attachSwipeToDismiss: vi.fn() };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_CONTROLS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   return g.PolarisAlertsTab;
 }
@@ -406,7 +403,6 @@ describe("alerts tab severity breakdown", () => {
 describe("mobile navbar", () => {
   it("is Alerts · Assets · Networks · More, and the map lives under More", () => {
     g.PolarisAlertsTab = { spec: { title: "Alerts" } };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TABS_SRC)();
     expect(g.PolarisTabs.list.map((t: any) => t.id)).toEqual(["alerts", "assets", "networks", "more"]);
     // #map still resolves, and lights More.
@@ -416,7 +412,6 @@ describe("mobile navbar", () => {
   });
 
   it("has no Search slot — #search is a route tab, reached from the search box, that lights nothing", () => {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TABS_SRC)();
     expect(g.PolarisTabs.byId("search")).toBeTruthy();
     expect(g.PolarisTabs.navTabFor("search")).toBe("");
@@ -431,7 +426,6 @@ describe("mobile navbar", () => {
   it("Chat gets its own slot before More only when switched on — Networks keeps its slot", () => {
     g.PolarisAlertsTab = { spec: { title: "Alerts" } };
     g.PolarisChatTab = { spec: { title: "Chat" } };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TABS_SRC)();
     const T = g.PolarisTabs;
     // Off by default: the bar is unchanged, and #chat still resolves (to explain itself) without a slot.

@@ -29,9 +29,10 @@ type Builder = {
 };
 
 const g = globalThis as Record<string, unknown>;
-let doc: Window["document"];
+// The lib.dom view of happy-dom's document, so the lib.dom element casts
+// below (HTMLElement, HTMLSelectElement, ...) type-check.
+let doc: Document;
 let toasts: string[];
-let changes: number;
 let make: (over?: Record<string, unknown>) => Builder;
 
 const META = {
@@ -65,11 +66,10 @@ function rootGroup(host: HTMLElement) {
 
 beforeAll(() => {
   const win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   toasts = [];
-  changes = 0;
   (win as unknown as Record<string, unknown>).escapeHtml = (s: unknown) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   (win as unknown as Record<string, unknown>).showToast = (msg: string) => { toasts.push(msg); };
@@ -82,7 +82,7 @@ beforeAll(() => {
       meta: META,
       valueOptions: (field: string) =>
         field === "assetType" ? [{ value: "switch", label: "Switch" }, { value: "server", label: "Server" }] : [],
-      onChange: () => { changes++; },
+      onChange: () => {},
       ...(over || {}),
     });
 });

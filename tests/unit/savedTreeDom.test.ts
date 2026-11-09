@@ -168,7 +168,7 @@ describe("saved tree — picker and the wallboard", () => {
   it("indents nested folders in the Save modal's picker and names others' owners", () => {
     const html = tree.pickerHtml("hq");
     expect(html).toContain('<option value="">Top level</option>');
-    expect(html).toMatch(/<option value="hq" selected> {4}HQ<\/option>/);
+    expect(html).toMatch(/<option value="hq" selected>\u00a0{4}HQ<\/option>/);
     expect(html).toContain("NOC (Role · NOC Operators)");
   });
 

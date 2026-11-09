@@ -40,7 +40,6 @@ function desktopFn(name: string): string {
 
 /** The desktop's params for one tab state, with paging + favorites stripped. */
 function desktopParams(state: any): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const build = new Function(
     "_assetsSF", "_assetsPageSize", "_assetsPage",
     desktopFn("_pushAssetText") + desktopFn("_buildAssetsQuery") + "return _buildAssetsQuery();",
@@ -109,9 +108,7 @@ function mount(opts: { tabs?: boolean; saveFails?: boolean } = {}) {
   };
   g.PolarisRouter = { go: vi.fn() };
   g.PolarisTabs = { showSnackbar: vi.fn(), attachSwipeToDismiss: vi.fn() };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(TAB_SRC)();
   const spec = g.PolarisAssetsTab.spec;
   document.getElementById("topbar-slot")!.innerHTML = spec.renderTopbar();

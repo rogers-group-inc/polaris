@@ -17,7 +17,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { SLIDEOVER_BUILDER } from "./_appShellStubs";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs.js";
 
 const eff = { credentialName: "FortiSwitch HTTP", scope: "assetType" };
 function tree() {

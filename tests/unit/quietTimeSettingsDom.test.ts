@@ -23,19 +23,18 @@ import { quietTimeConfigSchema } from "../../src/utils/quietTime.js";
 import { installAppOverlay } from "../fixtures/appOverlay.js";
 
 const g = globalThis as Record<string, unknown>;
-let doc: Window["document"];
+let doc: Document;
 let toasts: { msg: string; kind: string }[];
 const posted: Record<string, unknown>[] = [];
 const emailAsked: Array<{ id: string; address: string }> = [];
 const put: { id: string; body: Record<string, unknown> }[] = [];
 let schedules: Record<string, unknown>[] = [];
-let modalCloses = 0;
 
 const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] };
 
 beforeAll(() => {
   const win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   toasts = [];
@@ -44,7 +43,7 @@ beforeAll(() => {
   g.showConfirm = async () => true;
   g.permAtLeast = () => true;
   g.wireModalStepKeys = () => {};
-  g.closeModal = () => { modalCloses++; const o = doc.getElementById("modal-overlay"); if (o) o.remove(); };
+  g.closeModal = () => { const o = doc.getElementById("modal-overlay"); if (o) o.remove(); };
   // ONE shared overlay, reused — the contract the wizard's "replace and
   // reopen" dance depends on.
   g.openModal = (title: string, body: string, footer: string) => {
@@ -112,7 +111,6 @@ beforeEach(() => {
   toasts.length = 0;
   posted.length = 0;
   put.length = 0;
-  modalCloses = 0;
   schedules = [];
   const o = doc.getElementById("modal-overlay");
   if (o) o.remove();

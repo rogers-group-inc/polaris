@@ -61,7 +61,6 @@ beforeAll(() => {
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const src = CLIENT_FNS.map(fnSrc).join("\n") + "\n" +
     CLIENT_FNS.map((n) => `globalThis.${n} = ${n};`).join("\n");
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(src)();
 });
 

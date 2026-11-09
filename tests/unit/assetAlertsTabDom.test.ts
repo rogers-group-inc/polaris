@@ -126,7 +126,6 @@ async function mount(opts?: { perm?: string; alerts?: any[]; downDetection?: any
   g.showConfirm = vi.fn(async () => true);
   // The module is an IIFE that assigns onto `window`.
   g.window = g.window || g;
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("window", DOWN_AFTER_SRC)(g.window);
   g.api = {
     assets: {
@@ -176,7 +175,6 @@ beforeEach(() => {
   // browser box is unstyled, dead in the installed PWA, and can't mark a field
   // required — which requireAckNote needs).
   g.showPrompt = vi.fn(async () => "");
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
 });
 

@@ -63,7 +63,6 @@ function run(opts: { authProvider?: string | null; module?: boolean }): {
     "return _changePasswordMenuItem();",
   ].join("\n");
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const item = new Function(src)() as MenuItem;
   return { item, opened };
 }

@@ -22,7 +22,9 @@ type AnyFn = (...a: any[]) => any;
 interface Rec { rulesEditorHtml: AnyFn; wireRulesEditor: AnyFn; collectRulesEditor: AnyFn; fillRulesEditor: AnyFn; rulesFromShape: AnyFn }
 
 const g = globalThis as Record<string, unknown>;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so the test can use
+// the standard HTMLElement / HTMLInputElement casts.
+let doc: Document;
 let rec: Rec;
 let win: Window;
 
@@ -30,7 +32,7 @@ beforeAll(() => {
   win = new Window();
   g.window = win;
   g.document = win.document;
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recurrence-editor.js"), "utf8"));
   rec = (win as unknown as { PolarisRecurrence: Rec }).PolarisRecurrence;

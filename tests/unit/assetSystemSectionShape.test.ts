@@ -60,7 +60,6 @@ function installStubs(telemetryPolling: string) {
 
 function render(telemetryPolling: string, asset: Record<string, unknown> = {}): string {
   installStubs(telemetryPolling);
-  // eslint-disable-next-line no-eval
   (0, eval)(SRC);
   return g.assetSystemViewHTML({ id: "a1", monitored: true, assetType: "server", ...asset });
 }
@@ -94,7 +93,6 @@ describe("CPU & Memory section shape", () => {
     // set is the regression this pins: the section would split and draw two
     // single-line charts, which is the shape this gate exists to prevent.
     installStubs("agent");
-    // eslint-disable-next-line no-eval
     (0, eval)(SRC);
     expect([...g._SPLIT_CHART_METHODS].sort()).toEqual(["agent", "vcenter"]);
   });
@@ -142,7 +140,6 @@ describe("CPU & Memory section shape", () => {
     // The per-asset column says snmp; the resolver — which walks the class and
     // integration tiers — says agent. The section follows the resolver.
     installStubs("agent");
-    // eslint-disable-next-line no-eval
     (0, eval)(SRC);
     expect(g._telemetrySplitsCpuMemory({ id: "a1", cpuMemoryPolling: "snmp" })).toBe(true);
     installStubs("snmp");

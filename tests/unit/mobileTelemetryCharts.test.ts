@@ -29,10 +29,8 @@ const GB = 1024 ** 3;
 
 function load() {
   g.escapeHtml = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(CHARTS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(TELEMETRY_SRC)();
   return g.PolarisTelemetryCharts;

@@ -43,11 +43,8 @@ function setup(status: unknown) {
       setPreferences: vi.fn(async (b: any) => ({ efficiencyAdvisor: !!b.efficiencyAdvisor, memory: true })),
     },
   };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(MD_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ASSISTANT_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(CHAT_SRC)();
   const spec = g.PolarisChatTab.spec;
   const body = document.getElementById("app-body")!;

@@ -29,7 +29,6 @@ beforeEach(() => {
   document.body.innerHTML =
     '<input id="f-ipAddress" data-override-field="1" value="10.0.0.5">' +
     '<p id="f-ipRevert-wrap"><a href="#" id="f-ipRevert">Revert to discovered IP</a></p>';
-  // eslint-disable-next-line no-eval
   eval(fnSrc("_wireIpRevertLink") + "\nglobalThis._wireIpRevertLink = _wireIpRevertLink;");
   g._wireIpRevertLink();
 });

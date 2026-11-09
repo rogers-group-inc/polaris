@@ -19,12 +19,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 type Tab = {
   cardHTML: () => string;
   runsCardHTML: () => string;
   bindingPillHTML: (node: unknown, ctx: unknown) => string;
+  manufacturerLoginPillHTML: (m: unknown, ctx: unknown) => string;
   credentialOptionsHTML: (list: unknown[], currentId: string | null) => string;
   bindingEditorHTML: (node: unknown, ctx: unknown) => string;
   isOpen: (key: string, depth: number, orphaned: boolean) => boolean;

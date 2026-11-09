@@ -22,7 +22,6 @@ function grab(name: string): string {
   return js.slice(i, js.indexOf("\n}\n", i) + 3);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
 const hint = new Function(grab("_llmContextWindowHint") + "\nreturn _llmContextWindowHint;")() as (azure: boolean) => string;
 
 describe("AI Assistant form — Context window hint", () => {

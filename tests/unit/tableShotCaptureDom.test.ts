@@ -74,7 +74,9 @@ const MARKUP = `
   </div>`;
 
 let win: Window;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so the test can use
+// the standard HTMLElement / HTMLInputElement casts.
+let doc: Document;
 let toCanvas: ReturnType<typeof vi.fn>;
 let textComposer: ReturnType<typeof vi.fn>;
 let toasts: Array<[string, string]>;
@@ -85,7 +87,7 @@ const wrapper = () => doc.querySelector(".table-wrapper-sticky")!;
 
 beforeEach(() => {
   win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   g.getComputedStyle = (el: Element) => (win as any).getComputedStyle(el);

@@ -18,7 +18,6 @@ import { resolve } from "node:path";
 
 const g = globalThis as Record<string, any>;
 const src = readFileSync(resolve(__dirname, "../../public/js/map-fullscreen.js"), "utf8");
-// eslint-disable-next-line no-new-func
 new Function(src)();
 const FS = g.window.PolarisMapFullscreen;
 

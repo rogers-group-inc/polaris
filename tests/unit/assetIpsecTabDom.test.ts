@@ -141,11 +141,13 @@ function render(): void {
 }
 
 const tunRows = () => Array.from(doc.querySelectorAll(`#ipsec-tunnels-tbody-${ASSET_ID} > tr`));
+/** A row as the happy-dom document hands it back (not the lib.dom Element). */
+type Row = ReturnType<typeof tunRows>[number];
 /** The row's name, without the toggle, the elbow and the kind sub-line under it. */
-const firstCellText = (tr: Element) => {
+const firstCellText = (tr: Row) => {
   const td = tr.querySelectorAll(":scope > td")[1];
   if (!td) return "";
-  const c = td.cloneNode(true) as Element;
+  const c = td.cloneNode(true) as Row;
   // The expand toggle is a button too; the name is a .row-menu-trigger button and stays.
   c.querySelectorAll("div, span[aria-hidden], button:not(.row-menu-trigger)").forEach((n) => n.remove());
   return c.textContent!.replace(/[├└─]/g, "").trim();
@@ -193,7 +195,7 @@ describe("tunnel table — default view", () => {
 
 describe("dial-up templates — collapse and connected count", () => {
   const peerRows = () => tunRows().filter((tr) => tr.classList.contains("ipsec-peer"));
-  const shown = (tr: Element) => (tr as any).style.display !== "none";
+  const shown = (tr: Row) => (tr as any).style.display !== "none";
   const toggle = () => doc.querySelector('.ipsec-expand-toggle[data-parent="Overlay-1"]') as any;
 
   it("starts collapsed: the template's peers are rendered but hidden", () => {

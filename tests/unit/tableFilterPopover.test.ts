@@ -30,11 +30,13 @@ const TABLE_HTML = `
   </table>`;
 
 let win: Window;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so the test can use
+// the standard HTMLElement / HTMLInputElement casts.
+let doc: Document;
 
 function setup(insideTransformedHost = false) {
   win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   g.MutationObserver = (win as any).MutationObserver;

@@ -59,7 +59,7 @@ beforeEach(() => {
   g.escapeHtml = (s: unknown) => String(s ?? "");
 
   doc.body.innerHTML = '<table><tbody><tr><td><button id="anchor">Row name</button></td></tr></tbody></table>';
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
 
   showRowMenu = (win as unknown as { showRowMenu: typeof showRowMenu }).showRowMenu;
   closeRowMenu = (win as unknown as { closeRowMenu: typeof closeRowMenu }).closeRowMenu;
@@ -194,7 +194,8 @@ describe("showRowMenu — dismissal", () => {
   it("closes when a container HOLDING the anchor scrolls", () => {
     const wrap = doc.createElement("div");
     doc.body.appendChild(wrap);
-    wrap.appendChild(anchor);
+    // `anchor` is typed as the lib.dom element; `wrap` is happy-dom's.
+    wrap.appendChild(anchor as unknown as typeof wrap);
     showRowMenu(anchor, [{ label: "Open", onSelect: () => {} }]);
     wrap.dispatchEvent(new win.Event("scroll", { bubbles: true }));
     expect(menu()).toBeFalsy();
@@ -456,7 +457,7 @@ describe("left click opens, right click shows the menu", () => {
     contextmenu(anchor, { clientX: 120, clientY: 80 });
     expect(doc.activeElement).toBe(menu());
     // ↓ from there lands on the first item.
-    doc.body.dispatchEvent(new (win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent("keydown",
+    doc.body.dispatchEvent(new win.KeyboardEvent("keydown",
       { key: "ArrowDown", bubbles: true, cancelable: true }));
     expect((doc.activeElement as unknown as HTMLElement).textContent).toBe("Open");
     closeRowMenu({ silent: true });

@@ -25,7 +25,9 @@ import { fixSelects } from "../fixtures/happyDomSelects.js";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, unknown>;
-let doc: Window["document"];
+// Typed as the lib.dom Document (happy-dom implements it) so the test can use
+// the standard HTMLInputElement / HTMLSelectElement casts.
+let doc: Document;
 let toastErrors: string[];
 const savedPayloads: Record<string, unknown>[] = [];
 /** Export writes through downloadJson; captured rather than downloaded. */
@@ -47,7 +49,7 @@ const capHoldPuts: number[] = [];
 
 beforeAll(() => {
   const win = new Window();
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   toastErrors = [];
@@ -80,9 +82,9 @@ beforeAll(() => {
         '<div class="modal-body"></div><div class="modal-footer"></div></div>';
       doc.body.appendChild(overlay);
     }
-    overlay.querySelector(".modal-header h3").textContent = title;
-    overlay.querySelector(".modal-body").innerHTML = body;
-    overlay.querySelector(".modal-footer").innerHTML = footer;
+    overlay.querySelector(".modal-header h3")!.textContent = title;
+    overlay.querySelector(".modal-body")!.innerHTML = body;
+    overlay.querySelector(".modal-footer")!.innerHTML = footer;
     if (options && options.readOnly) ro._roTeardown = ro._lockModalReadOnly!(overlay.querySelector(".modal"));
   };
   g.MutationObserver = win.MutationObserver;
@@ -297,7 +299,7 @@ describe("automation wizard DOM render", () => {
     input.dispatchEvent(new win.Event("input", { bubbles: true }));
     items = row.querySelectorAll(".aw-suggest.open .aw-suggest-item");
     expect(items.length).toBe(1);
-    items[0]!.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true }));
+    items[0]!.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true }) as unknown as Event);
     expect(input.value).toBe("FGT-60F");
     expect(row.querySelector(".aw-suggest.open")).toBeFalsy(); // closed after pick
     expect(toastErrors).toEqual([]);
@@ -2347,7 +2349,7 @@ describe("automation wizard DOM render", () => {
     // Picking a suggestion fills the input exactly and confirms the pick.
     input.value = "on-die";
     input.dispatchEvent(new win.Event("input", { bubbles: true }));
-    items()[0]!.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true }));
+    items()[0]!.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true }) as unknown as Event);
     expect(input.value).toBe("CPU ON-DIE Temperature");
     expect(combo.querySelector(".aw-suggest.open")).toBeFalsy(); // closed after pick
     expect(cue()).toBe("✓ exact match");
@@ -4296,8 +4298,6 @@ describe("trigger filter rows", () => {
 // ─── Export / import / view code ────────────────────────────────────────────
 
 describe("automation export / import / view code", () => {
-  const win = () => g.window as Window & typeof globalThis;
-
   /** A complete stored automation. Opening in EDIT mode unlocks every step
    *  (visited = 6), which is what makes the Summary step reachable in one jump —
    *  a from-scratch draft has to be walked through Next, and exporting an

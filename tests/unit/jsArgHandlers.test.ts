@@ -30,9 +30,7 @@ function sliceFunction(name: string): string {
 }
 
 beforeEach(() => {
-  // eslint-disable-next-line no-eval
   (0, eval)(sliceFunction("escapeHtml"));
-  // eslint-disable-next-line no-eval
   (0, eval)(sliceFunction("jsArg"));
   delete g.__pwned;
   g.__calls = [];
@@ -63,7 +61,6 @@ function click(handlerBody: string): void {
   host.innerHTML = `<button id="b" onclick="${handlerBody}">go</button>`;
   const attr = host.querySelector("#b")!.getAttribute("onclick")!;
   // The handler source exactly as the browser would compile it.
-  // eslint-disable-next-line no-new-func
   new Function(attr)();
 }
 
@@ -90,7 +87,6 @@ describe("jsArg", () => {
     const host = document.createElement("div");
     host.innerHTML = `<button id="b" onclick="capture('${g.escapeHtml(evil)}')">go</button>`;
     const attr = host.querySelector("#b")!.getAttribute("onclick")!;
-    // eslint-disable-next-line no-new-func
     new Function(attr)();
     expect(g.__pwned).toBe(1);
   });

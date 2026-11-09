@@ -43,9 +43,7 @@ const site = (): El[] => [
 ];
 
 beforeAll(() => {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(RENDER)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(TAB)();
 });
 

@@ -11,7 +11,7 @@
  * rather than a failure, and a region NAME is escaped before it reaches HTML.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";

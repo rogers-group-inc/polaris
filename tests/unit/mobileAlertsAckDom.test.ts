@@ -54,11 +54,8 @@ async function render(opts?: { perm?: string; ackFails?: boolean; alerts?: any[]
   g.PolarisInstall = { isIos: () => false, isFirefox: () => false, isStandalone: () => false, canPrompt: () => false, prompt: vi.fn(), onChange: vi.fn() };
   g.polarisPush = { isSupported: () => false, status: vi.fn(async () => ({ supported: false, enabledOnServer: false, permission: "default", subscribed: false })), enable: vi.fn(), disable: vi.fn() };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_CONTROLS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const body = document.getElementById("app-body")!;
   await (g.PolarisAlertsTab.spec.render(body, {

@@ -31,8 +31,7 @@ function nestedFnSrc(name: string): string {
 beforeAll(() => {
   g.escapeHtml = (s: any) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line no-eval
-  (0, eval)(nestedFnSrc("wirelessMeshRoleHtml").replace(/^  function /, "globalThis.wirelessMeshRoleHtml = function "));
+  (0, eval)(nestedFnSrc("wirelessMeshRoleHtml").replace(/^ {2}function /, "globalThis.wirelessMeshRoleHtml = function "));
 });
 
 const AP = { id: "ap-1", assetType: "access_point" };

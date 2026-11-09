@@ -39,7 +39,6 @@ const g = globalThis as any;
 
 type LineChart = (opts: Record<string, unknown>) => string;
 function loadCharts(): LineChart {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(CHARTS_SRC)();
   return g.PolarisCharts.lineChart;
@@ -139,7 +138,6 @@ describe("mobile asset sheet in a maintenance window", () => {
       telemetryHistory: async () => ({ samples: [{ timestamp: "2026-09-27T07:00:00.000Z", cpuPct: 10, memPct: 20 }], stats: {} }),
     };
     g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     loadSharedModules();
     new Function(DETAIL_SRC)();
   }

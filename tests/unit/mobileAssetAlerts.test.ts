@@ -106,11 +106,8 @@ function mount(assets: any[], opts: { alerts?: string; alertRows?: AlertRow[] } 
     assets: "read",
   } }) };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(ALERTS_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(TAB_SRC)();
   const spec = g.PolarisAssetsTab.spec;
   spec.render(document.getElementById("app-body")!);

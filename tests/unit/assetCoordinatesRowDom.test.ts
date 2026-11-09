@@ -35,7 +35,6 @@ function varSrc(name: string): string {
 beforeAll(() => {
   g.escapeHtml = (s: any) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line no-eval
   (0, eval)(varSrc("GEOCODE_FAILURE_TEXT") + "\n" +
     ["geocodeFailureFor", "_geocodeFailureRowValue", "geocodeFailureFlagHTML", "geocodedAddressRowHTML", "coordinatesRowHTML"]
       .map(fnSrc).join("\n") +

@@ -15,11 +15,9 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { SLIDEOVER_BUILDER } from "./_appShellStubs";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { SLIDEOVER_BUILDER } from "./_appShellStubs.js";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -56,7 +54,6 @@ beforeAll(() => {
   g.PolarisPrefs = { get: () => null, set: () => {} };
   g.api = { assets: { byTag: (tag: string) => byTag(tag) } };
   const ss = serverSettingsSource();
-  // eslint-disable-next-line no-eval
   (0, eval)(SLIDEOVER_BUILDER + "\n" + ss);
 });
 

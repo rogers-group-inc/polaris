@@ -46,14 +46,12 @@ function addTopbarSearch() {
   const start = APP.indexOf("  function addTopbarSearch(");
   const end = APP.indexOf("\n  }\n", start);
   const src = APP.slice(start, end + 4);
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   return new Function("openSearchFromButton", src + "\nreturn addTopbarSearch;")(() => {});
 }
 
 describe("pinned sheet header (PolarisTabs.pinSheetHead)", () => {
   beforeAll(() => {
     g.escapeHtml = (s: any) => String(s ?? "");
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(mobile("tabs.js"))();
   });
 
@@ -201,7 +199,6 @@ describe("list fade under the top bar + pinned block (PolarisTabs.installListFad
 
   beforeAll(() => {
     g.escapeHtml = (s: any) => String(s ?? "");
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(mobile("tabs.js"))();
   });
 

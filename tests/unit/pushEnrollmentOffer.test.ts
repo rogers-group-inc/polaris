@@ -122,7 +122,6 @@ function loadPush(opts?: {
   };
   const navigator: any = { serviceWorker: { register: vi.fn(async () => registration) } };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("window", "navigator", "api", "Notification", "Uint8Array", PUSH_JS)(
     win, navigator, api, win.Notification, Uint8Array,
   );
@@ -272,7 +271,6 @@ function desktopHarness(opts: {
     "return { offer: _maybeOfferPushEnrollment };",
   ].join("\n");
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(SRC)() as { offer: () => Promise<void> };
   return { calls, modals, recorded, offer: mod.offer };
 }
@@ -384,7 +382,6 @@ function mobileHarness(opts: {
     "return { offer: maybeOfferPushEnrollment };",
   ].join("\n");
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(SRC)() as { offer: (p: string) => Promise<void> | undefined };
   return { calls, recorded, snacks, offer: mod.offer };
 }

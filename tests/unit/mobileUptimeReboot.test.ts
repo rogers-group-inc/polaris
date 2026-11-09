@@ -83,7 +83,6 @@ function boot() {
     get: async (id: string) => ASSETS[id], reboot: rebootFn, startReboot, rebootRun, rebootScheduleDefaults, scheduleReboot, firmwareUpgrade,
   };
   g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(SRC)();
 }

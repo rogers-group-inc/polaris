@@ -34,7 +34,6 @@ interface Mod {
 }
 
 function load(): Mod {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   return (globalThis as Record<string, unknown>).PolarisWebAuthn as unknown as Mod;
 }
@@ -195,7 +194,7 @@ describe("unavailableHere", () => {
 describe("create", () => {
   it("decodes the challenge, user id and excluded credentials before calling the browser", async () => {
     const mod = load();
-    const create = vi.fn(async () => fakeAttestation());
+    const create = vi.fn(async (_opts: { publicKey: any }) => fakeAttestation());
     setCredentials({ create: create, get: vi.fn() });
 
     await mod.create({
@@ -246,7 +245,7 @@ describe("create", () => {
 describe("get", () => {
   it("decodes the challenge and any named credentials", async () => {
     const mod = load();
-    const get = vi.fn(async () => fakeAssertion(true));
+    const get = vi.fn(async (_opts: { publicKey: any }) => fakeAssertion(true));
     setCredentials({ create: vi.fn(), get: get });
 
     await mod.get({ challenge: "AQIDBA", allowCredentials: [{ id: "CAkK", transports: ["nfc"] }] });
@@ -260,7 +259,7 @@ describe("get", () => {
     // the endpoint an account-enumeration oracle — so the client must not
     // invent an empty array, which means something different to a browser.
     const mod = load();
-    const get = vi.fn(async () => fakeAssertion(true));
+    const get = vi.fn(async (_opts: { publicKey: any }) => fakeAssertion(true));
     setCredentials({ create: vi.fn(), get: get });
     await mod.get({ challenge: "AQIDBA" });
     expect(get.mock.calls[0][0].publicKey.allowCredentials).toBeUndefined();

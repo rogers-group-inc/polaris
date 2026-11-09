@@ -13,10 +13,8 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 interface Sandbox {
   document: Document;
