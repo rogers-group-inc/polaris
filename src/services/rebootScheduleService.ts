@@ -17,8 +17,9 @@
  *   missed   — first seen more than LATE_GRACE_MS late (Polaris was down).
  *
  * The recipient / time rules and their limits are the firmware booking's
- * (`normalizeRecipients`, `assertSchedulableTime`), imported, so the two
- * booking forms cannot drift apart. Email goes through the oldest enabled
+ * (`normalizeRecipients`, `assertSchedulableTime`), and so is the firing loop
+ * (`fireDueBookings` — the grace, the wait and the claim), imported, so the two
+ * bookings cannot drift apart. Email goes through the oldest enabled
  * email channel, one message per recipient in that reader's zone — or, when an
  * automation's booking carries a Cc or Bcc, one message to the whole To line
  * in the install's zone.
@@ -39,7 +40,7 @@ import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { checkSchedulableReboot, startReboot, RebootRunConflictError, recordRebootCredentialUse } from "./rebootService.js";
 import { resolveRebootNote } from "./rebootSettingsService.js";
-import { normalizeRecipients, assertSchedulableTime, LATE_GRACE_MS, CONFLICT_WAIT_MS, MIN_LEAD_MS, MAX_RECIPIENTS, AUTOMATION_MAX_RECIPIENTS } from "./firmwareScheduleService.js";
+import { normalizeRecipients, assertSchedulableTime, fireDueBookings, MIN_LEAD_MS, MAX_RECIPIENTS, AUTOMATION_MAX_RECIPIENTS, type DueRunResult } from "./firmwareScheduleService.js";
 import { deliverOperationEmail, prepareNotify, targetFor, type NotifySpec, type NotifyTarget } from "./operationNotifyService.js";
 import { renderRebootResultEmail, type RebootResultEmailInput, type RebootResultOutcome } from "../utils/rebootResultEmailTemplate.js";
 
@@ -338,7 +339,7 @@ export async function bookRebootFromAutomation(input: AutomationRebootInput): Pr
 
 // ─── Firing ──────────────────────────────────────────────────────────────────
 
-export interface DueRebootResult { started: number; refused: number; missed: number; waiting: number }
+export type DueRebootResult = DueRunResult;
 
 /** The job's tick: due bookings oldest first, one at a time. */
 export async function runDueRebootSchedules(now: Date = new Date()): Promise<DueRebootResult> {
@@ -348,38 +349,16 @@ export async function runDueRebootSchedules(now: Date = new Date()): Promise<Due
     take: DUE_BATCH,
     select: { id: true, assetId: true, scheduledFor: true, createdBy: true, error: true, note: true },
   });
-  const out: DueRebootResult = { started: 0, refused: 0, missed: 0, waiting: 0 };
-  for (const s of due) {
-    const lateMs = now.getTime() - s.scheduledFor.getTime();
-    const waited = !!s.error;
-    if (!waited && lateMs > LATE_GRACE_MS) {
-      await settle(s.id, "missed", `Polaris was not running at the scheduled time and first saw this reboot ${Math.round(lateMs / 60_000)} min late; it was not started`, now);
-      out.missed++;
-      continue;
-    }
-    if (waited && lateMs > CONFLICT_WAIT_MS) {
-      await settle(s.id, "refused", `${s.error} — still waiting ${Math.round(CONFLICT_WAIT_MS / 60_000)} min after the scheduled time, so it was not started`, now);
-      out.refused++;
-      continue;
-    }
-    const claimed = await prisma.rebootSchedule.updateMany({ where: { id: s.id, status: "pending" }, data: { status: "started", firedAt: now } });
-    if (claimed.count === 0) continue;
-    try {
-      await startReboot({ assetId: s.assetId, actor: s.createdBy, scheduleId: s.id, note: s.note });
-      await prisma.rebootSchedule.update({ where: { id: s.id }, data: { error: null } }).catch(() => undefined);
-      out.started++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (err instanceof RebootRunConflictError) {
-        await prisma.rebootSchedule.update({ where: { id: s.id }, data: { status: "pending", firedAt: null, error: msg } }).catch(() => undefined);
-        out.waiting++;
-        continue;
-      }
-      await settle(s.id, "refused", msg, now);
-      out.refused++;
-    }
-  }
-  return out;
+  // The firing decisions (grace, wait, claim) are the firmware booking's.
+  return fireDueBookings(due, now, {
+    noun: "reboot",
+    claim: async (id, at) => (await prisma.rebootSchedule.updateMany({ where: { id, status: "pending" }, data: { status: "started", firedAt: at } })).count > 0,
+    start: async (s) => { await startReboot({ assetId: s.assetId, actor: s.createdBy, scheduleId: s.id, note: s.note }); },
+    clearWait: async (id) => { await prisma.rebootSchedule.update({ where: { id }, data: { error: null } }).catch(() => undefined); },
+    isConflict: (err) => err instanceof RebootRunConflictError,
+    wait: async (id, reason) => { await prisma.rebootSchedule.update({ where: { id }, data: { status: "pending", firedAt: null, error: reason } }).catch(() => undefined); },
+    settle,
+  });
 }
 
 async function settle(scheduleId: string, status: "refused" | "missed", error: string, now: Date): Promise<void> {
