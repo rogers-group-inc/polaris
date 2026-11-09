@@ -801,12 +801,24 @@ describe("fleetCadences", () => {
     expect(out.intervalSeconds).toBe(10);
   });
 
-  it("is the rate-weighted mean: N / Σ(1/interval), so N × it is the fleet's rate", async () => {
+  it("is the rate-weighted mean: N / Σ(1/interval), rounded to whole seconds", async () => {
     // Two assets on the floor's interval, one overridden to 10 s.
     (prisma.asset.findMany as any).mockResolvedValue([asset(), asset(), asset({ monitorIntervalSec: 10 })]);
     const floor = FLOOR.intervalSeconds;
-    const expected = 3 / (2 / floor + 1 / 10);
-    expect((await fleetCadences()).intervalSeconds).toBeCloseTo(expected, 9);
+    const out = await fleetCadences();
+    expect(out.intervalSeconds).toBe(Math.round(3 / (2 / floor + 1 / 10)));
+    expect(Number.isInteger(out.telemetryIntervalSeconds)).toBe(true);
+    expect(Number.isInteger(out.systemInfoIntervalSeconds)).toBe(true);
+  });
+
+  it("a uniform fleet reads as its interval, not float noise (60.000000000000014)", async () => {
+    // Two configurations on 60 s (one asset a switch, five servers) are two
+    // resolve groups: 6 / (1/60 + 5/60) is 60.00000000000001 in floating point.
+    (prisma.asset.findMany as any).mockResolvedValue([
+      asset({ monitorIntervalSec: 60, assetType: "switch" }),
+      ...Array.from({ length: 5 }, () => asset({ monitorIntervalSec: 60 })),
+    ]);
+    expect((await fleetCadences()).intervalSeconds).toBe(60);
   });
 
   it("resolves each distinct configuration once, however many assets share it", async () => {

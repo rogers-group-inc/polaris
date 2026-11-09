@@ -6,7 +6,8 @@
  * harmonic, rate-weighted mean of every monitored asset's resolved interval
  * (CQ-B012). Mixed cadences give a fraction (100.93645484949833) and even a
  * uniform 60 s fleet carries float noise (60.000000000000014); the card printed
- * both raw. The capacity model keeps the exact value; only the display rounds.
+ * both raw. fleetCadences now returns whole seconds itself (pinned in
+ * resolveMonitorSettings.test.ts); the card still never shows a fraction.
  *
  * Sliced out of the browser script by name, as capacityAlertHoldDom.test.ts does.
  */

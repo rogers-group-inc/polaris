@@ -1492,7 +1492,8 @@ export interface FleetCadences {
  * (CQ-B012). Resolved through resolveMonitorSettings per configuration — assets
  * sharing (integration, type, per-asset overrides) resolve once — and combined
  * as the RATE-weighted mean: N / Σ(1/interval), so N assets at that one interval
- * produce exactly the fleet's sample rate, which is how the model multiplies it.
+ * produce the fleet's sample rate, which is how the model multiplies it —
+ * rounded to whole seconds (never below 1).
  * A stream an asset has turned off (interval 0) adds no rate. No monitored
  * asset, or every one off for a stream → that stream's hard-coded floor.
  *
@@ -1547,7 +1548,11 @@ export async function fleetCadences(): Promise<FleetCadences> {
     add("telemetryIntervalSeconds", eff.cpuMemoryIntervalSeconds);
     add("systemInfoIntervalSeconds", eff.systemInfoIntervalSeconds);
   }
-  const mean = (k: keyof typeof acc, floor: number) => (acc[k].rate > 0 ? acc[k].n / acc[k].rate : floor);
+  // Whole seconds (operator decision 2026-11-09): the exact mean carries float
+  // noise even for a uniform fleet (60.000000000000014) and a fraction for a
+  // mixed one, and the rounding moves the projection by under 1 %.
+  const mean = (k: keyof typeof acc, floor: number) =>
+    (acc[k].rate > 0 ? Math.max(1, Math.round(acc[k].n / acc[k].rate)) : floor);
   return {
     intervalSeconds:           mean("intervalSeconds", HARDCODED_FLOOR.intervalSeconds),
     telemetryIntervalSeconds:  mean("telemetryIntervalSeconds", HARDCODED_FLOOR.cpuMemoryIntervalSeconds),
