@@ -3914,6 +3914,14 @@ model User {
   // Validation is normalizeHiddenMapRegionIds() in userMapViewService.
   hiddenMapRegionIds String[] @default([]) @map("hidden_map_region_ids")
 
+  // The email list this user last sent a firmware upgrade's / a reboot's
+  // notifications to (rules 93 / 115(e), 2026-11-09) — what the next upgrade or
+  // reboot dialog pre-fills, before falling back to their own address. Written
+  // by firmwareScheduleService.rememberRecipientsFor whenever they start or book
+  // one with recipients; never read for anyone else.
+  lastFirmwareNotifyEmails String[] @default([]) @map("last_firmware_notify_emails")
+  lastRebootNotifyEmails   String[] @default([]) @map("last_reboot_notify_emails")
+
   // Flipped true the first time the user actually logs in (lastLogin transitions
   // null → set). Drives the sidebar "new user — review role" notification for
   // admins; cleared globally by Dismiss.

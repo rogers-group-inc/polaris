@@ -127,6 +127,10 @@ d("scheduled firmware upgrade routes", () => {
     expect(created.body.schedule).toMatchObject({ status: "pending", toVersion: "7.6.8 build1164", notifyEmails: ["flasher@example.com", "noc@example.com"], createdBy: flasherU });
     // The device has an address and is unmonitored: nothing blocks it right now.
     expect(created.body.schedule.warnings).toEqual([]);
+    // The booker's next dialog pre-fills the list they just used (2026-11-09) —
+    // the upgrade one only; the reboot dialog still offers their own address.
+    expect((await flasher.agent.get(`${base}/schedules/defaults`)).body.notifyEmails).toEqual(["flasher@example.com", "noc@example.com"]);
+    expect((await flasher.agent.get(`/api/v1/assets/${assetId}/reboot/schedules/defaults`)).body.notifyEmails).toEqual(["flasher@example.com"]);
 
     const dup = await flasher.agent.post(`${base}/schedules`).set("X-CSRF-Token", flasher.csrf).send({ imageId, scheduledFor: inHours(6), notifyEmails: ["a@example.com"] });
     expect(dup.status).toBe(409);

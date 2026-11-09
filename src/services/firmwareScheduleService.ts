@@ -130,15 +130,35 @@ async function assetName(assetId: string): Promise<{ label: string | undefined; 
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
 /**
- * What the booking modal pre-fills: the booker's own profile email, when
- * they have one. Empty for an account with no email (an SSO user whose IdP
- * sent none, a bearer token) — the modal then asks for an address.
+ * What the upgrade / reboot dialog pre-fills: the list this user last sent
+ * that kind of notification to (`rememberRecipientsFor`), else their own
+ * profile email, when they have one. Empty for an account with neither (an SSO
+ * user whose IdP sent none, a bearer token) — the dialog then asks for one.
  */
-export async function defaultRecipientsFor(userId: string | null): Promise<string[]> {
+export async function defaultRecipientsFor(userId: string | null, kind: RecipientKind = "firmware"): Promise<string[]> {
   if (!userId) return [];
-  const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, lastFirmwareNotifyEmails: true, lastRebootNotifyEmails: true } });
+  // The list they used last time (2026-11-09), when they have one.
+  const last = (kind === "reboot" ? u?.lastRebootNotifyEmails : u?.lastFirmwareNotifyEmails) ?? [];
+  if (last.length > 0) return last;
   const e = u?.email?.trim().toLowerCase();
   return e && EMAIL_RE.test(e) ? [e] : [];
+}
+
+/** Which remembered list: firmware upgrades (single and group) or reboots. */
+export type RecipientKind = "firmware" | "reboot";
+
+/**
+ * Remember the list this user just sent an upgrade's / a reboot's emails to,
+ * so their next dialog pre-fills it (2026-11-09). Already-normalized input; an
+ * empty list (no emails this time) leaves the last one alone. Best-effort: a
+ * failed write never fails the upgrade, reboot or booking that called it.
+ */
+export async function rememberRecipientsFor(userId: string | null | undefined, kind: RecipientKind, list: readonly string[]): Promise<void> {
+  if (!userId || list.length === 0) return;
+  const data = kind === "reboot" ? { lastRebootNotifyEmails: [...list] } : { lastFirmwareNotifyEmails: [...list] };
+  await prisma.user.update({ where: { id: userId }, data, select: { id: true } })
+    .catch((err) => logger.warn({ err, userId, kind }, "could not remember the notification recipients"));
 }
 
 export async function getPendingSchedule(assetId: string): Promise<ScheduleSummary | null> {

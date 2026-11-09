@@ -120,3 +120,17 @@ Where it differs from firmware, and why:
 
 Pinned by `tests/unit/rebootEmailNotices.test.ts`, the notify cases in
 `tests/unit/assetPanelHeaderActionsDom.test.ts` and `tests/unit/mobileUptimeReboot.test.ts`.
+
+### 2026-11-09 (later) — the dialog remembers the last list
+
+The operator: "let's remember the previous email lists in subsequent upgrades for that user".
+`User.lastFirmwareNotifyEmails` / `lastRebootNotifyEmails` (migration
+`20261109140000_user_last_notify_emails`) hold the normalized list the user last sent; the
+routes call `firmwareScheduleService.rememberRecipientsFor` after a start, a booking, a change
+that carried recipients, and (firmware) a group booking. `defaultRecipientsFor(userId, kind)`
+returns it ahead of the profile email. Two lists, not one: the people told about a flash and
+about a reboot are often different, and one shared list would make each overwrite the other.
+An empty send (the box left unticked) does not clear the memory, and the **Email
+notifications** box is still unticked by default for an action now — the list is remembered,
+the decision to email is not. Stored on the user rather than in the browser so the phone and
+the desktop pre-fill the same list.

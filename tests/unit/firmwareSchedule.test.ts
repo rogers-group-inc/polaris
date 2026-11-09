@@ -29,6 +29,7 @@ const h = vi.hoisted(() => {
     sendFails: new Set<string>(),
     seq: 0,
     groupMember: null as { group: { scheduledFor: Date; status: string } } | null,
+    remembered: {} as Record<string, string[]>,
   };
   return {
     state, FakeAppError, FakeConflict,
@@ -82,7 +83,11 @@ vi.mock("../../src/db.js", () => ({
     // Rule 122: a booking is refused while the device is in a group — tested below.
     firmwareGroupMember: { findFirst: vi.fn(async () => h.state.groupMember ?? null) },
     asset: { findUnique: vi.fn(async () => ({ hostname: "lab-sw1", ipAddress: "10.0.0.5", model: "FortiSwitch S108FF", osVersion: "7.4.3 build0542" })) },
-    user: { findMany: vi.fn(async () => h.state.users), findUnique: vi.fn(async () => ({ email: "Ops@Example.com" })) },
+    user: {
+      findMany: vi.fn(async () => h.state.users),
+      findUnique: vi.fn(async () => ({ email: "Ops@Example.com", ...h.state.remembered })),
+      update: vi.fn(async ({ data }: any) => { Object.assign(h.state.remembered, data); return { id: "user-1" }; }),
+    },
   },
 }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
@@ -113,6 +118,7 @@ import {
   runDueSchedules,
   notifyScheduledRunFinished,
   defaultRecipientsFor,
+  rememberRecipientsFor,
   LATE_GRACE_MS,
   CONFLICT_WAIT_MS,
 } from "../../src/services/firmwareScheduleService.js";
@@ -203,8 +209,26 @@ describe("booking", () => {
   });
 
   it("pre-fills the booker's own profile email, lower-cased", async () => {
+    h.state.remembered = {};
     expect(await defaultRecipientsFor("user-1")).toEqual(["ops@example.com"]);
     expect(await defaultRecipientsFor(null)).toEqual([]);
+  });
+
+  it("pre-fills the list the user last used instead, one list for upgrades and one for reboots", async () => {
+    h.state.remembered = {};
+    await rememberRecipientsFor("user-1", "firmware", ["noc@example.com", "ops@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
+    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["ops@example.com"]);
+    await rememberRecipientsFor("user-1", "reboot", ["oncall@example.com"]);
+    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["oncall@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
+  });
+
+  it("an empty list, or no signed-in user (a bearer token), remembers nothing", async () => {
+    h.state.remembered = { lastFirmwareNotifyEmails: ["noc@example.com"] };
+    await rememberRecipientsFor("user-1", "firmware", []);
+    await rememberRecipientsFor(null, "firmware", ["x@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com"]);
   });
 });
 

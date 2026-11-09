@@ -1094,7 +1094,9 @@ otherwise.
 
 **Email notifications.** Tick **Email notifications** to have Polaris email when
 the reboot is **sent** and when it **ends** (succeeded, unverified or failed).
-**Email to** starts with your own address; add more separated by commas, or start
+**Email to** starts with the list you used for your last reboot (or, the first
+time, your own address) — it is kept apart from the firmware upgrade list; add
+more separated by commas, or start
 typing a name to pick a Polaris user or an [Address Book](Address-Book) contact.
 Leave the box clear and no email is sent.
 
@@ -1197,7 +1199,8 @@ platform and click **Approve and upgrade**.
 **Email notifications.** Under the warning, tick **Email notifications** to have
 Polaris email when the upgrade **starts** and when it **finishes** (succeeded,
 unverified or failed, with the end of the run log). The **Email to** box is
-filled in with your own profile email; add more addresses separated by commas,
+filled in with the addresses you used for your last firmware upgrade (or, the
+first time, your own profile email); add more addresses separated by commas,
 and start typing a name to pick a Polaris user or an
 [Address Book](Address-Book) contact. Leave the box clear and no email is sent.
 
@@ -1288,7 +1291,8 @@ adds:
 - **Run at** — a date and time in your browser's time zone (the dialog names
   it). It must be at least a minute ahead and within a year.
 - **Email notifications** — ticked and locked: a scheduled upgrade always
-  emails someone. **Email to** is filled in with your own profile email; add
+  emails someone. **Email to** is filled in with the list you used last time
+  (or your own profile email); add
   more addresses separated by commas, or start typing a name to pick from the
   address book. At least one is required.
 - If the device is blocked right now, the dialog says why, and that it will be

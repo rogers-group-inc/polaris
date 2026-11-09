@@ -29,7 +29,7 @@ import {
   updateRebootSchedule,
   cancelRebootSchedule,
 } from "../../services/rebootScheduleService.js";
-import { defaultRecipientsFor, normalizeRecipients, MAX_RECIPIENTS } from "../../services/firmwareScheduleService.js";
+import { defaultRecipientsFor, rememberRecipientsFor, normalizeRecipients, MAX_RECIPIENTS } from "../../services/firmwareScheduleService.js";
 import { setAgentRebootEnabled } from "../../services/agentRebootPermissionService.js";
 import { getRebootSettings } from "../../services/rebootSettingsService.js";
 
@@ -85,6 +85,8 @@ rebootAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetPara
   if (!body.success) throw new AppError(400, body.error.issues[0]?.code === "unrecognized_keys" ? "A reboot takes only a note and notifyEmails" : firstIssue(body.error));
   const notifyEmails = normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true });
   const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown", note: body.data.note, notifyEmails });
+  // The caller's next reboot dialog pre-fills this list (an empty one changes nothing).
+  await rememberRecipientsFor(req.session?.userId, "reboot", notifyEmails);
   // Rule 112: the stored credential this reboot signs with, aimed at the gate.
   await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
@@ -109,7 +111,7 @@ rebootAssetRouter.get("/schedules", requirePermission("assets", "read"), handle(
 }));
 
 rebootAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
-  res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
+  res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null, "reboot"), maxRecipients: MAX_RECIPIENTS });
 }));
 
 rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), scopeAssetParam("assets", "book reboots of devices"), handle(async (req, res) => {
@@ -124,6 +126,7 @@ rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), scope
   });
   // Rule 112: recorded when BOOKED, by the person who booked it (the flash precedent).
   await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
+  await rememberRecipientsFor(req.session?.userId, "reboot", schedule.notifyEmails);
   res.status(201).json({ schedule });
 }));
 
@@ -138,6 +141,7 @@ rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "w
     note: body.data.note,
     actor: requestActor(req) ?? "unknown",
   });
+  if (body.data.notifyEmails) await rememberRecipientsFor(req.session?.userId, "reboot", schedule.notifyEmails);
   res.json({ schedule });
 }));
 

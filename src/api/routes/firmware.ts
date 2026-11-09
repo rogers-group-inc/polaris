@@ -66,6 +66,7 @@ import {
   updateSchedule,
   cancelSchedule,
   defaultRecipientsFor,
+  rememberRecipientsFor,
   normalizeRecipients,
   MAX_RECIPIENTS,
 } from "../../services/firmwareScheduleService.js";
@@ -356,6 +357,8 @@ firmwareAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetPa
   if (!body.success) throw new AppError(400, firstIssue(body.error));
   const notifyEmails = normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true });
   const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown", notifyEmails });
+  // The caller's next upgrade dialog pre-fills this list (an empty one changes nothing).
+  await rememberRecipientsFor(req.session?.userId, "firmware", notifyEmails);
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));
@@ -403,7 +406,7 @@ firmwareAssetRouter.get("/schedules", requirePermission("assets", "read"), handl
   res.json({ schedules: await listSchedulesForAsset(String(req.params.id), q.data.limit ?? 20) });
 }));
 
-// The address the booking modal pre-fills: the caller's own profile email.
+// The list the upgrade dialog pre-fills: the caller's last firmware list, else their own email.
 firmwareAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
   res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
 }));
@@ -419,6 +422,7 @@ firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), sco
     actor: requestActor(req) ?? "unknown",
   });
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
+  await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
   res.status(201).json({ schedule });
 }));
 
@@ -433,6 +437,7 @@ firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", 
     imageId: body.data.imageId,
     actor: requestActor(req) ?? "unknown",
   });
+  if (body.data.notifyEmails) await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
   res.json({ schedule });
 }));
 
@@ -484,6 +489,7 @@ firmwareGroupRouter.post("/", requirePermission("assets", "write"), scopeAssetId
     actor: requestActor(req) ?? "unknown",
   });
   await recordGroupCredentialUse(plan.included.map((m) => m.assetId), credentialUseActor(req));
+  await rememberRecipientsFor(req.session?.userId, "firmware", group.notifyEmails);
   res.status(201).json({ group });
 }));
 
