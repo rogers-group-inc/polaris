@@ -315,7 +315,7 @@
     var esc = r.escalationTier
       ? '<span class="widget-pill widget-pill-orange" style="margin-right:6px' + fadeTail + '" title="' +
         escapeHtml("Escalated — tier " + r.escalationTier + " has been notified" +
-          (r.escalatedAt ? " (first escalation " + new Date(r.escalatedAt).toLocaleString() + ")" : "")) +
+          (r.escalatedAt ? " (first escalation " + (typeof formatDateTime === "function" ? formatDateTime(r.escalatedAt) : new Date(r.escalatedAt).toLocaleString()) + ")" : "")) +
         '">ESCALATED' + (r.escalationTier > 1 ? " T" + r.escalationTier : "") + '</span>'
       : "";
     var grouped = !!r.groupName || r.dimensionCount != null;
