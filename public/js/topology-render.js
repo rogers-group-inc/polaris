@@ -4465,7 +4465,64 @@
           : '') +
         '. An end is not being polled (dependency-down, down or recovering), so this is where the link was.</div>';
     }
+    html += _loopTipRows(cy, edge);
     return html;
+  }
+
+  // A link on a physical loop (inLoop) also lists the loop's OTHER links —
+  // the same set the hover lights (linkHoverSet), so the tooltip names what
+  // the operator sees glowing. Ordered by walking the ring from the hovered
+  // link's target end, so the rows read around the loop; anything the walk
+  // can't reach in one pass (a loop with chords) follows in hover-set order.
+  // Each row: "B ⇄ C", its port pair, and its speed (written, with the link's
+  // colour as a swatch). Capped so a large meshed fabric can't fill the screen.
+  var LOOP_TIP_MAX_ROWS = 8;
+  function _loopTipRows(cy, edge) {
+    if (!edge.data("inLoop")) return "";
+    var others = linkHoverSet(cy, edge).edges().filter(function (e) { return e.id() !== edge.id(); });
+    if (!others.length) return "";
+    var pool = others.toArray();
+    var ordered = [];
+    var at = edge.data("target");
+    var prev = edge.data("source");
+    while (pool.length) {
+      var idx = -1;
+      for (var i = 0; i < pool.length; i++) {
+        var s = pool[i].data("source"), t = pool[i].data("target");
+        if (s === at || t === at) {
+          // Prefer a link that doesn't step straight back to the device we came from.
+          if (idx === -1 || (s !== prev && t !== prev)) idx = i;
+          if (s !== prev && t !== prev) break;
+        }
+      }
+      if (idx === -1) { ordered = ordered.concat(pool); break; }
+      var next = pool.splice(idx, 1)[0];
+      ordered.push(next);
+      prev = at;
+      at = next.data("source") === at ? next.data("target") : next.data("source");
+    }
+    var ec = EDGE_COLORS[paletteFamily()];
+    function name(id) { return cy.getElementById(id).data("label") || id || "?"; }
+    var html = '<div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(127,127,127,0.35)">' +
+      '<div style="font-weight:600;font-size:0.82em">Part of a ring' +
+      ' <span style="opacity:0.7;font-weight:400">· ' + (others.length + 1) + ' links</span></div>';
+    ordered.slice(0, LOOP_TIP_MAX_ROWS).forEach(function (e) {
+      var cls = e.data("linkSpeed") || "unknown";
+      var sp = cls === "unknown" ? "" : _humanizeSpeedBps(e.data("speedBps"));
+      var ports = String(e.data("label") || "").trim();
+      html += '<div style="display:flex;align-items:baseline;gap:6px;font-size:0.78em;margin-top:2px">' +
+        _tipSwatch(cls === "unknown" ? ec.neutral : ec[cls], !!e.data("isMesh")) +
+        '<span>' + _escTip(name(e.data("source"))) + ' <span style="opacity:0.7">⇄</span> ' + _escTip(name(e.data("target"))) + '</span>' +
+        (ports && ports !== "unknown ↔ unknown" && !e.data("isMesh")
+          ? '<span style="font-family:var(--font-mono,monospace);opacity:0.85">' + _escTip(ports) + '</span>' : '') +
+        (sp ? '<span style="opacity:0.7">' + _escTip(sp) + '</span>' : '') +
+        (e.data("isLastKnown") === 1 ? '<span style="opacity:0.7">last known</span>' : '') +
+        '</div>';
+    });
+    if (ordered.length > LOOP_TIP_MAX_ROWS) {
+      html += '<div style="font-size:0.78em;opacity:0.7;margin-top:2px">+' + (ordered.length - LOOP_TIP_MAX_ROWS) + ' more</div>';
+    }
+    return html + '</div>';
   }
 
   // The legend's body from topologyLegendSpec(): Nodes, Monitor health, Edges

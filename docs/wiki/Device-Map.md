@@ -255,7 +255,11 @@ the tooltip names the end that is receiving too little light. A copper SFP
 reports no diagnostics, so it gets no line. A cable slower than 1 Gb also says
 that this is usually a cable or speed-negotiation fault. A mesh link's tooltip shows
 the signal in dBm and in words, the channel, band and channel width, the noise
-and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
+and signal-to-noise ratio, the SSID, and when it was last seen. A link that is
+part of a switch ring also lists the ring's other links under **Part of a ring**,
+read around the ring from the link you are on: both devices, the port pair and
+the speed of each, the same links the hover lights up. A large ring lists the
+first eight and counts the rest. The legend has
 a section for each: **Wired link speed**, **Wireless mesh signal**, and
 **Also** (MCLAG, ring and last-known links). Devices are listed by asset type (Firewall,
 Switch, Access Point).
