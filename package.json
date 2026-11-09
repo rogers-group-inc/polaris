@@ -96,7 +96,7 @@
     "cytoscape": "^3.34.4",
     "cytoscape-dagre": "^4.0.1",
     "dagre": "^0.8.5",
-    "eslint": "^10.13.0",
+    "eslint": "^10.14.0",
     "happy-dom": "^21.0.4",
     "jscpd": "^5.4.2",
     "knip": "^6.44.1",
