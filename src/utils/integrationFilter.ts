@@ -74,6 +74,59 @@ function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
 }
 
+// ─── The Fortinet interface / DHCP filters ──────────────────────────────────
+// The FortiGate and FortiManager integrations carry the same filter fields and
+// apply them the same way; these were two copies until CQ-B034. An include
+// list wins when non-empty; otherwise an exclude list; otherwise everything.
+// (services/windowsServerService.ts keeps its own DHCP filter on purpose: it
+// matches by SUBSTRING, not glob, and switching would change which scopes an
+// existing Windows config selects.)
+
+/** The integration's monitored-interface filter (interfaceInclude / interfaceExclude). */
+export function matchesInterfaceFilter(
+  interfaceName: string,
+  config: { interfaceInclude?: string[]; interfaceExclude?: string[] },
+): boolean {
+  const includeList = config.interfaceInclude ?? [];
+  const excludeList = config.interfaceExclude ?? [];
+  if (includeList.length > 0) return includeList.some((p) => matchesWildcard(p, interfaceName));
+  if (excludeList.length > 0) return !excludeList.some((p) => matchesWildcard(p, interfaceName));
+  return true;
+}
+
+/**
+ * The integration's inventory-interface filter. A plain pattern (no "*") also
+ * matches the VLAN sub-interfaces of the interface it names: "AcmeGuest"
+ * matches "AcmeGuest.100", "dmz" matches "dmz.10".
+ */
+export function matchesInventoryFilter(
+  interfaceName: string,
+  config: { inventoryIncludeInterfaces?: string[]; inventoryExcludeInterfaces?: string[] },
+): boolean {
+  const includeList = config.inventoryIncludeInterfaces ?? [];
+  const excludeList = config.inventoryExcludeInterfaces ?? [];
+  const matches = (pattern: string, iface: string): boolean =>
+    matchesWildcard(pattern, iface) ||
+    (!pattern.includes("*") && iface.toLowerCase().startsWith(pattern.toLowerCase() + "."));
+  if (includeList.length > 0) return includeList.some((p) => matches(p, interfaceName));
+  if (excludeList.length > 0) return !excludeList.some((p) => matches(p, interfaceName));
+  return true;
+}
+
+/** The DHCP scope filter (dhcpInclude / dhcpExclude), matched on the scope's name OR server id. */
+export function filterDhcpResults<T extends { name: unknown; dhcpServerId: unknown }>(
+  subnets: T[],
+  include?: string[],
+  exclude?: string[],
+): T[] {
+  const hit = (s: T, pattern: string) =>
+    matchesWildcard(pattern, String(s.name)) || matchesWildcard(pattern, String(s.dhcpServerId));
+  let result = subnets;
+  if (include && include.length > 0) result = result.filter((s) => include.some((p) => hit(s, p)));
+  if (exclude && exclude.length > 0) result = result.filter((s) => !exclude.some((p) => hit(s, p)));
+  return result;
+}
+
 export interface FilterResult {
   included: boolean;
   reason?: string;

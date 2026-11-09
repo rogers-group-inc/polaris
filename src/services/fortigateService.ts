@@ -10,9 +10,10 @@
  * in integrations.ts consumes both integrations identically.
  */
 
-import { Netmask } from "netmask";
 import { AppError } from "../utils/errors.js";
-import { matchesWildcard } from "../utils/integrationFilter.js";
+import { matchesInterfaceFilter, matchesInventoryFilter, filterDhcpResults } from "../utils/integrationFilter.js";
+import { parseDhcpServers, flattenDhcpMonitorResults, mergeDhcpMonitorLeases } from "../utils/fortiosDhcp.js";
+import { fortinetConnectionErrorMessage } from "../utils/fortinetConnectionError.js";
 import { tlsFetch } from "../utils/tlsDispatcher.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -35,7 +36,6 @@ import {
   NO_INTERFACE_IPV6,
   DHCP_MONITOR_FORMAT,
   parseDhcp6Servers,
-  parseDhcpMonitorAddress,
   parseInterfaceIpv6,
 } from "../utils/fortiosIpv6.js";
 import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
@@ -54,7 +54,7 @@ import type {
   DiscoveryProgressCallback,
 } from "./fortimanagerService.js";
 import { parseVipServerInfo } from "./fortimanagerService.js";
-import { findFortiswitchUplinkPorts, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
+import { findFortiswitchUplinkPorts, fortiswitchDiscoveryRow, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
 import { primeArpCache, ARP_SETTLE_MS } from "./arpPrimeService.js";
 import { fortiosVlanParentOf, FORTIOS_INTERFACE_CMDB_FORMAT } from "../utils/fortiosInterfaceRef.js";
@@ -125,22 +125,8 @@ export async function testConnection(config: FortiGateConfig): Promise<{
           : "Connected successfully";
     return { ok: true, message: label, version };
   } catch (err: any) {
-    if (err.cause?.code === "ECONNREFUSED") {
-      return { ok: false, message: `Connection refused — ${config.host}:${config.port || 443}` };
-    }
-    if (err.cause?.code === "ENOTFOUND") {
-      return { ok: false, message: `Host not found — ${config.host}` };
-    }
-    if (err.cause?.code === "ETIMEDOUT" || err.name === "TimeoutError") {
-      return { ok: false, message: `Connection timed out — ${config.host}:${config.port || 443}` };
-    }
-    if (err.message === "fetch failed" && err.cause) {
-      const code = err.cause?.code;
-      if (code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" || code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "CERT_HAS_EXPIRED" || code === "ERR_TLS_CERT_ALTNAME_INVALID") {
-        return { ok: false, message: `TLS certificate error (${code}) — try disabling SSL verification` };
-      }
-      return { ok: false, message: err.cause?.message || err.message };
-    }
+    const connectionError = fortinetConnectionErrorMessage(err, config.host, config.port);
+    if (connectionError !== null) return { ok: false, message: connectionError };
     if (err instanceof AppError) {
       return { ok: false, message: err.message };
     }
@@ -637,62 +623,16 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     if (!Array.isArray(dhcpData)) {
       log("discover.dhcp", "info", `${deviceHostname}: No DHCP servers configured`, deviceHostname);
     } else {
-      let deviceSubnetCount = 0;
-      let deviceReservationCount = 0;
-      for (const server of dhcpData) {
-        const iface = typeof server.interface === "string" ? server.interface : String(server.interface ?? "");
-        const serverId = String(server.id || iface);
-        const netmaskStr = server.netmask;
-        const ranges = server["ip-range"];
-
-        if (!netmaskStr || !Array.isArray(ranges) || ranges.length === 0) continue;
-        const startIp = ranges[0]["start-ip"];
-        if (!startIp) continue;
-
-        try {
-          const block = new Netmask(`${startIp}/${netmaskStr}`);
-          const cidr = `${block.base}/${block.bitmask}`;
-          discovered.push({
-            cidr,
-            name: iface || `dhcp-${serverId}`,
-            fortigateDevice: deviceName,
-            // Chassis identity (business rule 41). Resolved by the status
-            // chain before this one; blank stays UNKNOWN rather than becoming
-            // a claim that the chassis changed. The HA members this unit's
-            // cluster names are read later (chain G) and are joined in by
-            // syncDhcpSubnets from `result.devices`, not from here.
-            fortigateSerial: deviceSerial || undefined,
-            dhcpServerId: serverId,
-          });
-          deviceSubnetCount++;
-          if (iface) dhcpInterfaceNames.push(iface);
-        } catch {
-          // skip malformed
-        }
-
-        const reservedAddrs = server["reserved-address"];
-        if (Array.isArray(reservedAddrs)) {
-          for (const entry of reservedAddrs) {
-            const rIp = entry.ip;
-            const rMac = entry.mac || "";
-            if (!rIp || rIp === "0.0.0.0") continue;
-            const numericScopeId = typeof server.id === "number" ? server.id : Number(server.id);
-            const numericEntryId = typeof entry.id === "number" ? entry.id : Number(entry.id);
-            dhcpEntries.push({
-              device: deviceName,
-              interfaceName: iface || `dhcp-${serverId}`,
-              ipAddress: rIp,
-              macAddress: rMac,
-              hostname: entry.description || "",
-              type: "dhcp-reservation",
-              scopeId: Number.isFinite(numericScopeId) ? numericScopeId : undefined,
-              entryId: Number.isFinite(numericEntryId) ? numericEntryId : undefined,
-            });
-            deviceReservationCount++;
-          }
-        }
-      }
-      log("discover.dhcp", "info", `${deviceHostname}: Found ${deviceSubnetCount} DHCP subnet(s) and ${deviceReservationCount} static reservation(s)`, deviceHostname);
+      // Shared with FortiManager (utils/fortiosDhcp.ts). The serial is the
+      // chassis identity (business rule 41), resolved by the status chain
+      // before this one; blank stays UNKNOWN rather than becoming a claim that
+      // the chassis changed. The HA members this unit's cluster names are read
+      // later (chain G) and joined in by syncDhcpSubnets from `result.devices`.
+      const parsed = parseDhcpServers(dhcpData, deviceName, deviceSerial);
+      discovered.push(...parsed.subnets);
+      dhcpEntries.push(...parsed.reservations);
+      dhcpInterfaceNames.push(...parsed.interfaceNames);
+      log("discover.dhcp", "info", `${deviceHostname}: Found ${parsed.subnets.length} DHCP subnet(s) and ${parsed.reservations.length} static reservation(s)`, deviceHostname);
     }
   } catch (err: any) {
     log("discover.dhcp", "error", `${deviceHostname}: Failed to query DHCP servers — ${err.message || "Unknown error"}`, deviceHostname);
@@ -732,74 +672,14 @@ async function fgtChainDhcp(ctx: FgtChainCtx): Promise<void> {
     });
     flags.didDhcpLeasesQuery = true;
 
-    const flatLeases: any[] = [];
-    if (Array.isArray(leases)) {
-      for (const entry of leases) {
-        if (Array.isArray(entry.leases)) {
-          const serverIface = String(entry.server_interface || entry.interface || "");
-          for (const lease of entry.leases) flatLeases.push({ ...lease, _serverIface: serverIface });
-        } else if (entry.ip) {
-          flatLeases.push(entry);
-        }
-      }
-    }
-
+    const flatLeases = flattenDhcpMonitorResults(leases);
     log("discover.leases", "info", `${deviceHostname}: Raw DHCP entries from monitor: ${flatLeases.length}`, deviceHostname);
 
-    // Merge monitor data INTO the CMDB-derived list rather than wiping it.
-    // /api/v2/monitor/system/dhcp only returns reservations whose target client
-    // is currently online and holding a lease. Static reservations whose
-    // target is offline are in CMDB but not in monitor; wiping the CMDB list
-    // would silently drop them. CMDB is the base set; monitor adds new IPs
-    // (live leases) and stamps `seenLeased=true` on overlapping CMDB entries
-    // so the stale-reservation job can tell which static reservations have
-    // ever been seen actively held by their target.
-
-    let deviceEntryCount = 0;
-    for (const lease of flatLeases) {
-      const parsedLease = parseDhcpMonitorAddress(lease);
-      if (!parsedLease) continue;
-      const leaseIp = parsedLease.ip;
-      const leaseMac = parsedLease.mac;
-      let leaseIface = lease.interface || lease._serverIface || "";
-
-      const existingIdx = dhcpEntries.findIndex((e) => e.ipAddress === leaseIp && e.device === deviceName);
-      if (existingIdx >= 0) {
-        // CMDB already has this static reservation — mark it as currently
-        // leased so the stale job knows the target has been seen online.
-        dhcpEntries[existingIdx].seenLeased = true;
-        // The CMDB row can't say which medium the client is holding it on;
-        // the live lease can, and the address ranking (business rule 101)
-        // prefers a wired claim over a wireless one.
-        if (lease.access_point) dhcpEntries[existingIdx].accessPoint ??= lease.access_point;
-        if (lease.ssid) dhcpEntries[existingIdx].ssid ??= lease.ssid;
-        continue;
-      }
-
-      if (!leaseIface) {
-        const matched = discovered.find((s) => {
-          try { return new Netmask(s.cidr).contains(leaseIp); } catch { return false; }
-        });
-        leaseIface = matched?.name || "";
-      }
-
-      dhcpEntries.push({
-        device: deviceName,
-        interfaceName: leaseIface || "unknown",
-        ipAddress: leaseIp,
-        macAddress: leaseMac,
-        hostname: lease.hostname || "",
-        type: lease.reserved === true ? "dhcp-reservation" : "dhcp-lease",
-        expireTime: lease.expire_time || undefined,
-        accessPoint: lease.access_point || undefined,
-        ssid: lease.ssid || undefined,
-        vci: lease.vci || undefined,
-        // Monitor confirms the IP is being actively leased by a client right
-        // now — enables the stale-reservation job's "still online" signal.
-        seenLeased: true,
-      });
-      deviceEntryCount++;
-    }
+    // Merge monitor data INTO the CMDB-derived list rather than wiping it
+    // (utils/fortiosDhcp.ts, shared with FortiManager): the monitor returns a
+    // static reservation only while its client holds the lease, so CMDB is the
+    // base set and the monitor adds live leases and stamps `seenLeased`.
+    const deviceEntryCount = mergeDhcpMonitorLeases(flatLeases, dhcpEntries, discovered, deviceName);
     log("discover.leases", "info", `${deviceHostname}: Found ${deviceEntryCount} DHCP entry/entries from monitor`, deviceHostname);
   } catch (err: any) {
     log("discover.leases", "error", `${deviceHostname}: Failed to query DHCP monitor — ${err.message || "Unknown error"}`, deviceHostname);
@@ -964,20 +844,11 @@ async function fgtChainSwitchesAps(ctx: FgtChainCtx): Promise<void> {
     if (Array.isArray(swResults)) {
       for (const sw of swResults) {
         const cmdbMeta = cmdbMetaBySerial.get((sw.serial || "").toUpperCase());
-        fortiSwitches.push({
-          device: deviceName,
-          deviceSerial: deviceSerial || "",
-          name: sw["switch-id"] || "",
-          serial: sw.serial || "",
-          ipAddress: sw.connecting_from || "",
-          fgtInterface: sw.fgt_peer_intf_name || "",
-          osVersion: sw.os_version || "",
-          joinTime: Number.isFinite(sw.join_time) && sw.join_time > 0 ? sw.join_time : undefined,
-          state: sw.state || "",
-          connected: sw.status === "Connected",
-          uplinkPhysicalPort: cmdbMeta?.uplinkPort ?? null,
-          description: cmdbMeta?.description ?? null,
-        });
+        fortiSwitches.push(fortiswitchDiscoveryRow(
+          sw,
+          { device: deviceName, deviceSerial: deviceSerial || "" },
+          { uplinkPort: cmdbMeta?.uplinkPort ?? null, description: cmdbMeta?.description ?? null },
+        ));
         switchCount++;
       }
     }
@@ -1523,56 +1394,6 @@ export async function discoverDhcpSubnets(
 }
 
 
-// matchesWildcard is imported from ../utils/integrationFilter.js — the
-// canonical glob-lite matcher shared by every device/VM/interface filter.
-
-function matchesInterfaceFilter(interfaceName: string, config: FortiGateConfig): boolean {
-  const includeList = config.interfaceInclude ?? [];
-  const excludeList = config.interfaceExclude ?? [];
-  if (includeList.length > 0) return includeList.some((p) => matchesWildcard(p, interfaceName));
-  if (excludeList.length > 0) return !excludeList.some((p) => matchesWildcard(p, interfaceName));
-  return true;
-}
-
-function matchesInventoryFilter(interfaceName: string, config: FortiGateConfig): boolean {
-  const includeList = config.inventoryIncludeInterfaces ?? [];
-  const excludeList = config.inventoryExcludeInterfaces ?? [];
-
-  function matches(pattern: string, iface: string): boolean {
-    if (matchesWildcard(pattern, iface)) return true;
-    if (!pattern.includes("*") && iface.toLowerCase().startsWith(pattern.toLowerCase() + ".")) return true;
-    return false;
-  }
-
-  if (includeList.length > 0) return includeList.some((p) => matches(p, interfaceName));
-  if (excludeList.length > 0) return !excludeList.some((p) => matches(p, interfaceName));
-  return true;
-}
-
-function filterDhcpResults(
-  subnets: DiscoveredSubnet[],
-  include?: string[],
-  exclude?: string[],
-): DiscoveredSubnet[] {
-  let result = subnets;
-
-  if (include && include.length > 0) {
-    result = result.filter((s) =>
-      include.some((pattern) =>
-        matchesWildcard(pattern, String(s.name)) ||
-        matchesWildcard(pattern, String(s.dhcpServerId))
-      )
-    );
-  }
-
-  if (exclude && exclude.length > 0) {
-    result = result.filter((s) =>
-      !exclude.some((pattern) =>
-        matchesWildcard(pattern, String(s.name)) ||
-        matchesWildcard(pattern, String(s.dhcpServerId))
-      )
-    );
-  }
-
-  return result;
-}
+// matchesInterfaceFilter / matchesInventoryFilter / filterDhcpResults are
+// imported from ../utils/integrationFilter.js — shared with FortiManager
+// (CQ-B034), beside the canonical glob-lite matcher they use.
