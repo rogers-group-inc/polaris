@@ -43,7 +43,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:**
 - `src/api/routes/firmware.ts` — `firmwareAssetRouter` (`GET /`, `POST /`, `GET /runs`, `POST /runs/:runId/abort`), `firmwareRunsRouter` (`GET /assets/firmware-runs/active`) and `GET /server-settings/firmware/runs/:id`.
 - `src/api/routes/serverSettings.ts` — `refuseOrAbortLiveFlashes` before `POST /updates/apply` and `POST /restart` (rule 138): `listActiveFirmwareRuns` for the 409, `abortAllFirmwareRuns` on `abortFirmwareRuns: true`.
-- `public/js/app.js` — the nav bar's operations panel (`renderQueryStatus`'s firmware rows, `abortFirmwareRunFromPanel`), through the routes; `public/js/server-settings.js` — `warnIfFirmwareRunning` / `confirmAbortFirmwareRuns` before Apply Update and Restart.
+- `public/js/app.js` — the nav bar's operations panel (`renderQueryStatus`'s firmware rows, `abortFirmwareRunFromPanel`), through the routes; `public/js/server-settings-maintenance.js` — `warnIfFirmwareRunning` / `confirmAbortFirmwareRuns` before Apply Update and Restart.
 - `src/jobs/failOrphanedFirmwareRuns.ts` — the boot sweep.
 - Reader of its rows, not a caller: `src/services/operationsCalendarService.ts` reads `FirmwareUpgradeRun` by `startedAt` range for the Events page's Calendar tab.
 - `src/services/firmwareScheduleService.ts` — `checkSchedulableUpgrade` at booking, `startFirmwareUpgrade({ scheduleId, notifyEmails })` when a booking fires, `FirmwareRunConflictError` to tell "wait" from "refused" (rule 93). The reverse edge is a LAZY import: the runner's `.finally` and `failOrphanedFirmwareRuns` call `notifyScheduledRunFinished` through `notifyScheduledRun`, like `requestRediscover`, because the schedule service imports this one.
@@ -294,7 +294,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `settingsStore.createSettingStore` (10 s TTL); `eventLogService.logEvent` (`setting.reboot_updated`, only when the switch actually changes); `AppError`; `logger`.
 
-**Used by:** `src/services/rebootService.ts` (`startReboot`); `src/services/rebootScheduleService.ts` (`createRebootSchedule`, `updateRebootSchedule`); `src/api/routes/reboot.ts` (`GET /assets/:id/reboot` → `noteRequired`); `src/api/routes/serverSettings.ts` (`GET|PUT /server-settings/reboot`). Client: `public/js/server-settings.js → _rebootSettingsCardHtml` / `saveRebootSettings` (Customization tab, Reboots card); the reboot dialog (`public/js/assets.js → _rebootNoteFieldHTML`) and the phone sheet (`public/js/mobile/asset-detail.js → rbConfirmBodyHtml`) read `noteRequired`.
+**Used by:** `src/services/rebootService.ts` (`startReboot`); `src/services/rebootScheduleService.ts` (`createRebootSchedule`, `updateRebootSchedule`); `src/api/routes/reboot.ts` (`GET /assets/:id/reboot` → `noteRequired`); `src/api/routes/serverSettings.ts` (`GET|PUT /server-settings/reboot`). Client: `public/js/server-settings-customization.js → _rebootSettingsCardHtml` / `saveRebootSettings` (Customization tab, Reboots card); the reboot dialog (`public/js/assets.js → _rebootNoteFieldHTML`) and the phone sheet (`public/js/mobile/asset-detail.js → rbConfirmBodyHtml`) read `noteRequired`.
 
 **Invariants:**
 - **Enforced in the service, not the dialog** — the desktop dialog, the phone and a bearer token all meet the same 400.

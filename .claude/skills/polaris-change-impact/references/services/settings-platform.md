@@ -45,7 +45,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - Changing the geometry changes what operators already saved — `accentGeometry` is pure and unit-tested (`tests/unit/brandLogoService.test.ts`) precisely so the placement promise ("bottom-right, roughly half the logo") is a test, not a comment. The Customization tab's checkbox hint states the same number; move both together.
-- The frontend's `logoAccent` → URL mapping lives in `public/js/brand-logo.js` (which appends `?theme=` and the `?v=`/`&v=` logo version — see brandingService's versioned-URL invariant), plus the Customization tab's preview `src` in `public/js/server-settings.js`; a path or query change is a three-file change.
+- The frontend's `logoAccent` → URL mapping lives in `public/js/brand-logo.js` (which appends `?theme=` and the `?v=`/`&v=` logo version — see brandingService's versioned-URL invariant), plus the Customization tab's preview `src` in `public/js/server-settings-customization.js`; a path or query change is a three-file change.
 - WebP is deliberately unsupported (resvg can't decode it in an embedded `<image>`) — a WebP-branded install shows its logo un-accented, which is the same fallback `appIconService` already makes.
 
 ---
@@ -74,7 +74,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - Adding a branding field means updating the route's PUT schema too — and consider whether it belongs in the PWA manifest (`buildManifest` in `routes/pwa.ts`).
 - Changing `logoUrl` semantics (e.g. non-fixed filenames) breaks `appIconService`'s AND `brandLogoService`'s mtime-based cache keys — read those invariants first.
-- Which mark each surface paints is `public/js/brand-logo.js`'s call, not the surface's: desktop login (`js/login.js`), mobile login (`js/mobile/auth.js`), the sidebar (`applyBranding` in `js/app.js`) and the Customization tab preview (`js/server-settings.js`) all go through `PolarisBrandLogo.resolve/applyTo`. Adding a fifth surface means calling it too, not re-deriving the rule.
+- Which mark each surface paints is `public/js/brand-logo.js`'s call, not the surface's: desktop login (`js/login.js`), mobile login (`js/mobile/auth.js`), the sidebar (`applyBranding` in `js/app.js`) and the Customization tab preview (`js/server-settings-customization.js`) all go through `PolarisBrandLogo.resolve/applyTo`. Adding a fifth surface means calling it too, not re-deriving the rule.
 - The shipped art lives in `public/img/brand/` as one file per (orientation, theme) — those names are in `brand-logo.js`'s `ASSETS` map and nowhere else.
 
 ---
@@ -124,7 +124,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - Check magic-byte prefixes (PNG/JPEG/WebP) if adding new raster formats; ensure length matches actual file signatures.
 - SVG_REJECT_PATTERNS is the security boundary — adding a new tag/attribute reject pattern is fine, but loosening one needs careful review (every entry maps to a known XSS / XXE / SSRF vector).
-- Type validation reads the live AssetTypeDef registry (`isKnownAssetType`), and resolution keys on `asset.assetType` lowercased, so a custom type carries an icon like a built-in. The Device Icons card's type dropdown is drawn from the same registry (`_assetTypes` in `public/js/server-settings.js`); its hardcoded `_deviceIconAssetTypes` is only the fallback when the registry did not load.
+- Type validation reads the live AssetTypeDef registry (`isKnownAssetType`), and resolution keys on `asset.assetType` lowercased, so a custom type carries an icon like a built-in. The Device Icons card's type dropdown is drawn from the same registry (`_assetTypes` in `public/js/server-settings-identification.js`); its hardcoded `_deviceIconAssetTypes` is only the fallback when the registry did not load.
 - Verify Prisma DeviceIcon schema: unique constraint on (scope, key), Bytes column type for data. Scope is a String column — no DB migration needed when adding new scope values.
 - Review topologyGraphService.ts topology rendering (resolveIconUrl call sites) if icon resolution priority changes — but priority is built once in `buildResolutionCandidates()`, so updates land in both sync and async paths together.
 - Ensure upload route multer fileSize limit (256KB) stays at or above the raster MAX_ICON_BYTES constant. SVG's tighter MAX_SVG_BYTES is enforced inside validateUpload after multer accepts.
@@ -406,7 +406,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Writes invalidate the cache synchronously in the writing process; the OTHER process converges via TTL expiry — don't assume immediate cross-process visibility.
 
 **When changing this:**
-- New fields need a default + tolerant parse + merge handling, AND the Web-Server-tab card (`public/js/server-settings.js` `dashCardHtml`/`handleDashSave`) + the `PUT /server-settings/dash` Zod schema updated in lockstep.
+- New fields need a default + tolerant parse + merge handling, AND the Web-Server-tab card (`public/js/server-settings-ntp-web.js` `dashCardHtml`/`handleDashSave`) + the `PUT /server-settings/dash` Zod schema updated in lockstep.
 - Don't lengthen the TTL casually — it's the operator-visible latency of the kill-switch.
 - The gate DROPS unauthorized sources (socket destroy in dashServer, not a 403) — keep that stealth posture in mind when touching the scope decision.
 
@@ -432,7 +432,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **When changing this:**
 - A new IPv6 path (a collector, a discovery read, a UI surface) must read `ipv6Enabled()` (server) or `polarisIpv6Enabled` (browser, from `/auth/me`) — or it leaks IPv6 onto an install that switched it off. A new dial site reads `ipv6Dialable()`.
-- The Server Settings card is `public/js/server-settings.js → ipv6CardHtml` / `handleIpv6Save`.
+- The Server Settings card is `public/js/server-settings-ntp-web.js → ipv6CardHtml` / `handleIpv6Save`.
 
 ---
 
