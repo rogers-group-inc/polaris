@@ -195,6 +195,53 @@ describe("the SQL gate on evaluation loads", () => {
   });
 });
 
+describe("device-list preview applies the precedence carve-out (business rule 18)", () => {
+  const SERVER_DOWN = { id: "r-srv", name: "Servers down", trigger: DOWN_RULE.trigger, scope: { assetTypes: ["server"] } };
+
+  beforeEach(() => {
+    h.prisma.asset.findMany.mockResolvedValue([
+      scopeAsset("srv1"),
+      scopeAsset("fw1", { assetType: "firewall" }),
+      scopeAsset("srv2"),
+    ]);
+  });
+
+  it("stamps devices a more-specific same-trigger automation owns, orders them last, and counts the rest", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([SERVER_DOWN]);
+    const res = await previewRule({ scope: { allAssets: true }, carveOutTrigger: DOWN_RULE.trigger } as any);
+    expect(res.totalEvaluated).toBe(3);
+    expect(res.coveredAssets).toBe(1);
+    expect(res.matches.map((m) => m.assetId)).toEqual(["fw1", "srv1", "srv2"]);
+    expect(res.matches.filter((m) => m.excludedBy).map((m) => m.excludedBy!.ruleName)).toEqual(["Servers down", "Servers down"]);
+    expect(res.carveOut?.carvedOut).toEqual({ count: 2, byRule: [{ ruleId: "r-srv", ruleName: "Servers down", count: 2 }] });
+    expect(res.specificity?.label).toBeTruthy();
+  });
+
+  it("leaves the list alone when the peer watches a different trigger", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([
+      { ...SERVER_DOWN, trigger: { type: "asset_metric", metric: "cpuPct", operator: ">=", threshold: 90 } },
+    ]);
+    const res = await previewRule({ scope: { allAssets: true }, carveOutTrigger: DOWN_RULE.trigger } as any);
+    expect(res.coveredAssets).toBeUndefined();
+    expect(res.carveOut).toBeUndefined();
+    expect(res.matches.every((m) => !m.excludedBy)).toBe(true);
+  });
+
+  it("reports what a more-specific draft takes from a less-specific peer", async () => {
+    h.prisma.notificationRule.findMany.mockResolvedValue([{ ...SERVER_DOWN, id: "r-all", name: "All down", scope: { allAssets: true } }]);
+    const res = await previewRule({ scope: { assetTypes: ["server"] }, carveOutTrigger: DOWN_RULE.trigger } as any);
+    expect(res.coveredAssets).toBeUndefined();
+    expect(res.carveOut?.carvesFrom?.[0]).toMatchObject({ ruleId: "r-all", count: 3 });
+  });
+
+  it("does no carve-out work without a carveOutTrigger", async () => {
+    const res = await previewRule({ scope: { allAssets: true } } as any);
+    expect(h.prisma.notificationRule.findMany).not.toHaveBeenCalled();
+    expect(res.carveOut).toBeUndefined();
+    expect(res.specificity).toBeUndefined();
+  });
+});
+
 describe("the event/change tail honors the same gate", () => {
   beforeEach(() => {
     h.prisma.notificationRule.findMany.mockResolvedValue([EVENT_RULE]);

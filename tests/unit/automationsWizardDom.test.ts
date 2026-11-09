@@ -36,6 +36,8 @@ const DEFAULT_PREVIEW: Record<string, unknown> = { supported: true, totalEvaluat
 let previewResponse: Record<string, unknown> = DEFAULT_PREVIEW;
 /** How many times POST /automations/preview was asked — view mode never asks. */
 let previewCallCount = 0;
+/** Every POST /automations/preview body, in order. */
+const previewBodies: Record<string, unknown>[] = [];
 /** The global capacity alert hold (rule 105) the event step reads and writes. */
 let capHold: Record<string, unknown> = {
   holdMinutes: 30, intervalMinutes: 10, pending: null,
@@ -129,7 +131,7 @@ beforeAll(() => {
         models: ["FGT-60F"],
         subnets: [{ id: "s1", name: "Mgmt", cidr: "10.20.0.0/24" }],
       }),
-      preview: async () => { previewCallCount++; return previewResponse; },
+      preview: async (body: Record<string, unknown>) => { previewCallCount++; previewBodies.push(body); return previewResponse; },
       // The cadence the poll-counted hold + window fields convert through.
       // 120s with a spread, so a caption that quietly assumed 60 is visible.
       pollCadence: async () => ({ stream: "cpuMemory", mode: 120, min: 60, max: 300, timeoutMs: 5000, assetCount: 7 }),
@@ -5066,5 +5068,90 @@ describe("view mode (automationManagement:read without write)", () => {
     expect(doc.querySelector(".modal")!.classList.contains("modal-readonly")).toBe(false);
     expect((doc.querySelector("#aw-name") as HTMLInputElement).disabled).toBe(false);
     expect(doc.querySelector(".modal-header h3")!.textContent).toBe("Edit automation");
+  });
+});
+
+// Business rule 18 on the Devices step: an existing metric/state automation
+// sends its trigger with the device-list preview so the list leaves out the
+// devices a more-specific same-trigger automation already owns.
+describe("Devices step precedence carve-out", () => {
+  const DOWN = {
+    id: "r-all-down",
+    name: "All down",
+    description: null,
+    enabled: true,
+    severity: "warning",
+    trigger: { type: "asset_state", field: "monitorStatus", operator: "==", value: "down", forDurationSec: 0 },
+    scope: { condition: { op: "AND", children: [{ field: "model", operator: "not_contains", value: "FortiSwitch" }] } },
+    cooldownSec: null,
+    messageTemplate: null,
+    actions: [{ type: "notify", channelId: "c1", recipientDeviceRegion: true }],
+    escalation: null,
+    reset: { mode: "manual" },
+    severityBands: null,
+    bandNotify: null,
+  };
+
+  async function openOnDevices(rule: Record<string, unknown>) {
+    doc.body.innerHTML = "";
+    previewBodies.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)(rule);
+    (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 500));
+    expect(doc.querySelector("#aw-step-2.visible")).toBeTruthy();
+  }
+
+  it("sends the trigger + own id and lists only the devices this automation keeps", async () => {
+    previewResponse = {
+      supported: true,
+      totalEvaluated: 3,
+      totalAssets: 3,
+      meetsCount: 3,
+      coveredEvaluated: 1,
+      coveredAssets: 1,
+      carveOut: {
+        carvedOut: { count: 2, byRule: [{ ruleId: "r-ap", ruleName: "FortiAP down", count: 2 }] },
+        carvesFrom: [{ ruleId: "r-x", ruleName: "Everything down", count: 3, sampleHostnames: [] }],
+      },
+      matches: [
+        { assetId: "k1", hostname: "kept-fw", dimension: "", value: null, meets: true },
+        { assetId: "c1", hostname: "carved-ap-1", dimension: "", value: null, meets: true, excludedBy: { ruleId: "r-ap", ruleName: "FortiAP down" } },
+        { assetId: "c2", hostname: "carved-ap-2", dimension: "", value: null, meets: true, excludedBy: { ruleId: "r-ap", ruleName: "FortiAP down" } },
+      ],
+    };
+    try {
+      await openOnDevices(DOWN);
+      const sent = previewBodies[previewBodies.length - 1]!;
+      expect(sent.carveOutTrigger).toMatchObject({ type: "asset_state", field: "monitorStatus" });
+      expect(sent.id).toBe("r-all-down");
+      expect(sent.trigger).toBeUndefined(); // still a device list, not an evaluation
+      const box = doc.querySelector("#aw-scope-preview")!;
+      const rows = Array.from(box.querySelectorAll("tbody tr")).map((tr) => tr.textContent);
+      expect(rows).toEqual(["kept-fw"]);
+      expect(box.textContent).toContain("3 monitored device(s) match this filter.");
+      expect(box.textContent).toContain("2 of them are covered by a more-specific automation");
+      expect(box.textContent).toContain("“FortiAP down” (2)");
+      expect(box.textContent).toContain("remaining 1.");
+      expect(box.textContent).toContain("less-specific automations: “Everything down” (3)");
+    } finally {
+      previewResponse = DEFAULT_PREVIEW;
+    }
+  });
+
+  it("keeps the plain device list for a composite trigger (exempt from rule 18)", async () => {
+    await openOnDevices({
+      ...DOWN,
+      id: "r-comp",
+      trigger: {
+        type: "composite",
+        op: "AND",
+        children: [
+          { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90, aggregation: "latest", windowSec: 0, forDurationSec: 0 },
+          { type: "asset_metric", metric: "memPct", operator: ">", threshold: 90, aggregation: "latest", windowSec: 0, forDurationSec: 0 },
+        ],
+      },
+    });
+    expect(previewBodies.length).toBeGreaterThan(0);
+    for (const b of previewBodies) expect(b.carveOutTrigger).toBeUndefined();
   });
 });

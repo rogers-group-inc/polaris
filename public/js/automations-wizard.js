@@ -2948,6 +2948,31 @@ async function openAutomationWizard(existing, opts) {
     return '<p class="aw-preview-head">' + headHtml + '</p>' +
       '<div class="aw-preview-body' + (bodyHtml ? ' table-wrapper' : '') + '">' + (bodyHtml || "") + '</div>';
   }
+  // The Devices step's precedence line (business rule 18), riding the count
+  // head: how many matched devices a more-specific automation already owns
+  // (they are left out of the list below), and what this draft takes from
+  // less-specific ones. Empty when nothing overlaps.
+  function scopeCarveOutHtml(res) {
+    var co = res.carveOut;
+    if (!co) return "";
+    var out = "";
+    if (co.carvedOut && co.carvedOut.count) {
+      var by = (co.carvedOut.byRule || []).map(function (b) {
+        return '“' + escapeHtml(b.ruleName) + '” (' + b.count + ')';
+      }).join(", ");
+      out += ' <strong>' + co.carvedOut.count + '</strong> of them are covered by a more-specific automation and left out below: ' + by + '.' +
+        (res.coveredAssets
+          ? ' This one alerts on the remaining <strong>' + res.coveredAssets + '</strong>.'
+          : ' That leaves <strong>no</strong> device(s) for this one.');
+    }
+    if (co.carvesFrom && co.carvesFrom.length) {
+      var from = co.carvesFrom.map(function (c) {
+        return '“' + escapeHtml(c.ruleName) + '” (' + c.count + ')';
+      }).join(", ");
+      out += ' <span class="aw-preview-muted">This takes devices from less-specific automations: ' + from + '.</span>';
+    }
+    return out;
+  }
   function scheduleScopePreview() {
     if (scopePreviewTimer) clearTimeout(scopePreviewTimer);
     scopePreviewTimer = setTimeout(runScopePreview, 400);
@@ -2961,10 +2986,29 @@ async function openAutomationWizard(existing, opts) {
       // A Path Monitor draft's pool is agent hosts — preview the scope the
       // engine will actually resolve (pathMonitorScopeC).
       var pathPool = isPathTriggerC(draft.trigger);
-      var res = await awPreview({ scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope });
-      var rows = (res.matches || []).slice(0, 15).map(function (m) {
+      var body = { scope: pathPool ? pathMonitorScopeC(draft.scope) : draft.scope };
+      // Business rule 18: a more-specific automation watching the same thing
+      // takes the devices it covers from this one. Only single-condition
+      // metric/state triggers take part, and only they are sent — the trigger
+      // rides along for the carve-out alone, it is not evaluated here.
+      var tr = draft.trigger;
+      var carveTrigger = tr && (tr.type === "asset_metric" || tr.type === "asset_state") ? tr : null;
+      var res;
+      if (carveTrigger) {
+        var withCarve = Object.assign({}, body, { carveOutTrigger: carveTrigger });
+        if (editing && editing.id) withCarve.id = editing.id;
+        // A half-built trigger can fail validation; the device list must not
+        // go dark over it, so fall back to the plain list.
+        try { res = await awPreview(withCarve); } catch (_e) { res = await awPreview(body); }
+      } else {
+        res = await awPreview(body);
+      }
+      var carved = res.coveredAssets != null;
+      var owned = (res.matches || []).filter(function (m) { return !m.excludedBy; });
+      var rows = owned.slice(0, 15).map(function (m) {
         return '<tr><td>' + escapeHtml(m.hostname || m.assetId || "") + '</td></tr>';
       }).join("");
+      var listedTotal = carved ? res.coveredAssets : res.totalEvaluated;
       // MONITORED devices are what the list and the count report — those are
       // what an operator is choosing between. The unmonitored remainder is
       // stated rather than hidden (the filter does select them), but no
@@ -2976,7 +3020,8 @@ async function openAutomationWizard(existing, opts) {
       box.innerHTML = scopePreviewHtml(
         '<strong>' + res.totalEvaluated + '</strong> monitored device(s)' + (pathPool ? ' with the Polaris Agent' : '') + ' match this filter.' +
           (un ? ' <span class="aw-preview-muted">(+' + un + ' unmonitored — automations never fire on those.)</span>' : "") +
-          (res.totalEvaluated > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
+          scopeCarveOutHtml(res) +
+          (listedTotal > 15 ? ' <span class="aw-preview-muted">Showing the first 15.</span>' : ""),
         rows ? '<table><tbody>' + rows + '</tbody></table>' : ""
       );
     } catch (err) {

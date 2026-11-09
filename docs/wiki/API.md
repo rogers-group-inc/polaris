@@ -553,7 +553,10 @@ Gated on `automationManagement`. Behaviours to code against:
   checks, custom widgets).
 - **Preview before you create.** `POST /automations/preview` takes a partial
   draft (a scope alone, or a trigger and scope), reports which devices it covers
-  and how many readings meet it right now, and writes nothing.
+  and how many readings meet it right now, and writes nothing. A scope-only draft
+  may add `carveOutTrigger` (plus the rule's `id` when editing) to have the device
+  list honour precedence: devices a more specific automation owns carry
+  `excludedBy`, and `coveredAssets` counts the rest.
 - **PUT is a full replace.** Fields you leave out take their defaults, so read
   the rule, change it and send it all back.
 - **An empty scope selects no devices.** For a metric, state or composite

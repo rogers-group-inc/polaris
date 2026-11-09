@@ -7476,19 +7476,35 @@ export async function previewRule(rawInput: PreviewRuleInput): Promise<PreviewRe
     // UNFILTERED for exactly that reason: the count is the point.
     const all = await loadScopeAssets(input.scope);
     const assets = all.filter((a) => a.monitored);
+    const listed: PreviewMatch[] = assets.map((a) => ({
+      assetId: a.id,
+      hostname: a.hostname,
+      dimension: "",
+      value: null,
+      meets: true,
+    }));
+    // Precedence carve-out (business rule 18): when the wizard passes the
+    // draft's trigger, devices a more-specific same-trigger automation already
+    // covers are stamped and ordered last, and the covered counts say how many
+    // are left — the same computation the Test step and the engine use, so the
+    // Devices step cannot disagree with who the automation will alert on.
+    const carve = input.carveOutTrigger
+      ? await computeCarveOut({ ...input, trigger: input.carveOutTrigger }, assets)
+      : null;
+    const covered = carve && carve.excludedBy.size ? applyCarveOutToMatches(listed, carve.excludedBy) : undefined;
+    const sigTrigger = input.carveOutTrigger;
     return {
       supported: true,
       totalEvaluated: assets.length,
       totalAssets: assets.length,
       meetsCount: assets.length,
       unmonitoredCount: all.length - assets.length,
-      matches: assets.slice(0, 200).map((a) => ({
-        assetId: a.id,
-        hostname: a.hostname,
-        dimension: "",
-        value: null,
-        meets: true,
-      })),
+      ...(covered ? { coveredEvaluated: covered.evaluated, coveredAssets: covered.assets } : {}),
+      matches: listed.slice(0, 200),
+      ...(carve && (carve.summary.carvedOut || carve.summary.carvesFrom) ? { carveOut: carve.summary } : {}),
+      ...(sigTrigger && (sigTrigger.type === "asset_metric" || sigTrigger.type === "asset_state")
+        ? { specificity: { rank: scopeRank(input.scope), label: scopeRankLabel(scopeRank(input.scope)) } }
+        : {}),
     };
   }
 
