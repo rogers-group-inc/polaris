@@ -21,6 +21,7 @@
     "mock:demo": "node --env-file=.env --import tsx/esm prisma/mock-demo.ts",
     "mock:alert-grouping": "node --env-file=.env --import tsx/esm prisma/mock-alert-grouping.ts",
     "mock:path-alerts": "node --env-file=.env --import tsx/esm prisma/mock-path-alerts.ts",
+    "mock:topology-export": "node --env-file=.env --import tsx/esm scripts/seed-topology-from-export.ts",
     "lab:fortigates": "node --env-file=.env --import tsx/esm prisma/seed-lab-fortigates.ts",
     "test:fmg": "node scripts/test-fmg.mjs",
     "lint": "eslint src",
