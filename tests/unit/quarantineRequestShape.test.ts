@@ -42,7 +42,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 
 const callFortiOs = vi.hoisted(() => vi.fn());
 

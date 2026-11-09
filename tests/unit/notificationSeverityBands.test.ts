@@ -231,7 +231,7 @@ describe("updateTierMetSince / sustainedSeverity", () => {
   });
 
   it("holds the alert pending until the tier's OWN duration elapses", () => {
-    let map = updateTierMetSince(null, tiers, 8, T0); // warning band only
+    const map = updateTierMetSince(null, tiers, 8, T0); // warning band only
     expect(sustainedSeverity(map, tiers, T0)).toBeNull();
     expect(sustainedSeverity(map, tiers, min(29))).toBeNull();
     expect(sustainedSeverity(map, tiers, min(30))).toBe("warning");

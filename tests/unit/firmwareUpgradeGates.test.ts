@@ -53,7 +53,7 @@ const h = vi.hoisted(() => {
     state, primary, backup, stale,
     openMaintenanceHold: vi.fn(async () => true),
     releaseMaintenanceHold: vi.fn(async () => true),
-    logEvent: vi.fn(async () => {}),
+    logEvent: vi.fn(async (_e: { action: string }) => {}),
     resolveConnectionPath: vi.fn(async (id: string) => ({ hops: (state.paths.get(id) ?? []).map((hid) => ({ id: hid })) })),
     engineRun: vi.fn(async () => state.engineOutcome),
     stat: vi.fn(async () => ({ size: 100 })),

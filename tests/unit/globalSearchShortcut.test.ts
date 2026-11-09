@@ -40,7 +40,7 @@ function mount(platform: string) {
   g.api = {};
   g.escapeHtml = (s: unknown) => String(s ?? "");
   doc.body.innerHTML = '<div class="page-header"><h2>Assets</h2><div class="page-header-actions"></div></div>';
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   // Indirect eval puts app.js's top-level functions on Node's global.
   (g.renderGlobalSearch as () => void)();
   return { win, doc };
@@ -61,7 +61,7 @@ describe("global search — the Ctrl+K hint", () => {
 
   it("Ctrl+K puts the cursor in the box", () => {
     const { win, doc } = mount("Win32");
-    const ev = new (win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent("keydown",
+    const ev = new win.KeyboardEvent("keydown",
       { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
     doc.body.dispatchEvent(ev);
     expect(ev.defaultPrevented).toBe(true);

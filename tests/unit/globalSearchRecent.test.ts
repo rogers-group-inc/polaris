@@ -13,7 +13,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Window } from "happy-dom";
+import { Window, type HTMLInputElement, type HTMLElement } from "happy-dom";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -50,7 +50,7 @@ function mount(username: string, session: Record<string, string> = {}) {
   g.api = { search: { query } };
   g.escapeHtml = (s: unknown) => String(s ?? "");
   doc.body.innerHTML = '<div class="page-header"><h2>Assets</h2><div class="page-header-actions"></div></div>';
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   g.currentUsername = username;
   (g.renderGlobalSearch as () => void)();
   const input = doc.getElementById("global-search-input") as HTMLInputElement;

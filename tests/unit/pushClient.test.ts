@@ -89,7 +89,6 @@ function load(opts?: { supported?: boolean; serverEnabled?: boolean }): Harness 
     : {};
 
   const sandbox = { window: win, navigator, api, Notification: win.Notification, Uint8Array };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function("window", "navigator", "api", "Notification", "Uint8Array", SRC)(
     sandbox.window, sandbox.navigator, sandbox.api, sandbox.Notification, Uint8Array,
   );

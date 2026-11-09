@@ -118,10 +118,8 @@ function boot(perms: Record<string, string>, extra: Record<string, any> = {}) {
   (0, eval)(DOWN_AFTER_SRC);
   delete g.PolarisAssetDetail;
   delete g.PolarisAssetEdit;
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(DETAIL_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(EDIT_SRC)();
 }
 

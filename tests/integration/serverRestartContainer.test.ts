@@ -12,7 +12,7 @@
  * exits the process.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { it, expect, beforeAll, afterAll, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ restartService: vi.fn() }));
 

@@ -83,7 +83,7 @@ async function boot(opts: {
   };
 
   doc.body.innerHTML = "<div id='host'></div>";
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
 
   (win as unknown as Record<string, unknown>).currentRolePermissions = opts.perms;
   g.currentRolePermissions = opts.perms;

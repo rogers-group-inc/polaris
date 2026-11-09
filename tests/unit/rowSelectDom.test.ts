@@ -55,7 +55,7 @@ beforeEach(() => {
       '<td class="plain">cell ' + id + "</td></tr>").join("") +
     '<tr id="r-x"><td class="cb-col"></td><td class="plain">not selectable</td></tr>' +
     "</tbody></table>";
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
 
   changes = [];
   clears = 0;

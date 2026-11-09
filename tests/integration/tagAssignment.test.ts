@@ -248,7 +248,7 @@ d("tagAssignmentService — assetCondition (device filter tree)", () => {
   });
 
   it("reconcileTagsForAsset evaluates a tree against one asset", async () => {
-    const tag = await makeCondTag({
+    await makeCondTag({
       op: "and",
       children: [{ field: "hostname", operator: "startsWith", value: "tagtest-cond-f" }],
     });

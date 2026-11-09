@@ -235,7 +235,6 @@ describe("CPU chart — per-core rendering", () => {
     vi.useFakeTimers();
     document.body.innerHTML = "";
     installStubs();
-    // eslint-disable-next-line no-eval
     (0, eval)(SRC);
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -259,7 +258,7 @@ describe("CPU chart — per-core rendering", () => {
     // so the guarantee is the arc's bounds, not a list of hexes.
     expect(g._CPU_CORE_HUE_START).toBeGreaterThan(20);
     expect(g._CPU_CORE_HUE_END).toBeLessThan(340);
-    for (let n of [1, 2, 8, 64, 512]) {
+    for (const n of [1, 2, 8, 64, 512]) {
       for (let i = 0; i < n; i++) {
         const m = /^hsl\((\d+),(\d+)%,(\d+)%\)$/.exec(g._cpuCoreColor(i, n));
         expect(m, `core ${i}/${n} is not an hsl() colour`).toBeTruthy();
@@ -407,7 +406,6 @@ describe("CPU charts — rollup max (bucket peak) lines", () => {
     vi.useFakeTimers();
     document.body.innerHTML = "";
     installStubs();
-    // eslint-disable-next-line no-eval
     (0, eval)(SRC);
   });
   afterEach(() => { vi.useRealTimers(); });
@@ -1040,7 +1038,6 @@ describe("Memory forecast overlay", () => {
     vi.useFakeTimers();
     document.body.innerHTML = "";
     installStubs();
-    // eslint-disable-next-line no-eval
     (0, eval)(SRC);
     // The overlay is off by default; these cases are about what it draws, so
     // switch it on for the asset under test (the default has its own case).

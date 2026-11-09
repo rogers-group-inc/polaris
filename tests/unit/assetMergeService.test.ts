@@ -214,7 +214,7 @@ describe("mergeAssets — field resolution", () => {
       { lastSeen: older, lastSeenSwitch: "FS-248E-01/port15", lastSeenAp: "FAP-431F-01" },
     );
     await mergeAssets({ canonicalId: CANON, ghostId: GHOST });
-    let data = updateData();
+    const data = updateData();
     expect(data.lastSeenSwitch).toBe("FS-248E-01/port15");
     expect(data.lastSeenAp).toBe("FAP-431F-01");
 

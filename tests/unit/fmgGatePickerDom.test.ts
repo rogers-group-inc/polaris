@@ -12,11 +12,8 @@
  * matcher it calls are sliced out of the source and evaluated with a stub api.
  */
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
 let wire: (id: string) => void;
 let resolveGates: (v: unknown) => void;
 let rejectGates: (e: unknown) => void;
@@ -39,7 +36,6 @@ beforeAll(() => {
     },
   };
   const escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line no-new-func
   wire = new Function("api", "escapeHtml", matcher + "\n" + picker + "\nreturn _wireFmgGatePicker;")(api, escapeHtml);
 });
 

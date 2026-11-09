@@ -45,7 +45,6 @@ beforeAll(() => {
     document.body.innerHTML = `<div id="m">${body}${footer}</div>`;
   };
   g.closeModal = () => {};
-  // eslint-disable-next-line no-eval
   (0, eval)(
     [varLine("_MAC_SPLIT_OWN_SOURCES"), varLine("_MAC_SPLIT_VISIBLE"), varLine("_macSplitState"), ...FNS.map(fnSrc)].join("\n") +
       "\n" + [...FNS, "_macSplitState"].map((n) => `globalThis.${n} = ${n};`).join("\n"),

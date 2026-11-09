@@ -17,7 +17,6 @@ import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 
 type Pt = { x: number; y: number };
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sb: Record<string, any>;
 
 beforeAll(() => {

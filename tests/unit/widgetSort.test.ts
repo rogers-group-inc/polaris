@@ -324,7 +324,7 @@ describe("setHeaderSort — the edit-mode button", () => {
     const setWidgetConfig = stubDashboard();
     const w = mountWidget(true, "w-alerts");
     W.setHeaderSort(w.el, { options: optionsFixture(), config: { sortBy: "newest" } });
-    w.sortBtn()!.dispatchEvent(new win.Event("click", { bubbles: true }));
+    (w.sortBtn() as any).dispatchEvent(new win.Event("click", { bubbles: true }));
 
     const menu = doc.querySelector(".widget-sort-menu");
     expect(menu).not.toBeNull();

@@ -336,7 +336,7 @@ describe("platformEolDatasetSchema", () => {
 describe("gradeComponent — security floor", () => {
   const FLOOR = {
     version: "24.22.1",
-    advisories: [{ id: "CVE-2026-111497", severity: "high" }],
+    advisories: [{ id: "CVE-2026-111497", severity: "high" as const }],
     source: "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
     sourceCheckedOn: "2026-10-23",
   };

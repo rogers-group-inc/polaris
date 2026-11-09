@@ -79,7 +79,7 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-const logEventMock = vi.fn(async () => {});
+const logEventMock = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: (...a: unknown[]) => logEventMock(...a) }));
 
 import {

@@ -73,7 +73,6 @@ beforeAll(() => {
   };
   g.polarisPush = { isSupported: () => false, status: vi.fn(async () => ({ supported: false })) };
   g.PolarisRouter = { go: (r: string) => routed.push(r), current: () => ({ name: "more", parts: [] }) };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
 });
 

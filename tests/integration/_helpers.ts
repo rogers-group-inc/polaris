@@ -34,17 +34,15 @@ export const dbReachable: boolean = await (async () => {
   } catch (err) {
     // Surface the real failure: without this, "DB down" and "DB up but the
     // probe crashed" look identical (suites silently skip either way).
-    // eslint-disable-next-line no-console
     console.error("[integration tests] DATABASE_URL is set but the probe failed:", err);
     return false;
   }
 })();
 
 /** Use this in place of `describe` to make a suite skip cleanly when the DB is unreachable. */
-export const dbDescribe: typeof describe = dbReachable ? describe : describe.skip;
+export const dbDescribe = dbReachable ? describe : describe.skip;
 
 if (!dbReachable) {
-  // eslint-disable-next-line no-console
   console.warn("[integration tests] DB unreachable — suites will skip. Set DATABASE_URL and ensure the DB is up to run them.");
 }
 

@@ -23,14 +23,16 @@ type AnyFn = (...a: any[]) => any;
 interface QTE { html: AnyFn; wire: AnyFn; collect: AnyFn; summary: AnyFn; describeRecipients: AnyFn }
 
 const g = globalThis as Record<string, unknown>;
-let doc: Window["document"];
+// The lib.dom view of happy-dom's document, so the lib.dom element casts
+// below (HTMLElement, HTMLSelectElement, ...) type-check.
+let doc: Document;
 let qte: QTE;
 
 beforeAll(() => {
   const win = new Window();
   g.window = win;
   g.document = win.document;
-  doc = win.document;
+  doc = win.document as unknown as Document;
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g._trapFocus = () => () => {};
   g._focusFirstIn = () => {};

@@ -8,8 +8,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  executeRawUnsafe: vi.fn(async () => 1),
-  deleteMany: vi.fn(async () => ({ count: 0 })),
+  executeRawUnsafe: vi.fn(async (..._args: unknown[]) => 1),
+  deleteMany: vi.fn(async (_args: any) => ({ count: 0 })),
   findMany: vi.fn(async () => [] as Array<{ mac: string; source: string }>),
 }));
 

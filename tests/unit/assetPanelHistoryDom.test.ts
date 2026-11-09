@@ -116,9 +116,7 @@ const fwdBtn = () => document.getElementById("asset-panel-fwd") as HTMLButtonEle
 const navWrap = () => document.getElementById("asset-panel-nav") as HTMLElement;
 
 beforeEach(() => {
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(APP_SRC)();
   g.ASSET_HISTORY_MAX = HISTORY_MAX;
   resetState();

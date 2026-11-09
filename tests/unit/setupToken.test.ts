@@ -153,7 +153,7 @@ describe("wizard routes demand the token", () => {
 
 describe("finalize refuses values that would add lines to .env", () => {
   const admin = { username: "admin", password: "Str0ng-Passw0rd-Ex4mple!" };
-  const post = async (body: unknown) => {
+  const post = async (body: object) => {
     const { token } = loadOrCreateSetupToken();
     return request(wizard()).post("/api/setup/finalize").set("X-Setup-Token", token).send(body);
   };

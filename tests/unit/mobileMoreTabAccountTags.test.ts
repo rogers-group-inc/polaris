@@ -42,7 +42,6 @@ async function render(user: Record<string, unknown>) {
     status: vi.fn(async () => ({ supported: false, enabledOnServer: false, permission: "default", subscribed: false })),
     enable: vi.fn(), disable: vi.fn(), syncToPreference: vi.fn(async () => ""),
   };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const body = document.getElementById("app-body")!;
   await (g.PolarisMoreTab.spec.render(body, { route: { parts: [] }, user: { username: "dm", role: "Operator", ...user } }) as any);

@@ -85,7 +85,6 @@ beforeEach(() => {
       thr: {},
     },
   };
-  // eslint-disable-next-line no-eval
   (0, eval)(FN_NAMES.map(fnSrc).join("\n\n"));
 });
 

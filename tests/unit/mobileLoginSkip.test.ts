@@ -42,7 +42,6 @@ function loadAuthModule(azure: Cfg, oidc: Cfg) {
     confirmTotp: vi.fn(),
   };
   g.PolarisMobile = { boot: vi.fn() };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   return g.PolarisAuth as { renderLogin: (el: HTMLElement) => Promise<void>; markSignedOut: () => void };
 }

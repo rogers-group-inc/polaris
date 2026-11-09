@@ -47,7 +47,6 @@ beforeAll(() => {
   g.formatDate = (s: any) => String(s).slice(0, 10);
   g.canManageAssets = () => canManage;
   g.assetHaInfo = () => null;
-  // eslint-disable-next-line no-eval
   (0, eval)(
     [varLine("_MAC_ROW_IPS_VISIBLE"), varLine("_ADDRESS_PRIMARY_BADGE"), varLine("_ADDRESS_PRIMARY_IPV6_BADGE"), varLine("_PIN_STALE_MS"), varLine("_CONF_BAND_LABEL"), ...FNS.map(fnSrc)].join("\n") +
       "\n" + FNS.map((n) => `globalThis.${n} = ${n};`).join("\n"),

@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
     hostMetricsSample: { findMany: vi.fn() },
   },
-  logEvent: vi.fn(async () => {}),
+  logEvent: vi.fn(async (_event: unknown) => {}),
   blame: vi.fn(),
 }));
 

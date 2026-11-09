@@ -91,12 +91,10 @@ function load(user: any = { username: "u", permissions: { reservations: "fullwri
   g.PolarisAssetDetail = { open: vi.fn() };
   g.PolarisMobile = { user: () => user };
   for (const src of [TABLE_SF_SRC, LIST_SRC, ACTIONS_SRC, SHEET_SRC, TAB_SRC]) {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(src)();
   }
   // table-sf.js declares TableSF as a script-level function; lift it onto the
   // global the way a browser <script> would.
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   if (!g.TableSF) g.TableSF = new Function(TABLE_SF_SRC + "\nreturn TableSF;")();
   return user;
 }

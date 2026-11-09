@@ -48,9 +48,7 @@ function mount() {
   };
   g.PolarisRouter = { go: vi.fn() };
   g.PolarisTabs = { showSnackbar: vi.fn(), attachSwipeToDismiss: vi.fn() };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(TAB_SRC)();
   const spec = g.PolarisAssetsTab.spec;
   document.getElementById("topbar-slot")!.innerHTML = spec.renderTopbar();
@@ -146,7 +144,6 @@ describe("mobile Assets tab sort + filter", () => {
     sheetButton('[data-sort="ipAddress"]').click();
     await flush();
     // A fresh module (next app boot) reads the saved choice back.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TAB_SRC)();
     g.PolarisAssetsTab.spec.render(document.getElementById("app-body")!);
     await flush();
@@ -252,7 +249,6 @@ describe("mobile Assets tab sort + filter", () => {
     await flush();
     expect(requests[requests.length - 1].monitor).toBe("Down,Up");
     // A fresh module (next app boot) reads the saved pick back as an array.
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function(TAB_SRC)();
     g.PolarisAssetsTab.spec.render(document.getElementById("app-body")!);
     await flush();

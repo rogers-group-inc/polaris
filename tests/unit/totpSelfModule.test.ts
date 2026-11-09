@@ -59,7 +59,6 @@ function load(opts: {
   };
   g.closeModal = () => { document.body.innerHTML = ""; };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const mod = (globalThis as Record<string, unknown>).PolarisTotpSelf as Record<string, (o?: unknown) => Promise<void> | void>;
   return { ...h, mod };
@@ -130,7 +129,7 @@ describe("PolarisTotpSelf.open", () => {
     (document.getElementById("f-totp-backup-check") as HTMLInputElement).checked = true;
     (document.getElementById("btn-totp-disable") as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 0));
-    const api = (globalThis as Record<string, { totp: { disable: ReturnType<typeof vi.fn> } }>).api;
+    const api = (globalThis as unknown as Record<string, { totp: { disable: ReturnType<typeof vi.fn> } }>).api;
     expect(api.totp.disable).toHaveBeenCalledWith({ code: "AAAA-BBBB", isBackupCode: true });
   });
 });

@@ -72,7 +72,6 @@ async function run(opts: { summary?: Partial<Summary> | null; module?: boolean; 
   };
   g.api = opts.api === false ? undefined : { auth: { passkeys: summaryFn } };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   const mod = new Function(SRC)() as { wire: () => void; item: () => MenuItem; refresh: () => void };
   mod.wire();
   await Promise.resolve();
@@ -141,7 +140,6 @@ describe("account-menu passkey row", () => {
     const g = globalThis as Record<string, unknown>;
     g.PolarisPasskeys = { summary: vi.fn(async () => { throw new Error("offline"); }), open: () => {} };
     g.api = { auth: { passkeys: () => {} } };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     const mod = new Function(SRC)() as { wire: () => void; item: () => MenuItem };
     mod.wire();
     await Promise.resolve();

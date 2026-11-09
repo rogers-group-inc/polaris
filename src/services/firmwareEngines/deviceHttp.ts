@@ -488,9 +488,3 @@ export function jsonOrNull(body: string): Record<string, unknown> | null {
 export function asString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : typeof v === "number" ? String(v) : null;
 }
-
-export function asNumber(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) return Number(v);
-  return null;
-}

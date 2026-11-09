@@ -927,7 +927,9 @@ describe("getNocSummaryPayload", () => {
   });
 
   function grantAll() {
-    return { canAssets: true, canEvents: true, assetTypes: null, regionNames: null, capLimit: null };
+    // canAlerts stays false: these cases were written before the alerts gate
+    // existed, and an omitted gate always denied it.
+    return { canAssets: true, canEvents: true, canAlerts: false, assetTypes: null, regionNames: null, capLimit: null };
   }
 
   it("returns only the requested feeds, flattened to the legacy response keys", async () => {
@@ -996,7 +998,7 @@ describe("getNocSummaryPayload", () => {
 
   it("permission-denied feeds return their empty value without touching the DB", async () => {
     const r = await noc.getNocSummaryPayload({
-      feeds: null, canAssets: false, canEvents: false, assetTypes: null, regionNames: null, capLimit: null,
+      feeds: null, canAssets: false, canEvents: false, canAlerts: false, assetTypes: null, regionNames: null, capLimit: null,
     });
     expect(r.statusCounts).toEqual({ total: 0, up: 0, down: 0, warning: 0, unknown: 0, recovering: 0, passive: 0, maintenance: 0 });
     expect(r.downNodes).toEqual([]);

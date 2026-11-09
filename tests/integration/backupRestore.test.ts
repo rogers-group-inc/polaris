@@ -54,7 +54,6 @@ const pgToolsPresent: boolean = (() => {
 })();
 
 if (dbReachable && !pgToolsPresent) {
-  // eslint-disable-next-line no-console
   console.warn("[backupRestore] pg_dump/psql not on PATH — backup round-trip suite will skip.");
 }
 
@@ -214,7 +213,6 @@ d("backup + restore round trip", () => {
     // non-Timescale dev database is not mistaken for coverage of the gates.
     const installed = await timescaleInstalled();
     expect(typeof installed).toBe("boolean");
-    // eslint-disable-next-line no-console
     console.info(`[backupRestore] timescaledb installed: ${installed}`);
   });
 });

@@ -173,6 +173,12 @@ d("syncEntraDevices source mirror", () => {
         disabled: false,
         ouPath: "OU=Workstations",
       }],
+      // The sweep fields: the integration config leaves decommissionMissing
+      // off, and an incomplete read keeps the sweep blocked as well.
+      presentObjectGuids: [GUID],
+      disabledObjectGuids: [],
+      inventoryComplete: false,
+      scoped: false,
     });
     await prisma.assetSource.deleteMany({ where: { externalId: GUID } }); // cleanup key not in the shared list
     expect(r.updated.length).toBe(1);

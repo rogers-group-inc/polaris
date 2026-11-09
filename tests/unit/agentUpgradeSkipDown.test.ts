@@ -17,7 +17,7 @@ const h = vi.hoisted(() => ({
     managedAgent: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   },
   logEvent: vi.fn(async () => {}),
-  logEventsBatch: vi.fn(async () => 0),
+  logEventsBatch: vi.fn(async (_events: unknown) => 0),
   getInventory: vi.fn(),
 }));
 

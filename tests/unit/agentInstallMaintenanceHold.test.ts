@@ -23,7 +23,7 @@ const h = vi.hoisted(() => ({
   findUnique: vi.fn(async (args: { include?: unknown }) =>
     args.include ? null : { assetId: "asset-1" },
   ),
-  openMaintenanceHold:    vi.fn(async () => true),
+  openMaintenanceHold:    vi.fn(async (_hold: unknown) => true),
   releaseMaintenanceHold: vi.fn(async () => true),
 }));
 
@@ -42,7 +42,7 @@ vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async 
 import { startInstall, startUninstall } from "../../src/services/agentInstallService.js";
 
 const heldKinds = () =>
-  h.openMaintenanceHold.mock.calls.map((c) => (c[0] as unknown as { kind: string }).kind);
+  h.openMaintenanceHold.mock.calls.map((c) => (c[0] as { kind: string }).kind);
 
 beforeEach(() => {
   vi.clearAllMocks();

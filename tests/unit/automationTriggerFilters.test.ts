@@ -113,7 +113,7 @@ describe("tgFilterCompile", () => {
     expect((one.tree.children[0] as Leaf).dimensionFilter).toBeUndefined(); // cpuPct takes no interface
     expect((one.tree.children[1] as Leaf).dimensionFilter).toEqual({ ifNamePattern: "wan" });
 
-    const none = compile({ op: "and", children: [metricLeaf(), filterRow("tunnelName", "to-hq")] }, supports, (d) => "IPsec tunnel name");
+    const none = compile({ op: "and", children: [metricLeaf(), filterRow("tunnelName", "to-hq")] }, supports, (_d) => "IPsec tunnel name");
     expect(none.errors.join(" ")).toContain("no condition in its group can take it");
     expect(none.errors.join(" ")).toContain("IPsec tunnel name");
   });

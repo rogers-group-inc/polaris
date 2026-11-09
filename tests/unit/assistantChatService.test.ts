@@ -21,11 +21,11 @@ const h = vi.hoisted(() => ({
   chatCompletionRound: vi.fn(),
   runAssistantTool: vi.fn(),
   beginTurn: vi.fn(async () => ({ question: "q" })),
-  finishTurn: vi.fn(async () => ({ messageId: "m1", reportIds: [] })),
-  recentTurns: vi.fn(async () => [{ role: "user", content: "what is down?" }]),
+  finishTurn: vi.fn(async (_conversationId: string, _turn: any) => ({ messageId: "m1", reportIds: [] as string[] })),
+  recentTurns: vi.fn(async (_conversationId: string, _limit: number) => [{ role: "user", content: "what is down?" }]),
   getEfficiencyAdvisor: vi.fn(async () => false),
   recentAdvisorLines: vi.fn(async () => ({ prefaces: [] as string[], signOffs: [] as string[] })),
-  logEvent: vi.fn(async () => {}),
+  logEvent: vi.fn(async (_event: unknown) => {}),
   getMemoryEnabled: vi.fn(async () => false),
   listMemory: vi.fn(async () => [] as any[]),
   runMemoryTool: vi.fn(),
@@ -364,14 +364,14 @@ describe("streamAssistantTurn", () => {
   });
 
   it("saves a partial answer as stopped when the client hangs up", async () => {
-    let ctl: AbortController;
+    const hold = {} as { ctl: AbortController };
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => {
       o.onText("Half an ans");
-      ctl.abort();
+      hold.ctl.abort();
       throw Object.assign(new Error("aborted"), { name: "AbortError" });
     });
     const r = run();
-    ctl = r.ac;
+    hold.ctl = r.ac;
     await r.p;
     expect(h.finishTurn).toHaveBeenCalledWith("c1", expect.objectContaining({ content: "Half an ans", stopped: true }));
     expect(r.events.at(-1)).toEqual(["done", { messageId: "m1", stopped: true }]);

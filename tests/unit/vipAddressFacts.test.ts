@@ -190,7 +190,7 @@ describe("vipInfoDiffers", () => {
   });
 
   it("treats a missing isVirtualServer as false rather than as changed", () => {
-    const { isVirtualServer: _drop, ...withoutFlag } = snap as Record<string, unknown>;
+    const { isVirtualServer: _drop, ...withoutFlag }: Record<string, unknown> = { ...snap };
     expect(vipInfoDiffers(withoutFlag, snap)).toBe(false);
   });
 });

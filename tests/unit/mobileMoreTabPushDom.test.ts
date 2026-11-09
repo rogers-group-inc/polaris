@@ -80,7 +80,6 @@ async function render(ctx: Partial<Ctx>) {
     syncToPreference: vi.fn(async (pref: string, surf: string) => { calls.push("sync:" + pref + ":" + surf); return ""; }),
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const body = document.getElementById("app-body")!;
   await (g.PolarisMoreTab.spec.render(body, { route: { parts: [] }, user: { username: "u", role: "admin" } }) as any);

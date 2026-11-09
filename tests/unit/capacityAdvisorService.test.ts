@@ -141,7 +141,7 @@ function baseSnapshot(opts: {
 function buildInputs(snap: any, env?: Partial<AdvisorInputs["currentEnv"]>): AdvisorInputs {
   return {
     snapshot: snap,
-    integrations: { fortimanagerProxy: 0, fortimanagerDirectParallelismSum: 0, fortigate: 0, entra: 0, activedirectory: 0, windowsserver: 0 },
+    integrations: { fortimanagerProxy: 0, fortimanagerDirectParallelismSum: 0, fortigate: 0, entra: 0, activedirectory: 0, windowsserver: 0, vcenter: 0, azurearc: 0 },
     cadence: {
       probe:        fullObservation(0.3),
       fastFiltered: fullObservation(0.5),

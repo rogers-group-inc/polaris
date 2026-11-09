@@ -20,7 +20,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import vm from "node:vm";
-import { SERVER_SETTINGS_FILES, serverSettingsFileSource } from "./_serverSettingsSource";
+import { SERVER_SETTINGS_FILES, serverSettingsFileSource } from "./_serverSettingsSource.js";
 
 const PUBLIC = resolve(__dirname, "../../public");
 const INVENTORY = JSON.parse(

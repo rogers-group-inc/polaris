@@ -24,7 +24,8 @@ const CSS = readFileSync(resolve(__dirname, "../../public/css/styles.css"), "utf
 
 function mount(username: string, store: Record<string, string> = {}) {
   const win = new Window();
-  const doc = win.document;
+  // lib.dom Document view of happy-dom's, so the standard element casts type-check.
+  const doc = win.document as unknown as Document;
   g.window = win;
   g.document = doc;
   Object.defineProperty(globalThis, "navigator", { value: win.navigator, configurable: true, writable: true });
@@ -39,7 +40,7 @@ function mount(username: string, store: Record<string, string> = {}) {
   g.api = { search: { query } };
   g.escapeHtml = (s: unknown) => String(s ?? "");
   doc.body.innerHTML = '<div class="page-header"><h2>Assets</h2><div class="page-header-actions"></div></div>';
-  try { (0, eval)(APP_SRC); } catch (_e) { /* app.js boot wiring touches page-specific DOM */ }
+  try { (0, eval)(APP_SRC); } catch { /* app.js boot wiring touches page-specific DOM */ }
   g.currentUsername = username;
   (g.renderGlobalSearch as () => void)();
   return { win, doc, store, query };

@@ -62,7 +62,6 @@ g.api = {
   maintenanceSchedules: { removeAsset, delete: deleteSchedule },
 };
 
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
 (0, eval)(
   [
     fnSrc("_loadMaintenanceEditInfo"),

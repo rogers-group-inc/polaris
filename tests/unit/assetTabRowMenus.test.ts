@@ -24,7 +24,6 @@ function fnSrc(name: string): string {
   return LINES.slice(start, end + 1).join("\n");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
 const arpRowMenuItems = new Function(fnSrc("_arpRowMenuItems") + "\nreturn _arpRowMenuItems;")();
 
 describe("ARP table row menu", () => {

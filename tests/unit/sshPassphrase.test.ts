@@ -84,7 +84,7 @@ describe("masking", () => {
         passphrase: PASSPHRASE,
         publicKey: "ssh-ed25519 AAAA= c",
       },
-      createdAt: new Date(), updatedAt: new Date(),
+      createdBy: null, createdAt: new Date(), updatedAt: new Date(),
     });
     expect(out.config.passphrase).not.toBe(PASSPHRASE);
     expect(String(out.config.passphrase)).toMatch(/^•+$/);

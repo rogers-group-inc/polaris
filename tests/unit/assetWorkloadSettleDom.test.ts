@@ -30,7 +30,6 @@ beforeAll(() => {
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.canManageAssets = () => true;
   g.showConfirm = async () => true;
-  // eslint-disable-next-line no-eval
   (0, eval)(["_wlStateBadge", "_wlUpdateBadge", "_wireWorkloadActions"].map(fnSrc).join("\n") +
     "\nglobalThis._wireWorkloadActions = _wireWorkloadActions;");
 });

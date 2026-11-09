@@ -13,7 +13,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { integrationsSource } from "./_integrationsSource";
+import { integrationsSource } from "./_integrationsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 

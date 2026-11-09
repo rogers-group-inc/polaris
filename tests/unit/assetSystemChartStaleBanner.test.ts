@@ -89,7 +89,6 @@ beforeEach(() => {
   // _resolveStaleStreamSec falls through to the asset's own interval.
   g._effectiveResolvedByAssetId = new Map();
   g._monitorSettingsCache = {};
-  // eslint-disable-next-line no-new-func
   new Function(SRC)();
 });
 

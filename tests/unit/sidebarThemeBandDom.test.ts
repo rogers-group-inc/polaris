@@ -396,7 +396,8 @@ describe("_setTheme", () => {
     // On a busy page the per-element colour transitions were 100-150 ms
     // frames; a same-document view transition is one compositor fade. The
     // types carry the step's easing and length to the CSS.
-    const doc = document as Document & { startViewTransition?: unknown };
+    // A stub, not the lib.dom signature: the test records the options it is called with.
+    const doc = document as unknown as { startViewTransition?: (opts: { update: () => void; types: string[] }) => void };
     const g = globalThis as unknown as { ViewTransition?: unknown };
     const calls: Array<{ update: () => void; types: string[] }> = [];
     function VT() {}

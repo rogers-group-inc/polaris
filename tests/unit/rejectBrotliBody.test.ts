@@ -13,6 +13,9 @@ function app(guarded: boolean) {
 }
 
 const BODY = JSON.stringify({ hello: "world" });
+// Sends the compressed bytes untouched. superagent's typings declare a
+// serializer's result as a string, but it writes a Buffer as-is.
+const rawBody = (b: Buffer) => b as unknown as string;
 
 describe("contentEncodingHasBrotli", () => {
   it("matches br as any listed coding, case- and space-insensitively", () => {
@@ -38,7 +41,7 @@ describe("rejectBrotliBody", () => {
       .post("/echo")
       .set("Content-Type", "application/json")
       .set("Content-Encoding", "br")
-      .serialize((b: Buffer) => b)
+      .serialize(rawBody)
       .send(brotliCompressSync(Buffer.from(BODY)));
     expect(res.status).toBe(200);
     expect(res.body.got).toEqual({ hello: "world" });
@@ -49,7 +52,7 @@ describe("rejectBrotliBody", () => {
       .post("/echo")
       .set("Content-Type", "application/json")
       .set("Content-Encoding", "br")
-      .serialize((b: Buffer) => b)
+      .serialize(rawBody)
       .send(brotliCompressSync(Buffer.from(BODY)));
     expect(res.status).toBe(415);
     expect(res.body.error).toMatch(/Brotli/);
@@ -60,7 +63,7 @@ describe("rejectBrotliBody", () => {
       .post("/echo")
       .set("Content-Type", "application/json")
       .set("Content-Encoding", "gzip, br")
-      .serialize((b: Buffer) => b)
+      .serialize(rawBody)
       .send(Buffer.from("x"));
     expect(res.status).toBe(415);
   });
@@ -74,7 +77,7 @@ describe("rejectBrotliBody", () => {
       .post("/echo")
       .set("Content-Type", "application/json")
       .set("Content-Encoding", "gzip")
-      .serialize((b: Buffer) => b)
+      .serialize(rawBody)
       .send(gzipSync(Buffer.from(BODY)));
     expect(gz.status).toBe(200);
     expect(gz.body.got).toEqual({ hello: "world" });

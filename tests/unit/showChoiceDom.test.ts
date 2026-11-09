@@ -65,7 +65,6 @@ beforeEach(() => {
   // rAF is what reveals the dialog; run it synchronously so the overlay is
   // `open` and focused by the time the test looks.
   g.requestAnimationFrame = (cb: () => void) => { cb(); return 0; };
-  // eslint-disable-next-line no-new-func
   new Function(fnSrc("showChoice") + "\nglobalThis.showChoice = showChoice;")();
 });
 

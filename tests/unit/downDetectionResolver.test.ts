@@ -23,6 +23,9 @@ function mk(id: string, scope: RuleScope, threshold: number, extra?: Partial<Dow
     scope,
     rank: scopeRank(scope),
     threshold,
+    recoverySustainSec: null,
+    recoverySustainPolls: null,
+    severity: "warning",
     dimensionFilter: undefined,
     ...extra,
   };

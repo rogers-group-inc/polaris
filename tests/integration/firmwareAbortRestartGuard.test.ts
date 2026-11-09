@@ -14,7 +14,7 @@
  * own abort is pinned in tests/unit/firmwareUpgradeGates.test.ts.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
 const h = vi.hoisted(() => ({ restartService: vi.fn(), applyUpdate: vi.fn(async () => undefined) }));
 

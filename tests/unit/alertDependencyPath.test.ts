@@ -56,6 +56,7 @@ import {
   renderDependencyPathBlocks,
   runsOf,
   substituteDependencyPathTokens,
+  type DependencyPathSpec,
   type PathEntry,
   type PathNode,
 } from "../../src/services/alertDependencyPathService.js";
@@ -201,7 +202,7 @@ describe("ports", () => {
 });
 
 describe("rendering", () => {
-  function spec(n: number) {
+  function spec(n: number): DependencyPathSpec {
     const seq = pathEntriesFromBlame({ chain: chainOf(n), hops: n }, SELF)!;
     return { entries: seq.entries, links: seq.entries.slice(1).map(() => null), truncated: false };
   }

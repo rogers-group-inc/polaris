@@ -525,7 +525,7 @@ describe("resolveMonitorSettings — class override layering", () => {
       if (args.where.integrationId === null && args.where.assetType === "printer") {
         return { intervalSeconds: 900, failureThreshold: null, probeTimeoutMs: null,
                  cpuMemoryIntervalSeconds:   null, systemInfoIntervalSeconds: null,
-                 temperatureIntervalSeconds: null, systemInfoIntervalSeconds: null,
+                 temperatureIntervalSeconds: null,
                  sampleRetentionDays: null, telemetryRetentionDays: null, systemInfoRetentionDays: null };
       }
       return null;
@@ -553,7 +553,7 @@ describe("resolveMonitorSettings — per-asset overrides win", () => {
     (prisma.monitorClassOverride.findFirst as any).mockResolvedValue({
       intervalSeconds: 300, failureThreshold: null, probeTimeoutMs: 8000,
       cpuMemoryIntervalSeconds:   null, systemInfoIntervalSeconds: null,
-      temperatureIntervalSeconds: null, systemInfoIntervalSeconds: null,
+      temperatureIntervalSeconds: null,
       sampleRetentionDays: null, telemetryRetentionDays: null, systemInfoRetentionDays: null,
     });
 
@@ -707,14 +707,14 @@ describe("resolveMonitorSettingsWithProvenance — labels each field", () => {
     (prisma.monitorClassOverride.findFirst as any).mockResolvedValue({
       intervalSeconds: 300, failureThreshold: null, probeTimeoutMs: 8000,
       cpuMemoryIntervalSeconds:   null, systemInfoIntervalSeconds: null,
-      temperatureIntervalSeconds: null, systemInfoIntervalSeconds: null,
+      temperatureIntervalSeconds: null,
       sampleRetentionDays: null, telemetryRetentionDays: null, systemInfoRetentionDays: null,
     });
     // Class-row id lookup for the badge UI.
     (prisma.monitorClassOverride.findFirst as any).mockResolvedValueOnce({
       intervalSeconds: 300, failureThreshold: null, probeTimeoutMs: 8000,
       cpuMemoryIntervalSeconds:   null, systemInfoIntervalSeconds: null,
-      temperatureIntervalSeconds: null, systemInfoIntervalSeconds: null,
+      temperatureIntervalSeconds: null,
       sampleRetentionDays: null, telemetryRetentionDays: null, systemInfoRetentionDays: null,
     });
     (prisma.monitorClassOverride.findFirst as any).mockResolvedValueOnce({ id: "class-row-id" });

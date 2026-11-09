@@ -40,6 +40,7 @@ import { getConfiguredResolver } from "./dnsService.js";
 import { logger } from "../utils/logger.js";
 import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
 import { chunkArray } from "../utils/chunk.js";
+import { toFiniteOrNull } from "../utils/num.js";
 
 export interface VcenterConfig {
   host: string;
@@ -1315,12 +1316,6 @@ function splitAtSpec(entry: string): { head: string; spec: string } {
   return i === -1 ? { head: entry, spec: "" } : { head: entry.slice(0, i), spec: entry.slice(i) };
 }
 
-function intOrNull(s: string | undefined): number | null {
-  if (s === undefined) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-
 /**
  * Physical NICs out of a `config.network.pnic` propSet value. Exported for tests.
  *
@@ -1416,9 +1411,9 @@ export function parseHostVswitches(block: string): VcenterHostVswitch[] | null {
       name,
       distributed: false,
       dvsUuid: null,
-      mtu: intOrNull(head.match(/<mtu>(\d+)<\/mtu>/)?.[1]),
-      numPorts: intOrNull(head.match(/<numPorts>(\d+)<\/numPorts>/)?.[1]),
-      numPortsAvailable: intOrNull(head.match(/<numPortsAvailable>(\d+)<\/numPortsAvailable>/)?.[1]),
+      mtu: toFiniteOrNull(head.match(/<mtu>(\d+)<\/mtu>/)?.[1]),
+      numPorts: toFiniteOrNull(head.match(/<numPorts>(\d+)<\/numPorts>/)?.[1]),
+      numPortsAvailable: toFiniteOrNull(head.match(/<numPortsAvailable>(\d+)<\/numPortsAvailable>/)?.[1]),
       uplinks,
       teamingPolicy: teaming.match(/<policy>([^<]+)<\/policy>/)?.[1] || null,
     });
@@ -1453,8 +1448,8 @@ export function parseHostProxySwitches(block: string): VcenterHostVswitch[] | nu
       name,
       distributed: true,
       dvsUuid: head.match(/<dvsUuid>([^<]*)<\/dvsUuid>/)?.[1] || null,
-      mtu: intOrNull(head.match(/<mtu>(\d+)<\/mtu>/)?.[1]),
-      numPorts: intOrNull(head.match(/<numPorts>(\d+)<\/numPorts>/)?.[1]),
+      mtu: toFiniteOrNull(head.match(/<mtu>(\d+)<\/mtu>/)?.[1]),
+      numPorts: toFiniteOrNull(head.match(/<numPorts>(\d+)<\/numPorts>/)?.[1]),
       numPortsAvailable: null,
       uplinks,
       teamingPolicy: null,
@@ -1479,7 +1474,7 @@ export function parseHostPortgroups(block: string): VcenterHostPortgroup[] | nul
     out.push({
       name,
       vswitchName: spec.match(/<vswitchName>([^<]*)<\/vswitchName>/)?.[1] || null,
-      vlanId: intOrNull(spec.match(/<vlanId>(-?\d+)<\/vlanId>/)?.[1]),
+      vlanId: toFiniteOrNull(spec.match(/<vlanId>(-?\d+)<\/vlanId>/)?.[1]),
     });
   }
   return out;

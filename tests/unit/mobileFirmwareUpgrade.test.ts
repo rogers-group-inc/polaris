@@ -80,7 +80,6 @@ function boot() {
     firmwareScheduleDefaults, scheduleFirmwareUpgrade, updateFirmwareSchedule, cancelFirmwareSchedule,
   };
   g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(SRC)();
 }

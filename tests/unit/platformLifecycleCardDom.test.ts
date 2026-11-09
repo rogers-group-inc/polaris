@@ -29,9 +29,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 const g = globalThis as Record<string, any>;
 const SPLIT = /\r?\n/;
@@ -66,7 +64,6 @@ beforeEach(() => {
   g.escapeHtml = (s: any) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.formatLocalTime = (s: string) => String(s);
-  // eslint-disable-next-line no-eval
   const exported = eval(`(function () { ${FN_NAMES.map(fnSrc).join("\n")}
     return { renderPlatformLifecycleCard };
   })()`);

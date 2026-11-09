@@ -22,7 +22,6 @@ beforeAll(() => {
   // Page globals the script reads at load (mobile.html's other scripts).
   g.mobileFormatDate = (d: any) => String(d ?? "");
   g.escapeHtml = (s: any) => String(s ?? "");
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   canModify = g.PolarisReservationActions.canModify;
 });

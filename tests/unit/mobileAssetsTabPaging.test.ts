@@ -60,9 +60,7 @@ function mount(total: number) {
   g.PolarisTabs = { showSnackbar: vi.fn() };
   g.PolarisAssetDetail = { open: (id: string) => opened.push("detail:" + id) };
 
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(LIST_SRC)();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   new Function(SRC)();
   const spec = g.PolarisAssetsTab.spec;
   const body = document.getElementById("app-body")!;

@@ -44,7 +44,8 @@ import { createConnection } from "node:net";
 import { fgRequest, type FortiGateConfig } from "./fortigateService.js";
 import { fmgProxyRest, type FortiManagerConfig } from "./fortimanagerService.js";
 import { readSystemStatus } from "../utils/fortiosEnvelope.js";
-import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, asNumber } from "./firmwareEngines/deviceHttp.js";
+import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString } from "./firmwareEngines/deviceHttp.js";
+import { parseFiniteOrNull } from "../utils/num.js";
 import { gateLogin } from "./firmwareEngines/fortigateHttps.js";
 import { DEFAULT_FIRMWARE_TIMEOUTS, type FirmwareEngineContext } from "./firmwareEngines/types.js";
 import { withSshClient } from "../utils/remoteExec.js";
@@ -272,7 +273,7 @@ function restOps(a: RestAdapter, opts: { envelopeSerial: boolean }): GateOps {
     },
     async bootTime() {
       const r = (await a.get(WEB_UI_STATE_PATH)) as Record<string, unknown> | null;
-      const ms = asNumber(r?.utc_last_reboot);
+      const ms = parseFiniteOrNull(r?.utc_last_reboot);
       return ms && ms > 0 ? new Date(ms) : null;
     },
     async managedSwitches() {

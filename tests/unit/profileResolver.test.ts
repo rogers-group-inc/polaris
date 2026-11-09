@@ -18,20 +18,20 @@ import type { ProfileFull, MetricRow, MetricOverrideRow } from "../../src/servic
 function ov(modelPattern: string, symbol: string, extra: Partial<MetricOverrideRow> = {}): MetricOverrideRow {
   return {
     id: `o-${symbol}`, assetType: null, modelPattern, symbol, symbolB: null, mibId: null, mibStdKey: null, type: "scalar", transform: null,
-    aggregate: "none", label: null, parsePattern: null, parseTemplate: null, order: 0, ...extra,
+    aggregate: "none", label: null, parsePattern: null, parseTemplate: null, sensorColumns: null, order: 0, ...extra,
   };
 }
 function row(metricKey: MetricRow["metricKey"], extra: Partial<MetricRow> = {}): MetricRow {
   return {
     id: `m-${metricKey}`, metricKey, defaultSymbol: null, defaultSymbolB: null, defaultMibId: null, defaultMibStdKey: null, defaultType: "scalar", defaultTransform: null,
-    defaultAggregate: "none", defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null, overrides: [], ...extra,
+    defaultAggregate: "none", defaultLabel: null, defaultParsePattern: null, defaultParseTemplate: null, defaultSensorColumns: null, overrides: [], ...extra,
   };
 }
 
 // The Fortinet profile exactly as the seed stamps it: FortiOS defaults on the
 // rows, FortiSwitch / FortiAP as model-pattern overrides.
 const FORTINET: ProfileFull = {
-  id: "p-fortinet", manufacturer: "Fortinet", matchPattern: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+  id: "p-fortinet", manufacturer: "Fortinet", matchPattern: null, widgetLayout: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
   metrics: [
     row("cpu", { defaultSymbol: "fgSysCpuUsage", overrides: [ov("FortiSwitch", "fsSysCpuUsage"), ov("FortiAP", "fapCpuUsage")] }),
     row("memory", { defaultSymbol: "fgSysMemUsage", overrides: [
@@ -44,7 +44,7 @@ const FORTINET: ProfileFull = {
   ],
 };
 const CISCO: ProfileFull = {
-  id: "p-cisco", manufacturer: "Cisco", matchPattern: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+  id: "p-cisco", manufacturer: "Cisco", matchPattern: null, widgetLayout: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
   metrics: [
     row("cpu", { defaultSymbol: "cpmCPUTotal5secRev", defaultType: "table" }),
     row("memory", { defaultSymbol: "ciscoMemoryPoolUsed", defaultSymbolB: "ciscoMemoryPoolFree", defaultType: "double_scalar", defaultTransform: "a_over_a_plus_b_as_percent" }),
@@ -122,7 +122,7 @@ describe("temperature transform — only what the collector applies reaches it",
   // A MikroTik-shaped profile: one scalar sensor row whose raw integer is
   // tenths of a degree (DISPLAY-HINT "d-1").
   const mikrotik = (extra: Partial<MetricRow>): ProfileFull => ({
-    id: "p-mikrotik", manufacturer: "MikroTik", matchPattern: null, createdBy: "admin", createdAt: "", updatedAt: "", widgets: [],
+    id: "p-mikrotik", manufacturer: "MikroTik", matchPattern: null, widgetLayout: null, createdBy: "admin", createdAt: "", updatedAt: "", widgets: [],
     metrics: [row("temperature", { defaultSymbol: "mtxrHlTemperature", ...extra })],
   });
   const subject = { manufacturer: "MikroTik", os: null, model: "CCR2004", assetType: "router" };
@@ -136,6 +136,7 @@ describe("temperature transform — only what the collector applies reaches it",
   it("drops a transform stored before the write path narrowed — Celsius→Fahrenheit converts nothing", () => {
     // The 2026-09-16 prod row. Now that the collector reads the field, a stale
     // value must not suddenly start rewriting stored temperatures.
+    // @ts-expect-error a stored value the TransformKind union no longer admits — the point of the case
     expect(pick(mikrotik({ defaultTransform: "celsius_to_fahrenheit" }))?.temperature?.transform).toBeUndefined();
     expect(pick(mikrotik({ defaultTransform: "bytes_to_mb" }))?.temperature?.transform).toBeUndefined();
   });
@@ -169,7 +170,7 @@ describe("pickDbProfile names the governing profile (business rule 131)", () => 
   // it must be the PROFILE's name — not the asset's — whenever the asset got
   // there through "also applies when".
   const HP: ProfileFull = {
-    id: "p-hp", manufacturer: "HP", matchPattern: "aruba|procurve", createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
+    id: "p-hp", manufacturer: "HP", matchPattern: "aruba|procurve", widgetLayout: null, createdBy: "system:seed", createdAt: "", updatedAt: "", widgets: [],
     metrics: [
       row("cpu", { defaultSymbol: "hpSwitchCpuStat" }),
       row("memory"), row("temperature"), row("storage"), row("interfaces"), row("lldp"), row("wirelessStations"),

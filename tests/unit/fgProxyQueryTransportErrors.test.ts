@@ -42,7 +42,7 @@ afterEach(() => {
 describe("proxyQuery — transport failures become a named 502", () => {
   it("ETIMEDOUT names the address, port and the code", async () => {
     mockReject(fetchFailed("ETIMEDOUT"));
-    const err = await proxyQuery(config as any, "GET", "/api/v2/monitor/system/status").catch((e) => e);
+    const err = (await proxyQuery(config as any, "GET", "/api/v2/monitor/system/status").catch((e) => e)) as AppError;
     expect(err).toBeInstanceOf(AppError);
     expect(err.httpStatus).toBe(502);
     expect(err.message).toMatch(/Could not reach FortiGate at 10\.9\.8\.7:443/);
@@ -69,14 +69,14 @@ describe("proxyQuery — transport failures become a named 502", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({
       status: 200, ok: true, json: async () => JSON.parse("<html>"),
     })));
-    const err = await proxyQuery(config as any, "GET", "/x").catch((e) => e);
+    const err = (await proxyQuery(config as any, "GET", "/x").catch((e) => e)) as AppError;
     expect(err).toBeInstanceOf(AppError);
     expect(err.message).toMatch(/not JSON/);
   });
 
   it("HTTP-status AppErrors pass through unchanged", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ status: 401, ok: false, json: async () => ({}) })));
-    const err = await proxyQuery(config as any, "GET", "/x").catch((e) => e);
+    const err = (await proxyQuery(config as any, "GET", "/x").catch((e) => e)) as AppError;
     expect(err.message).toMatch(/^Authentication failed \(HTTP 401\)/);
     expect(err.message).not.toMatch(/Could not reach/);
   });

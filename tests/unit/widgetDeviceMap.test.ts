@@ -38,7 +38,7 @@ const cyOptions: Array<Record<string, unknown>> = [];
 let cyHandlers: Record<string, (evt: unknown) => void> = {};
 const editorOpts: Array<{ isEditable: () => boolean }> = [];
 /** The site's location views the fake computeFloorViews reports (none by default). */
-let floorViews: Array<Record<string, string>> = [];
+let floorViews: Array<Record<string, unknown>> = [];
 /** Every view key the widget asked partitionElementsForFloor to cut to. */
 const partitioned: string[] = [];
 
@@ -499,7 +499,7 @@ describe("Device Map widget — location chips, pins and rotation", () => {
     await vi.waitFor(() => expect(cyOptions).toHaveLength(1), { timeout: 2000 });
     // The fake switcher answers two rows (Base, then every location): one
     // strip, the page's row break a divider.
-    const strip = el.querySelector(".devmap-topo-views") as HTMLElement & { dispatchEvent: (e: Event) => boolean };
+    const strip = el.querySelector(".devmap-topo-views") as HTMLElement & { dispatchEvent: (e: unknown) => boolean };
     expect(strip.querySelectorAll(".topology-floor-row")).toHaveLength(0);
     const order = Array.from(strip.children).map((c) => (c.classList.contains("devmap-chip-sep") ? "|" : c.textContent));
     expect(order).toEqual(["Base", "|", "Mine", "Mine — B1", "Yard", "Yard — Scale"]);

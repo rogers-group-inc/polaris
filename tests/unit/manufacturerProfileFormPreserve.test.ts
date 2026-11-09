@@ -17,10 +17,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
-import { serverSettingsSource } from "./_serverSettingsSource";
+import { serverSettingsSource } from "./_serverSettingsSource.js";
 
 interface Sandbox {
   document: Document;
@@ -57,7 +55,7 @@ beforeAll(() => {
 
 /** The widget "add" card as the renderer emits it, with whatever the operator
  *  has typed so far. `nameValue` empty = a fresh render from stored state. */
-function addCardHtml(profileId: string, nameValue: string, symbolOptions: string[], symbolValue: string) {
+function addCardHtml(profileId: string, nameValue: string, symbolOptions: string[], _symbolValue: string) {
   return `<div class="mfg-widget-add-card" data-profile-id="${profileId}">
     <input type="text" class="mfg-widget-name" value="${nameValue}">
     <select class="mfg-widget-widgettype"><option value="gauge">Gauge</option><option value="state">State (0/1)</option></select>

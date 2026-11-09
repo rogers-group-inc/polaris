@@ -33,7 +33,6 @@ const T0 = Date.UTC(2026, 10, 1, 0, 0);
 
 function loadCharts() {
   g.escapeHtml = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval
   loadSharedModules();
   new Function(CHARTS_SRC)();
   return g.PolarisCharts;
@@ -132,7 +131,6 @@ describe("lineChart bucket max", () => {
 describe("split CPU chart bucket max", () => {
   function loadTelemetry() {
     loadCharts();
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     loadSharedModules();
     new Function(TELEMETRY_SRC)();
     return g.PolarisTelemetryCharts;
@@ -236,7 +234,6 @@ describe("asset sheet response-time chart bucket max", () => {
       telemetryHistory: async () => ({ samples: [], stats: {} }),
     };
     g.api = { assets: new Proxy(known, { get: (t, k: string) => (k in t ? t[k] : async () => ({})) }) };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     loadSharedModules();
     new Function(DETAIL_SRC)();
   }

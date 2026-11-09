@@ -146,7 +146,7 @@ describe("fgRequest surfaces the FortiOS error body", () => {
     // Something in front of the gate answering with an HTML error page must not
     // turn a device error into a parse error.
     mock(502, null, "<html><head><title>502 Bad Gateway</title></head>\n<body>nginx</body></html>");
-    const err = await fgRequest(config, "GET", "/api/v2/cmdb/x").catch((e) => e);
+    const err = (await fgRequest(config, "GET", "/api/v2/cmdb/x").catch((e: unknown) => e)) as Error;
     expect(err.message).toMatch(/FortiGate returned HTTP 502/);
     expect(err.message).toMatch(/502 Bad Gateway/);
     expect(err.message.length).toBeLessThan(400);
@@ -154,7 +154,7 @@ describe("fgRequest surfaces the FortiOS error body", () => {
 
   it("adds nothing when the body is empty", async () => {
     mock(500, null, "");
-    const err = await fgRequest(config, "GET", "/api/v2/cmdb/x").catch((e) => e);
+    const err = (await fgRequest(config, "GET", "/api/v2/cmdb/x").catch((e: unknown) => e)) as Error;
     expect(err.message).toBe("FortiGate returned HTTP 500 for /api/v2/cmdb/x");
   });
 

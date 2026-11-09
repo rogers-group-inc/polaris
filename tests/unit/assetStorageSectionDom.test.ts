@@ -94,7 +94,6 @@ beforeEach(() => {
   g._POLLING_LABELS = { snmp: "SNMP", rest_api: "REST API", disabled: "Disabled", agent: "Polaris Agent", vcenter: "vCenter" };
   g._notAvailableViaPollingHTML = (label: string, method: string, desc: string) =>
     `<div data-na="1" data-label="${label}" data-method="${method}">${desc}</div>`;
-  // eslint-disable-next-line no-eval
   eval(SRC);
 });
 
