@@ -78,7 +78,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges, resolveWorkloadHostAddress, staleContainerIps; re-exports normalizeWorkloadState, workloadContainerKey, workloadHostUsageKey + the externalId builders from utils/workloadSources.ts; the Workload* types.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas / proxmox branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
 
@@ -187,7 +187,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncGenericApiDevices, genericApiObserved, resolveGenericAssetType, genericApiSweepBlockedReason, genericApiFeedFieldUpdates, mergeGenericFeedTags, GENERIC_API_FEED_FIELDS, GenericApiSyncSummary.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), assetTypeService.listAssetTypes, eventLogService, maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), assetTypeService.listAssetTypes, eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's genericapi branch).
 
@@ -212,7 +212,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncGenericApiNetwork, GenericApiNetworkSummary, GENERIC_API_FEED_SOURCE_TYPES, defaultLeaseExpiry, pickSubnetForIp, dedupeFeedAddresses.
 
-**Cross-service deps:** subnetService.createSubnetRowChecked (the per-block lock + overlap + exclusion seam), dnsResolvedReservationService.releaseDnsResolvedAt, discoveryEngine (exported `upsertConflict` / `computeConflictFields`), eventLogService; utils cidr, subnetExclusion, directoryAbsence.
+**Cross-service deps:** subnetService.createSubnetRowChecked (the per-block lock + overlap + exclusion seam), dnsResolvedReservationService.releaseDnsResolvedAt, discoveryEngine (exported `upsertConflict` / `computeConflictFields`), eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer); utils cidr, subnetExclusion, directoryAbsence.
 
 **Used by:** src/services/discovery/discoveryEngine.ts — runDiscovery's genericapi branch, after the device sync (skipped when `readDevices: false`), only when `networkQueries` is non-empty; its counts feed the run summary (subnets created / claimed / deprecated).
 

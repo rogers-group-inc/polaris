@@ -24,6 +24,7 @@ import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { AppError } from "../utils/errors.js";
 import { diffInventory, sameFields } from "../utils/inventoryDelta.js";
+import { chunkArray } from "../utils/chunk.js";
 import {
   fetchIntuneDetectedApps,
   type DiscoveredEntraDevice,
@@ -168,8 +169,7 @@ export async function persistAssetSoftware(
 async function clearAssetSoftware(assetIds: string[], source: SoftwareSource): Promise<number> {
   if (assetIds.length === 0) return 0;
   let removed = 0;
-  for (let i = 0; i < assetIds.length; i += 1000) {
-    const chunk = assetIds.slice(i, i + 1000);
+  for (const chunk of chunkArray(assetIds, 1000)) {
     const [del] = await prisma.$transaction([
       prisma.assetSoftware.deleteMany({ where: { assetId: { in: chunk }, source } }),
       prisma.assetInventoryScrape.deleteMany({ where: { assetId: { in: chunk }, kind: softwareScrapeKind(source) } }),
@@ -341,9 +341,9 @@ function arcSoftwareToInput(r: ArcSoftwareRow): AssetSoftwareInput {
 
 async function loadScrapes(assetIds: string[], kind: string): Promise<Map<string, { stamp: string | null; scrapedAt: Date }>> {
   const out = new Map<string, { stamp: string | null; scrapedAt: Date }>();
-  for (let i = 0; i < assetIds.length; i += 5000) {
+  for (const chunk of chunkArray(assetIds, 5000)) {
     const rows = await prisma.assetInventoryScrape.findMany({
-      where: { kind, assetId: { in: assetIds.slice(i, i + 5000) } },
+      where: { kind, assetId: { in: chunk } },
       select: { assetId: true, stamp: true, scrapedAt: true },
     });
     for (const r of rows) out.set(r.assetId, { stamp: r.stamp, scrapedAt: r.scrapedAt });
@@ -399,8 +399,8 @@ export async function syncIntuneSoftware(
     let failedBatches = 0;
     let batchCount = 0;
     let lastError = "";
-    for (let i = 0; i < plan.toFetch.length && !signal?.aborted; i += INTUNE_SOFTWARE_CHUNK) {
-      const chunk = plan.toFetch.slice(i, i + INTUNE_SOFTWARE_CHUNK);
+    for (const chunk of chunkArray(plan.toFetch, INTUNE_SOFTWARE_CHUNK)) {
+      if (signal?.aborted) break;
       const res = await fetchIntuneDetectedApps(config, chunk.map((c) => c.managedDeviceId), signal);
       failedBatches += res.failedBatches;
       batchCount += res.batchCount;

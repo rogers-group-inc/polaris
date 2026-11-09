@@ -66,6 +66,7 @@ import {
 import type { GenericApiDiscoveryResult, GenericApiMappedRecord, GenericApiIdentityField } from "../genericApiService.js";
 import { listAssetTypes } from "../assetTypeService.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
+import { makeSyncLog } from "./syncLog.js";
 
 const KIND = GENERIC_API_SOURCE_KIND;
 const MAC_SOURCE = "generic-api";
@@ -248,9 +249,7 @@ export async function syncGenericApiDevices(
 ): Promise<GenericApiSyncSummary> {
   const cfg = (integrationConfig ?? {}) as Record<string, unknown>;
   const identityField = (cfg.identityField as GenericApiIdentityField | undefined) ?? "id";
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];

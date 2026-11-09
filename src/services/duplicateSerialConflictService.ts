@@ -67,6 +67,7 @@ import { logEvent } from "./eventLogService.js";
 import { mergeAssets, assertMergeTokenSafe } from "./assetMergeService.js";
 import { reconcileDuplicateIpForAddresses, repointDuplicateIpConflicts } from "./duplicateIpConflictService.js";
 import { isUsableSerial } from "../utils/serialNumber.js";
+import { chunkArray } from "../utils/chunk.js";
 import {
   buildInfraParentIndex,
   resolveInfraParentAsset,
@@ -514,8 +515,7 @@ export async function recordControllerClaims(inputs: ControllerClaimInput[]): Pr
   const now = new Date();
   const CHUNK = 200;
   let written = 0;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK);
+  for (const chunk of chunkArray(rows, CHUNK)) {
     try {
       await prisma.$transaction(
         chunk.map((row) =>

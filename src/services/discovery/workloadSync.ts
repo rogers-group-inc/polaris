@@ -72,6 +72,7 @@ import {
   type WorkloadState,
 } from "../../utils/workloadSources.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
+import { makeSyncLog } from "./syncLog.js";
 
 // ─── The normalized shape both services return ────────────────────────────────
 
@@ -560,9 +561,7 @@ export async function syncWorkloadDevices(
 ): Promise<WorkloadSyncSummary> {
   const platform = rawResult.platform;
   const label = workloadPlatformLabel(platform);
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const result = applyWorkloadFilters(rawResult, integrationConfig);
   const created: string[] = [];
   const updated: string[] = [];

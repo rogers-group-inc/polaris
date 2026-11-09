@@ -58,6 +58,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/discovery/syncLog.ts
+
+**What it owns:** The per-integration sync-pass logger. `makeSyncLog(integrationId, integrationName, actor)` returns the `syncLog(level, message)` every sync pass writes its progress lines with: one `integration.sync` Event (`resourceType: "integration"`, `resourceId` / `resourceName` = the integration, the run's `actor`) whose message is prefixed `[<integration name>]`. Replaced nine identical hand-written closures (CQ-B032).
+
+**Public API:** `makeSyncLog`, `SyncLog`
+
+**Cross-service deps:** eventLogService.logEvent.
+
+**Used by:** src/services/discovery/discoveryEngine.ts (`syncDhcpSubnets`, the Arc cluster + Arc machine syncs, `syncEntraDevices`, `syncActiveDirectoryDevices`, `syncVcenterDevices`), src/services/discovery/genericApiSync.ts (`syncGenericApiDevices`), src/services/discovery/genericApiNetworkSync.ts (`syncGenericApiNetwork`), src/services/discovery/workloadSync.ts (`syncWorkloadDevices`).
+
+**Invariants:**
+- Fire-and-forget: the writer does NOT await `logEvent` (which swallows its own errors and applies the Event-retention minimum level). A sync pass never waits on, or fails because of, its own log line.
+- One shape for every sync pass — `action: "integration.sync"` and the `[name]` prefix. Changing either changes every integration's sync log at once.
+
+**When changing this:**
+- A sync pass that needs a different action or payload writes its own `logEvent` rather than growing parameters here. Extend tests/unit/syncLog.test.ts.
+
+---
+
 ## services/discoveryCancelWatchdog.ts
 
 **What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, fails the run's pg-boss job, and exits the process with code 1 (systemd `Restart=on-failure` restarts it).

@@ -32,6 +32,7 @@ import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
+import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
 import * as llm from "../llmService.js";
 import { ipInCidr, normalizeCidr, cidrContains, cidrOverlaps, isIpv6Address } from "../../utils/cidr.js";
@@ -2507,9 +2508,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   const claims = claimState ?? createDhcpClaimState();
   // Business rule 128: with IPv6 off for the install, nothing IPv6 is stored.
   if (!ipv6Enabled()) result = withoutIpv6(result);
-  const syncLog = (level: "info" | "warning" | "error", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   // Per-integration verbose-debug detection — when on, each Phase wrapped by
   // `phaseTimer` emits one pino info-level line with elapsed ms. Reads the
   // current integration row up front (one query) so the phaseTimer hot path
@@ -8795,9 +8794,7 @@ async function syncArcClusters(
   if (clusters.length === 0) return { created, updated, skipped };
 
   const addAs = getAddAsMonitoredFromConfig("azurearc", integrationConfig, "kubernetes_cluster");
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const now = new Date();
 
   const sourceRows = await prisma.assetSource.findMany({
@@ -8958,9 +8955,7 @@ export async function syncArcDevices(
     assetType === "workstation" ? workstationAddAs
     : assetType === "server"    ? serverAddAs
     : null;
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];
@@ -9614,9 +9609,7 @@ export async function syncEntraDevices(
     assetType === "workstation" ? workstationAddAs
     : assetType === "server"    ? serverAddAs
     : null;
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];
@@ -10629,9 +10622,7 @@ export async function syncActiveDirectoryDevices(
   result: activeDirectory.AdDiscoveryResult,
   actor?: string,
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];
@@ -11094,9 +11085,7 @@ export async function syncVcenterDevices(
   /** "scoped" disables every fleet-absence pass — see `vcenterPassEnabled`. */
   mode: VcenterSyncMode = "full",
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
-  const syncLog = (level: "info" | "error" | "warning", message: string) => {
-    logEvent({ action: "integration.sync", resourceType: "integration", resourceId: integrationId, resourceName: integrationName, actor, level, message: `[${integrationName}] ${message}` });
-  };
+  const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];
