@@ -268,6 +268,10 @@ root_helpers() {
   # hands over to this reviewed copy. Offered on every host.
   root_helper "$SRC/update-linux.sh" /usr/local/sbin/polaris-update-linux 0755
   [[ -d /etc/polkit-1/rules.d ]] && root_helper "$SRC/polkit/49-polaris.rules" /etc/polkit-1/rules.d/49-polaris.rules 0644
+  # The root unit the nginx GUI starts instead of sudo-ing the wrapper from
+  # inside polaris-web's ProtectSystem=strict sandbox (rule 117(o)). A root
+  # unit is a root helper: held for review like the wrapper it runs.
+  root_helper "$SRC/polaris-nginx-apply@.service" "$UNIT_DIR/polaris-nginx-apply@.service" 0644
   if [[ -f /etc/polaris/ha-node || $HA_INSTALL -eq 1 ]]; then
     # Refresh-only-if-present on an HA node's sync / --apply-helpers:
     # setup-rhel-ha.sh decides which a node gets. Under `--install --ha` —

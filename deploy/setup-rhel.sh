@@ -867,6 +867,10 @@ systemctl is-active -q nginx || rm -f /run/nginx.pid
 # fresh installs work out of the box without an extra restart cycle.
 info "Installing in-app nginx GUI helpers (idempotent)..."
 root_copy 0755 "$APP_DIR/deploy/scripts/polaris-nginx-apply.sh" /usr/local/sbin/polaris-nginx-apply
+# The root unit the nginx GUI starts (business rule 117(o)): polaris-web is
+# ProtectSystem=strict, so a sudo of the wrapper from inside it cannot write
+# nginx's files; the scoped polkit rule lets polaris start this unit instead.
+root_copy 0644 "$APP_DIR/deploy/polaris-nginx-apply@.service" /etc/systemd/system/polaris-nginx-apply@.service
 root_copy 0440 "$APP_DIR/deploy/sudoers.d/polaris-nginx" /etc/sudoers.d/polaris-nginx
 root_copy 0644 "$APP_DIR/deploy/tmpfiles.d/polaris-nginx.conf" /etc/tmpfiles.d/polaris-nginx.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/polaris-nginx.conf >/dev/null 2>&1 || true

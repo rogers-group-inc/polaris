@@ -32,7 +32,14 @@ RestartSec=5
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/polaris
+# /run/polaris-nginx-stage is where this process stages a rendered nginx config
+# (the in-app updater's managed render and the Web Server tab's Save & Apply)
+# and a certificate pair for root to install. Without it strict mode made the
+# stage read-only: every update skipped the nginx render as "no-op" and every
+# Save & Apply failed. The "-" tolerates a host with no nginx GUI (tmpfiles
+# never created the directory). Root's half runs in polaris-nginx-apply@.service,
+# outside this sandbox (business rule 117(o)).
+ReadWritePaths=/opt/polaris -/run/polaris-nginx-stage
 PrivateTmp=true
 
 StandardOutput=journal

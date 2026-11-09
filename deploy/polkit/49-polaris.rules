@@ -17,11 +17,19 @@
 // a file the setup scripts install rather than as a step in the docs.
 //
 // Scope (business rule 117): the polaris user may start, stop and restart the
-// polaris units, and start polaris-update-sync.service. Nothing else — no
-// other unit, no transient unit (systemd-run), no daemon-reload, no package
-// management or shutdown. Before rule 117 this granted manage-units for EVERY
-// unit, which is the same as root: `systemd-run` alone runs any command as
-// root.
+// polaris units, start polaris-update-sync.service, and start the four fixed
+// instances of polaris-nginx-apply@.service (the Web Server tab's Save & Apply,
+// certificate rotation, reload and the listener check — rule 117(o)). Nothing
+// else — no other unit, no other instance, no transient unit (systemd-run), no
+// daemon-reload, no package management or shutdown. Before rule 117 this
+// granted manage-units for EVERY unit, which is the same as root: `systemd-run`
+// alone runs any command as root.
+//
+// The nginx instances replace a sudo of /usr/local/sbin/polaris-nginx-apply
+// that could not work from polaris-web: that unit is ProtectSystem=strict, and
+// a sudo inherits its read-only /etc, /run and /var. A started unit runs in
+// its own namespace. It grants no more than the sudo did — the same root
+// wrapper — and less: the wrapper's argument is fixed by the instance name.
 polkit.addRule(function(action, subject) {
     if (action.id != "org.freedesktop.systemd1.manage-units" ||
         subject.user != "polaris") {
@@ -34,6 +42,10 @@ polkit.addRule(function(action, subject) {
     }
     if (unit == "polaris-update-sync.service") {
         return polkit.Result.NOT_HANDLED;
+    }
+    if (/^polaris-nginx-apply@(apply-config|rotate-cert|reload|verify-listening-[0-9]{1,5})\.service$/.test(unit) &&
+        verb == "start") {
+        return polkit.Result.YES;
     }
     if ((unit == "polaris.target" || /^polaris-(web|monitor@[0-9]+|discovery|dash|migrate)\.service$/.test(unit)) &&
         (verb == "start" || verb == "stop" || verb == "restart")) {
