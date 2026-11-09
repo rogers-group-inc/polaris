@@ -39,8 +39,10 @@ describe("inferInterfaceTopology — candidate inventory", () => {
   it("asks only for live assets (decommissioned / disabled excluded)", async () => {
     findAssets.mockResolvedValue([]);
     await inferInterfaceTopology(["core2"]);
-    const where = findAssets.mock.calls[0][0].where;
-    expect(where.status).toEqual({ notIn: ["decommissioned", "disabled"] });
+    // The inventory read (the first asset read is the seeds' monitor state,
+    // for the last-known link rule).
+    const inventoryCall = findAssets.mock.calls.find((c) => c[0].where.status);
+    expect(inventoryCall![0].where.status).toEqual({ notIn: ["decommissioned", "disabled"] });
   });
 
   it("does not draw an edge to a numbered sibling of the named peer", async () => {

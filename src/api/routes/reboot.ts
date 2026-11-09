@@ -29,7 +29,8 @@ import {
   updateRebootSchedule,
   cancelRebootSchedule,
 } from "../../services/rebootScheduleService.js";
-import { defaultRecipientsFor, MAX_RECIPIENTS } from "../../services/firmwareScheduleService.js";
+import { normalizeRecipients, MAX_RECIPIENTS } from "../../services/firmwareScheduleService.js";
+import { notifySpecSchema, prepareNotify, rememberNotifyFor, notifyDialogDefaults } from "../../services/operationNotifyService.js";
 import { setAgentRebootEnabled } from "../../services/agentRebootPermissionService.js";
 import { getRebootSettings } from "../../services/rebootSettingsService.js";
 
@@ -41,19 +42,24 @@ const RecipientsSchema = z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS)
 // caps it at REBOOT_NOTE_MAX and decides whether a blank one is refused.
 const NoteSchema = z.string().max(2000, "The reboot note is too long").nullable();
 
-const RebootNowSchema = z.object({ note: NoteSchema.optional() }).strict();
+// `notifyEmails` (optional, may be empty): emailed when the reboot is sent and
+// when it ends — the dialog's "Email notifications" box (2026-11-09).
+const RebootNowSchema = z.object({ note: NoteSchema.optional(), notifyEmails: RecipientsSchema.optional(), notify: notifySpecSchema.optional() }).strict();
 
 const CreateScheduleSchema = z.object({
   scheduledFor: ScheduledForSchema,
-  notifyEmails: RecipientsSchema,
+  // Plain addresses (the original shape) or the dialog's picker spec — one is needed.
+  notifyEmails: RecipientsSchema.optional(),
+  notify: notifySpecSchema.optional(),
   note: NoteSchema.optional(),
 }).strict();
 
 const UpdateScheduleSchema = z.object({
   scheduledFor: ScheduledForSchema.optional(),
   notifyEmails: RecipientsSchema.optional(),
+  notify: notifySpecSchema.optional(),
   note: NoteSchema.optional(),
-}).strict().refine((v) => v.scheduledFor || v.notifyEmails || v.note !== undefined, { message: "Nothing to change" });
+}).strict().refine((v) => v.scheduledFor || v.notifyEmails || v.notify || v.note !== undefined, { message: "Nothing to change" });
 
 const ListQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(100).optional() });
 
@@ -80,8 +86,15 @@ rebootAssetRouter.get("/", requirePermission("assets", "read"), handle(async (re
 // Reboot now. 202 — the run is watched, not awaited.
 rebootAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "reboot devices"), handle(async (req, res) => {
   const body = RebootNowSchema.safeParse(req.body ?? {});
-  if (!body.success) throw new AppError(400, body.error.issues[0]?.code === "unrecognized_keys" ? "A reboot takes only a note" : firstIssue(body.error));
-  const run = await startReboot({ assetId: String(req.params.id), actor: requestActor(req) ?? "unknown", note: body.data.note });
+  if (!body.success) throw new AppError(400, body.error.issues[0]?.code === "unrecognized_keys" ? "A reboot takes only a note and notifyEmails" : firstIssue(body.error));
+  const assetId = String(req.params.id);
+  // Validated (channels, a To that reaches someone) BEFORE anything is sent.
+  const who = body.data.notify
+    ? await prepareNotify(assetId, body.data.notify)
+    : { notifyEmails: normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true }) };
+  const run = await startReboot({ assetId, actor: requestActor(req) ?? "unknown", note: body.data.note, ...who });
+  // The caller's next reboot dialog pre-fills this.
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "reboot", body.data.notify);
   // Rule 112: the stored credential this reboot signs with, aimed at the gate.
   await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
@@ -106,7 +119,7 @@ rebootAssetRouter.get("/schedules", requirePermission("assets", "read"), handle(
 }));
 
 rebootAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
-  res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
+  res.json({ ...(await notifyDialogDefaults(req.session?.userId ?? null, "reboot")), maxRecipients: MAX_RECIPIENTS });
 }));
 
 rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), scopeAssetParam("assets", "book reboots of devices"), handle(async (req, res) => {
@@ -116,11 +129,13 @@ rebootAssetRouter.post("/schedules", requirePermission("assets", "write"), scope
     assetId: String(req.params.id),
     scheduledFor: new Date(body.data.scheduledFor),
     notifyEmails: body.data.notifyEmails,
+    notify: body.data.notify,
     note: body.data.note,
     actor: requestActor(req) ?? "unknown",
   });
   // Rule 112: recorded when BOOKED, by the person who booked it (the flash precedent).
   await recordRebootCredentialUse(String(req.params.id), credentialUseActor(req));
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "reboot", body.data.notify);
   res.status(201).json({ schedule });
 }));
 
@@ -132,9 +147,11 @@ rebootAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", "w
     scheduleId: String(req.params.scheduleId),
     scheduledFor: body.data.scheduledFor ? new Date(body.data.scheduledFor) : undefined,
     notifyEmails: body.data.notifyEmails,
+    notify: body.data.notify,
     note: body.data.note,
     actor: requestActor(req) ?? "unknown",
   });
+  if (body.data.notify) await rememberNotifyFor(req.session?.userId, "reboot", body.data.notify);
   res.json({ schedule });
 }));
 

@@ -257,8 +257,17 @@ that this is usually a cable or speed-negotiation fault. A mesh link's tooltip s
 the signal in dBm and in words, the channel, band and channel width, the noise
 and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
 a section for each: **Wired link speed**, **Wireless mesh signal**, and
-**Also** (MCLAG and ring links). Devices are listed by asset type (Firewall,
+**Also** (MCLAG, ring and last-known links). Devices are listed by asset type (Firewall,
 Switch, Access Point).
+
+**Last-known links.** A switch-to-switch link stays on the map while one of its
+switches is dependency-down, down or recovering, drawn with long faded dashes. Polaris
+stops fully polling such a switch, so nothing refreshes the evidence for its links; the
+map keeps them where they were last seen, for up to seven days, and the link's tooltip
+says when. Before this, those links disappeared about an hour after the switch went
+dark and the site redrew as if every switch hung straight off the FortiGate. A link
+between two switches Polaris still polls fully disappears an hour after its evidence
+goes, as before.
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line
@@ -290,6 +299,12 @@ next code. Each level is a box inside the one above it, and the editor shows
 that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
+
+Boxes are kept as small as their contents allow. When a box holds exactly the
+same devices as the one box inside it (a building with one floor that has one
+room, say), only the innermost box is drawn, under its own name; hover it to
+see the whole path (Building › Floor › Room). A box with no box inside it sits
+close around its devices, and a device's name always stays inside its box.
 
 **How the map places devices and boxes.** Every device has a level, which is
 how many hops it is from the FortiGate. Every location box has the level of
@@ -371,7 +386,8 @@ was saved also steps aside if its automatic spot is now taken.
 **Drawing your own connection lines** (while editing). Drag any part of a line and a bend
 point appears where you pressed, selected and following the pointer. Click a
 line to show its points: a dot for each bend and a ring where it meets each
-device. Drag a ring around the device's edge to attach the line at that spot;
+device. A line the map routed itself shows a dot on each of its corners straight
+away; moving or deleting one makes the line yours, keeping its other corners. Drag a ring around the device's edge to attach the line at that spot;
 it stays on the device's outline, so the line never comes loose. A bend stays
 where you put it when you move one of the line's devices, and moves with the
 line when you move both devices together. Select a point and press
@@ -409,7 +425,7 @@ and an undone change is saved like any other edit.
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
-| **Base / area / building / floor chips** | top left, only when a device carries a `b:` or `f:` location code. **Base** is the whole site; under it are the areas (plus any building with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it: an area's buildings, then a building's floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Instead, every view shows a dashed stub for each neighbouring group: **← Scale House** for a group the view is fed from (drawn on the left, a line from each device that links to it) and **→ Mine** for a group it feeds (on the right). A neighbour with no location code at the view's level shows as its nearest coded group (a building with no area, in an area view), and one with no code at all as **Base**. Tap a stub to open that group's view. In a view with a saved layout, a stub the layout has no saved spot for is placed beside the devices it links to; **Reset to baseline** on that view lays everything out afresh. Each view keeps its own saved layout |
+| **Base / area / building / floor / room / junction box chips** | top left, only when a device carries a location code below area (`b:`, `f:`, `r:` or `jb:`). **Base** is the whole site; under it are the areas (plus anything tagged with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it, whatever that is for each device: an area's buildings, a building's floors, a floor's rooms, a room's junction boxes. A device that skips a level shows up at the next level it has, so a room tagged straight into an area (`a:Mine r:North Closet`) is listed beside that area's buildings, and a junction box tagged straight into a building beside its floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Instead, every view shows a dashed stub for each neighbouring group: **← Scale House** for a group the view is fed from (drawn on the left, a line from each device that links to it) and **→ Mine** for a group it feeds (on the right). A neighbour with no location code at the view's level shows as its nearest coded group (a building with no area, in an area view), and one with no code at all as **Base**. Tap a stub to open that group's view. In a view with a saved layout, a stub the layout has no saved spot for is placed beside the devices it links to; **Reset to baseline** on that view lays everything out afresh. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
 | **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |

@@ -24,6 +24,9 @@ describe("isValidViewKey", () => {
     expect(isValidViewKey("b||shop")).toBe(true);
     // Area view — the Base → area drill-down level.
     expect(isValidViewKey("a|pugmill")).toBe(true);
+    // Room and junction-box views, a skipped level left empty.
+    expect(isValidViewKey("r|mine|||north closet")).toBe(true);
+    expect(isValidViewKey("jb||shop|||305")).toBe(true);
   });
 
   it("rejects non-strings, empty, oversize, control chars, and foreign prefixes", () => {
@@ -31,6 +34,7 @@ describe("isValidViewKey", () => {
     expect(isValidViewKey(42)).toBe(false);
     expect(isValidViewKey("")).toBe(false);
     expect(isValidViewKey("x|whatever")).toBe(false);
+    expect(isValidViewKey("j|whatever")).toBe(false);
     expect(isValidViewKey("Flat")).toBe(false); // view keys are exact, not case-folded
     expect(isValidViewKey("b|a\nb")).toBe(false);
     expect(isValidViewKey("b|" + "x".repeat(MAX_VIEW_KEY_LEN))).toBe(false);

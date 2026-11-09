@@ -40,6 +40,7 @@
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { chunkArray } from "../utils/chunk.js";
 import { logEvent } from "./eventLogService.js";
 import type { CredentialUseActor } from "./credentialUseAuditService.js";
 import {
@@ -367,8 +368,7 @@ export async function planGroup(assetIds: readonly string[]): Promise<GroupPlan>
 
   // Assess in small parallel chunks: a few point queries each.
   const assessed: Array<{ a: FirmwareAssetRow; res: Awaited<ReturnType<typeof assessGroupCandidate>> }> = [];
-  for (let i = 0; i < r.selected.length; i += ASSESS_CHUNK) {
-    const chunk = r.selected.slice(i, i + ASSESS_CHUNK);
+  for (const chunk of chunkArray(r.selected, ASSESS_CHUNK)) {
     assessed.push(...await Promise.all(chunk.map(async (a) => ({ a, res: await assessGroupCandidate(a) }))));
   }
 
@@ -546,8 +546,8 @@ export async function createGroupSchedule(input: CreateGroupInput): Promise<{ gr
  * single-device booking route does.
  */
 export async function recordGroupCredentialUse(assetIds: readonly string[], actor: CredentialUseActor): Promise<void> {
-  for (let i = 0; i < assetIds.length; i += ASSESS_CHUNK) {
-    await Promise.all(assetIds.slice(i, i + ASSESS_CHUNK).map((id) => recordFirmwareCredentialUse(id, actor)));
+  for (const chunk of chunkArray(assetIds, ASSESS_CHUNK)) {
+    await Promise.all(chunk.map((id) => recordFirmwareCredentialUse(id, actor)));
   }
 }
 

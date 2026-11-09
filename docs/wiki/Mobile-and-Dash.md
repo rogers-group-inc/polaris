@@ -287,8 +287,13 @@ says *Upgrade started*, and the row then follows the run — signing in,
 uploading, erasing / writing / verifying with a percent on a switch,
 rebooting, verifying, waiting for monitoring to answer — and ends on the
 result. The same sheet has a **Schedule for later** box: tick it, pick a
-date and time (your phone's time zone) and who gets the results email, and
-**Schedule** books it instead of starting it. When the device cannot be
+date and time (your phone's time zone) and who gets the emails, and
+**Schedule** books it instead of starting it. Below it, **Email notifications**
+emails when an upgrade started now begins and when it finishes; it is always on
+for a scheduled one. It has the desktop's **To** / **Cc** / **Bcc** boxes —
+type a name, address, role or region, or "asset's" for the device's own
+recipients — and **Send through** for the email channels. The address-book
+picker is desktop-only; typing finds the same people. When the device cannot be
 upgraded right now, the button still shows and the sheet opens with the box
 ticked and locked. A pending booking shows in the row — when, to what
 version, who hears about it — with **Change** and **Cancel**. The button
@@ -309,8 +314,9 @@ allowed to reboot, the row carries **Reboot…** ([Assets → Reboot](Assets#reb
 how the reboot will be sent and what signs it, and says what goes down with it;
 **Reboot** stays greyed out until **I understand this device will go down** is
 ticked. The row then follows the reboot until the device is back, and ends on
-the result. The same sheet has **Schedule for later**, exactly as for a firmware
-upgrade, and a pending reboot shows in the row with **Change** and **Cancel**.
+the result. The same sheet has **Schedule for later** and **Email notifications**, exactly
+as for a firmware upgrade, and a pending reboot shows in the row with **Change**
+and **Cancel**.
 When the device can't be rebooted right now but can be booked (an agent host
 that is offline, say), the row offers **Schedule reboot…** and says why. When
 reboots are not enabled for the device, the row says nothing about rebooting;

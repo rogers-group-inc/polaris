@@ -55,7 +55,7 @@ const router = Router();
 const ViewKeySchema = z
   .string()
   .max(MAX_VIEW_KEY_LEN)
-  .refine(isValidViewKey, 'view must be "flat" or a "b|…" / "f|…" floor-view key');
+  .refine(isValidViewKey, 'view must be "flat" or a location-view key (a| / b| / f| / r| / jb|)');
 
 const SaveLayoutSchema = z.object({
   view: ViewKeySchema,

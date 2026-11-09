@@ -268,6 +268,45 @@ describe("editor on a headless graph", () => {
     expect(ed.deleteSelected()).toBe(false); // nothing selected → key press not swallowed
   });
 
+  // Operator (2026-11-09): a generated route showed only its two end points
+  // until a first drag on the line; its corners should be grabbable at once.
+  // Headless Cytoscape has no renderer to compute segmentPoints, so the
+  // routed corners are stubbed on the element.
+  function routed() {
+    const g = graph({});
+    g.edge.style(sb.J(JSON.stringify({ "curve-style": "segments" }))); // a plain object of the vm's realm
+    g.edge.segmentPoints = () => [{ x: 30, y: 40 }, { x: 70, y: 40 }];
+    return g;
+  }
+
+  it("a generated route shows its corners as bend handles before any drag", async () => {
+    const { ed, edge } = routed();
+    edge.select();
+    await tick();
+    const ids = cy.nodes("[isEdgeHandle]").map((n: any) => n.id()).sort();
+    expect(ids).toEqual(["edgehandle:e|a|b:b0", "edgehandle:e|a|b:b1", "edgehandle:e|a|b:s", "edgehandle:e|a|b:t"]);
+    expect(cy.getElementById("edgehandle:e|a|b:b1").position()).toEqual({ x: 70, y: 40 });
+    expect(blobOf(ed)).toEqual({}); // shown, not owned: nothing saved yet
+  });
+
+  it("moving a generated corner takes the whole shape over, keeping the other corners", async () => {
+    const { ed, edge } = routed();
+    edge.select();
+    await tick();
+    cy.getElementById("edgehandle:e|a|b:b1").position(sb.P(70, 90));
+    expect(blobOf(ed)).toEqual({ "edgepath:e|a|b:b0": { x: 30, y: 40 }, "edgepath:e|a|b:b1": { x: 70, y: 90 } });
+    expect(edge.data("customPath")).toBe(1);
+  });
+
+  it("deleting a generated corner keeps the rest of the shape", async () => {
+    const { ed, edge } = routed();
+    edge.select();
+    await tick();
+    cy.getElementById("edgehandle:e|a|b:b0").select();
+    expect(ed.deleteSelected()).toBe(true);
+    expect(blobOf(ed)).toEqual({ "edgepath:e|a|b:b0": { x: 70, y: 40 } });
+  });
+
   it("handles follow the selection: switching to another link swaps its handles in", async () => {
     const { edge } = graph({ "edgepath:e|a|b:b0": { x: 50, y: 40 } });
     const other = cy.getElementById("e1");

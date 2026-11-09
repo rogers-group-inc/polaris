@@ -39,6 +39,7 @@ import { matchesWildcard } from "../utils/integrationFilter.js";
 import { getConfiguredResolver } from "./dnsService.js";
 import { logger } from "../utils/logger.js";
 import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
+import { chunkArray } from "../utils/chunk.js";
 
 export interface VcenterConfig {
   host: string;
@@ -818,8 +819,7 @@ async function fetchVcenterPerfSamples(
   }
   const metricXml = metricIds.join("");
 
-  for (let i = 0; i < morefs.length; i += PERF_CHUNK) {
-    const chunk = morefs.slice(i, i + PERF_CHUNK);
+  for (const chunk of chunkArray(morefs, PERF_CHUNK)) {
     const specs = chunk
       .map(
         (moref) =>

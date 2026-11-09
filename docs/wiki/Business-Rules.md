@@ -1718,9 +1718,14 @@ above or below it, or its MCLAG peer: then it waits and retries every minute
 for up to two hours past its time. If Polaris was not running at the booked time
 and only gets to it more than 15 minutes late, it is not started. A device has
 at most one scheduled upgrade, and every booking names at least one email
-address. Whatever happens — finished, failed, not started, missed — each
-address gets one results email, in that reader's own time zone when they have a
-Polaris account.
+address. Each address is emailed when the upgrade is booked (and if its time
+or image changes), when it starts, and once with the result — finished, failed,
+not started, missed — in that reader's own time zone when they have a Polaris
+account. An upgrade started now can email the same way, when **Email
+notifications** is ticked: once when it starts and once when it finishes. Who
+is emailed is chosen as in an automation (To / Cc / Bcc, with roles, regions
+and the device's own recipients, worked out when each email is sent), on the
+email channels you pick — never push or chat.
 
 See [Assets → Firmware](Assets#firmware).
 
@@ -2581,6 +2586,12 @@ the reason it was booked with: turning the requirement on later does not stop
 a booking that has none. A reboot an automation books gives the automation's
 name as its reason.
 
+**Who hears about it.** A reboot you book emails its recipients when it is
+booked (and if its time changes), when it starts, and with the result — the
+same as a [scheduled firmware upgrade](#rule-93). A reboot started now emails
+when it is sent and when it ends, if **Email notifications** is ticked. A
+reboot an automation books emails only its result.
+
 ### Rule 116
 
 **No pattern can make Polaris hang.**
@@ -3146,3 +3157,14 @@ switch's highest-numbered ports. The layout must match exactly. If anything does
 the readings stay in **Hardware Sensors** as before. Placed readings are named
 for the port (`port10 Rx power`) and appear in the
 [Interfaces table](Assets#transceiver-readings-in-the-interfaces-table).
+
+### Rule 144
+
+**A link stays on the map as last known while one of its devices is dark.** Polaris
+stops fully polling a switch that is dependency-down, down or recovering, so nothing
+refreshes the evidence for its switch-to-switch links. Instead of dropping those links
+after an hour, the [Device Map](Device-Map) keeps them for up to seven days, drawn with
+long faded dashes, and the link's tooltip says when it was last seen. A link between two
+switches Polaris still polls fully disappears an hour after its evidence goes, as before.
+Discovery's dependency tree keeps the same links, so the switches behind a dark switch
+stay [suppressed](Dependency-Suppression) through a long outage.

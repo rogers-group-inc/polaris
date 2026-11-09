@@ -3971,6 +3971,7 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/assets.js",
     "/js/condition-builder.js",
     "/js/automations-address-book.js",
+    "/js/recipient-picker.js",
     "/js/automations-wizard.js",
     "/js/automations-portability.js",
     "/js/recurrence-editor.js",

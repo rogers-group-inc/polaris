@@ -95,6 +95,27 @@ export function runsHeavyCadences(a: {
 }
 
 /**
+ * True for a monitored device whose full scrape Polaris has stopped running
+ * (`runsHeavyCadences` false: dependency-suppressed, down, warning, recovering
+ * with misses outstanding). Its interface and LLDP rows stop being refreshed
+ * because Polaris stopped asking, not because the cabling changed — so the
+ * Device Map keeps the links those rows prove as LAST KNOWN instead of letting
+ * them age out after an hour (interfaceTopologyService / topologyGraphService;
+ * operator report 2026-11-09: switch-to-switch links vanished ~1 h after a
+ * switch went dependency-down, and the site redrew as a star off the gate).
+ * An unmonitored device is never dark: nothing was polling it to stop.
+ * Business rule 144.
+ */
+export function keepsLastKnownLinks(a: {
+  monitored: boolean;
+  monitorStatus: string | null;
+  consecutiveFailures?: number | null;
+  dependencySuppressed: boolean;
+}): boolean {
+  return a.monitored && !runsHeavyCadences(a);
+}
+
+/**
  * Is a probe that was published as DUE still due when a worker picks it up?
  *
  * The pg-boss publisher re-evaluates every 5 s, and the probe queue's stately

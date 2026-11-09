@@ -501,6 +501,15 @@ export interface StartRebootInput {
    * carried as it stands.
    */
   note?: string | null;
+  /**
+   * A reboot started NOW: who is emailed that it was sent and how it ended —
+   * the dialog's "Email notifications" box. Already normalized by the caller.
+   * A booked run's recipients are its booking's, read from the booking.
+   */
+  notifyEmails?: string[];
+  /** The picker's spec behind notifyEmails + the email channels (operationNotifyService), resolved at each send. */
+  notifyRecipients?: object | null;
+  notifyChannelIds?: string[];
   /** Tests: short clocks. */
   overrides?: { timeouts?: Partial<RebootTimeouts> };
 }
@@ -534,6 +543,9 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
         assetId: a.id, method: plan.method, viaAssetId: plan.via?.assetId ?? null, credentialId: plan.credentialId,
         authority: plan.authority, status: "queued", note, startedBy: input.actor, heartbeatAt: new Date(),
         bootTimeBefore: plan.kind === "agent" ? a.managedAgent?.bootTime ?? null : null,
+        notifyEmails: input.scheduleId ? [] : input.notifyEmails ?? [],
+        ...(!input.scheduleId && input.notifyRecipients ? { notifyRecipients: input.notifyRecipients } : {}),
+        notifyChannelIds: input.scheduleId ? [] : input.notifyChannelIds ?? [],
       },
     });
   } catch (err: any) {
@@ -565,11 +577,18 @@ export async function startReboot(input: StartRebootInput): Promise<RebootRunSum
     logger.warn({ err, assetId: a.id }, "Could not hold the asset in maintenance for the reboot");
   }
 
+  // "The reboot was sent" — to a booking's recipients or this run's own.
+  const emailed = !input.scheduleId && (input.notifyEmails?.length ?? 0) > 0;
+  if (input.scheduleId || emailed) void notifyRunEmail("started", run.id);
+
   const timeouts = { ...DEFAULT_REBOOT_TIMEOUTS, ...(input.overrides?.timeouts ?? {}) };
   setImmediate(() => {
     runReboot(run.id, a, plan, timeouts, input.scheduleId ? null : input.actor)
       .catch((err) => logger.error({ err, runId: run.id }, "Reboot runner crashed unexpectedly"))
-      .finally(() => { if (input.scheduleId) void notifyScheduledRun(run.id); });
+      .finally(() => {
+        if (input.scheduleId) void notifyScheduledRun(run.id);
+        else if (emailed) void notifyRunEmail("finished", run.id);
+      });
   });
   return summarize(run);
 }
@@ -581,6 +600,16 @@ async function notifyScheduledRun(runId: string): Promise<void> {
     await notifyScheduledRebootFinished(runId);
   } catch (err) {
     logger.warn({ err, runId }, "reboot: the scheduled-run results email could not be sent");
+  }
+}
+
+/** Lazy, like notifyScheduledRun: a reboot's start notice and a reboot-now's outcome. */
+async function notifyRunEmail(which: "started" | "finished", runId: string): Promise<void> {
+  try {
+    const svc = await import("./rebootScheduleService.js");
+    await (which === "started" ? svc.notifyRebootRunStarted(runId) : svc.notifyRebootRunFinished(runId));
+  } catch (err) {
+    logger.warn({ err, runId, which }, "reboot: the run's email could not be sent");
   }
 }
 
@@ -910,6 +939,7 @@ export async function failOrphanedRebootRuns(): Promise<number> {
       message: `Reboot orphaned: ${msg}`, details: { runId: o.id, orphaned: true },
     });
     await notifyScheduledRun(o.id);
+    await notifyRunEmail("finished", o.id);
   }
   return orphans.length;
 }

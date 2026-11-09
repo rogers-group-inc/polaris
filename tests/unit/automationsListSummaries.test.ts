@@ -64,6 +64,8 @@ beforeAll(() => {
   g.api = {};
   // The sentence factory lives in the wizard file, which the page loads
   // alongside this one — the summaries reach it through window.
+  // The pill vocabulary the Addresses column reads (recipient-picker.js, before the wizard as on the page).
+  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8"));
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations.js"), "utf8"));
   // AFTER both: the wizard file declares its own `_ruleSchema` at top level, so

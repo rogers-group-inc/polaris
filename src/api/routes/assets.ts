@@ -86,6 +86,7 @@ import { syncAzureTagRegistry } from "../../services/tagAssignmentService.js";
 import { shapeMacRows, selectPrimaryMac, MAC_ROW_SELECT } from "../../utils/macAddresses.js";
 import { isAllZeroMac } from "../../utils/mac.js";
 import { csvParam } from "../../utils/text.js";
+import { chunkArray } from "../../utils/chunk.js";
 import { buildPrismaTextFilter, TEXT_FILTER_OPS } from "../../utils/prismaTextFilter.js";
 import {
   probeAsset, recordProbeResult,
@@ -5039,8 +5040,7 @@ const DNS_SWEEP_WRITE_CHUNK = 250;
 async function applyDnsUpdatesChunked(
   updates: Array<{ table: "asset" | "assetAssociatedIp"; id: string; data: Record<string, unknown> }>,
 ): Promise<void> {
-  for (let i = 0; i < updates.length; i += DNS_SWEEP_WRITE_CHUNK) {
-    const chunk = updates.slice(i, i + DNS_SWEEP_WRITE_CHUNK);
+  for (const chunk of chunkArray(updates, DNS_SWEEP_WRITE_CHUNK)) {
     await prisma.$transaction(
       chunk.map((u) =>
         u.table === "asset"
@@ -5391,9 +5391,9 @@ router.post("/import", requirePermission("assets", "write"), requireFleetWide("a
 
     // Chunked so one transaction never spans a whole spreadsheet.
     const IMPORT_CHUNK = 200;
-    for (let i = 0; i < backdates.length; i += IMPORT_CHUNK) {
+    for (const chunk of chunkArray(backdates, IMPORT_CHUNK)) {
       await prisma.$transaction(
-        backdates.slice(i, i + IMPORT_CHUNK).map((b) =>
+        chunk.map((b) =>
           prisma.asset.update({ where: { id: b.id }, data: { createdAt: b.createdAt } }),
         ),
       );

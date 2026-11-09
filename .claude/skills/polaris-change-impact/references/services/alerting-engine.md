@@ -102,7 +102,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Notification RULE logic — scope matching, the "rules matching this asset" lookup, rule CRUD, and the change-type subscription cache that gates the persist* change-detectors.
 
-**Public API:** `scopeMatchesAsset`, `findRulesMatchingAsset`, `getMetricSeverityTiers`, `getMetricSeverityTierResolver`, `MetricSeverityDimension`, `listRules`/`getRule`/`createRule`/`updateRule`/`deleteRule`, `listScopeOptions`, `isChangeActionSubscribed`/`getSubscribedChangeActions`/`bumpChangeSubscriptions`, `ScopeAsset`, `MetricSeverityTier`.
+**Public API:** `scopeMatchesAsset`, `findRulesMatchingAsset`, `getMetricSeverityTiers`, `getMetricSeverityTierResolver`, `MetricSeverityDimension`, `listRules`/`getRule`/`createRule`/`updateRule`/`deleteRule`, `listScopeOptions` (its regions / roles / tags half is `listRecipientCatalog`, also read by `operationNotifyService` for the upgrade / reboot dialogs' picker at `assets:write`), `isChangeActionSubscribed`/`getSubscribedChangeActions`/`bumpChangeSubscriptions`, `ScopeAsset`, `MetricSeverityTier`.
 
 **`listScopeOptions` is the ONE option payload behind all four condition builders** — it is spread into `options` by `/automations/scope-options`, `/contacts/filter-schema`, `/server-settings/tags/filter-schema` and `/assets/pin-filter-schema` alike, so a list added here reaches every surface at once and a list added to one route reaches exactly that one. Inventory-derived lists (manufacturers, models, `interfaceNames`, `ssids`) are monitored-only; the IPAM lists (`subnets`, `ipBlocks`) are the address plan rather than inventory and stay unfiltered.
 

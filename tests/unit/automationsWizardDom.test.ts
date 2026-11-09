@@ -220,6 +220,8 @@ beforeAll(() => {
   // it — the same order the pages' script tags keep.
   const qteSrc = readFileSync(resolve(__dirname, "../../public/js/quiet-time-editor.js"), "utf8");
   (0, eval)(qteSrc);
+  // The recipient picker the wizard binds (lifted out 2026-11-09), before the wizard as on the pages.
+  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
   const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
   (0, eval)(src);
   // Export / import / view-code. Loaded on every page that loads the wizard.

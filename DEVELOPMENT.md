@@ -216,6 +216,13 @@ channel and alert names), credits those rules and channels to `admin` rather tha
 `Datacenter`, because in a screenshot each reads as if the product shipped placeholder
 data. It is idempotent and refuses to run with `NODE_ENV=production`.
 
+`npm run mock:topology-export -- <file>` rebuilds a Device Map site from an operator's
+anonymised **Export › Layout data** JSON (one `EXP-` asset per device, location codes in
+the description, LLDP / parent-switch / interface rows for every link), so a layout change
+can be judged on a real site's shape. Copy the file into the container first
+(`podman cp <file> polaris-<slug>_web:/tmp/ref.json`). The switch-to-switch links and link
+speeds come from rows the map reads for one hour only; re-run it to bring them back.
+
 Two scenario scripts sit beside the chain, each run inside the app container after
 `mock:compare`. `npm run mock:alert-grouping` seeds a switch with eight faulted PoE ports
 and an AlertGroup over two automations, which shows one alert per device (business rule

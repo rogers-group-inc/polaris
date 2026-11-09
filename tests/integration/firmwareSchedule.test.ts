@@ -127,6 +127,11 @@ d("scheduled firmware upgrade routes", () => {
     expect(created.body.schedule).toMatchObject({ status: "pending", toVersion: "7.6.8 build1164", notifyEmails: ["flasher@example.com", "noc@example.com"], createdBy: flasherU });
     // The device has an address and is unmonitored: nothing blocks it right now.
     expect(created.body.schedule.warnings).toEqual([]);
+    // A booking made with plain addresses (the API's original shape) is not
+    // remembered: the dialog still offers the booker themselves.
+    const d0 = (await flasher.agent.get(`${base}/schedules/defaults`)).body;
+    expect(d0.notifyEmails).toEqual(["flasher@example.com"]);
+    expect(d0.notify.to.recipientUserIds).toHaveLength(1);
 
     const dup = await flasher.agent.post(`${base}/schedules`).set("X-CSRF-Token", flasher.csrf).send({ imageId, scheduledFor: inHours(6), notifyEmails: ["a@example.com"] });
     expect(dup.status).toBe(409);
@@ -153,6 +158,41 @@ d("scheduled firmware upgrade routes", () => {
 
     const actions = (await prisma.event.findMany({ where: { resourceId: assetId }, select: { action: true } })).map((e) => e.action);
     expect(actions).toEqual(expect.arrayContaining(["firmware.upgrade_scheduled", "firmware.upgrade_rescheduled", "firmware.upgrade_schedule_cancelled"]));
+  });
+
+  it("the dialog's picker spec: channels checked, To resolved now and stored, remembered per kind", async () => {
+    const flasher = await loginAs(flasherU);
+    const base = `/api/v1/assets/${assetId}/firmware-upgrade`;
+    const smtp = await prisma.notificationChannel.create({ data: { name: PFX + "-smtp", type: "smtp", enabled: true, config: {} } });
+    const teams = await prisma.notificationChannel.create({ data: { name: PFX + "-teams", type: "teams", enabled: true, config: {} } });
+    try {
+      const spec = (channelIds: string[]) => ({ to: { addresses: ["Lead@Example.com"] }, cc: { addresses: ["noc@example.com"] }, bcc: null, channelIds });
+      // A chat channel is refused — these are emails.
+      const bad = await flasher.agent.post(`${base}/schedules`).set("X-CSRF-Token", flasher.csrf).send({ imageId, scheduledFor: inHours(5), notify: spec([teams.id]) });
+      expect(bad.status).toBe(400);
+      expect(bad.body.error).toMatch(/not an email channel/);
+      // A To that reaches nobody is refused.
+      const nobody = await flasher.agent.post(`${base}/schedules`).set("X-CSRF-Token", flasher.csrf).send({ imageId, scheduledFor: inHours(5), notify: { to: { recipientRoles: ["no-such-role"] }, channelIds: [smtp.id] } });
+      expect(nobody.status).toBe(400);
+      expect(nobody.body.error).toMatch(/reach nobody/);
+
+      const ok = await flasher.agent.post(`${base}/schedules`).set("X-CSRF-Token", flasher.csrf).send({ imageId, scheduledFor: inHours(5), notify: spec([smtp.id]) });
+      expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+      expect(ok.body.schedule).toMatchObject({
+        notifyEmails: ["lead@example.com"],
+        notifyRecipients: { to: { addresses: ["lead@example.com"] }, cc: { addresses: ["noc@example.com"] }, bcc: null },
+        notifyChannelIds: [smtp.id],
+      });
+      // Remembered for the next UPGRADE dialog; the reboot dialog keeps its own.
+      const d = (await flasher.agent.get(`${base}/schedules/defaults`)).body;
+      expect(d.notify).toMatchObject({ to: { addresses: ["lead@example.com"] }, channelIds: [smtp.id] });
+      expect(d.channels.map((c: { id: string }) => c.id)).toContain(smtp.id);
+      expect(d.channels.map((c: { id: string }) => c.id)).not.toContain(teams.id);
+      expect((await flasher.agent.get(`/api/v1/assets/${assetId}/reboot/schedules/defaults`)).body.notify.to.addresses).toBeUndefined();
+      expect((await flasher.agent.delete(`${base}/schedules/${ok.body.schedule.id}`).set("X-CSRF-Token", flasher.csrf)).status).toBe(200);
+    } finally {
+      await prisma.notificationChannel.deleteMany({ where: { id: { in: [smtp.id, teams.id] } } });
+    }
   });
 
   it("the database refuses a second pending booking and a booking with nobody to tell", async () => {

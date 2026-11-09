@@ -3914,6 +3914,15 @@ model User {
   // Validation is normalizeHiddenMapRegionIds() in userMapViewService.
   hiddenMapRegionIds String[] @default([]) @map("hidden_map_region_ids")
 
+  // What this user last sent a firmware upgrade's / a reboot's notifications
+  // to — the To / Cc / Bcc picker's spec and the email channels (rules 93 /
+  // 115(e), 2026-11-09) — which the next upgrade or reboot dialog pre-fills
+  // before falling back to themselves. Written by
+  // operationNotifyService.rememberNotifyFor whenever they start or book one
+  // with notifications; never read for anyone else.
+  lastFirmwareNotify Json? @map("last_firmware_notify")
+  lastRebootNotify   Json? @map("last_reboot_notify")
+
   // Flipped true the first time the user actually logs in (lastLogin transitions
   // null → set). Drives the sidebar "new user — review role" notification for
   // admins; cleared globally by Dismiss.
@@ -6607,6 +6616,18 @@ model FirmwareUpgradeRun {
   heartbeatAt     DateTime?
   startedAt       DateTime       @default(now())
   finishedAt      DateTime?
+  // Who hears that this run started (and, for a click-to-run flash, how it
+  // ended) — rule 93. Empty = no email. A booked run carries its booking's
+  // recipients; its outcome goes out as the booking's results email instead.
+  notifyEmails    String[]       @default([])
+  notifiedAt      DateTime?      // a click-to-run run's results email, claimed before sending
+  notifyError     String?        @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
   schedule        FirmwareUpgradeSchedule?
   groupMember     FirmwareGroupMember?
 
@@ -6645,6 +6666,12 @@ model FirmwareUpgradeSchedule {
   firedAt      DateTime?             // when the scheduler acted on it (started, refused or missed)
   notifiedAt   DateTime?             // when the results email went out
   notifyError  String?               @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
@@ -6762,6 +6789,18 @@ model RebootRun {
   startedAt      DateTime        @default(now())
   heartbeatAt    DateTime?
   finishedAt     DateTime?
+  // A reboot started NOW with "Email notifications" ticked (2026-11-09): who
+  // is emailed that it was sent and how it ended. Empty = no email, and always
+  // empty on a booked run (its booking holds the recipients).
+  notifyEmails   String[]        @default([])
+  notifiedAt     DateTime?       // its results email, claimed before sending
+  notifyError    String?         @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
   schedule       RebootSchedule?
 
   @@index([assetId, startedAt])
@@ -6800,6 +6839,12 @@ model RebootSchedule {
   firedAt      DateTime?
   notifiedAt   DateTime?
   notifyError  String?    @db.Text
+  // Who it emails, as the dialog's To / Cc / Bcc picker built it (roles,
+  // regions, the device's region users… — resolved at each send) and the
+  // EMAIL channels it goes out on (empty = the oldest enabled one). Null =
+  // only `notifyEmails`. operationNotifyService, 2026-11-09.
+  notifyRecipients Json?
+  notifyChannelIds String[] @default([])
 
   @@index([status, scheduledFor])
   @@index([assetId, createdAt])
