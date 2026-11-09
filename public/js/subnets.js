@@ -1440,7 +1440,8 @@ function generateNetworkPdf(networks, label) {
   var doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
 
   var now = new Date();
-  var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+  var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+  var timestamp = now.toLocaleDateString(undefined, tz) + " " + now.toLocaleTimeString(undefined, tz);
 
   doc.setFontSize(16);
   doc.setTextColor(40, 40, 40);

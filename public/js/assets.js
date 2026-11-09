@@ -3447,7 +3447,7 @@ function assetStatusBadge(asset) {
     if (asset.statusChangedBy) parts.push("Changed by: " + asset.statusChangedBy);
     if (asset.statusChangedAt) {
       var d = new Date(asset.statusChangedAt);
-      parts.push(d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }));
+      parts.push(d.toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }, timeZoneOpts())));
     }
     if (parts.length) title = ' title="' + parts.join("\n") + '"';
   }
@@ -14790,7 +14790,7 @@ function _memForecastHeadlineHTML(fc) {
     // operator reads a device with weeks of history as "1 so far".
     var since = fc && fc.restartedAt ? new Date(fc.restartedAt) : null;
     var why = since && !isNaN(since.getTime())
-      ? 'Forecast restarted at the reboot on ' + since.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ' — needs '
+      ? 'Forecast restarted at the reboot on ' + since.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric" }, timeZoneOpts())) + ' — needs '
       : 'Forecast needs ';
     return '<span style="color:' + muted + '">' + why + need + ' days of history — ' + have + ' so far</span>';
   }
@@ -16407,7 +16407,7 @@ function assetMonitoringViewHTML(a) {
     var _upNow = a.monitorStatus === "down" ? _obsUp : _obsUp + _elapsed;
     var _sinceMs = a.lastRebootAt ? new Date(a.lastRebootAt).getTime() : (_obsAt - _obsUp * 1000);
     var _since = new Date(_sinceMs).toLocaleString(undefined,
-      { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      Object.assign({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, timeZoneOpts()));
     uptimeRow =
       '<div class="detail-row" title="' + escapeHtml("Uptime as of " + timeAgo(a.lastMonitorAt)) + '">' +
         '<span class="detail-label">Uptime</span>' +
@@ -16609,7 +16609,7 @@ async function _renderIntermittencyBar(assetId, effP) {
   // Down or paying its way back out. Each cell reports where the bucket stood
   // AFTER that probe, plus the direction it moved.
   var cellHTML = states.map(function (st) {
-    var ts = new Date(st.timestamp).toLocaleTimeString();
+    var ts = new Date(st.timestamp).toLocaleTimeString(undefined, timeZoneOpts());
     var color = st.dep ? colors.dep : (colors[st.status] || colors.unknown);
     var n = st.missed || 0;
     var what;
@@ -23068,7 +23068,7 @@ function generateAssetPdf(assets, label) {
   var doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
 
   var now = new Date();
-  var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+  var timestamp = now.toLocaleDateString(undefined, timeZoneOpts()) + " " + now.toLocaleTimeString(undefined, timeZoneOpts());
 
   // Title
   doc.setFontSize(16);
@@ -25778,7 +25778,7 @@ async function _loadServiceLogsFor(assetId, unit, platform) {
     // Server returns newest-first; keep that order (newest at the top).
     el.innerHTML = logs.map(function (l) {
       var d = l.timestamp ? new Date(l.timestamp) : null;
-      var ts = d ? d.toLocaleDateString() + " " + d.toLocaleTimeString() : "";
+      var ts = d ? d.toLocaleDateString(undefined, timeZoneOpts()) + " " + d.toLocaleTimeString(undefined, timeZoneOpts()) : "";
       var lvl = l.level ? "[" + escapeHtml(l.level) + "] " : "";
       var flags = Array.isArray(l.flags) ? l.flags : [];
       var badges = flags.map(function (f) {
@@ -26287,7 +26287,7 @@ async function _loadProcessLogsFor(assetId, name) {
     // Server returns newest-first; keep that order (newest at the top).
     el.innerHTML = logs.map(function (l) {
       var d = l.timestamp ? new Date(l.timestamp) : null;
-      var ts = d ? d.toLocaleDateString() + " " + d.toLocaleTimeString() : "";
+      var ts = d ? d.toLocaleDateString(undefined, timeZoneOpts()) + " " + d.toLocaleTimeString(undefined, timeZoneOpts()) : "";
       var lvl = l.level ? "[" + escapeHtml(l.level) + "] " : "";
       var flags = Array.isArray(l.flags) ? l.flags : [];
       var badges = flags.map(function (f) {
@@ -26592,7 +26592,9 @@ function _loadAssetNotificationsTab(assetId) {
       var countEl = document.getElementById("asset-notif-active-count");
       if (countEl) countEl.textContent = active.length ? "(" + active.length + ")" : "";
       aTbody.innerHTML = active.length ? active.map(function (n) {
-        var ts = new Date(n.triggeredAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        // Guarded: assetAlertsTabDom loads this tab without api.js.
+        var _alertTz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+        var ts = new Date(n.triggeredAt).toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, _alertTz));
         // Actions is buttons only now — who acknowledged moved to the
         // Acknowledge column, next to what they wrote. Acknowledge (write) and
         // Clear (fullwrite) are separate permission levels, so a row can carry
@@ -26620,7 +26622,7 @@ function _loadAssetNotificationsTab(assetId) {
         var ackCell = '<span style="color:var(--color-text-tertiary)">—</span>';
         if (n.acknowledged) {
           var when = n.acknowledgedAt
-            ? new Date(n.acknowledgedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+            ? new Date(n.acknowledgedAt).toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, _alertTz))
             : "";
           var note = (n.acknowledgeNote || "").trim();
           // A note is free text an operator typed, so it wraps and breaks
@@ -27326,7 +27328,7 @@ function _generateAssetEventPdf(events, label, asset) {
   var doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
 
   var now = new Date();
-  var timestamp = now.toLocaleDateString() + " " + now.toLocaleTimeString();
+  var timestamp = now.toLocaleDateString(undefined, timeZoneOpts()) + " " + now.toLocaleTimeString(undefined, timeZoneOpts());
   var subject = _assetExportSubject(asset);
 
   doc.setFontSize(16);

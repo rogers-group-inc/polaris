@@ -77,9 +77,13 @@
     var d = iso ? new Date(iso) : null;
     if (!d || isNaN(d.getTime())) return "";
     var now = new Date();
-    var time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    var label = d.toDateString() === now.toDateString() ? time
-      : d.toLocaleDateString([], d.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }) + ", " + time;
+    // Today / this year judged in the display zone, as the desktop widget does.
+    var tz = typeof timeZoneOpts === "function" ? timeZoneOpts() : {};
+    var time = d.toLocaleTimeString([], Object.assign({ hour: "numeric", minute: "2-digit" }, tz));
+    var dayOf = function (x) { return x.toLocaleDateString("en-CA", tz); };
+    var yearOf = function (x) { return x.toLocaleDateString("en-CA", Object.assign({ year: "numeric" }, tz)); };
+    var label = dayOf(d) === dayOf(now) ? time
+      : d.toLocaleDateString([], Object.assign(yearOf(d) === yearOf(now) ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }, tz)) + ", " + time;
     return '<time class="chat-time" datetime="' + escapeHtml(d.toISOString()) + '">' + escapeHtml(label) + '</time>';
   }
 

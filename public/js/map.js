@@ -319,7 +319,7 @@
         doc.setFontSize(8);
         doc.setTextColor(110, 110, 110);
         var statusEl = document.getElementById("map-status");
-        var sub = "Generated: " + now.toLocaleDateString() + " " + now.toLocaleTimeString() +
+        var sub = "Generated: " + now.toLocaleDateString(undefined, timeZoneOpts()) + " " + now.toLocaleTimeString(undefined, timeZoneOpts()) +
           (statusEl && statusEl.textContent ? "  |  " + statusEl.textContent : "");
         doc.text(sub, M, M + 24);
         var top = M + 34, aw = pw - 2 * M, ah = ph - top - M;

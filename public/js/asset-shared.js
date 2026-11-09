@@ -120,7 +120,8 @@
   function fwWhenText(iso) {
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    var txt = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+    var txt = d.toLocaleString(undefined, Object.assign({ weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" },
+      typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
     var mins = Math.round((d.getTime() - Date.now()) / 60000);
     var rel = mins <= 0 ? "due now"
       : mins < 60 ? "in " + mins + " min"

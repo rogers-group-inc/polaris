@@ -118,9 +118,21 @@ if (typeof window !== "undefined") window.setDisplayTimeZone = setDisplayTimeZon
  * Every absolute-time formatter in the app should spread this. A formatter
  * that doesn't renders in the browser's zone regardless of the preference,
  * which is only correct while the two agree.
+ *
+ * A zone this browser's ICU cannot apply (the server validated it against
+ * Node's) also answers EMPTY — tried once per zone and remembered — so the
+ * many sites that spread this straight into a toLocale* call never throw a
+ * RangeError mid-render; they fall back to the browser's zone instead.
  */
+var _tzUsable = {};
 function timeZoneOpts() {
-  return _displayTimeZone && _displayTimeZone !== "auto" ? { timeZone: _displayTimeZone } : {};
+  var tz = _displayTimeZone;
+  if (!tz || tz === "auto") return {};
+  if (!(tz in _tzUsable)) {
+    try { new Intl.DateTimeFormat(undefined, { timeZone: tz }); _tzUsable[tz] = true; }
+    catch (_) { _tzUsable[tz] = false; }
+  }
+  return _tzUsable[tz] ? { timeZone: tz } : {};
 }
 if (typeof window !== "undefined") window.timeZoneOpts = timeZoneOpts;
 

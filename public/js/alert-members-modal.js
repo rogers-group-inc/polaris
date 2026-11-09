@@ -45,7 +45,8 @@
     if (!iso) return "";
     var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleString(undefined, Object.assign({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
+      typeof timeZoneOpts === "function" ? timeZoneOpts() : {}));
   }
 
   function natural(a, b) {
