@@ -2663,7 +2663,7 @@ async function openAutomationWizard(existing, opts) {
       '</div>' + body;
   }
 
-  openModal(readOnly ? "View automation" : editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true, readOnly: readOnly });
+  openModal(readOnly ? "View automation" : editing ? "Edit automation" : importing ? "Imported automation" : cloning ? "Clone automation" : "New automation", body, footer, { wide: true, stepper: true, readOnly: readOnly });
 
   // ── Export / import / view-code (public/js/automations-portability.js) ──
   // Guarded on the global: the wizard is standalone and loads on five pages,

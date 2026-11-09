@@ -65,6 +65,7 @@ beforeAll(() => {
   // FIRST — so the test would silently read the stale wizard and disagree with
   // the browser.
   g.openModal = (title: string, body: string, footer: string, options?: { readOnly?: boolean }) => {
+    (g as { _lastModalOptions?: unknown })._lastModalOptions = options;
     // The real view-only lock (sliced out of app.js below), torn down and
     // re-applied exactly as openModal does, so the read-only tests exercise
     // the observer the browser runs rather than a stand-in.
@@ -232,6 +233,8 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
     expect(doc.querySelector(".modal")).toBeTruthy();
     expect(doc.querySelectorAll("#aw-stepper .stepper-step").length).toBe(7);
+    // Seven steps need ~800px of row; .modal-stepper (880px) keeps them on one.
+    expect((g as { _lastModalOptions?: Record<string, unknown> })._lastModalOptions).toMatchObject({ wide: true, stepper: true });
     expect(doc.querySelector("#aw-step-1.visible")).toBeTruthy();
     // Severity + Enabled were removed from the name step (severity moved to the
     // trigger step; enabled is managed from the list toggle).

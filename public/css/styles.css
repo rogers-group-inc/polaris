@@ -5309,6 +5309,11 @@ select option { background: var(--color-bg-secondary); color: var(--color-text-p
    like Assets → Maintenance that need real column room but normal padding. */
 .modal.modal-large { max-width: min(94vw, 1200px); width: min(94vw, 1200px); }
 .modal.modal-xl { max-width: min(92vw, 1360px); width: min(92vw, 1360px); }
+/* The Automations wizard's 7-step stepper (Name … Summary) needs ~800px of
+   row; .modal-wide's 632px usable wrapped Summary onto a second line. Wide
+   enough for one row with label slack; narrower screens still wrap
+   (.stepper keeps flex-wrap). */
+.modal.modal-stepper { max-width: min(94vw, 880px); }
 .modal.modal-xl .modal-body { padding: 0; }
 /* A view-only dialog (openModal options.readOnly → _lockModalReadOnly): fields
    are disabled by the script; every body button that would change something is
@@ -9254,7 +9259,8 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
      SEVENTH step overflows at any label length — and the sticky header's
      negative margins meant that overflow was invisibly cut off rather than
      scrollable. A no-op for the 4- and 6-step wizards; row-gap only applies
-     once there IS a second row. */
+     once there IS a second row. The 7-step Automations wizard opens with
+     openModal's `stepper` option (.modal-stepper, 880px) so it fits one row. */
   flex-wrap: wrap;
   row-gap: 0.5rem;
 }
