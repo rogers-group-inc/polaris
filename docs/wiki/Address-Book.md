@@ -44,7 +44,10 @@ can appear, with **zero called out in the warning colour** — "none" is the mos
 common reason a push automation delivers nothing.
 
 Search and pagination are **server-side**, so a synced GAL cannot make opening
-the page cost the whole table. The "showing N of M" hint reads the unpaged
+the page cost the whole table. A search matches every word you type, in any
+order, against names and addresses — *John Smith* finds *Smith, John* and
+*john.smith@…* — and finds a person who is both a Polaris sign-in account and a
+directory entry by either name. The "showing N of M" hint reads the unpaged
 total rather than inferring truncation from a full-looking array.
 
 ---

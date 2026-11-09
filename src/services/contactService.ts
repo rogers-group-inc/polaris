@@ -472,14 +472,37 @@ function contactOriginWhere(opts: ListContactsOptions) {
   return maySeeSynced ? {} : { origin: "manual" };
 }
 
+/**
+ * The words of a search, lower-cased: "Smith, John" and "john  smith" are both
+ * ["smith","john"] / ["john","smith"]. Pure.
+ */
+function searchTerms(q: string): string[] {
+  return String(q ?? "").toLowerCase().split(/[\s,;]+/).filter(Boolean);
+}
+
+/**
+ * Does an entry match a search? EVERY word must appear in its address or its
+ * name, in any order — so "John Smith" finds "Smith, John" and
+ * john.smith@…, which a whole-string `contains` never did. Pure.
+ */
+function entryMatchesTerms(terms: readonly string[], email: string, name: string | null | undefined): boolean {
+  if (terms.length === 0) return true;
+  const e = email.toLowerCase();
+  const n = (name ?? "").toLowerCase();
+  return terms.every((t) => e.includes(t) || n.includes(t));
+}
+
 function contactSearchWhere(q: string) {
-  if (!q) return {};
-  return {
+  const terms = searchTerms(q);
+  if (terms.length === 0) return {};
+  const one = (t: string) => ({
     OR: [
-      { email: { contains: q, mode: "insensitive" as const } },
-      { name: { contains: q, mode: "insensitive" as const } },
+      { email: { contains: t, mode: "insensitive" as const } },
+      { name: { contains: t, mode: "insensitive" as const } },
     ],
-  };
+  });
+  // Every word somewhere in the address or the name, the same rule entryMatchesTerms applies.
+  return terms.length === 1 ? one(terms[0]) : { AND: terms.map(one) };
 }
 
 /**
@@ -1022,31 +1045,38 @@ export async function searchAddressBook(
     }
   }
 
-  const seen = new Set<string>();
-  const deduped = entries.filter((e) => {
+  // MATCH FIRST, THEN DEDUPE. The other order lost people: an SSO account
+  // (name = its username, or "Smith, John") wins the dedupe over the directory
+  // or contact row carrying "John Smith" for the same address, and then fails
+  // the filter itself — so "John Smith" found nobody, and only the username or
+  // john.smith did. An address is offered when ANY of its sources matches; the
+  // user still wins (its id survives an address change), labelled with the name
+  // that matched when its own did not. Every word must match, in any order
+  // (entryMatchesTerms). The USER half is an unfiltered cached index, so this is
+  // where it is matched; contacts arrived pre-filtered by SQL with the same rule
+  // and directory hits were matched upstream.
+  const terms = searchTerms(q);
+  const matchedName = new Map<string, string | null>();
+  for (const e of entries) {
     const key = e.email.toLowerCase();
-    if (seen.has(key)) return false;
+    if (!matchedName.has(key) && entryMatchesTerms(terms, e.email, e.name)) matchedName.set(key, e.name);
+  }
+  const seen = new Set<string>();
+  const filtered: AddressBookEntry[] = [];
+  for (const e of entries) {
+    const key = e.email.toLowerCase();
+    if (seen.has(key) || !matchedName.has(key)) continue;
     seen.add(key);
-    return true;
-  });
-
-  // Still applied in JS, but over a bounded set and for one reason only: the
-  // USER half is an unfiltered cached index, so it is the half that still needs
-  // matching. Contacts arrived pre-filtered by SQL and directory hits were
-  // matched upstream; re-testing them here is harmless and keeps one definition
-  // of what "matches" means across the three sources.
-  const filtered = q
-    ? deduped.filter(
-        (e) => e.email.toLowerCase().includes(q) || (e.name ?? "").toLowerCase().includes(q),
-      )
-    : deduped;
+    filtered.push(entryMatchesTerms(terms, e.email, e.name) ? e : { ...e, name: matchedName.get(key) ?? e.name });
+  }
 
   // Prefix matches first — the same ranking the appmap/scope typeaheads use, so
   // typing "no" surfaces "noc@…" above "jane.donovan@…".
+  const lead = terms[0] ?? "";
   const ranked = q
     ? filtered.sort((a, b) => {
-        const aPre = a.email.toLowerCase().startsWith(q) || (a.name ?? "").toLowerCase().startsWith(q);
-        const bPre = b.email.toLowerCase().startsWith(q) || (b.name ?? "").toLowerCase().startsWith(q);
+        const aPre = a.email.toLowerCase().startsWith(lead) || (a.name ?? "").toLowerCase().startsWith(q);
+        const bPre = b.email.toLowerCase().startsWith(lead) || (b.name ?? "").toLowerCase().startsWith(q);
         if (aPre !== bPre) return aPre ? -1 : 1;
         return (a.name ?? a.email).localeCompare(b.name ?? b.email);
       })
