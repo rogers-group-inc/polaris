@@ -104,6 +104,7 @@ export function runsHeavyCadences(a: {
  * operator report 2026-11-09: switch-to-switch links vanished ~1 h after a
  * switch went dependency-down, and the site redrew as a star off the gate).
  * An unmonitored device is never dark: nothing was polling it to stop.
+ * Business rule 144.
  */
 export function keepsLastKnownLinks(a: {
   monitored: boolean;

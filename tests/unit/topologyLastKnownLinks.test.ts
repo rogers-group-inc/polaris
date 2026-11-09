@@ -8,7 +8,7 @@
  * links rest on interface and LLDP rows only a full scrape refreshes, and
  * `runsHeavyCadences` stops the full scrape for a suppressed / down device, so
  * the rows aged past the one-hour cutoff. A dark end now keeps them for up to
- * seven days, marked `lastKnownAt`.
+ * seven days, marked `lastKnownAt`. Pins business rule 144.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

@@ -80,7 +80,7 @@ const INTERFACE_STALE_MS = 60 * 60 * 1000;
 /**
  * How long a link stays on the map as LAST KNOWN while one of its ends is dark
  * (keepsLastKnownLinks — Polaris stopped scraping it, so its rows stopped
- * being refreshed). Past this the link goes the way a stale one always did,
+ * being refreshed; business rule 144). Past this the link goes the way a stale one always did,
  * so a site that has been dark for a week does not keep its cabling forever.
  */
 export const INTERFACE_LAST_KNOWN_MS = 7 * 24 * 60 * 60 * 1000;
