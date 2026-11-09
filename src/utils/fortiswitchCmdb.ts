@@ -12,6 +12,9 @@
  * Field shapes confirmed against a live FortiOS 7.6 switch-controller CMDB.
  */
 
+// Type-only: no runtime dependency, so the no-cycle property above holds.
+import type { DiscoveredFortiSwitch } from "../services/fortimanagerService.js";
+
 // FortiOS coerces booleans inconsistently across endpoints — sometimes
 // "enable"/"disable", sometimes "yes"/"no", sometimes real true/false, and
 // integer flags like `fortilink-port: 1`. Normalize them all.
@@ -372,5 +375,34 @@ export function parseFortiswitchPortVlan(port: unknown, vlanIdByName: ReadonlyMa
     nativeVlan: resolveVlanRef(p.vlan, vlanIdByName),
     taggedVlans: allowed.filter((v) => !untagged.has(v)),
     trunksAllVlans: fortiosBool(p["allowed-vlans-all"]) || (typeof allRaw === "string" && allRaw.trim().toLowerCase() === "all"),
+  };
+}
+
+/**
+ * One managed FortiSwitch as discovery records it, from a monitor
+ * `switch-controller/managed-switch/status` row plus the CMDB facts read
+ * beside it (uplink port, description — null when the CMDB read had none).
+ * Shared by the FortiGate and FortiManager collectors (CQ-B034). The
+ * controller is recorded by name AND serial — consumers resolve the parent by
+ * serial (utils/fortinetParentKey.ts), never by the name.
+ */
+export function fortiswitchDiscoveryRow(
+  sw: Record<string, any>,
+  controller: { device: string; deviceSerial: string },
+  cmdb: { uplinkPort: string | null; description: string | null },
+): DiscoveredFortiSwitch {
+  return {
+    device: controller.device,
+    deviceSerial: controller.deviceSerial,
+    name: sw["switch-id"] || "",
+    serial: sw.serial || "",
+    ipAddress: sw.connecting_from || "",
+    fgtInterface: sw.fgt_peer_intf_name || "",
+    osVersion: sw.os_version || "",
+    joinTime: Number.isFinite(sw.join_time) && sw.join_time > 0 ? sw.join_time : undefined,
+    state: sw.state || "",
+    connected: sw.status === "Connected",
+    uplinkPhysicalPort: cmdb.uplinkPort,
+    description: cmdb.description,
   };
 }
