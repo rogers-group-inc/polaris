@@ -73,10 +73,13 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
 6. **Record every error you hit while working**: a failed test or check you did not cause, a
    tool or hook refusal, a missing generated file, a trap that cost a retry. One file per error
    in `error-log/` beside your memory directory (`~/.claude/projects/<this project>/error-log/`,
-   OUTSIDE the repository — it is local and **never committed**; `YYYY-MM-DD-<slug>.md`,
+   OUTSIDE the repository — it is local and **never committed**; `YYYY-MM-DD-<slug>-<worktree>.md`,
    frontmatter `category:` + `cost:`, then what happened, the cause, the fix; its README has the
-   shape). The user reviews the most frequent categories to fix the workflow, so log a known
-   trap again each time it recurs; that count is the signal.
+   shape). `category:` is exactly one of `worktree-guard`, `worktree-setup`, `tool-refusal`,
+   `test-timeout`, `test-flake`, `test-harness`, `crlf-encoding`, `scripted-edit`, `wrong-check`,
+   `code-trap`, `env-drift`, `skill-not-loaded`, `docs-check`, `merge` — never a new name (an
+   invented one splits the count). The user reviews the most frequent categories to fix the
+   workflow, so log a known trap again each time it recurs; that count is the signal.
 
 ---
 
