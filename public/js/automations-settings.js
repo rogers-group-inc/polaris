@@ -199,7 +199,7 @@
     var failed = r.status === "failed" || r.status === "partial-failed" || r.status === "unroutable";
     var firstErr = (recips.filter(function (x) { return x.error; })[0] || {}).error || "";
     return "<tr>" +
-      "<td>" + (d ? escapeHtml(d.toLocaleString()) : "—") + "</td>" +
+      "<td>" + (d ? escapeHtml(fmtAt(d)) : "—") + "</td>" +
       "<td>" + escapeHtml(r.sourceName) + ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">(' + (r.sourceKind === "global" ? "global" : "automation") + ")</span></td>" +
       // The three counts open the lists behind them (a stacked overlay over
       // this modal): which alerts the summary stamped, what the email said,
@@ -228,7 +228,11 @@
   function fmtAt(v) {
     if (!v) return "—";
     var d = new Date(v);
-    return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+    if (isNaN(d.getTime())) return String(v);
+    // The operator's display timezone via api.js formatDateTime (CQ-F017).
+    // fmtLocal above stays zone-less on purpose (CQ-F014): it fills a
+    // wall-clock editor, this one shows an instant.
+    return typeof formatDateTime === "function" ? formatDateTime(d) : d.toLocaleString();
   }
   function deviceCell(assetId, hostname, dimension) {
     var name = escapeHtml(hostname || "(no device)");

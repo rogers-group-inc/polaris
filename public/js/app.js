@@ -3026,7 +3026,7 @@ function renderIntegrationFailedStatus() {
         var sub = typeLabel(i.type);
         if (i.lastTestAt) {
           var when = new Date(i.lastTestAt);
-          if (!isNaN(when.getTime())) sub += ' · last test ' + when.toLocaleString();
+          if (!isNaN(when.getTime())) sub += ' · last test ' + formatDateTime(when);
         } else {
           sub += ' · never tested';
         }
@@ -3146,7 +3146,7 @@ function renderSigningFailureAlert() {
 
   var when = new Date(failure.at);
   var sub = "v" + (failure.version || "?");
-  if (!isNaN(when.getTime())) sub += " · " + when.toLocaleString();
+  if (!isNaN(when.getTime())) sub += " · " + formatDateTime(when);
   container.style.display = "block";
   container.innerHTML =
     '<div class="query-status-header signing-failure-header">' +
@@ -5478,7 +5478,8 @@ function renderPageControls(containerId, total, pageSize, currentPage, onPageCha
     '<button class="btn btn-secondary btn-sm pg-next" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next &raquo;</button>' +
     // nowrap: at narrow widths this label would otherwise break between the
     // number and the word, which reads as two separate facts.
-    '<span style="font-size:0.82rem;color:var(--color-text-tertiary);margin-left:8px;white-space:nowrap">' + total + ' items</span>';
+    // opts.itemLabel names what is counted ("events" on the two event logs).
+    '<span style="font-size:0.82rem;color:var(--color-text-tertiary);margin-left:8px;white-space:nowrap">' + total + ' ' + ((opts && opts.itemLabel) || 'items') + '</span>';
 
   // Standard list-controls row: a 3-column grid keeps the page navigation
   // centered across the full width regardless of the right cluster's size.

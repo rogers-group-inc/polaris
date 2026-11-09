@@ -631,8 +631,8 @@
     return ''
       + '<div class="chart-wrap" style="height:' + totalHeight + 'px;padding:' + TOP_GUTTER + 'px ' + RIGHT_GUTTER + 'px ' + BOTTOM_GUTTER + 'px ' + LEFT_GUTTER + 'px;">'
       + '  <div class="chart-y-labels">'
-      + '    <span class="chart-y-tick" style="top:0;">' + formatBytes(yMax) + '</span>'
-      + '    <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">' + formatBytes(yMax / 2) + '</span>'
+      + '    <span class="chart-y-tick" style="top:0;">' + formatBytesAxis(yMax) + '</span>'
+      + '    <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">' + formatBytesAxis(yMax / 2) + '</span>'
       + '    <span class="chart-y-tick" style="bottom:0;">0</span>'
       + '  </div>'
       + '<svg class="chart-svg" viewBox="0 0 ' + viewWidth + ' ' + plotHeight + '" preserveAspectRatio="none" role="img" aria-label="' + escapeAttr(aria) + '">'
@@ -647,7 +647,11 @@
   }
 
   // Binary units, the way the OS reports memory: 16 GB is 16 × 1024³.
-  function formatBytes(n) {
+  // The compact AXIS form — whole values drop their ".0" ("16 GB", where
+  // api.js formatBytes says "16.0 GB") and zero is the bare axis floor "0".
+  // Named apart from api.js formatBytes (which mobile.html also loads) so
+  // the one name never means two outputs (CQ-F018).
+  function formatBytesAxis(n) {
     n = Number(n);
     if (!isFinite(n) || n <= 0) return "0";
     var units = ["B", "KB", "MB", "GB", "TB"];
@@ -726,7 +730,7 @@
   window.PolarisCharts = {
     lineChart: lineChart,
     stackChart: stackChart,
-    formatBytes: formatBytes,
+    formatBytesAxis: formatBytesAxis,
     maxChipHTML: maxChipHTML,
     wireMaxToggle: wireMaxToggle,
     isRollup: isRollup,

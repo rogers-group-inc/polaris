@@ -84,6 +84,7 @@ beforeEach(() => {
   g.escapeHtml = (s: unknown) =>
     String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.timeAgo = () => "1s ago";
+  g.formatDateTime = (v: unknown) => new Date(v as string).toISOString();
   g.canDeployAgent = () => true;
   // The source-compat mirror lives in integrations.js, which assets.js reads
   // as a global; the helper normalizes an unknown key through it.

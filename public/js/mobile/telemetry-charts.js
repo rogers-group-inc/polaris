@@ -321,10 +321,10 @@
     var sumIn = 0, peakIn = 0;
     shaped.forEach(function (r) { sumIn += r.b.inUse; if (r.b.inUse > peakIn) peakIn = r.b.inUse; });
     var avgIn = sumIn / shaped.length;
-    var stats = "in use " + PolarisCharts.formatBytes(avgIn) + " of " + PolarisCharts.formatBytes(latest)
-      + " (" + Math.round(avgIn / latest * 100) + "%) · peak " + PolarisCharts.formatBytes(peakIn);
+    var stats = "in use " + PolarisCharts.formatBytesAxis(avgIn) + " of " + PolarisCharts.formatBytesAxis(latest)
+      + " (" + Math.round(avgIn / latest * 100) + "%) · peak " + PolarisCharts.formatBytesAxis(peakIn);
 
-    return headHTML("Memory", PolarisCharts.formatBytes(latest) + " installed")
+    return headHTML("Memory", PolarisCharts.formatBytesAxis(latest) + " installed")
       + '<div id="asset-mem-chart">' + chart + '</div>'
       + legendHTML("mem", chips, "")
       + notes.map(noteHTML).join("")

@@ -3572,7 +3572,7 @@ function assetMonitorBadge(asset) {
   var bits = [];
   if (asset.responseTimePolling) bits.push("Method: " + asset.responseTimePolling);
   if (typeof asset.lastResponseTimeMs === "number") bits.push("Last RTT: " + asset.lastResponseTimeMs + " ms");
-  if (asset.lastMonitorAt) bits.push("Last poll: " + new Date(asset.lastMonitorAt).toLocaleString());
+  if (asset.lastMonitorAt) bits.push("Last poll: " + formatDateTime(asset.lastMonitorAt));
   if (canToggle) bits.push("Click to disable monitoring");
   var clickCls = canToggle ? " badge-clickable" : "";
   // Maintenance window outranks everything, including the dep-test overlay —
@@ -3596,7 +3596,7 @@ function assetMonitorBadge(asset) {
   var depTestUntil = asset.dependencyTestUntil ? new Date(asset.dependencyTestUntil) : null;
   if (depTestUntil && depTestUntil.getTime() > Date.now()) {
     var dtBits = ["Simulated as DOWN by an admin (real probes still running)"];
-    dtBits.push("Auto-clears: " + depTestUntil.toLocaleString());
+    dtBits.push("Auto-clears: " + formatDateTime(depTestUntil));
     if (asset.dependencyTestStartedBy) dtBits.push("Started by: " + asset.dependencyTestStartedBy);
     var dtTitle = ' title="' + escapeHtml(dtBits.join("\n")) + '"';
     return '<span class="badge badge-monitor-dep-test"' + dtTitle + '>Dependency Test</span>';
@@ -4454,7 +4454,7 @@ function assetMonitoringFormHTML(asset, managedAgent) {
         '</p>' +
         '<div style="font-size:0.78rem;color:var(--color-text-tertiary)">' +
           'Platform: ' + escapeHtml(managedAgent.osPlatform || "?") + '/' + escapeHtml(managedAgent.arch || "?") +
-          (managedAgent.lastSeenAt ? ' · Last seen: ' + escapeHtml(new Date(managedAgent.lastSeenAt).toLocaleString()) : '') +
+          (managedAgent.lastSeenAt ? ' · Last seen: ' + escapeHtml(formatDateTime(managedAgent.lastSeenAt)) : '') +
         '</div>' +
       '</div>';
   } else if (agentInFlight) {
@@ -4709,12 +4709,12 @@ function _maintenanceInfoHTML(info) {
   var lines = [];
   (info.openWindows || []).forEach(function (w) {
     lines.push("<div><strong>In maintenance now</strong> — " + escapeHtml(w.scheduleName) +
-      (w.until ? " (until ~" + escapeHtml(new Date(w.until).toLocaleString()) + ")" : "") + "</div>");
+      (w.until ? " (until ~" + escapeHtml(formatDateTime(w.until)) + ")" : "") + "</div>");
   });
   (info.schedules || []).forEach(function (s) {
     var when = s.activeNow
       ? "active now"
-      : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
+      : (s.nextStart ? "next: " + formatDateTime(s.nextStart) : "no upcoming window");
     var actions = "";
     if (canManage) {
       // Rule 141 (e): Remove needs THIS device in reach (info.canMaintain),
@@ -7131,7 +7131,7 @@ function assetAgentSubpanelHTML(a, agent) {
     var platformRow = '<div>Platform: <strong>' + escapeHtml(agent.osPlatform) + '/' + escapeHtml(agent.arch) + '</strong></div>';
     var lastSeenRow = agent.lastSeenAt
       ? '<div>Last seen: <strong>' + escapeHtml(timeAgo(agent.lastSeenAt)) + '</strong>' +
-        ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(new Date(agent.lastSeenAt).toLocaleString()) + ')</span></div>'
+        ' <span style="color:var(--color-text-tertiary)">(' + escapeHtml(formatDateTime(agent.lastSeenAt)) + ')</span></div>'
       : '<div style="color:var(--color-text-tertiary)">Last seen: never</div>';
     // WS state heuristic: connected if wsConnectedAt > wsDisconnectedAt (or
     // disconnect is null). Not perfectly authoritative but cheap and right
@@ -7599,7 +7599,7 @@ function _fwApprovalBlockHTML(img, checked, withRadio) {
       '<dt>File</dt><dd>' + escapeHtml(img.filename) + ' (' + escapeHtml(typeof formatBytes === "function" ? formatBytes(img.sizeBytes) : img.sizeBytes + " bytes") + ')</dd>' +
       '<dt>SHA-256</dt><dd><code>' + escapeHtml(img.sha256) + '</code></dd>' +
       '<dt>Filed under</dt><dd>' + escapeHtml(img.manufacturer) + ' › ' + escapeHtml(img.assetType === "access_point" ? "access point" : img.assetType) + ' › ' + escapeHtml(img.model) + '</dd>' +
-      '<dt>Uploaded</dt><dd>' + escapeHtml(img.uploadedBy || "—") + (img.uploadedAt ? ', ' + escapeHtml(new Date(img.uploadedAt).toLocaleString()) : '') + '</dd>' +
+      '<dt>Uploaded</dt><dd>' + escapeHtml(img.uploadedBy || "—") + (img.uploadedAt ? ', ' + escapeHtml(formatDateTime(img.uploadedAt)) : '') + '</dd>' +
     '</dl>' +
   '</label>';
 }
@@ -7834,7 +7834,7 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
       var body = { scheduledFor: when.toISOString(), notify: editor.read(notifyFields) };
       if (sel && (!existing || sel.imageId !== existing.imageId)) body.imageId = sel.imageId;
       call = existing ? api.assets.updateFirmwareSchedule(a.id, existing.id, body) : api.assets.scheduleFirmwareUpgrade(a.id, body);
-      done = existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + when.toLocaleString();
+      done = existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + formatDateTime(when);
     } else {
       if (!sel) return;
       var startBody = { imageId: sel.imageId };
@@ -7921,7 +7921,7 @@ async function _loadFirmwareHistory(a) {
       var dur = (r.startedAt && r.finishedAt) ? Math.round((new Date(r.finishedAt) - new Date(r.startedAt)) / 1000) + " s" : "";
       var color = r.status === "succeeded" ? "var(--color-success)" : r.status === "failed" ? "var(--color-danger)" : r.status === "unverified" ? "var(--color-warning)" : "var(--color-text-secondary)";
       return '<tr>' +
-        '<td title="' + escapeHtml(r.startedAt ? new Date(r.startedAt).toLocaleString() : "") + '">' + escapeHtml(r.startedAt ? timeAgo(r.startedAt) : "") + '</td>' +
+        '<td title="' + escapeHtml(r.startedAt ? formatDateTime(r.startedAt) : "") + '">' + escapeHtml(r.startedAt ? timeAgo(r.startedAt) : "") + '</td>' +
         '<td>' + escapeHtml(r.fromVersion || "?") + ' → ' + escapeHtml(r.toVersion) + '</td>' +
         '<td><span style="color:' + color + '">' + escapeHtml(r.status) + '</span></td>' +
         '<td>' + escapeHtml(dur) + '</td>' +
@@ -8424,14 +8424,14 @@ function _telemetrySplitsCpuMemory(a) {
 // ATTEMPT, so a device whose REST pull failed every time looked current.
 function _streamPollStampHTML(okAt, attemptAt, failingSince, lastError) {
   if (failingSince && attemptAt) {
-    var tip = "Failing since " + new Date(failingSince).toLocaleString() +
-      "\nLast successful poll: " + (okAt ? new Date(okAt).toLocaleString() : "never") +
+    var tip = "Failing since " + formatDateTime(failingSince) +
+      "\nLast successful poll: " + (okAt ? formatDateTime(okAt) : "never") +
       (lastError ? "\nError: " + lastError : "");
     return '<span style="font-size:0.72rem;color:var(--color-warning);font-weight:600" title="' + escapeHtml(tip) + '">' +
       '&#9888; last poll failed ' + timeAgo(attemptAt) + '</span>';
   }
   if (!okAt) return "";
-  return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(okAt).toLocaleString()) + '">updated ' + timeAgo(okAt) + '</span>';
+  return '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(okAt)) + '">updated ' + timeAgo(okAt) + '</span>';
 }
 
 function assetSystemViewHTML(a) {
@@ -8476,7 +8476,7 @@ function assetSystemViewHTML(a) {
   var interfacesBadge  = _streamSourceBadgeHTML(a, "interfaces");
   var lldpBadge        = _streamSourceBadgeHTML(a, "lldp");
   var telUpdatedAt = a.lastTelemetryAt
-    ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(new Date(a.lastTelemetryAt).toLocaleString()) + '">updated ' + timeAgo(a.lastTelemetryAt) + '</span>')
+    ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(a.lastTelemetryAt)) + '">updated ' + timeAgo(a.lastTelemetryAt) + '</span>')
     : '';
   // CPU & Memory and Interfaces say a FAILED poll out loud (business rule 118)
   // — "updated X ago" is the last success, and a failing stream reads as the
@@ -9053,7 +9053,7 @@ function _updateTemperatureUpdatedStamp(asset, si) {
     (asset && asset.lastTelemetryAt) || null;
   if (!tempLastAt) { slot.innerHTML = ""; return; }
   slot.innerHTML = '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' +
-    escapeHtml(new Date(tempLastAt).toLocaleString()) + '">updated ' + timeAgo(tempLastAt) + '</span>';
+    escapeHtml(formatDateTime(tempLastAt)) + '">updated ' + timeAgo(tempLastAt) + '</span>';
 }
 
 // Bare amber banner box — the shared visual for every chart/section stale
@@ -9207,7 +9207,7 @@ function _freshnessStampHTML(lastAt, cadenceSec, neverText) {
   var overdue = typeof cadenceSec === "number" && cadenceSec > 0 &&
     (Date.now() - new Date(lastAt).getTime()) > cadenceSec * 1000;
   var color = overdue ? "var(--color-warning)" : "var(--color-text-tertiary)";
-  var title = new Date(lastAt).toLocaleString() +
+  var title = formatDateTime(lastAt) +
     (overdue ? " — older than the " + _formatPollingInterval(cadenceSec) + " poll cadence" : "");
   return '<span style="font-size:0.72rem;color:' + color + (overdue ? ";font-weight:600" : "") + '" title="' +
     escapeHtml(title) + '">' + (overdue ? "&#9888; " : "") + 'updated ' + timeAgo(lastAt) + '</span>';
@@ -12407,8 +12407,8 @@ function _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) {
     if (x1 - x0 < 1) x1 = x0 + 1; // sliver windows stay visible
     var name = w.scheduleName || "Maintenance";
     var tip = "Maintenance: " + name + "\n" +
-      new Date(ws).toLocaleString() + " → " +
-      (w.endedAt ? new Date(we).toLocaleString() : "ongoing");
+      formatDateTime(ws) + " → " +
+      (w.endedAt ? formatDateTime(we) : "ongoing");
     out += '<g class="maintenance-band">' +
       '<rect x="' + x0 + '" y="' + padT + '" width="' + (x1 - x0) + '" height="' + innerH +
         '" fill="rgba(149,117,205,0.14)" stroke="rgba(149,117,205,0.45)" stroke-width="1" stroke-dasharray="2,3">' +
@@ -16147,7 +16147,7 @@ async function _openRebootModal(a, rb, existing) {
       if (isNaN(when.getTime())) { showToast("Pick a date and time", "error"); return; }
       var body = { scheduledFor: when.toISOString(), notify: editor.read(notifyFields), note: noteValue() || null };
       call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
-      done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
+      done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + formatDateTime(when);
     } else {
       var nowBody = noteValue() ? { note: noteValue() } : {};
       if (emailing() && editor) nowBody.notify = editor.read(notifyFields);
@@ -24585,7 +24585,7 @@ function _depTreeStatusPip(node) {
   // is the simulated-down one driving suppression downstream.
   var depTestUntil = node.dependencyTestUntil ? new Date(node.dependencyTestUntil) : null;
   if (depTestUntil && depTestUntil.getTime() > Date.now()) {
-    return '<span class="dep-tree-pip dep-tree-pip-dep-test" title="Dependency Test active — simulated DOWN until ' + escapeHtml(depTestUntil.toLocaleString()) + '">●</span>';
+    return '<span class="dep-tree-pip dep-tree-pip-dep-test" title="Dependency Test active — simulated DOWN until ' + escapeHtml(formatDateTime(depTestUntil)) + '">●</span>';
   }
   if (node.dependencySuppressed) {
     return '<span class="dep-tree-pip dep-tree-pip-dep" title="Dep. Down — upstream parent is offline">●</span>';
@@ -24846,7 +24846,7 @@ function renderDependencyTreeBlock(payload, selfId) {
   if (selfDepTest && selfDepTest.getTime() > Date.now()) {
     var startedBy = self.dependencyTestStartedBy ? " by " + escapeHtml(self.dependencyTestStartedBy) : "";
     depTestBanner = '<div class="dep-tree-test-banner">' +
-      '<strong>Dependency Test active</strong>' + startedBy + ' — children are suppressed as if this device were down. Auto-clears ' + escapeHtml(selfDepTest.toLocaleString()) + '.' +
+      '<strong>Dependency Test active</strong>' + startedBy + ' — children are suppressed as if this device were down. Auto-clears ' + escapeHtml(formatDateTime(selfDepTest)) + '.' +
       '</div>';
   }
 
@@ -27023,7 +27023,9 @@ function _assetEventsTabHTML(assetId) {
         '</tbody>' +
       '</table>' +
     '</div>' +
-    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;padding:0.75rem 0 0;flex:none"></div>' +
+    // renderPageControls draws into this (grid, 10px top margin — the gap
+    // the old 0.75rem padding gave).
+    '<div id="asset-view-events-pagination" style="display:flex;align-items:center;gap:12px;justify-content:center;flex:none"></div>' +
   '</div>';
 }
 
@@ -27118,53 +27120,15 @@ async function _loadAssetEventsTabFor() {
   }
 }
 
+// The shared list pager (app.js renderPageControls, CQ-F019) — page
+// navigation only; the tab's own Show N selector sits above the table.
 function _renderAssetEventsPagination() {
-  var container = document.getElementById("asset-view-events-pagination");
-  if (!container) return;
-  var total = _assetEventsTotal;
   var pageSize = _assetEventsPageSize;
-  var totalPages = Math.max(1, Math.ceil(total / pageSize));
   var currentPage = Math.floor(_assetEventsOffset / pageSize) + 1;
-
-  var pageButtons = "";
-  var startPage = Math.max(1, currentPage - 2);
-  var endPage = Math.min(totalPages, startPage + 4);
-  if (endPage - startPage < 4) startPage = Math.max(1, endPage - 4);
-  if (startPage > 1) {
-    pageButtons += '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="1">1</button>';
-    if (startPage > 2) pageButtons += '<span style="color:var(--color-text-tertiary)">…</span>';
-  }
-  for (var p = startPage; p <= endPage; p++) {
-    pageButtons += p === currentPage
-      ? '<button class="btn btn-primary btn-sm ae-page-btn" data-page="' + p + '" disabled>' + p + '</button>'
-      : '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="' + p + '">' + p + '</button>';
-  }
-  if (endPage < totalPages) {
-    if (endPage < totalPages - 1) pageButtons += '<span style="color:var(--color-text-tertiary)">…</span>';
-    pageButtons += '<button class="btn btn-secondary btn-sm ae-page-btn" data-page="' + totalPages + '">' + totalPages + '</button>';
-  }
-
-  container.innerHTML =
-    '<button class="btn btn-secondary btn-sm ae-page-prev" ' + (currentPage <= 1 ? 'disabled' : '') + '>&laquo; Prev</button>' +
-    pageButtons +
-    '<button class="btn btn-secondary btn-sm ae-page-next" ' + (currentPage >= totalPages ? 'disabled' : '') + '>Next &raquo;</button>' +
-    '<span style="font-size:0.82rem;color:var(--color-text-tertiary);margin-left:8px">' + total + ' events</span>';
-
-  var prev = container.querySelector(".ae-page-prev");
-  if (prev) prev.addEventListener("click", function () {
-    if (_assetEventsOffset >= pageSize) { _assetEventsOffset -= pageSize; _loadAssetEventsTabFor(); }
-  });
-  var next = container.querySelector(".ae-page-next");
-  if (next) next.addEventListener("click", function () {
-    if (_assetEventsOffset + pageSize < total) { _assetEventsOffset += pageSize; _loadAssetEventsTabFor(); }
-  });
-  container.querySelectorAll(".ae-page-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      var page = parseInt(btn.getAttribute("data-page"), 10);
-      _assetEventsOffset = (page - 1) * pageSize;
-      _loadAssetEventsTabFor();
-    });
-  });
+  renderPageControls("asset-view-events-pagination", _assetEventsTotal, pageSize, currentPage, function (page) {
+    _assetEventsOffset = (page - 1) * pageSize;
+    _loadAssetEventsTabFor();
+  }, null, { itemLabel: "events" });
 }
 
 function _saveAssetEventsPrefs() {
@@ -30015,7 +29979,7 @@ function _renderAssetIpsec(assetId, data, asset) {
   function uptimeSec(c) { return c.connectedSince ? Math.max(0, (Date.now() - new Date(c.connectedSince).getTime()) / 1000) : null; }
   function uptimeCell(c) {
     var up = _ipsecUptimeLabel(c.connectedSince);
-    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(new Date(c.connectedSince).toLocaleString()) + '">' + escapeHtml(up) + '</span>' : dash;
+    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(formatDateTime(c.connectedSince)) + '">' + escapeHtml(up) + '</span>' : dash;
   }
   // The row's kind, as a quiet second line under its name — a column of its
   // own cost the addresses their width in a slide-over.

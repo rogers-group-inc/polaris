@@ -1101,12 +1101,12 @@
     (info.openWindows || []).forEach(function (w) {
       rows.push('<div class="list-item two-line ae-maint-row"><div class="content">' +
         '<div class="headline">In maintenance now</div>' +
-        '<div class="supporting">' + esc(w.scheduleName) + (w.until ? " · until ~" + esc(new Date(w.until).toLocaleString()) : "") + '</div>' +
+        '<div class="supporting">' + esc(w.scheduleName) + (w.until ? " · until ~" + esc(formatDateTime(w.until)) : "") + '</div>' +
       '</div></div>');
     });
     (info.schedules || []).forEach(function (s) {
       var when = s.activeNow ? "active now"
-        : (s.nextStart ? "next: " + new Date(s.nextStart).toLocaleString() : "no upcoming window");
+        : (s.nextStart ? "next: " + formatDateTime(s.nextStart) : "no upcoming window");
       var acts = "";
       if (mayMaint) {
         // Rule 141 (e), as the desktop tab: Remove needs THIS device in reach

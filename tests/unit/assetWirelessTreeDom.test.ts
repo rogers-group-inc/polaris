@@ -101,6 +101,7 @@ beforeEach(() => {
     const mins = Math.round((Date.now() - new Date(t).getTime()) / 60000);
     return mins + "m ago";
   };
+  g.formatDateTime = (v: any) => new Date(v).toISOString();
   g.canProbeAssets = () => true;
   g._wireCurrentStateRefresh = vi.fn();
   g._assetWirelessFilter = {};

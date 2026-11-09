@@ -1439,7 +1439,7 @@
     // disambiguator for multi-IP hosts and same-asset service→service edges.
     html += "<table><tr><th>Port</th><th>Via IP</th><th>Seen</th><th>Last seen</th></tr>";
     e.ports.forEach(function (p) {
-      html += "<tr><td>" + esc(p.proto + "/" + p.port) + "</td><td>" + esc((p.ips || []).join(", ") || "—") + "</td><td>" + p.count + "×</td><td>" + esc(new Date(p.lastSeen).toLocaleString()) + "</td></tr>";
+      html += "<tr><td>" + esc(p.proto + "/" + p.port) + "</td><td>" + esc((p.ips || []).join(", ") || "—") + "</td><td>" + p.count + "×</td><td>" + esc(typeof formatDateTime === "function" ? formatDateTime(p.lastSeen) : new Date(p.lastSeen).toLocaleString()) + "</td></tr>";
     });
     html += "</table>";
     if (e.portOverflow > 0) html += '<div class="appmap-info-sub">+ ' + e.portOverflow + " more port(s)</div>";

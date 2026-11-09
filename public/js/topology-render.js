@@ -4458,7 +4458,11 @@
     if (edge.data("isLastKnown") === 1) {
       var lk = new Date(edge.data("lastKnownAt"));
       html += '<div style="font-size:0.82em;margin-top:4px;opacity:0.9">Last known' +
-        (isFinite(lk.getTime()) ? ', seen ' + _escTip(lk.toLocaleString()) : '') +
+        (isFinite(lk.getTime())
+          // The display timezone (CQ-F017); guarded because the phone and
+          // this module's tests load it without api.js.
+          ? ', seen ' + _escTip(typeof formatDateTime === "function" ? formatDateTime(lk) : lk.toLocaleString())
+          : '') +
         '. An end is not being polled (dependency-down, down or recovering), so this is where the link was.</div>';
     }
     return html;

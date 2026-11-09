@@ -2612,7 +2612,7 @@ function _wireAutoMonitorStorageCard(idPrefix, klass, integrationId) {
     api.integrations.storageAggregate(integrationId, klass).then(function (resp) {
       aggregateLoaded = true;
       var asof = document.getElementById(idPrefix + "names-asof");
-      if (asof) asof.textContent = (resp && resp.computedAt) ? ("As of last discovery: " + new Date(resp.computedAt).toLocaleString()) : "";
+      if (asof) asof.textContent = (resp && resp.computedAt) ? ("As of last discovery: " + formatDateTime(resp.computedAt)) : "";
       renderNamesList((resp && resp.rows) || []);
     }).catch(function (err) {
       if (listEl) listEl.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">Failed to load: ' + escapeHtml(err.message || "unknown error") + '</p>';
@@ -2789,7 +2789,7 @@ function _wireAutoMonitorCard(idPrefix, klass, integrationId) {
       var rows = (resp && resp.rows) || [];
       aggregateRows = rows;
       var asof = document.getElementById(idPrefix + "names-asof");
-      if (asof) asof.textContent = (resp && resp.computedAt) ? ("As of last discovery: " + new Date(resp.computedAt).toLocaleString()) : "";
+      if (asof) asof.textContent = (resp && resp.computedAt) ? ("As of last discovery: " + formatDateTime(resp.computedAt)) : "";
       renderNamesList(rows);
       renderTypesList();
     }).catch(function (err) {

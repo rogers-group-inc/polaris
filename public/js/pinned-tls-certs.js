@@ -42,7 +42,10 @@
   }
 
   function when(d) {
-    return d ? new Date(d).toLocaleString() : "—";
+    if (!d) return "—";
+    // The operator's display timezone via api.js formatDateTime (CQ-F017);
+    // the fallback is for a load without api.js.
+    return typeof formatDateTime === "function" ? formatDateTime(d) : new Date(d).toLocaleString();
   }
 
   function row(label, valueHtml, stacked) {

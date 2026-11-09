@@ -1726,7 +1726,7 @@
     var when = "";
     if (cp.savedAt) {
       var d = new Date(cp.savedAt);
-      if (!isNaN(d.getTime())) when = d.toLocaleString();
+      if (!isNaN(d.getTime())) when = formatDateTime(d);
     }
     var who = cp.shared && cp.savedBy ? " by " + cp.savedBy : "";
     if (!when && !who) return cp.shared ? "shared save" : "saved in this browser";
@@ -3840,7 +3840,7 @@
     parts.push('<div class="detail-row"><span class="label">Mgmt IP</span>' + copyableValue(fg.ip) + '</div>');
     parts.push('<div class="detail-row"><span class="label">Status</span><span class="value">' + escapeHtml(fg.status || "—") + '</span></div>');
     if (fg.lastSeen) {
-      parts.push('<div class="detail-row"><span class="label">Last seen</span><span class="value">' + escapeHtml(new Date(fg.lastSeen).toLocaleString()) + '</span></div>');
+      parts.push('<div class="detail-row"><span class="label">Last seen</span><span class="value">' + escapeHtml(formatDateTime(fg.lastSeen)) + '</span></div>');
     }
     if (fg.latitude != null && fg.longitude != null) {
       var coordsText = fg.latitude.toFixed(4) + ', ' + fg.longitude.toFixed(4);

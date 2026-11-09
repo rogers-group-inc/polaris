@@ -1516,7 +1516,7 @@ function _renderDiscoveredLine(s) {
         ? "Windows Server"
         : (s.integration.name || "integration");
   var ago = _ipPanelTimeAgoVerbose(s.lastDiscoveredAt) || "recently";
-  var iso = new Date(s.lastDiscoveredAt).toLocaleString();
+  var iso = formatDateTime(s.lastDiscoveredAt);
   return '<span id="ip-panel-discovered-line" style="color:var(--color-text-tertiary)" ' +
     'title="' + escapeHtml(iso) + '">Discovered ' + escapeHtml(ago) +
     ' from ' + escapeHtml(typeLabel) + ' DHCP</span>';

@@ -449,7 +449,7 @@
             escapeHtml((s.credentialNames && s.credentialNames.linux) || "—") +
           '</span></div>' +
         '<div class="detail-row"><span class="detail-label">Generated</span>' +
-          '<span class="detail-value">' + escapeHtml(s.generatedAt ? new Date(s.generatedAt).toLocaleString() : "—") + '</span></div>' +
+          '<span class="detail-value">' + escapeHtml(s.generatedAt ? formatDateTime(s.generatedAt) : "—") + '</span></div>' +
         '<div class="form-group" style="margin-top:0.75rem">' +
           '<label>Public key <span style="font-weight:normal;color:var(--color-text-tertiary)">(what the scripts install on each host)</span></label>' +
           '<textarea readonly rows="2" class="mono" id="wssh-pubkey" style="width:100%">' + escapeHtml(s.publicKey) + '</textarea>' +

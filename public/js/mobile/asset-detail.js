@@ -2521,7 +2521,7 @@
     if (testUntil && testUntil.getTime() > Date.now()) {
       html += '<div class="card-filled" style="padding:10px 12px;margin-top:8px;font-size:13px;"><strong>Dependency Test active</strong>'
         + (self.dependencyTestStartedBy ? " by " + escapeHtml(self.dependencyTestStartedBy) : "")
-        + " — children are suppressed as if this device were down. Auto-clears " + escapeHtml(testUntil.toLocaleString()) + ".</div>";
+        + " — children are suppressed as if this device were down. Auto-clears " + escapeHtml(formatDateTime(testUntil)) + ".</div>";
     }
 
     if (parents.length) {
@@ -4455,7 +4455,7 @@
           : api.assets.scheduleFirmwareUpgrade(asset.id, Object.assign({ imageId: fw.image.id }, body));
         call.then(function () {
           if (_openId !== asset.id) return;
-          PolarisTabs.showSnackbar(existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + new Date(body.scheduledFor).toLocaleString());
+          PolarisTabs.showSnackbar(existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + formatDateTime(body.scheduledFor));
           loadFirmwareRow(asset.id, asset);
         }).catch(function (err) {
           btn.disabled = false;
@@ -4864,7 +4864,7 @@
         var call = existing ? api.assets.updateRebootSchedule(asset.id, existing.id, body) : api.assets.scheduleReboot(asset.id, body);
         call.then(function () {
           if (_openId !== asset.id) return;
-          PolarisTabs.showSnackbar(existing ? "Scheduled reboot changed" : "Reboot scheduled for " + new Date(body.scheduledFor).toLocaleString());
+          PolarisTabs.showSnackbar(existing ? "Scheduled reboot changed" : "Reboot scheduled for " + formatDateTime(body.scheduledFor));
           loadRebootRow(asset.id, asset);
         }).catch(function (err) {
           btn.disabled = false;

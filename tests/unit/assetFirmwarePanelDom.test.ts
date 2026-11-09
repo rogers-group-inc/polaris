@@ -55,6 +55,7 @@ beforeEach(() => {
   perms = { assets: "write", firmware: "read" };
   g.escapeHtml = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   g.timeAgo = () => "5 minutes ago";
+  g.formatDateTime = (v: unknown) => new Date(v as string).toISOString();
   g.formatBytes = (n: number) => n + " B";
   g.permAtLeast = (key: string, want: string) => RANK[perms[key] ?? "none"]! >= RANK[want]!;
   for (const name of ["_assetFirmwareEligible", "_fwBadge", "_fwImageLine", "_fwRunResultHTML", "_fwStageRow", "_fwProgressHTML", "_fwRunHistoryHTML", "assetFirmwarePanelHTML", "_fwApprovalBlockHTML", "_fwApprovalModalHTML", "_fwScheduleFieldsHTML", "_fwNotifyEditor", "_fwNotifyHTML", "_fwLocalInputValue", "_fwBrowserZone", "_fwWhenText"]) {

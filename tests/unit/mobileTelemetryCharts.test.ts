@@ -314,9 +314,21 @@ describe("stackChart", () => {
 
   it("formats bytes the way the OS reports memory", () => {
     load();
-    expect(g.PolarisCharts.formatBytes(16 * GB)).toBe("16 GB");
-    expect(g.PolarisCharts.formatBytes(6.5 * GB)).toBe("6.5 GB");
-    expect(g.PolarisCharts.formatBytes(512 * 1024 ** 2)).toBe("512 MB");
-    expect(g.PolarisCharts.formatBytes(0)).toBe("0");
+    expect(g.PolarisCharts.formatBytesAxis(16 * GB)).toBe("16 GB");
+    expect(g.PolarisCharts.formatBytesAxis(6.5 * GB)).toBe("6.5 GB");
+    expect(g.PolarisCharts.formatBytesAxis(512 * 1024 ** 2)).toBe("512 MB");
+    expect(g.PolarisCharts.formatBytesAxis(0)).toBe("0");
+  });
+
+  // CQ-F018: the axis form is NOT api.js formatBytes ("16.0 GB", "" for
+  // nothing) and must not borrow its name — mobile.html loads both.
+  it("keeps the name formatBytes for api.js alone", () => {
+    load();
+    expect(g.PolarisCharts.formatBytes).toBeUndefined();
+    const root = join(process.cwd(), "public", "js");
+    const decl = /function\s+formatBytes\s*\(|\bformatBytes\s*:\s*[A-Za-z_]/;
+    const files = ["api.js", "mobile/charts.js", "mobile/telemetry-charts.js", "mobile/asset-detail.js", "chart-shared.js"];
+    const declaring = files.filter((f) => decl.test(readFileSync(join(root, f), "utf-8")));
+    expect(declaring).toEqual(["api.js"]);
   });
 });

@@ -74,6 +74,7 @@ function boot() {
   g.PolarisMobile = { user: () => ({ permissions: perms }) };
   g.mobileFormatDate = (s: any) => String(s ?? "");
   g.timeAgo = () => "1m ago";
+  g.formatDateTime = (v: any) => new Date(v).toISOString();
   const known: Record<string, any> = {
     get: async (id: string) => ASSETS[id], firmwareUpgrade, startFirmwareUpgrade, firmwareUpgradeRun,
     firmwareScheduleDefaults, scheduleFirmwareUpgrade, updateFirmwareSchedule, cancelFirmwareSchedule,
