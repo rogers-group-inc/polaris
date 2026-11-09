@@ -243,6 +243,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - `managedMode=false` blocks apply and surfaces the adopt-required flow.
 
 **When changing this:**
+- Unit tests: `tests/unit/nginxApplyService.test.ts` — wrapper/managed-mode refusals, hash recorded only after success, cert pair checks before staging, bootstrap unmanaged, drift.
 - Hash computation must be byte-for-byte identical across platforms (CRLF normalization in the renderer).
 
 ---

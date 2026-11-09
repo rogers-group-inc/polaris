@@ -32,6 +32,7 @@ import * as genericApi from "../genericApiService.js";
 import { syncGenericApiDevices } from "./genericApiSync.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
 import { integrationAdapter, type IntegrationType } from "../integrationAdapters.js";
+import { wirelessRoamEventsWanted } from "../notificationChangeEvents.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
@@ -8010,6 +8011,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   if (changeBaseline.size > 0) {
     try {
       const changeEvents: LogEventInput[] = [];
+      const roamsWanted = await wirelessRoamEventsWanted();
       for (const [assetId, baseline] of changeBaseline) {
         const asset = assetIdx.findById(assetId);
         if (!asset) continue;
@@ -8033,7 +8035,9 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
           const ev = buildConnectionChangedEvent("switch", ctx, baseline.lastSeenSwitch as string | null, asset.lastSeenSwitch ?? null);
           if (ev) changeEvents.push(ev);
         }
-        if ("lastSeenAp" in baseline) {
+        // A roam Event only while an automation uses the roam trigger
+        // (wirelessRoamEventsWanted, asked once before this loop).
+        if ("lastSeenAp" in baseline && roamsWanted) {
           const ev = buildConnectionChangedEvent("ap", ctx, baseline.lastSeenAp as string | null, asset.lastSeenAp ?? null);
           if (ev) changeEvents.push(ev);
         }

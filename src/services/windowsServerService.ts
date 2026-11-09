@@ -180,17 +180,20 @@ async function winrmExec(
   const authUser = domain ? `${domain}\\${username}` : username;
   const authHeader = "Basic " + Buffer.from(`${authUser}:${password}`).toString("base64");
 
-  // WinRM SOAP envelope to create shell, run command, receive output, delete shell
-  const shellId = await winrmCreateShell(url, authHeader, controller.signal);
-
+  // WinRM SOAP envelope to create shell, run command, receive output, delete shell.
+  // The timer and the abort listener are released whatever fails — including
+  // the shell create itself (a 401, a refused connection), which used to sit
+  // OUTSIDE the try and leave both behind on every failed connection test.
+  let shellId: string | null = null;
   try {
+    shellId = await winrmCreateShell(url, authHeader, controller.signal);
     const commandId = await winrmRunCommand(url, authHeader, shellId, command, controller.signal);
     const output = await winrmReceive(url, authHeader, shellId, commandId, controller.signal);
     return output;
   } finally {
     clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", onExternalAbort);
-    await winrmDeleteShell(url, authHeader, shellId).catch(() => {});
+    if (shellId !== null) await winrmDeleteShell(url, authHeader, shellId).catch(() => {});
   }
 }
 

@@ -458,6 +458,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - No per-device iteration; single WinRM call returns all scopes on that server.
 
 **When changing this:**
+- Unit tests: `tests/unit/windowsServerService.test.ts` — the WinRM exchange against a fake endpoint, scope → CIDR, include/exclude, and no timer or abort listener left behind when the shell create fails (it was, until 2026-11-09: the create sat outside the try).
 - Verify WinRM URL construction (scheme + port based on useSsl flag).
 - Check PowerShell query still works on target Windows versions (Server 2016+).
 - Confirm dhcpInclude/dhcpExclude filtering still matches scope IDs/names correctly.
