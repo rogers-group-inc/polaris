@@ -71,6 +71,8 @@ const FN_NAMES = [
   "_wirelessBandLabel",
   "_renderWirelessStationsCard",
   "_renderWirelessFlatTable",
+  // The body's delegated toggle / endpoint-link listener (CQ-F042).
+  "_wireWirelessBody",
   // The cadence · freshness · Poll strip every branch of the tab renders.
   "_formatPollingInterval",
   "_cadenceChipHTML",
