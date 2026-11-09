@@ -257,8 +257,17 @@ that this is usually a cable or speed-negotiation fault. A mesh link's tooltip s
 the signal in dBm and in words, the channel, band and channel width, the noise
 and signal-to-noise ratio, the SSID, and when it was last seen. The legend has
 a section for each: **Wired link speed**, **Wireless mesh signal**, and
-**Also** (MCLAG and ring links). Devices are listed by asset type (Firewall,
+**Also** (MCLAG, ring and last-known links). Devices are listed by asset type (Firewall,
 Switch, Access Point).
+
+**Last-known links.** A switch-to-switch link stays on the map while one of its
+switches is dependency-down, down or recovering, drawn with long faded dashes. Polaris
+stops fully polling such a switch, so nothing refreshes the evidence for its links; the
+map keeps them where they were last seen, for up to seven days, and the link's tooltip
+says when. Before this, those links disappeared about an hour after the switch went
+dark and the site redrew as if every switch hung straight off the FortiGate. A link
+between two switches Polaris still polls fully disappears an hour after its evidence
+goes, as before.
 
 A link between two location boxes runs in the gutters between boxes and never
 through another device: when a switch sits in the target's column, the line

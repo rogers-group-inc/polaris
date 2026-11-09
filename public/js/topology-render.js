@@ -295,6 +295,10 @@
           reason: e.reason || "",
           srcIf: e.srcIf || null,
           tgtIf: e.tgtIf || null,
+          // Kept only because an end is not being fully polled (dependency-
+          // down, down, recovering): the server's last-known rule. Dashed.
+          isLastKnown: e.lastKnownAt ? 1 : undefined,
+          lastKnownAt: e.lastKnownAt || undefined,
         },
       });
     });
@@ -706,6 +710,14 @@
         selector: 'edge[isMclag = 1]',
         style: { "line-style": "dashed", "target-arrow-shape": "none" },
       },
+      // LAST KNOWN: a switch link kept on the map while an end is not being
+      // fully polled (dependency-down, down, recovering), drawn from evidence
+      // nothing has refreshed since. Long dashes, faded: still where the cable
+      // was, not a reading of it now. The tooltip says when it was last seen.
+      {
+        selector: 'edge[isLastKnown = 1]',
+        style: { "line-style": "dashed", "line-dash-pattern": [10, 6], opacity: 0.6 },
+      },
       // Wireless edge: AP → connected station (not rendered today — the map
       // is the FG / switch / AP backbone). Dashed, faint.
       {
@@ -1096,6 +1108,7 @@
         { key: "signal:poor",   section: "signal", label: "Poor, below −80",         color: ec.poor,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
         { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
+        { key: "edge:lastKnown", section: "also",  label: "Last known, an end not being polled", color: ec.neutral, style: "dashed", width: LINK_SPEED_STYLE.unknown.width },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
@@ -1142,7 +1155,9 @@
     }
     if (kind === "edge") {
       return cy.edges().filter(function (e) {
-        return val === "loop" ? e.data("inLoop") === 1 : edgeLegendKind(e) === val;
+        if (val === "loop") return e.data("inLoop") === 1;
+        if (val === "lastKnown") return e.data("isLastKnown") === 1;
+        return edgeLegendKind(e) === val;
       });
     }
     if (kind === "speed") return cy.edges().filter(function (e) { return e.data("linkSpeed") === val; });
@@ -4380,6 +4395,13 @@
         _escTip(lowRx.map(function (p) { return p[0]; }).join(" and ")) +
         ' receive' + (lowRx.length === 1 ? "s" : "") + ' below ' + _escTip(_fmtDbm(OPTICS_RX_LOW_DBM)) +
         ' dBm, past most optics’ sensitivity. Check the fibre, connectors and the far-end transmitter.</div>';
+    }
+    // A link kept as last known: say so, and when it was last seen.
+    if (edge.data("isLastKnown") === 1) {
+      var lk = new Date(edge.data("lastKnownAt"));
+      html += '<div style="font-size:0.82em;margin-top:4px;opacity:0.9">Last known' +
+        (isFinite(lk.getTime()) ? ', seen ' + _escTip(lk.toLocaleString()) : '') +
+        '. An end is not being polled (dependency-down, down or recovering), so this is where the link was.</div>';
     }
     return html;
   }
