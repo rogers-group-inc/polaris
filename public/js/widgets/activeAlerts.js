@@ -236,6 +236,7 @@
         { header: "Acknowledged By", get: function (r) { return r.acknowledgedBy || ""; } },
         { header: "Test", get: function (r) { return r.testRun ? "yes" : ""; } },
         { header: "Quiet", get: function (r) { return r.quietHeld ? "held" : ""; } },
+        { header: "Escalation Tier", get: function (r) { return r.escalationTier ? String(r.escalationTier) : ""; } },
         { header: "Raised At", get: function (r) { return r.raisedAt ? new Date(r.raisedAt).toISOString() : ""; } },
       ],
       rows: filtered,
@@ -306,6 +307,16 @@
       ? '<span class="widget-pill widget-pill-neutral" style="margin-right:6px' + fadeTail + '" title="' +
         escapeHtml("Held for quiet time — no email, push or chat message has gone out; a summary email is sent when the quiet period ends") +
         '">QUIET</span>'
+      : "";
+    // Gone over the first reader's head (business rule 145): an escalation tier
+    // has sent. The number is in the pill, not only the hover — wallboards
+    // never hover, and "T2" is the difference between the team lead and the
+    // director having been paged.
+    var esc = r.escalationTier
+      ? '<span class="widget-pill widget-pill-orange" style="margin-right:6px' + fadeTail + '" title="' +
+        escapeHtml("Escalated — tier " + r.escalationTier + " has been notified" +
+          (r.escalatedAt ? " (first escalation " + new Date(r.escalatedAt).toLocaleString() + ")" : "")) +
+        '">ESCALATED' + (r.escalationTier > 1 ? " T" + r.escalationTier : "") + '</span>'
       : "";
     var grouped = !!r.groupName || r.dimensionCount != null;
     var count = r.dimensionCount ? " — " + r.dimensionCount + " component" + (r.dimensionCount === 1 ? "" : "s") : "";
@@ -391,7 +402,7 @@
     return "<" + tag + ' class="recent-item' + (actionable ? " recent-item-link" : "") + '"' + attrs +
       ' style="border-left:3px solid ' + bar + ';padding-left:8px">' +
       '<div style="min-width:0">' +
-        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + quiet + title + group + who + dim + dep + maint + ack + '</div>' +
+        '<div class="recent-item-title"><span class="widget-pill ' + pillCls + '" style="margin-right:6px' + fadeTail + '">' + escapeHtml(sev) + '</span>' + test + quiet + esc + title + group + who + dim + dep + maint + ack + '</div>' +
         '<div class="recent-item-meta"' + fadeAttr + '>' + escapeHtml(r.message || "") + '</div>' +
       '</div>' +
       '<span class="recent-item-time">' + timeAgo(r.raisedAt) + '</span>' +

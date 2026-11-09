@@ -26639,6 +26639,13 @@ function _loadAssetNotificationsTab(assetId) {
         // Raised for this device while it was dependency-down (business rule
         // 78): the same slate badge the Status pill wears, beside the
         // severity, so the row reads as that state at a glance.
+        // An escalation tier has sent for this alert (business rule 145) —
+        // the same ESCALATED pill the Active Alerts widget wears.
+        var escBadge = n.escalationTier
+          ? ' <span class="badge badge-escalated" title="' + escapeHtml("Escalated — tier " + n.escalationTier + " has been notified" +
+              (n.escalatedAt ? " (first escalation " + new Date(n.escalatedAt).toLocaleString() + ")" : "")) + '">ESCALATED' +
+            (n.escalationTier > 1 ? " T" + n.escalationTier : "") + '</span>'
+          : "";
         var depBadge = n.dependencyDown
           ? ' <span class="badge badge-monitor-dep-down" title="Raised while this device was dependency-down — the message names the upstream device. No reminders or escalation until the upstream recovers.">Dep. Down</span>'
           : "";
@@ -26668,7 +26675,7 @@ function _loadAssetNotificationsTab(assetId) {
           : "";
         return '<tr' + (hasMenu ? ' data-row-menu-row' : '') + '>' + sel +
           '<td style="font-family:var(--font-mono);font-size:0.82rem">' + escapeHtml(ts) + '</td>' +
-          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + depBadge + maintPill + groupPill + '</td>' +
+          '<td><span class="badge badge-level-' + escapeHtml(n.severity || "info") + '">' + escapeHtml((n.severity || "info").toUpperCase()) + '</span>' + escBadge + depBadge + maintPill + groupPill + '</td>' +
           '<td' + (alertTitle ? ' title="' + escapeHtml(alertTitle) + '"' : "") + '>' + msgCell + '</td>' +
           '<td>' + ackCell + '</td>' +
           '<td><div style="display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">' + parts.join("") + '</div></td></tr>';

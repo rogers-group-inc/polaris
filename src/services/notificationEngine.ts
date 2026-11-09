@@ -54,6 +54,9 @@ import {
   type ResetConfig,
   type RepeatConfig,
   type AutomationAction,
+  type RuleActionCarrier,
+  expandResetActions,
+  parseEscalationFired,
   type EscalatableAction,
   ruleHasAnyEscalation,
   allRuleActionRefs,
@@ -6037,6 +6040,23 @@ function readingFromState(st: { assetId: string | null; dimensionKey: string; la
   };
 }
 
+/**
+ * The reset actions an alert's recovery actually runs (business rule 145) —
+ * `expandResetActions` over the owner's list, reading the alert's fired tiers
+ * only when some reset action asks for an escalation reset (one indexed read,
+ * once per alert, never per tick).
+ */
+async function resetActionsToRun(
+  carrier: RuleActionCarrier & { severity: string },
+  notificationId: string,
+): Promise<AutomationAction[]> {
+  const wantsFired = (carrier.resetActions ?? []).some((a) => a.type === "notify" && !!a.resetEscalation);
+  const fired = wantsFired
+    ? parseEscalationFired((await prisma.notification.findUnique({ where: { id: notificationId }, select: { escalationFired: true } }))?.escalationFired)
+    : [];
+  return expandResetActions(carrier, fired);
+}
+
 async function fireReset(
   rule: DbRule,
   reading: Reading,
@@ -6052,8 +6072,11 @@ async function fireReset(
   // A governed alert's reset actions are its GROUP's (business rule 75), the
   // same answer runResetActionsForCleared gives for an operator's Clear.
   const owner = await groupOwnerOf(rule, st.notificationId);
-  const actions = owner ? owner.resetActions : rule.resetActions;
-  if (!actions?.length) return;
+  if (!(owner ? owner.resetActions : rule.resetActions)?.length) return;
+  // Matched rows follow their trigger action live, and an escalation reset
+  // adds the tiers that sent for THIS alert (business rule 145).
+  const actions = await resetActionsToRun(owner ?? rule, st.notificationId);
+  if (!actions.length) return;
   const detail = ruleWantsAssetDetail(rule) && reading.assetId ? await assetDetail(reading.assetId) : null;
   const view = await allClearView(rule, st.notificationId, reading);
   const parts = readingContextParts(rule, view.reading, now, undefined, view.members, view.counts);

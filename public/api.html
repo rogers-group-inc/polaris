@@ -1697,7 +1697,15 @@
             <li><code>actions?</code> — up to 20, each one of <code>notify</code> (a delivery
               channel id from <code>/delivery-channels</code> plus recipients),
               <code>api_call</code>, <code>script</code>, <code>event</code>,
-              <code>reboot</code>; each may carry its own escalation tiers.</li>
+              <code>reboot</code>; each may carry its own escalation tiers. A <code>notify</code>
+              may carry a stable <code>id</code> (any string, unique among the rule's notify
+              actions).</li>
+            <li>A <code>notify</code> in <code>resetActions</code> may name the trigger
+              <code>notify</code> it answers for with <code>matchActionId</code> (its
+              <code>id</code>): it then sends what that action sends when the alert ends, unless
+              <code>customized: true</code>. <code>resetEscalation: {}</code> also tells every
+              escalation tier that sent for the alert; <code>{ "custom": { "&lt;severity&gt;:&lt;tierIndex&gt;": [notify…] } }</code>
+              replaces a tier's own recipients (business rule 145).</li>
             <li><code>reset?</code> — <strong>absent means <code>manual</code></strong> (never
               clears by itself); <code>{ "mode": "auto" }</code> clears when the condition stops.</li>
             <li><code>resetActions?</code>, <code>repeat?</code>,

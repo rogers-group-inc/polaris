@@ -2228,6 +2228,19 @@ button, .list-item, .chip { touch-action: manipulation; }
   text-transform: uppercase;
   color: var(--alert-flag-color, var(--md-sev-critical));
 }
+/* An escalation tier has sent (business rule 145) — serious orange, both themes
+   through the --md-sev-serious token. */
+.alert-item .alert-sev .badge-escalated {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--md-sev-serious);
+  color: var(--md-sev-serious);
+  font-size: 10px;
+  line-height: 16px;
+  vertical-align: 1px;
+}
 .alert-item .alert-msg {
   font-size: 15px;
   line-height: 20px;

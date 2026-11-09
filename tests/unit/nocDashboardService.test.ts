@@ -547,6 +547,8 @@ describe("getRecentAlerts", () => {
       testRun: false,
       // Not held for quiet time (business rule 92).
       quietHeld: false,
+      escalationTier: null,
+      escalatedAt: null,
       // Not frozen by a maintenance window (business rule 16).
       maintenanceHold: null,
     });

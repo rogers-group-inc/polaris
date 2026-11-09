@@ -5833,6 +5833,16 @@ model Notification {
   // Per-tier escalation progress: { tiers: { "<tierIdx>": { firstSentAt,
   // lastSentAt, count } } }. Written by the escalateNotifications sweep.
   escalationState Json?
+  // Which escalation tiers have ever SENT for this alert (business rule 145):
+  // [{ severity, chain, tier, at }], one entry per (severity, chain, tier),
+  // appended by the sweep on a tier's first run. Unlike escalationState it is
+  // NOT reset on a band change or a re-open — a reset notice owes the people
+  // a tier told, whichever severity told them. Read by expandResetActions.
+  escalationFired Json?
+  // Highest tier number (1-based) that has sent, and when the alert first
+  // escalated — the "ESCALATED" pill on every alert surface. Null = never.
+  escalationTier Int?
+  escalatedAt    DateTime?
 
   // Raised by the automation wizard's "Test delivery" buttons rather than by a
   // real trigger. Always carries ruleId = null (a real ruleId would put it in

@@ -3165,3 +3165,15 @@ long faded dashes, and the link's tooltip says when it was last seen. A link bet
 switches Polaris still polls fully disappears an hour after its evidence goes, as before.
 Discovery's dependency tree keeps the same links, so the switches behind a dark switch
 stay [suppressed](Dependency-Suppression) through a long outage.
+
+### Rule 145
+
+**A reset answers for the action that raised it, and an escalation reset reaches only
+the tiers that sent.** A reset Notify can match a trigger Notify: it sends what that
+action sends at the moment the alert ends, so a later change to the trigger action's
+recipients reaches its reset too, unless you customize it. With **Also reset the
+escalation** on, each escalation tier that actually sent for the alert is told it ended,
+once, through its own Notify actions or your override for that tier. Tiers the alert
+never reached are not told. Each tier's first send writes one `notification.escalated`
+event on the alert, and the alert shows an **ESCALATED** pill
+([Automation actions](Automation-Actions#a-reset-notify-matches-a-trigger-notify)).
