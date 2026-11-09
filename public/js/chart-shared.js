@@ -261,7 +261,81 @@
     };
   }
 
+  // ─── The display-zone calendar the time axes are laid out on ──────────────
+  // A chart's ticks, midnight lines, tooltips and caption must all name the
+  // same clock, and that clock is the operator's display timezone (api.js
+  // timeZoneOpts; CQ-F017). The axis needs calendar ARITHMETIC in that zone
+  // (the midnight a time falls in, the same wall-clock time N days later
+  // across a DST change), which Date only offers in the browser's own zone.
+  // With the zone on "auto" — or this file loaded without api.js, as its
+  // tests do — every helper is the browser-local Date call it replaced, so
+  // such an install draws exactly what it drew before.
+  function displayZone() {
+    var o = typeof timeZoneOpts === "function" ? timeZoneOpts() : null;
+    return (o && o.timeZone) || "";
+  }
+  var _zoneFmt = {};
+  // Wall-clock fields of `ts` in the display zone: { year, month (1-12), day,
+  // hour (0-23), minute, second }.
+  function zoneParts(ts) {
+    var tz = displayZone();
+    if (!tz) {
+      var d = new Date(ts);
+      return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(),
+        hour: d.getHours(), minute: d.getMinutes(), second: d.getSeconds() };
+    }
+    var f = _zoneFmt[tz];
+    if (!f) {
+      f = _zoneFmt[tz] = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hourCycle: "h23",
+        year: "numeric", month: "numeric", day: "numeric",
+        hour: "numeric", minute: "numeric", second: "numeric",
+      });
+    }
+    var p = {};
+    f.formatToParts(new Date(ts)).forEach(function (x) {
+      if (x.type !== "literal") p[x.type] = Number(x.value);
+    });
+    // Some engines still print midnight as "24" under h23.
+    return { year: p.year, month: p.month, day: p.day, hour: p.hour === 24 ? 0 : p.hour, minute: p.minute, second: p.second };
+  }
+  // The instant the display zone's clock reads y-mo-d h:mi:s (day / month may
+  // overflow — Date.UTC normalises). Two passes settle a DST change.
+  function zoneWallTime(y, mo, d, h, mi, s) {
+    var guess = Date.UTC(y, mo - 1, d, h || 0, mi || 0, s || 0);
+    function offsetAt(t) {
+      var p = zoneParts(t);
+      return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
+    }
+    var off = offsetAt(guess);
+    var t = guess - off;
+    var off2 = offsetAt(t);
+    return off2 === off ? t : guess - off2;
+  }
+  // The display-zone midnight starting the day `ts` falls in.
+  function zoneMidnight(ts) {
+    if (!displayZone()) { var d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    var p = zoneParts(ts);
+    return zoneWallTime(p.year, p.month, p.day, 0, 0, 0);
+  }
+  // The same display-zone wall-clock time `n` calendar days later — never
+  // `ts + n × 86 400 000`, which drifts an hour across a DST change.
+  function addZoneDays(ts, n) {
+    if (!displayZone()) { var d = new Date(ts); d.setDate(d.getDate() + n); return d.getTime(); }
+    var p = zoneParts(ts);
+    return zoneWallTime(p.year, p.month, p.day + n, p.hour, p.minute, p.second);
+  }
+  // A key equal for two instants on the same display-zone calendar day.
+  function zoneDayKey(ts) {
+    var p = zoneParts(ts);
+    return p.year + "-" + p.month + "-" + p.day;
+  }
+
   window.PolarisChartShared = {
+    zoneParts: zoneParts,
+    zoneMidnight: zoneMidnight,
+    addZoneDays: addZoneDays,
+    zoneDayKey: zoneDayKey,
     FAIL_COLOR: FAIL_COLOR,
     DEP_COLOR: DEP_COLOR,
     MISS_COLOR: MISS_COLOR,
