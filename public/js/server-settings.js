@@ -2441,10 +2441,16 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
         dbInfoRow("Storage mounts", formatNumber(work.monitoredStorageCount || 0)) +
         dbInfoRow("Agents", formatNumber(work.agentCount || 0)) +
         (work.cadences
+          // Fleet averages (monitoringService.fleetCadences: the harmonic,
+          // rate-weighted mean of every monitored asset's resolved interval),
+          // so mixed cadences give a fraction and even a uniform fleet carries
+          // float noise (60.000000000000014). The capacity model keeps the exact
+          // figure; the card shows whole seconds.
           ? dbInfoRow("Cadences",
-              work.cadences.responseTimeSec + "s response · " +
-              work.cadences.telemetrySec + "s telemetry · " +
-              work.cadences.systemInfoSec + "s system info")
+              _fmtCadenceSec(work.cadences.responseTimeSec) + " response · " +
+              _fmtCadenceSec(work.cadences.telemetrySec) + " telemetry · " +
+              _fmtCadenceSec(work.cadences.systemInfoSec) + " system info",
+              "Fleet averages: each stream's polling interval averaged across every monitored asset, weighted by how often each one polls.")
           : "") +
         (work.retention
           ? dbInfoRow("Retention",
@@ -3576,6 +3582,13 @@ function formatFileSize(bytes) {
   var size = bytes;
   while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
   return size.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+}
+
+// A fleet-average cadence for display: whole seconds, never below 1.
+function _fmtCadenceSec(sec) {
+  var n = Number(sec);
+  if (!isFinite(n) || n <= 0) return "-";
+  return Math.max(1, Math.round(n)) + "s";
 }
 
 function dbInfoRow(label, value, hint) {
