@@ -40,7 +40,7 @@ scrubs and similar) were removed on 2026-11-09. An install whose code predates
 Such an install updates in two steps:
 
 1. **Update to the last release that still carries those jobs** — commit
-   `4fef024e7` (version `0.9.5420`) — and let every role start once, so the
+   `47dcfb643` (version `0.9.5447`) — and let every role start once, so the
    jobs run.
    - git-based installs (RHEL / Ubuntu). The updaters always move to the
      branch tip, so this step is by hand. Take a backup first.
@@ -49,14 +49,14 @@ Such an install updates in two steps:
      sudo systemctl stop polaris.target
      cd /opt/polaris
      sudo -u polaris git fetch origin
-     sudo -u polaris git checkout 4fef024e7
+     sudo -u polaris git checkout 47dcfb643
      sudo -u polaris npm ci --include=dev
      sudo -u polaris npm run build
      sudo -u polaris npx prisma migrate deploy
      sudo systemctl start polaris.target
      journalctl -u polaris-web -n 100 --no-pager   # wait for startup to finish
      ```
-   - Docker / podman: set `POLARIS_IMAGE=ghcr.io/rogers-group-inc/polaris:sha-4fef024`
+   - Docker / podman: set `POLARIS_IMAGE=ghcr.io/rogers-group-inc/polaris:sha-47dcfb6`
      in `.env`, then `docker compose up -d` (or `podman compose up -d`), and
      wait for the web container to finish starting.
 2. **Then update normally.** A git checkout goes back to its branch first

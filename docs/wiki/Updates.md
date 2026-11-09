@@ -150,7 +150,7 @@ something your own automations may notice.
 
 Polaris is pre-1.0 and does not promise a direct update from any older release.
 An install whose code predates **2026-06-03** must first update to commit
-`4fef024e7` (version `0.9.5420`, image tag `sha-4fef024`) and start once, so the
+`47dcfb643` (version `0.9.5447`, image tag `sha-47dcfb6`) and start once, so the
 boot-time data conversions removed after it can run; then it updates normally.
 The steps are *Updating an install older than June 2026* in
 **[`docs/UPGRADING.md`](https://github.com/rogers-group-inc/polaris/blob/main/docs/UPGRADING.md)**.
