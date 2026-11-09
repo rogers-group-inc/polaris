@@ -59,6 +59,7 @@ import { cidrContains, cidrOverlaps, detectIpVersion, ipInCidr, mostSpecificCont
 import { findCoveringExclusion } from "../../utils/subnetExclusion.js";
 import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { GENERIC_API_LABEL, GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
+import { chunkArray } from "../../utils/chunk.js";
 import {
   GENERIC_API_ADDRESS_SOURCE_TYPE,
   GENERIC_API_NETWORK_LIMITS,
@@ -385,16 +386,15 @@ export async function syncGenericApiNetwork(
     for (const d of dnsResolvedToRelease) {
       try { await releaseDnsResolvedAt(d.subnetId, d.ip); } catch { /* the createMany below skips the address if it is still held */ }
     }
-    for (let i = 0; i < creates.length; i += 500) {
+    for (const chunk of chunkArray(creates, 500)) {
       try {
-        const res = await prisma.reservation.createMany({ data: creates.slice(i, i + 500) as any, skipDuplicates: true });
+        const res = await prisma.reservation.createMany({ data: chunk as any, skipDuplicates: true });
         summary.addressesCreated += res.count;
       } catch (err: any) {
-        syncLog("error", `Failed to write ${Math.min(500, creates.length - i)} address(es): ${err.message || "Unknown error"}`);
+        syncLog("error", `Failed to write ${chunk.length} address(es): ${err.message || "Unknown error"}`);
       }
     }
-    for (let i = 0; i < updates.length; i += 200) {
-      const chunk = updates.slice(i, i + 200);
+    for (const chunk of chunkArray(updates, 200)) {
       try {
         await prisma.$transaction(chunk.map((u) => prisma.reservation.update({ where: { id: u.id }, data: u.data })));
         summary.addressesUpdated += chunk.length;
