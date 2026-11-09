@@ -70,6 +70,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Nothing here retires or re-sends an alert.** A change governs the NEXT fire; an alert already held keeps its stamp and is summarised by the source it was stamped with. Deleting a schedule flushes its held alerts into a summary at once (the Event names the count — matched on the stamp's `id` PATH, since the stamp also carries `name` and a whole-object `equals` never matched), because the alert carries the stamp rather than a FK.
 - Validation is the route's (`quietScheduleInputSchema`: the automations' `scopeSchema` + `quietTimeConfigSchema`, severities refined against `SEVERITIES`); the service trusts its typed input.
 
+**When changing this:**
+- Unit tests: `tests/unit/quietTimeScheduleService.test.ts` — in-window / next-window state, cache bump on every write, held-alert count on delete, per-reader summary counts.
+
 ---
 
 ## services/quietTimeSummaryService.ts
