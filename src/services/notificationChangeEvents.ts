@@ -14,6 +14,28 @@
 
 import { logEventsBatch } from "./eventLogService.js";
 import { isChangeActionSubscribed } from "./notificationRuleService.js";
+import { CHANGE_TYPE_ACTIONS } from "./notificationTypes.js";
+
+/**
+ * Should a wireless client's roam to another AP (`asset.wireless_ap.changed`)
+ * be written at all? Only while an enabled automation uses the "Wireless AP
+ * changed (roam)" trigger — the same subscription gate the `change.*` events
+ * use. Operator decision 2026-11-09: roams are edge-triggered like the other
+ * `asset.*.changed` events but nothing like as rare — every client moving
+ * between APs writes one — and unconditionally they dominated the Events log.
+ * The asset's own `lastSeenAp` still updates on every roam; only the Event is
+ * gated. Asked once per batch by each writer (the wireless scrape in
+ * monitoringService, the upstream-chain sweep, discovery's change-event
+ * flush). A failed lookup answers false: an audit row is never worth failing
+ * the write it rides on.
+ */
+export async function wirelessRoamEventsWanted(): Promise<boolean> {
+  try {
+    return await isChangeActionSubscribed(CHANGE_TYPE_ACTIONS.wireless_ap_changed);
+  } catch {
+    return false;
+  }
+}
 
 export interface ChangeItem {
   /** Short human label for the changed thing (interface, neighbor, process). */

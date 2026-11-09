@@ -786,6 +786,9 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   wireless_station_connected: "change.wireless.station_connected",
   firmware_changed: "asset.firmware.changed",
   switch_port_changed: "asset.switch_port.changed",
+  // The one `asset.*.changed` row that is NOT unconditional: roams are
+  // anything but rare, so its writers emit it only while a rule subscribes
+  // (notificationChangeEvents.wirelessRoamEventsWanted, 2026-11-09).
   wireless_ap_changed: "asset.wireless_ap.changed",
   gateway_firewall_changed: "asset.gateway_firewall.changed",
   // The `asset.*.changed` family: written unconditionally by the sweep, so
