@@ -37,6 +37,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 | the push and clean-up steps | [references/push-protocol.md](references/push-protocol.md) |
 | creating a worktree in one call (worktree + branch + WORKLOCK + Prisma client [+ .env, npm ci]) | [scripts/worktree-start.mjs](scripts/worktree-start.mjs) |
 | the enforcement hook and how it is registered | [scripts/require-worklock.mjs](scripts/require-worklock.mjs) |
+| the Bash hook that refuses heredoc programs / risky file writes / repo appends (→ Shell notes) | [scripts/refuse-risky-heredoc.mjs](scripts/refuse-risky-heredoc.mjs) |
 
 ## Start of a task (short form)
 
@@ -70,6 +71,13 @@ checkout, not your worktree — `cd` back before the next git command, or use `g
 <worktree-path>` throughout.
 
 ## Shell notes
+
+The first three rows are ENFORCED by `scripts/refuse-risky-heredoc.mjs`, a PreToolUse Bash hook
+(registered like `require-worklock.mjs`, in the main checkout's `.claude/settings.local.json`):
+it refuses a heredoc that is a python/node program, a file-writing heredoc with a backslash or
+non-ASCII in it, and a heredoc appended to a repo file. The notes alone did not stop them (~12
+error-log entries in the four days after they were written), and the mangling is the Bash
+TOOL's — a quoted `<<'EOF'` loses backslashes too — so no quoting gets past it.
 
 | Trap | Do instead |
 |---|---|

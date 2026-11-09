@@ -105,8 +105,8 @@ verify on the new base (`prisma generate`, `typecheck`, unit suite) before pushi
 
 ## Reference
 
-The refused shapes and what to do instead are tabled in SKILL.md → "Shell inside a worktree";
-this is the history. A worktree-isolated session's Bash guard refuses any command it cannot statically prove stays
+The shell traps and what to do instead are tabled in SKILL.md → "Shell notes" (the heredoc
+rows enforced by `.claude/skills/polaris-worktree-workflow/scripts/refuse-risky-heredoc.mjs`); this is the history of the retired guard. A worktree-isolated session's Bash guard refuses any command it cannot statically prove stays
 inside the worktree — and that is **wider than "compound commands naming `git`"**, which is how
 this was described until 2026-09-11. A plain `cat >> file <<'EOF' … EOF` heredoc, naming no git
 and touching nothing outside the worktree, is refused on its own with *"too complex to verify
