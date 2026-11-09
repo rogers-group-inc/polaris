@@ -1594,6 +1594,7 @@
     topoState.activeView = "flat";
     topoState.floorViews = [];
     topoState.editing = false;
+    _editStaged = null;
 
     try {
       var data = await api.map.topology(id);
@@ -1637,11 +1638,12 @@
     }
   }
 
-  // == Save / Reset ========================================================
-  // Drags persist on their own (debounced, shared), which is the layout
-  // everyone sees but not a decision anyone made. Save stamps the current
-  // arrangement as a RESTORE POINT, and that is what gives Reset two
-  // meanings: back to the last save, or back to the column solver's baseline.
+  // == Save / Load =========================================================
+  // Done Editing persists the edit session's drags (shared), which is the
+  // layout everyone sees but not a restore point. Save commits the session
+  // AND stamps the arrangement as a RESTORE POINT, which is what gives Load
+  // (the folder button) two meanings: the last save, or the column solver's
+  // baseline. Mid-edit, a Load is staged like a drag.
   //
   // Both stores mirror the live-position ones: the server row's
   // `savedPositions` for a deviceMap writer (shared with every operator),
@@ -1747,9 +1749,9 @@
         : "Save this layout as a restore point (this browser only)");
     }
     if (resetBtn) {
-      _setCornerTip(resetBtn, "Reset layout", cp
-        ? "Back to the last save (" + _checkpointLabel(cp) + ") or to the automatic layout"
-        : "Back to the automatic layout");
+      _setCornerTip(resetBtn, "Load layout", cp
+        ? "Load the last save (" + _checkpointLabel(cp) + ") or the automatic layout"
+        : "Load the automatic layout");
     }
   }
 
@@ -1768,7 +1770,11 @@
     var btn = document.getElementById("topology-save-layout");
     if (btn) btn.disabled = true;
     try {
-      saveNodePositions(topoState.siteId);
+      // Save commits the edit session so far (every view touched), then
+      // stamps the restore point once those writes have landed.
+      var landing = null;
+      if (_editSessionActive()) landing = _commitEditSession();
+      else saveNodePositions(topoState.siteId);
       _writeLocalCheckpoint(topoState.siteId, positions);
       if (!_canWriteServerLayout()) {
         // A non-writer cannot touch the shared row at all, so say where the
@@ -1778,7 +1784,7 @@
         }
         return;
       }
-      await _flushServerLayoutSaves();
+      await (landing || _flushServerLayoutSaves());
       var saved = await api.map.saveTopologyCheckpoint(topoState.siteId, view, positions);
       if (topoState.data) {
         if (!topoState.data.savedLayouts) topoState.data.savedLayouts = {};
@@ -1810,9 +1816,9 @@
     if (typeof showRowMenu !== "function") { resetTopologyLayoutToBaseline(); return; }
     var cp = _readCheckpoint(topoState.siteId);
     showRowMenu(anchor, [
-      { heading: "Reset layout" },
+      { heading: "Load layout" },
       {
-        label: cp ? "Reset to last save (" + _checkpointLabel(cp) + ")" : "Reset to last save",
+        label: cp ? "Load last save (" + _checkpointLabel(cp) + ")" : "Load last save",
         title: cp
           ? "Put every node back where it was when this layout was last saved"
           : "This view has never been saved — use Save first",
@@ -1820,13 +1826,13 @@
         onSelect: restoreTopologyLayoutCheckpoint,
       },
       {
-        label: "Reset to baseline",
+        label: "Load automatic layout",
         title: "Discard manual node positions and re-run the automatic layout"
              + (cp ? " — the saved restore point is kept" : ""),
         danger: true,
         onSelect: resetTopologyLayoutToBaseline,
       },
-    ], { label: "Reset layout", align: "end" });
+    ], { label: "Load layout", align: "end" });
   }
 
   // Put the active view back to its restore point. The checkpoint blob becomes
@@ -1850,6 +1856,15 @@
       var p = cp.positions[id];
       if (p && typeof p.x === "number" && typeof p.y === "number") positions[id] = { x: p.x, y: p.y };
     });
+    if (_editSessionActive()) {
+      // Mid-edit it is one more staged change: Done Editing keeps it,
+      // closing the map drops it.
+      delete _layoutDirty[topoState.siteId + "|" + view];
+      _stageLayout(view, positions);
+      renderTopologyGraph(topoState.data);
+      if (typeof showToast === "function") showToast("Layout loaded from the last save");
+      return;
+    }
     try { localStorage.setItem(_positionsStorageKey(topoState.siteId), JSON.stringify(positions)); }
     catch (e) { /* quota / private mode — the in-memory render below still applies */ }
     var layouts = topoState.data.savedLayouts;
@@ -1900,6 +1915,13 @@
       if (typeof showToast === "function") {
         showToast("Shared layout kept — resetting it requires Device Map write access");
       }
+      return;
+    }
+    if (_editSessionActive()) {
+      // Staged like any other edit; the commit runs the clear + DELETE below.
+      _stageLayout(view, {}, { reset: true, deleteServer: hadServerLayout });
+      renderTopologyGraph(topoState.data);
+      if (typeof showToast === "function") showToast("Automatic layout loaded");
       return;
     }
     if (entry) {
@@ -2134,12 +2156,14 @@
   // Stale entries (nodes that left the topology) are silently dropped on the
   // next save in both stores. Server writes only happen after a real drag
   // (the dirty flag below) — open/close/refresh alone never PUTs, so the
-  // solver's automatic layout keeps improving for untouched sites.
+  // solver's automatic layout keeps improving for untouched sites. Every
+  // drag happens in edit mode, and there it is STAGED (the edit session
+  // below) — it reaches these stores only on Done Editing or Save.
   function _activeViewKey() {
     return topoState.activeView && topoState.activeView !== "flat" ? topoState.activeView : "flat";
   }
-  function _positionsStorageKey(siteId) {
-    var view = _activeViewKey();
+  function _positionsStorageKey(siteId, view) {
+    if (!view) view = _activeViewKey();
     return POSITION_STORAGE_PREFIX + siteId + (view !== "flat" ? ":" + view : "");
   }
   function _canWriteServerLayout() {
@@ -2205,18 +2229,112 @@
     });
     return Promise.all(pending);
   }
+  // ── Edit session ─────────────────────────────────────────────────────────
+  // While the map is being edited, layout changes are STAGED here instead of
+  // persisted: nothing reaches localStorage or the server until the operator
+  // commits with Done Editing (the tick) or Save. Closing the map mid-edit
+  // drops the session, so moves the operator never confirmed never land.
+  // One entry per view touched: { positions, reset, deleteServer } — `reset`
+  // is a staged "Load baseline", which commits as the DELETE it always was.
+  var _editStaged = null;
+  function _editSessionActive() {
+    return !!(topoState.editing && _editStaged && _editStaged.siteId === topoState.siteId);
+  }
+  function _beginEditSession() {
+    // Anything queued before editing began was already a committed layout.
+    _flushServerLayoutSaves();
+    _editStaged = { siteId: topoState.siteId, views: {} };
+  }
+  function _stageLayout(view, positions, opts) {
+    if (!_editStaged) return;
+    _editStaged.views[view] = {
+      positions: positions,
+      reset: !!(opts && opts.reset),
+      deleteServer: !!(opts && opts.deleteServer),
+    };
+  }
+  // Drop the session. Returns true when it held a change the operator made.
+  function _discardEditSession() {
+    var session = _editStaged;
+    _editStaged = null;
+    if (!session) return false;
+    var had = Object.keys(session.views).length > 0;
+    var prefix = session.siteId + "|";
+    Object.keys(_layoutDirty).forEach(function (k) {
+      if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
+    });
+    return had;
+  }
+  // Land every staged view through the normal pipeline (localStorage + the
+  // debounced PUT, flushed now) and start an empty session. Returns a promise
+  // for the server writes so Save can stamp its restore point after them.
+  function _commitEditSession() {
+    var session = _editStaged;
+    if (!session || session.siteId !== topoState.siteId) return Promise.resolve();
+    var siteId = session.siteId;
+    // Capture the canvas as it stands (a drag's 250 ms save may be pending).
+    if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
+    var views = session.views;
+    _editStaged = { siteId: siteId, views: {} };
+    var pending = [];
+    Object.keys(views).forEach(function (view) {
+      var s = views[view];
+      if (s.reset) {
+        try { localStorage.removeItem(_positionsStorageKey(siteId, view)); }
+        catch (e) { /* quota / private mode */ }
+        delete _layoutDirty[siteId + "|" + view];
+        var layouts = topoState.data && topoState.data.savedLayouts;
+        var entry = layouts && layouts[view];
+        if (entry) {
+          // A row carrying a restore point is EMPTIED, as the server does.
+          if (entry.savedPositions) entry.positions = {};
+          else delete layouts[view];
+        }
+        if (s.deleteServer && _canWriteServerLayout()) {
+          pending.push(api.map.deleteTopologyLayout(siteId, view).catch(function (err) {
+            if (typeof showToast === "function") {
+              showToast("Server layout not reset — " + (err && err.message ? err.message : String(err)), "error");
+            }
+          }));
+        }
+        return;
+      }
+      try { localStorage.setItem(_positionsStorageKey(siteId, view), JSON.stringify(s.positions)); }
+      catch (e) { /* quota / private mode */ }
+      _layoutDirty[siteId + "|" + view] = true;
+      _queueServerLayoutSave(siteId, view, s.positions);
+    });
+    pending.push(_flushServerLayoutSaves());
+    return Promise.all(pending);
+  }
+
   function saveNodePositions(siteId) {
     if (!cyInstance || !siteId) return;
     // Shared with the explicit Save so the two can never disagree about
     // which nodes are persistable.
     var out = _currentNodePositions();
     if (!out) return;
+    if (_editSessionActive()) {
+      // Mid-edit: stage only a real change (the dirty flag); a capture on a
+      // view switch or refresh must not overwrite a staged baseline reset.
+      var dirtyKey = siteId + "|" + _activeViewKey();
+      if (_layoutDirty[dirtyKey]) {
+        delete _layoutDirty[dirtyKey];
+        _stageLayout(_activeViewKey(), out);
+      }
+      return;
+    }
     try { localStorage.setItem(_positionsStorageKey(siteId), JSON.stringify(out)); }
     catch (e) { /* quota / private mode — silently skip */ }
     _queueServerLayoutSave(siteId, _activeViewKey(), out);
   }
   function loadNodePositions(siteId) {
     if (!siteId) return null;
+    // An uncommitted edit wins over everything while the session lasts, so
+    // a view switch or Refresh mid-edit keeps the operator's moves.
+    if (_editSessionActive() && _editStaged.views[_activeViewKey()]) {
+      return _editStaged.views[_activeViewKey()].positions;
+    }
     // Server layout wins — it's the shared map. localStorage remains the
     // per-browser fallback (non-writer drags, pre-server installs).
     var layouts = topoState.data && topoState.data.savedLayouts;
@@ -2529,10 +2647,18 @@
         if (n.length > 0) n.position(saved[id]);
       });
     }
-    // Persist current node positions before tear-down so reopening the
-    // same site restores the operator's manual layout. Flush the debounced
-    // server PUT immediately (fire-and-forget — the modal is closing).
-    if (topoState.siteId && cyInstance) saveNodePositions(topoState.siteId);
+    // Closing mid-edit DISCARDS the session: only Done Editing (the tick) or
+    // Save commits a layout change. Outside an edit there is nothing new to
+    // keep, but a debounced PUT may still be in flight — flush it now
+    // (fire-and-forget — the modal is closing).
+    if (topoState.editing) {
+      if (_discardEditSession() && typeof showToast === "function") {
+        showToast("Layout changes discarded — use the tick (Done Editing) to keep them");
+      }
+    } else if (topoState.siteId && cyInstance) {
+      saveNodePositions(topoState.siteId);
+    }
+    _editStaged = null;
     _flushServerLayoutSaves();
     closeTopologySearchResults();
     topoState.siteId = null;
@@ -3225,9 +3351,10 @@
     var resetBtn = _cornerButton("topology-reset-layout", "btn-icon topology-tool", function (b) {
       openResetLayoutMenu(b);
     });
-    resetBtn.innerHTML = _svg('<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>');
+    // Load = an open folder, the counterpart of Save's disk.
+    resetBtn.innerHTML = _svg('<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>');
     resetBtn.setAttribute("aria-haspopup", "menu");
-    _setCornerTip(resetBtn, "Reset layout", "Back to the last save or to the automatic layout");
+    _setCornerTip(resetBtn, "Load layout", "Load the last save or the automatic layout");
     // Undo / Redo (Ctrl+Z / Ctrl+Shift+Z) — greyed out with nothing to step
     // to; _paintUndoRedo keeps their state and tips current.
     var undoBtn = _cornerButton("topology-undo", "btn-icon topology-tool", function () { _layoutUndo(); });
@@ -3305,8 +3432,17 @@
     var sx = TOPO_SNAP_COL / div, sy = TOPO_SNAP_ROW / div;
     return { x: Math.round(p.x / sx) * sx, y: Math.round(p.y / sy) * sy };
   }
+  // Entering edit mode opens an edit session; Done Editing commits it.
+  // (Closing the map instead discards it — closeTopology.)
   function _setTopologyEditing(on) {
-    topoState.editing = !!on;
+    on = !!on;
+    if (on && !topoState.editing) {
+      _beginEditSession();
+    } else if (!on && topoState.editing) {
+      _commitEditSession();
+      _editStaged = null;
+    }
+    topoState.editing = on;
     _applyTopologyEditMode();
   }
   function _applyTopologyEditMode() {
@@ -3330,7 +3466,7 @@
       // what pressing it does now.
       btn.innerHTML = (on ? DONE_ICON + "Done Editing" : EDIT_ICON + "Edit Map");
       _setCornerTip(btn, on ? "Done editing" : "Edit map",
-        on ? "Stop editing — the map goes back to view-only"
+        on ? "Keep these changes and stop editing — closing the map without this discards them"
            : "Move devices and boxes, draw lines, snap to the grid");
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
@@ -3750,6 +3886,12 @@
         if (view === activeView) return;
         var entry = topoState.data.savedLayouts[view];
         var positions = entry && entry.positions;
+        // Mid-edit, a view already staged is snapped from its staged blob.
+        var staged = _editSessionActive() && _editStaged.views[view];
+        if (staged) {
+          if (staged.reset) return;
+          positions = staged.positions;
+        }
         if (!positions || typeof positions !== "object") return;
         var changed = false;
         var out = {};
@@ -3769,8 +3911,12 @@
           if (q.x !== it.x || q.y !== it.y) { out[it.id] = q; changed = true; }
         });
         if (changed) {
-          _layoutDirty[topoState.siteId + "|" + view] = true;
-          _queueServerLayoutSave(topoState.siteId, view, out);
+          if (_editSessionActive()) {
+            _stageLayout(view, out); // lands with the rest on Done Editing
+          } else {
+            _layoutDirty[topoState.siteId + "|" + view] = true;
+            _queueServerLayoutSave(topoState.siteId, view, out);
+          }
         }
       });
     }

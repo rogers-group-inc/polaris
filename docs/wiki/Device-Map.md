@@ -324,8 +324,8 @@ a box that has to move out of the way moves sideways rather than down, so a
 deep site spreads across the screen instead of stacking into a tall column; on
 a phone held upright the same site comes out taller, and the dashboard widget
 fits its own tile. The shape is decided when the layout is made, so it does not
-change when you resize the window afterwards; **Reset to baseline** lays it out
-again for the window as it is.
+change when you resize the window afterwards; **Load automatic layout** lays it
+out again for the window as it is.
 
 A link that leaves a location box goes out through whichever side is nearest
 its target, including the top or bottom, so a building just below a wide area
@@ -348,8 +348,8 @@ device joins or leaves, plus what is placed after it nearby. If the map has a sa
 layout, a code change never moves a device you placed: the new box is drawn
 around the devices where they already are, even if two boxes then overlap.
 A device the saved layout has no spot for is placed next to the device it
-connects to. **Reset layout** › **Reset to baseline** lays the whole map out
-again from levels.
+connects to. **Load layout** › **Load automatic layout** lays the whole map
+out again from levels.
 
 **Editing the layout.** The topology opens **view-only**: you can click,
 select, pan, zoom, switch location views and export, but nothing moves.
@@ -395,7 +395,7 @@ line when you move both devices together. Select a point and press
 no points left goes back to its automatic shape. A click selects just the
 device, line or location box you clicked; hold **Shift** to add to the
 selection, or Shift-drag to box-select. Drawn lines are part of the
-layout: **Save layout** and **Reset layout** cover them, and each location
+layout: **Save layout** and **Load layout** cover them, and each location
 view keeps its own. Lines are always straight between their points.
 
 **Moving with the arrow keys** (while editing). The arrow keys move the
@@ -413,15 +413,21 @@ The undo and redo arrows under the Edit button do the same and grey out when
 there is nothing to step to. History lasts until you press the check mark,
 and an undone change is saved like any other edit.
 
+**Keeping or discarding changes.** Nothing you change while editing is saved
+until you press the **check mark** (Done Editing) or **Save layout**. Close
+the map while still editing and every change since the last check mark or
+Save is discarded — reopening it shows the layout as it was. That covers
+moved devices and boxes, drawn lines, snapping, and a **Load layout** pick.
+
 | Control | |
 |---|---|
 | **Search** | find a node |
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |
-| **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark turns it off |
-| **Save layout** | while editing, under the Edit button. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
-| **Undo / Redo** | while editing, under Reset; also Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) |
-| **Reset layout** | while editing, under Save. A menu: **Reset to last save** (where a restore point exists) or **Reset to baseline** — the column solver's layout |
+| **Edit** | top right of the map, left of Export: the pencil turns layout editing on, the check mark keeps your changes and turns it off. Closing the map while editing discards them |
+| **Save layout** | while editing, under the Edit button (the disk). Keeps your changes so far and makes them the restore point. `deviceMap:write` — **shared across operators**; readers fall back to browser storage |
+| **Undo / Redo** | while editing, under Load; also Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y) |
+| **Load layout** | while editing, under Save (the open folder). A menu: **Load last save** (where a restore point exists) or **Load automatic layout** — the column solver's layout. Like any edit, it is kept only by the check mark or Save |
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
