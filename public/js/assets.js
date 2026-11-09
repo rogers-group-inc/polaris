@@ -27009,8 +27009,8 @@ function _assetEventsTabHTML(assetId) {
     '<div class="table-wrapper table-wrapper-panel-sticky" id="asset-view-events-wrapper">' +
       '<table id="asset-view-events-table">' +
         '<thead><tr>' +
-          '<th style="width:160px" data-col-id="timestamp" data-sf-key="timestamp" data-sf-type="date">Timestamp</th>' +
-          '<th style="width:70px"  data-col-id="level"     data-sf-key="level"     data-sf-type="string" data-sf-options="info|warning|error">Level</th>' +
+          '<th style="width:160px" data-col-fit="content" data-col-id="timestamp" data-sf-key="timestamp" data-sf-type="date">Timestamp</th>' +
+          '<th style="width:70px"  data-col-fit="content" data-col-id="level"     data-sf-key="level"     data-sf-type="string" data-sf-options="info|warning|error">Level</th>' +
           '<th style="width:140px" data-col-id="action"    data-sf-key="action"    data-sf-type="string">Action</th>' +
           '<th style="width:100px" data-col-id="resource"  data-sf-key="resourceType" data-sf-type="string">Resource</th>' +
           '<th                      data-col-id="message"  data-sf-key="message"   data-sf-type="string">Message</th>' +
@@ -27048,7 +27048,8 @@ function _renderAssetEventRow(ev, idx) {
     '<td><span class="badge ' + levelClass + '">' + levelLabel + '</span></td>' +
     '<td style="font-family:var(--font-mono);font-size:0.82rem">' + actionCell + '</td>' +
     '<td>' + escapeHtml(resourceLabel) + resourceName + '</td>' +
-    '<td>' + escapeHtml(ev.message || "") + '</td>' +
+    // The whole message on hover — a narrow Message column cuts it short.
+    '<td' + (ev.message ? ' title="' + escapeHtml(ev.message) + '"' : '') + '>' + escapeHtml(ev.message || "") + '</td>' +
     '<td>' + escapeHtml(ev.actor || "-") + '</td>' +
     '</tr>';
 }
@@ -27212,15 +27213,20 @@ function _wireAssetEventsTab(assetId) {
 
   var table = document.getElementById("asset-view-events-table");
   if (!table) return;
-  _assetEventsLayout = applyTableLayout(table, "asset-events", {
-    onChange: _saveAssetEventsPrefs,
-    onScreenshot: function (t) { _screenshotTableEl(t, "Events"); },
-  });
   // Server-side mode: never call sf.apply(); onChange resets offset + refetches.
+  // TableSF BEFORE the column layout: TableSF._setup rebuilds each header th
+  // via innerHTML, which wiped the resize handles applyTableLayout had just
+  // appended, so no column on this tab could be dragged (events.js's order).
   _assetEventsSF = new TableSF("asset-view-events-tbody", function () {
     _assetEventsOffset = 0;
     _loadAssetEventsTabFor();
     _saveAssetEventsPrefs();
+  });
+  // Timestamp, Level and User are content-fit (data-col-fit): sized to their
+  // widest rendered cell, no handle. Message is the auto-fill column.
+  _assetEventsLayout = applyTableLayout(table, "asset-events", {
+    onChange: _saveAssetEventsPrefs,
+    onScreenshot: function (t) { _screenshotTableEl(t, "Events"); },
   });
   var evRefresh = document.getElementById("asset-view-events-refresh");
   // addClearButton puts it after Refresh; this toolbar wants it before.
