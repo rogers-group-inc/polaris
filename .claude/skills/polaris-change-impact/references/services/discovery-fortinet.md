@@ -298,12 +298,12 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - **Typed per type, both ways.** `INTEGRATION_ADAPTERS` is `{ [K in IntegrationType]: … }`, so a type in `INTEGRATION_TYPES` without an entry does not compile; `POST /test` indexes it with `CreateIntegrationSchema`'s parsed `input.type`, so a schema literal without an entry does not compile either. `tests/unit/integrationAdapters.test.ts` pins the two lists equal at runtime and every label equal to `public/js/integrations.js → _INTEGRATION_PRODUCTS`.
 - **Only FortiManager receives the integration id** in `testConnection` (its proxy-mode concurrency gate is per integration); the draft test passes none.
-- **An unknown stored type is refused by `triggerDiscovery`** (400), never left to `runDiscovery`'s collector dispatch, whose last branch is FortiManager.
+- **An unknown stored type is refused by `triggerDiscovery`** (400), and `runDiscovery`'s collector dispatch is EXHAUSTIVE over `IntegrationType`: each type has its own branch (FortiManager included — it used to be the bare `else`), `llm` throws, and the last arm is `unhandledCollector(never)`, so a type added to `INTEGRATION_TYPES` without a collector does not compile, and an unknown stored type fails the run instead of running FortiManager discovery. `tests/integration/triggerDiscoveryRefusals.test.ts` pins the refusals.
 - `missingConfig` messages are operator-facing and pinned word for word in the test.
 
 **When changing this:**
 - A new integration type: add it to `INTEGRATION_TYPES` and give it an entry — the compiler then points at this file. The rest of `cross-cutting/integration-type-onboarding.md` (collectors in `runDiscovery`, the `/:id/query` proxy, projection, polling, the frontend modal) is still a checklist.
-- Moving another per-type chain here (the `/:id/query` proxy, `runDiscovery`'s collector branches) is the rest of CQ-B064; keep each per-type difference a field, not a type check at the call site.
+- The collectors stay per-type branches in `runDiscovery` (each calls different functions with different post-sync passes); the type system, not the adapter, keeps that chain complete. The `/:id/query` proxy stays per type in the route by design: each branch parses its own Zod body (schemas live with routes) and writes its own audit Event, and an unsupported type already answers an explicit 400.
 
 ---
 
