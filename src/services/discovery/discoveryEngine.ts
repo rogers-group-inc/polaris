@@ -39,6 +39,7 @@ import { flushChangeEvents, type ChangeBaseline, type ChangeBaselineFields } fro
 import { deprecateStaleSubnets, applyAutoMonitorInterfaces } from "./dhcp/subnetSweeps.js";
 import { reserveInterfaceIps } from "./dhcp/interfaceIpReservations.js";
 import { recordObservedIpv6 } from "./dhcp/observedIpv6.js";
+import { adoptPlaceholderMacs } from "./dhcp/placeholderMacAdoption.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import * as azureArc from "../azureArcService.js";
@@ -126,9 +127,7 @@ import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
 import {
-  buildMacEvidenceIndex,
   createAdoptionBudget,
-  runPlaceholderMacAdoption,
   type AdoptionBudget,
 } from "../placeholderMacAdoptionService.js";
 import { reconcileAllTags, syncAzureTagRegistry } from "../tagAssignmentService.js";
@@ -7398,40 +7397,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // device-writing passes.
   // ══════════════════════════════════════════════════════════════════════════════
 
-  if (adoptionBudget && adoptionBudget.remaining > 0 && !signal?.aborted) {
-    // Inventory evidence is locality-filtered: with overlapping RFC1918
-    // subnets, a ZTNA-relayed row can claim (this gate, <client's home IP>)
-    // for an address this gate ALSO serves — exactly the key a placeholder
-    // reservation here would adopt the wrong MAC from. ARP rows are local by
-    // construction and pass through unfiltered.
-    const evidence = buildMacEvidenceIndex(
-      result.arpTable || [],
-      (result.deviceInventory || []).filter((d) => inventorySightingIsLocal(d, arpMacDeviceIndex)),
-    );
-    if (evidence.size > 0) {
-      await runPlaceholderMacAdoption({
-        integrationId,
-        integrationName,
-        evidence,
-        budget: adoptionBudget,
-        actor,
-        signal,
-      })
-        .then((r) => {
-          if (r.attempted > 0) {
-            syncLog(
-              "info",
-              `Placeholder MAC adoption: ${r.adopted} reservation(s) updated to the discovered device's MAC`
-                + (r.failed > 0 ? `, ${r.failed} failed` : "")
-                + (r.deferred > 0 ? `, ${r.deferred} deferred to the next cycle` : ""),
-            );
-          }
-        })
-        .catch((err: any) => {
-          syncLog("error", `Placeholder MAC adoption failed: ${err?.message || "Unknown error"}`);
-        });
-    }
-  }
+  // Body: discovery/dhcp/placeholderMacAdoption.ts (CQ-B060).
+  await adoptPlaceholderMacs({ result, adoptionBudget, arpMacDeviceIndex, integrationId, integrationName, actor, signal, syncLog });
 
   } // end Phases 3–7 (full | skip-deprecation)
 

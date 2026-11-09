@@ -15,9 +15,15 @@ vi.mock("../../src/db.js", () => ({
   prisma: { reservation: { create: m.create, update: m.update, updateMany: m.updateMany } },
 }));
 vi.mock("../../src/services/dnsResolvedReservationService.js", () => ({ releaseDnsResolvedAt: m.releaseDnsResolvedAt }));
+const adopt = vi.hoisted(() => ({ evidenceIndex: vi.fn(), run: vi.fn() }));
+vi.mock("../../src/services/placeholderMacAdoptionService.js", () => ({
+  buildMacEvidenceIndex: adopt.evidenceIndex,
+  runPlaceholderMacAdoption: adopt.run,
+}));
 
 const { reserveInterfaceIps } = await import("../../src/services/discovery/dhcp/interfaceIpReservations.js");
 const { recordObservedIpv6 } = await import("../../src/services/discovery/dhcp/observedIpv6.js");
+const { adoptPlaceholderMacs } = await import("../../src/services/discovery/dhcp/placeholderMacAdoption.js");
 
 const log = vi.fn();
 const key = (s: string, ip: string) => `${s}|${ip}`;
@@ -89,5 +95,50 @@ describe("Phase 7c — observed IPv6 (rule 125)", () => {
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ ipAddress: "2001:db8::10", sourceType: "observed", subnetId: "net6" });
     expect(activeResMap.get("net6|2001:db8::10")).toMatchObject({ id: "o1" });
+  });
+});
+
+describe("Phase 7.7 — placeholder MAC adoption", () => {
+  const input = (over: Record<string, unknown> = {}) => ({
+    result: {
+      arpTable: [{ ip: "10.1.0.9", mac: "aa:bb:cc:00:00:09", fortigateDevice: "FGT-A" }],
+      deviceInventory: [
+        { macAddress: "aa:bb:cc:00:00:01", device: "FGT-A", switchName: "SW-1" }, // local
+        { macAddress: "aa:bb:cc:00:00:02", device: "FGT-A" },                     // relayed: dropped
+      ],
+    } as never,
+    adoptionBudget: { remaining: 5 } as never,
+    arpMacDeviceIndex: new Set<string>(),
+    integrationId: "i1", integrationName: "FMG", actor: "t", signal: undefined as AbortSignal | undefined, syncLog: log,
+    ...over,
+  });
+
+  it("does nothing without budget, with an exhausted one, or once the run is aborted", async () => {
+    await adoptPlaceholderMacs(input({ adoptionBudget: undefined }));
+    await adoptPlaceholderMacs(input({ adoptionBudget: { remaining: 0 } }));
+    const ac = new AbortController(); ac.abort();
+    await adoptPlaceholderMacs(input({ signal: ac.signal }));
+    expect(adopt.evidenceIndex).not.toHaveBeenCalled();
+  });
+
+  it("feeds ARP rows and only LOCAL inventory rows into the evidence, then runs the adoption", async () => {
+    adopt.evidenceIndex.mockReturnValue(new Map([["k", "v"]]));
+    adopt.run.mockResolvedValue({ attempted: 2, adopted: 1, failed: 1, deferred: 0 });
+    await adoptPlaceholderMacs(input());
+    const [arp, inv] = adopt.evidenceIndex.mock.calls[0];
+    expect(arp).toHaveLength(1);
+    expect(inv.map((d: { macAddress: string }) => d.macAddress)).toEqual(["aa:bb:cc:00:00:01"]);
+    expect(adopt.run).toHaveBeenCalledWith(expect.objectContaining({ integrationId: "i1", budget: { remaining: 5 } }));
+    expect(log).toHaveBeenCalledWith("info", "Placeholder MAC adoption: 1 reservation(s) updated to the discovered device's MAC, 1 failed");
+  });
+
+  it("skips the run with no evidence, and an adoption failure never throws", async () => {
+    adopt.evidenceIndex.mockReturnValue(new Map());
+    await adoptPlaceholderMacs(input());
+    expect(adopt.run).not.toHaveBeenCalled();
+    adopt.evidenceIndex.mockReturnValue(new Map([["k", "v"]]));
+    adopt.run.mockRejectedValue(new Error("gate refused"));
+    await expect(adoptPlaceholderMacs(input())).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith("error", "Placeholder MAC adoption failed: gate refused");
   });
 });
