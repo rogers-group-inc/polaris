@@ -407,7 +407,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Only as trustworthy as `req.ip`: behind two proxies with a one-hop `TRUST_PROXY`, `req.ip` is the INNER proxy's (RFC1918) address, so an "rfc1918" scope would admit the entire internet while reading as enforced. `GET /server-settings/login-access` returns `callerIp` and the card prints it for exactly this reason.
 
 **When changing this:**
-- New fields need a default + tolerant parse + merge handling, AND the Settings-tab section (`public/js/users.js` `buildLoginAccessSection`/`getLoginAccessFormData`) + the read-only summary on Server Settings → Web Server (`public/js/server-settings.js` `loginCardHtml`) + the `PUT /server-settings/login-access` Zod schema + the route's anti-lockout guard updated in lockstep.
+- New fields need a default + tolerant parse + merge handling, AND the Settings-tab section (`public/js/users.js` `buildLoginAccessSection`/`getLoginAccessFormData`) + the read-only summary on Server Settings → Web Server (`public/js/server-settings-ntp-web.js` `loginCardHtml`) + the `PUT /server-settings/login-access` Zod schema + the route's anti-lockout guard updated in lockstep.
 - If you add another credential endpoint, add it to `LOGIN_CREDENTIAL_PATHS` in `src/app.ts` — the gate is an explicit path set, not a prefix, so a new one is unguarded by default. The passkey login pair is the case that proves it: `POST /auth/passkeys/login` issues a session outright with no password step in front of it, so a miss there leaves a restricted install reachable from anywhere with nothing in the UI to show it.
 - Keep the two refusal shapes: the PAGE is dropped (socket destroy, no response — the dashServer stealth posture), the API returns the SAME generic 401 a wrong password gets. Neither may confirm "wrong network".
 - Coverage: `tests/unit/loginAccessService.test.ts`, `tests/integration/loginAccessGate.test.ts` (both halves + SSO-never-gated), `tests/integration/loginAccessRoutes.test.ts` (anti-lockout guard + audit).
@@ -435,7 +435,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - The gate DROPS unauthorized sources (socket destroy — dash/login stealth posture) and covers `/api.html` explicitly, because `express.static` would otherwise serve `public/api.html` around the gate.
 
 **When changing this:**
-- New fields need a default + tolerant parse + merge handling, AND the API-Tokens-tab card (`public/js/server-settings.js` `_apiDocsCardHtml`/`saveApiDocsAccess`) + the `PUT /server-settings/api-docs` Zod schema updated in lockstep.
+- New fields need a default + tolerant parse + merge handling, AND the API-Tokens-tab card (`public/js/server-settings-api-tokens.js` `_apiDocsCardHtml`/`saveApiDocsAccess`) + the `PUT /server-settings/api-docs` Zod schema updated in lockstep.
 - The docs CONTENT lives inline in `public/api.html` (the gated artifact); `public/js/api-docs.js` must stay generic — it is served ungated by static, so nothing endpoint-enumerating may move into it.
 - Coverage: `tests/unit/apiDocsAccessService.test.ts` (RFC1918 rejection, loopback-always, fail-closed, derive arrays, read-side re-filter), `tests/integration/apiDocsGate.test.ts` (three gated paths, off-means-off drop, /api/v1 untouched, route pair).
 

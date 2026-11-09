@@ -103,12 +103,12 @@ const GOLDENS: Record<string, { id: string; className: string; innerHTML: string
     "className": "slideover-overlay",
     "innerHTML": "<div class=\"slideover\" id=\"fw-assets-panel\" role=\"dialog\" aria-labelledby=\"fw-assets-title\" tabindex=\"-1\"><div class=\"slideover-resize-handle\"></div><div class=\"slideover-header\"><div class=\"slideover-header-top\"><h3 id=\"fw-assets-title\">Devices</h3><button class=\"btn-icon\" id=\"fw-assets-close\" aria-label=\"Close\">×</button></div><div class=\"slideover-meta\" id=\"fw-assets-meta\"></div></div><div class=\"slideover-body\"><div style=\"padding:1rem 1.25rem\"><input type=\"search\" id=\"fw-assets-filter\" placeholder=\"Filter by hostname, IP, model, serial or version\" style=\"width:100%;margin-bottom:0.75rem\"><div id=\"fw-assets-body\"></div></div></div></div>"
   },
-  "server-settings.js:_ensureTagAssetsPanelDOM": {
+  "server-settings-identification.js:_ensureTagAssetsPanelDOM": {
     "id": "tag-assets-overlay",
     "className": "slideover-overlay",
     "innerHTML": "<div class=\"slideover\" id=\"tag-assets-panel\" role=\"dialog\" aria-labelledby=\"tag-assets-title\" tabindex=\"-1\"><div class=\"slideover-resize-handle\"></div><div class=\"slideover-header\"><div class=\"slideover-header-top\"><h3 id=\"tag-assets-title\">Tag</h3><button class=\"btn-icon\" id=\"tag-assets-close\" title=\"Close\">×</button></div><div class=\"slideover-meta\" id=\"tag-assets-meta\"></div></div><div class=\"slideover-body\" id=\"tag-assets-body\"></div></div>"
   },
-  "server-settings.js:_ensureCredUsagePanelDOM": {
+  "server-settings-credentials.js:_ensureCredUsagePanelDOM": {
     "id": "cred-usage-overlay",
     "className": "slideover-overlay",
     "innerHTML": "<div class=\"slideover\" id=\"cred-usage-panel\"><div class=\"slideover-resize-handle\"></div><div class=\"slideover-header\"><div class=\"slideover-header-top\"><h3 id=\"cred-usage-title\">Credential usage</h3><button class=\"btn-icon\" id=\"cred-usage-close\">×</button></div><div class=\"slideover-meta\" id=\"cred-usage-meta\"></div></div><div class=\"slideover-body\" id=\"cred-usage-body\"></div></div>"

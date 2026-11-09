@@ -25,6 +25,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 interface Sandbox {
   _mfgMibCellHTML: (readiness: unknown, mibId: string | null, mibStdKey: string | null) => string;
@@ -45,7 +46,7 @@ beforeAll(() => {
     permAtLeast: () => true,
     api: {},
   });
-  const code = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+  const code = serverSettingsSource();
   (win as unknown as { eval: (s: string) => void }).eval(code);
   sb = win as unknown as Sandbox;
   sb._mibsData = [{ id: "mib-1", moduleName: "FORTINET-FORTISWITCH-MIB" }];

@@ -116,7 +116,7 @@ build auto-prune + boot-time auto-build are layered on top.
   pinned jsign jar at `/opt/polaris/tools/jsign.jar`.
 
 **Readers** (consume state):
-- `public/js/server-settings.js:initAgentBuildCard` — Maintenance-tab
+- `public/js/agent-build.js → initAgentBuildCard()` — Maintenance-tab
   Polaris Agent card. Three states (inventory / progress / progress-
   queued-behind). Auto-poll every 2s while running. Sub-features:
   Upgrade-all line, Clean-up button, Auto-build toggle, × cancel buttons

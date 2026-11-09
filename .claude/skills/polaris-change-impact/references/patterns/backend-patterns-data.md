@@ -227,7 +227,7 @@ Docs a new table owes: an the skill references (formerly ARCHITECTURE.md) "Core 
 
 **Canonical implementation:** **state probes** — a `ManufacturerCustomWidget` with `widgetType="state"`.
 - Pure mapping + evaluation: `src/utils/stateProbes.ts` (`StateMap`, `evaluateStateMap`, `joinStateRows`, `normalizeStateMap`, `validateStateMap`, `describeStateMap`) — dependency-free, fully unit-tested in `tests/unit/stateProbes.test.ts`.
-- Declaration: `ManufacturerCustomWidget.stateMap` + `labelSymbol` (nullable), validated on write by `stateFieldsForWrite` in `manufacturerProfileService.ts`, authored on Server Settings → Identification (`_widgetStateOptionsForm` in `public/js/server-settings.js`).
+- Declaration: `ManufacturerCustomWidget.stateMap` + `labelSymbol` (nullable), validated on write by `stateFieldsForWrite` in `manufacturerProfileService.ts`, authored on Server Settings → Identification (`_widgetStateOptionsForm` in `public/js/server-settings-profiles.js`).
 - Collection: the state branch of `collectAndRecordCustomWidgets` (`monitoringService.ts`) → `AssetStateSample` (0/1 rows).
 - Consumption: the `customStateValue` asset_metric (`notificationTypes` + `notificationEngine`), the builder's probe/row pickers (`notificationDimensionService`), and the Custom MIB tab's per-row pills (`_renderCustomWidgetState` in `public/js/assets.js`).
 
@@ -245,7 +245,7 @@ Docs a new table owes: an the skill references (formerly ARCHITECTURE.md) "Core 
 - Put the decision table in a dependency-free util with the tri-state return, and unit-test the null cases FIRST — they are the ones that cause silent wrong alerting rather than a visible crash.
 - Decide early whether the alerting dimension is the device or a sub-row. If it's a sub-row, give it real columns in its own table (indexed `(assetId, <probeId>, timestamp)`) rather than a JSON array on an existing sample table: the engine reads it every 60s and the builder needs a `GROUP BY` for its picker.
 - A boolean stream gets NO rollup companions — an average over 0/1 is a duty cycle, not a state. Register it in `STANDALONE_SAMPLE_TABLES` and prune it on an umbrella window (see "Tiered time-series rollups" for the tiered alternative).
-- Mirror any mode-set change into the client's label/needs-values tables (`STATE_MODE_LABELS`, `STATE_MODES_WITH_VALUES`, `_stateMapSummary` in `public/js/server-settings.js`).
+- Mirror any mode-set change into the client's label/needs-values tables (`STATE_MODE_LABELS`, `STATE_MODES_WITH_VALUES`, `_stateMapSummary` in `public/js/server-settings-profiles.js`).
 
 ---
 
