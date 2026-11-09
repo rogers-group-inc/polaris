@@ -66,6 +66,8 @@ import {
   updateSchedule,
   cancelSchedule,
   defaultRecipientsFor,
+  rememberRecipientsFor,
+  normalizeRecipients,
   MAX_RECIPIENTS,
 } from "../../services/firmwareScheduleService.js";
 import {
@@ -130,8 +132,11 @@ const RunsQuerySchema = z.object({
   status: z.enum(["queued", "running", "succeeded", "failed", "unverified"]).optional(),
 });
 
+// `notifyEmails` (optional, may be empty): who is emailed that the flash
+// started and how it ended (rule 93) — the dialog's "Email me" box.
 const StartUpgradeSchema = z.object({
   imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+  notifyEmails: z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS).optional(),
 });
 
 const AbortRunSchema = z.object({
@@ -350,7 +355,10 @@ firmwareAssetRouter.get("/", requirePermission("assets", "read"), handle(async (
 firmwareAssetRouter.post("/", requirePermission("assets", "write"), scopeAssetParam("assets", "upgrade the firmware of devices"), handle(async (req, res) => {
   const body = StartUpgradeSchema.safeParse(req.body ?? {});
   if (!body.success) throw new AppError(400, firstIssue(body.error));
-  const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown" });
+  const notifyEmails = normalizeRecipients(body.data.notifyEmails ?? [], { allowEmpty: true });
+  const run = await startFirmwareUpgrade({ assetId: String(req.params.id), imageId: body.data.imageId, actor: requestActor(req) ?? "unknown", notifyEmails });
+  // The caller's next upgrade dialog pre-fills this list (an empty one changes nothing).
+  await rememberRecipientsFor(req.session?.userId, "firmware", notifyEmails);
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
   res.status(202).json({ run });
 }));
@@ -398,7 +406,7 @@ firmwareAssetRouter.get("/schedules", requirePermission("assets", "read"), handl
   res.json({ schedules: await listSchedulesForAsset(String(req.params.id), q.data.limit ?? 20) });
 }));
 
-// The address the booking modal pre-fills: the caller's own profile email.
+// The list the upgrade dialog pre-fills: the caller's last firmware list, else their own email.
 firmwareAssetRouter.get("/schedules/defaults", requirePermission("assets", "write"), handle(async (req, res) => {
   res.json({ notifyEmails: await defaultRecipientsFor(req.session?.userId ?? null), maxRecipients: MAX_RECIPIENTS });
 }));
@@ -414,6 +422,7 @@ firmwareAssetRouter.post("/schedules", requirePermission("assets", "write"), sco
     actor: requestActor(req) ?? "unknown",
   });
   await recordFirmwareCredentialUse(String(req.params.id), credentialUseActor(req));
+  await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
   res.status(201).json({ schedule });
 }));
 
@@ -428,6 +437,7 @@ firmwareAssetRouter.patch("/schedules/:scheduleId", requirePermission("assets", 
     imageId: body.data.imageId,
     actor: requestActor(req) ?? "unknown",
   });
+  if (body.data.notifyEmails) await rememberRecipientsFor(req.session?.userId, "firmware", schedule.notifyEmails);
   res.json({ schedule });
 }));
 
@@ -479,6 +489,7 @@ firmwareGroupRouter.post("/", requirePermission("assets", "write"), scopeAssetId
     actor: requestActor(req) ?? "unknown",
   });
   await recordGroupCredentialUse(plan.included.map((m) => m.assetId), credentialUseActor(req));
+  await rememberRecipientsFor(req.session?.userId, "firmware", group.notifyEmails);
   res.status(201).json({ group });
 }));
 

@@ -92,3 +92,45 @@ A settings-read failure reads as not required. A reboot is often the remedy for 
 Shape. One line, ≤ 500 characters: control characters (newlines included) collapse to spaces, because the note lands in an Event message, a tooltip, a calendar chip and an email fact row, none of which want paragraphs. A change ticket belongs in the change system; the note is the sentence that points at it.
 
 Rejected: a separate permission key for "reboot without a reason" (the switch is install policy, not a per-person grant — anyone who may reboot may type a sentence); requiring the note only on reboot-now and not on bookings (a booking is the change-controlled case); re-judging at fire time (above); a free-form multi-line field (above).
+
+### 2026-11-09 — (e) every step is emailed, and a reboot now can be too
+
+The operator, right after asking for the same on firmware upgrades (rule 93's 2026-11-09
+section): "i also want to do the same stuff for rebooting assets". So the reboot dialog —
+desktop and phone — gets the same **Email notifications** box (unticked for a reboot now,
+ticked and locked while **Schedule for later** is), one **Email to** field with address-book
+suggestions (`public/js/email-suggest.js`), and the same emails: booked / rescheduled / started
+/ outcome for a booking, started / outcome for a reboot now (`RebootRun.notifyEmails`,
+migration `20261109130000_reboot_run_notify_emails`; `POST /assets/:id/reboot` takes optional
+`notifyEmails`).
+
+Where it differs from firmware, and why:
+
+- **The started notice reads the booking, not a copy.** A booking's recipients are not copied
+  onto the run (`notifyEmails` stays empty on a booked run); `notifyRebootRunStarted` reads
+  `run.schedule.notifyEmails`. Nothing else about a booked run needs them, and an automation
+  booking's To list can be 200 long.
+- **An automation's booking gets no notices.** It is booked a minute before it fires and the
+  automation that booked it already sends its own notify action; adding "scheduled" and
+  "started" would put three emails in front of the one the rule author asked for. It still gets
+  its result, with its Cc / Bcc (115(c)) — unchanged.
+- **One sender for all of it.** `sendRebootEmail` in `rebootScheduleService` keeps 115(c)'s
+  contract: a Cc or Bcc means ONE message to the whole To line in the install's zone;
+  otherwise one per reader in their own zone.
+
+Pinned by `tests/unit/rebootEmailNotices.test.ts`, the notify cases in
+`tests/unit/assetPanelHeaderActionsDom.test.ts` and `tests/unit/mobileUptimeReboot.test.ts`.
+
+### 2026-11-09 (later) — the dialog remembers the last list
+
+The operator: "let's remember the previous email lists in subsequent upgrades for that user".
+`User.lastFirmwareNotifyEmails` / `lastRebootNotifyEmails` (migration
+`20261109140000_user_last_notify_emails`) hold the normalized list the user last sent; the
+routes call `firmwareScheduleService.rememberRecipientsFor` after a start, a booking, a change
+that carried recipients, and (firmware) a group booking. `defaultRecipientsFor(userId, kind)`
+returns it ahead of the profile email. Two lists, not one: the people told about a flash and
+about a reboot are often different, and one shared list would make each overwrite the other.
+An empty send (the box left unticked) does not clear the memory, and the **Email
+notifications** box is still unticked by default for an action now — the list is remembered,
+the decision to email is not. Stored on the user rather than in the browser so the phone and
+the desktop pre-fill the same list.

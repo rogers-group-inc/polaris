@@ -180,6 +180,31 @@ describe("rebooting from the phone", () => {
     expect(text(document.getElementById("asset-reboot-slot"))).toContain("Rebooting — device is down");
   });
 
+  it("Email notifications: unticked by default; ticked, it needs an address and sends the list with the reboot", async () => {
+    await openAsset("gate");
+    btn()!.click();
+    await flush();
+    const ack = document.getElementById("rb-confirm-ack") as HTMLInputElement;
+    ack.checked = true;
+    ack.dispatchEvent(new Event("change"));
+    const notify = document.getElementById("rb-confirm-notify") as HTMLInputElement;
+    expect(notify.checked).toBe(false);
+    expect((document.getElementById("rb-notify-fields") as HTMLElement).style.display).toBe("none");
+    notify.checked = true;
+    notify.dispatchEvent(new Event("change"));
+    const emails = document.getElementById("rb-sched-emails") as HTMLInputElement;
+    const ok = document.getElementById("rb-confirm-ok") as HTMLButtonElement;
+    emails.value = "";
+    emails.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(true);
+    emails.value = "ops@example.com, noc@example.com";
+    emails.dispatchEvent(new Event("input"));
+    expect(ok.disabled).toBe(false);
+    ok.click();
+    await flush();
+    expect(startReboot).toHaveBeenCalledWith("gate", { notifyEmails: ["ops@example.com", "noc@example.com"] });
+  });
+
   it("Cancel sends nothing", async () => {
     await openAsset("gate");
     btn()!.click();

@@ -1718,9 +1718,11 @@ above or below it, or its MCLAG peer: then it waits and retries every minute
 for up to two hours past its time. If Polaris was not running at the booked time
 and only gets to it more than 15 minutes late, it is not started. A device has
 at most one scheduled upgrade, and every booking names at least one email
-address. Whatever happens — finished, failed, not started, missed — each
-address gets one results email, in that reader's own time zone when they have a
-Polaris account.
+address. Each address is emailed when the upgrade is booked (and if its time
+or image changes), when it starts, and once with the result — finished, failed,
+not started, missed — in that reader's own time zone when they have a Polaris
+account. An upgrade started now can email the same way, when **Email
+notifications** is ticked: once when it starts and once when it finishes.
 
 See [Assets → Firmware](Assets#firmware).
 
@@ -2580,6 +2582,12 @@ printed in the results email of a scheduled reboot. A scheduled reboot keeps
 the reason it was booked with: turning the requirement on later does not stop
 a booking that has none. A reboot an automation books gives the automation's
 name as its reason.
+
+**Who hears about it.** A reboot you book emails its recipients when it is
+booked (and if its time changes), when it starts, and with the result — the
+same as a [scheduled firmware upgrade](#rule-93). A reboot started now emails
+when it is sent and when it ends, if **Email notifications** is ticked. A
+reboot an automation books emails only its result.
 
 ### Rule 116
 

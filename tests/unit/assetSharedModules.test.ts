@@ -335,6 +335,8 @@ describe("every page that runs a consumer loads the shared modules first", () =>
     const list = scriptOrder(read("public/" + page));
     expectBefore(list, "/js/chart-shared.js", "/js/assets.js", page);
     expectBefore(list, "/js/asset-shared.js", "/js/assets.js", page);
+    // The firmware dialog's address-book typeahead (rule 93).
+    expectBefore(list, "/js/email-suggest.js", "/js/assets.js", page);
   });
   it("mobile.html loads them before every phone file that reads them", () => {
     const list = scriptOrder(read("public/mobile.html"));
@@ -342,6 +344,7 @@ describe("every page that runs a consumer loads the shared modules first", () =>
       expectBefore(list, "/js/chart-shared.js", user, "mobile.html");
       expectBefore(list, "/js/asset-shared.js", user, "mobile.html");
     }
+    expectBefore(list, "/js/email-suggest.js", "/js/mobile/asset-detail.js", "mobile.html");
     // endpointNodeColor lives on PolarisTopologyRender now.
     expectBefore(list, "/js/topology-render.js", "/js/mobile/topology-tab.js", "mobile.html");
   });
@@ -352,6 +355,7 @@ describe("every page that runs a consumer loads the shared modules first", () =>
     const list = [...asset.matchAll(/"([^"]+\.js)"/g)].map((m) => m[1]);
     expectBefore(list, "/js/chart-shared.js", "/js/assets.js", "app.js asset bundle");
     expectBefore(list, "/js/asset-shared.js", "/js/assets.js", "app.js asset bundle");
+    expectBefore(list, "/js/email-suggest.js", "/js/assets.js", "app.js asset bundle");
   });
 });
 

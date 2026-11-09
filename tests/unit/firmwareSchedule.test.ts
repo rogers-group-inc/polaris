@@ -29,6 +29,7 @@ const h = vi.hoisted(() => {
     sendFails: new Set<string>(),
     seq: 0,
     groupMember: null as { group: { scheduledFor: Date; status: string } } | null,
+    remembered: {} as Record<string, string[]>,
   };
   return {
     state, FakeAppError, FakeConflict,
@@ -82,7 +83,11 @@ vi.mock("../../src/db.js", () => ({
     // Rule 122: a booking is refused while the device is in a group — tested below.
     firmwareGroupMember: { findFirst: vi.fn(async () => h.state.groupMember ?? null) },
     asset: { findUnique: vi.fn(async () => ({ hostname: "lab-sw1", ipAddress: "10.0.0.5", model: "FortiSwitch S108FF", osVersion: "7.4.3 build0542" })) },
-    user: { findMany: vi.fn(async () => h.state.users), findUnique: vi.fn(async () => ({ email: "Ops@Example.com" })) },
+    user: {
+      findMany: vi.fn(async () => h.state.users),
+      findUnique: vi.fn(async () => ({ email: "Ops@Example.com", ...h.state.remembered })),
+      update: vi.fn(async ({ data }: any) => { Object.assign(h.state.remembered, data); return { id: "user-1" }; }),
+    },
   },
 }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
@@ -113,6 +118,7 @@ import {
   runDueSchedules,
   notifyScheduledRunFinished,
   defaultRecipientsFor,
+  rememberRecipientsFor,
   LATE_GRACE_MS,
   CONFLICT_WAIT_MS,
 } from "../../src/services/firmwareScheduleService.js";
@@ -120,8 +126,15 @@ import {
 const NOW = new Date("2026-10-06T12:00:00Z");
 const LATER = new Date("2026-10-07T07:00:00Z");
 
+/** Let the fire-and-forget booking notice finish (every mock resolves at once). */
+const drain = () => new Promise((r) => setTimeout(r, 0));
+
+/**
+ * A booking, with its "scheduled" notice already sent and forgotten — the
+ * tests below count only what comes after it (the notice has its own tests).
+ */
 async function book(over: Partial<{ scheduledFor: Date; notifyEmails: string[]; imageId: string }> = {}) {
-  return createSchedule({
+  const s = await createSchedule({
     assetId: "asset-1",
     imageId: over.imageId ?? "img-primary",
     scheduledFor: over.scheduledFor ?? LATER,
@@ -129,6 +142,9 @@ async function book(over: Partial<{ scheduledFor: Date; notifyEmails: string[]; 
     actor: "alice",
     now: NOW,
   });
+  await drain();
+  h.state.sent = [];
+  return s;
 }
 
 beforeEach(() => {
@@ -193,8 +209,74 @@ describe("booking", () => {
   });
 
   it("pre-fills the booker's own profile email, lower-cased", async () => {
+    h.state.remembered = {};
     expect(await defaultRecipientsFor("user-1")).toEqual(["ops@example.com"]);
     expect(await defaultRecipientsFor(null)).toEqual([]);
+  });
+
+  it("pre-fills the list the user last used instead, one list for upgrades and one for reboots", async () => {
+    h.state.remembered = {};
+    await rememberRecipientsFor("user-1", "firmware", ["noc@example.com", "ops@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
+    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["ops@example.com"]);
+    await rememberRecipientsFor("user-1", "reboot", ["oncall@example.com"]);
+    expect(await defaultRecipientsFor("user-1", "reboot")).toEqual(["oncall@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com", "ops@example.com"]);
+  });
+
+  it("an empty list, or no signed-in user (a bearer token), remembers nothing", async () => {
+    h.state.remembered = { lastFirmwareNotifyEmails: ["noc@example.com"] };
+    await rememberRecipientsFor("user-1", "firmware", []);
+    await rememberRecipientsFor(null, "firmware", ["x@example.com"]);
+    expect(await defaultRecipientsFor("user-1")).toEqual(["noc@example.com"]);
+  });
+});
+
+describe("the booking notices (2026-11-09)", () => {
+  it("booking emails every recipient that it is scheduled, with the time and who booked it", async () => {
+    h.checkSchedulableUpgrade.mockResolvedValueOnce({
+      approved: { id: "img-primary", versionLabel: "7.6.8 build1164", role: "primary" }, fromVersion: "7.4.3 build0542",
+      warnings: ["the device is down — an upgrade needs a device that is answering"],
+    } as any);
+    await createSchedule({ assetId: "asset-1", imageId: "img-primary", scheduledFor: LATER, notifyEmails: ["ops@example.com", "noc@example.com"], actor: "alice", now: NOW });
+    await drain();
+    expect(h.state.sent.map((m) => m.to[0])).toEqual(["ops@example.com", "noc@example.com"]);
+    expect(h.state.sent[0].subject).toMatch(/^\[Polaris\] Firmware upgrade scheduled for .+: lab-sw1 → 7\.6\.8 build1164$/);
+    expect(h.state.sent[0].text).toContain("UPGRADE SCHEDULED");
+    expect(h.state.sent[0].text).toContain("Scheduled by: alice");
+    expect(h.state.sent[0].text).toContain("when it starts and when it finishes");
+    // Today's blocker is named, with the promise that it is checked again.
+    expect(h.state.sent[0].text).toContain("Right now the device is down");
+  });
+
+  it("a new time or image emails everyone 'rescheduled'; a new address alone hears only 'scheduled'", async () => {
+    const s = await book({ notifyEmails: ["ops@example.com"] });
+    await updateSchedule({ assetId: "asset-1", scheduleId: s.id, notifyEmails: ["ops@example.com", "noc@example.com"], actor: "bob", now: NOW });
+    await drain();
+    expect(h.state.sent.map((m) => m.to[0])).toEqual(["noc@example.com"]);
+    expect(h.state.sent[0].subject).toMatch(/Firmware upgrade scheduled for/);
+    h.state.sent = [];
+    await updateSchedule({ assetId: "asset-1", scheduleId: s.id, scheduledFor: new Date("2026-10-08T07:00:00Z"), actor: "bob", now: NOW });
+    await drain();
+    expect(h.state.sent.map((m) => m.to[0])).toEqual(["ops@example.com", "noc@example.com"]);
+    expect(h.state.sent[0].subject).toMatch(/Firmware upgrade rescheduled for/);
+    h.state.sent = [];
+    // Nothing new: nobody is emailed.
+    await updateSchedule({ assetId: "asset-1", scheduleId: s.id, notifyEmails: ["ops@example.com", "noc@example.com"], actor: "bob", now: NOW });
+    await drain();
+    expect(h.state.sent).toHaveLength(0);
+  });
+
+  it("a booking notice that cannot be sent is a warning Event; the booking stands and its results claim is untouched", async () => {
+    h.state.channel = null;
+    const s = await createSchedule({ assetId: "asset-1", imageId: "img-primary", scheduledFor: LATER, notifyEmails: ["ops@example.com"], actor: "alice", now: NOW });
+    await drain();
+    expect(s.status).toBe("pending");
+    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "firmware.upgrade_schedule_email_failed", level: "warning", details: expect.objectContaining({ notice: "scheduled" }),
+    }));
+    expect(h.state.rows[0].notifyError).toBeNull();
+    expect(h.state.rows[0].notifiedAt).toBeNull();
   });
 });
 
@@ -249,13 +331,15 @@ describe("firing (runDueSchedules)", () => {
     const s = await book();
     const at = new Date(LATER.getTime() + 20_000);
     expect((await runDueSchedules(at)).started).toBe(1);
-    expect(h.startFirmwareUpgrade).toHaveBeenCalledWith({ assetId: "asset-1", imageId: "img-primary", actor: "alice", scheduleId: s.id });
+    // The booking's recipients ride on the run, which emails them "started".
+    expect(h.startFirmwareUpgrade).toHaveBeenCalledWith({ assetId: "asset-1", imageId: "img-primary", actor: "alice", scheduleId: s.id, notifyEmails: ["ops@example.com"] });
     expect(h.state.rows[0].status).toBe("started");
     expect(h.state.rows[0].firedAt).toEqual(at);
     // A second tick finds nothing pending.
     await runDueSchedules(new Date(at.getTime() + 60_000));
     expect(h.startFirmwareUpgrade).toHaveBeenCalledTimes(1);
-    // Nobody is emailed at START — only when the run ends.
+    // The schedule service sends nothing itself at start — the run does
+    // (firmwareEmailService.notifyRunStarted, mocked away here with the start).
     expect(h.state.sent).toHaveLength(0);
   });
 

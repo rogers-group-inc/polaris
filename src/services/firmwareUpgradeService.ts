@@ -439,6 +439,13 @@ export interface StartUpgradeInput {
    * told, so the next device starts without waiting for the job's tick.
    */
   groupMemberId?: string;
+  /**
+   * Who hears that this flash started (rule 93) — the card's "Email me" box
+   * on a flash now, or a booking's recipients when the job fires it. Already
+   * normalized by the caller. A click-to-run run's recipients also get its
+   * outcome when it ends; a booked run's outcome is the booking's email.
+   */
+  notifyEmails?: string[];
   /** Tests: a fake device and short clocks. */
   overrides?: { scheme?: "https" | "http"; port?: number; timeouts?: Partial<FirmwareEngineTimeouts> };
 }
@@ -600,6 +607,7 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
         status: "queued",
         startedBy: input.actor,
         heartbeatAt: new Date(),
+        notifyEmails: input.notifyEmails ?? [],
       },
     });
   } catch (err: any) {
@@ -642,6 +650,10 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
     }
   }
 
+  // Rule 93: "the upgrade has begun" — beside the runner, never in its way.
+  const emailed = (input.notifyEmails?.length ?? 0) > 0;
+  if (emailed) void notifyRunEmail("started", run.id);
+
   const live: LiveRun = { controller: new AbortController(), abort: null, done: Promise.resolve() };
   liveRuns.set(run.id, live);
   live.done = new Promise<void>((settled) => {
@@ -656,6 +668,7 @@ export async function startFirmwareUpgrade(input: StartUpgradeInput): Promise<Ru
           liveRuns.delete(run.id);
           settled();
           if (input.scheduleId) void notifyScheduledRun(run.id);
+          else if (emailed) void notifyRunEmail("finished", run.id);
           if (input.groupMemberId) void advanceGroupAfterRun(run.id);
         });
     });
@@ -680,6 +693,16 @@ async function notifyScheduledRun(runId: string): Promise<void> {
     await notifyScheduledRunFinished(runId);
   } catch (err) {
     logger.warn({ err, runId }, "firmware upgrade: the scheduled-run results email could not be sent");
+  }
+}
+
+/** Lazy, like notifyScheduledRun: the run's own recipients (rule 93). */
+async function notifyRunEmail(which: "started" | "finished", runId: string): Promise<void> {
+  try {
+    const svc = await import("./firmwareEmailService.js");
+    await (which === "started" ? svc.notifyRunStarted(runId) : svc.notifyRunFinished(runId));
+  } catch (err) {
+    logger.warn({ err, runId, which }, "firmware upgrade: the run's email could not be sent");
   }
 }
 
@@ -1105,6 +1128,8 @@ export async function failOrphanedFirmwareRuns(): Promise<number> {
     // A booked run's recipients hear about the orphan too (rule 93); a run
     // nobody booked has no booking and this is a no-op.
     await notifyScheduledRun(o.id);
+    // …and a flash started now with recipients hears it too (a no-op otherwise).
+    await notifyRunEmail("finished", o.id);
   }
   return orphans.length;
 }

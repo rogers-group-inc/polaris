@@ -1,10 +1,10 @@
 /**
  * src/utils/firmwareResultEmailTemplate.ts
  *
- * The SCHEDULED firmware upgrade results email (business rule 93): what
- * happened to a flash an operator booked for later, sent to the booking's
- * recipients once there is an outcome. Pure — takes the facts the schedule
- * service collected and renders text + HTML for ONE reader in ONE zone.
+ * The firmware upgrade emails (business rule 93): what happened to a flash an
+ * operator booked for later — or started now with "Email me" ticked — sent to
+ * its recipients. Pure — takes the facts the schedule service / the run
+ * notifier collected and renders text + HTML for ONE reader in ONE zone.
  *
  * Five outcomes, one layout:
  *   succeeded  — the device reported the new version after it came back
@@ -17,6 +17,17 @@
  *   missed     — Polaris was not running at the booked time and the booking
  *                was too late to start safely; nothing was sent.
  *
+ * And three notices that come BEFORE an outcome (2026-11-09):
+ *   scheduled   — the booking was made; when it runs and who booked it.
+ *   rescheduled — a pending booking's time or image was changed.
+ *   started     — the flash has begun (a booking firing, or a click-to-run
+ *                 flash whose operator ticked "Email me").
+ *
+ * `scheduled: false` is a flash started from the card now (no booking): the
+ * label reads "Firmware upgrade", the facts have no "Scheduled for" row and
+ * the person is "Started by". Only started / succeeded / unverified / failed
+ * are sent for one — refused and missed only exist for a booking.
+ *
  * Not an alert email: no Acknowledge button, no charts. The device link is
  * `assetPageUrl`, null when POLARIS_PUBLIC_URL is unset — the device is then
  * named without a link, the same degradation every Polaris email takes.
@@ -26,9 +37,14 @@
 import { escapeHtml, formatLocalTime, formatElapsed, assetPageUrl } from "./notificationTemplate.js";
 
 export type FirmwareResultOutcome = "succeeded" | "unverified" | "failed" | "refused" | "missed";
+/** A notice sent before there is an outcome. */
+type FirmwareNoticeKind = "scheduled" | "rescheduled" | "started";
+type FirmwareEmailOutcome = FirmwareResultOutcome | FirmwareNoticeKind;
 
 export interface FirmwareResultEmailInput {
-  outcome: FirmwareResultOutcome;
+  outcome: FirmwareEmailOutcome;
+  /** A booked flash (default) or one started from the card now. */
+  scheduled?: boolean;
   assetId: string;
   deviceName: string;
   model: string | null;
@@ -39,10 +55,14 @@ export interface FirmwareResultEmailInput {
   /** "upgraded" | "already-current" on a success. */
   result: string | null;
   error: string | null;
-  scheduledFor: Date | string;
+  /** The booked time; null for a flash started now. */
+  scheduledFor: Date | string | null;
   startedAt: Date | string | null;
   finishedAt: Date | string | null;
+  /** Who booked it — or, for a flash started now, who started it. */
   scheduledBy: string;
+  /** Today's health blockers on a `scheduled` / `rescheduled` notice, re-checked when it fires. */
+  warnings?: string[];
   /** The tail of the run log, oldest first; empty when nothing ran. */
   log: Array<{ t: string; level: string; msg: string }>;
   zone: string;
@@ -56,7 +76,10 @@ export interface RenderedFirmwareResult {
 
 const LOG_TAIL = 15;
 
-const HEADLINE: Record<FirmwareResultOutcome, { label: string; color: string }> = {
+const HEADLINE: Record<FirmwareEmailOutcome, { label: string; color: string }> = {
+  scheduled:   { label: "Upgrade scheduled",  color: "#1d4ed8" },
+  rescheduled: { label: "Upgrade rescheduled", color: "#1d4ed8" },
+  started:     { label: "Upgrade started",    color: "#1d4ed8" },
   succeeded:  { label: "Upgrade succeeded",  color: "#15803d" },
   unverified: { label: "Upgrade unverified", color: "#b45309" },
   failed:     { label: "Upgrade failed",     color: "#b91c1c" },
@@ -64,20 +87,35 @@ const HEADLINE: Record<FirmwareResultOutcome, { label: string; color: string }> 
   missed:     { label: "Upgrade missed",     color: "#b45309" },
 };
 
-function firmwareResultSubject(input: Pick<FirmwareResultEmailInput, "outcome" | "deviceName" | "toVersion">): string {
+function kindLabel(input: Pick<FirmwareResultEmailInput, "scheduled">): string {
+  return input.scheduled === false ? "Firmware upgrade" : "Scheduled firmware upgrade";
+}
+
+function firmwareResultSubject(input: Pick<FirmwareResultEmailInput, "outcome" | "deviceName" | "toVersion" | "scheduled" | "scheduledFor" | "zone">): string {
+  if (input.outcome === "scheduled" || input.outcome === "rescheduled") {
+    const when = input.scheduledFor ? ` for ${formatLocalTime(input.scheduledFor, input.zone)}` : "";
+    return `[Polaris] Firmware upgrade ${input.outcome}${when}: ${input.deviceName} → ${input.toVersion}`;
+  }
   const what = {
+    started: "started",
     succeeded: "succeeded",
     unverified: "finished unverified",
     failed: "FAILED",
     refused: "was not started",
     missed: "was missed",
   }[input.outcome];
-  return `[Polaris] Scheduled firmware upgrade ${what}: ${input.deviceName} → ${input.toVersion}`;
+  return `[Polaris] ${kindLabel(input)} ${what}: ${input.deviceName} → ${input.toVersion}`;
 }
 
 /** One sentence that says what happened, for both bodies. */
 function firmwareResultSummary(input: FirmwareResultEmailInput): string {
   switch (input.outcome) {
+    case "scheduled":
+    case "rescheduled":
+      return `The upgrade to ${input.toVersion} is ${input.outcome === "rescheduled" ? "now " : ""}booked for ${input.scheduledFor ? formatLocalTime(input.scheduledFor, input.zone) : "later"}. ` +
+        "Polaris checks the device again when it is due. You will get an email when it starts and when it finishes, or if it cannot be started.";
+    case "started":
+      return "Polaris has started the upgrade. The device reboots during it and will be unreachable for several minutes. You will get another email when it finishes.";
     case "succeeded":
       return input.result === "already-current"
         ? `The device was already running ${input.verifiedVersion ?? input.toVersion}; nothing was flashed.`
@@ -113,14 +151,20 @@ export function renderFirmwareResultEmail(input: FirmwareResultEmailInput): Rend
     ["Firmware", `${input.fromVersion ?? "unknown"} → ${input.toVersion}`],
   ];
   if (input.verifiedVersion) facts.push(["Device reports", input.verifiedVersion]);
-  facts.push(["Scheduled for", fmt(input.scheduledFor)]);
+  if (input.scheduledFor) facts.push(["Scheduled for", fmt(input.scheduledFor)]);
   if (input.startedAt) facts.push(["Started", fmt(input.startedAt)]);
   if (input.finishedAt) facts.push(["Finished", fmt(input.finishedAt)]);
   if (duration) facts.push(["Duration", duration]);
-  facts.push(["Scheduled by", input.scheduledBy]);
+  facts.push([input.scheduled === false ? "Started by" : "Scheduled by", input.scheduledBy]);
+  const label = kindLabel(input);
+  const warnings = (input.outcome === "scheduled" || input.outcome === "rescheduled") ? (input.warnings ?? []) : [];
+  const warnLine = warnings.length > 0
+    ? `Right now ${warnings.join("; ")}. That is checked again when the upgrade is due; if it still holds then, the upgrade is not started and you are told why.`
+    : null;
 
   // ── text ──────────────────────────────────────────────────────────────────
   const text: string[] = ["{brand.header}", "", head.label.toUpperCase(), summary, ""];
+  if (warnLine) text.push(warnLine, "");
   for (const [k, v] of facts) text.push(`${k}: ${v}`);
   text.push(`Times are shown in ${input.zone}.`);
   if (url) text.push("", `Open the device: ${url}`);
@@ -128,7 +172,7 @@ export function renderFirmwareResultEmail(input: FirmwareResultEmailInput): Rend
     text.push("", `RUN LOG (last ${tail.length} lines)`);
     for (const l of tail) text.push(`${fmt(l.t)}  ${l.level.toUpperCase().padEnd(5)}  ${l.msg}`);
   }
-  text.push("", "Sent by Polaris · scheduled firmware upgrade");
+  text.push("", `Sent by Polaris · ${label.toLowerCase()}`);
 
   // ── html ──────────────────────────────────────────────────────────────────
   const factCell = 'style="padding:5px 10px 5px 0;font-size:13px;color:#6b7280;vertical-align:top;white-space:nowrap"';
@@ -145,9 +189,10 @@ export function renderFirmwareResultEmail(input: FirmwareResultEmailInput): Rend
     '<tr><td style="padding:18px 22px 6px">',
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>',
     '<td style="vertical-align:top">',
-    '<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;font-weight:700">Scheduled firmware upgrade</div>',
+    `<div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;font-weight:700">${escapeHtml(label)}</div>`,
     `<div style="font-size:19px;font-weight:600;color:${head.color};margin-top:4px">${escapeHtml(head.label)}</div>`,
     `<div style="font-size:14px;color:#1f2430;margin-top:6px">${escapeHtml(summary)}</div>`,
+    warnLine ? `<div style="font-size:13px;color:#b45309;margin-top:6px">${escapeHtml(warnLine)}</div>` : "",
     "</td>",
     '<td style="text-align:right;vertical-align:top">{brand.header}</td>',
     "</tr></table>",
@@ -175,7 +220,7 @@ export function renderFirmwareResultEmail(input: FirmwareResultEmailInput): Rend
   }
   html.push(
     '<tr><td style="padding:16px 22px 18px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb">',
-    "<div>Sent by Polaris · scheduled firmware upgrade</div>",
+    `<div>Sent by Polaris · ${escapeHtml(label.toLowerCase())}</div>`,
     "</td></tr>",
     "</table>",
     "</td></tr>",

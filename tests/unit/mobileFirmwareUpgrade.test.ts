@@ -168,6 +168,51 @@ describe("the confirm", () => {
   });
 });
 
+describe("Email notifications (rule 93, 2026-11-09)", () => {
+  it("unticked by default; ticking it reveals the recipients and Upgrade sends them with the start", async () => {
+    runs = [{ id: "run-1", status: "running", stage: "deploying", progress: null, toVersion: IMAGE.versionLabel }];
+    await openAsset("sw");
+    upgradeBtn()!.click();
+    await flush();
+    const notify = document.getElementById("fw-confirm-notify") as HTMLInputElement;
+    expect(notify.checked).toBe(false);
+    expect((document.getElementById("fw-notify-fields") as HTMLElement).style.display).toBe("none");
+    notify.checked = true;
+    notify.dispatchEvent(new Event("change"));
+    expect((document.getElementById("fw-notify-fields") as HTMLElement).style.display).toBe("");
+    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
+    emails.value = "ops@example.com, noc@example.com";
+    emails.dispatchEvent(new Event("input"));
+    (document.getElementById("fw-confirm-ok") as HTMLButtonElement).click();
+    await flush();
+    expect(startFirmwareUpgrade).toHaveBeenCalledWith("sw", { imageId: "img-primary", notifyEmails: ["ops@example.com", "noc@example.com"] });
+  });
+
+  it("ticked with no address, Upgrade is disabled; ticking 'Schedule for later' locks the box on", async () => {
+    await openAsset("sw");
+    upgradeBtn()!.click();
+    await flush();
+    const notify = document.getElementById("fw-confirm-notify") as HTMLInputElement;
+    const emails = document.getElementById("fw-sched-emails") as HTMLInputElement;
+    emails.value = "";
+    notify.checked = true;
+    notify.dispatchEvent(new Event("change"));
+    expect((document.getElementById("fw-confirm-ok") as HTMLButtonElement).disabled).toBe(true);
+    notify.checked = false;
+    notify.dispatchEvent(new Event("change"));
+    expect((document.getElementById("fw-confirm-ok") as HTMLButtonElement).disabled).toBe(false);
+    const later = document.getElementById("fw-confirm-schedule") as HTMLInputElement;
+    later.checked = true;
+    later.dispatchEvent(new Event("change"));
+    expect(notify.checked).toBe(true);
+    expect(notify.disabled).toBe(true);
+    later.checked = false;
+    later.dispatchEvent(new Event("change"));
+    expect(notify.checked).toBe(false);   // the operator's own choice comes back
+    expect(notify.disabled).toBe(false);
+  });
+});
+
 describe("after confirming", () => {
   it("starts the approved image, says Upgrade started, follows the stage and percent, and settles on the result", async () => {
     runs = [

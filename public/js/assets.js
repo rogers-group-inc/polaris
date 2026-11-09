@@ -7654,9 +7654,11 @@ function _fwApprovalModalHTML(a, fw, opts) {
     schedulePart = '<div id="fw-sched-fields" style="margin-top:0.9rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' + _fwScheduleFieldsHTML(fw, existing, opts.defaults) + '</div>';
   } else if (fw.group) {
     schedulePart = '<p class="hint" style="margin:0.75rem 0 0">This device is in a group upgrade on ' + escapeHtml(fw.group.gateName) +
-      ' (' + escapeHtml(fw.group.status === "running" ? "running now" : _fwWhenText(fw.group.scheduledFor)) + ') — scheduling it is done by the group.</p>';
+      ' (' + escapeHtml(fw.group.status === "running" ? "running now" : _fwWhenText(fw.group.scheduledFor)) + ') — scheduling it is done by the group.</p>' +
+      (fw.image ? _fwNotifyHTML(opts.defaults, false) : '');
   } else if (fw.schedule) {
-    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">An upgrade to ' + escapeHtml(fw.schedule.toVersion) + ' is already scheduled for ' + escapeHtml(_fwWhenText(fw.schedule.scheduledFor)) + ' — change or cancel it on the Firmware card.</p>';
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">An upgrade to ' + escapeHtml(fw.schedule.toVersion) + ' is already scheduled for ' + escapeHtml(_fwWhenText(fw.schedule.scheduledFor)) + ' — change or cancel it on the Firmware card.</p>' +
+      (fw.image ? _fwNotifyHTML(opts.defaults, false) : '');
   } else {
     var locked = mode === "schedule-only";
     schedulePart =
@@ -7667,7 +7669,8 @@ function _fwApprovalModalHTML(a, fw, opts) {
         (locked
           ? '<p class="hint" style="margin:0.25rem 0 0">This device cannot be upgraded right now' + (fw.reason ? ' — ' + escapeHtml(fw.reason) : '') + ' It can be scheduled: every check runs again when the upgrade is due.</p>'
           : '') +
-        '<div id="fw-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _fwScheduleFieldsHTML(fw, null, opts.defaults) + '</div>' +
+        '<div id="fw-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _fwScheduleFieldsHTML(fw, null, opts.defaults, { emails: false }) + '</div>' +
+        _fwNotifyHTML(opts.defaults, locked) +
       '</div>';
   }
 
@@ -7689,7 +7692,8 @@ function _fwApprovalModalHTML(a, fw, opts) {
  * booking is being changed; otherwise the time defaults to the next whole hour
  * and the recipients to the booker's own email (`defaults`).
  */
-function _fwScheduleFieldsHTML(fw, existing, defaults) {
+function _fwScheduleFieldsHTML(fw, existing, defaults, opts) {
+  var withEmails = !(opts && opts.emails === false);
   var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
   var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
   var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
@@ -7703,10 +7707,38 @@ function _fwScheduleFieldsHTML(fw, existing, defaults) {
       '<input type="datetime-local" id="fw-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
       '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the upgrade is not started. If an upgrade on a related device is still running, this one waits up to 2 hours for it.</p>' +
     '</div>' +
-    '<div class="form-group">' +
-      '<label for="fw-sched-emails">Email the results to</label>' +
-      '<input type="text" id="fw-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml(emails.join(", ")) + '">' +
-      '<p class="hint" style="margin:0.25rem 0 0">Comma-separated. Sent when the upgrade finishes — succeeded or failed — or if it could not be started.</p>' +
+    (withEmails ? _fwEmailsFieldHTML(emails, _FW_NOTIFY_HINT_SCHEDULED) : '');
+}
+
+var _FW_NOTIFY_HINT_NOW = "Comma-separated; start typing a name to pick from the address book. Sent when the upgrade starts and when it finishes — succeeded or failed.";
+var _FW_NOTIFY_HINT_SCHEDULED = "Comma-separated; start typing a name to pick from the address book. Sent when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled upgrade always emails someone.";
+
+/** The recipients box (one per dialog — its id is what the dialog reads). */
+function _fwEmailsFieldHTML(emails, hint) {
+  return '<div class="form-group">' +
+      '<label for="fw-sched-emails">Email to</label>' +
+      '<div style="position:relative">' +
+        '<input type="text" id="fw-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml((emails || []).join(", ")) + '">' +
+      '</div>' +
+      '<p class="hint" id="fw-notify-hint" style="margin:0.25rem 0 0">' + escapeHtml(hint) + '</p>' +
+    '</div>';
+}
+
+/**
+ * "Email notifications" (rule 93): off by default for a flash now — ticking it
+ * emails the recipients when the flash starts and when it ends; always on, and
+ * locked, while "Schedule for later" is ticked, because a booking must email
+ * someone. Pre-filled with the operator's own profile email.
+ */
+function _fwNotifyHTML(defaults, locked) {
+  var emails = (defaults && defaults.notifyEmails) || [];
+  return '<div style="margin-top:0.75rem">' +
+      '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
+        '<input type="checkbox" id="fw-approve-notify"' + (locked ? " checked disabled" : "") + '> Email notifications' +
+      '</label>' +
+      '<div id="fw-notify-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' +
+        _fwEmailsFieldHTML(emails, locked ? _FW_NOTIFY_HINT_SCHEDULED : _FW_NOTIFY_HINT_NOW) +
+      '</div>' +
     '</div>';
 }
 
@@ -7722,9 +7754,10 @@ function _fwSelectedApproval() {
  */
 async function _openFirmwareApprovalModal(a, fw, existing) {
   var mode = existing ? "change" : (fw.state === "blocked" ? "schedule-only" : "choose");
-  var schedulable = mode === "change" || !fw.schedule;
+  // The operator's own address pre-fills the recipients — a booking's, and the
+  // "Email notifications" box of a flash now (rule 93).
   var defaults = null;
-  if (schedulable && !existing) {
+  if (!existing) {
     try { defaults = await api.assets.firmwareScheduleDefaults(a.id); } catch (e) { defaults = null; }
   }
   var title = (existing ? "Change scheduled upgrade — " : "Firmware upgrade — ") + (a.hostname || a.ipAddress || "device");
@@ -7739,6 +7772,10 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
   var fields = document.getElementById("fw-sched-fields");
   var whenEl = document.getElementById("fw-sched-when");
   var emailsEl = document.getElementById("fw-sched-emails");
+  var notify = document.getElementById("fw-approve-notify");
+  var notifyFields = document.getElementById("fw-notify-fields");
+  var notifyHint = document.getElementById("fw-notify-hint");
+  if (emailsEl && window.PolarisEmailSuggest) PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
   // Changing a booking pre-selects the image it was approved with, and that
   // approval stands — the box is ticked; picking another image unticks it.
   var bookedImage = existing ? existing.imageId : null;
@@ -7747,18 +7784,30 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
     if (pre) { pre.checked = true; if (ack) ack.checked = true; }
   }
   function scheduling() { return mode === "change" || !!(later && later.checked); }
+  // A booking always emails someone, so scheduling ticks and locks the box;
+  // unticking "Schedule for later" puts back what the operator had chosen.
+  var notifyChoice = notify ? notify.checked : false;
+  if (notify) notify.addEventListener("change", function () { notifyChoice = notify.checked; });
+  function emailing() { return scheduling() || !!(notify && notify.checked); }
   function sync(ev) {
     var sel = fw.image ? _fwSelectedApproval() : null;
     if (ev && ev.target && ev.target.name === "fw-approve-image" && ack && sel && sel.imageId !== bookedImage) ack.checked = false;
     if (fields && later) fields.style.display = later.checked ? "" : "none";
+    if (notify && mode !== "schedule-only") {
+      notify.disabled = scheduling();
+      notify.checked = scheduling() || notifyChoice;
+    }
+    if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
+    if (notifyHint && notify) notifyHint.textContent = scheduling() ? _FW_NOTIFY_HINT_SCHEDULED : _FW_NOTIFY_HINT_NOW;
     var imageOk = !fw.image || !!(ack && ack.checked && sel);
+    var emailsOk = !emailing() || !!(emailsEl && _fwParseEmails(emailsEl.value).length > 0);
     var version = sel ? sel.version : (existing ? existing.toVersion : "");
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule upgrade to " + version;
-      btn.disabled = !(imageOk && whenEl && whenEl.value && emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+      btn.disabled = !(imageOk && whenEl && whenEl.value && emailsOk);
     } else {
       btn.textContent = "Approve and upgrade to " + version;
-      btn.disabled = !imageOk;
+      btn.disabled = !(imageOk && emailsOk);
     }
     document.querySelectorAll(".fw-approve-block").forEach(function (b) {
       var r = b.querySelector('input[name="fw-approve-image"]');
@@ -7767,6 +7816,7 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
   }
   if (ack) ack.addEventListener("change", sync);
   if (later) later.addEventListener("change", sync);
+  if (notify) notify.addEventListener("change", sync);
   if (whenEl) whenEl.addEventListener("input", sync);
   if (emailsEl) emailsEl.addEventListener("input", sync);
   document.querySelectorAll('input[name="fw-approve-image"]').forEach(function (r) { r.addEventListener("change", sync); });
@@ -7783,8 +7833,10 @@ async function _openFirmwareApprovalModal(a, fw, existing) {
       done = existing ? "Scheduled upgrade changed" : "Upgrade scheduled for " + when.toLocaleString();
     } else {
       if (!sel) return;
-      call = api.assets.startFirmwareUpgrade(a.id, { imageId: sel.imageId });
-      done = "Upgrade started";
+      var startBody = { imageId: sel.imageId };
+      if (emailing() && emailsEl) startBody.notifyEmails = _fwParseEmails(emailsEl.value);
+      call = api.assets.startFirmwareUpgrade(a.id, startBody);
+      done = startBody.notifyEmails ? "Upgrade started — emails go to " + startBody.notifyEmails.join(", ") : "Upgrade started";
     }
     btn.disabled = true;
     call.then(function () {
@@ -7823,7 +7875,7 @@ function _fwWhenText(iso) {
 function _fwScheduleHTML(sched, canFlash) {
   return '<div id="asset-fw-schedule" style="margin:0.6rem 0 0.2rem;padding:0.55rem 0.75rem;border:1px solid var(--color-border);border-left:3px solid var(--color-accent);border-radius:4px;font-size:0.85rem">' +
     '<div><strong>Scheduled:</strong> upgrade to <strong>' + escapeHtml(sched.toVersion) + '</strong> at ' + escapeHtml(_fwWhenText(sched.scheduledFor)) + '</div>' +
-    '<div style="color:var(--color-text-secondary);margin-top:0.2rem">Results emailed to ' + escapeHtml((sched.notifyEmails || []).join(", ")) +
+    '<div style="color:var(--color-text-secondary);margin-top:0.2rem">Start and results emailed to ' + escapeHtml((sched.notifyEmails || []).join(", ")) +
       ' · booked by ' + escapeHtml(sched.createdBy || "—") + '</div>' +
     (sched.error
       ? '<div style="color:var(--color-warning);margin-top:0.2rem">Waiting: ' + escapeHtml(sched.error) + '</div>'
@@ -15863,7 +15915,7 @@ function _rebootControlHTML(a, rb) {
   if (rb.schedule) {
     parts.push('<button type="button" class="badge" id="btn-asset-reboot-scheduled" style="cursor:' + (canAct ? "pointer" : "default") +
       ';border:1px solid var(--color-border);background:transparent;color:var(--color-text-secondary)" title="' +
-      escapeHtml("Results emailed to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
+      escapeHtml("Emails to " + (rb.schedule.notifyEmails || []).join(", ") + " · booked by " + (rb.schedule.createdBy || "—") +
         (rb.schedule.note ? " · reason: " + rb.schedule.note : "") +
         (rb.schedule.error ? " · waiting: " + rb.schedule.error : "") + (canAct ? " — click to change or cancel" : "")) + '">' +
       'Reboot scheduled ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + '</button>');
@@ -15890,8 +15942,13 @@ async function _loadAssetRebootControl(a) {
   if (rb.activeRun) _startRebootPoll(a, rb.activeRun.id);
 }
 
-/** The time + recipients half of the dialog (the firmware booking's fields, worded for a reboot). Pure. */
-function _rebootScheduleFieldsHTML(existing, defaults, warn) {
+/**
+ * The time + recipients half of the dialog (the firmware booking's fields,
+ * worded for a reboot). Pure. `opts.emails === false` leaves the recipients
+ * out — they live under "Email notifications" (`_rebootNotifyHTML`) instead.
+ */
+function _rebootScheduleFieldsHTML(existing, defaults, warn, opts) {
+  var withEmails = !(opts && opts.emails === false);
   var when = existing ? new Date(existing.scheduledFor) : (function () { var d = new Date(Date.now() + 60 * 60000); d.setMinutes(0, 0, 0); return d; })();
   var min = _fwLocalInputValue(new Date(Date.now() + 2 * 60000));
   var emails = existing ? (existing.notifyEmails || []) : ((defaults && defaults.notifyEmails) || []);
@@ -15902,10 +15959,37 @@ function _rebootScheduleFieldsHTML(existing, defaults, warn) {
       '<input type="datetime-local" id="rb-sched-when" min="' + escapeHtml(min) + '" value="' + escapeHtml(_fwLocalInputValue(when)) + '">' +
       '<p class="hint" style="margin:0.25rem 0 0">Your time' + (zone ? ' (' + escapeHtml(zone) + ')' : '') + '. If Polaris is not running at that time and only gets to it more than 15 minutes late, the reboot is not sent.</p>' +
     '</div>' +
-    '<div class="form-group">' +
-      '<label for="rb-sched-emails">Email the results to</label>' +
-      '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml(emails.join(", ")) + '">' +
-      '<p class="hint" style="margin:0.25rem 0 0">Comma-separated. Sent when the reboot finishes — succeeded or failed — or if it could not be started.</p>' +
+    (withEmails ? _rebootEmailsFieldHTML(emails, _RB_NOTIFY_HINT_SCHEDULED) : '');
+}
+
+var _RB_NOTIFY_HINT_NOW = "Comma-separated; start typing a name to pick from the address book. Sent when the reboot is sent and when the device is back — or did not come back.";
+var _RB_NOTIFY_HINT_SCHEDULED = "Comma-separated; start typing a name to pick from the address book. Sent when it is scheduled, when it starts and when it finishes — succeeded or failed — or if it cannot be started. A scheduled reboot always emails someone.";
+
+/** The reboot dialog's one recipients box. Pure. */
+function _rebootEmailsFieldHTML(emails, hint) {
+  return '<div class="form-group">' +
+      '<label for="rb-sched-emails">Email to</label>' +
+      '<div style="position:relative">' +
+        '<input type="text" id="rb-sched-emails" placeholder="you@example.com, team@example.com" value="' + escapeHtml((emails || []).join(", ")) + '">' +
+      '</div>' +
+      '<p class="hint" id="rb-notify-hint" style="margin:0.25rem 0 0">' + escapeHtml(hint) + '</p>' +
+    '</div>';
+}
+
+/**
+ * "Email notifications" for a reboot: off by default for a reboot now (emails
+ * when it is sent and when it ends); ticked and locked while "Schedule for
+ * later" is, because a booking always emails someone. Pure.
+ */
+function _rebootNotifyHTML(defaults, locked) {
+  var emails = (defaults && defaults.notifyEmails) || [];
+  return '<div style="margin-top:0.75rem">' +
+      '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
+        '<input type="checkbox" id="rb-notify"' + (locked ? " checked disabled" : "") + '> Email notifications' +
+      '</label>' +
+      '<div id="rb-notify-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' +
+        _rebootEmailsFieldHTML(emails, locked ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW) +
+      '</div>' +
     '</div>';
 }
 
@@ -15967,7 +16051,8 @@ function _rebootModalHTML(a, rb, opts) {
     '</label>';
   var schedulePart;
   if (rb.schedule) {
-    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">A reboot is already scheduled for ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + ' — change or cancel it from the chip beside the button.</p>';
+    schedulePart = '<p class="hint" style="margin:0.75rem 0 0">A reboot is already scheduled for ' + escapeHtml(_fwWhenText(rb.schedule.scheduledFor)) + ' — change or cancel it from the chip beside the button.</p>' +
+      _rebootNotifyHTML(opts.defaults, false);
   } else {
     var locked = mode === "schedule-only";
     schedulePart =
@@ -15975,7 +16060,8 @@ function _rebootModalHTML(a, rb, opts) {
         '<label style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;cursor:' + (locked ? "default" : "pointer") + '">' +
           '<input type="checkbox" id="rb-schedule"' + (locked ? " checked disabled" : "") + '> Schedule for later' +
         '</label>' +
-        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null) + '</div>' +
+        '<div id="rb-sched-fields" style="margin-top:0.6rem' + (locked ? '' : ';display:none') + '">' + _rebootScheduleFieldsHTML(null, opts.defaults, locked ? rb.reason : null, { emails: false }) + '</div>' +
+        _rebootNotifyHTML(opts.defaults, locked) +
       '</div>';
   }
   return device + warnBox + _rebootNoteFieldHTML(rb, "") + schedulePart;
@@ -15983,8 +16069,10 @@ function _rebootModalHTML(a, rb, opts) {
 
 async function _openRebootModal(a, rb, existing) {
   var mode = existing ? "change" : (rb.available ? "choose" : "schedule-only");
+  // The operator's remembered list (else their own address) pre-fills the
+  // recipients — a booking's, and "Email notifications" for a reboot now.
   var defaults = null;
-  if (existing === null && !rb.schedule) {
+  if (!existing) {
     try { defaults = await api.assets.rebootScheduleDefaults(a.id); } catch (e) { defaults = null; }
   }
   var name = a.hostname || a.ipAddress || "device";
@@ -16002,20 +16090,36 @@ async function _openRebootModal(a, rb, existing) {
   var emailsEl = document.getElementById("rb-sched-emails");
   var noteEl = document.getElementById("rb-note");
   var btn = document.getElementById("btn-rb-go");
+  var notify = document.getElementById("rb-notify");
+  var notifyFields = document.getElementById("rb-notify-fields");
+  var notifyHint = document.getElementById("rb-notify-hint");
+  if (emailsEl && window.PolarisEmailSuggest) PolarisEmailSuggest.attach(emailsEl, { onChange: function () { sync(); } });
   function scheduling() { return mode === "change" || !!(later && later.checked); }
+  // A booking always emails someone: scheduling ticks and locks the box, and
+  // unticking "Schedule for later" puts back the operator's own choice.
+  var notifyChoice = notify ? notify.checked : false;
+  if (notify) notify.addEventListener("change", function () { notifyChoice = notify.checked; });
+  function emailing() { return scheduling() || !!(notify && notify.checked); }
   function noteValue() { return noteEl ? noteEl.value.trim() : ""; }
   function sync() {
     if (fields && later) fields.style.display = later.checked ? "" : "none";
+    if (notify && mode !== "schedule-only") {
+      notify.disabled = scheduling();
+      notify.checked = scheduling() || notifyChoice;
+    }
+    if (notifyFields) notifyFields.style.display = emailing() ? "" : "none";
+    if (notifyHint && notify) notifyHint.textContent = scheduling() ? _RB_NOTIFY_HINT_SCHEDULED : _RB_NOTIFY_HINT_NOW;
     var acked = (mode === "change" || !!(ack && ack.checked)) && (!rb.noteRequired || noteValue() !== "");
+    var emailsOk = !emailing() || !!(emailsEl && _fwParseEmails(emailsEl.value).length > 0);
     if (scheduling()) {
       btn.textContent = existing ? "Save changes" : "Schedule reboot";
-      btn.disabled = !(acked && whenEl && whenEl.value && emailsEl && _fwParseEmails(emailsEl.value).length > 0);
+      btn.disabled = !(acked && whenEl && whenEl.value && emailsOk);
     } else {
       btn.textContent = "Reboot now";
-      btn.disabled = !acked || !rb.available;
+      btn.disabled = !acked || !rb.available || !emailsOk;
     }
   }
-  [ack, later].forEach(function (el) { if (el) el.addEventListener("change", sync); });
+  [ack, later, notify].forEach(function (el) { if (el) el.addEventListener("change", sync); });
   [whenEl, emailsEl, noteEl].forEach(function (el) { if (el) el.addEventListener("input", sync); });
 
   var cancelBooking = document.getElementById("btn-rb-cancel-booking");
@@ -16043,8 +16147,10 @@ async function _openRebootModal(a, rb, existing) {
       call = existing ? api.assets.updateRebootSchedule(a.id, existing.id, body) : api.assets.scheduleReboot(a.id, body);
       done = existing ? "Scheduled reboot changed" : "Reboot scheduled for " + when.toLocaleString();
     } else {
-      call = api.assets.startReboot(a.id, noteValue() ? { note: noteValue() } : {});
-      done = "Reboot sent — Polaris is watching for the device to come back";
+      var nowBody = noteValue() ? { note: noteValue() } : {};
+      if (emailing() && emailsEl) nowBody.notifyEmails = _fwParseEmails(emailsEl.value);
+      call = api.assets.startReboot(a.id, nowBody);
+      done = "Reboot sent — Polaris is watching for the device to come back" + (nowBody.notifyEmails ? "; emails go to " + nowBody.notifyEmails.join(", ") : "");
     }
     btn.disabled = true;
     call.then(function () {

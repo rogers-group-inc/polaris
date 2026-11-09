@@ -3968,6 +3968,7 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/asset-merge-modal.js",
     "/js/chart-shared.js",
     "/js/asset-shared.js",
+    "/js/email-suggest.js",
     "/js/assets.js",
     "/js/condition-builder.js",
     "/js/automations-address-book.js",

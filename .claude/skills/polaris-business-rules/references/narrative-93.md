@@ -152,3 +152,64 @@ same scheduling thing on the mobile page as well". So:
   the row with Change / Cancel. Same routes, same rung (`assets:write`), primary image only.
 
 Nothing server-side changed: the booking API, the gates and the email are as above.
+
+### 2026-11-09 — every step is emailed, and an upgrade now can be too
+
+The operator asked: "when performing an upgrade, add a check box to include an email (that can
+be autopopulate from the address book) to send an email that an upgrade has begun as well as
+when it finishes. do the same when scheduling an upgrade. but email when it's scheduled, when it
+begins, and when it finishes. also send an email if the scheduled upgrade cannot start for some
+reason." The last part was already true (refused and missed are emailed, above). The rest:
+
+- **One sender.** `services/firmwareEmailService.ts → sendFirmwareEmail` is the per-recipient,
+  per-zone send through `resolveSummaryChannel` + `applyBrandLetterhead` that `sendResults`
+  used to do inline; the booking's results, its notices and a run's own emails all go through
+  it. It answers with what went wrong instead of throwing.
+- **The template grew three notices** — `scheduled`, `rescheduled`, `started` — and a
+  `scheduled: false` variant for a flash started now: "Firmware upgrade" rather than "Scheduled
+  firmware upgrade", **Started by** rather than **Scheduled by**, no booked time. A booking
+  notice carries today's health `warnings` with the promise that they are checked again.
+- **Booked.** `createSchedule` sends `scheduled` to every recipient; `updateSchedule` sends
+  `rescheduled` to everyone when the time or image moved, and `scheduled` to an address that
+  was only added. Both are fire-and-forget after the Event — an SMTP round trip per recipient is
+  not the booker's wait — and a failure is a `firmware.upgrade_schedule_email_failed` Event with
+  `details.notice`, leaving `notifyError` / `notifiedAt` to the results email.
+- **Started.** The run is what starts, so the run sends it: `FirmwareUpgradeRun.notifyEmails`
+  (migration `20261109120000_firmware_run_notify_emails`) is set from `StartUpgradeInput
+  .notifyEmails`; the job passes the booking's list, the card passes what the operator typed.
+  `startFirmwareUpgrade` fires `notifyRunStarted` after the start Event, beside the runner.
+- **Finished, for a flash now.** The runner's `.finally` and `failOrphanedFirmwareRuns` call
+  `notifyRunFinished`, which skips a booked run (the booking's results email says the same, and
+  two emails for one outcome is the thing `notifiedAt` exists to prevent) and claims
+  `FirmwareUpgradeRun.notifiedAt` before sending. A failure is `notifyError` on the run plus a
+  `firmware.upgrade_email_failed` Event.
+- **The dialog.** Desktop and phone get an **Email notifications** box under **Schedule for
+  later**, unticked by default for a flash now (the operator asked for a box, so the default is
+  the old behaviour), its recipients pre-filled with the operator's profile email. Ticking
+  **Schedule for later** ticks and locks it — a booking must still name someone, the rule's
+  original point — and unticking puts back the operator's own choice. There is ONE recipients
+  field (`#fw-sched-emails`); on a flash now it sits under the notify box, while changing a
+  booking keeps it in the schedule fields. The field takes address-book suggestions:
+  `public/js/email-suggest.js` (`PolarisEmailSuggest.attach`) queries `GET /contacts/search`
+  (Polaris users ∪ contacts, NOT the live directory) for the entry being typed and replaces just
+  that entry; without `contacts:read` it is a plain text box. The start route takes optional
+  `notifyEmails` (normalized with `allowEmpty`).
+
+Not changed: a GROUP upgrade (rule 122) still sends its one summary email. Pinned by
+`tests/unit/firmwareEmailService.test.ts`, the booking-notice cases in
+`tests/unit/firmwareSchedule.test.ts`, the notify cases in `tests/unit/assetFirmwarePanelDom.test.ts`
+and `tests/unit/mobileFirmwareUpgrade.test.ts`, and `tests/unit/emailSuggest.test.ts`.
+
+### 2026-11-09 (later) — the dialog remembers the last list
+
+The operator: "let's remember the previous email lists in subsequent upgrades for that user".
+`User.lastFirmwareNotifyEmails` / `lastRebootNotifyEmails` (migration
+`20261109140000_user_last_notify_emails`) hold the normalized list the user last sent; the
+routes call `firmwareScheduleService.rememberRecipientsFor` after a start, a booking, a change
+that carried recipients, and (firmware) a group booking. `defaultRecipientsFor(userId, kind)`
+returns it ahead of the profile email. Two lists, not one: the people told about a flash and
+about a reboot are often different, and one shared list would make each overwrite the other.
+An empty send (the box left unticked) does not clear the memory, and the **Email
+notifications** box is still unticked by default for an action now — the list is remembered,
+the decision to email is not. Stored on the user rather than in the browser so the phone and
+the desktop pre-fill the same list.

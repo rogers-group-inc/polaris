@@ -1092,6 +1092,14 @@ Before rebooting a FortiGate directly, Polaris checks that the device answering
 reports the asset's serial number and is not in an HA cluster, and refuses
 otherwise.
 
+**Email notifications.** Tick **Email notifications** to have Polaris email when
+the reboot is **sent** and when it **ends** (succeeded, unverified or failed).
+**Email to** starts with the list you used for your last reboot (or, the first
+time, your own address) — it is kept apart from the firmware upgrade list; add
+more separated by commas, or start
+typing a name to pick a Polaris user or an [Address Book](Address-Book) contact.
+Leave the box clear and no email is sent.
+
 **Reason.** The dialog has a **Reason** field — say why the device is being
 rebooted (one line, up to 500 characters). It is recorded on the asset's
 Events, shown beside the last reboot in the dialog and in a run's log, on the
@@ -1103,8 +1111,11 @@ same applies on the phone and over the API ([rule 115](Business-Rules#rule-115))
 A reboot an automation books gives the automation's name as its reason.
 
 **Scheduling a reboot.** Tick **Schedule for later** in the same dialog and give
-a time (your browser's time zone) and who gets the results email, exactly as for
-a [scheduled firmware upgrade](#firmware). While it waits, a **Reboot scheduled
+a time (your browser's time zone) and who gets the emails, exactly as for
+a [scheduled firmware upgrade](#firmware): **Email notifications** is then ticked
+and locked, and the recipients are emailed when it is scheduled (and if its time
+changes), when it starts, and with the result — or why it could not be started.
+A reboot an automation books emails only its result. While it waits, a **Reboot scheduled
 …** chip sits beside the button; click it to change the time, recipients or
 reason, or to **Cancel scheduled reboot**. When the time comes every check is taken again;
 a reboot first reached more than 15 minutes late is not sent, and the recipients
@@ -1184,6 +1195,14 @@ platform, file name, SHA-256, where it is filed, who uploaded it — and, when
 the model's backup image is also newer than the device, lets you choose that
 instead. Nothing is pushed until you tick that you checked the version and
 platform and click **Approve and upgrade**.
+
+**Email notifications.** Under the warning, tick **Email notifications** to have
+Polaris email when the upgrade **starts** and when it **finishes** (succeeded,
+unverified or failed, with the end of the run log). The **Email to** box is
+filled in with the addresses you used for your last firmware upgrade (or, the
+first time, your own profile email); add more addresses separated by commas,
+and start typing a name to pick a Polaris user or an
+[Address Book](Address-Book) contact. Leave the box clear and no email is sent.
 
 **On a FortiGate** the dialog warns that every network, tunnel and device
 behind the gate goes down with it for several minutes, and that Polaris does
@@ -1271,8 +1290,11 @@ adds:
 
 - **Run at** — a date and time in your browser's time zone (the dialog names
   it). It must be at least a minute ahead and within a year.
-- **Email the results to** — filled in with your own profile email; add more
-  addresses separated by commas. At least one is required.
+- **Email notifications** — ticked and locked: a scheduled upgrade always
+  emails someone. **Email to** is filled in with the list you used last time
+  (or your own profile email); add
+  more addresses separated by commas, or start typing a name to pick from the
+  address book. At least one is required.
 - If the device is blocked right now, the dialog says why, and that it will be
   checked again when the upgrade is due.
 
@@ -1306,8 +1328,9 @@ When the time comes:
   bound, the image is no longer offered or was deleted — it is **not started**
   and is not retried.
 
-**The results email.** Every recipient gets one email when there is an
-outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
+**The emails.** Every recipient is emailed when the upgrade is **scheduled**
+(and again if its time or image is changed — an address added later gets the
+*scheduled* email), when it **starts**, and when there is an outcome: the upgrade *succeeded*, came back *unverified*, *failed* (with the
 end of the run log), or was *not started* and why (including *missed* for a
 late start, or a restart of Polaris during the upgrade). Each recipient who
 has a Polaris account sees the times in their own time zone; other addresses
