@@ -56,14 +56,10 @@ const NUMERIC_RECEIVERS = new Set([
  * Deliberately NOT in the display zone. Key: `<file>#<enclosing function>#<method>`.
  */
 const ZONE_EXEMPT: Record<string, string> = {
-  // The desktop SVG charts lay their x axis out in the browser's zone (ticks at
-  // local midnights via setHours/getHours); a tooltip or caption in another
-  // zone would disagree with the axis under it. The whole chart moves at once
-  // or not at all — a separate follow-up.
-  "assets.js#_fmtTooltipTs#toLocaleDateString": "chart tooltip; date half of a getHours() time, matches the browser-zone x axis",
-  "assets.js#fmtTooltipTs#toLocaleDateString": "response-time chart tooltip; same pairing with getHours() and the axis",
-  "assets.js#_chartRangeLabel#toLocaleString": "chart screenshot caption; must name the same day/time as the browser-zone axis ticks",
-  "assets.js#_chartRangeLabel#toLocaleTimeString": "chart screenshot caption (same-day end); as above",
+  // (The desktop SVG charts' axis, tooltips and screenshot caption used to be
+  // here, on the browser's zone so a tooltip could not disagree with the axis
+  // under it. The whole chart moved to the display zone together —
+  // chart-shared.js zone helpers, tests/unit/chartTimeTicks.test.ts.)
   // A calendar date, not an instant: the filter value is "YYYY-MM-DD" parsed
   // as LOCAL midnight; a zone shift would show the previous or next day.
   "table-sf.js#fmt#toLocaleDateString": "date-filter button label — a typed calendar date, zone-less (CQ-F014)",
