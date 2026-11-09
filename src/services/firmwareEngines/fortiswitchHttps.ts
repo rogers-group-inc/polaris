@@ -34,7 +34,8 @@
 
 import type { FirmwareEngineContext, FirmwareEngineResult, FirmwareProgress } from "./types.js";
 import { FirmwareEngineError, sleep } from "./types.js";
-import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString, asNumber } from "./deviceHttp.js";
+import { DeviceHttpClient, DeviceConnectionError, jsonOrNull, asString } from "./deviceHttp.js";
+import { parseFiniteOrNull } from "../../utils/num.js";
 import { parseFirmwareVersion, compareFirmwareVersions, formatFirmwareVersion } from "../../utils/firmwareVersion.js";
 import { basename } from "node:path";
 
@@ -128,13 +129,13 @@ async function switchStatus(c: DeviceHttpClient, _ctx: FirmwareEngineContext): P
   // PERCENT, 0..100, so convert here, at the one place the device is read,
   // clamped so a 1.0000000002 from some build never draws past full.
   for (const [k, key] of [["erase_progress", "erase"], ["write_progress", "write"], ["verify_progress", "verify"], ["restart_progress", "restart"]] as const) {
-    const n = asNumber(j[k]);
+    const n = parseFiniteOrNull(j[k]);
     if (n !== null) { progress[key] = Math.round(Math.min(1, Math.max(0, n)) * 1000) / 10; any = true; }
   }
   // The step counter is carried for the run log only: observed pinned at 6/40
   // for an entire flash, so nothing displays or decides on it.
   for (const [k, key] of [["cur_step", "curStep"], ["tot_step", "totStep"]] as const) {
-    const n = asNumber(j[k]);
+    const n = parseFiniteOrNull(j[k]);
     if (n !== null) progress[key] = n;
   }
   return {
@@ -143,7 +144,7 @@ async function switchStatus(c: DeviceHttpClient, _ctx: FirmwareEngineContext): P
     serial: asString(j.serial_number),
     model: asString(j.model),
     hostname: asString(j.hostname),
-    adminTimeoutMin: asNumber(j.admin_timeout),
+    adminTimeoutMin: parseFiniteOrNull(j.admin_timeout),
     progress: any ? progress : null,
   };
 }

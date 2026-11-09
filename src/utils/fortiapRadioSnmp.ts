@@ -20,6 +20,8 @@
  * guess; see the column comments on AssetApRadio.
  */
 
+import { parseFiniteOrNull } from "./num.js";
+
 /** FORTINET-FORTIAP-MIB::fapRadioEntry, 1.3.6.1.4.1.12356.120.4.1.1 */
 const FAP_RADIO_ENTRY = "1.3.6.1.4.1.12356.120.4.1.1";
 /** FORTINET-FORTIAP-MIB::fapVapEntry, 1.3.6.1.4.1.12356.120.7.1.1 */
@@ -53,7 +55,7 @@ export const FAP_VAP_OID = {
 
 /** fapRadioMode. Anything outside the enum passes through as null. */
 export function decodeRadioMode(raw: unknown): string | null {
-  const n = toInt(raw);
+  const n = parseFiniteOrNull(raw);
   switch (n) {
     case 0: return "ap";
     case 1: return "disabled";
@@ -71,7 +73,7 @@ export function decodeRadioMode(raw: unknown): string | null {
  * as a right one, and the width is also readable from the controller.
  */
 export function decodeChannelWidth(raw: unknown): number | null {
-  const n = toInt(raw);
+  const n = parseFiniteOrNull(raw);
   switch (n) {
     case 0: return 20;
     case 1: return 40;
@@ -92,7 +94,7 @@ export function decodeChannelWidth(raw: unknown): number | null {
  * from the channel.
  */
 export function decodeRadioType(raw: unknown): { label: string | null; band: "2.4GHz" | "5GHz" | null } {
-  const n = toInt(raw);
+  const n = parseFiniteOrNull(raw);
   switch (n) {
     case 0: return { label: "802.11a", band: "5GHz" };
     case 1: return { label: "802.11b", band: "2.4GHz" };
@@ -134,14 +136,4 @@ export function parseVapSuffix(suffix: string): { radioIndex: number; wlanId: nu
   const wlanId = Number(parts[1]);
   if (!Number.isInteger(radioIndex) || !Number.isInteger(wlanId)) return null;
   return { radioIndex, wlanId };
-}
-
-/** Coerce a varbind value to an integer, or null. */
-function toInt(raw: unknown): number | null {
-  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  if (typeof raw === "string" && raw.trim() !== "") {
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
 }

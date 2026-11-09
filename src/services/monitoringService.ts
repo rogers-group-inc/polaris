@@ -23,7 +23,7 @@
  * transitions emit one as well.
  */
 
-import { toNonNegativeInt } from "../utils/num.js";
+import { toNonNegativeInt, toFiniteOrNull } from "../utils/num.js";
 import { trimTrailing } from "../utils/trimTrailing.js";
 import { tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { pinnedAgentFor } from "../utils/pinnedTlsAgent.js";
@@ -6350,10 +6350,10 @@ export function buildFortiInterfaceSamples(
       secondaryIps: cmdbEntry ? cmdbEntry.secondaryIps.filter((s) => s !== ip) : undefined,
       ipv6Address: cmdbEntry?.ipv6Address ?? null,
       macAddress:  typeof i.mac === "string" ? i.mac.toUpperCase() : null,
-      inOctets:    pickFiniteNumber(i.rx_bytes),
-      outOctets:   pickFiniteNumber(i.tx_bytes),
-      inErrors:    pickFiniteNumber(i.rx_errors  ?? i.errors_in),
-      outErrors:   pickFiniteNumber(i.tx_errors  ?? i.errors_out),
+      inOctets:    toFiniteOrNull(i.rx_bytes),
+      outOctets:   toFiniteOrNull(i.tx_bytes),
+      inErrors:    toFiniteOrNull(i.rx_errors  ?? i.errors_in),
+      outErrors:   toFiniteOrNull(i.tx_errors  ?? i.errors_out),
       ifType:      normalizeFortiIfType(rawType),
       ifSubtype:   fortiIfSubtype(rawType),
       ifParent:    rawParent,
@@ -6965,7 +6965,7 @@ export function parseSdwanSlaThresholds(sdwanRes: unknown): Map<string, SlaThres
     const slas = Array.isArray((hc as any).sla) ? (hc as any).sla : [];
     let lat: number | null = null, jit: number | null = null, loss: number | null = null;
     const take = (cur: number | null, raw: unknown): number | null => {
-      const n = pickFiniteNumber(raw);
+      const n = toFiniteOrNull(raw);
       if (n == null || n <= 0) return cur;
       return cur == null ? n : Math.max(cur, n);
     };
@@ -7023,9 +7023,9 @@ export function parsePerfSlaHealthCheck(
       for (const [link, m] of Object.entries(members as Record<string, any>)) {
         if (!link || !m || typeof m !== "object") continue;
         const state = normalizeSdwanState((m as any).status ?? (m as any).state ?? (m as any).alive);
-        const latencyMs  = pickFiniteNumber((m as any).latency);
-        const jitterMs   = pickFiniteNumber((m as any).jitter);
-        const packetLoss = pickFiniteNumber((m as any).packet_loss ?? (m as any).packetloss);
+        const latencyMs  = toFiniteOrNull((m as any).latency);
+        const jitterMs   = toFiniteOrNull((m as any).jitter);
+        const packetLoss = toFiniteOrNull((m as any).packet_loss ?? (m as any).packetloss);
         perfSla.push({
           healthCheck: hcName, link, zone: zones?.get(link) ?? null, state, latencyMs, jitterMs, packetLoss,
           latencyThresholdMs:  thr?.latencyMs ?? null,
@@ -7186,11 +7186,6 @@ function deriveSdwanCriteria(svc: any): string | null {
   if (mode === "priority")     return "Best Quality";
   if (mode === "sla")          return "SLA";
   return null;
-}
-
-function pickFiniteNumber(v: unknown): number | null {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 /**
