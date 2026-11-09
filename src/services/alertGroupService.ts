@@ -36,7 +36,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
-import { assertActionRefs } from "./notificationRuleService.js";
+import { assertActionRefs, applyResetSnapshots } from "./notificationRuleService.js";
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
 import { triggerCanJoinGroup, foldSpansDevices, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
 import { jsonEqual } from "../utils/jsonEqual.js";
@@ -134,6 +134,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
   await assertMembership(input.ruleIds ?? [], undefined, input.foldBy ?? "device");
   // The same save-time reference checks an automation's actions get (rule 114(a)).
   restoreMaskedActionHeaders(input, null);
+  applyResetSnapshots(input as never);
   await assertActionRefs(input as never);
   const group = await prisma.alertGroup.create({
     data: {
@@ -175,6 +176,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   // automation that only a subnet group can fold.
   await assertMembership(input.ruleIds ?? existing.rules.map((r) => r.id), id, foldBy);
   restoreMaskedActionHeaders(input, existing);
+  applyResetSnapshots(input as never);
   await assertActionRefs(input as never);
   const jsonOrClear = (v: unknown) => (v === undefined ? undefined : v === null ? Prisma.DbNull : (v as Prisma.InputJsonValue));
   const group = await prisma.alertGroup.update({

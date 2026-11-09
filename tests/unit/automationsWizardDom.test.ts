@@ -423,8 +423,8 @@ describe("automation wizard DOM render", () => {
     // (so it can't be collected/removed) and carries the moved message
     // template. It covers the ALERT only — every delivery row, the escalation
     // sweep and acknowledge/clear key on Notification.id, so it genuinely
-    // can't be removed. The audit Event moved OUT to a removable
-    // "Create an Event" action in the list below.
+    // can't be removed. Its audit Event is the engine's own (business rule
+    // 146) — there is no "Create an Event" action any more.
     const inapp = doc.querySelector("#aw-step-5 #aw-inapp-card")!;
     expect(inapp).toBeTruthy();
     expect(inapp.classList.contains("aw-action")).toBe(false);
@@ -433,16 +433,11 @@ describe("automation wizard DOM render", () => {
     expect(inapp.textContent).not.toContain("event + in-app alert");
     expect(inapp.querySelector(".aw-action-remove")).toBeFalsy();
 
-    // ...and the Event IS a removable action row, present by default.
-    const eventRow = Array.from(doc.querySelectorAll("#aw-step-5 .aw-action")).find(
-      (r) => (r.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value === "event",
-    );
-    expect(eventRow).toBeTruthy();
-    expect(eventRow!.querySelector(".aw-action-remove")).toBeTruthy();
-    expect(eventRow!.textContent).toContain("notification.triggered");
-    // An audit Event is instantaneous — no chain to chase, and the server
-    // schema gives it no escalation key.
-    expect(eventRow!.querySelector(":scope > .aw-esc-sec")).toBeFalsy();
+    // ...and no "Create an Event" row, nor any way to add one: the card says
+    // the Event happens on its own.
+    const typeOpts = Array.from(doc.querySelectorAll("#aw-step-5 .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
+    expect(typeOpts).not.toContain("event");
+    expect(inapp.textContent).toContain("audit Event");
 
     // Escalation is PER SEVERITY: the base actions section hosts the rule-level
     // chain, each band section its own. NOT the in-app card (it isn't about the
@@ -514,8 +509,9 @@ describe("automation wizard DOM render", () => {
     (baseAction.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
 
     // "When this resets" — the list that makes a recovery expressible at all.
-    // It starts mirroring the trigger's notify actions, so telling the same
-    // people it came back costs nothing.
+    // A reset Notify MATCHES a trigger Notify by default (business rule 145),
+    // so telling the same people it came back costs nothing — but the list
+    // only grows from its own + Add Action.
     const resetCard = doc.querySelector("#aw-step-5 #aw-reset-card")!;
     expect(resetCard).toBeTruthy();
     // A header and an Add action button, with the list always visible — the
@@ -531,9 +527,22 @@ describe("automation wizard DOM render", () => {
     chanBox.checked = true;
     chanBox.dispatchEvent(new win5.Event("change", { bubbles: true }));
     await new Promise((r) => setTimeout(r, 10));
-    expect(doc.querySelector("#aw-reset-actions .aw-action")).toBeTruthy();
-    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Following your notify actions");
+    // Adding a trigger Notify adds nothing to the reset list on its own.
+    const resetNotifies = () => Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"))
+      .filter((r) => (r.querySelector(".aw-action-type") as unknown as { value: string }).value === "notify");
+    expect(resetNotifies()).toHaveLength(0);
+    // + Add Action on the reset card: a Notify that MATCHES it — no channel or
+    // recipient fields shown, Customize off, the trigger action named.
+    (resetCard.querySelector("#aw-reset-add") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const linked = resetNotifies()[0]!;
+    expect(linked).toBeTruthy();
+    expect(linked.querySelector(":scope > .aw-reset-link")).toBeTruthy();
+    expect((linked.querySelector(".rl-customize") as unknown as { checked: boolean }).checked).toBe(false);
+    expect((linked.querySelector(":scope > .aw-action-fields") as unknown as { style: { display: string } }).style.display).toBe("none");
+    expect(linked.querySelector(".rl-one")!.textContent).toContain("Notify via");
     // Clean up so step-5 validation (a notify needs a recipient) still passes.
+    (linked.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
     (newNotify.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 10));
 
@@ -614,13 +623,13 @@ describe("automation wizard DOM render", () => {
     // who pressed it.
     expect(doc.querySelector('input[name="aw-test-to"]')).toBeNull();
     expect(doc.querySelector("#aw-test-real-warn")).toBeNull();
-    expect(block.textContent).toContain("to you only");
-
-    // The draft carries the default audit-Event action, so the Event test is
-    // offered; api_call/script actions never are (the server refuses to run
-    // them from a button, so a button would be a lie).
+    // This draft has no Notify, so there is nothing to send — and no "Write a
+    // Test Event" button either: the audit Event is no longer an action
+    // (business rule 146). api_call/script are never offered (the server
+    // refuses to run them from a button, so a button would be a lie).
+    expect(block.textContent).toContain("Add a Notify action");
     const labels = Array.from(doc.querySelectorAll(".awtd-btn")).map((b) => b.textContent);
-    expect(labels).toContain("Write a Test Event");
+    expect(labels).not.toContain("Write a Test Event");
     expect(labels.join(" ")).not.toMatch(/script|API/i);
   });
 
@@ -1033,9 +1042,9 @@ describe("automation wizard DOM render", () => {
       { type: "event" },
       { type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] },
     ]);
-    expect(p.resetActions).toHaveLength(2);
+    // The retired Event action is dropped on the way (business rule 146).
+    expect(p.resetActions).toHaveLength(1);
     expect(p.resetActions.filter((a: any) => a.type === "notify")).toHaveLength(1);
-    expect(p.resetActions.filter((a: any) => a.type === "event")).toHaveLength(1);
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
@@ -1048,6 +1057,169 @@ describe("automation wizard DOM render", () => {
   it("a saved automation with no reset actions stays that way through a trigger change", async () => {
     const p = await openStoredWithReset(null as unknown as unknown[]);
     expect(p.resetActions).toBeNull();
+  });
+
+  // ── Business rule 145: reset Notify actions that match a trigger action ──
+  it("a stored reset copy of a trigger Notify re-opens as a MATCH and saves as a link to it", async () => {
+    const p = await openStoredWithReset([{ type: "notify", channelId: "c1", addresses: ["noc@example.invalid"] }]);
+    const trig = p.actions.find((a: any) => a.type === "notify");
+    expect(typeof trig.id).toBe("string");
+    expect(p.resetActions).toHaveLength(1);
+    expect(p.resetActions[0]).toMatchObject({ type: "notify", channelId: "c1", addresses: ["noc@example.invalid"], matchActionId: trig.id });
+    expect(p.resetActions[0].customized).toBeUndefined();
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("an edited stored reset Notify stays the operator's: customized, linked for its escalation only", async () => {
+    const p = await openStoredWithReset([{ type: "notify", channelId: "c1", addresses: ["ops@example.invalid"] }]);
+    expect(p.resetActions[0]).toMatchObject({ addresses: ["ops@example.invalid"], customized: true });
+    expect(p.resetActions[0].matchActionId).toBe(p.actions.find((a: any) => a.type === "notify").id);
+  });
+
+  const openStoredRule = async (over: Record<string, unknown>) => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors = [];
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-link",
+      name: "Link",
+      description: null,
+      enabled: true,
+      severity: "warning",
+      trigger: { type: "asset_metric", metric: "cpuPct", aggregation: "avg", windowSec: 300, operator: ">=", threshold: 80, forDurationSec: 300 },
+      scope: { allAssets: true },
+      reset: { mode: "auto" },
+      cooldownSec: null,
+      ...over,
+    });
+    (doc.querySelector('.stepper-step[data-step="5"]') as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+  };
+  const saveIt = async () => {
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    return savedPayloads[0]! as Record<string, any>;
+  };
+  const tick = (el: Element | null, on = true) => {
+    const cb = el as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void };
+    cb.checked = on;
+    cb.dispatchEvent(new (doc.defaultView as any).Event("change", { bubbles: true }));
+  };
+
+  it("with several trigger Notify actions the reset row asks which one it resets, defaulting to one not yet answered for", async () => {
+    await openStoredRule({
+      actions: [
+        { type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] },
+        { type: "notify", id: "n2", channelId: "c1", addresses: ["b@example.invalid"] },
+      ],
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1" }],
+    });
+    (doc.querySelector("#aw-reset-add") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const rows = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"));
+    expect(rows).toHaveLength(2);
+    const sel = rows[1]!.querySelector(".rl-target") as unknown as { value: string; options: ArrayLike<unknown> };
+    expect(sel).toBeTruthy();
+    expect(sel.options.length).toBe(2);
+    expect(sel.value).toBe("n2");
+    const p = await saveIt();
+    expect(p.resetActions.map((a: any) => a.matchActionId)).toEqual(["n1", "n2"]);
+    expect(p.resetActions[1].addresses).toEqual(["b@example.invalid"]);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("Customize shows the fields, pre-filled from the trigger action, and saves them as the row's own", async () => {
+    await openStoredRule({
+      actions: [{ type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] }],
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1" }],
+    });
+    const row = doc.querySelector("#aw-reset-actions > .aw-action")!;
+    // Stored rows open folded; the link block is read with the row expanded.
+    (row.querySelector(".aw-collapse") as unknown as { click: () => void }).click();
+    tick(row.querySelector(".rl-customize"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect((row.querySelector(":scope > .aw-action-fields") as unknown as { style: { display: string } }).style.display).not.toBe("none");
+    expect(row.querySelector(".rl-note")).toBeFalsy();
+    const p = await saveIt();
+    expect(p.resetActions[0]).toMatchObject({ matchActionId: "n1", customized: true, addresses: ["a@example.invalid"] });
+  });
+
+  it("offers the escalation reset only when the action's severity escalates, and keys a customized tier by severity:tier", async () => {
+    await openStoredRule({
+      actions: [{ type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] }],
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1" }],
+    });
+    const row = () => doc.querySelector("#aw-reset-actions > .aw-action")!;
+    expect(row().querySelector(".rl-esc-on")).toBeFalsy();
+
+    await openStoredRule({
+      actions: [{ type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] }],
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 15, actions: [{ type: "notify", channelId: "c1", addresses: ["lead@example.invalid"] }] }] },
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1" }],
+    });
+    tick(row().querySelector(".rl-esc-on"));
+    await new Promise((r) => setTimeout(r, 10));
+    // Keyed by the severity whose chain it is — the rule's base severity
+    // (expandResetActions / levelChainOwner read the same key).
+    const tier = row().querySelector(".rl-tier")!;
+    expect(tier).toBeTruthy();
+    expect(tier.textContent).toContain("Tier 1");
+    const key = tier.getAttribute("data-key")!;
+    // Default: the tier's own Notify actions — saved as an empty override map.
+    let p = await saveIt();
+    expect(key).toBe(p.severity + ":0");
+    expect(p.resetActions[0].resetEscalation).toEqual({});
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+
+    // Re-opened with the escalation reset stored: still on. Customizing a tier
+    // pre-fills it from the tier's Notify and saves it under its key.
+    await openStoredRule({
+      actions: [{ type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] }],
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 15, actions: [{ type: "notify", channelId: "c1", addresses: ["lead@example.invalid"] }] }] },
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1", resetEscalation: {} }],
+    });
+    expect((row().querySelector(".rl-esc-on") as unknown as { checked: boolean }).checked).toBe(true);
+    tick(row().querySelector(".rl-tier .rl-tier-cust"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(row().querySelectorAll(".rl-tier .rl-tier-actions > .aw-action")).toHaveLength(1);
+    p = await saveIt();
+    expect(p.resetActions[0].resetEscalation.custom[key]).toEqual([
+      expect.objectContaining({ type: "notify", channelId: "c1", addresses: ["lead@example.invalid"] }),
+    ]);
+    expect(() => ruleInputSchema.parse(p)).not.toThrow();
+  });
+
+  it("a customized escalation tier emptied of every Notify is refused at save, not saved as 'tell nobody'", async () => {
+    await openStoredRule({
+      actions: [{ type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] }],
+      escalation: { stopOn: "acknowledge", tiers: [{ afterMin: 15, actions: [{ type: "notify", channelId: "c1", addresses: ["lead@example.invalid"] }] }] },
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1", resetEscalation: {} }],
+    });
+    const row = doc.querySelector("#aw-reset-actions > .aw-action")!;
+    tick(row.querySelector(".rl-tier .rl-tier-cust"));
+    await new Promise((r) => setTimeout(r, 10));
+    (row.querySelector(".rl-tier .rl-tier-actions > .aw-action .aw-action-remove") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(savedPayloads).toHaveLength(0);
+    expect(toastErrors.join(" ")).toContain("escalation tier 1 has no Notify");
+  });
+
+  it("a matched reset row whose trigger action is removed keeps what it last sent, as a customized copy", async () => {
+    await openStoredRule({
+      actions: [
+        { type: "notify", id: "n1", channelId: "c1", addresses: ["a@example.invalid"] },
+        { type: "notify", id: "n2", channelId: "c1", addresses: ["b@example.invalid"] },
+      ],
+      resetActions: [{ type: "notify", channelId: "c1", addresses: ["a@example.invalid"], matchActionId: "n1" }],
+    });
+    const first = doc.querySelectorAll("#aw-actions > .aw-action")[0]!;
+    (first.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 20));
+    const p = await saveIt();
+    expect(p.resetActions[0]).toMatchObject({ addresses: ["a@example.invalid"], customized: true, matchActionId: "n2" });
   });
 
   it("a new automation seeds an audit Event on BOTH halves, and emptying the reset list saves as null", async () => {
@@ -1072,28 +1244,17 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
 
     const typeOf = (row: Element) => (row.querySelector(".aw-action-type") as HTMLSelectElement | null)?.value;
-    // Fires: the default Event row.
-    expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual(["event"]);
-    // Resets: the same default.
-    const resetRows = Array.from(doc.querySelectorAll("#aw-reset-actions > .aw-action"));
-    expect(resetRows.map(typeOf)).toEqual(["event"]);
-    // It was never mirrorable, so the note must not read as "edited".
-    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Add a Notify above");
-
-    // Removing the last row empties the list, and the note says so — there is
-    // no box left to untick.
-    (resetRows[0]!.querySelector(".aw-action-remove") as unknown as { click: () => void }).click();
-    await new Promise((r) => setTimeout(r, 10));
+    // Both lists start EMPTY: the audit Event is the engine's own (rule 146).
+    expect(Array.from(doc.querySelectorAll("#aw-actions > .aw-action")).map(typeOf)).toEqual([]);
     expect(doc.querySelector("#aw-reset-actions > .aw-action")).toBeFalsy();
-    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Nothing here yet");
+    expect(doc.querySelector("#aw-reset-mirror-note")!.textContent).toContain("Nothing happens when this alert ends");
 
     (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
     await new Promise((r) => setTimeout(r, 30));
     expect(toastErrors).toEqual([]);
     const p = savedPayloads[0]! as Record<string, any>;
     expect(p.resetActions).toBeNull();
-    expect(p.actions).toHaveLength(1);
-    expect(p.actions[0]).toMatchObject({ type: "event" });
+    expect(p.actions).toEqual([]);
     expect(() => ruleInputSchema.parse(p)).not.toThrow();
   });
 
@@ -4222,8 +4383,8 @@ describe("automation export / import / view code", () => {
     expect(file.polarisAutomation).toBe(1);
     const rule = file.rule as Record<string, unknown>;
     expect(rule.name).toBe("Exportable");
-    // No delivery wiring, and the audit Event is explicit rather than omitted.
-    expect(rule.actions).toEqual([{ type: "event" }]);
+    // No delivery wiring; an explicit empty list (rule 146: no Event action).
+    expect(rule.actions).toEqual([]);
     expect(rule.enabled).toBeUndefined();
     expect(JSON.stringify(file)).not.toContain('"c1"'); // the harness's channel id
   });
@@ -4993,7 +5154,9 @@ describe("reboot action", () => {
   });
 
   it("is offered on the trigger's actions but never on the reset list", async () => {
-    await openStep5(memRule([{ type: "event" }]));
+    await openStep5(memRule([]));
+    (doc.querySelector("#aw-add-action") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
     const fireOpts = Array.from(doc.querySelectorAll("#aw-actions > .aw-action .aw-action-type option")).map((o) => (o as HTMLOptionElement).value);
     expect(fireOpts).toContain("reboot");
     (doc.querySelector("#aw-reset-add") as unknown as { click: () => void }).click();

@@ -98,8 +98,15 @@
     var quiet = a.quietHeldAt && !a.quietSummarizedAt
       ? '<span class="ack-testflag" title="No email, push or chat message has gone out; a summary email is sent when the quiet period ends">Held for quiet time</span>'
       : "";
+    // Gone over the first reader's head (business rule 145): the person
+    // acknowledging should know whether the next tier has already been told.
+    var escalated = a.escalationTier && !a.cleared
+      ? '<span class="ack-testflag ack-escalated" title="An escalation tier has been notified about this alert">Escalated' +
+        (a.escalationTier > 1 ? " — tier " + esc(String(a.escalationTier)) : "") + '</span>'
+      : "";
     return (a.testRun ? '<span class="ack-testflag">Test alert</span>' : "")
       + quiet
+      + escalated
       + '<p class="ack-message">' + esc(a.message) + "</p>"
       + factsHtml(a);
   }

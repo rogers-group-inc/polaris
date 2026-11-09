@@ -28,6 +28,8 @@ import {
   legacyMirrorOfV2,
   normalizeRuleToV2,
   allRuleActionRefs,
+  refreshMatchedResetSnapshots,
+  type RuleActionRef,
   type RuleActionCarrier,
   notifyChannelIds,
   rebootActionHasTo,
@@ -546,6 +548,38 @@ export async function isChangeActionSubscribed(action: string): Promise<boolean>
  * (The automationScripts=write gate on rules carrying script actions is
  * enforced at the route layer — permissions are not a service concern.)
  */
+/**
+ * Business rule 145's shape checks. The linking fields mean something only on a
+ * reset action — a trigger action that "matches" another would be a loop, and an
+ * escalation tier has nothing to reset — and a link must name ONE trigger
+ * Notify, so two firing Notify actions may not share an id.
+ */
+export function assertResetLinks(all: RuleActionRef[]): void {
+  const firingIds = new Set<string>();
+  for (const { action, label, where } of all) {
+    if (action.type !== "notify") continue;
+    if (where !== "reset" && (action.matchActionId || action.customized !== undefined || action.resetEscalation)) {
+      throw new AppError(400, `${label}: only a reset action can match a trigger action or reset an escalation`);
+    }
+    if (where === "fire" && action.id) {
+      if (firingIds.has(action.id)) throw new AppError(400, `${label}: two notify actions share the id "${action.id}"`);
+      firingIds.add(action.id);
+    }
+    if (where === "reset" && action.resetEscalation && !action.matchActionId) {
+      throw new AppError(400, `${label}: an escalation reset needs the trigger action it answers for`);
+    }
+  }
+}
+
+/** Keep each matched reset row's stored copy equal to its trigger action
+ *  (business rule 145) — mutates `input.resetActions`. */
+export function applyResetSnapshots(input: RuleActionCarrier): void {
+  // Both lists must be in hand: an update that omits `actions` (an alert
+  // group's partial PUT) would otherwise read every link as dangling.
+  if (!Array.isArray(input.resetActions) || !Array.isArray(input.actions)) return;
+  input.resetActions = refreshMatchedResetSnapshots(input).resetActions;
+}
+
 // Exported for the alert-group writers (business rule 114(a)): a group's
 // actions / reset actions / escalation run through the same save-time checks.
 export async function assertActionRefs(input: RuleActionCarrier): Promise<void> {
@@ -554,6 +588,7 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
   // actions (+ their per-action tiers), band-level tiers, and the dedicated
   // resolved actions — so a new action location can't escape these checks.
   const all = allRuleActionRefs(input);
+  assertResetLinks(all);
 
   const notifyRefs: { label: string; channelId: string; broadcast: boolean }[] = [];
   // One entry per ACTION (not per channel) for the checks that are about the
@@ -723,6 +758,7 @@ async function applyForecastLevelLink(input: RuleInput, selfId: string | null): 
 export async function createRule(input: RuleInput, actor?: string) {
   // A masked api_call header on a create has nothing to restore from (rule 114(h)).
   restoreMaskedActionHeaders(input, null);
+  applyResetSnapshots(input as RuleActionCarrier);
   await assertActionRefs(input);
   await applyForecastLevelLink(input, null);
   const mirror = legacyMirrorOfV2(input.reset, input.actions);
@@ -795,6 +831,7 @@ export async function updateRule(id: string, input: RuleInput, actor?: string) {
   // The edit form echoes masked api_call headers; put the stored values back
   // (same url + header name only — rule 114(h)).
   restoreMaskedActionHeaders(input, existing);
+  applyResetSnapshots(input as RuleActionCarrier);
   await assertActionRefs(input);
   await applyForecastLevelLink(input, id);
   const identityChanged =

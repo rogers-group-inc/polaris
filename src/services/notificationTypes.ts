@@ -2246,7 +2246,11 @@ const SCRIPT_RUN_TARGETS = ["server", "agent"] as const;
 export const SCRIPT_INTERPRETERS = ["bash", "sh", "powershell", "cmd", "python3"] as const;
 export type ScriptInterpreter = (typeof SCRIPT_INTERPRETERS)[number];
 
-export const notifyActionSchema = z
+/** A notify action's delivery fields — everything that says WHO and HOW. The
+ *  exported `notifyActionSchema` adds the identity + reset-linking fields
+ *  (business rule 145); this core is also what an escalation-reset override
+ *  holds, so an override can never itself carry a link. */
+const notifyFieldsSchema = z
   .object({
     type: z.literal("notify"),
     // The action's PRIMARY channel, and the lossless single-channel mirror of
@@ -2315,6 +2319,40 @@ export const notifyActionSchema = z
   // both refuse a ZodEffects. The channelId === channelIds[0] coherence check
   // therefore lives in assertActionRefs (notificationRuleService), which
   // already walks every action location through allRuleActionRefs.
+  .strict();
+
+/** The tier-key of an escalation-reset override: `<severity>:<tierIdx>` on the
+ *  severity's level chain (0-based tier index). */
+function escalationResetKey(severity: string, tierIdx: number): string {
+  return `${severity}:${tierIdx}`;
+}
+
+// Business rule 145 — a reset Notify can MATCH a trigger Notify and, when the
+// alert escalated, also tell the escalation tiers that actually sent.
+const resetEscalationSchema = z
+  .object({
+    // Per-tier overrides keyed escalationResetKey(severity, tierIdx). A tier
+    // with no entry uses its own Notify actions (the default); a tier with one
+    // sends these instead. Only consulted for tiers that FIRED for the alert.
+    custom: z.record(z.string().max(80), z.array(notifyFieldsSchema).max(10)).optional(),
+  })
+  .strict();
+
+export const notifyActionSchema = notifyFieldsSchema
+  .extend({
+    // Stable identity, client-generated, so a reset action can point at this
+    // one across edits (rows are positional, and removing one shifts the rest).
+    id: z.string().min(1).max(64).optional(),
+    // RESET ACTIONS ONLY (assertActionRefs refuses them anywhere else):
+    // which trigger Notify this reset action answers for. Without
+    // `customized`, delivery follows that action LIVE at reset time
+    // (expandResetActions); the stored channel/recipient fields are a snapshot
+    // refreshed at every save, used only if the target has gone.
+    matchActionId: z.string().min(1).max(64).optional(),
+    customized: z.boolean().optional(),
+    // Also send the reset to the escalation tiers that sent for this alert.
+    resetEscalation: resetEscalationSchema.optional().nullable(),
+  })
   .strict();
 
 /**
@@ -3321,8 +3359,8 @@ function normalizeRuleInputCore(raw: Omit<RuleInputRaw, "trigger">): Omit<RuleIn
     severity: raw.severity,
     scope: raw.scope,
     reset: normalizeReset(raw.reset, raw.clearBehavior, raw.clearAfterSec),
-    // Legacy body (targets, no actions) folded forward. The audit-Event action
-    // is added by withEventAction() at the call sites, which know the trigger.
+    // Legacy body (targets, no actions) folded forward. The audit Event is the
+    // engine's own (business rule 146), not an action.
     actions: raw.actions ?? targetsToNotifyActions(raw.targets, raw.emailComposition ?? null),
     cooldownSec: raw.cooldownSec ?? null,
     messageTemplate: raw.messageTemplate ?? null,
@@ -3819,20 +3857,34 @@ function validateRuleV2(
  * migration 20260810120000_event_action: the event tail writes no Events, so
  * the action would be dead weight the builder then warns about.
  */
-function withEventAction<T extends { actions: EscalatableAction[] }>(
-  core: T,
-  rawActions: unknown,
-  trigger: unknown,
-): T {
-  if (rawActions !== undefined) return core;
-  if (isEventDrivenTrigger(trigger)) return core;
-  return { ...core, actions: [...core.actions, { type: "event" as const }] };
+/**
+ * Business rule 146: the audit Event is no longer something an automation
+ * chooses — every fire, escalation and end writes one on its own. The retired
+ * `event` action is still ACCEPTED (stored rules, exports and API clients carry
+ * it) but is dropped from the lists that fire and reset, so saved rules
+ * converge on the shape the builder shows. An escalation tier keeps one: a
+ * tier needs at least one action, and there it was always inert.
+ */
+function withoutEventActions<T extends {
+  actions: EscalatableAction[];
+  severityBands?: SeverityBand[] | null;
+  resetActions?: AutomationAction[] | null;
+}>(core: T): T {
+  const drop = <A extends { type: string }>(list: A[] | null | undefined): A[] | null | undefined =>
+    list ? list.filter((a) => a.type !== "event") : list;
+  const resetActions = drop(core.resetActions);
+  return {
+    ...core,
+    actions: drop(core.actions) as EscalatableAction[],
+    ...(core.severityBands ? { severityBands: core.severityBands.map((b) => ({ ...b, actions: drop(b.actions) as EscalatableAction[] })) } : {}),
+    ...(core.resetActions !== undefined ? { resetActions: resetActions?.length ? resetActions : null } : {}),
+  };
 }
 
 export const ruleInputSchema = ruleInputBaseSchema
   .transform((raw): RuleInput => ({
     trigger: collapseCompositeTrigger(raw.trigger),
-    ...withEventAction(normalizeRuleInputCore(raw), raw.actions, raw.trigger),
+    ...withoutEventActions(normalizeRuleInputCore(raw)),
   }))
   .superRefine(validateRuleV2);
 
@@ -3851,7 +3903,7 @@ export const previewInputSchema = ruleInputBaseSchema
     trigger: raw.trigger ? collapseCompositeTrigger(raw.trigger) : undefined,
     id: raw.id,
     ...(raw.carveOutTrigger ? { carveOutTrigger: raw.carveOutTrigger } : {}),
-    ...withEventAction(normalizeRuleInputCore(raw), raw.actions, raw.trigger),
+    ...withoutEventActions(normalizeRuleInputCore(raw)),
   }))
   .superRefine(validateRuleV2);
 
@@ -3924,12 +3976,6 @@ export function normalizeEscalationToV2(escalation: unknown): EscalationV2Config
  * backups). Every reader — engine, escalation sweep, routes — goes through
  * this so v1 and v2 rows behave identically.
  */
-/** event/change triggers — the engine's event tail writes no audit Events. */
-function isEventDrivenTrigger(trigger: unknown): boolean {
-  const t = (trigger as { type?: string } | null | undefined)?.type;
-  return t === "event" || t === "change";
-}
-
 export function normalizeRuleToV2(row: {
   clearBehavior?: string | null;
   clearAfterSec?: number | null;
@@ -3965,13 +4011,9 @@ export function normalizeRuleToV2(row: {
       .map((r) => r.data);
   } else {
     // Pre-v2 row (or a restored pre-upgrade backup): fold legacy targets
-    // forward and re-add the audit Event the engine now gates on, so an
-    // un-migrated row keeps behaving exactly as it did. Mirrors migration
-    // 20260810120000_event_action, carve-out included — an event/change
-    // automation is driven BY Events and the tail writes none.
+    // forward. The audit Event needs no action (business rule 146).
     const targets = Array.isArray(row.targets) ? (row.targets as DeliveryTarget[]) : [];
     actions = targetsToNotifyActions(targets, emailComposition) as EscalatableAction[];
-    if (!isEventDrivenTrigger(row.trigger)) actions = [...actions, { type: "event" as const }];
   }
 
   const severityBands = parseSeverityBands(row.severityBands);
@@ -4078,7 +4120,16 @@ export function allRuleActionRefs(rule: RuleActionCarrier): RuleActionRef[] {
     addTiers(b.escalation, `${b.severity} band`);
   }
   (rule.bandNotify?.resolvedActions ?? []).forEach((a, i) => out.push({ action: a, label: `Resolved action ${i + 1}`, where: "resolved" }));
-  (rule.resetActions ?? []).forEach((a, i) => out.push({ action: a, label: `Reset action ${i + 1}`, where: "reset" }));
+  (rule.resetActions ?? []).forEach((a, i) => {
+    out.push({ action: a, label: `Reset action ${i + 1}`, where: "reset" });
+    // Escalation-reset overrides (business rule 145) deliver like any reset
+    // notify, so they get the same channel / recipient / permission checks.
+    if (a.type === "notify") {
+      for (const [key, list] of Object.entries(a.resetEscalation?.custom ?? {})) {
+        list.forEach((o) => out.push({ action: o, label: `Reset action ${i + 1} escalation reset ${key}`, where: "reset" }));
+      }
+    }
+  });
   return out;
 }
 
@@ -4303,6 +4354,157 @@ export function escalationChainsForSeverity(
     if (esc?.tiers.length) chains.push({ key: `a${i}`, escalation: esc });
   });
   return chains;
+}
+
+// ─── Reset actions that match a trigger action (business rule 145) ──────────
+
+/** One escalation tier that SENT for an alert — `Notification.escalationFired`. */
+export interface EscalationFiredRecord {
+  /** The alert's severity when the tier sent (selects the chain). */
+  severity: string;
+  /** Chain key: "" = the severity's level chain, "a<i>" = a per-action chain. */
+  chain: string;
+  /** 0-based tier index within that chain. */
+  tier: number;
+  at: string;
+}
+
+/** Tolerant read of `Notification.escalationFired`. */
+export function parseEscalationFired(v: unknown): EscalationFiredRecord[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((r): r is EscalationFiredRecord =>
+    !!r && typeof r === "object" &&
+    typeof (r as EscalationFiredRecord).severity === "string" &&
+    typeof (r as EscalationFiredRecord).chain === "string" &&
+    Number.isInteger((r as EscalationFiredRecord).tier));
+}
+
+/** Append a fired tier unless that (severity, chain, tier) is already listed. */
+export function appendEscalationFired(list: EscalationFiredRecord[], rec: EscalationFiredRecord): EscalationFiredRecord[] {
+  return list.some((r) => r.severity === rec.severity && r.chain === rec.chain && r.tier === rec.tier) ? list : [...list, rec];
+}
+
+/** A notify action as it EXECUTES: the linking / chain / reminder fields dropped. */
+function plainNotify(a: AutomationAction): AutomationAction {
+  if (a.type !== "notify") return a;
+  const { id: _id, matchActionId: _m, customized: _c, resetEscalation: _r, ...rest } = a as NotifyAction;
+  const out = { ...rest } as Record<string, unknown>;
+  delete out["escalation"];
+  delete out["repeat"];
+  return out as AutomationAction;
+}
+
+/** The trigger Notify a reset action points at, and the severity section that
+ *  holds it (null = the base list). */
+function findTriggerNotify(
+  rule: RuleActionCarrier,
+  id: string,
+): { action: AutomationAction; section: string | null } | null {
+  const hit = (rule.actions ?? []).find((a) => a.type === "notify" && a.id === id);
+  if (hit) return { action: hit as AutomationAction, section: null };
+  for (const b of rule.severityBands ?? []) {
+    const bh = (b.actions ?? []).find((a) => a.type === "notify" && a.id === id);
+    if (bh) return { action: bh as AutomationAction, section: b.severity };
+  }
+  return null;
+}
+
+/**
+ * The severities a trigger action RUNS at: its own band, or — for a base
+ * action — the base severity plus every band with no actions of its own
+ * (effectiveActionsForSeverity's fallback). The escalation reset covers the
+ * tiers that sent at any of them.
+ */
+export function severitiesRunningSection(rule: RuleActionCarrier & { severity: string }, section: string | null): string[] {
+  if (section) return [section];
+  return [rule.severity, ...(rule.severityBands ?? []).filter((b) => !b.actions?.length).map((b) => b.severity)];
+}
+
+/**
+ * Whose level chain an alert at `severity` escalates on: the band's own when it
+ * declares one, else the base severity's (escalationChainsForSeverity's rule).
+ * Two severities sharing one chain share its tiers, so the escalation reset
+ * keys — and dedupes — on this, not on the alert's severity.
+ */
+export function levelChainOwner(rule: RuleActionCarrier & { severity: string }, severity: string): string {
+  if (severity === rule.severity) return severity;
+  const band = (rule.severityBands ?? []).find((b) => b.severity === severity);
+  return (normalizeEscalationToV2(band?.escalation)?.tiers.length ?? 0) > 0 ? severity : rule.severity;
+}
+
+/**
+ * What an alert's reset actually SENDS (business rule 145).
+ *
+ *  - A reset Notify with `matchActionId` and no `customized` delivers as the
+ *    trigger Notify it points at, read NOW — an edit to the trigger action
+ *    reaches its reset without anyone re-saving the reset side. If the target
+ *    is gone the stored snapshot sends instead.
+ *  - With `resetEscalation`, every escalation tier that SENT for this alert
+ *    (`fired`) at a severity the matched action runs at also gets a reset:
+ *    the tier's own Notify actions, or the override stored for it. A tier that
+ *    never sent is skipped — nobody there was told. Each tier is sent once per
+ *    reset however many reset actions ask for it.
+ *  - Everything else passes through untouched.
+ */
+export function expandResetActions(
+  rule: RuleActionCarrier & { severity: string },
+  fired: EscalationFiredRecord[],
+): AutomationAction[] {
+  const out: AutomationAction[] = [];
+  const seenTiers = new Set<string>();
+  for (const a of rule.resetActions ?? []) {
+    if (a.type !== "notify" || (!a.matchActionId && !a.resetEscalation)) { out.push(a); continue; }
+    const src = a.matchActionId ? findTriggerNotify(rule, a.matchActionId) : null;
+    out.push(plainNotify(src && !a.customized ? src.action : a));
+    if (!a.resetEscalation || !src) continue;
+    const severities = severitiesRunningSection(rule, src.section);
+    for (const f of fired) {
+      if (!severities.includes(f.severity)) continue;
+      const chain = escalationChainsForSeverity(rule, f.severity).find((c) => c.key === f.chain);
+      const tier = chain?.escalation.tiers[f.tier];
+      if (!tier) continue;
+      // A per-action chain (pre-2026-08 rules) belongs to ONE action: only
+      // that action's reset answers for it.
+      if (f.chain !== "") {
+        const idx = effectiveActionsForSeverity(rule, f.severity).findIndex((x) => x.type === "notify" && x.id === a.matchActionId);
+        if (f.chain !== `a${idx}`) continue;
+      }
+      const owner = f.chain === "" ? levelChainOwner(rule, f.severity) : f.severity;
+      const dedupe = `${owner}|${f.chain}|${f.tier}`;
+      if (seenTiers.has(dedupe)) continue;
+      seenTiers.add(dedupe);
+      const override = f.chain === "" ? a.resetEscalation.custom?.[escalationResetKey(owner, f.tier)] : undefined;
+      const list = override ?? tier.actions.filter((x) => x.type === "notify");
+      for (const x of list) out.push(plainNotify(x as AutomationAction));
+    }
+  }
+  return out;
+}
+
+/**
+ * Refresh a rule's matched reset rows to the trigger actions they point at
+ * (save-time, business rule 145): the stored copy is what every reader that
+ * doesn't resolve links (the Addresses column, Test delivery, export) sees,
+ * so it is kept equal to what the link would send. A row whose target is gone
+ * keeps its copy and loses the link.
+ */
+export function refreshMatchedResetSnapshots<T extends RuleActionCarrier>(rule: T): T {
+  if (!rule.resetActions?.length) return rule;
+  const resetActions = rule.resetActions.map((a) => {
+    if (a.type !== "notify" || !a.matchActionId) return a;
+    const src = findTriggerNotify(rule, a.matchActionId);
+    if (!src) {
+      const { matchActionId: _m, customized: _c, resetEscalation: _r, ...rest } = a;
+      return rest as AutomationAction;
+    }
+    if (a.customized) return a;
+    return {
+      ...(plainNotify(src.action) as NotifyAction),
+      matchActionId: a.matchActionId,
+      ...(a.resetEscalation ? { resetEscalation: a.resetEscalation } : {}),
+    } as AutomationAction;
+  });
+  return { ...rule, resetActions };
 }
 
 // ─── Follow-up policy (what happens if nobody acts) ─────────────────────────
@@ -6143,7 +6345,6 @@ export function buildSchemaCatalog() {
       { type: "notify", label: "Send a notification", requires: "channels", permission: null },
       { type: "api_call", label: "Call an API (HTTP request)", requires: null, permission: null },
       { type: "script", label: "Run a script", requires: "scripts", permission: "automationScripts" },
-      { type: "event", label: "Create an Event", requires: null, permission: null },
       { type: "reboot", label: "Reboot the device", requires: null, permission: "assets" },
     ],
     rebootMeta: {
