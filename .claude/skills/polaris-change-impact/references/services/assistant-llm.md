@@ -7,7 +7,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
 `public/js/assistant-markdown.js`, `public/css/assistant.css` (booted by
-`public/js/app.js → _bootAssistant()`), and the AI Assistant form in `public/js/integrations.js`.
+`public/js/app.js → _bootAssistant()`), and the AI Assistant form in `public/js/integrations-forms.js`.
 
 ---
 

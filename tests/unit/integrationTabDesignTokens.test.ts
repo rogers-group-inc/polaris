@@ -14,9 +14,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { integrationsSource } from "./_integrationsSource";
 
 const read = (p: string) => readFileSync(resolve(__dirname, "../..", p), "utf8").replace(/\r\n/g, "\n");
-const js = read("public/js/integrations.js");
+const js = integrationsSource().replace(/\r\n/g, "\n");
 const css = read("public/css/styles.css");
 const app = read("public/js/app.js");
 

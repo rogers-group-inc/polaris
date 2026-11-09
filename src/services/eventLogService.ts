@@ -376,7 +376,9 @@ export function logDiscoveryAssetUpdated(
 //
 //   asset.firmware.changed          os / osVersion moved
 //   asset.switch_port.changed       lastSeenSwitch moved
-//   asset.wireless_ap.changed       lastSeenAp moved (every roam)
+//   asset.wireless_ap.changed       lastSeenAp moved (a roam) — the exception:
+//                                   its writers emit it only while an automation
+//                                   uses the trigger (wirelessRoamEventsWanted)
 //   asset.gateway_firewall.changed  the freshest FortiGate sighting flipped
 //
 // Unlike the `change.*` family in notificationChangeEvents.ts these are written

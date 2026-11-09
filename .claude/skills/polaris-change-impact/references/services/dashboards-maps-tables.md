@@ -152,6 +152,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A third kind of saved list needs a `kind`, a scope, item columns (`folderId` + the ownership four), a router mount of `buildSavedFolderRouter`, and the frontend tree.
 - Tests: `tests/integration/savedFolderOwnership.test.ts`.
+- Unit tests: `tests/unit/savedFolderService.test.ts` — depth bound on create and move, per-user cap, includeContents scope, P2002 → 409.
 
 ---
 

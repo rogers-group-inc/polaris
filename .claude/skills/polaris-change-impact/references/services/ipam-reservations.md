@@ -209,6 +209,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Everything is best-effort (errors logged + swallowed) — runs after the asset write already landed and must never break it.
 
 **When changing this:**
+- Unit tests: `tests/unit/ipOverrideService.test.ts` — one pending conflict per asset, rejection dedup, race guards, blank pin, auto-close on release.
 - Keep the accept/reject handlers in `src/services/conflictResolutionService.ts` in sync with the `proposedAssetFields` shape (accept reads `ipAddress`/`ipSource`/`overrideIp`).
 - Keep the events.js `renderIpOverrideConflictCard` reading the same keys.
 - If the dedup model changes (e.g. per-IP instead of per-asset pending rows), revisit `resolvePendingIpOverrideConflicts` callers — the PUT route assumes "close everything pending for this asset."
@@ -434,6 +435,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Bumps `Subnet.lastDiscoveredAt` only on success (so the IP panel's "Discovered N minutes ago" updates).
 
 **When changing this:**
+- Unit tests: `tests/unit/subnetRefreshService.test.ts` — every invariant above, with the FortiGate faked at the reservationPushService helpers.
 - Keep the scope narrow: don't reach into asset sightings / decommissions / map regions — those are owned by `syncDhcpSubnets` and reconcile on the next full integration cycle.
 - If the read shape from FortiOS `/api/v2/monitor/system/dhcp` changes, update both `fetchLiveLeasesForScope` here AND the corresponding shape in fortimanagerService.ts / fortigateService.ts so the partial discover and full discovery stay in sync.
 - The VIP read goes through `utils/vipAddressFacts.ts → parseVipRow()`, which accepts all three encodings a `firewall/vip` row arrives in. Never hand-parse the row here — the two full-discovery readers in fortimanagerService.ts and fortigateService.ts each handle a different subset, and that divergence is what dropped proxy-mode mapped IPs once already.
@@ -599,6 +601,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `getRecentManualReservations(limit, sourceTypes?)` — default `sourceTypes=undefined` filters to `["manual"]` (back-compat); explicit array narrows or broadens; empty array disables the filter entirely. Caller (the dashboard route) validates source-type values against the known enum before passing through.
 
 **When changing this:**
+- Unit tests: `tests/unit/utilizationService.test.ts` — status buckets, used-percent (IPv6 exact), the Recently Reserved filter, and `getBlockUtilization`'s `activeReservations` counting only status "active" rows (it counted released ones until 2026-11-09).
 - Test large fleet performance (blocks query with full subnet tree may be slow with 100k+ subnets)
 - Verify usagePercent calculation (allocatedAddresses / blockAddresses) matches business intent
 - Check that deprecated subnets are correctly filtered from block capacity
