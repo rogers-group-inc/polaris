@@ -16,6 +16,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 interface Sandbox {
   document: Document;
@@ -40,7 +41,7 @@ beforeAll(() => {
     permAtLeast: () => true,
     api: {},
   });
-  const code = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+  const code = serverSettingsSource();
   (win as unknown as { eval: (s: string) => void }).eval(code);
   sb = win as unknown as Sandbox;
 });

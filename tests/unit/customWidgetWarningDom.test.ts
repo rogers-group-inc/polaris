@@ -26,12 +26,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
 const g = globalThis as Record<string, any>;
 const SPLIT = /\r?\n/;
 const FILES = {
   assets: readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(SPLIT),
-  settings: readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8").split(SPLIT),
+  settings: serverSettingsSource().split(SPLIT),
 };
 
 function fnSrc(lines: string[], name: string): string {

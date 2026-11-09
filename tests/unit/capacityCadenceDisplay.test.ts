@@ -15,8 +15,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { serverSettingsSource } from "./_serverSettingsSource";
 
-const src = readFileSync(resolve(__dirname, "../../public/js/server-settings.js"), "utf8");
+const src = serverSettingsSource();
 const lines = src.split(/\r?\n/);
 const start = lines.findIndex((l) => l.startsWith("function _fmtCadenceSec("));
 const end = lines.findIndex((l, i) => i > start && l === "}");

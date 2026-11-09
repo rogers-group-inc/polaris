@@ -20,6 +20,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { FUNCTION_KEYS, levelsFor } from "../../src/api/middleware/permissions.js";
+import { SERVER_SETTINGS_FILES } from "./_serverSettingsSource";
 
 const root = resolve(__dirname, "../..");
 const read = (p: string) => readFileSync(resolve(root, p), "utf8");
@@ -40,7 +41,7 @@ describe("manufacturerAliases fold — catalogue and gates", () => {
     for (const p of [
       "src/api/router.ts",
       "src/api/routes/manufacturerAliases.ts",
-      "public/js/server-settings.js",
+      ...SERVER_SETTINGS_FILES.map((f) => "public/js/" + f),
       "public/js/app.js",
     ]) {
       expect(read(p), p).not.toMatch(/["']manufacturerAliases["']/);
