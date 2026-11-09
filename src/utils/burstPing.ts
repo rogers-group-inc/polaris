@@ -41,6 +41,7 @@
  */
 
 import { chunkArray } from "./chunk.js";
+import { mapWithConcurrency } from "./concurrency.js";
 import { spawn, type ChildProcess, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { burstPingHost, type BurstPingResult } from "./icmpPing.js";
@@ -262,25 +263,17 @@ async function runPingFallback(
   opts: Required<Pick<BurstPingOptions, "count" | "periodMs" | "timeoutMs">>,
 ): Promise<Map<string, BurstPingResult>> {
   const map = new Map<string, BurstPingResult>();
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      const i = next++;
-      if (i >= targets.length) return;
-      const t = targets[i]!;
-      const r = await burstPingHost(t, {
-        count: opts.count,
-        intervalMs: opts.periodMs,
-        timeoutMs: opts.timeoutMs,
-      });
-      // sent === 0 means we never reached the network (no ping binary) — absent
-      // from the map, exactly as an unresolvable fping target is.
-      if (r.sent > 0) map.set(t, r);
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(FALLBACK_CONCURRENCY, targets.length) }, worker),
-  );
+  // burstPingHost never rejects (a spawn failure resolves sent: 0).
+  await mapWithConcurrency(targets, FALLBACK_CONCURRENCY, async (t) => {
+    const r = await burstPingHost(t, {
+      count: opts.count,
+      intervalMs: opts.periodMs,
+      timeoutMs: opts.timeoutMs,
+    });
+    // sent === 0 means we never reached the network (no ping binary) — absent
+    // from the map, exactly as an unresolvable fping target is.
+    if (r.sent > 0) map.set(t, r);
+  });
   return map;
 }
 

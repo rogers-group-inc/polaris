@@ -25,6 +25,7 @@ import { retryOnDeadlock } from "../utils/dbRetry.js";
 import { AppError } from "../utils/errors.js";
 import { diffInventory, sameFields } from "../utils/inventoryDelta.js";
 import { chunkArray } from "../utils/chunk.js";
+import { mapWithConcurrency } from "../utils/concurrency.js";
 import {
   fetchIntuneDetectedApps,
   type DiscoveredEntraDevice,
@@ -264,14 +265,6 @@ export const AGENT_SOFTWARE_FRESH_MS = 2 * 24 * 3600_000;
 /** Re-read a device's apps at least this often even when Intune's stamp says unchanged. */
 export const INTUNE_SOFTWARE_MAX_AGE_MS = 7 * 24 * 3600_000;
 
-async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) await fn(items[next++]);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
-
 export interface IntuneSoftwareCandidate {
   assetId: string;
   managedDeviceId: string;
@@ -405,7 +398,7 @@ export async function syncIntuneSoftware(
       failedBatches += res.failedBatches;
       batchCount += res.batchCount;
       if (res.lastError) lastError = res.lastError;
-      await runPool(chunk, PERSIST_CONCURRENCY, async (c) => {
+      await mapWithConcurrency(chunk, PERSIST_CONCURRENCY, async (c) => {
         const apps = res.apps.get(c.managedDeviceId);
         if (!apps) return; // failed read: keep the stored list and its stamp
         await persistAssetSoftware(c.assetId, "intune", apps.map(intuneAppToInput), { stamp: c.lastSync });
@@ -460,7 +453,7 @@ export async function syncArcSoftware(
       const assetId = assetByArmId.get(rid);
       if (assetId) work.push({ assetId, rows });
     }
-    await runPool(work, PERSIST_CONCURRENCY, async (w) => {
+    await mapWithConcurrency(work, PERSIST_CONCURRENCY, async (w) => {
       await persistAssetSoftware(w.assetId, "arc", w.rows.map(arcSoftwareToInput));
     });
     let cleared = 0;

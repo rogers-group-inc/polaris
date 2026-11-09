@@ -55,6 +55,7 @@ import { triggerSummary } from "../utils/triggerSummary.js";
 import { dependencyTriggerSummary } from "../utils/notificationTemplate.js";
 import { SAMPLE_ALERT_DEVICE, SAMPLE_ALERT_HOSTNAME, SAMPLE_UPSTREAM_HOSTNAME, sampleDimensionFor } from "../utils/sampleAlertDevice.js";
 import { publicBaseUrl } from "../utils/publicUrl.js";
+import { withTimeout, TimeoutError } from "../utils/timeout.js";
 
 type TestTarget = "delivery" | "event";
 
@@ -300,12 +301,9 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   // budget, because the drain talks SMTP/Graph synchronously.
   let timedOut = false;
   try {
-    await Promise.race([
-      drainPendingDeliveries({ notificationId: notif.id }),
-      new Promise((_r, reject) => setTimeout(() => reject(new Error("budget")), DISPATCH_BUDGET_MS)),
-    ]);
+    await withTimeout(drainPendingDeliveries({ notificationId: notif.id }), DISPATCH_BUDGET_MS, "test delivery dispatch");
   } catch (err) {
-    timedOut = (err as Error)?.message === "budget";
+    timedOut = err instanceof TimeoutError;
     if (!timedOut) logger.warn({ err: (err as Error)?.message }, "test delivery dispatch failed");
   }
 

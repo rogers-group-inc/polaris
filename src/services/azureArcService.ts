@@ -49,7 +49,7 @@ import { AppError } from "../utils/errors.js";
 import { matchesWildcard } from "../utils/integrationFilter.js";
 import { AZURE_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { buildClientCredentialsTokenRequest } from "../utils/entraClientCredentials.js";
-import { mapSettledWithConcurrency } from "../utils/concurrency.js";
+import { mapSettledWithConcurrency, mapWithConcurrency } from "../utils/concurrency.js";
 
 // ─── API versions (verify-on-real-tenant) ───────────────────────────────────
 
@@ -1297,33 +1297,23 @@ async function fillNetworkProfiles(
 ): Promise<void> {
   const deadline = Date.now() + NETWORK_PROFILE_DEADLINE_MS;
   const pending = machines.filter((m) => m.ipAddresses.length === 0);
-  let cursor = 0;
   let skipped = 0;
   let failed = 0;
 
-  const worker = async () => {
-    while (true) {
-      if (signal?.aborted) return;
-      const idx = cursor++;
-      if (idx >= pending.length) return;
-      if (Date.now() > deadline) { skipped++; continue; }
-      const m = pending[idx];
-      try {
-        const detail: any = await armRequest(
-          config,
-          `${ARM_BASE}${m.armId}?api-version=${ARC_MACHINES_API_VERSION}`,
-          { signal },
-        );
-        m.ipAddresses = extractIpAddresses(detail?.properties?.networkProfile);
-      } catch {
-        failed++;
-      }
+  await mapWithConcurrency(pending, NETWORK_PROFILE_CONCURRENCY, async (m) => {
+    if (signal?.aborted) return;
+    if (Date.now() > deadline) { skipped++; return; }
+    try {
+      const detail: any = await armRequest(
+        config,
+        `${ARM_BASE}${m.armId}?api-version=${ARC_MACHINES_API_VERSION}`,
+        { signal },
+      );
+      m.ipAddresses = extractIpAddresses(detail?.properties?.networkProfile);
+    } catch {
+      failed++;
     }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(NETWORK_PROFILE_CONCURRENCY, pending.length) }, worker),
-  );
+  });
 
   if (skipped > 0 || failed > 0) {
     onProgress?.(
