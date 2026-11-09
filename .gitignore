@@ -39,6 +39,7 @@ data/instance-id
 # Session-workflow lock files (a worktree in use / a dev stack running) — never committed
 WORKLOCK
 DEVLOCK
+PARENT
 
 # Windows Explorer / OneDrive folder metadata
 desktop.ini

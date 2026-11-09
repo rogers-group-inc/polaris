@@ -53,10 +53,14 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
 
 ## Session workflow (always in force)
 
-1. **Never edit the main checkout.** Before the first edit of a task, create a worktree
-   (`EnterWorktree` → `.claude/worktrees/<slug>`, branch `worktree-<slug>`) and write a
-   `WORKLOCK` file at its root (one line: ISO timestamp + purpose). A PreToolUse hook refuses
-   Edit/Write inside the repo without one.
+1. **Never edit the main checkout.** Before the first edit of a task, create a worktree with
+   `node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <slug> "<purpose>"`
+   (→ `.claude/worktrees/<slug>`, branch `worktree-<slug>` from local `main`, `WORKLOCK`
+   written, Prisma client generated), then `cd` into it. **Do not use the `EnterWorktree`
+   tool** — retired 2026-11-04; its Bash guard, drive-case refusal and git lock were half the
+   error log. A PreToolUse hook refuses Edit/Write inside the repo without a `WORKLOCK`.
+   A large multi-batch project gets a **parent** worktree (`--parent`, the chat's home) and its
+   batches `--under <parent>`, each merging straight to `main`.
 2. **Finishing a task = delete `WORKLOCK`, then commit everything in the worktree.** Run
    `/polaris-docs-sync` first — or `/polaris-deploy`, which runs it and carries on through
    merge and push. The end-of-work commit does not wait for approval; merges and pushes do,
@@ -66,15 +70,19 @@ Both are fed from this repo's commits, not edited on their own schedule: the `/p
 4. **"merge"** → list every worktree WITHOUT a lock file as a numbered menu, merge the chosen
    ones to `main` with `--no-ff`, never push; then review what landed against the skills
    (update an entry, or add a skill, when the work changed what a future session needs told). **"push"** → audit deploy surfaces, push `main`,
-   then remove the merged worktrees and branches. Both protocols are in `/polaris-worktree-workflow`.
-5. `WORKLOCK` / `DEVLOCK` are gitignored and never committed.
+   then remove the merged worktrees and branches — never one `worktree-keep.mjs` says to keep
+   (a lock, a `PARENT`, or a chat filed under its folder). Both protocols are in `/polaris-worktree-workflow`.
+5. `WORKLOCK` / `DEVLOCK` / `PARENT` are gitignored and never committed.
 6. **Record every error you hit while working**: a failed test or check you did not cause, a
    tool or hook refusal, a missing generated file, a trap that cost a retry. One file per error
    in `error-log/` beside your memory directory (`~/.claude/projects/<this project>/error-log/`,
-   OUTSIDE the repository — it is local and **never committed**; `YYYY-MM-DD-<slug>.md`,
+   OUTSIDE the repository — it is local and **never committed**; `YYYY-MM-DD-<slug>-<worktree>.md`,
    frontmatter `category:` + `cost:`, then what happened, the cause, the fix; its README has the
-   shape). The user reviews the most frequent categories to fix the workflow, so log a known
-   trap again each time it recurs; that count is the signal.
+   shape). `category:` is exactly one of `worktree-guard`, `worktree-setup`, `tool-refusal`,
+   `test-timeout`, `test-flake`, `test-harness`, `crlf-encoding`, `scripted-edit`, `wrong-check`,
+   `code-trap`, `env-drift`, `skill-not-loaded`, `docs-check`, `merge` — never a new name (an
+   invented one splits the count). The user reviews the most frequent categories to fix the
+   workflow, so log a known trap again each time it recurs; that count is the signal.
 
 ---
 

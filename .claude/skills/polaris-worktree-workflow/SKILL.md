@@ -7,9 +7,10 @@ description: "Polaris session workflow: start every task in its own git worktree
 
 ## The six rules (also in CLAUDE.md, always in force)
 
-1. **Never edit the main checkout.** Before the first edit of a task, create a worktree
-   (`EnterWorktree` → `.claude/worktrees/<slug>` on branch `worktree-<slug>`) and write
-   `WORKLOCK` at its root. A PreToolUse hook refuses Edit/Write inside the repo otherwise.
+1. **Never edit the main checkout.** Before the first edit of a task, create a worktree with
+   `scripts/worktree-start.mjs` (→ `.claude/worktrees/<slug>` on branch `worktree-<slug>`,
+   `WORKLOCK` written) — **never the `EnterWorktree` tool**. A PreToolUse hook refuses
+   Edit/Write inside the repo without a `WORKLOCK`.
 2. **Finishing = delete `WORKLOCK`, then commit everything in the worktree.** That
    end-of-work commit does not wait for approval (run `/polaris-docs-sync` first). Merging to
    main and pushing happen only when the user says "merge" / "push" — or invokes
@@ -19,7 +20,7 @@ description: "Polaris session workflow: start every task in its own git worktree
 3. **A dev environment = `DEVLOCK` at the worktree root + one podman stack per worktree.**
 4. **"merge"** → the merge protocol below (numbered menu of unlocked worktrees).
    **"push"** → the push protocol below (push main, clean up what was merged).
-5. **Lock files are gitignored and never committed.** Content: one line, ISO timestamp +
+5. **Lock files (and `PARENT`) are gitignored and never committed.** Content: one line, ISO timestamp +
    purpose. A lock older than the chat that made it is stale; the merge menu shows its age.
 6. **Record every error you hit** as one file in `error-log/` beside the memory directory
    (`~/.claude/projects/<this project>/error-log/`, outside the repo, never committed; its
@@ -34,49 +35,77 @@ description: "Polaris session workflow: start every task in its own git worktree
 | bringing up / tearing down the per-worktree podman stack (`podman machine start`, `-p polaris-<slug>`, port offsets, `.env`, seed) | [references/dev-environment.md](references/dev-environment.md) |
 | the merge menu, the merge steps, the post-merge skill review, the DEVLOCK variant | [references/merge-protocol.md](references/merge-protocol.md) |
 | the push and clean-up steps | [references/push-protocol.md](references/push-protocol.md) |
+| creating a worktree in one call (worktree + branch + WORKLOCK + Prisma client [+ .env, npm ci]) | [scripts/worktree-start.mjs](scripts/worktree-start.mjs) |
 | the enforcement hook and how it is registered | [scripts/require-worklock.mjs](scripts/require-worklock.mjs) |
+| may this worktree be removed? (lock / `PARENT` / a chat filed under its folder → keep) — merge, push and `/polaris-deploy` ask it | [scripts/worktree-keep.mjs](scripts/worktree-keep.mjs) |
+| the Bash hook that refuses heredoc programs / risky file writes / repo appends (→ Shell notes) | [scripts/refuse-risky-heredoc.mjs](scripts/refuse-risky-heredoc.mjs) |
 
 ## Start of a task (short form)
 
-**Each numbered line is its own tool call. Never join them with `&&` / `;`.** Joined, the
-worktree Bash guard refuses the whole call (it contains git, or a `$(…)`), the client never
-gets generated, and the first typecheck fails — eight logged sessions did exactly this.
+One call, from the main checkout or any worktree:
 
-1. `EnterWorktree name=<slug>` — branch `worktree-<slug>`, cwd switches. If it errors with
-   **"core.worktree redirect"**, the worktree WAS created: the session launched from a
-   lowercase `c:\` and git reports `C:/`. Call `EnterWorktree path=<main-checkout with an
-   uppercase drive>/.claude/worktrees/<slug>` straight away; nothing else is wrong.
-2. Write `WORKLOCK` — the Write tool works (the hook exempts the lock itself), or Bash
-   `printf '%s %s\n' "<ISO time>" "<purpose>" > WORKLOCK` alone.
-3. `DATABASE_URL=postgresql://x:x@localhost:5432/x npx prisma generate` — ~1 s, no DB contacted.
-   **Not optional, even when you skip `npm install`.** Node finds the main checkout's
-   `node_modules` up-tree, so vitest / tsc / the design build run without an install, but
-   `src/generated/prisma` is resolved INSIDE the worktree and a fresh one has none. A test
-   that fails in a fresh worktree is the missing client until proved otherwise (the four ways
-   it shows up: worktree-setup.md step 5).
-4. Only when the change needs them: `cp <main-checkout>/.env .env` (tests against a DB), and
-   `DATABASE_URL=postgresql://x:x@localhost:5432/x npm install --no-audit --no-fund` (a
-   dependency change). The placeholder is not optional without a `.env`: postinstall runs
-   `prisma generate`, which fails on an unresolved `DATABASE_URL` and fails the whole install.
-5. Any git you want (`git log -1`, `npm run rules:next`) — each in its own call.
+```
+node .claude/skills/polaris-worktree-workflow/scripts/worktree-start.mjs <slug> "<purpose>" [--env] [--install]
+```
 
-## Shell inside a worktree — what the Bash guard refuses
+It creates `.claude/worktrees/<slug>` on branch `worktree-<slug>` from **local** `main`
+(`--base <ref>` to change), writes `WORKLOCK`, and generates the Prisma client (a fresh worktree
+has none, and its absence reads like a broken build: worktree-setup.md step 5). `--env` copies
+the main checkout's `.env` (tests against a DB, a dev stack); `--install` runs `npm ci` (a
+dependency change — otherwise Node resolves `node_modules` up-tree from the main checkout).
+Then, as its own Bash call, `cd` to the path it prints; the harness makes that the working
+directory. Edit with absolute paths under it.
 
-A worktree-isolated session's Bash guard refuses any command it cannot prove stays inside the
-worktree, whatever the command actually does. ~24 logged refusals, all one of these shapes:
+**A large project** (a code-quality review, anything run as many batches over days) gets a
+**parent** worktree: `worktree-start.mjs <project> "<purpose>" --parent` writes `PARENT` (no
+`WORKLOCK`, no Prisma client — nothing is edited there), and the user opens the project's
+long-running chat in that folder, so Claude Code files the chat there. Each batch is
+`worktree-start.mjs <batch> "<purpose>" --under <project>` → `<project>-<batch>` from local
+`main`; it merges straight to `main` and is removed like any other worktree. Each `--under`
+first fast-forwards the parent to `main`, so a chat opened there reads current CLAUDE.md and
+skills (the parent never has commits of its own; edit only in batches). The parent is
+never offered by the merge menu nor removed by a push or `/polaris-deploy` — `worktree-keep.mjs`
+says `keep` for it — until the user retires it by deleting `PARENT`. The plan and its progress
+live in a committed doc on `main` (the code-quality review's is `docs/CODE-QUALITY-LEDGER.md`),
+not on the parent's branch, which stays empty. **Why:** Claude Code lists a chat under the
+folder it is filed in; the code-quality review's chat was filed under its first batch worktree
+(`cq-guards`, by the retired EnterWorktree tool), and its own `/polaris-deploy` removed that
+worktree on 2026-11-05, so the chat vanished from VS Code. A chat launched from the main
+checkout and moving between worktrees with `cd` stays filed under the main checkout, which is
+never removed — the parent is for a chat you want opened beside its project.
 
-| Refused | Do instead |
+**Do not use the `EnterWorktree` tool, or the Agent tool's `isolation: "worktree"`.** Retired
+2026-11-04: they refused to start on a lowercase-`c:\` launch, put the session under a Bash
+guard that refused heredocs / variables / compound git (~30 logged refusals in six days), left a
+git lock that broke clean-up, and branched from `origin/main`. For a subagent, create its
+worktree with the script and name the absolute path in its prompt.
+
+**Without the guard, the main checkout is protected only by discipline and the WORKLOCK hook
+(which covers Edit/Write, not Bash).** So: run state-changing git (`add`, `commit`, `checkout`,
+`reset`, `stash`) only from inside your worktree; touch the main checkout with `git -C
+<main-checkout>` only for the merge / push protocols; never `sed -i` or redirect into a path
+outside your worktree. **Watch for "Shell cwd was reset"**: a Bash call that `cd`s outside the
+working directories (the error-log or memory folder, say) drops the shell back in the MAIN
+checkout, not your worktree — `cd` back before the next git command, or use `git -C
+<worktree-path>` throughout.
+
+## Shell notes
+
+The first three rows are ENFORCED by `scripts/refuse-risky-heredoc.mjs`, a PreToolUse Bash hook
+(registered like `require-worklock.mjs`, in the main checkout's `.claude/settings.local.json`):
+it refuses a heredoc that is a python/node program, a file-writing heredoc with a backslash or
+non-ASCII in it, and a heredoc appended to a repo file. The notes alone did not stop them (~12
+error-log entries in the four days after they were written), and the mangling is the Bash
+TOOL's — a quoted `<<'EOF'` loses backslashes too — so no quoting gets past it.
+
+| Trap | Do instead |
 |---|---|
-| git in a compound command (`x && git …`, `git … ; y`, `git … \| grep`, `git show … > file`) | git alone, one command per call |
-| any heredoc — `cat >> f <<'EOF'`, `python - <<'EOF'`, `node -e` with a long script | append / replace with **Edit**; for a scripted multi-file edit, **Write** the script to the scratchpad and run `python <script> <args>` as one line |
-| a shell variable or `$(…)` as a path (`S=.claude/skills; sed … $S/x`) | spell every path out literally |
-| `cd` to a computed path; a `cd` out of the worktree | stay at the worktree root; absolute literal paths |
-| a word containing "git" (`.github/…`) or `gh` inside a compound | that command alone |
-| `… \| xargs <cmd>` (the guard cannot prove the appended operands are not options) | list the files first, then one call with every path spelled out |
-
-Multi-line replacements in a script: this checkout has CRLF files (`public/js/*`); normalise
-`\r\n` before matching, or use Edit, which matches either. Non-ASCII text (`—`) does not survive
-a Git Bash heredoc on Windows — another reason for Write + run.
+| `cat >> f <<'EOF'` to append source | **Edit** (anchor on the last block) — no CRLF / escaping surprises |
+| a Python/Node edit script over CRLF files (`public/js/*`) | normalise `\r\n` before matching, or use Edit, which matches either |
+| non-ASCII (`—`, `→`) or backslashes through a Git Bash heredoc | **Write** the script to the scratchpad, run `python <script> <args>`; `PYTHONIOENCODING=utf-8` when it prints non-ASCII |
+| a commit message with `->` / quotes / backticks | **Write** it to the scratchpad, `git commit -F <file>` |
+| `sed -i` on a CRLF file | it keeps CRLF only per line it rewrites — check the per-file diffstat |
+| a session still on a legacy `EnterWorktree` worktree | its guard refuses heredocs, `$var` / `$(…)` paths, `xargs`, git in a compound — one plain command per call, literal paths |
 
 ## End of a task (short form)
 
@@ -97,7 +126,9 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
 
 1. `git worktree list --porcelain`; for each non-main worktree check for `WORKLOCK` / `DEVLOCK`.
 2. Print a **numbered list of the unlocked worktrees** (branch · commits ahead of main · last
-   subject · dirty?) and, un-numbered, the locked ones with each lock's age.
+   subject · dirty?) and, un-numbered, the locked ones with each lock's age. A `PARENT`
+   worktree is never numbered: list it as a project with its `<parent>-<batch>` worktrees
+   beneath (those are numbered as usual and merge straight to main).
 3. The user picks numbers. For each pick, in order: commit anything pending in that worktree;
    from the main checkout `git merge --no-ff worktree-<slug>`; on conflict stop and report.
 4. **Review what landed against the skills**: read each merged branch as one diff and ask what
@@ -116,8 +147,11 @@ Report the branch name and say the worktree is ready to merge. Do not merge or p
    when this push is the last stage of `/polaris-deploy` — its audit already ran in the worktree).
 2. `git push origin main`.
 3. For each worktree merged in this session (plus any `worktree-*` branch already fully merged,
-   `git branch --merged main` — but under `/polaris-deploy` only the chat's own): refuse if a lock file is present; check for directory junctions;
-   `podman compose -p polaris-<slug> down -v` if a stack lingers; `git worktree remove <path>`;
+   `git branch --merged main` — but under `/polaris-deploy` only the chat's own): refuse unless
+   `scripts/worktree-keep.mjs <path>` prints `remove` (a lock, a `PARENT`, or a chat filed
+   under the folder all mean keep); check for directory junctions;
+   `podman compose -p polaris-<slug> down -v` if a stack lingers; `git worktree unlock <path>`
+   (a legacy EnterWorktree lock; ignore "is not locked"); `git worktree remove <path>`;
    `git branch -d worktree-<slug>`. Report what was removed.
 
 ## Why it is shaped this way

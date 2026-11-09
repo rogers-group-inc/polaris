@@ -20,7 +20,8 @@ git worktree list --porcelain
 For every entry except the main checkout, collect: path, branch, whether `WORKLOCK` or
 `DEVLOCK` exists at the path (and each lock's first line + file mtime), `git -C <path> status
 --porcelain` (dirty?), `git rev-list --count main..<branch>` (commits ahead), and
-`git -C <path> log -1 --format=%s`.
+`git -C <path> log -1 --format=%s`. Then `node .claude/skills/polaris-worktree-workflow/scripts/worktree-keep.mjs`
+(no arguments: every worktree) for the PARENT markers and the chats filed under each folder.
 
 ## 2. Present the menu
 
@@ -35,6 +36,19 @@ Locked (skipped):
   - worktree-mobile-charts       DEVLOCK   3d old   "… dev stack polaris-mobile-charts pg=5433 app=3100"
 ```
 
+A **parent** worktree (`PARENT` at its root) is never in "Ready to merge" — it has no commits
+and is a large project's home. List it in its own group with its batches (`<parent>-<batch>`)
+beneath; each batch is offered like any other worktree and merges straight to `main`:
+
+```
+Projects (parents are never merged or removed):
+  code-quality — "code-quality review" (2 chats filed here)
+    3. worktree-code-quality-dup-helpers   2 ahead   clean   "…"
+```
+
+A worktree with chats filed under it but no lock may be merged; it is kept at push time
+(push-protocol.md § 3) — say so beside it in the menu.
+
 A lock that is days old on a worktree whose chat has ended is stale; say so. The user decides
 whether to clear it (`rm <path>/WORKLOCK`) and re-run the menu. Never delete a lock on your own.
 
@@ -48,8 +62,9 @@ For each selected worktree:
 1. If dirty: commit the pending changes **in that worktree** (`git -C <path> add -A && git -C
    <path> commit -m "wip: pending changes at merge time"`), so nothing is lost and the merge
    is of a real commit.
-2. From the main checkout, on `main` (a worktree-isolated session must `ExitWorktree` with
-   action keep first — its Bash guard refuses git commands aimed at the main checkout):
+2. In the main checkout, on `main` (`git -C <main-checkout> …`; a legacy `EnterWorktree`
+   session must `ExitWorktree` with action keep first — its Bash guard refuses git aimed at the
+   main checkout):
    `git merge --no-ff worktree-<slug>` (a merge commit per
    worktree keeps each unit of work identifiable in history; use the branch's own subjects in
    the merge message body).

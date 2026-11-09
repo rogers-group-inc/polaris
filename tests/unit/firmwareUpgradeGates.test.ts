@@ -319,17 +319,21 @@ describe("the runner", () => {
   });
 });
 
-// Real timers on purpose (the recovery wait IS the behaviour under test), so
-// each case spends 1–2 s of wall clock; under a loaded full-suite run that
-// overran the default 5 s three times on 2026-11-06 while passing alone. The
-// 20 s budget is for load, not for a hang: the cases still assert their order.
+// Real timers on purpose (the recovery wait IS the behaviour under test). The
+// cases used to sleep a fixed 600–700 ms and then assert, which a loaded
+// full-suite run could not meet (a 400 ms cap + the setImmediate runner + 10 ms
+// polls): five assertion failures 10-28 … 11-06, every one passing alone. They
+// now wait for the run's terminal Event — the runner's LAST step, after the
+// hold is released and the run log is written — so load only makes them slower.
 describe("the runner keeps the maintenance window open until monitoring answers", { timeout: 20_000 }, () => {
   // A FortiAP's web UI answered the engine while its SNMP agent was still
   // silent, so the hold ended and the misses landed just outside it. The run
   // now waits for the first SUCCESSFUL monitor sample after the engine is done.
   const fast = { timeouts: { recoveryWaitMs: 400, recoveryPollMs: 10 } };
   const startFast = () => startFirmwareUpgrade({ assetId: "asset-1", imageId: "img-primary", actor: "tester", overrides: fast });
-  const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+  const TERMINAL = new Set(["firmware.upgrade_succeeded", "firmware.upgrade_unverified", "firmware.upgrade_failed"]);
+  const terminalEvents = () => h.logEvent.mock.calls.filter((c) => TERMINAL.has((c[0] as { action: string }).action)).length;
+  const settle = (runs = 1) => vi.waitFor(() => expect(terminalEvents()).toBe(runs), { timeout: 15_000, interval: 10 });
 
   it("holds until the first successful sample, then releases before the success Event", async () => {
     h.state.hold = { expiresAt: new Date(Date.now() + 60_000) };
@@ -359,7 +363,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     const { prisma } = await import("../../src/db.js");
     const t0 = Date.now();
     await startFast();
-    await settle(700);
+    await settle();
     expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(1);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(400);
     expect(h.state.monitorPolls).toBeGreaterThan(3);
@@ -379,7 +383,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     h.state.monitorPolls = 0;
     h.state.engineOutcome = { outcome: "failed", error: "boom" };
     await startFast();
-    await settle();
+    await settle(2);
     expect(h.state.monitorPolls).toBe(0);
     expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(2);
   });
@@ -388,7 +392,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     h.state.hold = null;
     h.state.answerOnPoll = 0;
     await startFast();
-    await settle(100);
+    await settle();
     expect(h.state.monitorPolls).toBe(0);
     expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
   });
