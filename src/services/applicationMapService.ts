@@ -44,6 +44,7 @@ import { reverse as dnsReverse } from "node:dns/promises";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { isPrivateIpv4 } from "../utils/cidr.js";
+import { withTimeout } from "../utils/timeout.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js";
 import { sanitizePositions, type TopologyPositions } from "./topologyLayoutService.js";
@@ -500,10 +501,7 @@ export async function resolvePtrNames(
   await Promise.all(batch.map(async (ip) => {
     let name: string | null = null;
     try {
-      const names = await Promise.race([
-        lookup(ip),
-        new Promise<string[]>((resolve) => { setTimeout(() => resolve([]), PTR_LOOKUP_TIMEOUT_MS).unref?.(); }),
-      ]);
+      const names = await withTimeout(lookup(ip), PTR_LOOKUP_TIMEOUT_MS, "ptr lookup");
       name = (names && names[0]) ? String(names[0]).trim() || null : null;
     } catch {
       name = null; // NXDOMAIN / refused / timeout — negative-cache below
