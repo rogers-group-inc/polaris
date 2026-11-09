@@ -1250,6 +1250,11 @@ interface AlertRow {
    *  period ends. The widget pills it QUIET so a wallboard reader knows the
    *  silence is deliberate. */
   quietHeld: boolean;
+  /** Highest escalation tier that has SENT for this alert (business rule
+   *  145), 1-based; null = never escalated. The widget pills it ESCALATED. */
+  escalationTier: number | null;
+  /** When the alert first escalated (tier 1's first send). */
+  escalatedAt: Date | null;
   /** FROZEN for planned work (business rule 16): "self" — the device is in a
    *  maintenance window; "upstream" — it is suppressed behind one. Null
    *  otherwise. A frozen alert stays listed (the problem predates the work)
@@ -1328,6 +1333,7 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
       dependencyDown: true, dependencyBlame: true,
       testRun: true,
       quietHeldAt: true, quietSummarizedAt: true,
+      escalationTier: true, escalatedAt: true,
     },
     orderBy: { triggeredAt: "desc" },
   });
@@ -1363,6 +1369,8 @@ export async function getRecentAlerts(limit: number | null = 100, assetIds: stri
     dependencyUpstream: dependencyUpstreamOf(n.dependencyBlame),
     testRun: n.testRun === true,
     quietHeld: !!n.quietHeldAt && !n.quietSummarizedAt,
+    escalationTier: n.escalationTier ?? null,
+    escalatedAt: n.escalatedAt ?? null,
     maintenanceHold: (n.assetId && holds.get(n.assetId)) || null,
     tags: (n.assetId && tagsByAsset.get(n.assetId)) || [],
   }));

@@ -28,6 +28,7 @@
 
 import { spawn } from "node:child_process";
 import { reverse } from "node:dns/promises";
+import { withTimeout } from "./timeout.js";
 
 export interface TraceHop {
   ttl: number;
@@ -258,12 +259,10 @@ async function enrichRdns(hops: TraceHop[], budgetMs: number): Promise<void> {
   const ips = [...new Set(hops.map((h) => h.ip).filter((ip): ip is string => !!ip))];
   const names = new Map<string, string>();
   const deadline = Date.now() + budgetMs;
-  const withTimeout = <T>(p: Promise<T>, ms: number) =>
-    Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
   for (let i = 0; i < ips.length && Date.now() < deadline; i += 8) {
     await Promise.all(ips.slice(i, i + 8).map(async (ip) => {
       try {
-        const res = await withTimeout(reverse(ip), Math.min(1000, Math.max(1, deadline - Date.now())));
+        const res = await withTimeout(reverse(ip), Math.min(1000, Math.max(1, deadline - Date.now())), "rdns");
         if (res[0]) names.set(ip, res[0].replace(/\.$/, ""));
       } catch { /* no PTR, or out of time — blank */ }
     }));

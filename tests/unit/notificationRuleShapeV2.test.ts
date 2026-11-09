@@ -107,12 +107,9 @@ describe("normalizeRuleToV2 (stored rows)", () => {
       actions: null,
     });
     expect(v2.reset).toEqual({ mode: "auto" });
-    // The audit Event rides along: a pre-v2 row wrote notification.triggered
-    // before the Event became a removable action, and un-migrated rows must
-    // keep doing so rather than silently stop auditing.
+    // No audit-Event action: the engine writes the Event itself (rule 146).
     expect(v2.actions).toEqual([
       { type: "notify", channelId: "ch1", addresses: ["a@example.com"], emailComposition: { subjectTemplate: "s" } },
-      { type: "event" },
     ]);
     expect(v2.escalation).toBeNull();
   });
@@ -208,11 +205,8 @@ describe("ruleInputSchema (v2 input with legacy folding)", () => {
       emailComposition: { subjectTemplate: "s" },
     });
     expect(parsed.reset).toEqual({ mode: "timed", afterSec: 1800 });
-    // Same reasoning as the stored-row case: a legacy body carried an implicit
-    // audit Event, so folding it forward has to keep one.
     expect(parsed.actions).toEqual([
       { type: "notify", channelId: "ch1", emailComposition: { subjectTemplate: "s" } },
-      { type: "event" },
     ]);
   });
 
@@ -429,7 +423,8 @@ describe("buildSchemaCatalog v2 additions", () => {
     expect(cat.stateFieldDimensions.ifOperStatus).toEqual(["ifNamePattern"]);
     expect(cat.stateFieldDimensions.monitorStatus).toBeUndefined();
     expect(cat.dimensionNouns.ifNamePattern).toBe("interface");
-    expect(cat.actionTypes.map((a: { type: string }) => a.type)).toEqual(["notify", "api_call", "script", "event", "reboot"]);
+    // No "event": the audit Event is the engine's own (business rule 146).
+    expect(cat.actionTypes.map((a: { type: string }) => a.type)).toEqual(["notify", "api_call", "script", "reboot"]);
     // Business rule 115(c): the reboot action is gated on the reboot grant.
     expect(cat.actionTypes.find((a: { type: string }) => a.type === "reboot")).toMatchObject({ permission: "assets" });
     expect(cat.rebootMeta).toMatchObject({ whenOptions: ["now", "at"], defaultAt: "02:00", defaultMinGapHours: 24 });
@@ -844,18 +839,26 @@ describe("allRuleActionRefs / ruleHasAnyEscalation / escalationChainsForSeverity
 // engine without an event action stops auditing, and those Events feed the
 // Events tab, the baseline event-trigger automations and the syslog/SFTP
 // archivers. These pin the three ways a rule can arrive without one.
-describe("audit-Event action", () => {
+// Business rule 146 retired the action: the engine writes the audit Event on
+// every fire itself. The member is still ACCEPTED (stored rules, exports, API
+// clients) but stripped from the lists that fire and reset, and never added.
+describe("retired audit-Event action (business rule 146)", () => {
   const METRIC = { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90 } as const;
   const EVENT_TRIGGER = { type: "event", actionPattern: "discovery.*" } as const;
 
-  it("adds it to a body that omits actions entirely", () => {
+  it("never adds it to a body that omits actions", () => {
     const parsed = ruleInputSchema.parse({ name: "r", trigger: METRIC });
-    expect(parsed.actions).toEqual([{ type: "event" }]);
+    expect(parsed.actions).toEqual([]);
   });
 
-  it("respects an EXPLICIT empty action list as the opt-out", () => {
-    const parsed = ruleInputSchema.parse({ name: "r", trigger: METRIC, actions: [] });
-    expect(parsed.actions).toEqual([]);
+  it("strips it from the fire, band and reset lists of a posted rule", () => {
+    const parsed = ruleInputSchema.parse({
+      name: "r", trigger: METRIC,
+      actions: [{ type: "event" }, { type: "api_call", method: "POST", url: "https://example.com/x" }],
+      resetActions: [{ type: "event" }],
+    });
+    expect(parsed.actions.map((a) => a.type)).toEqual(["api_call"]);
+    expect(parsed.resetActions).toBeNull();
   });
 
   it("leaves an explicit action list alone", () => {
@@ -866,16 +869,14 @@ describe("audit-Event action", () => {
     expect(parsed.actions.map((a) => a.type)).toEqual(["api_call"]);
   });
 
-  it("does NOT add it to an event-triggered rule", () => {
-    // The engine's event tail writes no Events by design — an automation
-    // driven BY Events emitting one would feed itself.
+  it("does not add it to an event-triggered rule either", () => {
     const parsed = ruleInputSchema.parse({ name: "r", trigger: EVENT_TRIGGER });
     expect(parsed.actions).toEqual([]);
   });
 
-  it("adds it when folding a pre-v2 stored row forward", () => {
+  it("does not add it when folding a pre-v2 stored row forward", () => {
     const v2 = normalizeRuleToV2({ trigger: METRIC, clearBehavior: "manual", targets: [], actions: null });
-    expect(v2.actions).toEqual([{ type: "event" }]);
+    expect(v2.actions).toEqual([]);
   });
 
   it("does NOT add it to a pre-v2 event-triggered stored row", () => {

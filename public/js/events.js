@@ -778,6 +778,380 @@ function openEventAssetTrigger(trigger) {
     openEventAssetTrigger(trigger);
   });
 
+  // The card verbs. Delegated from the body and bound once (CQ-F042): a
+  // pending list can run to thousands of cards and every verb repaints the
+  // whole list, so binding a dozen listeners per card on each paint cost a
+  // full-body walk per verb kind. Each handler gets the element the selector
+  // matched, the same element its per-card listener used to be bound to.
+
+  // Whole-swap verbs: adopt (optionally merging the old gate's record into
+  // the new one) or dismiss every network the swap raised.
+  async function onChassisSwapAction(el) {
+    var card = el.closest(".conflict-card");
+    var payload = {
+      oldSerial: el.getAttribute("data-old-serial"),
+      newSerial: el.getAttribute("data-new-serial"),
+    };
+    el.disabled = true;
+    try {
+      if (el.getAttribute("data-chassis-swap-action") === "adopt") {
+        var mergeBox = card && card.querySelector("[data-chassis-swap-merge]");
+        payload.mergeOldAsset = !!(mergeBox && mergeBox.checked);
+        var out = await api.conflicts.adoptChassisSwap(payload);
+        var msg = "New FortiGate chassis adopted for " + out.adopted + " network" + (out.adopted !== 1 ? "s" : "");
+        if (out.mergedAssetId) msg += " — old gate merged into the new one";
+        else if (out.mergeSkipped) msg += " — old gate not merged (" + CHASSIS_MERGE_SKIPPED[out.mergeSkipped] + ")";
+        showToast(msg);
+      } else {
+        var rej = await api.conflicts.rejectChassisSwap(payload);
+        showToast("Dismissed for " + rej.rejected + " network" + (rej.rejected !== 1 ? "s" : "") + " — this chassis change won't be reported again");
+      }
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // Per-row winner pickers (asset conflicts only). Toggling a pill updates
+  // the winning side's highlight in the same row.
+  function onConflictWinner(el) {
+    var row = el.closest("tr");
+    if (!row) return;
+    var side = el.getAttribute("data-conflict-winner");
+    row.setAttribute("data-winner", side);
+    row.querySelectorAll("[data-conflict-winner]").forEach(function (b) {
+      b.classList.toggle("is-active", b.getAttribute("data-conflict-winner") === side);
+    });
+  }
+
+  // Duplicate-IP conflicts: per-asset "give this one a new address". The
+  // input lives in the same row; Enter submits it like the button does.
+  async function onDupIpApply(el) {
+    var conflictId = el.getAttribute("data-conflict-id");
+    var assetId = el.getAttribute("data-asset-id");
+    var row = el.closest("tr");
+    var input = row ? row.querySelector("[data-dupip-input]") : null;
+    var value = input ? input.value.trim() : "";
+    if (!value) {
+      showToast("Enter the new IP address for this asset", "error");
+      if (input) input.focus();
+      return;
+    }
+    el.disabled = true;
+    if (input) input.disabled = true;
+    try {
+      var out = await api.conflicts.reassignIp(conflictId, { assetId: assetId, ipAddress: value });
+      showToast(out && out.resolved
+        ? "Address updated — duplicate resolved"
+        : "Address updated — " + ((out && out.remaining) || 0) + " assets still share the old address");
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+      if (input) input.disabled = false;
+    }
+  }
+
+  // Duplicate-IP conflicts, offline variant (rule 40(j)): blank the row's
+  // address; discovery fills it when the device turns up elsewhere.
+  async function onDupIpClear(el) {
+    var conflictId = el.getAttribute("data-conflict-id");
+    var assetId = el.getAttribute("data-asset-id");
+    el.disabled = true;
+    try {
+      var out = await api.conflicts.clearIp(conflictId, { assetId: assetId });
+      showToast(out && out.resolved
+        ? "Address cleared — duplicate resolved; discovery will fill in the new address"
+        : "Address cleared — " + ((out && out.remaining) || 0) + " assets still share the old address");
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // Duplicate-IP conflicts, the other cause: one device recorded twice.
+  // "Merge into this" keeps the clicked row and absorbs the rest through the
+  // operator merge engine. Destructive and irreversible, so the confirm
+  // NAMES every record that will be deleted rather than counting them, and
+  // points at the asset page's Merge modal for per-field control.
+  // The duplicate-SERIAL card (business rule 83) reaches the same endpoint
+  // with the same body — one device recorded twice is one device recorded
+  // twice, whether the give-away was the address or the serial — so it
+  // shares this wiring and only the wording differs.
+  async function onDupMerge(el) {
+    var conflictId = el.getAttribute("data-conflict-id");
+    var survivorId = el.getAttribute("data-asset-id");
+    var bySerial = el.hasAttribute("data-dupserial-merge");
+    var rowSelector = bySerial ? "[data-dupserial-merge]" : "[data-dupip-merge]";
+    var subject = bySerial ? "serial number" : "address";
+    var card = el.closest(".conflict-card");
+    var rows = card ? Array.prototype.slice.call(card.querySelectorAll(rowSelector)) : [];
+    var others = rows
+      .map(function (b) {
+        return {
+          id: b.getAttribute("data-asset-id"),
+          label: (b.closest("tr") || {}).firstElementChild
+            ? b.closest("tr").firstElementChild.textContent.trim()
+            : b.getAttribute("data-asset-id"),
+        };
+      })
+      .filter(function (r) { return r.id && r.id !== survivorId; });
+    if (!others.length) { showToast("Nothing to merge — only one asset on this " + subject, "error"); return; }
+    var survivorLabel = (el.closest("tr") && el.closest("tr").firstElementChild)
+      ? el.closest("tr").firstElementChild.textContent.trim()
+      : survivorId;
+
+    // showConfirm renders with white-space:pre-wrap, so the line breaks
+    // below survive into the dialog.
+    var msg = [
+      'Merge into "' + survivorLabel + '"?',
+      "",
+      "These records will be absorbed and then DELETED:",
+      others.map(function (o) { return "  • " + o.label; }).join("\n"),
+      "",
+      'Their sources, MACs, IP history, sightings and dependency links move to "' +
+        survivorLabel + '"; their monitoring history is permanently lost. ' +
+        "Only do this if they are the same physical device.",
+      "",
+      "For per-field control over which values survive, use Merge on the asset's Sources tab instead.",
+    ].join("\n");
+    var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
+    if (!ok) return;
+
+    el.disabled = true;
+    try {
+      var out = await api.conflicts.merge(conflictId, {
+        survivorAssetId: survivorId,
+        absorbAssetIds: others.map(function (o) { return o.id; }),
+      });
+      showToast(out && out.resolved
+        ? "Merged — duplicate resolved, moved " + ((out && out.movedSources) || 0) + " source(s)"
+        : "Merged — " + ((out && out.remaining) || 0) + " assets still share the " + subject);
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // Duplicate-reservation Keep (business rule 139): confirm which bindings
+  // go, then release them through the conflict.
+  async function onDupResKeep(el) {
+    var conflictId = el.getAttribute("data-conflict-id");
+    var keepId = el.getAttribute("data-reservation-id");
+    var card = el.closest(".conflict-card");
+    var others = (card ? Array.prototype.slice.call(card.querySelectorAll("[data-dupres-keep]")) : [])
+      .filter(function (b) { return b.getAttribute("data-reservation-id") !== keepId; })
+      .map(function (b) { return b.getAttribute("data-label"); });
+    var msg = [
+      'Keep ' + el.getAttribute("data-label") + '?',
+      "",
+      "These will be RELEASED:",
+      others.map(function (o) { return "  • " + o; }).join("\n"),
+      "",
+      "A released reservation is deleted from the FortiGate, and a lease revoked, when DHCP Push is on for " +
+        "its integration; the device stops being linked to the address.",
+    ].join("\n");
+    var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
+    if (!ok) return;
+    el.disabled = true;
+    try {
+      var out = await api.conflicts.keepReservation(conflictId, { reservationId: keepId });
+      showToast(out && out.resolved
+        ? "Released " + ((out && out.released && out.released.length) || 0) + " binding(s)"
+        : ((out && out.failed && out.failed.length) || 0) + " release(s) failed — the conflict stays open", out && out.resolved ? undefined : "error");
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // Duplicate-reservation Release / Revoke lease: just this one binding.
+  async function onDupResRelease(el) {
+    var isLease = el.getAttribute("data-lease") === "1";
+    var msg = (isLease ? "Revoke the " : "Release the ") + el.getAttribute("data-label") + "?\n\n" +
+      (isLease
+        ? "The lease is revoked on the FortiGate when DHCP Push is on for its integration; the device asks for a new address."
+        : "The reservation is deleted from the FortiGate when DHCP Push is on for its integration.") +
+      " The device stops being linked to the address.";
+    var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
+    if (!ok) return;
+    el.disabled = true;
+    try {
+      var out = await api.conflicts.releaseReservation(el.getAttribute("data-conflict-id"), { reservationId: el.getAttribute("data-reservation-id") });
+      showToast((isLease ? "Lease revoked" : "Reservation released") + (out && out.resolved ? " — conflict resolved" : ""));
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // The network opens its slide-in at the address, in place over this
+  // panel. (The FortiGate is an asset-name trigger, wired above.)
+  function onDupResNetworkLink(el, e) {
+    e.preventDefault();
+    if (typeof PolarisPanels === "undefined") return;
+    PolarisPanels.openNetwork(el.getAttribute("data-subnet-id"), {
+      focusIp: el.getAttribute("data-ip") || undefined,
+      subnetCidr: el.getAttribute("data-cidr") || undefined,
+    });
+  }
+
+  // Duplicate-IP / duplicate-serial "Review & merge" — the same merge
+  // engine the row verb uses, reached through the full comparison modal so
+  // the operator sees polling history, sources and dependency edges and
+  // picks per-field winners before confirming. The modal lives in
+  // asset-merge-modal.js, which this page loads for exactly this button.
+  //
+  // It merges ASSETS, not the conflict. POST /assets/:id/merge settles the
+  // card it resolved before it responds: the duplicate-serial card is
+  // closed (awaited — so the reload below no longer lists it), the
+  // duplicate-ip card is re-evaluated fire-and-forget, so a duplicate-ip
+  // card can still show for a moment until that reconcile lands. The
+  // sweeps remain the backstop for both.
+  function onDupReview(el) {
+    var thisId = el.getAttribute("data-asset-id");
+    var otherId = el.getAttribute("data-other-id");
+    if (!thisId || !otherId) {
+      showToast("This conflict is missing an asset reference — use the row actions instead", "error");
+      return;
+    }
+    if (typeof openAssetMergeModal !== "function") {
+      showToast("Merge is unavailable on this page — open the asset's Sources tab", "error");
+      return;
+    }
+    openAssetMergeModal(thisId, otherId, {
+      onMerged: async function () {
+        var scrollTop = body.scrollTop;
+        await loadConflicts(true);
+        body.scrollTop = scrollTop;
+        refreshBadge();
+      },
+    });
+  }
+
+  // Chassis-replacement: load the per-address diff on demand. It is a
+  // separate read because discovery syncs subnets in Phase 1 and
+  // reservations in Phases 3–5, so it cannot be snapshotted at raise time
+  // without comparing the old chassis against itself.
+  async function onChassisDiff(el) {
+    var id = el.getAttribute("data-chassis-diff");
+    var panel = body.querySelector('[data-chassis-diff-panel="' + id + '"]');
+    if (!panel) return;
+    if (panel.innerHTML) { panel.innerHTML = ""; el.textContent = "Review reservations"; return; }
+    el.disabled = true;
+    try {
+      var res = await api.conflicts.chassisDiff(id);
+      panel.innerHTML = renderChassisDiffPanel(id, res.lines || []);
+      el.textContent = "Hide reservations";
+      bindChassisMigrate(body, panel);
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      el.disabled = false;
+    }
+  }
+
+  // Accept / reject / merge.
+  async function onConflictAction(el) {
+    var id = el.getAttribute("data-conflict-id");
+    var action = el.getAttribute("data-conflict-action");
+    el.disabled = true;
+    try {
+      var kind = el.getAttribute("data-conflict-kind");
+      if (action === "accept") {
+        await api.conflicts.accept(id);
+        showToast(kind === "subnet"
+          ? "New FortiGate chassis adopted for this network"
+          : kind === "decommissioned-agent"
+            ? "Asset reactivated — archived thumbprint reinstated"
+            : "Conflict accepted — discovered values applied");
+      } else if (action === "merge") {
+        var card = el.closest(".conflict-card");
+        var fieldWinners = {};
+        if (card) {
+          card.querySelectorAll("tr[data-winner][data-field]").forEach(function (row) {
+            var field = row.getAttribute("data-field");
+            var winner = row.getAttribute("data-winner");
+            if (field && (winner === "existing" || winner === "proposed")) {
+              fieldWinners[field] = winner;
+            }
+          });
+        }
+        await api.conflicts.merge(id, { fieldWinners: fieldWinners });
+        showToast("Conflict merged with selected values");
+      } else {
+        await api.conflicts.reject(id);
+        showToast(kind === "subnet"
+          ? "Dismissed — this chassis change won't be reported again"
+          : kind === "contested-serial"
+            ? "Acknowledged — this pair of gates won't be reported again"
+            : "Conflict rejected — existing values kept");
+      }
+      var scrollTop = body.scrollTop;
+      await loadConflicts(true);
+      body.scrollTop = scrollTop;
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  var CARD_ACTIONS = [
+    ["[data-chassis-swap-action]", onChassisSwapAction],
+    ["[data-conflict-winner]", onConflictWinner],
+    ["[data-dupip-apply]", onDupIpApply],
+    ["[data-dupip-clear]", onDupIpClear],
+    ["[data-dupip-merge], [data-dupserial-merge]", onDupMerge],
+    ["[data-dupres-keep]", onDupResKeep],
+    ["[data-dupres-release]", onDupResRelease],
+    [".dupres-network-link", onDupResNetworkLink],
+    ["[data-dupip-review], [data-dupserial-review]", onDupReview],
+    ["[data-chassis-diff]", onChassisDiff],
+    ["[data-conflict-action]", onConflictAction],
+  ];
+  body.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || typeof t.closest !== "function") return;
+    for (var i = 0; i < CARD_ACTIONS.length; i++) {
+      var el = t.closest(CARD_ACTIONS[i][0]);
+      if (el && body.contains(el)) { CARD_ACTIONS[i][1](el, e); return; }
+    }
+  });
+  // Enter in a duplicate-IP row's address box submits it like the row's button.
+  body.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    var input = e.target && typeof e.target.closest === "function" ? e.target.closest("[data-dupip-input]") : null;
+    var row = input && body.contains(input) ? input.closest("tr") : null;
+    var btn = row ? row.querySelector("[data-dupip-apply]") : null;
+    if (!btn) return;
+    e.preventDefault();
+    onDupIpApply(btn);
+  });
+
   async function loadConflicts(silent) {
     if (status === null) return;
     if (!silent) body.innerHTML = '<div class="empty-state" style="padding:2rem">Loading...</div>';
@@ -799,370 +1173,6 @@ function openEventAssetTrigger(trigger) {
       body.innerHTML = items.map(function (it) {
         return it.swap ? renderChassisSwapCard(it.swap) : renderConflictCard(it.conflict);
       }).join("");
-
-      // Whole-swap verbs: adopt (optionally merging the old gate's record into
-      // the new one) or dismiss every network the swap raised.
-      body.querySelectorAll("[data-chassis-swap-action]").forEach(function (el) {
-        el.addEventListener("click", async function () {
-          var card = el.closest(".conflict-card");
-          var payload = {
-            oldSerial: el.getAttribute("data-old-serial"),
-            newSerial: el.getAttribute("data-new-serial"),
-          };
-          el.disabled = true;
-          try {
-            if (el.getAttribute("data-chassis-swap-action") === "adopt") {
-              var mergeBox = card && card.querySelector("[data-chassis-swap-merge]");
-              payload.mergeOldAsset = !!(mergeBox && mergeBox.checked);
-              var out = await api.conflicts.adoptChassisSwap(payload);
-              var msg = "New FortiGate chassis adopted for " + out.adopted + " network" + (out.adopted !== 1 ? "s" : "");
-              if (out.mergedAssetId) msg += " — old gate merged into the new one";
-              else if (out.mergeSkipped) msg += " — old gate not merged (" + CHASSIS_MERGE_SKIPPED[out.mergeSkipped] + ")";
-              showToast(msg);
-            } else {
-              var rej = await api.conflicts.rejectChassisSwap(payload);
-              showToast("Dismissed for " + rej.rejected + " network" + (rej.rejected !== 1 ? "s" : "") + " — this chassis change won't be reported again");
-            }
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
-
-      // Per-row winner pickers (asset conflicts only). Toggling a pill updates
-      // the winning side's highlight in the same row.
-      body.querySelectorAll("[data-conflict-winner]").forEach(function (el) {
-        el.addEventListener("click", function () {
-          var row = el.closest("tr");
-          if (!row) return;
-          var side = el.getAttribute("data-conflict-winner");
-          row.setAttribute("data-winner", side);
-          row.querySelectorAll("[data-conflict-winner]").forEach(function (b) {
-            b.classList.toggle("is-active", b.getAttribute("data-conflict-winner") === side);
-          });
-        });
-      });
-
-      // Duplicate-IP conflicts: per-asset "give this one a new address". The
-      // input lives in the same row; Enter submits it like the button does.
-      body.querySelectorAll("[data-dupip-apply]").forEach(function (el) {
-        var conflictId = el.getAttribute("data-conflict-id");
-        var assetId = el.getAttribute("data-asset-id");
-        var row = el.closest("tr");
-        var input = row ? row.querySelector("[data-dupip-input]") : null;
-        var apply = async function () {
-          var value = input ? input.value.trim() : "";
-          if (!value) {
-            showToast("Enter the new IP address for this asset", "error");
-            if (input) input.focus();
-            return;
-          }
-          el.disabled = true;
-          if (input) input.disabled = true;
-          try {
-            var out = await api.conflicts.reassignIp(conflictId, { assetId: assetId, ipAddress: value });
-            showToast(out && out.resolved
-              ? "Address updated — duplicate resolved"
-              : "Address updated — " + ((out && out.remaining) || 0) + " assets still share the old address");
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-            if (input) input.disabled = false;
-          }
-        };
-        el.addEventListener("click", apply);
-        if (input) {
-          input.addEventListener("keydown", function (e) {
-            if (e.key === "Enter") { e.preventDefault(); apply(); }
-          });
-        }
-      });
-
-      // Duplicate-IP conflicts, offline variant (rule 40(j)): blank the row's
-      // address; discovery fills it when the device turns up elsewhere.
-      body.querySelectorAll("[data-dupip-clear]").forEach(function (el) {
-        var conflictId = el.getAttribute("data-conflict-id");
-        var assetId = el.getAttribute("data-asset-id");
-        el.addEventListener("click", async function () {
-          el.disabled = true;
-          try {
-            var out = await api.conflicts.clearIp(conflictId, { assetId: assetId });
-            showToast(out && out.resolved
-              ? "Address cleared — duplicate resolved; discovery will fill in the new address"
-              : "Address cleared — " + ((out && out.remaining) || 0) + " assets still share the old address");
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
-
-      // Duplicate-IP conflicts, the other cause: one device recorded twice.
-      // "Merge into this" keeps the clicked row and absorbs the rest through the
-      // operator merge engine. Destructive and irreversible, so the confirm
-      // NAMES every record that will be deleted rather than counting them, and
-      // points at the asset page's Merge modal for per-field control.
-      // The duplicate-SERIAL card (business rule 83) reaches the same endpoint
-      // with the same body — one device recorded twice is one device recorded
-      // twice, whether the give-away was the address or the serial — so it
-      // shares this wiring and only the wording differs.
-      body.querySelectorAll("[data-dupip-merge], [data-dupserial-merge]").forEach(function (el) {
-        var conflictId = el.getAttribute("data-conflict-id");
-        var survivorId = el.getAttribute("data-asset-id");
-        var bySerial = el.hasAttribute("data-dupserial-merge");
-        var rowSelector = bySerial ? "[data-dupserial-merge]" : "[data-dupip-merge]";
-        var subject = bySerial ? "serial number" : "address";
-        el.addEventListener("click", async function () {
-          var card = el.closest(".conflict-card");
-          var rows = card ? Array.prototype.slice.call(card.querySelectorAll(rowSelector)) : [];
-          var others = rows
-            .map(function (b) {
-              return {
-                id: b.getAttribute("data-asset-id"),
-                label: (b.closest("tr") || {}).firstElementChild
-                  ? b.closest("tr").firstElementChild.textContent.trim()
-                  : b.getAttribute("data-asset-id"),
-              };
-            })
-            .filter(function (r) { return r.id && r.id !== survivorId; });
-          if (!others.length) { showToast("Nothing to merge — only one asset on this " + subject, "error"); return; }
-          var survivorLabel = (el.closest("tr") && el.closest("tr").firstElementChild)
-            ? el.closest("tr").firstElementChild.textContent.trim()
-            : survivorId;
-
-          // showConfirm renders with white-space:pre-wrap, so the line breaks
-          // below survive into the dialog.
-          var msg = [
-            'Merge into "' + survivorLabel + '"?',
-            "",
-            "These records will be absorbed and then DELETED:",
-            others.map(function (o) { return "  • " + o.label; }).join("\n"),
-            "",
-            'Their sources, MACs, IP history, sightings and dependency links move to "' +
-              survivorLabel + '"; their monitoring history is permanently lost. ' +
-              "Only do this if they are the same physical device.",
-            "",
-            "For per-field control over which values survive, use Merge on the asset's Sources tab instead.",
-          ].join("\n");
-          var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
-          if (!ok) return;
-
-          el.disabled = true;
-          try {
-            var out = await api.conflicts.merge(conflictId, {
-              survivorAssetId: survivorId,
-              absorbAssetIds: others.map(function (o) { return o.id; }),
-            });
-            showToast(out && out.resolved
-              ? "Merged — duplicate resolved, moved " + ((out && out.movedSources) || 0) + " source(s)"
-              : "Merged — " + ((out && out.remaining) || 0) + " assets still share the " + subject);
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
-
-      // Duplicate-reservation Keep (business rule 139): confirm which bindings
-      // go, then release them through the conflict.
-      body.querySelectorAll("[data-dupres-keep]").forEach(function (el) {
-        var conflictId = el.getAttribute("data-conflict-id");
-        var keepId = el.getAttribute("data-reservation-id");
-        el.addEventListener("click", async function () {
-          var card = el.closest(".conflict-card");
-          var others = (card ? Array.prototype.slice.call(card.querySelectorAll("[data-dupres-keep]")) : [])
-            .filter(function (b) { return b.getAttribute("data-reservation-id") !== keepId; })
-            .map(function (b) { return b.getAttribute("data-label"); });
-          var msg = [
-            'Keep ' + el.getAttribute("data-label") + '?',
-            "",
-            "These will be RELEASED:",
-            others.map(function (o) { return "  • " + o; }).join("\n"),
-            "",
-            "A released reservation is deleted from the FortiGate, and a lease revoked, when DHCP Push is on for " +
-              "its integration; the device stops being linked to the address.",
-          ].join("\n");
-          var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
-          if (!ok) return;
-          el.disabled = true;
-          try {
-            var out = await api.conflicts.keepReservation(conflictId, { reservationId: keepId });
-            showToast(out && out.resolved
-              ? "Released " + ((out && out.released && out.released.length) || 0) + " binding(s)"
-              : ((out && out.failed && out.failed.length) || 0) + " release(s) failed — the conflict stays open", out && out.resolved ? undefined : "error");
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
-
-      // Duplicate-reservation Release / Revoke lease: just this one binding.
-      body.querySelectorAll("[data-dupres-release]").forEach(function (el) {
-        el.addEventListener("click", async function () {
-          var isLease = el.getAttribute("data-lease") === "1";
-          var msg = (isLease ? "Revoke the " : "Release the ") + el.getAttribute("data-label") + "?\n\n" +
-            (isLease
-              ? "The lease is revoked on the FortiGate when DHCP Push is on for its integration; the device asks for a new address."
-              : "The reservation is deleted from the FortiGate when DHCP Push is on for its integration.") +
-            " The device stops being linked to the address.";
-          var ok = typeof showConfirm === "function" ? await showConfirm(msg) : window.confirm(msg);
-          if (!ok) return;
-          el.disabled = true;
-          try {
-            var out = await api.conflicts.releaseReservation(el.getAttribute("data-conflict-id"), { reservationId: el.getAttribute("data-reservation-id") });
-            showToast((isLease ? "Lease revoked" : "Reservation released") + (out && out.resolved ? " — conflict resolved" : ""));
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
-
-      // The network opens its slide-in at the address, in place over this
-      // panel. (The FortiGate is an asset-name trigger, wired above.)
-      body.querySelectorAll(".dupres-network-link").forEach(function (el) {
-        el.addEventListener("click", function (e) {
-          e.preventDefault();
-          if (typeof PolarisPanels === "undefined") return;
-          PolarisPanels.openNetwork(el.getAttribute("data-subnet-id"), {
-            focusIp: el.getAttribute("data-ip") || undefined,
-            subnetCidr: el.getAttribute("data-cidr") || undefined,
-          });
-        });
-      });
-
-      // Duplicate-IP / duplicate-serial "Review & merge" — the same merge
-      // engine the row verb uses, reached through the full comparison modal so
-      // the operator sees polling history, sources and dependency edges and
-      // picks per-field winners before confirming. The modal lives in
-      // asset-merge-modal.js, which this page loads for exactly this button.
-      //
-      // It merges ASSETS, not the conflict. POST /assets/:id/merge settles the
-      // card it resolved before it responds: the duplicate-serial card is
-      // closed (awaited — so the reload below no longer lists it), the
-      // duplicate-ip card is re-evaluated fire-and-forget, so a duplicate-ip
-      // card can still show for a moment until that reconcile lands. The
-      // sweeps remain the backstop for both.
-      body.querySelectorAll("[data-dupip-review], [data-dupserial-review]").forEach(function (el) {
-        el.addEventListener("click", function () {
-          var thisId = el.getAttribute("data-asset-id");
-          var otherId = el.getAttribute("data-other-id");
-          if (!thisId || !otherId) {
-            showToast("This conflict is missing an asset reference — use the row actions instead", "error");
-            return;
-          }
-          if (typeof openAssetMergeModal !== "function") {
-            showToast("Merge is unavailable on this page — open the asset's Sources tab", "error");
-            return;
-          }
-          openAssetMergeModal(thisId, otherId, {
-            onMerged: async function () {
-              var scrollTop = body.scrollTop;
-              await loadConflicts(true);
-              body.scrollTop = scrollTop;
-              refreshBadge();
-            },
-          });
-        });
-      });
-
-      // Chassis-replacement: load the per-address diff on demand. It is a
-      // separate read because discovery syncs subnets in Phase 1 and
-      // reservations in Phases 3–5, so it cannot be snapshotted at raise time
-      // without comparing the old chassis against itself.
-      body.querySelectorAll("[data-chassis-diff]").forEach(function (el) {
-        el.addEventListener("click", async function () {
-          var id = el.getAttribute("data-chassis-diff");
-          var panel = body.querySelector('[data-chassis-diff-panel="' + id + '"]');
-          if (!panel) return;
-          if (panel.innerHTML) { panel.innerHTML = ""; el.textContent = "Review reservations"; return; }
-          el.disabled = true;
-          try {
-            var res = await api.conflicts.chassisDiff(id);
-            panel.innerHTML = renderChassisDiffPanel(id, res.lines || []);
-            el.textContent = "Hide reservations";
-            bindChassisMigrate(body, panel);
-          } catch (err) {
-            showToast(err.message, "error");
-          } finally {
-            el.disabled = false;
-          }
-        });
-      });
-
-      // Bind accept/reject/merge buttons
-      body.querySelectorAll("[data-conflict-action]").forEach(function (el) {
-        el.addEventListener("click", async function () {
-          var id = el.getAttribute("data-conflict-id");
-          var action = el.getAttribute("data-conflict-action");
-          el.disabled = true;
-          try {
-            var kind = el.getAttribute("data-conflict-kind");
-            if (action === "accept") {
-              await api.conflicts.accept(id);
-              showToast(kind === "subnet"
-                ? "New FortiGate chassis adopted for this network"
-                : kind === "decommissioned-agent"
-                  ? "Asset reactivated — archived thumbprint reinstated"
-                  : "Conflict accepted — discovered values applied");
-            } else if (action === "merge") {
-              var card = el.closest(".conflict-card");
-              var fieldWinners = {};
-              if (card) {
-                card.querySelectorAll("tr[data-winner][data-field]").forEach(function (row) {
-                  var field = row.getAttribute("data-field");
-                  var winner = row.getAttribute("data-winner");
-                  if (field && (winner === "existing" || winner === "proposed")) {
-                    fieldWinners[field] = winner;
-                  }
-                });
-              }
-              await api.conflicts.merge(id, { fieldWinners: fieldWinners });
-              showToast("Conflict merged with selected values");
-            } else {
-              await api.conflicts.reject(id);
-              showToast(kind === "subnet"
-                ? "Dismissed — this chassis change won't be reported again"
-                : kind === "contested-serial"
-                  ? "Acknowledged — this pair of gates won't be reported again"
-                  : "Conflict rejected — existing values kept");
-            }
-            var scrollTop = body.scrollTop;
-            await loadConflicts(true);
-            body.scrollTop = scrollTop;
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
     } catch (err) {
       body.innerHTML = '<div class="empty-state" style="padding:2rem;color:var(--color-danger)">' + escapeHtml(err.message) + '</div>';
     }
@@ -2304,6 +2314,81 @@ function openEventAssetTrigger(trigger) {
   if (filterSel) filterSel.addEventListener("change", loadAlerts);
   if (statusSel) statusSel.addEventListener("change", loadAlerts);
 
+  // The push-queue and stale-reservation card verbs, delegated from the body
+  // and bound once (CQ-F042): the list repaints after every verb, and the
+  // Conflicts view draws into this same body with its own (disjoint) verbs.
+  async function onPushQueueAction(el) {
+    var id = el.getAttribute("data-pq-id");
+    var action = el.getAttribute("data-pq-action");
+    var name = el.getAttribute("data-pq-name") || id;
+    el.disabled = true;
+    try {
+      if (action === "retry") {
+        var result = await api.reservations.retryPush(id);
+        var outcome = result && result.outcome;
+        var msg;
+        if (outcome === "synced") msg = "Pushed to FortiGate";
+        else if (outcome === "transient") msg = "FortiGate still unreachable — kept queued";
+        else if (outcome === "permanent") msg = "Push hit a permanent error — see reservation for details";
+        else if (outcome === "superseded") msg = "Another row already has this IP — release this one to free the queue";
+        else if (outcome === "cancelled") msg = "Subnet config changed — queue cleared, reservation kept as manual";
+        else msg = "Retry: " + (outcome || "no change");
+        showToast(msg, outcome === "synced" ? "success" : outcome === "transient" ? "info" : "error");
+      } else if (action === "free") {
+        var ok = await showConfirm("Release reservation " + name + "? If it was pushed to a FortiGate, the device entry will also be removed.");
+        if (!ok) { el.disabled = false; return; }
+        await api.reservations.release(id);
+        showToast("Reservation released");
+      }
+      await loadAlerts();
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  // Snooze / Free / Ignore / Un-ignore.
+  async function onStaleAction(el) {
+    var id = el.getAttribute("data-alert-id");
+    var action = el.getAttribute("data-alert-action");
+    var name = el.getAttribute("data-alert-name") || id;
+    el.disabled = true;
+    try {
+      if (action === "snooze") {
+        var r = await api.reservations.snoozeAlert(id);
+        showToast("Snoozed for " + r.daysAdded + " day" + (r.daysAdded === 1 ? "" : "s"));
+      } else if (action === "free") {
+        var ok = await showConfirm("Release reservation " + name + "? If it was pushed to a FortiGate, the device entry will also be removed.");
+        if (!ok) { el.disabled = false; return; }
+        await api.reservations.release(id);
+        showToast("Reservation released");
+      } else if (action === "ignore") {
+        var ok2 = await showConfirm("Permanently ignore stale alerts for " + name + "? The row will never appear in the Alerts panel again until an admin un-ignores it. The reservation itself stays active.");
+        if (!ok2) { el.disabled = false; return; }
+        await api.reservations.ignoreAlert(id);
+        showToast("Alert ignored");
+      } else if (action === "unignore") {
+        await api.reservations.unignoreAlert(id);
+        showToast("Alert un-ignored");
+      }
+      await loadAlerts();
+      refreshBadge();
+    } catch (err) {
+      showToast(err.message, "error");
+      el.disabled = false;
+    }
+  }
+
+  body.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t || typeof t.closest !== "function") return;
+    var el = t.closest("[data-pq-action]");
+    if (el && body.contains(el)) { onPushQueueAction(el); return; }
+    el = t.closest("[data-alert-action]");
+    if (el && body.contains(el)) onStaleAction(el);
+  });
+
   // Drag-resizable like every other slide-over; the width persists per user.
   // It keeps the old Conflict Review panel's key: the duplicate-IP conflict
   // card (six columns, two holding controls) is the widest thing in here, so
@@ -2337,38 +2422,6 @@ function openEventAssetTrigger(trigger) {
           return;
         }
         body.innerHTML = rows.map(renderPushQueueCard).join("");
-        body.querySelectorAll("[data-pq-action]").forEach(function (el) {
-          el.addEventListener("click", async function () {
-            var id = el.getAttribute("data-pq-id");
-            var action = el.getAttribute("data-pq-action");
-            var name = el.getAttribute("data-pq-name") || id;
-            el.disabled = true;
-            try {
-              if (action === "retry") {
-                var result = await api.reservations.retryPush(id);
-                var outcome = result && result.outcome;
-                var msg;
-                if (outcome === "synced") msg = "Pushed to FortiGate";
-                else if (outcome === "transient") msg = "FortiGate still unreachable — kept queued";
-                else if (outcome === "permanent") msg = "Push hit a permanent error — see reservation for details";
-                else if (outcome === "superseded") msg = "Another row already has this IP — release this one to free the queue";
-                else if (outcome === "cancelled") msg = "Subnet config changed — queue cleared, reservation kept as manual";
-                else msg = "Retry: " + (outcome || "no change");
-                showToast(msg, outcome === "synced" ? "success" : outcome === "transient" ? "info" : "error");
-              } else if (action === "free") {
-                var ok = await showConfirm("Release reservation " + name + "? If it was pushed to a FortiGate, the device entry will also be removed.");
-                if (!ok) { el.disabled = false; return; }
-                await api.reservations.release(id);
-                showToast("Reservation released");
-              }
-              await loadAlerts();
-              refreshBadge();
-            } catch (err) {
-              showToast(err.message, "error");
-              el.disabled = false;
-            }
-          });
-        });
       } catch (err) {
         body.innerHTML = '<div class="empty-state" style="padding:2rem;color:var(--color-danger)">' + escapeHtml(err.message) + '</div>';
       }
@@ -2397,40 +2450,6 @@ function openEventAssetTrigger(trigger) {
       // reservation this caller created or whose network carries their tag.
       var canIgnore = typeof permAtLeast === "function" && permAtLeast("staleReservations", "write");
       body.innerHTML = alerts.map(function (a) { return renderAlertCard(a, settings, show, canIgnore && a.canEdit !== false); }).join("");
-
-      // Bind Snooze / Free / Ignore / Un-ignore buttons
-      body.querySelectorAll("[data-alert-action]").forEach(function (el) {
-        el.addEventListener("click", async function () {
-          var id = el.getAttribute("data-alert-id");
-          var action = el.getAttribute("data-alert-action");
-          var name = el.getAttribute("data-alert-name") || id;
-          el.disabled = true;
-          try {
-            if (action === "snooze") {
-              var r = await api.reservations.snoozeAlert(id);
-              showToast("Snoozed for " + r.daysAdded + " day" + (r.daysAdded === 1 ? "" : "s"));
-            } else if (action === "free") {
-              var ok = await showConfirm("Release reservation " + name + "? If it was pushed to a FortiGate, the device entry will also be removed.");
-              if (!ok) { el.disabled = false; return; }
-              await api.reservations.release(id);
-              showToast("Reservation released");
-            } else if (action === "ignore") {
-              var ok2 = await showConfirm("Permanently ignore stale alerts for " + name + "? The row will never appear in the Alerts panel again until an admin un-ignores it. The reservation itself stays active.");
-              if (!ok2) { el.disabled = false; return; }
-              await api.reservations.ignoreAlert(id);
-              showToast("Alert ignored");
-            } else if (action === "unignore") {
-              await api.reservations.unignoreAlert(id);
-              showToast("Alert un-ignored");
-            }
-            await loadAlerts();
-            refreshBadge();
-          } catch (err) {
-            showToast(err.message, "error");
-            el.disabled = false;
-          }
-        });
-      });
     } catch (err) {
       body.innerHTML = '<div class="empty-state" style="padding:2rem;color:var(--color-danger)">' + escapeHtml(err.message) + '</div>';
     }

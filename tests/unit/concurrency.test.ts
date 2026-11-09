@@ -45,6 +45,32 @@ describe("mapWithConcurrency", () => {
       }),
     ).rejects.toThrow("boom");
   });
+
+  it("starts no further items after the first rejection (in-flight ones finish)", async () => {
+    const started: number[] = [];
+    let finishedInFlight = false;
+    const p = mapWithConcurrency(Array.from({ length: 10 }, (_, i) => i), 2, async (n) => {
+      started.push(n);
+      if (n === 0) { await tick(); throw new Error("boom"); }
+      if (n === 1) { await new Promise((r) => setTimeout(r, 20)); finishedInFlight = true; }
+      return n;
+    });
+    await expect(p).rejects.toThrow("boom");
+    await new Promise((r) => setTimeout(r, 40));
+    // 0 failed and 1 was in flight; nothing after them was started.
+    expect(started).toEqual([0, 1]);
+    expect(finishedInFlight).toBe(true);
+  });
+
+  it("settle-all variant keeps going past a rejection", async () => {
+    const started: number[] = [];
+    await mapSettledWithConcurrency([0, 1, 2, 3], 2, async (n) => {
+      started.push(n);
+      if (n === 0) throw new Error("boom");
+      return n;
+    });
+    expect(started.sort()).toEqual([0, 1, 2, 3]);
+  });
 });
 
 describe("mapSettledWithConcurrency", () => {

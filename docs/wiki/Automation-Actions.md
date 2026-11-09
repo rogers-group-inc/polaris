@@ -51,10 +51,11 @@ email is sent" (the acknowledge link, charts, recipients) only exist once a
 real alert is delivered. Rows marked "Only on reminders" or "Only on
 escalation emails" are blank on the first send.
 
-> The **audit Event** is separate and *is* removable — a "Create an Event"
-> action row, present by default, with no config. It is a no-op on event and
-> change triggers, and flagged as such: an automation that wrote an Event on an
-> event trigger would feed its own trigger.
+> The **audit Event** is not an action. Every fire, every escalation and the
+> alert ending each write one on their own, and nothing turns that off
+> ([rule 146](Business-Rules#rule-146)). The one exception is an automation
+> triggered *by* events: its alerts write no fired event, because one would feed
+> its own trigger. The event that set it off is the record.
 
 ---
 
@@ -644,14 +645,37 @@ alert ended — it recovered, it timed out, or someone cleared it — and on an
 alert covering several devices or components it names the whole alert, not
 whichever one recovered last.
 
-### How the reset list follows your Notify actions
+### A reset Notify matches a trigger Notify
 
-Adding a Notify to the trigger list puts the same Notify in the **Reset
-Action** list, so the people told it broke are told it came back. A reset row
-follows its trigger Notify until you edit or remove it; from then on it is
-yours, and the list never adds a second copy beside it. Re-opening a saved
-automation keeps that: a reset Notify that still matches its trigger Notify
-carries on following it, and one you changed or removed stays as saved.
+Add a Notify to the **Reset Action** list with its **+ Add Action** button.
+By default it **matches** one of the trigger's Notify actions: it sends to the
+same channels and recipients, so the people told it broke are told it came
+back. A matched row shows no channel or recipient fields. **Resets** names the
+trigger action it answers for. When the trigger has several Notify actions,
+pick the one this row is for. A new row starts on one that no other reset row
+answers for. Matching is live: change the trigger Notify's recipients later
+and its reset follows, with nothing to re-save
+([rule 145](Business-Rules#rule-145)).
+
+Turn on **Customize** to choose the reset's channels and recipients yourself.
+The fields start as a copy of the trigger action's, and from then on the row
+sends what you set.
+
+Adding a Notify to the trigger list no longer adds one to the reset list; reset
+rows come only from the reset list's own button. If you remove the trigger
+Notify a matched row answers for, the row keeps sending what it last sent, as a
+customized copy.
+
+#### Resetting the escalation
+
+When the trigger action's severity has an
+[escalation chain](Automation-Escalation#escalation), a reset Notify also offers
+**Also reset the escalation**. With it on, each escalation tier that **actually
+sent** for this alert is told the alert ended. A tier the alert never reached is
+skipped, because nobody there heard about it. Each tier uses its own Notify
+actions unless you turn on **Customize** beside it, which starts from a copy of
+the tier's recipients. A tier is told once, however many reset actions ask for
+it.
 
 ---
 

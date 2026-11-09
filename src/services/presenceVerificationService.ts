@@ -34,6 +34,7 @@
  */
 
 import { chunkArray } from "../utils/chunk.js";
+import { mapWithConcurrency } from "../utils/concurrency.js";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
@@ -179,37 +180,30 @@ export async function runPresenceVerification(opts: {
   // ICMP fallback — bounded worker pool over the remainder.
   if (pingQueue.length > 0) {
     const deadline = startedAt + PASS_DEADLINE_MS;
-    let cursor = 0;
-    const worker = async (): Promise<void> => {
-      for (;;) {
-        if (opts.signal?.aborted) return;
-        const i = cursor++;
-        if (i >= pingQueue.length) return;
-        const a = pingQueue[i];
-        if (Date.now() > deadline) {
-          summary.pingSkippedDeadline++;
-          continue;
-        }
-        // DNS name first — the stored ipAddress on directory-discovered
-        // assets is frequently stale (DHCP churn the directory never sees).
-        const target = (a.dnsName || a.hostname || a.ipAddress || "").trim();
-        if (!target) {
-          summary.pingSkippedNoTarget++;
-          continue;
-        }
-        const r = await pingHost(target, PING_TIMEOUT_MS);
-        if (r.success) {
-          const data: Record<string, unknown> = {};
-          if (bumpLastSeen(data, a, new Date(), "ping")) updates.push({ id: a.id, data });
-          summary.viaPing++;
-        } else {
-          summary.pingUnreachable++;
-        }
+    // pingHost never rejects, so the fail-fast mapper never fails here; after
+    // an abort the remaining items return at once without counting.
+    await mapWithConcurrency(pingQueue, PING_CONCURRENCY, async (a) => {
+      if (opts.signal?.aborted) return;
+      if (Date.now() > deadline) {
+        summary.pingSkippedDeadline++;
+        return;
       }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(PING_CONCURRENCY, pingQueue.length) }, () => worker()),
-    );
+      // DNS name first — the stored ipAddress on directory-discovered
+      // assets is frequently stale (DHCP churn the directory never sees).
+      const target = (a.dnsName || a.hostname || a.ipAddress || "").trim();
+      if (!target) {
+        summary.pingSkippedNoTarget++;
+        return;
+      }
+      const r = await pingHost(target, PING_TIMEOUT_MS);
+      if (r.success) {
+        const data: Record<string, unknown> = {};
+        if (bumpLastSeen(data, a, new Date(), "ping")) updates.push({ id: a.id, data });
+        summary.viaPing++;
+      } else {
+        summary.pingUnreachable++;
+      }
+    });
   }
 
   for (const chunk of chunkArray(updates, WRITE_CHUNK)) {

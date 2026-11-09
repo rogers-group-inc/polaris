@@ -10,9 +10,12 @@
 
 /**
  * Run `fn` over `items` with at most `limit` in flight. Results come back in
- * input order. Rejects on the first `fn` rejection (like Promise.all) —
- * callers that must not fail the whole map should catch inside `fn`, or use
- * mapSettledWithConcurrency.
+ * input order. FAIL-FAST: rejects on the first `fn` rejection (like
+ * Promise.all) and starts no further items after it — calls already in
+ * flight run to completion (there is no way to cancel them; pass an
+ * AbortSignal into `fn` for that) but their outcome is discarded. Callers
+ * that must not fail the whole map should catch inside `fn`, or use
+ * mapSettledWithConcurrency (settle-all).
  */
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -21,11 +24,17 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
+  let failed = false;
   const worker = async (): Promise<void> => {
-    for (;;) {
+    while (!failed) {
       const i = cursor++;
       if (i >= items.length) return;
-      results[i] = await fn(items[i]!, i);
+      try {
+        results[i] = await fn(items[i]!, i);
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
     }
   };
   const workers = Math.max(1, Math.min(limit, items.length));

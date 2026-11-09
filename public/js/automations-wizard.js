@@ -234,7 +234,16 @@ function ruleRecipientGroups(rule, catalogs) {
   if (rule.bandNotify && rule.bandNotify.resolvedMode === "dedicated") {
     (rule.bandNotify.resolvedActions || []).forEach(function (a) { addNotify(a, "When it eases to normal", false); });
   }
-  (rule.resetActions || []).forEach(function (a) { addNotify(a, "When it clears", false); });
+  (rule.resetActions || []).forEach(function (a) {
+    addNotify(a, "When it clears", false);
+    // Escalation-reset overrides (business rule 145) reach their own people.
+    // A tier WITHOUT an override resets through its own Notify actions, whose
+    // recipients are already listed under the escalation above.
+    var custom = (a && a.resetEscalation && a.resetEscalation.custom) || {};
+    Object.keys(custom).forEach(function (k) {
+      (custom[k] || []).forEach(function (x) { addNotify(x, "When it clears — escalation tier " + (Number(String(k).split(":").pop()) + 1), false); });
+    });
+  });
   return groups;
 }
 
@@ -1644,9 +1653,9 @@ async function openAutomationWizard(existing, opts) {
       reset: null, // defaulted per trigger type on Step-4 entry
       cooldownSec: null, messageTemplate: null, requireAckNote: false, groupByAsset: false, severityFromPriorityTag: false, repeat: null,
       quietTime: null,
-      // The audit Event is an action now, present by default — a new
-      // automation behaves like every existing one until someone removes it.
-      actions: [{ type: "event" }], escalation: null,
+      // No default action: the audit Event is the engine's own on every fire,
+      // escalation and end (business rule 146), not something to add.
+      actions: [], escalation: null,
     };
   }
   // What the trigger checked when the message template was last written — the
@@ -6624,6 +6633,16 @@ async function openAutomationWizard(existing, opts) {
   }
   function renderStep5() {
     var panel = document.getElementById("aw-step-5");
+    // Business rule 145, before any row renders: every firing Notify gets its
+    // stable id ON THE DRAFT (so the rows and the reset links agree), and a
+    // stored reset Notify that is still an exact copy of a trigger Notify — the
+    // pre-feature mirror — becomes a link to it, once per draft.
+    stripEventActions();
+    ensureNotifyIds();
+    if (!draft._resetLinksAdopted) {
+      draft._resetLinksAdopted = true;
+      if (Array.isArray(draft.resetActions)) draft.resetActions = adoptResetLinks(draft.resetActions);
+    }
     var esc = draft.escalation;
     // The mandatory first "action": every fire creates the in-app alert (and,
     // for metric/state/composite triggers, writes an audit Event carrying the
@@ -6631,14 +6650,14 @@ async function openAutomationWizard(existing, opts) {
     // Sibling of #aw-actions, so collectActionsFrom's :scope > .aw-action
     // never picks it up.
     var isEC = draft.trigger && (draft.trigger.type === "event" || draft.trigger.type === "change");
-    // The in-app alert is genuinely unremovable, unlike the audit Event next to
-    // it: every delivery row hangs off the Notification id, as do the
-    // escalation sweep, acknowledge/clear and the rule state machine. The Event
-    // moved out to a removable "Create an Event" action in the list below.
+    // The in-app alert is genuinely unremovable: every delivery row hangs off
+    // the Notification id, as do the escalation sweep, acknowledge/clear and
+    // the rule state machine. Its audit Event is written by the engine on every
+    // fire, escalation and end (business rule 146) — there is no action for it.
     var cardTitle = "In-app Alert";
     var cardHelp = isEC
       ? "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes the alert text — {value} is the source event’s own message; leave blank for the default."
-      : "Every fire creates an in-app alert (the Alerts tab). This is built in and can’t be removed — notifications, API calls and scripts all hang off it. The message template below customizes what the alert and the audit Event say; leave blank for the default.";
+      : "Every fire creates an in-app alert (the Alerts tab) and an audit Event (the Events tab) — escalations and the alert ending are recorded there too. This is built in and can’t be removed; notifications, API calls and scripts all hang off it. The message template below customizes what the alert and its Event say; leave blank for the default.";
     // The step is a stack of CARDS (the 2026-09-21 mockup): the alert record
     // first — In-app Alert, then the two rows that describe it (Require
     // Acknowledgement, Dependency-Down Bypass) — then, per severity, the Trigger
@@ -6751,9 +6770,11 @@ async function openAutomationWizard(existing, opts) {
     });
     // ── Reset Action ──────────────────────────────────────────────────────
     // Every clear path today writes cleared/clearedBy and nothing else, so
-    // "tell the NOC it came back" wasn't expressible. The list starts mirroring
-    // the trigger's Notify actions (see mirroredResetActions) so the recovery
-    // reaches the same people without configuring them twice.
+    // "tell the NOC it came back" wasn't expressible. A reset Notify MATCHES a
+    // trigger Notify by default (business rule 145): same channels and
+    // recipients, followed live, with a Customize switch to diverge — and,
+    // where the trigger's severity escalates, an escalation reset for the
+    // tiers that actually sent. Rows appear only from + Add Action.
     // A header and an Add action button (2026-09-21) — no enable checkbox.
     // The box gated the list behind a control that had to be reasoned about
     // ("is it ticked AND is there a row?"), and it could disagree with the
@@ -6794,16 +6815,24 @@ async function openAutomationWizard(existing, opts) {
     (draft.actions || []).forEach(function (a) { addActionRow(host, a, false, true); });
     panel.querySelector("#aw-add-action").addEventListener("click", function () {
       foldActionRow(addActionRow(host, null, false, true), false);
-      syncResetMirror(panel);
+      refreshResetLinks(panel);
     });
-    // The reset list follows the trigger list as it is BUILT: picking a channel
-    // on a new Notify action, or removing one, re-derives the mirrored rows.
-    // Delegated so it covers rows added later. Timeout lets the row's own
-    // handlers (and its removal) settle first.
-    host.addEventListener("change", function () { setTimeout(function () { syncResetMirror(panel); }, 0); });
-    host.addEventListener("click", function (e) {
-      if (e.target && e.target.classList && e.target.classList.contains("aw-action-remove")) {
-        setTimeout(function () { syncResetMirror(panel); }, 0);
+    // The reset rows' "Resets" picker and escalation tiers follow the trigger
+    // side as it is BUILT — a Notify added, removed or re-channelled, an
+    // escalation tier added — anywhere on the step but the reset card itself
+    // (business rule 145). Nothing is ADDED to the reset list by this: new
+    // reset rows come only from its own + Add Action. Delegated so it covers
+    // rows added later; the timeout lets a row's own handlers (and its
+    // removal) settle first.
+    var outsideReset = function (e) { return !(e.target && e.target.closest && e.target.closest("#aw-reset-card")); };
+    panel.addEventListener("change", function (e) {
+      if (outsideReset(e)) setTimeout(function () { refreshResetLinks(panel); }, 0);
+    });
+    panel.addEventListener("click", function (e) {
+      if (!outsideReset(e) || !(e.target && e.target.classList)) return;
+      var cl = e.target.classList;
+      if (cl.contains("aw-action-remove") || cl.contains("aesc-add") || cl.contains("tier-remove") || cl.contains("tier-add-action") || cl.contains("ba-add")) {
+        setTimeout(function () { refreshResetLinks(panel); }, 0);
       }
     });
 
@@ -6812,41 +6841,26 @@ async function openAutomationWizard(existing, opts) {
       (((draft.severityBands || [])[i] || {}).actions || []).forEach(function (a) { addActionRow(bHost, a, false, true); });
       sec.querySelector(".ba-add").addEventListener("click", function () { foldActionRow(addActionRow(bHost, null, false, true), false); });
     });
-    // Reset list: hydrate, then keep it following the trigger actions.
+    // Reset list: hydrate. Rendered AFTER every trigger row, because a reset
+    // Notify's "Resets" picker is built from them.
     var resetHost = panel.querySelector("#aw-reset-actions");
-    // A STORED automation comes back with no mirror marks (they are stripped
-    // at save), so its reset rows would all read as operator-authored and the
-    // first change on the trigger list would mirror every Notify in AGAIN — a
-    // duplicate per edit, saved and compounded on the next one. So, once per
-    // draft: re-attach the rows that still equal their trigger Notify, and opt
-    // every other trigger Notify out of mirroring (its reset counterpart was
-    // edited, removed, or never wanted — the saved list is the answer).
-    if (draft._resetMirrorOptOut === undefined) {
-      if (draft.resetActions === undefined) {
-        draft._resetMirrorOptOut = [];
-      } else {
-        var reattached = reattachResetMirrors(draft.actions, draft.resetActions || []);
-        draft.resetActions = draft.resetActions ? reattached.rows : draft.resetActions;
-        draft._resetMirrorOptOut = reattached.optOut;
-      }
-    }
     var resetSeed = draft.resetActions === undefined
       // Brand-new automation: the audit Event is present by default on BOTH
       // halves, so a recovery is recorded the way the firing is (the draft's
-      // `actions` seeds the same row), plus whatever the trigger's Notify
-      // actions mirror in. It is an ordinary operator row — remove it and the
-      // mirror leaves it removed.
-      ? mirroredResetActions(draft.actions, [{ type: "event" }])
+      // `actions` seeds the same row). Nothing else is added for the operator:
+      // a reset Notify comes from + Add Action (business rule 145).
+      ? []
       : (draft.resetActions || []);                         // stored, or explicitly off
-    renderResetRows(panel, resetSeed);
+    resetHost.innerHTML = "";
+    resetSeed.forEach(function (a) { addActionRow(resetHost, a); });
+    refreshMirrorNote(panel);
     panel.querySelector("#aw-reset-add").addEventListener("click", function () {
       foldActionRow(addActionRow(resetHost, null), false);
       refreshMirrorNote(panel);
     });
     // Removing the LAST reset action IS "no reset behaviour", and the empty
     // list says so on its own now — all that is left is to re-word the note.
-    // Delegated (rows come and go with the mirror); the timeout lets the row's
-    // own remove handler detach it first.
+    // Delegated; the timeout lets the row's own remove handler detach it first.
     resetHost.addEventListener("click", function (e) {
       if (!(e.target && e.target.classList && e.target.classList.contains("aw-action-remove"))) return;
       setTimeout(function () { refreshMirrorNote(panel); }, 0);
@@ -7095,9 +7109,14 @@ async function openAutomationWizard(existing, opts) {
     var bn = draft.bandNotify || {};
     if (bn.onResolved === false) return;
     if ((draft.resetActions || []).length) return;
+    // "reuse" re-ran the trigger's Notify actions on recovery, which is now
+    // exactly a reset Notify MATCHING each of them (business rule 145).
+    ensureNotifyIds();
     var adopted = bn.resolvedMode === "dedicated"
       ? (bn.resolvedActions || []).slice()
-      : mirroredResetActions(draft.actions, []);
+      : (draft.actions || [])
+          .filter(function (a) { return a && a.type === "notify" && actionChannelIds(a).length; })
+          .map(function (a) { var c = plainNotifyCopy(a); c.matchActionId = a.id; return c; });
     if (!adopted.length) return;
     draft.resetActions = adopted;
   }
@@ -7802,11 +7821,6 @@ async function openAutomationWizard(existing, opts) {
     var perSev = bandActionsPerSeverityOn();
     var push = function (action, where) {
       idx++;
-      if (action.type === "event") {
-        if (!seen["event"]) { seen["event"] = true; out.push({ key: "event", kind: "event", index: idx, label: "Write a Test Event", detail: "", usedIn: [where] }); }
-        else out.push(null);
-        return;
-      }
       if (action.type !== "notify") return;
       // A button per CHANNEL, not per action: the button names a delivery the
       // operator is about to receive, and a multi-channel action produces one
@@ -7849,7 +7863,11 @@ async function openAutomationWizard(existing, opts) {
       walkTiers(b.escalation, "escalation");
     });
     ((draft.bandNotify && draft.bandNotify.resolvedActions) || []).forEach(function (a) { push(a, "resolved"); });
-    (draft.resetActions || []).forEach(function (a) { push(a, "reset"); });
+    (draft.resetActions || []).forEach(function (a) {
+      push(a, "reset");
+      var custom = (a && a.resetEscalation && a.resetEscalation.custom) || {};
+      Object.keys(custom).forEach(function (k) { (custom[k] || []).forEach(function (x) { push(x, "reset"); }); });
+    });
     return out.filter(Boolean);
   }
 
@@ -7861,7 +7879,7 @@ async function openAutomationWizard(existing, opts) {
     var targets = testDeliveryTargets();
     if (targets.length === 0) {
       box.innerHTML = '<p class="hint" style="margin:0">This automation only creates an in-app alert — there’s nothing to send. ' +
-        'Add a <strong>Notify</strong> or <strong>Create an Event</strong> action on the previous step to test delivery.</p>';
+        'Add a <strong>Notify</strong> action on the previous step to test delivery.</p>';
       return;
     }
     var me = (_ruleRecipientUsers || []).find(function (u) { return u.username === (typeof currentUsername !== "undefined" ? currentUsername : ""); });
@@ -8087,8 +8105,11 @@ async function openAutomationWizard(existing, opts) {
    */
   function foldActionRow(row, collapsed) {
     row._awFolded = !!collapsed;
-    row.querySelectorAll(":scope > .aw-action-fields, :scope > .aw-esc-sec").forEach(function (el) {
-      el.style.display = collapsed ? "none" : "";
+    row.querySelectorAll(":scope > .aw-action-fields, :scope > .aw-esc-sec, :scope > .aw-reset-link").forEach(function (el) {
+      // A reset row MATCHING its trigger action (business rule 145) shows no
+      // channel / recipient fields at all: what it sends is that action's.
+      var hide = collapsed || (row._awMatched && el.classList.contains("aw-action-fields"));
+      el.style.display = hide ? "none" : "";
     });
     var btn = row.querySelector(":scope > div > .aw-collapse");
     if (btn) {
@@ -8101,6 +8122,9 @@ async function openAutomationWizard(existing, opts) {
   }
 
   function addActionRow(host, action, escalatable, repeatable) {
+    // A row the operator ADDED (no stored action behind it) — a new reset
+    // Notify defaults to matching a trigger action (business rule 145).
+    var isNewRow = !action;
     action = action || { type: "notify", channelId: channels.length ? channels[0].id : "" };
     // A recovery is no reason to reboot anything (business rule 115(c)): the
     // reset list never offers it — unless a stored row already holds one, so
@@ -8132,6 +8156,10 @@ async function openAutomationWizard(existing, opts) {
     // may carry a reminder clock. Stashed rather than passed down because
     // renderActionFields is also the re-render path for a channel change.
     row._awRepeatable = !!repeatable;
+    // A FIRING Notify (the lists that pass `repeatable`) carries a stable id so
+    // a reset action can point at it across edits — rows are positional, and
+    // removing one shifts the rest (business rule 145).
+    if (repeatable && action.type === "notify") row._awActionId = action.id || newActionId();
     host.appendChild(row);
     // Set the value explicitly rather than trusting the `selected` attribute
     // written via innerHTML: the collector reads .value, and relying on
@@ -8153,7 +8181,7 @@ async function openAutomationWizard(existing, opts) {
       var host2 = row.parentNode;
       var anchor = row.nextSibling;
       row.remove();
-      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : next === "reboot" ? { type: "reboot" } : { type: next, escalation: esc }, escalatable, repeatable);
+      var rebuilt = addActionRow(host2, next === "event" ? { type: "event" } : next === "reboot" ? { type: "reboot" } : { type: next, escalation: esc, id: row._awActionId, _awRetyped: true }, escalatable, repeatable);
       foldActionRow(rebuilt, false); // mid-edit: the operator just changed its type
       // addActionRow appends; move the rebuilt row back to where it was.
       if (anchor) host2.insertBefore(host2.lastChild, anchor);
@@ -8172,6 +8200,10 @@ async function openAutomationWizard(existing, opts) {
       );
     }
     if (escalatable && action.type !== "event" && action.type !== "reboot") wireEscSection(row.querySelector(":scope > .aw-esc-sec"), action.escalation || null);
+    // A Notify directly in the reset list answers for a trigger Notify
+    // (business rule 145). Not one nested in an escalation-reset override,
+    // which sits inside a reset row and is a plain delivery.
+    if (host && host.id === "aw-reset-actions" && action.type === "notify") wireResetLink(row, action, isNewRow || !!action._awRetyped);
     row.querySelector(":scope > div > .aw-collapse").addEventListener("click", function () {
       foldActionRow(row, !row._awFolded);
     });
@@ -8660,15 +8692,6 @@ async function openAutomationWizard(existing, opts) {
       box.addEventListener("input", syncRebootBits);
       wireRecipBoxes(box.querySelector(".rb-recips"), function () { /* collected on save; the summary names no one */ });
       syncRebootBits();
-    } else if (t === "event") {
-      // Nothing to configure — the severity, message and resource all come from
-      // the fire. The note earns its place because the two trigger families
-      // behave differently: an event/change automation is DRIVEN by Events, so
-      // the engine deliberately writes none of its own (that would loop).
-      var ecTrigger = draft.trigger && (draft.trigger.type === "event" || draft.trigger.type === "change");
-      box.innerHTML = ecTrigger
-        ? '<p style="font-size:0.82rem;color:var(--color-warning,#d97706);margin:0">This automation is triggered BY Events, so it deliberately writes none of its own — an audit Event here would feed back into the trigger. Remove this action; it has no effect.</p>'
-        : '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0">Writes a <strong>notification.triggered</strong> audit Event on every fire, at the alert’s severity, carrying the message from the card above. Visible on the Events tab and forwarded by syslog / SFTP archival. Remove it for a deliberately noisy automation — the in-app alert is unaffected.</p>';
     }
   }
   /** One `detailsMatch` row on the event trigger: a field in the event's own
@@ -8699,6 +8722,7 @@ async function openAutomationWizard(existing, opts) {
     var box = row.querySelector(":scope > .aw-action-fields");
     var a = collectActionCore(t, box);
     if (!a) return null;
+    if (t === "notify" && row._awActionId) a.id = row._awActionId;
     // Per-action escalation (escalatable rows only — tier-hosted rows have no
     // .aw-esc-sec, and :scope keeps a nested tier's sections out of reach).
     var esc = collectEscSection(row.querySelector(":scope > .aw-esc-sec"));
@@ -8839,20 +8863,18 @@ async function openAutomationWizard(existing, opts) {
     host.querySelectorAll(":scope > .aw-action").forEach(function (row) {
       var a = collectAction(row);
       if (!a) return;
-      // `_mirrorOf` marks a reset row still following its trigger action. It's
-      // wizard bookkeeping, never part of the saved rule (the server schema is
-      // .strict() and would reject it).
-      if (row._mirrorOf) a._mirrorOf = row._mirrorOf;
       out.push(a);
     });
     return out;
   }
 
-  /** Strip the wizard-only markers before the payload leaves the browser. */
+  /** Strip any wizard-only marker before the payload leaves the browser (the
+   *  server schema is .strict()). */
   function stripMirrorMarks(actions) {
     return (actions || []).map(function (a) {
       var copy = JSON.parse(JSON.stringify(a));
       delete copy._mirrorOf;
+      delete copy._awRetyped;
       return copy;
     });
   }
@@ -8991,66 +9013,84 @@ async function openAutomationWizard(existing, opts) {
     if (resetHost) {
       // An empty list is "no reset behaviour" — the one state the retired
       // enable checkbox used to express.
-      var resetRows = collectActionsFrom(resetHost);
+      var resetRows = collectResetRows(resetHost);
       draft.resetActions = resetRows.length ? resetRows : null;
     }
   }
 
+  // ─── Reset actions that MATCH a trigger action (business rule 145) ────────
+  //
+  // A reset Notify answers for one trigger Notify, named by the trigger
+  // action's stable `id`. Two modes:
+  //   - MATCH (default): no channel / recipient fields at all. The server
+  //     delivers it as the trigger action reads at reset time
+  //     (expandResetActions), so an edit to the trigger reaches its reset with
+  //     nothing to re-save; the payload carries a copy only as a snapshot.
+  //   - CUSTOMIZE: the ordinary fields, pre-filled from the trigger action.
+  // Either way, when the trigger action's severity escalates, "Also reset the
+  // escalation" tells each tier that SENT for the alert — by default through
+  // the tier's own Notify actions, or per tier through an override.
+  //
+  // State lives on the row (`row._awReset`) and round-trips through the DOM:
+  // syncResetLinkFromDom reads the controls back before every re-render, so a
+  // re-render (a trigger Notify added, an escalation tier removed) never loses
+  // a customized tier.
+
   /**
-   * The reset list mirrors the trigger's NOTIFY actions as they're created:
-   * add a Notify on the left and the same channel + recipients appear on the
-   * right, so "tell the same people it came back" costs nothing.
-   *
-   * A mirrored row is marked (_mirrorOf, client-only — stripped by
-   * collectActionsFrom like the band stash) and DETACHES the moment the
-   * operator edits or deletes it. Rows that are still attached follow later
-   * changes; an edited one never gets overwritten.
+   * Drop the retired "Create an Event" action from every list on the draft
+   * (business rule 146: the engine writes the Event itself). A tier left with
+   * no action did nothing before either, so it goes too.
    */
-  /** (Re)draw the reset rows, tagging the mirrored ones so they keep tracking. */
-  function renderResetRows(panel, actions) {
-    var host = panel.querySelector("#aw-reset-actions");
-    if (!host) return;
-    host.innerHTML = "";
-    (actions || []).forEach(function (a) {
-      addActionRow(host, a);
-      var row = host.lastElementChild;
-      if (row && a._mirrorOf) {
-        row._mirrorOf = a._mirrorOf;
-        // Any edit inside a mirrored row detaches it: from here it is the
-        // operator's, and a later trigger change must not overwrite it.
-        row.addEventListener("input", function () { detachMirror(row, panel); }, true);
-        row.addEventListener("change", function () { detachMirror(row, panel); }, true);
-        var rm = row.querySelector(".aw-action-remove");
-        if (rm) rm.addEventListener("click", function () {
-          // Removed is as much the operator's answer as edited: the next
-          // trigger change must not put it back.
-          optOutOfResetMirror(row._mirrorOf);
-          setTimeout(function () { refreshMirrorNote(panel); }, 0);
-        });
-      }
+  function stripEventActions() {
+    var keep = function (list) { return (list || []).filter(function (a) { return a && a.type !== "event"; }); };
+    var tiers = function (esc) {
+      if (!esc || !esc.tiers) return esc;
+      var t = esc.tiers.map(function (x) { return Object.assign({}, x, { actions: keep(x.actions) }); })
+        .filter(function (x) { return x.actions.length; });
+      return t.length ? Object.assign({}, esc, { tiers: t }) : null;
+    };
+    if (Array.isArray(draft.actions)) draft.actions = keep(draft.actions);
+    draft.escalation = tiers(draft.escalation);
+    (draft.severityBands || []).forEach(function (b) {
+      if (!b) return;
+      if (Array.isArray(b.actions)) b.actions = keep(b.actions);
+      if (b.escalation) b.escalation = tiers(b.escalation);
     });
-    refreshMirrorNote(panel);
+    if (Array.isArray(draft.resetActions)) {
+      var r = keep(draft.resetActions);
+      draft.resetActions = r.length ? r : null;
+    }
   }
 
-  function detachMirror(row, panel) {
-    if (!row._mirrorOf) return;
-    // The edited row now speaks for that destination; without the opt-out the
-    // next trigger change would mirror a fresh copy in beside it.
-    optOutOfResetMirror(row._mirrorOf);
-    row._mirrorOf = null;
-    refreshMirrorNote(panel);
+  function newActionId() {
+    return "a" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
-  /** Trigger Notify destinations (channel-list keys) whose reset counterpart
-   *  the operator owns — edited, removed, or saved differently. The mirror
-   *  never adds a row for one of these. Draft-only; never posted. */
-  function optOutOfResetMirror(key) {
-    if (!key) return;
-    if (!Array.isArray(draft._resetMirrorOptOut)) draft._resetMirrorOptOut = [];
-    if (draft._resetMirrorOptOut.indexOf(key) === -1) draft._resetMirrorOptOut.push(key);
+  /** Give every firing Notify on the draft a stable id (mutates the draft). */
+  function ensureNotifyIds() {
+    var seen = {};
+    var give = function (list) {
+      (list || []).forEach(function (a) {
+        if (!a || a.type !== "notify") return;
+        // A duplicated id (a hand-edited import) would make a link ambiguous,
+        // and the server refuses it — the second one gets a fresh id.
+        if (!a.id || seen[a.id]) a.id = newActionId();
+        seen[a.id] = true;
+      });
+    };
+    give(draft.actions);
+    (draft.severityBands || []).forEach(function (b) { if (b) give(b.actions); });
   }
 
-  /** Key-order-independent JSON of an action, minus what mirroring drops. */
+  /** An action with the fields a reset copy must not carry. */
+  function plainNotifyCopy(a) {
+    var c = JSON.parse(JSON.stringify(a || {}));
+    delete c.id; delete c.escalation; delete c.repeat; delete c._awRetyped;
+    delete c.matchActionId; delete c.customized; delete c.resetEscalation;
+    return c;
+  }
+
+  /** Key-order-independent JSON of an action's DELIVERY fields. */
   function mirrorComparable(a) {
     var sortKeys = function (v) {
       if (Array.isArray(v)) return v.map(sortKeys);
@@ -9061,89 +9101,380 @@ async function openAutomationWizard(existing, opts) {
       }
       return v;
     };
-    var copy = JSON.parse(JSON.stringify(a || {}));
-    delete copy.escalation;
-    delete copy._mirrorOf;
-    return JSON.stringify(sortKeys(copy));
+    return JSON.stringify(sortKeys(plainNotifyCopy(a)));
+  }
+
+  /** Every firing Notify on the draft (base, then each band), with its id. */
+  function draftTriggerNotifies() {
+    var out = [];
+    (draft.actions || []).forEach(function (a) { if (a && a.type === "notify" && a.id) out.push(a); });
+    (draft.severityBands || []).forEach(function (b) {
+      ((b && b.actions) || []).forEach(function (a) { if (a && a.type === "notify" && a.id) out.push(a); });
+    });
+    return out;
   }
 
   /**
-   * A stored automation's reset list, with the rows that still EQUAL a mirror
-   * of a trigger Notify marked as following it again, and the keys of every
-   * trigger Notify that has no such row returned as opt-outs.
+   * A stored automation's reset list with every unlinked reset Notify that is
+   * an EXACT copy of a trigger Notify turned into a link to it — what the
+   * pre-feature mirror wrote. Each trigger action is claimed once. A row that
+   * differs stays the operator's: it renders customized.
    */
-  function reattachResetMirrors(triggerActions, resetActions) {
-    var rows = (resetActions || []).map(function (a) { return JSON.parse(JSON.stringify(a)); });
-    var optOut = [];
-    (triggerActions || []).forEach(function (a) {
-      if (!a || a.type !== "notify" || !actionChannelIds(a).length) return;
-      var key = actionChannelIds(a).join(",");
-      var want = mirrorComparable(a);
-      // A row already marked for this key (the legacy band-resolved adoption
-      // marks its rows before this runs) is following as it is.
-      if (rows.some(function (r) { return r._mirrorOf === key; })) return;
-      var match = rows.find(function (r) { return !r._mirrorOf && mirrorComparable(r) === want; });
-      if (match) match._mirrorOf = key;
-      else if (optOut.indexOf(key) === -1) optOut.push(key);
+  function adoptResetLinks(resetActions) {
+    var triggers = draftTriggerNotifies();
+    var claimed = {};
+    (resetActions || []).forEach(function (r) { if (r && r.matchActionId) claimed[r.matchActionId] = true; });
+    return (resetActions || []).map(function (r) {
+      if (!r || r.type !== "notify" || r.matchActionId) return r;
+      var want = mirrorComparable(r);
+      var hit = triggers.find(function (t) { return !claimed[t.id] && mirrorComparable(t) === want; });
+      if (!hit) return r;
+      claimed[hit.id] = true;
+      var linked = JSON.parse(JSON.stringify(r));
+      linked.matchActionId = hit.id;
+      return linked;
     });
-    return { rows: rows, optOut: optOut };
   }
 
-  /** Re-mirror after the TRIGGER action list changes (add / remove / channel). */
-  function syncResetMirror(panel) {
-    var host = panel.querySelector("#aw-reset-actions");
+  function capWord(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  /**
+   * The trigger Notify actions a reset row may answer for, read LIVE from the
+   * step's rows: { id, action, section (null = base | band severity), label }.
+   * A Notify with no channel ticked yet collects as nothing and is left out
+   * until it has one.
+   */
+  function triggerNotifyCatalog() {
+    var panel = document.getElementById("aw-step-5");
+    var out = [];
+    if (!panel) return out;
+    var perSev = bandActionsPerSeverityOn();
+    var addFrom = function (host, section) {
+      if (!host) return;
+      var n = 0;
+      host.querySelectorAll(":scope > .aw-action").forEach(function (row) {
+        n++;
+        if (!row._awActionId) return;
+        var a = collectAction(row);
+        if (!a || a.type !== "notify") return;
+        out.push({
+          id: row._awActionId,
+          action: a,
+          section: section,
+          label: (section ? capWord(section) + " · " : "") + "Action " + n + " — " + actionSummary(a),
+        });
+      });
+    };
+    addFrom(panel.querySelector("#aw-actions"), null);
+    if (perSev) {
+      panel.querySelectorAll(".aw-band-actions").forEach(function (sec, i) {
+        var band = (draft.severityBands || [])[i];
+        if (band) addFrom(sec.querySelector(".ba-actions"), band.severity);
+      });
+    }
+    return out;
+  }
+  function findCatalogEntry(cat, id) {
+    return id ? cat.find(function (c) { return c.id === id; }) || null : null;
+  }
+
+  /**
+   * The escalation tiers a trigger action in `section` runs under, as the
+   * engine resolves them (escalationChainsForSeverity / levelChainOwner):
+   * a band's own chain when it declares one, else the base chain. A base
+   * action also covers every per-severity band that has no actions of its own.
+   * Returns [{ key: "<owner severity>:<tier idx>", owner, idx, tier }].
+   */
+  function resetChainTiers(section) {
+    var panel = document.getElementById("aw-step-5");
+    if (!panel) return [];
+    var baseSev = draft.severity || "warning";
+    var baseHost = panel.querySelector("#aw-actions");
+    var baseSecEl = baseHost && baseHost.closest(".form-group");
+    var baseEsc = collectEscSection(baseSecEl && baseSecEl.querySelector(".aw-esc-sec"));
+    var perSev = bandActionsPerSeverityOn();
+    var bandSecs = perSev ? Array.from(panel.querySelectorAll(".aw-band-actions")) : [];
+    var chains = [];
+    var addChain = function (owner, esc) {
+      if (!esc || !(esc.tiers || []).length) return;
+      if (chains.some(function (c) { return c.owner === owner; })) return;
+      chains.push({ owner: owner, esc: esc });
+    };
+    var bandInfo = bandSecs.map(function (sec, i) {
+      var band = (draft.severityBands || [])[i] || {};
+      var hostEl = sec.querySelector(".ba-actions");
+      return {
+        severity: band.severity,
+        esc: collectEscSection(sec.querySelector(".aw-esc-sec")),
+        hasActions: !!(hostEl && hostEl.querySelector(":scope > .aw-action")),
+      };
+    });
+    if (section == null) {
+      addChain(baseSev, baseEsc);
+      bandInfo.forEach(function (b) {
+        if (b.hasActions) return;
+        if (b.esc && (b.esc.tiers || []).length) addChain(b.severity, b.esc);
+      });
+    } else {
+      var b = bandInfo.find(function (x) { return x.severity === section; });
+      if (b && b.esc && (b.esc.tiers || []).length) addChain(section, b.esc);
+      else addChain(baseSev, baseEsc);
+    }
+    var out = [];
+    chains.forEach(function (c) {
+      c.esc.tiers.forEach(function (t, idx) {
+        out.push({ key: c.owner + ":" + idx, owner: c.owner, idx: idx, tier: t });
+      });
+    });
+    return out;
+  }
+
+  /** "Tier 1 — after 15 min: Notify via Email — NOC" */
+  function resetTierLabel(t, showOwner) {
+    var notifies = (t.tier.actions || []).filter(function (a) { return a && a.type === "notify"; });
+    var what = notifies.length ? notifies.map(actionSummary).join("; ") : "no Notify action — nothing to reset";
+    return (showOwner ? capWord(t.owner) + " · " : "") + "Tier " + (t.idx + 1) + " — after " + (t.tier.afterMin || "?") + " min: " + what;
+  }
+
+  /** Wire a reset Notify row's link block. Called by addActionRow. */
+  function wireResetLink(row, action, isNew) {
+    var box = document.createElement("div");
+    box.className = "aw-reset-link";
+    box.style.cssText = "margin:0 0 6px;padding:6px 8px;border-radius:6px;background:var(--color-bg-subtle, rgba(127,127,127,0.06))";
+    row.insertBefore(box, row.querySelector(":scope > .aw-action-fields"));
+    var cat = triggerNotifyCatalog();
+    var st = { target: null, customized: false, escOn: false, custom: {} };
+    if (isNew) {
+      // Default to the first trigger Notify no other reset row answers for.
+      var taken = {};
+      var host = row.parentNode;
+      if (host) host.querySelectorAll(":scope > .aw-action").forEach(function (r) {
+        if (r !== row && r._awReset && r._awReset.target) taken[r._awReset.target] = true;
+      });
+      var free = cat.find(function (c) { return !taken[c.id]; }) || cat[0] || null;
+      st.target = free ? free.id : null;
+      st.customized = !st.target;
+    } else if (action.matchActionId) {
+      st.target = action.matchActionId;
+      st.customized = action.customized === true || !findCatalogEntry(cat, action.matchActionId);
+      if (!findCatalogEntry(cat, action.matchActionId)) st.target = cat.length ? cat[0].id : null;
+      st.escOn = !!action.resetEscalation;
+      st.custom = JSON.parse(JSON.stringify((action.resetEscalation && action.resetEscalation.custom) || {}));
+    } else {
+      // A stored reset Notify written before links existed and edited since:
+      // it is the operator's own, so it stays customized. It answers for the
+      // trigger Notify sharing its channels, else the first one.
+      st.customized = true;
+      var mine = actionChannelIds(action).join(",");
+      var same = cat.find(function (c) { return actionChannelIds(c.action).join(",") === mine; });
+      st.target = same ? same.id : (cat[0] ? cat[0].id : null);
+    }
+    row._awReset = st;
+    renderResetLink(row);
+  }
+
+  /** Read a reset row's link controls back into row._awReset. */
+  function syncResetLinkFromDom(row) {
+    var st = row._awReset;
+    var box = row.querySelector(":scope > .aw-reset-link");
+    if (!st || !box) return;
+    var sel = box.querySelector(".rl-target");
+    if (sel && sel.value) st.target = sel.value;
+    var cust = box.querySelector(".rl-customize");
+    if (cust) st.customized = cust.checked;
+    var escOn = box.querySelector(".rl-esc-on");
+    if (escOn) {
+      st.escOn = escOn.checked;
+      var custom = {};
+      box.querySelectorAll(".rl-tier").forEach(function (tr) {
+        var cb = tr.querySelector(".rl-tier-cust");
+        if (!cb || !cb.checked) return;
+        custom[tr.getAttribute("data-key")] = collectActionsFrom(tr.querySelector(".rl-tier-actions"))
+          .filter(function (a) { return a.type === "notify"; })
+          .map(plainNotifyCopy);
+      });
+      st.custom = custom;
+    }
+  }
+
+  function setResetMatched(row, matched) {
+    row._awMatched = !!matched;
+    var fields = row.querySelector(":scope > .aw-action-fields");
+    if (fields) fields.style.display = row._awFolded || matched ? "none" : "";
+  }
+
+  /** (Re)draw a reset row's link block from row._awReset. */
+  function renderResetLink(row) {
+    var st = row._awReset;
+    var box = row.querySelector(":scope > .aw-reset-link");
+    if (!st || !box) return;
+    var ro = readOnly;
+    var cat = triggerNotifyCatalog();
+    var tgt = findCatalogEntry(cat, st.target);
+    if (!tgt && cat.length) {
+      // The action it answered for is gone. A MATCHED row would otherwise
+      // start sending to someone else; it keeps what it last sent instead, as
+      // a customized copy, and answers for the first remaining action.
+      if (!st.customized) {
+        st.customized = true;
+        renderActionFields(row, st.lastSent || { type: "notify", channelId: channels.length ? channels[0].id : "" });
+        wireTokenPalette(row);
+      }
+      tgt = cat[0];
+      st.target = tgt.id;
+    }
+    if (!cat.length) {
+      if (!st.customized && st.lastSent) { renderActionFields(row, st.lastSent); wireTokenPalette(row); }
+      st.customized = true;
+      st.target = null;
+      box.innerHTML = '<p class="aw5-help" style="margin:0">There is no Notify on the trigger side to match, so this action sends to the channels and recipients below.</p>';
+      setResetMatched(row, false);
+      return;
+    }
+    if (!st.customized) st.lastSent = plainNotifyCopy(tgt.action);
+    var opts = cat.map(function (c) {
+      return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.label) + '</option>';
+    }).join("");
+    var tiers = resetChainTiers(tgt.section);
+    var owners = {};
+    tiers.forEach(function (t) { owners[t.owner] = true; });
+    var showOwner = Object.keys(owners).length > 1;
+    var tierHtml = tiers.map(function (t) {
+      var on = !!(st.custom && st.custom[t.key]);
+      return '<div class="rl-tier" data-key="' + escapeHtml(t.key) + '" style="margin:4px 0 0 18px">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:0.8rem">' +
+          '<span style="flex:1;min-width:180px">' + escapeHtml(resetTierLabel(t, showOwner)) + '</span>' +
+          '<label style="margin:0;font-size:0.8rem;display:flex;align-items:center;gap:4px"><input type="checkbox" class="rl-tier-cust"' + (on ? " checked" : "") + '> Customize</label>' +
+        '</div>' +
+        '<div class="rl-tier-actions" style="margin-top:4px' + (on ? "" : ";display:none") + '"></div>' +
+      '</div>';
+    }).join("");
+    box.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<label style="margin:0;font-size:0.8rem;font-weight:600">Resets</label>' +
+        (cat.length > 1
+          ? '<select class="rl-target" style="width:auto;max-width:100%">' + opts + '</select>'
+          : '<span class="rl-one" style="font-size:0.8rem">' + escapeHtml(tgt.label) + '</span>') +
+        '<label style="margin:0 0 0 auto;font-size:0.8rem;display:flex;align-items:center;gap:4px" title="Off: send exactly what that trigger action sends. On: choose the channels and recipients yourself.">' +
+          '<input type="checkbox" class="rl-customize"' + (st.customized ? " checked" : "") + '> Customize</label>' +
+      '</div>' +
+      (st.customized ? "" :
+        '<p class="aw5-help rl-note" style="margin:4px 0 0">Sends to the same channels and recipients as that trigger action, and follows any later change to it.</p>') +
+      (tiers.length
+        ? '<div class="rl-esc" style="margin-top:6px">' +
+            '<label style="margin:0;font-size:0.8rem;display:flex;align-items:center;gap:4px"><input type="checkbox" class="rl-esc-on"' + (st.escOn ? " checked" : "") + '> Also reset the escalation</label>' +
+            (st.escOn
+              ? '<p class="aw5-help" style="margin:2px 0 0 18px">Only tiers that actually notified someone for this alert are told it ended — a tier the alert never reached is skipped. Each tier uses its own Notify actions unless you customize it.</p>' +
+                '<div class="rl-esc-tiers">' + tierHtml + '</div>'
+              : "") +
+          '</div>'
+        : "");
+    var sel = box.querySelector(".rl-target");
+    if (sel) sel.value = tgt.id;
+    // Customized tiers: one plain Notify row per action, pre-filled from the
+    // override or (first time) from the tier's own Notify actions.
+    box.querySelectorAll(".rl-tier").forEach(function (tr) {
+      var key = tr.getAttribute("data-key");
+      var t = tiers.find(function (x) { return x.key === key; });
+      var hostEl = tr.querySelector(".rl-tier-actions");
+      var fill = function (list) {
+        hostEl.innerHTML = "";
+        list.forEach(function (a) {
+          var r = addActionRow(hostEl, plainNotifyCopy(a));
+          var typeSel = r.querySelector(".aw-action-type");
+          if (typeSel) typeSel.disabled = true; // an escalation reset is a Notify
+          foldActionRow(r, false);
+        });
+      };
+      if (st.custom && st.custom[key]) fill(st.custom[key]);
+      tr.querySelector(".rl-tier-cust").addEventListener("change", function (e) {
+        if (e.target.checked) {
+          fill(((t && t.tier.actions) || []).filter(function (a) { return a && a.type === "notify"; }));
+          hostEl.style.display = "";
+        } else {
+          hostEl.innerHTML = "";
+          hostEl.style.display = "none";
+        }
+        syncResetLinkFromDom(row);
+      });
+    });
+    if (sel) sel.addEventListener("change", function () { syncResetLinkFromDom(row); renderResetLink(row); });
+    box.querySelector(".rl-customize").addEventListener("change", function (e) {
+      if (e.target.checked) {
+        // "By default duplicate what the trigger action has."
+        var cur = findCatalogEntry(triggerNotifyCatalog(), sel ? sel.value : st.target);
+        if (cur) { renderActionFields(row, plainNotifyCopy(cur.action)); wireTokenPalette(row); }
+      }
+      syncResetLinkFromDom(row);
+      renderResetLink(row);
+    });
+    var escCb = box.querySelector(".rl-esc-on");
+    if (escCb) escCb.addEventListener("change", function () { syncResetLinkFromDom(row); renderResetLink(row); });
+    setResetMatched(row, !st.customized);
+    var sum = row.querySelector(".aw-action-summary");
+    if (sum) {
+      sum.textContent = st.customized
+        ? actionSummary(collectAction(row) || { type: "notify" }) + " (customized)"
+        : "Same as " + tgt.label;
+    }
+    if (ro) box.querySelectorAll("input, select").forEach(function (el) { el.disabled = true; });
+  }
+
+  /** Re-read the trigger side into every reset row's link block. */
+  function refreshResetLinks(panel) {
+    var host = panel && panel.querySelector("#aw-reset-actions");
     if (!host) return;
-    var current = collectActionsFrom(host);
-    // Rows the operator has touched are kept verbatim; the rest re-derive.
-    renderResetRows(panel, mirroredResetActions(collectActionsFrom(panel.querySelector("#aw-actions")), current));
+    host.querySelectorAll(":scope > .aw-action").forEach(function (row) {
+      if (!row._awReset) return;
+      syncResetLinkFromDom(row);
+      renderResetLink(row);
+    });
   }
 
+  /**
+   * The reset list as saved. A matched row carries the trigger action's
+   * CURRENT delivery fields as its snapshot (the server refreshes it again at
+   * save) plus `matchActionId`; a customized one its own fields plus
+   * `matchActionId` + `customized`; either may carry `resetEscalation`.
+   */
+  function collectResetRows(host) {
+    var out = [];
+    var cat = null;
+    host.querySelectorAll(":scope > .aw-action").forEach(function (row) {
+      var st = row._awReset;
+      if (!st) { var plain = collectAction(row); if (plain) out.push(plain); return; }
+      syncResetLinkFromDom(row);
+      cat = cat || triggerNotifyCatalog();
+      var tgt = findCatalogEntry(cat, st.target);
+      var a;
+      if (tgt && !st.customized) {
+        a = plainNotifyCopy(tgt.action);
+        a.matchActionId = tgt.id;
+      } else {
+        a = collectAction(row);
+        if (!a) return;
+        if (tgt) { a.matchActionId = tgt.id; a.customized = true; }
+      }
+      if (tgt && st.escOn && resetChainTiers(tgt.section).length) {
+        var custom = st.custom || {};
+        a.resetEscalation = Object.keys(custom).length ? { custom: custom } : {};
+      }
+      out.push(a);
+    });
+    return out;
+  }
+
+  /** The card's one help line: what the list does, in its current state. */
   function refreshMirrorNote(panel) {
     var note = panel.querySelector("#aw-reset-mirror-note");
     var host = panel.querySelector("#aw-reset-actions");
     if (!note || !host) return;
-    var rows = Array.from(host.querySelectorAll(":scope > .aw-action"));
-    var mirrored = rows.filter(function (r) { return !!r._mirrorOf; }).length;
-    // The note is about COVERAGE of the trigger's notify actions, not about the
-    // row count: the list also seeds a default audit Event, and a row that was
-    // never mirrorable must not read as "edited".
-    var triggerHost = panel.querySelector("#aw-actions");
-    var mirrorable = (triggerHost ? collectActionsFrom(triggerHost) : [])
-      .filter(function (a) { return a.type === "notify" && actionChannelIds(a).length; }).length;
-    if (rows.length === 0) {
-      note.textContent = "Nothing here yet — add an action, or add a Notify above and it will appear here.";
-    } else if (mirrorable === 0) {
-      note.textContent = "Add a Notify above and it will appear here too.";
-    } else if (mirrored === mirrorable) {
-      note.textContent = "Following your notify actions above.";
-    } else if (mirrored === 0) {
-      note.textContent = "Edited — no longer following your notify actions.";
-    } else {
-      note.textContent = mirrored + " of " + mirrorable + " still following your notify actions.";
-    }
+    var rows = host.querySelectorAll(":scope > .aw-action").length;
+    note.textContent = rows === 0
+      ? "Nothing happens when this alert ends. Add an action — a Notify here matches one of your trigger Notify actions by default."
+      : "Runs once when the alert ends. A Notify matches one of your trigger Notify actions unless you customize it.";
   }
 
-  function mirroredResetActions(triggerActions, existing) {
-    var optOut = Array.isArray(draft._resetMirrorOptOut) ? draft._resetMirrorOptOut : [];
-    var notifies = (triggerActions || []).filter(function (a) {
-      return a.type === "notify" && actionChannelIds(a).length &&
-        optOut.indexOf(actionChannelIds(a).join(",")) === -1;
-    });
-    var kept = (existing || []).filter(function (a) { return !a._mirrorOf; });
-    var stillMirrored = notifies.map(function (a) {
-      var clone = JSON.parse(JSON.stringify(a));
-      // An escalation chases an UNHANDLED alert — meaningless on a recovery,
-      // and the server rejects it (reset actions are plain, not escalatable).
-      delete clone.escalation;
-      // Keyed on the WHOLE channel list: two notify actions that share a
-      // primary but differ in their second channel are different destinations,
-      // and mirroring one onto the other would silently drop the difference.
-      clone._mirrorOf = actionChannelIds(a).join(",");
-      return clone;
-    });
-    // Operator-authored rows keep their place after the mirrored ones.
-    return stillMirrored.concat(kept);
-  }
   // Severity tiers + notify policy — collected only in multi-severity mode
   // (a single numeric metric). Single mode clears them.
   function collectBands(panel) {
@@ -9306,6 +9637,26 @@ async function openAutomationWizard(existing, opts) {
         if (p) return p;
       }
     }
+    // Reset actions the operator configured themselves — a customized row and
+    // every per-tier escalation override (business rule 145). A MATCHED row is
+    // its trigger action, which is validated above.
+    var resets = draft.resetActions || [];
+    for (var ri = 0; ri < resets.length; ri++) {
+      var ra = resets[ri];
+      if (!ra) continue;
+      if (!(ra.type === "notify" && ra.matchActionId && !ra.customized)) {
+        p = validateAction(ra, "Reset action " + (ri + 1));
+        if (p) return p;
+      }
+      var custom = (ra.resetEscalation && ra.resetEscalation.custom) || {};
+      var keys = Object.keys(custom);
+      for (var ki = 0; ki < keys.length; ki++) {
+        var tierNo = Number(String(keys[ki]).split(":").pop()) + 1;
+        if (!(custom[keys[ki]] || []).length) return "Reset action " + (ri + 1) + ": the customized escalation tier " + tierNo + " has no Notify — add one, or turn Customize off to use the tier's own.";
+        p = validateActionList(custom[keys[ki]], "Reset action " + (ri + 1) + " escalation tier " + tierNo + " notify");
+        if (p) return p;
+      }
+    }
     // Quiet time: what the editor can't collect contributes NO window to the
     // draft, so a ticked checkbox over a half-typed day would save silently as
     // "no quiet time" — the operator would have to notice the reminders still
@@ -9431,7 +9782,12 @@ async function openAutomationWizard(existing, opts) {
       ? '<dt>Reminders</dt><dd>' + repeatLines.join("<br>") + '</dd>'
       : "") + quietRow;
     var resetRow = (draft.resetActions && draft.resetActions.length)
-      ? '<dt>When it resets</dt><dd>' + draft.resetActions.map(function (a) { return escapeHtml(actionSummary(a)); }).join("<br>") + '</dd>'
+      ? '<dt>When it resets</dt><dd>' + draft.resetActions.map(function (a) {
+          var s = actionSummary(a);
+          if (a.type === "notify" && a.matchActionId) s += a.customized ? " (customized)" : " (same as its trigger action)";
+          if (a.type === "notify" && a.resetEscalation) s += " + the escalation tiers that sent";
+          return escapeHtml(s);
+        }).join("<br>") + '</dd>'
       : '<dt>When it resets</dt><dd><span style="color:var(--color-text-tertiary)">nothing — the alert just clears</span></dd>';
     var bandsRow = "";
     if (bandsApplicable(draft.trigger) && draft.severityBands && draft.severityBands.length) {

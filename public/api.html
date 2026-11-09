@@ -1696,8 +1696,10 @@
               <code>POST /automations/preview</code> lists what a scope selects.</li>
             <li><code>actions?</code> — up to 20, each one of <code>notify</code> (a delivery
               channel id from <code>/delivery-channels</code> plus recipients),
-              <code>api_call</code>, <code>script</code>, <code>event</code>,
-              <code>reboot</code>; each may carry its own escalation tiers.</li>
+              <code>api_call</code>, <code>script</code>,
+              <code>reboot</code> (every fire writes its audit Event on its own); each may carry its own escalation tiers. A
+              <code>notify</code> takes an optional <code>id</code>; a reset <code>notify</code> may
+              follow one by <code>matchActionId</code> (rule 145).</li>
             <li><code>reset?</code> — <strong>absent means <code>manual</code></strong> (never
               clears by itself); <code>{ "mode": "auto" }</code> clears when the condition stops.</li>
             <li><code>resetActions?</code>, <code>repeat?</code>,
