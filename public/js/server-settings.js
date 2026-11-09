@@ -2444,8 +2444,8 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
           // Fleet averages (monitoringService.fleetCadences: the harmonic,
           // rate-weighted mean of every monitored asset's resolved interval),
           // so mixed cadences give a fraction and even a uniform fleet carries
-          // float noise (60.000000000000014). The capacity model keeps the exact
-          // figure; the card shows whole seconds.
+          // float noise (60.000000000000014) — fleetCadences now rounds them to
+          // whole seconds at the source; the card formats what it is given.
           ? dbInfoRow("Cadences",
               _fmtCadenceSec(work.cadences.responseTimeSec) + " response · " +
               _fmtCadenceSec(work.cadences.telemetrySec) + " telemetry · " +
