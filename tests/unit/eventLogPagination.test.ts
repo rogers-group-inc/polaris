@@ -17,10 +17,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
 const read = (f: string) => readFileSync(resolve(__dirname, "../../public/js", f), "utf8");
-const APP = read("app.js").split(/\r?\n/);
+const APP = appSource().split(/\r?\n/);
 const ASSETS = read("assets.js").split(/\r?\n/);
 const EVENTS = read("events.js");
 

@@ -32,12 +32,11 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 // Normalized to LF: the working copy is CRLF on Windows checkouts, and the
 // `\n}\n` end-of-function marker below would otherwise never match.
-const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").replace(/\r\n/g, "\n");
+const appSrc = appSource().replace(/\r\n/g, "\n");
 
 /** Slice one top-level `function <name>(` … `\n}` out of app.js. */
 function fnSrc(name: string): string {

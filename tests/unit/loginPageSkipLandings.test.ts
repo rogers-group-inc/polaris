@@ -22,11 +22,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const read = (...p: string[]) => readFileSync(join(process.cwd(), ...p), "utf-8");
 
 describe("desktop logout landings", () => {
-  const appJs = read("public", "js", "app.js");
+  const appJs = appSource();
 
   it("app.js never navigates to the login page directly — every logout lands on /signed-out.html", () => {
     expect(appJs.match(/window\.location\.href = "\/login\.html[^"]*"/g)).toBeNull();

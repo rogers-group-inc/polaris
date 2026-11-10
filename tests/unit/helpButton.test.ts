@@ -12,10 +12,11 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { appSource } from "./_appSource.js";
 
-const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const APP_JS = appSource();
 const g = globalThis as Record<string, any>;
 
 function slice(startMarker: string, endMarker: string): string {

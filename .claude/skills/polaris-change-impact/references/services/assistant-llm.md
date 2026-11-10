@@ -7,7 +7,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 (`/api/v1/assistant`, `assistant` read, session-only); integration CRUD stays in
 `src/api/routes/integrations.ts`. Frontend: `public/js/assistant.js`,
 `public/js/assistant-markdown.js`, `public/css/assistant.css` (booted by
-`public/js/app.js → _bootAssistant()`), and the AI Assistant form in `public/js/integrations-forms.js`.
+`public/js/app-panels.js → _bootAssistant()`), and the AI Assistant form in `public/js/integrations-forms.js`.
 
 ---
 
@@ -267,7 +267,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 
 ## services/helpIndexService.ts
 
-**What it owns:** Keyword search over the operator wiki (`docs/wiki/*.md`) **and the developer page (`public/api.html`)** for the `search_help` tool. Reads both once per process, lazily; splits each wiki page at `##` / `###` headings (never at a `#` inside a code fence) and the developer page into each `<section id>`'s intro plus one section per endpoint block (`splitApiPage`: heading `METHOD /api/v1/path`, text prefixed with its permission gate, `htmlToText` for the body); ranks sections BM25-style with a heading boost; returns at most 5 sections under a 6 KB budget, each with its URL — the GitHub wiki URL (`WIKI_BASE_URL`, the same base as the Help menu's `WIKI_URL` in `public/js/app.js`) and anchor, or `/api#<section id>` for the developer page — and its `source` (`wiki` | `api`). Missing both answers `available: false`; missing either still answers from the other.
+**What it owns:** Keyword search over the operator wiki (`docs/wiki/*.md`) **and the developer page (`public/api.html`)** for the `search_help` tool. Reads both once per process, lazily; splits each wiki page at `##` / `###` headings (never at a `#` inside a code fence) and the developer page into each `<section id>`'s intro plus one section per endpoint block (`splitApiPage`: heading `METHOD /api/v1/path`, text prefixed with its permission gate, `htmlToText` for the body); ranks sections BM25-style with a heading boost; returns at most 5 sections under a 6 KB budget, each with its URL — the GitHub wiki URL (`WIKI_BASE_URL`, the same base as the Help menu's `WIKI_URL` in `public/js/app-sidebar.js`) and anchor, or `/api#<section id>` for the developer page — and its `source` (`wiki` | `api`). Missing both answers `available: false`; missing either still answers from the other.
 
 **Public API:** WIKI_BASE_URL, API_PAGE, HelpSection, HelpHit, HelpSearchResult, tokenize, wikiAnchor, splitWikiPage, splitApiPage, htmlToText, asksAboutApi, buildHelpIndex, rankHelp, searchHelp, wikiPageNames, _resetHelpIndexForTests.
 
@@ -285,7 +285,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 - `public/api.html` is resolved the same relative way (`../../public/api.html`); the Docker image COPYs `public`.
 
 **When changing this:**
-- If `WIKI_URL` in `public/js/app.js` moves, move `WIKI_BASE_URL` with it.
+- If `WIKI_URL` in `public/js/app-sidebar.js` moves, move `WIKI_BASE_URL` with it.
 - Embedding-based retrieval would be a new dependency and a model call per question — the keyword index is deliberate.
 
 ---

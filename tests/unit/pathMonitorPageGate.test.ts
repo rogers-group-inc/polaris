@@ -7,9 +7,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { appSource } from "./_appSource.js";
 
 const root = path.resolve(__dirname, "../..");
-const appJs = readFileSync(path.join(root, "public/js/app.js"), "utf8");
+const appJs = appSource();
 const appTs = readFileSync(path.join(root, "src/app.ts"), "utf8");
 const html = readFileSync(path.join(root, "public/path-monitor.html"), "utf8");
 

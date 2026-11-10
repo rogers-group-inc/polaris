@@ -21,6 +21,7 @@ import { installAppOverlay } from "../fixtures/appOverlay.js";
 import { buildSchemaCatalog, ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { dimensionPickerMeta } from "../../src/services/notificationDimensionService.js";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
+import { appSource } from "./_appSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -89,7 +90,7 @@ beforeAll(() => {
   };
   g.MutationObserver = win.MutationObserver;
   {
-    const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const appSrc = appSource();
     const start = appSrc.indexOf("function _lockModalReadOnly(");
     if (start === -1) throw new Error("_lockModalReadOnly not found in public/js/app.js");
     let depth = 0;

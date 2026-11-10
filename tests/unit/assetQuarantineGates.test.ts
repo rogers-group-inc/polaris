@@ -27,9 +27,10 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { clampLevelToKey, levelsFor } from "../../src/api/middleware/permissions.js";
+import { appSource } from "./_appSource.js";
 
 const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
-const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+const appSrc = appSource();
 const assetsHtml = readFileSync(resolve(__dirname, "../../public/assets.html"), "utf8");
 const mobileSrc = readFileSync(resolve(__dirname, "../../public/js/mobile/asset-detail.js"), "utf8");
 const apiSrc = readFileSync(resolve(__dirname, "../../public/js/api.js"), "utf8");

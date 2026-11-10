@@ -21,10 +21,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appSource } from "./_appSource.js";
 
-const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const APP_JS = appSource();
 
 function extractFn(name: string): string {
   const start = APP_JS.indexOf(`function ${name}(`);

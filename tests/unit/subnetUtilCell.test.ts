@@ -17,10 +17,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
 
-const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const appLines = appSource().split(/\r?\n/);
 const widgetSrc = readFileSync(resolve(__dirname, "../../public/js/widgets/blockUtilization.js"), "utf8");
 
 function fnSrc(name: string): string {

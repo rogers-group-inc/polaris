@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const root = resolve(__dirname, "../..");
 const read = (p: string) => readFileSync(resolve(root, p), "utf8");
@@ -306,7 +307,7 @@ describe("source labels: phone vs desktop", () => {
     return new Function("return " + src.slice(open, close + 1))();
   }
   it("mobile SOURCE_LABELS equals app.js _assetSourceLabels", () => {
-    const desktop = objectLiteral(read("public/js/app.js"), "var _assetSourceLabels = {");
+    const desktop = objectLiteral(appSource(), "var _assetSourceLabels = {");
     const phone = objectLiteral(read("public/js/mobile/asset-detail.js"), "var SOURCE_LABELS = {");
     expect(phone).toEqual(desktop);
   });
@@ -349,7 +350,7 @@ describe("every page that runs a consumer loads the shared modules first", () =>
     expectBefore(list, "/js/topology-render.js", "/js/mobile/topology-tab.js", "mobile.html");
   });
   it("the on-demand asset-panel bundle in app.js loads them before assets.js", () => {
-    const src = read("public/js/app.js");
+    const src = appSource();
     const start = src.indexOf("var _PANEL_SCRIPT_BUNDLES = {");
     const asset = src.slice(src.indexOf("asset: [", start), src.indexOf("]", src.indexOf("asset: [", start)));
     const list = [...asset.matchAll(/"([^"]+\.js)"/g)].map((m) => m[1]);

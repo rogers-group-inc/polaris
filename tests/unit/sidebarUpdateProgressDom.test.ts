@@ -30,11 +30,10 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { serverSettingsSource } from "./_serverSettingsSource.js";
+import { appSource } from "./_appSource.js";
 
-const APP_JS = readFileSync(join(process.cwd(), "public", "js", "app.js"), "utf-8");
+const APP_JS = appSource();
 const SETTINGS_JS = serverSettingsSource();
 
 /** Pull one function out of app.js so we don't boot the whole page. */

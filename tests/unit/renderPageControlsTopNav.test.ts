@@ -13,11 +13,10 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
-const lines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const lines = appSource().split(/\r?\n/);
 
 function fnSrc(name: string): string {
   const start = lines.findIndex((l) => l.startsWith(`function ${name}(`));
