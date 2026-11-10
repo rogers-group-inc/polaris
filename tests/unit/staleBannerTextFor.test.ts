@@ -21,11 +21,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
-const lines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const lines = assetsSource().split(/\r?\n/);
 const start = lines.findIndex((l) => l.startsWith("function _staleBannerTextFor("));
 const end = lines.findIndex((l, i) => i > start && l === "}");
 (0, eval)(lines.slice(start, end + 1).join("\n") + "\nglobalThis._staleBannerTextFor = _staleBannerTextFor;");

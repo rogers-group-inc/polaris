@@ -30,10 +30,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
-const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
+const assetsSrc = assetsSource();
 const assetsLines = assetsSrc.split(/\r?\n/);
 const cssSrc = readFileSync(resolve(__dirname, "../../public/css/styles.css"), "utf8");
 

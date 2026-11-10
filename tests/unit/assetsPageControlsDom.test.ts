@@ -18,8 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -35,7 +34,7 @@ interface ControlsCall {
 }
 
 const g = globalThis as Record<string, any>;
-const src = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
+const src = assetsSource();
 const lines = src.split(/\r?\n/);
 
 /** Slice a top-level `function NAME(...) {` … `}` block out of assets.js. */

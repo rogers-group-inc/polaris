@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
@@ -48,7 +49,7 @@ const impls: Record<string, MarkersFn> = {};
 
 beforeAll(() => {
   // A Windows checkout may carry CRLF; extractFunction slices on "\n}\n".
-  const desktopSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").replace(/\r\n/g, "\n");
+  const desktopSrc = assetsSource().replace(/\r\n/g, "\n");
   const body = ["_medianCadenceMs", "_seriesReportedThrough", "_outageMarkers"]
     .map((n) => extractFunction(desktopSrc, n))
     .join("\n");

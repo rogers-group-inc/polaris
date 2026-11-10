@@ -23,16 +23,15 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
 loadSharedModules();
 
 const g = globalThis as Record<string, any>;
-const lines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const lines = assetsSource().split(/\r?\n/);
 
 function fnSrc(name: string): string {
   const start = lines.findIndex((l) => l.startsWith(`function ${name}(`));

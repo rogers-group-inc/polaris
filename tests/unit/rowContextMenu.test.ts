@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -618,7 +619,7 @@ describe("double click anywhere on a data-row-menu-row", () => {
 // open and the whole-row right-click menu; pin the count per file.
 describe("list pages that open on double click and menu on right click", () => {
   const cases: Array<[string, number]> = [
-    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row)
+    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row) — every assets-*.js split file (assetsSource)
     ["public/js/users.js", 3],
     ["public/js/automations.js", 1],
     ["public/js/blocks.js", 1],
@@ -628,7 +629,7 @@ describe("list pages that open on double click and menu on right click", () => {
   ];
   for (const [file, n] of cases) {
     it(file + " marks its row" + (n > 1 ? "s" : ""), () => {
-      const src = readFileSync(resolve(__dirname, "../..", file), "utf8");
+      const src = file === "public/js/assets.js" ? assetsSource() : readFileSync(resolve(__dirname, "../..", file), "utf8");
       expect((src.match(/<tr data-row-menu-row/g) || []).length).toBe(n);
     });
   }
