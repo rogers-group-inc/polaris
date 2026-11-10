@@ -102,7 +102,7 @@ describe("app split — declarations", () => {
 
   it("every function the original app.js declared is declared exactly once", () => {
     const all = perFile.flatMap((p) => p.fns);
-    expect(INVENTORY.functions.length).toBe(207);
+    expect(INVENTORY.functions.length).toBe(208); // + prefetchPanelScripts (CQ-F041)
     for (const n of INVENTORY.functions) expect(all.filter((x) => x === n).length, n).toBe(1);
     expect(all.length).toBe(INVENTORY.functions.length);
   });

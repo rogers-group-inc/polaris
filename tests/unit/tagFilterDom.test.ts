@@ -295,9 +295,20 @@ describe("tag auto-assign filter — load order", () => {
   it("every page hosting a condition-builder consumer loads the module", () => {
     // A missing or late <script> doesn't error visibly — the modal just fails to
     // open. See polaris-ui-canon → Nested condition tree.
-    for (const page of ["server-settings", "assets", "automations", "appmap", "index", "map"]) {
+    for (const page of ["server-settings", "assets", "automations"]) {
       const html = readFileSync(resolve(__dirname, `../../public/${page}.html`), "utf8");
       expect(html, `${page}.html must load condition-builder.js`).toContain("/js/condition-builder.js");
+    }
+    // appmap / index / map get the wizard from the prefetched asset bundle
+    // (CQ-F041), which must carry the module ahead of it.
+    const panels = readFileSync(resolve(__dirname, "../../public/js/app-panels.js"), "utf8");
+    const at = panels.indexOf("asset: [");
+    const asset = panels.slice(at, panels.indexOf("]", at));
+    expect(asset.indexOf("/js/condition-builder.js")).toBeGreaterThan(-1);
+    expect(asset.indexOf("/js/condition-builder.js")).toBeLessThan(asset.indexOf("/js/automations-wizard.js"));
+    for (const page of ["appmap", "index", "map"]) {
+      const html = readFileSync(resolve(__dirname, `../../public/${page}.html`), "utf8");
+      expect(html, `${page}.html must prefetch the asset bundle`).toContain('data-prefetch-panels="asset"');
     }
   });
 

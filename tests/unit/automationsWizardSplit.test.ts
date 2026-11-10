@@ -40,9 +40,10 @@ describe("automation wizard split — pages and the panel bundle", () => {
     .map((f) => ({ page: f, srcs: scriptSrcs(readFileSync(join(PUBLIC, f), "utf8")) }))
     .filter((p) => p.srcs.some((s) => split.has(s)));
 
-  it("every page that carried the wizard before the split carries the split", () => {
+  it("every page that loads the wizard statically carries the whole split", () => {
     expect(pages.map((p) => p.page).sort()).toEqual(
-      ["appmap.html", "assets.html", "automations.html", "index.html", "map.html", "path-monitor.html"],
+      // index / map / appmap prefetch the asset bundle instead (CQ-F041, tests/unit/panelPrefetch.test.ts).
+      ["assets.html", "automations.html", "path-monitor.html"],
     );
   });
 

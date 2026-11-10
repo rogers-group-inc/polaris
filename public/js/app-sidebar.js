@@ -528,8 +528,10 @@ async function abortFirmwareRunFromPanel(run) {
 }
 
 function openAssetById(assetId) {
+  // PolarisPanels loads the asset bundle when this page has not (yet) — the
+  // dashboard and maps prefetch it (CQ-F041) — and falls back to the deep link.
   if (typeof openViewModal === "function") openViewModal(assetId);
-  else window.location.href = "/assets.html#view=asset:" + encodeURIComponent(assetId);
+  else PolarisPanels.openAsset(assetId);
 }
 
 // Resolve a discovery "currently querying" FortiGate name to its Asset and open

@@ -57,7 +57,7 @@ describe("integrations split — pages", () => {
 
   it("every page that carried integrations.js before the split carries the split", () => {
     expect(pages.map((p) => p.page).sort()).toEqual(
-      ["appmap.html", "assets.html", "automations.html", "index.html", "integrations.html", "map.html", "path-monitor.html"],
+      ["assets.html", "automations.html", "integrations.html", "path-monitor.html"] /* index / map / appmap prefetch it (CQ-F041) */,
     );
   });
 
