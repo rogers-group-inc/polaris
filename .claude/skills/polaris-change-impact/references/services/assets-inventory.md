@@ -381,7 +381,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 
-**Used by:** `src/api/routes/assets.ts — quarantine/release/verify endpoints + GET /assets/quarantine-availability`, `src/services/discovery/discoveryEngine.ts — auto-quarantine post-discovery on new FortiGate sighting`
+**Used by:** `src/api/routes/assets.ts — quarantine/release/verify endpoints + GET /assets/quarantine-availability`, `src/services/discovery/dhcp/dhcpMacAssociation.ts — auto-quarantine post-discovery on new FortiGate sighting (syncDhcpSubnets Phase 6)`
 
 **Availability probe readers (the UI gate):** `public/js/assets.js` (`_quarantinePushAvailable()` — row menu, bulk-bar Quarantine button, asset-details tab visibility), `public/js/mobile/asset-detail.js` (`quarantinePushAvailable()` — hero button), `public/js/api.js` (`api.assets.quarantineAvailability`)
 
@@ -450,7 +450,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization), `assetUpstreamService.resolveFirewallRefsByName` + `utils/cidr.cidrContains` (`getSightingsForDisplay` only).
 
-**Used by:** `src/services/discovery/discoveryEngine.ts — batch-record sightings after DHCP discovery sync`, `src/api/routes/assets.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
+**Used by:** `src/services/discovery/dhcp/dhcpMacAssociation.ts — batch-record sightings after DHCP discovery sync (syncDhcpSubnets Phase 6)`, `src/api/routes/assets.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
 
 **Invariants:**
 - Sightings are keyed by `(assetId, fortigateDevice, source)` (migration `20261103090000_sightings_per_binding_kind`): a gate holding both a lease and a reservation for the device keeps a row for each, so Firewall Sightings shows both. Within a batch the latest `seenAt` per key wins. Until 2026-11-03 the key was (asset, gate) and `dhcp_reservation` won a tie, which hid the lease — often the address the device was actually using.
@@ -465,7 +465,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - Check `assetQuarantineService.ts` `quarantineAsset()` for sighting-filter logic (max-age, integration scoping).
-- Verify `discoveryEngine.ts` `syncDhcpSubnets()` call site still matches expected SightingInput shape.
+- Verify the `dhcp/dhcpMacAssociation.ts` (syncDhcpSubnets Phase 6) call site still matches expected SightingInput shape.
 - Review Settings UI (assets.html) sighting age control and max-age tooltip.
 - Ensure `pruneOldHistory` job (if added) respects Setting-backed retention separately from max-age filter.
 
