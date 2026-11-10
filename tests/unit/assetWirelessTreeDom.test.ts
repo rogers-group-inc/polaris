@@ -27,9 +27,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
@@ -37,7 +36,7 @@ loadSharedModules();
 
 const g = globalThis as Record<string, any>;
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 
 /** Slice a top-level `function NAME(...) {` … `}` block out of assets.js. */
 function fnSrc(name: string): string {

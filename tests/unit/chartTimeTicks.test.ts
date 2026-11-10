@@ -21,8 +21,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
-const lines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const lines = assetsSource().split(/\r?\n/);
 function slice(startsWith: string, endsWith: string): string {
   const start = lines.findIndex((l) => l.startsWith(startsWith));
   const end = lines.findIndex((l, i) => i > start && l.startsWith(endsWith));

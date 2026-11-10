@@ -122,7 +122,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** Fire onload on every appended script, defining the opener when the named file lands. */
 async function loadAll(openerFile: string, opener: string): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 80; i++) {
     const pending = appended.filter((s: any) => !s.__fired);
     if (!pending.length) { await settle(); continue; }
     for (const s of pending) {

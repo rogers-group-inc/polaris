@@ -38,6 +38,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
@@ -48,7 +49,7 @@ const DETAIL_SRC = read("public", "js", "mobile", "asset-detail.js");
 const EDIT_SRC = read("public", "js", "mobile", "asset-edit.js");
 const POLLING_SRC = read("public", "js", "polling-methods.js");
 const DOWN_AFTER_SRC = read("public", "js", "monitor-down-after.js");
-const ASSETS_SRC = read("public", "js", "assets.js");
+const ASSETS_SRC = assetsSource();
 
 const g = globalThis as any;
 const flush = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };

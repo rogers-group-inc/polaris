@@ -22,13 +22,12 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 interface MenuItem { label?: string; separator?: boolean; primary?: boolean; onSelect?: () => void }
 
 const g = globalThis as Record<string, any>;
-const src = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
+const src = assetsSource();
 const lines = src.split(/\r?\n/);
 
 function fnSrc(name: string): string {

@@ -9,14 +9,13 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, unknown>;
 
 // CRLF-normalized, so the "\n}\n" slice finds a function's end in a Windows checkout.
-const SRC = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").replace(/\r\n/g, "\n");
+const SRC = assetsSource().replace(/\r\n/g, "\n");
 
 function extractFunction(name: string): string {
   const m = new RegExp("\\n(async )?function " + name + "\\(").exec(SRC);

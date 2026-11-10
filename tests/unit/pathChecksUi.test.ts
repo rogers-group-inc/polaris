@@ -17,12 +17,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
 import { parseStatusSpec as serverParse } from "../../src/utils/httpCheck.js";
+import { assetsSource } from "./_assetsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const ROOT = resolve(__dirname, "../..");
 const pageSrc = readFileSync(resolve(ROOT, "public/js/path-checks.js"), "utf8");
-const assetsSrc = readFileSync(resolve(ROOT, "public/js/assets.js"), "utf8");
+const assetsSrc = assetsSource();
 
 let CC: any;
 

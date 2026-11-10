@@ -38,12 +38,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { APP_SHELL_STUBS } from "./_appShellStubs.js";
 import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
 const SPLIT = /\r?\n/;
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(SPLIT);
+const assetsLines = assetsSource().split(SPLIT);
 // Two of the functions the tab calls — the severity colour and the severity
 // rank behind its strobe — live in app.js, because the global search dropdown
 // draws the same dot on pages that never load assets.js. The slicer falls

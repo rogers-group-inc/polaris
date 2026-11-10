@@ -26,12 +26,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
 /** One `function name(...) {...}` declaration from a public/js file, by brace matching. */
 function fnSrc(file: string, name: string): string {
-  const src = file === "app.js" ? appSource() : readFileSync(resolve(__dirname, "../../public/js", file), "utf8");
+  const src = file === "app.js" ? appSource() : file === "assets.js" ? assetsSource() : readFileSync(resolve(__dirname, "../../public/js", file), "utf8");
   const start = src.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`${file}: ${name} not found`);
   let depth = 0;

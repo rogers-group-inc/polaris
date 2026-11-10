@@ -18,14 +18,13 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { serverSettingsSource } from "./_serverSettingsSource.js";
 import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const APP_JS = appSource();
 const SETTINGS_JS = serverSettingsSource();
-const ASSETS_JS = readFileSync(join(process.cwd(), "public", "js", "assets.js"), "utf-8");
+const ASSETS_JS = assetsSource();
 
 function extractFn(src: string, name: string): string {
   const start = src.indexOf(`function ${name}(`);

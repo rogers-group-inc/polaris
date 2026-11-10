@@ -24,14 +24,13 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { serverSettingsSource } from "./_serverSettingsSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 const SPLIT = /\r?\n/;
 const FILES = {
-  assets: readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(SPLIT),
+  assets: assetsSource().split(SPLIT),
   settings: serverSettingsSource().split(SPLIT),
 };
 
