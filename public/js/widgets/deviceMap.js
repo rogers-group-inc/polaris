@@ -835,6 +835,11 @@
     return (typeof isLightTheme === "function" && isLightTheme()) ? "light" : "dark";
   }
 
+  // The read-only topology pane, for the Status Map widget: on the /dash
+  // wallboard its dot popup opens a gate's topology here instead of linking
+  // to /map.html (a page behind the login the kiosk does not have).
+  window.PolarisDeviceMapTopology = { open: openTopologyPane };
+
   PolarisWidgets.register({
     type: "deviceMap",
     category: "NOC",
