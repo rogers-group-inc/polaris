@@ -30,6 +30,21 @@
   var DEFAULT_OSM_ZOOM = 19;  // a site, not a city (operator: "zoomed in much further")
   var OSM_NATIVE_MAX = 19;    // tile.openstreetmap.org's deepest tiles
   var OSM_MAX_ZOOM = 22;      // overzoom past the tiles for indoor placement
+  // The optional satellite basemap (Server Settings → Customization), proxied
+  // through Polaris so the CSP keeps its one tile host. Asked once per page;
+  // null until the answer arrives.
+  var SATELLITE_TILE_URL = "/api/v1/map/satellite/{z}/{x}/{y}";
+  var _satelliteStatus = null;
+  var _satellitePending = null;
+  function loadSatelliteStatus() {
+    if (_satelliteStatus) return Promise.resolve(_satelliteStatus);
+    if (!_satellitePending) {
+      _satellitePending = (typeof api !== "undefined" && api.map && api.map.satellite ? api.map.satellite() : Promise.reject(new Error("no api")))
+        .then(function (s) { _satelliteStatus = s || { available: false }; return _satelliteStatus; },
+              function () { _satelliteStatus = { available: false }; return _satelliteStatus; });
+    }
+    return _satellitePending;
+  }
   var HISTORY_MAX = 100;
   var DRAG_MIME = "application/x-polaris-asset";
 
@@ -195,11 +210,104 @@
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
     var drawHandler = null;
+    var baseLayer = null;
+    var layerSwitch = null;
+    var satelliteErrorShown = false;
+    // While VIEWING, Map / Satellite is just a look (like a rack's Front /
+    // Back); while editing it is staged into the view's background.
+    var viewLayer = null;
 
     function family() { return typeof isLightTheme === "function" && isLightTheme() ? "light" : "dark"; }
 
+    // Which basemap the map shows: the view's saved choice, a viewer's
+    // transient pick over it, and plain Map whenever satellite is not
+    // (or no longer) configured.
+    function currentLayer() {
+      var bg = state.background;
+      var want = viewLayer || (bg && bg.kind === "osm" && bg.layer === "satellite" ? "satellite" : "map");
+      return want === "satellite" && _satelliteStatus && _satelliteStatus.available ? "satellite" : "map";
+    }
+    function applyBaseLayer() {
+      if (!map) return;
+      if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
+      if (currentLayer() === "satellite") {
+        baseLayer = L.tileLayer(SATELLITE_TILE_URL, {
+          maxNativeZoom: _satelliteStatus.maxNativeZoom || OSM_NATIVE_MAX,
+          maxZoom: OSM_MAX_ZOOM,
+          attribution: esc(_satelliteStatus.attribution || ""),
+        });
+        baseLayer.on("tileerror", function () {
+          if (satelliteErrorShown) return;
+          satelliteErrorShown = true;
+          ctx.toast("Some satellite tiles did not load — the imagery provider may be refusing them (Server Settings → Customization → Test)", "error");
+        });
+      } else {
+        baseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxNativeZoom: OSM_NATIVE_MAX,
+          maxZoom: OSM_MAX_ZOOM,
+          crossOrigin: "anonymous",
+          attribution: "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+        });
+      }
+      baseLayer.addTo(map);
+      baseLayer.bringToBack();
+      mapEl.classList.toggle("is-satellite", currentLayer() === "satellite");
+      paintLayerSwitch();
+    }
+    // The Map | Satellite switch, under the zoom bar (bottom-left is the
+    // legend button's corner), only when an
+    // operator configured satellite imagery and the view is not an image.
+    function addLayerSwitch() {
+      if (!map || layerSwitch || (state.background && state.background.kind === "image")) return;
+      var Ctl = L.Control.extend({
+        options: { position: "topleft" },
+        onAdd: function () {
+          var el = L.DomUtil.create("div", "topo-phys-layer-switch");
+          el.setAttribute("role", "group");
+          el.setAttribute("aria-label", "Basemap");
+          el.innerHTML =
+            '<button type="button" data-layer="map">Map</button>' +
+            '<button type="button" data-layer="satellite">Satellite</button>';
+          L.DomEvent.disableClickPropagation(el);
+          L.DomEvent.disableScrollPropagation(el);
+          el.addEventListener("click", function (e) {
+            var b = e.target.closest("[data-layer]");
+            if (b) setLayer(b.getAttribute("data-layer"));
+          });
+          return el;
+        },
+      });
+      layerSwitch = new Ctl();
+      layerSwitch.addTo(map);
+      paintLayerSwitch();
+    }
+    function paintLayerSwitch() {
+      var el = layerSwitch && layerSwitch.getContainer ? layerSwitch.getContainer() : null;
+      if (!el) return;
+      var on = currentLayer();
+      Array.prototype.forEach.call(el.querySelectorAll("[data-layer]"), function (b) {
+        var is = b.getAttribute("data-layer") === on;
+        b.classList.toggle("is-on", is);
+        b.setAttribute("aria-pressed", is ? "true" : "false");
+      });
+    }
+    function setLayer(layer) {
+      if (layer !== "map" && layer !== "satellite") return;
+      if (state.editing) {
+        // Staged with the framing the operator sees, like Done editing does.
+        var c = map.getCenter();
+        state.background = { kind: "osm", center: [Number(c.lat.toFixed(7)), Number(c.lng.toFixed(7))], zoom: map.getZoom(), layer: layer };
+        viewLayer = null;
+        changed("background");
+      } else {
+        viewLayer = layer;
+      }
+      applyBaseLayer();
+    }
+
     function buildMap() {
       if (map) { map.remove(); map = null; }
+      baseLayer = null; layerSwitch = null;
       markers = {}; linkLines = {}; polygonShapes = {};
       var bg = state.background;
       if (bg && bg.kind === "image") {
@@ -213,12 +321,8 @@
         map.setMaxBounds(L.latLngBounds([[-h, -w], [2 * h, 2 * w]]));
       } else {
         map = L.map(mapEl, { maxZoom: OSM_MAX_ZOOM, zoomSnap: 0.5 });
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxNativeZoom: OSM_NATIVE_MAX,
-          maxZoom: OSM_MAX_ZOOM,
-          crossOrigin: "anonymous",
-          attribution: "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
-        }).addTo(map);
+        applyBaseLayer();
+        loadSatelliteStatus().then(function (s) { if (map && s.available) { applyBaseLayer(); addLayerSwitch(); } });
         var center = bg && bg.kind === "osm" && Array.isArray(bg.center) ? bg.center : null;
         var fg = data.fortigate || {};
         if (!center && fg.latitude != null && fg.longitude != null) center = [fg.latitude, fg.longitude];
@@ -576,9 +680,10 @@
     function captureOsmView() {
       if (!map || (state.background && state.background.kind === "image")) return;
       var c = map.getCenter();
-      var next = { kind: "osm", center: [Number(c.lat.toFixed(7)), Number(c.lng.toFixed(7))], zoom: map.getZoom() };
       var cur = state.background;
-      if (cur && cur.kind === "osm" && cur.zoom === next.zoom && cur.center[0] === next.center[0] && cur.center[1] === next.center[1]) return;
+      var layer = cur && cur.kind === "osm" && cur.layer === "satellite" ? "satellite" : "map";
+      var next = { kind: "osm", center: [Number(c.lat.toFixed(7)), Number(c.lng.toFixed(7))], zoom: map.getZoom(), layer: layer };
+      if (cur && cur.kind === "osm" && cur.zoom === next.zoom && cur.center[0] === next.center[0] && cur.center[1] === next.center[1] && (cur.layer || "map") === layer) return;
       state.background = next;
       ctx.stageViewPatch({ background: next });
     }
@@ -623,6 +728,7 @@
 
     function setEditing(on) {
       state.editing = !!on;
+      if (viewLayer) { viewLayer = null; applyBaseLayer(); }
       Object.keys(markers).forEach(function (id) {
         var m = markers[id];
         if (m.dragging) { if (on) m.dragging.enable(); else m.dragging.disable(); }

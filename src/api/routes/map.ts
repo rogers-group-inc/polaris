@@ -16,6 +16,8 @@
  *   GET /map/sites/:id/topology/views — the site's saved views (rule 147)
  *   GET /map/sites/:id/topology/views/:viewId/mode-change — what a mode change would remove
  *   GET /map/sites/:id/topology/background/:imageId — an uploaded view background
+ *   GET /map/satellite          — whether the operator configured satellite imagery
+ *   GET /map/satellite/:z/:x/:y — one satellite tile, proxied (satelliteTileService)
  *
  * Write endpoints (escalate to deviceMap=write per-route):
  *   PUT    /map/sites/:id/topology/layout — full-replace one (site, view) layout
@@ -64,6 +66,7 @@ import {
   MAX_BACKGROUND_IMAGE_BYTES,
 } from "../../services/topologyViewService.js";
 import multer from "multer";
+import { getSatelliteStatus, getSatelliteTile } from "../../services/satelliteTileService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope } from "../../services/writeScopeService.js";
@@ -441,6 +444,37 @@ router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => 
     res.setHeader("Cache-Control", "private, max-age=86400, immutable");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(img.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The optional satellite basemap (Server Settings → Customization). Status is
+// all a viewer learns — never the provider URL or key; the tiles come back
+// through Polaris so the CSP keeps its one tile host.
+router.get("/satellite", async (_req, res, next) => {
+  try {
+    res.json(await getSatelliteStatus());
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SatelliteTileParams = z.object({
+  z: z.coerce.number().int(),
+  x: z.coerce.number().int(),
+  y: z.coerce.number().int(),
+});
+
+router.get("/satellite/:z/:x/:y", async (req, res, next) => {
+  try {
+    const p = SatelliteTileParams.safeParse(req.params);
+    if (!p.success) throw new AppError(400, "Invalid satellite tile request");
+    const tile = await getSatelliteTile(p.data.z, p.data.x, p.data.y);
+    res.setHeader("Content-Type", tile.contentType);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(tile.body);
   } catch (err) {
     next(err);
   }

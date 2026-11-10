@@ -55,7 +55,9 @@ describe("view name / mode / shown types", () => {
 
 describe("sanitizeBackground", () => {
   it("accepts OSM centre + zoom and an image id; null clears", () => {
-    expect(sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19 })).toEqual({ kind: "osm", center: [36.1, -86.7], zoom: 19 });
+    expect(sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19 })).toEqual({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "map" });
+    expect(sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "satellite" })).toMatchObject({ layer: "satellite" });
+    expect(status(() => sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "terrain" }))).toBe(400);
     expect(sanitizeBackground({ kind: "image", imageId: A1, width: 9, height: 9 })).toEqual({ kind: "image", imageId: A1 });
     expect(sanitizeBackground(null)).toBeNull();
   });

@@ -59,7 +59,7 @@ const ORPHAN_IMAGE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // ─── Shapes ───────────────────────────────────────────────────────────────────
 
 type TopologyBackground =
-  | { kind: "osm"; center: [number, number]; zoom: number }
+  | { kind: "osm"; center: [number, number]; zoom: number; layer: "map" | "satellite" }
   | { kind: "image"; imageId: string; width: number; height: number };
 
 export interface TopologyPolygon {
@@ -212,7 +212,7 @@ export function sanitizeShownTypes(raw: unknown): string[] {
  * by id; width/height are filled from the stored image by the caller, never
  * trusted from the client.
  */
-export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number, number]; zoom: number } | { kind: "image"; imageId: string } | null {
+export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number, number]; zoom: number; layer: "map" | "satellite" } | { kind: "image"; imageId: string } | null {
   if (raw === null || raw === undefined) return null;
   if (!isObj(raw)) return bad("background must be null or an object");
   if (raw.kind === "osm") {
@@ -222,7 +222,11 @@ export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number
     const lng = finite((c as unknown[])[1], "background longitude", 180);
     const zoom = finite(raw.zoom, "background zoom", 22);
     if (zoom < 1) bad("background zoom must be from 1 to 22");
-    return { kind: "osm", center: [lat, lng], zoom };
+    // The basemap: OpenStreetMap, or the operator-configured satellite source
+    // (satelliteTileService). Kept even if satellite is later switched off —
+    // the canvas then shows the map until it is back.
+    if (raw.layer !== undefined && raw.layer !== "map" && raw.layer !== "satellite") bad('background.layer must be "map" or "satellite"');
+    return { kind: "osm", center: [lat, lng], zoom, layer: raw.layer === "satellite" ? "satellite" : "map" };
   }
   if (raw.kind === "image") {
     if (typeof raw.imageId !== "string" || !/^[0-9a-f-]{36}$/.test(raw.imageId)) bad("background.imageId must be an uploaded image id");

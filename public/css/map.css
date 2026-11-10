@@ -928,6 +928,26 @@
 /* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
    an uploaded floor plan, with location-group polygons and placed devices. */
 .topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+/* Map | Satellite (only when Server Settings configures satellite imagery):
+   the zoom bar's look, as a two-button segmented control. */
+.topo-phys-layer-switch {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--map-btn-shadow);
+}
+.topo-phys-layer-switch button {
+  padding: 5px 12px;
+  border: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font: 600 0.78rem var(--font-sans);
+  cursor: pointer;
+}
+.topo-phys-layer-switch button + button { border-left: 1px solid var(--color-border); }
+.topo-phys-layer-switch button:hover { background: var(--color-surface); color: var(--color-text-primary); }
+.topo-phys-layer-switch button.is-on { background: var(--color-accent); color: #fff; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

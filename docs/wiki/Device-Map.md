@@ -580,6 +580,11 @@ the column under the tick:
   site; pan and zoom to frame it, and the view you leave edit mode on is saved
   with the view. An image is shown at any resolution, scaled to fit. Switching
   between the two clears the polygons and placements drawn on the old one.
+- **Map | Satellite** (under the zoom buttons, OpenStreetMap only): shown when
+  an administrator has set up [Satellite imagery](Server-Settings#satellite-imagery).
+  While you are viewing, switching is just a look; in edit mode the choice is
+  saved with the view. Polygons and placements stay where they are, since both
+  layers use the same coordinates.
 - **Draw polygon**: pick the location group the polygon is for (a group the
   site's descriptions already name, or a new group inside one), then click to
   add points and click the first point to close it. Click a polygon to

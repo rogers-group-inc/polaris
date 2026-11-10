@@ -29,9 +29,11 @@ async function loadCustomizationTab() {
     var both = await Promise.all([
       api.serverSettings.getBranding(),
       api.serverSettings.rebootGet().then(function (r) { return r.reboot; }, function () { return null; }),
+      api.serverSettings.satelliteGet().then(function (r) { return r.satellite; }, function () { return null; }),
     ]);
     _brandingData = both[0];
     _rebootSettingsData = both[1];
+    _satelliteSettingsData = both[2];
     _brandingLoaded = true;
     renderCustomizationTab();
   } catch (err) {
@@ -154,6 +156,7 @@ function renderCustomizationTab() {
       '<button class="btn btn-primary" id="btn-tempunit-save">Save</button>' +
     '</div>' +
     _rebootSettingsCardHtml(_rebootSettingsData) +
+    _satelliteSettingsCardHtml(_satelliteSettingsData) +
     '</div>';
 
   // Wire save buttons — every card PUTs the whole branding payload, so any one
@@ -166,6 +169,17 @@ function renderCustomizationTab() {
   if (placementBtn) placementBtn.addEventListener("click", function () { saveBranding(true); });
   var rebootBtn = document.getElementById("btn-reboot-settings-save");
   if (rebootBtn) rebootBtn.addEventListener("click", saveRebootSettings);
+  var satSave = document.getElementById("btn-satellite-save");
+  if (satSave) satSave.addEventListener("click", function () { saveSatelliteSettings(false); });
+  var satTest = document.getElementById("btn-satellite-test");
+  if (satTest) satTest.addEventListener("click", function () { saveSatelliteSettings(true); });
+  var satClear = document.getElementById("btn-satellite-clear-key");
+  if (satClear) satClear.addEventListener("click", function () {
+    _satelliteClearKey = true;
+    var f = document.getElementById("f-sat-key");
+    if (f) { f.value = ""; f.placeholder = "Removed when you save"; }
+    satClear.disabled = true;
+  });
 
   // Wire logo upload
   wireUploadArea("logo-upload-area", "logo-file-input", uploadLogo);
@@ -202,6 +216,89 @@ function _rebootSettingsCardHtml(s) {
     '</label>' +
     '<button class="btn btn-primary" id="btn-reboot-settings-save" style="margin-top:0.9rem">Save</button>' +
   '</div>';
+}
+
+var _satelliteSettingsData = null;
+var _satelliteClearKey = false;
+
+/**
+ * The Satellite imagery card: the optional satellite basemap of the Device
+ * Map's Topology views (satelliteTileService). Polaris fetches the tiles from
+ * the provider and passes them on, so the key never reaches a browser. Pure.
+ */
+function _satelliteSettingsCardHtml(s) {
+  if (!s) {
+    return '<div class="settings-card"><h4>Satellite imagery</h4><p class="empty-state">Could not load the satellite imagery settings.</p></div>';
+  }
+  _satelliteClearKey = false;
+  return '<div class="settings-card">' +
+    '<h4>Satellite imagery</h4>' +
+    '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+      'Adds a <strong>Map | Satellite</strong> switch to the Device Map’s Topology views. OpenStreetMap has no aerial ' +
+      'imagery, so it comes from a provider you choose, under that provider’s terms and your own licence or API key. ' +
+      'Polaris fetches the tiles and passes them on: the key never reaches a browser.' +
+    '</p>' +
+    '<label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:0.8rem">' +
+      '<input type="checkbox" id="f-sat-enabled"' + (s.enabled ? ' checked' : '') + ' style="margin-top:0.2rem">' +
+      '<span><strong>Offer satellite imagery</strong></span>' +
+    '</label>' +
+    '<div class="form-group"><label for="f-sat-url">Tile URL</label>' +
+      '<input id="f-sat-url" type="text" maxlength="500" spellcheck="false" value="' + escapeHtml(s.urlTemplate || "") + '" placeholder="https://…/{z}/{y}/{x}?token={key}">' +
+      '<p class="hint">An https address with <code>{z}</code>, <code>{x}</code> and <code>{y}</code>, in the order your provider uses. ' +
+      'Write <code>{key}</code> where the API key goes rather than pasting the key into the URL.</p></div>' +
+    '<div class="form-group"><label for="f-sat-key">API key</label>' +
+      '<div style="display:flex;gap:0.5rem">' +
+        '<input id="f-sat-key" type="password" autocomplete="new-password" maxlength="2000" style="flex:1" placeholder="' + (s.apiTokenSet ? "Saved — leave blank to keep it" : "Optional") + '">' +
+        (s.apiTokenSet ? '<button type="button" class="btn btn-secondary" id="btn-satellite-clear-key">Remove key</button>' : '') +
+      '</div>' +
+      '<p class="hint">Stored encrypted. Leave it blank for a provider that needs no key.</p></div>' +
+    '<div class="form-group"><label for="f-sat-attr">Attribution</label>' +
+      '<input id="f-sat-attr" type="text" maxlength="200" value="' + escapeHtml(s.attribution || "") + '" placeholder="Imagery © Esri, Maxar, Earthstar Geographics">' +
+      '<p class="hint">The credit your provider’s terms require. It is shown in the corner of the map.</p></div>' +
+    '<div class="form-group"><label for="f-sat-zoom">Deepest zoom</label>' +
+      '<input id="f-sat-zoom" type="number" min="1" max="22" value="' + (s.maxNativeZoom || 19) + '" style="width:6rem">' +
+      '<p class="hint">The most detailed zoom level your provider serves. Polaris enlarges its tiles beyond that.</p></div>' +
+    '<div style="display:flex;gap:0.5rem;margin-top:0.4rem">' +
+      '<button class="btn btn-secondary" id="btn-satellite-test">Test</button>' +
+      '<button class="btn btn-primary" id="btn-satellite-save">Save</button>' +
+    '</div>' +
+    '<p style="margin:0.8rem 0 0;font-size:0.78rem;color:var(--color-text-tertiary)">Check with your IT team that the provider is approved and that the Polaris server may reach it.</p>' +
+  '</div>';
+}
+
+function _satelliteFormValues() {
+  var v = {
+    enabled: !!(document.getElementById("f-sat-enabled") || {}).checked,
+    urlTemplate: (document.getElementById("f-sat-url") || {}).value || "",
+    attribution: (document.getElementById("f-sat-attr") || {}).value || "",
+    maxNativeZoom: Number((document.getElementById("f-sat-zoom") || {}).value || 19),
+  };
+  var key = (document.getElementById("f-sat-key") || {}).value || "";
+  // Blank keeps the stored key; Remove key sends "" to clear it.
+  if (key) v.apiToken = key;
+  else if (_satelliteClearKey) v.apiToken = "";
+  return v;
+}
+
+async function saveSatelliteSettings(testOnly) {
+  var btn = document.getElementById(testOnly ? "btn-satellite-test" : "btn-satellite-save");
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    if (testOnly) {
+      var t = await api.serverSettings.satelliteTest(_satelliteFormValues());
+      showToast("The provider returned a tile (" + t.contentType + ", " + Math.max(1, Math.round(t.bytes / 1024)) + " KB)");
+    } else {
+      var res = await api.serverSettings.satellitePut(_satelliteFormValues());
+      _satelliteSettingsData = res.satellite;
+      showToast(res.satellite.enabled ? "Satellite imagery is on — the Map | Satellite switch appears on Topology views" : "Satellite imagery is off");
+      renderCustomizationTab();
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function saveRebootSettings() {

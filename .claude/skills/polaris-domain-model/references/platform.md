@@ -413,6 +413,8 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- switch/access_point, so a custom type added later starts hidden
   background    Json?           -- null | {kind:"osm", center:[lat,lng], zoom} |
                                 -- {kind:"image", imageId, width, height}  (topology views)
+                                -- an osm background also carries layer "map" | "satellite"
+                                -- (satellite = the Setting("satelliteConfig") provider)
   polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
                                 -- in background coordinates; codes in display casing (rule 148)
   racks         Json            -- [{id, name, units 1-60, order, face}]  (rack views)

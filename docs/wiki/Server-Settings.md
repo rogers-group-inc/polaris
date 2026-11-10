@@ -328,7 +328,8 @@ Four cards: **Application Name** (name and subtitle — the name shows in browse
 tabs and PDF exports), **Logo** (upload, where it appears — `logoOnLogin` /
 `logoOnSidebar` — and an optional Polaris-star accent on its corner),
 **Display Units** (Celsius or Fahrenheit for hardware-sensor temperatures;
-display only — samples and automation thresholds stay in °C), and **Reboots**.
+display only — samples and automation thresholds stay in °C), **Reboots** and
+**Satellite imagery**.
 The unit rides the branding payload and applies to every operator and the
 wallboard.
 
@@ -344,6 +345,32 @@ so the switch never stops an automation. Turning it on or off is recorded as an
 Event. Saving needs **Read-Write** on `serverSettingsSystem`; the people who
 reboot devices only need **Read-Write on Assets** to see whether the field is
 required ([rule 115](Business-Rules#rule-115)).
+
+### Satellite imagery
+
+Adds a **Map | Satellite** switch to the [Device Map](Device-Map)'s Topology
+views. OpenStreetMap has no aerial imagery, so it comes from a provider you
+choose (Esri, Mapbox, MapTiler, your own imagery server…), under that
+provider's terms and your own licence or key. Off by default.
+
+- **Tile URL**: an https address with `{z}`, `{x}` and `{y}` in the order your
+  provider uses, for example
+  `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`.
+  Write `{key}` where the key goes, for example `…?access_token={key}`, rather
+  than pasting the key into the URL.
+- **API key**: stored encrypted and never shown again; leave it blank to keep
+  the saved one, or **Remove key**.
+- **Attribution**: the credit the provider requires, shown in the corner of the
+  map. Required while satellite imagery is on.
+- **Deepest zoom**: the most detailed level the provider serves; the map
+  enlarges its tiles beyond that.
+
+**Test** fetches one tile with what is on screen, before you save. The Polaris
+server fetches the tiles and passes them on, so the key never reaches a browser
+and the browser only talks to Polaris. The server therefore needs to reach the
+provider; check with your IT team that the provider is approved. Saving needs
+**Read-Write** on `serverSettingsSystem` and is recorded as an Event (without
+the key).
 
 **The logo is picked by theme *family*, never by id** ([rule 27](Business-Rules#rule-27)).
 The shipped art is theme-paired, so painting the wrong variant makes the logo

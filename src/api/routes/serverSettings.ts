@@ -27,6 +27,7 @@ import { getReservationMacSettings, saveReservationMacSettings } from "../../ser
 import { getDashSettings, saveDashSettings } from "../../services/dashSettingsService.js";
 import { getIpv6Status, setIpv6Enabled } from "../../services/ipv6GateService.js";
 import { getRebootSettings, saveRebootSettings } from "../../services/rebootSettingsService.js";
+import { getSatelliteSettings, saveSatelliteSettings, testSatelliteSettings } from "../../services/satelliteTileService.js";
 import { listActiveFirmwareRuns, abortAllFirmwareRuns } from "../../services/firmwareUpgradeService.js";
 import {
   getLoginAccessSettings,
@@ -1023,6 +1024,49 @@ router.put("/reboot", requirePermission("serverSettingsSystem", "write"), async 
     const body = RebootSettingsSchema.safeParse(req.body ?? {});
     if (!body.success) throw new AppError(400, body.error.issues[0]?.message ?? "Invalid request");
     res.json({ reboot: await saveRebootSettings(body.data, req.session?.username ?? "unknown") });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Satellite imagery (the topology view's optional basemap) ─────────────────
+//
+// An operator-chosen provider: the URL template the SERVER fetches and its API
+// key (sealed at rest, never returned — `apiTokenSet` only). `apiToken`
+// omitted keeps the stored key; "" clears it.
+const SatelliteSettingsSchema = z.object({
+  enabled: z.boolean(),
+  urlTemplate: z.string().max(500),
+  apiToken: z.string().max(2000).optional(),
+  attribution: z.string().max(200),
+  maxNativeZoom: z.number().int().min(1).max(22),
+}).strict();
+
+router.get("/satellite", async (_req, res, next) => {
+  try {
+    res.json({ satellite: await getSatelliteSettings() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/satellite", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const body = SatelliteSettingsSchema.safeParse(req.body ?? {});
+    if (!body.success) throw new AppError(400, body.error.issues[0]?.message ?? "Invalid request");
+    res.json({ satellite: await saveSatelliteSettings(body.data, req.session?.username ?? "unknown") });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Fetches one tile with the values on screen. Write-gated: it makes the server
+// request an address the caller typed.
+router.post("/satellite/test", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+  try {
+    const body = SatelliteSettingsSchema.safeParse(req.body ?? {});
+    if (!body.success) throw new AppError(400, body.error.issues[0]?.message ?? "Invalid request");
+    res.json(await testSatelliteSettings(body.data));
   } catch (err) {
     next(err);
   }

@@ -1594,6 +1594,9 @@ const api = {
     // Whether every reboot must say why (business rule 115(d)).
     rebootGet:            ()      => request("GET",  "/server-settings/reboot"),
     rebootPut:            (body)  => request("PUT",  "/server-settings/reboot", body),
+    satelliteGet:         ()      => request("GET",  "/server-settings/satellite"),
+    satellitePut:         (body)  => request("PUT",  "/server-settings/satellite", body),
+    satelliteTest:        (body)  => request("POST", "/server-settings/satellite/test", body),
     // Local login source-IP restriction (login form + password endpoints).
     // The GET also reports the caller's IP as Polaris resolves it, which is
     // what reveals a trust-proxy misconfiguration before the scope is trusted.
@@ -1861,6 +1864,7 @@ const api = {
     // Explicit Save — stamps the restore point "Reset to last save" restores.
     saveTopologyCheckpoint: (id, view, positions) => request("POST", `/map/sites/${id}/topology/layout/checkpoint`, { view, positions }),
     // Saved topology views (business rules 147-149).
+    satellite:          ()                 => request("GET",    "/map/satellite"),
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),

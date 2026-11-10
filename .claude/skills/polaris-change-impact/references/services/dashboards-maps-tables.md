@@ -301,7 +301,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/topologyViewService.ts
 
-**What it owns:** Saved, SHARED per-site Device Map topology views (business rules 147-149) — the `TopologyView` and `TopologyBackgroundImage` tables (single writer). A view is a name + ONE mode (`layer2` / `topology` / `rack`) + `shownTypes` + that mode's content: a Topology view's `background` (OSM centre + zoom, or an uploaded image) and `polygons` (location-group codes in display casing + points in background coordinates); a Rack view's `racks` and `rackPlacements` (devices and cable-management placeholders). Also commits the location-code rewrites a Topology view's polygon placements stage (rule 148). Node positions stay in `TopologyLayout` (topologyLayoutService) under the view's prefix.
+**What it owns:** Saved, SHARED per-site Device Map topology views (business rules 147-149) — the `TopologyView` and `TopologyBackgroundImage` tables (single writer). A view is a name + ONE mode (`layer2` / `topology` / `rack`) + `shownTypes` + that mode's content: a Topology view's `background` (OSM centre + zoom + `layer` map / satellite — satelliteTileService — or an uploaded image) and `polygons` (location-group codes in display casing + points in background coordinates); a Rack view's `racks` and `rackPlacements` (devices and cable-management placeholders). Also commits the location-code rewrites a Topology view's polygon placements stage (rule 148). Node positions stay in `TopologyLayout` (topologyLayoutService) under the view's prefix.
 
 **Public API:** MAX_RACK_UNITS, MAX_VIEW_NAME_LEN, MAX_BACKGROUND_IMAGE_BYTES; types TopologyViewMode, TopologyPolygon, TopologyRack, TopologyRackPlacement, TopologyViewDto, ViewPatch, UpdateViewResult, LocationCodeChange, LocationCodeResult, BackgroundImageDto; pure validators sanitizeViewName, sanitizeMode, sanitizeShownTypes, sanitizeBackground, sanitizePolygons, sanitizeRacks, sanitizeRackPlacements, sanitizeLocationCodeChanges; DB functions listViews (materialises the default through the private ensureDefaultView), createView, updateView, describeModeChangeLoss, deleteView, applyLocationCodeChanges, saveBackgroundImage, getBackgroundImage. The limits (racks, placements, polygons, views per site, image side, changes per commit) and defaults (shown types, view name, 42U) are module constants.
 
@@ -326,6 +326,32 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A new mode-specific field must be cleared by the mode-change reset (`freshModeFields`) and counted by `describeModeChangeLoss`, or a mode change silently carries it over.
 - Scale: `listViews` is one query per topology GET (≤100 views per site); the location-code commit is one findMany + one `$transaction` + one batched Event insert for up to 500 assets — keep it batched.
 - Tests: `tests/unit/topologyViewService.test.ts` (pure validators), `tests/unit/setLocationCodes.test.ts`, `tests/unit/imageDimensions.test.ts`, `tests/integration/topologyViews.test.ts` (default materialisation, CRUD + RBAC, rack overlap / shrink, background upload + authenticated GET, the mode-change reset, delete, the location-code commit).
+
+---
+
+## services/satelliteTileService.ts
+
+**What it owns:** The OPTIONAL, operator-configured satellite basemap of the Device Map topology view's Topology canvas — `Setting("satelliteConfig")` `{enabled, urlTemplate, apiToken, attribution, maxNativeZoom}` (single writer) and the tile proxy that serves it. OpenStreetMap has no aerial imagery and the browser's basemap rule is one tile host (polaris-ui-canon → tech-stack-frontend.md), so the provider (Esri, Mapbox, an in-house ArcGIS server…) is the operator's choice under their own licence, and Polaris fetches its tiles server-side. Off by default.
+
+**Public API:** types SatelliteSettings, SatelliteSettingsView (the token replaced by `apiTokenSet`), SatelliteStatus, SatelliteSettingsPatch; pure parseSatelliteSettings, urlTemplateProblem, buildTileUrl, mergeSatelliteSettings; getSatelliteSettings, getSatelliteStatus, saveSatelliteSettings (Event `setting.satellite_updated`, never the key), getSatelliteTile (z/x/y → `{body, contentType}`), testSatelliteSettings (one tile with the unsaved values); `_resetSatelliteForTests`.
+
+**Cross-service deps:** `settingsStore.createSettingStore` (10 s TTL), `eventLogService.logEvent`, `utils/version.getAppVersion` (User-Agent); global `fetch`. The key is sealed at rest by the Setting.value hook in `src/db.ts` because `apiToken` is in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS` — no sealing code here.
+
+**Used by:**
+- `src/api/routes/serverSettings.ts` — `GET /server-settings/satellite` (the blanket read), `PUT /server-settings/satellite` and `POST /server-settings/satellite/test` (`serverSettingsSystem=write`).
+- `src/api/routes/map.ts` — `GET /map/satellite` (status only: available, attribution, deepest zoom) and `GET /map/satellite/:z/:x/:y` (the tile), both under the deviceMap read floor.
+- `public/js/topology-physical.js` (the Map | Satellite switch) and `public/js/server-settings-customization.js` (the Satellite imagery card).
+
+**Invariants:**
+- **The key never leaves the server**: no read returns it (`apiTokenSet` only), the Event records `apiTokenChanged`, and the browser only ever sees `/api/v1/map/satellite/...` — so the CSP `imgSrc` keeps its one tile host.
+- **A switched-on source must work**: https, `{z}` `{x}` `{y}` present, `{key}` only with a key, no user:password in the URL, an attribution (the provider's terms). A switched-off one may be left half filled in. An omitted `apiToken` keeps the stored key; `""` clears it.
+- **The fetch is constrained**: `redirect: "error"`, 8 s timeout, `image/*` only (never `image/svg+xml`), ≤4 MB, zoom ≤ `maxNativeZoom`, x/y in range. An internal host is allowed on purpose (an on-premises imagery server), which is why the setting is write-gated.
+- **A settings read failure means "not offered"**, never a broken map. A satellite choice saved on a view (`background.layer`) falls back to the map while satellite is off.
+
+**When changing this:**
+- The cache (64 MB / 4000 tiles, per process, keyed by a hash of template + key) is cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL plus its own cache — acceptable for imagery.
+- Scale: tiles are requested only by open Topology views on the satellite layer; one upstream fetch per tile per process (in-flight dedupe). At 2000 assets nothing here runs per asset.
+- Tests: `tests/unit/satelliteTileService.test.ts`.
 
 ---
 
