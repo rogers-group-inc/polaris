@@ -13,7 +13,6 @@ import { chunkArray } from "../../utils/chunk.js";
 import { mapSettledWithConcurrency } from "../../utils/concurrency.js";
 import { createTrailingThrottle } from "../../utils/trailingThrottle.js";
 import { prisma } from "../../db.js";
-import { Prisma } from "../../generated/prisma/client.js";
 import { AppError, throwIfAborted } from "../../utils/errors.js";
 import { armDiscoveryCancelWatchdog } from "../discoveryCancelWatchdog.js";
 import * as fortimanager from "../fortimanagerService.js";
@@ -119,6 +118,7 @@ import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { decommissionStaleFirewalls } from "./dhcp/staleFirewalls.js";
 import { syncVipReservations } from "./dhcp/vipReservations.js";
+import { releaseStaleAuthoritativeRows } from "./dhcp/staleAuthoritativeRows.js";
 import { runFinalizeReconciles } from "./dhcp/finalizeReconciles.js";
 import { decommissionStaleManagedDevices } from "./dhcp/staleManagedDevices.js";
 import { stampEndpointSources, applyEndpointProjection } from "./dhcp/endpointSources.js";
@@ -5305,166 +5305,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // as either (the discovery merger keeps CMDB rows on overlap; the monitor
   // pass annotates them).
   // ══════════════════════════════════════════════════════════════════════════════
-  const dhcpReservationDevices = new Set<string>(result.dhcpReservationsInventoriedDevices ?? []);
-  const stillOnGateKeys = new Set<string>();
-  if (Array.isArray(result.dhcpEntries)) {
-    for (const e of result.dhcpEntries) {
-      if (!e.ipAddress || !dhcpReservationDevices.has(e.device)) continue;
-      const s = findSubnetForIp(e.ipAddress);
-      if (s) stillOnGateKeys.add(reservationKey(s.id, e.ipAddress));
-    }
-  }
-  // Subnet index by id — used to scope dhcp_reservation cleanup to subnets
-  // this integration discovered (and to read fortigateDevice in O(1)).
-  const subnetById = new Map<string, any>();
-  for (const s of allSubnets) subnetById.set(s.id, s);
-
-  let releasedStaleVips = 0;
-  let clearedStaleVipStamps = 0;
-  let releasedStaleDhcpReservations = 0;
-  for (const [key, row] of activeResMap.entries()) {
-    if (!row || row.status !== "active") continue;
-    // Stale VIP stamp on a row that owns its address on its own account — a
-    // DHCP lease / reservation the VIP arrived on second, or an operator's
-    // claim that inherited the snapshot (business rule 77). Only the VIP fact
-    // goes; the row keeps its status and every operator field, the same
-    // three-way retirement the per-subnet discover applies. Without this
-    // branch nothing ever cleared such a stamp: the `vip` sweep below skips
-    // these rows, and the per-subnet discover refuses a network no
-    // integration discovered — so a claimed address in a hand-built WAN
-    // network reported its deleted VIP forever. Scoped to stamps naming a gate
-    // whose VIP table read this cycle (rule 17's per-device scoping; an
-    // unread table is never "no VIPs", rule 53). Falls through so the
-    // dhcp_reservation sweep still judges the row itself.
-    if (row.sourceType !== "vip" && row.vipInfo) {
-      const stamp = row.vipInfo as any;
-      const dev = (typeof stamp?.device === "string" && stamp.device) || "";
-      const name = (typeof stamp?.name === "string" && stamp.name) || "";
-      if (vipQueriedDevices.has(dev) && !currentVipStampKeys.has(`${dev}|${name}|${key}`)) {
-        try {
-          await prisma.reservation.update({
-            where: { id: row.id },
-            data: { vipInfo: Prisma.DbNull },
-          });
-          row.vipInfo = null;
-          clearedStaleVipStamps++;
-          logEvent({
-            action: "reservation.vip.cleared",
-            resourceType: "reservation",
-            resourceId: row.id,
-            resourceName: row.ipAddress || "",
-            actor,
-            message: `VIP "${name || "(unknown)"}" no longer on ${dev} — cleared from ${row.sourceType.replace("_", " ")} reservation at ${row.ipAddress || "(subnet)"}`,
-            details: {
-              integrationId,
-              integrationName,
-              reservationId: row.id,
-              ipAddress: row.ipAddress,
-              sourceType: row.sourceType,
-              priorVipInfo: stamp,
-              fortigateDevice: dev,
-            },
-          });
-        } catch (err: any) {
-          syncLog("error", `Failed to clear stale VIP stamp on ${row.ipAddress}: ${err.message || "Unknown error"}`);
-        }
-      }
-    }
-    if (row.sourceType === "vip") {
-      const dev = ((row.vipInfo as any)?.device) || "";
-      if (!vipQueriedDevices.has(dev)) continue;
-      if (currentVipKeys.has(key)) continue;
-      const priorVipInfo = row.vipInfo as any;
-      try {
-        // `vipInfo: null` clears the JSON column. Routed through a
-        // Record<string, unknown> bag so Prisma's narrow nullable-Json
-        // input type doesn't reject — matches the in-place convert path
-        // above.
-        const vipReleaseData: Record<string, unknown> = { status: "released", vipInfo: null };
-        await prisma.reservation.update({
-          where: { id: row.id },
-          data: vipReleaseData,
-        });
-        await prisma.conflict.updateMany({
-          where: { reservationId: row.id, status: "pending" },
-          data: { status: "rejected", resolvedBy: "auto", resolvedAt: new Date() },
-        });
-        activeResMap.delete(key);
-        releasedStaleVips++;
-        logEvent({
-          action: "reservation.vip.released",
-          resourceType: "reservation",
-          resourceId: row.id,
-          resourceName: row.ipAddress || "",
-          actor,
-          message: `VIP "${priorVipInfo?.name || "(unknown)"}" no longer on ${priorVipInfo?.device || "(unknown)"} — reservation released`,
-          details: {
-            integrationId,
-            integrationName,
-            reservationId: row.id,
-            ipAddress: row.ipAddress,
-            priorVipInfo,
-            fortigateDevice: dev,
-          },
-        });
-      } catch (err: any) {
-        syncLog("error", `Failed to release stale VIP reservation ${row.ipAddress}: ${err.message || "Unknown error"}`);
-      }
-      continue;
-    }
-    if (row.sourceType === "dhcp_reservation") {
-      // Scope: only this integration's own discovered rows. A subnet
-      // discovered by a different integration is out of scope even if
-      // the FortiGate name happens to coincide.
-      if (!row.subnetId) continue;
-      const subnet = subnetById.get(row.subnetId);
-      if (!subnet || subnet.discoveredBy !== integrationId) continue;
-      if (!subnet.fortigateDevice || !dhcpReservationDevices.has(subnet.fortigateDevice)) continue;
-      if (stillOnGateKeys.has(key)) continue;
-      try {
-        await prisma.reservation.update({
-          where: { id: row.id },
-          data: {
-            status: "released",
-            // Clear push pointers — the device-side entry is gone (operator
-            // deleted on the gate), and any future re-reservation at this
-            // IP should make its own push from scratch.
-            pushedToId: null,
-            pushedScopeId: null,
-            pushedEntryId: null,
-            pushStatus: null,
-          },
-        });
-        await prisma.conflict.updateMany({
-          where: { reservationId: row.id, status: "pending" },
-          data: { status: "rejected", resolvedBy: "auto", resolvedAt: new Date() },
-        });
-        activeResMap.delete(key);
-        releasedStaleDhcpReservations++;
-        logEvent({
-          action: "reservation.dhcp_reservation.released",
-          resourceType: "reservation",
-          resourceId: row.id,
-          resourceName: row.ipAddress || "",
-          actor,
-          message: `DHCP reservation for ${row.ipAddress} no longer on ${subnet.fortigateDevice} — reservation released`,
-          details: {
-            integrationId,
-            integrationName,
-            reservationId: row.id,
-            ipAddress: row.ipAddress,
-            fortigateDevice: subnet.fortigateDevice,
-            wasPushedByPolaris: !!row.pushedToId,
-          },
-        });
-      } catch (err: any) {
-        syncLog("error", `Failed to release stale DHCP reservation ${row.ipAddress}: ${err.message || "Unknown error"}`);
-      }
-    }
-  }
-  if (releasedStaleVips > 0 || clearedStaleVipStamps > 0 || releasedStaleDhcpReservations > 0) {
-    syncLog("info", `Stale-row sweep: released ${releasedStaleVips} VIP reservation(s), cleared ${clearedStaleVipStamps} stale VIP stamp(s), released ${releasedStaleDhcpReservations} DHCP reservation(s)`);
-  }
+  await releaseStaleAuthoritativeRows({
+    result, activeResMap, allSubnets, findSubnetForIp, reservationKey,
+    currentVipKeys, currentVipStampKeys, vipQueriedDevices,
+    integrationId, integrationName, actor, syncLog,
+  });
 
   // Per-run (MAC, gate) ARP index — the locality half of the device-inventory
   // trust decision shared by Phase 6's claim corroboration and Phase 7's
