@@ -109,7 +109,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `prisma.assetInterface`, `logger`, `utils/cidr` (`bareInterfaceIp`, `interfaceIpIsUnaddressed` — the one definition of "unaddressed"); `trunkPeerNameTail` + `matchTrunkPeer` from `utils/fortiswitchTrunkMap.ts` (the trunk-preservation pass); `InterfaceSample` from monitoringService as a TYPE-ONLY import (monitoringService imports this service's writer, so a value import would close a runtime cycle).
 
 **Used by:**
-- `src/services/monitoringService.ts` — `recordSystemInfoResult` calls `persistInterfaces` on the full pass, guarded on a non-empty interface list, wrapped in the standard `startSampleWriteTimer("asset_interfaces")` + `startPhase("systeminfo.persist.interfaces")` pair.
+- `src/services/monitoring/systemInfoPersist.ts` — `recordSystemInfoResult` calls `persistInterfaces` on the full pass, guarded on a non-empty interface list, wrapped in the standard `startSampleWriteTimer("asset_interfaces")` + `startPhase("systeminfo.persist.interfaces")` pair.
 - `src/api/routes/agents.ts` — `ingestInterfaces` calls `persistInterfaceRows` with the rows it already built for the sample write, minus `assetId`/`timestamp`/`cadence`. The agent push is a legitimate full-pass writer: it sends the host's whole NIC table.
 - `src/jobs/backfillInterfaceInventory.ts` — one-shot seed from the latest `lastSystemInfoAt` snapshot.
 
@@ -154,7 +154,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `prisma.asset` (hostname lookup, only when an edge fired), `eventLogService.logEventsBatch`, `logger`.
 
 **Used by:**
-- `src/services/monitoringService.ts` — `persistInterfaceSampleStream` (full system-info pass) and `recordFastFilteredResult` (fast pinned re-walk), each right after `enqueueInterfaceSamples` with the same rows.
+- `src/services/monitoring/systemInfoPersist.ts` — `persistInterfaceSampleStream` (full system-info pass) and `monitoring/streamCollection.ts` — `recordFastFilteredResult` (fast pinned re-walk), each right after `enqueueInterfaceSamples` with the same rows.
 - `src/api/routes/agents.ts` — `ingestInterfaces`, beside its pinned-row enqueue.
 
 **Invariants:**
@@ -226,7 +226,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/monitoringService.ts
 
-**Being split (CQ-B061)** into `src/services/monitoring/*.ts`, each moved verbatim and re-exported from monitoringService.ts so importers and `vi.mock` factories still see one module; a moved module never imports monitoringService.ts back (no cycle). Done: `monitoring/monitorSettings.ts` (the four-tier settings hierarchy, its cache + `invalidateMonitorSettingsCache`, `defaultPollingForSource`, the SD-WAN cadence, `fleetCadences`, `resolveMonitorSettings[WithProvenance]`, `loadClassOverrideStreamCredential`), `monitoring/retentionPrune.ts` (the prune helpers + `runRetentionPrune`), `monitoring/dial.ts` (`dial`, business rule 128). When changing a moved function, edit it in its module.
+**Split (CQ-B061)** into `src/services/monitoring/*.ts`, each cluster moved verbatim and re-exported from monitoringService.ts so importers and `vi.mock` factories still see one module; the modules layer downward and none imports monitoringService.ts back (no cycle). What is left here is the pass orchestration: persisting a probe result, the bulk pass + scheduler (`runMonitorPass`, `runProbeFor` / `runTelemetryFor` / …, the due-work cadences) and the custom widget collector. The modules, bottom up: `types.ts` (the stream samples + `ProbeResult`), `common.ts` (`finish`, `clampPct`, the verbose phase spans), `dial.ts`, `monitorSettings.ts` (the four-tier resolver), `agentSilence.ts` (rule 86), `snmpCore.ts` (session, gate, walk, varbinds, the `OID` map), `fortiswitchTrunks.ts`, `lldpMatchIndex.ts`, `snmpCollectors.ts` (telemetry, sensors, interfaces, LLDP, PoE, the fast pass), `fortiosCollectors.ts`, `fortinetControllers.ts` (managed switch / AP status), `vcenterFmgCollectors.ts`, `probes.ts` (`probeAsset` + every probe), `streamCollection.ts` (`collectTelemetry` / `collectFastFiltered` / `collectSystemInfo` + the overlays), `pollStamps.ts` (rule 118), `systemInfoPersist.ts` (`recordSystemInfoResult`), `neighborPersistence.ts` (process connections, LLDP, wireless stations), `retentionPrune.ts`. When changing a moved function, edit it in its module; a text assertion over the service reads `tests/unit/_monitoringServiceSource.ts → monitoringServiceSource()`, never one file.
 
 **What it owns:** Asset health monitoring via probes, telemetry collection, and state machine transitions across five monitor states (unknown → recovering → up → warning → down).
 
@@ -301,7 +301,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** unraidService.fetchUnraidSnapshot, truenasService.fetchTrueNasSnapshot, proxmoxService.fetchProxmoxSnapshot; types from monitoringService and discovery/workloadSync (type-only imports — no runtime cycle).
 
-**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors` dispatch on `isWorkloadPollingMethod(polling)` (`unraid` / `truenas` / `proxmox`). src/services/workloadActionService.ts — reads a FRESH snapshot (invalidate first) for the action handle and invalidates again afterwards.
+**Used by:** src/services/monitoring/probes.ts (`probeAsset`) and monitoring/streamCollection.ts (`collectTelemetry`, `collectSystemInfo`, `collectFastFiltered`, `collectHardwareSensors`) dispatch on `isWorkloadPollingMethod(polling)` (`unraid` / `truenas` / `proxmox`). src/services/workloadActionService.ts — reads a FRESH snapshot (invalidate first) for the action handle and invalidates again afterwards.
 
 **Invariants:**
 - `unreachable` SKIPS a VM / container probe (one NAS reboot must not declare sixty containers down; the placement edges then suppress them once the host fails) but FAILS the HOST probe — the host's own API not answering IS the finding about the host.
@@ -327,7 +327,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** genericApiService (`buildRequestHeaders`, `fetchGenericApiRecords`, `fetchJsonDocument`, `fillDetailTemplate`, `identityKeyFor`, `genericApiWidgetId`); utils jsonPath, stateProbes, genericApiSource, cidr, mac, ttlCache; types from monitoringService (type-only — no runtime cycle).
 
-**Used by:** src/services/monitoringService.ts — `probeAsset`, `collectTelemetry`, `collectHardwareSensors`, `collectSystemInfo`, `collectFastFiltered` dispatch on `polling === "genericapi"` before their IP guards; `collectAndRecordCustomWidgets` runs `collectGenericApiWidgetSamples` beside `collectManufacturerWidgetSamples` and persists both in one transaction. src/api/routes/assets.ts — `GET /assets/:id/custom-widgets` appends `genericApiWidgetDefsForAsset`.
+**Used by:** src/services/monitoring/probes.ts (`probeAsset`) and monitoring/streamCollection.ts (`collectTelemetry`, `collectHardwareSensors`, `collectSystemInfo`, `collectFastFiltered`) dispatch on `polling === "genericapi"` before their IP guards; `collectAndRecordCustomWidgets` runs `collectGenericApiWidgetSamples` beside `collectManufacturerWidgetSamples` and persists both in one transaction. src/api/routes/assets.ts — `GET /assets/:id/custom-widgets` appends `genericApiWidgetDefsForAsset`.
 
 **Invariants:**
 - The reading model is the workload one: `unreachable` (API down, credentials refused, integration disabled, a fleet read that stopped early) SKIPS the probe — one inventory outage never downs a fleet; `absent` (a complete fleet read without the record, a per-asset 404 / 410, a placeholder the record cannot fill) FAILS it; `none` (no query for the stream, or no Generic API record) fails the probe with the reason and makes every collector `{supported:false}`.
@@ -463,7 +463,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `applicationMapService → resolveIpsToAssets` (primary IP, then `AssetAssociatedIp`; decommissioned assets never resolve).
 
 **Used by:**
-- `src/services/monitoringService.ts → recordSystemInfoResult` — the ONLY writer, full pass only, from `SystemInfoSample.ipsecConnections` / `.sslVpnSessions`.
+- `src/services/monitoring/systemInfoPersist.ts → recordSystemInfoResult` — the ONLY writer, full pass only, from `SystemInfoSample.ipsecConnections` / `.sslVpnSessions`.
 - `src/api/routes/assets.ts → GET /assets/:id/ipsec` — `readAssetIpsec` (+ the system-info cadence for the freshness strip).
 - `src/api/routes/assets.ts → GET /assets/:id/system-info` — `readLatestIpsecTunnels` (the System tab's tunnel list; extracted from the route verbatim).
 

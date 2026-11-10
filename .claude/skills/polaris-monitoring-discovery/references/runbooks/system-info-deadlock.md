@@ -8,9 +8,9 @@
 
 ## Background — the SNMP gate and the two-loop monitor
 
-Many switch / AP SNMP agents are single-threaded: a heavy walk (IF-MIB + LLDP + storage) running in parallel with a cheap `sysUpTime` probe pins the agent's request queue and stretches the probe's response time, occasionally past its timeout (reads as packet loss). To prevent this, all SNMP entry points FIFO-serialize per `(host, port)` through `src/services/monitoringService.ts -> withSnmpGate()`.
+Many switch / AP SNMP agents are single-threaded: a heavy walk (IF-MIB + LLDP + storage) running in parallel with a cheap `sysUpTime` probe pins the agent's request queue and stretches the probe's response time, occasionally past its timeout (reads as packet loss). To prevent this, all SNMP entry points FIFO-serialize per `(host, port)` through `src/services/monitoring/snmpCore.ts -> withSnmpGate()`.
 
-The wedge case: when the currently-running collector hangs (e.g. a dead host hitting net-snmp's ~60s timeout), it holds its gate slot for the full upstream duration. Without a bound, every queued caller behind it would block that whole time. So each waiter has a bounded wait — `POLARIS_SNMP_GATE_WAIT_TIMEOUT_MS` (default 30000) — after which it fails fast with `SNMP gate timeout for <host>:<port> after <ms>ms` (`src/services/monitoringService.ts -> snmpGateWaitTimeoutMs()`). **The timeout only bounds the wait for queued callers; the wedged slot itself still holds the gate until its upstream call returns.** Operator SNMP walks override the per-call wait to 50s (`SNMP_WALK_GATE_WAIT_MS`) to fit the SNMP Walk tab's 60s client countdown.
+The wedge case: when the currently-running collector hangs (e.g. a dead host hitting net-snmp's ~60s timeout), it holds its gate slot for the full upstream duration. Without a bound, every queued caller behind it would block that whole time. So each waiter has a bounded wait — `POLARIS_SNMP_GATE_WAIT_TIMEOUT_MS` (default 30000) — after which it fails fast with `SNMP gate timeout for <host>:<port> after <ms>ms` (`src/services/monitoring/snmpCore.ts -> snmpGateWaitTimeoutMs()`). **The timeout only bounds the wait for queued callers; the wedged slot itself still holds the gate until its upstream call returns.** Operator SNMP walks override the per-call wait to 50s (`SNMP_WALK_GATE_WAIT_MS`) to fit the SNMP Walk tab's 60s client countdown.
 
 This is contained by the two-loop design in `src/jobs/monitorAssets.ts`: the **light loop** (probe + fastFiltered, every 5s) and the **heavy loop** (telemetry + systemInfo, every 30s) tick independently with separate `running` guards. A slow heavy pass on a wedged host blocks only **future heavy ticks**, never the light loop — so per-minute reachability polling for the rest of the fleet keeps firing.
 
@@ -94,5 +94,5 @@ Postgres server logs per platform:
 - `polaris-deploy` → `env-vars.md` (`POLARIS_SNMP_GATE_WAIT_TIMEOUT_MS`, `POLARIS_MONITOR_HEAVY_WORKERS`, `POLARIS_HEAVY_CONCURRENCY`).
 - `observability.md` (per-process `/metrics`, monitor pass / heavy work duration metrics) and `polaris-business-rules` rule 10 (decommissioned/disabled not monitored).
 - `polaris-change-impact` → `services/monitoring-collection.md` (`monitoringService.ts` entry).
-- Code: `src/services/monitoringService.ts` (`withSnmpGate()`, `snmpGateWaitTimeoutMs()`, `processNextSnmpSlot()`), `src/jobs/monitorAssets.ts` (light/heavy two-loop architecture).
+- Code: `src/services/monitoring/snmpCore.ts` (`withSnmpGate()`, `snmpGateWaitTimeoutMs()`, `processNextSnmpSlot()`; moved out of monitoringService.ts by CQ-B061), `src/jobs/monitorAssets.ts` (light/heavy two-loop architecture).
 - Sibling runbook: `timescale-chunk-bloat.md` for DB-volume / TimescaleDB issues.
