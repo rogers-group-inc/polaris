@@ -1415,7 +1415,7 @@
     var btn = info.querySelector("[data-open-asset]");
     if (btn) {
       btn.addEventListener("click", function () {
-        if (typeof openViewModal === "function") openViewModal(btn.getAttribute("data-open-asset"));
+        PolarisPanels.openAsset(btn.getAttribute("data-open-asset"));
       });
     }
     info.querySelectorAll("[data-add-tag]").forEach(function (chip) {

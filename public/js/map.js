@@ -1066,7 +1066,7 @@
         var id = _assetIdFromTopoHref(link.getAttribute("href"));
         if (!id) return;
         e.preventDefault();
-        openViewModal(id);
+        PolarisPanels.openAsset(id);
       });
     }
     overlay.addEventListener("click", function (e) {
@@ -2936,7 +2936,7 @@
     }
     function _openAssetForNode(node) {
       var assetId = _assetIdForNode(node);
-      if (assetId) openViewModal(assetId);
+      if (assetId) PolarisPanels.openAsset(assetId);
     }
     var _lastNodeTap = { id: null, t: 0 };
     cyInstance.on("tap", "node", function (evt) {

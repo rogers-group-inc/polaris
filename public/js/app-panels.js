@@ -44,8 +44,11 @@ if (typeof window !== "undefined") window.revealOverlay = revealOverlay;
 // of how the <script> element reaches the document.
 //
 // Each bundle is the SAME ordered list the panel's home page loads statically
-// (index.html / map.html / ipam.html carry the commented versions) — keep
-// them in step when a panel grows a dependency. A file's DOMContentLoaded
+// (assets.html, automations.html, path-monitor.html for the asset panel;
+// ipam.html for the network and block panels) — keep them in step when a
+// panel grows a dependency. The dashboard and both maps no longer load the
+// asset bundle statically: they prefetch it when idle (prefetchPanelScripts
+// below, CQ-F041). A file's DOMContentLoaded
 // page-init never runs when it lands late, which is exactly the off-page case
 // those handlers already guard for.
 var _PANEL_SCRIPT_BUNDLES = {
@@ -84,6 +87,7 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/assets-software.js",
     "/js/assets-alerts-events.js",
     "/js/condition-builder.js",
+    "/js/scope-vocabulary.js",
     "/js/automations-address-book.js",
     "/js/recipient-picker.js",
     "/js/automations-wizard.js",
@@ -93,6 +97,7 @@ var _PANEL_SCRIPT_BUNDLES = {
     "/js/automations-wizard-filters.js",
     "/js/automations-portability.js",
     "/js/recurrence-editor.js",
+    "/js/quiet-time-editor.js",
     "/js/assets-maintenance.js",
   ],
   network: ["/js/table-sf.js", "/js/placeholder-mac.js", "/js/reservation-notes.js", "/js/ip-panel.js"],
@@ -248,6 +253,32 @@ var PolarisPanels = {
   },
 };
 if (typeof window !== "undefined") window.PolarisPanels = PolarisPanels;
+
+// Idle prefetch (CQ-F041). A page whose own content never needs a panel's
+// scripts, but that offers the panel on a click — the dashboard, the Device
+// Map, the Application Map — names it on <body data-prefetch-panels="asset">
+// instead of loading the bundle statically. Once the page has loaded and the
+// browser is idle, the bundle loads in the background, so the page paints
+// without parsing ~3 MB first and the slide-over is usually ready by the first
+// click; a click that beats it goes through PolarisPanels, which waits on the
+// same promise (one request per script — _loadPanelScript dedupes). A failure
+// is silent: the next open retries and falls back to the deep link.
+function prefetchPanelScripts(doc) {
+  var d = doc || document;
+  var kinds = d.body ? (d.body.getAttribute("data-prefetch-panels") || "") : "";
+  if (!kinds || window.POLARIS_DASH_LOCAL) return [];
+  var idle = typeof window.requestIdleCallback === "function"
+    ? function (fn) { window.requestIdleCallback(fn, { timeout: 3000 }); }
+    : function (fn) { setTimeout(fn, 200); };
+  return kinds.split(/\s+/).filter(function (k) { return _PANEL_OPENERS[k]; }).map(function (k) {
+    return new Promise(function (resolve) {
+      idle(function () { ensurePanelScripts(k).then(resolve, function () { resolve(); }); });
+    });
+  });
+}
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("load", function () { prefetchPanelScripts(); });
+}
 
 // True when `overlayEl` is the slide-over the operator is looking at: it is
 // open, no other slide-over was opened after it (every .slideover-overlay is
