@@ -1232,7 +1232,7 @@
               // the server detail first so the two never share a page.
               var mount = document.getElementById("path-server-detail");
               if (mount) mount.innerHTML = "";
-              if (typeof openViewModal === "function") openViewModal(b.dataset.id, { tab: "pathCheck" });
+              PolarisPanels.openAsset(b.dataset.id, { tab: "pathCheck" });
             },
           }));
         });
@@ -1246,6 +1246,13 @@
       try {
         var payload = await api.pathChecks.server(check.id);
         if (!document.body.contains(mount)) return;
+        // The charts are assets-network.js's, which this page no longer loads
+        // statically (CQ-F041): pull the asset bundle in on demand — the page
+        // prefetches it when idle, so this is usually already settled.
+        if (typeof renderServerPathDetail !== "function" && window.PolarisPanels) {
+          try { await PolarisPanels.ensure("asset"); } catch (e) { /* falls through to the hint */ }
+          if (!document.body.contains(mount)) return;
+        }
         if (typeof renderServerPathDetail === "function") renderServerPathDetail(mount, payload);
         else mount.innerHTML = '<p class="hint">Charts are unavailable on this page.</p>';
       } catch (err) {

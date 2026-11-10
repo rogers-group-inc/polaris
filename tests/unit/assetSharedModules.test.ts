@@ -330,7 +330,7 @@ describe("every page that runs a consumer loads the shared modules first", () =>
   const desktop = pages.filter((p) => scriptOrder(read("public/" + p)).includes("/js/assets.js"));
 
   it("the desktop pages are the ones we expect (a new one must be added here on purpose)", () => {
-    expect(desktop.sort()).toEqual(["assets.html", "automations.html", "path-monitor.html"]); // index / map / appmap prefetch the asset bundle (CQ-F041)
+    expect(desktop.sort()).toEqual(["assets.html"]); // every other page prefetches the asset bundle (CQ-F041)
   });
   it.each(desktop)("%s loads chart-shared.js and asset-shared.js before assets.js", (page) => {
     const list = scriptOrder(read("public/" + page));

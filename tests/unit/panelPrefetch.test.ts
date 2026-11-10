@@ -41,6 +41,11 @@ const PREFETCHING: Record<string, string[]> = {
   "index.html": ["/js/temp-unit.js", "/js/favorites.js"],
   "map.html": ["/js/temp-unit.js", "/js/vendor/jspdf.umd.min.js", "/js/vendor/jspdf.plugin.autotable.min.js", "/js/vendor/html-to-image.min.js"],
   "appmap.html": ["/js/table-sf.js", "/js/vendor/jspdf.umd.min.js", "/js/vendor/jspdf.plugin.autotable.min.js", "/js/vendor/html-to-image.min.js"],
+  // These two use the automation wizard (and Path Monitor the maintenance
+  // helpers) for their own content, so that stack stays; integrations*.js,
+  // assets*.js and the chart / asset shared modules come with the prefetch.
+  "automations.html": ["/js/table-sf.js", "/js/monitor-down-after.js", "/js/temp-unit.js", "/js/recurrence-editor.js", "/js/quiet-time-editor.js", "/js/scope-vocabulary.js", "/js/condition-builder.js", "/js/automations-address-book.js", "/js/recipient-picker.js", "/js/automations-wizard.js", "/js/automations-wizard-recipients.js", "/js/automations-wizard-sentences.js", "/js/automations-wizard-dimensions.js", "/js/automations-wizard-filters.js", "/js/automations-portability.js"],
+  "path-monitor.html": ["/js/table-sf.js", "/js/monitor-down-after.js", "/js/temp-unit.js", "/js/recurrence-editor.js", "/js/quiet-time-editor.js", "/js/assets-maintenance.js", "/js/condition-builder.js", "/js/automations-address-book.js", "/js/recipient-picker.js", "/js/automations-wizard.js", "/js/automations-wizard-recipients.js", "/js/automations-wizard-sentences.js", "/js/automations-wizard-dimensions.js", "/js/automations-wizard-filters.js", "/js/automations-portability.js"],
 };
 
 describe("pages that prefetch the asset bundle", () => {
@@ -68,8 +73,8 @@ describe("pages that prefetch the asset bundle", () => {
     }
   });
 
-  it("map.js and appmap.js open an asset through PolarisPanels, not a bare openViewModal", () => {
-    for (const f of ["map.js", "appmap.js"]) {
+  it("map.js, appmap.js and path-checks.js open an asset through PolarisPanels, not a bare openViewModal", () => {
+    for (const f of ["map.js", "appmap.js", "path-checks.js"]) {
       const src = readFileSync(join(PUBLIC, "js", f), "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
       expect(src, f).not.toMatch(/(?<![\w.$])openViewModal\s*\(/);

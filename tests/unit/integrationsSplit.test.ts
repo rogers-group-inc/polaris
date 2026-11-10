@@ -57,7 +57,7 @@ describe("integrations split — pages", () => {
 
   it("every page that carried integrations.js before the split carries the split", () => {
     expect(pages.map((p) => p.page).sort()).toEqual(
-      ["assets.html", "automations.html", "integrations.html", "path-monitor.html"] /* index / map / appmap prefetch it (CQ-F041) */,
+      ["assets.html", "integrations.html"] /* every other page prefetches it with the asset bundle (CQ-F041) */,
     );
   });
 

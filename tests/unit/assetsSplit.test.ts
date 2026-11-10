@@ -43,8 +43,8 @@ describe("assets split — pages and the panel bundle", () => {
 
   it("every page that loads assets.js statically carries the whole split", () => {
     expect(pages.map((p) => p.page).sort()).toEqual(
-      // index / map / appmap prefetch the asset bundle instead (CQ-F041, tests/unit/panelPrefetch.test.ts).
-      ["assets.html", "automations.html", "path-monitor.html"],
+      // Every other page prefetches the asset bundle instead (CQ-F041, tests/unit/panelPrefetch.test.ts).
+      ["assets.html"],
     );
   });
 
