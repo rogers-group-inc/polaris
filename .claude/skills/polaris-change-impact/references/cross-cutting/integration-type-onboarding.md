@@ -20,7 +20,7 @@ The canonical to mirror for a standalone-device-with-its-own-API type (most comm
 - `src/services/discovery/discoveryEngine.ts:discoveryScheduler dispatch` — add the new type's auto-discovery branch alongside the FMG/FortiGate/Windows/Entra/AD branches.
 - `src/utils/pollingCompatibility.ts` — UNION `AssetSourceKind`: add `| "<type>-firewall"` (or similar). MATRIX `COMPATIBILITY`: add the set of allowed polling methods. SWITCH `assetSourceKindFromIntegrationType`: map `case "<type>": return "<type>-firewall"`.
 - `src/utils/assetProjection.ts` — UNION `AssetSourceKind`: add the new source kind. RULES `HOSTNAME_RULES`, `SERIAL_RULES`, `MANUFACTURER_RULES`, `MODEL_RULES`, `OS_VERSION_RULES`, `IP_ADDRESS_RULES`: add an entry per field at the position matching the source's trustworthiness for that field. Manufacturer rules typically pick a fixed string (`"Palo Alto Networks"`) ignoring the observed blob.
-- `src/services/monitoringService.ts:defaultPollingForSource` — add a per-stream defaults branch for the new source kind. REST-capable appliances mirror FortiGate (**`icmp` on response-time**, `rest_api` on telemetry/temperature/interfaces, `disabled` on LLDP/storage); identity sources mirror AD (`icmp` on response-time, `not_delivered` on the heavy streams).
+- `src/services/monitoring/monitorSettings.ts:defaultPollingForSource` — add a per-stream defaults branch for the new source kind. REST-capable appliances mirror FortiGate (**`icmp` on response-time**, `rest_api` on telemetry/temperature/interfaces, `disabled` on LLDP/storage); identity sources mirror AD (`icmp` on response-time, `not_delivered` on the heavy streams).
 - `src/services/monitoringService.ts:transport dispatch` — extend `isFortinetSrc`-style branching only when the new type uses a different credential model than FortiOS (e.g. a header-key auth scheme instead of bearer). If the new type's `config` has `apiToken` like FortiGate, no transport-dispatch change is needed.
 - `public/js/polling-methods.js:_POLLING_COMPAT` — add the new type's allowed polling methods, mirroring its backend pollingCompatibility entry.
 - `public/js/polling-methods.js:_SOURCE_TELEMETRY_MIB` — add the per-type telemetry MIB default (or null if the type doesn't expose SNMP telemetry).
@@ -56,7 +56,7 @@ The canonical to mirror for a standalone-device-with-its-own-API type (most comm
 **Readers** (files that consume the new type without needing a new code branch):
 - `src/services/discovery/discoveryEngine.ts:syncDhcpSubnets` body — consumes `DiscoveryResult` generically; new types ride it for free if their service returns the exact shape.
 - `src/services/searchService.ts` — surfaces firewall assets through the asset table; no new-type branch needed.
-- Monitor settings hierarchy resolver (`resolveMonitorSettings` in `monitoringService.ts`) — generic across types; consumes `Integration.config.monitorSettings` blob.
+- Monitor settings hierarchy resolver (`resolveMonitorSettings` in `monitoring/monitorSettings.ts`) — generic across types; consumes `Integration.config.monitorSettings` blob.
 - `src/utils/integrationFilter.ts:assetMatchesIntegrationFilter` — handles `deviceInclude` / `deviceExclude` for any type that stamps them in config (FMG/FortiGate convention); add a per-type branch only if the filter semantics differ (e.g. AD uses `ouInclude` / `ouExclude` instead).
 - `public/js/assets.js:integration filter dropdown` — populated from `GET /integrations`; new types appear automatically.
 

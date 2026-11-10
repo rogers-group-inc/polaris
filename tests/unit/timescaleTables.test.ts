@@ -3,7 +3,7 @@
  *
  * Drift guards for the TimescaleDB-managed table inventory. The 2026-06
  * whole-app review found the SD-WAN sample tables written by
- * sampleRollupService and pruned by monitoringService but missing from
+ * sampleRollupService and pruned by monitoring/retentionPrune.ts but missing from
  * timescaleService's SAMPLE_TABLES / ROLLUP_TABLES — leaving them plain
  * Postgres tables (no hypertable conversion, no compression, seq-scanning
  * deleteMany pruning; the same failure family as the 2026-06-08 chunk-bloat
@@ -89,7 +89,8 @@ describe("timescaleService managed-table inventory", () => {
   });
 
   it("every hypertable name the prune layer passes to dropChunks is Timescale-managed", () => {
-    const referenced = tablesReferencedIn("src/services/monitoringService.ts");
+    // The prune layer moved out of monitoringService.ts (CQ-B061).
+    const referenced = tablesReferencedIn("src/services/monitoring/retentionPrune.ts");
     expect(referenced.length).toBeGreaterThan(0);
     const unmanaged = referenced.filter((t) => !managed.has(t) && !EXEMPT.has(t));
     expect(unmanaged).toEqual([]);
