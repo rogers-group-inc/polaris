@@ -27,6 +27,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 interface Group {
   where: string;
@@ -42,7 +43,7 @@ let ruleRecipientGroups: (rule: unknown, catalogs: unknown) => Group[];
 let normalizeEscalationV2: (esc: unknown) => unknown;
 
 beforeAll(() => {
-  const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
+  const src = wizardSource();
   const sandbox: Record<string, unknown> = {};
   sandbox.window = sandbox;
   sandbox.document = { addEventListener() {}, querySelector: () => null, getElementById: () => null };

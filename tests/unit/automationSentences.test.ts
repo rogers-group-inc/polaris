@@ -7,10 +7,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import vm from "node:vm";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 interface Ladder { severity?: string; severityBands?: Array<Record<string, unknown>> | null }
 
@@ -27,9 +25,7 @@ let make: (s: Record<string, unknown>) => {
 };
 
 beforeAll(() => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const file = resolve(here, "../../public/js/automations-wizard.js");
-  const code = readFileSync(file, "utf8");
+  const code = wizardSource();
   const sandbox: Record<string, any> = {
     window: {},
     document: { addEventListener() {}, getElementById: () => null },

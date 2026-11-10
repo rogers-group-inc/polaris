@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -66,7 +67,7 @@ beforeAll(() => {
   // alongside this one — the summaries reach it through window.
   // The pill vocabulary the Addresses column reads (recipient-picker.js, before the wizard as on the page).
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
-  (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8"));
+  (0, eval)(wizardSource());
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations.js"), "utf8"));
   // AFTER both: the wizard file declares its own `_ruleSchema` at top level, so
   // an earlier assignment is overwritten by its null initializer. Both files
