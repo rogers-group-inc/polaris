@@ -256,7 +256,7 @@ Asset
   monitoredIpsecTunnels String[]   @default([])
   -- All three pin arrays gate ALERTING as well as cadence: an automation
   -- produces readings only for pinned interfaces / mounts / tunnels
-  -- (services/notificationEngine.ts -> interfaceIsPinned() /
+  -- (services/notifications/scope.ts -> interfaceIsPinned() /
   -- storageIsPinned() / tunnelIsPinned()). Every stream also writes samples
   -- for the UNPINNED members (cadence="slow"), so the pin is the only thing
   -- deciding what can raise an alert; un-pinning is how alerting stops.
