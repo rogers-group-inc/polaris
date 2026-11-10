@@ -1865,6 +1865,7 @@ const api = {
     saveTopologyCheckpoint: (id, view, positions) => request("POST", `/map/sites/${id}/topology/layout/checkpoint`, { view, positions }),
     // Saved topology views (business rules 147-149).
     satellite:          ()                 => request("GET",    "/map/satellite"),
+    assetRegionViews:   (assetId)          => request("GET",    `/map/assets/${assetId}/region-views`),
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),

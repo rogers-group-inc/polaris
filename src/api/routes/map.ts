@@ -63,6 +63,8 @@ import {
   getBackgroundImage,
   sanitizeLocationCodeChanges,
   applyLocationCodeChanges,
+  siteForAsset,
+  regionViewsForSite,
   MAX_BACKGROUND_IMAGE_BYTES,
 } from "../../services/topologyViewService.js";
 import multer from "multer";
@@ -454,6 +456,19 @@ router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => 
     res.setHeader("Cache-Control", "private, max-age=86400, immutable");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(img.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Rule 150: the description-save prompt asks which site an asset belongs to
+// and which of that site's Rack / Wall views already stand for which region.
+// Read-only (the map router's deviceMap read floor); creating or mapping a
+// view goes through the usual write-gated view routes.
+router.get("/assets/:id/region-views", async (req, res, next) => {
+  try {
+    const siteId = await siteForAsset(req.params.id as string);
+    res.json({ siteId, views: siteId ? await regionViewsForSite(siteId) : [] });
   } catch (err) {
     next(err);
   }

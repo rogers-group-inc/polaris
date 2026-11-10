@@ -171,13 +171,50 @@
     var staged = ctx.stagedViewPatch() || {};
     var state = {
       editing: !!ctx.editing,
-      background: staged.background !== undefined ? staged.background : (view.background || null),
       polygons: (staged.polygons || view.polygons || []).map(function (p) {
-        return { id: p.id, codes: normCodes(p.codes), points: p.points.map(function (q) { return [q[0], q[1]]; }) };
+        return { id: p.id, codes: normCodes(p.codes), points: p.points.map(function (q) { return [q[0], q[1]]; }), layer: p.layer || 0 };
       }),
-      placements: Object.assign({}, ctx.loadPlacements() || {}),
+      // Floor layers (rule 152): layer 0 is the view itself; the others are
+      // listed with their floor name and their own background.
+      layers: JSON.parse(JSON.stringify(staged.layers || view.layers || [])),
+      layer: 0,
       history: { entries: [], index: -1 },
     };
+    // Layer 0's background is the view's; a floor layer's is its own, and a
+    // layer without one shows layer 0's until it gets one.
+    var background0 = staged.background !== undefined ? staged.background : (view.background || null);
+    function layerObj(level) { return state.layers.filter(function (l) { return l.level === level; })[0] || null; }
+    Object.defineProperty(state, "background", {
+      get: function () {
+        if (state.layer === 0) return background0;
+        var l = layerObj(state.layer);
+        return (l && l.background) || background0;
+      },
+      set: function (v) {
+        if (state.layer === 0) { background0 = v; return; }
+        var l = layerObj(state.layer);
+        if (l) l.background = v;
+      },
+    });
+    // Placements per layer, loaded the first time a layer is shown.
+    var byLayer = {};
+    function placementsOf(level) {
+      if (!byLayer[level]) byLayer[level] = Object.assign({}, ctx.loadPlacements(level) || {});
+      return byLayer[level];
+    }
+    state.layers.forEach(function (l) { placementsOf(l.level); });
+    placementsOf(0);
+    Object.defineProperty(state, "placements", {
+      get: function () { return placementsOf(state.layer); },
+      set: function (v) { byLayer[state.layer] = v; },
+    });
+    function layerPolys() { return state.polygons.filter(function (p) { return (p.layer || 0) === state.layer; }); }
+    // The layer a device is placed on, or null.
+    function layerOfDevice(id) {
+      var found = null;
+      Object.keys(byLayer).forEach(function (k) { if (byLayer[k][id] && found === null) found = Number(k); });
+      return found;
+    }
 
     // Nodes and links from the same builder as the Layer 2 graph, so a
     // switched-on endpoint type and every link class match (rule 147).
@@ -354,7 +391,7 @@
     function drawPolygons() {
       polygonLayer.clearLayers();
       polygonShapes = {};
-      state.polygons.forEach(function (p) {
+      layerPolys().forEach(function (p) {
         var color = polygonColor(p);
         var dashed = (deepestField(p.codes) || {}).kind === "floor" || (deepestField(p.codes) || {}).kind === "jb";
         var shape = L.polygon(p.points.map(function (q) { return [q[1], q[0]]; }), {
@@ -413,7 +450,7 @@
           var ring = (e.layer.getLatLngs()[0] || []).map(function (ll) { return [ll.lng, ll.lat]; });
           drawHandler = null;
           if (ring.length < 3) return;
-          state.polygons.push({ id: newId("poly"), codes: codes, points: ring });
+          state.polygons.push({ id: newId("poly"), codes: codes, points: ring, layer: state.layer });
           changed("polygons");
           drawPolygons();
           restageAllCodes();
@@ -433,7 +470,7 @@
       });
       groups.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
       var drawn = {};
-      state.polygons.forEach(function (p) { drawn[codesKey(p.codes)] = true; });
+      layerPolys().forEach(function (p) { drawn[codesKey(p.codes)] = true; });
       var rows = groups.map(function (g, i) {
         var f = deepestField(g);
         var color = R.locGroupColor(f ? f.kind : "building", family());
@@ -453,7 +490,7 @@
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
-          '<select id="topo-pg-kind" aria-label="Kind">' + CODE_FIELDS.map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
+          '<select id="topo-pg-kind" aria-label="Kind">' + CODE_FIELDS.filter(function (f) { return state.layer === 0 || f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
           '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
           '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
           '<select id="topo-pg-parent">' + parentOptions + '</select>' +
@@ -476,7 +513,7 @@
           var name = dlg.overlay.querySelector("#topo-pg-name").value.trim().replace(/\s+/g, " ");
           var parentIdx = Number(dlg.overlay.querySelector("#topo-pg-parent").value);
           if (!name) { ctx.toast("Give the new group a name", "error"); return; }
-          if (/(?:^|\s)(?:jb|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
+          if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
           var parent = parentIdx >= 0 ? normCodes(groups[parentIdx]) : emptyCodes();
           var fieldIdx = CODE_FIELDS.findIndex(function (f) { return f.field === field; });
           if (fieldIdx <= groupDepth(parent)) {
@@ -544,6 +581,14 @@
     }
     function place(id, latlng) {
       if (!state.editing || !nodeById[id]) return;
+      // A device is on one layer at a time (rule 152): placing it here takes
+      // it off any other layer.
+      Object.keys(byLayer).forEach(function (k) {
+        if (Number(k) !== state.layer && byLayer[k][id]) {
+          delete byLayer[k][id];
+          ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k));
+        }
+      });
       state.placements[id] = { x: latlng.lng, y: latlng.lat };
       if (markers[id]) markers[id].setLatLng(latlng); else addMarker(id);
       changed("placements");
@@ -582,9 +627,19 @@
       var p = state.placements[id];
       if (!d || !p) return;
       var assetId = d.assetId || id;
-      var poly = innermostPolygon(state.polygons, [p.x, p.y]);
-      if (!poly || codesEqual(poly.codes, currentCodes[id])) { ctx.stageLocationCode(assetId, null); return; }
-      ctx.stageLocationCode(assetId, normCodes(poly.codes), {
+      var poly = innermostPolygon(layerPolys(), [p.x, p.y]);
+      var want = null;
+      if (state.layer === 0) {
+        want = poly ? normCodes(poly.codes) : null;
+      } else {
+        // Rule 152: a floor layer gives its floor. Inside a polygon: the
+        // polygon's codes plus that floor; outside: the device keeps every
+        // other code it has and only its floor changes.
+        var l = layerObj(state.layer);
+        want = Object.assign({}, poly ? normCodes(poly.codes) : normCodes(currentCodes[id]), { floor: l ? l.name : String(state.layer) });
+      }
+      if (!want || codesEqual(want, currentCodes[id])) { ctx.stageLocationCode(assetId, null); return; }
+      ctx.stageLocationCode(assetId, want, {
         name: d.label || assetId,
         from: currentCodes[id] || emptyCodes(),
       });
@@ -637,7 +692,7 @@
     }
 
     // ── Background ──────────────────────────────────────────────────────
-    function hasDrawing() { return state.polygons.length > 0 || Object.keys(state.placements).length > 0; }
+    function hasDrawing() { return layerPolys().length > 0 || Object.keys(state.placements).length > 0; }
     async function confirmClear(kindWord) {
       if (!hasDrawing()) return true;
       return typeof showConfirm === "function"
@@ -647,7 +702,7 @@
     function clearDrawing() {
       Object.keys(state.placements).forEach(function (id) { ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null); });
       state.placements = {};
-      state.polygons = [];
+      state.polygons = state.polygons.filter(function (q) { return (q.layer || 0) !== state.layer; });
     }
     function openBackgroundMenu(anchor) {
       if (!state.editing || typeof showRowMenu !== "function") return;
@@ -710,13 +765,18 @@
 
     // ── Staging + history ───────────────────────────────────────────────
     function snapshot() {
-      return JSON.stringify({ background: state.background, polygons: state.polygons, placements: state.placements });
+      return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer });
     }
     function stageAll(fields) {
       fields.forEach(function (f) {
         if (f === "polygons") ctx.stageViewPatch({ polygons: state.polygons });
-        if (f === "background") ctx.stageViewPatch({ background: state.background });
-        if (f === "placements") ctx.stagePlacements(Object.assign({}, state.placements));
+        if (f === "background") {
+          if (state.layer === 0) ctx.stageViewPatch({ background: background0 });
+          else ctx.stageViewPatch({ layers: state.layers });
+        }
+        if (f === "layers") ctx.stageViewPatch({ layers: state.layers });
+        if (f === "placements") ctx.stagePlacements(Object.assign({}, state.placements), state.layer);
+        if (f === "allPlacements") Object.keys(byLayer).forEach(function (k) { ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k)); });
       });
     }
     function changed() {
@@ -728,15 +788,20 @@
       if (h.entries.length > HISTORY_MAX) h.entries.shift();
       h.index = h.entries.length - 1;
       ctx.historyChanged();
+      if (fields.indexOf("placements") !== -1) paintLayerCtl();
     }
     function applySnapshot(s) {
       var o = JSON.parse(s);
-      var bgChanged = JSON.stringify(o.background) !== JSON.stringify(state.background);
-      state.background = o.background;
+      var before = JSON.stringify(state.background);
+      background0 = o.background0;
+      state.layers = o.layers;
       state.polygons = o.polygons;
-      state.placements = o.placements;
-      stageAll(["background", "polygons", "placements"]);
-      if (bgChanged) buildMap(); else { drawPolygons(); drawMarkers(); drawLinks(); }
+      byLayer = o.byLayer;
+      if (state.layer !== 0 && !layerObj(state.layer)) state.layer = 0;
+      ctx.stageViewPatch({ background: background0, layers: state.layers, polygons: state.polygons });
+      stageAll(["allPlacements"]);
+      paintLayerCtl();
+      if (JSON.stringify(state.background) !== before) buildMap(); else { drawPolygons(); drawMarkers(); drawLinks(); }
       restageAllCodes();
       ctx.refreshSidebar();
       ctx.historyChanged();
@@ -756,9 +821,114 @@
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
       host.classList.toggle("is-editing", !!on);
       if (on) resetHistory();
+      paintLayerCtl();
     }
 
     // The details pane: what can be dragged on and what is already placed.
+    // ── Floor layers (rule 152) ─────────────────────────────────────────
+    // Layer 0 is the flat view. + / − step through the listed layers; while
+    // editing, stepping past the last one offers to add a layer there.
+    var layerCtl = document.createElement("div");
+    layerCtl.className = "topo-layer-ctl";
+    layerCtl.setAttribute("role", "group");
+    layerCtl.setAttribute("aria-label", "Floor layer");
+    host.appendChild(layerCtl);
+    function levels() { return [0].concat(state.layers.map(function (l) { return l.level; })).sort(function (a, b) { return a - b; }); }
+    function layerName(level) { var l = layerObj(level); return level === 0 ? "Flat view" : "Floor " + (l ? l.name : level); }
+    function countOn(level) { return Object.keys(placementsOf(level)).filter(function (id) { return nodeById[id]; }).length; }
+    function paintLayerCtl() {
+      var lv = levels();
+      var i = lv.indexOf(state.layer);
+      var canUp = i < lv.length - 1 || state.editing;
+      var canDown = i > 0 || state.editing;
+      var n = countOn(state.layer);
+      layerCtl.innerHTML =
+        '<span class="topo-layer-cap">Layer</span>' +
+        '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="1"' + (canUp ? "" : " disabled") + ' aria-label="Up a layer">+</button>' +
+        '<span class="topo-layer-now" aria-live="polite"' + (state.editing && state.layer !== 0 ? ' title="Right-click to rename or delete this layer"' : "") + '>' +
+          '<strong>' + state.layer + '</strong><span>' + esc(layerName(state.layer)) + '</span><span class="topo-layer-n">' + n + ' device' + (n === 1 ? "" : "s") + '</span></span>' +
+        '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="-1"' + (canDown ? "" : " disabled") + ' aria-label="Down a layer">−</button>' +
+        (state.layer !== 0 ? '<button type="button" class="btn btn-secondary btn-sm topo-layer-zero" data-layer-zero>Layer 0</button>' : "");
+    }
+    function setLayer(level) {
+      if (level === state.layer) return;
+      state.layer = level;
+      selectedId = null;
+      buildMap();
+      paintLayerCtl();
+      ctx.refreshSidebar();
+    }
+    layerCtl.addEventListener("click", function (e) {
+      if (e.target.closest("[data-layer-zero]")) { setLayer(0); return; }
+      var step = e.target.closest("[data-layer-step]");
+      if (!step) return;
+      var dir = Number(step.getAttribute("data-layer-step"));
+      var lv = levels();
+      var i = lv.indexOf(state.layer);
+      var next = lv[i + dir];
+      if (next !== undefined) { setLayer(next); return; }
+      if (state.editing) addLayer(dir > 0 ? lv[lv.length - 1] + 1 : lv[0] - 1);
+    });
+    layerCtl.addEventListener("contextmenu", function (e) {
+      if (!state.editing || state.layer === 0 || !e.target.closest(".topo-layer-now") || typeof showRowMenu !== "function") return;
+      e.preventDefault();
+      var level = state.layer;
+      showRowMenu(e.target.closest(".topo-layer-now"), [
+        { heading: layerName(level) },
+        { label: "Rename", onSelect: function () { nameLayer(level, false); } },
+        { label: "Delete layer", danger: true, onSelect: function () { deleteLayer(level); } },
+      ], { menuAt: { x: e.clientX, y: e.clientY }, label: "Layer", overMap: true });
+    });
+    function defaultFloorName(level) { return level > 0 ? String(level) : "B" + (-level); }
+    function addLayer(level) { nameLayer(level, true); }
+    function nameLayer(level, isNew) {
+      if (typeof buildOverlay !== "function") return;
+      var l = layerObj(level);
+      var body = '<div class="form-group"><label for="tl-name">Floor name</label>' +
+        '<input id="tl-name" type="text" maxlength="64" value="' + esc(isNew ? defaultFloorName(level) : (l ? l.name : "")) + '">' +
+        '<div class="hint">Layer ' + level + '. A device placed on it gets <code>f:</code> this name when you save' +
+        (level < 0 ? ' (below ground: B1, B2…)' : '') + '.</div></div>';
+      var footer = '<button type="button" class="btn btn-secondary" data-tl="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" data-tl="ok">' + (isNew ? "Add layer" : "Apply") + '</button>';
+      var dlg = buildOverlay(1100, isNew ? "Add layer " + level : "Rename layer " + level, body, footer);
+      var input = dlg.overlay.querySelector("#tl-name");
+      function apply() {
+        var name = input.value.trim().replace(/\s+/g, " ");
+        if (!name) { ctx.toast("Give the floor a name", "error"); return; }
+        if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A floor name can't contain another location code", "error"); return; }
+        var clash = state.layers.some(function (x) { return x.level !== level && x.name.toLowerCase() === name.toLowerCase(); });
+        if (clash) { ctx.toast("Another layer is already called " + name, "error"); return; }
+        if (isNew) state.layers.push({ level: level, name: name, background: null });
+        else if (l) l.name = name;
+        state.layers.sort(function (a, b) { return a.level - b.level; });
+        dlg.close();
+        changed("layers");
+        if (isNew) setLayer(level); else { paintLayerCtl(); Object.keys(state.placements).forEach(stageCodesFor); }
+      }
+      dlg.overlay.querySelector('[data-tl="cancel"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector('[data-tl="ok"]').addEventListener("click", apply);
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+      setTimeout(function () { try { input.focus(); input.select(); } catch (_) { /* closed */ } }, 0);
+    }
+    async function deleteLayer(level) {
+      var n = countOn(level), polys = state.polygons.filter(function (q) { return (q.layer || 0) === level; }).length;
+      var what = [n ? n + " placed device" + (n === 1 ? "" : "s") : "", polys ? polys + " polygon" + (polys === 1 ? "" : "s") : ""].filter(Boolean).join(" and ");
+      var ok = typeof showConfirm === "function"
+        ? await showConfirm("Delete " + layerName(level) + (what ? " and its " + what : "") + "? Codes already written to descriptions are not changed.")
+        : false;
+      if (!ok) return;
+      Object.keys(placementsOf(level)).forEach(function (id) { ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null); });
+      byLayer[level] = {};
+      ctx.stagePlacements({}, level);
+      state.polygons = state.polygons.filter(function (q) { return (q.layer || 0) !== level; });
+      state.layers = state.layers.filter(function (x) { return x.level !== level; });
+      state.layer = 0;
+      changed("layers", "polygons");
+      buildMap();
+      paintLayerCtl();
+      ctx.refreshSidebar();
+    }
+
     // The details pane's Device List (topology-device-list.js): every shown
     // device, the ones on the map highlighted with an × to take them off.
     function sidebarHtml() {
@@ -768,11 +938,15 @@
         var d = nodeById[id];
         var t = R.nodeAssetType(d) || "";
         var codes = currentCodes[id];
+        var on = layerOfDevice(id);
         return {
           id: id,
           label: d.label || id,
-          meta: hasCodes(codes) ? codesLabel(codes) : String(t).replace(/_/g, " "),
-          inUse: !!state.placements[id],
+          // A device on ANOTHER layer says which; selecting it goes there.
+          meta: on !== null && on !== state.layer ? (on === 0 ? "layer 0 · flat view" : "layer " + on + " · floor " + (layerObj(on) ? layerObj(on).name : on))
+            : hasCodes(codes) ? codesLabel(codes) : String(t).replace(/_/g, " "),
+          inUse: on === state.layer,
+          title: on !== null && on !== state.layer ? "Placed on layer " + on : "",
         };
       }).sort(function (a, b) {
         return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
@@ -795,6 +969,8 @@
         onFilter: function (f) { listFilter = f; },
         onRemove: function (id) { if (state.editing && state.placements[id]) removePlacement(id); },
         onSelect: function (id) {
+          var on = layerOfDevice(id);
+          if (on !== null && on !== state.layer) setLayer(on);
           select(id);
           // A placed device is brought into view; one not on the map just
           // fills the info card.
@@ -820,7 +996,11 @@
       sidebarHtml: sidebarHtml,
       wireSidebar: wireSidebar,
       // The devices on the map — map.js lists only these under the info card.
-      placedIds: function () { var o = {}; Object.keys(state.placements).forEach(function (id) { o[id] = true; }); return o; },
+      placedIds: function () {
+        var o = {};
+        Object.keys(byLayer).forEach(function (k) { Object.keys(byLayer[k]).forEach(function (id) { o[id] = true; }); });
+        return o;
+      },
       setSelected: function (id) { selectedId = id || null; paintSelected(); },
       // The Delete key (map.js): the selected placed device comes off the map.
       deleteSelected: function () {

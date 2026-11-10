@@ -5420,6 +5420,17 @@ async function openEditModal(id, opts) {
           if (pinNotice && !(await showConfirm("Decommission " + (asset.hostname ? '"' + asset.hostname + '"' : "this asset") + "?\n\n" + pinNotice))) return;
         }
         var updated = await api.assets.update(id, formData);
+        // Rule 150: a description naming a new room / rack / junction box
+        // offers a Wall or Rack view for it (after the save, never blocking it).
+        if (typeof formData.description === "string" && formData.description !== (asset.description || "") &&
+            typeof _loadPanelScript === "function") {
+          var descBefore = asset.description || "", descAfter = formData.description;
+          _loadPanelScript("/js/region-view-prompt.js").then(function () {
+            if (window.PolarisRegionViewPrompt) {
+              window.PolarisRegionViewPrompt.afterSave({ assetId: id, before: descBefore, after: descAfter, assetName: asset.hostname });
+            }
+          }).catch(function () { /* the prompt is optional */ });
+        }
         var maintApplied = false;
         if (maint.requested) {
           if (typeof window.maintCreateAdhoc !== "function") {

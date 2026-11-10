@@ -671,6 +671,18 @@ In edit mode:
 A device's icon (Server Settings → Customization) is drawn on its shape here,
 and beside its name in a rack.
 
+**Floors are layers of a Topology view.** Every Topology view opens on **Layer
+0**, the flat view, which ignores floors and writes no floor code. The **Layer**
+control at the left edge steps up (**+**) and down (**−**) through the view's
+floors; **Layer 0** jumps back. While editing, pressing **+** or **−** past the
+last layer adds one and asks its floor name (the number, or B1, B2… below
+ground); right-click the layer number to rename or delete it. Each layer has its
+own background (usually that floor's plan, chosen with the map button), its own
+polygons and its own devices, and a device is on one layer at a time: the Device
+List says which, and clicking it takes you there. A device placed on a floor
+layer gets that floor's `f:` code when you save; it keeps its other codes unless
+you drop it inside a polygon on that layer ([rule 152](Business-Rules#rule-152)).
+
 **A Rack or Wall view can stand for a region.** When you create the view, or
 in **View settings**, choose the area, building, floor, room, rack or junction
 box it is for: any region the site's descriptions already name, or a custom
@@ -680,6 +692,16 @@ changes a description by itself, and existing regions are never removed —
 a region is still just the codes in device descriptions
 ([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views don't take a
 region; they draw the regions themselves.
+
+**Saving a description that names a new region offers a view for it.** When
+you save a device's description (in its Edit form, or with right-click on the
+map) and it names a room, rack or junction box that no Wall or Rack view stands
+for yet, Polaris asks, for each one, whether to create a Wall view, create a
+Rack view, map it to one of the site's existing Wall or Rack views, or leave it
+unmapped. **Don't map** is remembered in that browser. The description is saved
+either way. This needs Read-Write on the Device Map, and in the Edit form it
+works for FortiGates, FortiSwitches and FortiAPs (the map's own editor covers
+every device).
 
 **Changing a view's mode resets it.** Polaris first shows what the change
 removes: placed devices, group polygons, the uploaded background and racks. If

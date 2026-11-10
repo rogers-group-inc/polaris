@@ -944,6 +944,34 @@
 /* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
    an uploaded floor plan, with location-group polygons and placed devices. */
 .topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+/* The floor Layer control (rule 152): left edge, vertically centred. */
+.topo-layer-ctl {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 800;
+  width: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--map-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  box-shadow: var(--map-btn-shadow, 0 2px 4px rgba(0,0,0,.3));
+}
+.topo-layer-cap { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.topo-layer-step { width: 40px; height: 30px; padding: 0; justify-content: center; font-size: 18px; line-height: 1; }
+.topo-layer-now { display: flex; flex-direction: column; align-items: center; line-height: 1.15; text-align: center; }
+.topo-layer-now strong { font-size: 22px; color: var(--color-accent); }
+.topo-layer-now span { font-size: 11px; color: var(--color-text-primary); }
+.topo-layer-now .topo-layer-n { font-size: 10px; color: var(--color-text-secondary); }
+.topo-layer-zero { width: 60px; padding: 0 4px; justify-content: center; font-size: 11px; }
 /* Map | Satellite (only when Server Settings configures satellite imagery):
    the zoom bar's look, as a two-button segmented control. */
 .topo-phys-layer-switch {

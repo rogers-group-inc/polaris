@@ -94,6 +94,11 @@ a detached one measures 0 × 0, so every inch became Infinity), and every mode c
 `window.PolarisTopologyRender` inside `render()`, never at file load (map.html loads it after the
 canvases). Region-mapped Rack / Wall views stage the region's codes through `ctx.stageLocationCode`,
 the rule-148 Save summary.
+**Floor layers** (`topology-physical.js`, rule 152) keep the canvas's code shape by making
+`state.background` and `state.placements` property accessors onto the CURRENT layer, and
+`layerPolys()` the only polygon list drawing and hit-testing read. Layer 2 must skip the new
+`topo|L<n>` layout keys (`_layoutKeyBelongsToCurrentView`), or a floor layer's placements
+read as a Layer 2 layout.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.

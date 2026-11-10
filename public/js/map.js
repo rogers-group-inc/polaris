@@ -1734,16 +1734,17 @@
       layoutKey: function () { return _viewScopedKey("topo"); },
       // The view's Topology placements ({ assetId: {x, y} } in background
       // coordinates): a staged edit first, then the shared layout.
-      loadPlacements: function () {
-        var key = _viewScopedKey("topo");
+      // `layer` (rule 152): 0 / absent = the flat view, n = "topo|L<n>".
+      loadPlacements: function (layer) {
+        var key = _viewScopedKey(layer ? "topo|L" + layer : "topo");
         if (_editSessionActive() && _editStaged.views[key]) return _editStaged.views[key].positions;
         var layouts = topoState.data && topoState.data.savedLayouts;
         var entry = layouts && layouts[key];
         return entry && entry.positions && typeof entry.positions === "object" ? entry.positions : {};
       },
-      stagePlacements: function (positions) {
+      stagePlacements: function (positions, layer) {
         if (!_editSessionActive()) return false;
-        _stageLayout(_viewScopedKey("topo"), positions);
+        _stageLayout(_viewScopedKey(layer ? "topo|L" + layer : "topo"), positions);
         return true;
       },
       // Rule 148: a code change staged for one asset (null withdraws it).
@@ -1851,7 +1852,7 @@
         '</td><td class="mono">' + escapeHtml(_codesText(c.codes)) + '</td></tr>';
     }).join("");
     var body =
-      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, so their location codes change. ' +
+      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, on a floor layer, or on a view that stands for a region, so their location codes change. ' +
         'The free text in each description stays; only the a:/b:/f:/r:/ra:/jb: codes are replaced.</p>' +
       '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>' +
@@ -1983,9 +1984,10 @@
   // True when a stored Layer 2 layout key belongs to the current view.
   function _layoutKeyBelongsToCurrentView(key) {
     var v = _currentView();
-    if (!v || v.isDefault) return key.indexOf("v:") !== 0 && key !== "topo";
+    // The Topology placements ("topo", and a floor layer's "topo|L<n>") are not Layer 2 layouts.
+    if (!v || v.isDefault) return key.indexOf("v:") !== 0 && key !== "topo" && key.indexOf("topo|") !== 0;
     var prefix = "v:" + v.id;
-    return key === prefix || (key.indexOf(prefix + "|") === 0 && key !== prefix + "|topo");
+    return key === prefix || (key.indexOf(prefix + "|") === 0 && key !== prefix + "|topo" && key.indexOf(prefix + "|topo|") !== 0);
   }
   // Re-draw the open site after a view-level change, keeping the canvas's
   // current positions for the nodes that survive.
@@ -2812,10 +2814,22 @@
       if (save) save.addEventListener("click", async function () {
         save.disabled = true;
         try {
-          await api.assets.update(assetId, { description: input ? input.value.trim() : "" });
+          var descAfter = input ? input.value.trim() : "";
+          await api.assets.update(assetId, { description: descAfter });
           if (typeof closeModal === "function") closeModal();
           if (typeof showToast === "function") showToast("Description saved");
           refreshTopology({ silent: true });
+          // Rule 150: offer a Wall / Rack view for each new room, rack or junction box.
+          if (descAfter !== (asset.description || "") && typeof _loadPanelScript === "function") {
+            var siteForPrompt = topoState.siteId;
+            _loadPanelScript("/js/region-view-prompt.js").then(function () {
+              if (window.PolarisRegionViewPrompt) {
+                window.PolarisRegionViewPrompt.afterSave({ assetId: assetId, before: asset.description || "", after: descAfter, siteId: siteForPrompt, assetName: asset.hostname,
+                  // The new views belong in the view picker straight away.
+                  onDone: function () { if (topoState.siteId === siteForPrompt) refreshTopology({ silent: true }); } });
+              }
+            }).catch(function () { /* the prompt is optional */ });
+          }
         } catch (err) {
           save.disabled = false;
           if (typeof showToast === "function") {
