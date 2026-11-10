@@ -18,11 +18,9 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 import { ipDimensionMatch, macDimensionMatch } from "../../src/services/notificationTypes.js";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 type Leaf = Record<string, any>;
 type Group = { op: string; children: (Leaf | Group)[] };
@@ -33,8 +31,7 @@ let clientIpMatch: (ip: string | null, p?: string | null) => boolean;
 let clientMacMatch: (mac: string | null, p?: string | null) => boolean;
 
 beforeAll(() => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const code = readFileSync(resolve(here, "../../public/js/automations-wizard.js"), "utf8");
+  const code = wizardSource();
   const sandbox: Record<string, any> = {
     window: {},
     document: { addEventListener() {}, getElementById: () => null },

@@ -17,6 +17,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 type Pill = { kind: string; value: string; label: string; unknown?: boolean };
 type Recipients = {
@@ -38,7 +39,7 @@ let recipientsToPills: (
 ) => Pill[];
 
 beforeAll(() => {
-  const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
+  const src = wizardSource();
   const sandbox: Record<string, unknown> = {};
   sandbox.window = sandbox;
   sandbox.document = { addEventListener() {}, querySelector: () => null, getElementById: () => null };

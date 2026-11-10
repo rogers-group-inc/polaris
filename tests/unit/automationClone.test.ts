@@ -28,6 +28,7 @@ import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { buildSchemaCatalog, ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { dimensionPickerMeta } from "../../src/services/notificationDimensionService.js";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -178,7 +179,7 @@ describe("openAutomationWizard — clone mode", () => {
     // both while assembling the modal body.
     (0, eval)(readFileSync(resolve(__dirname, "../../public/js/condition-builder.js"), "utf8"));
     (0, eval)(readFileSync(resolve(__dirname, "../../public/js/scope-vocabulary.js"), "utf8"));
-    (0, eval)(readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8"));
+    (0, eval)(wizardSource());
 
     await (g.openAutomationWizard as (r: unknown, o?: unknown) => Promise<void>)(
       SOURCE_RULE, { clone: true, name: "High CPU usage (copy)" },
