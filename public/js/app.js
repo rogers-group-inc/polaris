@@ -4832,7 +4832,12 @@ function showRowMenu(anchor, items, opts) {
   if (reopening) return;
 
   var menu = document.createElement("div");
-  menu.className = "btn-dropdown-menu row-context-menu open" + (opts && opts.overMap ? " is-over-map" : "");
+  // overMap: the denser map glass (--map-glass-bg). Asked for explicitly, or
+  // implied by an anchor inside a surface marked data-menu-glass="map" (the
+  // Device Map topology modal), so every menu there matches its legend.
+  var overMap = (opts && opts.overMap) ||
+    !!(anchor && typeof anchor.closest === "function" && anchor.closest('[data-menu-glass="map"]'));
+  menu.className = "btn-dropdown-menu row-context-menu open" + (overMap ? " is-over-map" : "");
   menu.setAttribute("role", "menu");
   if (opts && opts.label) menu.setAttribute("aria-label", opts.label);
 

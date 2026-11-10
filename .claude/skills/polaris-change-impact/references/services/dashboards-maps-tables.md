@@ -317,7 +317,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`shownTypes` is the SHOWN set**, firewall always in it — a custom asset type added later starts hidden.
 - **Polygons store codes, not group keys** — group keys are lowercased client-side, so writing one back would lose the operator's casing (rule 148).
 - **A location-code commit is per asset**: `assets=write` at the route, each asset judged by `inScope`, results `updated` / `unchanged` / `refused`; updates run in one `$transaction`, then `logEventsBatch` and per-asset `syncDescriptionsOnSave`. A description that would pass 255 is refused, never truncated.
-- **Rack placements are validated whole** on every save: inside the rack, an asset at most once per view, no overlap on any face a placement occupies (full depth = both). A rack change that strands an existing placement is refused, never dropped.
+- **Rack placements are validated whole** on every save: inside the rack, an asset at most once per view, no overlap on any face a placement occupies (half depth — the default when `fullDepth` is absent — is its own face; full depth both). A rack change that strands an existing placement is refused, never dropped.
 - **An upload never changes the view.** The client stages `background: {kind:"image", imageId}`; saving it deletes the view's other images (abandoned or replaced uploads), and an upload prunes unreferenced ones older than a day. Width / height come from the stored image, never the client.
 - Images are served only by the authenticated `GET …/background/:imageId` (private, immutable cache) — never the unauthenticated `/uploads` mount.
 

@@ -213,7 +213,10 @@
         ctx.toast("That device is already racked in this view", "error");
         return;
       }
-      var fullDepth = !isCable;
+      // Half depth by default (operator request 2026-11-10): a device racked
+      // on the front leaves the same U free on the back. Full depth is the
+      // right-click opt-in for gear that fills the rack.
+      var fullDepth = false;
       var u = nearestFreeU(state.placements, state.racks, rack.id, rack.face, uAt(bay, rack, e.clientY), 1, fullDepth, null);
       if (u == null) { ctx.toast(rack.name + " has no free U", "error"); return; }
       var placed = {

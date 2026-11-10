@@ -2745,6 +2745,7 @@
         ["Drag", "Pan the map (scroll wheel zooms)"],
         ["Hover a device or link", "Show its name / the link's ports"],
         ["Double-click a device", "Open its asset details"],
+        ["Map | Satellite (under the zoom)", "Switch the basemap for a look — shown when satellite imagery is set up"],
       ],
       edit: [
         ["Drag a device from the details pane", "Place it on the map — inside a group polygon it takes that group's location codes when you save"],
@@ -2753,6 +2754,7 @@
         ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
         ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
         ["Click a polygon", "Reshape it, change its group or delete it"],
+        ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
         ["Drag / scroll", "Pan and zoom — on OpenStreetMap the view you leave is saved with the view"],
         ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
       ],

@@ -106,8 +106,8 @@ describe("racks and rack placements", () => {
       { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 41, heightU: 2 },
       { id: "cm1", kind: "cableManagement", rackId: "rA", face: "front", startU: 40, heightU: 1 },
     ], racks);
-    expect(out[0].fullDepth).toBe(true); // a device defaults to full depth
-    expect(out[1]).toMatchObject({ assetId: null, fullDepth: false }); // cable management to half
+    expect(out[0].fullDepth).toBe(false); // half depth unless marked full
+    expect(out[1]).toMatchObject({ assetId: null, fullDepth: false });
   });
 
   it("keeps a third-party box's name, defaults it, and refuses a bad one", () => {
@@ -116,7 +116,7 @@ describe("racks and rack placements", () => {
       { id: "tp2", kind: "thirdParty", rackId: "rA", face: "front", startU: 20, heightU: 1, assetId: A1 },
       { id: "p1", kind: "asset", assetId: A2, label: "ignored", rackId: "rA", face: "front", startU: 10, heightU: 1 },
     ], racks);
-    expect(out[0]).toMatchObject({ kind: "thirdParty", label: "ISP router", assetId: null, fullDepth: true });
+    expect(out[0]).toMatchObject({ kind: "thirdParty", label: "ISP router", assetId: null, fullDepth: false });
     expect(out[1]).toMatchObject({ label: "Third party", assetId: null }); // no name → the default, never an asset
     expect(out[2].label).toBeNull();
     expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "thirdParty", label: "x".repeat(65), rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
@@ -129,9 +129,16 @@ describe("racks and rack placements", () => {
     expect(status(() => sanitizeRackPlacements([{ id: "p", kind: "asset", assetId: A1, rackId: "nope", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
   });
 
+  it("a front device and a rear device share a U by default", () => {
+    expect(sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 1 },
+      { id: "p2", kind: "asset", assetId: A2, rackId: "rA", face: "rear", startU: 10, heightU: 1 },
+    ], racks)).toHaveLength(2);
+  });
+
   it("a full-depth device blocks the rear; two half-depth items share a U", () => {
     expect(status(() => sanitizeRackPlacements([
-      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 2 },
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 2, fullDepth: true },
       { id: "p2", kind: "asset", assetId: A2, rackId: "rA", face: "rear", startU: 11, heightU: 1, fullDepth: false },
     ], racks))).toBe(400);
     expect(sanitizeRackPlacements([

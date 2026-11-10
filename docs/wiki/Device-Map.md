@@ -617,10 +617,11 @@ the last save**, and **Export** copies a picture of the map.
 - Drag a block's top or bottom edge to change its height, and its body to
   move it within a rack or to another rack. Both move a U at a time and stop
   at the next item or the end of the rack.
-- Right-click a block to move it to the other face, make it half or full
-  depth, or remove it. A device takes its U on both the front and the back
-  unless it is half depth, so a half-depth front device and a half-depth rear
-  device can share a U.
+- Everything you rack is **half depth** at first: it takes its U on the face
+  you dropped it on only, so you can turn the rack round and rack another
+  device in the same U on the back. Right-click a block to make it **full
+  depth** (it then takes the U on both faces and shows as a dashed outline on
+  the other one), move it to the other face, or remove it.
 - The **Front** button in a rack's header turns the rack round and then reads
   **Back** (while you are only viewing, that is just a look). Double-click the
   rack's name to rename it and its **42U** to change its size; a rack can't

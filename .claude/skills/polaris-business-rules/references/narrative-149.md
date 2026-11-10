@@ -40,4 +40,7 @@ Later the same day (2026-11-10) the operator asked for a **Third party** rack it
 box for equipment Polaris does not monitor (`kind:"thirdParty"` with a `label`, full depth by
 default like a device), and reworked the rack header: Rotate became a Front / Back button that
 names the face on show, the name and the "42U" are each double-clicked to edit, and every rack
-after the first carries an × to delete it.
+after the first carries an × to delete it. The operator then asked that a device racked on the
+front leave the same U free on the back, so every placement became half depth unless marked full
+(it had been full depth for a device and a third-party box, half for cable management);
+placements already saved keep the depth they were saved with.

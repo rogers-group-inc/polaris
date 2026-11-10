@@ -356,8 +356,9 @@ export function sanitizeRackPlacements(raw: unknown, racks: TopologyRack[]): Top
       face: face(pr.face, `rack placement ${i + 1}`),
       startU,
       heightU,
-      // A device or third-party box defaults to full depth; cable management to half.
-      fullDepth: pr.fullDepth === undefined ? kind !== "cableManagement" : pr.fullDepth === true,
+      // Half depth unless marked full: the face it is on, so a front item and a
+      // rear item may share a U (operator request 2026-11-10).
+      fullDepth: pr.fullDepth === true,
     } as TopologyRackPlacement;
   });
   // Overlap: per rack, per face, per U.

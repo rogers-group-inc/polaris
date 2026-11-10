@@ -270,6 +270,12 @@
      than the panels' 70% by choice — a menu is small and short-lived, so it can
      show more of what it covers without costing legibility. */
   --menu-glass-bg: color-mix(in srgb, var(--color-surface) 30%, transparent);
+  /* The ONE floating material over a map or graph canvas — the Device Map
+     topology modal's legend, Mouse controls panel and every menu opened in
+     it. 30% let bright OSM tiles (and a busy graph) through as a milky wash,
+     and a solid legend beside a glass menu read as two materials; the
+     panels' 70% keeps the menus' look over a busy ground. */
+  --map-glass-bg: color-mix(in srgb, var(--color-surface) 70%, transparent);
   /* Slight, not heavy: enough to smear text under the panel illegible while
      leaving shapes and colour behind it recognisable. saturate() compensates
      for the wash-out a large blur radius causes. */
@@ -2991,7 +2997,7 @@ html[data-page-top-curtain]::after {
    milky wash, so nightfall's menu read grey and half-legible. The panel
    glass's 70% (--panel-glass-bg's mix) restores the look of every other menu
    over a busy ground — same material, same blur, less of the street map. */
-.row-context-menu.is-over-map { background: color-mix(in srgb, var(--color-surface) 70%, transparent); }
+.row-context-menu.is-over-map { background: var(--map-glass-bg); }
 .row-context-menu:focus { outline: none; }
 .row-context-menu button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
 /* The row-name trigger: reads as the name, not as a control, until hovered.
@@ -9059,7 +9065,10 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   max-height: calc(100% - 24px);
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-primary);
+  /* The same glass as the menus opened on the canvas (--map-glass-bg). */
+  background: var(--map-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   box-shadow: var(--topology-btn-shadow, var(--map-btn-shadow));
