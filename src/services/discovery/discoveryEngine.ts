@@ -59,9 +59,9 @@ import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanager
 import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { scoreAddressClaim, claimBeats, claimMedium, createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
-import { reconcileDiscoveredAddresses, type AddressSighting } from "../assetAddressService.js";
+import type { AddressSighting } from "../assetAddressService.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
-import { readFirewallDeviceName, readControllerStamp, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
+import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../utils/serialNumber.js";
 import { hostnameCollisionRefusal, type HostnameCollisionSide } from "../../utils/hostnameCollisionGuard.js";
 import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
@@ -124,6 +124,8 @@ import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
 import { reconcileMapRegions } from "../mapRegionService.js";
 import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
+import { decommissionStaleManagedDevices } from "./dhcp/staleManagedDevices.js";
+import { enrichFromSwitchMacAndArp } from "./dhcp/switchArpEnrichment.js";
 import { releaseInfraReservationsForAssets } from "../reservationService.js";
 import { runInfraReservationPush } from "../infraReservationPushService.js";
 import {
@@ -2330,118 +2332,6 @@ export function cascadeControllerOf(fortinetTopology: unknown, staleFwNamesLc: S
 }
 
 /**
- * Sighting evidence for the Phase 2b stale FortiSwitch/FortiAP sweep, built
- * once per sync from the discovery result. Serials are fleet-wide (globally
- * unique); hostname and CMDB sightings are keyed by lowercased controller
- * device name so one gate's roster never vouches for another gate's devices.
- */
-export interface ManagedDeviceSightings {
-  seenSerials: Set<string>;
-  seenHostnamesByController: Map<string, Set<string>>;
-  cmdbSerialsByController: Map<string, Set<string>>;
-}
-
-/**
- * Pure Phase 2b decision: is this previously-discovered FortiSwitch/FortiAP
- * asset still vouched for this run? (Caller has already established that the
- * asset's controller was queried successfully.)
- *
- * Serial is AUTHORITATIVE when the asset has one on file: a same-hostname
- * sighting must never vouch for a different serial. An RMA'd/replaced unit
- * keeps the old unit's hostname, and the former `seenBySerial || seenByHostname`
- * OR let the replacement's name shield the dead serial's asset from
- * decommission forever (prod 2026-08: three RIVERBEND-112F-7 switch assets,
- * distinct serials, only one still on the gate — none ever decommissioned).
- * Hostname is consulted only for assets with no serial on file, and only
- * against sightings on the asset's OWN controller — same per-controller
- * scoping the CMDB protection already uses (a staged/offline gate's cloned
- * config must not vouch for another gate's fleet).
- */
-export function isVouchedManagedDevice(
-  asset: { serialNumber: string | null; hostname: string | null },
-  controller: string,
-  sightings: ManagedDeviceSightings,
-): boolean {
-  const ctlKey = controller.toLowerCase();
-  if (asset.serialNumber) {
-    if (sightings.seenSerials.has(asset.serialNumber)) return true;
-    // CMDB decommission protection: configured-but-currently-offline.
-    return !!sightings.cmdbSerialsByController.get(ctlKey)?.has(asset.serialNumber);
-  }
-  return !!(asset.hostname && sightings.seenHostnamesByController.get(ctlKey)?.has(asset.hostname));
-}
-
-/**
- * Pure Phase 2b guard for an ORPHAN (see resolveSweepController): is this
- * switch/AP still evidenced anywhere this run? Deliberately fleet-wide, the
- * opposite of isVouchedManagedDevice's per-controller scope — the asset's own
- * controller no longer exists, so any gate that reports it live, or still has
- * it in its CMDB, is the gate it now sits under and will re-stamp it.
- */
-export function isSightedAnywhere(
-  asset: { serialNumber: string | null; hostname: string | null },
-  sightings: ManagedDeviceSightings,
-): boolean {
-  if (asset.serialNumber) {
-    if (sightings.seenSerials.has(asset.serialNumber)) return true;
-    for (const set of sightings.cmdbSerialsByController.values()) if (set.has(asset.serialNumber)) return true;
-    return false;
-  }
-  if (!asset.hostname) return false;
-  for (const set of sightings.seenHostnamesByController.values()) if (set.has(asset.hostname)) return true;
-  return false;
-}
-
-/** What Phase 2b knows about controllers this run, for resolveSweepController. */
-export interface SweepControllerContext {
-  /** Controller device names whose switch (or AP) inventory query succeeded. */
-  inventoried: Set<string>;
-  /** UPPER serial (a gate's own, and each HA member's) → its device name THIS run. */
-  currentNameBySerial: Map<string, string>;
-  /** True only when the run read the whole roster (Phase 2a's gate). */
-  rosterJudgeable: boolean;
-  rosterNamesLc: Set<string>;
-  rosterSerialsUc: Set<string>;
-}
-
-export type SweepControllerVerdict =
-  | { kind: "judge"; controller: string; renamedFrom: string | null }
-  | { kind: "orphan"; controller: string }
-  | { kind: "skip" };
-
-/**
- * Pure Phase 2b decision (business rule 41(b)): which controller does this
- * switch/AP answer to this run, if any?
- *
- * The chassis, not the name, says which gate (rule 41). A gate renamed in
- * FortiManager keeps its serial, so the stamped `controllerSerial` resolves to
- * the gate's CURRENT name and the asset is judged under it. Matching the
- * stamped name alone stranded every switch/AP a renamed gate no longer had:
- * the ones still connected were re-stamped with the new name, the ones left
- * behind kept the old name, which was never in the inventoried set again — so
- * they sat `active` forever (prod 2026-10: a gate renamed for a site move).
- *
- * `orphan` = the controller exists in the roster under NEITHER its stamped name
- * NOR its serial — it was renamed (a pre-serial stamp) or removed. Only on a
- * run that read the whole roster; the caller still spares an orphan any gate
- * reports (isSightedAnywhere). `skip` = no fresh answer either way.
- */
-export function resolveSweepController(topology: unknown, ctx: SweepControllerContext): SweepControllerVerdict {
-  const stamp = readControllerStamp(topology);
-  const name = (stamp.name || "").trim();
-  const serial = normalizeSerialKey(stamp.serial);
-  const current = serial ? ctx.currentNameBySerial.get(serial) : undefined;
-  const controller = current || name;
-  if (controller && ctx.inventoried.has(controller)) {
-    return { kind: "judge", controller, renamedFrom: current && name && current !== name ? name : null };
-  }
-  if (!ctx.rosterJudgeable || (!name && !serial)) return { kind: "skip" };
-  if (serial && ctx.rosterSerialsUc.has(serial)) return { kind: "skip" };
-  if (name && ctx.rosterNamesLc.has(normalizeNameKey(name))) return { kind: "skip" };
-  return { kind: "orphan", controller: name || serial };
-}
-
-/**
  * The FortiGate interface a discovered network is served on and, for a VLAN
  * interface, the interface it sits on (business rule 137). Only what the run
  * read: an entry whose interface table was not read this run (`vlanParent`
@@ -3579,103 +3469,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // the scoped, successfully-queried controller are ever judged. (Its orphan
   // clause is the exception, and is held off there — `rosterJudgeable`.)
   if (sweepPhaseEnabled(mode, "2b") && (switchInventoriedDevices.size > 0 || apInventoriedDevices.size > 0)) {
-    const candidates = await prisma.asset.findMany({
-      where: {
-        discoveredByIntegrationId: integrationId,
-        assetType: { in: ["switch", "access_point"] },
-        // Maintenance-window assets are judged here too — same reasoning as
-        // Phase 2a: a powered-off-for-maintenance switch/AP is still in its
-        // controller's CMDB (cmdbProtected below), so only a real removal from
-        // the managed inventory reaches the decommission path.
-        status: { not: "decommissioned" },
-      },
-      select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true, status: true },
-    });
-    // Business rule 41(b): the controller is resolved by chassis first, so a
-    // gate renamed in FortiManager still judges the switches/APs it left
-    // behind (their stamp keeps the old name). The serial → current-name map
-    // comes from the gates processed this run; the roster half is only
-    // trusted on a run that read the whole roster — Phase 2a's own gate,
-    // never "finalize-scoped".
-    const currentNameBySerial = new Map<string, string>();
-    for (const dev of result.devices) {
-      const devName = dev.name || dev.hostname;
-      if (!devName) continue;
-      if (dev.serial) currentNameBySerial.set(normalizeSerialKey(dev.serial), devName);
-      for (const m of dev.haMembers ?? []) if (m.serial) currentNameBySerial.set(normalizeSerialKey(m.serial), devName);
-    }
     // Never on a scoped run, even though 2a now runs there narrowed: the
     // orphan clause judges children of gates OTHER than the scoped one.
     const rosterJudgeable = mode !== "finalize-scoped" && sweepPhaseEnabled(mode, "2a") && knownDeviceNames.size > 0;
-    const staleIds: string[] = [];
-    for (const a of candidates) {
-      const isSwitch = a.assetType === "switch";
-      const sightings: ManagedDeviceSightings = isSwitch
-        ? { seenSerials: seenSwitchSerials, seenHostnamesByController: seenSwitchHostnamesByController, cmdbSerialsByController: cmdbSwitchSerialsByDevice }
-        : { seenSerials: seenApSerials,     seenHostnamesByController: seenApHostnamesByController,     cmdbSerialsByController: cmdbApSerialsByDevice };
-      const verdict = resolveSweepController(a.fortinetTopology, {
-        inventoried: isSwitch ? switchInventoriedDevices : apInventoriedDevices,
-        currentNameBySerial,
-        rosterJudgeable,
-        rosterNamesLc: knownDeviceNamesLc,
-        rosterSerialsUc: knownFirewallSerials,
-      });
-      // Skip when this asset's controller wasn't reachable this run — we
-      // didn't get a fresh answer either way.
-      if (verdict.kind === "skip") continue;
-      const controller = verdict.controller;
-      let message: string;
-      let details: Record<string, unknown>;
-      if (verdict.kind === "judge") {
-        // Serial-authoritative sighting check (pure, unit-tested): serial on
-        // file must reappear (live monitor or this controller's CMDB roster);
-        // hostname vouches only for serial-less assets, and only on the same
-        // controller. See isVouchedManagedDevice for the replaced-unit rationale.
-        if (isVouchedManagedDevice(a, controller, sightings)) continue;
-        const formerly = verdict.renamedFrom ? ` (formerly "${verdict.renamedFrom}")` : "";
-        message = `controller "${controller}"${formerly} no longer reports it`;
-        details = { reason: "missing-from-controller", controllerFortigate: controller, ...(verdict.renamedFrom ? { renamedFrom: verdict.renamedFrom } : {}), integrationId, integrationName };
-      } else {
-        // Orphan: its controller is gone from the roster under every identity.
-        // Any gate that still reports it (live or CMDB) now owns it.
-        if (isSightedAnywhere(a, sightings)) continue;
-        message = `its controller "${controller}" is no longer in "${integrationName}"`;
-        details = { reason: "controller-not-in-roster", controllerFortigate: controller, integrationId, integrationName };
-      }
-      staleIds.push(a.id);
-      if (isSwitch)                            decommissionedSwitches.push(a.hostname || a.serialNumber || a.id);
-      else if (a.assetType === "access_point") decommissionedAps.push(a.hostname || a.serialNumber || a.id);
-      logEvent({
-        action: isSwitch ? "asset.fortiswitch.decommissioned" : "asset.fortiap.decommissioned",
-        resourceType: "asset",
-        resourceId: a.id,
-        resourceName: a.hostname || a.serialNumber || a.id,
-        actor,
-        message: `${isSwitch ? "FortiSwitch" : "FortiAP"} "${a.hostname || a.serialNumber}" decommissioned — ${message}`,
-        details,
-      });
-    }
-    if (staleIds.length > 0) {
-      // Force-exit maintenance for any of these in an open window (see 2a).
-      await releaseAssetsForDecommission(staleIds, {
-        at: new Date(now),
-        actor,
-        statusChangedBy: integrationLabel,
-        reason: "no longer reported by its controller",
-      });
-      await prisma.asset.updateMany({
-        where: { id: { in: staleIds } },
-        data: { status: "decommissioned", statusChangedAt: new Date(now), statusChangedBy: integrationLabel },
-      });
-      // The device is gone from its controller's inventory — deletion at source,
-      // which business rule 16 already treats as config truth. Give the address
-      // back rather than leaving it claimed (or, once auto-push exists, leaving a
-      // real MAC→IP binding orphaned on the gate). Never throws.
-      await releaseInfraReservationsForAssets(staleIds, {
-        reason: "no longer reported by its controller",
-        actor,
-      });
-    }
+    await decommissionStaleManagedDevices({
+      result, integrationId, integrationName, integrationLabel, actor, now, rosterJudgeable,
+      knownDeviceNamesLc, knownFirewallSerials, switchInventoriedDevices, apInventoriedDevices,
+      seenSwitchSerials, seenApSerials, seenSwitchHostnamesByController, seenApHostnamesByController,
+      cmdbSwitchSerialsByDevice, cmdbApSerialsByDevice, decommissionedSwitches, decommissionedAps,
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
@@ -7141,197 +6943,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // FortiGate's own MAC seen on managed-switch uplinks.
   // ══════════════════════════════════════════════════════════════════════════════
 
-  if ((result.switchMacTable && result.switchMacTable.length > 0) ||
-      (result.arpTable && result.arpTable.length > 0)) {
-    const enrichmentUpdates = new Map<string, Record<string, unknown>>();
-
-    const queueUpdate = (assetId: string, data: Record<string, unknown>) => {
-      const existing = enrichmentUpdates.get(assetId);
-      enrichmentUpdates.set(assetId, existing ? { ...existing, ...data } : data);
-    };
-
-    // Switch-port enrichment with port-rank attribution.
-    //
-    // The same MAC commonly appears on multiple switch ports because
-    // FortiSwitches learn it on every port that observed traffic from the
-    // device — typically the access port the device is plugged into AND
-    // every upstream trunk between that switch and the FortiGate. Stamping
-    // the LAST row seen would put endpoints on whichever upstream port
-    // happened to come last in the iteration, which is wrong. Instead we
-    // rank ports by their MAC count (cardinality of unique MACs learned
-    // on the port across the whole site) and pick the LOWEST-rank port
-    // for each asset — fewer MACs = closer to the leaf = real attachment
-    // point. An access port with one device sees 1 MAC; an uplink trunk
-    // with 50 devices behind it sees 50. `isFortilinkPeer` rows are
-    // filtered out earlier as a separate "this is a FortiLink uplink"
-    // signal, but the rank logic catches every other trunk-vs-access
-    // ambiguity uniformly.
-    const portMacCounts = new Map<string /* switchId/port */, Set<string /* mac */>>();
-    for (const row of result.switchMacTable || []) {
-      if (row.isFortilinkPeer) continue;
-      if (!row.mac || !row.switchId || !row.portName) continue;
-      const portKey = `${row.switchId}/${row.portName}`;
-      let bucket = portMacCounts.get(portKey);
-      if (!bucket) { bucket = new Set(); portMacCounts.set(portKey, bucket); }
-      bucket.add(row.mac.toUpperCase());
-    }
-    // Walk again, picking the lowest-rank port per asset. lastSeen-style
-    // tiebreaker isn't applied — when two ports tie, the first to win
-    // sticks (deterministic from row order).
-    const assetBestPort = new Map<string /* assetId */, { portLabel: string; rank: number; fortigateDevice: string }>();
-    for (const row of result.switchMacTable || []) {
-      if (row.isFortilinkPeer) continue;
-      if (!row.mac || !row.switchId || !row.portName) continue;
-      const asset = assetIdx.findByMac(row.mac);
-      if (!asset) continue;
-      // Skip Fortinet infrastructure assets — their topology already lives
-      // on `fortinetTopology` (parentSwitch/parentPort for APs, FortiLink
-      // uplinkInterface for switches). Stamping lastSeenSwitch on a
-      // managed switch or FortiGate would conflate roles.
-      if (asset.assetType === "switch" || asset.assetType === "firewall") continue;
-      const portLabel = `${row.switchId}/${row.portName}`;
-      const rank = portMacCounts.get(portLabel)?.size ?? 1;
-      const best = assetBestPort.get(asset.id);
-      if (!best || rank < best.rank) {
-        assetBestPort.set(asset.id, { portLabel, rank, fortigateDevice: row.fortigateDevice || "" });
-      }
-    }
-    for (const [assetId, pick] of assetBestPort) {
-      const asset = assetIdx.findById(assetId);
-      if (!asset) continue;
-      if (asset.lastSeenSwitch !== pick.portLabel) {
-        noteChangeBaseline(asset, ["lastSeenSwitch"]);
-        queueUpdate(assetId, { lastSeenSwitch: pick.portLabel });
-        asset.lastSeenSwitch = pick.portLabel;
-      }
-      // Switch-port attribution counts as a fortigate-endpoint touch
-      // even when no DHCP sighting fired — the asset was seen on a
-      // managed switch's port.
-      if (asset.assetType !== "firewall" && asset.assetType !== "switch" && asset.assetType !== "access_point") {
-        fortigateEndpointAssetIds.add(asset.id);
-        // The switch's own controller gate — the MAC-table row carries it, so
-        // a switch-port-only touch still names a real FortiGate rather than
-        // leaving the flush to guess.
-        noteEndpointGate(asset.id, pick.fortigateDevice);
-      }
-    }
-
-    // ARP — fills an empty ipAddress, and stakes a CLAIM on the shared address
-    // ladder (business rule 101): the gate currently resolves this address to
-    // the MAC. A card with secondary addresses has several ARP rows, and they
-    // tie — so:
-    //   • the row for the asset's CURRENT address stakes its claim first, and
-    //     a sibling must strictly beat it. Equal ARP claims therefore leave the
-    //     asset where it is; the one thing that lifts a sibling is a DHCP
-    //     reservation configured for that MAC at that address (`reserved`) —
-    //     the address somebody chose for the card;
-    //   • ARP only overrules an address THIS RUN's DHCP / detected-device
-    //     claims decided (an incumbent on the ladder before this pass). An
-    //     address that came from elsewhere — vCenter, Arc, an operator — has
-    //     no ladder claim and is not ARP's to take.
-    const reservedIpsByMac = new Map<string, Set<string>>();
-    for (const e of result.dhcpEntries || []) {
-      if (e.type !== "dhcp-reservation" || !e.macAddress || !e.ipAddress) continue;
-      const m = e.macAddress.toUpperCase().replace(/-/g, ":");
-      const set = reservedIpsByMac.get(m) ?? new Set<string>();
-      set.add(e.ipAddress);
-      reservedIpsByMac.set(m, set);
-    }
-    const arpRowsByAsset = new Map<string, Array<{ mac: string; ip: string; device: string }>>();
-    for (const row of result.arpTable || []) {
-      if (!row.mac || !row.ip || !row.fortigateDevice) continue;
-      const a = assetIdx.findByMac(row.mac);
-      if (!a || a.assetType === "firewall" || a.assetType === "switch" || a.assetType === "access_point") continue;
-      const list = arpRowsByAsset.get(a.id) ?? [];
-      list.push({ mac: String(row.mac).toUpperCase().replace(/-/g, ":"), ip: row.ip, device: row.fortigateDevice });
-      arpRowsByAsset.set(a.id, list);
-    }
-    const arpNowMs = Date.parse(now);
-    for (const [arpAssetId, arpRows] of arpRowsByAsset) {
-      const asset = assetIdx.findById(arpAssetId);
-      if (!asset || !asset.ipAddress) continue;
-      const hadLadderClaim = claims.bestAddressClaimByAsset.has(arpAssetId);
-      const standing = asset.ipAddress;
-      const ordered = [...arpRows].sort((x, y) => Number(y.ip === standing) - Number(x.ip === standing));
-      for (const row of ordered) {
-        const arpMacEntry = Array.isArray(asset.macAddresses)
-          ? (asset.macAddresses as MacJsonEntry[]).find((m) => m.mac === row.mac)
-          : undefined;
-        const arpScore = scoreAddressClaim({
-          kind: "arp", current: true, seenMs: arpNowMs,
-          medium: claimMedium({ macSource: arpMacEntry?.source }),
-          reserved: !!reservedIpsByMac.get(row.mac)?.has(row.ip),
-        }, arpNowMs);
-        const incumbent = claims.bestAddressClaimByAsset.get(arpAssetId);
-        if (row.ip === asset.ipAddress) {
-          // ARP confirms the standing address — recorded so a weaker claim
-          // iterated later can't take it.
-          if (!incumbent || claimBeats(arpScore, incumbent)) claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
-        } else if (hadLadderClaim && incumbent && claimBeats(arpScore, incumbent)) {
-          claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
-          queueUpdate(arpAssetId, { ipAddress: row.ip, ipSource: `${row.device}:arp`, learnedLocation: row.device });
-          asset.ipAddress = row.ip;
-          asset.learnedLocation = row.device;
-          assetIdx.reindex(asset);
-          fortigateEndpointAssetIds.add(arpAssetId);
-          noteEndpointGate(arpAssetId, row.device);
-        }
-      }
-    }
-    for (const row of result.arpTable || []) {
-      if (!row.mac || !row.ip) continue;
-      const asset = assetIdx.findByMac(row.mac);
-      if (!asset) continue;
-      // Every ARP binding is a current address for that MAC — one row each,
-      // which is how a card's SECONDARY addresses reach the asset's address
-      // list (business rule 102). Infra keeps its own interface table.
-      if (row.fortigateDevice && asset.assetType !== "firewall" && asset.assetType !== "switch" && asset.assetType !== "access_point") {
-        addressSightings.push({
-          assetId: asset.id, mac: String(row.mac).toUpperCase().replace(/-/g, ":"), ip: row.ip, source: "arp",
-          device: row.fortigateDevice, seenAt: new Date(now),
-        });
-      }
-      if (asset.ipAddress) continue; // conservative: don't overwrite
-      queueUpdate(asset.id, { ipAddress: row.ip, ipSource: `${row.fortigateDevice}:arp` });
-      asset.ipAddress = row.ip;
-      assetIdx.reindex(asset);
-      if (asset.assetType !== "firewall" && asset.assetType !== "switch" && asset.assetType !== "access_point") {
-        fortigateEndpointAssetIds.add(asset.id);
-        noteEndpointGate(asset.id, row.fortigateDevice);
-      }
-    }
-
-    if (enrichmentUpdates.size > 0) {
-      const updates = Array.from(enrichmentUpdates, ([id, data]) => ({ id, data }));
-      const results = await batchSettled(updates, (u) =>
-        prisma.asset.update({ where: { id: u.id }, data: u.data })
-      );
-      let okCount = 0;
-      for (const r of results) if (r.status === "fulfilled") okCount++;
-      syncLog("info", `Enriched ${okCount} asset(s) from FortiSwitch macmap + FortiGate ARP (switch-port + IP)`);
-    }
-  }
-
-  // ── Per-MAC address list (business rule 102) ─────────────────────────────
-  // Current-state per gate: each gate whose read of a kind succeeded has its
-  // discovered rows of that kind replaced by this run's sightings. Runs even
-  // with zero sightings, so a gate that stopped reporting a binding drops it.
-  // Best-effort, like 7.5b below: the run's real work has already landed.
-  {
-    const scope = {
-      dhcpDevices: result.dhcpLeasesInventoriedDevices ?? [],
-      inventoryDevices: result.inventoryDevices ?? [],
-      arpDevices: result.arpQueriedDevices ?? [],
-    };
-    if (addressSightings.length > 0 || scope.dhcpDevices.length || scope.inventoryDevices.length || scope.arpDevices.length) {
-      try {
-        const { upserted, pruned } = await reconcileDiscoveredAddresses(addressSightings, scope, new Date(now));
-        if (upserted || pruned) syncLog("info", `Address list: ${upserted} binding(s) recorded, ${pruned} no longer reported removed`);
-      } catch (err: any) {
-        syncLog("error", `Failed to record per-MAC addresses: ${err.message || "Unknown error"}`);
-      }
-    }
-  }
+  await enrichFromSwitchMacAndArp({
+    result, now, assetIdx, claims, addressSightings, fortigateEndpointAssetIds,
+    noteChangeBaseline, noteEndpointGate, syncLog,
+  });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // Phase 7.5b — Persist each FortiGate's ARP table
