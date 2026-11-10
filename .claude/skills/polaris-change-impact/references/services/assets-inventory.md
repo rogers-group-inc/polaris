@@ -557,7 +557,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Reads:** `Asset` (+ `AssetAssociatedIp` via `associatedIpRows`), `Subnet` (through `buildIpContexts`), `Reservation.vipInfo`.
 
-**Writes:** nothing — no device I/O, no rows, no Events. Every fact is one discovery already stamped (`discoveryEngine` Phase 3c writes `Reservation.vipInfo` = `{ name, device, extip, role, isVirtualServer }` for the VIP's external IP, each mapped IP and each virtual-server realserver).
+**Writes:** nothing — no device I/O, no rows, no Events. Every fact is one discovery already stamped (syncDhcpSubnets Phase 3c, `discovery/dhcp/vipReservations.ts`, writes `Reservation.vipInfo` = `{ name, device, extip, role, isVirtualServer }` for the VIP's external IP, each mapped IP and each virtual-server realserver).
 
 **Used by:**
 - `src/api/routes/assets.ts → GET /api/v1/assets/:id/vips` — the only caller. Gated `assets:read` AND `reservations:read`, chained (the `/assets/:id/contacts` precedent: reading it exposes IPAM content).

@@ -115,14 +115,11 @@ import * as autoMonitorStorage from "../autoMonitorStorageService.js";
 import * as agentAutoDeploy from "../agentAutoDeployService.js";
 import * as presenceVerification from "../presenceVerificationService.js";
 import * as directorySync from "../directorySyncService.js";
-import { recomputeDependencyTree } from "../dependencyTreeService.js";
-import type { ManagementAccessSummary } from "../fortinetManagementAccessService.js";
-import { runDescriptionSyncForIntegration } from "../descriptionSyncService.js";
-import { anyDescriptionSyncEnabled } from "../../utils/descriptionSyncFlags.js";
-import { reconcileMapRegions } from "../mapRegionService.js";
 import { isAzureTag, appendMissingTags } from "../../utils/tagNormalize.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { decommissionStaleFirewalls } from "./dhcp/staleFirewalls.js";
+import { syncVipReservations } from "./dhcp/vipReservations.js";
+import { runFinalizeReconciles } from "./dhcp/finalizeReconciles.js";
 import { decommissionStaleManagedDevices } from "./dhcp/staleManagedDevices.js";
 import { stampEndpointSources, applyEndpointProjection } from "./dhcp/endpointSources.js";
 import { enrichFromSwitchMacAndArp } from "./dhcp/switchArpEnrichment.js";
@@ -131,7 +128,7 @@ import {
   createAdoptionBudget,
   type AdoptionBudget,
 } from "../placeholderMacAdoptionService.js";
-import { reconcileAllTags, syncAzureTagRegistry } from "../tagAssignmentService.js";
+import { syncAzureTagRegistry } from "../tagAssignmentService.js";
 import * as sightings from "../assetSightingService.js";
 import { quarantineAsset, verifyAssetQuarantine } from "../assetQuarantineService.js";
 import { fetchFortigateSysLocation } from "../fortigateLocationService.js";
@@ -4645,148 +4642,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
     }
   }
 
-  if (result.vips && result.vips.length > 0) {
-    for (const vip of result.vips) {
-      const ipsToReserve: Array<{ ip: string; role: "external" | "mapped" | "realserver" }> = [
-        { ip: vip.extip, role: "external" },
-        ...vip.mappedips.map((ip) => ({ ip, role: "mapped" as const })),
-        ...vip.realservers.map((ip) => ({ ip, role: "realserver" as const })),
-      ];
-      // Load-balance Virtual Servers get their own canonical owner / notes /
-      // projectRef so operators can tell a VS (and its realserver pool
-      // members) apart from a plain DNAT VIP at a glance. Phase 5's
-      // VIP-succession path treats both spellings as canonical placeholders.
-      const kindLabel = vip.isVirtualServer ? "Virtual server" : "Firewall VIP";
-
-      for (const { ip, role } of ipsToReserve) {
-        const matchingSubnet = findSubnetForIp(ip);
-        if (!matchingSubnet) continue;
-
-        const key = reservationKey(matchingSubnet.id, ip);
-        const proposedHostname = vip.name;
-        // The owner is the VIP / Virtual Server's own name, as the FortiGate
-        // config spells it.
-        const proposedOwner = vip.name;
-        const proposedProjectRef = `${vip.isVirtualServer ? "VS" : "VIP"}: ${vip.device}`;
-        const proposedNotes = `${kindLabel} "${vip.name}" (${role}) on ${vip.device} — ext: ${vip.extip}`;
-
-        const existingRes = activeResMap.get(key);
-        if (existingRes) {
-          if (existingRes.sourceType === "manual") {
-            // An operator who reserved a VIP address gets the row STAMPED, not
-            // a conflict card. Business rule 77 makes a VIP address claimable
-            // and carries its snapshot onto the claim, so a manual row already
-            // naming this same VIP is this feature working — raising a card
-            // would mean one per claimed VIP per cycle, which is exactly what
-            // `reservationBelongsToInfraDevice` exists to prevent on the
-            // managed-switch/AP side of the same problem. A manual row naming
-            // a DIFFERENT VIP, or none, is an unrelated collision and still
-            // raises its card.
-            const carried = existingRes.vipInfo as any;
-            const claimsThisVip =
-              !!carried && carried.name === vip.name && carried.device === vip.device;
-            if (claimsThisVip) {
-              const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
-              if (carried.role !== role || carried.extip !== vip.extip || !!carried.isVirtualServer !== vip.isVirtualServer) {
-                await prisma.reservation.update({
-                  where: { id: existingRes.id },
-                  data: { vipInfo: newVipInfo },
-                });
-                existingRes.vipInfo = newVipInfo;
-              }
-            } else {
-              await upsertConflict(existingRes.id, integrationId, { hostname: proposedHostname, owner: proposedOwner, projectRef: proposedProjectRef, notes: proposedNotes, sourceType: "vip" }, existingRes);
-            }
-          } else if (existingRes.sourceType === "vip") {
-            // VIP rename (or first vipInfo snapshot) — refresh canonical VIP
-            // metadata only. hostname / owner / notes / projectRef are
-            // operator-editable via the Reserve modal, so discovery must not
-            // overwrite them; the VIP's current name stays visible via the
-            // vip badge tooltip rendered from vipInfo.
-            const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
-            const cur = existingRes.vipInfo as any;
-            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
-              await prisma.reservation.update({
-                where: { id: existingRes.id },
-                data: { vipInfo: newVipInfo },
-              });
-              existingRes.vipInfo = newVipInfo;
-            }
-          } else if (existingRes.sourceType === "dhcp_reservation" || existingRes.sourceType === "dhcp_lease") {
-            // VIP + DHCP collision (VIP arriving second): same IP is both a
-            // DHCP lease/reservation AND a VIP external on the FortiGate.
-            // Update vipInfo so the operator sees the VIP badge immediately.
-            //
-            // VIP metadata takes precedence over the DHCP side's owner /
-            // projectRef, so the canonical DHCP-discovery placeholders are
-            // overwritten in place rather than offered as a conflict — the
-            // mirror of the Phase 5 VIP-succession path, which overwrites
-            // canonical VIP placeholders when the VIP goes away. Anything
-            // outside that allowlist is operator-owned (or an asset's
-            // assignedTo) and survives untouched. The remaining conflict is
-            // fill-only: it raises a card solely for fields this row left
-            // blank.
-            const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
-            const cur = existingRes.vipInfo as any;
-            const vipUpdate: Record<string, unknown> = {};
-            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
-              vipUpdate.vipInfo = newVipInfo;
-            }
-            const isCanonicalDhcpOwner =
-              existingRes.owner === "dhcp-lease" || existingRes.owner === "dhcp-reservation";
-            if (isCanonicalDhcpOwner && existingRes.owner !== proposedOwner) vipUpdate.owner = proposedOwner;
-            if (existingRes.projectRef === projectRefLabel && existingRes.projectRef !== proposedProjectRef) {
-              vipUpdate.projectRef = proposedProjectRef;
-            }
-            if (Object.keys(vipUpdate).length > 0) {
-              await prisma.reservation.update({
-                where: { id: existingRes.id },
-                data: vipUpdate,
-              });
-              if (vipUpdate.vipInfo) existingRes.vipInfo = newVipInfo;
-              if (vipUpdate.owner) existingRes.owner = proposedOwner;
-              if (vipUpdate.projectRef) existingRes.projectRef = proposedProjectRef;
-            }
-            await upsertConflict(
-              existingRes.id,
-              integrationId,
-              { hostname: proposedHostname, owner: proposedOwner, projectRef: proposedProjectRef, notes: proposedNotes, sourceType: "vip" },
-              existingRes,
-              "fill-only",
-            );
-          }
-          continue;
-        }
-
-        try {
-          await releaseDnsResolvedAt(matchingSubnet.id, ip);
-          // vipInfo stamped at create (not just on the next cycle's refresh
-          // branch) so the VIP/VS badge renders and the Phase 5b stale sweep
-          // is armed from the row's first cycle.
-          const newRes = await prisma.reservation.create({
-            data: {
-              subnetId: matchingSubnet.id,
-              ipAddress: ip,
-              hostname: proposedHostname,
-              owner: proposedOwner,
-              projectRef: proposedProjectRef,
-              notes: proposedNotes,
-              status: "active",
-              sourceType: "vip",
-              vipInfo: { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer },
-            },
-          });
-          activeResMap.set(key, newRes);
-          vipNames.push(`${ip} (${vip.name}/${role})`);
-        } catch (err: any) {
-          syncLog("error", `Failed to create VIP reservation for ${ip} (${vip.name}): ${err.message || "Unknown error"}`);
-        }
-      }
-    }
-    if (vipNames.length > 0) {
-      syncLog("info", `VIP sync: created ${vipNames.length} VIP reservation(s)`);
-    }
-  }
+  await syncVipReservations({
+    result, activeResMap, findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
+    vipNames, integrationId, syncLog,
+  });
 
   // Flush this pass's controller claims (business rule 83). Best-effort and
   // never fatal: the claims are evidence for a REPORT, and losing a pass of
@@ -6814,131 +6673,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   //
   // Best-effort. Failures are logged but never block the sync return.
   if (finalizePhasesEnabled(mode)) {
-    try {
-      const dep = await recomputeDependencyTree(integrationId);
-      if (dep.scoped > 0) {
-        syncLog("info", `Dependency tree: ${dep.edgesWritten} edge(s) across ${dep.scoped} asset(s)${dep.unresolved > 0 ? `, ${dep.unresolved} unresolved` : ""}${dep.endpointEdges > 0 ? `; ${dep.endpointEdges} endpoint edge(s)` : ""}`);
-      }
-    } catch (err: any) {
-      syncLog("error", `Dependency tree recompute failed: ${err?.message || "Unknown error"}`);
-    }
-
-    phaseMark("13");
-    // Phase 13 — Re-evaluate map-region tags. Any firewall whose lat/lng now
-    // falls inside an operator-drawn region (or any FortiSwitch / FortiAP whose
-    // controllerFortigate matches one, or any subnet one of those firewalls
-    // serves) gets its `region:<name>` tag stamped — and a target that has
-    // MOVED out since we tagged it has the tag stripped, bounded by the
-    // RegionTagAssignment provenance rows so hand-applied tags survive. Running
-    // here is what makes a device re-pinned or re-parented by THIS discovery
-    // run land in the right region without waiting for the 6-hour tick; the
-    // cost is that a transiently-absent gate pin churns its subtree's tags for
-    // one pass. Best-effort, gated like Phase 12 (a scoped run reconciles
-    // too: a DB-wide pass, idempotent, and it is what tags a new switch).
-    try {
-      const summary = await reconcileMapRegions();
-      if (summary.assetsTouched > 0 || summary.subnetsTouched > 0) {
-        syncLog(
-          "info",
-          `Map region tags: +${summary.added}/-${summary.removed} on ${summary.assetsTouched} asset(s), ` +
-            `+${summary.subnetsAdded}/-${summary.subnetsRemoved} on ${summary.subnetsTouched} network(s)`,
-        );
-      }
-    } catch (err: any) {
-      syncLog("error", `Map region reconcile failed: ${err?.message || "Unknown error"}`);
-    }
-
-    phaseMark("13.65");
-    // Phase 13.65 — Reconcile criteria-based auto-assigned tags. Newly
-    // discovered / changed assets that now match (or no longer match) an
-    // operator-defined tag criteria get the tag added / removed (managed sync,
-    // engine-owned copies only). Best-effort. See src/services/tagAssignmentService.ts.
-    try {
-      const summary = await reconcileAllTags();
-      if (summary.added > 0 || summary.removed > 0) {
-        syncLog("info", `Criteria tags: +${summary.added} / -${summary.removed}`);
-      }
-    } catch (err: any) {
-      syncLog("error", `Tag-assignment reconcile failed: ${err?.message || "Unknown error"}`);
-    }
-
-    phaseMark("13.6");
-    // Phase 13.6 — Write the management-access (`allowaccess`) summaries each
-    // gate's own discovery pass built (result.managementAccess; see
-    // fortinetManagementAccessService → summarizeGateManagementAccess) onto
-    // Asset.managementAccess. Firewall: the operator-named management
-    // interface's allowaccess. FortiAP: its wtp-profile's allowaccess.
-    // FortiSwitch: the controller's local-access policy. Drives the
-    // slide-over's Open HTTPS / Open SSH buttons + the FortiAP "SNMP not
-    // enabled" warning. No device or FortiManager call happens here — until
-    // 2026-11 this phase re-read every gate after discovery finished. A device
-    // absent from the list (its table was not read) keeps what it had.
-    // FMG/FortiGate only; gated like Phases 12/13; a scoped run's result
-    // carries its one gate. Best-effort — never blocks the sync.
-    if (isFortinetIntegrationType(integrationType) && (result.managementAccess?.length ?? 0) > 0) {
-      try {
-        const summaries = new Map<string, ManagementAccessSummary>();
-        for (const m of result.managementAccess!) {
-          if (m?.serial && !summaries.has(m.serial)) summaries.set(m.serial, m.summary);
-        }
-        // Map device serial → assetId via the AssetSource rows discovery wrote
-        // (externalId === serial for these sourceKinds), then batch the writes
-        // in chunked transactions (no per-row awaits — bounded at 2000 assets).
-        const sources = await prisma.assetSource.findMany({
-          where: {
-            integrationId,
-            sourceKind: { in: ["fortigate-firewall", "fortiswitch", "fortiap"] },
-            externalId: { in: [...summaries.keys()] },
-          },
-          select: { assetId: true, externalId: true },
-        });
-        const seen = new Set<string>();
-        const updates: Array<ReturnType<typeof prisma.asset.update>> = [];
-        for (const src of sources) {
-          const summary = summaries.get(src.externalId);
-          if (!summary || seen.has(src.assetId)) continue;
-          seen.add(src.assetId);
-          updates.push(prisma.asset.update({ where: { id: src.assetId }, data: { managementAccess: summary as any } }));
-        }
-        for (const chunk of chunkArray(updates, 200)) {
-          await prisma.$transaction(chunk);
-        }
-        if (updates.length > 0) syncLog("info", `Management-access: recorded allowaccess for ${updates.length} device(s)`);
-      } catch (err: any) {
-        syncLog("error", `Management-access write failed: ${err?.message || "Unknown error"}`);
-      }
-    }
-
-    phaseMark("13.7");
-    // Phase 13.7 — Description sync reconcile (Polaris-primary; gated by the
-    // integration's per-class FortiGate / FortiSwitch / FortiAP toggles,
-    // all default off = zero cost; the service skips each class that's off). Per
-    // FortiGate: read the current device-side descriptions (system/interface,
-    // system/global, managed-switch, wtp — through the shared push transport,
-    // so both useProxy modes work), adopt device values where Polaris has
-    // none, and re-push wherever the device drifted from a non-empty Polaris
-    // value. Also the retry path for save-time pushes that failed
-    // transiently. Best-effort — failures are logged and never block the sync.
-    if (isFortinetIntegrationType(integrationType)) {
-      try {
-        const integrationRow = await prisma.integration.findUnique({
-          where: { id: integrationId },
-          select: { id: true, type: true, config: true, name: true },
-        });
-        if (integrationRow && anyDescriptionSyncEnabled(integrationRow.config)) {
-          // A scoped run reconciles only its gate's group (rule 142).
-          const onlyDevices = mode === "finalize-scoped"
-            ? result.devices.flatMap((d) => [d.name, d.hostname]).filter((n): n is string => !!n)
-            : undefined;
-          const summary = await runDescriptionSyncForIntegration(integrationRow, onlyDevices);
-          if (summary.pushed || summary.adopted || summary.failed || summary.skippedDevices || summary.fmgMirrored || summary.fmgMirrorFailed) {
-            syncLog("info", `Description sync: pushed ${summary.pushed}, adopted ${summary.adopted}, failed ${summary.failed}${summary.fmgMirrored || summary.fmgMirrorFailed ? `, FMG mirror ${summary.fmgMirrored} ok / ${summary.fmgMirrorFailed} failed` : ""}${summary.skippedDevices ? `, ${summary.skippedDevices} device(s) skipped` : ""}`);
-          }
-        }
-      } catch (err: any) {
-        syncLog("error", `Description sync failed: ${err?.message || "Unknown error"}`);
-      }
-    }
+    await runFinalizeReconciles({ integrationId, integrationType, mode, result, phaseMark, syncLog });
   }
 
   // Close out the final phase's elapsed-time log line before returning.
