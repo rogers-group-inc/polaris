@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { extractRosterIdentities } from "../../src/services/fortimanagerService.js";
-import { haStandbyOfUnreadCluster } from "../../src/services/discovery/discoveryEngine.js";
+import { haStandbyOfUnreadCluster } from "../../src/services/discovery/dhcp/staleFirewalls.js";
 
 // Both functions guard the Phase 2a stale-firewall sweep against decommissioning
 // an HA standby that is still perfectly configured. A standby has no identity

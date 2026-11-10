@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { judgeRosterFirewall, type RosterFirewallContext } from "../../src/services/discovery/discoveryEngine.js";
+import { judgeRosterFirewall, type RosterFirewallContext } from "../../src/services/discovery/dhcp/staleFirewalls.js";
 
 // Business rule 41(a): FortiManager's serial swap keeps the device NAME, so the
 // old chassis's asset used to match the roster by name forever and was never
