@@ -543,13 +543,14 @@ devices, so you can see which switches a ring runs through.
 
 ### Device types
 
-The **Device types** list at the top of the details pane has a row for each
-kind of device at the site, with a count and an eye button. Firewalls, routers,
-switches and access points are shown by default; the firewall is the root of
-the map and is always shown. Click the eye on **Servers**, **Workstations**,
-**Printers** or any other type to draw those devices on the graph, each hung
-off the switch it was seen on with a link labelled with the port; click it
-again to hide them. While you are only viewing the map, a toggle lasts until
+**Device types** at the top of the details pane is a row of icons, one for
+each kind of device at the site, with its count on the corner; hover an icon
+to see its name. A shown type is outlined in the accent colour, a hidden one is
+dimmed and struck through. Firewalls, routers, switches and access points are
+shown by default; the firewall is the root of the map and is always shown.
+Click the **Servers**, **Workstations**, **Printers** or any other icon to draw
+those devices on the graph, each hung off the switch it was seen on with a link
+labelled with the port; click it again to hide them. While you are only viewing the map, a toggle lasts until
 you close it. While you are editing, it is saved with the view when you click
 the tick or **Save**. A site with more than 2000 endpoints draws the 2000 most
 recently seen.

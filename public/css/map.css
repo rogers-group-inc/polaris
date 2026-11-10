@@ -871,39 +871,55 @@
 .topology-info .topology-section li.topology-loc-group:first-child { margin-top: 0; }
 .topology-info .topology-section li.topology-loc-group .sep { color: var(--color-text-tertiary); font-weight: 400; }
 .topology-info .topology-section li.topology-loc-group.is-none { font-style: italic; font-weight: 400; }
-/* Device types (business rule 147): one row per asset type on the site,
-   an eye toggle, its name and count. The FortiGate's row is locked on. */
+/* Device types (business rule 147): one icon toggle per asset type on the
+   site, in a row that wraps. On = the accent outline; off = dimmed and struck
+   through. The count sits on the icon's corner; the tooltip names the type.
+   The FortiGate's icon is locked on. */
 .topology-info .topology-types { margin-top: 0; }
-.topology-info .topology-section li.topology-type-row {
-  justify-content: flex-start;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
-}
-.topology-info .topology-section li.topology-type-row:hover { background: var(--color-hover-tint); }
-.topology-info .topology-type-row.is-off .topology-type-name { color: var(--color-text-tertiary); }
-.topology-type-eye {
-  width: 26px;
-  height: 26px;
+.topology-type-icons { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; }
+.topology-types .topology-type-hint { margin-top: 8px; }
+.topology-type-icon {
+  position: relative;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--color-bg-primary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-}
-.topology-type-eye.is-on { color: var(--color-accent); border-color: var(--color-accent); }
-.topology-type-eye:disabled { cursor: default; opacity: 0.8; }
-.topology-type-note { font-size: 0.72rem; color: var(--color-text-tertiary); }
-.topology-type-count {
-  margin-left: auto;
-  font-family: "Roboto Mono", monospace;
-  font-size: 0.75rem;
   color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.topology-type-icon:not(.is-on)::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 50%;
+  border-top: 2px solid currentColor;
+  transform: rotate(-35deg);
+}
+.topology-type-icon:hover { background: var(--color-hover-tint); opacity: 0.85; }
+.topology-type-icon.is-on { color: var(--color-accent); border-color: var(--color-accent); opacity: 1; }
+.topology-type-icon:disabled { cursor: default; }
+.topology-type-icon:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.topology-type-icon-count {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font: 600 10px/14px "Roboto Mono", monospace;
+  text-align: center;
 }
 .topology-type-hint { margin: 6px 4px 0; font-size: 0.72rem; color: var(--color-text-tertiary); }
 /* The header's view picker and mode pill (rule 147). */

@@ -12,11 +12,11 @@
   .demo-head h3 { margin: 0; font-size: 1rem; }
   .demo-types { width: 300px; padding: 10px 12px; background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
   .demo-types h5 { margin: 0 0 8px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-tertiary); }
-  .demo-type { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 0.82rem; }
-  .demo-type.off { color: var(--color-text-tertiary); }
-  .demo-eye { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg-primary); color: var(--color-text-secondary); padding: 0; }
-  .demo-eye.on { color: var(--color-accent); border-color: var(--color-accent); }
-  .demo-count { margin-left: auto; font-family: "Roboto Mono", monospace; font-size: 0.75rem; color: var(--color-text-tertiary); }
+  .demo-ticons { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; }
+  .demo-ticon { position: relative; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-primary); color: var(--color-text-tertiary); opacity: 0.7; }
+  .demo-ticon:not(.on)::after { content: ""; position: absolute; left: 7px; right: 7px; top: 50%; border-top: 2px solid currentColor; transform: rotate(-35deg); }
+  .demo-ticon.on { color: var(--color-accent); border-color: var(--color-accent); opacity: 1; }
+  .demo-tcount { position: absolute; right: -5px; bottom: -5px; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-secondary); font: 600 10px/14px "Roboto Mono", monospace; text-align: center; }
   .demo-rack { width: 325px; }
   .demo-rack-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; font-size: 0.86rem; }
   .demo-rack-body { display: flex; border: 1px solid var(--color-border); background: var(--color-bg-primary); }
@@ -50,13 +50,15 @@
       <p class="demo-cap">Details pane — Device types</p>
       <div class="demo-types">
         <h5>Device types</h5>
-        <div class="demo-type"><button type="button" class="demo-eye on" disabled aria-label="Firewalls are always shown">●</button>Firewalls <span class="hint" style="margin:0">root</span><span class="demo-count">1</span></div>
-        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide routers">●</button>Routers<span class="demo-count">1</span></div>
-        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide switches">●</button>Switches<span class="demo-count">2</span></div>
-        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide access points">●</button>Access points<span class="demo-count">4</span></div>
-        <div class="demo-type off"><button type="button" class="demo-eye" aria-label="Show servers">○</button>Servers<span class="demo-count">3</span></div>
-        <div class="demo-type off"><button type="button" class="demo-eye" aria-label="Show workstations">○</button>Workstations<span class="demo-count">112</span></div>
-        <p class="hint" style="margin:6px 4px 0">Shown until you close the map. Edit the map to save them with the view.</p>
+        <div class="demo-ticons">
+        <button type="button" class="demo-ticon on" title="Firewalls (1) — always shown, the site’s root" aria-label="Firewalls (1) — always shown, the site’s root"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="M4 11h16M12 5.5V11M8 11v5.5M16 11v5.5"/></svg><span class="demo-tcount">1</span></button>
+        <button type="button" class="demo-ticon on" title="Routers (1) — shown; click to hide" aria-label="Routers (1) — shown; click to hide"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 17h.01M10 17h.01M15 13V9M12 6.5a4.5 4.5 0 0 1 6 0M10 4a8 8 0 0 1 10 0"/></svg><span class="demo-tcount">1</span></button>
+        <button type="button" class="demo-ticon on" title="Switches (2) — shown; click to hide" aria-label="Switches (2) — shown; click to hide"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M9 11v2M12 11v2M15 11v2M18 11v2"/></svg><span class="demo-tcount">2</span></button>
+        <button type="button" class="demo-ticon on" title="Access points (4) — shown; click to hide" aria-label="Access points (4) — shown; click to hide"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/></svg><span class="demo-tcount">4</span></button>
+        <button type="button" class="demo-ticon" title="Servers (3) — hidden; click to show" aria-label="Servers (3) — hidden; click to show"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg><span class="demo-tcount">3</span></button>
+        <button type="button" class="demo-ticon" title="Workstations (112) — hidden; click to show" aria-label="Workstations (112) — hidden; click to show"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/></svg><span class="demo-tcount">112</span></button>
+        </div>
+        <p class="hint" style="margin:8px 4px 0">Shown until you close the map. Edit the map to save them with the view.</p>
       </div>
     </div>
     <div>

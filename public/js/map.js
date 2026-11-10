@@ -1984,10 +1984,27 @@
     }
     _rerenderTopology();
   }
-  var EYE_ON_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-  var EYE_OFF_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10 10 0 0 1 12 20c-7 0-11-8-11-8a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-  // The sidebar's Device types section: one row per asset type on the site,
-  // with its count and an eye toggle (business rule 147).
+  // Device types as a row of icon toggles (operator request 2026-11-10: the
+  // eye-and-name list was too tall). One icon per asset type on the site; the
+  // tooltip names the type, its count and whether it is drawn; a click shows
+  // or hides it. Line icons in the 24-unit stroke style of the corner tools.
+  var TYPE_ICON_PATHS = {
+    firewall: '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="M4 11h16M12 5.5V11M8 11v5.5M16 11v5.5"/>',
+    router: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 17h.01M10 17h.01M15 13V9M12 6.5a4.5 4.5 0 0 1 6 0M10 4a8 8 0 0 1 10 0"/>',
+    "switch": '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M9 11v2M12 11v2M15 11v2M18 11v2"/>',
+    access_point: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/>',
+    server: '<rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+    workstation: '<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>',
+    printer: '<path d="M6 9V2h12v7"/><rect x="2" y="9" width="20" height="8" rx="2"/><path d="M6 14h12v7H6z"/>',
+    hypervisor: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/>',
+    container: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    kubernetes_cluster: '<path d="m12 2 8.5 5v10L12 22l-8.5-5V7z"/><circle cx="12" cy="12" r="3"/>',
+  };
+  var TYPE_ICON_OTHER = '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2.5"/>';
+  function _typeIconSvg(type) {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (TYPE_ICON_PATHS[type] || TYPE_ICON_OTHER) + '</svg>';
+  }
   function _deviceTypesHtml(data) {
     var types = window.PolarisTopologyRender && window.PolarisTopologyRender.siteDeviceTypes
       ? window.PolarisTopologyRender.siteDeviceTypes(data) : [];
@@ -1996,26 +2013,24 @@
     _effectiveShownTypes().forEach(function (t) { shown[t] = true; });
     shown.firewall = true;
     var staged = topoState.editing && _canEditViews();
-    var rows = types.map(function (t) {
+    var icons = types.map(function (t) {
       var on = !!shown[t.type];
       var locked = t.type === "firewall";
       var word = _deviceTypeLabel(t.type);
-      var label = locked ? word + " are always shown" : (on ? "Hide " : "Show ") + word.toLowerCase();
-      return '<li class="topology-type-row' + (on ? "" : " is-off") + '">' +
-        '<button type="button" class="topology-type-eye' + (on ? " is-on" : "") + '" data-topo-type="' + escapeHtml(t.type) + '"' +
-          ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="' + escapeHtml(label) + '" title="' + escapeHtml(label) + '"' +
-          (locked ? " disabled" : "") + '>' + (on ? EYE_ON_SVG : EYE_OFF_SVG) + '</button>' +
-        '<span class="topology-type-name">' + escapeHtml(word) + '</span>' +
-        (locked ? '<span class="topology-type-note">root</span>' : '') +
-        '<span class="topology-type-count">' + t.count + '</span>' +
-      '</li>';
+      var tip = word + " (" + t.count + ") — " +
+        (locked ? "always shown, the site's root" : on ? "shown; click to hide" : "hidden; click to show");
+      return '<button type="button" class="topology-type-icon' + (on ? " is-on" : "") + '" data-topo-type="' + escapeHtml(t.type) + '"' +
+        ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="' + escapeHtml(tip) + '" title="' + escapeHtml(tip) + '"' +
+        (locked ? " disabled" : "") + '>' + _typeIconSvg(t.type) +
+        '<span class="topology-type-icon-count" aria-hidden="true">' + t.count + '</span></button>';
     }).join("");
     var hint = staged
       ? "Editing: these are saved with this view."
       : "Shown until you close the map. Edit the map to save them with the view.";
     if (data && data.endpointsTruncated) hint += " Only the 2000 most recently seen endpoints are drawn.";
-    return '<div class="topology-section topology-types"><h5>Device types</h5><ul class="topology-type-list">' + rows +
-      '</ul><p class="topology-type-hint">' + escapeHtml(hint) + '</p></div>';
+    return '<div class="topology-section topology-types"><h5>Device types</h5>' +
+      '<div class="topology-type-icons" role="group" aria-label="Device types to show">' + icons + '</div>' +
+      '<p class="topology-type-hint">' + escapeHtml(hint) + '</p></div>';
   }
   // The header's view picker label: the view's name and its mode.
   function _renderViewPicker() {

@@ -12,9 +12,10 @@ and may have more; views are shared, and creating or changing one needs Device M
   the settings dialog) that lists what it removes.
 - **The header** carries the view picker (`View <name> ▾`, the view menu) and a read-only
   `badge-readonly` pill naming the mode.
-- **The details pane starts with Device types**: one row per asset type on the site, an eye toggle,
-  the count. Firewall is the root and locked on; firewalls, routers, switches and access points are
-  on by default. A switched-on type is drawn in the graph.
+- **The details pane starts with Device types**: a wrapping row of 36px icon toggles, one per asset
+  type on the site, the count on the corner and the name in the tooltip. On = accent outline; off =
+  dimmed and struck through. Firewall is the root and locked on; firewalls, routers, switches and
+  access points are on by default. A switched-on type is drawn in the graph.
 - **Topology and Rack add a Device List** (`topology-device-list.js`) under the types: every shown
   device in one list with a filter box, about 5½ rows tall then scrolling; a device on the canvas is
   highlighted (accent tint and a left bar) and carries an × in edit mode; the switch / AP lists lower
