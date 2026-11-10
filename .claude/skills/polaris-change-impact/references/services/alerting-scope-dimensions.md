@@ -111,7 +111,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `notificationEngine.loadScopeAssets` (the engine tick, the builder's device preview, and mass pinning via `loadScopeAssetIds`) and its two carve-out passes, `deviceFilterService.resolveDeviceFilter` (tag auto-assignment + the tag preview), `downDetectionService`'s index build, and `contactService`'s condition preview. `decorateSubnetNameHits` (also exported) is additionally called by the three single-asset paths — `contactService.resolveContactsForAsset`, `tagAssignmentService.reconcileTagsForAsset`, `notificationRuleService.findRulesMatchingAsset`.
 
 **Invariants:**
-- **Which relation and column each field reads is declared ONCE**, in `RELATION_CONDITION_FIELDS` (notificationTypes.ts). This module and the single-asset joins both read it, so "what does `ssid` mean" has one answer.
+- **Which relation and column each field reads is declared ONCE**, in `RELATION_CONDITION_FIELDS` (notificationTypes/scopeConditions.ts). This module and the single-asset joins both read it, so "what does `ssid` mean" has one answer.
 - **Never join the relation on a fleet-scale path.** `AssetInterface` is the largest current-state table in the schema — tens of thousands of rows at 2000 devices. `AssetApVap` is far smaller (a handful of SSIDs per AP), but it goes through the same path so there is one mechanism, not two.
 - **`groupBy`, not `findMany` + `distinct`.** A client-side dedupe would ship every matching row, which for a broad leaf (`contains "port"`) is the whole table.
 - **The key carries the FIELD.** Two relations share one verdict map, so `interfaceName equals GUEST` and `ssid equals GUEST` must not collide — they are different questions and a collision would answer one with the other's row set.
@@ -249,7 +249,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `resolveDeviceFilterAssetIds(cond, {where?})`, `deviceFilterSelect(conditions, {needsInterfaces?})`, `ResolveDeviceFilterOptions`, `INTERFACE_CONDITION_SELECT` (`{ ifName, nativeVlan }` — the interface columns every single-asset join reads, so a "Native VLAN" leaf cannot silently miss its column; `contactService` uses it too).
 
-**Cross-service deps:** `conditionFields` / `evaluateScopeCondition` / `ScopeConditionAsset` / `ScopeConditionGroup` from `notificationTypes.ts`; `decorateInterfaceLeafHits` from `scopeInterfaceIndex.ts`; `prisma.asset.findMany`.
+**Cross-service deps:** `conditionFields` / `evaluateScopeCondition` / `ScopeConditionAsset` / `ScopeConditionGroup` from `notificationTypes/scopeConditions.ts`; `decorateInterfaceLeafHits` from `scopeInterfaceIndex.ts`; `prisma.asset.findMany`.
 
 **Used by:**
 - `src/services/contactService.ts` — `resolveAssetIdsForCondition` (the address-book editor's live device preview) delegates straight to it.
