@@ -1678,7 +1678,8 @@
   // graph says so rather than drawing a Layer 2 map under a Topology name.
   var _modeCanvas = null; // { mode, instance }
   function _modeCanvasModule(mode) {
-    return mode === "topology" ? window.PolarisTopologyPhysical : mode === "rack" ? window.PolarisTopologyRack : null;
+    return mode === "topology" ? window.PolarisTopologyPhysical : mode === "rack" ? window.PolarisTopologyRack
+      : mode === "wall" ? window.PolarisTopologyWall : null;
   }
   function _teardownModeCanvas() {
     if (!_modeCanvas) return;
@@ -1760,6 +1761,18 @@
       refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
       selectAsset: function (id) { _selectTopologyAsset(id); },
       selectedId: function () { return topoState.selectedAssetId || null; },
+      // The site's views, and making / opening one (a wall rack links a Rack view).
+      listViews: function () { return _siteViews(); },
+      createView: async function (body) {
+        var created = await api.map.createTopologyView(topoState.siteId, body);
+        if (topoState.data) topoState.data.views = _siteViews().concat([created]);
+        _renderViewPicker();
+        return created;
+      },
+      openView: function (viewId) {
+        if (topoState.editing) { if (typeof showToast === "function") showToast("Save or close your edits first", "error"); return; }
+        _switchTopologyView(viewId);
+      },
       historyChanged: function () { _paintUndoRedo(); },
       openAsset: function (id) { if (id && typeof openViewModal === "function") openViewModal(id); },
       toast: function (msg, kind) { if (typeof showToast === "function") showToast(msg, kind); },
@@ -1906,7 +1919,7 @@
   // working per view without knowing views exist.
   var VIEW_PREF_PREFIX = "polaris.topology.view:";
   var DEFAULT_SHOWN_TYPES = ["firewall", "router", "switch", "access_point"];
-  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", rack: "Rack" };
+  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", rack: "Rack", wall: "Wall" };
   var DEVICE_TYPE_LABELS = {
     firewall: "Firewalls", router: "Routers", switch: "Switches", access_point: "Access points",
     server: "Servers", workstation: "Workstations", printer: "Printers", other: "Other",
@@ -2099,13 +2112,84 @@
     renderTopologyInfo(topoState.data);
   }
   function _modeSelectHtml(id, selected) {
-    return '<select id="' + id + '">' + ["layer2", "topology", "rack"].map(function (m) {
+    return '<select id="' + id + '">' + ["layer2", "topology", "rack", "wall"].map(function (m) {
       return '<option value="' + m + '"' + (m === selected ? " selected" : "") + '>' + VIEW_MODE_LABELS[m] + '</option>';
     }).join("") + '</select>';
   }
   var MODE_HINT =
     "A view has one mode. Layer 2 lays the devices out automatically. Topology starts empty: choose a " +
-    "map or floor-plan background, draw group polygons and drag devices onto it. Rack starts with one 42U rack.";
+    "map or floor-plan background, draw group polygons and drag devices onto it. Rack starts with one rack, " +
+    "Wall with one wall (a backboard, pegboard or junction box backplate) to mount devices on.";
+
+  // ── Regions (rule 150): a Rack or Wall view may stand for one ─────────────
+  // A region is the code chain devices carry in their descriptions; the list
+  // offers every chain the site's descriptions already name, at any level,
+  // so a view can stand for an area, a building, a floor, a room, a rack or
+  // a junction box. Nothing here writes a description.
+  var REGION_FIELDS = [["area", "a", "Area"], ["building", "b", "Building"], ["floor", "f", "Floor"],
+    ["room", "r", "Room"], ["rack", "ra", "Rack"], ["junctionBox", "jb", "Junction box"]];
+  function _regionLabel(codes) {
+    if (!codes) return "No region";
+    var parts = REGION_FIELDS.filter(function (f) { return codes[f[0]]; }).map(function (f) { return f[1] + ":" + codes[f[0]]; });
+    return parts.length ? parts.join(" ") : "No region";
+  }
+  function _regionName(codes) {
+    if (!codes) return "";
+    var last = null;
+    REGION_FIELDS.forEach(function (f) { if (codes[f[0]]) last = f; });
+    return last ? last[2] + " " + codes[last[0]] : "";
+  }
+  function _regionKey(codes) {
+    if (!codes) return "";
+    return REGION_FIELDS.map(function (f) { return String(codes[f[0]] || "").trim().toLowerCase(); }).join("|");
+  }
+  function _siteRegions() {
+    var P = window.PolarisTopologyPhysical;
+    return P && P._groupsFromData && topoState.data ? P._groupsFromData(topoState.data) : [];
+  }
+  function _modeTakesRegion(mode) { return mode === "rack" || mode === "wall"; }
+  function _regionPickerHtml(prefix, current) {
+    var regions = _siteRegions();
+    var curKey = _regionKey(current);
+    var known = regions.some(function (r) { return _regionKey(r) === curKey; });
+    var opts = '<option value="">No region</option>' + regions.map(function (r, i) {
+      return '<option value="' + i + '"' + (curKey && _regionKey(r) === curKey ? " selected" : "") + '>' +
+        escapeHtml(_regionName(r) + " — " + _regionLabel(r)) + '</option>';
+    }).join("") + '<option value="custom"' + (current && !known ? " selected" : "") + '>Custom region…</option>';
+    var custom = REGION_FIELDS.map(function (f) {
+      return '<label style="display:flex;flex-direction:column;gap:2px;font-size:0.75rem">' + f[2] +
+        '<input type="text" data-region-field="' + f[0] + '" maxlength="64" value="' + escapeHtml((current && current[f[0]]) || "") + '"></label>';
+    }).join("");
+    return '<div class="form-group" data-region-picker="' + prefix + '"><label for="' + prefix + '-region">Location region</label>' +
+      '<select id="' + prefix + '-region">' + opts + '</select>' +
+      '<div data-region-custom style="display:' + (current && !known ? "grid" : "none") + ';grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:6px">' + custom + '</div>' +
+      '<div class="hint">The area, building, floor, room, rack or junction box this view is for. Placing a device on it adds that region’s codes to its description when you save (you see the change first). Choosing one never changes a description by itself.</div></div>';
+  }
+  function _wireRegionPicker(root, prefix) {
+    var sel = root.querySelector("#" + prefix + "-region");
+    var box = root.querySelector('[data-region-picker="' + prefix + '"] [data-region-custom]');
+    if (!sel || !box) return;
+    sel.addEventListener("change", function () {
+      box.style.display = sel.value === "custom" ? "grid" : "none";
+      if (sel.value !== "" && sel.value !== "custom") {
+        var r = _siteRegions()[Number(sel.value)] || {};
+        Array.prototype.forEach.call(box.querySelectorAll("[data-region-field]"), function (inp) { inp.value = r[inp.getAttribute("data-region-field")] || ""; });
+      }
+    });
+  }
+  // The picked region (codes) or null; "custom" reads the six fields.
+  function _collectRegion(root, prefix) {
+    var sel = root.querySelector("#" + prefix + "-region");
+    if (!sel || sel.value === "") return null;
+    if (sel.value !== "custom") return _siteRegions()[Number(sel.value)] || null;
+    var out = {}, any = false;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-region-picker="' + prefix + '"] [data-region-field]'), function (inp) {
+      var v = inp.value.trim();
+      out[inp.getAttribute("data-region-field")] = v || null;
+      if (v) any = true;
+    });
+    return any ? out : null;
+  }
   function openNewTopologyViewDialog() {
     if (!topoState.siteId || typeof buildOverlay !== "function") return;
     var siteId = topoState.siteId;
@@ -2113,6 +2197,13 @@
       '<div class="form-group"><label for="topo-nv-name">Name</label><input id="topo-nv-name" type="text" maxlength="80" autocomplete="off"></div>' +
       '<div class="form-group"><label for="topo-nv-mode">Mode</label>' + _modeSelectHtml("topo-nv-mode", "layer2") +
         '<div class="hint">' + escapeHtml(MODE_HINT) + '</div></div>' +
+      '<div class="form-group" data-nv-only="wall" hidden><label>Wall size</label>' +
+        '<div style="display:flex;align-items:center;gap:8px"><input id="topo-nv-ww" type="number" min="4" max="600" value="96" style="width:6rem" aria-label="Width (in)">' +
+        '<span>×</span><input id="topo-nv-wh" type="number" min="4" max="600" value="48" style="width:6rem" aria-label="Height (in)"><span>in</span></div>' +
+        '<div class="hint">A 4 × 8 ft sheet is 96 × 48; a junction box backplate perhaps 24 × 30. More walls can be added in the view.</div></div>' +
+      '<div class="form-group" data-nv-only="rack" hidden><label for="topo-nv-ru">Rack size (U)</label>' +
+        '<input id="topo-nv-ru" type="number" min="1" max="60" value="42" style="width:6rem"></div>' +
+      '<div data-nv-only="region" hidden>' + _regionPickerHtml("topo-nv", null) + '</div>' +
       '<div class="form-group"><label for="topo-nv-types">Start device types from</label>' +
         '<select id="topo-nv-types"><option value="current">This view (' + escapeHtml((_currentView() || {}).name || "Base view") + ')</option>' +
         '<option value="defaults">Defaults (firewalls, routers, switches, access points)</option></select></div>';
@@ -2121,6 +2212,15 @@
       '<button type="button" class="btn btn-primary" data-nv="create">Create view</button>';
     var dlg = buildOverlay(1100, "New view", body, footer);
     var nameEl = dlg.overlay.querySelector("#topo-nv-name");
+    var modeEl = dlg.overlay.querySelector("#topo-nv-mode");
+    function paintModeFields() {
+      var md = modeEl.value;
+      dlg.overlay.querySelector('[data-nv-only="wall"]').hidden = md !== "wall";
+      dlg.overlay.querySelector('[data-nv-only="rack"]').hidden = md !== "rack";
+      dlg.overlay.querySelector('[data-nv-only="region"]').hidden = !_modeTakesRegion(md);
+    }
+    modeEl.addEventListener("change", paintModeFields);
+    _wireRegionPicker(dlg.overlay, "topo-nv");
     dlg.overlay.querySelector('[data-nv="cancel"]').addEventListener("click", dlg.close);
     var createBtn = dlg.overlay.querySelector('[data-nv="create"]');
     createBtn.addEventListener("click", async function () {
@@ -2132,6 +2232,15 @@
       try {
         var body = { name: name, mode: mode };
         if (fromCurrent) body.shownTypes = _effectiveShownTypes();
+        if (mode === "wall") {
+          body.wallWidth = Number(dlg.overlay.querySelector("#topo-nv-ww").value);
+          body.wallHeight = Number(dlg.overlay.querySelector("#topo-nv-wh").value);
+        }
+        if (mode === "rack") body.rackUnits = Number(dlg.overlay.querySelector("#topo-nv-ru").value);
+        if (_modeTakesRegion(mode)) {
+          var region = _collectRegion(dlg.overlay, "topo-nv");
+          if (region) body.region = region;
+        }
         var view = await api.map.createTopologyView(siteId, body);
         dlg.close();
         if (!topoState.data || topoState.siteId !== siteId) return;
@@ -2158,12 +2267,17 @@
     var body =
       '<div class="form-group"><label for="topo-vs-name">Name</label><input id="topo-vs-name" type="text" maxlength="80" autocomplete="off" value="' + escapeHtml(view.name) + '"></div>' +
       '<div class="form-group"><label for="topo-vs-mode">Mode</label>' + _modeSelectHtml("topo-vs-mode", view.mode) +
-        '<div class="hint">Changing the mode resets this view: its placements, polygons, background and racks are removed.</div></div>';
+        '<div class="hint">Changing the mode resets this view: its placements, polygons, background, racks and walls are removed.</div></div>' +
+      '<div data-vs-region' + (_modeTakesRegion(view.mode) ? "" : " hidden") + '>' + _regionPickerHtml("topo-vs", view.region || null) + '</div>';
     var footer =
       '<button type="button" class="btn btn-secondary" data-vs="cancel">Cancel</button>' +
       '<button type="button" class="btn btn-primary" data-vs="save">Save</button>';
     var dlg = buildOverlay(1100, "View settings", body, footer);
     dlg.overlay.querySelector('[data-vs="cancel"]').addEventListener("click", dlg.close);
+    _wireRegionPicker(dlg.overlay, "topo-vs");
+    dlg.overlay.querySelector("#topo-vs-mode").addEventListener("change", function () {
+      dlg.overlay.querySelector("[data-vs-region]").hidden = !_modeTakesRegion(dlg.overlay.querySelector("#topo-vs-mode").value);
+    });
     var saveBtn = dlg.overlay.querySelector('[data-vs="save"]');
     saveBtn.addEventListener("click", async function () {
       var name = dlg.overlay.querySelector("#topo-vs-name").value.trim();
@@ -2171,6 +2285,10 @@
       if (!name) { if (typeof showToast === "function") showToast("Give the view a name", "error"); return; }
       var patch = {};
       if (name !== view.name) patch.name = name;
+      if (_modeTakesRegion(mode)) {
+        var region = _collectRegion(dlg.overlay, "topo-vs");
+        if (_regionKey(region) !== _regionKey(view.region || null)) patch.region = region;
+      }
       if (mode !== view.mode) {
         var ok = await _confirmModeChange(siteId, view, mode);
         if (!ok) return;
@@ -2233,6 +2351,9 @@
       if (loss.hasImage) items.push("the uploaded background image");
       if (loss.racks && view.mode === "rack") items.push(loss.racks + " rack" + (loss.racks === 1 ? "" : "s"));
       if (loss.rackPlacements) items.push(loss.rackPlacements + " racked item" + (loss.rackPlacements === 1 ? "" : "s"));
+      if (loss.walls && view.mode === "wall") items.push(loss.walls + " wall" + (loss.walls === 1 ? "" : "s"));
+      if (loss.wallPlacements) items.push(loss.wallPlacements + " mounted item" + (loss.wallPlacements === 1 ? "" : "s"));
+      if (loss.layers) items.push(loss.layers + " floor layer" + (loss.layers === 1 ? "" : "s"));
     }
     if (view.mode === "layer2") {
       items.push("its hand-placed device positions (the automatic layout comes back)");
@@ -2243,7 +2364,7 @@
     var body =
       '<p style="margin:0 0 10px">Changing the mode resets <strong>' + escapeHtml(view.name) + '</strong> to a new ' + escapeHtml(target) + ' view. This removes, for everyone:</p>' +
       '<ul style="margin:0 0 10px 18px;padding:0;line-height:1.7">' + items.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join("") + '</ul>' +
-      '<p class="hint" style="margin:0">It starts again with the default device types' + (mode === "rack" ? " and one empty 42U rack" : "") +
+      '<p class="hint" style="margin:0">It starts again with the default device types' + (mode === "rack" ? " and one empty 42U rack" : mode === "wall" ? " and one empty 96 × 48 in wall" : "") +
       '. The view’s name stays. Location codes already written to asset descriptions are not changed. This can’t be undone.</p>';
     return new Promise(function (resolve) {
       var settled = false;
@@ -2789,6 +2910,29 @@
         ["Click a polygon", "Reshape it, change its group or delete it"],
         ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
         ["Drag / scroll", "Pan and zoom — on OpenStreetMap the view you leave is saved with the view"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+    wall: {
+      view: [
+        ["Scroll", "Move along the walls"],
+        ["Click a mounted device", "Show it in the details pane"],
+        ["Double-click a device", "Open its asset details"],
+        ["Double-click a linked rack", "Open its Rack view"],
+        ["Zoom buttons (right)", "Draw the walls larger or smaller"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Mount it — it lands as a 12 × 8 in shape at the pointer, or the nearest free space"],
+        ["Drag Cable management / Third party", "Add a placeholder or a named box (any number)"],
+        ["Drag Rack", "Asks its size in U and which Rack view it opens, then mounts it"],
+        ["Drag a mounted item", "Move it, an inch at a time; it can't overlap another"],
+        ["Drag a corner", "Reshape the item"],
+        ["Drag the + on an edge", "Add a corner there"],
+        ["Right-click a corner", "Remove it"],
+        ["Right-click an item", "Open, rename, change a rack's size, or remove it"],
+        ["Click an item, then Delete", "Take it off the wall"],
+        ["Double-click a wall's name / size", "Rename it / change its size (in)"],
+        ["× (wall header)", "Delete that wall — every wall after the first has one"],
         ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
       ],
     },

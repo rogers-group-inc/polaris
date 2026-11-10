@@ -4245,6 +4245,14 @@ model TopologyView {
   polygons       Json     @default("[]")
   racks          Json     @default("[]")
   rackPlacements Json     @default("[]") @map("rack_placements")
+  // The one location region the view stands for (rule 150): {area, building,
+  // floor, room, rack, junctionBox} codes, or null.
+  region         Json?
+  // A Wall view's walls and what is mounted on them, in inches (rule 151).
+  walls          Json     @default("[]")
+  wallPlacements Json     @default("[]") @map("wall_placements")
+  // A Topology view's floor layers beyond layer 0 (rule 152).
+  layers         Json     @default("[]")
   createdBy      String?  @map("created_by")
   updatedBy      String?  @map("updated_by")
   createdAt      DateTime @default(now()) @map("created_at")

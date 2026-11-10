@@ -421,6 +421,19 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
   rackPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty", assetId?, label?,
                                 -- rackId, face, startU, heightU, fullDepth}] — bounded + overlap-free per
                                 -- face; label = a thirdParty box's name (≤64, default "Third party")
+  region        Json?           -- the location region a RACK or WALL view stands for (rule 150): a code
+                                -- chain {area, building, floor, room, rack, junctionBox}; refused on
+                                -- layer2 / topology views, cleared by a mode change to one. A POINTER to
+                                -- codes in descriptions — regions are never stored anywhere else
+  walls         Json            -- [{id, name, width, height, order}] inches, 4-600 a side (wall views)
+  wallPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty"|"rack", assetId?,
+                                -- label?, wallId, points:[[x,y]…] whole inches, units? (rack),
+                                -- linkedViewId? (a Rack view of the site)}] — no two share a 1-inch cell
+                                -- (rule 151, utils/wallGeometry.ts)
+  layers        Json            -- [{level (non-zero, −20..99), name (the floor code value), background}]
+                                -- floor layers of a topology view (rule 152); layer 0 is the view
+                                -- itself. Polygons carry `layer`; placements per layer live in
+                                -- TopologyLayout "…topo|L<n>"
   createdBy / updatedBy String?
   createdAt / updatedAt DateTime
   @@unique([siteId, name])

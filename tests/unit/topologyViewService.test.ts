@@ -17,6 +17,10 @@ import {
   sanitizeRacks,
   sanitizeRackPlacements,
   sanitizeLocationCodeChanges,
+  sanitizeWalls,
+  sanitizeWallPlacements,
+  sanitizeLayers,
+  sanitizeRegion,
   MAX_RACK_UNITS,
   MAX_VIEW_NAME_LEN,
   type TopologyRack,
@@ -166,3 +170,64 @@ describe("sanitizeLocationCodeChanges", () => {
     expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: {} }]))).toBe(400);
   });
 });
+
+describe("wall views (rule 151)", () => {
+  const walls = sanitizeWalls([{ id: "w1", name: "MDF wall", width: 96, height: 48 }]);
+  const rect = (x: number, y: number, w: number, h: number) => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+
+  it("sizes walls in whole inches within limits", () => {
+    expect(walls[0]).toMatchObject({ width: 96, height: 48, order: 0 });
+    expect(status(() => sanitizeWalls([{ id: "w", name: "x", width: 2, height: 48 }]))).toBe(400);
+    expect(status(() => sanitizeWalls([{ id: "w", name: "x", width: 700, height: 48 }]))).toBe(400);
+  });
+
+  it("accepts items that share an edge and refuses an overlap", () => {
+    expect(sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 12, 8) },
+      { id: "b", kind: "asset", assetId: A2, wallId: "w1", points: rect(12, 0, 12, 8) },
+    ], walls)).toHaveLength(2);
+    expect(status(() => sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 12, 8) },
+      { id: "b", kind: "cableManagement", wallId: "w1", points: rect(11, 7, 4, 4) },
+    ], walls))).toBe(400);
+  });
+
+  it("keeps corners on the wall, an asset once, and a rack's size", () => {
+    expect(status(() => sanitizeWallPlacements([{ id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(90, 0, 12, 8) }], walls))).toBe(400);
+    expect(status(() => sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 4, 4) },
+      { id: "b", kind: "asset", assetId: A1, wallId: "w1", points: rect(10, 0, 4, 4) },
+    ], walls))).toBe(400);
+    const [r] = sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", units: 12, label: " Wall rack ", points: rect(0, 0, 24, 24) }], walls);
+    expect(r).toMatchObject({ kind: "rack", units: 12, label: "Wall rack", linkedViewId: null, assetId: null });
+    expect(status(() => sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", points: rect(0, 0, 24, 24) }], walls))).toBe(400);
+  });
+
+  it("refuses a shape with no area", () => {
+    expect(status(() => sanitizeWallPlacements([{ id: "a", kind: "cableManagement", wallId: "w1", points: [[0, 0], [4, 0], [8, 0]] }], walls))).toBe(400);
+  });
+});
+
+describe("floor layers and regions (rules 150, 152)", () => {
+  it("orders layers by level, needs a floor name, and never lists layer 0", () => {
+    const out = sanitizeLayers([{ level: 2, name: "2" }, { level: -1, name: "B1" }]);
+    expect(out.map((l) => l.level)).toEqual([-1, 2]);
+    expect(out[0]).toMatchObject({ name: "B1", background: null });
+    expect(status(() => sanitizeLayers([{ level: 0, name: "Ground" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "1" }, { level: 1, name: "One" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "2 r:x" }]))).toBe(400);
+  });
+
+  it("polygons default to layer 0", () => {
+    const [p] = sanitizePolygons([{ id: "p", codes: { room: "MDF" }, points: [[0, 0], [1, 0], [1, 1]] }]);
+    expect(p.layer).toBe(0);
+  });
+
+  it("a region is a code chain or null", () => {
+    expect(sanitizeRegion(null)).toBeNull();
+    expect(sanitizeRegion({ building: "Plant", room: "MDF", junctionBox: "7" })).toMatchObject({ building: "Plant", room: "MDF", junctionBox: "7", rack: null });
+    expect(status(() => sanitizeRegion({}))).toBe(400);
+  });
+});
+

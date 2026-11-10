@@ -89,6 +89,8 @@ export function isValidViewKey(view: unknown): view is string {
     if (rest === "") return true; // the view's Layer 2 base
   }
   if (rest === "topo") return true;
+  // A floor layer of a Topology view (rule 152): its own placements.
+  if (/^topo\|L-?\d{1,2}$/.test(rest)) return true;
   if (!m && rest === "flat") return true;
   return /^(?:[abfr]|jb|ra)\|/.test(rest);
 }
@@ -248,9 +250,17 @@ export async function deleteLayoutsForView(
 /** Number of placed nodes a view's Topology-mode layout holds (for the mode-change warning). */
 export async function countTopologyPlacements(siteId: string, view: { id: string; isDefault: boolean }): Promise<number> {
   const key = view.isDefault ? "topo" : `v:${view.id}|topo`;
-  const row = await prisma.topologyLayout.findUnique({ where: { siteId_view: { siteId, view: key } }, select: { positions: true } });
-  if (!row || !row.positions || typeof row.positions !== "object") return 0;
-  return Object.keys(row.positions as Record<string, unknown>).filter((k) => !k.startsWith("edgepath:")).length;
+  // Layer 0 ("…topo") and every floor layer ("…topo|L<n>", rule 152).
+  const rows = await prisma.topologyLayout.findMany({
+    where: { siteId, OR: [{ view: key }, { view: { startsWith: `${key}|L` } }] },
+    select: { positions: true },
+  });
+  let n = 0;
+  for (const row of rows) {
+    if (!row.positions || typeof row.positions !== "object") continue;
+    n += Object.keys(row.positions as Record<string, unknown>).filter((k) => !k.startsWith("edgepath:")).length;
+  }
+  return n;
 }
 
 export interface LayoutResetResult {

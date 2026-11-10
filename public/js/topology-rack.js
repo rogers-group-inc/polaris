@@ -189,6 +189,8 @@
       return '<div class="' + cls + '" data-blk="' + esc(p.id) + '" style="top:' + top + 'px;height:' + h + 'px' +
         (color && !ghost && p.kind === "asset" ? ";border-color:" + esc(color) : "") + '">' +
         (state.editing && !ghost ? '<span class="topo-rack-grip-top" data-blk-edge="top" aria-hidden="true"></span>' : '') +
+        // The device's icon (Server Settings → Customization), left of its name.
+        (d && d.iconUrl && !ghost ? '<img class="topo-rack-blk-icon" src="' + esc(d.iconUrl) + '" alt="" aria-hidden="true">' : '') +
         '<span class="topo-rack-blk-name">' + esc(name) + '</span><span class="topo-rack-blk-meta">' + esc(meta) + '</span>' +
         (state.editing && !ghost ? '<span class="topo-rack-grip-bottom" data-blk-edge="bottom" aria-hidden="true"></span>' : '') +
       '</div>';
@@ -525,6 +527,32 @@
     function snapshot() { return JSON.stringify({ racks: state.racks, placements: state.placements }); }
     function stage() {
       ctx.stageViewPatch({ racks: state.racks, rackPlacements: state.placements });
+      restageCodes();
+    }
+    // Rule 150: a device racked in a region-mapped view takes the region's codes.
+    var CODE_KEYS = ["area", "building", "floor", "room", "rack", "junctionBox"];
+    var region = view.region || null;
+    var locById = {};
+    [data.fortigate].concat(data.switches || [], data.aps || [], data.endpoints || []).forEach(function (x) {
+      if (x && x.id) locById[x.id] = x.location || null;
+    });
+    var stagedAssets = {};
+    function codesEqual(a, b) {
+      return CODE_KEYS.every(function (k) { return String((a && a[k]) || "").trim().toLowerCase() === String((b && b[k]) || "").trim().toLowerCase(); });
+    }
+    function restageCodes() {
+      if (!region || !ctx.stageLocationCode) return;
+      var now = {};
+      state.placements.forEach(function (p) {
+        if (p.kind !== "asset" || !p.assetId) return;
+        now[p.assetId] = true;
+        var cur = locById[p.assetId] || null;
+        if (codesEqual(cur, region)) { ctx.stageLocationCode(p.assetId, null); return; }
+        var d = nodeById[p.assetId];
+        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {} });
+      });
+      Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
+      stagedAssets = now;
     }
     function changed() {
       stage();
@@ -553,6 +581,8 @@
       if (on) {
         state.history = { entries: [snapshot()], index: 0 };
         ctx.historyChanged();
+        // Devices already racked here owe the region's codes too (rule 150).
+        restageCodes();
       }
       draw();
     }

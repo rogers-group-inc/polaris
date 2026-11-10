@@ -87,6 +87,13 @@ Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse c
 (`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
 `_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
 picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.
+**The Wall canvas (`topology-wall.js`)** is plain SVG in inch units, one `<svg>` per wall with a
+`viewBox` of the wall's inches (so geometry never converts), redrawn whole on each change. Two
+traps it hit: a gesture must re-find its board on every pointer move (a redraw replaces the SVG and
+a detached one measures 0 × 0, so every inch became Infinity), and every mode canvas must read
+`window.PolarisTopologyRender` inside `render()`, never at file load (map.html loads it after the
+canvases). Region-mapped Rack / Wall views stage the region's codes through `ctx.stageLocationCode`,
+the rule-148 Save summary.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.

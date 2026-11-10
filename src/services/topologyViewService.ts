@@ -25,12 +25,13 @@ import { detectImageMagic } from "../utils/imageMagic.js";
 import { readImageSize } from "../utils/imageDimensions.js";
 import { locationCodeValueProblem, setLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
+import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
 import { buildChanges, logEventsBatch } from "./eventLogService.js";
 import { syncDescriptionsOnSave } from "./descriptionSyncService.js";
 
 // ─── Limits + defaults ────────────────────────────────────────────────────────
 
-const TOPOLOGY_VIEW_MODES = ["layer2", "topology", "rack"] as const;
+const TOPOLOGY_VIEW_MODES = ["layer2", "topology", "rack", "wall"] as const;
 export type TopologyViewMode = (typeof TOPOLOGY_VIEW_MODES)[number];
 
 /** Types a new (or reset) view draws: the infrastructure tier. */
@@ -41,6 +42,18 @@ export const MAX_RACK_UNITS = 60;
 const MAX_RACKS = 50;
 const MAX_RACK_PLACEMENTS = 2000;
 const MAX_POLYGONS = 500;
+// Wall mode (rule 151): inches; one wall at most 50 ft a side.
+const MAX_WALLS = 20;
+const MAX_WALL_SIDE_IN = 600;
+const MIN_WALL_SIDE_IN = 4;
+const MAX_WALL_PLACEMENTS = 1000;
+const MAX_WALL_ITEM_POINTS = 40;
+const DEFAULT_WALL_W = 96;
+const DEFAULT_WALL_H = 48;
+// Floor layers (rule 152).
+const MAX_LAYERS = 40;
+const MIN_LAYER_LEVEL = -20;
+const MAX_LAYER_LEVEL = 99;
 const MAX_POLYGON_POINTS = 1000;
 const MAX_VIEWS_PER_SITE = 100;
 export const MAX_VIEW_NAME_LEN = 80;
@@ -66,6 +79,40 @@ export interface TopologyPolygon {
   id: string;
   codes: LocationCodes;
   points: Array<[number, number]>;
+  /** The floor layer it is drawn on (rule 152); 0 = the flat layer. */
+  layer: number;
+}
+
+/** A wall of a Wall view, in inches (rule 151). */
+export interface TopologyWall {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  order: number;
+}
+
+/** One thing mounted on a wall: a polygon with whole-inch corners. */
+export interface TopologyWallPlacement {
+  id: string;
+  kind: "asset" | "cableManagement" | "thirdParty" | "rack";
+  assetId: string | null;
+  /** A thirdParty box's or a rack's name; null otherwise. */
+  label: string | null;
+  wallId: string;
+  points: Array<[number, number]>;
+  /** A rack's size in U; null on the other kinds. */
+  units: number | null;
+  /** The Rack view a wall rack opens (same site), or null. */
+  linkedViewId: string | null;
+}
+
+/** A floor layer of a Topology view (rule 152). Layer 0 is the view itself. */
+export interface TopologyLayer {
+  level: number;
+  /** The floor's code value — what f: becomes for a device placed on it. */
+  name: string;
+  background: TopologyBackground | null;
 }
 
 export interface TopologyRack {
@@ -101,6 +148,11 @@ export interface TopologyViewDto {
   polygons: TopologyPolygon[];
   racks: TopologyRack[];
   rackPlacements: TopologyRackPlacement[];
+  /** The location region the view stands for (rule 150), or null. */
+  region: LocationCodes | null;
+  walls: TopologyWall[];
+  wallPlacements: TopologyWallPlacement[];
+  layers: TopologyLayer[];
   /** TopologyLayout key prefix: "" for the default view, "v:<id>" otherwise. */
   layoutPrefix: string;
   createdBy: string | null;
@@ -120,6 +172,10 @@ type ViewRow = {
   polygons: Prisma.JsonValue;
   racks: Prisma.JsonValue;
   rackPlacements: Prisma.JsonValue;
+  region: Prisma.JsonValue | null;
+  walls: Prisma.JsonValue;
+  wallPlacements: Prisma.JsonValue;
+  layers: Prisma.JsonValue;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: Date;
@@ -135,9 +191,14 @@ function toDto(row: ViewRow): TopologyViewDto {
     mode: (TOPOLOGY_VIEW_MODES as readonly string[]).includes(row.mode) ? (row.mode as TopologyViewMode) : "layer2",
     shownTypes: row.shownTypes,
     background: (row.background ?? null) as unknown as TopologyBackground | null,
-    polygons: (Array.isArray(row.polygons) ? row.polygons : []) as unknown as TopologyPolygon[],
+    polygons: ((Array.isArray(row.polygons) ? row.polygons : []) as unknown as TopologyPolygon[])
+      .map((p) => ({ ...p, layer: Number.isInteger(p.layer) ? p.layer : 0 })),
     racks: (Array.isArray(row.racks) ? row.racks : []) as unknown as TopologyRack[],
     rackPlacements: (Array.isArray(row.rackPlacements) ? row.rackPlacements : []) as unknown as TopologyRackPlacement[],
+    region: (row.region && typeof row.region === "object" && !Array.isArray(row.region) ? row.region : null) as unknown as LocationCodes | null,
+    walls: (Array.isArray(row.walls) ? row.walls : []) as unknown as TopologyWall[],
+    wallPlacements: (Array.isArray(row.wallPlacements) ? row.wallPlacements : []) as unknown as TopologyWallPlacement[],
+    layers: (Array.isArray(row.layers) ? row.layers : []) as unknown as TopologyLayer[],
     layoutPrefix: viewLayoutPrefix(row),
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
@@ -273,8 +334,149 @@ export function sanitizePolygons(raw: unknown): TopologyPolygon[] {
       if (!Array.isArray(pt) || pt.length !== 2) bad(`polygon ${i + 1} has a point that is not [x, y]`);
       return [finite((pt as unknown[])[0], "polygon point"), finite((pt as unknown[])[1], "polygon point")] as [number, number];
     });
-    return { id, codes, points };
+    const layer = pr.layer === undefined || pr.layer === null ? 0 : int(pr.layer, `polygon ${i + 1} layer`, MIN_LAYER_LEVEL, MAX_LAYER_LEVEL);
+    return { id, codes, points, layer };
   });
+}
+
+/**
+ * Only a Rack or Wall view stands for a region (rule 150): a Topology or
+ * Layer 2 view already DRAWS the site's regions, so grouping it under one
+ * would say nothing (operator decision 2026-11-10).
+ */
+function modeTakesRegion(mode: TopologyViewMode): boolean {
+  return mode === "rack" || mode === "wall";
+}
+
+/** The region a view stands for (rule 150): codes with at least one value, or null. */
+export function sanitizeRegion(raw: unknown): LocationCodes | null {
+  if (raw === null || raw === undefined) return null;
+  return sanitizeLocationCodesObject(raw, "region");
+}
+
+/** A Wall view's walls, in whole inches; order normalised 0..n-1. */
+export function sanitizeWalls(raw: unknown): TopologyWall[] {
+  if (!Array.isArray(raw)) bad("walls must be an array");
+  const arr = raw as unknown[];
+  if (arr.length > MAX_WALLS) bad(`a view may hold at most ${MAX_WALLS} walls`);
+  const ids = new Set<string>();
+  const walls = arr.map((w, i) => {
+    if (!isObj(w)) bad(`wall ${i + 1} must be an object`);
+    const wr = w as Record<string, unknown>;
+    const id = itemId(wr.id, "wall");
+    if (ids.has(id)) bad(`wall id "${id}" is used twice`);
+    ids.add(id);
+    if (typeof wr.name !== "string" || !wr.name.trim() || wr.name.trim().length > MAX_RACK_NAME_LEN) {
+      bad(`wall ${i + 1} needs a name of 1-${MAX_RACK_NAME_LEN} characters`);
+    }
+    return {
+      id,
+      name: (wr.name as string).trim(),
+      width: int(wr.width, `wall ${i + 1} width (in)`, MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN),
+      height: int(wr.height, `wall ${i + 1} height (in)`, MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN),
+      order: int(wr.order ?? i, `wall ${i + 1} order`, 0, 10000),
+    } as TopologyWall;
+  });
+  walls.sort((a, b) => a.order - b.order);
+  walls.forEach((w, i) => { w.order = i; });
+  return walls;
+}
+
+/**
+ * What is mounted on a Wall view's walls (rule 151): each item a polygon with
+ * whole-inch corners inside its wall, an asset at most once, and no two items
+ * on a wall overlapping (they share no 1-inch cell — utils/wallGeometry.ts).
+ * A rack carries its size and may name the Rack view it opens; the caller
+ * checks that view exists (linkedViewIds).
+ */
+export function sanitizeWallPlacements(raw: unknown, walls: TopologyWall[]): TopologyWallPlacement[] {
+  if (!Array.isArray(raw)) bad("wallPlacements must be an array");
+  const arr = raw as unknown[];
+  if (arr.length > MAX_WALL_PLACEMENTS) bad(`a view may hold at most ${MAX_WALL_PLACEMENTS} wall items`);
+  const wallById = new Map(walls.map((w) => [w.id, w]));
+  const ids = new Set<string>();
+  const assets = new Set<string>();
+  const out = arr.map((p, i) => {
+    const what = `wall item ${i + 1}`;
+    if (!isObj(p)) bad(`${what} must be an object`);
+    const pr = p as Record<string, unknown>;
+    const id = itemId(pr.id, "wall item");
+    if (ids.has(id)) bad(`wall item id "${id}" is used twice`);
+    ids.add(id);
+    const kind = pr.kind === "asset" || pr.kind === "cableManagement" || pr.kind === "thirdParty" || pr.kind === "rack"
+      ? pr.kind
+      : bad(`${what} kind must be "asset", "cableManagement", "thirdParty" or "rack"`);
+    let assetId: string | null = null;
+    if (kind === "asset") {
+      if (typeof pr.assetId !== "string" || !/^[0-9a-f-]{36}$/.test(pr.assetId)) bad(`${what} needs an assetId`);
+      assetId = pr.assetId as string;
+      if (assets.has(assetId)) bad("a device can be mounted only once per view");
+      assets.add(assetId);
+    }
+    let label: string | null = null;
+    if (kind === "thirdParty" || kind === "rack") {
+      label = typeof pr.label === "string" ? pr.label.trim().replace(/\s+/g, " ") : "";
+      if (!label) label = kind === "rack" ? "Rack" : THIRD_PARTY_DEFAULT_LABEL;
+      if (label.length > MAX_RACK_LABEL_LEN) bad(`${what} name may be at most ${MAX_RACK_LABEL_LEN} characters`);
+      if (/[\x00-\x1f\x7f]/.test(label)) bad(`${what} name contains a control character`);
+    }
+    const units = kind === "rack" ? int(pr.units, `${what} size (U)`, 1, MAX_RACK_UNITS) : null;
+    let linkedViewId: string | null = null;
+    if (kind === "rack" && pr.linkedViewId !== undefined && pr.linkedViewId !== null) {
+      if (typeof pr.linkedViewId !== "string" || !/^[0-9a-f-]{36}$/.test(pr.linkedViewId)) bad(`${what} linkedViewId must be a view id`);
+      linkedViewId = pr.linkedViewId as string;
+    }
+    if (typeof pr.wallId !== "string" || !wallById.has(pr.wallId)) bad(`${what} names a wall that does not exist`);
+    const wall = wallById.get(pr.wallId as string)!;
+    if (!Array.isArray(pr.points)) bad(`${what} points must be an array`);
+    const pts = pr.points as unknown[];
+    if (pts.length < 3 || pts.length > MAX_WALL_ITEM_POINTS) bad(`${what} needs 3 to ${MAX_WALL_ITEM_POINTS} corners`);
+    const points = pts.map((pt) => {
+      if (!Array.isArray(pt) || pt.length !== 2) bad(`${what} has a corner that is not [x, y]`);
+      const x = int((pt as unknown[])[0], `${what} corner x`, 0, wall.width);
+      const y = int((pt as unknown[])[1], `${what} corner y`, 0, wall.height);
+      return [x, y] as [number, number];
+    });
+    if (doubleArea(points as Point[]) === 0) bad(`${what} has no area`);
+    return { id, kind, assetId, label, wallId: wall.id, points, units, linkedViewId } as TopologyWallPlacement;
+  });
+  // Overlap, per wall. A view's items are few (a wall holds tens); pairwise is fine.
+  const byWall = new Map<string, TopologyWallPlacement[]>();
+  for (const p of out) {
+    const list = byWall.get(p.wallId) ?? [];
+    for (const q of list) {
+      if (polygonsOverlap(p.points as Point[], q.points as Point[])) bad(`wall items "${q.id}" and "${p.id}" overlap`);
+    }
+    list.push(p);
+    byWall.set(p.wallId, list);
+  }
+  return out;
+}
+
+/** A Topology view's floor layers (rule 152): distinct non-zero levels, each with a floor name. */
+export function sanitizeLayers(raw: unknown): TopologyLayer[] {
+  if (!Array.isArray(raw)) bad("layers must be an array");
+  const arr = raw as unknown[];
+  if (arr.length > MAX_LAYERS) bad(`a view may hold at most ${MAX_LAYERS} layers`);
+  const levels = new Set<number>();
+  const names = new Set<string>();
+  const out = arr.map((l, i) => {
+    if (!isObj(l)) bad(`layer ${i + 1} must be an object`);
+    const lr = l as Record<string, unknown>;
+    const level = int(lr.level, `layer ${i + 1} level`, MIN_LAYER_LEVEL, MAX_LAYER_LEVEL);
+    if (level === 0) bad("layer 0 is the view itself and is not listed");
+    if (levels.has(level)) bad(`layer ${level} is listed twice`);
+    levels.add(level);
+    const name = typeof lr.name === "string" ? lr.name.trim().replace(/\s+/g, " ") : "";
+    if (!name) bad(`layer ${level} needs a floor name`);
+    const problem = locationCodeValueProblem(name);
+    if (problem) bad(`layer ${level}'s floor name ${problem}`);
+    if (names.has(name.toLowerCase())) bad(`two layers are both called "${name}"`);
+    names.add(name.toLowerCase());
+    return { level, name, background: lr.background === undefined ? null : sanitizeBackground(lr.background) } as TopologyLayer;
+  });
+  out.sort((a, b) => a.level - b.level);
+  return out;
 }
 
 export function sanitizeRacks(raw: unknown): TopologyRack[] {
@@ -390,6 +592,11 @@ function newRack(order = 0, name = "Rack 1"): TopologyRack {
 }
 
 /** Mode-specific fields of a freshly created or reset view. */
+function newWall(width = DEFAULT_WALL_W, height = DEFAULT_WALL_H, name = "Wall 1"): TopologyWall {
+  return { id: randomUUID(), name, width, height, order: 0 };
+}
+
+/** Mode-specific fields of a freshly created or reset view (the region is decided by the caller). */
 function freshModeFields(mode: TopologyViewMode) {
   return {
     mode,
@@ -398,6 +605,9 @@ function freshModeFields(mode: TopologyViewMode) {
     polygons: json([]),
     racks: json(mode === "rack" ? [newRack()] : []),
     rackPlacements: json([]),
+    walls: json(mode === "wall" ? [newWall()] : []),
+    wallPlacements: json([]),
+    layers: json([]),
   };
 }
 
@@ -459,7 +669,7 @@ function nameTaken(err: unknown): boolean {
 
 export async function createView(
   siteId: string,
-  input: { name: unknown; mode: unknown; shownTypes?: unknown },
+  input: { name: unknown; mode: unknown; shownTypes?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown },
   actor: string | null,
 ): Promise<TopologyViewDto> {
   await assertSite(siteId);
@@ -467,8 +677,22 @@ export async function createView(
   const mode = sanitizeMode(input.mode);
   const count = await prisma.topologyView.count({ where: { siteId } });
   if (count >= MAX_VIEWS_PER_SITE) throw new AppError(400, `A site may have at most ${MAX_VIEWS_PER_SITE} views`);
-  const fields = freshModeFields(mode);
+  const fields: ReturnType<typeof freshModeFields> & { region?: Prisma.InputJsonValue } = freshModeFields(mode);
   if (input.shownTypes !== undefined) fields.shownTypes = sanitizeShownTypes(input.shownTypes);
+  const region = sanitizeRegion(input.region);
+  if (region && !modeTakesRegion(mode)) throw new AppError(400, "Only a Rack or Wall view can stand for a location region");
+  if (region) fields.region = json(region);
+  // A Wall view opens with one wall of the size asked for; a Rack view with one rack.
+  if (mode === "wall" && (input.wallWidth !== undefined || input.wallHeight !== undefined)) {
+    const w = int(input.wallWidth ?? DEFAULT_WALL_W, "wall width (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
+    const h = int(input.wallHeight ?? DEFAULT_WALL_H, "wall height (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
+    fields.walls = json([newWall(w, h, name.length <= MAX_RACK_NAME_LEN ? name : "Wall 1")]);
+  }
+  if (mode === "rack" && input.rackUnits !== undefined) {
+    const r = newRack();
+    r.units = int(input.rackUnits, "rack size (U)", 1, MAX_RACK_UNITS);
+    fields.racks = json([r]);
+  }
   try {
     const row = await prisma.topologyView.create({
       data: { siteId, name, isDefault: false, ...fields, createdBy: actor, updatedBy: actor },
@@ -488,6 +712,10 @@ export interface ViewPatch {
   polygons?: unknown;
   racks?: unknown;
   rackPlacements?: unknown;
+  region?: unknown;
+  walls?: unknown;
+  wallPlacements?: unknown;
+  layers?: unknown;
 }
 
 interface ModeChangeSummary {
@@ -526,7 +754,13 @@ export async function updateView(
 
   if (patch.mode !== undefined && sanitizeMode(patch.mode) !== current.mode) {
     const to = sanitizeMode(patch.mode);
-    const fresh = freshModeFields(to);
+    const fresh: ReturnType<typeof freshModeFields> & { region?: Prisma.InputJsonValue } = freshModeFields(to);
+    // The region survives a change between Rack and Wall, never one to a mode that takes none.
+    if (!modeTakesRegion(to)) fresh.region = null as unknown as Prisma.InputJsonValue;
+    else if (patch.region !== undefined) {
+      const r = sanitizeRegion(patch.region);
+      fresh.region = r === null ? (null as unknown as Prisma.InputJsonValue) : json(r);
+    }
     try {
       const result = await prisma.$transaction(async (tx) => {
         const layoutsCleared = await deleteLayoutsForView(tx, siteId, current);
@@ -553,23 +787,52 @@ export async function updateView(
   }
 
   if (patch.shownTypes !== undefined) data.shownTypes = sanitizeShownTypes(patch.shownTypes);
-  let keepImageId: string | null | undefined;
+  if (patch.region !== undefined) {
+    const region = sanitizeRegion(patch.region);
+    if (region && !modeTakesRegion(current.mode)) throw new AppError(400, "Only a Rack or Wall view can stand for a location region");
+    data.region = region === null ? (null as unknown as Prisma.InputJsonValue) : json(region);
+  }
+  // An image background, on the view or on a layer, must be an upload of this
+  // view; its size comes from the stored image, never the client.
+  async function resolveImage(bg: ReturnType<typeof sanitizeBackground>): Promise<TopologyBackground | null> {
+    if (!bg || bg.kind !== "image") return bg as TopologyBackground | null;
+    const img = await prisma.topologyBackgroundImage.findFirst({
+      where: { id: bg.imageId, viewId },
+      select: { id: true, width: true, height: true },
+    });
+    if (!img) throw new AppError(400, "The background image was not uploaded to this view");
+    return { kind: "image", imageId: img.id, width: img.width, height: img.height };
+  }
+  let nextBackground = current.background;
+  let nextLayers = current.layers;
+  let imagesTouched = false;
   if (patch.background !== undefined) {
-    const bg = sanitizeBackground(patch.background);
-    if (bg && bg.kind === "image") {
-      const img = await prisma.topologyBackgroundImage.findFirst({
-        where: { id: bg.imageId, viewId },
-        select: { id: true, width: true, height: true },
-      });
-      if (!img) throw new AppError(400, "The background image was not uploaded to this view");
-      data.background = json({ kind: "image", imageId: img.id, width: img.width, height: img.height });
-      keepImageId = img.id;
-    } else {
-      data.background = bg === null ? (null as unknown as Prisma.InputJsonValue) : json(bg);
-      keepImageId = null;
-    }
+    nextBackground = await resolveImage(sanitizeBackground(patch.background));
+    data.background = nextBackground === null ? (null as unknown as Prisma.InputJsonValue) : json(nextBackground);
+    imagesTouched = true;
+  }
+  if (patch.layers !== undefined) {
+    const layers = sanitizeLayers(patch.layers);
+    for (const l of layers) l.background = await resolveImage(l.background as ReturnType<typeof sanitizeBackground>);
+    nextLayers = layers;
+    data.layers = json(layers);
+    imagesTouched = true;
   }
   if (patch.polygons !== undefined) data.polygons = json(sanitizePolygons(patch.polygons));
+  const walls = patch.walls !== undefined ? sanitizeWalls(patch.walls) : current.walls;
+  if (patch.walls !== undefined) data.walls = json(walls);
+  if (patch.wallPlacements !== undefined || patch.walls !== undefined) {
+    const placements = sanitizeWallPlacements(patch.wallPlacements !== undefined ? patch.wallPlacements : current.wallPlacements, walls);
+    // A wall rack may open only a Rack view of this same site.
+    const linked = [...new Set(placements.map((p) => p.linkedViewId).filter((v): v is string => !!v))];
+    if (linked.length) {
+      const found = await prisma.topologyView.findMany({ where: { id: { in: linked }, siteId, mode: "rack" }, select: { id: true } });
+      const ok = new Set(found.map((f) => f.id));
+      const missing = linked.filter((id) => !ok.has(id));
+      if (missing.length) throw new AppError(400, "A wall rack is linked to a view that is not a Rack view of this site");
+    }
+    data.wallPlacements = json(placements);
+  }
   const racks = patch.racks !== undefined ? sanitizeRacks(patch.racks) : current.racks;
   if (patch.racks !== undefined) data.racks = json(racks);
   if (patch.rackPlacements !== undefined) {
@@ -585,10 +848,12 @@ export async function updateView(
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const u = await tx.topologyView.update({ where: { id: viewId }, data });
-      // Saving the background drops every uploaded image it no longer names.
-      if (keepImageId !== undefined) {
+      // Saving a background (the view's or a layer's) drops every uploaded
+      // image neither the view nor any of its layers still names.
+      if (imagesTouched) {
+        const keep = referencedImageIds(nextBackground, nextLayers);
         await tx.topologyBackgroundImage.deleteMany({
-          where: { viewId, ...(keepImageId ? { NOT: { id: keepImageId } } : {}) },
+          where: { viewId, ...(keep.length ? { id: { notIn: keep } } : {}) },
         });
       }
       return u;
@@ -600,6 +865,14 @@ export async function updateView(
   }
 }
 
+/** Every uploaded image a view still uses: its own background and each layer's. */
+function referencedImageIds(background: TopologyBackground | null, layers: TopologyLayer[]): string[] {
+  const ids: string[] = [];
+  if (background?.kind === "image") ids.push(background.imageId);
+  for (const l of layers) if (l.background?.kind === "image") ids.push(l.background.imageId);
+  return ids;
+}
+
 /** What a mode change would remove — the numbers the warning dialog shows. */
 export async function describeModeChangeLoss(siteId: string, viewId: string): Promise<{
   mode: TopologyViewMode;
@@ -607,6 +880,9 @@ export async function describeModeChangeLoss(siteId: string, viewId: string): Pr
   polygons: number;
   racks: number;
   rackPlacements: number;
+  walls: number;
+  wallPlacements: number;
+  layers: number;
   hasImage: boolean;
 }> {
   const view = toDto(await loadView(siteId, viewId));
@@ -616,7 +892,10 @@ export async function describeModeChangeLoss(siteId: string, viewId: string): Pr
     polygons: view.polygons.length,
     racks: view.racks.length,
     rackPlacements: view.rackPlacements.length,
-    hasImage: view.background?.kind === "image",
+    walls: view.walls.length,
+    wallPlacements: view.wallPlacements.length,
+    layers: view.layers.length,
+    hasImage: referencedImageIds(view.background, view.layers).length > 0,
   };
 }
 
@@ -756,12 +1035,12 @@ export async function saveBackgroundImage(
   if (size.width > MAX_BACKGROUND_IMAGE_SIDE || size.height > MAX_BACKGROUND_IMAGE_SIDE) {
     throw new AppError(400, `The image may be at most ${MAX_BACKGROUND_IMAGE_SIDE} pixels on a side`);
   }
-  const referenced = view.background?.kind === "image" ? view.background.imageId : null;
+  const referenced = referencedImageIds(view.background, view.layers);
   await prisma.topologyBackgroundImage.deleteMany({
     where: {
       viewId,
       uploadedAt: { lt: new Date(Date.now() - ORPHAN_IMAGE_MAX_AGE_MS) },
-      ...(referenced ? { NOT: { id: referenced } } : {}),
+      ...(referenced.length ? { id: { notIn: referenced } } : {}),
     },
   });
   const row = await prisma.topologyBackgroundImage.create({

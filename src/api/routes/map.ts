@@ -300,18 +300,28 @@ router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "writ
 // here only check the outer shape so a malformed body fails fast.
 const CreateViewSchema = z.object({
   name: z.string().min(1).max(200),
-  mode: z.enum(["layer2", "topology", "rack"]),
+  mode: z.enum(["layer2", "topology", "rack", "wall"]),
   shownTypes: z.array(z.string()).max(100).optional(),
+  // Rack / Wall only (rule 150): the region the view stands for.
+  region: z.unknown().optional(),
+  // Wall: the first wall's size in inches; Rack: the first rack's size in U.
+  wallWidth: z.number().int().optional(),
+  wallHeight: z.number().int().optional(),
+  rackUnits: z.number().int().optional(),
 });
 
 const UpdateViewSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  mode: z.enum(["layer2", "topology", "rack"]).optional(),
+  mode: z.enum(["layer2", "topology", "rack", "wall"]).optional(),
   shownTypes: z.array(z.string()).max(100).optional(),
   background: z.unknown().optional(),
   polygons: z.array(z.unknown()).optional(),
   racks: z.array(z.unknown()).optional(),
   rackPlacements: z.array(z.unknown()).optional(),
+  region: z.unknown().optional(),
+  walls: z.array(z.unknown()).optional(),
+  wallPlacements: z.array(z.unknown()).optional(),
+  layers: z.array(z.unknown()).optional(),
 }).refine((b) => Object.keys(b).length > 0, "Nothing to update");
 
 const LocationCodesSchema = z.object({ changes: z.array(z.unknown()).min(1).max(500) });

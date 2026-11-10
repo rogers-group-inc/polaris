@@ -3223,3 +3223,28 @@ needs Assets Read-Write on each device, and each change is logged like an Edit A
 devices, polygons, the uploaded image and racks. If you accept, the view starts again in the
 new mode with the default device types; a Rack view gets one empty 42U rack. The view's name is
 kept, and location codes already written to descriptions stay.
+
+### Rule 150
+
+**A Rack or Wall view can stand for one location region, and that never changes a description
+by itself.** A region is still just the location codes in device descriptions; a view only points
+at one (for example `b:Plant r:MDF jb:7`). Only Rack and Wall views take a region. Placing a
+device on a region-mapped view adds that region's codes to its description when you save, after
+the same summary a Topology view shows. When you save a description that names a new room, rack
+or junction box, Polaris offers to make or pick a Wall or Rack view for it; skipping saves the
+description as typed.
+
+### Rule 151
+
+**Things mounted on a wall cannot overlap.** A Wall view's walls are measured in inches, and
+everything on them (devices, cable management, third-party boxes, racks) is a shape whose corners
+sit on the 1-inch pegboard grid. Two items may touch along an edge but never cover the same
+square inch.
+
+### Rule 152
+
+**Floors are layers of a Topology view.** Layer 0 is the flat view every Topology view starts
+with; it ignores floors and writes no floor code. Layers above and below (basements) each have
+their own background, polygons and devices. A device placed on a layer gets that layer's floor
+code; it keeps its other codes unless you drop it inside a polygon.
+

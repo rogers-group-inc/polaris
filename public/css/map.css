@@ -1094,6 +1094,71 @@
   background: var(--color-bg-secondary);
 }
 .topo-rack { flex: none; width: 375px; display: flex; flex-direction: column; }
+
+/* ── Wall mode (topology-wall.js; rule 151) ───────────────────────────────
+   Walls side by side like racks; each board is an SVG in inch units, a
+   pegboard of one hole per inch. Items are polygons: a device bordered in its
+   health colour, Cable management striped, a Third party box neutral, a rack
+   with U lines. A refused move (an overlap) outlines the item in danger red. */
+.topo-wall-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  padding: 24px 32px 56px;
+  overflow: auto;
+  background: var(--color-bg-secondary);
+}
+.topo-wall { flex: none; display: flex; flex-direction: column; }
+.topo-wall-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  user-select: none;
+}
+.topo-wall-head .topo-rack-delete { margin-left: auto; }
+.is-editing .topo-wall-head [data-wall-rename],
+.is-editing .topo-wall-head [data-wall-resize] { cursor: text; border-radius: var(--radius-sm); padding: 1px 3px; }
+.is-editing .topo-wall-head [data-wall-rename]:hover,
+.is-editing .topo-wall-head [data-wall-resize]:hover { background: var(--color-hover-tint); }
+.topo-wall-board { display: block; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); user-select: none; touch-action: none; }
+.topo-wall-ground { fill: #b98d5c; }
+.topo-wall-hole { fill: rgba(40, 24, 8, 0.55); }
+:is([data-theme="nightfall"]) .topo-wall-ground { fill: #5c4630; }
+:is([data-theme="nightfall"]) .topo-wall-hole { fill: rgba(0, 0, 0, 0.6); }
+.topo-wall-item polygon {
+  fill: var(--color-surface);
+  stroke: var(--color-success);
+  stroke-width: 0.35;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.topo-wall-item polygon { stroke-width: 2px; }
+.topo-wall-item text { fill: var(--color-text-primary); font-family: var(--font-sans); font-weight: 600; pointer-events: none; }
+.topo-wall-item .topo-wall-sub { fill: var(--color-text-secondary); font-weight: 400; }
+.topo-wall-item image { pointer-events: none; }
+.topo-wall-item.is-cableManagement polygon { fill: var(--color-bg-elevated); stroke: var(--color-border); stroke-dasharray: 3 2; }
+.topo-wall-item.is-thirdParty polygon { fill: var(--color-bg-tertiary); stroke: var(--color-text-tertiary); }
+.topo-wall-item.is-rack polygon { fill: var(--color-bg-tertiary); stroke: var(--color-text-secondary); }
+.is-editing .topo-wall-item { cursor: move; }
+.topo-wall-item.is-selected polygon { stroke: var(--color-accent); stroke-width: 3px; }
+.topo-wall-item.is-refused polygon { stroke: var(--color-danger); stroke-dasharray: 4 3; fill: color-mix(in srgb, var(--color-danger) 18%, var(--color-surface)); }
+.topo-wall-corner { fill: #ffffff; stroke: var(--color-accent); stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: grab; }
+.topo-wall-mid { fill: var(--color-bg-primary); stroke: var(--color-accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; cursor: copy; }
+.topo-wall-rack-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-text-secondary);
+  background: repeating-linear-gradient(0deg, var(--color-bg-elevated) 0 2px, var(--color-bg-tertiary) 2px 3px);
+}
 .topo-rack.is-dragging { opacity: 0.6; transform: rotate(1deg); }
 .topo-rack-head {
   display: flex;
@@ -1152,6 +1217,7 @@
 }
 .is-editing .topo-rack-blk:not(.is-ghost) { cursor: move; }
 .topo-rack-blk-name { overflow: hidden; text-overflow: ellipsis; }
+.topo-rack-blk-icon { flex: none; width: 14px; height: 14px; object-fit: contain; }
 .topo-rack-blk-meta { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--color-text-tertiary); }
 .topo-rack-blk.is-ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); font-weight: 500; }
 .topo-rack-blk.is-cable {

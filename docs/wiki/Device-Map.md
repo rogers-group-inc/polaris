@@ -648,6 +648,39 @@ the last save**, and **Export** copies a picture of the map.
 
 Racking a device never changes its description.
 
+**A Wall view** is for gear mounted flat: a closet backboard, a pegboard, a
+junction box's backplate. It opens with one wall of the size you gave when you
+created it (96 × 48 in by default), drawn as pegboard with a hole every inch.
+In edit mode:
+
+- Drag a device from the **Device List** onto a wall: it lands as a 12 × 8 in
+  shape at the pointer, or in the nearest free space. **Wall items** adds
+  **Cable management**, a named **Third party** box, and a **Rack**: a Rack asks
+  for its size in U and whether it opens a saved Rack view, a new one, or none.
+  Double-click a linked rack (when you're not editing) to open its Rack view.
+- Every item is a shape you edit like a map region: drag it to move it, drag a
+  corner to reshape it, drag the **+** on an edge to add a corner, and
+  right-click a corner to remove it. Corners snap to whole inches.
+- Items can't overlap, because they're mounted flat: a move or reshape that
+  would cover another item is put back, and Polaris names what it hit. Items
+  may touch along an edge.
+- Double-click a wall's name to rename it and its size to change it; **Add
+  wall** adds another to the right, and the **×** deletes any wall after the
+  first. **Zoom in** / **Zoom out** draw the walls larger or smaller.
+
+A device's icon (Server Settings → Customization) is drawn on its shape here,
+and beside its name in a rack.
+
+**A Rack or Wall view can stand for a region.** When you create the view, or
+in **View settings**, choose the area, building, floor, room, rack or junction
+box it is for: any region the site's descriptions already name, or a custom
+one. Placing a device on that view then gives it the region's codes when you
+save, after the same summary a Topology view shows. Choosing a region never
+changes a description by itself, and existing regions are never removed —
+a region is still just the codes in device descriptions
+([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views don't take a
+region; they draw the regions themselves.
+
 **Changing a view's mode resets it.** Polaris first shows what the change
 removes: placed devices, group polygons, the uploaded background and racks. If
 you accept, the view starts again in the new mode with the default device
