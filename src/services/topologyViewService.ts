@@ -50,6 +50,8 @@ export const MAX_BACKGROUND_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_BACKGROUND_IMAGE_SIDE = 30000;
 const MAX_ID_LEN = 64;
 const MAX_RACK_NAME_LEN = 60;
+const MAX_RACK_LABEL_LEN = 64;
+const THIRD_PARTY_DEFAULT_LABEL = "Third party";
 const MAX_COORD = 1e7;
 /** An unreferenced uploaded image older than this is an abandoned edit. */
 const ORPHAN_IMAGE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -76,8 +78,11 @@ export interface TopologyRack {
 
 export interface TopologyRackPlacement {
   id: string;
-  kind: "asset" | "cableManagement";
+  /** asset = a Polaris device; cableManagement / thirdParty = placeholders that are not assets. */
+  kind: "asset" | "cableManagement" | "thirdParty";
   assetId: string | null;
+  /** The operator's name for a thirdParty block (gear Polaris does not monitor); null on the other kinds. */
+  label: string | null;
   rackId: string;
   face: "front" | "rear";
   startU: number;
@@ -316,7 +321,16 @@ export function sanitizeRackPlacements(raw: unknown, racks: TopologyRack[]): Top
     const id = itemId(pr.id, "rack placement");
     if (ids.has(id)) bad(`rack placement id "${id}" is used twice`);
     ids.add(id);
-    const kind = pr.kind === "cableManagement" ? "cableManagement" : pr.kind === "asset" ? "asset" : bad(`rack placement ${i + 1} kind must be "asset" or "cableManagement"`);
+    const kind = pr.kind === "cableManagement" || pr.kind === "thirdParty" || pr.kind === "asset"
+      ? pr.kind
+      : bad(`rack placement ${i + 1} kind must be "asset", "cableManagement" or "thirdParty"`);
+    let label: string | null = null;
+    if (kind === "thirdParty") {
+      label = typeof pr.label === "string" ? pr.label.trim().replace(/\s+/g, " ") : "";
+      if (!label) label = THIRD_PARTY_DEFAULT_LABEL;
+      if (label.length > MAX_RACK_LABEL_LEN) bad(`rack placement ${i + 1} name may be at most ${MAX_RACK_LABEL_LEN} characters`);
+      if (/[\x00-\x1f\x7f]/.test(label)) bad(`rack placement ${i + 1} name contains a control character`);
+    }
     let assetId: string | null = null;
     if (kind === "asset") {
       if (typeof pr.assetId !== "string" || !/^[0-9a-f-]{36}$/.test(pr.assetId)) bad(`rack placement ${i + 1} needs an assetId`);
@@ -333,11 +347,13 @@ export function sanitizeRackPlacements(raw: unknown, racks: TopologyRack[]): Top
       id,
       kind,
       assetId,
+      label,
       rackId: rack.id,
       face: face(pr.face, `rack placement ${i + 1}`),
       startU,
       heightU,
-      fullDepth: pr.fullDepth === undefined ? kind === "asset" : pr.fullDepth === true,
+      // A device or third-party box defaults to full depth; cable management to half.
+      fullDepth: pr.fullDepth === undefined ? kind !== "cableManagement" : pr.fullDepth === true,
     } as TopologyRackPlacement;
   });
   // Overlap: per rack, per face, per U.

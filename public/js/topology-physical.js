@@ -257,15 +257,18 @@
         shape.on("click", function (e) {
           if (!state.editing) return;
           L.DomEvent.stopPropagation(e);
-          openPolygonMenu(p, e.originalEvent);
+          openPolygonMenu(p, e.originalEvent, shape.getElement());
         });
         shape.addTo(polygonLayer);
         polygonShapes[p.id] = shape;
       });
     }
-    function openPolygonMenu(p, ev) {
+    // The menu is anchored to the shape / marker element, never to mapEl:
+    // showRowMenu ignores a pointerdown INSIDE its anchor, so a mapEl anchor
+    // meant a click anywhere on the map could never dismiss the menu.
+    function openPolygonMenu(p, ev, anchorEl) {
       if (typeof showRowMenu !== "function") return;
-      showRowMenu(mapEl, [
+      showRowMenu(anchorEl || ev.target, [
         { heading: groupName(p.codes) },
         { label: "Reshape", onSelect: function () { reshapePolygon(p); } },
         { label: "Change group", onSelect: function () { pickGroup(function (codes) { p.codes = codes; changed("polygons"); drawPolygons(); restageAllCodes(); }, p.codes); } },
@@ -273,7 +276,7 @@
           state.polygons = state.polygons.filter(function (q) { return q.id !== p.id; });
           changed("polygons"); drawPolygons(); restageAllCodes();
         } },
-      ], { menuAt: { x: ev.clientX, y: ev.clientY }, label: "Polygon" });
+      ], { menuAt: { x: ev.clientX, y: ev.clientY }, label: "Polygon", overMap: true });
     }
     function reshapePolygon(p) {
       var shape = polygonShapes[p.id];
@@ -334,7 +337,7 @@
           (drawn[codesKey(g)] ? ' <span class="badge badge-readonly">drawn</span>' : '') +
           '<span class="topo-phys-codes">' + esc(codesLabel(g)) + '</span></label>';
       }).join("");
-      var parentOptions = '<option value="-1">Top level</option>' + groups.map(function (g, i) {
+      var parentOptions = '<option value="-1">Nothing — a group of its own</option>' + groups.map(function (g, i) {
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
@@ -344,8 +347,9 @@
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
           '<select id="topo-pg-kind" aria-label="Kind">' + CODE_FIELDS.map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
           '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
-          '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Inside</label>' +
+          '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
           '<select id="topo-pg-parent">' + parentOptions + '</select>' +
+          '<p class="hint" style="grid-column:1 / -1;margin:0">The group this one sits within. A Floor "2" that is part of <code>b:Plant</code> gives a device <code>b:Plant f:2</code>; with Nothing it gets only <code>f:2</code>.</p>' +
         '</div>';
       var footer = '<button type="button" class="btn btn-secondary" data-pg="cancel">Cancel</button>' +
         '<button type="button" class="btn btn-primary" data-pg="ok">' + (current ? "Use this group" : "Start drawing") + '</button>';
@@ -419,11 +423,11 @@
       m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
       m.on("contextmenu", function (e) {
         if (!state.editing || typeof showRowMenu !== "function") return;
-        showRowMenu(mapEl, [
+        showRowMenu(m.getElement() || e.originalEvent.target, [
           { heading: d.label || "Device" },
           { label: "Open", onSelect: function () { ctx.openAsset(d.assetId || id); } },
           { label: "Remove from map", danger: true, onSelect: function () { removePlacement(id); } },
-        ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device" });
+        ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
       });
       m.addTo(markerLayer);
       markers[id] = m;
@@ -523,6 +527,9 @@
     }
     function openBackgroundMenu(anchor) {
       if (!state.editing || typeof showRowMenu !== "function") return;
+      // One corner popover at a time: the menu drawn over the open Mouse
+      // controls panel read as two-tone glass.
+      if (typeof ctx.closePopovers === "function") ctx.closePopovers();
       var bg = state.background;
       var isImage = bg && bg.kind === "image";
       showRowMenu(anchor, [
@@ -537,7 +544,7 @@
           ctx.refreshSidebar();
         } },
         { label: isImage ? "Replace image" : "Upload image", onSelect: function () { chooseImage(); } },
-      ], { label: "Background", align: "end" });
+      ], { label: "Background", align: "end", overMap: true });
     }
     function chooseImage() {
       var input = document.createElement("input");

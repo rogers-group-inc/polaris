@@ -344,26 +344,34 @@
    plus a 1px contact edge — the topology graph's --topology-btn-shadow and the
    Application Map's (appmap.css), so the three maps match; the earlier 1px/2px
    cast all but vanished on the light themes. */
-.map-canvas.leaflet-container {
+.map-canvas.leaflet-container,
+.topo-phys-map.leaflet-container {
   --map-btn-shadow: 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25);
 }
-.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar {
+/* The topology view's Topology canvas (.topo-phys-map) wears the same zoom
+   bar — without it Leaflet's stock white / basemap-tinted +/- showed. */
+.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar,
+.topo-phys-map.leaflet-container .leaflet-control-zoom.leaflet-bar {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--map-btn-shadow);
   overflow: hidden;
 }
-.map-canvas.leaflet-container .leaflet-control-zoom a {
+.map-canvas.leaflet-container .leaflet-control-zoom a,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a {
   background-color: var(--color-bg-primary);
   color: var(--color-text-secondary);
   border-bottom-color: var(--color-border);
 }
 .map-canvas.leaflet-container .leaflet-control-zoom a:hover,
-.map-canvas.leaflet-container .leaflet-control-zoom a:focus {
+.map-canvas.leaflet-container .leaflet-control-zoom a:focus,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a:hover,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a:focus {
   background-color: var(--color-surface);
   color: var(--color-text-primary);
 }
-.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
+.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
   background-color: var(--color-bg-primary);
   color: var(--color-text-tertiary);
   opacity: 0.6;
@@ -997,7 +1005,7 @@
   overflow: auto;
   background: var(--color-bg-secondary);
 }
-.topo-rack { flex: none; width: 300px; display: flex; flex-direction: column; }
+.topo-rack { flex: none; width: 375px; display: flex; flex-direction: column; }
 .topo-rack.is-dragging { opacity: 0.6; transform: rotate(1deg); }
 .topo-rack-head {
   display: flex;
@@ -1013,14 +1021,19 @@
 .is-editing .topo-rack-head[data-rack-grip] { cursor: grab; }
 .topo-rack-name { font-weight: 600; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topo-rack-units { font-family: "Roboto Mono", monospace; font-size: 0.72rem; color: var(--color-text-tertiary); white-space: nowrap; }
-.topo-rack-rotate { margin-left: auto; }
+.topo-rack-face { margin-left: auto; min-width: 58px; }
+.is-editing .topo-rack-name[data-rack-rename],
+.is-editing .topo-rack-units[data-rack-resize] { cursor: text; border-radius: var(--radius-sm); padding: 1px 3px; }
+.is-editing .topo-rack-name[data-rack-rename]:hover,
+.is-editing .topo-rack-units[data-rack-resize]:hover { background: var(--color-hover-tint); }
+.topo-rack-delete { font-size: 18px; line-height: 1; padding: 0 4px; }
 .topo-rack-body { display: flex; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-bg-primary); }
-.topo-rack-rail { width: 30px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
+.topo-rack-rail { width: 38px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
 .topo-rack-rail span {
-  height: 16px;
-  line-height: 16px;
+  height: 20px;
+  line-height: 20px;
   font-family: "Roboto Mono", monospace;
-  font-size: 9px;
+  font-size: 11px;
   text-align: center;
   color: var(--color-text-tertiary);
   border-bottom: 1px solid var(--color-border-light);
@@ -1029,29 +1042,29 @@
 .topo-rack-bay {
   position: relative;
   flex: 1;
-  background-image: repeating-linear-gradient(to bottom, transparent 0 15px, var(--color-border-light) 15px 16px);
+  background-image: repeating-linear-gradient(to bottom, transparent 0 19px, var(--color-border-light) 19px 20px);
 }
 .topo-rack-blk {
   position: absolute;
-  left: 4px;
-  right: 4px;
+  left: 5px;
+  right: 5px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: 8px;
+  padding: 0 10px;
   border: 1.5px solid var(--color-success);
   border-radius: 3px;
   background: var(--color-surface);
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   white-space: nowrap;
 }
 .is-editing .topo-rack-blk:not(.is-ghost) { cursor: move; }
 .topo-rack-blk-name { overflow: hidden; text-overflow: ellipsis; }
-.topo-rack-blk-meta { margin-left: auto; font-weight: 400; font-size: 10px; color: var(--color-text-tertiary); }
+.topo-rack-blk-meta { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--color-text-tertiary); }
 .topo-rack-blk.is-ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); font-weight: 500; }
 .topo-rack-blk.is-cable {
   border: 1px solid var(--color-border);
@@ -1074,8 +1087,8 @@
 .topo-rack-blk:hover .topo-rack-grip-top, .topo-rack-blk:hover .topo-rack-grip-bottom { opacity: 1; }
 .topo-rack-add {
   flex: none;
-  width: 120px;
-  height: 320px;
+  width: 150px;
+  height: 400px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1084,6 +1097,23 @@
   border-style: dashed;
 }
 .topo-rack-add-plus { font-size: 24px; line-height: 1; }
+/* A third-party box: equipment Polaris does not monitor, named by the
+   operator. Solid like a device (it is real hardware) but with the neutral
+   border, since it has no health to colour it. */
+.topo-rack-blk.is-third-party {
+  border: 1.5px solid var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+.is-editing .topo-rack-blk.is-third-party { cursor: move; }
+.topo-rack-third-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  box-sizing: border-box;
+}
 .topo-rack-cable-swatch {
   width: 26px;
   height: 10px;

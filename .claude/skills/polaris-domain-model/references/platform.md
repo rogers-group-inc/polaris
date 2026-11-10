@@ -416,8 +416,9 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
   polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
                                 -- in background coordinates; codes in display casing (rule 148)
   racks         Json            -- [{id, name, units 1-60, order, face}]  (rack views)
-  rackPlacements Json           -- [{id, kind:"asset"|"cableManagement", assetId?, rackId, face,
-                                -- startU, heightU, fullDepth}] — bounded + overlap-free per face
+  rackPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty", assetId?, label?,
+                                -- rackId, face, startU, heightU, fullDepth}] — bounded + overlap-free per
+                                -- face; label = a thirdParty box's name (≤64, default "Third party")
   createdBy / updatedBy String?
   createdAt / updatedAt DateTime
   @@unique([siteId, name])

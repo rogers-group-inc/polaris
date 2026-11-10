@@ -94,7 +94,7 @@ before that each rule picked its own background and shadow.
 
 **Canonical implementation:** the token block at the top of
 [public/css/styles.css](public/css/styles.css). `--panel-glass-bg` (modal + slide-over body; 70% in every theme),
-`--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu),
+`--panel-glass-chrome` (their header/footer bands), `--menu-glass-bg` (every menu — the one exception is a `showRowMenu` opened ON a map canvas, `opts.overMap` → `.row-context-menu.is-over-map`, which takes the panels' 70% because 30% over bright OSM tiles read as a milky wash; anchor such a menu to the marker / shape, never the map element, or a click on the map can't dismiss it),
 `--panel-glass-blur` (the `backdrop-filter` value all of them share), `--shadow-panel` (a
 frosted surface floating free of a screen edge), `--shadow-control` (buttons, page search
 and filter fields, anything small resting on the page), `--shadow-card` (the big opaque

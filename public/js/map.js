@@ -1702,6 +1702,7 @@
   function _modeCanvasContext(data) {
     return {
       data: data,
+      closePopovers: function () { if (document.getElementById("topology-mouse-controls")) _closeMouseControls(); },
       siteId: topoState.siteId,
       view: _currentView(),
       shownTypes: _effectiveShownTypes(),
@@ -2760,16 +2761,20 @@
       view: [
         ["Scroll", "Move along the racks"],
         ["Double-click a device", "Open its asset details"],
+        ["Front / Back (rack header)", "Turn the rack round to show its other face"],
       ],
       edit: [
         ["Drag a device from the details pane", "Rack it — it lands as 1U at the U under the pointer"],
         ["Drag Cable management", "Add a cable-management placeholder (any number)"],
+        ["Drag Third party", "Add a box for equipment Polaris does not monitor; double-click it to name it"],
         ["Drag a racked item", "Move it within a rack or to another rack, a U at a time"],
         ["Drag an item's top or bottom edge", "Change its height, a U at a time"],
         ["Right-click a racked item", "Move it to the other face, make it half or full depth, or remove it"],
-        ["Rotate (rack header)", "Show the rack's other face"],
+        ["Front / Back (rack header)", "Turn the rack round to show its other face"],
         ["Drag a rack by its header", "Move it among the racks"],
-        ["Double-click a rack", "Rename it or change its size (U)"],
+        ["Double-click a rack's name", "Rename it"],
+        ["Double-click a rack's 42U", "Change its size (U)"],
+        ["× (rack header)", "Delete that rack — every rack after the first has one"],
         ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
       ],
     },

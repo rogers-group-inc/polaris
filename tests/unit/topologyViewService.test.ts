@@ -108,6 +108,20 @@ describe("racks and rack placements", () => {
     expect(out[1]).toMatchObject({ assetId: null, fullDepth: false }); // cable management to half
   });
 
+  it("keeps a third-party box's name, defaults it, and refuses a bad one", () => {
+    const out = sanitizeRackPlacements([
+      { id: "tp1", kind: "thirdParty", label: "  ISP   router ", rackId: "rA", face: "front", startU: 30, heightU: 2 },
+      { id: "tp2", kind: "thirdParty", rackId: "rA", face: "front", startU: 20, heightU: 1, assetId: A1 },
+      { id: "p1", kind: "asset", assetId: A2, label: "ignored", rackId: "rA", face: "front", startU: 10, heightU: 1 },
+    ], racks);
+    expect(out[0]).toMatchObject({ kind: "thirdParty", label: "ISP router", assetId: null, fullDepth: true });
+    expect(out[1]).toMatchObject({ label: "Third party", assetId: null }); // no name → the default, never an asset
+    expect(out[2].label).toBeNull();
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "thirdParty", label: "x".repeat(65), rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "thirdParty", label: "a\u0007b", rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "shelf", rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+  });
+
   it("rejects a placement past the top of the rack or in an unknown rack", () => {
     expect(status(() => sanitizeRackPlacements([{ id: "p", kind: "asset", assetId: A1, rackId: "rB", face: "front", startU: 24, heightU: 2 }], racks))).toBe(400);
     expect(status(() => sanitizeRackPlacements([{ id: "p", kind: "asset", assetId: A1, rackId: "nope", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);

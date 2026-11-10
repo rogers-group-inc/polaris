@@ -4832,7 +4832,7 @@ function showRowMenu(anchor, items, opts) {
   if (reopening) return;
 
   var menu = document.createElement("div");
-  menu.className = "btn-dropdown-menu row-context-menu open";
+  menu.className = "btn-dropdown-menu row-context-menu open" + (opts && opts.overMap ? " is-over-map" : "");
   menu.setAttribute("role", "menu");
   if (opts && opts.label) menu.setAttribute("aria-label", opts.label);
 

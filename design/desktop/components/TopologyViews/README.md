@@ -19,8 +19,8 @@ and may have more; views are shared, and creating or changing one needs Device M
   Edit (pencil) / Done editing (check mark), Save (disk), Load (folder), Undo, Redo, and the Legend
   button, whose legend opens to its right and closes on a second click. Topology adds Background
   (map icon) and Draw polygon in edit mode.
-- **Rack**: U1 at the bottom of each rail, 16px per U. A device is a solid block bordered in its
-  health colour; Cable management is a striped placeholder; a full-depth item seen from its other
+- **Rack**: U1 at the bottom of each rail, 20px per U. A device is a solid block bordered in its
+  health colour; Cable management is a striped placeholder; a Third party box (equipment Polaris does not monitor, named by the operator) is solid with a neutral border; a full-depth item seen from its other
   face is a dashed outline.
 
 The live implementation is `public/js/map.js` (picker, toggles, dialogs), `public/js/topology-physical.js`

@@ -35,3 +35,9 @@ rear, racks reorder by dragging. A device occupies both faces unless marked half
 cable-management placeholder (no asset) defaults to half depth. The server re-checks bounds and
 overlap on every save, and refuses a rack shrink that would strand a placement rather than
 silently dropping it.
+
+Later the same day (2026-11-10) the operator asked for a **Third party** rack item, a named
+box for equipment Polaris does not monitor (`kind:"thirdParty"` with a `label`, full depth by
+default like a device), and reworked the rack header: Rotate became a Front / Back button that
+names the face on show, the name and the "42U" are each double-clicked to edit, and every rack
+after the first carries an × to delete it.
