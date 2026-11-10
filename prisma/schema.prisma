@@ -1375,6 +1375,8 @@ model Asset {
   rebootRuns        RebootRun[]
   rebootSchedules    RebootSchedule[]
   topologyLayouts    TopologyLayout[]
+  topologyViews      TopologyView[]
+  topologyBackgroundImages TopologyBackgroundImage[]
   processConnections AssetProcessConnection[]
 
   @@index([ipAddress])
@@ -4208,6 +4210,77 @@ model TopologyLayout {
 
   @@unique([siteId, view])
   @@map("topology_layouts")
+}
+
+// A named, SHARED per-site Device Map topology view (business rules 147-149).
+// Every view has exactly ONE mode: "layer2" (the column-solved graph),
+// "topology" (a physical canvas over an OSM basemap or an uploaded image,
+// with operator-drawn location-group polygons) or "rack" (rack elevations).
+// One row per site may be the default view (`isDefault`, enforced by the
+// partial unique index topology_views_one_default); it is materialised on
+// first read by topologyViewService.listViews, so a site that never touched
+// views behaves exactly as before (layer2, the four infrastructure types).
+//
+// `shownTypes` lists the asset types drawn (firewall is always drawn, as the
+// root) — stored as the SHOWN set so an operator-added custom type starts
+// hidden. Positions live in TopologyLayout under the view's key prefix:
+// the default view keeps the legacy keys ("flat" / floor keys / "topo"),
+// any other view uses "v:<id>" / "v:<id>|<floorKey>" / "v:<id>|topo".
+// `background`: null | {kind:"osm", center:[lat,lng], zoom} |
+// {kind:"image", imageId, width, height}. `polygons`: [{id, codes:{area,
+// building, floor, room, junctionBox}, points:[[x,y]…]}] in background
+// coordinates. `racks`: [{id, name, units, order, face}]. `rackPlacements`:
+// [{id, kind:"asset"|"cableManagement", assetId?, rackId, face, startU,
+// heightU, fullDepth}]. All validated by topologyViewService; changing
+// `mode` resets everything mode-specific (rule 149). Gated deviceMap=write.
+model TopologyView {
+  id             String   @id @default(uuid())
+  siteId         String   @map("site_id")
+  site           Asset    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name           String
+  isDefault      Boolean  @default(false) @map("is_default")
+  mode           String   @default("layer2")
+  shownTypes     String[] @default(["firewall", "router", "switch", "access_point"]) @map("shown_types")
+  background     Json?
+  polygons       Json     @default("[]")
+  racks          Json     @default("[]")
+  rackPlacements Json     @default("[]") @map("rack_placements")
+  createdBy      String?  @map("created_by")
+  updatedBy      String?  @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  backgroundImages TopologyBackgroundImage[]
+
+  @@unique([siteId, name])
+  @@index([siteId])
+  @@map("topology_views")
+}
+
+// The uploaded background image of a Topology-mode view (PNG / JPEG / WebP,
+// magic-byte checked, 15 MB cap). Bytes in the DB like DeviceIcon, served
+// only through the authenticated GET /map/sites/:id/topology/background/:id
+// — never the unauthenticated /uploads mount. An upload does not change the
+// view (the edit session stages `background` and commits it on Save), so a
+// view can briefly hold more than one row; saving the view deletes every row
+// its `background` no longer names, and an upload prunes unreferenced rows
+// older than a day (an abandoned edit). Cascades with the view and the site.
+model TopologyBackgroundImage {
+  id         String       @id @default(uuid())
+  siteId     String       @map("site_id")
+  site       Asset        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  viewId     String       @map("view_id")
+  view       TopologyView @relation(fields: [viewId], references: [id], onDelete: Cascade)
+  mimeType   String       @map("mime_type")
+  width      Int
+  height     Int
+  size       Int
+  data       Bytes
+  uploadedBy String?      @map("uploaded_by")
+  uploadedAt DateTime     @default(now()) @map("uploaded_at")
+
+  @@index([siteId])
+  @@index([viewId])
+  @@map("topology_background_images")
 }
 
 // SHARED Application Map node positions — the appmap.html counterpart of

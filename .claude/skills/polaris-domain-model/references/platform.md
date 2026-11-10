@@ -52,6 +52,8 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **SavedFolder** — a nested folder of saved filters (`kind` `filter`, `scope` = the table) or saved dashboards (`kind` `dashboard`, `scope` `dashboards`), business rule 140. Private or public and OWNED like the items it holds; each row keeps its own visibility, so an item or folder whose parent a viewer cannot see is drawn at the top level. Deleting one moves its contents up a level (`deleteFoldersReparenting`) — nothing inside is deleted. ≤8 deep, 200 per user per kind + scope.
 - **Saved-item ownership** (business rule 140) — `SavedFolder`, `SavedTableFilter` and `SavedDashboard` share four columns: `ownerId` (a USER), `ownerRoleId` (FK → Role, SetNull — every holder), `ownerRegion` (a bare region name — every user whose effective region scope names it; an unrestricted user does not count), or none = OWNERLESS (only a fullwrite holder of the page's key manages it). `ownerName` is the current owner's display snapshot, kept when the owner goes so an ownerless row reads "was <name>". Only the owner edits / moves / deletes / re-owns — fullwrite no longer deletes someone's OWNED public row. `savedOwnershipService` is the one decider.
 
+- **TopologyView** — a named, SHARED per-site Device Map view with exactly ONE mode (`layer2` / `topology` / `rack`), its shown asset types and that mode's content (background + polygons, or racks + rack placements). One lazily materialised default per site. A mode change resets the view (rule 149); a polygon placement's location codes are written to asset descriptions on Save (rule 148). Single writer: `topologyViewService` (rule 147).
+- **TopologyBackgroundImage** — an uploaded Topology-view background image, bytea, cascades with its view and site; served only through the authenticated topology background GET. Single writer: `topologyViewService`.
 - **TopologyLayout** — SHARED Device Map topology node positions, one row per (siteId, view). Written full-replace by operator drags (gated `deviceMap=write`, last-write-wins); server layout wins over the per-browser localStorage fallback. Cascades with the site Asset. **Two blobs, and the second is what makes Reset a choice**: `positions` is the LIVE layout every drag rewrites, `savedPositions` (+ `savedBy`/`savedAt`) is the operator's RESTORE POINT, written ONLY by the explicit Save (`POST …/layout/checkpoint`) and never by a drag — a drag is not a decision, and letting one overwrite the restore point would leave nothing to reset to. So Reset has two destinations: **last save** (copy the restore point back over the live blob, keeping the restore point so it can be used again) and **baseline** (clear the live blob and re-run the column solver). A baseline reset **empties** a row that carries a restore point rather than deleting it — an operator who resets to baseline must still be able to change their mind — and deletes one that does not, which is the pre-checkpoint behavior. `positions: {}` restores nothing at render, which IS the baseline. NULL `savedPositions` = never saved, which is every pre-existing row (nothing is backfilled) and what greys out "Reset to last save".
 
 - **Event** — audit log, 7-day rolling retention. Four per-asset **change events** (`asset.firmware.changed` / `asset.switch_port.changed` / `asset.wireless_ap.changed` / `asset.gateway_firewall.changed`) are written edge-triggered and **unconditionally** (except roams — `asset.wireless_ap.changed` only while an automation uses its trigger, 2026-11-09), never behind the `change.*` subscription gate. Row builders are pure and centralized in `eventLogService`; discovery emits them from an end-of-run baseline, because coarse-then-corrected phases ping-pong within a single run. `asset.firmware.changed` additionally has a MONITOR-path writer — `adoptSysDescrIdentity`, for a device whose vendor publishes a sysDescr format Polaris can read (`utils/snmpDescrIdentity.ts`) — which has no run to baseline against and so compares against the stored row, leaning on `computeFirmwareChange`'s rule that a first learn is not an upgrade.
@@ -397,6 +399,45 @@ TopologyLayout                  -- SHARED Device Map topology node positions (th
                                 -- Server layout wins client-side; localStorage remains the per-browser
                                 -- fallback (non-writer drags, pre-server installs). Mobile applies the
                                 -- flat view read-only (desktop axes). Single writer: topologyLayoutService.
+                                -- Saved views (rule 147) add keys: "topo" (the default view's Topology
+                                -- placements), "v:<uuid>" / "v:<uuid>|<floor key>" / "v:<uuid>|topo".
+
+TopologyView                    -- a named, SHARED per-site Device Map view (business rules 147-149)
+  id            UUID PK
+  siteId        String FK → Asset (cascade delete)  -- the FortiGate
+  name          String          -- unique per site
+  isDefault     Boolean         -- one per site (partial unique index topology_views_one_default,
+                                -- migration only); materialised on first read (ensureDefaultView)
+  mode          String          -- "layer2" | "topology" | "rack" — exactly one per view
+  shownTypes    String[]        -- the SHOWN asset types (firewall always); default firewall/router/
+                                -- switch/access_point, so a custom type added later starts hidden
+  background    Json?           -- null | {kind:"osm", center:[lat,lng], zoom} |
+                                -- {kind:"image", imageId, width, height}  (topology views)
+  polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
+                                -- in background coordinates; codes in display casing (rule 148)
+  racks         Json            -- [{id, name, units 1-60, order, face}]  (rack views)
+  rackPlacements Json           -- [{id, kind:"asset"|"cableManagement", assetId?, rackId, face,
+                                -- startU, heightU, fullDepth}] — bounded + overlap-free per face
+  createdBy / updatedBy String?
+  createdAt / updatedAt DateTime
+  @@unique([siteId, name])
+                                -- Written via /map/sites/:id/topology/views (deviceMap=write, audited
+                                -- map.topology.view_*). A mode change resets every mode-specific field +
+                                -- the view's TopologyLayout rows + images (rule 149). Single writer:
+                                -- topologyViewService.
+
+TopologyBackgroundImage         -- an uploaded Topology-view background (PNG / JPEG / WebP, ≤15 MB, bytea)
+  id            UUID PK
+  siteId        String FK → Asset (cascade delete)
+  viewId        String FK → TopologyView (cascade delete)  -- not unique: an upload precedes the
+                                -- save that names it; saving the view deletes the rows it no longer names
+  mimeType      String
+  width / height Int            -- read from the image header (readImageSize), never from the client
+  size          Int
+  data          Bytes
+  uploadedBy    String?
+  uploadedAt    DateTime
+                                -- Served only by the authenticated GET /map/sites/:id/topology/background/:id.
 
 Event                           -- Audit log, 7-day rolling retention
   id            UUID PK
@@ -779,6 +820,10 @@ RebootSchedule                  -- A reboot booked for later (business rule 115)
 - **Load automatic layout** (formerly "Reset to baseline") — `DELETE …/topology/layout?view=…`, sent when the edit session commits. A row carrying a restore point is EMPTIED (`positions` → `{}`, which restores nothing at render, so the column solver's own placement stands) rather than deleted; a row without one is deleted outright, which is the pre-checkpoint behavior. Emptying is what lets an operator reset to baseline and still change their mind.
 
 NULL `savedPositions` means this (site, view) was never saved — the state every pre-existing row starts in (migration `20260904030000_topology_layout_checkpoint` backfills nothing), and what greys out the menu's last-save entry. The browser mirrors both blobs: `polaris.topology.positions:<siteId>[:<view>]` for the live layout and `polaris.topology.saved:<siteId>[:<view>]` for the restore point, which is the only half a non-writer gets (their drags were already local-only).
+
+#### TopologyView / TopologyBackgroundImage
+
+**TopologyView** (migration `20261110120000_topology_views`, business rules 147-149) holds a site's saved Device Map views; node positions stay in `TopologyLayout` under the view's key prefix (`v:<id>`, the default view keeping the legacy keys plus `topo`). `shownTypes` stores the SHOWN set rather than a hidden one so an operator-added asset type starts hidden. Polygons store the location group's codes in display casing, because the browser's group keys are lowercased and writing one back would rewrite the operator's casing. Rack placements are validated whole on every save (inside the rack, one placement per asset per view, no overlap on a face either occupies — a full-depth item occupies both). **TopologyBackgroundImage** rows are written by the upload route before the view names them: the edit session stages `background`, and saving it deletes the view's other images, so an abandoned upload is pruned (a day old) rather than kept.
 
 #### FirmwareUpgradeSchedule
 

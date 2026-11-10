@@ -3198,3 +3198,28 @@ escalates to a new tier, or its alert ends, Polaris writes an event to the
 "Create an Event" action to add or remove any more, and an automation saved with the old
 action simply drops it. The one exception is an automation triggered by events, whose
 alerts write no fired event, because one would feed its own trigger.
+
+### Rule 147
+
+**A topology view is a shared, named way of looking at one site, with one mode.** On the
+[Device Map](Device-Map) topology, every site has a default view and can have more. A view is
+Layer 2 (the automatic graph), Topology (a map or floor plan you place devices on) or Rack (rack
+elevations). Everyone who can open the Device Map sees the same views; creating and saving them
+needs Device Map Read-Write. Each view remembers which device types it shows: firewalls,
+routers, switches and access points by default, with any other type switched on from the
+sidebar.
+
+### Rule 148
+
+**Placing a device inside a group polygon gives it that group's location codes, on Save.** In
+a Topology view, a device you drop inside a polygon takes that group's `a:` / `b:` / `f:` /
+`r:` / `jb:` codes in its description when you save the view. The free text in front of the
+codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
+needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
+
+### Rule 149
+
+**Changing a view's mode resets the view.** Polaris first shows what will be removed: placed
+devices, polygons, the uploaded image and racks. If you accept, the view starts again in the
+new mode with the default device types; a Rack view gets one empty 42U rack. The view's name is
+kept, and location codes already written to descriptions stay.

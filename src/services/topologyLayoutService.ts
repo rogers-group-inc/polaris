@@ -70,12 +70,32 @@ const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u001f\\u007f]");
  * "a|<area>", "b|<area>|<building>", "f|<area>|<building>|<floor>",
  * "r|<area>|<building>|<floor>|<room>" or
  * "jb|<area>|<building>|<floor>|<room>|<jb>" (a skipped level is empty).
+ *
+ * Saved topology views (business rule 147) add their own keys. The default
+ * view keeps the legacy keys above plus "topo" (its Topology-mode
+ * placements); any other view prefixes its id: "v:<uuid>" (its Layer 2 base),
+ * "v:<uuid>|<location key>" (a floor view of it) and "v:<uuid>|topo".
  */
+const VIEW_ID_PREFIX_RE = /^v:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\||$)/;
+
 export function isValidViewKey(view: unknown): view is string {
   if (typeof view !== "string") return false;
   if (view.length === 0 || view.length > MAX_VIEW_KEY_LEN) return false;
   if (CONTROL_CHARS_RE.test(view)) return false;
-  return view === "flat" || /^(?:[abfr]|jb)\|/.test(view);
+  let rest = view;
+  const m = VIEW_ID_PREFIX_RE.exec(view);
+  if (m) {
+    rest = view.slice(m[0].length);
+    if (rest === "") return true; // the view's Layer 2 base
+  }
+  if (rest === "topo") return true;
+  if (!m && rest === "flat") return true;
+  return /^(?:[abfr]|jb)\|/.test(rest);
+}
+
+/** The TopologyLayout view-key prefix of a saved view ("" for the default view). */
+export function viewLayoutPrefix(view: { id: string; isDefault: boolean }): string {
+  return view.isDefault ? "" : `v:${view.id}`;
 }
 
 /**
@@ -201,6 +221,36 @@ export async function saveCheckpoint(
     update: { positions: json, savedPositions: json, savedBy: actor, savedAt, updatedBy: actor },
   });
   return toDto(row);
+}
+
+/**
+ * Delete every stored layout (live blob AND restore point) of one saved view
+ * — its Layer 2 base, its floor views and its Topology placements. Used when a
+ * view is deleted or its mode changes (business rule 149). The default view
+ * owns every key that is not "v:"-prefixed. Takes the caller's transaction
+ * client so the reset is atomic with the view row's own change.
+ */
+/** The extended client inside `prisma.$transaction(async (tx) => …)`. */
+type TxClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
+
+export async function deleteLayoutsForView(
+  db: TxClient,
+  siteId: string,
+  view: { id: string; isDefault: boolean },
+): Promise<number> {
+  const where: Prisma.TopologyLayoutWhereInput = view.isDefault
+    ? { siteId, NOT: { view: { startsWith: "v:" } } }
+    : { siteId, OR: [{ view: `v:${view.id}` }, { view: { startsWith: `v:${view.id}|` } }] };
+  const res = await db.topologyLayout.deleteMany({ where });
+  return res.count;
+}
+
+/** Number of placed nodes a view's Topology-mode layout holds (for the mode-change warning). */
+export async function countTopologyPlacements(siteId: string, view: { id: string; isDefault: boolean }): Promise<number> {
+  const key = view.isDefault ? "topo" : `v:${view.id}|topo`;
+  const row = await prisma.topologyLayout.findUnique({ where: { siteId_view: { siteId, view: key } }, select: { positions: true } });
+  if (!row || !row.positions || typeof row.positions !== "object") return 0;
+  return Object.keys(row.positions as Record<string, unknown>).filter((k) => !k.startsWith("edgepath:")).length;
 }
 
 export interface LayoutResetResult {

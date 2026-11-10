@@ -13,10 +13,20 @@
  *                                 button. Note the DELIBERATE permission
  *                                 widening documented at the route itself.
  *
+ *   GET /map/sites/:id/topology/views — the site's saved views (rule 147)
+ *   GET /map/sites/:id/topology/views/:viewId/mode-change — what a mode change would remove
+ *   GET /map/sites/:id/topology/background/:imageId — an uploaded view background
+ *
  * Write endpoints (escalate to deviceMap=write per-route):
  *   PUT    /map/sites/:id/topology/layout — full-replace one (site, view) layout
  *   POST   /map/sites/:id/topology/layout/checkpoint — stamp the restore point
  *   DELETE /map/sites/:id/topology/layout?view=<key> — reset one view's layout
+ *   POST   /map/sites/:id/topology/views — create a view
+ *   PUT    /map/sites/:id/topology/views/:viewId — update a view (a mode change resets it, rule 149)
+ *   DELETE /map/sites/:id/topology/views/:viewId — delete a view
+ *   POST   /map/sites/:id/topology/views/:viewId/background — upload a background image
+ *   POST   /map/sites/:id/topology/location-codes — rewrite descriptions from
+ *          polygon placements (rule 148; assets=write + the assets write scope, not deviceMap)
  *
  * Coordinates and topology metadata are populated by the FortiManager / FortiGate
  * discovery pipelines (see fortimanagerService.ts step 3d.5/3d.6 and
@@ -41,6 +51,19 @@ import {
   MAX_LAYOUT_NODES,
   MAX_VIEW_KEY_LEN,
 } from "../../services/topologyLayoutService.js";
+import {
+  listViews,
+  createView,
+  updateView,
+  deleteView,
+  describeModeChangeLoss,
+  saveBackgroundImage,
+  getBackgroundImage,
+  sanitizeLocationCodeChanges,
+  applyLocationCodeChanges,
+  MAX_BACKGROUND_IMAGE_BYTES,
+} from "../../services/topologyViewService.js";
+import multer from "multer";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope } from "../../services/writeScopeService.js";
@@ -155,7 +178,11 @@ router.get("/sites/:id/topology", async (req, res, next) => {
       getSiteLayoutOwner(req.params.id as string),
     ]);
     const canEditLayout = site ? inWriteScope(await resolveWriteScope(req, "deviceMap"), site) : false;
-    res.json({ ...(topo as object), canEditLayout });
+    // Rule 147: the site's saved views ride along (buildSiteTopology has
+    // already 404ed a non-firewall id, so the default view is never
+    // materialised for one).
+    const views = await listViews(req.params.id as string);
+    res.json({ ...(topo as object), canEditLayout, views });
   } catch (err) {
     next(err);
   }
@@ -259,6 +286,180 @@ router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "writ
       });
     }
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Saved topology views (business rules 147-149) ──────────────────────────────
+// A view is name + ONE mode + shown device types + mode-specific content.
+// The service validates every field in depth (sanitize*); the Zod schemas
+// here only check the outer shape so a malformed body fails fast.
+const CreateViewSchema = z.object({
+  name: z.string().min(1).max(200),
+  mode: z.enum(["layer2", "topology", "rack"]),
+  shownTypes: z.array(z.string()).max(100).optional(),
+});
+
+const UpdateViewSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  mode: z.enum(["layer2", "topology", "rack"]).optional(),
+  shownTypes: z.array(z.string()).max(100).optional(),
+  background: z.unknown().optional(),
+  polygons: z.array(z.unknown()).optional(),
+  racks: z.array(z.unknown()).optional(),
+  rackPlacements: z.array(z.unknown()).optional(),
+}).refine((b) => Object.keys(b).length > 0, "Nothing to update");
+
+const LocationCodesSchema = z.object({ changes: z.array(z.unknown()).min(1).max(500) });
+
+const viewWriteGate = [
+  requirePermission("deviceMap", "write"),
+  scopeAssetParam("deviceMap", "edit topology views for sites"),
+];
+
+router.get("/sites/:id/topology/views", async (req, res, next) => {
+  try {
+    res.json(await listViews(req.params.id as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/topology/views", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const input = CreateViewSchema.parse(req.body);
+    const view = await createView(siteId, input, req.session?.username ?? null);
+    logEvent({
+      action: "map.topology.view_created",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Topology view "${view.name}" created (${view.mode})`,
+      details: { viewId: view.id, name: view.name, mode: view.mode },
+    });
+    res.status(201).json(view);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/sites/:id/topology/views/:viewId/mode-change", async (req, res, next) => {
+  try {
+    res.json(await describeModeChangeLoss(req.params.id as string, req.params.viewId as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const input = UpdateViewSchema.parse(req.body);
+    const { view, modeChange } = await updateView(siteId, req.params.viewId as string, input, req.session?.username ?? null);
+    if (modeChange) {
+      logEvent({
+        action: "map.topology.view_mode_changed",
+        resourceType: "asset",
+        resourceId: siteId,
+        actor: req.session?.username,
+        level: "warning",
+        message: `Topology view "${view.name}" changed from ${modeChange.from} to ${modeChange.to} and reset`,
+        details: { viewId: view.id, ...modeChange },
+      });
+    } else {
+      logEvent({
+        action: "map.topology.view_updated",
+        resourceType: "asset",
+        resourceId: siteId,
+        actor: req.session?.username,
+        message: `Topology view "${view.name}" saved`,
+        details: { viewId: view.id, fields: Object.keys(input) },
+      });
+    }
+    res.json({ view, modeChange });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const view = await deleteView(siteId, req.params.viewId as string);
+    logEvent({
+      action: "map.topology.view_deleted",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Topology view "${view.name}" deleted`,
+      details: { viewId: view.id, name: view.name, mode: view.mode },
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+const backgroundUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BACKGROUND_IMAGE_BYTES, files: 1 } });
+
+router.post("/sites/:id/topology/views/:viewId/background", ...viewWriteGate, (req, res, next) => {
+  backgroundUpload.single("file")(req, res, (err: unknown) => {
+    const code = (err as { code?: string } | undefined)?.code;
+    if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `Background images are limited to ${MAX_BACKGROUND_IMAGE_BYTES / (1024 * 1024)} MB`));
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    if (!req.file) throw new AppError(400, "No image uploaded (form field \"file\")");
+    const img = await saveBackgroundImage(siteId, req.params.viewId as string, req.file.buffer, req.session?.username ?? null);
+    logEvent({
+      action: "map.topology.background_uploaded",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Background image uploaded to a topology view (${img.width} × ${img.height})`,
+      details: { viewId: img.viewId, imageId: img.id, width: img.width, height: img.height, size: img.size },
+    });
+    res.status(201).json(img);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Authenticated only (the /map mount's deviceMap=read floor) — never the
+// unauthenticated /uploads static mount. An image id is immutable, so the
+// browser may cache it privately.
+router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => {
+  try {
+    const img = await getBackgroundImage(req.params.id as string, req.params.imageId as string);
+    res.setHeader("Content-Type", img.mimeType);
+    res.setHeader("Content-Length", String(img.data.length));
+    res.setHeader("Cache-Control", "private, max-age=86400, immutable");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(img.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Rule 148: the asset half of saving a Topology view. Gated assets=write (a
+// description is an asset field), and each asset is checked against the
+// caller's assets write scope inside the service — a refusal is reported per
+// asset, the rest still land.
+router.post("/sites/:id/topology/location-codes", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const input = LocationCodesSchema.parse(req.body);
+    const changes = sanitizeLocationCodeChanges(input.changes);
+    const scope = await resolveWriteScope(req, "assets");
+    const results = await applyLocationCodeChanges(changes, {
+      actor: req.session?.username ?? null,
+      inScope: (rec) => inWriteScope(scope, rec),
+    });
+    res.json({ results });
   } catch (err) {
     next(err);
   }

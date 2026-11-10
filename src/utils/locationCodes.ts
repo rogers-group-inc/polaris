@@ -94,6 +94,59 @@ export function hasLocationCodes(codes: LocationCodes): boolean {
     codes.room !== null || codes.junctionBox !== null;
 }
 
+/** Output order of the codes, outermost first. */
+const CODE_ORDER: Array<[keyof LocationCodes, string]> = [
+  ["area", "a"],
+  ["building", "b"],
+  ["floor", "f"],
+  ["room", "r"],
+  ["junctionBox", "jb"],
+];
+
+/** Longest code value setLocationCodes accepts. */
+export const MAX_LOCATION_CODE_VALUE_LEN = 64;
+
+/**
+ * Why a code value cannot be written, or null when it can. A value must be
+ * non-empty after trimming, short, free of control characters, and must not
+ * itself contain a token (" b:…"), which would re-parse as a second code.
+ */
+export function locationCodeValueProblem(value: string): string | null {
+  const v = value.trim();
+  if (!v) return "is empty";
+  if (v.length > MAX_LOCATION_CODE_VALUE_LEN) return `is longer than ${MAX_LOCATION_CODE_VALUE_LEN} characters`;
+  if (/[\u0000-\u001f\u007f]/.test(v)) return "contains a control character";
+  if (/(?:^|\s)(?:jb|a|b|f|r):/i.test(v)) return "contains another location code";
+  return null;
+}
+
+/**
+ * Rewrite the a:/b:/f:/r:/jb: codes of a description (business rule 148):
+ * the free text BEFORE the first code is kept, every existing code is
+ * dropped, and `codes` is appended in a: b: f: r: jb: order. Free text must
+ * stay in front because a code's value runs to the next code or the end of
+ * the string — text after the last code would be read as part of its value.
+ * A null/empty field writes no code. Throws on a value
+ * locationCodeValueProblem rejects; the caller owns the 255-character cap.
+ */
+export function setLocationCodes(description: string | null | undefined, codes: Partial<LocationCodes>): string {
+  const raw = typeof description === "string" ? description : "";
+  TOKEN_RE.lastIndex = 0;
+  const first = TOKEN_RE.exec(raw);
+  TOKEN_RE.lastIndex = 0;
+  const prefix = (first ? raw.slice(0, first.index) : raw).trim();
+  const parts: string[] = [];
+  if (prefix) parts.push(prefix);
+  for (const [field, key] of CODE_ORDER) {
+    const value = codes[field];
+    if (value == null || String(value).trim() === "") continue;
+    const problem = locationCodeValueProblem(String(value));
+    if (problem) throw new Error(`${key}: value ${problem}`);
+    parts.push(`${key}:${String(value).trim().replace(/\s+/g, " ")}`);
+  }
+  return parts.join(" ");
+}
+
 /**
  * Canonical grouping key for a code value: trim, collapse internal
  * whitespace, lowercase. Display surfaces keep the original trimmed casing;
