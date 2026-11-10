@@ -44,11 +44,10 @@ if (typeof window !== "undefined") window.revealOverlay = revealOverlay;
 // of how the <script> element reaches the document.
 //
 // Each bundle is the SAME ordered list the panel's home page loads statically
-// (assets.html, automations.html, path-monitor.html for the asset panel;
-// ipam.html for the network and block panels) — keep them in step when a
-// panel grows a dependency. The dashboard and both maps no longer load the
-// asset bundle statically: they prefetch it when idle (prefetchPanelScripts
-// below, CQ-F041). A file's DOMContentLoaded
+// (assets.html for the asset panel; ipam.html for the network and block
+// panels) — keep them in step when a panel grows a dependency. The dashboard,
+// both maps, Automations and Path Monitor do not load the asset bundle
+// statically: they prefetch it when idle (prefetchPanelScripts below, CQ-F041). A file's DOMContentLoaded
 // page-init never runs when it lands late, which is exactly the off-page case
 // those handlers already guard for.
 var _PANEL_SCRIPT_BUNDLES = {
