@@ -90,6 +90,12 @@ picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio wr
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.
+**Selection and the info card** are shared by all three modes: `map.js → _selectTopologyAsset(id)`
+repaints only `#topology-asset-card` (never the whole pane, so the Device List keeps its filter and
+scroll) and mirrors the choice onto the canvas (`instance.setSelected`, or the Cytoscape
+selection); canvases report clicks through `ctx.selectAsset`, and must ring the selection with a
+class toggle, never a redraw — a redraw between the two clicks of a double-click swallows the
+dblclick. A canvas's `placedIds()` limits the switch / AP lists below the card to what is on it.
 
 Under each end's port line `_opticsTipRow` adds that port's
 SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,

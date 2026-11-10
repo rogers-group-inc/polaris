@@ -1604,6 +1604,7 @@
     topoState.siteId = id;
     topoState.hostname = hostname || null;
     topoState.data = null;
+    topoState.selectedAssetId = null;
     topoState.activeView = "flat";
     topoState.floorViews = [];
     topoState.editing = false;
@@ -1743,6 +1744,8 @@
       },
       backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(topoState.siteId, imageId); },
       refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
+      selectAsset: function (id) { _selectTopologyAsset(id); },
+      selectedId: function () { return topoState.selectedAssetId || null; },
       historyChanged: function () { _paintUndoRedo(); },
       openAsset: function (id) { if (id && typeof openViewModal === "function") openViewModal(id); },
       toast: function (msg, kind) { if (typeof showToast === "function") showToast(msg, kind); },
@@ -3385,6 +3388,7 @@
     topoState.siteId = null;
     topoState.hostname = null;
     topoState.data = null;
+    topoState.selectedAssetId = null;
     topoState.pathOverlay = null;
     topoState.editing = false;
     topoState.viewId = null;
@@ -3684,7 +3688,13 @@
         return;
       }
       _lastNodeTap = { id: id, t: now };
-      // Single tap: selection highlight is handled by Cytoscape automatically.
+      // Single tap: Cytoscape draws the selection; the details pane's info
+      // card shows the device (an asset-backed node only).
+      var tapped = _assetIdForNode(node);
+      if (tapped && topoState.data && _topologyAssetById(topoState.data, tapped)) _selectTopologyAsset(tapped);
+    });
+    cyInstance.on("tap", function (evt) {
+      if (evt.target === cyInstance && topoState.selectedAssetId) _selectTopologyAsset(null);
     });
 
     // Right-click on an asset-backed node opens the in-place description
@@ -4750,6 +4760,94 @@
     if (_edgeTooltipEl) _edgeTooltipEl.classList.remove("visible");
   }
 
+  // ── The info card: the selected device, else the site's FortiGate ────────
+  // A click on a device (a graph node, a placed marker, a racked block, a
+  // Device List row) fills it; a click on the canvas background returns it
+  // to the FortiGate. Repainted on its own, so the Device List keeps its
+  // filter text and scroll position.
+  function _topologyAssetById(data, id) {
+    if (!data || !id) return null;
+    var fg = data.fortigate;
+    if (fg && fg.id === id) return { kind: "firewall", item: fg };
+    var lists = [["switch", data.switches], ["access point", data.aps], ["endpoint", data.endpoints]];
+    for (var i = 0; i < lists.length; i++) {
+      var arr = lists[i][1] || [];
+      for (var j = 0; j < arr.length; j++) if (arr[j] && arr[j].id === id) return { kind: lists[i][0], item: arr[j] };
+    }
+    return null;
+  }
+  function _locationText(loc) {
+    if (!loc) return "";
+    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["junctionBox", "jb"]];
+    return keys.filter(function (k) { return loc[k[0]]; }).map(function (k) { return k[1] + ":" + loc[k[0]]; }).join(" ");
+  }
+  function _topologyAssetCardHtml(data) {
+    var fg = data.fortigate || {};
+    var hit = _topologyAssetById(data, topoState.selectedAssetId) || { kind: "firewall", item: fg };
+    var a = hit.item || {};
+    var isFg = a === fg;
+    var label = escapeHtml(a.hostname || a.ipAddress || a.macAddress || (isFg ? "FortiGate" : "(unnamed)"));
+    var rows = [];
+    var head = a.id
+      ? '<a href="/assets.html#asset=' + encodeURIComponent(a.id) + '">' + label + '</a>'
+      : label;
+    rows.push('<h4 class="topology-asset-card-head">' + head +
+      (isFg ? "" : '<button type="button" class="btn-icon topology-asset-card-clear" data-asset-card-clear title="Show the site\'s FortiGate" aria-label="Show the site\'s FortiGate">×</button>') +
+      '</h4>');
+    function row(lbl, valueHtml) { rows.push('<div class="detail-row"><span class="label">' + lbl + '</span>' + valueHtml + '</div>'); }
+    function text(v) { return '<span class="value">' + escapeHtml(v == null || v === "" ? "—" : String(v)) + '</span>'; }
+    if (!isFg) row("Type", text(String(a.assetType || hit.kind).replace(/_/g, " ")));
+    if (hit.kind !== "endpoint") {
+      row("Serial", copyableValue(a.serial));
+      row("Model", text(a.model));
+      row("Mgmt IP", copyableValue(a.ip));
+    } else {
+      row("IP", copyableValue(a.ipAddress));
+      row("MAC", copyableValue(a.macAddress));
+    }
+    row("Status", text(a.status));
+    if (a.monitored) row("Health", text(a.monitorHealth));
+    if (hit.kind === "switch" && a.uplinkInterface) row("Uplink", text(displayableUplink(a.uplinkInterface)));
+    if (hit.kind === "access point") row("Connected to", text(a.peerSwitch ? a.peerSwitch + "/" + (a.peerPort || "?") : (a.meshUplink ? "mesh" : "direct")));
+    if (hit.kind === "endpoint") {
+      var sw = (data.switches || []).filter(function (s) { return s.id === a.switchId; })[0];
+      row("Connected to", text(sw ? (sw.hostname || "switch") + (a.port ? "/" + a.port : "") : (a.port || null)));
+    }
+    var loc = _locationText(a.location);
+    if (loc) row("Location", text(loc));
+    if (a.lastSeen) row("Last seen", text(formatDateTime(a.lastSeen)));
+    if (isFg && fg.latitude != null && fg.longitude != null) row("Coords", copyableValue(fg.latitude.toFixed(4) + ", " + fg.longitude.toFixed(4)));
+    return rows.join("");
+  }
+  function _paintTopologyAssetCard() {
+    var el = document.getElementById("topology-asset-card");
+    if (!el || !topoState.data) return;
+    el.innerHTML = _topologyAssetCardHtml(topoState.data);
+    _wireCopyableValues(el);
+    var clr = el.querySelector("[data-asset-card-clear]");
+    if (clr) clr.addEventListener("click", function () { _selectTopologyAsset(null); });
+  }
+  function _selectTopologyAsset(id) {
+    var next = id && topoState.data && _topologyAssetById(topoState.data, id) ? id : null;
+    topoState.selectedAssetId = next;
+    _paintTopologyAssetCard();
+    // Mirror the choice onto the canvas that did not make it.
+    var inst = _modeInstance();
+    if (inst && typeof inst.setSelected === "function") inst.setSelected(next);
+    if (cyInstance && !inst) {
+      try {
+        cyInstance.$("node:selected").filter(function (n) { return n.id() !== next; }).unselect();
+        if (next) { var n = cyInstance.getElementById(next); if (n && n.length && !n.selected()) n.select(); }
+      } catch (e) { /* graph mid-rebuild */ }
+    }
+    var info = document.getElementById("topology-info");
+    if (info) {
+      Array.prototype.forEach.call(info.querySelectorAll("[data-device-row]"), function (li) {
+        li.classList.toggle("is-selected", li.getAttribute("data-device-row") === next);
+      });
+    }
+  }
+
   function renderTopologyInfo(data) {
     var fg = data.fortigate || {};
     var parts = [];
@@ -4759,24 +4857,21 @@
     if (typesHtml) parts.push(typesHtml);
     var modeInstForPane = _modeInstance();
     if (modeInstForPane && typeof modeInstForPane.sidebarHtml === "function") parts.push(modeInstForPane.sidebarHtml());
-    var fgLabel = escapeHtml(fg.hostname || "FortiGate");
-    if (fg.id) {
-      parts.push('<h4><a href="/assets.html#asset=' + encodeURIComponent(fg.id) + '">' + fgLabel + '</a></h4>');
-    } else {
-      parts.push('<h4>' + fgLabel + '</h4>');
-    }
+    if (topoState.selectedAssetId && !_topologyAssetById(data, topoState.selectedAssetId)) topoState.selectedAssetId = null;
+    parts.push('<div id="topology-asset-card" class="topology-asset-card">' + _topologyAssetCardHtml(data) + '</div>');
 
-    parts.push('<div class="detail-row"><span class="label">Serial</span>' + copyableValue(fg.serial) + '</div>');
-    parts.push('<div class="detail-row"><span class="label">Model</span><span class="value">' + escapeHtml(fg.model || "—") + '</span></div>');
-    parts.push('<div class="detail-row"><span class="label">Mgmt IP</span>' + copyableValue(fg.ip) + '</div>');
-    parts.push('<div class="detail-row"><span class="label">Status</span><span class="value">' + escapeHtml(fg.status || "—") + '</span></div>');
-    if (fg.lastSeen) {
-      parts.push('<div class="detail-row"><span class="label">Last seen</span><span class="value">' + escapeHtml(formatDateTime(fg.lastSeen)) + '</span></div>');
-    }
-    if (fg.latitude != null && fg.longitude != null) {
-      var coordsText = fg.latitude.toFixed(4) + ', ' + fg.longitude.toFixed(4);
-      parts.push('<div class="detail-row"><span class="label">Coords</span>' + copyableValue(coordsText) + '</div>');
-    }
+    // On a Topology or Rack canvas the lists below name only what is on the
+    // canvas (operator request 2026-11-10): the Device List above is where
+    // everything else waits.
+    var placed = modeInstForPane && typeof modeInstForPane.placedIds === "function" ? modeInstForPane.placedIds() : null;
+    function onCanvas(id) { return !placed || !!placed[id]; }
+    data = Object.assign({}, data, {
+      switches: (data.switches || []).filter(function (s) { return onCanvas(s.id); }),
+      aps: (data.aps || []).filter(function (a) { return onCanvas(a.id); }),
+      interfaceEdges: placed ? (data.interfaceEdges || []).filter(function (e) { return onCanvas(e.source) && onCanvas(e.target); }) : data.interfaceEdges,
+      lldpEdges: placed ? (data.lldpEdges || []).filter(function (e) { return onCanvas(e.source); }) : data.lldpEdges,
+      lldpNodes: placed ? [] : data.lldpNodes,
+    });
 
     // With the location boxes on, the switch and AP lists follow the boxes'
     // nesting — area › building › floor › room › junction box — under one
@@ -4895,6 +4990,8 @@
     var infoEl = document.getElementById("topology-info");
     infoEl.innerHTML = parts.join("");
     _wireCopyableValues(infoEl);
+    var clr = infoEl.querySelector("[data-asset-card-clear]");
+    if (clr) clr.addEventListener("click", function () { _selectTopologyAsset(null); });
     if (modeInstForPane && typeof modeInstForPane.wireSidebar === "function") modeInstForPane.wireSidebar(infoEl);
   }
 

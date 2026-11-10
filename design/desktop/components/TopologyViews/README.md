@@ -15,6 +15,12 @@ and may have more; views are shared, and creating or changing one needs Device M
 - **The details pane starts with Device types**: one row per asset type on the site, an eye toggle,
   the count. Firewall is the root and locked on; firewalls, routers, switches and access points are
   on by default. A switched-on type is drawn in the graph.
+- **Topology and Rack add a Device List** (`topology-device-list.js`) under the types: every shown
+  device in one list with a filter box, about 5½ rows tall then scrolling; a device on the canvas is
+  highlighted (accent tint and a left bar) and carries an × in edit mode; the switch / AP lists lower
+  down name only what is on the canvas.
+- **The info card follows the selection** in every mode: a clicked node, marker, rack block or list
+  row fills it (with an × back to the FortiGate); a click on the canvas background clears it.
 - **Every mode wears the same corner tools**, as icon buttons: Mouse controls, Export,
   Edit (pencil) / Done editing (check mark), Save (disk), Load (folder), Undo, Redo, and the Legend
   button, whose legend opens to its right and closes on a second click. Topology adds Background

@@ -590,13 +590,25 @@ the column under the tick:
   add points and click the first point to close it. Click a polygon to
   reshape it, change its group or delete it.
 
-Drag a device from **Not placed** in the details pane onto the map. A device
+The details pane's **Device List** names every device of a shown type, with a
+filter box; it shows about five rows and scrolls past that. A device on the
+map is highlighted, and in edit mode it has an **×** that takes it off the map
+again (its codes stay). The FortiSwitch and FortiAP lists further down the pane
+name only the devices on the map.
+
+Drag a device from the **Device List** onto the map. A device
 dropped inside a group polygon takes that group's `a:` / `b:` / `f:` / `r:` /
 `jb:` codes in its description when you save; the innermost polygon wins, so
 a device on a floor inside a building gets both. A device placed outside every
 polygon keeps its codes ([rule 148](Business-Rules#rule-148)). Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.
 Right-click a placed device to remove it from the map (its codes stay).
+
+**Click a device** — a node in Layer 2, a placed device in Topology, a racked
+device in Rack, or a row in the Device List — and the details pane's info card
+(serial, model, address, status, location…) shows that device instead of the
+FortiGate. Click the canvas background, or the card's **×**, to go back to the
+FortiGate.
 
 When you click the tick or **Save**, Polaris lists the descriptions that will
 change (codes now, codes after) before writing them. Writing descriptions
@@ -608,7 +620,8 @@ the last save**, and **Export** copies a picture of the map.
 **A Rack view** opens with one empty 42U rack, its U numbers up the rail
 (U1 at the bottom). In edit mode:
 
-- Drag a device from **Not racked** onto a rack: it lands as a 1U block at the
+- Drag a device from the **Device List** onto a rack (a racked device is
+  highlighted there, with an **×** to take it out of the rack): it lands as a 1U block at the
   U under the pointer, or the nearest free U. Drag **Cable management** from
   **Rack items** to add a placeholder; you can add as many as you need.
   Drag **Third party** for equipment Polaris does not monitor (an ISP router,

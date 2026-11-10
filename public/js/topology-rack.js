@@ -109,6 +109,24 @@
     function rackById(id) { return state.racks.filter(function (r) { return r.id === id; })[0] || null; }
     function assetOf(p) { return p.kind === "asset" ? nodeById[p.assetId] : null; }
 
+    var listFilter = "";        // the Device List's filter text, kept across pane redraws
+    var selectedId = ctx.selectedId ? ctx.selectedId() : null;
+    // The selected device: its block is ringed and map.js fills the details
+    // pane's info card with it.
+    // Classes only, never draw(): a redraw between the two clicks of a
+    // double-click would swallow the dblclick (open / rename).
+    function paintSelected() {
+      Array.prototype.forEach.call(strip.querySelectorAll("[data-blk]"), function (el) {
+        var p = state.placements.filter(function (x) { return x.id === el.getAttribute("data-blk"); })[0];
+        el.classList.toggle("is-selected", !!(p && p.assetId && p.assetId === selectedId));
+      });
+    }
+    function select(id) {
+      selectedId = id || null;
+      paintSelected();
+      if (typeof ctx.selectAsset === "function") ctx.selectAsset(selectedId);
+    }
+
     // ── Drawing ─────────────────────────────────────────────────────────
     function draw() {
       var html = state.racks.map(rackHtml).join("");
@@ -166,6 +184,7 @@
         meta = (t ? String(t).replace(/_/g, " ") + " · " : "") + p.heightU + "U" + (p.fullDepth ? "" : " · half depth");
       }
       if (ghost) { cls += " is-ghost"; name = name + " (" + faceWord(p.face).toLowerCase() + ")"; }
+      if (p.assetId && p.assetId === selectedId) cls += " is-selected";
       var color = d && d.nodeColor ? d.nodeColor : null;
       return '<div class="' + cls + '" data-blk="' + esc(p.id) + '" style="top:' + top + 'px;height:' + h + 'px' +
         (color && !ghost && p.kind === "asset" ? ";border-color:" + esc(color) : "") + '">' +
@@ -359,6 +378,13 @@
         if (state.editing) changed(); else draw();
         return;
       }
+      var blkSel = e.target.closest("[data-blk]");
+      if (blkSel) {
+        var bp = state.placements.filter(function (x) { return x.id === blkSel.getAttribute("data-blk"); })[0];
+        if (bp && bp.assetId && bp.assetId !== selectedId) select(bp.assetId);
+        return;
+      }
+      if (!e.target.closest("button, [data-rack-grip]") && selectedId) { select(null); return; }
       var del = e.target.closest("[data-rack-delete]");
       if (del) { deleteRack(rackById(del.getAttribute("data-rack-delete"))); return; }
       if (e.target.closest("[data-rack-add]")) {
@@ -532,52 +558,63 @@
     }
 
     function sidebarHtml() {
+      var DL = window.PolarisTopologyDeviceList;
       var racked = {};
       state.placements.forEach(function (p) { if (p.assetId) racked[p.assetId] = p; });
-      var ids = Object.keys(nodeById);
-      var free = ids.filter(function (id) { return !racked[id]; });
-      var on = ids.filter(function (id) { return racked[id]; });
       function where(p) {
         var r = rackById(p.rackId);
         var top = p.startU + p.heightU - 1;
         return (r ? r.name : "?") + " · U" + (p.heightU > 1 ? p.startU + "–" + top : p.startU);
       }
       var drag = state.editing;
-      var cable = '<li class="topo-phys-row topo-rack-cable-row"' + (drag ? ' draggable="true" data-place-asset="' + CABLE_TOKEN + '"' : '') + '>' +
-        '<span class="topo-phys-grip" aria-hidden="true">⋮⋮</span><span class="topo-rack-cable-swatch" aria-hidden="true"></span>' +
-        '<span class="topo-phys-row-name">Cable management</span><span class="meta">placeholder</span></li>' +
-        '<li class="topo-phys-row topo-rack-cable-row"' + (drag ? ' draggable="true" data-place-asset="' + THIRD_PARTY_TOKEN + '"' : '') + '>' +
-        '<span class="topo-phys-grip" aria-hidden="true">⋮⋮</span><span class="topo-rack-third-swatch" aria-hidden="true"></span>' +
-        '<span class="topo-phys-row-name">Third party</span><span class="meta">named</span></li>';
-      var freeRows = free.map(function (id) {
+      var items = '<div class="topology-section topo-rack-items"><h5>Rack items</h5><ul>' +
+        '<li class="topo-device-row topo-rack-item-row"' + (drag ? ' draggable="true" data-place-asset="' + CABLE_TOKEN + '"' : '') + '>' +
+          '<span class="topo-rack-cable-swatch" aria-hidden="true"></span><span class="topo-device-name">Cable management</span><span class="meta">placeholder</span></li>' +
+        '<li class="topo-device-row topo-rack-item-row"' + (drag ? ' draggable="true" data-place-asset="' + THIRD_PARTY_TOKEN + '"' : '') + '>' +
+          '<span class="topo-rack-third-swatch" aria-hidden="true"></span><span class="topo-device-name">Third party</span><span class="meta">named</span></li>' +
+        '</ul></div>';
+      var rows = Object.keys(nodeById).map(function (id) {
         var d = nodeById[id];
         var t = R ? R.nodeAssetType(d) : "";
-        return '<li class="topo-phys-row"' + (drag ? ' draggable="true" data-place-asset="' + esc(id) + '"' : '') + '>' +
-          '<span class="topo-phys-grip" aria-hidden="true">⋮⋮</span><span class="topo-phys-row-name">' + esc(d.label || id) + '</span>' +
-          '<span class="meta">' + esc(TYPE_INITIALS[t] ? String(t).replace(/_/g, " ") : (t || "")) + '</span></li>';
-      }).join("");
-      var onRows = on.map(function (id) {
-        var d = nodeById[id];
-        return '<li class="topo-phys-row is-placed"><span class="topo-phys-grip" aria-hidden="true">✓</span>' +
-          '<span class="topo-phys-row-name">' + esc(d.label || id) + '</span><span class="meta">' + esc(where(racked[id])) + '</span></li>';
-      }).join("");
-      var hint = drag
-        ? "Drag a device, Cable management or Third party onto a rack; double-click a Third party block to name it. Racking a device does not change its description."
-        : "Edit the map to rack devices.";
-      return (drag ? '<div class="topology-section topo-phys-side"><h5>Rack items</h5><ul>' + cable + '</ul></div>' : '') +
-        '<div class="topology-section topo-phys-side"><h5>Not racked (' + free.length + ')</h5>' +
-        '<p class="topology-type-hint" style="margin:0 0 6px">' + esc(hint) + '</p><ul>' +
-        (freeRows || '<li class="muted">Every shown device is racked.</li>') + '</ul></div>' +
-        '<div class="topology-section topo-phys-side"><h5>Racked (' + on.length + ')</h5><ul>' +
-        (onRows || '<li class="muted">Nothing racked yet.</li>') + '</ul></div>';
+        return { id: id, label: d.label || id, inUse: !!racked[id],
+          meta: racked[id] ? where(racked[id]) : String(t || "").replace(/_/g, " ") };
+      }).sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
+      });
+      var list = DL ? DL.html({
+        title: "Device List",
+        hint: drag ? "Drag device from list to a rack." : "Edit the map to rack devices.",
+        rows: rows,
+        editing: drag,
+        filter: listFilter,
+        selectedId: selectedId,
+        removeLabel: "Remove from the rack",
+      }) : "";
+      return (drag ? items : "") + list;
     }
     function wireSidebar(pane) {
       if (!pane) return;
-      pane.querySelectorAll("[data-place-asset]").forEach(function (li) {
+      pane.querySelectorAll(".topo-rack-items [data-place-asset]").forEach(function (li) {
         li.addEventListener("dragstart", function (e) {
           e.dataTransfer.setData(DRAG_MIME, li.getAttribute("data-place-asset"));
           e.dataTransfer.effectAllowed = "move";
         });
+      });
+      var DL = window.PolarisTopologyDeviceList;
+      if (!DL) return;
+      DL.wire(pane, {
+        dragMime: DRAG_MIME,
+        onFilter: function (f) { listFilter = f; },
+        onRemove: function (id) {
+          if (!state.editing) return;
+          state.placements = state.placements.filter(function (p) { return p.assetId !== id; });
+          changed();
+        },
+        onSelect: function (id) {
+          select(id);
+          var el = strip.querySelector(".topo-rack-blk.is-selected");
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        },
       });
     }
 
@@ -588,6 +625,9 @@
       setEditing: setEditing,
       sidebarHtml: sidebarHtml,
       wireSidebar: wireSidebar,
+      // The devices in a rack — map.js lists only these under the info card.
+      placedIds: function () { var o = {}; state.placements.forEach(function (p) { if (p.assetId) o[p.assetId] = true; }); return o; },
+      setSelected: function (id) { selectedId = id || null; paintSelected(); },
       cornerButtons: function () { return []; },
       canUndo: function () { return state.history.index > 0; },
       canRedo: function () { return state.history.index < state.history.entries.length - 1; },

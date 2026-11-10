@@ -210,6 +210,8 @@
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
     var drawHandler = null;
+    var listFilter = "";        // the Device List's filter text, kept across pane redraws
+    var selectedId = ctx.selectedId ? ctx.selectedId() : null;
     var baseLayer = null;
     var layerSwitch = null;
     var satelliteErrorShown = false;
@@ -333,6 +335,7 @@
           ctx.toast("This site has no coordinates — pan and zoom to it, then Done editing to keep that view");
         }
       }
+      map.on("click", function () { if (!drawHandler && selectedId) select(null); });
       polygonLayer = L.featureGroup().addTo(map);
       linkLayer = L.layerGroup().addTo(map);
       markerLayer = L.layerGroup().addTo(map);
@@ -524,6 +527,7 @@
         stageCodesFor(id);
         drawLinksFor(id);
       });
+      m.on("click", function () { select(id); });
       m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
       m.on("contextmenu", function (e) {
         if (!state.editing || typeof showRowMenu !== "function") return;
@@ -535,6 +539,7 @@
       });
       m.addTo(markerLayer);
       markers[id] = m;
+      paintSelected();
     }
     function place(id, latlng) {
       if (!state.editing || !nodeById[id]) return;
@@ -547,6 +552,20 @@
     }
     // Removing a placement never touches codes (rule 148) — but a change
     // this session staged for it no longer has a drop behind it.
+    // The selected device: its marker is ringed and map.js fills the details
+    // pane's info card with it. A click on the map's background clears it.
+    function select(id) {
+      selectedId = id || null;
+      paintSelected();
+      if (typeof ctx.selectAsset === "function") ctx.selectAsset(selectedId);
+    }
+    function paintSelected() {
+      Object.keys(markers).forEach(function (mid) {
+        var el = markers[mid].getElement && markers[mid].getElement();
+        if (el) el.classList.toggle("is-selected", mid === selectedId);
+      });
+    }
+
     function removePlacement(id) {
       delete state.placements[id];
       if (markers[id]) { markerLayer.removeLayer(markers[id]); delete markers[id]; }
@@ -739,38 +758,47 @@
     }
 
     // The details pane: what can be dragged on and what is already placed.
+    // The details pane's Device List (topology-device-list.js): every shown
+    // device, the ones on the map highlighted with an × to take them off.
     function sidebarHtml() {
-      var ids = Object.keys(nodeById);
-      var placed = ids.filter(function (id) { return state.placements[id]; });
-      var free = ids.filter(function (id) { return !state.placements[id]; });
-      function row(id, isPlaced) {
+      var DL = window.PolarisTopologyDeviceList;
+      if (!DL) return "";
+      var rows = Object.keys(nodeById).map(function (id) {
         var d = nodeById[id];
         var t = R.nodeAssetType(d) || "";
         var codes = currentCodes[id];
-        var meta = hasCodes(codes) ? codesLabel(codes) : (TYPE_INITIALS[t] ? t.replace(/_/g, " ") : t);
-        return '<li class="topo-phys-row' + (isPlaced ? " is-placed" : "") + '"' +
-          (!isPlaced && state.editing ? ' draggable="true" data-place-asset="' + esc(id) + '"' : "") + '>' +
-          '<span class="topo-phys-grip" aria-hidden="true">' + (isPlaced ? "✓" : "⋮⋮") + '</span>' +
-          '<span class="topo-phys-row-name">' + esc(d.label || id) + '</span>' +
-          '<span class="meta">' + esc(meta) + '</span></li>';
-      }
-      var hint = state.editing
-        ? "Drag a device onto the map. Inside a group polygon it takes that group's location codes when you save; outside every polygon its codes are left as they are."
-        : "Edit the map to place devices.";
-      return '<div class="topology-section topo-phys-side"><h5>Not placed (' + free.length + ')</h5>' +
-        '<p class="topology-type-hint" style="margin:0 0 6px">' + esc(hint) + '</p>' +
-        '<ul>' + (free.map(function (id) { return row(id, false); }).join("") || '<li class="muted">Every shown device is placed.</li>') + '</ul></div>' +
-        '<div class="topology-section topo-phys-side"><h5>Placed (' + placed.length + ')</h5><ul>' +
-        (placed.map(function (id) { return row(id, true); }).join("") || '<li class="muted">Nothing placed yet.</li>') + '</ul></div>';
+        return {
+          id: id,
+          label: d.label || id,
+          meta: hasCodes(codes) ? codesLabel(codes) : String(t).replace(/_/g, " "),
+          inUse: !!state.placements[id],
+        };
+      }).sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
+      });
+      return DL.html({
+        title: "Device List",
+        hint: state.editing ? "Drag device from list to map." : "Edit the map to place devices.",
+        rows: rows,
+        editing: state.editing,
+        filter: listFilter,
+        selectedId: selectedId,
+        removeLabel: "Remove from the map",
+      });
     }
-    // Wire the pane's drag rows (map.js re-renders the pane, then calls this).
     function wireSidebar(pane) {
-      if (!pane) return;
-      pane.querySelectorAll("[data-place-asset]").forEach(function (li) {
-        li.addEventListener("dragstart", function (e) {
-          e.dataTransfer.setData(DRAG_MIME, li.getAttribute("data-place-asset"));
-          e.dataTransfer.effectAllowed = "move";
-        });
+      var DL = window.PolarisTopologyDeviceList;
+      if (!pane || !DL) return;
+      DL.wire(pane, {
+        dragMime: DRAG_MIME,
+        onFilter: function (f) { listFilter = f; },
+        onRemove: function (id) { if (state.editing && state.placements[id]) removePlacement(id); },
+        onSelect: function (id) {
+          select(id);
+          // A placed device is brought into view; one not on the map just
+          // fills the info card.
+          if (markers[id] && map) map.panTo(markers[id].getLatLng());
+        },
       });
     }
 
@@ -790,6 +818,9 @@
       setEditing: setEditing,
       sidebarHtml: sidebarHtml,
       wireSidebar: wireSidebar,
+      // The devices on the map — map.js lists only these under the info card.
+      placedIds: function () { var o = {}; Object.keys(state.placements).forEach(function (id) { o[id] = true; }); return o; },
+      setSelected: function (id) { selectedId = id || null; paintSelected(); },
       beforeCommit: captureOsmView,
       cornerButtons: function () {
         return [
