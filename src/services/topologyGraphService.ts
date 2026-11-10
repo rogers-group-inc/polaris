@@ -31,6 +31,7 @@ import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js"
 import { INTERFACE_LAST_KNOWN_MS, inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
+import { loadRegionIndex, resolveLocation, type LocationStatus } from "./regionTreeService.js";
 import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
 
 // ─── Which of a site's switches an endpoint sits on (business rule 91) ──────
@@ -465,7 +466,34 @@ export async function fetchRecentSampleStats(
 // the whole object to a graph renderer (Cytoscape) without doing any extra
 // lookups. APs that could not be paired to a switch port fall back to a direct
 // edge from the FortiGate.
+/**
+ * The site's topology with every device's location RESOLVED through the
+ * site's region tree (rule 153): `location` is the full chain a short code
+ * (`ra:rack1`) stands for, `locationWritten` the codes as typed, and
+ * `locationStatus` whether the tree confirmed them ("resolved"), had nothing
+ * to say ("asWritten"), disagrees ("conflict": shown as written), can't
+ * place a lone floor ("ambiguous"), or names nothing it has ("unknown").
+ * An empty tree changes nothing. One query.
+ */
 export async function buildSiteTopology(siteId: string) {
+  const payload = await buildSiteTopologyAsWritten(siteId);
+  const index = await loadRegionIndex(siteId);
+  const conflicts: Array<{ id: string; hostname: string | null; status: LocationStatus; written: LocationCodes | null }> = [];
+  const resolve = (n: { id?: string; hostname?: string | null; location?: LocationCodes | null } | null | undefined): void => {
+    if (!n) return;
+    const written = n.location ?? null;
+    const r = resolveLocation(index, written);
+    Object.assign(n, { location: r.location, locationWritten: written, locationStatus: r.status });
+    if ((r.status === "conflict" || r.status === "ambiguous" || r.status === "unknown") && n.id) conflicts.push({ id: n.id, hostname: n.hostname ?? null, status: r.status, written });
+  };
+  resolve(payload.fortigate);
+  (payload.switches as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  (payload.aps as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  (payload.endpoints as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  return { ...payload, regionCount: index.size, regionConflicts: conflicts };
+}
+
+async function buildSiteTopologyAsWritten(siteId: string) {
     const id = siteId;
     const fg = await prisma.asset.findFirst({
       where: { id, status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },

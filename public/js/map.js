@@ -2085,6 +2085,18 @@
       });
     });
     items.push({ separator: true });
+    // Rule 153: the site's region tree (viewing is open to Device Map readers).
+    items.push({ label: "Location regions", title: "The site's areas, buildings, floors, rooms, racks and junction boxes", onSelect: function () {
+      if (!window.PolarisRegionTreePanel) return;
+      var siteId = topoState.siteId;
+      window.PolarisRegionTreePanel.open({
+        siteId: siteId,
+        data: function () { return topoState.data; },
+        canEdit: _canEditViews(),
+        onChanged: function () { return topoState.siteId === siteId ? refreshTopology({ silent: true }) : null; },
+      });
+    } });
+    items.push({ separator: true });
     var noEdit = "Creating and changing views requires Device Map write access";
     items.push({ label: "New view", disabled: !canEdit, title: canEdit ? "Create a view of this site" : noEdit, onSelect: openNewTopologyViewDialog });
     items.push({ label: "View settings", disabled: !canEdit || !current, title: canEdit ? "Rename this view or change its mode" : noEdit, onSelect: openTopologyViewSettings });

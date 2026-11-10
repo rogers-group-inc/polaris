@@ -1377,6 +1377,7 @@ model Asset {
   topologyLayouts    TopologyLayout[]
   topologyViews      TopologyView[]
   topologyBackgroundImages TopologyBackgroundImage[]
+  regionNodes        RegionNode[]
   processConnections AssetProcessConnection[]
 
   @@index([ipAddress])
@@ -4262,6 +4263,32 @@ model TopologyView {
   @@unique([siteId, name])
   @@index([siteId])
   @@map("topology_views")
+}
+
+// A site's region tree (business rule 153): areas > buildings > floors >
+// rooms > racks > junction boxes. Built FROM the location codes already in
+// device descriptions (only ever adding) and edited directly; it never
+// changes a description by itself. A name is unique per site at its level,
+// except a floor, which is unique within its parent — `uniqueKey` holds
+// that: "<kind>|<lower name>", or "floor|<parentId>|<lower name>". Short
+// codes (`ra:rack1` alone) resolve through it to the full chain.
+model RegionNode {
+  id        String       @id @default(uuid())
+  siteId    String       @map("site_id")
+  site      Asset        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  kind      String       // area | building | floor | room | rack | junctionBox
+  name      String
+  parentId  String?      @map("parent_id")
+  parent    RegionNode?  @relation("RegionParent", fields: [parentId], references: [id], onDelete: Restrict)
+  children  RegionNode[] @relation("RegionParent")
+  uniqueKey String       @map("unique_key")
+  createdBy String?      @map("created_by")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  @@unique([siteId, uniqueKey])
+  @@index([siteId])
+  @@map("region_nodes")
 }
 
 // The uploaded background image of a Topology-mode view (PNG / JPEG / WebP,

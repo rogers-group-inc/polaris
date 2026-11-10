@@ -3248,3 +3248,12 @@ with; it ignores floors and writes no floor code. Layers above and below (baseme
 their own background, polygons and devices. A device placed on a layer gets that layer's floor
 code; it keeps its other codes unless you drop it inside a polygon.
 
+### Rule 153
+
+**A site's location regions are a tree that names each place once.** Each area, building,
+floor, room, rack and junction box has one name per site (a floor, one per building), so a
+description can say just `r:Closet` or `ra:rack1` and Polaris knows the rest. The tree is built
+from the codes already in descriptions and only ever adds; you edit it in **Location regions**.
+A description that disagrees with the tree is shown as written and listed for you to fix.
+Renaming or moving a region offers to update the descriptions that name it, after a summary;
+it never changes one by itself.

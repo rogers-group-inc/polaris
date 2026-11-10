@@ -329,6 +329,32 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/regionTreeService.ts
+
+**What it owns:** A Device Map site's REGION TREE (business rule 153) — the `RegionNode` table (single writer): areas > buildings > floors > rooms > racks > junction boxes, a name unique per site per level except a floor (unique within its parent). And the resolution of a device's written location codes through it, so a short code (`ra:rack1` alone) stands for its full chain.
+
+**Public API:** types RegionKind / RegionNodeDto / LocationStatus / RegionIndex / RegionRewrite; pure uniqueKeyFor, buildRegionIndex, chainOf, resolveLocation; DB listRegionNodes, loadRegionIndex, createRegionNode, buildFromDescriptions, updateRegionNode (returns `rewrites`), mergeRegionNodes, deleteRegionNode.
+
+**Cross-service deps:** `prisma.regionNode`; `utils/locationCodes.ts → locationCodeValueProblem`. Consumed by `topologyGraphService.buildSiteTopology` (resolves every payload location once per request: one query).
+
+**Used by:**
+- `src/services/topologyGraphService.ts` — the topology payload's `location` (resolved) / `locationWritten` / `locationStatus`, plus `regionCount` and `regionConflicts`.
+- `src/api/routes/map.ts` — `GET /map/sites/:id/regions`, `POST …/regions/build`, `POST …/regions`, `PUT …/regions/:nodeId`, `POST …/regions/:nodeId/merge`, `DELETE …/regions/:nodeId` (writes at deviceMap write + scopeAssetParam, Events `map.region.*`).
+- `public/js/region-tree-panel.js` — the Location regions panel.
+
+**Invariants:**
+- **Never writes a description.** A rename / move returns the descriptions naming the region's OLD place in a full chain, with the codes they'd get; the client commits them through `POST …/topology/location-codes` (rule 148) only after the operator confirms.
+- **Build only adds.** An existing node keeps its place even when a description disagrees — that description reads `conflict`.
+- **An empty tree is a no-op**: `resolveLocation` returns the written codes with status `asWritten`, so an install that never builds a tree reads exactly as before.
+- **Disagreement is shown, never resolved by moving**: `conflict` / `ambiguous` / `unknown` locations stay as written and are listed.
+
+**When changing this:**
+- A new location level is the rule-15 tier lockstep (cross-cutting/location-codes.md) plus `REGION_KINDS` / `RANK` here and in region-tree-panel.js.
+- Scale: one `findMany` per topology GET (≤5000 nodes per site), resolution is O(devices × levels) in memory; build reads the site's payload once and creates in one `$transaction`.
+- Tests: `tests/unit/regionTree.test.ts`.
+
+---
+
 ## services/satelliteTileService.ts
 
 **What it owns:** The OPTIONAL, operator-configured satellite basemap of the Device Map topology view's Topology canvas — `Setting("satelliteConfig")` `{enabled, urlTemplate, apiToken, attribution, maxNativeZoom}` (single writer) and the tile proxy that serves it. OpenStreetMap has no aerial imagery and the browser's basemap rule is one tile host (polaris-ui-canon → tech-stack-frontend.md), so the provider (Esri, Mapbox, an in-house ArcGIS server…) is the operator's choice under their own licence, and Polaris fetches its tiles server-side. Off by default.

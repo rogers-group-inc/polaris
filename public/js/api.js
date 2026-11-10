@@ -1866,6 +1866,13 @@ const api = {
     // Saved topology views (business rules 147-149).
     satellite:          ()                 => request("GET",    "/map/satellite"),
     assetRegionViews:   (assetId)          => request("GET",    `/map/assets/${assetId}/region-views`),
+    // The site's region tree (rule 153).
+    regions:            (id)               => request("GET",    `/map/sites/${id}/regions`),
+    buildRegions:       (id)               => request("POST",   `/map/sites/${id}/regions/build`, {}),
+    createRegion:       (id, body)         => request("POST",   `/map/sites/${id}/regions`, body),
+    updateRegion:       (id, nodeId, body) => request("PUT",    `/map/sites/${id}/regions/${nodeId}`, body),
+    mergeRegion:        (id, nodeId, into) => request("POST",   `/map/sites/${id}/regions/${nodeId}/merge`, { into: into }),
+    deleteRegion:       (id, nodeId)       => request("DELETE", `/map/sites/${id}/regions/${nodeId}`),
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),

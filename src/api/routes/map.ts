@@ -68,6 +68,15 @@ import {
   MAX_BACKGROUND_IMAGE_BYTES,
 } from "../../services/topologyViewService.js";
 import multer from "multer";
+import {
+  listRegionNodes,
+  createRegionNode,
+  buildFromDescriptions,
+  updateRegionNode,
+  mergeRegionNodes,
+  deleteRegionNode,
+} from "../../services/regionTreeService.js";
+import type { LocationCodes } from "../../utils/locationCodes.js";
 import { getSatelliteStatus, getSatelliteTile } from "../../services/satelliteTileService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -411,6 +420,111 @@ router.delete("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req,
       message: `Topology view "${view.name}" deleted`,
       details: { viewId: view.id, name: view.name, mode: view.mode },
     });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── The site's region tree (rule 153) ──────────────────────────────────────
+// Read on the map router's deviceMap floor; every write is a view edit
+// (deviceMap write + the site's write scope). None of them writes a
+// description: a rename / move RETURNS the descriptions it would change,
+// committed (or not) through POST …/topology/location-codes.
+
+/** Every device of a site with the codes its description WRITES (for build / rewrite). */
+async function siteDevicesWritten(siteId: string): Promise<Array<{ assetId: string; name: string; written: LocationCodes | null }>> {
+  const t = await buildSiteTopology(siteId);
+  const rows = [t.fortigate as unknown].concat(t.switches as unknown[], t.aps as unknown[], t.endpoints as unknown[]) as Array<{
+    id: string; hostname?: string | null; ipAddress?: string | null; locationWritten?: LocationCodes | null;
+  }>;
+  return rows.filter((r) => r && r.id).map((r) => ({ assetId: r.id, name: r.hostname || r.ipAddress || r.id, written: r.locationWritten ?? null }));
+}
+
+const RegionCreateSchema = z.object({
+  kind: z.enum(["area", "building", "floor", "room", "rack", "junctionBox"]),
+  name: z.string().min(1).max(64),
+  parentId: z.string().uuid().nullable().optional(),
+});
+const RegionUpdateSchema = z.object({
+  name: z.string().min(1).max(64).optional(),
+  parentId: z.string().uuid().nullable().optional(),
+}).refine((b) => Object.keys(b).length > 0, "Nothing to update");
+const RegionMergeSchema = z.object({ into: z.string().uuid() });
+
+router.get("/sites/:id/regions", async (req, res, next) => {
+  try {
+    res.json({ nodes: await listRegionNodes(req.params.id as string) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions/build", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const devices = await siteDevicesWritten(siteId);
+    const result = await buildFromDescriptions(siteId, devices.map((d) => d.written), req.session?.username ?? null);
+    logEvent({
+      action: "map.region.tree_built",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Region tree built from descriptions: ${result.added} region${result.added === 1 ? "" : "s"} added`,
+      details: result,
+    });
+    res.json({ ...result, nodes: await listRegionNodes(siteId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const node = await createRegionNode(siteId, RegionCreateSchema.parse(req.body), req.session?.username ?? null);
+    logEvent({ action: "map.region.created", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${node.kind} "${node.name}" created`, details: { ...node } });
+    res.status(201).json({ node });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/sites/:id/regions/:nodeId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const patch = RegionUpdateSchema.parse(req.body);
+    const devices = await siteDevicesWritten(siteId);
+    const result = await updateRegionNode(siteId, req.params.nodeId as string, patch, devices);
+    logEvent({ action: "map.region.updated", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${result.node.kind} "${result.node.name}" updated (${result.rewrites.length} description${result.rewrites.length === 1 ? "" : "s"} name it)`,
+      details: { node: result.node, patch, rewrites: result.rewrites.length } });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions/:nodeId/merge", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const { into } = RegionMergeSchema.parse(req.body);
+    const node = await mergeRegionNodes(siteId, req.params.nodeId as string, into);
+    logEvent({ action: "map.region.merged", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region merged into ${node.kind} "${node.name}"`, details: { from: req.params.nodeId, into: node } });
+    res.json({ node });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/sites/:id/regions/:nodeId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const node = await deleteRegionNode(siteId, req.params.nodeId as string);
+    logEvent({ action: "map.region.deleted", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${node.kind} "${node.name}" deleted`, details: { ...node } });
     res.status(204).send();
   } catch (err) {
     next(err);

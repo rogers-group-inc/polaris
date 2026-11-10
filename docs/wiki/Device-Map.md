@@ -693,6 +693,20 @@ a region is still just the codes in device descriptions
 ([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views don't take a
 region; they draw the regions themselves.
 
+**Location regions: one name, one place.** **Location regions** in the view
+menu shows the site's areas, buildings, floors, rooms, racks and junction boxes
+as a tree. Each name is used once per site (a floor once per building), so a
+description can say just `r:Closet` or `ra:rack1` and the map knows it is in
+Mine › Shop › 1 › Closet. **Build from descriptions** fills the tree from the
+codes the site's descriptions already carry; it only adds, never removes or
+renames anything. Use **Add region**, and each region's **⋯** menu (Rename,
+Move, Merge into, Delete), to keep the tree right. Renaming or moving a region
+lists the descriptions that name it the old way and offers to update them; you
+can leave them as they are. Devices whose codes disagree with the tree, name a
+floor without its building, or name a region the tree doesn't have are listed
+under **Devices to check** and drawn as their description says. Until a tree
+is built, nothing about the map changes ([rule 153](Business-Rules#rule-153)).
+
 **Saving a description that names a new region offers a view for it.** When
 you save a device's description (in its Edit form, or with right-click on the
 map) and it names a room, rack or junction box that no Wall or Rack view stands

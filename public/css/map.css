@@ -944,6 +944,16 @@
 /* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
    an uploaded floor plan, with location-group polygons and placed devices. */
 .topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+/* The Regions panel (region-tree-panel.js, rule 153). */
+.region-tree, .region-tree-conflicts { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.region-tree-row { display: flex; align-items: center; gap: 8px; min-height: 30px; border-radius: var(--radius-sm); }
+.region-tree-row:hover { background: var(--color-hover-tint); }
+.region-tree-kind { width: 92px; flex: none; font-size: 0.72rem; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.region-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-tree-code { font-size: 0.75rem; color: var(--color-text-secondary); }
+.region-tree-more { flex: none; padding: 0 6px; font-size: 16px; }
+.region-tree-h { margin: 14px 0 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-secondary); }
+.region-tree-conflicts li { padding: 4px 0; font-size: 0.85rem; }
 /* The floor Layer control (rule 152): left edge, vertically centred. */
 .topo-layer-ctl {
   position: absolute;
