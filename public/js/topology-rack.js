@@ -569,9 +569,9 @@
       var drag = state.editing;
       var items = '<div class="topology-section topo-rack-items"><h5>Rack items</h5><ul>' +
         '<li class="topo-device-row topo-rack-item-row"' + (drag ? ' draggable="true" data-place-asset="' + CABLE_TOKEN + '"' : '') + '>' +
-          '<span class="topo-rack-cable-swatch" aria-hidden="true"></span><span class="topo-device-name">Cable management</span><span class="meta">placeholder</span></li>' +
+          '<span class="topo-rack-cable-swatch" aria-hidden="true"></span><span class="topo-device-name">Cable management</span></li>' +
         '<li class="topo-device-row topo-rack-item-row"' + (drag ? ' draggable="true" data-place-asset="' + THIRD_PARTY_TOKEN + '"' : '') + '>' +
-          '<span class="topo-rack-third-swatch" aria-hidden="true"></span><span class="topo-device-name">Third party</span><span class="meta">named</span></li>' +
+          '<span class="topo-rack-third-swatch" aria-hidden="true"></span><span class="topo-device-name">Third party</span></li>' +
         '</ul></div>';
       var rows = Object.keys(nodeById).map(function (id) {
         var d = nodeById[id];
