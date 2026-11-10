@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { sweepPhaseEnabled, finalizePhasesEnabled, scopedFinalizeAssetIds, firewallNamedForScopedGate, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, cascadeControllerOf, type SyncMode } from "../../src/services/discovery/discoveryEngine.js";
+import { sweepPhaseEnabled, finalizePhasesEnabled, scopedFinalizeAssetIds, assetOnlyPostSyncPassesEnabled, vcenterPassEnabled, type SyncMode } from "../../src/services/discovery/discoveryEngine.js";
+import { firewallNamedForScopedGate, cascadeControllerOf } from "../../src/services/discovery/dhcp/staleFirewalls.js";
 import { isVouchedManagedDevice, isSightedAnywhere, resolveSweepController, type ManagedDeviceSightings, type SweepControllerContext } from "../../src/services/discovery/dhcp/staleManagedDevices.js";
 import { vcenterSweepBlockedReason } from "../../src/services/vcenterService.js";
 
