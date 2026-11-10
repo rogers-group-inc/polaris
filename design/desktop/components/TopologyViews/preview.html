@@ -1,0 +1,84 @@
+<!-- @dsCard group="Data" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Topology views</title>
+<style>
+  body { padding: 24px; }
+  .demo-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; }
+  .demo-cap { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); margin: 0 0 6px; }
+  .demo-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .demo-head h3 { margin: 0; font-size: 1rem; }
+  .demo-types { width: 300px; padding: 10px 12px; background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .demo-types h5 { margin: 0 0 8px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-tertiary); }
+  .demo-type { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 0.82rem; }
+  .demo-type.off { color: var(--color-text-tertiary); }
+  .demo-eye { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg-primary); color: var(--color-text-secondary); padding: 0; }
+  .demo-eye.on { color: var(--color-accent); border-color: var(--color-accent); }
+  .demo-count { margin-left: auto; font-family: "Roboto Mono", monospace; font-size: 0.75rem; color: var(--color-text-tertiary); }
+  .demo-rack { width: 260px; }
+  .demo-rack-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; font-size: 0.86rem; }
+  .demo-rack-body { display: flex; border: 1px solid var(--color-border); background: var(--color-bg-primary); }
+  .demo-rail { width: 28px; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
+  .demo-rail span { height: 16px; line-height: 16px; font: 9px "Roboto Mono", monospace; text-align: center; color: var(--color-text-tertiary); border-bottom: 1px solid var(--color-border-light); box-sizing: border-box; }
+  .demo-bay { position: relative; flex: 1; height: 192px; background-image: repeating-linear-gradient(to bottom, transparent 0 15px, var(--color-border-light) 15px 16px); }
+  .demo-blk { position: absolute; left: 4px; right: 4px; box-sizing: border-box; display: flex; align-items: center; padding: 0 8px; border: 1.5px solid var(--color-success); border-radius: 3px; background: var(--color-surface); font-size: 11px; font-weight: 600; }
+  .demo-blk .m { margin-left: auto; font-weight: 400; font-size: 10px; color: var(--color-text-tertiary); }
+  .demo-blk.cable { border: 1px solid var(--color-border); font-weight: 500; color: var(--color-text-secondary); background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px); }
+  .demo-blk.ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); }
+</style>
+</head>
+<body>
+  <div class="page-header"><h2>Topology views</h2></div>
+  <p class="hint">
+    A Device Map site has a default view and may have more, shared by everyone who can open the map
+    (business rule 147). Each view has ONE mode — Layer 2, Topology or Rack — and the device types it
+    shows. The header names the view and its mode; the details pane starts with the Device types toggles.
+  </p>
+
+  <p class="demo-cap">Header — the view picker and the mode pill</p>
+  <div class="demo-head">
+    <h3>Site topology — HQ-FGT01</h3>
+    <button type="button" class="btn btn-secondary btn-sm">View <strong>Plant floor plan</strong> ▾</button>
+    <span class="badge badge-readonly">Topology view</span>
+  </div>
+
+  <div class="demo-row" style="margin-top:20px">
+    <div>
+      <p class="demo-cap">Details pane — Device types</p>
+      <div class="demo-types">
+        <h5>Device types</h5>
+        <div class="demo-type"><button type="button" class="demo-eye on" disabled aria-label="Firewalls are always shown">●</button>Firewalls <span class="hint" style="margin:0">root</span><span class="demo-count">1</span></div>
+        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide routers">●</button>Routers<span class="demo-count">1</span></div>
+        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide switches">●</button>Switches<span class="demo-count">2</span></div>
+        <div class="demo-type"><button type="button" class="demo-eye on" aria-label="Hide access points">●</button>Access points<span class="demo-count">4</span></div>
+        <div class="demo-type off"><button type="button" class="demo-eye" aria-label="Show servers">○</button>Servers<span class="demo-count">3</span></div>
+        <div class="demo-type off"><button type="button" class="demo-eye" aria-label="Show workstations">○</button>Workstations<span class="demo-count">112</span></div>
+        <p class="hint" style="margin:6px 4px 0">Shown until you close the map. Edit the map to save them with the view.</p>
+      </div>
+    </div>
+    <div>
+      <p class="demo-cap">Rack view — 12U shown, front face</p>
+      <div class="demo-rack">
+        <div class="demo-rack-head"><strong>Rack A</strong><span class="hint" style="margin:0">42U · Front</span><button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto">⟲ Rotate</button></div>
+        <div class="demo-rack-body">
+          <div class="demo-rail"><span>42</span><span>41</span><span>40</span><span>39</span><span>38</span><span>37</span><span>36</span><span>35</span><span>34</span><span>33</span><span>32</span><span>31</span></div>
+          <div class="demo-bay">
+            <div class="demo-blk" style="top:16px;height:16px">HQ-FGT01<span class="m">firewall · 1U</span></div>
+            <div class="demo-blk cable" style="top:32px;height:16px">Cable management<span class="m">1U</span></div>
+            <div class="demo-blk" style="top:48px;height:32px">PL-SW1<span class="m">switch · 2U</span></div>
+            <div class="demo-blk ghost" style="top:96px;height:16px">PDU-2 (rear)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint" style="margin-top:20px">
+    A Topology view's Save lists every description whose location codes change (a device dropped inside a
+    group polygon; rule 148) before writing them. Changing a view's mode resets it after a warning that
+    lists what goes (rule 149).
+  </p>
+</body>
+</html>

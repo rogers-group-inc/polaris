@@ -984,6 +984,113 @@
 .topo-phys-group .topo-phys-codes { margin-left: auto; }
 .topo-phys-group-new { margin-top: 10px; }
 .topo-phys-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+/* Rack mode (topology-rack.js, rules 147 / 149): racks side by side, U1 at
+   the bottom of each rail, one rack unit = 16px (U_PX — change both). */
+.topo-rack-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  padding: 24px 32px 56px;
+  overflow: auto;
+  background: var(--color-bg-secondary);
+}
+.topo-rack { flex: none; width: 300px; display: flex; flex-direction: column; }
+.topo-rack.is-dragging { opacity: 0.6; transform: rotate(1deg); }
+.topo-rack-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  user-select: none;
+}
+.is-editing .topo-rack-head[data-rack-grip] { cursor: grab; }
+.topo-rack-name { font-weight: 600; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-rack-units { font-family: "Roboto Mono", monospace; font-size: 0.72rem; color: var(--color-text-tertiary); white-space: nowrap; }
+.topo-rack-rotate { margin-left: auto; }
+.topo-rack-body { display: flex; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-bg-primary); }
+.topo-rack-rail { width: 30px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
+.topo-rack-rail span {
+  height: 16px;
+  line-height: 16px;
+  font-family: "Roboto Mono", monospace;
+  font-size: 9px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border-light);
+  box-sizing: border-box;
+}
+.topo-rack-bay {
+  position: relative;
+  flex: 1;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 15px, var(--color-border-light) 15px 16px);
+}
+.topo-rack-blk {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1.5px solid var(--color-success);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.is-editing .topo-rack-blk:not(.is-ghost) { cursor: move; }
+.topo-rack-blk-name { overflow: hidden; text-overflow: ellipsis; }
+.topo-rack-blk-meta { margin-left: auto; font-weight: 400; font-size: 10px; color: var(--color-text-tertiary); }
+.topo-rack-blk.is-ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); font-weight: 500; }
+.topo-rack-blk.is-cable {
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px);
+}
+.topo-rack-grip-top, .topo-rack-grip-bottom {
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-accent);
+  opacity: 0;
+  cursor: ns-resize;
+}
+.topo-rack-grip-top { top: -1px; }
+.topo-rack-grip-bottom { bottom: -1px; }
+.topo-rack-blk:hover .topo-rack-grip-top, .topo-rack-blk:hover .topo-rack-grip-bottom { opacity: 1; }
+.topo-rack-add {
+  flex: none;
+  width: 120px;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-style: dashed;
+}
+.topo-rack-add-plus { font-size: 24px; line-height: 1; }
+.topo-rack-cable-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  border: 1px solid var(--color-border);
+  background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 3px, var(--color-bg-elevated) 3px 4px);
+}
 .topology-info .topology-section li .meta {
   color: var(--color-text-tertiary);
   font-family: "Roboto Mono", monospace;

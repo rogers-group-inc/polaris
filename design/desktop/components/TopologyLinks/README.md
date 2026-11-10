@@ -7,9 +7,9 @@ How the Device Map topology draws a link between two devices, and what its hover
 Every link starts as one neutral line. It changes only when it has something to say:
 
 - **A cable takes the colour and weight of its speed.** The speed is the slower of the two ends' reported interface speeds; anything faster than 10 Gb (an aggregate, 25 / 40 / 100 Gb) reads as 10 Gb. No reading at either end leaves the link neutral.
-- **A wireless mesh backhaul is dashed** and turns yellow, orange, then red as its signal weakens. No signal reading (a controller polled over SNMP only) leaves it neutral.
+- **A wireless mesh backhaul is dashed**: green while the signal is good, then yellow, orange and red as it weakens. No signal reading (a controller polled over SNMP only) leaves it neutral.
 
-Warm hues belong to signal alone, so a slow cable never reads as a failing radio. How a link was found (controller data, interface naming, LLDP, an AP uplink) is not a colour; it is in the tooltip.
+Signal hues (green, yellow, orange, red) belong to signal alone, so a slow cable never reads as a failing radio. How a link was found (controller data, interface naming, LLDP, an AP uplink) is not a colour; it is in the tooltip.
 
 ## Palette
 
@@ -23,7 +23,8 @@ Hex, not tokens: Cytoscape paints the canvas from the stylesheet and the export 
 | 1 Gb | `#14b8a6` | `#0f766e` | 2.4 px | solid |
 | 100 Mb | `#94a3b8` | `#64748b` | 1.8 px | solid |
 | 10 Mb | `#94a3b8` | `#64748b` | 1.6 px | round dots |
-| Speed not known / good signal / no signal reading | `#5b6478` | `#b4bcc8` | 2 px (mesh 2.4 px dashed) | solid / dashed |
+| Speed not known / no signal reading | `#5b6478` | `#b4bcc8` | 2 px (mesh 2.4 px dashed) | solid / dashed |
+| Signal good, −65 dBm or better | `#22c55e` | `#16a34a` | 2.4 px | dashed |
 | Signal fair, −66 to −72 dBm | `#eab308` | `#ca8a04` | 2.4 px | dashed |
 | Signal weak, −73 to −80 dBm | `#f97316` | `#ea580c` | 2.4 px | dashed |
 | Signal poor, below −80 dBm | `#ef4444` | `#dc2626` | 2.4 px | dashed |

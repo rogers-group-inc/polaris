@@ -2201,8 +2201,11 @@
       if (loss.racks && view.mode === "rack") items.push(loss.racks + " rack" + (loss.racks === 1 ? "" : "s"));
       if (loss.rackPlacements) items.push(loss.rackPlacements + " racked item" + (loss.rackPlacements === 1 ? "" : "s"));
     }
-    if (view.mode === "layer2") items.push("its hand-placed device positions (the automatic layout comes back)");
-    items.push("its saved restore point");
+    if (view.mode === "layer2") {
+      items.push("its hand-placed device positions (the automatic layout comes back)");
+      items.push("its saved restore points");
+    }
+    if (!items.length) items.push("nothing yet — the view is empty");
     var target = VIEW_MODE_LABELS[mode];
     var body =
       '<p style="margin:0 0 10px">Changing the mode resets <strong>' + escapeHtml(view.name) + '</strong> to a new ' + escapeHtml(target) + ' view. This removes, for everyone:</p>' +

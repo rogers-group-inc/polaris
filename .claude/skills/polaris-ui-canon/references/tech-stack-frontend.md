@@ -85,6 +85,9 @@ Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse c
 (`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
 `_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
 picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.
+**The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
+(no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (16) must
+match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.
 
 Under each end's port line `_opticsTipRow` adds that port's
 SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,

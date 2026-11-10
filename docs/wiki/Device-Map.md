@@ -600,6 +600,26 @@ skipped. On a FortiSwitch or FortiAP the new description is also sent to the
 device when description sync is on. **Load** offers **Discard changes since
 the last save**, and **Export** copies a picture of the map.
 
+**A Rack view** opens with one empty 42U rack, its U numbers up the rail
+(U1 at the bottom). In edit mode:
+
+- Drag a device from **Not racked** onto a rack: it lands as a 1U block at the
+  U under the pointer, or the nearest free U. Drag **Cable management** from
+  **Rack items** to add a placeholder; you can add as many as you need.
+- Drag a block's top or bottom edge to change its height, and its body to
+  move it within a rack or to another rack. Both move a U at a time and stop
+  at the next item or the end of the rack.
+- Right-click a block to move it to the other face, make it half or full
+  depth, or remove it. A device takes its U on both the front and the back
+  unless it is half depth, so a half-depth front device and a half-depth rear
+  device can share a U.
+- **Rotate** above a rack shows its other face (while you are only viewing,
+  that is just a look). **Add rack** adds a 42U rack to the right, drag a rack
+  by its header to move it, and double-click a rack to rename it, change its
+  size or delete it. A rack can't shrink below something racked in it.
+
+Racking a device never changes its description.
+
 **Changing a view's mode resets it.** Polaris first shows what the change
 removes: placed devices, group polygons, the uploaded background and racks. If
 you accept, the view starts again in the new mode with the default device

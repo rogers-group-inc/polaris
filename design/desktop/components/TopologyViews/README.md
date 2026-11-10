@@ -1,0 +1,28 @@
+# Topology views
+
+Saved views of a Device Map site's topology (business rules 147-149). A site has a default view
+and may have more; views are shared, and creating or changing one needs Device Map write.
+
+## The rules
+
+- **A view has exactly one mode**, chosen from a dropdown in New view / View settings:
+  **Layer 2** (the automatic graph), **Topology** (a map or floor plan you place devices on, with
+  location-group polygons) or **Rack** (rack elevations). There is no in-view mode toggle.
+- **Changing the mode resets the view** after a warning (a danger button, on its own overlay above
+  the settings dialog) that lists what it removes.
+- **The header** carries the view picker (`View <name> ▾`, the view menu) and a read-only
+  `badge-readonly` pill naming the mode.
+- **The details pane starts with Device types**: one row per asset type on the site, an eye toggle,
+  the count. Firewall is the root and locked on; firewalls, routers, switches and access points are
+  on by default. A switched-on type is drawn in the graph.
+- **Every mode wears the same corner tools**, as icon buttons: Mouse controls, Export,
+  Edit (pencil) / Done editing (check mark), Save (disk), Load (folder), Undo, Redo, and the Legend
+  button, whose legend opens to its right and closes on a second click. Topology adds Background
+  (map icon) and Draw polygon in edit mode.
+- **Rack**: U1 at the bottom of each rail, 16px per U. A device is a solid block bordered in its
+  health colour; Cable management is a striped placeholder; a full-depth item seen from its other
+  face is a dashed outline.
+
+The live implementation is `public/js/map.js` (picker, toggles, dialogs), `public/js/topology-physical.js`
+(Topology) and `public/js/topology-rack.js` (Rack); their styles live in `public/css/map.css`, so the
+preview redraws them with its own helpers.
