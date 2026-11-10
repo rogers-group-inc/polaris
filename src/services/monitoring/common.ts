@@ -8,7 +8,7 @@
 import { performance } from "node:perf_hooks";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "../../utils/logger.js";
-import { ProbeResult } from "./types.js";
+import { type ProbeResult } from "./types.js";
 
 export function finish(startedAt: number, success: boolean, error?: string): ProbeResult {
   const ms = Math.max(0, Math.round(performance.now() - startedAt));

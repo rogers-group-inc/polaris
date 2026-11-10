@@ -20,7 +20,7 @@ import { alarmStatusToFlag } from "../../utils/hardwareSensors.js";
 import { median } from "../../utils/stats.js";
 import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../../utils/cpuCores.js";
 import { sdwanDimensionMatch, sdwanChildrenYielding } from "../../utils/sdwanDimensions.js";
-import { SERIES_CAP, lookbackMsFor, aggregateSinceMs, DbRule, ScopeAssetRow, Reading, compareNum, compareValue } from "./ruleModel.js";
+import { SERIES_CAP, lookbackMsFor, aggregateSinceMs, type DbRule, type ScopeAssetRow, type Reading, compareNum, compareValue } from "./ruleModel.js";
 import { assetIsAnsweringProbes, interfaceIsPinned, poeFaultCoversUnpinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned } from "./scope.js";
 
 // ─── Reading resolvers ──────────────────────────────────────────────────────

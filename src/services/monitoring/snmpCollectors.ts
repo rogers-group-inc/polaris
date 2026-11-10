@@ -30,7 +30,7 @@ import { basePortToIfName, fdbStatusIsUsable, fdbStatusLabel, resolveFdbIdentity
 import { buildArpNeighbors, type ArpNeighborEntry } from "../../utils/arpNeighbors.js";
 import { decodePortList, derivePortVlans, isVlanId, type PortVlanConfig, type VlanMembership } from "../../utils/portVlans.js";
 import { matchTrunkPeer, parseTrunkPortMap, trunkMemberMap, type TrunkPortEntry } from "../../utils/fortiswitchTrunkMap.js";
-import { TelemetrySample, InterfaceSample, StorageSample, HardwareSensorSample, LldpNeighborSample, WirelessStationSample, PhysicalEntitySample, SystemInfoSample } from "./types.js";
+import { type TelemetrySample, type InterfaceSample, type StorageSample, type HardwareSensorSample, type LldpNeighborSample, type WirelessStationSample, type PhysicalEntitySample, type SystemInfoSample } from "./types.js";
 import { startPhase, clampPct } from "./common.js";
 import { OID, walkLoopError, snmpWalk, snmpVbToString, snmpVbToNumber, snmpMacFromBuffer, withSnmpSession, snmpGetScalar, snmpMultiGet } from "./snmpCore.js";
 import { overlayFortiswitchTrunkMembers } from "./fortiswitchTrunks.js";

@@ -5,6 +5,8 @@
  */
 
 import { prisma } from "../../db.js";
+// Business rule 78 — who silenced a dependency-suppressed device, for the
+// alert a down automation raises about it anyway.
 import { newBlameLoadCache, type BlameLoadCache } from "../dependencyTreeService.js";
 import { type AssetTemplateDetail } from "../../utils/notificationTemplate.js";
 

@@ -7,7 +7,7 @@
 import { triggerSummary, triggerTokenParts, pathConditionPhrase } from "../../utils/triggerSummary.js";
 import { type AutomationAction, ruleHasAnyEscalation, allRuleActionRefs, type AlertMember, wholeGroupSubject, countNoun, type SpanCounts, activeMembers, primaryMember, renderMemberList, dimensionNounOf, followUpPolicy, forecastLevelsOf, allRepeatsOf } from "../notificationTypes.js";
 import { renderNotificationTemplate, templateNeedsAsset, notificationsPageUrl, type TemplateContextParts } from "../../utils/notificationTemplate.js";
-import { DbRule, Reading } from "./ruleModel.js";
+import { type DbRule, type Reading } from "./ruleModel.js";
 
 // ─── Message + email templating ─────────────────────────────────────────────
 // All interpolation goes through renderNotificationTemplate (single-brace

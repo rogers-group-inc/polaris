@@ -9,7 +9,7 @@ import { logEvent } from "../eventLogService.js";
 import { type AutomationAction, alertOwnerOf, type DeliveryOwner } from "../notificationTypes.js";
 import { scopeRegionTagsOf } from "../notificationRecipientService.js";
 import { executeActions, type ActionExecContext } from "../automationActionService.js";
-import { DbRule, Reading } from "./ruleModel.js";
+import { type DbRule, type Reading } from "./ruleModel.js";
 import { regionSnapshot } from "./scope.js";
 
 /** Best-effort action fan-out — never breaks rule evaluation. (executeActions

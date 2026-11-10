@@ -6,7 +6,7 @@
 
 import { prisma } from "../../db.js";
 import { enqueueTelemetrySample, enqueueHardwareSensorSamples } from "../sampleWriteBuffer.js";
-import { TelemetrySample, HardwareSensorSample, CollectionResult } from "./types.js";
+import { type TelemetrySample, type HardwareSensorSample, type CollectionResult } from "./types.js";
 
 // ─── Persisting telemetry / system info ─────────────────────────────────────
 

@@ -16,7 +16,7 @@ import { classifyHardwareSensor, normalizeRestAlarmStatus } from "../../utils/ha
 import { arpNeighborsFromFortiosRest, type ArpNeighborEntry } from "../../utils/arpNeighbors.js";
 import { parseFortiosIpsec, parseFortiosSslVpn, type IpsecTunnelSample, type IpsecConnectionSample } from "../../utils/fortiosIpsec.js";
 import { pickRestApiCredential, restApiCredentialAuth, type CredentialLike } from "../../utils/fortinetRestCredential.js";
-import { TelemetrySample, InterfaceSample, HardwareSensorSample, PerfSlaSample, SdwanRuleSample, LldpNeighborSample, SystemInfoSample } from "./types.js";
+import { type TelemetrySample, type InterfaceSample, type HardwareSensorSample, type PerfSlaSample, type SdwanRuleSample, type LldpNeighborSample, type SystemInfoSample } from "./types.js";
 import { startPhase, clampPct } from "./common.js";
 
 // ─── FortiOS collectors ─────────────────────────────────────────────────────

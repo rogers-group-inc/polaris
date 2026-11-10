@@ -9,10 +9,12 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { poeIsFault } from "../../utils/poePorts.js";
 import { REGION_TAG_PREFIX } from "../notificationService.js";
 import { type Trigger, type RuleScope, scopeCidrOf, evaluateScopeCondition } from "../notificationTypes.js";
+// Business rule 78 — who silenced a dependency-suppressed device, for the
+// alert a down automation raises about it anyway.
 import { resolveDependencyBlame } from "../dependencyTreeService.js";
 import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { ipInCidr } from "../../utils/cidr.js";
-import { ScopeAssetRow, collectLeafRefs } from "./ruleModel.js";
+import { type ScopeAssetRow, collectLeafRefs } from "./ruleModel.js";
 import { _blameCache } from "./assetDetail.js";
 
 // ─── Scope → assets ─────────────────────────────────────────────────────────

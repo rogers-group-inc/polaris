@@ -13,15 +13,17 @@ import { sensorReadingDisplay } from "../alertChartService.js";
 import { resolveAssetCadenceSec } from "../notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, sameAssetDownAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "../notificationService.js";
 import { isPathMetric, type Trigger, type RuleScope, type AutomationAction, type RuleActionCarrier, expandResetActions, parseEscalationFired, severityRank, type AlertMember, type GroupChange, classifyGroupChanges, describeGroupChanges, ruleGroupsByAsset, alertScopeOf, groupKeyOf, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, type SpanCounts, memberMatches, queueGroupChanges, refreshMemberContext, type PendingGroupChanges, mergeMembers, markMemberLeft, activeMembers, groupSeverity, primaryMember, renderMemberList, forecastLevelsOf, type ForecastLevel, scopeIsUnconstrained, isDownDetectionTrigger } from "../notificationTypes.js";
+// Business rule 78 — who silenced a dependency-suppressed device, for the
+// alert a down automation raises about it anyway.
 import { resolveDependencyBlame } from "../dependencyTreeService.js";
 import { dependencyTriggerSummary } from "../../utils/notificationTemplate.js";
 import { mostSpecificContaining } from "../../utils/cidr.js";
 import { logger } from "../../utils/logger.js";
 import { buildTemplateContext, forecastCountdown, setRecoverySentence } from "../../utils/notificationTemplate.js";
-import { DbRule, Reading } from "./ruleModel.js";
+import { type DbRule, type Reading } from "./ruleModel.js";
 import { _blameCache, assetDetail } from "./assetDetail.js";
 import { loadScopeAssetIds, regionSnapshot } from "./scope.js";
-import { CompositeFireInfo, readingContextParts, applyFollowUpPolicy, renderMessage, round2, ruleWantsContext, groupWantsContext, groupWantsAssetDetail, ruleWantsAssetDetail } from "./templating.js";
+import { type CompositeFireInfo, readingContextParts, applyFollowUpPolicy, renderMessage, round2, ruleWantsContext, groupWantsContext, groupWantsAssetDetail, ruleWantsAssetDetail } from "./templating.js";
 import { enqueueAlertActions, groupOwnersOf, groupOwnerOf, ownerActions } from "./alertActions.js";
 import { CLEARED_RUNS, metSinceJson, tierForSeverity, bandNotifyOf, severityLevel } from "./severityBands.js";
 

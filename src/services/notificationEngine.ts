@@ -1,3 +1,31 @@
+/**
+ * src/services/notificationEngine.ts
+ *
+ * The notification rule evaluator. Two paths, both driven by the
+ * evaluateNotificationRules job:
+ *
+ *  1. Threshold / state path (asset_metric, asset_state, host_metric):
+ *     batch-load in-scope assets + their latest sample readings, compare
+ *     against the rule, and drive a per-(rule, asset, dimension) firing state
+ *     machine (clear → pending → firing) with sustained-duration + debounce.
+ *     Fires only on the clear→firing crossing; clears per the rule's
+ *     clearBehavior (manual / auto / timed). Modeled on capacityWatch's
+ *     transition guard — state writes happen only on transition, so the hot
+ *     path is bounded by the number of *changes*, not the fleet size.
+ *
+ *  2. Event-tail path (event, change): consume new Event audit rows since a
+ *     stored cursor and match them against event/change rules. Change rules
+ *     are sugar over the change-Events the persist* functions emit.
+ *
+ * The engine WRITES notifications; notificationService is the read/lifecycle
+ * side. previewRule() dry-runs a draft against current data with no writes
+ * (the builder's Test button).
+ *
+ * CQ-B063: the scope, readings, evaluation, alert lifecycle, event tail and
+ * preview now live in src/services/notifications/*.ts (layered, none imports
+ * this file back); this file keeps the entry point and re-exports every
+ * public name.
+ */
 
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
@@ -5,7 +33,7 @@ import { type Trigger, type RuleScope, type EmailComposition, ruleGroupsByAsset,
 import { buildComposedEmail } from "./notificationRecipientService.js";
 
 // CQ-B063 — the rule model, comparators, lookback windows (notifications/ruleModel.ts).
-import { DbRule } from "./notifications/ruleModel.js";
+import { type DbRule } from "./notifications/ruleModel.js";
 
 // CQ-B063 — the per-tick asset-detail + blame caches (notifications/assetDetail.ts).
 import { _assetDetailCache, _blameCache, clearAssetDetailCache } from "./notifications/assetDetail.js";
@@ -14,7 +42,7 @@ import { _assetDetailCache, _blameCache, clearAssetDetailCache } from "./notific
 import { clearScopeAssetCache } from "./notifications/scope.js";
 
 // CQ-B063 — the alert lifecycle: fire / reset / recover + grouped alerts, business rule 75 (notifications/alertLifecycle.ts).
-import { PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends } from "./notifications/alertLifecycle.js";
+import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends } from "./notifications/alertLifecycle.js";
 
 // CQ-B063 — threshold / state + composite evaluation (notifications/evaluation.ts).
 import { evaluationOrder, evaluateThresholdRule, evaluateCompositeRule } from "./notifications/evaluation.js";
@@ -23,9 +51,9 @@ import { evaluationOrder, evaluateThresholdRule, evaluateCompositeRule } from ".
 import { runEventRuleTimedClear, runEventTail, applyLinkedForecastLevels } from "./notifications/eventTail.js";
 
 // CQ-B063 — the builder Test-button preview (notifications/preview.ts).
-export { PreviewMatch, CarveOutPeer, carveOutAggregate, applyCarveOutToMatches, previewRule, applicableTemplateTokens, previewAlertMessage } from "./notifications/preview.js";
+export { type PreviewMatch, type CarveOutPeer, carveOutAggregate, applyCarveOutToMatches, previewRule, applicableTemplateTokens, previewAlertMessage } from "./notifications/preview.js";
 
-export { globToRegExp, runEventRuleTimedClear, MaintenanceSpan, suppressedAtEventTime } from "./notifications/eventTail.js";
+export { globToRegExp, runEventRuleTimedClear, type MaintenanceSpan, suppressedAtEventTime } from "./notifications/eventTail.js";
 
 export { evaluationOrder } from "./notifications/evaluation.js";
 
@@ -34,7 +62,7 @@ export { forecastCountdownMoved } from "./notifications/alertLifecycle.js";
 export { tierForSeverity, bandNotifyOf } from "./notifications/severityBands.js";
 
 
-export { applyDeviceFilters, InterfaceStateRow, interfaceSampleCarries, interfaceStateSeries, streamFailingMinutes, readingMeets, recoveredMeets } from "./notifications/readings.js";
+export { applyDeviceFilters, type InterfaceStateRow, interfaceSampleCarries, interfaceStateSeries, streamFailingMinutes, readingMeets, recoveredMeets } from "./notifications/readings.js";
 
 export { assetCanTrigger, loadScopeAssetIds, loadScopeRegionSnapshots, isSuppressedForNotifications, frozenReadingIsFresh, assetIsAnsweringProbes, triggerHandsOffWhenDeviceDown, assetIsDown, interfaceIsPinned, poeFaultCoversUnpinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned } from "./notifications/scope.js";
 

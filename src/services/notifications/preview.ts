@@ -14,12 +14,12 @@ import { scopeMatchesAsset, type ScopeAsset } from "../notificationRuleService.j
 import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { buildComposedEmail } from "../notificationRecipientService.js";
 import { buildTemplateContext, renderNotificationTemplate, notificationsPageUrl, TEMPLATE_VARIABLES, type TemplateContextParts, type TemplateVariableScope } from "../../utils/notificationTemplate.js";
-import { DbRule, ScopeAssetRow, Reading, collectLeafRefs } from "./ruleModel.js";
+import { type DbRule, type ScopeAssetRow, type Reading, collectLeafRefs } from "./ruleModel.js";
 import { ASSET_DETAIL_SELECT } from "./assetDetail.js";
 import { loadScopeAssets } from "./scope.js";
 import { resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, recoveredMeets } from "./readings.js";
-import { CompositeFireInfo, readingContextParts, renderMessage } from "./templating.js";
-import { resolveLeafTruths, CompositeOutcome, compositeOutcomeForAsset, leafConditionLabel, compositeFireInfo, HOST_PSEUDO_ASSET, serverPathReadings } from "./evaluation.js";
+import { type CompositeFireInfo, readingContextParts, renderMessage } from "./templating.js";
+import { resolveLeafTruths, type CompositeOutcome, compositeOutcomeForAsset, leafConditionLabel, compositeFireInfo, HOST_PSEUDO_ASSET, serverPathReadings } from "./evaluation.js";
 import { applyLinkedForecastLevels } from "./eventTail.js";
 
 // ─── Preview (builder Test button) ──────────────────────────────────────────

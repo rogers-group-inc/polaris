@@ -10,7 +10,7 @@ import { AppError } from "../../utils/errors.js";
 import { fetchVcenterQuickStats, fetchVcenterHostSnapshot } from "../vcenterService.js";
 import { fetchRosterConnectivity, type FortiManagerConfig, type RosterDeviceStatus } from "../fortimanagerService.js";
 import { logger } from "../../utils/logger.js";
-import { ProbeResult, TelemetrySample, InterfaceSample, StorageSample, SystemInfoSample, CollectionResult } from "./types.js";
+import { type ProbeResult, type TelemetrySample, type InterfaceSample, type StorageSample, type SystemInfoSample, type CollectionResult } from "./types.js";
 import { finish } from "./common.js";
 
 // ─── vCenter warm caches ───────────────────────────────────────────────────

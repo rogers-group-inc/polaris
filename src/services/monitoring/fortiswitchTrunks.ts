@@ -5,7 +5,7 @@
  */
 
 import { stripTrunkRoleSuffix } from "../../utils/fortiswitchTrunkMap.js";
-import { InterfaceSample } from "./types.js";
+import { type InterfaceSample } from "./types.js";
 
 /**
  * Back-fill the trunk → physical-member relationship onto a managed

@@ -5,7 +5,7 @@
 
 import { Prisma } from "../../generated/prisma/client.js";
 import { type Trigger, type EscalationV2Config, type ResetConfig, type AutomationAction, type SeverityBand, type BandNotify, type Severity, severityForValue, type ResolvedTier, resolveTierLadder, normalizeEscalationToV2, numMeets, leadingRun, advanceRun } from "../notificationTypes.js";
-import { DbRule, Reading } from "./ruleModel.js";
+import { type DbRule, type Reading } from "./ruleModel.js";
 import { rulePrioritySubject, readingMeets, recoveredMeets } from "./readings.js";
 
 // ─── Severity bands (value-driven severity escalation) ──────────────────────

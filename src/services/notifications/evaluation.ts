@@ -13,12 +13,12 @@ import { pathCheckIdsInMaintenance } from "../maintenanceScheduleService.js";
 import { isPathTrigger, isPathMetric, pathTriggerIncludesServer, scopeForTrigger, PATH_SERVER_LABEL, type Trigger, type CompositeTrigger, type CompositeLeaf, type TriggerConditionGroup, severityRank, updateTierMetSince, sustainedSeverity, bandDescent, tierMetSinceChanged, ruleGroupsByAsset, METRIC_META, FIELD_META, dimensionSpaceOf, isTriggerLeaf, triggerSignature, scopeRank, forecastLevelsOf, triggerHoldPolls, advanceRun, sustainedSeverityByRun, ruleAlertsWhenDependencyDown, isAssetShadowed, type ShadowIndex as ShadowIndexOf } from "../notificationTypes.js";
 import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { type PrioritySeverity } from "../../utils/priorityTags.js";
-import { withRecoveryLookback, DbRule, ScopeAssetRow, Reading, engineSustainPolls, LeafRef, collectLeafRefs } from "./ruleModel.js";
+import { withRecoveryLookback, type DbRule, type ScopeAssetRow, type Reading, engineSustainPolls, type LeafRef, collectLeafRefs } from "./ruleModel.js";
 import { loadScopeAssets, isSuppressedForNotifications, suppressionOwedToMaintenance, frozenFreshnessFor, assetIsAnsweringProbes, triggerNeedsAnsweringDevice, triggerHandsOffWhenDeviceDown, assetIsDown, poeFaultCoversUnpinned, pinTestForTrigger } from "./scope.js";
-import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, SweepStateRow } from "./readings.js";
-import { CompositeFireInfo, round2 } from "./templating.js";
+import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
+import { type CompositeFireInfo, round2 } from "./templating.js";
 import { ruleHasBands, bandSeverityFor, tierLadderFor, readingRuns, tierRuns, CLEARED_RUNS, metSinceJson, metSinceOf, tierForSeverity } from "./severityBands.js";
-import { GroupBuffer, PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour } from "./alertLifecycle.js";
+import { type GroupBuffer, type PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour } from "./alertLifecycle.js";
 
 type ShadowIndex = ShadowIndexOf<DbRule>;
 
