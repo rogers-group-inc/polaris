@@ -453,7 +453,7 @@ export async function fetchRecentSampleStats(
 //     edges:     [{ source, target, label? }, ...]
 //   }
 //
-// `location` is { area, building, floor, room, junctionBox } (each
+// `location` is { area, building, floor, room, rack, junctionBox } (each
 // string|null) or null when the node carries no a:/b:/f:/r:/jb: codes —
 // resolved server-side by utils/locationCodes.ts: the Asset.description's
 // codes when it carries any (exclusively — no per-key fall-through), else

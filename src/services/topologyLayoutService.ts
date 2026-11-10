@@ -90,7 +90,7 @@ export function isValidViewKey(view: unknown): view is string {
   }
   if (rest === "topo") return true;
   if (!m && rest === "flat") return true;
-  return /^(?:[abfr]|jb)\|/.test(rest);
+  return /^(?:[abfr]|jb|ra)\|/.test(rest);
 }
 
 /** The TopologyLayout view-key prefix of a saved view ("" for the default view). */

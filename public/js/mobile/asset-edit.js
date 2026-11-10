@@ -587,7 +587,7 @@
 
       sectionLabel("Description & notes") +
       tf("Description", input("ae-description", a.description || "", ' maxlength="255" placeholder="e.g. b:Shop f:2 r:North Closet"'),
-        "Device Map grouping codes: <code>a:</code>area <code>b:</code>building <code>f:</code>floor <code>r:</code>room <code>jb:</code>junction box." +
+        "Device Map grouping codes: <code>a:</code>area <code>b:</code>building <code>f:</code>floor <code>r:</code>room <code>ra:</code>rack <code>jb:</code>junction box." +
         (target ? ' Written to the ' + esc(target.device) + ' <code>' + esc(target.field) + '</code> by Description Sync.' : '') +
         (target ? '<span id="ae-desc-cap" class="ae-warn" data-cap="' + target.cap + '" hidden></span>' : '')) +
       tf("Notes", '<textarea class="field" id="ae-notes" rows="3" placeholder="Optional notes">' + esc(a.notes || "") + '</textarea>') +

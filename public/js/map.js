@@ -1822,7 +1822,7 @@
   }
   function _codesText(c) {
     if (!c) return "no codes";
-    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["junctionBox", "jb"]]
+    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]]
       .filter(function (p) { return c[p[0]]; })
       .map(function (p) { return p[1] + ":" + c[p[0]]; });
     return parts.length ? parts.join(" ") : "no codes";
@@ -1839,7 +1839,7 @@
     }).join("");
     var body =
       '<p style="margin:0 0 10px">These devices were placed inside a group polygon, so their location codes change. ' +
-        'The free text in each description stays; only the a:/b:/f:/r:/jb: codes are replaced.</p>' +
+        'The free text in each description stays; only the a:/b:/f:/r:/ra:/jb: codes are replaced.</p>' +
       '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>' +
       '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. Devices placed outside every polygon keep their codes.</p>' +
@@ -2664,10 +2664,10 @@
       '<div style="margin-top:10px;font-size:0.8rem;color:var(--color-text-secondary)">' +
         'Device grouping shortcuts — include anywhere in the description:' +
         '<div style="margin-top:4px;font-family:monospace">' +
-          'a:<i>Area</i> &nbsp; b:<i>Building</i> &nbsp; f:<i>Floor</i> &nbsp; r:<i>Room</i> &nbsp; jb:<i>Junction box</i>' +
+          'a:<i>Area</i> &nbsp; b:<i>Building</i> &nbsp; f:<i>Floor</i> &nbsp; r:<i>Room</i> &nbsp; ra:<i>Rack</i> &nbsp; jb:<i>Junction box</i>' +
         '</div>' +
         '<div style="margin-top:4px;color:var(--color-text-tertiary)">' +
-          'e.g. <code>a:Mine b:Shop f:2 r:North Closet jb:112-305</code> — a value runs until the ' +
+          'e.g. <code>a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305</code> — a value runs until the ' +
           'next code, so multi-word names need no quotes. Codes in the asset’s Notes override ' +
           'the same code here.' +
         '</div>' +
@@ -3492,7 +3492,7 @@
     // are always drawn when one does — the Locations chip is gone.)
     topoState.hasLocationCodes = elements.some(function (el) {
       var d = el && el.data;
-      return !!(d && !d.source && (d.locA || d.locB || d.locF || d.locR || d.locJb));
+      return !!(d && !d.source && (d.locA || d.locB || d.locF || d.locR || d.locRa || d.locJb));
     });
 
     // Floor views present in this payload (empty unless some device carries
@@ -3789,7 +3789,7 @@
     // shape it nests inside (hit-testing hands the hover to the innermost
     // hull, so a jb inside a room inside a building lists all three).
     // Reuses the edge-tooltip element/positioning helpers.
-    var LOC_KIND_LABELS = { area: "Area", building: "Building", floor: "Floor", room: "Room", jb: "Junction box" };
+    var LOC_KIND_LABELS = { area: "Area", building: "Building", floor: "Floor", room: "Room", ra: "Rack", jb: "Junction box" };
     cyInstance.on("mouseover", "node[isLocGroup]", function (evt) {
       var parts = window.PolarisTopologyRender.locationGroupTooltipParts(cyInstance, evt.target);
       if (!parts.length) return;
@@ -4809,7 +4809,7 @@
   }
   function _locationText(loc) {
     if (!loc) return "";
-    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["junctionBox", "jb"]];
+    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
     return keys.filter(function (k) { return loc[k[0]]; }).map(function (k) { return k[1] + ":" + loc[k[0]]; }).join(" ");
   }
   function _topologyAssetCardHtml(data) {
@@ -5028,7 +5028,7 @@
 
   // The location tiers in nesting order — the same chain the grouping boxes
   // nest by (topology-render.js locationData).
-  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "junctionBox"];
+  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "rack", "junctionBox"];
   function _topoLocKey(value) {
     return String(value).replace(/\s+/g, " ").trim().toLowerCase();
   }

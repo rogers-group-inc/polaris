@@ -53,6 +53,7 @@
     { field: "building", key: "b", kind: "building", word: "Building" },
     { field: "floor", key: "f", kind: "floor", word: "Floor" },
     { field: "room", key: "r", kind: "room", word: "Room" },
+    { field: "rack", key: "ra", kind: "ra", word: "Rack" },
     { field: "junctionBox", key: "jb", kind: "jb", word: "Junction box" },
   ];
   var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
@@ -61,7 +62,7 @@
     return typeof escapeHtml === "function" ? escapeHtml(String(s == null ? "" : s))
       : String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; });
   }
-  function emptyCodes() { return { area: null, building: null, floor: null, room: null, junctionBox: null }; }
+  function emptyCodes() { return { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null }; }
   function normCodes(c) {
     var out = emptyCodes();
     if (!c) return out;

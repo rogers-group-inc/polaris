@@ -75,7 +75,7 @@ describe("sanitizePolygons", () => {
   const sq = [[0, 0], [10, 0], [10, 10]];
   it("keeps the group's codes in their display casing", () => {
     const out = sanitizePolygons([{ id: "p1", codes: { building: " Plant ", floor: "1" }, points: sq }]);
-    expect(out[0].codes).toEqual({ area: null, building: "Plant", floor: "1", room: null, junctionBox: null });
+    expect(out[0].codes).toEqual({ area: null, building: "Plant", floor: "1", room: null, rack: null, junctionBox: null });
   });
 
   it("rejects too few points, no codes, duplicate ids and an embedded code", () => {

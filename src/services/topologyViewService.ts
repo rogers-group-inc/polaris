@@ -235,13 +235,13 @@ export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number
   return bad('background.kind must be "osm" or "image"');
 }
 
-const CODE_FIELDS: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "junctionBox"];
+const CODE_FIELDS: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "rack", "junctionBox"];
 
 /** Location codes of a polygon's group: at least one value, each writable. */
 function sanitizeLocationCodesObject(raw: unknown, what: string): LocationCodes {
   if (!isObj(raw)) bad(`${what} codes must be an object`);
   const r = raw as Record<string, unknown>;
-  const out: LocationCodes = { area: null, building: null, floor: null, room: null, junctionBox: null };
+  const out: LocationCodes = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
   for (const f of CODE_FIELDS) {
     const v = r[f];
     if (v === null || v === undefined || v === "") continue;

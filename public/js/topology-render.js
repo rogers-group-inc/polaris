@@ -75,9 +75,15 @@
   }
 
   // Location-code node-data stamps from a payload node's `location` object
-  // ({ area, building, floor, room, junctionBox } | null). locA/locB/locF/
-  // locR/locJb are normalized grouping keys (drive the row-clustering pass +
+  // ({ area, building, floor, room, rack, junctionBox } | null). locA/locB/
+  // locF/locR/locRa/locJb are normalized grouping keys (drive the row-clustering pass +
   // grouping hulls); loc*Name keep the operator's original casing for labels.
+  // A junction box's group key. Without a rack it is the key it has always
+  // had ("jb|a|b|f|r|jb"), so layouts saved against it before ra: existed
+  // still match; inside a rack it carries the rack as an extra segment.
+  function jbKey(a, b, f, r, ra, jb) {
+    return "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + (ra ? ra + "|" : "") + jb;
+  }
   function locationData(loc) {
     var d = {};
     if (!loc) return d;
@@ -85,6 +91,7 @@
     if (loc.building) { d.locB = locKey(loc.building); d.locBName = String(loc.building); }
     if (loc.floor) { d.locF = locKey(loc.floor); d.locFName = String(loc.floor); }
     if (loc.room) { d.locR = locKey(loc.room); d.locRName = String(loc.room); }
+    if (loc.rack) { d.locRa = locKey(loc.rack); d.locRaName = String(loc.rack); }
     if (loc.junctionBox) { d.locJb = locKey(loc.junctionBox); d.locJbName = String(loc.junctionBox); }
     return d;
   }
@@ -1234,6 +1241,7 @@
         { key: "loc:building", label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
         { key: "loc:floor",    label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
         { key: "loc:room",     label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
+        { key: "loc:ra",       label: "Rack",         shape: "rect", style: "solid",  color: loc("ra") },
         { key: "loc:jb",       label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
       ],
     };
@@ -1351,7 +1359,9 @@
     building: { rank: 1, pad: 34, color: "#4fc3f7", colorLight: "#0369a1", shape: "round-rectangle", dash: "solid",  z: 2, scaleW: 1, scaleH: 1 },
     floor:    { rank: 2, pad: 26, color: "#a78bfa", colorLight: "#6d28d9", shape: "round-rectangle", dash: "dashed", z: 3, scaleW: 1, scaleH: 1 },
     room:     { rank: 3, pad: 18, color: "#4ade80", colorLight: "#15803d", shape: "round-rectangle", dash: "solid",  z: 4, scaleW: 1, scaleH: 1 },
-    jb:       { rank: 4, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
+    // Rack (ra:, 2026-11-10): between room and junction box.
+    ra:       { rank: 4, pad: 15, color: "#2dd4bf", colorLight: "#0f766e", shape: "round-rectangle", dash: "solid",  z: 5, scaleW: 1, scaleH: 1 },
+    jb:       { rank: 5, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 6, scaleW: 1, scaleH: 1 },
   };
 
   // The box name lives inside the box, under its top wall (stylesheet
@@ -1410,15 +1420,17 @@
       var b = n.data("locB") || "";
       var f = n.data("locF") || "";
       var r = n.data("locR") || "";
+      var ra = n.data("locRa") || "";
       var jb = n.data("locJb") || "";
       var id = n.id();
       if (a) addTo("a|" + a, "area", n.data("locAName"), [a], id);
       if (b) addTo("b|" + a + "|" + b, "building", n.data("locBName"), [a, b], id);
       if (f) addTo("f|" + a + "|" + b + "|" + f, "floor", n.data("locFName"), [a, b, f], id);
       if (r) addTo("r|" + a + "|" + b + "|" + f + "|" + r, "room", n.data("locRName"), [a, b, f, r], id);
-      if (jb) addTo("jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, "jb", n.data("locJbName"), [a, b, f, r, jb], id);
+      if (ra) addTo("ra|" + a + "|" + b + "|" + f + "|" + r + "|" + ra, "ra", n.data("locRaName"), [a, b, f, r, ra], id);
+      if (jb) addTo(jbKey(a, b, f, r, ra, jb), "jb", n.data("locJbName"), ra ? [a, b, f, r, ra, jb] : [a, b, f, r, jb], id);
     });
-    var kindRank = { area: 0, building: 1, floor: 2, room: 3, jb: 4 };
+    var kindRank = { area: 0, building: 1, floor: 2, room: 3, ra: 4, jb: 5 };
     order.sort(function (a2, b2) { return kindRank[a2.kind] - kindRank[b2.kind]; });
     return order;
   }
@@ -2326,12 +2338,14 @@
   // plus the device's segments down to that level, a missing level an empty
   // segment — the same keys computeLocationGroups gives its boxes:
   // area "a|<a>", building "b|<a>|<b>", floor "f|<a>|<b>|<f>",
-  // room "r|<a>|<b>|<f>|<r>", junction box "jb|<a>|<b>|<f>|<r>|<jb>".
+  // room "r|<a>|<b>|<f>|<r>", rack "ra|<a>|<b>|<f>|<r>|<ra>", junction box
+  // "jb|<a>|<b>|<f>|<r>|<jb>" (or "jb|<a>|<b>|<f>|<r>|<ra>|<jb>" inside a rack).
   var VIEW_LEVELS = [
     { kind: "area", prefix: "a", field: "locA" },
     { kind: "building", prefix: "b", field: "locB" },
     { kind: "floor", prefix: "f", field: "locF" },
     { kind: "room", prefix: "r", field: "locR" },
+    { kind: "ra", prefix: "ra", field: "locRa" },
     { kind: "jb", prefix: "jb", field: "locJb" },
   ];
   var VIEW_LEVEL_BY_PREFIX = {};
@@ -2349,7 +2363,13 @@
   function _viewKeyAt(d, i) {
     if (!d[VIEW_LEVELS[i].field]) return "";
     var segs = [];
-    for (var j = 0; j <= i; j++) segs.push(d[VIEW_LEVELS[j].field] || "");
+    for (var j = 0; j <= i; j++) {
+      // A missing RACK is left out below its own level, not an empty segment:
+      // a junction box with no rack keeps the key it had before ra: existed
+      // (jbKey), so its saved layout still matches.
+      if (VIEW_LEVELS[j].kind === "ra" && j < i && !d[VIEW_LEVELS[j].field]) continue;
+      segs.push(d[VIEW_LEVELS[j].field] || "");
+    }
     return VIEW_LEVELS[i].prefix + "|" + segs.join("|");
   }
   // The name a level shows on its chip. A floor with no building says so
@@ -3089,6 +3109,7 @@
     var locBById = {};
     var locFById = {};
     var locRById = {};
+    var locRaById = {};
     var locJbById = {};
 
     elements.forEach(function (el) {
@@ -3103,6 +3124,7 @@
       if (d.locB) locBById[d.id] = d.locB;
       if (d.locF) locFById[d.id] = d.locF;
       if (d.locR) locRById[d.id] = d.locR;
+      if (d.locRa) locRaById[d.id] = d.locRa;
       if (d.locJb) locJbById[d.id] = d.locJb;
       if (d.role === "fortigate" && !rootId) rootId = d.id;
       // A location view whose FortiGate lives elsewhere roots on its stub.
@@ -3390,7 +3412,7 @@
 
     // The full location-tier chain, outermost first — one array so pass 5a
     // (anchor regrouping) and pass 5b (leaf-block ordering) can't drift apart.
-    var LOC_TIERS = [locAById, locBById, locFById, locRById, locJbById];
+    var LOC_TIERS = [locAById, locBById, locFById, locRById, locRaById, locJbById];
     // Recursive stable bucketing over a tier chain: bucket by the first
     // tier's key (buckets keep the order in which their first member
     // appeared; members keep relative order), then recurse into each bucket
@@ -3770,7 +3792,7 @@
   var LEVEL_CELL_PX = 130;
   var LEVEL_DEVICE_EXT = 32;
   var LEVEL_LINK_GAP = 20;
-  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", jb: "jb" };
+  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", ra: "ra", jb: "jb" };
   function _ceilHalf(v) { return Math.ceil(v * 2 - 1e-9) / 2; }
   function _levelSep(extA, extB) {
     return Math.max(1, _ceilHalf((extA + extB + LOC_GROUP_SIBLING_GAP) / LEVEL_CELL_PX));
@@ -3782,13 +3804,14 @@
   var _levelRankMemo = {};
 
   function _locPath(d) {
-    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", jb = d.locJb || "";
+    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", ra = d.locRa || "", jb = d.locJb || "";
     var path = [];
     if (a) path.push({ key: "a|" + a, name: d.locAName || a });
     if (b) path.push({ key: "b|" + a + "|" + b, name: d.locBName || b });
     if (f) path.push({ key: "f|" + a + "|" + b + "|" + f, name: d.locFName || f });
     if (r) path.push({ key: "r|" + a + "|" + b + "|" + f + "|" + r, name: d.locRName || r });
-    if (jb) path.push({ key: "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, name: d.locJbName || jb });
+    if (ra) path.push({ key: "ra|" + a + "|" + b + "|" + f + "|" + r + "|" + ra, name: d.locRaName || ra });
+    if (jb) path.push({ key: jbKey(a, b, f, r, ra, jb), name: d.locJbName || jb });
     return path;
   }
 
@@ -4257,7 +4280,7 @@
   // and say which cable is which. Pure over the cy instance; `meta` carries
   // what the page knows (the active view key, the pane size).
   var _ANON_ROLE = { fortigate: "FW", fortiswitch: "SW", fortiap: "AP", endpoint: "EP", "remote-asset": "REM", "wireless-station": "STA" };
-  var _ANON_KIND = { a: "AREA", b: "BLDG", f: "FLOOR", r: "ROOM", jb: "JB" };
+  var _ANON_KIND = { a: "AREA", b: "BLDG", f: "FLOOR", r: "ROOM", ra: "RACK", jb: "JB" };
   function anonymisedLayout(cy, meta) {
     meta = meta || {};
     function r1(v) { return typeof v === "number" && isFinite(v) ? Math.round(v * 10) / 10 : null; }

@@ -3213,7 +3213,7 @@ sidebar.
 
 **Placing a device inside a group polygon gives it that group's location codes, on Save.** In
 a Topology view, a device you drop inside a polygon takes that group's `a:` / `b:` / `f:` /
-`r:` / `jb:` codes in its description when you save the view. The free text in front of the
+`r:` / `ra:` / `jb:` codes in its description when you save the view. The free text in front of the
 codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
 needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
 

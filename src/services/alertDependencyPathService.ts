@@ -218,6 +218,7 @@ const BOX_STYLE = {
   building: { color: "#0284c7", dashed: false },
   floor: { color: "#7c3aed", dashed: true },
   room: { color: "#16a34a", dashed: false },
+  rack: { color: "#0f766e", dashed: false },
   junctionBox: { color: "#d97706", dashed: true },
   generic: { color: "#9ca3af", dashed: true },
 } as const;
@@ -229,12 +230,12 @@ export const NO_LOCATION_LABEL = "No location codes";
 export function innerBoxOf(node: PathNode): { kind: BoxKind; label: string; key: string } | null {
   const c = node.codes;
   if (c && hasLocationCodes(c)) {
-    const label = c.junctionBox ?? c.room ?? c.floor ?? c.building;
+    const label = c.junctionBox ?? c.rack ?? c.room ?? c.floor ?? c.building;
     if (!label) return null; // area only — the band is the whole story
-    const kind: BoxKind = c.junctionBox ? "junctionBox" : c.room ? "room" : c.floor ? "floor" : "building";
+    const kind: BoxKind = c.junctionBox ? "junctionBox" : c.rack ? "rack" : c.room ? "room" : c.floor ? "floor" : "building";
     // Identity is the whole code set below the area, so "jb:3" in two
     // different rooms is two boxes.
-    const key = [c.building, c.floor, c.room, c.junctionBox].map((v) => (v ? locationGroupKey(v) : "")).join("|");
+    const key = [c.building, c.floor, c.room, c.rack, c.junctionBox].map((v) => (v ? locationGroupKey(v) : "")).join("|");
     return { kind, label, key: `codes:${key}` };
   }
   const label = node.location?.trim() || NO_LOCATION_LABEL;
@@ -425,7 +426,7 @@ export function dependencyPathSvg(spec: DependencyPathSpec): string {
 function whereOf(n: PathNode): string | null {
   const c = n.codes;
   if (c && hasLocationCodes(c)) {
-    const inner = c.junctionBox ?? c.room ?? c.floor ?? c.building;
+    const inner = c.junctionBox ?? c.rack ?? c.room ?? c.floor ?? c.building;
     return [c.area, inner].filter(Boolean).join(" / ") || null;
   }
   return n.location?.trim() || null;
@@ -558,7 +559,7 @@ async function hydrate(entries: PathEntry[], allClear: boolean): Promise<Array<P
 }
 
 /** Invented locations for a test alert's path (business rule 65 — "Example"-prefixed). */
-const SAMPLE_CODES: LocationCodes = { area: "Example Area", building: null, floor: null, room: null, junctionBox: "Example Cabinet" };
+const SAMPLE_CODES: LocationCodes = { area: "Example Area", building: null, floor: null, room: null, rack: null, junctionBox: "Example Cabinet" };
 
 export interface DependencyPathNotification {
   assetId: string | null;

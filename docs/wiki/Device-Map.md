@@ -300,9 +300,10 @@ under a heading per group, with devices that have no location last.
 While editing the map (**Edit Map**), right-click a device to edit its
 description in place; viewing the map never changes an asset. That is the quick way
 to put it into a location box. The codes are `a:` area, `b:` building, `f:`
-floor, `r:` room and `jb:` junction box, written anywhere in the description
-(`a:Mine b:Shop f:2 r:North Closet jb:112-305`); each value runs until the
-next code. Each level is a box inside the one above it, and the editor shows
+floor, `r:` room, `ra:` rack and `jb:` junction box, written anywhere in the
+description (`a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305`); each value
+runs until the next code. A rack sits inside a room, and a junction box can sit
+inside a rack. Each level is a box inside the one above it, and the editor shows
 that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.
 The asset **Edit** form's Description field shows the same diagram.
@@ -438,7 +439,7 @@ moved devices and boxes, drawn lines, snapping, and a **Load layout** pick.
 | **Grid** | while editing; per user; show or hide the two-weight grid (it hides whenever editing ends) |
 | **Snap devices** | while editing; per user; lands device drags on the grid's thick lines and re-snaps everything on enable |
 | **Snap line points** | while editing; per user; lands dragged bend points on any grid line |
-| **Base / area / building / floor / room / junction box chips** | top left, only when a device carries a location code below area (`b:`, `f:`, `r:` or `jb:`). **Base** is the whole site; under it are the areas (plus anything tagged with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it, whatever that is for each device: an area's buildings, a building's floors, a floor's rooms, a room's junction boxes. A device that skips a level shows up at the next level it has, so a room tagged straight into an area (`a:Mine r:North Closet`) is listed beside that area's buildings, and a junction box tagged straight into a building beside its floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Instead, every view shows a dashed stub for each neighbouring group: **← Scale House** for a group the view is fed from (drawn on the left, a line from each device that links to it) and **→ Mine** for a group it feeds (on the right). A neighbour with no location code at the view's level shows as its nearest coded group (a building with no area, in an area view), and one with no code at all as **Base**. Tap a stub to open that group's view. In a view with a saved layout, a stub the layout has no saved spot for is placed beside the devices it links to; **Reset to baseline** on that view lays everything out afresh. Each view keeps its own saved layout |
+| **Base / area / building / floor / room / junction box chips** | top left, only when a device carries a location code below area (`b:`, `f:`, `r:`, `ra:` or `jb:`). **Base** is the whole site; under it are the areas (plus anything tagged with no area), or the buildings when no area is tagged. Picking a chip shows its devices and lists the next level beneath it, whatever that is for each device: an area's buildings, a building's floors, a floor's rooms, a room's junction boxes. A device that skips a level shows up at the next level it has, so a room tagged straight into an area (`a:Mine r:North Closet`) is listed beside that area's buildings, and a junction box tagged straight into a building beside its floors. The FortiGate shows only in **Base** and in the views its own codes place it in. Elsewhere, a dashed **→ Base** stub stands in for it only when a device in that view links to it directly; tapping the stub takes you there. A view whose devices reach the FortiGate through other switches shows no firewall stub. Instead, every view shows a dashed stub for each neighbouring group: **← Scale House** for a group the view is fed from (drawn on the left, a line from each device that links to it) and **→ Mine** for a group it feeds (on the right). A neighbour with no location code at the view's level shows as its nearest coded group (a building with no area, in an area view), and one with no code at all as **Base**. Tap a stub to open that group's view. In a view with a saved layout, a stub the layout has no saved spot for is placed beside the devices it links to; **Reset to baseline** on that view lays everything out afresh. Each view keeps its own saved layout |
 | **Fullscreen** | |
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
 | **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
@@ -599,7 +600,7 @@ name only the devices on the map.
 
 Drag a device from the **Device List** onto the map. A device
 dropped inside a group polygon takes that group's `a:` / `b:` / `f:` / `r:` /
-`jb:` codes in its description when you save; the innermost polygon wins, so
+`ra:` / `jb:` codes in its description when you save; the innermost polygon wins, so
 a device on a floor inside a building gets both. A device placed outside every
 polygon keeps its codes ([rule 148](Business-Rules#rule-148)). Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.

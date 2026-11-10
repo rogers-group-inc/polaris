@@ -32,7 +32,7 @@ describe("setLocationCodes", () => {
   });
 
   it("round-trips through the parser", () => {
-    const codes = { area: "Pug Mill", building: "Shop", floor: "2", room: "North Closet", junctionBox: "112-305" };
+    const codes = { area: "Pug Mill", building: "Shop", floor: "2", room: "North Closet", rack: "R2", junctionBox: "112-305" };
     const written = setLocationCodes("Core switch", codes);
     expect(parseLocationCodes(written)).toEqual(codes);
   });

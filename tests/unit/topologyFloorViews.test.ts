@@ -50,7 +50,7 @@ beforeAll(() => {
 
 // Element builders. loc* are normalized grouping keys; loc*Name the display
 // casing (buildTopologyElements stamps both in production).
-const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: string; r?: string; jb?: string }): El => ({
+const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: string; r?: string; ra?: string; jb?: string }): El => ({
   data: {
     id,
     role,
@@ -59,6 +59,7 @@ const node = (id: string, role: string, loc?: { a?: string; b?: string; f?: stri
     ...(loc?.b ? { locB: loc.b.toLowerCase(), locBName: loc.b } : {}),
     ...(loc?.f ? { locF: loc.f.toLowerCase(), locFName: loc.f } : {}),
     ...(loc?.r ? { locR: loc.r.toLowerCase(), locRName: loc.r } : {}),
+    ...(loc?.ra ? { locRa: loc.ra.toLowerCase(), locRaName: loc.ra } : {}),
     ...(loc?.jb ? { locJb: loc.jb.toLowerCase(), locJbName: loc.jb } : {}),
   },
 });
@@ -434,6 +435,19 @@ describe("drill-down through every level, skipping the ones a device does not ha
     expect(byKey["jb|mine|shop|1|idf|112"]).toMatchObject({ parentKey: "r|mine|shop|1|idf", label: "Mine — Shop — 1 — IDF — 112" });
   });
 
+  it("a rack (ra:) is a level between room and junction box; a jb outside a rack keeps its old key", () => {
+    const views = computeFloorViews([
+      node("fw", "fortigate"),
+      node("s1", "fortiswitch", { b: "Shop", r: "MDF", ra: "R2", jb: "7" }),
+      node("s2", "fortiswitch", { b: "Shop", r: "MDF", jb: "8" }),
+    ]) as unknown as { key: string; kind: string; parentKey: string | null; label: string }[];
+    const byKey = Object.fromEntries(views.map((v) => [v.key, v]));
+    expect(byKey["ra||shop||mdf|r2"]).toMatchObject({ kind: "ra", parentKey: "r||shop||mdf", label: "Shop — MDF — R2" });
+    expect(byKey["jb||shop||mdf|r2|7"]).toMatchObject({ kind: "jb", parentKey: "ra||shop||mdf|r2" });
+    // No rack: exactly the key a junction box had before ra: existed.
+    expect(byKey["jb||shop||mdf|8"]).toMatchObject({ kind: "jb", parentKey: "r||shop||mdf" });
+  });
+
   it("an area lists its buildings AND a room tagged straight in it", () => {
     expect(labels(viewSwitcherRows(computeFloorViews(quarry()), "a|mine"))).toEqual([
       ["Base"], ["Mine", "Office"], ["Shop", "North Closet"],
@@ -461,6 +475,7 @@ describe("drill-down through every level, skipping the ones a device does not ha
     expect(viewSuppressKinds("a|mine")).toEqual(["area"]);
     expect(viewSuppressKinds("f|mine|shop|1")).toEqual(["area", "building", "floor"]);
     expect(viewSuppressKinds("r|mine|||north closet")).toEqual(["area", "building", "floor", "room"]);
-    expect(viewSuppressKinds("jb|mine|shop|||305")).toEqual(["area", "building", "floor", "room", "jb"]);
+    expect(viewSuppressKinds("ra|mine|shop|||r2")).toEqual(["area", "building", "floor", "room", "ra"]);
+    expect(viewSuppressKinds("jb|mine|shop|||305")).toEqual(["area", "building", "floor", "room", "ra", "jb"]);
   });
 });
