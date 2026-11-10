@@ -13,8 +13,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   fortiosVlanIdByName,
   parseFortiosVlanList,
@@ -22,6 +20,7 @@ import {
   FORTISWITCH_MONITOR_PORT_FORMAT,
 } from "../../src/utils/fortiswitchCmdb.js";
 import { buildFortiswitchControllerPortsMap } from "../../src/services/monitoringService.js";
+import { monitoringServiceSource } from "./_monitoringServiceSource.js";
 
 // The gate's interfaces as `format=name|vlanid` returns them (HUB1-a shapes).
 const GATE_IFACES = [
@@ -132,7 +131,7 @@ describe("monitoring's switch reads", () => {
       "isl-local-trunk-name", "isl-peer-device-name", "isl-peer-device-sn", "isl-peer-port-name", "mclag-icl-port", "description"]) {
       expect(fields, f).toContain(f);
     }
-    const src = readFileSync(join(process.cwd(), "src", "services", "monitoringService.ts"), "utf-8");
+    const src = monitoringServiceSource(); // monitoringService.ts + monitoring/*.ts (CQ-B061)
     expect(src).toContain("/ports?format=${FORTISWITCH_MONITOR_PORT_FORMAT}");
     expect(src).toContain('"/api/v2/cmdb/system/interface?format=name|vlanid"');
     expect(src).not.toContain("managed-switch?datasource=1");

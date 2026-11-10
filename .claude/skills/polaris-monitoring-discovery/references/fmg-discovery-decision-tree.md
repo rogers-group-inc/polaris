@@ -310,7 +310,7 @@ Notes:
 
 ## Direct mode vs the probe path — same strict behavior
 
-The discovery path (this doc) and the response-time probe controller-redirect path (`fetchFortinetControllerInventory` in `src/services/monitoringService.ts`) both run with `useProxy=false` strict semantics — a precondition failure (missing token, missing mgmtInterface, mgmt-IP not resolvable) **fails loudly per-device** with a clear error rather than silently falling back to FMG proxy. This matters at scale: a silent fallback to proxy turns "I disabled proxy" into "I disabled proxy except when something else is wrong, in which case it silently re-enables itself and overruns FMG's session limit."
+The discovery path (this doc) and the response-time probe controller-redirect path (`fetchFortinetControllerInventory` in `src/services/monitoring/fortinetControllers.ts`) both run with `useProxy=false` strict semantics — a precondition failure (missing token, missing mgmtInterface, mgmt-IP not resolvable) **fails loudly per-device** with a clear error rather than silently falling back to FMG proxy. This matters at scale: a silent fallback to proxy turns "I disabled proxy" into "I disabled proxy except when something else is wrong, in which case it silently re-enables itself and overruns FMG's session limit."
 
 ## Companion docs
 

@@ -131,7 +131,7 @@ Verbatim from TOUCHES.md → Canonical backend patterns. Copy the canonical's sh
 
 ## Current-state table refreshed per scrape (delete-replace)
 
-**Canonical:** `persistPhysicalEntities` / `persistMacTable` / `persistTrunkMembers` in `src/services/monitoringService.ts`; `persistFortigateArpTables` in `src/services/arpTableService.ts` (the discovery-cadence variant, below); `persistInterfaces` in `src/services/interfaceInventoryService.ts` (the fullest worked example — it has its own service, tests and a backfill job).
+**Canonical:** `persistPhysicalEntities` / `persistMacTable` / `persistTrunkMembers` in `src/services/monitoring/snmpCollectors.ts`; `persistFortigateArpTables` in `src/services/arpTableService.ts` (the discovery-cadence variant, below); `persistInterfaces` in `src/services/interfaceInventoryService.ts` (the fullest worked example — it has its own service, tests and a backfill job).
 
 Use this when the device reports a SET that replaces the previous one and history answers no question worth storing: an interface list, an FDB table, an FRU inventory, LLDP neighbours, SD-WAN rules. The tell is that every consumer asks "what is it now?" — if you find yourself writing `DISTINCT ON (assetId, key) ORDER BY timestamp DESC` against a hypertable, you wanted this table, not that one.
 
