@@ -1090,6 +1090,20 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && overlay.classList.contains("open")) closeTopology();
+      // Delete / Backspace on a Topology or Rack canvas, editing: the selected
+      // device comes off the map / out of its rack and is back in the Device
+      // List (operator request 2026-11-10). Never while typing, and never
+      // under a dialog stacked on the modal.
+      if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && topoState.editing) {
+        var dt = e.target;
+        var typing = dt && (dt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(dt.tagName));
+        var stacked = document.querySelector(".modal-overlay.open:not(#topology-overlay)");
+        var modeInst = _modeInstance();
+        if (!typing && !stacked && modeInst && typeof modeInst.deleteSelected === "function" && modeInst.deleteSelected()) {
+          e.preventDefault();
+          return;
+        }
+      }
       // Delete / Backspace removes the selected connection-path handles (a
       // bend goes; an end point returns to automatic). Never while typing.
       if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && edgeEditor) {
@@ -2769,6 +2783,7 @@
         ["Drag a device from the details pane", "Place it on the map — inside a group polygon it takes that group's location codes when you save"],
         ["Drag a placed device", "Move it; its links follow"],
         ["Right-click a placed device", "Open it, or remove it from the map (its codes are left as they are)"],
+        ["Click a placed device, then Delete", "Take it off the map — it goes back to the Device List"],
         ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
         ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
         ["Click a polygon", "Reshape it, change its group or delete it"],
@@ -2790,6 +2805,7 @@
         ["Drag a racked item", "Move it within a rack or to another rack, a U at a time"],
         ["Drag an item's top or bottom edge", "Change its height, a U at a time"],
         ["Right-click a racked item", "Move it to the other face, make it half or full depth, or remove it"],
+        ["Click a racked device, then Delete", "Take it out of the rack — it goes back to the Device List"],
         ["Front / Back (rack header)", "Turn the rack round to show its other face"],
         ["Drag a rack by its header", "Move it among the racks"],
         ["Double-click a rack's name", "Rename it"],

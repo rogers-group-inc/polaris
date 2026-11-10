@@ -603,7 +603,8 @@ dropped inside a group polygon takes that group's `a:` / `b:` / `f:` / `r:` /
 a device on a floor inside a building gets both. A device placed outside every
 polygon keeps its codes ([rule 148](Business-Rules#rule-148)). Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.
-Right-click a placed device to remove it from the map (its codes stay).
+Right-click a placed device to remove it from the map (its codes stay), or
+click it and press **Delete**: it goes back to the Device List.
 
 **Click a device** — a node in Layer 2, a placed device in Topology, a racked
 device in Rack, or a row in the Device List — and the details pane's info card
@@ -635,7 +636,8 @@ the last save**, and **Export** copies a picture of the map.
   you dropped it on only, so you can turn the rack round and rack another
   device in the same U on the back. Right-click a block to make it **full
   depth** (it then takes the U on both faces and shows as a dashed outline on
-  the other one), move it to the other face, or remove it.
+  the other one), move it to the other face, or remove it. Or click a racked
+  device and press **Delete** to take it out of the rack.
 - The **Front** button in a rack's header turns the rack round and then reads
   **Back** (while you are only viewing, that is just a look). Double-click the
   rack's name to rename it and its **42U** to change its size; a rack can't

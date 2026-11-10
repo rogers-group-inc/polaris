@@ -628,6 +628,16 @@
       // The devices in a rack — map.js lists only these under the info card.
       placedIds: function () { var o = {}; state.placements.forEach(function (p) { if (p.assetId) o[p.assetId] = true; }); return o; },
       setSelected: function (id) { selectedId = id || null; paintSelected(); },
+      // The Delete key (map.js): the selected racked device leaves the rack.
+      deleteSelected: function () {
+        if (!state.editing || !selectedId) return false;
+        var id = selectedId;
+        if (!state.placements.some(function (p) { return p.assetId === id; })) return false;
+        select(null);
+        state.placements = state.placements.filter(function (p) { return p.assetId !== id; });
+        changed();
+        return true;
+      },
       cornerButtons: function () { return []; },
       canUndo: function () { return state.history.index > 0; },
       canRedo: function () { return state.history.index < state.history.entries.length - 1; },

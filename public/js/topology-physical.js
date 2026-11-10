@@ -821,6 +821,14 @@
       // The devices on the map — map.js lists only these under the info card.
       placedIds: function () { var o = {}; Object.keys(state.placements).forEach(function (id) { o[id] = true; }); return o; },
       setSelected: function (id) { selectedId = id || null; paintSelected(); },
+      // The Delete key (map.js): the selected placed device comes off the map.
+      deleteSelected: function () {
+        if (!state.editing || !selectedId || !state.placements[selectedId]) return false;
+        var id = selectedId;
+        select(null);
+        removePlacement(id);
+        return true;
+      },
       beforeCommit: captureOsmView,
       cornerButtons: function () {
         return [
