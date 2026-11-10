@@ -180,6 +180,19 @@
       applyBasemap();
 
       var markersLayer = L.layerGroup().addTo(map);
+
+      // /dash: a dot's "Open device map" draws the gate's topology over the
+      // map in place (see addSiteDot); "← Map" closes it.
+      var dash = window.POLARIS_DASH_LOCAL === true;
+      var topoPane = null;
+      function closeTopology() { if (topoPane) { topoPane.close(); topoPane = null; } }
+      function openTopology(s) {
+        closeTopology();
+        topoPane = window.PolarisDeviceMapTopology.open(el, { id: s.id, name: s.learnedLocation || s.hostname }, {
+          hidden: {},
+          onBack: closeTopology,
+        });
+      }
       // Weather tiles ride a custom pane ABOVE the base tiles but OUTSIDE the
       // .leaflet-tile-pane CSS darkening filter, so radar stays vivid.
       var wxPane = map.createPane("sitemapWeather");
@@ -315,15 +328,39 @@
           bubblingMouseEvents: !isLeg,
         });
         var name = escapeHtml(s.hostname || "(unnamed)");
-        dot.bindPopup(
+        // The /dash wallboard has no login: the popup leaves out the
+        // management IP, and its link opens the gate's read-only topology in
+        // the widget (the Device Map widget's pane, on the dash API) instead
+        // of /map.html, which would bounce the kiosk to a login page.
+        var popupHtml =
           '<div class="sitemap-popup-title" style="color:' + color + '">' + name + "</div>" +
           (s.model ? '<div class="sitemap-popup-row">' + escapeHtml(s.model) + "</div>" : "") +
-          (s.ipAddress ? '<div class="sitemap-popup-row"><span>IP</span><code>' + escapeHtml(s.ipAddress) + "</code></div>" : "") +
+          (!dash && s.ipAddress ? '<div class="sitemap-popup-row"><span>IP</span><code>' + escapeHtml(s.ipAddress) + "</code></div>" : "") +
           '<div class="sitemap-popup-row">' + escapeHtml(monitorLine(s)) + "</div>" +
-          (s.subnetCount ? '<div class="sitemap-popup-row">' + s.subnetCount + " subnet" + (s.subnetCount === 1 ? "" : "s") + "</div>" : "") +
-          '<a class="sitemap-popup-link" href="/map.html#site=' + encodeURIComponent(s.id) + '&topology=1">Open device map →</a>',
-          { maxWidth: 280 }
-        );
+          (s.subnetCount ? '<div class="sitemap-popup-row">' + s.subnetCount + " subnet" + (s.subnetCount === 1 ? "" : "s") + "</div>" : "");
+        if (dash) {
+          var popupEl = document.createElement("div");
+          popupEl.innerHTML = popupHtml;
+          if (window.PolarisDeviceMapTopology) {
+            var link = document.createElement("a");
+            link.className = "sitemap-popup-link";
+            link.href = "#";
+            link.textContent = "Open device map →";
+            link.addEventListener("click", function (e) {
+              e.preventDefault();
+              map.closePopup();
+              openTopology(s);
+            });
+            popupEl.appendChild(link);
+          }
+          dot.bindPopup(popupEl, { maxWidth: 280 });
+        } else {
+          dot.bindPopup(
+            popupHtml +
+            '<a class="sitemap-popup-link" href="/map.html#site=' + encodeURIComponent(s.id) + '&topology=1">Open device map →</a>',
+            { maxWidth: 280 }
+          );
+        }
         // Down sites get a PERMANENT, DRAGGABLE red tooltip (always visible,
         // naming the down device) so the outage is readable at a glance and
         // overlapping labels can be pulled apart; healthy sites show the name
@@ -738,6 +775,7 @@
 
       ctx.onUnmount(function () {
         clearTimeout(tempTimer); clearTimeout(radarTimer); clearTimeout(radarAnimTimer);
+        closeTopology();
         document.removeEventListener("keydown", onKeydown);
         try { ro.disconnect(); } catch (_) {}
         if (raf) cancelAnimationFrame(raf);

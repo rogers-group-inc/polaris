@@ -283,6 +283,21 @@ describe("Device Map widget — one gate picked", () => {
     }
   });
 
+  it("lends its read-only topology pane to the Status Map (the /dash dot popup's link)", () => {
+    const api = (win as unknown as Record<string, { open: (el: unknown, gate: unknown, opts: unknown) => { close: () => void } }>).PolarisDeviceMapTopology;
+    expect(typeof api.open).toBe("function");
+    const host = doc.createElement("div");
+    doc.body.appendChild(host);
+    let backs = 0;
+    const pane = api.open(host, { id: "fg-river", name: "RIVERBEND-FG" }, { hidden: {}, onBack: () => { backs++; } });
+    const back = Array.from(host.querySelectorAll(".devmap-topo-bar button")).find((b) => b.textContent === "← Map") as unknown as { click: () => void };
+    expect(back).toBeTruthy();
+    back.click();
+    expect(backs).toBe(1);
+    pane.close();
+    host.remove();
+  });
+
   it("on the Dashboard the Open button leads to the Device Map page", () => {
     const { el, unmount } = renderSolo({ gate: { id: "fg-river", name: "RIVERBEND-FG" } });
     const labels = Array.from(el.querySelectorAll(".devmap-topo-bar button")).map((b) => b.textContent);

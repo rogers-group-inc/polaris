@@ -484,6 +484,11 @@ access points, links and the devices behind them. A single click on a gate also
 opens a details popup there, since a wall screen has no hover. The **Open ↗**
 button is left off: the wallboard does not navigate.
 
+The **Status Map** widget's dot popup on the wallboard leaves out the gate's
+management IP, and its **Open device map →** link opens that gate's topology
+inside the widget — the same read-only view — instead of the Device Map page,
+which would ask for a login. **← Map** goes back to the map.
+
 The wallboard's own layout — every tab — is kept in that browser's storage. Its
 **Dashboards ▾** menu, shown only while customizing or while a linked tab (below)
 is on screen, lists every **public** [saved dashboard](Dashboard#saved-dashboards),

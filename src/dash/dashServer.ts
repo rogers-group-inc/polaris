@@ -93,7 +93,8 @@ const API_PREFIX_ALLOWLIST = ["/weather/", "/saved-dashboards/"];
 /**
  * Whole-path patterns for parameterized reads that a prefix would over-admit.
  * The Device Map widget draws a FortiGate's topology (a single picked gate, or
- * a double-clicked one) from GET /map/sites/:id/topology — exactly that path:
+ * a double-clicked one) from GET /map/sites/:id/topology — and the Status Map
+ * widget's dot popup opens the same pane on the wallboard — exactly that path:
  * the site-scoped endpoint search beside it stays unreachable here, and the
  * layout writes under it are 405'd regardless.
  */
