@@ -93,7 +93,14 @@
   // The shape mirrors what desktop map.js used to construct inline; mobile
   // and desktop now both call this so a new node/edge type only needs to
   // be added in one place.
-  function buildTopologyElements(data) {
+  //
+  // opts.shownTypes (business rule 147, the desktop modal's Device-types
+  // toggles): the asset types a saved view draws. Absent → the backbone as
+  // it always was (the phone, the dashboard widget). Present → a hidden
+  // switch / AP / cross-site type is dropped with its links, and every
+  // payload endpoint of a shown type (`data.endpoints`) becomes a node
+  // hung off its switch by a link labelled with the port.
+  function buildTopologyElements(data, opts) {
     if (!data) return [];
     var elements = [];
 
@@ -320,10 +327,94 @@
       });
     });
 
+    if (opts && Array.isArray(opts.shownTypes)) {
+      elements = applyShownTypes(elements, data, opts.shownTypes);
+    }
+
     markLinkClasses(elements);
     markPhysicalLoops(elements);
     markInterGroupEdges(elements);
     return elements;
+  }
+
+  // The asset type a backbone node stands for (endpoint and cross-site nodes
+  // carry their own `assetType`).
+  var ROLE_ASSET_TYPE = { fortigate: "firewall", fortiswitch: "switch", fortiap: "access_point" };
+  function nodeAssetType(d) {
+    if (!d) return null;
+    if (ROLE_ASSET_TYPE[d.role]) return ROLE_ASSET_TYPE[d.role];
+    return d.assetType || null;
+  }
+
+  // Rule 147: keep only the shown types (the FortiGate always — it is the
+  // root), add the shown endpoints, and drop any link left without both ends.
+  function applyShownTypes(elements, data, shownTypes) {
+    var shown = { firewall: true };
+    shownTypes.forEach(function (t) { if (t) shown[String(t)] = true; });
+    var nodeIds = {};
+    var out = elements.filter(function (el) {
+      var d = el.data || {};
+      if (d.source) return true; // edges are settled below
+      var t = nodeAssetType(d);
+      if (t && !shown[t]) return false;
+      nodeIds[d.id] = true;
+      return true;
+    });
+    (data.endpoints || []).forEach(function (ep) {
+      if (!ep || !ep.id || nodeIds[ep.id]) return;
+      if (!shown[ep.assetType]) return;
+      nodeIds[ep.id] = true;
+      out.push({
+        data: Object.assign({
+          id: ep.id,
+          label: ep.hostname || ep.ipAddress || ep.macAddress || "endpoint",
+          role: "endpoint",
+          assetId: ep.id,
+          assetType: ep.assetType,
+          nodeColor: fortinetNodeColor(ep),
+          iconUrl: ep.iconUrl || null,
+          hasIcon: ep.iconUrl ? 1 : 0,
+        }, locationData(ep.location)),
+      });
+      if (ep.switchId) {
+        out.push({
+          data: {
+            id: "ep-" + ep.id,
+            source: ep.switchId,
+            target: ep.id,
+            label: ep.port && ep.port !== "unknown" ? ep.port : "",
+            isEndpointLink: 1,
+            reason: "Seen on this switch port (MAC table)",
+          },
+        });
+      }
+    });
+    return out.filter(function (el) {
+      var d = el.data || {};
+      return !d.source || (nodeIds[d.source] && nodeIds[d.target]);
+    });
+  }
+
+  // The asset types present on a site, for the Device-types toggles: each
+  // with how many devices of it the payload holds. Firewall first, then the
+  // backbone, then the endpoint types by count.
+  function siteDeviceTypes(data) {
+    var counts = {};
+    function add(t) { if (t) counts[t] = (counts[t] || 0) + 1; }
+    if (data && data.fortigate) add("firewall");
+    ((data && data.switches) || []).forEach(function () { add("switch"); });
+    ((data && data.aps) || []).forEach(function () { add("access_point"); });
+    ((data && data.remoteAssetNodes) || []).forEach(function (n) {
+      var t = (n.assetType || "").toLowerCase();
+      if (t === "firewall" || t === "switch" || t === "access_point") add(t);
+    });
+    ((data && data.endpoints) || []).forEach(function (ep) { add(ep && ep.assetType); });
+    var order = ["firewall", "router", "switch", "access_point"];
+    return Object.keys(counts).sort(function (a, b) {
+      var ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      return counts[b] - counts[a] || a.localeCompare(b);
+    }).map(function (t) { return { type: t, count: counts[t] }; });
   }
 
   // ── Link colour classes ───────────────────────────────────────────────────
@@ -505,8 +596,10 @@
   // on the "Device Map link colors" canvas). Every device-to-device link is
   // `neutral` until it has something to say: a wired link takes its SPEED's
   // colour — a cool ramp, violet 10 Gb → blue → cyan → teal 1 Gb → slate
-  // 100 / 10 Mb — and a mesh link turns `fair` yellow → `weak` orange →
-  // `poor` red as its signal weakens. Warm hues are kept for signal alone, so
+  // 100 / 10 Mb — and a mesh link is `good` green (operator request
+  // 2026-11-10; it was the neutral grey until then), then turns `fair`
+  // yellow → `weak` orange → `poor` red as its signal weakens; a mesh link
+  // with no reading stays the neutral dashed line. Warm hues are kept for signal alone, so
   // a slow cable never reads as a failing radio; weight carries speed too
   // (LINK_SPEED_STYLE), so the ramp still reads in grayscale. The daylight
   // set steps each hue to its 600/700 shade (≥ 3:1 on noon / morning); the
@@ -518,12 +611,12 @@
   var EDGE_COLORS = {
     dark: {
       neutral: "#5b6478", "10g": "#a78bfa", "5g": "#60a5fa", "2g5": "#67e8f9", "1g": "#14b8a6",
-      "100m": "#94a3b8", "10m": "#94a3b8", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
+      "100m": "#94a3b8", "10m": "#94a3b8", good: "#22c55e", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
       halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee",
     },
     light: {
       neutral: "#b4bcc8", "10g": "#7c3aed", "5g": "#2563eb", "2g5": "#0891b2", "1g": "#0f766e",
-      "100m": "#64748b", "10m": "#64748b", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
+      "100m": "#64748b", "10m": "#64748b", good: "#16a34a", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
       halo: "#111827", portal: "#64748b", wireless: "#0e7490",
     },
   };
@@ -731,7 +824,7 @@
         },
       },
       // Wireless mesh backhaul (root AP → leaf AP): dashed, the neutral
-      // colour at a good signal or none reported, then by signal band.
+      // colour when no signal is reported, else by signal band.
       {
         selector: 'edge[isMesh = 1]',
         style: {
@@ -741,6 +834,10 @@
           "target-arrow-shape": "none",
           width: MESH_LINK_WIDTH,
         },
+      },
+      {
+        selector: 'edge[meshSignal = "good"]',
+        style: { "line-color": ec.good, "target-arrow-color": ec.good },
       },
       {
         selector: 'edge[meshSignal = "fair"]',
@@ -1102,10 +1199,11 @@
         { key: "speed:100m",    section: "speed",  label: "100 Mb",          color: ec["100m"], style: "solid",  width: LINK_SPEED_STYLE["100m"].width },
         { key: "speed:10m",     section: "speed",  label: "10 Mb",           color: ec["10m"],  style: "dotted", width: LINK_SPEED_STYLE["10m"].width },
         { key: "speed:unknown", section: "speed",  label: "Speed not known", color: ec.neutral, style: "solid",  width: LINK_SPEED_STYLE.unknown.width },
-        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.good,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:fair",   section: "signal", label: "Fair, −66 to −72",        color: ec.fair,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:weak",   section: "signal", label: "Weak, −73 to −80",        color: ec.weak,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:poor",   section: "signal", label: "Poor, below −80",         color: ec.poor,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:unknown", section: "signal", label: "Signal not reported",   color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
         { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
         { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
         { key: "edge:lastKnown", section: "also",  label: "Last known, an end not being polled", color: ec.neutral, style: "dashed", width: LINK_SPEED_STYLE.unknown.width },
@@ -1161,12 +1259,8 @@
       });
     }
     if (kind === "speed") return cy.edges().filter(function (e) { return e.data("linkSpeed") === val; });
-    // "Good" lights the links drawn like it: a good signal and none reported.
     if (kind === "signal") {
-      return cy.edges().filter(function (e) {
-        var c = e.data("meshSignal");
-        return c === val || (val === "good" && c === "unknown");
-      });
+      return cy.edges().filter(function (e) { return !!e.data("isMesh") && e.data("meshSignal") === val; });
     }
     if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
     return cy.collection();
@@ -4488,7 +4582,7 @@
       html += _tipSwatch(ec.neutral, true) + '<b>Signal not reported</b></div>';
     } else {
       var wordColor = cls === "good" ? "var(--color-success)" : ec[cls];
-      html += _tipSwatch(cls === "good" ? ec.neutral : ec[cls], true) +
+      html += _tipSwatch(ec[cls], true) +
         '<b>' + _escTip(String(dbm).replace("-", "−")) + ' dBm</b>' +
         '<span style="font-weight:600;color:' + wordColor + '">' + _SIGNAL_WORD[cls] + '</span></div>';
     }
@@ -4893,6 +4987,8 @@
     fortinetNodeColor: fortinetNodeColor,
     endpointNodeColor: endpointNodeColor,
     buildTopologyElements: buildTopologyElements,
+    siteDeviceTypes: siteDeviceTypes,
+    nodeAssetType: nodeAssetType,
     markPhysicalLoops: markPhysicalLoops,
     topologyStylesheet: topologyStylesheet,
     topologyLegendSpec: topologyLegendSpec,

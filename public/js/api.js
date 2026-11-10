@@ -1860,6 +1860,27 @@ const api = {
     deleteTopologyLayout: (id, view)            => request("DELETE", `/map/sites/${id}/topology/layout?view=${encodeURIComponent(view)}`),
     // Explicit Save — stamps the restore point "Reset to last save" restores.
     saveTopologyCheckpoint: (id, view, positions) => request("POST", `/map/sites/${id}/topology/layout/checkpoint`, { view, positions }),
+    // Saved topology views (business rules 147-149).
+    topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
+    createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
+    updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),
+    deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
+    topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
+    topologyBackgroundUrl:  (id, imageId)  => `${API_BASE}/map/sites/${id}/topology/background/${imageId}`,
+    uploadTopologyBackground: (id, viewId, file) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      return fetch(`${API_BASE}/map/sites/${id}/topology/views/${viewId}/background`, {
+        method: "POST",
+        headers: _csrfHeaders(),
+        body: formData,
+      }).then(function (res) {
+        if (res.status === 401) { window.location.href = "/login.html"; return; }
+        return _readResponseBody(res, "Background upload failed");
+      });
+    },
+    // Rule 148: assets=write — rewrites descriptions from polygon placements.
+    commitTopologyLocationCodes: (id, changes) => request("POST", `/map/sites/${id}/topology/location-codes`, { changes }),
   },
   applicationMap: {
     get:          ()                => request("GET",    "/application-map"),

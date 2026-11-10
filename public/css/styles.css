@@ -2782,6 +2782,11 @@ html[data-page-top-curtain]::after {
 .legend-collapsible.legend-collapsed > :not(.legend-toggle-open) { display: none !important; }
 .legend-collapsible:not(.legend-collapsed) > .legend-toggle-open { display: none !important; }
 .legend-collapsible > .legend-toggle-open { pointer-events: auto; box-shadow: var(--shadow-lift); }
+/* `beside` (legend-toggle.js): the button is the legend's sibling and never
+   hides; the collapsed legend is simply gone, the open one sits to its right. */
+.legend-collapsible.legend-beside.legend-collapsed { display: none !important; }
+.legend-toggle-beside { box-shadow: var(--shadow-lift); }
+.legend-toggle-beside.is-open { color: var(--color-accent); border-color: var(--color-accent); }
 /* On-map view tools (Device Map + Application Map): Full screen / Refresh /
    Export as one row of icon buttons in the map's top-right corner, lifted off
    the map the way the collapsed legend buttons are. */
@@ -9055,6 +9060,15 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   user-select: none;
 }
 .topology-legend[hidden] { display: none; }
+/* The topology's legend button stays in the corner and the panel opens to
+   its right (legend-toggle.js `beside`); a click on the button closes it. */
+.topology-legend-toggle {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 5;
+}
+.topology-legend.legend-beside { left: 56px; }
 .topology-legend-header {
   display: flex;
   align-items: center;

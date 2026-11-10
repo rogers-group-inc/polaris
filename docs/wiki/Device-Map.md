@@ -237,13 +237,13 @@ line, whatever kind of link it is and however it was found. Then:
   two ports' reported speeds. When neither port reports a speed (Polaris does
   not know the port at one end, or its reading is more than an hour old) the
   line stays gray.
-- **A wireless mesh link between two APs is dashed.** It stays gray while the
+- **A wireless mesh link between two APs is dashed.** It is green while the
   signal is good (−65 dBm or better), then turns yellow (−66 to −72), orange
   (−73 to −80) and red (below −80) as the signal weakens. Signal strength comes
   from the firewall's REST API; a site polled over SNMP only has no reading, so
-  its mesh links stay gray.
+  its mesh links stay gray ("Signal not reported" in the legend).
 
-Yellow, orange and red are only ever used for signal, so a slow cable never
+Green, yellow, orange and red are only ever used for signal, so a slow cable never
 looks like a failing radio. An MCLAG inter-chassis link is dashed, in its
 speed's color, and a link that is part of a switch ring gets a white halo
 (near-black on the light themes).
@@ -443,15 +443,16 @@ moved devices and boxes, drawn lines, snapping, and a **Load layout** pick.
 | **Export** | top right of the map: screenshots, PDF or Visio — see below |
 | **Mouse controls** | the mouse button beside Export: how to pan, select and open devices. While editing it becomes a mouse with a pencil, listing the editing gestures instead (moving devices, bending lines, undo, grid and snap, right-click to edit a description). The panel stays open while you work the map, swaps its list when you start or finish editing, and closes only when you click the button again |
 
-The **legend** sits at the graph's bottom left as a small button; click it to
-open the legend, and its **×** folds it back. Hover a row of the legend to
+The **legend** button sits at the graph's bottom left; click it and the legend
+opens to the right of the button, and click the button again (or the legend's
+**×**) to close it. Hover a row of the legend to
 light up what it stands for on the map: every switch, every device in a
 health state, every link of that kind (each glowing in its own colour), or
 every box of that location level. The edge between the graph and
 the details pane hides the pane: hover the edge and click the arrow, and the
 arrow at the right edge brings the pane back. Both remember your choice in
 this browser. The Device Map's own status legend, the Application Map's and
-the Status Map widget's work the same way.
+the Status Map widget's fold into their button instead.
 
 **Save** is an explicit checkpoint that writes the live layout **and** the
 restore point in one statement, so a checkpoint can never be of a layout the
@@ -539,6 +540,45 @@ colour (yellow when it carries a loop halo). A link on a **physical
 loop** (drawn with a yellow halo) lights the **whole loop** instead: every
 looped link reachable from it through the devices they share, and those
 devices, so you can see which switches a ring runs through.
+
+### Device types
+
+The **Device types** list at the top of the details pane has a row for each
+kind of device at the site, with a count and an eye button. Firewalls, routers,
+switches and access points are shown by default; the firewall is the root of
+the map and is always shown. Click the eye on **Servers**, **Workstations**,
+**Printers** or any other type to draw those devices on the graph, each hung
+off the switch it was seen on with a link labelled with the port; click it
+again to hide them. While you are only viewing the map, a toggle lasts until
+you close it. While you are editing, it is saved with the view when you click
+the tick or **Save**. A site with more than 2000 endpoints draws the 2000 most
+recently seen.
+
+### Views
+
+Every site has a default view, and you can save more. A view is a name, one
+**mode** and the device types it shows:
+
+- **Layer 2** — this graph, laid out automatically, with your own positions
+  once you move things.
+- **Topology** — a map or floor plan you place devices on, with polygons for
+  your location groups.
+- **Rack** — rack elevations you put devices into.
+
+The view button beside the site's name opens the view menu: pick a view to
+switch to it, or choose **New view**, **View settings** (its name and mode) or
+**Delete view** (the default view can't be deleted). Views are shared: everyone
+who can open the Device Map sees the same views, and creating or changing them
+needs Device Map Read-Write. Each view keeps its own layout, so moving devices
+in one view never moves them in another.
+
+**Changing a view's mode resets it.** Polaris first shows what the change
+removes: placed devices, group polygons, the uploaded background and racks. If
+you accept, the view starts again in the new mode with the default device
+types (a Rack view with one empty 42U rack). The name is kept, and location
+codes already written to device descriptions stay
+([rule 149](Business-Rules#rule-149)). Finish editing first: the change is
+refused while the view has unsaved edits.
 
 ### Endpoints under a switch
 

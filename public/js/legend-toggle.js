@@ -17,6 +17,11 @@
  *     icon, openLabel,  // the collapsed button's SVG and label (default: a
  *                       // legend list, "Show legend") — the Device Map's
  *                       // Regions panel passes its own
+ *     beside,           // true: the button never hides — it sits just before
+ *                       // the legend (its previous sibling), the open panel
+ *                       // appears to its RIGHT, and the button toggles it
+ *                       // (the Device Map topology, operator request
+ *                       // 2026-11-10); the × still closes it
  *   }) → { setExpanded(bool), isExpanded(), button }
  *
  * The state is a per-viewer convenience, so storage is best-effort: every
@@ -45,7 +50,14 @@
     open.title = openLabel;
     open.setAttribute("aria-label", openLabel);
     open.innerHTML = (opts.icon || ICON) + openLabel;
-    el.insertBefore(open, el.firstChild);
+    var beside = !!opts.beside && !!el.parentNode;
+    if (beside) {
+      el.classList.add("legend-beside");
+      open.classList.add("legend-toggle-beside");
+      el.parentNode.insertBefore(open, el);
+    } else {
+      el.insertBefore(open, el.firstChild);
+    }
 
     var close = opts.closeButton;
     if (!close) {
@@ -78,18 +90,28 @@
     function set(expanded, byUser) {
       el.classList.toggle("legend-collapsed", !expanded);
       open.setAttribute("aria-expanded", expanded ? "true" : "false");
+      if (beside) {
+        open.classList.toggle("is-open", !!expanded);
+        var word = expanded ? "Hide legend" : openLabel;
+        open.title = word;
+        open.setAttribute("aria-label", word);
+      }
       if (byUser) {
         store(expanded);
         if (typeof opts.onChange === "function") opts.onChange(expanded);
-        // Keyboard users land on the control that brings them back.
-        (expanded ? close : open).focus();
+        // Keyboard users land on the control that brings them back. Beside,
+        // the button is always there, so focus stays on it.
+        (beside ? open : (expanded ? close : open)).focus();
       }
     }
 
     // Clicks on the legend must not reach the map under it (Leaflet's own
     // disableClickPropagation covers the Device Map; the widget and the
     // Application Map need it here).
-    open.addEventListener("click", function (e) { e.stopPropagation(); set(true, true); });
+    open.addEventListener("click", function (e) {
+      e.stopPropagation();
+      set(beside ? el.classList.contains("legend-collapsed") : true, true);
+    });
     close.addEventListener("click", function (e) { e.stopPropagation(); set(false, true); });
 
     var initial = typeof opts.expanded === "boolean" ? opts.expanded : stored();

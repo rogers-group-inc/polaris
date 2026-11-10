@@ -176,8 +176,10 @@ describe("legend hover highlight", () => {
     expect(m("speed:10g")).toEqual(["up"]);
     expect(m("speed:1g")).toEqual(["ll", "sw"]);
     expect(m("speed:unknown")).toEqual(["ap"]);
-    // "Good" lights the mesh links drawn like it, no reading included.
-    expect(m("signal:good")).toEqual(["me"]);
+    // A mesh link with no reading is "Signal not reported", not "Good" —
+    // good is green now and lights only a measured good link.
+    expect(m("signal:good")).toEqual([]);
+    expect(m("signal:unknown")).toEqual(["me"]);
     expect(m("signal:poor")).toEqual([]);
     expect(m("loc:building")).toEqual(["box"]);
     expect(m("loc:floor")).toEqual([]);

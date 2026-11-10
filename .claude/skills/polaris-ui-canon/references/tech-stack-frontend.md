@@ -44,18 +44,37 @@ has something to say. `markLinkClasses` (run by `buildTopologyElements`) stamps 
 `linkSpeed` = `linkSpeedClass(min of the two ends' srcIf/tgtIf.speedBps)` — `10g` (≥ 10 Gb,
 aggregates included) / `5g` / `2g5` / `1g` / `100m` / `10m` / `unknown` — and a mesh link
 `meshSignal` = `meshSignalClass(signalDbm)` — `good` ≥ −65 / `fair` ≥ −72 / `weak` ≥ −80 /
-`poor` / `unknown` (no reading, drawn like `good`). The stylesheet has one rule per class
+`poor` / `unknown` (no reading — the neutral dashed line, its own "Signal not reported"
+legend row). `good` is GREEN (`EDGE_COLORS.good`, `#22c55e` dark / `#16a34a` light — operator
+request 2026-11-10; until then it was drawn neutral like `unknown`). The stylesheet has one rule per class
 (colour + `LINK_SPEED_STYLE` weight; 10 Mb a round-capped dot pattern); how a link was found
 (isIface / isLldp / isApLink / controller) no longer has a colour and lives in the tooltip.
-**Warm hues are reserved for signal** — no speed may take yellow / orange / red, which the
-palette test enforces. MCLAG stays dashed in its speed's colour; the ring halo is
+**Signal hues are reserved for signal** — no speed may take green / yellow / orange / red
+(the 1 Gb teal is the nearest; the palette test enforces the warm three). MCLAG stays dashed in its speed's colour; the ring halo is
 `EDGE_COLORS.halo` (white / near-black — yellow was given to signal). The server side:
 `attachIfDetails` covers bridge and MCLAG edges too, and a mesh leaf's station row carries
 `signalDbm` / `noiseDbm` / `band` / `channel` / `channelWidthMhz`
 (`topologyGraphService → meshLinkDetail`, the root AP's `AssetApRadio` for channel and width;
 signal only exists where the controller's REST overlay ran). The tooltip
 (`edgeTooltipHtml` → `_speedTipRows` / `_meshTipRows`) writes every value out in words, so
-colour is never the only carrier. Under each end's port line `_opticsTipRow` adds that port's
+colour is never the only carrier.
+
+**Device types and saved views (business rule 147).** `buildTopologyElements(data, { shownTypes })`
+(desktop modal only — the phone and the widget call it without opts and keep the backbone)
+drops a hidden switch / AP / cross-site type with its links and adds every payload `endpoints`
+row of a shown type as a `role: "endpoint"` node (`assetId`, `assetType`, health colour,
+location codes) linked from its `switchId` by an `isEndpointLink` edge labelled with the port;
+the column solver already treats endpoints as leaves. `siteDeviceTypes(data)` feeds the
+sidebar's Device types rows. In map.js the view on screen (`topoState.viewId`) scopes every
+layout key through `_activeViewKey` → `_viewScopedKey` (`v:<id>` / `v:<id>|<location key>` for a
+saved view, the legacy keys for the default), so save / load / checkpoint / reset need no view
+logic of their own; "snap other views" only touches `_layoutKeyBelongsToCurrentView` keys. A
+view-level change in edit mode is staged in `_editStaged.viewPatch` and lands as ONE
+`PUT …/views/:id` in `_commitEditSession`; a Topology or Rack view renders through
+`_renderModeCanvas` → `window.PolarisTopologyPhysical` / `window.PolarisTopologyRack`, handed
+`_modeCanvasContext`.
+
+Under each end's port line `_opticsTipRow` adds that port's
 SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,
 the Interfaces table's `RX_LOW_DBM`; keep the two equal) in red, plus one line naming the end
 receiving too little light; a port whose readings are all null (copper SFP, empty cage) gets

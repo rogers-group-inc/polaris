@@ -29,13 +29,13 @@ function slice(from: string, to: string): string {
 type Harness = {
   ctx: Record<string, any>;
   store: Map<string, string>;
-  calls: { put: any[]; del: any[] };
+  calls: { put: any[]; del: any[]; view: any[] };
   move: (x: number) => void;
 };
 
 function harness(opts: { writer?: boolean } = {}): Harness {
   const store = new Map<string, string>();
-  const calls = { put: [] as any[], del: [] as any[] };
+  const calls = { put: [] as any[], del: [] as any[], view: [] as any[] };
   let pos = { x: 0, y: 0 };
   const ctx: Record<string, any> = {
     POSITION_STORAGE_PREFIX: "polaris.topology.positions:",
@@ -53,6 +53,10 @@ function harness(opts: { writer?: boolean } = {}): Harness {
       map: {
         saveTopologyLayout: async (id: string, view: string, p: unknown) => { calls.put.push({ id, view, p }); },
         deleteTopologyLayout: async (id: string, view: string) => { calls.del.push({ id, view }); },
+        updateTopologyView: async (id: string, viewId: string, patch: unknown) => {
+          calls.view.push({ id, viewId, patch });
+          return { view: { id: viewId, isDefault: false, mode: "layer2", name: "x", ...(patch as object) }, modeChange: null };
+        },
       },
     },
     setTimeout, clearTimeout, Promise, Object, JSON,
@@ -60,6 +64,8 @@ function harness(opts: { writer?: boolean } = {}): Harness {
   vm.createContext(ctx);
   vm.runInContext(
     "function _currentNodePositions() { return { 'sw-1': { x: __pos().x, y: __pos().y } }; }\n" +
+    // The saved-views helpers _activeViewKey / the commit lean on (rule 147).
+    slice("  // == Saved views (business rules 147-149)", "  // == Save / Load") +
     slice("  function _activeViewKey() {", "  // ── Topology search"),
     Object.assign(ctx, { __pos: () => pos }),
   );
@@ -76,6 +82,77 @@ function harness(opts: { writer?: boolean } = {}): Harness {
 }
 
 const KEY = "polaris.topology.positions:site-1";
+
+describe("saved topology views (business rule 147)", () => {
+  const VIEW = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  function withViews(h: Harness, viewId: string | null) {
+    h.ctx.topoState.data.views = [
+      { id: "dflt", isDefault: true, mode: "layer2", name: "Base view", shownTypes: ["firewall", "switch"] },
+      { id: VIEW, isDefault: false, mode: "layer2", name: "Plant", shownTypes: ["firewall", "server"] },
+    ];
+    h.ctx.topoState.viewId = viewId;
+  }
+
+  it("the default view keeps the legacy keys", async () => {
+    const h = harness();
+    withViews(h, "dflt");
+    h.move(7);
+    await h.ctx._flushServerLayoutSaves();
+    expect(h.calls.put[0].view).toBe("flat");
+    expect(h.store.has(KEY)).toBe(true);
+  });
+
+  it("another view's layout lands under v:<id>, its floor views under v:<id>|<key>", async () => {
+    const h = harness();
+    withViews(h, VIEW);
+    h.move(7);
+    await h.ctx._flushServerLayoutSaves();
+    expect(h.calls.put[0].view).toBe(`v:${VIEW}`);
+    expect(h.store.has(`${KEY}:v:${VIEW}`)).toBe(true);
+    h.ctx.topoState.activeView = "f|plant|mill|1";
+    expect(h.ctx._activeViewKey()).toBe(`v:${VIEW}|f|plant|mill|1`);
+  });
+
+  it("owns only its own Layer 2 keys", () => {
+    const h = harness();
+    withViews(h, VIEW);
+    expect(h.ctx._layoutKeyBelongsToCurrentView(`v:${VIEW}`)).toBe(true);
+    expect(h.ctx._layoutKeyBelongsToCurrentView(`v:${VIEW}|b||shop`)).toBe(true);
+    expect(h.ctx._layoutKeyBelongsToCurrentView(`v:${VIEW}|topo`)).toBe(false);
+    expect(h.ctx._layoutKeyBelongsToCurrentView("flat")).toBe(false);
+    withViews(h, "dflt");
+    expect(h.ctx._layoutKeyBelongsToCurrentView("flat")).toBe(true);
+    expect(h.ctx._layoutKeyBelongsToCurrentView("topo")).toBe(false);
+    expect(h.ctx._layoutKeyBelongsToCurrentView(`v:${VIEW}`)).toBe(false);
+  });
+
+  it("shown types: a staged edit, else this session's toggles, else the view's own", () => {
+    const h = harness();
+    withViews(h, VIEW);
+    expect(h.ctx._effectiveShownTypes()).toEqual(["firewall", "server"]);
+    h.ctx.topoState.shownTypesOverride = ["firewall", "printer"];
+    expect(h.ctx._effectiveShownTypes()).toEqual(["firewall", "printer"]);
+    h.ctx.topoState.editing = true;
+    h.ctx._beginEditSession();
+    h.ctx._editStaged.viewPatch.shownTypes = ["firewall", "router"];
+    expect(h.ctx._effectiveShownTypes()).toEqual(["firewall", "router"]);
+  });
+
+  it("a staged device-type change commits as one view PUT, and discarding drops it", async () => {
+    const h = harness();
+    withViews(h, VIEW);
+    h.ctx.topoState.editing = true;
+    h.ctx._beginEditSession();
+    h.ctx._editStaged.viewPatch.shownTypes = ["firewall", "router", "server"];
+    await h.ctx._commitEditSession();
+    expect(h.calls.view).toEqual([{ id: "site-1", viewId: VIEW, patch: { shownTypes: ["firewall", "router", "server"] } }]);
+    expect(h.ctx._currentView().shownTypes).toEqual(["firewall", "router", "server"]);
+
+    h.ctx._editStaged.viewPatch.shownTypes = ["firewall"];
+    expect(h.ctx._discardEditSession()).toBe(true);
+    expect(h.calls.view).toHaveLength(1);
+  });
+});
 
 describe("topology edit session", () => {
   let h: Harness;
