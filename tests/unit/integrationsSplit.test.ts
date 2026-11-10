@@ -23,6 +23,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import vm from "node:vm";
 import { INTEGRATIONS_FILES, integrationsFileSource } from "./_integrationsSource.js";
+import { appSource } from "./_appSource.js";
 
 const PUBLIC = resolve(__dirname, "../../public");
 const INVENTORY = JSON.parse(
@@ -75,7 +76,7 @@ describe("integrations split — pages", () => {
   });
 
   it("app.js's asset panel bundle carries the split, in order, after polling-methods.js", () => {
-    const app = readFileSync(join(PUBLIC, "js/app.js"), "utf8");
+    const app = appSource();
     const start = app.indexOf("var _PANEL_SCRIPT_BUNDLES = {");
     const body = app.slice(start, app.indexOf("\n};", start));
     const asset = /^\s{2}asset:\s*\[([\s\S]*?)\]/m.exec(body)![1];

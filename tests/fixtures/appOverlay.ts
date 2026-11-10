@@ -11,14 +11,10 @@
  * the function body; it throws loudly if the function is renamed or moved, which
  * is the signal a caller wants rather than a silently absent global.
  */
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = dirname(fileURLToPath(import.meta.url));
+import { appSource } from "../unit/_appSource.js";
 
 function appOverlaySource(): string {
-  const src = readFileSync(resolve(here, "../../public/js/app.js"), "utf8");
+  const src = appSource();
   const start = src.indexOf("function buildOverlay(");
   if (start === -1) {
     throw new Error("buildOverlay not found in public/js/app.js — was it renamed or moved?");

@@ -34,7 +34,7 @@ line was an escalation, and the next reading under it was a recovery.
 **Three evaluators with different inputs wrote one stored severity.** The
 `capacityWatch` job graded every 10 minutes with `pgTuningNeeded: false` and no
 Capacity Advisor gaps. `GET /server-settings/pg-tuning`, called on every admin page
-load by `public/js/app.js → checkCapacity`, graded with the real PostgreSQL tuning
+load by `public/js/app-sidebar.js → checkCapacity`, graded with the real PostgreSQL tuning
 check but no advisor gaps. `GET /server-settings/capacity-advisor`, the Maintenance
 tab itself, graded with both. All three called `recordCapacityTransition` against
 the same Setting. On a host where one of the inputs only some evaluators read was

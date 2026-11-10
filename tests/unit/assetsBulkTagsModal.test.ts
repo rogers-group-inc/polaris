@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, unknown>;
 
@@ -73,7 +74,7 @@ beforeAll(() => {
     },
   };
 
-  const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").replace(/\r\n/g, "\n");
+  const appSrc = appSource().replace(/\r\n/g, "\n");
   const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").replace(/\r\n/g, "\n");
   const body = [
     extractVar(appSrc, "_tagCache"),

@@ -30,6 +30,7 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -113,7 +114,7 @@ beforeAll(() => {
   };
 
   // The real tag-color helpers (tagColorCss / tagColorTint), sliced out of app.js.
-  const appJs = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+  const appJs = appSource();
   const from = appJs.indexOf("var TAG_SEVERITY_COLORS");
   const to = appJs.indexOf("// ─── Tag field", from);
   expect(from > 0 && to > from, "app.js tag-color helper block moved").toBe(true);

@@ -12,10 +12,9 @@
  * every run, so a change there shows up as a test change, not a silent pass.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
-const APP_JS = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+const APP_JS = appSource();
 
 /** One top-level `function name(...) {...}` declaration, source text and all. */
 function extractAppFn(name: string): string {

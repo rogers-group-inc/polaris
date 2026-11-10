@@ -27,12 +27,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
-const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const appLines = appSource().split(/\r?\n/);
 
 /** Slice a top-level block that starts with `prefix` and ends at the first bare `}` / `};`. */
 function blockSrc(prefix: string): string {

@@ -12,6 +12,7 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -19,7 +20,7 @@ const g = globalThis as Record<string, unknown>;
 // The page order: the shared theme engine (theme-core.js) runs before app.js.
 const APP_SRC =
   readFileSync(resolve(__dirname, "../../public/js/theme-core.js"), "utf8") + "\n" +
-  readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+  appSource();
 const CSS = readFileSync(resolve(__dirname, "../../public/css/styles.css"), "utf8");
 
 function mount(username: string, store: Record<string, string> = {}) {

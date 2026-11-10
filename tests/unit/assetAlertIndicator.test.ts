@@ -22,8 +22,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 const h = vi.hoisted(() => ({
   prisma: { notification: { findMany: vi.fn() } },
@@ -39,12 +37,13 @@ vi.mock("../../src/services/notificationRuleService.js", () => ({
 
 import { activeAlertSummaryByAsset } from "../../src/services/notificationService.js";
 import { ALERT_SEVERITY_RANK, alertSeverityRank, higherAlertSeverity } from "../../src/utils/alertSeverity.js";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
 
 /* ─── The client half, sliced out of app.js ───────────────────────────────── */
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const assetsLines = appSource().split(/\r?\n/);
 
 function fnSrc(name: string): string {
   const start = assetsLines.findIndex((l) => l.startsWith(`function ${name}(`));
