@@ -916,6 +916,74 @@
   z-index: 1;
 }
 .topology-mode-empty { padding: 3rem 1rem; text-align: center; }
+
+/* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
+   an uploaded floor plan, with location-group polygons and placed devices. */
+.topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+.topo-phys-marker { background: none; border: none; }
+.topo-phys-node {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid #64748b;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.topo-phys-node img { width: 20px; height: 20px; object-fit: contain; }
+.topo-phys-name {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  text-shadow: 0 0 3px var(--color-bg-primary), 0 0 3px var(--color-bg-primary);
+  pointer-events: none;
+}
+.topo-phys-polygon-label {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--color-text-primary);
+  text-shadow: 0 0 3px var(--color-bg-primary), 0 0 3px var(--color-bg-primary);
+}
+.topo-phys-polygon-label::before { display: none; }
+.topo-phys-codes { font-family: "Roboto Mono", monospace; font-size: 10px; color: var(--color-text-tertiary); font-weight: 400; }
+.topo-phys-tip { color: var(--color-text-tertiary); font-size: 11px; }
+.topology-mode-canvas.is-editing .topo-phys-marker { cursor: grab; }
+/* The details pane's Not placed / Placed lists. */
+.topology-info .topology-section li.topo-phys-row { justify-content: flex-start; align-items: center; gap: 8px; padding: 3px 4px; border-radius: var(--radius-sm); }
+.topology-info .topology-section li.topo-phys-row[draggable="true"] { cursor: grab; }
+.topology-info .topology-section li.topo-phys-row[draggable="true"]:hover { background: var(--color-hover-tint); }
+.topology-info .topology-section li.topo-phys-row.is-placed { color: var(--color-text-tertiary); }
+.topo-phys-grip { color: var(--color-text-tertiary); width: 14px; text-align: center; }
+.topo-phys-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The group picker dialog. */
+.topo-phys-groups { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow: auto; }
+.topo-phys-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.topo-phys-group .topo-phys-codes { margin-left: auto; }
+.topo-phys-group-new { margin-top: 10px; }
+.topo-phys-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .topology-info .topology-section li .meta {
   color: var(--color-text-tertiary);
   font-family: "Roboto Mono", monospace;

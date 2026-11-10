@@ -337,6 +337,24 @@
     return elements;
   }
 
+  // How a link is drawn, for a surface that is not Cytoscape (the Topology
+  // canvas, topology-physical.js): the same colour, weight and dash the
+  // stylesheet gives it. `d` is an edge's data after markLinkClasses.
+  function edgeLineStyle(d, theme) {
+    var ec = EDGE_COLORS[paletteFamily(theme)];
+    d = d || {};
+    if (d.isMesh) {
+      var sig = d.meshSignal || "unknown";
+      return { color: sig === "unknown" ? ec.neutral : ec[sig], width: MESH_LINK_WIDTH, dash: "6 4" };
+    }
+    if (d.isEndpointLink) return { color: ec.neutral, width: 1.4, dash: null };
+    var cls = d.linkSpeed || "unknown";
+    var st = LINK_SPEED_STYLE[cls] || LINK_SPEED_STYLE.unknown;
+    var color = cls === "unknown" ? ec.neutral : ec[cls];
+    var dash = d.isMclag || d.isLastKnown ? "8 5" : (st.dotted ? "1 4" : null);
+    return { color: color, width: st.width, dash: dash };
+  }
+
   // The asset type a backbone node stands for (endpoint and cross-site nodes
   // carry their own `assetType`).
   var ROLE_ASSET_TYPE = { fortigate: "firewall", fortiswitch: "switch", fortiap: "access_point" };
@@ -4988,6 +5006,8 @@
     endpointNodeColor: endpointNodeColor,
     buildTopologyElements: buildTopologyElements,
     siteDeviceTypes: siteDeviceTypes,
+    edgeLineStyle: edgeLineStyle,
+    locGroupColor: locGroupColor,
     nodeAssetType: nodeAssetType,
     markPhysicalLoops: markPhysicalLoops,
     topologyStylesheet: topologyStylesheet,

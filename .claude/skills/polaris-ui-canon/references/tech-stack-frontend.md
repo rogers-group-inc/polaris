@@ -74,6 +74,18 @@ view-level change in edit mode is staged in `_editStaged.viewPatch` and lands as
 `_renderModeCanvas` → `window.PolarisTopologyPhysical` / `window.PolarisTopologyRack`, handed
 `_modeCanvasContext`.
 
+**The Topology canvas (`topology-physical.js`)** is Leaflet, not Cytoscape: one module owns a view's
+map (OSM through the single tile host, or the uploaded image on `L.CRS.Simple`), its polygons,
+placed markers and links, and reaches map.js only through the context. map.js routes the shared
+corner tools to it (`_modeCornerTools`: the Layer 2 row minus grid / snapping, plus its edit-only
+Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse controls branch on
+`_modeInstance()`), adds its Not placed / Placed lists to the details pane (`sidebarHtml` /
+`wireSidebar`, HTML5 drag with the `application/x-polaris-asset` type), and commits through
+`_commitModeCanvasSession`: `beforeCommit` (the OSM centre + zoom), the rule-148 summary
+(`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
+`_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
+picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.
+
 Under each end's port line `_opticsTipRow` adds that port's
 SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,
 the Interfaces table's `RX_LOW_DBM`; keep the two equal) in red, plus one line naming the end

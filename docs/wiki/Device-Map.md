@@ -572,6 +572,34 @@ who can open the Device Map sees the same views, and creating or changing them
 needs Device Map Read-Write. Each view keeps its own layout, so moving devices
 in one view never moves them in another.
 
+**A Topology view** starts empty. In edit mode, two extra buttons appear in
+the column under the tick:
+
+- **Background** (the map icon): **OpenStreetMap** or **Upload image** (PNG,
+  JPEG or WebP, up to 15 MB). On OpenStreetMap the map opens zoomed in on the
+  site; pan and zoom to frame it, and the view you leave edit mode on is saved
+  with the view. An image is shown at any resolution, scaled to fit. Switching
+  between the two clears the polygons and placements drawn on the old one.
+- **Draw polygon**: pick the location group the polygon is for (a group the
+  site's descriptions already name, or a new group inside one), then click to
+  add points and click the first point to close it. Click a polygon to
+  reshape it, change its group or delete it.
+
+Drag a device from **Not placed** in the details pane onto the map. A device
+dropped inside a group polygon takes that group's `a:` / `b:` / `f:` / `r:` /
+`jb:` codes in its description when you save; the innermost polygon wins, so
+a device on a floor inside a building gets both. A device placed outside every
+polygon keeps its codes ([rule 148](Business-Rules#rule-148)). Links between
+placed devices draw themselves, in the same colours as the Layer 2 graph.
+Right-click a placed device to remove it from the map (its codes stay).
+
+When you click the tick or **Save**, Polaris lists the descriptions that will
+change (codes now, codes after) before writing them. Writing descriptions
+needs Assets Read-Write; without it the view saves and the code changes are
+skipped. On a FortiSwitch or FortiAP the new description is also sent to the
+device when description sync is on. **Load** offers **Discard changes since
+the last save**, and **Export** copies a picture of the map.
+
 **Changing a view's mode resets it.** Polaris first shows what the change
 removes: placed devices, group polygons, the uploaded background and racks. If
 you accept, the view starts again in the new mode with the default device

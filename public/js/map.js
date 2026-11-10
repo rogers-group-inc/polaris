@@ -257,8 +257,10 @@
   // else — markers, clusters, region polygons, the status legend and the
   // attribution — over them with the tile pane and the top corners' buttons
   // left out.
-  async function captureMapCanvas() {
-    var el = map.getContainer();
+  // `target` (optional): another map container to capture — a Topology or
+  // Rack view's canvas (rule 147). Default: the Device Map itself.
+  async function captureMapCanvas(target) {
+    var el = target && target.nodeType === 1 ? target : map.getContainer();
     var box = el.getBoundingClientRect();
     var SCALE = 2;
     var canvas = document.createElement("canvas");
@@ -1692,6 +1694,8 @@
       return;
     }
     _modeCanvas = { mode: mode, instance: mod.render(host, _modeCanvasContext(data)) };
+    _modeCornerTools();
+    _applyTopologyEditMode();
   }
   // What a mode canvas may read and call. Kept small and explicit so the
   // modules never reach into map.js's closure.
@@ -1711,9 +1715,168 @@
       },
       stagedViewPatch: function () { return _editSessionActive() ? (_editStaged.viewPatch || {}) : {}; },
       layoutKey: function () { return _viewScopedKey("topo"); },
+      // The view's Topology placements ({ assetId: {x, y} } in background
+      // coordinates): a staged edit first, then the shared layout.
+      loadPlacements: function () {
+        var key = _viewScopedKey("topo");
+        if (_editSessionActive() && _editStaged.views[key]) return _editStaged.views[key].positions;
+        var layouts = topoState.data && topoState.data.savedLayouts;
+        var entry = layouts && layouts[key];
+        return entry && entry.positions && typeof entry.positions === "object" ? entry.positions : {};
+      },
+      stagePlacements: function (positions) {
+        if (!_editSessionActive()) return false;
+        _stageLayout(_viewScopedKey("topo"), positions);
+        return true;
+      },
+      // Rule 148: a code change staged for one asset (null withdraws it).
+      stageLocationCode: function (assetId, codes, info) {
+        if (!_editSessionActive() || !assetId) return;
+        if (!_editStaged.locationCodes) _editStaged.locationCodes = {};
+        if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from };
+        else delete _editStaged.locationCodes[assetId];
+      },
+      uploadBackground: function (file) {
+        var v = _currentView();
+        return api.map.uploadTopologyBackground(topoState.siteId, v && v.id, file);
+      },
+      backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(topoState.siteId, imageId); },
+      refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
+      historyChanged: function () { _paintUndoRedo(); },
       openAsset: function (id) { if (id && typeof openViewModal === "function") openViewModal(id); },
       toast: function (msg, kind) { if (typeof showToast === "function") showToast(msg, kind); },
     };
+  }
+  function _modeInstance() { return _modeCanvas && _modeCanvas.instance ? _modeCanvas.instance : null; }
+  // Export on a Topology / Rack canvas: a picture of the canvas as drawn
+  // (the Layer 2 PDF / Visio writers read a Cytoscape scene it does not have).
+  function _openModeCanvasExport(anchor) {
+    if (typeof showRowMenu !== "function") return;
+    showRowMenu(anchor, [
+      { heading: "Export" },
+      { label: "Copy map as image", onSelect: _copyModeCanvasImage },
+    ], { label: "Export", align: "end" });
+  }
+  async function _copyModeCanvasImage() {
+    var inst = _modeInstance();
+    var el = inst && inst.captureElement ? inst.captureElement() : null;
+    if (!el) return;
+    try {
+      var canvas = await captureMapCanvas(el);
+      var blob = await new Promise(function (resolve) {
+        try { canvas.toBlob(resolve, "image/png"); } catch (e) { resolve(null); }
+      });
+      var ok = blob ? await copyPngToClipboard(blob) : false;
+      if (typeof showToast === "function") {
+        showToast(ok ? "View copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+      }
+    } catch (err) {
+      if (typeof showToast === "function") showToast("Screenshot failed — " + (err && err.message ? err.message : String(err)), "error");
+    }
+  }
+  // The corner tools on a mode canvas: the Layer 2 set minus its grid and
+  // snapping (a map and a rack have neither), plus the canvas's own edit-mode
+  // buttons (Topology: Background, Draw polygon) at the end of the column.
+  function _modeCornerTools() {
+    _ensureTopologyCornerTools();
+    ["topology-snap-points", "topology-snap-devices", "topology-grid"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.remove();
+    });
+    var inst = _modeInstance();
+    var stack = document.getElementById("topology-corner-stack");
+    if (!inst || !stack || typeof inst.cornerButtons !== "function") return;
+    inst.cornerButtons().forEach(function (b) {
+      var btn = _cornerButton(b.id, "btn-icon topology-tool", function (el) { b.onClick(el); });
+      btn.innerHTML = _svg(b.icon);
+      _setCornerTip(btn, b.label, b.tip);
+      if (b.editOnly) btn.setAttribute("data-edit-only", "1");
+      stack.appendChild(btn);
+    });
+  }
+  // Staged rule-148 code changes of the open edit session, as a list.
+  function _stagedLocationCodeChanges() {
+    var map = _editSessionActive() && _editStaged.locationCodes;
+    if (!map) return [];
+    return Object.keys(map).map(function (id) {
+      return { assetId: id, codes: map[id].codes, name: map[id].name || id, from: map[id].from || null };
+    });
+  }
+  function _codesText(c) {
+    if (!c) return "no codes";
+    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["junctionBox", "jb"]]
+      .filter(function (p) { return c[p[0]]; })
+      .map(function (p) { return p[1] + ":" + c[p[0]]; });
+    return parts.length ? parts.join(" ") : "no codes";
+  }
+  // The Save summary (rule 148): which descriptions the commit rewrites.
+  // Resolves "save" (codes too), "layout" (no assets write: save the view
+  // only) or "back" (keep editing).
+  function _confirmLocationCodeChanges(changes) {
+    var canAssets = typeof permAtLeast === "function" && permAtLeast("assets", "write");
+    var n = changes.length;
+    var rows = changes.map(function (c) {
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td class="mono">' + escapeHtml(_codesText(c.from)) +
+        '</td><td class="mono">' + escapeHtml(_codesText(c.codes)) + '</td></tr>';
+    }).join("");
+    var body =
+      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, so their location codes change. ' +
+        'The free text in each description stays; only the a:/b:/f:/r:/jb: codes are replaced.</p>' +
+      '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+      '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. Devices placed outside every polygon keep their codes.</p>' +
+      (canAssets || typeof calloutHTML !== "function" ? '' : calloutHTML("warning", "Descriptions will be skipped",
+        escapeHtml("You have Device Map write but not Assets write: the view will save, the " + n + " description change" + (n === 1 ? "" : "s") + " will be skipped.")));
+    return new Promise(function (resolve) {
+      var settled = false;
+      var footer =
+        '<button type="button" class="btn btn-secondary" data-lc="back">Back to editing</button>' +
+        '<button type="button" class="btn btn-primary" data-lc="ok">' + (canAssets ? 'Save view and ' + n + ' description' + (n === 1 ? '' : 's') : 'Save the view only') + '</button>';
+      var dlg = buildOverlay(1300, "Save view — " + n + " description" + (n === 1 ? "" : "s") + " will change", body, footer, function () {
+        if (!settled) { settled = true; resolve("back"); }
+      }, true);
+      dlg.overlay.querySelector('[data-lc="back"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector('[data-lc="ok"]').addEventListener("click", function () {
+        settled = true;
+        resolve(canAssets ? "save" : "layout");
+        dlg.close();
+      });
+    });
+  }
+  async function _commitLocationCodes(siteId, changes) {
+    if (!changes.length) return;
+    try {
+      var res = await api.map.commitTopologyLocationCodes(siteId, changes.map(function (c) { return { assetId: c.assetId, codes: c.codes }; }));
+      var results = (res && res.results) || [];
+      var updated = results.filter(function (r) { return r.status === "updated"; }).length;
+      var refused = results.filter(function (r) { return r.status === "refused"; });
+      if (typeof showToast === "function") {
+        if (refused.length) {
+          showToast(updated + " description" + (updated === 1 ? "" : "s") + " updated; " + refused.length + " refused — " + refused[0].reason, "warning");
+        } else if (updated) {
+          showToast(updated + " description" + (updated === 1 ? "" : "s") + " updated with location codes");
+        }
+      }
+      // The payload's location codes are now stale: re-read it.
+      if (updated && topoState.siteId === siteId) refreshTopology({ silent: true });
+    } catch (err) {
+      if (typeof showToast === "function") showToast("Location codes not written — " + (err && err.message ? err.message : String(err)), "error");
+    }
+  }
+  // Commit a mode canvas's edit session (the tick or Save): the canvas
+  // captures anything it stages lazily (the OSM view), the rule-148 summary
+  // is confirmed, then the session lands and the codes are written. Resolves
+  // false when the operator chose to keep editing.
+  async function _commitModeCanvasSession() {
+    var inst = _modeInstance();
+    if (inst && typeof inst.beforeCommit === "function") inst.beforeCommit();
+    var changes = _stagedLocationCodeChanges();
+    var choice = changes.length ? await _confirmLocationCodeChanges(changes) : "save";
+    if (choice === "back") return false;
+    var siteId = topoState.siteId;
+    await _commitEditSession();
+    if (choice === "save") await _commitLocationCodes(siteId, changes);
+    return true;
   }
 
   // == Saved views (business rules 147-149) ================================
@@ -2220,6 +2383,14 @@
   // PUT may not have landed yet and a restore point of a layout the server
   // never stored would restore a state nobody displayed.
   async function saveTopologyLayoutCheckpoint() {
+    // A Topology / Rack view: Save commits the edit so far (with the
+    // rule-148 summary) and keeps editing. Its layout has no restore point.
+    if (_modeInstance()) {
+      if (!topoState.editing) return;
+      var done = await _commitModeCanvasSession();
+      if (done && typeof showToast === "function") showToast("View saved");
+      return;
+    }
     if (!topoState.siteId || !cyInstance) return;
     if (_layoutActionBlockedByOverlay()) return;
     var view = _activeViewKey();
@@ -2271,6 +2442,24 @@
   // entries grey out.
   function openResetLayoutMenu(anchor) {
     if (!topoState.siteId || !topoState.data) return;
+    if (_modeInstance()) {
+      if (typeof showRowMenu !== "function") return;
+      showRowMenu(anchor, [
+        { heading: "Load" },
+        {
+          label: "Discard changes since the last save",
+          title: "Put the view back as it was last saved",
+          danger: true,
+          onSelect: function () {
+            _discardEditSession();
+            _beginEditSession();
+            renderTopologyGraph(topoState.data);
+            renderTopologyInfo(topoState.data);
+          },
+        },
+      ], { label: "Load", align: "end" });
+      return;
+    }
     if (typeof showRowMenu !== "function") { resetTopologyLayoutToBaseline(); return; }
     var cp = _readCheckpoint(topoState.siteId);
     showRowMenu(anchor, [
@@ -2545,6 +2734,43 @@
       ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
       ["Right-click a device", "Edit its description / grouping codes"],
   ];
+  // The Topology and Rack canvases have their own gestures (rule 147).
+  var MOUSE_CONTROLS_BY_MODE = {
+    topology: {
+      view: [
+        ["Drag", "Pan the map (scroll wheel zooms)"],
+        ["Hover a device or link", "Show its name / the link's ports"],
+        ["Double-click a device", "Open its asset details"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Place it on the map — inside a group polygon it takes that group's location codes when you save"],
+        ["Drag a placed device", "Move it; its links follow"],
+        ["Right-click a placed device", "Open it, or remove it from the map (its codes are left as they are)"],
+        ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
+        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
+        ["Click a polygon", "Reshape it, change its group or delete it"],
+        ["Drag / scroll", "Pan and zoom — on OpenStreetMap the view you leave is saved with the view"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+    rack: {
+      view: [
+        ["Scroll", "Move along the racks"],
+        ["Double-click a device", "Open its asset details"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Rack it — it lands as 1U at the U under the pointer"],
+        ["Drag Cable management", "Add a cable-management placeholder (any number)"],
+        ["Drag a racked item", "Move it within a rack or to another rack, a U at a time"],
+        ["Drag an item's top or bottom edge", "Change its height, a U at a time"],
+        ["Right-click a racked item", "Move it to the other face, make it half or full depth, or remove it"],
+        ["Rotate (rack header)", "Show the rack's other face"],
+        ["Drag a rack by its header", "Move it among the racks"],
+        ["Double-click a rack", "Rename it or change its size (U)"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+  };
 
   // The Mouse controls panel: a legend-styled card under the corner tools.
   // Only its button closes it — a click elsewhere on the map leaves it open,
@@ -2587,7 +2813,11 @@
     panel.innerHTML =
       '<header class="topology-legend-header"><span class="topology-legend-title">' + title + "</span></header>" +
       '<div class="topology-legend-body">' +
-        (editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW)
+        (function () {
+          var byMode = MOUSE_CONTROLS_BY_MODE[_currentMode()];
+          if (byMode) return editing ? byMode.edit : byMode.view;
+          return editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW;
+        })()
           .map(function (c) { return row("", c[0], c[1]); }).join("") +
       "</div>";
   }
@@ -2703,7 +2933,7 @@
   function _beginEditSession() {
     // Anything queued before editing began was already a committed layout.
     _flushServerLayoutSaves();
-    _editStaged = { siteId: topoState.siteId, views: {}, viewPatch: {} };
+    _editStaged = { siteId: topoState.siteId, views: {}, viewPatch: {}, locationCodes: {} };
   }
   function _stageLayout(view, positions, opts) {
     if (!_editStaged) return;
@@ -2719,7 +2949,8 @@
     _editStaged = null;
     if (!session) return false;
     var had = Object.keys(session.views).length > 0 ||
-      !!(session.viewPatch && Object.keys(session.viewPatch).length);
+      !!(session.viewPatch && Object.keys(session.viewPatch).length) ||
+      !!(session.locationCodes && Object.keys(session.locationCodes).length);
     var prefix = session.siteId + "|";
     Object.keys(_layoutDirty).forEach(function (k) {
       if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
@@ -2737,7 +2968,7 @@
     if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
     var views = session.views;
     var viewPatch = session.viewPatch || {};
-    _editStaged = { siteId: siteId, views: {}, viewPatch: {} };
+    _editStaged = { siteId: siteId, views: {}, viewPatch: {}, locationCodes: {} };
     var pending = [];
     // The view's own staged fields (rule 147: its shown device types; the
     // Topology / Rack canvases stage theirs here too) land as one PUT.
@@ -3791,6 +4022,7 @@
       function () { _paintTopologyGrid(); });
 
     var exportBtn = _cornerButton("topology-export", "btn-icon topology-tool", function (btn) {
+      if (_modeInstance()) { _openModeCanvasExport(btn); return; }
       if (!window.PolarisGraphExport) return;
       window.PolarisGraphExport.openMenu(btn, topologyExportContext, {
         screenshots: [
@@ -3930,6 +4162,17 @@
   // (Closing the map instead discards it — closeTopology.)
   function _setTopologyEditing(on) {
     on = !!on;
+    // A mode canvas's Done editing confirms the rule-148 description changes
+    // first, and may stay in edit mode ("Back to editing").
+    if (!on && topoState.editing && _modeInstance()) {
+      _commitModeCanvasSession().then(function (done) {
+        if (!done) return;
+        _editStaged = null;
+        topoState.editing = false;
+        _applyTopologyEditMode();
+      });
+      return;
+    }
     if (on && !topoState.editing) {
       _beginEditSession();
       // Types toggled while viewing become the edit's starting point, so
@@ -3980,7 +4223,19 @@
     });
     var viewMouse = document.getElementById("topology-mouse-help");
     if (viewMouse) viewMouse.hidden = on;
+    // A mode canvas's own buttons (Background, Draw polygon) are edit-only.
+    document.querySelectorAll("#topology-corner-stack [data-edit-only]").forEach(function (el) { el.hidden = !on; });
     _paintMouseControls(); // an open panel swaps to this mode's rows
+    var modeInst = _modeInstance();
+    if (modeInst) {
+      // A Topology / Rack canvas keeps its own undo history (_paintUndoRedo
+      // asks it), so the Layer 2 snapshot history is not started.
+      if (typeof modeInst.setEditing === "function") modeInst.setEditing(on);
+      layoutHistory = null;
+      if (topoState.data) renderTopologyInfo(topoState.data);
+      _paintUndoRedo();
+      return;
+    }
     // Undo history belongs to one edit session in one view: started when
     // editing starts (or the view changes under it), dropped on Done. A
     // re-render while editing (Refresh, Reset, restore) records its result
@@ -4071,6 +4326,8 @@
     saveNodePositions(topoState.siteId);
   }
   function _layoutUndo() {
+    var modeInst = _modeInstance();
+    if (modeInst) { if (topoState.editing && modeInst.undo) modeInst.undo(); return; }
     if (!topoState.editing || !layoutHistory || layoutHistory.index <= 0) return;
     if (_historyTimer) { clearTimeout(_historyTimer); _historyTimer = null; _layoutHistoryRecord(); }
     if (layoutHistory.index <= 0) return;
@@ -4079,6 +4336,8 @@
     _paintUndoRedo();
   }
   function _layoutRedo() {
+    var modeInst = _modeInstance();
+    if (modeInst) { if (topoState.editing && modeInst.redo) modeInst.redo(); return; }
     if (!topoState.editing || !layoutHistory || layoutHistory.index >= layoutHistory.entries.length - 1) return;
     layoutHistory.index++;
     _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
@@ -4090,6 +4349,11 @@
     var h = layoutHistory;
     var canUndo = !!(h && h.index > 0);
     var canRedo = !!(h && h.index < h.entries.length - 1);
+    var modeInst = _modeInstance();
+    if (modeInst) {
+      canUndo = !!(modeInst.canUndo && modeInst.canUndo());
+      canRedo = !!(modeInst.canRedo && modeInst.canRedo());
+    }
     if (undo) {
       undo.disabled = !canUndo;
       _setCornerTip(undo, "Undo (Ctrl+Z)", canUndo ? "Undo the last layout change" : "Nothing to undo");
@@ -4479,9 +4743,12 @@
   function renderTopologyInfo(data) {
     var fg = data.fortigate || {};
     var parts = [];
-    // Rule 147: the Device types toggles head the details pane.
+    // Rule 147: the Device types toggles head the details pane; a Topology /
+    // Rack canvas adds its own lists (what to drag on, what is placed).
     var typesHtml = _deviceTypesHtml(data);
     if (typesHtml) parts.push(typesHtml);
+    var modeInstForPane = _modeInstance();
+    if (modeInstForPane && typeof modeInstForPane.sidebarHtml === "function") parts.push(modeInstForPane.sidebarHtml());
     var fgLabel = escapeHtml(fg.hostname || "FortiGate");
     if (fg.id) {
       parts.push('<h4><a href="/assets.html#asset=' + encodeURIComponent(fg.id) + '">' + fgLabel + '</a></h4>');
@@ -4618,6 +4885,7 @@
     var infoEl = document.getElementById("topology-info");
     infoEl.innerHTML = parts.join("");
     _wireCopyableValues(infoEl);
+    if (modeInstForPane && typeof modeInstForPane.wireSidebar === "function") modeInstForPane.wireSidebar(infoEl);
   }
 
   // The location tiers in nesting order — the same chain the grouping boxes
