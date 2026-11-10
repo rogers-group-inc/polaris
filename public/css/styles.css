@@ -1256,6 +1256,11 @@ code {
   flex-direction: column;
   z-index: 100;
   overflow-y: auto;
+  /* overflow-y: auto quietly turns the x axis to auto as well, so one long
+     unbroken word in a status panel (a capacity warning naming a Windows
+     path) gave the rail a horizontal scroll bar. The rail never scrolls
+     sideways; the panels wrap instead (.pg-tuning-text). */
+  overflow-x: hidden;
 }
 .sidebar-brand {
   padding: 0 1.25rem 1.25rem;
@@ -1712,6 +1717,8 @@ code {
   color: var(--color-text-secondary);
   margin: 0 0 6px;
   line-height: 1.4;
+  /* A path or URL with no spaces breaks anywhere rather than widening the rail. */
+  overflow-wrap: anywhere;
 }
 .pg-tuning-row {
   display: flex;
