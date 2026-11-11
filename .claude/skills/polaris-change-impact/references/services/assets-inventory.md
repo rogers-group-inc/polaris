@@ -204,6 +204,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetLookupService.ts
+
+**What it owns:** The asset lookups and imports, moved out of `routes/assets/lookups.ts` (CQ-B062 slice 2): the fleet PTR sweep and the per-asset PTR / forward (A/AAAA) lookup, the OUI vendor lookup (fleet and per asset), and the two imports — CSV serial + date (back-dates `createdAt`) and PDF invoice rows (create or update by serial). The route keeps the gates, the body checks, and the rule 111(c) retarget guard, which reads the caller's permission and is handed in as `assertRetarget`.
+
+**Public API:** `RetargetGuard`, `bulkDnsLookup(actor)`, `assetDnsLookup(id, actor)`, `assetForwardLookup(id, actor, assertRetarget)`, `bulkOuiLookup(actor)`, `assetOuiLookup(id, actor)`, `importFirstSeenDates(rows, dryRun, actor)`, `importPdfAssets(rows, dryRun, actor, assertRetarget)`.
+
+**Cross-service deps:** dnsService (`getConfiguredResolver`), ouiService, assetQuarantineService (`assertQuarantineStatusUntouched`), eventLogService (incl. `logEventsBatch`, `buildFirmwareChangedEvent`), utils/concurrency, utils/chunk, utils/assetInvariants, utils/mac.
+
+**Used by:** `src/api/routes/assets/lookups.ts` (POST /dns-lookup, /:id/dns-lookup, /:id/forward-lookup, /oui-lookup, /:id/oui-lookup, /import, /import-pdf).
+
+**Invariants:**
+- Fleet scale: the PTR sweep looks up through a bounded pool (`DNS_SWEEP_LOOKUP_CONCURRENCY`) and writes in chunked transactions; the OUI sweep writes one statement per vendor; the CSV import resolves every serial in one read and writes chunked. None is a per-row await loop.
+- A forward-lookup address and a PDF row's address are typed addresses by another route: the rule 111(c) guard runs before the write; a PDF row may not enter or leave quarantine by status.
+- The CSV import only moves first-seen EARLIER; a dry run writes nothing.
+
+**When changing this:** `tests/unit/assetLookupService.test.ts`, `tests/integration/assetsImportBackdate.test.ts`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
