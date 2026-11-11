@@ -17,6 +17,13 @@ import {
   desktopAssetPath,
   mobileAssetPath,
   resolveAssetOpenTarget,
+  networkOpenPath,
+  blockOpenPath,
+  desktopNetworkPath,
+  mobileNetworkPath,
+  desktopBlockPath,
+  resolveNetworkOpenTarget,
+  resolveBlockOpenTarget,
 } from "../../src/utils/assetOpenLink.js";
 
 const ID = "3f2a9c1e-7b4d-4e8a-9f01-2c3d4e5f6a7b";
@@ -95,5 +102,35 @@ describe("resolveAssetOpenTarget", () => {
     expect(resolveAssetOpenTarget({ id: "../login.html", userAgent: UA.iphoneSafari })).toBeNull();
     expect(resolveAssetOpenTarget({ id: "", userAgent: UA.windowsChrome })).toBeNull();
     expect(resolveAssetOpenTarget({ id: undefined, userAgent: UA.windowsChrome })).toBeNull();
+  });
+});
+
+// The Share button's links (public/js/share-link.js) for the other two things a
+// slide-over shows. Same decision as an asset, except that a block has no phone
+// view and always resolves to the desktop drill-in.
+describe("network and block links", () => {
+  it("embed the id, encoded, in the shape each front end routes on", () => {
+    expect(networkOpenPath(ID)).toBe(`/networks/${ID}`);
+    expect(blockOpenPath(ID)).toBe(`/blocks/${ID}`);
+    expect(desktopNetworkPath(ID)).toBe(`/ipam.html#tab=networks&subnet=${ID}`);
+    expect(mobileNetworkPath(ID)).toBe(`/mobile.html#subnet/${ID}`);
+    expect(desktopBlockPath(ID)).toBe(`/ipam.html#tab=blocks&view=block:${ID}`);
+    expect(networkOpenPath("a b/c")).toBe("/networks/a%20b%2Fc");
+  });
+
+  it("sends a network to the phone's sheet on a phone and the desktop panel elsewhere", () => {
+    expect(resolveNetworkOpenTarget({ id: ID, userAgent: UA.iphoneSafari })).toBe(mobileNetworkPath(ID));
+    expect(resolveNetworkOpenTarget({ id: ID, userAgent: UA.windowsChrome })).toBe(desktopNetworkPath(ID));
+    expect(resolveNetworkOpenTarget({ id: ID, userAgent: UA.iphoneSafari, desktop: "1" })).toBe(desktopNetworkPath(ID));
+  });
+
+  it("sends a block to the desktop drill-in on every device", () => {
+    expect(resolveBlockOpenTarget({ id: ID })).toBe(desktopBlockPath(ID));
+  });
+
+  it("refuses anything that is not an id", () => {
+    expect(resolveNetworkOpenTarget({ id: "../login.html", userAgent: UA.iphoneSafari })).toBeNull();
+    expect(resolveBlockOpenTarget({ id: "" })).toBeNull();
+    expect(resolveBlockOpenTarget({ id: undefined })).toBeNull();
   });
 });

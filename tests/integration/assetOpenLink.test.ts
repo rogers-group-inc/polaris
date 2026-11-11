@@ -105,3 +105,50 @@ d("GET /assets/:id (the emailed Open device link)", () => {
     expect(res.headers.location).not.toContain("/mobile.html");
   });
 });
+
+// The Share button's links for the other two things a slide-over shows
+// (public/js/share-link.js) — the same handler, so only the targets and the
+// signed-out branch need proving.
+d("GET /networks/:id and /blocks/:id (the Share button's links)", () => {
+  beforeAll(async () => { await ensureTestUser(); });
+
+  it("a network opens the phone's sheet on a phone and the IPAM panel on a desktop", async () => {
+    const { agent } = await authedAgent(app);
+    const phone = await agent.get(`/networks/${ID}`).set("User-Agent", PHONE_UA);
+    expect(phone.status).toBe(302);
+    expect(phone.headers.location).toBe(`/mobile.html#subnet/${ID}`);
+    const desk = await agent.get(`/networks/${ID}`).set("User-Agent", DESKTOP_UA);
+    expect(desk.headers.location).toBe(`/ipam.html#tab=networks&subnet=${ID}`);
+  });
+
+  it("a block opens the desktop drill-in even on a phone (no phone block view)", async () => {
+    const { agent } = await authedAgent(app);
+    const res = await agent.get(`/blocks/${ID}`).set("User-Agent", PHONE_UA);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(`/ipam.html#tab=blocks&view=block:${ID}`);
+  });
+
+  it("signed out on a desktop: bounces to sign-in and remembers the link", async () => {
+    const net = await request(app).get(`/networks/${ID}`).set("User-Agent", DESKTOP_UA);
+    expect(net.status).toBe(302);
+    expect(net.headers.location).not.toContain("/ipam.html");
+    expect(rememberedTarget(net)).toBe(`/networks/${ID}`);
+    // A block resolves to a desktop page on every device, so a phone signs in the same way.
+    const blk = await request(app).get(`/blocks/${ID}`).set("User-Agent", PHONE_UA);
+    expect(blk.headers.location).not.toContain("/ipam.html");
+    expect(rememberedTarget(blk)).toBe(`/blocks/${ID}`);
+  });
+
+  it("signed out on a phone: a network still opens the SPA, which logs in in place", async () => {
+    const res = await request(app).get(`/networks/${ID}`).set("User-Agent", PHONE_UA);
+    expect(res.headers.location).toBe(`/mobile.html#subnet/${ID}`);
+    expect(rememberedTarget(res)).toBe(`/networks/${ID}`);
+  });
+
+  it("is never cacheable and falls through on a non-id", async () => {
+    const res = await request(app).get(`/networks/${ID}`).set("User-Agent", PHONE_UA);
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect((await request(app).get("/networks/not-an-id")).status).toBe(404);
+    expect((await request(app).get("/blocks/not-an-id")).status).toBe(404);
+  });
+});

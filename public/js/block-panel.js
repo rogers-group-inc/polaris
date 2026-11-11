@@ -13,12 +13,22 @@ function _ensureBlockPanelDOM() {
   // Skeleton + backdrop / close / Escape / resize wiring: buildSlideover
   // (app.js). Escape goes to the topmost layer only — this panel may sit over
   // another slide-over now that any page can open it.
-  buildSlideover({
+  var built = buildSlideover({
     id: "block-panel",
+    // Share copies the block's link (public/js/share-link.js).
+    headerActions: window.PolarisShare
+      ? '<button type="button" class="btn btn-glyph btn-glyph-share btn-sm btn-secondary" id="block-panel-share" title="Share — copy a link to this block for another Polaris user">Share</button>'
+      : "",
     bodyHTML: '<p class="empty-state">Loading...</p>',
     footer: true,
     close: closeBlockPanel,
     resizeKey: "polaris.panel.width.block",
+  });
+  var shareBtn = built.panel.querySelector("#block-panel-share");
+  if (shareBtn) shareBtn.addEventListener("click", function () {
+    if (!_blockPanelBlockId) return;
+    var b = _blockPanelData && _blockPanelData.block;
+    window.PolarisShare.share("block", _blockPanelBlockId, { title: b ? (b.name + " " + b.cidr) : "IP block" });
   });
 }
 

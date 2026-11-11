@@ -364,6 +364,9 @@ if (typeof window !== "undefined") window.raiseSlideover = raiseSlideover;
 //   closeTitle   the close button's title (default "Close"; null omits it)
 //   closeLabel   the close button's aria-label (default none)
 //   meta         false omits the .slideover-meta row (default true)
+//   headerActions markup for a right-aligned .slideover-header-actions group in
+//                the title row, left of the lock + close pair (the asset
+//                panel's arrangement) — the network and block panels' Share
 //   headerHTML   markup after the meta row, inside .slideover-header
 //   bodyHTML / bodyStyle   the body's initial content / inline style
 //   footer       true → an empty .slideover-footer; a string → its inner HTML
@@ -403,6 +406,7 @@ function buildSlideover(opts) {
       '<div class="slideover-header">' +
         '<div class="slideover-header-top">' +
           (opts.titleLead ? '<div class="slideover-header-lead">' + h3 + "</div>" : h3) +
+          (opts.headerActions ? '<div class="slideover-header-actions">' + opts.headerActions + "</div>" : "") +
           '<button class="btn-icon"' + attr("id", closeId) +
             attr("title", opts.closeTitle === undefined ? "Close" : opts.closeTitle) +
             attr("aria-label", opts.closeLabel) + ">&times;</button>" +

@@ -41,6 +41,12 @@ slide-over. Click a network's name there to open that network's address table
 over it. Both panels open from
 any page — a search result for a block or a network opens them in place.
 
+Both panels carry a **Share** button in the header that copies a link to
+the block or network for another Polaris user. A shared network opens on a
+phone in the [mobile app](Mobile-and-Dash). A shared block always opens the
+desktop page, because the mobile app has no block view. See
+[Sharing a device](Assets#sharing-a-device).
+
 **Deleting a block is refused with a 409 while it still contains any network**
 ([rule 4](Business-Rules#rule-4)) — deprecated and empty networks count too.
 Move the networks to another block ([Moving a network](#moving-a-network-to-another-block)),
