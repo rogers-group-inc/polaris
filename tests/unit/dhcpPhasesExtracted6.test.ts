@@ -5,14 +5,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  resCreate: stubbed(prisma.reservation.create),
+  resUpdate: stubbed(prisma.reservation.update),
+  sourceFindMany: stubbed(prisma.assetSource.findMany),
+  assetUpdate: stubbed(prisma.asset.update),
+  integrationFindUnique: stubbed(prisma.integration.findUnique),
+  transaction: stubbed(prisma.$transaction),
+};
 
 const m = vi.hoisted(() => ({
-  resCreate: vi.fn(),
-  resUpdate: vi.fn(),
-  sourceFindMany: vi.fn(),
-  assetUpdate: vi.fn(),
-  transaction: vi.fn(),
-  integrationFindUnique: vi.fn(),
   releaseDnsResolvedAt: vi.fn(),
   recompute: vi.fn(),
   regions: vi.fn(),
@@ -20,15 +25,7 @@ const m = vi.hoisted(() => ({
   descSync: vi.fn(),
   descEnabled: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    reservation: { create: m.resCreate, update: m.resUpdate },
-    assetSource: { findMany: m.sourceFindMany },
-    asset: { update: m.assetUpdate },
-    integration: { findUnique: m.integrationFindUnique },
-    $transaction: m.transaction,
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/dnsResolvedReservationService.js", () => ({ releaseDnsResolvedAt: m.releaseDnsResolvedAt }));
 vi.mock("../../src/services/dependencyTreeService.js", () => ({ recomputeDependencyTree: m.recompute }));
 vi.mock("../../src/services/mapRegionService.js", () => ({ reconcileMapRegions: m.regions }));
@@ -40,9 +37,10 @@ const { syncVipReservations } = await import("../../src/services/discovery/dhcp/
 const { runFinalizeReconciles } = await import("../../src/services/discovery/dhcp/finalizeReconciles.js");
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.resCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `new-${String(data.ipAddress)}`, ...data }));
-  m.resUpdate.mockResolvedValue({});
+  db.resCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `new-${String(data.ipAddress)}`, ...data }));
+  db.resUpdate.mockResolvedValue({});
 });
 
 describe("Phase 3c — firewall VIP reservations", () => {
@@ -65,9 +63,9 @@ describe("Phase 3c — firewall VIP reservations", () => {
   it("reserves the external and mapped addresses, with vipInfo stamped at create", async () => {
     const { state, done } = run([vip({ mappedips: ["10.1.0.20", "192.0.2.5"] })]);
     await done;
-    expect(m.resCreate).toHaveBeenCalledTimes(2); // 192.0.2.5 is in no known network
+    expect(db.resCreate).toHaveBeenCalledTimes(2); // 192.0.2.5 is in no known network
     expect(m.releaseDnsResolvedAt).toHaveBeenCalledWith("net1", "10.1.0.10");
-    expect(m.resCreate.mock.calls[0][0].data).toMatchObject({
+    expect(db.resCreate.mock.calls[0][0].data).toMatchObject({
       ipAddress: "10.1.0.10", hostname: "web-dnat", owner: "web-dnat", projectRef: "VIP: FGT-A", sourceType: "vip",
       notes: 'Firewall VIP "web-dnat" (external) on FGT-A — ext: 10.1.0.10',
       vipInfo: { name: "web-dnat", device: "FGT-A", extip: "10.1.0.10", role: "external", isVirtualServer: false },
@@ -79,7 +77,7 @@ describe("Phase 3c — firewall VIP reservations", () => {
 
   it("labels a load-balance Virtual Server and its realservers apart from a plain VIP", async () => {
     await run([vip({ name: "vs-web", isVirtualServer: true, mappedips: [], realservers: ["10.1.0.31"] })]).done;
-    expect(m.resCreate.mock.calls[1][0].data).toMatchObject({ projectRef: "VS: FGT-A", notes: expect.stringMatching(/^Virtual server "vs-web" \(realserver\)/) });
+    expect(db.resCreate.mock.calls[1][0].data).toMatchObject({ projectRef: "VS: FGT-A", notes: expect.stringMatching(/^Virtual server "vs-web" \(realserver\)/) });
   });
 
   it("stamps, never conflicts, a manual row the operator claimed for this same VIP (rule 77)", async () => {
@@ -87,8 +85,8 @@ describe("Phase 3c — firewall VIP reservations", () => {
     const { state, done } = run([vip({ mappedips: [] })], new Map([["net1|10.1.0.10", claimed]]));
     await done;
     expect(state.upsertConflict).not.toHaveBeenCalled();
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "man" }, data: { vipInfo: expect.objectContaining({ role: "external" }) } });
-    expect(m.resCreate).not.toHaveBeenCalled();
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "man" }, data: { vipInfo: expect.objectContaining({ role: "external" }) } });
+    expect(db.resCreate).not.toHaveBeenCalled();
   });
 
   it("raises a conflict on a manual row naming a different VIP, or none", async () => {
@@ -100,7 +98,7 @@ describe("Phase 3c — firewall VIP reservations", () => {
   it("a renamed VIP refreshes vipInfo only — the operator-editable fields are left alone", async () => {
     const row = { id: "v1", sourceType: "vip", hostname: "my label", vipInfo: { name: "old-name", device: "FGT-A", role: "external" } };
     await run([vip({ mappedips: [] })], new Map([["net1|10.1.0.10", row]])).done;
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "v1" }, data: { vipInfo: expect.objectContaining({ name: "web-dnat" }) } });
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "v1" }, data: { vipInfo: expect.objectContaining({ name: "web-dnat" }) } });
     expect(row.hostname).toBe("my label");
   });
 
@@ -108,12 +106,12 @@ describe("Phase 3c — firewall VIP reservations", () => {
     const row: Record<string, unknown> = { id: "d1", sourceType: "dhcp_lease", owner: "dhcp-lease", projectRef: LABEL, vipInfo: null };
     const { state, done } = run([vip({ mappedips: [] })], new Map([["net1|10.1.0.10", row]]));
     await done;
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "d1" }, data: expect.objectContaining({ owner: "web-dnat", projectRef: "VIP: FGT-A" }) });
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "d1" }, data: expect.objectContaining({ owner: "web-dnat", projectRef: "VIP: FGT-A" }) });
     expect(state.upsertConflict).toHaveBeenCalledWith("d1", "i1", expect.anything(), row, "fill-only");
   });
 
   it("logs, rather than throws, a failed create", async () => {
-    m.resCreate.mockRejectedValueOnce(new Error("unique"));
+    db.resCreate.mockRejectedValueOnce(new Error("unique"));
     const { state, done } = run([vip({ mappedips: [] })]);
     await done;
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to create VIP reservation for 10.1.0.10 (web-dnat): unique");
@@ -132,10 +130,10 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
     m.recompute.mockResolvedValue({ scoped: 0, edgesWritten: 0, unresolved: 0, endpointEdges: 0 });
     m.regions.mockResolvedValue({ assetsTouched: 0, subnetsTouched: 0 });
     m.tags.mockResolvedValue({ added: 0, removed: 0 });
-    m.integrationFindUnique.mockResolvedValue({ id: "i1", type: "fortimanager", config: {}, name: "FMG" });
+    db.integrationFindUnique.mockResolvedValue({ id: "i1", type: "fortimanager", config: {}, name: "FMG" });
     m.descEnabled.mockReturnValue(false);
-    m.assetUpdate.mockImplementation((args: unknown) => args);
-    m.transaction.mockResolvedValue([]);
+    db.assetUpdate.mockImplementation((args: unknown) => args);
+    db.transaction.mockResolvedValue([]);
   });
 
   it("runs each reconcile in order, marking the sub-phase timer between them", async () => {
@@ -160,7 +158,7 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
   });
 
   it("writes each device's management-access summary once, onto the asset its AssetSource names", async () => {
-    m.sourceFindMany.mockResolvedValue([
+    db.sourceFindMany.mockResolvedValue([
       { assetId: "a1", externalId: "FGT1" },
       { assetId: "a1", externalId: "FGT1" }, // a second row for the same asset
       { assetId: "a2", externalId: "SW1" },
@@ -171,8 +169,8 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
       { serial: "FGT1", summary: { https: false } }, // first one wins
     ] } });
     await runFinalizeReconciles(input);
-    expect(m.sourceFindMany.mock.calls[0][0].where).toMatchObject({ integrationId: "i1", externalId: { in: ["FGT1", "SW1"] } });
-    expect(m.transaction).toHaveBeenCalledWith([
+    expect(db.sourceFindMany.mock.calls[0][0].where).toMatchObject({ integrationId: "i1", externalId: { in: ["FGT1", "SW1"] } });
+    expect(db.transaction).toHaveBeenCalledWith([
       { where: { id: "a1" }, data: { managementAccess: { https: true } } },
       { where: { id: "a2" }, data: { managementAccess: { ssh: true } } },
     ]);
@@ -191,8 +189,8 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
 
   it("skips the Fortinet-only phases for any other integration type", async () => {
     await runFinalizeReconciles(base({ integrationType: "vcenter", result: { devices: [], managementAccess: [{ serial: "X", summary: {} }] } }));
-    expect(m.sourceFindMany).not.toHaveBeenCalled();
-    expect(m.integrationFindUnique).not.toHaveBeenCalled();
+    expect(db.sourceFindMany).not.toHaveBeenCalled();
+    expect(db.integrationFindUnique).not.toHaveBeenCalled();
     expect(m.recompute).toHaveBeenCalled();
   });
 });

@@ -10,23 +10,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  assetUpdate: stubbed(prisma.asset.update),
+  assetFindMany: stubbed(prisma.asset.findMany),
+  assetFindUnique: stubbed(prisma.asset.findUnique),
+  resUpdate: stubbed(prisma.reservation.update),
+};
 
 const m = vi.hoisted(() => ({
-  assetUpdate: vi.fn(),
-  assetFindMany: vi.fn(),
-  assetFindUnique: vi.fn(),
-  resUpdate: vi.fn(),
   reconcileMacs: vi.fn(),
   recordSightings: vi.fn(),
   quarantine: vi.fn(),
   verifyQuarantine: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { update: m.assetUpdate, findMany: m.assetFindMany, findUnique: m.assetFindUnique },
-    reservation: { update: m.resUpdate },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/macAddressService.js", () => ({ reconcileMacAddresses: m.reconcileMacs }));
 vi.mock("../../src/services/assetSightingService.js", () => ({ recordSightings: m.recordSightings }));
 vi.mock("../../src/services/assetQuarantineService.js", () => ({ quarantineAsset: m.quarantine, verifyAssetQuarantine: m.verifyQuarantine }));
@@ -37,10 +37,11 @@ const { createDhcpClaimState } = await import("../../src/utils/dhcpClaimFreshnes
 const NOW = "2026-11-10T12:00:00.000Z";
 const MAC = "AA:BB:CC:DD:EE:01";
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.assetUpdate.mockResolvedValue({});
-  m.resUpdate.mockResolvedValue({});
-  m.assetFindMany.mockResolvedValue([]);
+  db.assetUpdate.mockResolvedValue({});
+  db.resUpdate.mockResolvedValue({});
+  db.assetFindMany.mockResolvedValue([]);
   m.recordSightings.mockResolvedValue(undefined);
 });
 
@@ -86,7 +87,7 @@ describe("Phase 6 — a held lease on an endpoint", () => {
     const a = asset();
     const { state, done } = run([lease()], [a]);
     await done;
-    const data = m.assetUpdate.mock.calls[0][0].data;
+    const data = db.assetUpdate.mock.calls[0][0].data;
     expect(data).toMatchObject({ macAddress: MAC, ipAddress: "10.1.0.5", ipSource: "FGT-A", learnedLocation: "FGT-A", lastSeenSource: "dhcp-lease" });
     expect(data.lastSeen).toEqual(new Date(NOW));
     expect(m.reconcileMacs).toHaveBeenCalledWith("a1", [expect.objectContaining({ mac: MAC, source: "dhcp-lease", subnetCidr: "10.1.0.0/24", subnetName: "LAN" })]);
@@ -99,14 +100,14 @@ describe("Phase 6 — a held lease on an endpoint", () => {
 
   it("defers Last Seen to Phase 7 when the detected-device table also covers the MAC", async () => {
     await run([lease()], [asset()], { result: { dhcpEntries: [lease()], deviceInventory: [{ macAddress: MAC, device: "FGT-A" }] } }).done;
-    expect(m.assetUpdate.mock.calls[0][0].data.lastSeen).toBeUndefined();
+    expect(db.assetUpdate.mock.calls[0][0].data.lastSeen).toBeUndefined();
   });
 
   it("two bindings for one card: the reservation outranks the lease, and the asset gets ONE merged write", async () => {
     const a = asset();
     await run([lease(), lease({ ipAddress: "10.1.0.9", type: "dhcp-reservation" })], [a]).done;
-    expect(m.assetUpdate).toHaveBeenCalledTimes(1);
-    expect(m.assetUpdate.mock.calls[0][0].data.ipAddress).toBe("10.1.0.9");
+    expect(db.assetUpdate).toHaveBeenCalledTimes(1);
+    expect(db.assetUpdate.mock.calls[0][0].data.ipAddress).toBe("10.1.0.9");
     expect(a.ipAddress).toBe("10.1.0.9");
   });
 
@@ -116,7 +117,7 @@ describe("Phase 6 — a held lease on an endpoint", () => {
       lease({ ipAddress: "2001:db8::5" }),
       lease({ macAddress: "11:22:33:44:55:66" }),
     ], [asset()]).done;
-    expect(m.assetUpdate).not.toHaveBeenCalled();
+    expect(db.assetUpdate).not.toHaveBeenCalled();
     expect(m.recordSightings).not.toHaveBeenCalled();
   });
 });
@@ -126,7 +127,7 @@ describe("Phase 6 — infrastructure and reservations", () => {
     const sw = asset({ assetType: "switch", fortinetTopology: { role: "fortiswitch" } });
     const { state, done } = run([lease()], [sw]);
     await done;
-    const data = m.assetUpdate.mock.calls[0][0].data;
+    const data = db.assetUpdate.mock.calls[0][0].data;
     expect(data.ipAddress).toBeUndefined();
     expect(data.lastSeen).toBeUndefined();
     expect(state.fortigateEndpointAssetIds.size).toBe(0);
@@ -142,19 +143,19 @@ describe("Phase 6 — infrastructure and reservations", () => {
       [asset({ assignedTo: "jdoe" }), a2],
       { activeResMap: new Map<string, any>([["net1|10.1.0.5", res], ["net1|10.1.0.6", pushed]]) },
     ).done;
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "r1" }, data: { hostname: "pc-1", owner: "jdoe", macAddress: MAC } });
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "r2" }, data: { owner: "jdoe" } });
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "r1" }, data: { hostname: "pc-1", owner: "jdoe", macAddress: MAC } });
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "r2" }, data: { owner: "jdoe" } });
   });
 });
 
 describe("Phase 6 — auto-quarantine fan-out", () => {
   it("extends a quarantined asset to a gate it is newly seen on, and only verifies one already covered", async () => {
-    m.assetFindMany.mockResolvedValue([{ id: "a1" }]);
-    m.assetFindUnique.mockResolvedValue({ id: "a1", status: "quarantined", quarantineTargets: [{ fortigateDevice: "FGT-A", status: "synced" }] });
+    db.assetFindMany.mockResolvedValue([{ id: "a1" }]);
+    db.assetFindUnique.mockResolvedValue({ id: "a1", status: "quarantined", quarantineTargets: [{ fortigateDevice: "FGT-A", status: "synced" }] });
     m.verifyQuarantine.mockResolvedValue({ driftDetected: true, targets: [{ fortigateDevice: "FGT-A", status: "drift" }] });
     await run([lease(), lease({ device: "FGT-B", ipAddress: "10.1.0.7" })], [asset({ status: "quarantined" })]).done;
     expect(m.verifyQuarantine).toHaveBeenCalledWith("a1");
-    expect(m.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { quarantineTargets: [{ fortigateDevice: "FGT-A", status: "drift" }] } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { quarantineTargets: [{ fortigateDevice: "FGT-A", status: "drift" }] } });
     expect(m.quarantine).toHaveBeenCalledWith({ assetId: "a1", actor: "system:auto-quarantine" });
   });
 
@@ -163,6 +164,6 @@ describe("Phase 6 — auto-quarantine fan-out", () => {
     const { state, done } = run([lease()], [asset()]);
     await done;
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to flush 1 asset sighting(s): db");
-    expect(m.assetFindMany).toHaveBeenCalled();
+    expect(db.assetFindMany).toHaveBeenCalled();
   });
 });

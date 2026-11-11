@@ -7,21 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  executeRawUnsafe: vi.fn(async (..._args: unknown[]) => 1),
-  deleteMany: vi.fn(async (_args: any) => ({ count: 0 })),
-  findMany: vi.fn(async () => [] as Array<{ mac: string; source: string }>),
-}));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    $executeRawUnsafe: mocks.executeRawUnsafe,
-    assetMacAddress: {
-      deleteMany: mocks.deleteMany,
-      findMany: mocks.findMany,
-    },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 // retryOnDeadlock just invokes the thunk; run the real (trivial) helper.
 import {
@@ -30,14 +17,23 @@ import {
   INTERFACE_MAC_SOURCE,
 } from "../../src/utils/macAddresses.js";
 import { reconcileInterfaceMacs } from "../../src/services/macAddressService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  executeRawUnsafe: stubbed(prisma.$executeRawUnsafe),
+  deleteMany: stubbed(prisma.assetMacAddress.deleteMany),
+  findMany: stubbed(prisma.assetMacAddress.findMany),
+};
 
 const now = new Date("2026-07-13T12:00:00.000Z");
 
 beforeEach(() => {
-  mocks.executeRawUnsafe.mockClear();
-  mocks.deleteMany.mockClear();
-  mocks.findMany.mockClear();
-  mocks.findMany.mockResolvedValue([]);
+  resetDbStub();
+  db.executeRawUnsafe.mockClear();
+  db.deleteMany.mockClear();
+  db.findMany.mockClear();
+  db.findMany.mockResolvedValue([]);
 });
 
 describe("foldMacsToRanges", () => {
@@ -119,11 +115,11 @@ describe("expandMacRange", () => {
 describe("reconcileInterfaceMacs", () => {
   it("wipes only interface-fold rows when the scrape has no valid MACs", async () => {
     await reconcileInterfaceMacs("a1", [null, "bad"], now);
-    expect(mocks.deleteMany).toHaveBeenCalledTimes(1);
-    expect(mocks.deleteMany.mock.calls[0][0]).toEqual({
+    expect(db.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.deleteMany.mock.calls[0][0]).toEqual({
       where: { assetId: "a1", source: INTERFACE_MAC_SOURCE },
     });
-    expect(mocks.executeRawUnsafe).not.toHaveBeenCalled();
+    expect(db.executeRawUnsafe).not.toHaveBeenCalled();
   });
 
   it("writes range + single rows scoped to the monitor-interface source", async () => {
@@ -133,11 +129,11 @@ describe("reconcileInterfaceMacs", () => {
       now,
     );
     // stale-delete is scoped to the fold's source and keyed on surviving starts
-    const delWhere = mocks.deleteMany.mock.calls[0][0].where;
+    const delWhere = db.deleteMany.mock.calls[0][0].where;
     expect(delWhere.source).toBe(INTERFACE_MAC_SOURCE);
     expect(delWhere.mac.notIn).toEqual(["AA:BB:CC:DD:EE:00", "AA:BB:CC:DD:EE:10"]);
 
-    const [sql, ...params] = mocks.executeRawUnsafe.mock.calls[0] as [string, ...unknown[]];
+    const [sql, ...params] = db.executeRawUnsafe.mock.calls[0] as [string, ...unknown[]];
     expect(sql).toContain('INSERT INTO "asset_mac_addresses"');
     expect(sql).toContain('"macEnd" = EXCLUDED."macEnd"');
     expect(sql).not.toMatch(/DELETE/i);
@@ -150,7 +146,7 @@ describe("reconcileInterfaceMacs", () => {
   });
 
   it("slides a range start past a key held by another source", async () => {
-    mocks.findMany.mockResolvedValue([
+    db.findMany.mockResolvedValue([
       { mac: "AA:BB:CC:DD:EE:00", source: "fmg-discovery" },
     ]);
     await reconcileInterfaceMacs(
@@ -158,7 +154,7 @@ describe("reconcileInterfaceMacs", () => {
       ["aa:bb:cc:dd:ee:00", "aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"],
       now,
     );
-    const params = mocks.executeRawUnsafe.mock.calls[0].slice(1);
+    const params = db.executeRawUnsafe.mock.calls[0].slice(1);
     // range re-anchored one past the discovery-owned key
     expect(params).toContain("AA:BB:CC:DD:EE:01");
     expect(params).toContain("AA:BB:CC:DD:EE:02");
@@ -166,24 +162,24 @@ describe("reconcileInterfaceMacs", () => {
   });
 
   it("drops an entry fully covered by other-source rows (dedupe, no write)", async () => {
-    mocks.findMany.mockResolvedValue([
+    db.findMany.mockResolvedValue([
       { mac: "AA:BB:CC:DD:EE:00", source: "polaris-agent" },
     ]);
     await reconcileInterfaceMacs("a1", ["aa:bb:cc:dd:ee:00"], now);
     // nothing left to upsert → scoped wipe of our rows only
-    expect(mocks.executeRawUnsafe).not.toHaveBeenCalled();
-    expect(mocks.deleteMany).toHaveBeenCalledTimes(1);
-    expect(mocks.deleteMany.mock.calls[0][0]).toEqual({
+    expect(db.executeRawUnsafe).not.toHaveBeenCalled();
+    expect(db.deleteMany).toHaveBeenCalledTimes(1);
+    expect(db.deleteMany.mock.calls[0][0]).toEqual({
       where: { assetId: "a1", source: INTERFACE_MAC_SOURCE },
     });
   });
 
   it("does not slide past keys already owned by the fold itself", async () => {
-    mocks.findMany.mockResolvedValue([
+    db.findMany.mockResolvedValue([
       { mac: "AA:BB:CC:DD:EE:00", source: INTERFACE_MAC_SOURCE },
     ]);
     await reconcileInterfaceMacs("a1", ["aa:bb:cc:dd:ee:00", "aa:bb:cc:dd:ee:01"], now);
-    const params = mocks.executeRawUnsafe.mock.calls[0].slice(1);
+    const params = db.executeRawUnsafe.mock.calls[0].slice(1);
     expect(params).toContain("AA:BB:CC:DD:EE:00");
     expect(params).toContain("AA:BB:CC:DD:EE:01");
   });

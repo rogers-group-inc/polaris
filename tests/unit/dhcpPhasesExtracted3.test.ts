@@ -4,16 +4,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  create: stubbed(prisma.reservation.create),
+  update: stubbed(prisma.reservation.update),
+  updateMany: stubbed(prisma.reservation.updateMany),
+};
 
 const m = vi.hoisted(() => ({
-  create: vi.fn(),
-  update: vi.fn(),
-  updateMany: vi.fn(),
   releaseDnsResolvedAt: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: { reservation: { create: m.create, update: m.update, updateMany: m.updateMany } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/dnsResolvedReservationService.js", () => ({ releaseDnsResolvedAt: m.releaseDnsResolvedAt }));
 const adopt = vi.hoisted(() => ({ evidenceIndex: vi.fn(), run: vi.fn() }));
 vi.mock("../../src/services/placeholderMacAdoptionService.js", () => ({
@@ -28,7 +31,8 @@ const { adoptPlaceholderMacs } = await import("../../src/services/discovery/dhcp
 const log = vi.fn();
 const key = (s: string, ip: string) => `${s}|${ip}`;
 const findSubnet = (ip: string) => (ip.startsWith("10.1.") ? { id: "net1" } : ip.startsWith("2001:db8:") ? { id: "net6" } : undefined);
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  resetDbStub(); vi.clearAllMocks(); });
 
 describe("Phase 4 — interface IP reservations", () => {
   const base = () => ({
@@ -37,7 +41,7 @@ describe("Phase 4 — interface IP reservations", () => {
   });
 
   it("creates an interface_ip reservation, labelled by role, after releasing any DNS-resolved row", async () => {
-    m.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "r1", ...data }));
+    db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "r1", ...data }));
     const activeResMap = new Map<string, any>();
     const reservationNames: string[] = [];
     await reserveInterfaceIps({
@@ -48,14 +52,14 @@ describe("Phase 4 — interface IP reservations", () => {
       ] } as never,
     });
     expect(m.releaseDnsResolvedAt).toHaveBeenCalledWith("net1", "10.1.0.1");
-    expect(m.create.mock.calls[0][0].data).toMatchObject({ sourceType: "interface_ip", notes: "Management interface (port1) on FGT-A", owner: "network-team" });
+    expect(db.create.mock.calls[0][0].data).toMatchObject({ sourceType: "interface_ip", notes: "Management interface (port1) on FGT-A", owner: "network-team" });
     expect(activeResMap.get("net1|10.1.0.1")).toMatchObject({ id: "r1" });
     expect(reservationNames).toEqual(["10.1.0.1 (FGT-A/port1)"]);
   });
 
   it("a manual reservation at the address raises a conflict; an observed one is converted in place", async () => {
     const upsertConflict = vi.fn();
-    m.update.mockResolvedValue({ id: "obs", sourceType: "interface_ip" });
+    db.update.mockResolvedValue({ id: "obs", sourceType: "interface_ip" });
     const activeResMap = new Map<string, any>([
       ["net1|10.1.0.2", { id: "man", sourceType: "manual" }],
       ["net1|10.1.0.3", { id: "obs", sourceType: "observed" }],
@@ -68,14 +72,14 @@ describe("Phase 4 — interface IP reservations", () => {
       ] } as never,
     });
     expect(upsertConflict).toHaveBeenCalledWith("man", "i1", expect.objectContaining({ sourceType: "interface_ip", notes: "Secondary IP (port2) on FGT-A" }), expect.anything());
-    expect(m.update.mock.calls[0][0]).toMatchObject({ where: { id: "obs" }, data: { sourceType: "interface_ip", expiresAt: null } });
-    expect(m.create).not.toHaveBeenCalled();
+    expect(db.update.mock.calls[0][0]).toMatchObject({ where: { id: "obs" }, data: { sourceType: "interface_ip", expiresAt: null } });
+    expect(db.create).not.toHaveBeenCalled();
   });
 });
 
 describe("Phase 7c — observed IPv6 (rule 125)", () => {
   it("records a seen IPv6 client address as an observed row, and never over another source", async () => {
-    m.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "o1", ...data }));
+    db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "o1", ...data }));
     const activeResMap = new Map<string, any>([["net6|2001:db8::99", { id: "dhcp", sourceType: "dhcp_lease" }]]);
     await recordObservedIpv6({
       result: {
@@ -90,7 +94,7 @@ describe("Phase 7c — observed IPv6 (rule 125)", () => {
       assetIdx: { findByMac: () => ({ hostname: "laptop-10" }) } as never,
       projectRefLabel: "FortiGate Integration", syncLog: log,
     });
-    const created = m.create.mock.calls.map((c) => c[0].data);
+    const created = db.create.mock.calls.map((c) => c[0].data);
     // Exactly the one free address — the DHCP-held one is left to its source.
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ ipAddress: "2001:db8::10", sourceType: "observed", subnetId: "net6" });
