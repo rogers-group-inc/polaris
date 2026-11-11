@@ -23,6 +23,7 @@ import {
   listQuarantineIntegrations,
 } from "../../services/apiTokenService.js";
 import { logEvent } from "./events.js";
+import { tombstoneTotal } from "../../services/userOwnershipService.js";
 import { requirePermission, assertGrantWithinCaller } from "../middleware/permissions.js";
 import { getPublicApiBaseUrl } from "../../utils/publicUrl.js";
 
@@ -142,14 +143,18 @@ router.post("/:id/revoke", requirePermission("apiTokens", "write"), async (req, 
 router.delete("/:id", requirePermission("apiTokens", "write"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    await deleteToken(id);
+    const { name, tombstoned } = await deleteToken(id);
+    const owned = tombstoneTotal(tombstoned);
     logEvent({
       action: "api_token.deleted",
       resourceType: "api_token",
       resourceId: id,
+      resourceName: name,
       actor: req.session?.username,
       level: "warning",
-      message: `API token ${id} deleted`,
+      message: `API token "${name}" deleted` +
+        (owned ? `; ${owned} row(s) it created are now owned by no token or account (Full Read-Write holders can still change them)` : ""),
+      details: owned ? { ownedRowsTombstoned: tombstoned } : undefined,
     });
     res.status(204).send();
   } catch (err) {

@@ -16,7 +16,7 @@ import { prisma } from "../../src/db.js";
 import { hashPassword } from "../../src/utils/password.js";
 import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
 import { dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
-import { ownershipTombstone } from "../../src/services/userOwnershipService.js";
+import { ownershipTombstone, tokenOwnershipTombstone } from "../../src/services/userOwnershipService.js";
 
 const d = dbDescribe;
 const PFX = "rbac11-test";
@@ -192,6 +192,51 @@ d("deleting a user tombstones what they owned (F85)", () => {
     expect(res.status).toBe(204);
     const after = await prisma.credential.findUnique({ where: { id: cred.id } });
     expect(after!.createdBy).toBe(ownershipTombstone(name, leaver.id));
+  });
+  // Widened 2026-11-11: rule 141(e) made createdBy decide write reach on
+  // assets, maintenance windows, path checks and group firmware bookings.
+  it("tombstones the devices they created, so a re-created account cannot edit them", async () => {
+    const name = PFX + "-rehire";
+    const perms = matrix("read", { assets: "write" });
+    const role = await createRole("rehire", perms);
+    const first = await prisma.user.create({ data: { username: name, passwordHash: await hashPassword(PASSWORD), roleId: role.id, authProvider: "local" } });
+    const asset = await prisma.asset.create({ data: { hostname: PFX + "-rehire-device", assetType: "server", status: "active", createdBy: name } as never });
+
+    // While the account exists, Read-Write reaches what it created.
+    const before = await loginAs(name);
+    expect((await before.agent.put(`/api/v1/assets/${asset.id}`).set("X-CSRF-Token", before.csrf).send({ notes: "mine" })).status).toBe(200);
+    sessions.delete(name);
+
+    const adm = await loginAs(admin);
+    expect((await adm.agent.delete(`/api/v1/users/${first.id}`).set("X-CSRF-Token", adm.csrf)).status).toBe(204);
+    expect((await prisma.asset.findUnique({ where: { id: asset.id } }))!.createdBy).toBe(ownershipTombstone(name, first.id));
+
+    // Same name, new account: it owns nothing.
+    await prisma.user.create({ data: { username: name, passwordHash: await hashPassword(PASSWORD), roleId: role.id, authProvider: "local" } });
+    const after = await loginAs(name);
+    expect((await after.agent.put(`/api/v1/assets/${asset.id}`).set("X-CSRF-Token", after.csrf).send({ notes: "inherited?" })).status).toBe(403);
+  });
+  it("tombstones what an API token created when the token is deleted", async () => {
+    const role = await createRole("tokrole", matrix("read", { assets: "write" }));
+    const tokenName = PFX + "-token";
+    const token = await prisma.apiToken.create({ data: { name: tokenName, tokenHash: "x", tokenPrefix: PFX.slice(0, 8), roleId: role.id, createdBy: admin } as never });
+    const asset = await prisma.asset.create({ data: { hostname: PFX + "-token-device", assetType: "server", status: "active", createdBy: "api:" + tokenName } as never });
+    const bystander = await prisma.asset.create({ data: { hostname: PFX + "-token-bystander", assetType: "server", status: "active", createdBy: tokenName } as never });
+
+    const adm = await loginAs(admin);
+    expect((await adm.agent.delete(`/api/v1/api-tokens/${token.id}`).set("X-CSRF-Token", adm.csrf)).status).toBe(204);
+
+    expect((await prisma.asset.findUnique({ where: { id: asset.id } }))!.createdBy).toBe(tokenOwnershipTombstone(tokenName, token.id));
+    // A USER who happens to share the token's name keeps their rows.
+    expect((await prisma.asset.findUnique({ where: { id: bystander.id } }))!.createdBy).toBe(tokenName);
+    const ev = await prisma.event.findFirst({ where: { action: "api_token.deleted", resourceId: token.id } });
+    expect(ev!.message).toContain(tokenName);
+  });
+  it("refuses a local username that could pass for a token's actor", async () => {
+    const { agent, csrf } = await loginAs(admin);
+    const res = await agent.post("/api/v1/users").set("X-CSRF-Token", csrf)
+      .send({ username: "api:" + PFX + "-token", password: "Very-Long-Password-123!", roleId: lowRoleId });
+    expect(res.status).toBe(400);
   });
   it("refuses a local username that could match a tombstone", async () => {
     const { agent, csrf } = await loginAs(admin);

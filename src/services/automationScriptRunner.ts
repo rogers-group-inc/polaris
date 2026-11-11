@@ -41,6 +41,7 @@ import { logger } from "../utils/logger.js";
 import { STATE_DIR } from "../utils/paths.js";
 import { logEvent } from "./eventLogService.js";
 import { pruneOldRuns, SCRIPT_OUTPUT_CAP_BYTES } from "./automationScriptService.js";
+import { expireStaleAgentCommands, pruneOldAgentCommands } from "./agentCommandService.js";
 
 const CONCURRENCY = 2;
 const CLAIM_BATCH = 10;
@@ -285,9 +286,28 @@ export async function executeServerScript(run: {
   }
 }
 
-/** One runner tick: stuck sweep → claim → execute (bounded) → record. */
+/** The agent-queue sweep rides the runner's tick, but only this often. */
+const AGENT_SWEEP_INTERVAL_MS = 60_000;
+let lastAgentSweepAt = 0;
+
+/** Rule 155: settle expired agent commands and their runs, then age out old
+ *  command rows. Throttled, and never allowed to stop server-side scripts
+ *  from running — a failed sweep is logged and retried a minute later. */
+async function sweepAgentQueue(now: Date): Promise<void> {
+  if (now.getTime() - lastAgentSweepAt < AGENT_SWEEP_INTERVAL_MS) return;
+  lastAgentSweepAt = now.getTime();
+  try {
+    await expireStaleAgentCommands(now);
+    await pruneOldAgentCommands(now);
+  } catch (err) {
+    logger.warn({ err }, "agent command queue sweep failed");
+  }
+}
+
+/** One runner tick: agent-queue sweep → stuck sweep → claim → execute (bounded) → record. */
 export async function runPendingServerScripts(): Promise<{ started: number; completed: number }> {
   const now = new Date();
+  await sweepAgentQueue(now);
 
   // Stuck-running sweep: a run whose window (timeout + grace) elapsed without
   // completing — e.g. the process died mid-run — flips to timeout.

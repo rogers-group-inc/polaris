@@ -185,6 +185,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetLiveActionService.ts
+
+**What it owns:** The asset details buttons that reach a device or start a run, moved out of `routes/assets/detail.ts` (CQ-B062 slice 2): Poll now (probe-now), the system-info Refresh, Discover now (rediscover) and the SNMP Walk tab, plus their shared gate `resolveIntegrationFilterBlock` (the originating integration's device filter — AD's own `ouPath`, a VM's / workload's own name — evaluated before any traffic leaves the box). The route keeps the Zod body, the gates and the request-bound inputs (the caller's `assets:write`, the credential-use actor).
+
+**Public API:** `LiveActionResult` (`{ status, body }` — what probe-now / refresh / rediscover send, since each can answer 409 or 202), `pollAssetNow(id, actor)`, `refreshAssetSystemInfo(id, actor)`, `rediscoverAsset(id, actor)`, `snmpWalkAsset(id, { credentialId, oid, maxRows }, canWriteAssets, credentialActor, actor)`.
+
+**Cross-service deps:** monitoringService (the probe / collectors / recorders, `runSdwanFor`, `snmpWalkRaw`), discovery/assetDiscoveryScope, discovery/discoveryEngine (`triggerDiscovery`), discoveryRunState, assetCredentialScopeService (rule 112(e)), credentialService, credentialUseAuditService (rule 112), eventLogService, utils/integrationFilter, utils/assetDialAddress, ipv6GateService.
+
+**Used by:** `src/api/routes/assets/detail.ts` (POST /:id/probe-now, /:id/refresh-system-info, /:id/rediscover, /:id/snmp-walk).
+
+**Invariants:**
+- An asset outside its integration's filter is refused 409 with an `asset.refresh` / `asset.rediscover` warning Event before any probe, collector or run.
+- Every operator-initiated action leaves an Event whatever the outcome; Refresh writes no monitor state (it cannot mark a device down or clear a miss).
+- The SNMP walk at read level may use only a credential the asset already uses (rule 112(e)); the use is recorded (rule 112); a device failure is a 502.
+
+**When changing this:** `tests/unit/assetLiveActionService.test.ts`; integration coverage in `currentStateRefresh`, `secretFollowsDestinationPhase10` and `writeScope`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
@@ -778,6 +797,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetDependencyService.ts
+
+**What it owns:** The asset Dependencies tab's server half, moved out of `routes/assets/dependencies.ts` (CQ-B062 slice 2): the dependency view (effective / computed / override parents, infra children with grandchildren under `DEP_INFRA_CHILD_CAP` / `DEP_GRANDCHILD_CAP`, the HA peer, active-alert summaries), the operator parent override, and the Dependency Test simulation. The suppression engine itself stays in dependencyTreeService; this module is its operator surface.
+
+**Public API:** `getAssetDependencies(id)`, `setDependencyOverride(id, { parentAssetIds })`, `clearDependencyOverride(id)`, `startDependencyTest(id, durationMinutes, actor)`, `clearDependencyTest(id, actor)`.
+
+**Cross-service deps:** dependencyTreeService (`propagateAfterStatusChange`, `FORTINET_INFRA_ASSET_TYPES`), notificationService (`activeAlertSummaryByAsset`), eventLogService.
+
+**Used by:** `src/api/routes/assets/dependencies.ts` (GET /:id/dependencies, PUT + DELETE /:id/dependencies/override, POST + DELETE /:id/dependency-test). `GET /:id/connection-path` calls connectionPathService directly.
+
+**Invariants:**
+- An override parent must exist, be a firewall / switch / access_point, not be the asset itself, and not lead back to it through the effective parents (override set when present, else computed) — refused 400 before anything is written; the edge swap is one transaction.
+- Both downward layers of the view are infra-only and capped (a site FortiGate's child set is fleet-sized).
+- A Dependency Test applies only to Fortinet infra; clearing one that is not running is a no-op with no Event.
+
+**When changing this:** `tests/integration/assetDependenciesContract.test.ts` pins the view; `tests/unit/assetDependencyService.test.ts` the override refusals and the test's branches. See [dependency-aware-monitoring-suppression](../cross-cutting/dependency-aware-monitoring-suppression.md).
+
+---
+
 ## services/dependencyTreeService.ts
 
 **What it owns:** Dependency-DAG computation and multi-parent suppression semantics — assigns layers via BFS from FortiGate roots, prefers the most-physical edge per (child,parent) pair, hangs every non-infra asset off that tree as a leaf, and reconciles `Asset.dependencySuppressed` on the reconciler cadence.
@@ -812,7 +850,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - `propagateAfterStatusChange` is a latency optimization; `reconcileDependencySuppression` is the source of truth.
-- Anything that resolves "the effective parent set" must treat every NON-`override` source as computed — `loadEffectiveParents` does, and `loadBoundChildRows` + the parents shaping in `GET /assets/:id/dependencies` were fixed in 2026-08 to match (they tested `source === "computed"` literally, which hid both `endpoint` and `vcenter` rows from the asset-details tree while the reconciler was suppressing on them).
+- Anything that resolves "the effective parent set" must treat every NON-`override` source as computed — `loadEffectiveParents` does, and `loadBoundChildRows` + the parents shaping in `GET /assets/:id/dependencies` (both in `assetDependencyService.ts`) were fixed in 2026-08 to match (they tested `source === "computed"` literally, which hid both `endpoint` and `vcenter` rows from the asset-details tree while the reconciler was suppressing on them).
 - The endpoint half makes a site FortiGate's child set fleet-sized. `GET /assets/:id/dependencies` keeps BOTH downward layers infra-only and capped (`DEP_INFRA_CHILD_CAP` / `DEP_GRANDCHILD_CAP`); any new consumer that walks children downward needs its own type filter and its own bound. Suppression itself is unaffected — the reconciler reads every edge regardless of what the tree displays.
 
 ---

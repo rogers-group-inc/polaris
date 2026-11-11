@@ -33,6 +33,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { logEvent } from "./eventLogService.js";
+import { deleteTokenAndTombstoneOwnership, type TombstoneCounts } from "./userOwnershipService.js";
 import { ipMatchesAllowlist, isValidAllowlistEntry } from "../utils/ipAllowlist.js";
 import { detectIpVersion, isValidIpAddress, normalizeCidr } from "../utils/cidr.js";
 import {
@@ -311,10 +312,17 @@ export async function revokeToken(id: string, revokedBy: string): Promise<void> 
   });
 }
 
-export async function deleteToken(id: string): Promise<void> {
-  const row = await prisma.apiToken.findUnique({ where: { id }, select: { id: true } });
+/**
+ * Delete a token. Rule 48(e): a token owns what it creates (`api:<name>`,
+ * rule 141(e)) and its name is free for reuse once the row is gone, so the
+ * rows it created are tombstoned in the same transaction — a new token given
+ * the old name inherits nothing.
+ */
+export async function deleteToken(id: string): Promise<{ name: string; tombstoned: TombstoneCounts }> {
+  const row = await prisma.apiToken.findUnique({ where: { id }, select: { id: true, name: true } });
   if (!row) throw new AppError(404, "Token not found");
-  await prisma.apiToken.delete({ where: { id } });
+  const tombstoned = await deleteTokenAndTombstoneOwnership(row);
+  return { name: row.name, tombstoned };
 }
 
 function toSummary(row: {
