@@ -851,13 +851,62 @@ function _fcSwitchHTML(sw) {
     '<p style="margin:0.4rem 0 0;font-size:0.75rem;color:var(--color-text-tertiary)">Error counts are the switch\'s totals since its counters were last cleared, not a rate.</p>';
 }
 
+// How a login was tied to this asset: the WWN the host itself reported
+// (exact), or the host name its HBA registered with the switch.
+function _fcMatchHTML(method) {
+  if (method === "wwn") return '<span title="The host reports this port WWN as its own HBA">WWN</span>';
+  if (method === "name") return '<span title="The host name the HBA registered with the switch matches this asset" style="color:var(--color-text-secondary)">name</span>';
+  return '<span style="color:var(--color-text-tertiary)">—</span>';
+}
+
+// The host's own HBA ports (agent / vCenter), and the switch port that sees
+// each one logged in — or that no switch in Polaris does.
+function _fcHostHbasHTML(hbas) {
+  if (!hbas || !hbas.length) return "";
+  var rows = hbas.map(function (h) {
+    var seen = (h.seenBy || []).length
+      ? h.seenBy.map(function (s) {
+          return '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(s.switch.id) + '">' +
+            escapeHtml(s.switch.hostname || s.switch.id) + '</a> <span class="mono">' + escapeHtml(s.ifName || "") + '</span>';
+        }).join("<br>")
+      : '<span style="color:var(--color-text-tertiary)" title="No switch in Polaris has this WWN logged in">no monitored switch</span>';
+    var state = h.portState || "—";
+    var stateBad = h.portState && !/^online$/i.test(h.portState);
+    return '<tr>' +
+      '<td class="mono">' + escapeHtml(h.name || "—") + '</td>' +
+      '<td class="mono">' + escapeHtml(h.portWwn) + '</td>' +
+      '<td' + (stateBad ? ' style="color:var(--color-warning);font-weight:600"' : "") + '>' + escapeHtml(state) + '</td>' +
+      '<td>' + escapeHtml(h.speed || "—") + '</td>' +
+      '<td class="mono" title="The WWN of the fabric this port is attached to">' + escapeHtml(h.fabricWwn || "—") + '</td>' +
+      '<td>' + _fcHbaHTML({ hbaModel: h.model, hbaFirmware: h.firmware, hbaDriver: h.driver }) + '</td>' +
+      '<td>' + seen + '</td>' +
+      '<td style="color:var(--color-text-secondary)">' + escapeHtml(h.source === "vcenter" ? "vCenter" : "Polaris Agent") + '</td>' +
+    '</tr>';
+  }).join("");
+  return '<h5 style="margin:0.9rem 0 0.35rem">HBA ports this host reports</h5>' +
+    '<div class="table-wrapper"><table class="ip-table" style="font-size:0.8rem"><thead><tr>' +
+      '<th>Port</th><th>Port WWN</th><th>State</th><th>Speed</th><th>Fabric</th><th>HBA</th><th>Seen by</th><th>Reported by</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
 function _fcHostHTML(host) {
   var fabrics = host.fabrics || [];
-  var note = fabrics.length === 1
-    ? calloutHTML("warning", "One fabric",
-        "Only one fibre-channel switch in Polaris sees this host. Either it has no second fabric path, " +
-        "or the other switch is not monitored over SNMP.")
-    : "";
+  var hbas = host.hbas || [];
+  var fabricWwns = {};
+  hbas.forEach(function (h) { if (h.fabricWwn) fabricWwns[h.fabricWwn] = true; });
+  var hostFabricCount = Object.keys(fabricWwns).length;
+  var note = "";
+  if (fabrics.length === 1 && hostFabricCount >= 2) {
+    note = calloutHTML("note", "One fabric monitored",
+      "This host is attached to " + hostFabricCount + " fabrics, but only one of their switches is monitored in Polaris.");
+  } else if (fabrics.length === 1) {
+    note = calloutHTML("warning", "One fabric",
+      "Only one fibre-channel switch in Polaris sees this host. Either it has no second fabric path, " +
+      "or the other switch is not monitored over SNMP.");
+  } else if (fabrics.length === 0 && hbas.length) {
+    note = calloutHTML("note", "No monitored switch",
+      "No fibre-channel switch in Polaris has this host's HBA ports logged in. The ports below are what the host itself reports.");
+  }
   return note + fabrics.map(function (f, idx) {
     var swName = (f.switch && (f.switch.hostname || f.switch.id)) || "switch";
     var head = '<h5 style="margin:0.8rem 0 0.35rem">Fabric ' + String.fromCharCode(65 + idx) + ' · ' +
@@ -869,6 +918,7 @@ function _fcHostHTML(host) {
         '<td class="mono">' + escapeHtml(p.portWwn) + '</td>' +
         '<td class="mono">' + escapeHtml(p.ifName || "—") + '</td>' +
         '<td>' + _fcHbaHTML(p) + '</td>' +
+        '<td>' + _fcMatchHTML(p.matchMethod) + '</td>' +
         _fcCounterCells(p.errorCounters) +
       '</tr>';
     }).join("");
@@ -879,11 +929,12 @@ function _fcHostHTML(host) {
           }).join(", ") + '</p>'
       : "";
     return head + '<div class="table-wrapper"><table class="ip-table" style="font-size:0.8rem"><thead><tr>' +
-        '<th>HBA port WWN</th><th>Switch port</th><th>HBA / OS</th>' + _fcCounterHeads() +
+        '<th>HBA port WWN</th><th>Switch port</th><th>HBA / OS</th><th>Matched by</th>' + _fcCounterHeads() +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' + others;
   }).join("") +
-  '<p style="margin:0.5rem 0 0;font-size:0.75rem;color:var(--color-text-tertiary)">Matched by the host name each HBA registered with the switch. ' +
-    'Error counts are the switch port\'s totals since its counters were last cleared.</p>';
+  _fcHostHbasHTML(hbas) +
+  '<p style="margin:0.5rem 0 0;font-size:0.75rem;color:var(--color-text-tertiary)">A switch port is tied to this host by the WWN the host reports, ' +
+    'or failing that by the host name its HBA registered. Error counts are the switch port\'s totals since its counters were last cleared.</p>';
 }
 
 function _renderAssetFc(assetId, payload) {

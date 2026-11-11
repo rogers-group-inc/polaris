@@ -5,9 +5,9 @@
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 156](#rule-156) — A fibre-channel login names the asset it is only when its registered host name answers to exactly one asset; a WWN alone identifies nothing
+- [Rule 156](#rule-156) — A fibre-channel login names the asset that reports its WWN, else the one asset its registered host name answers to — never a guess
 
-## Rule 156 — A fibre-channel login names the asset it is only when its registered host name answers to exactly one asset; a WWN alone identifies nothing
+## Rule 156 — A fibre-channel login names the asset that reports its WWN, else the one asset its registered host name answers to — never a guess
 
 **The request (2026-11-11).** With a Cisco MDS 9148S monitored over SNMP (rule 154 had just filled its identity), the operator asked what else SNMP could say about a fibre-channel switch — "what is connected to what". FC does not run LLDP, so nothing in Polaris could draw those links. Walks of the switch, done together in the session, showed what it publishes:
 
@@ -33,4 +33,11 @@ The operator saw their host names in the `HN:` field and proposed using them to 
 
 **Rejected.** Matching by WWN prefix or vendor OUI (identifies a vendor, not a host); reading zoning to decide what a host "reaches" (deferred; the host view says "on this switch's VSAN", nothing more); a profile-widget implementation (one column per widget, raw indexes, WWNs garbled by the value decoder — shown to the operator first and set aside).
 
-**Not yet.** The standard FC-MGMT-MIB (RFC 4044) for other vendors, host-side WWNs from vCenter and the agent, Device Map links, and alerts for a host that lost a fabric or a port whose error counters are climbing.
+**The host reports its own WWNs (2026-11-11, the second batch).** The operator asked whether the MAC address could do the job instead of the host name, "assuming Polaris is aware of fibre-channel interfaces on the assets". FC has no MAC; the WWN is its equivalent, and Polaris knew no host's WWN. The MAC-format address inside an NAA-1 WWN (`10:00:` + 48 bits) was considered and rejected as a match key: it comes from the HBA vendor's own pool and is no Ethernet card's MAC, so it would almost never hit and could hit the wrong device. Instead the hosts report their WWNs themselves:
+
+- **The Polaris Agent** (0.29.0) adds `fcPorts` to its system-info push. On Linux it reads `/sys/class/fc_host` (world-readable, so the unprivileged tier sees it), plus model / firmware from `scsi_host` and the driver from `/sys/module`. On Windows it reads `MSFT_InitiatorPort`, whose WWNs are flat hex strings; `MSFC_FibrePortHBAAttributes` nests them in an embedded object the agent's WMI library cannot decode reliably. It also reads `MSFC_FCAdapterHBAAttributes` for the model, applied only when every adapter agrees, because the two classes share no key. The wire keeps "cannot say" (absent) apart from "none" (`[]`).
+- **vCenter** adds `config.storageDevice.hostBusAdapter` to the SOAP host fetch both the monitor loop and discovery already make; discovery's Pass A2 records it per ESXi host. A WWN there is an xsd:long, a SIGNED decimal, so a WWN whose top bit is set arrives negative (`wwnFromVimLong`).
+
+Both land in `AssetHbaPort` per (asset, source). The switch's next pass matches a login to the asset reporting its WWN (`matchMethod: "wwn"`), and that outranks the name. Two assets claiming one WWN is still no match. Linux's `fabric_name` also lets a server say which fabrics it is on when only one of their switches is monitored, and the server tab lists the host's ports with the switch port that sees each one (or none).
+
+**Not yet.** The standard FC-MGMT-MIB (RFC 4044) for other vendors, Device Map links, and alerts for a host that lost a fabric or a port whose error counters are climbing. Windows port state, speed and fabric name are not read (they live in the embedded object). None of the host side has been run against a real HBA; the SOAP shape is from the vSphere API reference, and the Windows classes from Microsoft's documentation.

@@ -486,6 +486,23 @@ source. A serial the hardware never had programmed (`To Be Filled By O.E.M.`
 and friends) is reported as no serial at all rather than passed on — see
 [Business Rules](Business-Rules#rule-83).
 
+### Fibre-channel HBAs
+
+From agent 0.29.0 the host identity also lists the server's fibre-channel HBA
+ports. For each port the agent reports its WWN, node WWN, state, speed, the
+fabric it is attached to, and the HBA model, firmware and driver:
+
+- **Linux:** read from `/sys/class/fc_host`, readable on the unprivileged tier.
+- **Windows:** read from the Storage module's initiator ports and the HBA
+  driver's WMI classes. Port state, speed and fabric are not read on Windows.
+
+These are what a fibre-channel switch logs in. A switch monitored over SNMP
+links each of its ports to the server reporting that WWN, which is exact and
+needs no host name. The ports appear on the server's **Fibre Channel** tab (see
+[Assets](Assets) and [Business Rules](Business-Rules#rule-156)). A server with
+no HBA reports none, and an older agent reports nothing, leaving what Polaris
+already knows in place.
+
 ### The collections are spread across the minute
 
 Each collection runs on its own cadence, and each one starts at a different

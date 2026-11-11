@@ -3298,11 +3298,17 @@ as it is then. A script the agent started but never reported on is shown as
 
 ### Rule 156
 
-**A fibre-channel connection is linked to a server only when its name matches exactly one
-asset.** On a Cisco MDS switch monitored over SNMP, Polaris reads which device is logged
-into each port, the name each HBA registered with the switch, and each port's error
-counters. A connection is linked to an asset when that registered host name matches exactly
-one asset's hostname or DNS name. If two assets match, or none, the connection is shown with
-its WWN and registered name but not linked. A full name such as `esx07.example.com` never
-matches an asset in a different domain. When a device logs out of a port, Polaris records it
-in Events.
+**A fibre-channel connection is linked to the server that reports its WWN, or failing that to
+the one server its registered name matches.** On a Cisco MDS switch monitored over SNMP,
+Polaris reads which device is logged into each port, the name each HBA registered with the
+switch, and each port's error counters. Servers report their own HBA WWNs: the Polaris Agent
+on Linux and Windows (agent 0.29.0 and later), and vCenter for ESXi hosts.
+
+A connection links to a server in one of two ways, in this order:
+
+1. **By WWN:** exactly one server reports the logged-in WWN as its own.
+2. **By name:** the registered host name matches exactly one asset's hostname or DNS name.
+
+If two servers claim the WWN, or two assets match the name, the connection is shown with its
+WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
+an asset in a different domain. When a device logs out of a port, Polaris records it in Events.

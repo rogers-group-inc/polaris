@@ -1757,10 +1757,27 @@ registered no HBA, which are usually the storage array's ports (for example
 *PURE01-ct0*). If only one switch in Polaris sees the server, a warning says so.
 Either the server has no second path, or the other switch isn't monitored.
 
-**How a server is matched:** by the host name each HBA registers with the
-switch. The match counts only when exactly one asset's hostname or DNS name
-matches it ([rule 156](Business-Rules#rule-156)). A device that logs out of a
-port is recorded in Events.
+**HBA ports this host reports** appears when the server reports its own HBAs.
+The Polaris Agent reports them on Linux and Windows (agent 0.29.0 and later),
+and vCenter reports them for ESXi hosts, refreshed by vCenter discovery. Each
+port shows:
+
+- its WWN, state and speed;
+- the fabric it is attached to (Linux), so a server can tell you it is on two
+  fabrics even when only one of their switches is monitored;
+- the switch port that has it logged in, or *no monitored switch*.
+
+A port that is down on the host is amber.
+
+**How a server is matched**, shown per port as *Matched by*:
+
+- **WWN:** the server itself reports the logged-in WWN. This is exact.
+- **Name:** the host name the HBA registered with the switch matches exactly one
+  asset's hostname or DNS name.
+
+Two servers claiming one WWN, or two assets matching a name, link nothing
+([rule 156](Business-Rules#rule-156)). A device that logs out of a port is
+recorded in Events.
 
 ### ARP Table (firewalls)
 

@@ -25,7 +25,9 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import {
   hostLookupNames,
+  normalizeWwn,
   pickHostMatch,
+  pickWwnMatch,
   type FcLoginRow,
   type FcMatchCandidate,
   type FcPortRow,
@@ -65,7 +67,7 @@ export async function persistFibreChannel(
   now: Date = new Date(),
 ): Promise<void> {
   try {
-    const [oldPorts, oldLogins, candidates, sw] = await Promise.all([
+    const [oldPorts, oldLogins, candidates, sw, hbaRows] = await Promise.all([
       prisma.assetFcPort.findMany({ where: { assetId: switchId }, select: { ifIndex: true, firstSeen: true } }),
       prisma.assetFcLogin.findMany({
         where: { assetId: switchId },
@@ -73,7 +75,20 @@ export async function persistFibreChannel(
       }),
       loadMatchCandidates(switchId, inv.logins),
       prisma.asset.findUnique({ where: { id: switchId }, select: { hostname: true } }),
+      // Hosts that report these WWNs as their own HBAs — the exact match.
+      inv.logins.length
+        ? prisma.assetHbaPort.findMany({
+            where: { portWwn: { in: [...new Set(inv.logins.map((l) => l.portWwn))] }, asset: { status: { not: "decommissioned" } } },
+            select: { assetId: true, portWwn: true },
+          })
+        : Promise.resolve([] as Array<{ assetId: string; portWwn: string }>),
     ]);
+    const matchOf = (l: FcLoginRow): { matchedAssetId: string | null; matchMethod: string | null } => {
+      const byWwn = pickWwnMatch(l.portWwn, hbaRows, switchId);
+      if (byWwn) return { matchedAssetId: byWwn, matchMethod: "wwn" };
+      const byName = pickHostMatch(l.hostName, candidates, switchId);
+      return { matchedAssetId: byName, matchMethod: byName ? "name" : null };
+    };
     const portFirst = new Map(oldPorts.map((p) => [p.ifIndex, p.firstSeen]));
     const loginFirst = new Map(oldLogins.map((l) => [loginKey(l), l.firstSeen]));
 
@@ -92,12 +107,10 @@ export async function persistFibreChannel(
       prisma.assetFcLogin.deleteMany({ where: { assetId: switchId } }),
       prisma.assetFcLogin.createMany({
         data: inv.logins.map((l) => {
-          const matchedAssetId = pickHostMatch(l.hostName, candidates, switchId);
           return {
             assetId: switchId,
             ...l,
-            matchedAssetId,
-            matchMethod: matchedAssetId ? "name" : null,
+            ...matchOf(l),
             firstSeen: loginFirst.get(loginKey(l)) ?? now,
             lastSeen: now,
           };
@@ -206,6 +219,37 @@ export async function getFibreChannelForAsset(assetId: string) {
     };
   });
 
+  // The host's own report of its HBA ports, each with the switch port that
+  // sees its WWN logged in, if a switch in Polaris does. A port no switch
+  // sees is the case the switch view cannot show: a dead link, or a fabric
+  // whose switch is not monitored (its `fabricWwn` still says which fabric).
+  const hbaRows = await prisma.assetHbaPort.findMany({
+    where: { assetId },
+    orderBy: [{ name: "asc" }, { portWwn: "asc" }],
+  });
+  const seen = hbaRows.length
+    ? await prisma.assetFcLogin.findMany({
+        where: { portWwn: { in: hbaRows.map((h) => h.portWwn) } },
+        select: { portWwn: true, ifName: true, vsan: true, asset: { select: { id: true, hostname: true } } },
+      })
+    : [];
+  const hbas = hbaRows.map((h) => ({
+    source: h.source,
+    name: h.name,
+    portWwn: h.portWwn,
+    nodeWwn: h.nodeWwn,
+    portState: h.portState,
+    speed: h.speed,
+    fabricWwn: h.fabricWwn,
+    model: h.model,
+    firmware: h.firmware,
+    driver: h.driver,
+    lastSeen: h.lastSeen,
+    seenBy: seen
+      .filter((s) => s.portWwn === h.portWwn)
+      .map((s) => ({ switch: s.asset, ifName: s.ifName, vsan: s.vsan })),
+  }));
+
   const collectedAt = [...ports, ...logins].reduce<Date | null>(
     (max, r) => (!max || r.lastSeen > max ? r.lastSeen : max),
     null,
@@ -213,6 +257,83 @@ export async function getFibreChannelForAsset(assetId: string) {
   return {
     collectedAt,
     switch: ports.length || logins.length ? { ports, logins } : null,
-    host: fabrics.length ? { fabrics } : null,
+    host: fabrics.length || hbas.length ? { fabrics, hbas } : null,
   };
+}
+
+/** One HBA port as a host source reported it, before normalisation. */
+export interface HostHbaPortInput {
+  name?: string | null;
+  portWwn: string;
+  nodeWwn?: string | null;
+  portState?: string | null;
+  speed?: string | null;
+  fabricWwn?: string | null;
+  model?: string | null;
+  firmware?: string | null;
+  driver?: string | null;
+}
+
+/** "asset|source" → the canonical reading last recorded. Bounds steady state. */
+const lastHbaReading = new Map<string, string>();
+
+/** Test hook. */
+export function resetHbaPortCache(): void {
+  lastHbaReading.clear();
+}
+
+const text = (v: string | null | undefined, max = 255) => {
+  const s = (v ?? "").replace(/\s+/g, " ").trim();
+  return s ? s.slice(0, max) : null;
+};
+
+/**
+ * Record a host's own HBA ports as one source reported them (business rule
+ * 156): `source` "agent" or "vcenter". An empty list clears that source's
+ * rows (the host was read and has none); a port whose WWN is not a WWN is
+ * dropped. Edge-triggered: an unchanged reading costs an in-memory compare.
+ * Matching happens on the switch's next pass, which looks these rows up.
+ */
+export async function recordHostHbaPorts(
+  assetId: string,
+  source: "agent" | "vcenter",
+  ports: readonly HostHbaPortInput[],
+  now: Date = new Date(),
+): Promise<void> {
+  const byWwn = new Map<string, Omit<HostHbaPortInput, "portWwn"> & { portWwn: string }>();
+  for (const p of ports.slice(0, 64)) {
+    const portWwn = normalizeWwn(p.portWwn);
+    if (!portWwn || byWwn.has(portWwn)) continue;
+    byWwn.set(portWwn, {
+      portWwn,
+      name: text(p.name, 128),
+      nodeWwn: normalizeWwn(p.nodeWwn),
+      portState: text(p.portState, 64),
+      speed: text(p.speed, 64),
+      fabricWwn: normalizeWwn(p.fabricWwn),
+      model: text(p.model),
+      firmware: text(p.firmware),
+      driver: text(p.driver),
+    });
+  }
+  const rows = [...byWwn.values()].sort((a, b) => a.portWwn.localeCompare(b.portWwn));
+  const key = `${assetId}|${source}`;
+  const reading = JSON.stringify(rows);
+  if (lastHbaReading.get(key) === reading) return;
+  try {
+    const old = await prisma.assetHbaPort.findMany({
+      where: { assetId, source },
+      select: { portWwn: true, firstSeen: true },
+    });
+    const first = new Map(old.map((o) => [o.portWwn, o.firstSeen]));
+    await prisma.$transaction([
+      prisma.assetHbaPort.deleteMany({ where: { assetId, source } }),
+      prisma.assetHbaPort.createMany({
+        data: rows.map((r) => ({ assetId, source, ...r, firstSeen: first.get(r.portWwn) ?? now, lastSeen: now })),
+      }),
+    ]);
+    lastHbaReading.set(key, reading);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, assetId, source }, "HBA port record failed");
+  }
 }

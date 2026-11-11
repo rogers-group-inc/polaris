@@ -1341,6 +1341,7 @@ model Asset {
   fcPorts                AssetFcPort[]            @relation("AssetFcPorts")
   fcLogins               AssetFcLogin[]           @relation("AssetFcLogins")
   fcLoginMatches         AssetFcLogin[]           @relation("AssetFcLoginMatch")
+  hbaPorts               AssetHbaPort[]           @relation("AssetHbaPorts")
   // Current-state interface inventory (one row per ifName), delete-replaced per
   // full system-info scrape. The pinned-only time-series lives in
   // AssetInterfaceSample.
@@ -2677,6 +2678,40 @@ model AssetFcLogin {
   @@index([matchedAssetId])
   @@index([portWwn])
   @@map("asset_fc_logins")
+}
+
+// A fibre-channel HBA port as the HOST reports it (business rule 156): the
+// Polaris Agent (Linux sysfs fc_host / Windows MSFT_InitiatorPort) or vCenter
+// (HostSystem config.storageDevice.hostBusAdapter). CURRENT STATE per
+// (asset, source), replaced when the source's reading changes. The port WWN
+// is what a switch's login table names, so a login whose WWN exactly one
+// asset reports here is matched to that asset outright (`matchMethod` "wwn").
+model AssetHbaPort {
+  id         String  @id @default(uuid())
+  assetId    String
+  asset      Asset   @relation("AssetHbaPorts", fields: [assetId], references: [id], onDelete: Cascade)
+  // "agent" | "vcenter"
+  source     String
+  // Lower-case colon hex, normalised from whatever the source printed.
+  portWwn    String
+  nodeWwn    String?
+  // host3 (Linux), vmhba2 (ESXi), the instance name (Windows).
+  name       String?
+  portState  String?
+  speed      String?
+  // The WWN of the fabric this port is attached to (Linux sysfs): which
+  // fabric, even when its switch is not monitored.
+  fabricWwn  String?
+  model      String?
+  firmware   String?
+  driver     String?
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([assetId, source, portWwn])
+  @@index([portWwn])
+  @@map("asset_hba_ports")
 }
 
 // Layer-2 MAC forwarding database (the switch's CAM table), from Q-BRIDGE-MIB

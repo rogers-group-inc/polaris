@@ -589,25 +589,26 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/fibreChannelService.ts
 
-**What it owns:** Business rule 156 — a fibre-channel switch's ports and the devices logged into them, as CURRENT STATE on the switch (`AssetFcPort`, `AssetFcLogin`), each login resolved to the asset its registered host name uniquely names; and the Fibre Channel tab's payload for either side.
+**What it owns:** Business rule 156 — a fibre-channel switch's ports and the devices logged into them, as CURRENT STATE on the switch (`AssetFcPort`, `AssetFcLogin`); a server's own HBA ports as its sources report them (`AssetHbaPort`); each login resolved to the asset reporting its WWN, else the one its registered host name names; and the Fibre Channel tab's payload for either side.
 
-**Public API:** `persistFibreChannel(switchId, { ports, logins }, now?)` — full replace keeping `firstSeen`, matching through `utils/fibreChannel.pickHostMatch`, one `asset.fc_logins_changed` Event on a change; never throws. `getFibreChannelForAsset(assetId)` → `{ collectedAt, switch: { ports, logins } | null, host: { fabrics: [{ switch, vsans, ports (+ the switch port's `errorCounters`), others }] } | null }`.
+**Public API:** `persistFibreChannel(switchId, { ports, logins }, now?)` — full replace keeping `firstSeen`, matching through `pickWwnMatch` then `pickHostMatch`, one `asset.fc_logins_changed` Event on a change; never throws. `recordHostHbaPorts(assetId, "agent" | "vcenter", ports, now?)` — normalises (`normalizeWwn`, bad WWNs dropped, 64 max), edge-triggered in memory (`lastHbaReading`, reset by `resetHbaPortCache()`), delete + create per (asset, source) keeping `firstSeen`, `[]` clears; never throws. `getFibreChannelForAsset(assetId)` → `{ collectedAt, switch: { ports, logins } | null, host: { fabrics: [{ switch, vsans, ports (+ the switch port's `errorCounters`, `matchMethod`), others }], hbas: [{ source, name, portWwn, nodeWwn, portState, speed, fabricWwn, model, firmware, driver, seenBy: [{ switch, ifName, vsan }] }] } | null }`.
 
-**Cross-service deps:** `utils/fibreChannel` (`hostLookupNames`, `pickHostMatch`), `eventLogService.logEvent`.
+**Cross-service deps:** `utils/fibreChannel` (`hostLookupNames`, `pickHostMatch`, `pickWwnMatch`, `normalizeWwn`), `eventLogService.logEvent`.
 
-**Used by:** `monitoring/systemInfoPersist.recordSystemInfoResult` (when `SystemInfoSample.fibreChannel` is defined — `monitoring/snmpCollectors.collectFibreChannelSnmp`); `GET /assets/:id/fibre-channel` (`routes/assets/system.ts`).
+**Used by:** `monitoring/systemInfoPersist.recordSystemInfoResult` (when `SystemInfoSample.fibreChannel` is defined — `monitoring/snmpCollectors.collectFibreChannelSnmp`); `POST /agents/system-info` (`routes/agents.ts`, the body's `fcPorts`); `discovery/discoveryEngine` vCenter Pass A2 (`DiscoveredVcenterHost.fcHbas` from `vcenterService.parseHostFcHbas`); `GET /assets/:id/fibre-channel` (`routes/assets/system.ts`).
 
-**Writes:** `AssetFcPort`, `AssetFcLogin` (deleteMany + createMany in one `$transaction` per pass), `Event` (`asset.fc_logins_changed`, `actor: system:monitor`, warning when a login left).
+**Writes:** `AssetFcPort`, `AssetFcLogin` (deleteMany + createMany in one `$transaction` per pass), `AssetHbaPort` (the same shape, per asset + source, only when the reading changed), `Event` (`asset.fc_logins_changed`, `actor: system:monitor`, warning when a login left).
 
-**Reads:** `AssetFcPort` / `AssetFcLogin` (the stored rows, for first-seen and the change diff), `Asset` (match candidates: one `findMany` with an OR of exact and short-name terms, excluding the switch and decommissioned assets; the switch's hostname for the Event).
+**Reads:** `AssetFcPort` / `AssetFcLogin` (the stored rows, for first-seen and the change diff), `AssetHbaPort` (the login WWNs, `portWwn in [...]` on the indexed column, live assets only), `Asset` (name candidates: one `findMany` with an OR of exact and short-name terms, excluding the switch and decommissioned assets; the switch's hostname for the Event).
 
 **Invariants:**
-- A device that is not an FC switch never reaches this service: the collector resolves every table by symbol from the uploaded Cisco MIBs (`FC_ERROR_COLUMNS` / `FC_SYMBOLS` → `resolveOidSync`, no OID literal — `noEnterpriseOids.test.ts`) and returns undefined with no query when they do not resolve at the asset's scope, or after one GETNEXT of `fcIfLinkFailures` when the device answers nothing.
-- A name match is taken only when unique (rule 91); `matchMethod` says how it was made so a WWN match can outrank it later.
+- A device that is not an FC switch never reaches `persistFibreChannel`: the collector resolves every table by symbol from the uploaded Cisco MIBs (`FC_ERROR_COLUMNS` / `FC_SYMBOLS` → `resolveOidSync`, no OID literal — `noEnterpriseOids.test.ts`) and returns undefined with no query when they do not resolve at the asset's scope, or after one GETNEXT of `fcIfLinkFailures` when the device answers nothing.
+- A WWN the host reports outranks a name; either is taken only when exactly one asset answers (rule 91). A host's HBAs reported AFTER the switch's pass are matched on the switch's next pass, not retroactively.
+- The agent's 64-per-heartbeat push costs one in-memory compare when unchanged; `AssetHbaPort.lastSeen` therefore means "last changed".
 - The host view's `others` lists the logins on the same switch and VSAN with no symbolic name — in practice storage target ports — and claims nothing about zoning. Its `matchedAssetId` filter spells out the NULL arm: a bare `not` compiles to `<>` and drops every unmatched row.
 
 **When changing this:**
-- A host-side WWN source (vCenter `hostBusAdapter`, the agent) should set `matchMethod: "wwn"` and win over `"name"`.
+- A new host source (Arc, a hypervisor integration) calls `recordHostHbaPorts` with its own `source` string; the match needs nothing else.
 - Another vendor's tables (FC-MGMT-MIB, Brocade) belong in the collector and `buildFcInventory`; this service stores whatever rows it is given.
 
 ---

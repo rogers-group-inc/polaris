@@ -21,6 +21,7 @@ import * as entraId from "../entraIdService.js";
 import * as activeDirectory from "../activeDirectoryService.js";
 import { syncArcSoftware, syncIntuneSoftware } from "../softwareInventoryService.js";
 import * as vcenter from "../vcenterService.js";
+import { recordHostHbaPorts } from "../fibreChannelService.js";
 import * as unraid from "../unraidService.js";
 import * as truenas from "../truenasService.js";
 import * as proxmox from "../proxmoxService.js";
@@ -6287,6 +6288,28 @@ export async function syncVcenterDevices(
       }
     }
   }
+
+  // ── Pass A2 — each ESXi host's fibre-channel HBAs (business rule 156) ─────
+  // The WWNs a fibre-channel switch's login table names, so the switch's next
+  // pass can match its logins to these hosts exactly. `null` = the SOAP host
+  // fetch did not read them this run: nothing is touched. Edge-triggered in
+  // the service, so an unchanged host costs an in-memory compare.
+  let hostsWithHbas = 0;
+  await Promise.all(result.hosts.map(async (host) => {
+    const assetId = hostAssetIdByMoref.get(host.moref);
+    if (!assetId || !Array.isArray(host.fcHbas)) return;
+    if (host.fcHbas.length) hostsWithHbas++;
+    await recordHostHbaPorts(assetId, "vcenter", host.fcHbas.map((h) => ({
+      name: h.device,
+      portWwn: h.portWwn,
+      nodeWwn: h.nodeWwn,
+      portState: h.status,
+      speed: h.speed,
+      model: h.model,
+      driver: h.driver,
+    })), now);
+  }));
+  if (hostsWithHbas) syncLog("info", `Fibre-channel HBAs recorded on ${hostsWithHbas} ESXi host(s)`);
 
   // ── Pass B — virtual machines ──────────────────────────────────────────────
   const currentVmExternalIds: string[] = [];

@@ -27,6 +27,34 @@
 /** Longest registered string kept. Bounds a malformed agent. */
 const MAX_TEXT = 255;
 
+/**
+ * A WWN as a host spelled it → "10:00:5c:ba:2c:ff:ac:5a", or null. Accepts
+ * Linux sysfs (`0x10000090fa1b2c3d`), Windows' bare hex (`10000090FA1B2C3D`)
+ * and the colon / dash forms. All-zero and all-ones (sysfs's
+ * "not attached" fabric name) are no WWN.
+ */
+export function normalizeWwn(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const hex = String(raw).trim().toLowerCase().replace(/^0x/, "").replace(/[:\-\s]/g, "");
+  if (!/^[0-9a-f]{16}$/.test(hex)) return null;
+  if (/^0+$/.test(hex) || /^f+$/.test(hex)) return null;
+  return hex.match(/../g)!.join(":");
+}
+
+/**
+ * vSphere's `portWorldWideName` / `nodeWorldWideName` are xsd:long — the
+ * 64-bit WWN as a SIGNED decimal (an NAA-5 WWN such as 52:4a:… is negative).
+ * Two's-complement back to the 16 hex digits.
+ */
+export function wwnFromVimLong(raw: string | null | undefined): string | null {
+  const s = (raw ?? "").trim();
+  if (!/^-?\d{1,20}$/.test(s)) return null;
+  let n = BigInt(s);
+  if (n < 0n) n += 1n << 64n;
+  if (n < 0n || n >= 1n << 64n) return null;
+  return normalizeWwn(n.toString(16).padStart(16, "0"));
+}
+
 /** 8 raw bytes → "10:00:5c:ba:2c:ff:ac:5a", or null for anything else / all-zero. */
 export function wwnFromBytes(bytes: ArrayLike<number> | null | undefined): string | null {
   if (!bytes || bytes.length !== 8) return null;
@@ -302,6 +330,21 @@ export function pickHostMatch(hostName: string | null, candidates: readonly FcMa
   if (exact.size === 1) return [...exact][0];
   if (exact.size > 1) return null;
   return loose.size === 1 ? [...loose][0] : null;
+}
+
+/**
+ * Which asset reports this port WWN as its own HBA, or null. Exact by
+ * construction, so it outranks a name; but two assets claiming one WWN (a
+ * cloned VM, a re-used HBA moved between hosts with a stale row) is still
+ * no match, never a pick.
+ */
+export function pickWwnMatch(
+  portWwn: string,
+  hbaRows: ReadonlyArray<{ assetId: string; portWwn: string }>,
+  excludeId?: string,
+): string | null {
+  const ids = new Set(hbaRows.filter((r) => r.portWwn === portWwn && r.assetId !== excludeId).map((r) => r.assetId));
+  return ids.size === 1 ? [...ids][0] : null;
 }
 
 /** The names to look assets up by: each host name and its short form. */

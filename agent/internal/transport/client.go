@@ -399,6 +399,23 @@ type SystemInfoBody struct {
 	PrimaryMAC    string `json:"primaryMac,omitempty"`
 	PrimaryIP     string `json:"primaryIp,omitempty"`
 	AgentVersion  string `json:"agentVersion,omitempty"`
+	// FC HBA ports: nil = cannot say (omitted), empty = none (sent as []).
+	FcPorts *[]FcPort `json:"fcPorts,omitempty"`
+}
+
+// FcPort is one fibre-channel HBA port as the host sees it (collectors/
+// fcports.go fills it; Polaris business rule 156). Declared here, with the
+// rest of the wire shapes, because collectors imports transport.
+type FcPort struct {
+	Name       string `json:"name,omitempty"`       // host3, an instance name
+	PortWWN    string `json:"portWwn"`              // as the OS printed it; the server normalises
+	NodeWWN    string `json:"nodeWwn,omitempty"`    //
+	PortState  string `json:"portState,omitempty"`  // Online, Linkdown, …
+	Speed      string `json:"speed,omitempty"`      // "16 Gbit"
+	FabricName string `json:"fabricName,omitempty"` // the fabric's WWN: which fabric this port is on
+	Model      string `json:"model,omitempty"`
+	Firmware   string `json:"firmware,omitempty"`
+	Driver     string `json:"driver,omitempty"`
 }
 
 // PushSystemInfo POSTs the host identity blob. Server upserts the
