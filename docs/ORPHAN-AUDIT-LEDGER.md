@@ -24,9 +24,9 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | Batch | What | State |
 |---|---|---|
 | 0 | Queued agent commands, ownership stamps, disabled-account alerts, departing-account bookings | **done** — pushed `3d7bde734` |
-| A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — `d66a4973b` |
-| B | Integration delete / disable / re-scope | open — B-D1, B-D2 decided; B-D3 defaulted |
-| C | Tables that only grow | **retention done** — this commit; C.3, C.6, C.7, C.11 open |
+| A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
+| B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
+| C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
 | D | Leftovers outside the database (hosts, devices, disk) | open — D-D1 decided; D-D2, D-D3 defaulted |
 | E | Removable by hand, but silent | open — no decisions needed |
 
@@ -74,7 +74,7 @@ Not asked; defaulted by the implementer and open to change:
 Deliberately not done in A: an automation's `scope.assetIds` is left alone on a DELETE (an
 empty list means every device — rule 157(a)); it is in batch E as "silent".
 
-## Batch B — integration delete / disable / re-scope (open)
+## Batch B — integration delete / disable / re-scope (delete done, rule 160)
 
 Root cause shared by most rows: deleting an integration nulls the integration reference
 (`onDelete: SetNull`) on what it discovered, and every clean-up sweep is keyed on that
@@ -83,17 +83,17 @@ purges directory contacts and the `llm` role + token, and nothing else.
 
 | # | Leftover | Consequence |
 |---|---|---|
-| B.1 | `AssetSource` rows of a deleted integration (`integrationId` NULL) | keep feeding `projectAssetFromSources` (hostname / OS / serial); count as "still claimed", so the asset can never be auto-decommissioned; ids embedding the integration id can never be re-adopted |
-| B.2 | `azure:` tags after Arc is deleted / disabled / a machine leaves Arc | operators are blocked from removing them everywhere; stay in filters, tag-scoped RBAC, automation scopes |
-| B.3 | `arc` source rows — there is no Arc absence pass at all | as B.1 |
-| B.4 | Superseded `fortigate-endpoint` source rows; every `AssetFortigateSighting` row (no delete anywhere) | `syncEndpointDependencyEdges` reads sightings with no age filter |
-| B.5 | Placement dependency edges (`source` = vcenter / unraid / truenas / proxmox) | suppression frozen at the last sync; an override masks, does not remove |
-| B.6 | Pushed DHCP reservations on the FortiGate after the integration is deleted | `pushedTo` nulled, so a later release is local-only; the device keeps binding MAC to IP |
-| B.7 | Discovered assets, subnets and reservations of a deleted integration look live and manual | UI-removable, but nothing marks them |
-| B.8 | In-memory state per integration (`fmgWorker.workers`, token caches, Proxmox pools, labelled Prometheus gauges) | until restart; small and bounded |
-| B.9 | `monitorSettings` caches never invalidated across process roles | monitor role keeps a deleted / edited integration's cadences until restart (suspected runtime effect) |
-| B.10 | `DiscoveryRun` rows — no delete anywhere | grows; invisible |
-| B.11 | `DirectoryContactSource` rows if the purge fails during delete (suspected) | point at a dead id |
+| B.1 | `AssetSource` rows of a deleted integration (`integrationId` NULL) | keep feeding `projectAssetFromSources` (hostname / OS / serial); count as "still claimed", so the asset can never be auto-decommissioned; ids embedding the integration id can never be re-adopted **→ fixed at delete time, and by migration `20261111140000_orphan_integration_sources` for vCenter / Arc / workload / Generic API kinds. **Still open:** dead `entra` / `ad` / `intune` / Fortinet source rows already on existing installs (those kinds can legitimately carry no integration, so the migration leaves them)** |
+| B.2 | `azure:` tags after Arc is deleted / disabled / a machine leaves Arc | operators are blocked from removing them everywhere; stay in filters, tag-scoped RBAC, automation scopes **→ fixed for a DELETED Arc integration (stripped; migration covers existing installs). Open: disabled Arc, and a machine that leaves Arc (B.3)** |
+| B.3 | `arc` source rows — there is no Arc absence pass at all | as B.1 **→ open — needs an Arc absence pass with rule 70's guards** |
+| B.4 | Superseded `fortigate-endpoint` source rows; every `AssetFortigateSighting` row (no delete anywhere) | `syncEndpointDependencyEdges` reads sightings with no age filter **→ sightings deleted with the integration, and pruned by age (rule 158). Superseded `fortigate-endpoint` rows on a LIVE integration: open** |
+| B.5 | Placement dependency edges (`source` = vcenter / unraid / truenas / proxmox) | suppression frozen at the last sync; an override masks, does not remove **→ fixed — deleted with the integration; migration covers existing installs** |
+| B.6 | Pushed DHCP reservations on the FortiGate after the integration is deleted | `pushedTo` nulled, so a later release is local-only; the device keeps binding MAC to IP **→ decided: left on the device, listed in `integration.dhcp_entries_left`** |
+| B.7 | Discovered assets, subnets and reservations of a deleted integration look live and manual | UI-removable, but nothing marks them **→ decided: kept; the delete dialog shows the counts and offers to decommission what nothing else reports** |
+| B.8 | In-memory state per integration (`fmgWorker.workers`, token caches, Proxmox pools, labelled Prometheus gauges) | until restart; small and bounded **→ open — bounded, clears on restart** |
+| B.9 | `monitorSettings` caches never invalidated across process roles | monitor role keeps a deleted / edited integration's cadences until restart (suspected runtime effect) **→ open** |
+| B.10 | `DiscoveryRun` rows — no delete anywhere | grows; invisible **→ fixed — deleted with the integration (and swept by rule 158)** |
+| B.11 | `DirectoryContactSource` rows if the purge fails during delete (suspected) | point at a dead id **→ open** |
 
 Decisions needed:
 

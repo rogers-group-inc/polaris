@@ -1167,7 +1167,10 @@ const api = {
     get:    (id)     => request("GET", `/integrations/${id}`),
     create: (body)   => request("POST", "/integrations", body),
     update: (id, b)  => request("PUT", `/integrations/${id}`, b),
-    delete: (id)     => request("DELETE", `/integrations/${id}`),
+    // Business rule 160: `decommission` also retires the assets no other source
+    // reports; deletePreview is the confirm dialog's numbers.
+    delete: (id, opts) => request("DELETE", `/integrations/${id}` + (opts && opts.decommission ? "?decommission=true" : "")),
+    deletePreview: (id) => request("GET", `/integrations/${id}/delete-preview`),
     test:   (id, name) => trackedRequest("Testing " + (name || "integration"), "POST", `/integrations/${id}/test`),
     testFortigateSample:    (id)   => trackedRequest("Testing random FortiGate", "POST", `/integrations/${id}/test/fortigate-sample`),
     testFortigateSampleNew: (body) => trackedRequest("Testing random FortiGate", "POST", "/integrations/test/fortigate-sample", body),
