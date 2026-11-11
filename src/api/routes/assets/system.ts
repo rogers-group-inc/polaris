@@ -16,6 +16,7 @@ import { readLatestIpsecTunnels } from "../../../services/ipsecConnectionService
 import { getAssetSoftware } from "../../../services/softwareInventoryService.js";
 import { getInventoryPresence } from "../../../services/serviceInventoryService.js";
 import { getApRadioInventory } from "../../../services/apRadioService.js";
+import { getFibreChannelForAsset } from "../../../services/fibreChannelService.js";
 import { getArpEntryRetentionDays } from "../../../services/sampleRetentionService.js";
 import { fillMacTableVlans, getVlanNamesForAsset, portVlansFor, readPortVlans } from "../../../services/vlanNameService.js";
 import { countControllerChildren, getControllerMacTable, getControllerWireless } from "../../../services/controllerChildrenService.js";
@@ -485,6 +486,19 @@ router.get("/:id/processes", requirePermission("assets", "read"), async (req, re
 // inventory for the Services tab. Mirrors /:id/processes: the current AssetService
 // rows plus the two pin arrays (monitoredServices = journalctl tailing,
 // mappedServices = Application Map connection attribution).
+/**
+ * GET /assets/:id/fibre-channel — the Fibre Channel tab (business rule 156):
+ * `switch` = this asset's FC ports and the devices logged into them;
+ * `host` = this asset's HBA ports as the switches it is matched on see them,
+ * one entry per switch. Either is null when it has nothing; both null means
+ * the tab is not drawn.
+ */
+router.get("/:id/fibre-channel", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    res.json(await getFibreChannelForAsset(req.params.id as string));
+  } catch (err) { next(err); }
+});
+
 /**
  * GET /assets/:id/mac-table — the switch's layer-2 forwarding database.
  *

@@ -586,3 +586,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Known gap (as for `fortinet-live` / `snmp-sysdescr`): a row stops refreshing when SNMP polling stops, and keeps contributing until the asset gains a higher source; if the reader is ever removed, delete the rows it wrote.
 
 ---
+
+## services/fibreChannelService.ts
+
+**What it owns:** Business rule 156 — a fibre-channel switch's ports and the devices logged into them, as CURRENT STATE on the switch (`AssetFcPort`, `AssetFcLogin`), each login resolved to the asset its registered host name uniquely names; and the Fibre Channel tab's payload for either side.
+
+**Public API:** `persistFibreChannel(switchId, { ports, logins }, now?)` — full replace keeping `firstSeen`, matching through `utils/fibreChannel.pickHostMatch`, one `asset.fc_logins_changed` Event on a change; never throws. `getFibreChannelForAsset(assetId)` → `{ collectedAt, switch: { ports, logins } | null, host: { fabrics: [{ switch, vsans, ports (+ the switch port's `errorCounters`), others }] } | null }`.
+
+**Cross-service deps:** `utils/fibreChannel` (`hostLookupNames`, `pickHostMatch`), `eventLogService.logEvent`.
+
+**Used by:** `monitoring/systemInfoPersist.recordSystemInfoResult` (when `SystemInfoSample.fibreChannel` is defined — `monitoring/snmpCollectors.collectFibreChannelSnmp`); `GET /assets/:id/fibre-channel` (`routes/assets/system.ts`).
+
+**Writes:** `AssetFcPort`, `AssetFcLogin` (deleteMany + createMany in one `$transaction` per pass), `Event` (`asset.fc_logins_changed`, `actor: system:monitor`, warning when a login left).
+
+**Reads:** `AssetFcPort` / `AssetFcLogin` (the stored rows, for first-seen and the change diff), `Asset` (match candidates: one `findMany` with an OR of exact and short-name terms, excluding the switch and decommissioned assets; the switch's hostname for the Event).
+
+**Invariants:**
+- A device that is not an FC switch never reaches this service: the collector resolves every table by symbol from the uploaded Cisco MIBs (`FC_ERROR_COLUMNS` / `FC_SYMBOLS` → `resolveOidSync`, no OID literal — `noEnterpriseOids.test.ts`) and returns undefined with no query when they do not resolve at the asset's scope, or after one GETNEXT of `fcIfLinkFailures` when the device answers nothing.
+- A name match is taken only when unique (rule 91); `matchMethod` says how it was made so a WWN match can outrank it later.
+- The host view's `others` lists the logins on the same switch and VSAN with no symbolic name — in practice storage target ports — and claims nothing about zoning. Its `matchedAssetId` filter spells out the NULL arm: a bare `not` compiles to `<>` and drops every unmatched row.
+
+**When changing this:**
+- A host-side WWN source (vCenter `hostBusAdapter`, the agent) should set `matchMethod: "wwn"` and win over `"name"`.
+- Another vendor's tables (FC-MGMT-MIB, Brocade) belong in the collector and `buildFcInventory`; this service stores whatever rows it is given.
+
+---

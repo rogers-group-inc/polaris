@@ -737,6 +737,184 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
 }
 
+// ─── Fibre Channel tab (business rule 156) ─────────────────────────────────
+//
+// One tab, two readings of one fetch (`api.assets.fibreChannel`):
+//  - on an FC switch, its ports and the device logged into each one, with the
+//    port's cumulative error counters;
+//  - on a server the switches matched by registered host name, one card per
+//    switch (a fabric), its HBA ports, the health of each link, and the other
+//    devices on that switch's VSAN that registered no HBA string (in practice
+//    the storage array's target ports).
+// Prefetched beside the panel's wave so the tab is present or absent on first
+// paint; drawn from the prefetched payload, re-read by the strip's Poll.
+
+function _fcTabEligible(payload) {
+  return !!(payload && (payload.switch || payload.host));
+}
+
+function _assetFcTabHTML(assetId) {
+  return '<div id="asset-fc-mount-' + escapeHtml(assetId) + '">' +
+    '<span class="empty-state">Loading…</span></div>';
+}
+
+// The counters an operator acts on, in the order they read: a link that
+// dropped, then words / frames the optic mangled. Zero is shown as a dash so a
+// non-zero cell stands out; a non-zero corruption counter is amber.
+var _FC_ERROR_COLS = [
+  ["linkFailures",   "Link failures",  "Times the link went down (fcIfLinkFailures)", false],
+  ["syncLosses",     "Sync losses",    "Losses of synchronisation (fcIfSyncLosses)", true],
+  ["sigLosses",      "Signal losses",  "Losses of signal (fcIfSigLosses)", false],
+  ["invalidTxWords", "Invalid words",  "Invalid transmission words received — usually an optic, cable or connector (fcIfInvalidTxWords)", true],
+  ["invalidCrcs",    "CRC errors",     "Frames received with a bad CRC (fcIfInvalidCrcs)", true],
+];
+
+function _fcCounterCells(counters) {
+  var c = counters || {};
+  return _FC_ERROR_COLS.map(function (col) {
+    var v = c[col[0]];
+    if (typeof v !== "number" || v === 0) return '<td class="mono" style="color:var(--color-text-tertiary)">—</td>';
+    var warn = col[3];
+    return '<td class="mono"' + (warn ? ' style="color:var(--color-warning);font-weight:600"' : "") +
+      ' title="' + escapeHtml(col[2]) + '">' + escapeHtml(Number(v).toLocaleString()) + '</td>';
+  }).join("");
+}
+
+function _fcCounterHeads() {
+  return _FC_ERROR_COLS.map(function (col) {
+    return '<th title="' + escapeHtml(col[2]) + '">' + escapeHtml(col[1]) + '</th>';
+  }).join("");
+}
+
+function _fcAnyErrors(counters) {
+  var c = counters || {};
+  return _FC_ERROR_COLS.some(function (col) { return typeof c[col[0]] === "number" && c[col[0]] > 0; });
+}
+
+// The attached device's best name: the asset it was matched to, else the
+// registered host name / port label, else the HBA model.
+function _fcDeviceHTML(login) {
+  if (login.matchedAsset) {
+    return '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(login.matchedAsset.id) + '"' +
+      ' title="Matched by the host name the HBA registered (' + escapeHtml(login.hostName || "") + ')">' +
+      escapeHtml(login.matchedAsset.hostname || login.hostName || login.matchedAsset.id) + '</a>';
+  }
+  if (login.hostName) {
+    return '<span title="Registered name; no single asset answers to it">' + escapeHtml(login.hostName) + '</span>';
+  }
+  return '<span style="color:var(--color-text-tertiary)">' + escapeHtml(login.hbaModel || "unnamed") + '</span>';
+}
+
+function _fcHbaHTML(r) {
+  var parts = [];
+  if (r.hbaModel) parts.push(escapeHtml(r.hbaModel));
+  var ver = [r.hbaFirmware ? "FW " + r.hbaFirmware : "", r.hbaDriver ? "driver " + r.hbaDriver : ""].filter(Boolean).join(" · ");
+  if (ver) parts.push('<span style="color:var(--color-text-secondary)">' + escapeHtml(ver) + '</span>');
+  if (r.osInfo) parts.push('<span style="color:var(--color-text-secondary)">' + escapeHtml(r.osInfo) + '</span>');
+  return parts.length ? parts.join("<br>") : '<span style="color:var(--color-text-tertiary)">—</span>';
+}
+
+function _fcSwitchHTML(sw) {
+  var loginsByIf = {};
+  (sw.logins || []).forEach(function (l) { (loginsByIf[l.ifIndex] = loginsByIf[l.ifIndex] || []).push(l); });
+  var used = [], idle = [];
+  (sw.ports || []).forEach(function (p) {
+    if (loginsByIf[p.ifIndex] || _fcAnyErrors(p.errorCounters)) used.push(p); else idle.push(p);
+  });
+  var rows = used.map(function (p) {
+    var ls = loginsByIf[p.ifIndex] || [];
+    var port = '<td class="mono">' + escapeHtml(p.ifName || ("ifIndex " + p.ifIndex)) + '</td>';
+    if (ls.length === 0) {
+      return '<tr>' + port + '<td>—</td>' +
+        '<td colspan="3" style="color:var(--color-text-tertiary)" title="The port has error history but nothing is logged in now">nothing logged in</td>' +
+        _fcCounterCells(p.errorCounters) + '</tr>';
+    }
+    return ls.map(function (l, i) {
+      return '<tr>' + (i === 0 ? port : '<td></td>') +
+        '<td>' + escapeHtml(String(l.vsan)) + '</td>' +
+        '<td>' + _fcDeviceHTML(l) + '</td>' +
+        '<td class="mono" title="' + escapeHtml(l.nodeWwn ? "Node WWN " + l.nodeWwn : "") + '">' + escapeHtml(l.portWwn) + '</td>' +
+        '<td>' + _fcHbaHTML(l) + '</td>' +
+        (i === 0 ? _fcCounterCells(p.errorCounters) : '<td colspan="' + _FC_ERROR_COLS.length + '"></td>') +
+      '</tr>';
+    }).join("");
+  }).join("");
+  var idleLine = idle.length
+    ? '<p style="margin:0.4rem 0 0;font-size:0.8rem;color:var(--color-text-tertiary)">' +
+        idle.length + ' more port' + (idle.length === 1 ? "" : "s") + ' with nothing logged in and no errors: ' +
+        escapeHtml(idle.map(function (p) { return p.ifName || p.ifIndex; }).join(", ")) + '</p>'
+    : "";
+  return '<div class="table-wrapper"><table class="ip-table" style="font-size:0.8rem"><thead><tr>' +
+      '<th>Port</th><th>VSAN</th><th>Device</th><th>Port WWN</th><th>HBA / OS</th>' + _fcCounterHeads() +
+    '</tr></thead><tbody>' + (rows || '<tr><td colspan="' + (5 + _FC_ERROR_COLS.length) + '" class="empty-state">No ports in use.</td></tr>') +
+    '</tbody></table></div>' + idleLine +
+    '<p style="margin:0.4rem 0 0;font-size:0.75rem;color:var(--color-text-tertiary)">Error counts are the switch\'s totals since its counters were last cleared, not a rate.</p>';
+}
+
+function _fcHostHTML(host) {
+  var fabrics = host.fabrics || [];
+  var note = fabrics.length === 1
+    ? calloutHTML("warning", "One fabric",
+        "Only one fibre-channel switch in Polaris sees this host. Either it has no second fabric path, " +
+        "or the other switch is not monitored over SNMP.")
+    : "";
+  return note + fabrics.map(function (f, idx) {
+    var swName = (f.switch && (f.switch.hostname || f.switch.id)) || "switch";
+    var head = '<h5 style="margin:0.8rem 0 0.35rem">Fabric ' + String.fromCharCode(65 + idx) + ' · ' +
+      '<a href="#" class="asset-link" data-asset-id="' + escapeHtml(f.switch.id) + '">' + escapeHtml(swName) + '</a>' +
+      (f.switch.model ? ' <span style="font-weight:400;color:var(--color-text-secondary)">' + escapeHtml(f.switch.model) + '</span>' : "") +
+      ' <span style="font-weight:400;color:var(--color-text-secondary)">· VSAN ' + escapeHtml(f.vsans.join(", ")) + '</span></h5>';
+    var rows = (f.ports || []).map(function (p) {
+      return '<tr>' +
+        '<td class="mono">' + escapeHtml(p.portWwn) + '</td>' +
+        '<td class="mono">' + escapeHtml(p.ifName || "—") + '</td>' +
+        '<td>' + _fcHbaHTML(p) + '</td>' +
+        _fcCounterCells(p.errorCounters) +
+      '</tr>';
+    }).join("");
+    var others = (f.others || []).length
+      ? '<p style="margin:0.35rem 0 0;font-size:0.8rem;color:var(--color-text-secondary)">Also on this switch\'s VSAN, with no HBA registration (usually storage): ' +
+          f.others.map(function (o) {
+            return escapeHtml(o.label || o.portWwn) + ' <span class="mono" style="color:var(--color-text-tertiary)">(' + escapeHtml(o.ifName || "") + ')</span>';
+          }).join(", ") + '</p>'
+      : "";
+    return head + '<div class="table-wrapper"><table class="ip-table" style="font-size:0.8rem"><thead><tr>' +
+        '<th>HBA port WWN</th><th>Switch port</th><th>HBA / OS</th>' + _fcCounterHeads() +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' + others;
+  }).join("") +
+  '<p style="margin:0.5rem 0 0;font-size:0.75rem;color:var(--color-text-tertiary)">Matched by the host name each HBA registered with the switch. ' +
+    'Error counts are the switch port\'s totals since its counters were last cleared.</p>';
+}
+
+function _renderAssetFc(assetId, payload) {
+  var mount = document.getElementById("asset-fc-mount-" + assetId);
+  if (!mount) return;
+  var d = payload || {};
+  var refreshId = "fc-refresh-" + assetId;
+  var html = _currentStateStripHTML({
+    title: d.switch ? "Fibre Channel ports" : "Fibre Channel",
+    lastAt: d.collectedAt || null,
+    neverText: "not collected yet",
+    refreshId: refreshId,
+    refreshTitle: "Re-read the switch's fibre-channel tables now",
+  });
+  if (d.switch) html += _fcSwitchHTML(d.switch);
+  if (d.host) html += _fcHostHTML(d.host);
+  mount.innerHTML = html;
+  _wireAssetPivotLinks(mount);
+  // A host's Poll re-reads THIS asset, which holds no FC tables; the strip's
+  // button is offered on the switch only.
+  if (d.switch) {
+    _wireCurrentStateRefresh(refreshId, assetId, async function () {
+      var next = await api.assets.fibreChannel(assetId).catch(function () { return null; });
+      if (next) _renderAssetFc(assetId, next);
+    });
+  } else {
+    var btn = document.getElementById(refreshId);
+    if (btn) btn.remove();
+  }
+}
+
 // ─── MAC Table tab ─────────────────────────────────────────────────────────
 //
 // The switch's layer-2 forwarding database. Two views of the same fetch: the

@@ -3295,3 +3295,14 @@ script when it comes back. Polaris does not queue it again: if the condition
 still holds, the automation fires again and that run is judged against the host
 as it is then. A script the agent started but never reported on is shown as
 **timeout**. See [Automation Scripts](Automation-Scripts#agent).
+
+### Rule 156
+
+**A fibre-channel connection is linked to a server only when its name matches exactly one
+asset.** On a Cisco MDS switch monitored over SNMP, Polaris reads which device is logged
+into each port, the name each HBA registered with the switch, and each port's error
+counters. A connection is linked to an asset when that registered host name matches exactly
+one asset's hostname or DNS name. If two assets match, or none, the connection is shown with
+its WWN and registered name but not linked. A full name such as `esx07.example.com` never
+matches an asset in a different domain. When a device logs out of a port, Polaris records it
+in Events.

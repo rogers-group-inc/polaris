@@ -18,6 +18,7 @@ import { logEvent, buildFirmwareChangedEvent } from "../eventLogService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { lookupOuiOverride } from "../ouiService.js";
 import { reconcileSnmpSelfIdentity } from "../snmpSelfIdentityService.js";
+import { persistFibreChannel } from "../fibreChannelService.js";
 import { resolveAssetTypeCached } from "../../utils/assetTypeMatch.js";
 import { sameDescrObserved, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
 import { maybeEmitChangeEvents, type ChangeItem } from "../notificationChangeEvents.js";
@@ -690,6 +691,13 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
     await persistPhysicalEntities(assetId, d.physicalEntities);
     endEnt({ entities: d.physicalEntities.length });
     stopWrite();
+  }
+  // Fibre-channel ports and logins (business rule 156). Same undefined /
+  // walked contract: undefined = not an FC switch, nothing written.
+  if (d.fibreChannel) {
+    const endFc = startPhase("systeminfo.persist.fibre_channel");
+    await persistFibreChannel(assetId, d.fibreChannel, now);
+    endFc({ ports: d.fibreChannel.ports.length, logins: d.fibreChannel.logins.length });
   }
   // Forwarding database. Same undefined/[] contract again.
   if (Array.isArray(d.macTable)) {

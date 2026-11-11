@@ -607,6 +607,9 @@ async function openViewModal(id, opts) {
       if (asset.assetType !== "firewall") return null;
       return api.assets.childCounts(asset.id).catch(function () { return null; });
     });
+    // Fibre Channel (business rule 156) — whether the tab is drawn, and its
+    // content. Beside the wave for the same reason: wave slots are positional.
+    var fcP = api.assets.fibreChannel(id).catch(function () { return null; });
 
     var wave = await Promise.all([
       assetP,
@@ -668,6 +671,7 @@ async function openViewModal(id, opts) {
     var ipsecPayload = wave[14];
     var inventoryPresence = wave[15] || { services: true, software: true };
     var childCounts = await childCountsP;
+    var fcPayload = await fcP;
 
     _currentAssetForRefresh = a;
     // Name the entry now that the hostname is known, so the tooltips read
@@ -739,6 +743,11 @@ async function openViewModal(id, opts) {
     // first click since it can carry a few thousand rows.
     if (a.assetType === "switch") {
       tabs.push({ key: "mactable", label: "MAC Table", html: _assetMacTableTabHTML(a.id) });
+    }
+    // Fibre Channel — an FC switch's ports and logins, or a server's HBA
+    // links as the switches see them. Only when either side has rows.
+    if (_fcTabEligible(fcPayload)) {
+      tabs.push({ key: "fibrechannel", label: "Fibre Channel", html: _assetFcTabHTML(a.id) });
     }
     // A FortiGate's MAC Table tab — the forwarding database of every
     // FortiSwitch it controls, grouped by switch. Only when it controls one.
@@ -935,6 +944,7 @@ async function openViewModal(id, opts) {
     if (sdwanRules.length || sdwanLinks.length || sdwanMembers.length) _wireSdwanTab(a, sdwanRules, sdwanLinks, sdwanMembers);
     if (_pathTabEligible(pathPayload)) _wireAssetPathCheckTab(a, pathPayload);
     if (a.assetType === "switch") _wireAssetMacTableTab(a.id);
+    if (_fcTabEligible(fcPayload)) _renderAssetFc(a.id, fcPayload);
     if (a.assetType === "firewall") _wireAssetArpTableTab(a.id);
     if (a.assetType === "firewall") _wireAssetChildTabs(a.id);
     if (showIpsecTab) _renderAssetIpsec(a.id, ipsecPayload, a);
@@ -2970,7 +2980,7 @@ function dateInputVal(isoStr) {
 var _ASSET_VIEW_TAB_ORDER = [
   "general", "system", "workloads",
   "sdwan", "ipsec",
-  "arptable", "mactable", "childmactable",
+  "arptable", "mactable", "childmactable", "fibrechannel",
   "stations", "childwireless",
   "pathCheck", "services", "software", "quarantine",
   "events", "notifications",
