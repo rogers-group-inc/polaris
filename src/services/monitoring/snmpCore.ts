@@ -251,6 +251,10 @@ export const OID = {
   entPhysicalName:        "1.3.6.1.2.1.47.1.1.1.1.7",
   entPhysicalHardwareRev: "1.3.6.1.2.1.47.1.1.1.1.8",
   entPhysicalFirmwareRev: "1.3.6.1.2.1.47.1.1.1.1.9",
+  // The running OS on a chassis / supervisor row — read for the device's own
+  // firmware (business rule 154, utils/snmpEntityIdentity.ts), never stored
+  // per module.
+  entPhysicalSoftwareRev: "1.3.6.1.2.1.47.1.1.1.1.10",
   entPhysicalSerialNum:   "1.3.6.1.2.1.47.1.1.1.1.11",
   entPhysicalMfgName:     "1.3.6.1.2.1.47.1.1.1.1.12",
   entPhysicalModelName:   "1.3.6.1.2.1.47.1.1.1.1.13",

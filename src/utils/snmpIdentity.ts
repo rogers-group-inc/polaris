@@ -228,8 +228,12 @@ function tidy(raw: string | undefined): string | undefined {
   return s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) : s;
 }
 
-/** tidy(), but drop the well-known unconfigured-agent placeholders. */
-function tidyMeaningful(raw: string | undefined): string | undefined {
+/**
+ * tidy(), but drop the well-known unconfigured-agent placeholders. Exported for
+ * `utils/snmpEntityIdentity.ts`, which reads the same agents on the monitor
+ * path and must refuse the same factory defaults.
+ */
+export function tidyMeaningful(raw: string | undefined): string | undefined {
   const s = tidy(raw);
   if (!s) return undefined;
   return PLACEHOLDER_TEXT.has(s.toLowerCase()) ? undefined : s;
