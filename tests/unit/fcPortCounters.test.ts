@@ -26,7 +26,9 @@ import {
   isFcRateMetric,
   type FcErrorCounters,
 } from "../../src/utils/fibreChannel.js";
-import { ASSET_METRICS, METRIC_META, METRIC_DIMENSIONS, triggerIsPerDimension } from "../../src/services/notificationTypes.js";
+import { ASSET_METRICS } from "../../src/services/notificationTypes/triggers.js";
+import { METRIC_META } from "../../src/services/notificationTypes/metricMeta.js";
+import { METRIC_DIMENSIONS, triggerIsPerDimension } from "../../src/services/notificationTypes/dimensions.js";
 import { METRIC_STREAM } from "../../src/services/notificationCadenceService.js";
 import { pinTestForTrigger, interfaceIsPinned } from "../../src/services/notifications/scope.js";
 import { isInterfaceDimensionMetric } from "../../src/services/alertInterfaceService.js";

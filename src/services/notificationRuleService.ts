@@ -26,7 +26,6 @@ import {
   deviceFilterMatch,
   interfacePatternMatch,
   interfaceTagMatch,
-  METRIC_DIMENSIONS,
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
   normalizeRuleToV2,
@@ -52,6 +51,7 @@ import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { bumpQuietTimeCache } from "./quietTimeHoldService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";
 import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
+import { METRIC_DIMENSIONS } from "./notificationTypes/dimensions.js";
 
 /**
  * Scope membership (ScopeAsset + scopeMatchesAsset) now lives in
