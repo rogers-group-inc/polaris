@@ -6,8 +6,9 @@
  *   window.PolarisRegionViewPrompt.afterSave({ assetId, before, after, siteId? })
  *
  * A region is the code chain down to that level (`b:Plant r:MDF jb:7` → the
- * room "Plant › MDF" and the junction box "Plant › MDF › 7"). It is NEW when
- * the old description did not name it. A region some Rack / Wall view of the
+ * room "Plant › MDF" and the junction box "Plant › MDF › 7"), read through
+ * the site's region tree (rule 153), so a short `r:MDF` is the same region
+ * as its full chain. It is NEW when the old description did not name it. A region some Rack / Wall view of the
  * site already stands for is not asked about, nor one the operator chose
  * "Don't map" for in this browser. Area, building and floor regions are never
  * asked about: Topology and Layer 2 views draw them.
@@ -59,13 +60,19 @@
     });
     return out;
   }
-  /** Pure — the chains `after` names that `before` did not, and no view stands for. */
+  function asCodes(x) { return typeof x === "string" || x == null ? parseCodes(x) : x; }
+  /**
+   * Pure — the chains `after` names that `before` did not, and no view stands
+   * for. `before` / `after` are descriptions or codes already resolved
+   * through the site's region tree (rule 153), so `r:MDF` and the full
+   * `b:Plant f:1 r:MDF` are the same region.
+   */
   function newRegions(before, after, views, skipped) {
     var had = {};
-    askableChains(parseCodes(before)).forEach(function (r) { had[chainKey(r.codes)] = true; });
+    askableChains(asCodes(before)).forEach(function (r) { had[chainKey(r.codes)] = true; });
     var mapped = {};
     (views || []).forEach(function (v) { if (v.region) mapped[chainKey(v.region)] = true; });
-    return askableChains(parseCodes(after)).filter(function (r) {
+    return askableChains(asCodes(after)).filter(function (r) {
       var k = chainKey(r.codes);
       return !had[k] && !mapped[k] && !(skipped && skipped[k]);
     });
@@ -104,7 +111,16 @@
         views = (await api.map.topologyViews(siteId)).filter(function (v) { return v.mode === "rack" || v.mode === "wall"; });
       } catch (e) { return; }
     }
-    var regions = newRegions(opts.before, opts.after, views, skippedSet(siteId));
+    // Read both through the site's region tree, as the map does; a failed
+    // read compares the codes as written.
+    var before = opts.before, afterCodes = opts.after;
+    try {
+      var res2 = await api.map.resolveRegions(siteId, [opts.before || "", opts.after || ""]);
+      var r0 = res2 && res2.results && res2.results[0], r1 = res2 && res2.results && res2.results[1];
+      if (r0) before = r0.location || parseCodes("");
+      if (r1 && r1.location) afterCodes = r1.location;
+    } catch (e) { /* as written */ }
+    var regions = newRegions(before, afterCodes, views, skippedSet(siteId));
     if (!regions.length) return;
     openDialog(siteId, regions, views, opts.assetName || "this device", opts.onDone);
   }

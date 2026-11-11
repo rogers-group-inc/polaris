@@ -187,13 +187,13 @@
     }
     // The rename / move summary (rule 153): the descriptions that name the
     // region in a full chain, old → new; committed only on confirmation.
-    function offerRewrites(rewrites, node) {
+    function offerRewrites(rewrites, node, leadText) {
       var canAssets = typeof permAtLeast === "function" && permAtLeast("assets", "write");
       var rows = rewrites.map(function (r) {
         return '<tr><td>' + esc(r.name) + '</td><td class="mono">' + esc(codesText(r.from)) + '</td><td class="mono">' + esc(codesText(r.codes)) + '</td></tr>';
       }).join("");
-      var bodyHtml = '<p style="margin:0 0 10px">' + rewrites.length + ' description' + (rewrites.length === 1 ? " names" : "s name") + ' ' + esc(WORD[node.kind].toLowerCase() + " " + node.name) +
-        ' by its old place. Update them to match the tree? The free text in each description stays; only the location codes change.</p>' +
+      var lead = leadText || (rewrites.length + ' description' + (rewrites.length === 1 ? " names " : "s name ") + WORD[node.kind].toLowerCase() + " " + node.name + ' by its old place.');
+      var bodyHtml = '<p style="margin:0 0 10px">' + esc(lead) + ' Update them to match the tree? The free text in each description stays; only the location codes change.</p>' +
         '<div class="table-wrapper" style="max-height:300px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After update</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
         (canAssets ? '' : '<p class="hint">Updating descriptions needs Read-Write on Assets; they stay as they are and are listed under Devices to check.</p>');
       var footer = '<button type="button" class="btn btn-secondary" data-rw="leave">Leave them as they are</button>' +
@@ -219,13 +219,21 @@
       if (!others.length) { toast("There is no other " + WORD[node.kind].toLowerCase() + " to merge into", "error"); return; }
       var bodyHtml = '<div class="form-group"><label for="rt-into">Merge ' + esc(WORD[node.kind].toLowerCase() + " " + pathOf(nodes, node)) + ' into</label><select id="rt-into">' +
         others.map(function (o) { return '<option value="' + esc(o.id) + '">' + esc(pathOf(nodes, o)) + '</option>'; }).join("") + '</select>' +
-        '<div class="hint">Everything inside it moves to the one you pick, and it is removed. Descriptions are not changed; any that still name it are listed under Devices to check.</div></div>';
+        '<div class="hint">Everything inside it moves to the one you pick, and it is removed. Saved views and layouts follow. Descriptions that name it are listed next, for you to update or leave.</div></div>';
       var footer = '<button type="button" class="btn btn-secondary" data-rm="cancel">Cancel</button><button type="button" class="btn btn-primary" data-rm="ok">Merge</button>';
       var d = buildOverlay(1200, "Merge region", bodyHtml, footer);
       d.overlay.querySelector('[data-rm="cancel"]').addEventListener("click", d.close);
       d.overlay.querySelector('[data-rm="ok"]').addEventListener("click", async function () {
-        try { await api.map.mergeRegion(siteId, node.id, d.overlay.querySelector("#rt-into").value); d.close(); toast("Merged"); changed(); }
-        catch (err) { toast("Not merged — " + (err && err.message ? err.message : err), "error"); }
+        try {
+          var res = await api.map.mergeRegion(siteId, node.id, d.overlay.querySelector("#rt-into").value);
+          d.close();
+          await changed();
+          var into = res && res.node ? res.node : node;
+          if (res && res.rewrites && res.rewrites.length) {
+            offerRewrites(res.rewrites, into, res.rewrites.length + ' description' + (res.rewrites.length === 1 ? " names " : "s name ") +
+              WORD[node.kind].toLowerCase() + ' ' + node.name + ', now merged into ' + into.name + '.');
+          } else toast("Merged — no description needed changing");
+        } catch (err) { toast("Not merged — " + (err && err.message ? err.message : err), "error"); }
       });
     }
     async function deleteNode(node) {

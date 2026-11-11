@@ -7,7 +7,8 @@
  * dark one and theirs, and WHERE each of them is — the junction box, the room,
  * the shack. This draws the chain the engine blamed, root cause on the left and
  * the alerting device on the right, grouped into the same location boxes the
- * Device Map draws (a:/b:/f:/r:/jb: codes, `utils/locationCodes`), with the
+ * Device Map draws (a:/b:/f:/r:/ra:/jb: codes, `utils/locationCodes`, read
+ * through the site's region tree — rule 153 — so a short code nests), with the
  * link ports on each edge where LLDP knows them.
  *
  * Only the CHAIN — nothing beside it. The map shows a whole site; an email
@@ -60,6 +61,7 @@ import {
   type LocationCodes,
 } from "../utils/locationCodes.js";
 import type { DependencyBlameReason } from "./dependencyTreeService.js";
+import { loadRegionIndex, resolveLocation, siteForAsset, type RegionIndex } from "./regionTreeService.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
 export type DependencyPathToken = "dependency.path";
@@ -500,6 +502,28 @@ export function lastSeenSwitchPort(lastSeenSwitch: string | null, parentHostname
   return port && sw.toLowerCase() === parentHostname.trim().toLowerCase() ? port : null;
 }
 
+/**
+ * One resolver per drawn device: its site's region tree (rule 153), each
+ * site's tree read once. At most four devices, so at most a few small reads;
+ * a device whose site can't be found (or a failed read) keeps its codes as
+ * written — the diagram never waits on, or fails because of, the tree.
+ */
+async function siteResolvers(ids: string[]): Promise<Map<string, (c: LocationCodes) => LocationCodes | null>> {
+  const out = new Map<string, (c: LocationCodes) => LocationCodes | null>();
+  const sites = await Promise.all(ids.map((id) => siteForAsset(id).catch(() => null)));
+  const indexes = new Map<string, RegionIndex | null>();
+  await Promise.all(
+    [...new Set(sites.filter((s): s is string => !!s))].map(async (siteId) => {
+      indexes.set(siteId, await loadRegionIndex(siteId).catch(() => null));
+    }),
+  );
+  ids.forEach((id, i) => {
+    const index = sites[i] ? indexes.get(sites[i]!) : null;
+    if (index && index.size > 0) out.set(id, (c) => resolveLocation(index, c).location);
+  });
+  return out;
+}
+
 function deviceDescriptionOf(topology: unknown): string | null {
   if (!topology || typeof topology !== "object") return null;
   const v = (topology as { deviceDescription?: unknown }).deviceDescription;
@@ -534,10 +558,15 @@ async function hydrate(entries: PathEntry[], allClear: boolean): Promise<Array<P
         : Promise.resolve([] as LldpPortRow[]),
     ]);
     const byId = new Map(assets.map((a) => [a.id, a]));
+    const resolvers = await siteResolvers(ids);
     for (const n of nodes) {
       const a = byId.get(n.id!);
       if (!a) continue;
-      n.codes = resolveEffectiveLocation({ description: a.description, deviceDescription: deviceDescriptionOf(a.fortinetTopology) });
+      const written = resolveEffectiveLocation({ description: a.description, deviceDescription: deviceDescriptionOf(a.fortinetTopology) });
+      // Through the device's own site's region tree (rule 153): `ra:rack1`
+      // alone draws inside its room, floor and building, as on the map.
+      const resolve = resolvers.get(n.id!);
+      n.codes = resolve && hasLocationCodes(written) ? (resolve(written) ?? written) : written;
       n.location = a.location;
       // The snapshot's name is the fire-time one; a renamed device reads as it is now.
       n.hostname = a.hostname ?? n.hostname;

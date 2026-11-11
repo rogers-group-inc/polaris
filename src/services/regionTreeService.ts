@@ -20,6 +20,7 @@
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { locationCodeValueProblem, type LocationCodes } from "../utils/locationCodes.js";
+import { buildInfraParentIndex, parentAssetWhereOr, readControllerStamp, resolveInfraParentAsset } from "../utils/fortinetParentKey.js";
 
 const REGION_KINDS = ["area", "building", "floor", "room", "rack", "junctionBox"] as const;
 export type RegionKind = (typeof REGION_KINDS)[number];
@@ -121,6 +122,134 @@ export function resolveLocation(index: RegionIndex, written: LocationCodes | nul
   const out: LocationCodes = { ...chain };
   for (const k of REGION_KINDS) if (RANK[k] > RANK[anchor.kind] && written[k]) out[k] = written[k];
   return { location: out, status: "resolved" };
+}
+
+// ─── Carrying a tree edit into stored data (pure) ───────────────────────────
+// A rename / move / merge changes a region's chain from `before` to `after`.
+// Polaris's OWN stored copies of that chain (a Rack / Wall view's region, a
+// Topology polygon's codes, the TopologyLayout keys of floor drill-downs and
+// group boxes) follow it, so nothing saved against the old name is orphaned.
+// Descriptions never follow silently — they come back as rewrites (rule 153).
+
+/** True when `codes` sits at or under the region whose old chain is `before`. */
+function namesRegion(codes: LocationCodes, kind: RegionKind, before: LocationCodes): boolean {
+  if (!codes[kind] || norm(codes[kind]) !== norm(before[kind])) return false;
+  return REGION_KINDS.every((k) => RANK[k] >= RANK[kind] || !codes[k] || norm(codes[k]) === norm(before[k]));
+}
+
+/**
+ * The codes a stored chain gets when the region `before` becomes `after`:
+ * every level down to the region takes the new chain IN FULL (stored view
+ * data is canonical, not short), deeper levels are kept. Null when `codes`
+ * is not at or under that region.
+ */
+export function remapLocationCodes(codes: LocationCodes | null, kind: RegionKind, before: LocationCodes, after: LocationCodes): LocationCodes | null {
+  if (!codes || !namesRegion(codes, kind, before)) return null;
+  const out: LocationCodes = { ...codes };
+  for (const k of REGION_KINDS) if (RANK[k] <= RANK[kind]) out[k] = after[k];
+  return out;
+}
+
+// The location-key grammar of topology-render.js (computeLocationGroups,
+// jbKey, _viewKeyAt): lowercased, whitespace-collapsed segments in level
+// order; a junction box carries a rack segment only when it is in one.
+const locKey = (v: string | null): string => String(v ?? "").replace(/\s+/g, " ").replace(/^ | $/g, "").toLowerCase();
+const KEY_FIELDS: Record<string, RegionKind[]> = {
+  a: ["area"],
+  b: ["area", "building"],
+  f: ["area", "building", "floor"],
+  r: ["area", "building", "floor", "room"],
+  ra: ["area", "building", "floor", "room", "rack"],
+};
+function keyFields(prefix: string, segCount: number): RegionKind[] | null {
+  if (prefix === "jb") {
+    if (segCount === 5) return ["area", "building", "floor", "room", "junctionBox"];
+    if (segCount === 6) return ["area", "building", "floor", "room", "rack", "junctionBox"];
+    return null;
+  }
+  const f = KEY_FIELDS[prefix];
+  return f && f.length === segCount ? f : null;
+}
+function encodeKey(prefix: string, c: LocationCodes): string {
+  const fields = prefix === "jb" ? keyFields("jb", c.rack ? 6 : 5)! : KEY_FIELDS[prefix];
+  return prefix + "|" + fields.map((f) => locKey(c[f])).join("|");
+}
+
+/**
+ * Re-key one location key ("r|mine|shop|1|closet", "jb|…") for a tree edit.
+ * Null when the key is not at or under the region — or when it doesn't
+ * round-trip (a value holding "|"), which is left alone rather than guessed.
+ */
+export function remapLocationKey(key: string, kind: RegionKind, before: LocationCodes, after: LocationCodes): string | null {
+  const bar = key.indexOf("|");
+  if (bar < 0) return null;
+  const prefix = key.slice(0, bar);
+  const segs = key.slice(bar + 1).split("|");
+  const fields = keyFields(prefix, segs.length);
+  if (!fields || !fields.includes(kind)) return null;
+  const codes: LocationCodes = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
+  fields.forEach((f, i) => { codes[f] = segs[i] || null; });
+  if (encodeKey(prefix, codes) !== key) return null;
+  // A key's skipped level is a real "nothing here", so match it strictly.
+  const lowered = (c: LocationCodes): LocationCodes => Object.fromEntries(REGION_KINDS.map((k) => [k, c[k] ? locKey(c[k]) : null])) as unknown as LocationCodes;
+  const b = lowered(before);
+  if (!REGION_KINDS.every((k) => RANK[k] > RANK[kind] || !fields.includes(k) || (codes[k] ?? null) === (b[k] ?? null))) return null;
+  const next = remapLocationCodes(codes, kind, b, lowered(after));
+  if (!next) return null;
+  const out = encodeKey(prefix, next);
+  return out === key ? null : out;
+}
+
+/** A TopologyLayout view key: the default view's bare key, or "v:<uuid>|<key>". */
+export function remapLayoutViewKey(view: string, kind: RegionKind, before: LocationCodes, after: LocationCodes): string | null {
+  const m = /^(v:[0-9a-f-]{36}\|)(.+)$/.exec(view);
+  const prefix = m ? m[1] : "";
+  const body = m ? m[2] : view;
+  const next = remapLocationKey(body, kind, before, after);
+  return next ? prefix + next : null;
+}
+
+/** A positions blob with its group-box keys ("locgroup:<key>") re-keyed; null when nothing moved. */
+export function remapPositionKeys(positions: unknown, kind: RegionKind, before: LocationCodes, after: LocationCodes): Record<string, unknown> | null {
+  if (!positions || typeof positions !== "object" || Array.isArray(positions)) return null;
+  const src = positions as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...src };
+  let changed = false;
+  for (const id of Object.keys(src)) {
+    if (!id.startsWith("locgroup:")) continue;
+    const next = remapLocationKey(id.slice("locgroup:".length), kind, before, after);
+    if (!next || ("locgroup:" + next) in src) continue; // never overwrite a box already saved there
+    out["locgroup:" + next] = src[id];
+    delete out[id];
+    changed = true;
+  }
+  return changed ? out : null;
+}
+
+/**
+ * The descriptions a tree edit would rewrite: a chain naming the region the
+ * old way, with each level it WROTE (a short code stays short) moved to the
+ * new chain. Short codes that resolve through the tree aren't listed.
+ */
+export function rewritesFor(
+  kind: RegionKind,
+  before: LocationCodes,
+  after: LocationCodes,
+  devices: Array<{ assetId: string; name: string; written: LocationCodes | null }>,
+): RegionRewrite[] {
+  const rewrites: RegionRewrite[] = [];
+  for (const d of devices) {
+    const w = d.written;
+    if (!w || !namesRegion(w, kind, before)) continue;
+    const next: LocationCodes = { ...w };
+    let changed = false;
+    for (const k of REGION_KINDS) {
+      if (RANK[k] > RANK[kind]) continue;
+      if (w[k] && norm(w[k]) !== norm(after[k])) { next[k] = after[k]; changed = true; }
+    }
+    if (changed) rewrites.push({ assetId: d.assetId, name: d.name, from: w, codes: next });
+  }
+  return rewrites;
 }
 
 // ─── Reads ────────────────────────────────────────────────────────────────────
@@ -231,63 +360,115 @@ export interface RegionRewrite {
   codes: LocationCodes;
 }
 
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 /**
- * Rename and / or move a region. Returns the node and the descriptions that
- * name it in a way the edit changes — a FULL chain naming the old name or
- * the old parents — with the codes each would get. Short codes that resolve
- * through the tree follow on their own and are not listed. Nothing is
- * written to a description here.
+ * Carry a tree edit into the site's stored view data, inside the edit's own
+ * transaction: Rack / Wall view regions, Topology polygon codes and the
+ * TopologyLayout keys (floor drill-down views and saved group boxes). A
+ * re-keyed layout row never replaces one already saved under the new key.
+ */
+async function carryStoredChains(tx: Tx, siteId: string, kind: RegionKind, before: LocationCodes, after: LocationCodes): Promise<{ views: number; layouts: number }> {
+  let views = 0;
+  let layouts = 0;
+  const rows = await tx.topologyView.findMany({ where: { siteId }, select: { id: true, region: true, polygons: true } });
+  for (const v of rows) {
+    const data: { region?: object; polygons?: object[] } = {};
+    const region = remapLocationCodes(v.region as unknown as LocationCodes | null, kind, before, after);
+    if (region) data.region = region;
+    if (Array.isArray(v.polygons)) {
+      let moved = false;
+      const polys = (v.polygons as unknown as Array<{ codes?: LocationCodes }>).map((p) => {
+        const codes = remapLocationCodes(p && p.codes ? p.codes : null, kind, before, after);
+        if (!codes) return p;
+        moved = true;
+        return { ...p, codes };
+      });
+      if (moved) data.polygons = polys as object[];
+    }
+    if (Object.keys(data).length) {
+      await tx.topologyView.update({ where: { id: v.id }, data });
+      views++;
+    }
+  }
+  const layoutRows = await tx.topologyLayout.findMany({ where: { siteId }, select: { id: true, view: true, positions: true, savedPositions: true } });
+  const taken = new Set(layoutRows.map((r) => r.view));
+  for (const r of layoutRows) {
+    const data: { view?: string; positions?: object; savedPositions?: object } = {};
+    const view = remapLayoutViewKey(r.view, kind, before, after);
+    if (view && !taken.has(view)) { data.view = view; taken.delete(r.view); taken.add(view); }
+    const positions = remapPositionKeys(r.positions, kind, before, after);
+    if (positions) data.positions = positions;
+    const saved = remapPositionKeys(r.savedPositions, kind, before, after);
+    if (saved) data.savedPositions = saved;
+    if (Object.keys(data).length) {
+      await tx.topologyLayout.update({ where: { id: r.id }, data });
+      layouts++;
+    }
+  }
+  return { views, layouts };
+}
+
+/** A region's chain after a rename / move, read from the index as it stands before it. */
+function chainAfterEdit(index: RegionIndex, kind: RegionKind, name: string, parentId: string | null): LocationCodes {
+  const parent = parentId ? index.byId.get(parentId) : undefined;
+  const out = parent ? chainOf(index, parent) : { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
+  out[kind] = name;
+  return out;
+}
+
+/**
+ * Rename and / or move a region. Stored view data (view regions, polygons,
+ * layout keys) follows in the same transaction. Returns the node and the
+ * descriptions that name it in a way the edit changes, with the codes each
+ * would get; nothing is written to a description here.
  */
 export async function updateRegionNode(
   siteId: string,
   id: string,
   patch: { name?: unknown; parentId?: unknown },
   devices: Array<{ assetId: string; name: string; written: LocationCodes | null }>,
-): Promise<{ node: RegionNodeDto; rewrites: RegionRewrite[] }> {
+): Promise<{ node: RegionNodeDto; rewrites: RegionRewrite[]; carried: { views: number; layouts: number } }> {
   const node = await loadNode(siteId, id);
-  const beforeIndex = await loadRegionIndex(siteId);
-  const beforeChain = chainOf(beforeIndex, { id: node.id, kind: node.kind, name: node.name, parentId: node.parentId });
+  const index = await loadRegionIndex(siteId);
+  const before = chainOf(index, { id: node.id, kind: node.kind, name: node.name, parentId: node.parentId });
   const name = patch.name !== undefined ? cleanName(patch.name) : node.name;
   const parentId = patch.parentId !== undefined ? (typeof patch.parentId === "string" && patch.parentId ? patch.parentId : null) : node.parentId;
   if (parentId !== node.parentId) await checkParent(siteId, node.kind, parentId, node.id);
+  const after = chainAfterEdit(index, node.kind, name, parentId);
+  let carried = { views: 0, layouts: 0 };
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.regionNode.update({ where: { id }, data: { name, parentId, uniqueKey: uniqueKeyFor(node.kind, name, parentId) } });
       // A building's floors key on their parent id, which did not change; nothing to re-key.
+      await tx.regionNode.update({ where: { id }, data: { name, parentId, uniqueKey: uniqueKeyFor(node.kind, name, parentId) } });
+      carried = await carryStoredChains(tx, siteId, node.kind, before, after);
     });
   } catch (err) {
     if (clash(err)) throw new AppError(409, node.kind === "floor" ? `That building already has a floor "${name}"` : `This site already has a ${node.kind} called "${name}"`);
     throw err;
   }
-  const afterIndex = await loadRegionIndex(siteId);
-  const after = afterIndex.byId.get(id)!;
-  const afterChain = chainOf(afterIndex, after);
-  const rewrites: RegionRewrite[] = [];
-  for (const d of devices) {
-    const w = d.written;
-    if (!w || !w[node.kind] || norm(w[node.kind]) !== norm(beforeChain[node.kind])) continue;
-    // Only a description whose chain down to this level matches the OLD place.
-    const matches = REGION_KINDS.every((k) => RANK[k] > RANK[node.kind] || !w[k] || norm(w[k]) === norm(beforeChain[k]));
-    if (!matches) continue;
-    const next: LocationCodes = { ...w };
-    let changed = false;
-    for (const k of REGION_KINDS) {
-      if (RANK[k] > RANK[node.kind]) continue;
-      // Rewrite the levels the description WROTE (a short code stays short),
-      // and add any new ancestor the move brings only where it wrote one above.
-      if (w[k] && norm(w[k]) !== norm(afterChain[k])) { next[k] = afterChain[k]; changed = true; }
-    }
-    if (changed) rewrites.push({ assetId: d.assetId, name: d.name, from: w, codes: next });
-  }
-  return { node: { id: after.id, kind: after.kind, name: after.name, parentId: after.parentId }, rewrites };
+  return { node: { id, kind: node.kind, name, parentId }, rewrites: rewritesFor(node.kind, before, after, devices), carried };
 }
 
-/** Fold one region into another of the same kind: its children move, it is removed. */
-export async function mergeRegionNodes(siteId: string, fromId: string, intoId: string): Promise<RegionNodeDto> {
+/**
+ * Fold one region into another of the same kind: its children move, it is
+ * removed, stored view data follows, and the descriptions that name it come
+ * back as rewrites to the region it joined.
+ */
+export async function mergeRegionNodes(
+  siteId: string,
+  fromId: string,
+  intoId: string,
+  devices: Array<{ assetId: string; name: string; written: LocationCodes | null }> = [],
+): Promise<{ node: RegionNodeDto; rewrites: RegionRewrite[]; carried: { views: number; layouts: number } }> {
   if (fromId === intoId) throw new AppError(400, "Pick a different region to merge into");
   const from = await loadNode(siteId, fromId);
   const into = await loadNode(siteId, intoId);
   if (from.kind !== into.kind) throw new AppError(400, "Only regions of the same kind can be merged");
+  const index = await loadRegionIndex(siteId);
+  const before = chainOf(index, { id: from.id, kind: from.kind, name: from.name, parentId: from.parentId });
+  const after = chainOf(index, { id: into.id, kind: into.kind, name: into.name, parentId: into.parentId });
+  let carried = { views: 0, layouts: 0 };
   await prisma.$transaction(async (tx) => {
     const kids = await tx.regionNode.findMany({ where: { parentId: fromId } });
     for (const k of kids) {
@@ -298,8 +479,13 @@ export async function mergeRegionNodes(siteId: string, fromId: string, intoId: s
       await tx.regionNode.update({ where: { id: k.id }, data: { parentId: intoId, uniqueKey: key } });
     }
     await tx.regionNode.delete({ where: { id: fromId } });
+    carried = await carryStoredChains(tx, siteId, from.kind, before, after);
   });
-  return { id: into.id, kind: into.kind, name: into.name, parentId: into.parentId };
+  return {
+    node: { id: into.id, kind: into.kind, name: into.name, parentId: into.parentId },
+    rewrites: rewritesFor(from.kind, before, after, devices),
+    carried,
+  };
 }
 
 /** Delete a region with nothing inside it. Descriptions are not touched. */
@@ -309,4 +495,60 @@ export async function deleteRegionNode(siteId: string, id: string): Promise<Regi
   if (kids) throw new AppError(400, `"${node.name}" still has ${kids} region${kids === 1 ? "" : "s"} inside it`);
   await prisma.regionNode.delete({ where: { id } });
   return { id: node.id, kind: node.kind, name: node.name, parentId: node.parentId };
+}
+
+// ─── Which site a device is drawn on ─────────────────────────────────────────
+
+/**
+ * The Device Map site an asset belongs to — the tree its location codes
+ * resolve through (rule 153), and the site the description-save prompt
+ * (rule 150) offers views of. A FortiGate is its own site; a FortiSwitch /
+ * FortiAP resolves to its controller FortiGate through the discovery stamps
+ * (utils/fortinetParentKey.ts — never a hostname match); any other device
+ * through the switch it hangs off (`endpointSite`). Null when nothing places it.
+ */
+export async function siteForAsset(assetId: string): Promise<string | null> {
+  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { id: true, assetType: true, fortinetTopology: true } });
+  if (!asset) throw new AppError(404, "Asset not found");
+  if (asset.assetType === "firewall") return asset.id;
+  if (asset.assetType !== "switch" && asset.assetType !== "access_point") return endpointSite(asset.id);
+  const stamp = readControllerStamp(asset.fortinetTopology);
+  const or = parentAssetWhereOr(stamp);
+  if (!or.length) return null;
+  const candidates = await prisma.asset.findMany({
+    where: { assetType: "firewall", OR: or },
+    select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true },
+  });
+  const hit = resolveInfraParentAsset(buildInfraParentIndex(candidates), stamp, "firewall");
+  return hit ? hit.id : null;
+}
+
+/**
+ * The site an endpoint is drawn on: through the switch it hangs off, found
+ * the way the Device Map attributes it (buildSiteEndpointAttribution) — its
+ * `switch-port` dependency edge, else a fleet-unique switch its
+ * `lastSeenSwitch` names. A shared name settles nothing, so null.
+ */
+async function endpointSite(assetId: string): Promise<string | null> {
+  const row = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: {
+      lastSeenSwitch: true,
+      dependencyParents: { where: { source: "endpoint", detectedVia: "switch-port" }, select: { parentAssetId: true } },
+    },
+  });
+  if (!row) return null;
+  const parentIds = row.dependencyParents.map((p) => p.parentAssetId);
+  if (parentIds.length) {
+    const sw = await prisma.asset.findFirst({ where: { id: { in: parentIds }, assetType: "switch" }, select: { id: true } });
+    if (sw) return siteForAsset(sw.id);
+  }
+  const host = row.lastSeenSwitch ? row.lastSeenSwitch.split("/")[0].trim() : "";
+  if (!host) return null;
+  const named = await prisma.asset.findMany({
+    where: { assetType: "switch", status: { notIn: ["decommissioned", "disabled"] }, hostname: { equals: host, mode: "insensitive" } },
+    select: { id: true },
+    take: 2,
+  });
+  return named.length === 1 ? siteForAsset(named[0].id) : null;
 }

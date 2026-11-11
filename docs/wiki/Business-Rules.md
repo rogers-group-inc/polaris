@@ -3255,5 +3255,8 @@ floor, room, rack and junction box has one name per site (a floor, one per build
 description can say just `r:Closet` or `ra:rack1` and Polaris knows the rest. The tree is built
 from the codes already in descriptions and only ever adds; you edit it in **Location regions**.
 A description that disagrees with the tree is shown as written and listed for you to fix.
-Renaming or moving a region offers to update the descriptions that name it, after a summary;
-it never changes one by itself.
+Renaming, moving or merging a region offers to update the descriptions that name it, after a
+summary; it never changes one by itself. Everything reads locations through the tree: the map,
+the dependency-path picture in alert emails, the new-region prompt, and saved views. Polaris's
+own saved data (a view's region, polygon groups, saved layouts) follows a rename, move or merge
+automatically, so nothing saved against the old name is lost.

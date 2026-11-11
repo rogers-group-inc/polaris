@@ -14,7 +14,7 @@ type Codes = Record<string, string | null>;
 type P = {
   _parseCodes: (s: string) => Codes;
   _askableChains: (c: Codes) => Array<{ level: string; codes: Codes }>;
-  _newRegions: (before: string, after: string, views: Array<{ region: Codes | null }>, skipped: Record<string, boolean>) => Array<{ level: string; codes: Codes }>;
+  _newRegions: (before: string | Codes, after: string | Codes, views: Array<{ region: Codes | null }>, skipped: Record<string, boolean>) => Array<{ level: string; codes: Codes }>;
   _chainKey: (c: Codes) => string;
 };
 let P: P;
@@ -45,5 +45,13 @@ describe("region-view prompt", () => {
     expect(P._newRegions("", after, [view], {}).map((r) => r.level)).toEqual(["room", "junctionBox"]);
     const skipKey = P._chainKey({ building: "Plant", room: "MDF", rack: "R2", junctionBox: "7" });
     expect(P._newRegions("", after, [view], { [skipKey]: true }).map((r) => r.level)).toEqual(["room"]);
+  });
+
+  it("compares chains resolved through the region tree, so a short code is the region it names", () => {
+    // `r:MDF` saved, resolved by the server to its full chain; the old description named it in full.
+    const full = { area: null, building: "Plant", floor: "1", room: "MDF", rack: null, junctionBox: null };
+    expect(P._newRegions("b:Plant f:1 r:MDF", full, [], {})).toEqual([]);
+    // A view standing for that room (stored short, returned resolved) covers it too.
+    expect(P._newRegions("", full, [{ region: full }], {})).toEqual([]);
   });
 });

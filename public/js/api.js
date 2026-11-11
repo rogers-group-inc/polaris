@@ -1869,6 +1869,7 @@ const api = {
     // The site's region tree (rule 153).
     regions:            (id)               => request("GET",    `/map/sites/${id}/regions`),
     buildRegions:       (id)               => request("POST",   `/map/sites/${id}/regions/build`, {}),
+    resolveRegions:     (id, descriptions) => request("POST",   `/map/sites/${id}/regions/resolve`, { descriptions: descriptions }),
     createRegion:       (id, body)         => request("POST",   `/map/sites/${id}/regions`, body),
     updateRegion:       (id, nodeId, body) => request("PUT",    `/map/sites/${id}/regions/${nodeId}`, body),
     mergeRegion:        (id, nodeId, into) => request("POST",   `/map/sites/${id}/regions/${nodeId}/merge`, { into: into }),

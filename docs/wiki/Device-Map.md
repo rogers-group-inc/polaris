@@ -700,9 +700,11 @@ description can say just `r:Closet` or `ra:rack1` and the map knows it is in
 Mine › Shop › 1 › Closet. **Build from descriptions** fills the tree from the
 codes the site's descriptions already carry; it only adds, never removes or
 renames anything. Use **Add region**, and each region's **⋯** menu (Rename,
-Move, Merge into, Delete), to keep the tree right. Renaming or moving a region
-lists the descriptions that name it the old way and offers to update them; you
-can leave them as they are. Devices whose codes disagree with the tree, name a
+Move, Merge into, Delete), to keep the tree right. Renaming, moving or merging a
+region lists the descriptions that name it the old way and offers to update them;
+you can leave them as they are. Saved views, polygon groups and saved layouts
+follow the change on their own. Alert emails' dependency-path pictures and the
+new-region prompt read locations through the tree too. Devices whose codes disagree with the tree, name a
 floor without its building, or name a region the tree doesn't have are listed
 under **Devices to check** and drawn as their description says. Until a tree
 is built, nothing about the map changes ([rule 153](Business-Rules#rule-153)).

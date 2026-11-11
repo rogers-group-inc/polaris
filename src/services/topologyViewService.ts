@@ -25,8 +25,8 @@ import { detectImageMagic } from "../utils/imageMagic.js";
 import { readImageSize } from "../utils/imageDimensions.js";
 import { locationCodeValueProblem, setLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
+import { loadRegionIndex, resolveLocation, type RegionIndex } from "./regionTreeService.js";
 import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
-import { buildInfraParentIndex, parentAssetWhereOr, readControllerStamp, resolveInfraParentAsset } from "../utils/fortinetParentKey.js";
 import { buildChanges, logEventsBatch } from "./eventLogService.js";
 import { syncDescriptionsOnSave } from "./descriptionSyncService.js";
 
@@ -653,7 +653,25 @@ async function ensureDefaultView(siteId: string): Promise<TopologyViewDto> {
 export async function listViews(siteId: string): Promise<TopologyViewDto[]> {
   await ensureDefaultView(siteId);
   const rows = await prisma.topologyView.findMany({ where: { siteId }, orderBy: [{ isDefault: "desc" }, { name: "asc" }] });
-  return rows.map(toDto);
+  const index = await loadRegionIndex(siteId);
+  return rows.map(toDto).map((v) => resolveViewChains(index, v));
+}
+
+/**
+ * A view's stored chains read through the site's region tree (rule 153): a
+ * region or polygon saved as a short code (`r:MDF`) comes back as its full
+ * chain, so it compares equal to the devices' resolved locations. Storage is
+ * untouched; the next save writes the resolved form. A chain the tree
+ * disagrees with or doesn't know stays as saved.
+ */
+function resolveViewChains(index: RegionIndex, v: TopologyViewDto): TopologyViewDto {
+  if (index.size === 0) return v;
+  const resolve = (c: LocationCodes | null): LocationCodes | null => (c ? resolveLocation(index, c).location : c);
+  return {
+    ...v,
+    region: resolve(v.region),
+    polygons: v.polygons.map((p) => ({ ...p, codes: resolve(p.codes) ?? p.codes })),
+  };
 }
 
 async function loadView(siteId: string, viewId: string): Promise<ViewRow> {
@@ -900,33 +918,11 @@ export async function describeModeChangeLoss(siteId: string, viewId: string): Pr
   };
 }
 
-/**
- * The Device Map site an asset belongs to, for the description-save prompt
- * (rule 150): a FortiGate is its own site; a FortiSwitch / FortiAP resolves
- * to its controller FortiGate through the discovery stamps
- * (utils/fortinetParentKey.ts — never a hostname match). Anything else
- * (an endpoint) answers null; the Device Map's own editor knows its site.
- */
-export async function siteForAsset(assetId: string): Promise<string | null> {
-  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { id: true, assetType: true, fortinetTopology: true } });
-  if (!asset) throw new AppError(404, "Asset not found");
-  if (asset.assetType === "firewall") return asset.id;
-  if (asset.assetType !== "switch" && asset.assetType !== "access_point") return null;
-  const stamp = readControllerStamp(asset.fortinetTopology);
-  const or = parentAssetWhereOr(stamp);
-  if (!or.length) return null;
-  const candidates = await prisma.asset.findMany({
-    where: { assetType: "firewall", OR: or },
-    select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true },
-  });
-  const hit = resolveInfraParentAsset(buildInfraParentIndex(candidates), stamp, "firewall");
-  return hit ? hit.id : null;
-}
-
 /** A site's Rack and Wall views with the regions they stand for (rule 150). */
 export async function regionViewsForSite(siteId: string): Promise<Array<{ id: string; name: string; mode: TopologyViewMode; region: LocationCodes | null }>> {
   const rows = await prisma.topologyView.findMany({ where: { siteId, mode: { in: ["rack", "wall"] } }, orderBy: { name: "asc" } });
-  return rows.map(toDto).map((v) => ({ id: v.id, name: v.name, mode: v.mode, region: v.region }));
+  const index = await loadRegionIndex(siteId);
+  return rows.map(toDto).map((v) => resolveViewChains(index, v)).map((v) => ({ id: v.id, name: v.name, mode: v.mode, region: v.region }));
 }
 
 /** Delete a saved view with its layouts and images. The default view cannot be deleted. */

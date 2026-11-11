@@ -333,25 +333,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** A Device Map site's REGION TREE (business rule 153) — the `RegionNode` table (single writer): areas > buildings > floors > rooms > racks > junction boxes, a name unique per site per level except a floor (unique within its parent). And the resolution of a device's written location codes through it, so a short code (`ra:rack1` alone) stands for its full chain.
 
-**Public API:** types RegionKind / RegionNodeDto / LocationStatus / RegionIndex / RegionRewrite; pure uniqueKeyFor, buildRegionIndex, chainOf, resolveLocation; DB listRegionNodes, loadRegionIndex, createRegionNode, buildFromDescriptions, updateRegionNode (returns `rewrites`), mergeRegionNodes, deleteRegionNode.
+**Public API:** types RegionKind / RegionNodeDto / LocationStatus / RegionIndex / RegionRewrite; pure uniqueKeyFor, buildRegionIndex, chainOf, resolveLocation, remapLocationCodes, remapLocationKey, remapLayoutViewKey, remapPositionKeys, rewritesFor; DB listRegionNodes, loadRegionIndex, createRegionNode, buildFromDescriptions, updateRegionNode and mergeRegionNodes (both return `rewrites` and `carried`), deleteRegionNode, siteForAsset (the Device Map site of any asset: a FortiGate itself, a FortiSwitch / FortiAP through `utils/fortinetParentKey.ts`, anything else through its switch — the `switch-port` dependency edge, else a fleet-unique `lastSeenSwitch` name).
 
-**Cross-service deps:** `prisma.regionNode`; `utils/locationCodes.ts → locationCodeValueProblem`. Consumed by `topologyGraphService.buildSiteTopology` (resolves every payload location once per request: one query).
+**Cross-service deps:** `prisma.regionNode`; writes `prisma.topologyView` (`region`, `polygons`) and `prisma.topologyLayout` (`view`, `positions`, `savedPositions`) inside a tree edit's transaction; `utils/locationCodes.ts → locationCodeValueProblem`; `utils/fortinetParentKey.ts` (siteForAsset). Consumed by `topologyGraphService.buildSiteTopology` (resolves every payload location once per request: one query), `topologyViewService` (views resolved on read) and `alertDependencyPathService` (≤4 devices).
 
 **Used by:**
 - `src/services/topologyGraphService.ts` — the topology payload's `location` (resolved) / `locationWritten` / `locationStatus`, plus `regionCount` and `regionConflicts`.
 - `src/api/routes/map.ts` — `GET /map/sites/:id/regions`, `POST …/regions/build`, `POST …/regions`, `PUT …/regions/:nodeId`, `POST …/regions/:nodeId/merge`, `DELETE …/regions/:nodeId` (writes at deviceMap write + scopeAssetParam, Events `map.region.*`).
-- `public/js/region-tree-panel.js` — the Location regions panel.
+- `src/services/topologyViewService.ts` — `listViews` / `regionViewsForSite` return each view's `region` and polygon codes resolved through the tree (storage untouched).
+- `src/services/alertDependencyPathService.ts` — the alert email's path diagram resolves each drawn device through its own site's tree.
+- `src/api/routes/map.ts` — also `POST …/regions/resolve` (descriptions → resolved codes, for the region prompt) and `GET /map/assets/:id/region-views` (siteForAsset).
+- `public/js/region-tree-panel.js` — the Location regions panel; `public/js/region-view-prompt.js` — the description-save prompt compares resolved chains.
 
 **Invariants:**
 - **Never writes a description.** A rename / move returns the descriptions naming the region's OLD place in a full chain, with the codes they'd get; the client commits them through `POST …/topology/location-codes` (rule 148) only after the operator confirms.
 - **Build only adds.** An existing node keeps its place even when a description disagrees — that description reads `conflict`.
 - **An empty tree is a no-op**: `resolveLocation` returns the written codes with status `asWritten`, so an install that never builds a tree reads exactly as before.
 - **Disagreement is shown, never resolved by moving**: `conflict` / `ambiguous` / `unknown` locations stay as written and are listed.
+- **A tree edit carries Polaris's own stored chains** (`carryStoredChains`, same transaction): view regions and polygon codes take the new chain in full; TopologyLayout view keys and `locgroup:` position keys are re-keyed in the topology-render.js key grammar (lowercased segments; a junction box gains a rack segment only inside a rack). A re-key never overwrites a key already saved, and a key that doesn't round-trip (a value with `|`) is left alone. A new place that stores a region name must be added here, or a rename orphans it.
 
 **When changing this:**
 - A new location level is the rule-15 tier lockstep (cross-cutting/location-codes.md) plus `REGION_KINDS` / `RANK` here and in region-tree-panel.js.
 - Scale: one `findMany` per topology GET (≤5000 nodes per site), resolution is O(devices × levels) in memory; build reads the site's payload once and creates in one `$transaction`.
-- Tests: `tests/unit/regionTree.test.ts`.
+- Tests: `tests/unit/regionTree.test.ts` (resolution + the carry / rewrite helpers), `tests/unit/alertDependencyPathTree.test.ts`, `tests/unit/regionViewPrompt.test.ts`.
 
 ---
 

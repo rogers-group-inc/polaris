@@ -63,7 +63,6 @@ import {
   getBackgroundImage,
   sanitizeLocationCodeChanges,
   applyLocationCodeChanges,
-  siteForAsset,
   regionViewsForSite,
   MAX_BACKGROUND_IMAGE_BYTES,
 } from "../../services/topologyViewService.js";
@@ -75,8 +74,11 @@ import {
   updateRegionNode,
   mergeRegionNodes,
   deleteRegionNode,
+  loadRegionIndex,
+  resolveLocation,
+  siteForAsset,
 } from "../../services/regionTreeService.js";
-import type { LocationCodes } from "../../utils/locationCodes.js";
+import { hasLocationCodes, parseLocationCodes, type LocationCodes } from "../../utils/locationCodes.js";
 import { getSatelliteStatus, getSatelliteTile } from "../../services/satelliteTileService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -499,7 +501,7 @@ router.put("/sites/:id/regions/:nodeId", ...viewWriteGate, async (req, res, next
     const result = await updateRegionNode(siteId, req.params.nodeId as string, patch, devices);
     logEvent({ action: "map.region.updated", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
       message: `Region ${result.node.kind} "${result.node.name}" updated (${result.rewrites.length} description${result.rewrites.length === 1 ? "" : "s"} name it)`,
-      details: { node: result.node, patch, rewrites: result.rewrites.length } });
+      details: { node: result.node, patch, rewrites: result.rewrites.length, carried: result.carried } });
     res.json(result);
   } catch (err) {
     next(err);
@@ -510,10 +512,30 @@ router.post("/sites/:id/regions/:nodeId/merge", ...viewWriteGate, async (req, re
   try {
     const siteId = req.params.id as string;
     const { into } = RegionMergeSchema.parse(req.body);
-    const node = await mergeRegionNodes(siteId, req.params.nodeId as string, into);
+    const devices = await siteDevicesWritten(siteId);
+    const result = await mergeRegionNodes(siteId, req.params.nodeId as string, into, devices);
     logEvent({ action: "map.region.merged", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
-      message: `Region merged into ${node.kind} "${node.name}"`, details: { from: req.params.nodeId, into: node } });
-    res.json({ node });
+      message: `Region merged into ${result.node.kind} "${result.node.name}" (${result.rewrites.length} description${result.rewrites.length === 1 ? "" : "s"} name it)`,
+      details: { from: req.params.nodeId, into: result.node, rewrites: result.rewrites.length, carried: result.carried } });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Read: resolve descriptions through the site's tree — what the region
+// prompt (rule 150) compares, so it asks about the region a short code names.
+const RegionResolveSchema = z.object({ descriptions: z.array(z.string().max(1024).nullable()).min(1).max(50) });
+router.post("/sites/:id/regions/resolve", async (req, res, next) => {
+  try {
+    const { descriptions } = RegionResolveSchema.parse(req.body);
+    const index = await loadRegionIndex(req.params.id as string);
+    res.json({
+      results: descriptions.map((d) => {
+        const written = parseLocationCodes(d);
+        return resolveLocation(index, hasLocationCodes(written) ? written : null);
+      }),
+    });
   } catch (err) {
     next(err);
   }

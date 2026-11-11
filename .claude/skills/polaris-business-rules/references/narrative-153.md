@@ -15,4 +15,12 @@ The constraint that shaped everything: production already has regions in its des
 
 Rejected: enforcing uniqueness by refusing description saves (the operator preferred a tree they can edit); rewriting descriptions automatically on a tree edit (the operator chose the confirmed summary); storing a resolved chain on each asset (a second copy of the codes that could drift).
 
+**Every reader, not just the map (2026-11-10, same day).** The first build resolved codes only in the topology payload; the alert email's dependency-path diagram and the description-save region prompt still parsed descriptions as written, so `ra:rack1` alone drew a bare rack box in an alert and the prompt could ask about a region a view already stood for. The operator's direction was "every place needs to use the tree". So:
+
+- the alert path resolves each drawn device through ITS site's tree (`siteForAsset`, now in `regionTreeService` and extended to endpoints through the switch they hang off, the Device Map's own attribution); a device no site places, or a failed read, keeps its codes as written;
+- the region prompt asks the server to resolve both descriptions (`POST /map/sites/:id/regions/resolve`) before comparing, and so works for any device a site places, not only FortiGates, FortiSwitches and FortiAPs;
+- a saved view's `region` and its polygons' codes come back resolved, so a view saved as `r:MDF` compares equal to devices resolved to the full chain.
+
+**Nothing Polaris stored may be orphaned by a tree edit.** A view region, a polygon's codes and the TopologyLayout keys of floor drill-down views and group boxes (`locgroup:<key>`) all hold region NAMES. A rename, move or merge now carries them to the new chain in the same transaction (`carryStoredChains`, pure `remapLocationCodes` / `remapLocationKey` / `remapLayoutViewKey` / `remapPositionKeys`). Stored view data takes the new chain in full, since it is Polaris's own canonical copy; a description still keeps its short codes short. A re-keyed layout never replaces one already saved under the new key, and a key that does not round-trip (a value containing `|`) is left alone rather than guessed. A merge also returns `rewrites` now, as a rename does; before, it silently left every description naming the merged region `unknown`.
+
 The panel is called **Location regions** because the Device Map already has a **Regions** feature, the geographic map regions of rule 54.
