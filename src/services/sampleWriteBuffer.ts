@@ -45,6 +45,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
+import { type FcErrorCounters } from "../utils/fibreChannel.js";
 import { startSampleWriteTimer, setSampleBufferDepth } from "../metrics.js";
 
 // ─── Row types ────────────────────────────────────────────────────────────
@@ -191,6 +192,8 @@ export interface InterfaceSampleRow {
   addressingMode: string | null;
   poeStatus: string | null;
   poeClass: string | null;
+  /** An FC port's counters (rule 159a). Omitted — never null — when none: a JSON column takes no bare null in createMany. */
+  fcErrors?: FcErrorCounters;
 }
 
 export interface StorageSampleRow {

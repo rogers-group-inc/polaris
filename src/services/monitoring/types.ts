@@ -7,7 +7,7 @@
 import { type FortiswitchMclagPeer } from "../../utils/fortiswitchCmdb.js";
 import { type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
 import { type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
-import { type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
+import { type FcErrorCounters, type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
 import type { ApRadioSample } from "../../utils/fortiapMonitorRow.js";
 import { type FdbEntry } from "../../utils/macForwarding.js";
 import { type ArpNeighborEntry } from "../../utils/arpNeighbors.js";
@@ -173,6 +173,10 @@ export interface InterfaceSample {
   poeClass?:    string | null;
   /** L3 addressing mode: "static" | "dhcp" | "pppoe". FortiOS CMDB `system/interface.mode`; SNMP / agent leave null. */
   addressingMode?: string | null;
+  /** A fibre-channel port's own port WWN (business rule 159a) — what IF-MIB ifPhysAddress holds on an FC interface (8 bytes, where a MAC is 6). SNMP only. */
+  wwn?: string | null;
+  /** A fibre-channel port's cumulative fcIfErrorTable counters (business rule 159a) — sampled like inErrors, so a rate can be alerted on. SNMP only. */
+  fcErrors?: FcErrorCounters | null;
 }
 
 export interface StorageSample {

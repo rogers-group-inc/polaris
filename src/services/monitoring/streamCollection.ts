@@ -30,7 +30,7 @@ import { type TelemetrySample, type HardwareSensorSample, type SystemInfoSample,
 import { startPhase } from "./common.js";
 import { withSnmpSession } from "./snmpCore.js";
 import { overlayFortiswitchTrunkMembers } from "./fortiswitchTrunks.js";
-import { profileSubjectFor, collectTelemetrySnmp, collectHardwareSensorsSnmp, collectSystemInfoSnmp, collectFastFilteredSnmp, collectLldpOnlySnmp } from "./snmpCollectors.js";
+import { profileSubjectFor, collectTelemetrySnmp, collectHardwareSensorsSnmp, collectSystemInfoSnmp, collectFastFilteredSnmp, collectLldpOnlySnmp, snmpVendorScope } from "./snmpCollectors.js";
 import { buildFortinetConfig, collectTelemetryFortinet, collectHardwareSensorsFortinet, collectSystemInfoFortinet, collectLldpOnlyFortinet, fetchFortilinkInterfaceSet, type FortiIpsecCollection, collectIpsecFortinet, applyFortiInterfaceFilter } from "./fortiosCollectors.js";
 import { FORTINET_CONTROLLER_CACHE_TTL_MS, fetchViaFortinetTransport, unwrapFortiosRows, fetchFortinetControllerInventory } from "./fortinetControllers.js";
 import { readVcenterAsset, collectTelemetryVcenter, buildVcenterSystemInfo, collectSystemInfoVcenter } from "./vcenterFmgCollectors.js";
@@ -789,6 +789,9 @@ export async function collectFastFiltered(assetId: string): Promise<CollectionRe
         wantedIfaces:  wantedIfaces,
         wantedStorage: wantedStorage,
         timeoutMs:     sysInfoTimeout,
+        // A pinned FC port's counters (rule 159a); costs nothing on a
+        // device with no fibreChannel interface pinned.
+        fcScope:       snmpVendorScope(asset),
       });
       // Fortinet-discovered firewalls running SNMP still benefit from the
       // integration's interface filter (CMDB blocklist) and from the FortiOS
@@ -890,6 +893,9 @@ export async function recordFastFilteredResult(assetId: string, result: Collecti
       // waiting for the next heavy scrape.
       poeStatus:   i.poeStatus ?? null,
       poeClass:    i.poeClass  ?? null,
+      // A pinned FC port's counters, read on this cadence so an FC error-rate
+      // automation sees them per minute (rule 159a).
+      ...(i.fcErrors ? { fcErrors: i.fcErrors } : {}),
     }));
     enqueueInterfaceSamples(ifaceRows);
     void recordInterfaceLinkEvents(ifaceRows);

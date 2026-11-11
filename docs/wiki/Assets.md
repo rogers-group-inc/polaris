@@ -945,6 +945,30 @@ them depends on the switch's sensor table having a known layout; when it
 doesn't, the readings stay in Hardware Sensors. See
 [rule 143](Business-Rules#rule-143).
 
+### Fibre-channel ports in the Interfaces table
+
+On a fibre-channel switch (a Cisco MDS with the MIBs listed under
+[Fibre Channel](#fibre-channel-fc-switches-and-the-servers-on-them) uploaded),
+the Interfaces table gains three columns:
+
+- **WWN**: the port's own port WWN. The MAC column stays blank on FC ports,
+  because a fibre-channel port has a WWN instead of a MAC address.
+- **Logged in**: what is plugged into the port. A server Polaris matched is a
+  link to that asset, followed by the WWN it logged in with; **+N** means more
+  than one device is logged in, and hovering it lists them all.
+- **FC errors**: the port's CRC errors, link failures, sync losses, signal
+  losses and invalid transmission words, added up. Hover the cell for each one.
+  It is amber when a CRC, sync-loss or invalid-word count is above zero, which
+  usually means an optic, a cable or a connector. These are the switch's totals
+  since its counters were last cleared.
+
+**To alert on them**, set the FC port to **Monitored** in this table. Polaris
+then reads its counters every minute and keeps their history. Create an
+automation with one of the **FC port … rate** metrics (see
+[Automation Triggers](Automation-Triggers#asset-metric)): for example **FC port
+CRC error rate** `> 0` on interfaces matching `fc` (a name pattern matches part of a name, so `fc` covers every FC port). The rates are per minute.
+See [rule 159a](Business-Rules#rule-159a).
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 It opens inside the asset details panel, in place of the tabs: use the

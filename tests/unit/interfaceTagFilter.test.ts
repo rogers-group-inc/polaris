@@ -51,6 +51,8 @@ describe("interfaceTagMatch", () => {
 describe("INTERFACE_TAG_TARGETS", () => {
   it("is exactly the conditions that read one interface per reading", () => {
     expect([...INTERFACE_TAG_TARGETS].sort()).toEqual([
+      // The FC counter rates (rule 159a) read one FC port per reading.
+      "fcCrcErrorRate", "fcInvalidTxWordRate", "fcLinkFailureRate", "fcSignalLossRate", "fcSyncLossRate",
       "ifAdminStatus", "ifInBps", "ifInErrorRate", "ifIpAddress",
       "ifOperStatus", "ifOutBps", "ifOutErrorRate", "poeStatus",
     ]);

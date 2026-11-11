@@ -70,6 +70,11 @@ export const INTERFACE_DIMENSION_METRICS: ReadonlySet<string> = new Set([
   "ifOutBps",
   "ifInErrorRate",
   "ifOutErrorRate",
+  "fcCrcErrorRate",
+  "fcLinkFailureRate",
+  "fcSyncLossRate",
+  "fcSignalLossRate",
+  "fcInvalidTxWordRate",
 ]);
 
 export function isInterfaceDimensionMetric(metric: string | null | undefined): boolean {
