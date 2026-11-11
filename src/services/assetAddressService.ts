@@ -468,3 +468,68 @@ export async function detachReleasedAddress(input: {
 export function _resetAgeSweepForTests(): void {
   lastAgeSweepMs = 0;
 }
+
+// ─── associatedIps shape helper (moved from routes/assets, CQ-B062 slice 2) ─
+//
+// `Asset.associatedIps` was a JSONB column until the side-table migration; the
+// frontend (`public/js/assets.js`) and any external API consumer still expect
+// the response to carry an `associatedIps: [...]` JSON array on the asset
+// object. Rather than change the wire format, every place that reads asset
+// rows + their `associatedIpRows` relation runs the rows through this helper
+// to project them back into the original JSON shape.
+
+interface AssociatedIpJson {
+  ip: string;
+  source: string;
+  interfaceName?: string;
+  mac?: string;
+  /** Interface-scrape rows where the device says: "primary" | "secondary". */
+  interfaceRole?: string;
+  /** Discovered rows: the gate that reported the binding, and its medium (rule 102). */
+  device?: string;
+  medium?: string;
+  ptrName?: string;
+  ptrTtl?: number;
+  ptrFetchedAt?: string;
+  lastSeen?: string;
+  firstSeen?: string;
+}
+
+interface AssociatedIpRow {
+  ip: string;
+  source: string;
+  interfaceName: string | null;
+  mac: string | null;
+  interfaceRole: string | null;
+  device: string | null;
+  medium: string | null;
+  ptrName: string | null;
+  ptrTtl: number | null;
+  ptrFetchedAt: Date | null;
+  lastSeen: Date;
+  firstSeen: Date;
+}
+
+export function shapeAssociatedIps(rows: AssociatedIpRow[] | null | undefined): AssociatedIpJson[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => {
+    const out: AssociatedIpJson = { ip: r.ip, source: r.source };
+    if (r.interfaceName) out.interfaceName = r.interfaceName;
+    if (r.mac)           out.mac           = r.mac;
+    if (r.interfaceRole) out.interfaceRole = r.interfaceRole;
+    if (r.device)       out.device        = r.device;
+    if (r.medium)        out.medium        = r.medium;
+    if (r.ptrName)       out.ptrName       = r.ptrName;
+    if (r.ptrTtl != null) out.ptrTtl       = r.ptrTtl;
+    if (r.ptrFetchedAt)   out.ptrFetchedAt = r.ptrFetchedAt.toISOString();
+    out.lastSeen  = r.lastSeen.toISOString();
+    out.firstSeen = r.firstSeen.toISOString();
+    return out;
+  });
+}
+
+export const ASSOCIATED_IP_SELECT = {
+  ip: true, source: true, interfaceName: true, mac: true, interfaceRole: true, device: true, medium: true,
+  ptrName: true, ptrTtl: true, ptrFetchedAt: true,
+  lastSeen: true, firstSeen: true,
+} as const;

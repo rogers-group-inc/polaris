@@ -43,7 +43,7 @@ import { isRunActive } from "../../../services/discoveryRunState.js";
 import { reconcileAddressesWithIpam } from "../../../services/assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson } from "../../../services/addressConfidenceService.js";
 import { assertCredentialInAssetScope } from "../../../services/assetCredentialScopeService.js";
-import { shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "./shared.js";
+import { shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "../../../services/assetAddressService.js";
 
 const router = Router();
 

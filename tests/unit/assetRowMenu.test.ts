@@ -98,7 +98,7 @@ function withPerms(assets: boolean, quarantine: boolean, pushEnabled = true) {
 /**
  * A Fortinet-discovered device whose captured access list says HTTPS and SSH
  * are both open. `managementAccess` is the four-field projection the list
- * endpoint ships (shapeManagementAccess in src/api/routes/assets.ts), not the
+ * endpoint ships (shapeManagementAccess in src/services/assetListService.ts), not the
  * full stored blob.
  */
 function mgmtAsset(over: Record<string, unknown> = {}): AssetRow {

@@ -15,7 +15,7 @@ import { reconcileDuplicateIpForAddresses, type WriteTimeIpConflict } from "../.
 import { requestActor } from "../../middleware/auth.js";
 import { logEvent, buildChanges } from "../events.js";
 import { buildFirmwareChangedEvent } from "../../../services/eventLogService.js";
-import { clampAcquiredToLastSeen, statusAllowsMonitoring, UNMONITORABLE_STATUSES } from "../../../utils/assetInvariants.js";
+import { clampAcquiredToLastSeen, statusAllowsMonitoring, UNMONITORABLE_STATUSES, clampMonitoredState } from "../../../utils/assetInvariants.js";
 import { syncDescriptionsOnSave } from "../../../services/descriptionSyncService.js";
 import { isKnownAssetType } from "../../../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets, getAddAsMonitoredFromConfig } from "../../../services/monitorOverrideService.js";
@@ -35,7 +35,8 @@ import { workloadPlatformLabel, workloadSourceKindsFor } from "../../../utils/wo
 import { collectorCapability } from "../../../utils/pollingCapability.js";
 import { logger } from "../../../utils/logger.js";
 import { CLEAR_PRIMARY_ADDRESS_PIN, gateForPinnedAddress } from "../../../services/primaryAddressService.js";
-import { clampMonitoredState, assertCredentialAssignments, assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { assertCredentialAssignments } from "../../../services/credentialService.js";
 
 const router = Router();
 

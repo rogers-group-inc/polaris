@@ -6,36 +6,19 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { prisma } from "../../../db.js";
-import { AppError } from "../../../utils/errors.js";
 import { mapWithConcurrency } from "../../../utils/concurrency.js";
 import { requirePermission } from "../../middleware/permissions.js";
 import { scopeAssetParam, scopeAssetIds, idsFromBody } from "../../middleware/writeScope.js";
 import { requestActor } from "../../middleware/auth.js";
 import { machineApiLimiter } from "../../middleware/rateLimits.js";
-import { logEvent } from "../events.js";
-import { quarantineAsset, releaseQuarantine, verifyAssetQuarantine } from "../../../services/assetQuarantineService.js";
+import { quarantineAsset, releaseQuarantine, verifyAssetQuarantine, getQuarantineStatus, recordQuarantineDrift } from "../../../services/assetQuarantineService.js";
 
 const router = Router();
 
 // GET /api/v1/assets/:id/quarantine-status — current quarantine state + recorded targets
 router.get("/:id/quarantine-status", requirePermission("assetsQuarantine", "read"), async (req, res, next) => {
   try {
-    const id = req.params.id as string;
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        status: true,
-        statusBeforeQuarantine: true,
-        quarantineReason: true,
-        quarantinedAt: true,
-        quarantinedBy: true,
-        quarantineTargets: true,
-      },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-    res.json(asset);
+    res.json(await getQuarantineStatus(req.params.id as string));
   } catch (err) {
     next(err);
   }
@@ -83,22 +66,7 @@ router.post("/:id/quarantine/verify", machineApiLimiter, requirePermission("asse
     const verifyResult = await verifyAssetQuarantine(id, req.apiToken?.integrationIds);
     if (verifyResult.driftDetected) {
       // Persist the drift flip + log the event so the operator has an audit trail.
-      await prisma.asset.update({
-        where: { id },
-        data: { quarantineTargets: verifyResult.targets as any },
-      });
-      const asset = await prisma.asset.findUnique({ where: { id }, select: { hostname: true, ipAddress: true } });
-      const actor = requestActor(req);
-      logEvent({
-        action: "asset.quarantine.drift_detected",
-        resourceType: "asset",
-        resourceId: id,
-        resourceName: asset?.hostname || asset?.ipAddress || undefined,
-        actor,
-        level: "warning",
-        message: `Quarantine drift detected on ${asset?.hostname || id} — one or more FortiGate targets are missing or incomplete`,
-        details: { targets: verifyResult.targets },
-      });
+      await recordQuarantineDrift(id, verifyResult.targets, requestActor(req));
     }
     res.json(verifyResult);
   } catch (err) {

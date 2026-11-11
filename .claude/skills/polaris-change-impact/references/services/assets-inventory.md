@@ -26,7 +26,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The DISCOVERY half of an asset's address list (business rule 102) — the `AssetAssociatedIp` rows whose source is one of `DISCOVERED_ADDRESS_SOURCES` (`dhcp-lease` / `dhcp-reservation` / `device-inventory` / `arp`): one row per (asset, IP) with the MAC it is bound to, the reporting gate (`device`) and the medium (`wired` / `wireless` / null). Current-state PER GATE.
 
-**Public API:** `DISCOVERED_ADDRESS_SOURCES`, `DISCOVERED_ROW_MAX_AGE_MS` (30 days), `reconcileDiscoveredAddresses(sightings, scope, now?)` → `{ upserted, pruned }`; pure helpers `collapseSightings` (one row per (asset, ip): strongest source — device-inventory > dhcp-reservation > dhcp-lease > arp — freshest `seenAt`, a known medium beats unknown) and `prunableSourcesFor(device, scope)`; types `AddressSighting`, `AddressReadScope`; test seam `_resetAgeSweepForTests`. IPAM cross-check (business rule 102(a)): `reconcileAddressesWithIpam(assetId, actor?)` → `{ removed[], relabelled }` and its pure verdict `judgeDhcpAddressAgainstIpam(row, covered, reservation)`. Release detach (business rule 102(b)): `detachReleasedAddress({ ip, gate, macAddress, actor? })` → `DetachedAddress[]` and its pure verdict `judgeReleasedAddress(asset, releasedIp, remainingSourcesAtIp)` (`ReleasedAddressVerdict`: move, or keep for `not-primary` / `pinned` / `infra` / `device-reports-it`).
+**Public API:** `DISCOVERED_ADDRESS_SOURCES`, `DISCOVERED_ROW_MAX_AGE_MS` (30 days), `reconcileDiscoveredAddresses(sightings, scope, now?)` → `{ upserted, pruned }`; pure helpers `collapseSightings` (one row per (asset, ip): strongest source — device-inventory > dhcp-reservation > dhcp-lease > arp — freshest `seenAt`, a known medium beats unknown) and `prunableSourcesFor(device, scope)`; types `AddressSighting`, `AddressReadScope`; test seam `_resetAgeSweepForTests`. IPAM cross-check (business rule 102(a)): `reconcileAddressesWithIpam(assetId, actor?)` → `{ removed[], relabelled }` and its pure verdict `judgeDhcpAddressAgainstIpam(row, covered, reservation)`. Release detach (business rule 102(b)): `detachReleasedAddress({ ip, gate, macAddress, actor? })` → `DetachedAddress[]` and its pure verdict `judgeReleasedAddress(asset, releasedIp, remainingSourcesAtIp)` (`ReleasedAddressVerdict`: move, or keep for `not-primary` / `pinned` / `infra` / `device-reports-it`). Also the wire shape of the address list: `ASSOCIATED_IP_SELECT` + `shapeAssociatedIps(rows)` project `associatedIpRows` back into the `associatedIps: [...]` JSON array the browser and API clients expect (moved from routes/assets in CQ-B062 slice 2; read by `assetListService` and `GET /assets/:id`).
 
 **Cross-service deps:** `prisma` (asset_associated_ips, raw bulk `INSERT … ON CONFLICT`), `utils/dbRetry.retryOnDeadlock`, `utils/chunk.chunkArray`, `utils/dhcpClaimFreshness` (`AddressMedium`), `utils/cidr.mostSpecificContaining`, `utils/mac.normalizeMacOrNull`, `eventLogService.logEvent`, `primaryAddressService.bestListedAddress` (the release detach's next address); READS `subnets` + `reservations` for the IPAM cross-check; the release detach also writes `assets.ipAddress` / `ipSource`.
 
@@ -115,11 +115,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The Assets list's **Tags** column on the server side — the filter (the column's pick menu: `any_of` / `all_of` over EXACT names sent as a JSON array, plus `tagsUntagged=1`; and the older text ops `contains` / `not_contains` / `empty` / `is_not_empty`, matching any single tag by case-insensitive substring, still honoured for saved views written before the menu) and the sort (alphabetically-first tag, untagged rows last in both directions). `Asset.tags` is a `String[]`, and Prisma can neither substring-match inside a scalar list nor order by one; that gap is the reason this service exists.
 
-**Public API:** `findAssetIdsByTagSubstring(term)` (one raw `EXISTS (… unnest(tags) … ILIKE …)` query, LIKE wildcards escaped); the pure `buildTagFilter(value, op, matchingIds, includeUntagged?)`, `parseTagPickValue(value)` + `TAG_PICK_MAX`, `tagFilterNeedsLookup(value, op)`, `tagSortKey(tags)`, `sortIdsByTags(rows, dir, favoriteIds?)`; `pageAssetIdsByTags(where, dir, offset, limit, favoriteIds?)`; `listAssetsWithTag(tag)` → `{ total, assets }` — EXACT match (`tags: { has }`), six-column select, hostname order, capped at `ASSETS_WITH_TAG_LIMIT`.
+**Public API:** `findAssetIdsByTagSubstring(term)` (one raw `EXISTS (… unnest(tags) … ILIKE …)` query, LIKE wildcards escaped); the pure `buildTagFilter(value, op, matchingIds, includeUntagged?)`, `parseTagPickValue(value)` + `TAG_PICK_MAX`, `tagFilterNeedsLookup(value, op)`, `tagSortKey(tags)`, `sortIdsByTags(rows, dir, favoriteIds?)`; `pageAssetIdsByTags(where, dir, offset, limit, favoriteIds?)`; `listAssetsWithTag(tag)` → `{ total, assets }` — EXACT match (`tags: { has }`), six-column select, hostname order, capped at `ASSETS_WITH_TAG_LIMIT`; `listAllAssetTags()` — every distinct tag, sorted, NOT filtered by `monitored` (GET /assets/tags, the assets-page filter autocomplete; tagAssignmentService.listAssetTags is the monitored-only builder list).
 
 **Cross-service deps:** `prisma.$queryRaw` on `assets`; `prisma.asset.findMany` with `select: { id, tags }`.
 
-**Used by:** `src/api/routes/assets/list.ts → GET /assets` — `resolveTagMatches` resolves the term's ids before `buildAssetListWhere` (the same pre-resolve shape as the discovered-hostname ids), and `sortBy=tags` takes the `pageAssetIdsByTags` branch instead of `buildAssetOrderBy`. `GET /assets/by-tag` → `listAssetsWithTag` (the tag registry chip's slide-in).
+**Used by:** `src/services/assetListService.ts → listAssetsPage` (GET /assets) — `resolveTagMatches` resolves the term's ids before `buildAssetListWhere` (the same pre-resolve shape as the discovered-hostname ids), and `sortBy=tags` takes the `pageAssetIdsByTags` branch instead of `buildAssetOrderBy`. `GET /assets/by-tag` → `listAssetsWithTag` (the tag registry chip's slide-in).
 
 **Invariants:**
 - `sortBy=tags` keeps the favorites-first contract: starred rows lead, each bucket sorted the same way.
@@ -128,6 +128,44 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `any_of` / `all_of` never throw on a bad `tags` value: anything but a JSON array of strings is no filter (`parseTagPickValue`); `tagsUntagged` widens `any_of` only — `all_of` ignores it, as a row cannot be untagged and carry every tag. Matching is exact and case-sensitive by design: the values come from `GET /assets/tags`.
 
 **When changing this:** the Tags sort reads `id, tags` for EVERY row matching the active filters and sorts in memory, then fetches only the page's rows. At 2000 assets that is one narrow scan per page load (the same scan `GET /assets/tags` does); at 100 it is trivial. If fleets grow an order of magnitude past that, move the ordering into SQL (a raw ordered id query) rather than widening the select. The `contains` path's `id IN (…)` list is bounded by the number of tagged assets matching the term.
+
+## services/assetListService.ts
+
+**What it owns:** The assets list engine behind `GET /api/v1/assets`, moved out of `routes/assets/list.ts` (CQ-B062 slice 2): the query contract (`AssetListQuerySchema` — kept here, not beside the route, because `buildAssetListWhere` is typed by it), the sort whitelist (`ASSET_SORT_COLUMNS`) and operator-aware text columns, the where builder (`monitorClause`, the server / location filter, the IP Address column's `in_networks`, tag and discovered-hostname pre-resolves), ordering, favorites-first two-bucket paging, the tags-sort path, and the per-row enrichment (`enrichAssetList`: monitoring methods, active-alert summary, management access, HA, address confidence, MACs, associated IPs). The route parses the query and adds the caller's per-row `canEdit` / `canQuarantine` / `canMaintain` flags (rule 141(e)), which need the request.
+
+**Public API:** `AssetListQuerySchema`, `listAssetsPage(q, raw, actor)` → `{ enriched, total, limit, offset }`.
+
+**Cross-service deps:** assetTagListService (tag filter + tags sort), discoveredHostnameService, subnetService (`buildIpContexts`), monitoringService (`resolveMonitorSettings`), fortinetManagementAccessService (`shapeManagementAccessForClient`), notificationService (`activeAlertSummaryByAsset`), addressConfidenceService, assetAddressService (`shapeAssociatedIps`, `ASSOCIATED_IP_SELECT`), utils/prismaTextFilter, utils/cidr, utils/macAddresses.
+
+**Used by:** `src/api/routes/assets/list.ts → GET /assets` — the only caller.
+
+**Invariants:**
+- `orderBy` never takes a user string: only `ASSET_SORT_COLUMNS` keys reach Prisma; `tags` sorts in memory through `pageAssetIdsByTags`.
+- `ASSET_SORT_COLUMNS` and `monitorClause`'s cases are the server half of the phone's sort sheet and status chips; `tests/unit/mobileAssetsSortFilter.test.ts` reads both from this file and fails on a key the server would 400.
+- Enrichment is batched per page (one query per concern for the page's ids), never per row — this is the hot read at 2000+ assets.
+
+**When changing this:** a new list column → `ASSET_LIST_SELECT` (tight select; every column costs at 2000 rows), the sort whitelist if sortable, `ASSET_TEXT_COLUMNS` if text-filterable, and the browser's column spec; keep [server-side-list-tables](../cross-cutting/server-side-list-tables.md) current.
+
+---
+
+## services/assetBulkMonitorService.ts
+
+**What it owns:** `POST /assets/bulk-monitor`'s write, moved out of `routes/assets/list.ts` (CQ-B062 slice 2). One `updateMany` over the selection with a uniform `monitored` / credential / cadence, after `clampMonitoredState`.
+
+**Public API:** `bulkSetMonitored(body, credentialActor, actor)` → `{ updated, errors: [{ id, error }] }`; `BulkMonitorInput`.
+
+**Cross-service deps:** credentialService (`assertCredentialAssignments`, existence only), monitorOverrideService (`recomputeMonitorOverrideForAssets`), credentialUseAuditService (`recordCredentialUse`, rule 112), eventLogService, utils/assetInvariants (`clampMonitoredState`, `statusAllowsMonitoring`).
+
+**Used by:** `src/api/routes/assets/list.ts → POST /assets/bulk-monitor` — the only caller.
+
+**Invariants:**
+- One statement for the batch, never a per-row loop; `monitorOverride` is recomputed for the touched ids in one SQL UPDATE afterwards.
+- A missing id or a status that cannot carry monitoring (rule 10) is reported per id and the rest still go through; an unknown credential id fails the whole call (400), since it applies to every row.
+- The credential use is recorded only for assets that did not already carry it.
+
+**When changing this:** keep `tests/unit/assetBulkMonitorService.test.ts` and `tests/integration/monitorableStatusClamp.test.ts` green.
+
+---
 
 ## services/assetBulkTagService.ts
 
@@ -377,7 +415,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Push/pull FortiGate MAC quarantine via persistent `user.quarantine.targets` CMDB tree; orchestrates multi-FortiGate best-effort with per-device all-or-nothing atomicity.
 
-**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
+**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 
@@ -439,6 +477,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Adding a **field**-mode contributor: confirm the observed key is actually written by the discovery path that mints the source row. A contributor whose key never appears is a silent no-op.
 - Touching the `integrationPrefix` rendering: it reads `observed.integrationName`, stamped by `buildFortigateEndpointObservedBlob` + `upsertFortinetInfraAssetSource` in `discoveryEngine.ts`. Rows written before that stamp fall back to the bare device name — keep that fallback or pre-upgrade assets render a dangling `:name`. Whatever you change, `contributedLocation` must stay IDEMPOTENT under its own output (see the feedback-loop invariant above); the test file pins that directly.
 - Any change to what a source contributes is a change to `Asset.learnedLocation`: re-check the "behind FortiGate" matchers in `tagAssignmentService` / maintenance criteria (`utils/integrationFilter.ts` reads AD's `ouPath` off learnedLocation as a fallback) and `dashboard.ts`'s per-site narrowing.
+
+---
+
+## services/assetSourceService.ts
+
+**What it owns:** The server half of the asset details **Sources** tab, moved out of `routes/assets/sources.ts` (CQ-B062 slice 2): the per-discovery-source view, splitting one source off into a new asset, and the operator-driven merge with its audit Event and conflict settling. The route keeps only Zod validation and the merge body's "this" / "other" -> canonical / ghost translation.
+
+**Public API:** `listAssetSourcesForDisplay(id)`, `splitAssetSource(id, sourceId, actor)`, `mergeAssetsAudited({ canonicalId, ghostId, fieldWinners, dependencyWinner, canManageIntegrations, actor })`.
+
+**Cross-service deps:** assetMergeService (`mergeAssets`), duplicateIpConflictService (`repointDuplicateIpConflicts`, `reconcileDuplicateIpForAddresses`), duplicateSerialConflictService (`repointDuplicateSerialConflicts`, `settleDuplicateSerialConflictsAfterMerge`), assetDetailReadService (`assertAssetExists`), eventLogService (`logEvent`), utils/assetProjection (`projectAssetFromSources`), utils/assetSourceState (`deriveAssetSourceState`), utils/workloadSources.
+
+**Used by:** `src/api/routes/assets/sources.ts — GET /assets/:id/sources, POST /assets/:id/sources/:sourceId/split, POST /assets/:id/merge`.
+
+**Invariants:**
+- The source view sorts identity-first (entra, intune, ad, the Fortinet kinds, snmp-sysdescr, fortinet-live), unknown kinds at 50, `manual` last, and collapses rows to one per (sourceKind, integrationId), keeping the newest — a churned `fortigate-endpoint` MAC must not render as several cards.
+- A split refuses a `manual` source and an asset's only source (409); the new asset and the moved source are one transaction, so no AssetSource is ever left pointing at an asset that was never created. Writes `asset.split`.
+- The merge moves the duplicate-serial and duplicate-ip cards off the absorbed row BEFORE `mergeAssets` deletes it (rules 83 and 40(i)), writes `asset.merged`, then settles both card kinds AWAITED; a settle failure is logged and never fails a merge that already committed.
+- The merge orchestration lives here, not in assetMergeService, because both conflict services import assetMergeService.
+
+**When changing this:**
+- A new source kind: give it a place in the view's ORDER table and a branch in the split's assetType / tag mapping, or it sorts at 50 and splits as `other`.
+- Keep `tests/unit/assetSourceService.test.ts` and `tests/integration/assetMerge.test.ts` green; the second is the HTTP contract.
 
 ---
 
@@ -819,7 +879,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `utils/assetProjection.ts` (`projectAssetFromSources`) + prisma.assetSource. No writes at all.
 
-**Used by:** `api/routes/assets.ts` — `enrichAssetList` (list rows, ids filtered to those carrying `hostnameOverride`) and `GET /assets/:id` (only when the row is pinned). Both surface it as the wire field `hostnameDiscovered`; `public/js/assets.js` `hostnameOriginalLineHTML()` renders it as the subdued second line in the Hostname cell and in the slide-over Hostname row.
+**Used by:** `services/assetListService.ts` — `enrichAssetList` (list rows, ids filtered to those carrying `hostnameOverride`) and `GET /assets/:id` (only when the row is pinned). Both surface it as the wire field `hostnameDiscovered`; `public/js/assets.js` `hostnameOriginalLineHTML()` renders it as the subdued second line in the Hostname cell and in the slide-over Hostname row.
 
 **Invariants:**
 - **Read-only and never called for unpinned rows.** The caller filters the id set, so a page with no overridden hostnames issues no extra query; otherwise it is ONE indexed `assetId IN (...)` scan of `asset_sources` per request.

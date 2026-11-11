@@ -6,7 +6,26 @@ import {
   releaseAddressOnDecommission,
   dropAddressOnDecommissioned,
   DECOMMISSION_ADDRESS_RELEASE,
+  clampMonitoredState,
 } from "../../src/utils/assetInvariants.js";
+
+describe("clampMonitoredState", () => {
+  it("re-enabling resets the probe state to Recovering", () => {
+    const d: Record<string, unknown> = { monitored: true, monitorStatus: "down", consecutiveFailures: 9, consecutiveSuccesses: 4 };
+    clampMonitoredState(d);
+    expect(d).toMatchObject({ monitorStatus: "recovering", consecutiveFailures: 0, consecutiveSuccesses: 0 });
+  });
+  it("disabling clears only the failure count", () => {
+    const d: Record<string, unknown> = { monitored: false, monitorStatus: "down", consecutiveFailures: 9 };
+    clampMonitoredState(d);
+    expect(d).toEqual({ monitored: false, monitorStatus: "down", consecutiveFailures: 0 });
+  });
+  it("leaves a write that does not touch monitored alone", () => {
+    const d: Record<string, unknown> = { hostname: "x" };
+    clampMonitoredState(d);
+    expect(d).toEqual({ hostname: "x" });
+  });
+});
 
 const T0 = new Date("2026-01-01T00:00:00Z");
 const T1 = new Date("2026-02-01T00:00:00Z");

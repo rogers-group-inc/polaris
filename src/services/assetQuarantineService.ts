@@ -1116,3 +1116,49 @@ export async function verifyAssetQuarantine(
 
   return { targets: updated, driftDetected };
 }
+
+/** The quarantine state + recorded targets for one asset (GET /assets/:id/quarantine-status). 404 when absent. */
+export async function getQuarantineStatus(assetId: string) {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: {
+      id: true,
+      status: true,
+      statusBeforeQuarantine: true,
+      quarantineReason: true,
+      quarantinedAt: true,
+      quarantinedBy: true,
+      quarantineTargets: true,
+    },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  return asset;
+}
+
+/**
+ * Persist a drift flip found by `verifyAssetQuarantine` and record the
+ * `asset.quarantine.drift_detected` Event, so an operator-run verify leaves an
+ * audit trail. (Discovery's auto-quarantine pass persists the targets itself
+ * and writes no Event.)
+ */
+export async function recordQuarantineDrift(
+  assetId: string,
+  targets: QuarantineTargetRecord[],
+  actor: string | undefined,
+): Promise<void> {
+  await prisma.asset.update({
+    where: { id: assetId },
+    data: { quarantineTargets: targets as any },
+  });
+  const asset = await prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } });
+  logEvent({
+    action: "asset.quarantine.drift_detected",
+    resourceType: "asset",
+    resourceId: assetId,
+    resourceName: asset?.hostname || asset?.ipAddress || undefined,
+    actor,
+    level: "warning",
+    message: `Quarantine drift detected on ${asset?.hostname || assetId} — one or more FortiGate targets are missing or incomplete`,
+    details: { targets },
+  });
+}

@@ -57,7 +57,7 @@
 
   // Sort + filter run SERVER-side — the list is paged, so a client sort would
   // only order the pages already loaded. Keys are the route's own sortBy
-  // whitelist (ASSET_SORT_COLUMNS in src/api/routes/assets.ts) and its
+  // whitelist (ASSET_SORT_COLUMNS in src/services/assetListService.ts) and its
   // `monitor` chip vocabulary (monitorClause), so nothing here can ask for a
   // sort or a filter the server would refuse. "Recently added" is the
   // server's default order (no sortBy), which is what the list always showed.
