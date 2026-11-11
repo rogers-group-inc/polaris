@@ -31,7 +31,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { prisma } from "../db.js";
 import type { Prisma } from "../generated/prisma/client.js";
@@ -494,6 +494,84 @@ function incomingPath(tmpPath: string): string | null {
 export async function discardIncomingUpload(tmpPath: string): Promise<void> {
   const tmp = incomingPath(tmpPath);
   if (tmp) await rm(tmp, { force: true }).catch(() => undefined);
+}
+
+/** A stored image file is named for its row: `<uuid>.out`. Nothing else in FIRMWARE_DIR is ever swept. */
+const IMAGE_FILE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.out$/i;
+
+/** An image file with no row is left this long: a registration renames the file before it stores the path. */
+export const FIRMWARE_ORPHAN_GRACE_MS = 60 * 60 * 1000;
+/** An upload still in the incoming directory is left this long: a slow upload of a large image is not a leftover. */
+export const FIRMWARE_INCOMING_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export interface FirmwareSweepResult {
+  /** `<uuid>.out` files no FirmwareImage row points at. */
+  files: number;
+  /** Uploads abandoned in the incoming directory. */
+  incoming: number;
+  /** Rows whose bytes never landed (`storagePath` still "pending"). */
+  rows: number;
+}
+
+/**
+ * Remove what a failed or interrupted upload, delete or restore left in the
+ * firmware repository (business rule 158(b)).
+ *
+ * Three leftovers, none of them reachable from the Repository tab:
+ *   - an image FILE no row points at — a delete whose `rm` failed, a process
+ *     killed between the rename and the path write, or a database restored
+ *     from before the upload;
+ *   - an upload abandoned in `.incoming` — the process died, or the client
+ *     dropped, before the route could discard it;
+ *   - a ROW still at `storagePath: "pending"` — the process died between the
+ *     insert and the rename. It lists as an image whose file is missing and,
+ *     as the model's primary, would be offered to a flash that cannot read it.
+ *
+ * Files are judged by age so an upload in flight is never touched, and only
+ * names this service mints are considered: anything else an operator put in
+ * the directory is left alone. The row list is read BEFORE the directory, so
+ * a file registered between the two reads is younger than the grace period
+ * and is skipped. If the rows cannot be read this throws and deletes nothing.
+ */
+export async function sweepFirmwareFiles(now: Date = new Date()): Promise<FirmwareSweepResult> {
+  const result: FirmwareSweepResult = { files: 0, incoming: 0, rows: 0 };
+  const nowMs = now.getTime();
+
+  const stuck = await prisma.firmwareImage.deleteMany({
+    where: { storagePath: "pending", uploadedAt: { lt: new Date(nowMs - FIRMWARE_ORPHAN_GRACE_MS) } },
+  });
+  result.rows = stuck.count;
+
+  const known = new Set((await prisma.firmwareImage.findMany({ select: { storagePath: true } })).map((r) => r.storagePath));
+
+  const sweepDir = async (dir: string, graceMs: number, eligible: (name: string) => boolean): Promise<number> => {
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return 0; // no directory yet: nothing was ever uploaded
+    }
+    let removed = 0;
+    for (const name of names) {
+      if (!eligible(name)) continue;
+      const abs = resolve(dir, name);
+      if (!abs.startsWith(dir + sep)) continue;
+      try {
+        const st = await stat(abs);
+        if (!st.isFile() || nowMs - st.mtimeMs < graceMs) continue;
+        await rm(abs, { force: true });
+        removed++;
+      } catch (err) {
+        logger.warn({ err, file: name }, "firmware sweep could not remove a leftover file");
+      }
+    }
+    return removed;
+  };
+
+  result.files = await sweepDir(FIRMWARE_DIR, FIRMWARE_ORPHAN_GRACE_MS, (name) => IMAGE_FILE_RE.test(name) && !known.has(name));
+  // Everything in `.incoming` is a multer temp file; none of them is ever a stored image.
+  result.incoming = await sweepDir(FIRMWARE_INCOMING_DIR, FIRMWARE_INCOMING_GRACE_MS, () => true);
+  return result;
 }
 
 /**

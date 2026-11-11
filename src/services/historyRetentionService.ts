@@ -56,6 +56,7 @@ import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { getSightingSettings } from "./assetSightingService.js";
 import { listRegions } from "./mapRegionService.js";
+import { sweepFirmwareFiles } from "./firmwareRepositoryService.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -300,14 +301,16 @@ export interface HistoryPruneResult {
   scanRuns: number;
   hiddenRegionIds: number;
   tagAssignments: number;
+  /** Firmware repository leftovers (rule 158(b)): unreferenced image files + abandoned uploads + rows whose bytes never landed. */
+  firmwareLeftovers: number;
 }
 
 /**
- * One pass over all seven. Each prune is independent: one that throws is
+ * One pass over all of them. Each prune is independent: one that throws is
  * reported in `errors` and the others still run.
  */
 export async function pruneHistory(now: Date = new Date()): Promise<{ result: HistoryPruneResult; errors: string[] }> {
-  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0 };
+  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, firmwareLeftovers: 0 };
   const errors: string[] = [];
   const attempt = async (name: string, run: () => Promise<void>) => {
     try { await run(); } catch (err) { errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`); }
@@ -319,5 +322,9 @@ export async function pruneHistory(now: Date = new Date()): Promise<{ result: Hi
   await attempt("discovery scans", async () => { result.scanRuns = await pruneNetworkScanRuns(now); });
   await attempt("hidden regions", async () => { result.hiddenRegionIds = await pruneHiddenRegionIds(); });
   await attempt("tag provenance", async () => { result.tagAssignments = await pruneOrphanTagAssignments(); });
+  await attempt("firmware leftovers", async () => {
+    const swept = await sweepFirmwareFiles(now);
+    result.firmwareLeftovers = swept.files + swept.incoming + swept.rows;
+  });
   return { result, errors };
 }

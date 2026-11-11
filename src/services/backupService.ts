@@ -49,6 +49,7 @@ import {
   existsSync,
   openSync,
   readSync,
+  readdirSync,
   closeSync,
   statSync,
   unlinkSync,
@@ -94,8 +95,15 @@ export const ENCRYPTED_HEADER_LEN = BACKUP_MAGIC.length + SALT_LEN + IV_LEN + TA
  */
 const NO_OUTPUT_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** How many history entries the Setting row retains. */
-const HISTORY_LIMIT = 50;
+/**
+ * How many history entries the Setting row retains. The row is an INDEX of
+ * the files, never the list of them: a backup whose entry has aged out of it
+ * (or never got one) is still found on disk and listed — see `listBackups`
+ * and business rule 158(a). It was 50 until 2026-11-11, and an entry trimmed
+ * from it took its file's name, version and kind with it, so the cap is now
+ * high enough that only a very long-lived install reaches it.
+ */
+const HISTORY_LIMIT = 500;
 
 type BackupKind = "manual" | "pre-update" | "scheduled";
 
@@ -108,6 +116,12 @@ export interface BackupRecord {
   /** Legacy flag kept for the Maintenance tab's "pre-update" badge. */
   preUpdate?: boolean;
   kind?: BackupKind;
+  /**
+   * True for a file found in BACKUP_DIR with no history entry (rule 158(a)):
+   * its original filename and version are unknown, so `filename` is derived
+   * and `createdAt` is the time its id was minted.
+   */
+  untracked?: boolean;
 }
 
 // ─── Path safety ───────────────────────────────────────────────────────────
@@ -145,15 +159,89 @@ async function writeHistory(history: BackupRecord[]): Promise<void> {
   });
 }
 
-/** Newest-first history, each entry carrying its resolved on-disk path. */
+/** The ids `createBackup` mints: `bk-<ms>`, `bk-pre-update-<ms>`, `bk-scheduled-<ms>`. */
+const BACKUP_ID_RE = /^bk(?:-(pre-update|scheduled))?-(\d{10,})$/;
+
+/** A file modified this recently may be a backup in progress. */
+const UNTRACKED_SETTLE_MS = 2 * 60 * 1000;
+
+/** Is this a name a backup file could have? (Nothing else in BACKUP_DIR is ever listed or deleted.) */
+function isBackupId(name: string): boolean {
+  return BACKUP_ID_RE.test(name);
+}
+
+/**
+ * Backup files on disk that the history does not list (business rule 158(a)).
+ *
+ * The history is a capped Setting row, written AFTER the dump: an entry
+ * trimmed by the cap, a backup whose registration failed, and every file made
+ * after an older backup was RESTORED (the restore replaces the history with
+ * the one inside it) all leave a file with no entry. Such a file used to be
+ * invisible — not listed, not downloadable, not deletable from the UI — and
+ * simply accumulated in `data/backups`. Only names `createBackup` mints are
+ * considered, so a temp file or anything an operator dropped there is left
+ * alone.
+ */
+function untrackedBackups(known: ReadonlySet<string>): BackupRecord[] {
+  let names: string[];
+  try {
+    names = readdirSync(BACKUP_DIR);
+  } catch {
+    return []; // no directory yet: nothing has ever been backed up
+  }
+  const out: BackupRecord[] = [];
+  for (const name of names) {
+    const m = BACKUP_ID_RE.exec(name);
+    if (!m || known.has(name)) continue;
+    const path = backupFilePath(name);
+    if (!path) continue;
+    try {
+      const st = statSync(path);
+      if (!st.isFile()) continue;
+      // A dump still being written has a file and no entry yet (the history
+      // is appended after it finishes). It is not a leftover.
+      if (Date.now() - st.mtimeMs < UNTRACKED_SETTLE_MS) continue;
+      const kind: BackupKind = m[1] === "pre-update" ? "pre-update" : m[1] === "scheduled" ? "scheduled" : "manual";
+      const encrypted = isEncryptedBackupFile(path);
+      // The id carries the creation time; fall back to the file's own.
+      const minted = Number(m[2]);
+      const createdAt = new Date(Number.isFinite(minted) && minted > 0 ? minted : st.mtimeMs);
+      const stamp = createdAt.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      out.push({
+        id: name,
+        filename: `${kind === "pre-update" ? "polaris-pre-update" : "polaris-backup"}-${stamp}${encrypted ? ".enc" : ""}.gz`,
+        size: st.size,
+        encrypted,
+        createdAt: createdAt.toISOString(),
+        kind,
+        ...(kind === "pre-update" ? { preUpdate: true } : {}),
+        untracked: true,
+      });
+    } catch {
+      // Unreadable or gone between the readdir and the stat: not ours to list.
+    }
+  }
+  return out;
+}
+
+/**
+ * Every backup, newest first, each carrying its resolved on-disk path: the
+ * history's entries plus any backup file on disk the history does not list
+ * (`untracked: true`, rule 158(a)).
+ */
 export async function listBackups(): Promise<Array<BackupRecord & { path: string | null }>> {
   const history = await readHistory();
-  return history.map((r) => ({ ...r, path: backupFilePath(r.id) })).reverse();
+  const all = [...history, ...untrackedBackups(new Set(history.map((r) => r.id)))];
+  all.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  return all.map((r) => ({ ...r, path: backupFilePath(r.id) }));
 }
 
 export async function getBackupRecord(id: string): Promise<BackupRecord | null> {
   const history = await readHistory();
-  return history.find((r) => r.id === id) ?? null;
+  const tracked = history.find((r) => r.id === id);
+  if (tracked) return tracked;
+  if (!isBackupId(id)) return null;
+  return untrackedBackups(new Set(history.map((r) => r.id))).find((r) => r.id === id) ?? null;
 }
 
 async function appendHistory(record: BackupRecord): Promise<void> {
@@ -168,10 +256,16 @@ export async function deleteBackup(id: string, actor?: string): Promise<BackupRe
   const safePath = requireBackupPath(id);
   const history = await readHistory();
   const idx = history.findIndex((r) => r.id === id);
-  if (idx === -1) throw new AppError(404, "Backup not found");
-
-  const [removed] = history.splice(idx, 1);
-  await writeHistory(history);
+  let removed: BackupRecord | undefined;
+  if (idx === -1) {
+    // Rule 158(a): a backup file the history does not list is still a backup
+    // an operator can see and must be able to delete.
+    removed = untrackedBackups(new Set(history.map((r) => r.id))).find((r) => r.id === id);
+    if (!removed) throw new AppError(404, "Backup not found");
+  } else {
+    [removed] = history.splice(idx, 1);
+    await writeHistory(history);
+  }
   if (existsSync(safePath)) unlinkSync(safePath);
 
   await logEvent({

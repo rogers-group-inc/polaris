@@ -9,7 +9,18 @@
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+
+// pruneHistory also sweeps the firmware repository's FILES (rule 158(b)). This
+// suite runs against a scratch database beside a real state directory: with no
+// FirmwareImage rows here, the real sweep would remove every image a developer
+// has stored. It is stubbed; tests/unit/firmwareFileSweep.test.ts covers it.
+const sweepFirmwareFiles = vi.hoisted(() => vi.fn(async () => ({ files: 2, incoming: 1, rows: 0 })));
+vi.mock("../../src/services/firmwareRepositoryService.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  sweepFirmwareFiles,
+}));
+
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
@@ -254,6 +265,8 @@ d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
     const { result, errors } = await pruneHistory();
     expect(errors).toEqual([]);
     expect(result.alerts).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "hiddenRegionIds", "ruleStates", "scanRuns", "sightings", "summaries", "tagAssignments"]);
+    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "ruleStates", "scanRuns", "sightings", "summaries", "tagAssignments"]);
+    expect(sweepFirmwareFiles).toHaveBeenCalledTimes(1);
+    expect(result.firmwareLeftovers).toBe(3);
   });
 });

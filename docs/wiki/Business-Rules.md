@@ -3337,6 +3337,16 @@ FortiGate sightings older than the quarantine sighting window; and Discovery run
 than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
 a slice at a time over several nights. See [Events](Events#retention-and-archival).
 
+**(a) A backup file is a backup whether or not Polaris has a record of making it.** Backup
+History lists every backup file in `data/backups`, including one whose record was lost — by
+restoring an older backup, for instance. Such a file is marked **Found on disk** and can be
+downloaded and deleted like any other. See [Backup and restore](Backup-and-Restore).
+
+**(b) The firmware repository keeps no file without an image entry.** Once a day Polaris
+removes image files that no entry in the Repository points at, uploads that were abandoned
+part-way, and entries whose file never arrived. Files you placed in `data/firmware`
+yourself under their own names are not touched.
+
 ### Rule 159
 
 **A fibre-channel connection is linked to the server that reports its WWN, or failing that to

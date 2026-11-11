@@ -136,11 +136,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/historyRetentionService.ts
 
-**What it owns:** Business rule 158 — retention for the tables nothing ever deleted from, and the operator's alert-history period. Five prunes (cleared alerts + quiet-time summaries, idle automation state rows, discovery runs of deleted integrations, sightings past the quarantine window, old Discovery scan runs) and two reference sweeps (hidden-region ids, tag provenance).
+**What it owns:** Business rule 158 — retention for the tables nothing ever deleted from, and the operator's alert-history period. Five prunes (cleared alerts + quiet-time summaries, idle automation state rows, discovery runs of deleted integrations, sightings past the quarantine window, old Discovery scan runs), two reference sweeps (hidden-region ids, tag provenance), and the call into the firmware repository's file sweep (rule 158(b); the sweep itself is `firmwareRepositoryService.sweepFirmwareFiles`).
 
 **Public API:** `pruneHistory(now?)` (all of them; `{ result, errors }`, never throws); the individual `pruneAlertHistory`, `pruneIdleRuleStates`, `pruneDiscoveryRuns`, `pruneSightings`, `pruneNetworkScanRuns`, `pruneHiddenRegionIds`, `pruneOrphanTagAssignments`; `getAlertHistorySettings()` / `updateAlertHistorySettings(raw, actor?)` (400 outside 0 or 30–3650; writes `settings.alert_history_retention.updated`); pure `normalizeAlertHistoryDays(raw)` and `idleRuleStateWhere(cutoff)`; constants `DEFAULT_ALERT_HISTORY_DAYS`, `RULE_STATE_IDLE_DAYS`, `SCAN_RUN_DAYS`, `BATCH`, `MAX_BATCHES`.
 
-**Cross-service deps:** `assetSightingService.getSightingSettings` (the sighting window is the quarantine window), `mapRegionService.listRegions`, `eventLogService.logEvent`; `prisma` for `Notification`, `QuietTimeSummary`, `NotificationRuleState`, `DiscoveryRun`, `Integration`, `AssetFortigateSighting`, `NetworkScanRun`, `User`, `Tag`, `TagAutoAssignment`, `Setting`.
+**Cross-service deps:** `assetSightingService.getSightingSettings` (the sighting window is the quarantine window), `mapRegionService.listRegions`, `firmwareRepositoryService.sweepFirmwareFiles` (`result.firmwareLeftovers`), `eventLogService.logEvent`; `prisma` for `Notification`, `QuietTimeSummary`, `NotificationRuleState`, `DiscoveryRun`, `Integration`, `AssetFortigateSighting`, `NetworkScanRun`, `User`, `Tag`, `TagAutoAssignment`, `Setting`.
 
 **Used by:** `src/jobs/pruneHistory.ts` (daily); `src/api/routes/events.ts` (`GET` / `PUT /events/retention-settings` merge the alert-history setting into the Event retention payload).
 
@@ -155,6 +155,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A new table that is only ever inserted into gets a prune here in the same change (or a stated reason it must be kept, in `narrative-158.md`).
 - Do not add `Conflict` here: a rejected conflict is what stops the same finding being raised again (rule 139).
+- A sweep that deletes FILES (the firmware one, rule 158(b)) must be stubbed in `tests/integration/historyRetention.test.ts`: that suite runs `pruneHistory` against a scratch database beside a real state directory, where every stored file looks unreferenced.
 - The sighting retention follows `quarantine.sightingMaxAgeDays`; a reader that wants older sightings needs its own setting, not a longer window here.
 
 ## services/eventArchiveService.ts
@@ -638,7 +639,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - **File format is a compatibility contract.** `"POLARIS\0" | salt(32) | iv(16) | authTag(16) | AES-256-GCM(gzip(sql))`, unchanged across the rewrite so operators' existing `.enc.gz` files still restore. Pinned by `tests/unit/backupEnvelope.test.ts`.
 - A failed backup deletes its partial file — never leave a truncated file masquerading as a usable backup.
 - Backup ids are server-generated (`bk-` / `bk-pre-update-` / `bk-scheduled-` + timestamp) but the delete/download routes accept them from the URL, so `backupFilePath` requires containment under `BACKUP_DIR` before any filesystem access.
-- History lives in the `backup_history` Setting row, capped at 50 entries. A history-write failure is logged but does NOT fail the backup — the file on disk is valid, only the index entry is missing.
+- **The history is an index of `BACKUP_DIR`, not the list of backups (rule 158(a)).** It lives in the `backup_history` Setting row, capped at `HISTORY_LIMIT` (500). A history-write failure is logged but does NOT fail the backup, a restore replaces the row with the one in the dump, and the cap trims — so `listBackups`, `getBackupRecord` and `deleteBackup` also cover a file with no entry (`untracked: true`; kind and time from the id, encryption from the header, filename derived). Only names matching `BACKUP_ID_RE` are ever listed or deleted, and a file modified within `UNTRACKED_SETTLE_MS` is skipped as a dump in progress. `scheduledBackup.pruneScheduledBackups` reads `listBackups`, so an untracked scheduled backup counts toward the retain count. Pinned by `tests/unit/backupUntracked.test.ts`.
 
 - **Backups are private files (business rule 117).** `BACKUP_DIR` goes through `utils/privateFiles.ensurePrivateDir` (0700, tightening existing files to 0600 once per process) and every backup, ciphertext and decrypted restore temp file opens with `PRIVATE_FILE_MODE`. The decrypted temp file stays (GCM authenticates only at the end, so streaming straight into psql would apply unauthenticated SQL).
 

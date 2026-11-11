@@ -27,7 +27,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
 | B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
-| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.7 done** (rules 163, 164); D.3–D.6, D.8 open |
+| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.5, D.6, D.7 done** (rules 163, 164, 158(a), 158(b)); D.3, D.4, D.8 and off-host backup copies open |
 | E | Removable by hand, but silent | open — no decisions needed |
 
 ## Decisions (operator, 2026-11-11)
@@ -135,8 +135,8 @@ C.7 (topology layouts), C.11 (process config on unpin).
 | D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry **→ fixed (rule 164): the gate is remembered in `Asset.quarantineStranded`, retried every 15 min on a backoff, with Retry / Dismiss on the Quarantine tab** |
 | D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id **→ open; also: an asset DELETED while it has stranded entries loses the list (a released asset can be deleted)** |
 | D.4 | Onboarding artefacts: service account, authorized key, sudoers file, Intune remediation, Arc run-command | no removal path; key rotation appends, so old keys stay authorized |
-| D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI |
-| D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way |
+| D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI **→ fixed (rule 158(a)): every backup file is listed, downloadable and deletable, `untracked` when the history does not name it; the tab lists all of them; cap raised to 500. OPEN, needs a decision: off-host copies are still never pruned** |
+| D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way **→ fixed (rule 158(b)): `sweepFirmwareFiles` in the daily retention pass. A row whose file is missing is left: the tab flags it and Delete works** |
 | D.7 | Agent WebSocket session survives a revoke or an asset delete | until the agent stops or the web role restarts **→ fixed — `revokeBearer` and `recordAgentsLeftOnHosts` detach the session (rule 163)** |
 | D.8 | Browser `localStorage` keys embedding site / integration ids | cosmetic |
 

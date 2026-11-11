@@ -33,4 +33,34 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 
 **What is deliberately not pruned.** Resolved `Conflict` rows: a rejected conflict is the record that stops the same finding being raised again (rule 139), so deleting it re-opens it. The subnet archive: it was designed as "not a retention entity", and whether it gains a delete is the operator's call, tracked in `docs/ORPHAN-AUDIT-LEDGER.md`. `TopologyLayout` rows for retired views are left to the topology work in flight.
 
-Pinned by `tests/unit/historyRetentionService.test.ts` and `tests/integration/historyRetention.test.ts`.
+### Rule 158(a) — a backup file is a backup whether or not the history names it
+
+**How it was found.** The same audit, looking at what Polaris leaves on disk. Backups are files in `data/backups`; the Maintenance tab's Backup History is drawn from a `backup_history` Setting row, written after each dump and capped at 50 entries. The row was treated as the list of backups. It is not: it is an index, and three ordinary things leave a file the index does not name.
+
+- **The cap.** The 51st backup pushed the oldest entry out. Its file stayed. A manual or pre-update backup is never pruned by anything, so on an install that updates monthly and takes the odd manual backup the directory outgrew the index within a few years; scheduled backups prune themselves by reading the same index, so one that fell off the end was never pruned either.
+- **A history write that failed.** By design a failed index write does not fail the backup — the file is good. It was also, from then on, invisible.
+- **A restore.** Restoring an older backup replaces every table, the Setting row included, with the one inside the dump. Every backup taken since — including the pre-restore one an operator would most want — lost its entry in the moment it mattered.
+
+An unnamed file could not be seen, downloaded or deleted from the UI; only a shell on the host could reach it. The tab also drew just the newest 20 entries of the 50, so entries 21–50 were equally out of reach.
+
+**What it does.** `listBackups` returns the history plus every file in `BACKUP_DIR` that has no entry and whose name is one `createBackup` mints (`bk-<ms>`, `bk-pre-update-<ms>`, `bk-scheduled-<ms>`), flagged `untracked`. Kind comes from the name, the creation time from the timestamp in it, the size from the file, and "encrypted" from the file's own magic header. What cannot be recovered is the original download filename and the Polaris version in it, so the name is derived and the tab badges the row **Found on disk**. `getBackupRecord` and `deleteBackup` resolve such a file the same way, so Download and Delete work on it; delete still writes its Event. The tab lists every backup in a scrolling table. The cap is raised to 500 so that the index keeps the real filename and version for far longer; correctness no longer depends on it.
+
+**The edges.** A file modified in the last two minutes is skipped: a dump has a file before it has an entry, and listing it would offer a download of half a backup. Only minted names are considered, so a temp file, a restore upload or anything an operator put in the directory is neither listed nor deletable through the API — `deleteBackup` on any other name is still a 404. Scheduled-backup pruning reads `listBackups`, so an untracked scheduled backup now counts toward the retain count and is pruned in turn; manual and pre-update backups are still never pruned automatically. That is deliberate — deleting a backup nobody asked to delete is a different decision from showing it.
+
+**Not covered.** Off-host copies. `copyBackupOffHost` pushes each scheduled backup to an SFTP/SCP target and nothing ever removes one there. Polaris would need delete rights on a server whose purpose is to be the copy that survives Polaris; that is an operator decision and is open in `docs/ORPHAN-AUDIT-LEDGER.md`.
+
+### Rule 158(b) — the firmware repository holds no file without a row and no row without bytes
+
+**How it was found.** Firmware images are bytes in `data/firmware/<id>.out` and a `FirmwareImage` row naming them. An upload lands in `.incoming`, is registered (row inserted with `storagePath: "pending"`, file renamed to `<id>.out`, path written), and every failure path the code can see cleans up after itself. The ones it cannot see are a process that dies or a disk that refuses:
+
+- an **image file no row points at** — `deleteImage` removes the row and then the file, and logs a warning if the `rm` fails; a database restored from before an upload forgets the row and keeps the file;
+- an **upload abandoned in `.incoming`** — the process restarted mid-upload, or died between multer finishing and the route discarding a refused upload;
+- a **row whose bytes never landed** — the process died between the insert and the rename. This one is visible, as an image flagged missing, and as the platform's primary it is what a flash would be offered.
+
+Images are up to 300 MiB each, and nothing in the Repository tab can reach the first two.
+
+**What it does.** `firmwareRepositoryService.sweepFirmwareFiles`, called from the daily `pruneHistory` pass, removes all three. A `<uuid>.out` with no row is removed once it is an hour old; a file in `.incoming` once it is a day old (a slow upload of a large image over a poor link is not a leftover); a `pending` row once it is an hour old. The rows are read before the directory is, so a file registered between the two reads is younger than the grace period; if the rows cannot be read the sweep throws and deletes nothing. Only names the service mints are candidates in `data/firmware` — an image an operator copied there by hand under its vendor filename is left alone.
+
+**Deployment shapes.** The sweep runs in the web / all role, which is the role that takes uploads; every role on a host shares the state directory. On an HA standby the directory is not replicated, so the standby has rows and no files — the sweep only ever removes a file with no row or a row that never had a file, never a row whose file is missing, so it cannot damage a standby. The cost is one `readdir` and one single-column read of a table that holds two rows per platform, once a day, at any fleet size.
+
+Pinned by `tests/unit/historyRetentionService.test.ts` and `tests/integration/historyRetention.test.ts`; 158(a) by `tests/unit/backupUntracked.test.ts`, 158(b) by `tests/unit/firmwareFileSweep.test.ts`.

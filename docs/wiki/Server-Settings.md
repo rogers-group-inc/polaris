@@ -220,7 +220,9 @@ still on disk, and the flag is the only thing telling you so.
 Switch and access-point images are up to 100 MiB, FortiGate images up to
 300 MiB, and they live on the host under `data/firmware` (outside the database
 backup, like the agent binaries; a Docker install keeps them in the state
-volume). An nginx-fronted install needs the shipped config's firmware location
+volume). Once a day Polaris removes what a failed upload or delete left there:
+image files no entry points at, uploads abandoned part-way, and entries whose
+file never arrived. An nginx-fronted install needs the shipped config's firmware location
 block, or the upload is rejected at the edge with a 413. An update installs it
 only on an install whose nginx is managed from the **Web Server** tab and has
 not been edited by hand since. The block allows `300m`; an install whose
