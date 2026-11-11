@@ -9,6 +9,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { hasNoControlChars } from "../../utils/safeText.js";
 import { purgeDirectoryContacts } from "../../services/directorySyncService.js";
+import { detachIntegration, detachSummary, previewIntegrationDetach } from "../../services/integrationDetachService.js";
 import { bumpDirectoryCache } from "../../services/directorySearchService.js";
 import { requirePermission, hasPermission, credentialUseActor } from "../middleware/permissions.js";
 import { requestActor } from "../middleware/auth.js";
@@ -2052,10 +2053,34 @@ router.put("/:id", async (req, res, next) => {
 });
 
 // DELETE /api/v1/integrations/:id
+// GET /api/v1/integrations/:id/delete-preview — what deleting this integration
+// would detach, for the confirm dialog's numbers (business rule 160).
+// `canDecommission` is whether THIS caller may tick the box: decommissioning is
+// a fleet-wide act on assets, so it needs Full Read-Write there.
+router.get("/:id/delete-preview", async (req, res, next) => {
+  try {
+    const existing = await prisma.integration.findUnique({ where: { id: req.params.id }, select: { id: true, name: true, type: true } });
+    if (!existing) throw new AppError(404, "Integration not found");
+    res.json({
+      ...(await previewIntegrationDetach(existing)),
+      canDecommission: hasPermission(req, "assets", "fullwrite"),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/v1/integrations/:id[?decommission=true]
 router.delete("/:id", async (req, res, next) => {
   try {
     const existing = await prisma.integration.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new AppError(404, "Integration not found");
+    // Rule 160: the tick-box in the dialog. Refused, before anything changes,
+    // for a caller who could not decommission those assets one by one.
+    const decommission = req.query.decommission === "true" || req.query.decommission === "1";
+    if (decommission && !hasPermission(req, "assets", "fullwrite")) {
+      throw new AppError(403, "Forbidden — decommissioning the assets this integration discovered needs Full Read-Write on Assets");
+    }
     // BEFORE the row goes. DirectoryContactSource deliberately has no FK on
     // integrationId (a cascade would strip the provenance and strand the
     // contacts it justified), so this is the only thing that cleans up.
@@ -2069,10 +2094,17 @@ router.delete("/:id", async (req, res, next) => {
         req.session?.username ?? "unknown",
       );
     }
+    // Rule 160: detach what it discovered BEFORE the row goes, while its id
+    // still finds its source rows, sightings, edges and pushed reservations.
+    // A failure here leaves the integration in place to try again.
+    const detached = await detachIntegration(
+      { id: existing.id, name: existing.name, type: existing.type },
+      { decommission, actor: req.session?.username },
+    );
     await prisma.integration.delete({ where: { id: req.params.id } });
     invalidateMonitorSettingsCache({ integrationId: req.params.id });
     if (existing.type === "entraid" || existing.type === "activedirectory") bumpDirectoryCache();
-    logEvent({ action: "integration.deleted", resourceType: "integration", resourceId: req.params.id, resourceName: existing.name, actor: req.session?.username, message: `Integration "${existing.name}" deleted` });
+    logEvent({ action: "integration.deleted", resourceType: "integration", resourceId: req.params.id, resourceName: existing.name, actor: req.session?.username, message: `Integration "${existing.name}" deleted` + (detachSummary(detached) ? ` — ${detachSummary(detached)}` : ""), details: { detached } });
     res.status(204).send();
   } catch (err) {
     next(err);

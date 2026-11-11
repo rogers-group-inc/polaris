@@ -3354,6 +3354,18 @@ If two servers claim the WWN, or two assets match the name, the connection is sh
 WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
 an asset in a different domain. When a device logs out of a port, Polaris records it in Events.
 
+### Rule 160
+
+**Deleting an integration keeps what it discovered, and detaches it.** The assets and
+networks stay. What that integration reported about them is removed, so they stop being
+updated from it and stand as ordinary manual records; for an Azure Arc integration the
+`azure:` tags come off too, and a hypervisor's VM-to-host links are removed. The delete
+dialog shows the numbers first and offers to **decommission** the assets that no other
+source still reports — unticked by default, and it needs Full Read-Write on Assets. DHCP
+reservations the integration pushed to a device **stay on the device**; Polaris can no
+longer change them, and each one is listed in a warning Event so you know what is there.
+See [Integrations](Integrations#deleting-an-integration).
+
 ### Rule 161
 
 **An APC management card's model and serial count as the device's only when the card is built
