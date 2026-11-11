@@ -3284,6 +3284,10 @@ otherwise. A hostname you typed is kept. When the answer is ambiguous Polaris wr
 device with no chassis entry gives no model or serial, and a switch stack gives no serial. The
 first fill is quiet; a later change of model, serial or name is recorded in Events.
 
+A name the device gave itself at the factory, such as an APC card's `apc8F29C4` (`apc` plus the
+end of its MAC address), is used only when no other name is known: a name from DHCP, a directory
+or an operator always wins over it.
+
 ### Rule 155
 
 **A command queued for an agent runs soon or not at all.** When an automation
@@ -3349,3 +3353,19 @@ A connection links to a server in one of two ways, in this order:
 If two servers claim the WWN, or two assets match the name, the connection is shown with its
 WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
 an asset in a different domain. When a device logs out of a port, Polaris records it in Events.
+
+### Rule 161
+
+**An APC management card's model and serial count as the device's only when the card is built
+into it.** An APC rack PDU, UPS or other device monitored over SNMP describes itself through its
+Network Management Card (`APC Web/SNMP Management Card (… MN:AP8870 … SN: ZA2406030655 …)`).
+Polaris reads the card's operating-system (AOS) version as the device's firmware on every APC
+device. It takes the model and serial number only on a rack PDU, which Polaris recognises from the
+product identifier the device reports (`sysObjectID`). A PDU's card is part of the PDU, so its model
+and serial are the PDU's own. A UPS's card is a removable add-on, so its model and serial belong to
+the card and are not written onto the UPS. A rack PDU's type also reads "Rack PDU", which a device
+type's matching rules can use.
+
+To keep UPS and PDU custom widgets apart under the one APC manufacturer profile, give each widget a
+model pattern. PDU models start with `AP8` (for example `^AP8`); UPS models are named by the UPS's
+own model reading.

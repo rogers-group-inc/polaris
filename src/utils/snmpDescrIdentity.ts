@@ -55,6 +55,12 @@ export interface SysDescrDetail {
    * the asset-type match rules see it as a fact of its own.
    */
   productType?: string;
+  /**
+   * Serial number, only where the format states it AND it is the device's own
+   * (business rule 161: an APC card's `SN:` is the PDU's only on a PDU, whose
+   * card is built in). Through `usableSerialOrNull` at the projection (rule 84).
+   */
+  serialNumber?: string;
 }
 
 /** Longest model / product-type string kept. Bounds a malformed descr. */
@@ -106,38 +112,126 @@ function parseAxis(fields: string[]): SysDescrDetail | undefined {
 }
 
 /**
+ * APC / Schneider Electric Network Management Card (NMC1, NMC2, NMC3).
+ *
+ * `APC Web/SNMP Management Card (MB:v4.2.9 PF:v1.5.1.1 PN:apc_hw21_aos_1.5.1.1.bin
+ *  AF1:v1.2.0.4 AN1:apc_hw21_rpdu2g_1.2.0.4.bin MN:AP8870 HR:03 SN: ZA2406030655
+ *  MD:02/10/2024)`, optionally followed by `(Embedded PowerNet SNMP Agent …)`.
+ *
+ * KEY:value tokens inside the first parentheses, read by KEY, not position:
+ * MB boot monitor, PF the card's OS (AOS), PN its image, AF1 / AN1 the
+ * application firmware and image (`rpdu2g`, `sumx` …), MN model, HR hardware
+ * revision, SN serial (note the space after the colon), MD manufacture date.
+ *
+ * **Whose identity MN / SN are is the sysObjectID's call (business rule 161).**
+ * They describe the CARD. On a rack PDU the card is built in, so they are the
+ * PDU's own; in a UPS's SmartSlot (AP9630 / AP9631 / AP9640 / AP9641) they are
+ * the add-on card's, and storing them would call a Smart-UPS an "AP9631" and
+ * give every UPS the card's serial. APC registers each product under
+ * `318.1.3.<family>`, and `318.1.3.4` is `masterSwitch` — every rack PDU
+ * generation (rPDU, rPDU2, sPDU, ePDU …). Model and serial are claimed only
+ * under that branch; anywhere else, or with no sysObjectID at all, the parse
+ * yields the firmware alone.
+ *
+ * Firmware is PF, the card's operating system (AOS), falling back to AF1 when
+ * a card states no platform. Not the application version: the asset page
+ * prints OS / Firmware as `[os, osVersion]`, and a FortiGate fingerprints an
+ * APC card's OS as "APC AOS" — AF1 there would read "APC AOS 1.2.0.4", a
+ * version AOS never had. The application version stays verbatim in the raw
+ * sysDescr on the source row.
+ */
+const APC_NMC_ANCHOR = /^\s*APC Web\/SNMP Management Card\s*\(([^)]*)\)/i;
+
+/** PowerNet-MIB `masterSwitch` — the rack-PDU product family, card built in. */
+const APC_PDU_ARC = /^\.?1\.3\.6\.1\.4\.1\.318\.1\.3\.4(\.|$)/;
+
+/** `KEY:value` tokens; a key whose value is blank takes the next non-key token. */
+function apcTokens(body: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const words = body.split(/\s+/).filter(Boolean);
+  const KEY = /^([A-Z]{1,3}\d?):(.*)$/;
+  for (let i = 0; i < words.length; i++) {
+    const m = KEY.exec(words[i]);
+    if (!m) continue;
+    let value = m[2];
+    if (!value && i + 1 < words.length && !KEY.test(words[i + 1])) value = words[++i];
+    if (value && !out.has(m[1])) out.set(m[1], value);
+  }
+  return out;
+}
+
+/** "v1.2.0.4" → "1.2.0.4" when version-shaped, else undefined. */
+function apcVersion(raw: string | undefined): string | undefined {
+  const v = field(raw?.replace(/^v/i, ""));
+  return v && VERSION_RE.test(v) ? v : undefined;
+}
+
+function parseApcNmc(raw: string, sysObjectId: string | undefined): SysDescrDetail | undefined {
+  const m = APC_NMC_ANCHOR.exec(raw);
+  if (!m) return undefined;
+  const t = apcTokens(m[1]);
+
+  const out: SysDescrDetail = { manufacturer: "APC" };
+  const fw = apcVersion(t.get("PF")) ?? apcVersion(t.get("AF1"));
+  if (fw) out.osVersion = fw;
+
+  if (sysObjectId && APC_PDU_ARC.test(sysObjectId.trim())) {
+    out.productType = "Rack PDU";
+    // A model is a part number: one token, letters and digits. Anything else
+    // is a card that reordered its own format, and yields no model.
+    const model = field(t.get("MN"));
+    if (model && /^[A-Z0-9][A-Z0-9-]{2,}$/i.test(model)) out.model = model;
+    const serial = field(t.get("SN"));
+    if (serial && /^[A-Z0-9]{6,}$/i.test(serial)) out.serialNumber = serial;
+  }
+  return out;
+}
+
+/**
  * The vendors whose sysDescr layout is known.
  *
- * One entry, because AXIS is the format in hand and confirmed against real
- * hardware. That is the whole admission criterion — adding a vendor is adding
- * an entry once its layout is documented, and a vendor whose format is merely
- * *probably* like this one does not belong in the table. The `test` is a cheap
- * pre-filter; the parser still has to find its own anchor.
+ * AXIS and APC, both confirmed against real hardware. That is the whole
+ * admission criterion — adding a vendor is adding an entry once its layout is
+ * documented, and a vendor whose format is merely *probably* like these does
+ * not belong in the table. The `test` is a cheap pre-filter; the parser still
+ * has to find its own anchor. `sysObjectId` is offered to every parser, for a
+ * format whose fields mean different things on different products (APC).
  */
 const VENDOR_DESCR_PARSERS: readonly {
   vendor: string;
   test: RegExp;
-  parse: (fields: string[]) => SysDescrDetail | undefined;
+  parse: (raw: string, sysObjectId: string | undefined) => SysDescrDetail | undefined;
 }[] = [
-  { vendor: "Axis Communications", test: /(^|;)\s*AXIS\s+\S/i, parse: parseAxis },
+  {
+    vendor: "Axis Communications",
+    test: /(^|;)\s*AXIS\s+\S/i,
+    // Every AXIS layout is semicolon-delimited.
+    parse: (raw) => (raw.includes(";") ? parseAxis(raw.split(";")) : undefined),
+  },
+  { vendor: "APC", test: APC_NMC_ANCHOR, parse: parseApcNmc },
 ];
 
 /**
  * Parse a sysDescr through its vendor's own format, when we know it.
  *
+ * `sysObjectId` is optional and only ever NARROWS what a parser claims: APC's
+ * model and serial need it (rule 161), and a caller that cannot supply it gets
+ * the firmware alone.
+ *
  * Pure, never throws, and `undefined` for everything else — which is most
  * devices, and is the point: a caller that gets nothing back is left with
  * exactly the identity it had before this file existed.
  */
-export function parseVendorSysDescr(sysDescr: string | undefined): SysDescrDetail | undefined {
+export function parseVendorSysDescr(
+  sysDescr: string | undefined,
+  sysObjectId?: string | null,
+): SysDescrDetail | undefined {
   if (!sysDescr) return undefined;
   const raw = String(sysDescr);
-  if (!raw.includes(";")) return undefined; // Every known format is delimited.
 
-  const fields = raw.split(";");
   for (const entry of VENDOR_DESCR_PARSERS) {
     if (!entry.test.test(raw)) continue;
-    const detail = entry.parse(fields);
+    const detail = entry.parse(raw, sysObjectId ?? undefined);
     // A vendor that matched the pre-filter but not its own layout yields
     // nothing — deliberately not `{ manufacturer }` alone, which would claim
     // the vendor off a string we just failed to read.
@@ -190,7 +284,7 @@ export function sameDescrObserved(
     const v = o[k];
     return typeof v === "string" && v.trim() ? v : null;
   };
-  for (const k of ["manufacturer", "model", "osVersion", "productType", "sysDescr"]) {
+  for (const k of ["manufacturer", "model", "osVersion", "productType", "serialNumber", "sysObjectId", "sysDescr"]) {
     if (read(prev, k) !== read(next, k)) return false;
   }
   return true;

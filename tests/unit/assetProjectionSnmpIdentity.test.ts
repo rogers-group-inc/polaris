@@ -81,6 +81,37 @@ describe("projectAssetFromSources — snmp-identity (rule 154)", () => {
     expect(projected.osVersion).toBe("10.12.114");
   });
 
+  it("ranks a factory-default sysName below every name anyone chose (rule 154(a))", () => {
+    // An APC card's "apc" + last-3-MAC-octets name loses even to the DHCP
+    // client identifier and a Generic API feed…
+    const named = projectAssetFromSources([
+      src("fortigate-endpoint", { hostname: "dc-pdu-a3" }),
+      src("snmp-identity", { hostname: "apc8F29C4" }),
+    ]);
+    expect(named.projected.hostname).toBe("dc-pdu-a3");
+    expect(named.provenance.hostname).toBe("fortigate-endpoint");
+
+    // …but is still used when it is the only name there is.
+    const alone = projectAssetFromSources([src("snmp-identity", { hostname: "apc8F29C4" })]);
+    expect(alone.projected.hostname).toBe("apc8F29C4");
+
+    // A name someone set keeps the snmp-identity rung above the DHCP name.
+    const chosen = projectAssetFromSources([
+      src("fortigate-endpoint", { hostname: "dhcp-name" }),
+      src("snmp-identity", { hostname: "dc-pdu-a3" }),
+    ]);
+    expect(chosen.projected.hostname).toBe("dc-pdu-a3");
+  });
+
+  it("takes a rack PDU's serial from the sysDescr parse, above ENTITY-MIB (rule 161)", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      src("snmp-identity", { serialNumber: "ENTITY-SERIAL-1" }),
+      src("snmp-sysdescr", { model: "AP8870", serialNumber: "ZA2406030655" }),
+    ]);
+    expect(projected.serialNumber).toBe("ZA2406030655");
+    expect(provenance.serialNumber).toBe("snmp-sysdescr");
+  });
+
   it("is enrichment, never a claim that the device exists", () => {
     expect(ENRICHMENT_SOURCE_KINDS).toContain("snmp-identity");
   });
