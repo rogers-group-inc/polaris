@@ -78,6 +78,8 @@
       + '<div class="network-sheet-head">'
       + '  <h3 class="sheet-title" id="network-sheet-title">' + escapeHtml(opts.title || "Network") + '</h3>'
       + '  <div class="network-sheet-actions" id="network-sheet-actions"></div>'
+      // Share: the network's surface-neutral link (public/js/share-link.js).
+      + (window.PolarisShare ? '  <button class="icon-btn" id="network-sheet-share" aria-label="Share"><svg viewBox="0 0 24 24"><use href="#i-share"/></svg></button>' : '')
       + '  <button class="icon-btn" id="network-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
       + '</div>'
       + '<div id="subnet-host"><div class="loading-screen" style="padding:32px 0;"><div class="spinner"></div></div></div>';
@@ -89,6 +91,11 @@
     // Pinned header band (handle + title row) — reachable from the bottom of the sheet.
     if (window.PolarisTabs && PolarisTabs.pinSheetHead) PolarisTabs.pinSheetHead(sheet);
     document.getElementById("network-sheet-close").addEventListener("click", closeNetworkSheet);
+    var shareBtn = document.getElementById("network-sheet-share");
+    if (shareBtn) shareBtn.addEventListener("click", function () {
+      var t = document.getElementById("network-sheet-title");
+      window.PolarisShare.share("network", id, { native: true, title: (t && t.textContent) || "Network" });
+    });
     PolarisTabs.attachSwipeToDismiss(sheet, closeNetworkSheet);
     window.addEventListener("hashchange", closeNetworkSheet);
 

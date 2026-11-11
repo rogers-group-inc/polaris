@@ -90,3 +90,58 @@ export function resolveAssetOpenTarget(opts: {
   if (opts.desktop === "1") return desktopAssetPath(id);
   return isPhoneUserAgent(opts.userAgent) ? mobileAssetPath(id) : desktopAssetPath(id);
 }
+
+// ─── Networks and blocks ────────────────────────────────────────────────────
+//
+// The slide-overs' Share button (public/js/share-link.js) hands out the same
+// kind of link for the other two things a slide-over shows, for the same
+// reason: the sharer cannot know whether the recipient opens it on a laptop or
+// a phone. Networks and blocks are UUIDs too (`Subnet.id`, `IpBlock.id`).
+
+/** The surface-neutral path for ONE network (subnet). */
+export function networkOpenPath(subnetId: string): string {
+  return `/networks/${encodeURIComponent(subnetId)}`;
+}
+
+/** The surface-neutral path for ONE IP block. */
+export function blockOpenPath(blockId: string): string {
+  return `/blocks/${encodeURIComponent(blockId)}`;
+}
+
+/** The desktop network slide-over — ipam.js / subnets.js read `subnet=`. */
+export function desktopNetworkPath(subnetId: string): string {
+  return `/ipam.html#tab=networks&subnet=${encodeURIComponent(subnetId)}`;
+}
+
+/** The phone SPA's network sheet — `#subnet/<id>` swaps to the Networks tab and opens it. */
+export function mobileNetworkPath(subnetId: string): string {
+  return `/mobile.html#subnet/${encodeURIComponent(subnetId)}`;
+}
+
+/** The desktop block drill-in panel (app-search.js → processSearchHash). */
+export function desktopBlockPath(blockId: string): string {
+  return `/ipam.html#tab=blocks&view=block:${encodeURIComponent(blockId)}`;
+}
+
+/** Where `/networks/<id>` should send THIS request — same decision as an asset. */
+export function resolveNetworkOpenTarget(opts: {
+  id: string | undefined | null;
+  userAgent: string | undefined | null;
+  desktop?: unknown;
+}): string | null {
+  if (!isAssetOpenId(opts.id)) return null;
+  const id = opts.id as string;
+  if (opts.desktop === "1") return desktopNetworkPath(id);
+  return isPhoneUserAgent(opts.userAgent) ? mobileNetworkPath(id) : desktopNetworkPath(id);
+}
+
+/**
+ * Where `/blocks/<id>` should send THIS request. The phone SPA has no block
+ * view (its `#block/<id>` route is a "Blocks live on desktop" placeholder), so
+ * every reader gets the desktop drill-in — only the root redirects a phone, so
+ * a phone can open it.
+ */
+export function resolveBlockOpenTarget(opts: { id: string | undefined | null }): string | null {
+  if (!isAssetOpenId(opts.id)) return null;
+  return desktopBlockPath(opts.id as string);
+}

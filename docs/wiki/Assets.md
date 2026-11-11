@@ -451,6 +451,20 @@ The header also carries **Screenshot** and **Export PDF** (below), **Open HTTPS*
 Right of the device's name, on every tab, are its two verbs:
 [Discover Now](#discover-now) and [Reboot](#reboot).
 
+### Sharing a device
+
+The **Share** button (three joined dots, first in the header's icon row) copies
+a link to this device. Paste it into a chat or an email for anyone with a
+Polaris account. The link works the same on any device: on a computer it
+opens this slide-over, and on a phone it opens the device in the
+[mobile app](Mobile-and-Dash). A reader who is signed out signs in first and
+then lands on the device. The link gives no extra access. The reader's own
+role still decides what they can see, so someone without **Assets** read
+access cannot open it.
+
+The network and IP-block slide-overs on the [IPAM](IPAM) page have the same
+button.
+
 ### Screenshot and Export PDF
 
 The slide-over header carries two icon buttons, **Screenshot** (the camera) and
