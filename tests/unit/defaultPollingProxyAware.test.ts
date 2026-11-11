@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { defaultPollingForSource } from "../../src/services/monitoringService.js";
+import { defaultPollingForSource } from "../../src/services/monitoring/monitorSettings.js";
 import type { Stream } from "../../src/utils/pollingCompatibility.js";
 
 const SIX: Stream[] = ["responseTime", "cpuMemory", "temperature", "interfaces", "lldp", "storage"];

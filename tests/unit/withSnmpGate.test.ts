@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { withSnmpGate } from "../../src/services/monitoringService.js";
+import { withSnmpGate } from "../../src/services/monitoring/snmpCore.js";
 
 const ORIGINAL_TIMEOUT_ENV = process.env.POLARIS_SNMP_GATE_WAIT_TIMEOUT_MS;
 

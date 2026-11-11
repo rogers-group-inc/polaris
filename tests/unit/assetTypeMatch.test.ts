@@ -44,7 +44,8 @@ import {
   type MatchContext,
   type MatchGroup,
 } from "../../src/utils/assetTypeMatch.js";
-import { scopeConditionMeta, SCOPE_GROUP_OPS, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { scopeConditionMeta, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { SCOPE_GROUP_OPS } from "../../src/services/notificationTypes/scopeConditions.js";
 
 /** The shipped registry, shaped for the resolver. */
 function defaultTypes(): MatchableType[] {

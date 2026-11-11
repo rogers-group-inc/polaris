@@ -11,17 +11,19 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 const {
   applyWorkloadFilters,
   buildWorkloadDependencyEdges,
-  normalizeWorkloadState,
   passesNameFilter,
   resolveWorkloadHostAddress,
   staleContainerIps,
+  workloadSweepBlockedReason,
+} = await import("../../src/services/discovery/workloadSync.js");
+const {
+  normalizeWorkloadState,
   workloadContainerExternalId,
   workloadContainerKey,
   workloadHostExternalId,
   workloadHostUsageKey,
-  workloadSweepBlockedReason,
   workloadVmExternalId,
-} = await import("../../src/services/discovery/workloadSync.js");
+} = await import("../../src/utils/workloadSources.js");
 
 type Result = Parameters<typeof applyWorkloadFilters>[0];
 

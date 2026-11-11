@@ -19,13 +19,9 @@ import {
   normalizeNotificationPreference,
   preferenceAllowsTransport,
 } from "../../src/services/notificationPreferenceService.js";
-import {
-  notifyChannelIds,
-  actionsToTargets,
-  targetsToNotifyActions,
-  notifyActionSchema,
-  type AutomationAction,
-} from "../../src/services/notificationTypes.js";
+import { notifyChannelIds, actionsToTargets, type AutomationAction } from "../../src/services/notificationTypes.js";
+import { targetsToNotifyActions } from "../../src/services/notificationTypes/ruleSchema.js";
+import { notifyActionSchema } from "../../src/services/notificationTypes/actions.js";
 
 describe("normalizeNotificationPreference", () => {
   it("passes the three known values through", () => {

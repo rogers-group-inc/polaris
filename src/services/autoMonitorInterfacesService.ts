@@ -170,7 +170,7 @@ const CLASS_TO_ASSET_TYPE: Record<AutoMonitorClass, string> = {
 // service. Re-exported here because this module has been the import site for
 // every consumer (tag criteria, app-map discovery rules, storage auto-monitor,
 // the integrations route) and for the existing unit suite.
-export { MAX_PATTERN_LENGTH, compileWildcard, compilePattern } from "../utils/wildcard.js";
+export { compileWildcard, compilePattern } from "../utils/wildcard.js";
 
 // ─── Pure resolver ──────────────────────────────────────────────────────────
 

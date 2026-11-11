@@ -8,7 +8,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { compareNum, compareValue, globToRegExp, readingMeets, interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned, applyDeviceFilters, poeFaultCoversUnpinned } from "../../src/services/notificationEngine.js";
+import { compareNum, compareValue } from "../../src/services/notifications/ruleModel.js";
+import { globToRegExp } from "../../src/services/notifications/eventTail.js";
+import { readingMeets, applyDeviceFilters } from "../../src/services/notifications/readings.js";
+import { interfaceIsPinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned, poeFaultCoversUnpinned } from "../../src/services/notifications/scope.js";
 import { scopeMatchesAsset, type ScopeAsset } from "../../src/services/notificationRuleService.js";
 import { stripRegionPrefix } from "../../src/services/notificationService.js";
 import { bareInterfaceIp } from "../../src/utils/cidr.js";

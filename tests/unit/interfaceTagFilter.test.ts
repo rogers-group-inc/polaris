@@ -11,16 +11,8 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
-import {
-  interfaceTagMatch,
-  INTERFACE_TAG_TARGETS,
-  triggerDimensionApplicable,
-  ruleInputSchema,
-  buildSchemaCatalog,
-  triggerSignature,
-  dimensionSpaceOf,
-  type Trigger,
-} from "../../src/services/notificationTypes.js";
+import { interfaceTagMatch, triggerDimensionApplicable, ruleInputSchema, buildSchemaCatalog, triggerSignature, dimensionSpaceOf, type Trigger } from "../../src/services/notificationTypes.js";
+import { INTERFACE_TAG_TARGETS } from "../../src/services/notificationTypes/dimensions.js";
 
 describe("interfaceTagMatch", () => {
   it("matches a whole tag name, case-insensitively", () => {

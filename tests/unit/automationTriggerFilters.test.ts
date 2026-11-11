@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import vm from "node:vm";
-import { ipDimensionMatch, macDimensionMatch } from "../../src/services/notificationTypes.js";
+import { ipDimensionMatch, macDimensionMatch } from "../../src/services/notificationTypes/specificity.js";
 import { wizardSource } from "./_automationsWizardSource.js";
 
 type Leaf = Record<string, any>;

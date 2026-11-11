@@ -14,13 +14,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  parseFortiosMemberList,
-  buildFortiswitchTrunkMembers,
-  findFortiswitchUplinkPorts,
-  overlayFortiswitchTrunkMembers,
-  type InterfaceSample,
-} from "../../src/services/monitoringService.js";
+import { parseFortiosMemberList, buildFortiswitchTrunkMembers, findFortiswitchUplinkPorts, type InterfaceSample } from "../../src/services/monitoringService.js";
+import { overlayFortiswitchTrunkMembers } from "../../src/services/monitoring/fortiswitchTrunks.js";
 import { parseFortiswitchMclagPeers, parseFortiswitchPortDescriptions } from "../../src/utils/fortiswitchCmdb.js";
 
 // Minimal managed-switch CMDB port entries mirroring the shapes confirmed on a

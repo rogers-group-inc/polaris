@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { deliveryTargetSchema, emailCompositionSchema, escalationSchema } from "../../src/services/notificationTypes.js";
+import { emailCompositionSchema, escalationSchema } from "../../src/services/notificationTypes.js";
+import { deliveryTargetSchema } from "../../src/services/notificationTypes/actions.js";
 import { formatBody, type WebhookPayload } from "../../src/services/notificationChannels/webhookChannel.js";
 import { buildGraphMessage } from "../../src/services/notificationChannels/emailChannel.js";
 import { scopeRegionTagsOf, dedupeEmailRecipients } from "../../src/services/notificationRecipientService.js";

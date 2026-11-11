@@ -93,7 +93,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
   listRecipientUsers: vi.fn(async () => []),
 }));
 
-import { evaluateAllNotificationRules, recoveredMeets } from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { recoveredMeets } from "../../src/services/notifications/readings.js";
 import type { ResetConfig, Trigger } from "../../src/services/notificationTypes.js";
 
 const T0 = new Date("2026-07-21T12:00:00Z");

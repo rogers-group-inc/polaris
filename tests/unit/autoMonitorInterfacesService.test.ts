@@ -7,19 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  compileWildcard,
-  compilePattern,
-  MAX_PATTERN_LENGTH,
-  resolvePinnedInterfaces,
-  splitPinsByProvenance,
-  coerceLegacySelection,
-  mergeTunnelsIntoInterfaces,
-  type ResolverInterface,
-  type LldpByIfName,
-  type AutoMonitorSelection,
-  type TunnelObservation,
-} from "../../src/services/autoMonitorInterfacesService.js";
+import { compileWildcard, compilePattern, resolvePinnedInterfaces, splitPinsByProvenance, coerceLegacySelection, mergeTunnelsIntoInterfaces, type ResolverInterface, type LldpByIfName, type AutoMonitorSelection, type TunnelObservation } from "../../src/services/autoMonitorInterfacesService.js";
+import { MAX_PATTERN_LENGTH } from "../../src/utils/wildcard.js";
 
 function iface(name: string, type: string | null = "physical", up = true): ResolverInterface {
   return { ifName: name, ifType: type, operStatus: up ? "up" : "down" };

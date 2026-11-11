@@ -8,18 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  parseFortiCmdbInterfaceTable,
-  buildFortiInterfaceSamples,
-  backfillFortiAggregateMembers,
-  backfillFortiCmdbOnlyTunnels,
-  fortiMonitorDuplex,
-  applyFortiSoftwareSwitchMembers,
-  backfillFortiCmdbOnlyBundles,
-  fortiIfSubtype,
-  normalizeFortiIfType,
-  buildMonitorAssocIpEntries,
-} from "../../src/services/monitoringService.js";
+import { parseFortiCmdbInterfaceTable, buildFortiInterfaceSamples, backfillFortiAggregateMembers, backfillFortiCmdbOnlyTunnels, fortiMonitorDuplex, applyFortiSoftwareSwitchMembers, backfillFortiCmdbOnlyBundles, fortiIfSubtype, normalizeFortiIfType } from "../../src/services/monitoring/fortiosCollectors.js";
+import { buildMonitorAssocIpEntries } from "../../src/services/monitoring/lldpMatchIndex.js";
 
 describe("parseFortiCmdbInterfaceTable", () => {
   it("reads members through the hyphenated key with q_origin_key / underscore / string fallbacks", () => {

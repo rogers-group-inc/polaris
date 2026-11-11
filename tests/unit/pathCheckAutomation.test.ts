@@ -7,22 +7,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  evaluateScopeCondition,
-  relationLeafKey,
-  pathCheckFilterMatches,
-  isBooleanMetric,
-  METRIC_DIMENSIONS,
-  METRIC_META,
-  CHANGE_TYPE_ACTIONS,
-  CHANGE_TYPE_META,
-  WINDOWED_RATIO_METRICS,
-  SCOPE_FIELD_OPS,
-  scopeConditionMeta,
-  scopeMatchesAsset,
-  type ScopeConditionGroup,
-} from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, evaluateScopeCondition, relationLeafKey, pathCheckFilterMatches, METRIC_META, CHANGE_TYPE_ACTIONS, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, SCOPE_FIELD_OPS, scopeConditionMeta, scopeMatchesAsset, type ScopeConditionGroup } from "../../src/services/notificationTypes.js";
+import { isBooleanMetric } from "../../src/services/notificationTypes/triggers.js";
+import { METRIC_DIMENSIONS } from "../../src/services/notificationTypes/dimensions.js";
 import { isPathCheckScopedAlert, chartTokenForMetric } from "../../src/services/alertChartService.js";
 import { sampleDimensionFor, SAMPLE_PATH_CHECK } from "../../src/utils/sampleAlertDevice.js";
 
