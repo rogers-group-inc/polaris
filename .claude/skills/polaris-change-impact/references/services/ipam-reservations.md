@@ -291,6 +291,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Names are unique per OWNER** (`assertNameFree`), checked against the ROW's owner on update so an admin editing someone else's Discovery can't collide it with their own.
 
 **When changing this:**
+- Rule 157(d): `scanVisibleTo(row, viewerId, housekeeping)` — a PRIVATE Discovery with NO owner (its user was deleted; `owner` is `onDelete: SetNull`) is visible to `networkScan:fullwrite` (`ScanViewer.housekeeping`, set in `routes/networkScans.ts → viewer`). One that still has an owner stays that owner's at every level. Every visibility read takes the flag (`listScans`, `getScan`, `getScanForWrite`, `getRun`, and the `ScanViewer` paths); a new read that omits it re-strands orphans.
 - Keep `validateScanInput` the single authority for semantics — the route's Zod is shape only, and the import path has no route at all.
 - If adoption grows a field, check it against the manual `POST /assets` create rather than inventing a second convention, and do NOT add an AssetSource kind without also adding projection rules (see the invariant above).
 - Never widen the adopt route to a single gate. "May scan" and "may create assets" being separable is the reason the `networkScan` key exists.
@@ -483,6 +484,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`decommissioned-agent-checkin` (business rule 123) dispatches before the generic asset paths.** Accept → `acceptDecommissionedAgentConflict` (reactivate to `active`, reinstate the archived pins); reject → `logDecommissionedAgentDismissal` only — the rejected row itself is the silencing marker for that decommission. Neither touches `AssetSource` or the Entra/AD accept logic. The route adds the `assets:write` gate (`assertCanReactivate`) before calling in, on accept AND merge; a new verb reaching this flavour needs the same gate.
 - **The badge counts decisions, not rows (rule 41(a)).** `countPendingConflicts` counts pending `chassis-replaced` rows once per (old, new) serial pair via `chassisSwapKey` — the same fold `public/js/events.js` → `groupChassisSwaps` applies to the cards. The extra read is bounded by pending subnet rows, not fleet size. A change to either fold must change the other, or the badge and the panel disagree.
 - **The swap-level verbs do NOT go through the dispatcher.** `adoptChassisSwap` / `rejectChassisSwap` stamp their rows' status themselves in one `updateMany` (the dispatcher's per-row stamp would be N round trips and N transactions), so a new per-row side effect added to `acceptConflict`'s subnet branch must be mirrored there.
+
+**When changing this:**
+- Rule 157: the ghost absorb on accept calls `assetRemovalService.afterAssetMerged(ghost, target)` after its transaction commits.
 
 ## services/subnetChassisConflictService.ts
 
