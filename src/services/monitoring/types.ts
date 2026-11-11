@@ -7,6 +7,7 @@
 import { type FortiswitchMclagPeer } from "../../utils/fortiswitchCmdb.js";
 import { type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
 import { type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
+import { type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
 import type { ApRadioSample } from "../../utils/fortiapMonitorRow.js";
 import { type FdbEntry } from "../../utils/macForwarding.js";
 import { type ArpNeighborEntry } from "../../utils/arpNeighbors.js";
@@ -391,6 +392,13 @@ export interface SystemInfoSample {
    * nothing; persisted as the `snmp-identity` enrichment source.
    */
   selfIdentity?: SnmpSelfIdentity;
+  /**
+   * A fibre-channel switch's ports and the devices logged into them (business
+   * rule 159, utils/fibreChannel.ts). Undefined = not an FC switch, or a
+   * transport that cannot say: stored rows stay. An object = the device was
+   * walked, and its rows replace the stored ones.
+   */
+  fibreChannel?: { ports: FcPortRow[]; logins: FcLoginRow[] };
 }
 
 export interface CollectionResult<T> {
