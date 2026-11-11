@@ -1422,6 +1422,7 @@ export async function collectSystemInfoSnmp(
     // sysName rides the same multi-GET (business rule 154): the device's own
     // name, for an asset no inventory source names.
     let sysNameText: string | null = null;
+    let sysObjectIdText: string | null = null;
     try {
       // Registry load stays behind the model profile that needs it — sysDescr
       // is a fixed OID and every device without a profile is the common case.
@@ -1433,12 +1434,15 @@ export async function collectSystemInfoSnmp(
       // The registry holds the symbol's DEFINITION oid: its `.0` instance
       // rides this batch, and pickScalar asks for the bare oid alone only if
       // that came back empty (utils/snmpIdentity.ts says why).
-      const oids = [SYS_OIDS.sysDescr, SYS_OIDS.sysName, ...(modelOid ? [scalarInstanceOid(modelOid)] : [])];
+      // sysObjectID too (business rule 161): a vendor format whose fields
+      // describe the card or the device depending on the product needs it.
+      const oids = [SYS_OIDS.sysDescr, SYS_OIDS.sysName, SYS_OIDS.sysObjectID, ...(modelOid ? [scalarInstanceOid(modelOid)] : [])];
       const vbs = await snmpMultiGet(session, oids).catch(() => new Map<string, unknown>());
 
       sysDescrText = snmpVbToString(vbs.get(SYS_OIDS.sysDescr)) || null;
       sysNameText = snmpVbToString(vbs.get(SYS_OIDS.sysName)) || null;
-      descrIdentity = parseVendorSysDescr(sysDescrText ?? undefined);
+      sysObjectIdText = snmpVbToString(vbs.get(SYS_OIDS.sysObjectID)).trim() || null;
+      descrIdentity = parseVendorSysDescr(sysDescrText ?? undefined, sysObjectIdText);
 
       if (modelOid && vendorProfile?.model) {
         const raw = await pickScalar(
@@ -1698,6 +1702,7 @@ export async function collectSystemInfoSnmp(
       detectedModel,
       descrIdentity,
       sysDescr: sysDescrText,
+      sysObjectId: sysObjectIdText,
       selfIdentity: hasSelfIdentity(selfIdentity) ? selfIdentity : undefined,
       fibreChannel,
     };

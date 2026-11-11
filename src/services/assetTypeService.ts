@@ -417,20 +417,23 @@ function eligibleAssets() {
     // Entra/Intune record mid-sync — so a rule using it previews as no-match.
     select: {
       id: true, hostname: true, os: true, osVersion: true,
-      manufacturer: true, model: true,
+      manufacturer: true, model: true, productType: true,
     },
   });
 }
 
 /** The facts a stored asset offers the resolver. One place, so preview and
- *  apply cannot disagree about what a rule was tested against. */
+ *  apply cannot disagree about what a rule was tested against. `productType`
+ *  is the device's own word for what it is ("Bullet Camera", "Rack PDU" —
+ *  utils/snmpDescrIdentity.ts); left out, a rule on it previewed and applied
+ *  as no-match although the monitor path's typing matched it. */
 function factsOf(a: {
   hostname: string | null; os: string | null; osVersion: string | null;
-  manufacturer: string | null; model: string | null;
+  manufacturer: string | null; model: string | null; productType?: string | null;
 }) {
   return {
     os: a.os, osVersion: a.osVersion, hostname: a.hostname,
-    manufacturer: a.manufacturer, model: a.model,
+    manufacturer: a.manufacturer, model: a.model, productType: a.productType ?? null,
   };
 }
 

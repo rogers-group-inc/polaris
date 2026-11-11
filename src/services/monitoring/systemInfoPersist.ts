@@ -64,6 +64,8 @@ type SystemInfoPins = {
   /** For the device-type inference gate — only `other` may be re-typed. */
   assetType: string;
   productType: string | null;
+  /** The sysDescr serial (business rule 161) is compared against this. */
+  serialNumber: string | null;
 } | null;
 
 /**
@@ -371,7 +373,7 @@ async function adoptSysDescrIdentity(
   pinned: SystemInfoPins,
 ): Promise<void> {
   if (!pinned || !d.descrIdentity) return;
-  await applyDescrIdentity(assetId, d.descrIdentity, d.sysDescr ?? null, pinned);
+  await applyDescrIdentity(assetId, d.descrIdentity, d.sysDescr ?? null, pinned, d.sysObjectId ?? null);
 }
 
 /**
@@ -390,6 +392,7 @@ export async function applyDescrIdentity(
   detail: SysDescrDetail,
   sysDescr: string | null,
   pinned: NonNullable<SystemInfoPins>,
+  sysObjectId: string | null = null,
 ): Promise<void> {
 
   // What the device said about itself, in the shape the projection reads.
@@ -398,6 +401,11 @@ export async function applyDescrIdentity(
     model: detail.model ?? null,
     osVersion: detail.osVersion ?? null,
     productType: detail.productType ?? null,
+    // Only ever set where the device is its own card (business rule 161).
+    serialNumber: detail.serialNumber ?? null,
+    // The product registration that decided whether model / serial were
+    // claimed — kept so the Sources tab can show why a UPS has none.
+    sysObjectId,
     // The whole reading, verbatim, as the record of what the device said —
     // read by the Sources tab and by nothing that decides anything. It is
     // deliberately NOT offered to the `os` projection: that column is
@@ -457,12 +465,12 @@ export async function applyDescrIdentity(
     })),
   );
 
-  // ONLY the four identity fields this source can speak to. Applying the
+  // ONLY the identity fields this source can speak to. Applying the
   // whole projection here would make the monitor path a general projection
   // writer — rewriting hostname, IP and learnedLocation from other sources on
   // a cadence that has nothing to do with them.
   const diff: Record<string, string | null> = {};
-  for (const f of ["manufacturer", "model", "os", "osVersion", "productType"] as const) {
+  for (const f of ["manufacturer", "model", "os", "osVersion", "productType", "serialNumber"] as const) {
     const next = projected[f];
     if (next !== null && next !== pinned[f]) diff[f] = next;
   }
@@ -572,6 +580,9 @@ export async function applyDescrIdentity(
   if (diff.manufacturer && (pinned.manufacturer ?? "").trim()) {
     moved.push(`manufacturer "${pinned.manufacturer}" → "${diff.manufacturer}"`);
   }
+  if (diff.serialNumber && (pinned.serialNumber ?? "").trim()) {
+    moved.push(`serial "${pinned.serialNumber}" → "${diff.serialNumber}"`);
+  }
   if (moved.length) {
     logEvent({
       action: "asset.model_detected",
@@ -604,7 +615,7 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   // history fold and the model adoption.
   const pinned: SystemInfoPins = await prisma.asset.findUnique({
     where: { id: assetId },
-    select: { monitoredInterfaces: true, monitoredStorage: true, monitoredIpsecTunnels: true, ipAddress: true, ipv6Address: true, model: true, hostname: true, manufacturer: true, osVersion: true, os: true, macAddress: true, assetType: true, productType: true },
+    select: { monitoredInterfaces: true, monitoredStorage: true, monitoredIpsecTunnels: true, ipAddress: true, ipv6Address: true, model: true, hostname: true, manufacturer: true, osVersion: true, os: true, macAddress: true, assetType: true, productType: true, serialNumber: true },
   });
 
   // Reconcile the collected names against the identity of record BEFORE

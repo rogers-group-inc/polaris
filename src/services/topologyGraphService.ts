@@ -33,6 +33,7 @@ import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "
 import { getLayoutsForSite } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type LocationStatus } from "./regionTreeService.js";
 import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
+import { getFcLoginsForSwitches } from "./fibreChannelService.js";
 
 // ─── Which of a site's switches an endpoint sits on (business rule 91) ──────
 //
@@ -1892,6 +1893,39 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       }
       edges = edges.filter((e) => !(fallbackFgSwitchEdges.has(e) && reachable.has(e.target)));
     }
+
+    // Fibre-channel links (business rule 162): the logins on every endpoint of
+    // this site that is an FC switch, each to the host it was matched to (with
+    // the host's node summary, since a server need not hang off one of this
+    // site's Ethernet switches) or, unmatched, to the name it registered. The
+    // renderer draws one only while the FC switch is a shown node.
+    const fcRows = await getFcLoginsForSwitches(siteEndpoints.map((e) => e.id));
+    const fcLinks = fcRows.map((r) => {
+      const h = r.matchedAsset;
+      return {
+        switchId: r.assetId,
+        port: r.ifName,
+        vsan: r.vsan,
+        portWwn: r.portWwn,
+        label: r.hostName || r.hbaModel || r.portWwn,
+        matchMethod: r.matchMethod,
+        host: h
+          ? {
+              id: h.id,
+              hostname: h.hostname,
+              ipAddress: h.ipAddress,
+              assetType: String(h.assetType),
+              status: String(h.status),
+              monitored: !!h.monitored,
+              monitorHealth: h.monitored ? monitorStatusToHealth(h.monitorStatus ?? null) : null,
+              dependencySuppressed: !!h.dependencySuppressed,
+              location: nodeLocation(resolveEffectiveLocation({ description: h.description })),
+              iconUrl: resolveIconUrl({ manufacturer: h.manufacturer, model: h.model, assetType: String(h.assetType) }, iconCache),
+            }
+          : null,
+      };
+    });
+
     return {
       fortigate: {
         id: fg.id,
@@ -1923,6 +1957,8 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       // MAX_SITE_ENDPOINTS — what the Device-types toggles draw.
       endpoints: siteEndpoints,
       endpointsTruncated,
+      // Fibre-channel logins on this site's FC switches (rule 162).
+      fcLinks,
       subnets,
       edges,
       // CMDB-inferred edges from FortiOS interface naming conventions —

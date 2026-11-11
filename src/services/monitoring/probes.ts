@@ -315,10 +315,10 @@ export async function probeAsset(
       // stamped by recordProbeResult off `result.sysDescr` regardless, so a
       // device whose blob we cannot parse is not re-read every tick.
       if (snmpRes.sysDescr) {
-        const detail = parseVendorSysDescr(snmpRes.sysDescr);
+        const detail = parseVendorSysDescr(snmpRes.sysDescr, snmpRes.sysObjectId);
         if (detail) {
           try {
-            await applyDescrIdentity(asset.id, detail, snmpRes.sysDescr, asset);
+            await applyDescrIdentity(asset.id, detail, snmpRes.sysDescr, asset, snmpRes.sysObjectId ?? null);
           } catch (err: any) {
             logger.debug(
               { assetId: asset.id, err: err?.message },
@@ -574,9 +574,14 @@ async function probeSnmp(
       session = buildSnmpSession(host, config, timeoutMs);
 
       session.on("error", (err: Error) => finishOnce(finish(start, false, err?.message || "SNMP error")));
-      // sysDescr rides along only when the identity read is due. Two OIDs in
+      // sysDescr rides along only when the identity read is due, with
+      // sysObjectID beside it (business rule 161 reads the product branch).
       // ONE GET: no extra round trip, no second session, nothing new queued.
-      const oids = wantDescr ? [sysUpTimeOid, SYS_OIDS.sysDescr] : [sysUpTimeOid];
+      // Both are mandatory system-group objects, so an SNMPv1 agent that
+      // answers sysDescr answers sysObjectID too.
+      const oids = wantDescr
+        ? [sysUpTimeOid, SYS_OIDS.sysDescr, SYS_OIDS.sysObjectID]
+        : [sysUpTimeOid];
       session.get(oids, (err: Error | null, varbinds: any[]) => {
         clearTimeout(timer);
         if (err) return finishOnce(finish(start, false, err.message || "SNMP get failed"));
@@ -605,6 +610,11 @@ async function probeSnmp(
           if (dVb && !snmp.isVarbindError(dVb)) {
             const text = snmpVbToString(dVb.value);
             if (text) ok.sysDescr = text;
+          }
+          const oVb = byOid.get(SYS_OIDS.sysObjectID);
+          if (oVb && !snmp.isVarbindError(oVb)) {
+            const oid = snmpVbToString(oVb.value).trim();
+            if (oid) ok.sysObjectId = oid;
           }
         }
         finishOnce(ok);

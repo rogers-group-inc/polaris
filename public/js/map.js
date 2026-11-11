@@ -3865,6 +3865,7 @@
       if (node.data("isEdgeHandle")) return null; // connection-path handle
       var role = node.data("role");
       if (role === "lldp") return null; // ghost neighbor — no Polaris asset
+      if (role === "fcport") return null; // FC login with no matched asset (rule 162)
       if (role === "wireless-station" || role === "remote-asset") {
         return node.data("assetId") || null;
       }
