@@ -1777,7 +1777,18 @@ A port that is down on the host is amber.
 
 Two servers claiming one WWN, or two assets matching a name, link nothing
 ([rule 156](Business-Rules#rule-156)). A device that logs out of a port is
-recorded in Events.
+recorded in Events, on the switch, as `asset.fc_logins_changed`: a warning when
+a device logged out, info when one only logged in. The message names the port,
+the device and its WWN.
+
+**To be alerted when a device drops off the fabric**, create an automation with
+an **Event** trigger:
+
+- action pattern `asset.fc_logins_changed`;
+- minimum level **warning**;
+- a device filter on the switch, if you only want some of them.
+
+See [Automation Triggers](Automation-Triggers#event).
 
 ### ARP Table (firewalls)
 
