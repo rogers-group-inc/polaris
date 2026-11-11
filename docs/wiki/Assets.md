@@ -478,7 +478,9 @@ Interfaces section can be told to include the interfaces it is hiding. On
 **Capture**, Polaris renders the tab at a fixed width — so the image looks the
 same whether your window is wide or narrow, or the panel has been dragged to a
 new size — and copies it to the clipboard as a PNG. Charts, badges, colours and
-your theme all come across as they appear on screen.
+your theme all come across as they appear on screen. On the **Custom MIB** tab,
+each widget card is captured with all of its content, not just the part that
+fits the card's height on screen. The same goes for Export PDF.
 
 **Export PDF** offers the same picker and the same capture, but saves it as a
 PDF file (letter size, portrait) named after the device and the tab. A long tab

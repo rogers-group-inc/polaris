@@ -97,7 +97,10 @@ function _cmibCardHTML(w, opts) {
   var height = opts.height
     ? ';height:' + (opts.height * CMIB_ROW_PX + (opts.height - 1) * CMIB_GAP_PX) + 'px;overflow:auto;box-sizing:border-box'
     : '';
-  return '<div class="custom-mib-card" data-widget-id="' + escapeHtml(w.id) + '" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '" style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))' + height + '">' +
+  // `data-shot-expand`: the screenshot / PDF capture lets this card grow to its
+  // full content for the length of the capture (_expandShotRegions), so a
+  // table taller than the card's layout height is captured whole, not clipped.
+  return '<div class="custom-mib-card" data-widget-id="' + escapeHtml(w.id) + '" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '"' + (height ? ' data-shot-expand' : '') + ' style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))' + height + '">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
       '<span style="display:flex;align-items:center;gap:4px;min-width:0">' +
         (opts.editing ? '<span class="cmib-grip" draggable="true" data-widget-id="' + escapeHtml(w.id) + '" title="Drag to move (to any column)">⠿</span>' : '') +
