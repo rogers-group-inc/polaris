@@ -3352,6 +3352,18 @@ an asset in a different domain. When a device logs out of a port, Polaris record
 
 ### Rule 160
 
+**Deleting an integration keeps what it discovered, and detaches it.** The assets and
+networks stay. What that integration reported about them is removed, so they stop being
+updated from it and stand as ordinary manual records; for an Azure Arc integration the
+`azure:` tags come off too, and a hypervisor's VM-to-host links are removed. The delete
+dialog shows the numbers first and offers to **decommission** the assets that no other
+source still reports — unticked by default, and it needs Full Read-Write on Assets. DHCP
+reservations the integration pushed to a device **stay on the device**; Polaris can no
+longer change them, and each one is listed in a warning Event so you know what is there.
+See [Integrations](Integrations#deleting-an-integration).
+
+### Rule 162
+
 **Fibre-channel links are drawn on the Device Map's Layer 2 view from a fibre-channel switch you
 are showing.** Turn on the switch's device type (an MDS is usually *Other*) and its fibre-channel
 logins are drawn as pink lines labelled with the FC port. Each line ends at the server it matched

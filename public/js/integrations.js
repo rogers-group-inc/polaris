@@ -1987,16 +1987,90 @@ async function abortIntegrationDiscovery(id, name) {
   try { await api.integrations.abortDiscover(id); } catch (_) {}
 }
 
-async function confirmDeleteIntegration(id, name) {
-  var ok = await showConfirm('Delete integration "' + name + '"? This cannot be undone.');
-  if (!ok) return;
-  try {
-    await api.integrations.delete(id);
-    showToast("Integration deleted");
-    loadIntegrations();
-  } catch (err) {
-    showToast(err.message, "error");
+// ─── Delete (business rule 160) ──────────────────────────────────────────────
+// Deleting an integration keeps what it discovered — the inventory is not the
+// integration's to take with it — but detaches it: that integration's source
+// data, tags and placement links go, so the records stand as plain manual ones.
+// The dialog says how much that is before it happens, offers to decommission
+// the assets nothing else reports, and says plainly that DHCP entries pushed
+// to a device stay there.
+
+function _plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+
+/**
+ * The body of the Delete Integration dialog from a delete-preview. An
+ * integration that discovered nothing gets the one-line question it always had.
+ */
+function _integrationDeleteBodyHTML(name, p) {
+  var html = '<p style="margin:0">Delete integration <strong>' + escapeHtml(name) + "</strong>? This cannot be undone.</p>";
+  var lines = [];
+  if (p.sourcedAssets > 0) {
+    lines.push("<li>" + _plural(p.sourcedAssets, "asset it discovered is", "assets it discovered are") +
+      " <strong>kept</strong>. What this integration reported about " + (p.sourcedAssets === 1 ? "it" : "them") +
+      " is removed, so " + (p.sourcedAssets === 1 ? "it stops" : "they stop") + " being updated from it.</li>");
   }
+  if (p.networks > 0) lines.push("<li>" + _plural(p.networks, "network it discovered is", "networks it discovered are") + " kept as " + (p.networks === 1 ? "a manual network" : "manual networks") + ".</li>");
+  if (p.azureTaggedAssets > 0) lines.push("<li>The <code>azure:</code> tags on " + _plural(p.azureTaggedAssets, "asset", "assets") + " are removed.</li>");
+  if (p.pushedReservations > 0) {
+    lines.push("<li><strong>" + _plural(p.pushedReservations, "DHCP reservation", "DHCP reservations") + " it pushed " +
+      (p.pushedReservations === 1 ? "stays" : "stay") + " on the device.</strong> Polaris will not be able to change or remove " +
+      (p.pushedReservations === 1 ? "it" : "them") + " afterwards; each one is listed in Events.</li>");
+  }
+  if (lines.length) {
+    html += '<ul style="margin:0.75rem 0 0;padding-left:1.1rem;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.5">' + lines.join("") + "</ul>";
+  }
+  if (p.soleSourceAssets > 0) {
+    var monitored = p.soleSourceMonitored > 0
+      ? " " + _plural(p.soleSourceMonitored, "of them is monitored now and will stop being polled.", "of them are monitored now and will stop being polled.")
+      : "";
+    html += '<div style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+      '<label for="idel-decom" style="display:flex;gap:0.5rem;align-items:flex-start;font-size:0.9rem;' + (p.canDecommission ? "cursor:pointer" : "opacity:0.65") + '"' +
+        (p.canDecommission ? "" : ' title="Decommissioning needs Full Read-Write on Assets"') + ">" +
+        '<input type="checkbox" id="idel-decom" style="width:auto;margin-top:0.15rem"' + (p.canDecommission ? "" : " disabled") + ">" +
+        "<span>Also <strong>decommission</strong> the " + _plural(p.soleSourceAssets, "asset", "assets") + " that no other source reports</span>" +
+      "</label>" +
+      '<p class="hint" style="margin:0.35rem 0 0 1.6rem">Left unticked, ' + (p.soleSourceAssets === 1 ? "it stays" : "they stay") +
+        " active with nothing updating " + (p.soleSourceAssets === 1 ? "it" : "them") + "." + monitored +
+        (p.canDecommission ? "" : " You need Full Read-Write on Assets to decommission them here.") + "</p>" +
+    "</div>";
+  }
+  return html;
+}
+
+async function confirmDeleteIntegration(id, name) {
+  var preview = null;
+  try { preview = await api.integrations.deletePreview(id); } catch (_err) { /* the numbers are a courtesy */ }
+  var nothingToSay = !preview || (!preview.sourcedAssets && !preview.networks && !preview.pushedReservations && !preview.azureTaggedAssets);
+  if (nothingToSay) {
+    var yes = await showConfirm('Delete integration "' + name + '"? This cannot be undone.');
+    if (!yes) return;
+    try {
+      await api.integrations.delete(id);
+      showToast("Integration deleted");
+      loadIntegrations();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+    return;
+  }
+  openModal("Delete integration", _integrationDeleteBodyHTML(name, preview),
+    '<button class="btn btn-secondary" id="idel-cancel">Cancel</button><button class="btn btn-danger" id="idel-ok">Delete integration</button>');
+  document.getElementById("idel-cancel").addEventListener("click", closeModal);
+  var ok = document.getElementById("idel-ok");
+  ok.addEventListener("click", async function () {
+    var box = document.getElementById("idel-decom");
+    var decommission = !!(box && box.checked);
+    ok.disabled = true;
+    try {
+      await api.integrations.delete(id, { decommission: decommission });
+      closeModal();
+      showToast("Integration deleted" + (decommission ? "; " + _plural(preview.soleSourceAssets, "asset", "assets") + " decommissioned" : ""));
+      loadIntegrations();
+    } catch (err) {
+      showToast(err.message || "Could not delete the integration", "error");
+      ok.disabled = false;
+    }
+  });
 }
 
 function showConflictModal(integrationId, conflicts) {

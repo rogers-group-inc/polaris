@@ -151,7 +151,7 @@ export async function persistFibreChannel(
 /**
  * The logins on a set of fibre-channel switches, each with the live asset it
  * was matched to (or none), for the Device Map's Layer 2 links (business rule
- * 160). One indexed query; `switchIds` are the site's endpoints, so a device
+ * 162). One indexed query; `switchIds` are the site's endpoints, so a device
  * that is not an FC switch simply has no rows. A login matched to a
  * decommissioned or disabled asset comes back unmatched, never as a link to a
  * retired device.

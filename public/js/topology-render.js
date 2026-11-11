@@ -415,7 +415,7 @@
         });
       }
     });
-    // Fibre-channel links (business rule 160): drawn only while their FC
+    // Fibre-channel links (business rule 162): drawn only while their FC
     // switch is a shown node. A matched host becomes a node of its own when its
     // type is shown, even when it hangs off none of this site's Ethernet
     // switches; an unmatched login (a storage array port) is a small ghost
@@ -541,7 +541,7 @@
       if (!d || !d.source) return;
       if (d.isMesh) { d.meshSignal = meshSignalClass(d.signalDbm); return; }
       if (d.isWireless) return;
-      // A fibre-channel link (rule 160) is not Ethernet: it takes its own
+      // A fibre-channel link (rule 162) is not Ethernet: it takes its own
       // colour, never a speed class.
       if (d.isFcLink) return;
       var bps = linkSpeedBps(d);
@@ -894,7 +894,7 @@
         selector: 'edge[isMclag = 1]',
         style: { "line-style": "dashed", "target-arrow-shape": "none" },
       },
-      // FIBRE CHANNEL (rule 160): a SAN login, not Ethernet — its own pink,
+      // FIBRE CHANNEL (rule 162): a SAN login, not Ethernet — its own pink,
       // never a speed colour, solid, no arrow.
       {
         selector: 'edge[isFcLink = 1]',

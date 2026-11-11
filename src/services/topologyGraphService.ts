@@ -1894,7 +1894,7 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       edges = edges.filter((e) => !(fallbackFgSwitchEdges.has(e) && reachable.has(e.target)));
     }
 
-    // Fibre-channel links (business rule 160): the logins on every endpoint of
+    // Fibre-channel links (business rule 162): the logins on every endpoint of
     // this site that is an FC switch, each to the host it was matched to (with
     // the host's node summary, since a server need not hang off one of this
     // site's Ethernet switches) or, unmatched, to the name it registered. The
@@ -1957,7 +1957,7 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       // MAX_SITE_ENDPOINTS — what the Device-types toggles draw.
       endpoints: siteEndpoints,
       endpointsTruncated,
-      // Fibre-channel logins on this site's FC switches (rule 160).
+      // Fibre-channel logins on this site's FC switches (rule 162).
       fcLinks,
       subnets,
       edges,

@@ -163,7 +163,7 @@ describe("host-reported HBA ports (WWN matching)", () => {
   });
 });
 
-describe("getFcLoginsForSwitches (the Device Map's FC links, rule 160)", () => {
+describe("getFcLoginsForSwitches (the Device Map's FC links, rule 162)", () => {
   it("returns each login with its live host, and unmatches a retired one", async () => {
     await persistFibreChannel("sw", INV);
     let rows = await getFcLoginsForSwitches(["sw"]);

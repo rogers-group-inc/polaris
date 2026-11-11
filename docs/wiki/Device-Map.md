@@ -564,7 +564,7 @@ shown. A matched server appears even if it isn't under one of this site's Ethern
 login that matched no asset, such as a storage array's port, ends at a small dashed pink box
 named for what it registered (for example *PURE01-ct0*). Hover a line for its port, VSAN, WWN
 and how the server was matched. Hide the switch's type and its fibre-channel lines go with it
-([rule 160](Business-Rules#rule-160)).
+([rule 162](Business-Rules#rule-162)).
 
 ### Views
 

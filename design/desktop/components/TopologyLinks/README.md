@@ -8,7 +8,7 @@ Every link starts as one neutral line. It changes only when it has something to 
 
 - **A cable takes the colour and weight of its speed.** The speed is the slower of the two ends' reported interface speeds; anything faster than 10 Gb (an aggregate, 25 / 40 / 100 Gb) reads as 10 Gb. No reading at either end leaves the link neutral.
 - **A wireless mesh backhaul is dashed**: green while the signal is good, then yellow, orange and red as it weakens. No signal reading (a controller polled over SNMP only) leaves it neutral.
-- **A fibre-channel login is pink** (business rule 160), solid and unweighted by speed: it is a SAN link from an FC switch to a host or array port, never Ethernet, so it takes no speed colour. An FC login matched to no asset ends at a small dashed pink round-rectangle named for what it registered (an array port such as `PURE01-ct0`).
+- **A fibre-channel login is pink** (business rule 162), solid and unweighted by speed: it is a SAN link from an FC switch to a host or array port, never Ethernet, so it takes no speed colour. An FC login matched to no asset ends at a small dashed pink round-rectangle named for what it registered (an array port such as `PURE01-ct0`).
 
 Signal hues (green, yellow, orange, red) belong to signal alone, so a slow cable never reads as a failing radio. How a link was found (controller data, interface naming, LLDP, an AP uplink) is not a colour; it is in the tooltip.
 

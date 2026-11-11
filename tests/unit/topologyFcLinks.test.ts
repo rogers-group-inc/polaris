@@ -1,7 +1,7 @@
 /**
  * tests/unit/topologyFcLinks.test.ts
  *
- * Fibre-channel links on the Device Map (business rule 160), drawn by
+ * Fibre-channel links on the Device Map (business rule 162), drawn by
  * buildTopologyElements(data, { shownTypes }) from the payload's `fcLinks`:
  *
  *   - a link is drawn only while its FC switch is a shown node;
@@ -59,7 +59,7 @@ function fcEdges(els: any[]) {
   return els.filter((e) => e.data.isFcLink).map((e) => `${e.data.source}>${e.data.target}@${e.data.label}`).sort();
 }
 
-describe("fibre-channel links (rule 160)", () => {
+describe("fibre-channel links (rule 162)", () => {
   it("draws every login from a shown FC switch: matched hosts, an off-site host, and an array ghost", () => {
     const els = R.buildTopologyElements(payload(), { shownTypes: ALL });
     expect(nodes(els)).toEqual(["esx07", "fc:52:4a:93:00:00:00:30:09", "fg", "lnx01", "mds", "sw1"]);

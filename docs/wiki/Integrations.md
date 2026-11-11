@@ -190,6 +190,30 @@ Everything else Polaris does is a **read**.
 
 ---
 
+## Deleting an integration
+
+**Delete** on an integration's card removes the integration, not the inventory it built
+([rule 160](Business-Rules#rule-160)). The dialog tells you what will happen before you
+confirm:
+
+| | What happens |
+|---|---|
+| Assets it discovered | **Kept.** What this integration reported about them is removed, so they stop being updated from it. An asset another integration also reports carries on as before |
+| Networks it discovered | **Kept**, as manual networks |
+| `azure:` tags (Azure Arc) | Removed from the assets it reported |
+| VM / container placement (vCenter, Unraid, TrueNAS, Proxmox) | The links to their hosts are removed, so they no longer suppress alerts |
+| DHCP reservations it pushed to a device | **Left on the device.** Polaris can no longer change or remove them; releasing the reservation in Polaris afterwards does not touch the device. Every entry is listed in a warning Event, `integration.dhcp_entries_left` |
+
+If the integration is the only thing reporting some assets, the dialog offers **Also
+decommission the N assets that no other source reports**, and says how many of them are
+being monitored. It is not ticked for you: left unticked those assets stay active with
+nothing updating them. Ticking it needs Full Read-Write on **Assets**. An asset you
+created by hand is never decommissioned this way, even if the integration also reported it.
+
+If you are replacing an integration rather than retiring its devices, add the new one and
+run it **before** deleting the old one: the assets then have another source and none of
+them is offered for decommissioning.
+
 ## Diagnosing an integration
 
 Three tools, in order of how much they cost:
