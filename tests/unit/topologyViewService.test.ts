@@ -169,6 +169,13 @@ describe("sanitizeLocationCodeChanges", () => {
     ]))).toBe(400);
     expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: {} }]))).toBe(400);
   });
+
+  it("carries the levels a placement sets (rule 148(a)), and refuses an unknown one", () => {
+    expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" }, levels: ["building", "building"] }])[0].levels).toEqual(["building"]);
+    expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" } }])[0].levels).toBeUndefined();
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" }, levels: ["shelf"] }]))).toBe(400);
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" }, levels: [] }]))).toBe(400);
+  });
 });
 
 describe("wall views (rule 151)", () => {

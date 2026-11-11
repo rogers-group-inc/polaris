@@ -529,7 +529,8 @@
       ctx.stageViewPatch({ racks: state.racks, rackPlacements: state.placements });
       restageCodes();
     }
-    // Rule 150: a device racked in a region-mapped view takes the region's codes.
+    // Rule 150: a device racked in a region-mapped view takes the region's
+    // codes; rule 148(a): only the levels the region names change.
     var CODE_KEYS = ["area", "building", "floor", "room", "rack", "junctionBox"];
     var region = view.region || null;
     var locById = {};
@@ -537,9 +538,6 @@
       if (x && x.id) locById[x.id] = x.location || null;
     });
     var stagedAssets = {};
-    function codesEqual(a, b) {
-      return CODE_KEYS.every(function (k) { return String((a && a[k]) || "").trim().toLowerCase() === String((b && b[k]) || "").trim().toLowerCase(); });
-    }
     function restageCodes() {
       if (!region || !ctx.stageLocationCode) return;
       var now = {};
@@ -547,9 +545,12 @@
         if (p.kind !== "asset" || !p.assetId) return;
         now[p.assetId] = true;
         var cur = locById[p.assetId] || null;
-        if (codesEqual(cur, region)) { ctx.stageLocationCode(p.assetId, null); return; }
+        // Rule 148(a): only the levels the region names change.
+        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); });
+        var same = levels.every(function (k) { return String(region[k]).trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
+        if (!levels.length || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
-        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {} });
+        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
       Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
       stagedAssets = now;

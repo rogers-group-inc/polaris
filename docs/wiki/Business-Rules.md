@@ -3217,6 +3217,10 @@ a Topology view, a device you drop inside a polygon takes that group's `a:` / `b
 codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
 needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
 
+Polygons stand for areas, buildings and floors, and a save changes only the levels that the
+polygon (or floor layer) sets: a device's room, rack and junction box are left as they are. A Rack
+or Wall view changes only the levels its region names, so a junction box below a rack is kept.
+
 ### Rule 149
 
 **Changing a view's mode resets the view.** Polaris first shows what will be removed: placed

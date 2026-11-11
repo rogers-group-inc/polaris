@@ -40,3 +40,14 @@ scope (rule 141(e)), reporting refusals per asset so one out-of-scope device doe
 save. The view itself still saves at `deviceMap=write`; the client warns when the codes will be
 skipped. The same `asset.updated` Event and device description sync an Edit-form save triggers run
 here, so the audit trail and the device copy stay consistent.
+
+### (a) Only the levels a placement sets (2026-11-11)
+
+The first build replaced every code on Save. Dropping `JEFF-108E-SH-WR` (`b:Scale House r:Weigh Room`) into the Scale House polygon left it `b:Scale House`, and `JEFF-234F-HOIST-TOP` lost `f:Surface` the same way: the Save summary listed four devices whose only change was losing a room or floor. The operator's direction: on the Topology view, polygons are only areas, buildings and floors, "and when saving those edits it will only update the part of the device descriptions that those affect"; on the Rack / Wall views, "only update the part of the asset descriptions that affect those".
+
+So a staged change now names the levels it sets (`levels`): a Topology polygon its area / building / floor values (`polyCodes`), a floor layer its floor, a Rack / Wall view the levels its region names. The server merges those over the device's current effective codes (its description, else the device-side one, as the map reads them) with `mergeLocationLevels`, and everything else stays. A device whose building is already right is no longer staged at all. The group picker offers areas, buildings and floors only; an older polygon that still names a room keeps drawing, but only its outer levels are written.
+
+A region-tree rewrite (rule 153) still sends no `levels`: a rename or move replaces the chain on purpose.
+
+Rejected: clearing the levels below the polygon's deepest one when its building changes (it is exactly the loss the operator reported); refusing old room polygons on save (an existing view would stop saving).
+
