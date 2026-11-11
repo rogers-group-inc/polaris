@@ -219,7 +219,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Confirm proxyQuery handles GET/POST/PUT/DELETE correctly for manual testing route.
 - Per-device REST concurrency IS clamped now, by the rule-96 gate (default 2 per gate per process) — not by discovery itself. Cross-gate parallelism (`discoveryParallelism`) is untouched. Adding a chain makes a large gate slower, not more parallel.
 - Ensure VDOM parameter threading is correct (default "root"; custom vdoms from config).
-- Renaming any of the five `asset.*.changed` action strings must move `CHANGE_TYPE_ACTIONS` in `notificationTypes.ts` in the same commit, or stored automations silently stop matching (`tests/unit/notificationChangeTypes.test.ts` pins the pairing).
+- Renaming any of the five `asset.*.changed` action strings must move `CHANGE_TYPE_ACTIONS` in `notificationTypes/triggers.ts` in the same commit, or stored automations silently stop matching (`tests/unit/notificationChangeTypes.test.ts` pins the pairing).
 - Adding another per-FortiGate REST endpoint: add an 8th chain inside the Promise.all rather than appending after — keeps wall-clock at max(chain) instead of sum(chains).
 
 ---

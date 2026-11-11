@@ -36,7 +36,7 @@ import { snmpTicksToSeconds } from "../../utils/uptime.js";
 import { type CredentialLike } from "../../utils/fortinetRestCredential.js";
 import { dial } from "./dial.js";
 import { HARDCODED_FLOOR, sysUpTimeOid, PROBE_ASSET_OMIT, resolveMonitorSettings, resolveSnmpConfigForStream } from "./monitorSettings.js";
-import { ProbeResult, AssetMonitorSnapshot } from "./types.js";
+import { type ProbeResult, type AssetMonitorSnapshot } from "./types.js";
 import { finish } from "./common.js";
 import { withSnmpGate, buildSnmpSession, snmpVbToString } from "./snmpCore.js";
 import { buildFortinetConfig } from "./fortiosCollectors.js";

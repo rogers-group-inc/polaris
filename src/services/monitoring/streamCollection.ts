@@ -26,12 +26,12 @@ import { collectHardwareSensorsGenericApi, collectSystemInfoGenericApi, collectT
 import { pickRestApiCredential, type CredentialLike } from "../../utils/fortinetRestCredential.js";
 import { dial } from "./dial.js";
 import { PROBE_ASSET_OMIT, resolveMonitorSettings, resolveSnmpConfigForStream, resolveAgentlessCredConfig, winrmConnFrom } from "./monitorSettings.js";
-import { TelemetrySample, HardwareSensorSample, SystemInfoSample, CollectionResult } from "./types.js";
+import { type TelemetrySample, type HardwareSensorSample, type SystemInfoSample, type CollectionResult } from "./types.js";
 import { startPhase } from "./common.js";
 import { withSnmpSession } from "./snmpCore.js";
 import { overlayFortiswitchTrunkMembers } from "./fortiswitchTrunks.js";
 import { profileSubjectFor, collectTelemetrySnmp, collectHardwareSensorsSnmp, collectSystemInfoSnmp, collectFastFilteredSnmp, collectLldpOnlySnmp } from "./snmpCollectors.js";
-import { buildFortinetConfig, collectTelemetryFortinet, collectHardwareSensorsFortinet, collectSystemInfoFortinet, collectLldpOnlyFortinet, fetchFortilinkInterfaceSet, FortiIpsecCollection, collectIpsecFortinet, applyFortiInterfaceFilter } from "./fortiosCollectors.js";
+import { buildFortinetConfig, collectTelemetryFortinet, collectHardwareSensorsFortinet, collectSystemInfoFortinet, collectLldpOnlyFortinet, fetchFortilinkInterfaceSet, type FortiIpsecCollection, collectIpsecFortinet, applyFortiInterfaceFilter } from "./fortiosCollectors.js";
 import { FORTINET_CONTROLLER_CACHE_TTL_MS, fetchViaFortinetTransport, unwrapFortiosRows, fetchFortinetControllerInventory } from "./fortinetControllers.js";
 import { readVcenterAsset, collectTelemetryVcenter, buildVcenterSystemInfo, collectSystemInfoVcenter } from "./vcenterFmgCollectors.js";
 

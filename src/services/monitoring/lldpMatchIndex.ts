@@ -14,7 +14,7 @@ import { expandMacRange } from "../../utils/macAddresses.js";
 import { logger } from "../../utils/logger.js";
 import { buildInfraParentIndex, controllerGateIdOf, type InfraParentCandidate } from "../../utils/fortinetParentKey.js";
 import { indexLldpHostname, type LldpHostnameMatchIndex } from "../../utils/lldpHostnameMatch.js";
-import { InterfaceSample } from "./types.js";
+import { type InterfaceSample } from "./types.js";
 
 /**
  * Who read an interface table's addresses. `agent-interface` is the asset's

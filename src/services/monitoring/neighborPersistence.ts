@@ -17,7 +17,7 @@ import { normalizeFortiapInterfaceName, fortiapInterfaceAliases } from "../../ut
 import type { ApLldpNeighborSample } from "../../utils/fortiapLldp.js";
 import { pickLldpHostnameMatch } from "../../utils/lldpHostnameMatch.js";
 import { PROBE_ASSET_OMIT, resolveMonitorSettings } from "./monitorSettings.js";
-import { LldpNeighborSample, WirelessStationSample } from "./types.js";
+import { type LldpNeighborSample, type WirelessStationSample } from "./types.js";
 import { startPhase } from "./common.js";
 import { getLldpAssetMatchIndex } from "./lldpMatchIndex.js";
 
