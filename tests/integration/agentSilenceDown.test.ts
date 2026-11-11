@@ -14,11 +14,8 @@
 import { afterAll, beforeEach, expect, it } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
-import {
-  __resetAgentSilenceStateForTests,
-  probeAsset,
-  recordProbeResult,
-} from "../../src/services/monitoringService.js";
+import { probeAsset, recordProbeResult } from "../../src/services/monitoringService.js";
+import { __resetAgentSilenceStateForTests } from "../../src/services/monitoring/agentSilence.js";
 import { flushProbePatchBuffer } from "../../src/services/probePatchBuffer.js";
 import { flushAllSampleBuffers } from "../../src/services/sampleWriteBuffer.js";
 import { resetDownDetectionStateForTests } from "../../src/services/downDetectionService.js";

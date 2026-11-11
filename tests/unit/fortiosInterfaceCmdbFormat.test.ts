@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { FORTIOS_INTERFACE_CMDB_FORMAT, fortiosVlanParentOf } from "../../src/utils/fortiosInterfaceRef.js";
 import { fortiosSecondaryIpStrings } from "../../src/utils/fortiosSecondaryIp.js";
 import { parseInterfaceIpv6 } from "../../src/utils/fortiosIpv6.js";
-import { parseFortiCmdbInterfaceTable, fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoringService.js";
+import { parseFortiCmdbInterfaceTable, fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoring/fortiosCollectors.js";
 import { buildFirewallSummary } from "../../src/services/fortinetManagementAccessService.js";
 import { monitoringServiceSource } from "./_monitoringServiceSource.js";
 

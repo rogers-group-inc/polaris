@@ -15,15 +15,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import vm from "node:vm";
 import { wizardSource } from "./_automationsWizardSource.js";
-import {
-  parseMemberIpFilter,
-  memberIpPasses,
-  ruleInputSchema,
-  triggerSignature,
-  buildSchemaCatalog,
-  SDWAN_MEMBER_IP_TARGETS,
-  type Trigger,
-} from "../../src/services/notificationTypes.js";
+import { parseMemberIpFilter, memberIpPasses, ruleInputSchema, triggerSignature, buildSchemaCatalog, type Trigger } from "../../src/services/notificationTypes.js";
+import { SDWAN_MEMBER_IP_TARGETS } from "../../src/services/notificationTypes/dimensions.js";
 
 describe("parseMemberIpFilter", () => {
   it("reads both operators, whitespace-tolerant", () => {

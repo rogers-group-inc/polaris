@@ -328,18 +328,6 @@ export interface WorkloadSnapshot {
   containerUsage: Map<string, WorkloadUsage>;
 }
 
-// Identity + state live in utils/workloadSources.ts (no imports) so the
-// services and collectors can share them without importing this file, which
-// pulls discoveryEngine. Re-exported here for the sync's own callers.
-export {
-  normalizeWorkloadState,
-  workloadContainerExternalId,
-  workloadContainerKey,
-  workloadHostExternalId,
-  workloadHostUsageKey,
-  workloadVmExternalId,
-} from "../../utils/workloadSources.js";
-
 // ─── Filters (the post-hoc twin is utils/integrationFilter.ts) ───────────────
 
 function asStringArray(v: unknown): string[] {

@@ -26,7 +26,8 @@ import {
   clearInterfaceIdentityCache,
 } from "../../src/services/interfaceInventoryService.js";
 import { buildInterfaceIdentity } from "../../src/utils/interfaceIdentity.js";
-import { recordFastFilteredResult, type InterfaceSample } from "../../src/services/monitoringService.js";
+import { type InterfaceSample } from "../../src/services/monitoringService.js";
+import { recordFastFilteredResult } from "../../src/services/monitoring/streamCollection.js";
 import { flushAllSampleBuffers } from "../../src/services/sampleWriteBuffer.js";
 
 const d = dbDescribe;

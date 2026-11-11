@@ -128,36 +128,27 @@ import { probeAsset, probeHttp } from "./monitoring/probes.js";
 
 // CQ-B061 — per-stream collection dispatch (monitoring/streamCollection.ts).
 import { loadTelemetryAsset, type TelemetryAssetRow, collectTelemetry, collectHardwareSensors, collectFastFiltered, recordFastFilteredResult, collectSystemInfo } from "./monitoring/streamCollection.js";
-export { buildFortiswitchControllerPortsMap, collectTelemetry, collectHardwareSensors, recordFastFilteredResult, collectSystemInfo } from "./monitoring/streamCollection.js";
+export { collectTelemetry, collectHardwareSensors, collectSystemInfo } from "./monitoring/streamCollection.js";
 
 export { probeAsset, probeCredentialAgainstHost } from "./monitoring/probes.js";
 
-export { __resetAgentSilenceStateForTests } from "./monitoring/agentSilence.js";
-
 export { persistAgentAddressRows, recordSystemInfoResult, type AssetProcessInput, persistAssetProcesses } from "./monitoring/systemInfoPersist.js";
 
-export { POLL_ERROR_MAX_LEN, pollFailureText, telemetrySuccessStamps, systemInfoSuccessStamps, recordTelemetryResult, recordHardwareSensorResult } from "./monitoring/pollStamps.js";
+export { telemetrySuccessStamps, systemInfoSuccessStamps, recordTelemetryResult, recordHardwareSensorResult } from "./monitoring/pollStamps.js";
 
 export { type ProcessConnectionInput, persistProcessConnections, persistManagedApLldpNeighbors } from "./monitoring/neighborPersistence.js";
 
-export { type VcenterReading, buildVcenterSystemInfo } from "./monitoring/vcenterFmgCollectors.js";
+export { type VcenterReading } from "./monitoring/vcenterFmgCollectors.js";
 
-export { resolveControllerMgmtIp, fetchFortinetControllerInventory } from "./monitoring/fortinetControllers.js";
-
-export { parseFortiCmdbInterfaceTable, applyFortiSoftwareSwitchMembers, buildFortiInterfaceSamples, fortiMonitorDuplex, backfillFortiAggregateMembers, backfillFortiCmdbOnlyBundles, backfillFortiCmdbOnlyTunnels, fortilinkInterfaceNamesFromCmdb, parseSdwanMemberZones, parseSdwanSlaThresholds, parsePerfSlaHealthCheck, parseSdwanRules, fortiIfSubtype, normalizeFortiIfType } from "./monitoring/fortiosCollectors.js";
+export { fetchFortinetControllerInventory } from "./monitoring/fortinetControllers.js";
 
 export { snmpWalkRaw } from "./monitoring/snmpCollectors.js";
 
-export { invalidateLldpMatchCache, buildMonitorAssocIpEntries } from "./monitoring/lldpMatchIndex.js";
-
-export { overlayFortiswitchTrunkMembers } from "./monitoring/fortiswitchTrunks.js";
-
-export { withSnmpGate, snmpVbToNumber } from "./monitoring/snmpCore.js";
-
+export { invalidateLldpMatchCache } from "./monitoring/lldpMatchIndex.js";
 
 export { type ProbeResult, type TelemetrySample, type InterfaceSample, type StorageSample, type HardwareSensorSample, type LldpNeighborSample, type SystemInfoSample, type CollectionResult, type AssetMonitorSnapshot } from "./monitoring/types.js";
 
-export { type MonitorTierSettings, type ResolvedMonitorSettings, getAdMonitorProtocol, SDWAN_INTERVAL_DEFAULT_SEC, SDWAN_INTERVAL_MIN_SEC, SDWAN_INTERVAL_MAX_SEC, sdwanIntervalFromConfig, resolveSdwanIntervalSec, invalidateMonitorSettingsCache, defaultPollingForSource, PROBE_ASSET_OMIT, type FleetCadences, fleetCadences, resolveMonitorSettings, resolveMonitorSettingsWithProvenance } from "./monitoring/monitorSettings.js";
+export { type MonitorTierSettings, type ResolvedMonitorSettings, getAdMonitorProtocol, SDWAN_INTERVAL_DEFAULT_SEC, resolveSdwanIntervalSec, invalidateMonitorSettingsCache, PROBE_ASSET_OMIT, type FleetCadences, fleetCadences, resolveMonitorSettings, resolveMonitorSettingsWithProvenance } from "./monitoring/monitorSettings.js";
 
 // CQ-B061 — sample retention pruning (monitoring/retentionPrune.ts).
 export { RETENTION_PRUNE_INTERVAL_MS, runRetentionPrune } from "./monitoring/retentionPrune.js";

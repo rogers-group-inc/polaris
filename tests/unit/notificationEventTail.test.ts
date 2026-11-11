@@ -75,7 +75,8 @@ vi.mock("../../src/db.js", () => ({
 
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
 
-import { evaluateAllNotificationRules, runEventRuleTimedClear } from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { runEventRuleTimedClear } from "../../src/services/notifications/eventTail.js";
 
 const NOW = Date.now();
 

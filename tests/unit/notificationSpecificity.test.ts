@@ -6,16 +6,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  scopeRank,
-  scopeRankLabel,
-  triggerSignature,
-  severityForValue,
-  severityRank,
-  SCOPE_RANK,
-  type RuleScope,
-  type Trigger,
-} from "../../src/services/notificationTypes.js";
+import { scopeRank, scopeRankLabel, triggerSignature, severityForValue, severityRank, type RuleScope, type Trigger } from "../../src/services/notificationTypes.js";
+import { SCOPE_RANK } from "../../src/services/notificationTypes/specificity.js";
 
 const scope = (s: Partial<RuleScope>): RuleScope => s as RuleScope;
 

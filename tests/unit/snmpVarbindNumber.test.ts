@@ -31,7 +31,7 @@
  *    zeros.
  */
 import { describe, it, expect } from "vitest";
-import { snmpVbToNumber } from "../../src/services/monitoringService.js";
+import { snmpVbToNumber } from "../../src/services/monitoring/snmpCore.js";
 
 describe("snmpVbToNumber — absence vs zero", () => {
   it("decodes an error varbind (null) as null, not 0", () => {

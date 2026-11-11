@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { applicableTemplateTokens } from "../../src/services/notificationEngine.js";
+import { applicableTemplateTokens } from "../../src/services/notifications/preview.js";
 import { chartTokensForAlert, CHART_TOKENS } from "../../src/services/alertChartService.js";
 import { triggerTokenParts } from "../../src/utils/triggerSummary.js";
 import { TEMPLATE_VARIABLES } from "../../src/utils/notificationTemplate.js";

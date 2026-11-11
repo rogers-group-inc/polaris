@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  CHANGE_TYPES,
-  CHANGE_TYPE_ACTIONS,
-  CHANGE_TYPE_META,
-  ASSET_STATE_FIELDS,
-  FIELD_META,
-} from "../../src/services/notificationTypes.js";
+import { CHANGE_TYPE_ACTIONS, CHANGE_TYPE_META, FIELD_META } from "../../src/services/notificationTypes.js";
+import { CHANGE_TYPES, ASSET_STATE_FIELDS } from "../../src/services/notificationTypes/triggers.js";
 
 // The change-trigger vocabulary is three parallel structures: the enum the
 // rule schema validates against, the action string the engine's event tail

@@ -1,17 +1,8 @@
 // Business rule 145 — reset Notify actions that MATCH a trigger action, and the
 // escalation reset that tells only the tiers that actually sent.
 import { describe, it, expect } from "vitest";
-import {
-  expandResetActions,
-  refreshMatchedResetSnapshots,
-  appendEscalationFired,
-  parseEscalationFired,
-  levelChainOwner,
-  severitiesRunningSection,
-  allRuleActionRefs,
-  ruleInputSchema,
-  type EscalationFiredRecord,
-} from "../../src/services/notificationTypes.js";
+import { expandResetActions, refreshMatchedResetSnapshots, appendEscalationFired, parseEscalationFired, allRuleActionRefs, ruleInputSchema, type EscalationFiredRecord } from "../../src/services/notificationTypes.js";
+import { levelChainOwner, severitiesRunningSection } from "../../src/services/notificationTypes/actionWalk.js";
 import { assertResetLinks } from "../../src/services/notificationRuleService.js";
 
 const noc = { type: "notify", id: "n1", channelId: "c1", addresses: ["noc@example.invalid"] } as const;

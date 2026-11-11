@@ -11,15 +11,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  probeLossWindowSec,
-  probeLossWindowSecFromTrigger,
-  PROBE_LOSS_DEFAULT_WINDOW_SEC,
-  PROBE_LOSS_MIN_WINDOW_SEC,
-  readingAtOrAboveCeiling,
-  DEFAULT_READING_CEILING_PCT,
-  SATURATION_CEILING_METRICS,
-} from "../../src/services/notificationTypes.js";
+import { probeLossWindowSec, probeLossWindowSecFromTrigger, readingAtOrAboveCeiling } from "../../src/services/notificationTypes.js";
+import { PROBE_LOSS_DEFAULT_WINDOW_SEC, PROBE_LOSS_MIN_WINDOW_SEC, DEFAULT_READING_CEILING_PCT, SATURATION_CEILING_METRICS } from "../../src/services/notificationTypes/metricMeta.js";
 import { lossBucketMs, probeLossSeriesFrom } from "../../src/services/alertChartService.js";
 
 describe("probeLossWindowSec", () => {
