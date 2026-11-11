@@ -113,12 +113,15 @@ function assetSystemViewHTML(a) {
   // can run CPU/mem over REST while temperature scrapes over SNMP (the
   // branch-class FortiGate workaround). Each section gets its own badge so
   // the per-stream polling method, credential, MIB, and cadence are visible
-  // at a glance. Interfaces and Storage share the Interfaces stream. LLDP is
-  // its own stream (per-integration/class/asset REST or SNMP) so it also
-  // gets its own badge.
+  // at a glance. Storage and LLDP are streams of their own (own method,
+  // own queue and cadence; Storage borrows the Interfaces credential), so
+  // each gets its own badge and its own "updated" stamp — they used to show
+  // the Interfaces stream's, which named a method and tier the operator had
+  // not set for them.
   var telemetryBadge   = _streamSourceBadgeHTML(a, "telemetry");
   var temperatureBadge = _streamSourceBadgeHTML(a, "temperature");
   var interfacesBadge  = _streamSourceBadgeHTML(a, "interfaces");
+  var storageBadge     = _streamSourceBadgeHTML(a, "storage");
   var lldpBadge        = _streamSourceBadgeHTML(a, "lldp");
   var telUpdatedAt = a.lastTelemetryAt
     ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(a.lastTelemetryAt)) + '">updated ' + timeAgo(a.lastTelemetryAt) + '</span>')
@@ -130,7 +133,17 @@ function assetSystemViewHTML(a) {
   var sysInfoPollStamp = _streamPollStampHTML(a.lastSystemInfoAt, a.lastSystemInfoAttemptAt, a.systemInfoFailingSince, a.systemInfoLastError);
   var telemetryBadgeFull  = telemetryBadge  + (telemetryBadge  && telPollStamp     ? " " : "") + telPollStamp;
   var interfacesBadgeFull = interfacesBadge + (interfacesBadge && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
-  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
+  // runStorageFor / runLldpFor stamp lastStorageAt / lastLldpAt on their own
+  // passes; they track no attempt or failure, so a plain stamp.
+  function plainStamp(at) {
+    return at
+      ? '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(at)) + '">updated ' + timeAgo(at) + '</span>'
+      : '';
+  }
+  var storageStamp = plainStamp(a.lastStorageAt);
+  var lldpStamp    = plainStamp(a.lastLldpAt);
+  var storageBadgeFull    = storageBadge    + (storageBadge    && storageStamp     ? " " : "") + storageStamp;
+  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && lldpStamp        ? " " : "") + lldpStamp;
   // Temperatures uses its own table-specific timestamp (si.lastTemperatureAt)
   // which can diverge from lastTelemetryAt when the CPU/memory pull succeeds
   // but the sensor pull fails. The header's updated stamp lives in an id'd
@@ -254,9 +267,13 @@ function assetSystemViewHTML(a) {
     // documented way to enable direct switch polling) still read as REST and
     // hid the section, and switching the Storage stream itself to SNMP
     // collected samples into a table with nowhere to render.
+    // Emitted is not SHOWN: _renderStorageTable / _renderLldpNeighborsCard hide
+    // the section (display:none, still in the DOM for the post-pass) when its
+    // own stream RESOLVES to disabled and nothing was collected — a switched-
+    // off stream is the Monitoring tab's business, not a card on every PDU.
     (isWorkloadContainer ? '' :
     '<div data-shot-section="storage" data-shot-label="Storage">' +
-    sectionHeader("Storage", interfacesBadgeFull, false) +
+    sectionHeader("Storage", storageBadgeFull, false) +
     '<div id="asset-system-storage"><span class="empty-state">Loading…</span></div>' +
     '</div>' +
     '<div data-shot-section="lldp" data-shot-label="LLDP Neighbors">' +
@@ -648,6 +665,23 @@ function _storageStreamDelivers(asset) {
   return _STORAGE_DELIVERING_METHODS.indexOf(_resolvedStreamPolling(asset, "storage")) !== -1;
 }
 
+// A stream that resolves to "disabled" (or to nothing at all) is switched off
+// for this device. Read from the RESOLVED method — class / integration tiers
+// included once the effective-settings walk lands — never the per-asset
+// column alone, which is the guess that once hid Storage on SNMP switches.
+function _streamSwitchedOff(asset, stream) {
+  var m = _resolvedStreamPolling(asset, stream);
+  return !m || m === "disabled";
+}
+
+// Show or hide the System-tab section a card's container sits in. Hidden, not
+// removed: the effective-settings post-pass re-renders into the same element
+// and must be able to bring it back.
+function _showSystemSection(container, shown) {
+  var sec = container && container.closest ? container.closest("[data-shot-section]") : null;
+  if (sec) sec.style.display = shown ? "" : "none";
+}
+
 function _isRestApiManagedNetworkDevice(asset, stream) {
   if (!asset) return false;
   var t = asset.assetType;
@@ -807,6 +841,12 @@ function _updateStaleBannersFromEffective(assetId, asset) {
   var storageEl = document.getElementById("asset-system-storage");
   if (storageEl && asset && asset.id === assetId && _assetSystemSiCache) {
     _renderStorageTable(storageEl, _assetSystemSiCache, asset);
+  }
+  // LLDP hides itself when its stream resolves to disabled; a class- or
+  // integration-tier method only becomes visible here, so re-decide it too.
+  var lldpEl = document.getElementById("asset-system-lldp");
+  if (lldpEl && asset && asset.id === assetId && _assetSystemSiCache) {
+    _renderLldpNeighborsCard(lldpEl, _assetSystemSiCache, asset);
   }
 }
 
@@ -2247,21 +2287,23 @@ function _poolLayoutsHTML(rows, details) {
 function _renderStorageTable(container, si, asset) {
   if (!container) return;
   var rows = (si && si.storage) || [];
+  if (rows.length === 0 && _streamSwitchedOff(asset, "storage")) {
+    // Switched off and nothing collected: no section. An "is switched off"
+    // card on every device that has no disks to report (a PDU, a UPS) was
+    // noise; turning the stream on is the Monitoring tab's job.
+    _showSystemSection(container, false);
+    container.innerHTML = "";
+    return;
+  }
+  _showSystemSection(container, true);
   if (rows.length === 0) {
-    // Distinguish "nothing collected this yet" from "nothing ever will".
-    // The second case used to render as the first — or, before 2026-08, as no
-    // Storage section at all — which read as a device with no disks rather
-    // than as a stream that is switched off.
+    // Distinguish "nothing collected this yet" from "nothing ever will" — a
+    // method that is set but carries no storage (REST API on a FortiSwitch).
+    // Rendering both as "No storage data yet" read as a device with no disks.
     if (!_storageStreamDelivers(asset)) {
       var storageMethod = _resolvedStreamPolling(asset, "storage");
-      var storageOff = !storageMethod || storageMethod === "disabled";
-      // "not available via Disabled" isn't a sentence; when the stream is
-      // simply off, the description carries the specifics instead.
-      var methodLabel = storageOff
-        ? "the current polling method"
-        : (_POLLING_LABELS[storageMethod] || storageMethod);
+      var methodLabel = _POLLING_LABELS[storageMethod] || storageMethod;
       var storageDesc =
-        (storageOff ? "The <strong>Storage</strong> stream is switched off for this device. " : "") +
         "Set it to <strong>SNMP</strong> on this asset's Monitoring tab, or on the integration's Monitoring tab to cover the whole class. " +
         "It has to be the <strong>Storage</strong> stream specifically — the Interfaces stream's SNMP walk collects the same rows but they are dropped unless Storage asked for them. " +
         "FortiOS REST API publishes no mountable storage, so a Fortinet device reports its system flash over SNMP only.";
@@ -2553,6 +2595,14 @@ function _renderTemperatures(container, si, asset) {
 function _renderLldpNeighborsCard(container, si, asset) {
   if (!container) return;
   var neighbors = (si && si.lldpNeighbors) || [];
+  if (neighbors.length === 0 && _streamSwitchedOff(asset, "lldp")) {
+    // Same rule as Storage: a switched-off stream with nothing collected
+    // draws no section (it used to say "no neighbors" with a FortiOS hint).
+    _showSystemSection(container, false);
+    container.innerHTML = "";
+    return;
+  }
+  _showSystemSection(container, true);
   if (neighbors.length === 0) {
     if (_isRestApiManagedNetworkDevice(asset, "lldp")) {
       var lldpPolling = _assetMonitorStreamSource(asset, "lldp").polling || "REST API";
