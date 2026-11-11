@@ -484,10 +484,17 @@ router.put("/ntp", requirePermission("serverSettingsSystem", "write"), async (re
   }
 });
 
+// The test opens a socket per server, so the list is bounded and each entry is
+// a host name or address (no scheme, path or port — the ports are NTP's own).
+const NtpTestSchema = z.object({
+  mode: z.enum(["ntp", "sntp", "nts"]).default("ntp"),
+  servers: z.array(z.string().trim().min(1).max(253).regex(/^[A-Za-z0-9.:\-[\]]+$/, "a host name or IP address")).max(10),
+});
+
 // Test probes an operator-supplied host from the server — gate like the write.
 router.post("/ntp/test", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
-    res.json(await testNtpSync(req.body));
+    res.json(await testNtpSync(NtpTestSchema.parse(req.body)));
   } catch (err) {
     next(err);
   }

@@ -174,9 +174,11 @@ async function testNtpSync() {
       mode: document.getElementById("f-ntp-mode").value,
       servers: servers,
     });
-    statusEl.innerHTML = result.ok
-      ? '<span style="color:var(--color-success)">' + escapeHtml(result.message) + '</span>'
-      : '<span style="color:var(--color-danger)">' + escapeHtml(result.message) + '</span>';
+    // One line per server: each was queried for real, and each answers on its own.
+    var rows = (result.results && result.results.length) ? result.results : [{ ok: result.ok, message: result.message }];
+    statusEl.innerHTML = rows.map(function (r) {
+      return '<div style="color:var(' + (r.ok ? '--color-success' : '--color-danger') + ')">' + escapeHtml(r.message) + '</div>';
+    }).join("");
   } catch (err) {
     statusEl.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(err.message) + '</span>';
   } finally {
