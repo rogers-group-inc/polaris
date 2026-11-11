@@ -978,8 +978,10 @@ function _blocksToPlaintext(blocks) {
 // the .screenshot-hide-scrollbars class (see styles.css). Webfont embedding
 // fetches the Google Fonts CSS + woff2 files (allowed by CSP connect-src);
 // when they're unreachable the capture still completes, just with fallback
-// system fonts. One known fidelity gap: inner scrollable regions render
-// scrolled-to-top in the clone (scroll offsets don't survive cloneNode).
+// system fonts. Inner scrollable regions render scrolled-to-top in the clone
+// (scroll offsets don't survive cloneNode); a fixed-height region that marks
+// itself `data-shot-expand` (the Custom MIB cards) is grown to its full
+// content for the capture instead, so nothing below its fold is lost.
 //
 // `opts.filter` (optional) is forwarded to html-to-image — return false for a
 // node to prune it and its whole subtree from the clone. The options modal
@@ -987,6 +989,29 @@ function _blocksToPlaintext(blocks) {
 // composed canvas as a letter-portrait PDF (_saveCaptureAsPdf) instead of
 // copying it to the clipboard. Returns a Promise that resolves when the
 // capture has finished (success or toast'd failure — it never rejects).
+// Let every `[data-shot-expand]` region under `root` grow to its full content
+// (height / max-height released, overflow visible) and return the function
+// that puts each one's inline styles back exactly as they were. Inline styles,
+// because the regions carry their height inline; a stylesheet rule would lose
+// to it without !important.
+function _expandShotRegions(root) {
+  var regions = root ? Array.prototype.slice.call(root.querySelectorAll("[data-shot-expand]")) : [];
+  var saved = regions.map(function (el) {
+    var s = { el: el, height: el.style.height, maxHeight: el.style.maxHeight, overflow: el.style.overflow };
+    el.style.height = "auto";
+    el.style.maxHeight = "none";
+    el.style.overflow = "visible";
+    return s;
+  });
+  return function restore() {
+    saved.forEach(function (s) {
+      s.el.style.height = s.height;
+      s.el.style.maxHeight = s.maxHeight;
+      s.el.style.overflow = s.overflow;
+    });
+  };
+}
+
 function _runScreenshotCapture(asset, opts) {
   opts = opts || {};
   var panel = _activeAssetPanel();
@@ -1024,7 +1049,13 @@ function _runScreenshotCapture(asset, opts) {
   // classic-scrollbar platforms (Windows) this also widens scroll containers
   // by the bar width — another reflow the settle delay absorbs.
   panel.classList.add("screenshot-hide-scrollbars");
+  // Fixed-height scroll regions (a Custom MIB card is its layout's height with
+  // its own scrollbar) are captured at their visible size, clipping every row
+  // below the fold. The ones that opt in grow to their content for the length
+  // of the capture — the settle delay absorbs the reflow — and are restored.
+  var restoreExpanded = _expandShotRegions(panel);
   function release() {
+    restoreExpanded();
     panel.classList.remove("screenshot-hide-scrollbars");
     if (slideover) slideover.style.width = prevWidth;
   }

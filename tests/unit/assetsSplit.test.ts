@@ -77,7 +77,7 @@ describe("assets split — declarations", () => {
   it("each original top-level function and var is declared exactly once across the files", () => {
     const fns = perFile.flatMap((p) => p.fns);
     const vars = perFile.flatMap((p) => p.vars);
-    expect(INVENTORY.functions.length).toBe(810);
+    expect(INVENTORY.functions.length).toBe(811);
     expect(INVENTORY.vars.length).toBe(171);
     for (const n of INVENTORY.functions) expect(fns.filter((x) => x === n).length, n).toBe(1);
     for (const n of INVENTORY.vars) expect(vars.filter((x) => x === n).length, n).toBe(1);
