@@ -760,9 +760,14 @@ export async function getAssetIpHistory(id: string) {
 
 /** The owner + tags the write-scope judgement reads (rule 141(e)) for one asset. 404 when absent. */
 export async function loadAssetScopeRecord(id: string) {
-  const asset = await prisma.asset.findUnique({ where: { id }, select: { id: true, createdBy: true, tags: true } });
+  const asset = await findAssetScopeRecord(id);
   if (!asset) throw new AppError(404, "Asset not found");
   return asset;
+}
+
+/** The same record, or null when the asset is gone (a caller for whom absence is an answer). */
+export async function findAssetScopeRecord(id: string) {
+  return prisma.asset.findUnique({ where: { id }, select: { id: true, createdBy: true, tags: true } });
 }
 
 /**

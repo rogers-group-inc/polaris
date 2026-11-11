@@ -223,6 +223,24 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetSystemTabService.ts
+
+**What it owns:** The asset details System-tab family's reads, moved out of `routes/assets/system.ts` (CQ-B062 slice 2): the System tab itself (latest telemetry, interfaces with tags / optics / alerts, storage, hardware sensors, reported + peer-inferred LLDP neighbours, wireless stations, physical entities, IPsec tunnels, AP radios, probe outages), the process list, the MAC table (VLAN fill, VLAN names, per-port configured VLANs) and the ARP table (ranges, retention, interface counts), each with its freshness pair, and the service inventory. The route keeps the gates and the query parsing.
+
+**Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
+
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), utils/sfpOptics.
+
+**Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
+
+**Invariants:**
+- The ARP `current` view is the newest read only — rows within `ARP_CURRENT_TOLERANCE_MS` of the asset's max `lastSeen` — never every retained row; the "" interface sentinel leaves the API as null.
+- The MAC table's `pollIntervalSec` takes no discovery fallback (only the system-info pass writes the FDB); the ARP table's does (discovery writes ARP too).
+
+**When changing this:** `tests/unit/assetSystemTabService.test.ts`; integration `arpTable` and `currentStateRefresh`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
