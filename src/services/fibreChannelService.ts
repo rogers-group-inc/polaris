@@ -148,6 +148,42 @@ export async function persistFibreChannel(
   }
 }
 
+/**
+ * The logins on a set of fibre-channel switches, each with the live asset it
+ * was matched to (or none), for the Device Map's Layer 2 links (business rule
+ * 162). One indexed query; `switchIds` are the site's endpoints, so a device
+ * that is not an FC switch simply has no rows. A login matched to a
+ * decommissioned or disabled asset comes back unmatched, never as a link to a
+ * retired device.
+ */
+export async function getFcLoginsForSwitches(switchIds: readonly string[]) {
+  if (switchIds.length === 0) return [];
+  const rows = await prisma.assetFcLogin.findMany({
+    where: { assetId: { in: [...switchIds] } },
+    orderBy: [{ assetId: "asc" }, { ifIndex: "asc" }, { vsan: "asc" }],
+    select: {
+      assetId: true,
+      ifName: true,
+      vsan: true,
+      portWwn: true,
+      hostName: true,
+      hbaModel: true,
+      matchMethod: true,
+      matchedAsset: {
+        select: {
+          id: true, hostname: true, ipAddress: true, assetType: true, status: true,
+          monitored: true, monitorStatus: true, dependencySuppressed: true,
+          manufacturer: true, model: true, description: true,
+        },
+      },
+    },
+  });
+  return rows.map((r) => {
+    const live = r.matchedAsset && !["decommissioned", "disabled"].includes(String(r.matchedAsset.status));
+    return { ...r, matchedAsset: live ? r.matchedAsset : null, matchMethod: live ? r.matchMethod : null };
+  });
+}
+
 /** The Fibre Channel tab's payload for one asset, from both sides. */
 export async function getFibreChannelForAsset(assetId: string) {
   const [ports, logins, hostLogins] = await Promise.all([

@@ -118,7 +118,10 @@ describe("parseVendorSysDescr — everything else", () => {
       "Cisco IOS Software, C2960 Software, Version 15.0(2)SE11",
       "FortiSwitch-148F v7.2.5,build0123,220401",
       "Hardware: Intel64 Family 6 - Software: Windows Version 6.3",
-      "APC Web/SNMP Management Card (MB:v4.1.0 PF:v6.4.6)",
+      // APC's anchor with nothing version-shaped inside it — no opinion.
+      "APC Web/SNMP Management Card (MB:unknown PF:unknown)",
+      // An APC string that is not the NMC format.
+      "APC Embedded PowerNet SNMP Agent (SW v2.2, HW vB2, Mod: AP9605)",
     ]) {
       expect(parseVendorSysDescr(descr), descr).toBeUndefined();
     }
@@ -242,6 +245,141 @@ describe("descrReadDue — what makes the probe carry the extra varbind", () => 
 
   it("treats an invalid stamp as due", () => {
     expect(descrReadDue(new Date(NaN), now)).toBe(true);
+  });
+});
+
+describe("parseVendorSysDescr — APC Network Management Card (business rule 161)", () => {
+  /** A real prod reading off an AP8870 rack PDU (NMC3, rPDU2g), verbatim. */
+  const APC_AP8870 =
+    "APC Web/SNMP Management Card (MB:v4.2.9 PF:v1.5.1.1 PN:apc_hw21_aos_1.5.1.1.bin " +
+    "AF1:v1.2.0.4 AN1:apc_hw21_rpdu2g_1.2.0.4.bin MN:AP8870 HR:03 SN: ZA2406030655 MD:02/10/2024)";
+  /** Its sysObjectID: PowerNet-MIB masterSwitchrPDU2. */
+  const RPDU2 = "1.3.6.1.4.1.318.1.3.4.6";
+  /**
+   * The UPS shape — an AP9631 in a Smart-UPS's SmartSlot. MN / SN are the
+   * CARD's, which is the whole reason the sysObjectID gate exists.
+   */
+  const APC_UPS_CARD =
+    "APC Web/SNMP Management Card (MB:v4.1.0 PF:v6.8.2 PN:apc_hw05_aos_682.bin " +
+    "AF1:v6.8.2 AN1:apc_hw05_sumx_682.bin MN:AP9631 HR:05 SN: ZA1234567890 MD:03/01/2019) " +
+    "(Embedded PowerNet SNMP Agent SW v2.2 compatible)";
+  const SMART_UPS = "1.3.6.1.4.1.318.1.3.27";
+
+  it("reads model, serial, firmware and type off a rack PDU", () => {
+    expect(parseVendorSysDescr(APC_AP8870, RPDU2)).toEqual({
+      manufacturer: "APC",
+      model: "AP8870",
+      serialNumber: "ZA2406030655",
+      // PF, the AOS — not AF1 "1.2.0.4": beside a FortiGate's "APC AOS" OS
+      // fingerprint the application version would read as an AOS version.
+      osVersion: "1.5.1.1",
+      productType: "Rack PDU",
+    });
+  });
+
+  it("accepts every masterSwitch product and a leading dot", () => {
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.4.5")?.model).toBe("AP8870");
+    expect(parseVendorSysDescr(APC_AP8870, ".1.3.6.1.4.1.318.1.3.4.9")?.model).toBe("AP8870");
+  });
+
+  it("claims only the firmware off a UPS's add-on card", () => {
+    // Writing MN here would call a Smart-UPS an "AP9631" and give every UPS
+    // the card's serial.
+    expect(parseVendorSysDescr(APC_UPS_CARD, SMART_UPS)).toEqual({
+      manufacturer: "APC",
+      osVersion: "6.8.2",
+    });
+  });
+
+  it("claims only the firmware when the sysObjectID is unknown", () => {
+    // Every caller that could not read sysObjectID gets the safe half.
+    expect(parseVendorSysDescr(APC_AP8870)).toEqual({ manufacturer: "APC", osVersion: "1.5.1.1" });
+    expect(parseVendorSysDescr(APC_AP8870, null)?.model).toBeUndefined();
+    expect(parseVendorSysDescr(APC_AP8870, "")?.serialNumber).toBeUndefined();
+  });
+
+  it("claims a rack transfer switch's own model and serial (no hardware in hand)", () => {
+    // Built-in management on every rack ATS generation: 318.1.3.11 / .32 (4G) / .38 (5G).
+    const ats =
+      "APC Web/SNMP Management Card (MB:v3.8.6 PF:v6.4.0 PN:apc_hw05_aos_640.bin " +
+      "AF1:v6.4.0 AN1:apc_hw05_ats4g_640.bin MN:AP4423 HR:01 SN: 5A1234E56789 MD:06/15/2018)";
+    for (const oid of ["1.3.6.1.4.1.318.1.3.11", "1.3.6.1.4.1.318.1.3.32", "1.3.6.1.4.1.318.1.3.38.1"]) {
+      expect(parseVendorSysDescr(ats, oid), oid).toEqual({
+        manufacturer: "APC", model: "AP4423", serialNumber: "5A1234E56789",
+        osVersion: "6.4.0", productType: "Transfer Switch",
+      });
+    }
+  });
+
+  it("claims a NetBotz Rack Monitor 200's own model and serial", () => {
+    // The layout and sysObjectID (monitors.mem, 318.1.3.8.4) of a published
+    // NBRK0200 walk; the serial is replaced with a made-up one.
+    const nb200 =
+      "APC Web/SNMP Management Card (MB:v4.0.6 PF:v3.7.5 PN:apc_hw03_aos_375.bin AF1:v3.7.5 " +
+      "AN1:apc_hw03_nb200_375.bin MN:NBRK0200 HR:05 SN: ZA0000000001 MD:04/29/2013)";
+    expect(parseVendorSysDescr(nb200, "1.3.6.1.4.1.318.1.3.8.4")).toEqual({
+      manufacturer: "APC", model: "NBRK0200", serialNumber: "ZA0000000001",
+      osVersion: "3.7.5", productType: "Environmental Monitor",
+    });
+  });
+
+  it("does not admit the InfraStruXure ATS, whose card is not confirmed built in", () => {
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.19.1")?.model).toBeUndefined();
+  });
+
+  it("does not mistake a neighbouring arc for the PDU branch", () => {
+    // 318.1.3.40 is not 318.1.3.4.
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.40.1")?.model).toBeUndefined();
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.3180.1.3.4.6")?.model).toBeUndefined();
+    // 318.1.3.110 is not 318.1.3.11, and .80 is not .8.
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.110")?.model).toBeUndefined();
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.80")?.model).toBeUndefined();
+  });
+
+  it("reads the platform version alone, and the application when no platform is stated", () => {
+    expect(parseVendorSysDescr("APC Web/SNMP Management Card (MB:v4.1.0 PF:v6.4.6)")?.osVersion)
+      .toBe("6.4.6");
+    expect(parseVendorSysDescr("APC Web/SNMP Management Card (MB:v4.1.0 AF1:v1.2.0.4)")?.osVersion)
+      .toBe("1.2.0.4");
+  });
+
+  it("never reads the next key as a blank serial's value", () => {
+    const d = parseVendorSysDescr(
+      "APC Web/SNMP Management Card (PF:v1.5.1.1 MN:AP8870 HR:03 SN: MD:02/10/2024)", RPDU2,
+    );
+    expect(d?.model).toBe("AP8870");
+    expect(d?.serialNumber).toBeUndefined();
+  });
+
+  it("refuses a model or serial that is not shaped like one", () => {
+    const d = parseVendorSysDescr(
+      "APC Web/SNMP Management Card (PF:v1.5.1.1 MN:?? SN: ab)", RPDU2,
+    );
+    expect(d?.osVersion).toBe("1.5.1.1");
+    expect(d?.model).toBeUndefined();
+    expect(d?.serialNumber).toBeUndefined();
+  });
+
+  it("is not fooled by the vendor name elsewhere in the text", () => {
+    expect(parseVendorSysDescr("Linux host monitoring APC Web/SNMP Management Card (AF1:v1.0)", RPDU2))
+      .toBeUndefined();
+  });
+
+  it("never throws on hostile input", () => {
+    for (const descr of [
+      "APC Web/SNMP Management Card (",
+      "APC Web/SNMP Management Card ()",
+      "APC Web/SNMP Management Card (" + "SN: ".repeat(2000) + ")",
+    ]) {
+      expect(() => parseVendorSysDescr(descr, RPDU2)).not.toThrow();
+    }
+  });
+
+  it("re-records when the serial or the sysObjectID changes", () => {
+    const base = { manufacturer: "APC", model: "AP8870", serialNumber: "ZA1", sysObjectId: RPDU2 };
+    expect(sameDescrObserved(base, { ...base })).toBe(true);
+    expect(sameDescrObserved(base, { ...base, serialNumber: "ZA2" })).toBe(false);
+    expect(sameDescrObserved(base, { ...base, sysObjectId: SMART_UPS })).toBe(false);
   });
 });
 

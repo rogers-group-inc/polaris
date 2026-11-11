@@ -3284,6 +3284,10 @@ otherwise. A hostname you typed is kept. When the answer is ambiguous Polaris wr
 device with no chassis entry gives no model or serial, and a switch stack gives no serial. The
 first fill is quiet; a later change of model, serial or name is recorded in Events.
 
+A name the device gave itself at the factory, such as an APC card's `apc8F29C4` (`apc` plus the
+end of its MAC address), is used only when no other name is known: a name from DHCP, a directory
+or an operator always wins over it.
+
 ### Rule 155
 
 **A command queued for an agent runs soon or not at all.** When an automation
@@ -3361,6 +3365,40 @@ source still reports — unticked by default, and it needs Full Read-Write on As
 reservations the integration pushed to a device **stay on the device**; Polaris can no
 longer change them, and each one is listed in a warning Event so you know what is there.
 See [Integrations](Integrations#deleting-an-integration).
+
+### Rule 161
+
+**An APC management card's model and serial count as the device's only when the card is built
+into it.** An APC rack PDU, UPS or other device monitored over SNMP describes itself through its
+Network Management Card (`APC Web/SNMP Management Card (… MN:AP8870 … SN: ZA2406030655 …)`).
+Polaris reads the card's operating-system (AOS) version as the device's firmware on every APC
+device. It takes the model and serial number only from products whose card is built in, which
+Polaris recognises from the product identifier the device reports (`sysObjectID`):
+
+| Product | Product type Polaris records |
+|---|---|
+| Rack PDUs (every generation) | Rack PDU |
+| Rack Automatic Transfer Switches | Transfer Switch |
+| Environmental monitors, including the NetBotz Rack Monitor 200 | Environmental Monitor |
+
+On these the card is part of the device, so its model and serial are the device's own. A UPS's
+card is a removable add-on, so its model and serial belong to the card and are not written onto
+the UPS. The product type can be used by a device type's matching rules. The larger NetBotz
+appliances (450, 550, 570, 750, 755) describe themselves differently and are not read this way.
+
+To keep UPS and PDU custom widgets apart under the one APC manufacturer profile, give each widget a
+model pattern. PDU models start with `AP8` (for example `^AP8`); UPS models are named by the UPS's
+own model reading.
+
+### Rule 162
+
+**Fibre-channel links are drawn on the Device Map's Layer 2 view from a fibre-channel switch you
+are showing.** Turn on the switch's device type (an MDS is usually *Other*) and its fibre-channel
+logins are drawn as pink lines labelled with the FC port. Each line ends at the server it matched
+(see [rule 159](#rule-159)) when that server's type is shown, even if the server isn't under one
+of this site's Ethernet switches. A login that matched no asset, such as a storage array's port,
+ends at a small dashed box named for what it registered (for example *PURE01-ct0*). Hide the
+switch's type and its fibre-channel lines go with it.
 
 ### Rule 163
 

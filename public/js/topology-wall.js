@@ -144,7 +144,7 @@
     (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes }) : []).forEach(function (el) {
       var d = el.data;
       if (!d || d.source || d.isLocGroup || d.isPortal) return;
-      if (d.role === "lldp" || d.role === "wireless-station" || d.role === "remote-asset") return;
+      if (d.role === "lldp" || d.role === "fcport" || d.role === "wireless-station" || d.role === "remote-asset") return;
       nodeById[d.id] = d;
     });
     [data.fortigate].concat(data.switches || [], data.aps || [], data.endpoints || []).forEach(function (x) {

@@ -556,6 +556,16 @@ you close it. While you are editing, it is saved with the view when you click
 the tick or **Save**. A site with more than 2000 endpoints draws the 2000 most
 recently seen.
 
+**Fibre-channel links.** When a fibre-channel switch monitored over SNMP (a Cisco MDS) is
+among the devices shown, usually under **Other**, its fibre-channel logins are drawn as **pink**
+lines labelled with the FC port. Each line ends at the server the login matched (see
+[Assets](Assets) and [rule 159](Business-Rules#rule-159)), as long as that server's type is
+shown. A matched server appears even if it isn't under one of this site's Ethernet switches. A
+login that matched no asset, such as a storage array's port, ends at a small dashed pink box
+named for what it registered (for example *PURE01-ct0*). Hover a line for its port, VSAN, WWN
+and how the server was matched. Hide the switch's type and its fibre-channel lines go with it
+([rule 162](Business-Rules#rule-162)).
+
 ### Views
 
 Every site has a default view, and you can save more. A view is a name, one
