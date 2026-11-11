@@ -185,6 +185,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetLiveActionService.ts
+
+**What it owns:** The asset details buttons that reach a device or start a run, moved out of `routes/assets/detail.ts` (CQ-B062 slice 2): Poll now (probe-now), the system-info Refresh, Discover now (rediscover) and the SNMP Walk tab, plus their shared gate `resolveIntegrationFilterBlock` (the originating integration's device filter — AD's own `ouPath`, a VM's / workload's own name — evaluated before any traffic leaves the box). The route keeps the Zod body, the gates and the request-bound inputs (the caller's `assets:write`, the credential-use actor).
+
+**Public API:** `LiveActionResult` (`{ status, body }` — what probe-now / refresh / rediscover send, since each can answer 409 or 202), `pollAssetNow(id, actor)`, `refreshAssetSystemInfo(id, actor)`, `rediscoverAsset(id, actor)`, `snmpWalkAsset(id, { credentialId, oid, maxRows }, canWriteAssets, credentialActor, actor)`.
+
+**Cross-service deps:** monitoringService (the probe / collectors / recorders, `runSdwanFor`, `snmpWalkRaw`), discovery/assetDiscoveryScope, discovery/discoveryEngine (`triggerDiscovery`), discoveryRunState, assetCredentialScopeService (rule 112(e)), credentialService, credentialUseAuditService (rule 112), eventLogService, utils/integrationFilter, utils/assetDialAddress, ipv6GateService.
+
+**Used by:** `src/api/routes/assets/detail.ts` (POST /:id/probe-now, /:id/refresh-system-info, /:id/rediscover, /:id/snmp-walk).
+
+**Invariants:**
+- An asset outside its integration's filter is refused 409 with an `asset.refresh` / `asset.rediscover` warning Event before any probe, collector or run.
+- Every operator-initiated action leaves an Event whatever the outcome; Refresh writes no monitor state (it cannot mark a device down or clear a miss).
+- The SNMP walk at read level may use only a credential the asset already uses (rule 112(e)); the use is recorded (rule 112); a device failure is a 502.
+
+**When changing this:** `tests/unit/assetLiveActionService.test.ts`; integration coverage in `currentStateRefresh`, `secretFollowsDestinationPhase10` and `writeScope`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
