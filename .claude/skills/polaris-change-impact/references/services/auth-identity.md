@@ -466,14 +466,15 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/userOwnershipService.ts
 
-**Purpose:** business rule 48(e) — row ownership dies with the account (re-scan F85).
+**Purpose:** business rule 48(e) — row ownership dies with the actor that held it, an account or an API token (re-scan F85; widened 2026-11-11).
 
-**Public API:** `ownershipTombstone(username, userId)` → `deleted:<username>#<id8>` (pure); `assertUsernameNotReserved(username)` — 400 for a name starting `deleted:`; `deleteUserAndTombstoneOwnership(user)` — in ONE transaction rewrites `createdBy` from the username to the tombstone on Subnet, Reservation, Credential and Contact, then deletes the user; returns the per-table counts.
+**Public API:** `ownershipTombstone(username, userId)` → `deleted:<username>#<id8>` (pure); `tokenOwnershipTombstone(name, tokenId)` → `deleted:api:<name>#<id8>` and `apiTokenActor(name)` → `api:<name>` (pure); `assertUsernameNotReserved(username)` — 400 for a name starting `deleted:` or `api:`; `OWNED_MODELS` — every model whose `createdBy` decides write reach; `deleteUserAndTombstoneOwnership(user)` — in ONE transaction rewrites `createdBy` from the username to the tombstone on every `OWNED_MODELS` table, then deletes the user; `deleteTokenAndTombstoneOwnership(token)` — the same for `api:<name>`, then deletes the token; both return `TombstoneCounts` (`tombstoneTotal` sums them).
 
-**Writes:** Subnet / Reservation / Credential / Contact `createdBy`, User (delete). **Callers:** `DELETE /users/:id` (the counts go on the `user.deleted` Event); `POST /users` calls `assertUsernameNotReserved`.
+**Writes:** `createdBy` on Subnet / Reservation / Credential / Contact / Asset / MaintenanceSchedule / PathCheck / FirmwareGroupSchedule; User (delete); ApiToken (delete). **Callers:** `DELETE /users/:id` (the counts go on the `user.deleted` Event); `apiTokenService.deleteToken` — so `DELETE /api-tokens/:id` (counts on `api_token.deleted`) and the `llm` integration's token regeneration / deprovision; `POST /users` calls `assertUsernameNotReserved`.
 
 **When changing this:**
-- A new table whose rows `assertOwnership` guards by `createdBy` MUST join the transaction here, or a re-used username inherits its rows.
+- A new table whose rows `assertOwnership` or the write scope (`inWriteScope`, rule 141(e)) judges by `createdBy` MUST join `OWNED_MODELS` and `tombstoneOps`, or a re-used username or token name inherits its rows. `tests/unit/userOwnershipService.test.ts → ownedModelsCoverage` scans the files that judge ownership and fails on a model it finds missing. A model whose `createdBy` is only displayed (automations, channels, scripts) stays out.
+- A token can only be deleted through `apiTokenService.deleteToken` — never `prisma.apiToken.delete` directly, which skips the tombstone. There is no token rename; adding one would need the same rewrite.
 - A new way to create or rename a local account must call `assertUsernameNotReserved`. SSO / LDAP provisioning cannot produce `:` (USERNAME_SAFE_RE).
 ## services/accountSelfService.ts
 

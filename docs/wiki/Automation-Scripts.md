@@ -162,6 +162,14 @@ Queued as an `AgentCommand` on the **triggering asset's** agent, which is
 preflighted *before* the run row is created: the agent must be **installed**,
 **active**, and at **version ≥ 0.13.0**.
 
+**The agent has 15 minutes to pick the script up.** An agent that is online
+collects it within seconds. If the host is off or unreachable, the script waits
+at most 15 minutes and is then **withdrawn**: it will never run, the run shows as
+`failed` with the reason, and a warning Event is written. A host that comes back
+later is not handed the old script. Polaris does not queue it again by itself;
+if the automation's condition still holds, its next fire, reminder or escalation
+queues a new run ([rule 154](Business-Rules#rule-154)).
+
 The agent is a **satellite** — it never self-acts and refuses unknown actions.
 For a script it:
 

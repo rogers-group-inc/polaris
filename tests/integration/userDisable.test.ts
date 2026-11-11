@@ -22,6 +22,12 @@ import { hashPassword } from "../../src/utils/password.js";
 import { clearLockout } from "../../src/utils/loginLockout.js";
 import { revalidateSessionUser } from "../../src/api/middleware/sessionRevalidate.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
+import {
+  bumpRecipientIndex,
+  resolveAllUsers,
+  resolveRecipientUsersByIds,
+  resolveUsersByRoles,
+} from "../../src/services/notificationRecipientService.js";
 
 const d = dbDescribe;
 
@@ -134,6 +140,38 @@ d("disabling an account", () => {
     const { res } = await signIn();
     expect(res.status).toBe(200);
     expect(await prisma.savedTableFilter.count({ where: { name: "Gone for good" } })).toBe(0);
+  });
+
+  // Rule 140(a): a disabled account receives nothing. Before 2026-11-11 the
+  // recipient index never read `disabledAt`, so a disabled user still matched
+  // by role / region / tag / name and kept getting email and web push.
+  it("stops being an alert recipient and loses its push devices; enabling brings the recipient back", async () => {
+    const role = await prisma.role.findUnique({ where: { name: "readonly" } });
+    await prisma.user.update({ where: { id: userId }, data: { email: "disable-target@example.test" } });
+    await prisma.pushSubscription.create({
+      data: { userId, endpoint: "https://push.example.test/disable-target", p256dh: "k", auth: "a" },
+    });
+    bumpRecipientIndex();
+    const reached = async () => ({
+      byId: (await resolveRecipientUsersByIds([userId])).length,
+      byRole: (await resolveUsersByRoles([role!.id])).some((u) => u.id === userId),
+      all: (await resolveAllUsers()).some((u) => u.id === userId),
+    });
+    expect(await reached()).toEqual({ byId: 1, byRole: true, all: true });
+
+    const adm = await authedAgent(app);
+    expect((await adm.agent.post(`/api/v1/users/${userId}/disable`).set("X-CSRF-Token", adm.csrf).send({})).status).toBe(200);
+
+    // No bump here: the route must drop the cached index itself.
+    expect(await reached()).toEqual({ byId: 0, byRole: false, all: false });
+    expect(await prisma.pushSubscription.count({ where: { userId } })).toBe(0);
+    const ev = await prisma.event.findFirst({ where: { action: "user.disabled", resourceId: userId }, orderBy: { timestamp: "desc" } });
+    expect((ev!.details as { pushDevicesRemoved?: number }).pushDevicesRemoved).toBe(1);
+
+    expect((await adm.agent.post(`/api/v1/users/${userId}/enable`).set("X-CSRF-Token", adm.csrf).send({})).status).toBe(200);
+    expect(await reached()).toEqual({ byId: 1, byRole: true, all: true });
+    // The device does not come back by itself — the browser re-subscribes (rule 39).
+    expect(await prisma.pushSubscription.count({ where: { userId } })).toBe(0);
   });
 
   it("refuses to disable yourself", async () => {

@@ -230,7 +230,12 @@ function normalizeNeedle(tag: string): string {
 
 function loadUserIndex(): Promise<IndexedUser[]> {
   return _userIndexCache.getOrCompute("", async () => {
+  // Rule 140(a): a disabled account is nobody's recipient. Every user-resolved
+  // recipient — a role, a region, a tag, "all users", a named account, and the
+  // Cc / Bcc and escalation-tier lists — is read from this index, so leaving
+  // disabled accounts out here leaves them out of every one of them.
   const users = await prisma.user.findMany({
+    where: { disabledAt: null },
     select: {
       id: true,
       email: true,
