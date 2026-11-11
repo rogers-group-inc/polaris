@@ -8,8 +8,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildShadowIndex, isAssetShadowed, carveOutAggregate, applyCarveOutToMatches, type CarveOutPeer, type PreviewMatch } from "../../src/services/notificationEngine.js";
-import { triggerSignature, scopeRank, SCOPE_RANK } from "../../src/services/notificationTypes.js";
+import { buildShadowIndex, isAssetShadowed, type CarveOutPeer, type PreviewMatch } from "../../src/services/notificationEngine.js";
+import { carveOutAggregate, applyCarveOutToMatches } from "../../src/services/notifications/preview.js";
+import { triggerSignature, scopeRank } from "../../src/services/notificationTypes.js";
+import { SCOPE_RANK } from "../../src/services/notificationTypes/specificity.js";
 import type { ScopeAsset } from "../../src/services/notificationRuleService.js";
 
 const tempTrigger = { type: "asset_metric", metric: "hwSensorValue", operator: ">=", threshold: 80, aggregation: "latest", windowSec: 0, forDurationSec: 0 };

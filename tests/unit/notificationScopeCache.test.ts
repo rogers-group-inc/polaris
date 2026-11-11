@@ -35,12 +35,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
   scopeRegionTagsOf: vi.fn(() => []),
 }));
 
-import {
-  clearAssetDetailCache,
-  evaluateAllNotificationRules,
-  loadScopeRegionSnapshots,
-  previewRule,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules, loadScopeRegionSnapshots, previewRule } from "../../src/services/notificationEngine.js";
+import { clearAssetDetailCache } from "../../src/services/notifications/assetDetail.js";
 
 function scopeAsset(id: string, over: Record<string, unknown> = {}) {
   return {

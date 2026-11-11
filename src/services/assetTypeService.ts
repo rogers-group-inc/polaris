@@ -422,6 +422,19 @@ function eligibleAssets() {
   });
 }
 
+/**
+ * A stored asset's match, for the retroactive preview / apply: the directory
+ * context first (the one this always used), then `inventory` (business rule
+ * 164) — the "other" bucket on a FortiGate install is mostly devices that
+ * came from a gate's detected-device inventory, so a type ticked only for
+ * that context must be able to reach them here too. Never `scan`: those rules
+ * read a device's own self-description, which a stored row does not carry.
+ */
+function explainStored(types: readonly MatchableType[], facts: ReturnType<typeof factsOf>) {
+  const dir = explainAssetType(types, facts, "directory");
+  return dir.type && dir.type !== "other" ? dir : explainAssetType(types, facts, "inventory");
+}
+
 /** The facts a stored asset offers the resolver. One place, so preview and
  *  apply cannot disagree about what a rule was tested against. `productType`
  *  is the device's own word for what it is ("Bullet Camera", "Rack PDU" —
@@ -481,7 +494,7 @@ export async function previewMatchRules(
   let matched = 0;
 
   for (const a of assets) {
-    const { type, clause } = explainAssetType(types, factsOf(a), "directory");
+    const { type, clause } = explainStored(types, factsOf(a));
     if (!type || type === "other") continue;
     matched++;
     byType.set(type, (byType.get(type) ?? 0) + 1);
@@ -531,7 +544,7 @@ export async function applyMatchRules(): Promise<{
 
   const idsByType = new Map<string, string[]>();
   for (const a of assets) {
-    const { type } = explainAssetType(types, factsOf(a), "directory");
+    const { type } = explainStored(types, factsOf(a));
     if (!type || type === "other") continue;
     const list = idsByType.get(type);
     if (list) list.push(a.id);

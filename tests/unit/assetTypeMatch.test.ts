@@ -44,7 +44,8 @@ import {
   type MatchContext,
   type MatchGroup,
 } from "../../src/utils/assetTypeMatch.js";
-import { scopeConditionMeta, SCOPE_GROUP_OPS, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { scopeConditionMeta, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { SCOPE_GROUP_OPS } from "../../src/services/notificationTypes/scopeConditions.js";
 
 /** The shipped registry, shaped for the resolver. */
 function defaultTypes(): MatchableType[] {
@@ -279,6 +280,25 @@ describe("resolution", () => {
     ];
     expect(resolveAssetType(tied, { os: "x" }, "scan")).toBe("alpha");
     expect(resolveAssetType([...tied].reverse(), { os: "x" }, "scan")).toBe("alpha");
+  });
+
+  it("runs a Manufacturer rule in the inventory context (business rule 164)", () => {
+    // The prod case: a FortiGate fingerprints an APC PDU's OS as "APC AOS" and
+    // its NIC vendor as APC; the operator's Power rule reads Manufacturer.
+    const power: MatchableType[] = [{
+      name: "power", matchPriority: 100, matchContexts: ["directory", "scan", "inventory"],
+      matchRules: { op: "or", children: [{ field: "manufacturer", operator: "contains", value: "APC" }] },
+    }];
+    expect(resolveAssetType(power, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBe("power");
+    // Without the box ticked, inventory never reaches it.
+    const untick = [{ ...power[0]!, matchContexts: ["directory"] as MatchContext[] }];
+    expect(resolveAssetType(untick, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBeNull();
+  });
+
+  it("ships the OS ladders in the inventory context too, so Phase 7 types as before", () => {
+    expect(DEFAULT_TYPE_MATCHING.server!.contexts).toEqual(["directory", "inventory"]);
+    expect(DEFAULT_TYPE_MATCHING.workstation!.contexts).toEqual(["directory", "inventory"]);
+    expect(MATCH_CONTEXTS).toContain("inventory");
   });
 
   it("skips a type whose contexts exclude this one", () => {

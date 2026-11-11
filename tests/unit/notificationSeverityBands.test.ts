@@ -7,17 +7,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  normalizeRuleToV2,
-  resolveTierLadder,
-  updateTierMetSince,
-  sustainedSeverity,
-  tierMetSinceChanged,
-  bandDescent,
-  BAND_DESCENT_KEY_PREFIX,
-} from "../../src/services/notificationTypes.js";
-import { tierForSeverity, bandNotifyOf } from "../../src/services/notificationEngine.js";
+import { ruleInputSchema, normalizeRuleToV2, resolveTierLadder, updateTierMetSince, sustainedSeverity, tierMetSinceChanged, bandDescent } from "../../src/services/notificationTypes.js";
+import { BAND_DESCENT_KEY_PREFIX } from "../../src/services/notificationTypes/triggers.js";
+import { tierForSeverity, bandNotifyOf } from "../../src/services/notifications/severityBands.js";
 
 const bandedRule = (over: any = {}) => ({
   name: "Core temp",

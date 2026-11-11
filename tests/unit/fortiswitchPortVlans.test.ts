@@ -19,7 +19,7 @@ import {
   parseFortiswitchPortVlan,
   FORTISWITCH_MONITOR_PORT_FORMAT,
 } from "../../src/utils/fortiswitchCmdb.js";
-import { buildFortiswitchControllerPortsMap } from "../../src/services/monitoringService.js";
+import { buildFortiswitchControllerPortsMap } from "../../src/services/monitoring/streamCollection.js";
 import { monitoringServiceSource } from "./_monitoringServiceSource.js";
 
 // The gate's interfaces as `format=name|vlanid` returns them (HUB1-a shapes).

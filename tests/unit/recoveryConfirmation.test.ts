@@ -25,7 +25,7 @@ import {
   type ResetConfig,
 } from "../../src/services/notificationTypes.js";
 import { recoveryPollsFor, type DownDetectionVerdict } from "../../src/services/downDetectionService.js";
-import { recoveredMeets } from "../../src/services/notificationEngine.js";
+import { recoveredMeets } from "../../src/services/notifications/readings.js";
 
 /** A verdict whose reset states seconds, not a poll count. */
 const secVerdict = (threshold: number, recoverySustainSec: number | null): DownDetectionVerdict =>

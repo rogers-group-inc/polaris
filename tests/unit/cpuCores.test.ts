@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { coreVector, coreVectorWithGaps, coreConditionIsBelow, aggregateCores, coreSeries, coresToName, formatCoreList } from "../../src/utils/cpuCores.js";
-import { evaluationOrder } from "../../src/services/notificationEngine.js";
-import { dimensionNounOf, METRIC_META, ASSET_METRICS, leadingRun, rollingAggregate } from "../../src/services/notificationTypes.js";
+import { evaluationOrder } from "../../src/services/notifications/evaluation.js";
+import { dimensionNounOf, METRIC_META, leadingRun, rollingAggregate } from "../../src/services/notificationTypes.js";
+import { ASSET_METRICS } from "../../src/services/notificationTypes/triggers.js";
 import { processRankingForMetric } from "../../src/services/alertProcessService.js";
 import { isResourceScopedAlert, chartTokenForMetric } from "../../src/services/alertChartService.js";
 

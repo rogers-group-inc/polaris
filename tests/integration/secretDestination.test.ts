@@ -17,7 +17,7 @@ import { hashPassword } from "../../src/utils/password.js";
 import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
 import { SECRET_MASK } from "../../src/utils/secretMask.js";
 import { dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
-import { resolveControllerMgmtIp } from "../../src/services/monitoringService.js";
+import { resolveControllerMgmtIp } from "../../src/services/monitoring/fortinetControllers.js";
 
 const d = dbDescribe;
 const PFX = "secretdest-test";

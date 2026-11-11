@@ -2,12 +2,10 @@
  * tests/unit/serverSettingsService.test.ts — NTP settings and the uploaded
  * certificate list (CQ-T010).
  *
- * BUG FOUND (pinned with it.fails, 2026-11-11): `testNtpSync` never contacts a
- * server. With any server configured it answers ok: true, "Synchronized with
- * <server> (offset: +0.003s, …)" — a fixed, invented offset — and the Server
- * Settings → NTP "Test" button (POST /server-settings/ntp/test) shows that to
- * the operator as a real result. The it.fails case below flips to `it` once
- * the test really queries the server.
+ * `testNtpSync` used to answer "Synchronized" with an invented offset without
+ * contacting anything (found 2026-11-11, pinned then fixed the same day). It
+ * now queries every server for real (src/utils/sntp.ts, tested on loopback in
+ * sntp.test.ts); here the query is injected through its `deps` seam.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,7 +15,8 @@ vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
 import {
-  getNtpSettings, updateNtpSettings, testNtpSync, listCertificates, addCertificate, deleteCertificate, type CertificateRecord,
+  getNtpSettings, updateNtpSettings, testNtpSync, listCertificates, addCertificate, deleteCertificate,
+  type CertificateRecord, type NtpTestDeps,
 } from "../../src/services/serverSettingsService.js";
 
 const findUnique = stubbed(prisma.setting.findUnique);
@@ -45,13 +44,49 @@ describe("NTP settings", () => {
   });
 
   it("a test with no servers is refused", async () => {
-    expect(await testNtpSync({ mode: "ntp", servers: [] })).toEqual({ ok: false, message: "No NTP servers configured" });
+    expect(await testNtpSync({ mode: "ntp", servers: [" "] })).toEqual({ ok: false, message: "No NTP servers configured", results: [] });
+  });
+});
+
+describe("testNtpSync — a real query per server (was an invented success until 2026-11-11)", () => {
+  const sample = (over: Record<string, unknown> = {}) => ({ offsetMs: 12, delayMs: 23.4, stratum: 2, refId: "10.0.0.1", address: "a", ...over });
+  const deps = (over: Partial<NtpTestDeps> = {}): NtpTestDeps => ({
+    querySntp: vi.fn(async () => sample()) as any,
+    checkNtsKe: vi.fn(async () => { throw new Error("not used"); }) as any,
+    ...over,
   });
 
-  it.fails("a test against a server that cannot answer does not report a sync (testNtpSync never queries)", async () => {
-    // 192.0.2.0/24 is TEST-NET-1: nothing answers there.
-    const r = await testNtpSync({ mode: "ntp", servers: ["192.0.2.1"] });
+  it("queries every distinct server and reports each one's stratum, offset and delay", async () => {
+    const d = deps();
+    const r = await testNtpSync({ mode: "ntp", servers: ["a.example", "b.example", "a.example"] }, d);
+    expect(d.querySntp).toHaveBeenCalledTimes(2);
+    expect(r.ok).toBe(true);
+    expect(r.message).toBe("a.example: stratum 2, offset +0.012 s, delay 23 ms; b.example: stratum 2, offset +0.012 s, delay 23 ms");
+  });
+
+  it("a server that does not answer fails the test and says why; the others still report", async () => {
+    const d = deps({
+      querySntp: vi.fn(async (host: string) => { if (host === "192.0.2.1") throw new Error("no answer within 3 s"); return sample(); }) as any,
+    });
+    const r = await testNtpSync({ mode: "ntp", servers: ["192.0.2.1", "ok.example"] }, d);
     expect(r.ok).toBe(false);
+    expect(r.results.map((x) => x.ok)).toEqual([false, true]);
+    expect(r.message).toContain("192.0.2.1: no answer within 3 s");
+  });
+
+  it("says so when this server's clock is more than a second off", async () => {
+    const r = await testNtpSync({ mode: "sntp", servers: ["a"] }, deps({ querySntp: vi.fn(async () => sample({ offsetMs: 4200 })) as any }));
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("the Polaris server's clock is 4.2 s behind it");
+  });
+
+  it("NTS runs the key exchange first, takes the time from the server it names, and says the sample was not NTS-authenticated", async () => {
+    const d = deps({ checkNtsKe: vi.fn(async () => ({ complete: true, protocols: [0], aead: [15], cookies: 8, server: "time.example", port: 1123, error: null })) as any });
+    const r = await testNtpSync({ mode: "nts", servers: ["nts.example"] }, d);
+    expect(d.querySntp).toHaveBeenCalledWith("time.example", { port: 1123 });
+    expect(r.message).toMatch(/^nts\.example: NTS key exchange OK \(8 cookies\); stratum 2.*not NTS-authenticated/);
+    const refused = await testNtpSync({ mode: "nts", servers: ["x"] }, deps({ checkNtsKe: vi.fn(async () => { throw new Error("NTS key exchange: no ntske/1 ALPN"); }) as any }));
+    expect(refused).toMatchObject({ ok: false, message: "x: NTS key exchange: no ntske/1 ALPN" });
   });
 });
 

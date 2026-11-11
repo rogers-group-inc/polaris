@@ -51,24 +51,13 @@ import { evaluationOrder, evaluateThresholdRule, evaluateCompositeRule } from ".
 import { runEventRuleTimedClear, runEventTail, applyLinkedForecastLevels } from "./notifications/eventTail.js";
 
 // CQ-B063 — the builder Test-button preview (notifications/preview.ts).
-export { type PreviewMatch, type CarveOutPeer, carveOutAggregate, applyCarveOutToMatches, previewRule, applicableTemplateTokens, previewAlertMessage } from "./notifications/preview.js";
+export { type PreviewMatch, type CarveOutPeer, previewRule, previewAlertMessage } from "./notifications/preview.js";
 
-export { globToRegExp, runEventRuleTimedClear, type MaintenanceSpan, suppressedAtEventTime } from "./notifications/eventTail.js";
+export { type MaintenanceSpan } from "./notifications/eventTail.js";
 
-export { evaluationOrder } from "./notifications/evaluation.js";
+export { type InterfaceStateRow } from "./notifications/readings.js";
 
-export { forecastCountdownMoved } from "./notifications/alertLifecycle.js";
-
-export { tierForSeverity, bandNotifyOf } from "./notifications/severityBands.js";
-
-
-export { applyDeviceFilters, type InterfaceStateRow, interfaceSampleCarries, interfaceStateSeries, streamFailingMinutes, readingMeets, recoveredMeets } from "./notifications/readings.js";
-
-export { assetCanTrigger, loadScopeAssetIds, loadScopeRegionSnapshots, isSuppressedForNotifications, frozenReadingIsFresh, assetIsAnsweringProbes, triggerHandsOffWhenDeviceDown, assetIsDown, interfaceIsPinned, poeFaultCoversUnpinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned } from "./notifications/scope.js";
-
-export { clearAssetDetailCache } from "./notifications/assetDetail.js";
-
-export { lookbackMsFor, fireLookbackMsFor, withRecoveryLookback, compareNum, compareValue } from "./notifications/ruleModel.js";
+export { loadScopeAssetIds, loadScopeRegionSnapshots, isSuppressedForNotifications } from "./notifications/scope.js";
 
 // buildComposedEmail moved to notificationRecipientService (the action layer
 // composes per-action emails and importing it from here would be circular);

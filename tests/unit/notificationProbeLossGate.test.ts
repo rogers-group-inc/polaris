@@ -44,10 +44,8 @@ vi.mock("../../src/services/probeLossQuery.js", () => ({
   queryProbeLossRatios: h.queryProbeLossRatios,
 }));
 
-import {
-  evaluateAllNotificationRules,
-  assetIsAnsweringProbes,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { assetIsAnsweringProbes } from "../../src/services/notifications/scope.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {
   return {

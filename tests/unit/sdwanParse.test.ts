@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parsePerfSlaHealthCheck, parseSdwanRules, parseSdwanSlaThresholds, parseSdwanMemberZones } from "../../src/services/monitoringService.js";
+import { parsePerfSlaHealthCheck, parseSdwanRules, parseSdwanSlaThresholds, parseSdwanMemberZones } from "../../src/services/monitoring/fortiosCollectors.js";
 
 describe("parsePerfSlaHealthCheck", () => {
   it("flattens results.<hc>.<member> into one sample per (hc, link)", () => {

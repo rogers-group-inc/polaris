@@ -138,13 +138,9 @@ export const MAX_PLAUSIBLE_DUPLICATES = 3;
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────
 
-/**
- * Re-exported so this service stays the place rule 83 reads about serial
- * usability, while the rule itself lives in utils/serialNumber.ts — the
- * projection and the agent ingest path apply the SAME test at write time, so
- * a placeholder never becomes an Asset.serialNumber for this sweep to find.
- */
-export { isUsableSerial } from "../utils/serialNumber.js";
+// Serial usability (rule 83) lives in utils/serialNumber.ts → isUsableSerial:
+// the projection and the agent ingest path apply the SAME test at write time,
+// so a placeholder never becomes an Asset.serialNumber for this sweep to find.
 
 /**
  * The dedupe key for ONE claiming controller.

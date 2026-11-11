@@ -13,11 +13,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  withRecoveryLookback,
-  lookbackMsFor,
-  fireLookbackMsFor,
-} from "../../src/services/notificationEngine.js";
+import { withRecoveryLookback, lookbackMsFor, fireLookbackMsFor } from "../../src/services/notifications/ruleModel.js";
 import type { Trigger, ResetConfig } from "../../src/services/notificationTypes.js";
 
 const MIN = 60_000;

@@ -48,7 +48,12 @@ Five cards about what Polaris calls things it finds:
 - **Device Types** — the asset-type registry and the matching rules that file a
   newly discovered device. Built-in types cannot be renamed or removed, but
   their rules are editable; **Apply rules to existing "Other" assets…** re-files
-  what was left unclassified.
+  what was left unclassified. Each type chooses where its rules run: **Directory
+  discovery** (AD, Entra, Intune, Azure Arc), **Network Discovery scans** (and a
+  device's own SNMP description), and **Firewall device inventory** — the devices a
+  FortiGate detects on its networks, judged on the gate's OS fingerprint, the
+  network card's vendor (Manufacturer), the hostname, and any model or product type
+  the asset already has. See [Business Rules](Business-Rules#rule-164).
 - **[Tags](#tags)** — the tag registry.
 
 The manufacturer boxes on this tab (Device Icons, both halves of a Manufacturer
@@ -393,6 +398,22 @@ vanish.
 
 Two cards: **Time Synchronization** (the server's NTP servers) and **Timezone
 Override**.
+
+**Test Sync** queries every listed server from the Polaris server, once each,
+and shows one line per server: its stratum, how far the Polaris server's clock
+is from it (the offset), and the round-trip delay — or why it did not answer
+(no answer within 3 seconds, a name that does not resolve, a server that is not
+synchronized itself, a server that refused the query). It turns red unless
+every server answered, and says so when the Polaris server's clock is more than
+a second off. With the **NTS** mode it first runs the NTS key exchange (TCP
+4460, TLS 1.3), then takes one time sample from the server the exchange names;
+that sample is plain NTP, and the line says so. The test needs UDP 123 (and TCP
+4460 for NTS) outbound from the Polaris server.
+
+Polaris does not configure the host's time service from these settings — the
+operating system's NTP client (chronyd on RHEL) keeps the clock. Use Test Sync
+to check that the servers you intend to use are reachable and agree with the
+host.
 
 **This is the clock every maintenance window and every automation quiet-time
 window is expressed in.** Both are **server-local wall clock with no offset** —

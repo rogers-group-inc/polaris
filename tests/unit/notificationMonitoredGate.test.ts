@@ -43,12 +43,9 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
   scopeRegionTagsOf: vi.fn(() => []),
 }));
 
-import {
-  assetCanTrigger,
-  clearAssetDetailCache,
-  evaluateAllNotificationRules,
-  previewRule,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules, previewRule } from "../../src/services/notificationEngine.js";
+import { assetCanTrigger } from "../../src/services/notifications/scope.js";
+import { clearAssetDetailCache } from "../../src/services/notifications/assetDetail.js";
 import { statusAllowsMonitoring, UNMONITORABLE_STATUSES } from "../../src/utils/assetInvariants.js";
 
 function scopeAsset(id: string, over: Record<string, unknown> = {}) {

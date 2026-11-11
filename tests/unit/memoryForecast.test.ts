@@ -18,7 +18,8 @@ import {
   MEMORY_FORECAST_MAX_DAYS,
   MEMORY_FORECAST_MIN_POINTS,
 } from "../../src/services/memoryForecastService.js";
-import { ASSET_METRICS, METRIC_META } from "../../src/services/notificationTypes.js";
+import { METRIC_META } from "../../src/services/notificationTypes.js";
+import { ASSET_METRICS } from "../../src/services/notificationTypes/triggers.js";
 import { chartTokenForMetric, isResourceScopedAlert } from "../../src/services/alertChartService.js";
 import { processRankingForMetric } from "../../src/services/alertProcessService.js";
 import { prisma } from "../../src/db.js";

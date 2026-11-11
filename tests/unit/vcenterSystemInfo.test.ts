@@ -17,7 +17,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildVcenterSystemInfo, type VcenterReading } from "../../src/services/monitoringService.js";
+import { type VcenterReading } from "../../src/services/monitoringService.js";
+import { buildVcenterSystemInfo } from "../../src/services/monitoring/vcenterFmgCollectors.js";
 
 function hostReading(over: Partial<Parameters<typeof hostRow>[0]> = {}): VcenterReading {
   return { kind: "host", row: hostRow(over), datastores: [], fetchDurationMs: 12 };

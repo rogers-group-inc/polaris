@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { defaultPollingForSource } from "../../src/services/monitoringService.js";
+import { defaultPollingForSource } from "../../src/services/monitoring/monitorSettings.js";
 
 describe("defaultPollingForSource — Unraid / TrueNAS", () => {
   for (const src of ["unraid", "truenas"] as const) {

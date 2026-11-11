@@ -86,7 +86,7 @@ import {
   FIRMWARE_DRIFT_RULES,
 } from "../../src/jobs/seedBaselineAutomations.js";
 import { ruleInputSchema } from "../../src/services/notificationTypes.js";
-import { globToRegExp } from "../../src/services/notificationEngine.js";
+import { globToRegExp } from "../../src/services/notifications/eventTail.js";
 
 beforeEach(() => {
   settings.clear();

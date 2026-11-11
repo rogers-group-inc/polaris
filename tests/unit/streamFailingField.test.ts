@@ -10,15 +10,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  ASSET_STATE_FIELDS,
-  FIELD_META,
-  type Trigger,
-} from "../../src/services/notificationTypes.js";
-import { streamFailingMinutes, triggerHandsOffWhenDeviceDown } from "../../src/services/notificationEngine.js";
+import { ruleInputSchema, FIELD_META, type Trigger } from "../../src/services/notificationTypes.js";
+import { ASSET_STATE_FIELDS } from "../../src/services/notificationTypes/triggers.js";
+import { streamFailingMinutes } from "../../src/services/notifications/readings.js";
+import { triggerHandsOffWhenDeviceDown } from "../../src/services/notifications/scope.js";
 import { streamForMetric } from "../../src/services/notificationCadenceService.js";
-import { pollFailureText, POLL_ERROR_MAX_LEN } from "../../src/services/monitoringService.js";
+import { pollFailureText, POLL_ERROR_MAX_LEN } from "../../src/services/monitoring/pollStamps.js";
 import { triggerSummary } from "../../src/utils/triggerSummary.js";
 import { chartTokenForMetric } from "../../src/services/alertChartService.js";
 

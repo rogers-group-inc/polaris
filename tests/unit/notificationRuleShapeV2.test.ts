@@ -10,24 +10,8 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
-import {
-  ruleInputSchema,
-  evaluateScopeCondition,
-  previewInputSchema,
-  normalizeRuleToV2,
-  normalizeReset,
-  normalizeEscalationToV2,
-  targetsToNotifyActions,
-  actionsToTargets,
-  legacyMirrorOfV2,
-  buildSchemaCatalog,
-  allRuleActionRefs,
-  ruleHasAnyEscalation,
-  escalationChainsForSeverity,
-  escalationTierStateKey,
-  type DeliveryTarget,
-  type EmailComposition,
-} from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, evaluateScopeCondition, previewInputSchema, normalizeRuleToV2, normalizeEscalationToV2, actionsToTargets, legacyMirrorOfV2, buildSchemaCatalog, allRuleActionRefs, ruleHasAnyEscalation, escalationChainsForSeverity, escalationTierStateKey, type DeliveryTarget, type EmailComposition } from "../../src/services/notificationTypes.js";
+import { normalizeReset, targetsToNotifyActions } from "../../src/services/notificationTypes/ruleSchema.js";
 import { scopeMatchesAsset } from "../../src/services/notificationRuleService.js";
 
 const metricTrigger = { type: "asset_metric", metric: "cpuPct", operator: ">=", threshold: 90 };

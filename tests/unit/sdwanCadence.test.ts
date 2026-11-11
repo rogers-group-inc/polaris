@@ -10,13 +10,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  sdwanIntervalFromConfig,
-  sdwanShouldQueue,
-  SDWAN_INTERVAL_DEFAULT_SEC,
-  SDWAN_INTERVAL_MIN_SEC,
-  SDWAN_INTERVAL_MAX_SEC,
-} from "../../src/services/monitoringService.js";
+import { sdwanShouldQueue, SDWAN_INTERVAL_DEFAULT_SEC } from "../../src/services/monitoringService.js";
+import { sdwanIntervalFromConfig, SDWAN_INTERVAL_MIN_SEC, SDWAN_INTERVAL_MAX_SEC } from "../../src/services/monitoring/monitorSettings.js";
 
 describe("sdwanIntervalFromConfig", () => {
   it("defaults to 60s when pullSdwan is on and no interval is stored", () => {
