@@ -24,11 +24,29 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | Batch | What | State |
 |---|---|---|
 | 0 | Queued agent commands, ownership stamps, disabled-account alerts, departing-account bookings | **done** — pushed `3d7bde734` |
-| A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — this commit |
-| B | Integration delete / disable / re-scope | open — needs decisions B-D1..B-D3 |
-| C | Tables that only grow | open — needs decisions C-D1, C-D2 |
-| D | Leftovers outside the database (hosts, devices, disk) | open — needs decisions D-D1..D-D3 |
+| A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — `d66a4973b` |
+| B | Integration delete / disable / re-scope | open — B-D1, B-D2 decided; B-D3 defaulted |
+| C | Tables that only grow | **retention done** — this commit; C.3, C.6, C.7, C.11 open |
+| D | Leftovers outside the database (hosts, devices, disk) | open — D-D1 decided; D-D2, D-D3 defaulted |
 | E | Removable by hand, but silent | open — no decisions needed |
+
+## Decisions (operator, 2026-11-11)
+
+| Id | Question | Answer |
+|---|---|---|
+| B-D1 | What happens to what a deleted integration discovered | **Keep the assets and networks and detach them cleanly** (remove that integration's source rows, tags and dependency edges; re-project from the remaining sources), **plus a tick-box in the delete dialog to decommission the assets no other source still reports.** The dialog shows the counts first |
+| B-D2 | DHCP reservations pushed to a FortiGate when its integration is deleted | **Leave them on the device, and write an Event listing every entry left behind** |
+| C-D1 | How long cleared alerts are kept | **A setting, default 365 days** (0 = keep forever) |
+| D-D1 | Deleting an asset that has the Polaris Agent installed | **Warn about the agent and offer to attempt the uninstall first. If it succeeds, carry on. If it fails, say so and ask whether to continue with the delete** |
+
+Not asked; defaulted by the implementer and open to change:
+
+| Id | Default |
+|---|---|
+| B-D3 | `azure:` tags are stripped when the Arc integration is deleted or a machine leaves Arc (it is part of the clean detach of B-D1) |
+| C-D2 | The subnet archive gains a Delete at Full Read-Write rather than a retention period — the operator has consistently preferred a visible, operator-decided removal over a silent automatic one |
+| D-D2 | A quarantine release that cannot reach a gate keeps that gate on the record as still blocked, with a retry, rather than dropping it |
+| D-D3 | An offboarding script is generated beside the onboarding one; Intune / Arc objects Polaris created are listed for removal |
 
 ## Batch 0 — done (rules 155, 48(e), 140(a), 140(b))
 
@@ -92,27 +110,21 @@ Decisions needed:
 
 | # | Table | State today |
 |---|---|---|
-| C.1 | `Notification`, `NotificationDelivery`, `QuietTimeSummary` (alert history) | no delete, no retention |
-| C.2 | `NotificationRuleState` | rows set to `clear`, never deleted; ALL loaded per rule on every 60 s tick — the one with a cost at 2000 assets |
-| C.3 | `Conflict` (resolved) | never pruned |
-| C.4 | `DiscoveryRun` | never deleted (also B.10) |
-| C.5 | `AssetFortigateSighting` | never deleted (also B.4) |
+| C.1 | `Notification`, `NotificationDelivery`, `QuietTimeSummary` (alert history) | fixed — `alertHistoryDays`, default 365 (rule 157) |
+| C.2 | `NotificationRuleState` | fixed — idle `clear` rows deleted after 7 days (rule 157) |
+| C.3 | `Conflict` (resolved) | **kept on purpose**: a rejected conflict suppresses re-raising (rule 139). Open question: prune ACCEPTED ones only |
+| C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 157) |
+| C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 157) |
 | C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` |
 | C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
-| C.8 | `User.hiddenMapRegionIds` ids of deleted regions | re-saved on every toggle |
-| C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | no sweep |
-| C.10 | `NetworkScanRun` | never pruned |
+| C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
+| C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 157) |
+| C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 157) |
+| C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 157) |
 | C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob |
 
-Decisions needed:
-
-- **C-D1** — alert history retention: how long are cleared alerts and their delivery rows
-  kept? (Events have a configured retention; alerts have none.) Deleting history is not
-  reversible, so the default must be yours.
-- **C-D2** — the subnet archive: keep forever (it was designed as "not a retention entity"),
-  add a retention, or add a Delete to the archive view.
-
-No decision needed for C.2, C.4, C.5, C.7, C.8, C.9, C.11 — they are housekeeping.
+Still open in C: C.3 (accepted conflicts only?), C.6 (archive Delete, per the C-D2 default),
+C.7 (topology layouts), C.11 (process config on unpin).
 
 ## Batch D — leftovers outside the database (open)
 

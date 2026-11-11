@@ -198,7 +198,16 @@ needs `events:write`.
 |---|---|
 | **Archive Export** | copy events off-host over **SCP** or **SFTP**: host, port, username, password or SSH key path, remote path |
 | **Syslog** | forward events over **UDP**, **TCP** or **TLS** (CA, client certificate and key paths): host, port, facility, minimum severity, and message format — **RFC 5424** (default) or **RFC 3164** |
-| **Retention** | **Retention Period (days)**, default 7, and **Minimum Event Level to Retain** — *Info* (store everything, the default), *Warning* or *Error*, which drop the lower levels permanently |
+| **Retention** | **Retention Period (days)**, default 7, and **Minimum Event Level to Retain** — *Info* (store everything, the default), *Warning* or *Error*, which drop the lower levels permanently. Also **Alert History (days)**, default 365: how long an alert is kept after it has **cleared** (see below) |
+
+**Alert History** is about alerts, not events, but it is the same kind of
+setting so it sits on the same tab. An alert that has cleared is deleted that
+many days after it cleared, along with its delivery records; an alert that is
+still open is never deleted, however old it is. Enter `0` to keep alert history
+forever, or 30 to 3650 days. Polaris deletes a backlog in slices over several
+nightly runs, so the first run after an upgrade does not remove years of history
+at once, and writes an Event each time it deletes alerts
+([rule 157](Business-Rules#rule-157)).
 
 Archive Export and Syslog each have a **Test Connection** button. Archive Export
 refuses a host that is not a hostname or IP address, a username with anything

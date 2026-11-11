@@ -3309,3 +3309,16 @@ never lets this widen a target: an automation scoped to one deleted device keeps
 (and matches nothing) rather than quietly becoming an automation for every device. A
 Discovery left private by a deleted user can be seen, republished or deleted by holders of
 Full Read-Write on Discovery. See [Assets](Assets#deleting-an-asset).
+
+### Rule 157
+
+**Nothing Polaris writes grows without a limit.** Samples, events and script runs have
+always aged out; these now do too. **Cleared alerts** are deleted 365 days after they
+cleared, with their delivery records — a period you set on the Events page's
+**Settings → Retention** tab (`0` keeps them forever). An alert that is still open is
+never deleted. Polaris also removes, without a setting because nothing reads them: the
+leftover state an automation kept for a device, port or check that stopped being
+evaluated a week ago; the last-run record of an integration that has been deleted;
+FortiGate sightings older than the quarantine sighting window; and Discovery runs older
+than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
+a slice at a time over several nights. See [Events](Events#retention-and-archival).

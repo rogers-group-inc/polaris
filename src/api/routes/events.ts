@@ -6,6 +6,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { requirePermission } from "../middleware/permissions.js";
+import { requestActor } from "../middleware/auth.js";
+import { getAlertHistorySettings, normalizeAlertHistoryDays, updateAlertHistorySettings } from "../../services/historyRetentionService.js";
 import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter } from "../../utils/prismaTextFilter.js";
@@ -302,7 +304,9 @@ router.post("/syslog-test", requirePermission("events", "write"), async (req, re
 // GET /api/v1/events/retention-settings
 router.get("/retention-settings", requirePermission("events", "read"), async (_req, res, next) => {
   try {
-    res.json(await getRetentionSettings());
+    // Alert history rides the same dialog tab (business rule 157) but is its
+    // own setting: Events are pruned hourly, cleared alerts daily.
+    res.json({ ...(await getRetentionSettings()), ...(await getAlertHistorySettings()) });
   } catch (err) {
     next(err);
   }
@@ -311,7 +315,17 @@ router.get("/retention-settings", requirePermission("events", "read"), async (_r
 // PUT /api/v1/events/retention-settings
 router.put("/retention-settings", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    res.json(await updateRetentionSettings(req.body));
+    // `alertHistoryDays` is optional so an older client's PUT still saves the
+    // Event settings; when present it is validated before anything is written.
+    const rawAlertDays = (req.body as { alertHistoryDays?: unknown } | undefined)?.alertHistoryDays;
+    if (rawAlertDays !== undefined && normalizeAlertHistoryDays(rawAlertDays) === null) {
+      await updateAlertHistorySettings(rawAlertDays); // throws the 400 with the allowed range
+    }
+    const events = await updateRetentionSettings(req.body);
+    const alerts = rawAlertDays !== undefined
+      ? await updateAlertHistorySettings(rawAlertDays, requestActor(req))
+      : await getAlertHistorySettings();
+    res.json({ ...events, ...alerts });
   } catch (err) {
     next(err);
   }

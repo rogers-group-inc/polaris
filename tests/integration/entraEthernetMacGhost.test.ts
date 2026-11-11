@@ -17,7 +17,7 @@
 
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
-import { dbDescribe, dbReachable } from "./_helpers.js";
+import { dbDescribe, dbReachable, waitForEventCount } from "./_helpers.js";
 import { syncEntraDevices, knownEthernetMacsFromIntuneRows } from "../../src/services/discovery/discoveryEngine.js";
 
 const d = dbDescribe;
@@ -139,6 +139,10 @@ d("Entra sync — Intune Ethernet MAC absorbs the endpoint duplicate", () => {
     expect(rows.map((r) => r.mac).sort()).toEqual([ETH, WIFI].sort());
     const after = await prisma.asset.findUniqueOrThrow({ where: { id: intune.id }, select: { macAddress: true } });
     expect(after.macAddress).toBe(ETH);
+    // logEvent is fire-and-forget: the sync returns before the row is written.
+    // (Read straight away this lost the race about 2 runs in 5 once the merge
+    // gained its post-commit reference clean-up, rule 156.)
+    await waitForEventCount("asset.duplicate_merged", 1, intune.id);
     const ev = await prisma.event.findFirst({ where: { action: "asset.duplicate_merged", resourceId: intune.id } });
     expect(ev?.message).toContain(ETH);
   });
