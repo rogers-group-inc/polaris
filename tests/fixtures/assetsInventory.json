@@ -192,6 +192,7 @@
     "_ensureSensorPanelDOM",
     "_ensureStoragePanelDOM",
     "_ensureTypeDropdown",
+    "_expandShotRegions",
     "_exportPanelLogsCsv",
     "_extractPdfPages",
     "_extractTabBlocks",
