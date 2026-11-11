@@ -86,7 +86,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `eventLogService.logEvent` (audit `logflagrule.*`); `prisma.logFlagRule`.
 
-**Used by:** `src/api/routes/logFlagRules.ts` (CRUD at `/api/v1/log-flag-rules`); `src/api/routes/assets.ts:GET /assets/:id/process-logs` (annotates returned lines via `evaluateLogFlags`; `?flagged=1` → only matches).
+**Used by:** `src/api/routes/logFlagRules.ts` (CRUD at `/api/v1/log-flag-rules`); `src/api/routes/assets/telemetry.ts:GET /assets/:id/process-logs` (annotates returned lines via `evaluateLogFlags`; `?flagged=1` → only matches).
 
 **Invariants:**
 - **Read-time eval, no persisted flag** — flags are computed per fetch over the bounded log window, so a new/edited rule retroactively flags history and edits take effect on the next fetch (no backfill).
@@ -327,7 +327,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** genericApiService (`buildRequestHeaders`, `fetchGenericApiRecords`, `fetchJsonDocument`, `fillDetailTemplate`, `identityKeyFor`, `genericApiWidgetId`); utils jsonPath, stateProbes, genericApiSource, cidr, mac, ttlCache; types from monitoringService (type-only — no runtime cycle).
 
-**Used by:** src/services/monitoring/probes.ts (`probeAsset`) and monitoring/streamCollection.ts (`collectTelemetry`, `collectHardwareSensors`, `collectSystemInfo`, `collectFastFiltered`) dispatch on `polling === "genericapi"` before their IP guards; `collectAndRecordCustomWidgets` runs `collectGenericApiWidgetSamples` beside `collectManufacturerWidgetSamples` and persists both in one transaction. src/api/routes/assets.ts — `GET /assets/:id/custom-widgets` appends `genericApiWidgetDefsForAsset`.
+**Used by:** src/services/monitoring/probes.ts (`probeAsset`) and monitoring/streamCollection.ts (`collectTelemetry`, `collectHardwareSensors`, `collectSystemInfo`, `collectFastFiltered`) dispatch on `polling === "genericapi"` before their IP guards; `collectAndRecordCustomWidgets` runs `collectGenericApiWidgetSamples` beside `collectManufacturerWidgetSamples` and persists both in one transaction. src/api/routes/assets/telemetry.ts — `GET /assets/:id/custom-widgets` appends `genericApiWidgetDefsForAsset`.
 
 **Invariants:**
 - The reading model is the workload one: `unreachable` (API down, credentials refused, integration disabled, a fleet read that stopped early) SKIPS the probe — one inventory outage never downs a fleet; `absent` (a complete fleet read without the record, a per-asset 404 / 410, a placeholder the record cannot fill) FAILS it; `none` (no query for the stream, or no Generic API record) fails the probe with the reason and makes every collector `{supported:false}`.
@@ -375,8 +375,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** Reads `Asset` rows + `fortinetTopology` JSON via Prisma. The FortiAP branch additionally reads recent `AssetInterfaceSample` rows for the AP itself and passes them through `src/utils/fortiapInterfaceAlias.ts:normalizeFortiapInterfaceName` so the synthesized `localIfName` matches the AP's SNMP-canonical naming (`eth0`) rather than discovery's FortiAP-CLI form (`lan1`).
 
 **Used by:**
-- `src/api/routes/assets.ts` — `GET /assets/:id/system-info` (merges into `lldpNeighbors` response array)
-- `src/api/routes/assets.ts` — `GET /assets/:id/interface-history` (filters inferred set to the requested ifName, then merges; fetches all real LLDP rows for the asset — not just the requested ifName — so a member-port row can suppress an aggregate's inferred row, and loads the latest full interface snapshot via `lastSystemInfoAt` for the membership map)
+- `src/api/routes/assets/system.ts` — `GET /assets/:id/system-info` (merges into `lldpNeighbors` response array)
+- `src/api/routes/assets/telemetry.ts` — `GET /assets/:id/interface-history` (filters inferred set to the requested ifName, then merges; fetches all real LLDP rows for the asset — not just the requested ifName — so a member-port row can suppress an aggregate's inferred row, and loads the latest full interface snapshot via `lastSystemInfoAt` for the membership map)
 
 **Invariants:**
 - Never writes the `AssetLldpNeighbor` table; rows exist only in the HTTP response body.
@@ -464,8 +464,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Used by:**
 - `src/services/monitoring/systemInfoPersist.ts → recordSystemInfoResult` — the ONLY writer, full pass only, from `SystemInfoSample.ipsecConnections` / `.sslVpnSessions`.
-- `src/api/routes/assets.ts → GET /assets/:id/ipsec` — `readAssetIpsec` (+ the system-info cadence for the freshness strip).
-- `src/api/routes/assets.ts → GET /assets/:id/system-info` — `readLatestIpsecTunnels` (the System tab's tunnel list; extracted from the route verbatim).
+- `src/api/routes/assets/telemetry.ts → GET /assets/:id/ipsec` — `readAssetIpsec` (+ the system-info cadence for the freshness strip).
+- `src/api/routes/assets/system.ts → GET /assets/:id/system-info` — `readLatestIpsecTunnels` (the System tab's tunnel list; extracted from the route verbatim).
 
 **Invariants:**
 - **Each half is replaced only when it was read.** `undefined` preserves, `[]` wipes, decided per half: the SSL-VPN read is a separate request a token can fail on its own, and it must not wipe the ADVPN spokes (nor an IPsec failure the SSL users). The delete is scoped by `kind` (`ssl-vpn` vs everything else) inside the one transaction.

@@ -11,7 +11,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Cross-service deps:** `src/utils/geo.ts:pointInPolygon`, `src/utils/regionHierarchy.ts:buildRegionHierarchy` (derived levels) + `src/utils/ttlCache.ts:createTtlCache`, `src/utils/cidr.ts:buildCidrMatcher` (subnet propagation — precompiled, because the loop is every IP-carrying asset per region), `prisma.tag` (registry mirror), `prisma.subnet` (`fortigateDevice` → id + CIDR list; the ids get the tag, the CIDRs drive asset propagation), `prisma.asset` (membership compute + tag mutations), `prisma.regionTagAssignment` (provenance — sole writer).
 
 **Used by:**
-- `src/api/routes/assets.ts` — `assertAddedRegionTagsNameARegion` from `validateAssetUpdate` (PUT) and the create handler (POST), reserving the `region:` prefix against operator writes; plus the existing `reconcileMapRegions` call.
+- `src/api/routes/assets/write.ts` — `assertAddedRegionTagsNameARegion` from `validateAssetUpdate` (PUT) and the create handler (POST), reserving the `region:` prefix against operator writes; plus the existing `reconcileMapRegions` call.
 - `src/api/routes/serverSettings.ts` — `REGION_TAG_CATEGORY` for the two registry guards (`assertNotRegionCategory` on the category, `assertNotRegionPrefix` on the name).
 - `src/api/routes/mapRegions.ts` — all CRUD endpoints (`GET / POST / PUT / DELETE /map/regions`); each call awaits the appropriate apply* helper before responding. Plus `POST /map/regions/reconcile` (`mapRegions=write`) → `reviewRegionTagsForMapSave` — the Device Map's Save Regions review, called by `map.js` on EVERY save click (even a no-edit one), which is what strips stale region tags off gates that MOVED rather than any polygon changing.
 - `src/services/discovery/discoveryEngine.ts` Phase 13 — end-of-syncDhcpSubnets (`mode in {"full", "finalize"}`) calls `reconcileMapRegions()` so newly-discovered firewalls' coords land in the right regions.
@@ -346,7 +346,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Used by:**
 - `src/api/routes/applicationMap.ts` — `GET /application-map` (applicationMap=read) + `PUT|DELETE /application-map/layout` (applicationMap=write, audited `application_map.layout.saved/reset`).
-- `src/api/routes/assets.ts` — `GET /assets/:id/process-connections` (assets=read) → `getAssetProcessConnections`.
+- `src/api/routes/assets/system.ts` — `GET /assets/:id/process-connections` (assets=read) → `getAssetProcessConnections`.
 - `public/js/appmap.js` — the page; `public/js/assets.js` — the process detail panel's Ports & Connections section.
 
 **Invariants:**

@@ -40,7 +40,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `src/utils/fortinetParentKey.ts`.
 
-**Used by:** `src/api/routes/assets.ts` (`POST /:id/rediscover`).
+**Used by:** `src/api/routes/assets/detail.ts` (`POST /:id/rediscover`).
 
 **Invariants:**
 - It answers TWO separate questions and must not conflate them: WHICH INTEGRATION runs, and WHAT the run is narrowed to. A FortiSwitch/FortiAP’s integration is the one owning its CONTROLLER GATE, not necessarily the one that stamped the child.
@@ -164,7 +164,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `logger`.
 
-**Used by:** `src/services/discovery/discoveryEngine.ts` (discovery control), `src/api/routes/integrations.ts` (`/discoveries` list + cancel + backup-restore guard), `src/api/routes/assets.ts` (`POST /:id/rediscover` pre-check via `isRunActive`), `src/jobs/discoveryRunReaper.ts` (stale-run reaping), `src/services/discoveryCancelWatchdog.ts` (`finishRun("aborted")` before force-exit).
+**Used by:** `src/services/discovery/discoveryEngine.ts` (discovery control), `src/api/routes/integrations.ts` (`/discoveries` list + cancel + backup-restore guard), `src/api/routes/assets/detail.ts` (`POST /:id/rediscover` pre-check via `isRunActive`), `src/jobs/discoveryRunReaper.ts` (stale-run reaping), `src/services/discoveryCancelWatchdog.ts` (`finishRun("aborted")` before force-exit).
 
 **Invariants:**
 - Hot progress is coalesced in the accumulator (mutates synchronously, flushes throttled + on terminal transitions); `flushRunProgress` / `touchWorkerHeartbeat` are best-effort and never kill a run on a transient DB hiccup.

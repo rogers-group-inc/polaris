@@ -361,7 +361,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Used by:**
 - `src/api/routes/agents.ts` — the `softwareInventory` sample-stream arm (`SoftwareSampleSchema`, max 20 000 rows, no min) → `ingestSoftwareInventory` → `persistAssetSoftware(assetId, "agent", rows)`. `GET /agents/config` ships `streams.software {enabled: true, intervalSec: 21600}` — a constant, like `streams.services`, and deliberately not folded into `computeConfigEtag` because it never changes.
-- `src/api/routes/assets.ts` — `GET /assets/:id/software` (gate `assets:read`, thin → `getAssetSoftware`).
+- `src/api/routes/assets/system.ts` — `GET /assets/:id/software` (gate `assets:read`, thin → `getAssetSoftware`).
 - `src/services/discovery/discoveryEngine.ts` — the Entra branch calls `syncIntuneSoftware` after `syncEntraDevices`, passing the run's device list, the Intune list read's outcome (`intuneRead`) and whether the run is scoped; the Azure Arc branch calls `syncArcSoftware` after `syncAzureTagRegistry`.
 - `agent/internal/collectors/software*.go` — the agent-side producer (`SoftwareInventoryOnce`: HKLM Uninstall keys in both registry views on Windows, `dpkg-query` else `rpm` on Linux).
 - `public/js/assets.js` — the asset **Software** tab (`_wireAssetSoftwareTab`), through `api.assets.software`.

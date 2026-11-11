@@ -54,7 +54,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `ipv6GateService` (`ipv6Enabled`), `addressConfidenceService` (`buildAddressConfidence`), `eventLogService` (`logEvent`, `logEventsBatch`), `utils/cidr.ts` (`canonicalIp`, `isIpamIpv6Address`, `isIpv6Address`).
 
-**Used by:** `jobs/reconcilePrimaryIpv6.ts`, `api/routes/assets.ts` (`PUT|DELETE /assets/:id/primary-ipv6`).
+**Used by:** `jobs/reconcilePrimaryIpv6.ts`, `api/routes/assets/addresses.ts` (`PUT|DELETE /assets/:id/primary-ipv6`).
 
 **Invariants:**
 - The reconcile never touches a pinned value, and writes only assets whose choice changed (one `$transaction` per 200) — the steady state is one read and no writes at 2000 assets.
@@ -119,7 +119,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma.$queryRaw` on `assets`; `prisma.asset.findMany` with `select: { id, tags }`.
 
-**Used by:** `src/api/routes/assets.ts → GET /assets` — `resolveTagMatches` resolves the term's ids before `buildAssetListWhere` (the same pre-resolve shape as the discovered-hostname ids), and `sortBy=tags` takes the `pageAssetIdsByTags` branch instead of `buildAssetOrderBy`. `GET /assets/by-tag` → `listAssetsWithTag` (the tag registry chip's slide-in).
+**Used by:** `src/api/routes/assets/list.ts → GET /assets` — `resolveTagMatches` resolves the term's ids before `buildAssetListWhere` (the same pre-resolve shape as the discovered-hostname ids), and `sortBy=tags` takes the `pageAssetIdsByTags` branch instead of `buildAssetOrderBy`. `GET /assets/by-tag` → `listAssetsWithTag` (the tag registry chip's slide-in).
 
 **Invariants:**
 - `sortBy=tags` keeps the favorites-first contract: starred rows lead, each bucket sorted the same way.
@@ -137,7 +137,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `mapRegionService.assertAddedRegionTagsNameARegion` (the PUT's `region:` guard, asked once per batch); `utils/chunk.ts → chunkArray`; `prisma.asset` (`select: { id, tags }` read, per-row `update` in 50-row `$transaction`s).
 
-**Used by:** `src/api/routes/assets.ts → POST /assets/bulk-tags` — the only caller; writes the `asset.bulk_tags` Event.
+**Used by:** `src/api/routes/assets/list.ts → POST /assets/bulk-tags` — the only caller; writes the `asset.bulk_tags` Event.
 
 **Invariants:**
 - Replace never strips `region:`, `prev-entra:` or `prev-ad:` tags (case-insensitive prefix). Remove does strip one the caller names.
@@ -313,7 +313,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `AppError`, `clampAcquiredToLastSeen`, `monitorOverrideService.recomputeMonitorOverrideForAssets` (after a monitored carry-over).
 
-**Used by:** `src/api/routes/assets.ts` — `POST /assets/:id/merge`; `assetGhostMergeService.ts` (imports `transferAssetSideTables`).
+**Used by:** `src/api/routes/assets/sources.ts` — `POST /assets/:id/merge`; `assetGhostMergeService.ts` (imports `transferAssetSideTables`).
 
 **Invariants:**
 - The survivor keeps its owner; an ownerless survivor takes the absorbed record's `createdBy` (business rule 141 (e), 2026-11-04) so a merge never turns an owned device into a Full Read-Write-only one. The merge itself is `assetMerge` (any two) — rule 141 (a).
@@ -381,7 +381,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 
-**Used by:** `src/api/routes/assets.ts — quarantine/release/verify endpoints + GET /assets/quarantine-availability`, `src/services/discovery/dhcp/dhcpMacAssociation.ts — auto-quarantine post-discovery on new FortiGate sighting (syncDhcpSubnets Phase 6)`
+**Used by:** `src/api/routes/assets/quarantine.ts — quarantine/release/verify endpoints`, `src/api/routes/assets/list.ts — GET /assets/quarantine-availability`, `src/services/discovery/dhcp/dhcpMacAssociation.ts — auto-quarantine post-discovery on new FortiGate sighting (syncDhcpSubnets Phase 6)`
 
 **Availability probe readers (the UI gate):** `public/js/assets.js` (`_quarantinePushAvailable()` — row menu, bulk-bar Quarantine button, asset-details tab visibility), `public/js/mobile/asset-detail.js` (`quarantinePushAvailable()` — hero button), `public/js/api.js` (`api.assets.quarantineAvailability`)
 
@@ -420,7 +420,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `settingsStore.createSettingStore`, `eventLogService.logEvent`, `utils/assetSourceLocation` (catalogue + normalizer), `utils/assetProjection.setLearnedLocationPriority` (the install seam).
 
-**Used by:** `src/api/routes/assets.ts — GET/PUT /assets/source-priority`, `src/services/discovery/discoveryEngine.ts — refreshProjectionPriority() at the top of runDiscovery`, `src/app.ts — refreshProjectionPriority() once per process in startBackgroundJobs`, and client-side by two browser files — the Assets → Settings → Sources drag list (`public/js/assets.js`, read + write) and the **merge modal** (`public/js/asset-merge-modal.js`, read only), which defaults each differing field's winner radio to the side whose best-ranked discovery source sits higher in the order.
+**Used by:** `src/api/routes/assets/list.ts — GET/PUT /assets/source-priority`, `src/services/discovery/discoveryEngine.ts — refreshProjectionPriority() at the top of runDiscovery`, `src/app.ts — refreshProjectionPriority() once per process in startBackgroundJobs`, and client-side by two browser files — the Assets → Settings → Sources drag list (`public/js/assets.js`, read + write) and the **merge modal** (`public/js/asset-merge-modal.js`, read only), which defaults each differing field's winner radio to the side whose best-ranked discovery source sits higher in the order.
 
 **Invariants:**
 - The order feeds `Asset.learnedLocation` through the projection, **not just rendering**. The Sources column, its text filter, its sort, "behind FortiGate X" tag/maintenance criteria and the Device Map's per-site narrowing all read `learnedLocation` — deciding the winner at render time would make the column disagree with everything that filters on it. Never "fix" this by moving the resolution into the list enrichment.
@@ -450,7 +450,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `eventLogService` (`buildFirewallChangedEvent` + `logEventsBatch` — the `asset.gateway_firewall.changed` audit row), `utils/assetSourceLocation.bareFortinetDeviceName` (device-name normalization), `assetUpstreamService.resolveFirewallRefsByName` + `utils/cidr.cidrContains` (`getSightingsForDisplay` only).
 
-**Used by:** `src/services/discovery/dhcp/dhcpMacAssociation.ts — batch-record sightings after DHCP discovery sync (syncDhcpSubnets Phase 6)`, `src/api/routes/assets.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
+**Used by:** `src/services/discovery/dhcp/dhcpMacAssociation.ts — batch-record sightings after DHCP discovery sync (syncDhcpSubnets Phase 6)`, `src/api/routes/assets/sources.ts — GET /assets/:id/sightings via getSightingsForDisplay (the Sources tab's Firewall Sightings table and the Quarantine tab's copy)`, `src/services/assetQuarantineService.ts — fan-out targeting within quarantineAsset()`
 
 **Invariants:**
 - Sightings are keyed by `(assetId, fortigateDevice, source)` (migration `20261103090000_sightings_per_binding_kind`): a gate holding both a lease and a reservation for the device keeps a row for each, so Firewall Sightings shows both. Within a batch the latest `seenAt` per key wins. Until 2026-11-03 the key was (asset, gate) and `dhcp_reservation` won a tie, which hid the lease — often the address the device was actually using.
@@ -560,7 +560,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Writes:** nothing — no device I/O, no rows, no Events. Every fact is one discovery already stamped (syncDhcpSubnets Phase 3c, `discovery/dhcp/vipReservations.ts`, writes `Reservation.vipInfo` = `{ name, device, extip, role, isVirtualServer }` for the VIP's external IP, each mapped IP and each virtual-server realserver).
 
 **Used by:**
-- `src/api/routes/assets.ts → GET /api/v1/assets/:id/vips` — the only caller. Gated `assets:read` AND `reservations:read`, chained (the `/assets/:id/contacts` precedent: reading it exposes IPAM content).
+- `src/api/routes/assets/telemetry.ts → GET /api/v1/assets/:id/vips` — the only caller. Gated `assets:read` AND `reservations:read`, chained (the `/assets/:id/contacts` precedent: reading it exposes IPAM content).
 - `public/js/assets.js → _mountAssetViewAsyncSections` + `assetVipRowsHTML` — the General-tab rows.
 
 **Invariants:**
