@@ -14,6 +14,7 @@ import { getApRadioInventory } from "./apRadioService.js";
 import { getArpEntryRetentionDays } from "./sampleRetentionService.js";
 import { fillMacTableVlans, getVlanNamesForAsset, portVlansFor, readPortVlans } from "./vlanNameService.js";
 import { listInterfaceTags } from "./interfaceTagService.js";
+import { getFcByInterface } from "./fibreChannelService.js";
 import { activeAlertSummaryByAsset } from "./notificationService.js";
 import { buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap } from "./peerInferredLldpService.js";
 import { resolveCurrentStateIntervalSec } from "./monitoring/monitorSettings.js";
@@ -164,10 +165,12 @@ export async function getAssetSystemInfo(id: string) {
   const neighborAssetIds = [...new Set(
     mergedNeighbors.map((n) => n.matchedAsset?.id).filter((v): v is string => !!v),
   )];
-  const [vlanNames, neighborAlerts, interfaceTags] = await Promise.all([
+  const [vlanNames, neighborAlerts, interfaceTags, fcByIf] = await Promise.all([
     getVlanNamesForAsset(id),
     activeAlertSummaryByAsset(neighborAssetIds),
     listInterfaceTags(id),
+    // An FC switch port's counters and logged-in devices (rule 159a).
+    getFcByInterface(id),
   ]);
 
   return {
@@ -201,6 +204,10 @@ export async function getAssetSystemInfo(id: string) {
       ipAddress:   i.ipAddress,
       ipv6Address: i.ipv6Address ?? null,
       macAddress:  i.macAddress,
+      // A fibre-channel port's own WWN, its counters and what is logged into
+      // it (business rule 159a); null on every other port.
+      wwn:         i.wwn ?? null,
+      fc:          fcByIf.get(i.ifName) ?? null,
       inOctets:    bigIntToNumber(i.inOctets),
       outOctets:   bigIntToNumber(i.outOctets),
       inErrors:    bigIntToNumber(i.inErrors),

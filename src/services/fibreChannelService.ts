@@ -24,8 +24,10 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import {
+  fcErrorsFrom,
   hostLookupNames,
   normalizeWwn,
+  type FcErrorCounters,
   pickHostMatch,
   pickWwnMatch,
   type FcLoginRow,
@@ -182,6 +184,58 @@ export async function getFcLoginsForSwitches(switchIds: readonly string[]) {
     const live = r.matchedAsset && !["decommissioned", "disabled"].includes(String(r.matchedAsset.status));
     return { ...r, matchedAsset: live ? r.matchedAsset : null, matchMethod: live ? r.matchMethod : null };
   });
+}
+
+/** What the Interfaces table shows on an FC switch port (business rule 159a). */
+export interface FcInterfaceDetail {
+  errorCounters: FcErrorCounters | null;
+  /** The devices logged into the port, each with the asset it was matched to. */
+  logins: Array<{
+    vsan: number;
+    portWwn: string;
+    hostName: string | null;
+    matchMethod: string | null;
+    matchedAsset: { id: string; hostname: string | null } | null;
+  }>;
+}
+
+/**
+ * ifName → the FC port's counters and logins, for an FC switch's Interfaces
+ * table. Two indexed reads; an asset that is not an FC switch has no rows and
+ * gets an empty map. A login matched to a decommissioned asset shows as
+ * unmatched, as on the Device Map.
+ */
+export async function getFcByInterface(assetId: string): Promise<Map<string, FcInterfaceDetail>> {
+  const [ports, logins] = await Promise.all([
+    prisma.assetFcPort.findMany({ where: { assetId }, select: { ifName: true, errorCounters: true } }),
+    prisma.assetFcLogin.findMany({
+      where: { assetId },
+      orderBy: [{ ifIndex: "asc" }, { vsan: "asc" }, { portWwn: "asc" }],
+      select: {
+        ifName: true, vsan: true, portWwn: true, hostName: true, matchMethod: true,
+        matchedAsset: { select: { id: true, hostname: true, status: true } },
+      },
+    }),
+  ]);
+  const out = new Map<string, FcInterfaceDetail>();
+  const entry = (ifName: string) => {
+    let e = out.get(ifName);
+    if (!e) { e = { errorCounters: null, logins: [] }; out.set(ifName, e); }
+    return e;
+  };
+  for (const p of ports) if (p.ifName) entry(p.ifName).errorCounters = fcErrorsFrom(p.errorCounters);
+  for (const l of logins) {
+    if (!l.ifName) continue;
+    const live = l.matchedAsset && l.matchedAsset.status !== "decommissioned";
+    entry(l.ifName).logins.push({
+      vsan: l.vsan,
+      portWwn: l.portWwn,
+      hostName: l.hostName,
+      matchMethod: live ? l.matchMethod : null,
+      matchedAsset: live ? { id: l.matchedAsset!.id, hostname: l.matchedAsset!.hostname } : null,
+    });
+  }
+  return out;
 }
 
 /** The Fibre Channel tab's payload for one asset, from both sides. */

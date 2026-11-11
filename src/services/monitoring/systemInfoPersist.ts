@@ -130,6 +130,8 @@ async function persistInterfaceSampleStream(
     addressingMode: i.addressingMode ?? null,
     poeStatus:   i.poeStatus ?? null,
     poeClass:    i.poeClass  ?? null,
+    // FC counters (rule 159a) — omitted, not null, on every other port.
+    ...(i.fcErrors ? { fcErrors: i.fcErrors } : {}),
     };
   });
   if (pinnedRows.length > 0) {

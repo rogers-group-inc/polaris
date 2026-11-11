@@ -192,6 +192,10 @@ export const DEFAULT_ALERT_TEXT = [
   // a storage alert (alertChartService's STORAGE_SCOPED_METRICS) and renders
   // away on every other alert.
   "{chart.storage}",
+  // The port an error-rate or fibre-channel counter alert fired on (rule
+  // 159a) — usually already drawn by {chart.trigger}, which it then does not
+  // repeat; renders away on every other alert.
+  "{chart.interface}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -425,6 +429,8 @@ export const DEFAULT_ALERT_HTML = [
   // See the text body: the storage chart replaces the device charts on a
   // storage alert.
   "{chart.storage}",
+  // See the text body: an interface rate alert's port chart.
+  "{chart.interface}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",

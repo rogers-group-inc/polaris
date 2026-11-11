@@ -3354,6 +3354,26 @@ If two servers claim the WWN, or two assets match the name, the connection is sh
 WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
 an asset in a different domain. When a device logs out of a port, Polaris records it in Events.
 
+### Rule 159a
+
+**A fibre-channel port's error counters are recorded and alerted on like any interface
+counter.** Monitor the FC port on the switch's **Interfaces** table and Polaris reads its CRC
+errors, link failures, loss of sync, loss of signal and invalid transmission words every minute
+and keeps their history. An automation can then fire on any of them as a rate **per minute**:
+**FC port CRC error rate**, **FC port link failure rate**, **FC port loss-of-sync rate**, **FC
+port loss-of-signal rate** and **FC port invalid transmission word rate**. Only monitored ports
+are read. When the switch's counters are cleared, that minute gives no reading rather than a
+negative rate.
+
+The Interfaces table also shows each FC port's own **WWN**, what is **logged in** to it, and its
+**FC errors** total.
+
+The interface panel charts errors in the same units as the automations: **Errors per second**
+on every port, and **FC errors per minute** on an FC port. Each severity band of an automation
+that reads the port is drawn as a dashed line, and the bars take that band's colour while they
+are inside it. An alert email for one of these automations leads with the port's chart for the
+last hour; on an FC alert it also names what is logged into the port.
+
 ### Rule 160
 
 **Deleting an integration keeps what it discovered, and detaches it.** The assets and

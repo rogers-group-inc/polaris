@@ -230,7 +230,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
 
-**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), utils/sfpOptics.
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), fibreChannelService (`getFcByInterface` — each interface's `fc`: an FC switch port's counters and logins, beside `AssetInterface.wwn`, rule 159a), utils/sfpOptics.
 
 **Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
 

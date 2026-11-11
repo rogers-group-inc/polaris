@@ -1407,6 +1407,8 @@ function _loadMetricSeverityTiers(assetId, metric, dim) {
   if (dim && dim.sensorName)  params.sensorName  = dim.sensorName;
   if (dim && dim.sensorClass) params.sensorClass = dim.sensorClass;
   if (dim && dim.checkId)     params.checkId     = dim.checkId;
+  if (dim && dim.ifName)      params.ifName      = dim.ifName;
+  if (dim && dim.alias)       params.alias       = dim.alias;
   return api.assets.metricThresholds(assetId, params)
     .then(function (res) { return (res && res.tiers) || []; })
     .catch(function () { return []; }); // no shading rather than no chart

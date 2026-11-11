@@ -10,6 +10,7 @@ import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "../firmwareReposit
 import { pathCheckIdsInMaintenance } from "../maintenanceScheduleService.js";
 import { type Trigger, type ResetConfig, hwSensorFilterMatches, probeLossWindowSec, readingAtOrAboveCeiling, forecastDaysOf, forecastLevelsOf, type ForecastLevel, DEVICE_FILTER_DIMENSIONS, deviceFilterMatch, type DeviceFilterAsset, downRecoveryConsumesSustain, DOWN_ALERT_HOLDING_STATES, triggerHoldPolls, triggerWindowPolls, rollingAggregate, prepareResponseTimeWindow, parseMemberIpFilter, memberIpPasses, interfacePatternMatch, interfaceTagMatch, priorityTagSubjectOf } from "../notificationTypes.js";
 import { bareInterfaceIp } from "../../utils/cidr.js";
+import { FC_RATE_METRICS, fcErrorsFrom, isFcRateMetric } from "../../utils/fibreChannel.js";
 import { sdwanDimensionTerms } from "../../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../../utils/priorityTags.js";
 import { computeStorageForecast } from "../storageForecastService.js";
@@ -878,6 +879,22 @@ export async function resolveAssetMetricReadings(
       const tagged = await loadInterfaceTagFilter(df, ids);
       const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern) && tagged(r.assetId, r.ifName));
       return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => num((r as any)[col]), mult);
+    }
+    case "fcCrcErrorRate": case "fcLinkFailureRate": case "fcSyncLossRate": case "fcSignalLossRate": case "fcInvalidTxWordRate": {
+      // A pinned FC port's counter as a rate per minute (business rule
+      // 159a). Only rows that carry an FC reading: a sample written by a
+      // pass that read none would otherwise pair with a real one and read as
+      // "no rate" every other tick.
+      if (!isFcRateMetric(trigger.metric)) return [];
+      const field = FC_RATE_METRICS[trigger.metric];
+      const rows = await prisma.assetInterfaceSample.findMany({
+        where: { assetId: { in: ids }, timestamp: { gte: since }, fcErrors: { not: Prisma.DbNull } },
+        orderBy: { timestamp: "desc" },
+        select: { assetId: true, timestamp: true, ifName: true, alias: true, fcErrors: true },
+      });
+      const tagged = await loadInterfaceTagFilter(df, ids);
+      const filtered = rows.filter((r) => interfaceIsPinned(index.get(r.assetId), r.ifName) && interfacePatternMatch(r.ifName, r.alias, df.ifNamePattern) && tagged(r.assetId, r.ifName));
+      return rateReadings(filtered, index, (r) => r.ifName, (r) => interfaceDimLabel(r.ifName, r.alias), (r) => fcErrorsFrom(r.fcErrors)?.[field] ?? null, 60);
     }
     case "ipsecThroughputBps": {
       const rows = await prisma.assetIpsecTunnelSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, orderBy: { timestamp: "desc" }, select: { assetId: true, timestamp: true, tunnelName: true, incomingBytes: true, outgoingBytes: true } });

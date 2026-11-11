@@ -43,6 +43,7 @@ A number, compared against a threshold.
 | `storageUsedPct` / `storageUsedBytes` — **Storage used** | % / KB, MB, GB, TB | mount path (one condition in the builder — see below) |
 | `storageDaysUntilFull` | days | mount path |
 | `ifInErrorRate` / `ifOutErrorRate` | errors/s | interface name |
+| `fcCrcErrorRate` / `fcLinkFailureRate` / `fcSyncLossRate` / `fcSignalLossRate` / `fcInvalidTxWordRate` — **FC port … rate** | per minute | interface name (monitored fibre-channel ports only — [rule 159a](Business-Rules#rule-159a)) |
 | `ifInBps` / `ifOutBps` | bps | interface name |
 | `sdwanLatencyMs` / `sdwanJitterMs` / `sdwanPacketLoss` | ms / ms / % | health check, member |
 | `ipsecThroughputBps` | bps | tunnel name |
