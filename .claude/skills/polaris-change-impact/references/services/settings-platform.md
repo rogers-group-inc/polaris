@@ -136,7 +136,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/historyRetentionService.ts
 
-**What it owns:** Business rule 157 — retention for the tables nothing ever deleted from, and the operator's alert-history period. Five prunes (cleared alerts + quiet-time summaries, idle automation state rows, discovery runs of deleted integrations, sightings past the quarantine window, old Discovery scan runs) and two reference sweeps (hidden-region ids, tag provenance).
+**What it owns:** Business rule 158 — retention for the tables nothing ever deleted from, and the operator's alert-history period. Five prunes (cleared alerts + quiet-time summaries, idle automation state rows, discovery runs of deleted integrations, sightings past the quarantine window, old Discovery scan runs) and two reference sweeps (hidden-region ids, tag provenance).
 
 **Public API:** `pruneHistory(now?)` (all of them; `{ result, errors }`, never throws); the individual `pruneAlertHistory`, `pruneIdleRuleStates`, `pruneDiscoveryRuns`, `pruneSightings`, `pruneNetworkScanRuns`, `pruneHiddenRegionIds`, `pruneOrphanTagAssignments`; `getAlertHistorySettings()` / `updateAlertHistorySettings(raw, actor?)` (400 outside 0 or 30–3650; writes `settings.alert_history_retention.updated`); pure `normalizeAlertHistoryDays(raw)` and `idleRuleStateWhere(cutoff)`; constants `DEFAULT_ALERT_HISTORY_DAYS`, `RULE_STATE_IDLE_DAYS`, `SCAN_RUN_DAYS`, `BATCH`, `MAX_BATCHES`.
 
@@ -153,7 +153,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `DiscoveryRun` is one row per integration; the prune is by a missing integration, not by age.
 
 **When changing this:**
-- A new table that is only ever inserted into gets a prune here in the same change (or a stated reason it must be kept, in `narrative-157.md`).
+- A new table that is only ever inserted into gets a prune here in the same change (or a stated reason it must be kept, in `narrative-158.md`).
 - Do not add `Conflict` here: a rejected conflict is what stops the same finding being raised again (rule 139).
 - The sighting retention follows `quarantine.sightingMaxAgeDays`; a reader that wants older sightings needs its own setting, not a longer window here.
 

@@ -1,4 +1,4 @@
--- Business rule 156: an asset leaves nothing behind when its row goes.
+-- Business rule 157: an asset leaves nothing behind when its row goes.
 --
 -- assetRemovalService now cleans these up at delete / merge time. This
 -- migration is the other half: it removes what earlier deletes and merges

@@ -817,7 +817,7 @@ export async function mergeAssets(opts: {
     await tx.asset.delete({ where: { id: g.id } });
   });
 
-  // Rule 156: pins, automation scopes, log rules and process log config that
+  // Rule 157: pins, automation scopes, log rules and process log config that
   // named the absorbed record now name the survivor. After the commit, and
   // best-effort — see assetRemovalService.
   await afterAssetMerged(g.id, c.id);

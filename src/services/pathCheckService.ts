@@ -421,7 +421,7 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
   const scope: RuleScope = (input.scope ?? {}) as RuleScope;
   const requestedPins = [...new Set((input.assetIds ?? []).filter((s) => typeof s === "string" && s))];
   if (requestedPins.length > 2000) throw new AppError(400, "At most 2000 pinned hosts");
-  // Rule 156(c): a pin that names no asset is dropped on save. The editor
+  // Rule 157(c): a pin that names no asset is dropped on save. The editor
   // re-posts the whole stored pin list but can only draw a box for a host
   // that still exists, so a deleted host's id was kept on every save with no
   // way to untick it — and it satisfied the "runs somewhere" check below, so a

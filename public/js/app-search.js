@@ -817,7 +817,10 @@ function processSearchHash() {
   // the new IPAM consolidated page.
   // An optional &tab=<key> names the asset slide-over tab to land on (the
   // Active Alerts widget's navigation fallback sends tab=notifications).
-  var m = /#view=(\w+):([^&]+)/.exec(hash);
+  // `view=` may follow a `tab=` (`#tab=blocks&view=block:<id>` — the IPAM
+  // forms PolarisPanels.openBlock's fallback, a search hit's fallback and a
+  // shared /blocks/<id> link carry); anchored on `#` alone, those never opened.
+  var m = /[#&]view=(\w+):([^&]+)/.exec(hash);
   if (m) {
     var type = m[1], id = decodeURIComponent(m[2]);
     var tabM = /[#&]tab=([^&]+)/.exec(hash);
@@ -825,8 +828,12 @@ function processSearchHash() {
     setTimeout(function () {
       if (type === "asset" && path.indexOf("/assets.html") !== -1 && typeof openViewModal === "function") {
         openViewModal(id, viewTab ? { tab: viewTab } : undefined);
-      } else if (type === "block" && (onIpamPage || path.indexOf("/blocks.html") !== -1) && typeof openBlockEditModal === "function") {
-        openBlockEditModal(id);
+      } else if (type === "block" && (onIpamPage || path.indexOf("/blocks.html") !== -1)) {
+        // The block's VIEW is its drill-in panel — what a block row opens, what
+        // PolarisPanels.openBlock's fallback and a shared /blocks/<id> link
+        // (share-link.js) expect. The edit dialog is only the fallback.
+        if (typeof openBlockPanel === "function") openBlockPanel(id);
+        else if (typeof openBlockEditModal === "function") openBlockEditModal(id);
       } else if (type === "subnet" && (onIpamPage || path.indexOf("/subnets.html") !== -1) && typeof openSubnetEditModal === "function") {
         openSubnetEditModal(id);
       } else if (type === "reservation" && (onIpamPage || path.indexOf("/subnets.html") !== -1) && typeof openReservationModal === "function") {

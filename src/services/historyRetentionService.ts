@@ -1,6 +1,6 @@
 /**
  * src/services/historyRetentionService.ts — retention for the tables that only
- * ever grew (business rule 157).
+ * ever grew (business rule 158).
  *
  * The sample hypertables, Events and completed script runs all age out. These
  * did not: nothing deleted a row, ever, so each grew for the life of the

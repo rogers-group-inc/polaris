@@ -314,19 +314,21 @@ router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "writ
 // here only check the outer shape so a malformed body fails fast.
 const CreateViewSchema = z.object({
   name: z.string().min(1).max(200),
-  mode: z.enum(["layer2", "topology", "rack", "wall"]),
+  mode: z.enum(["layer2", "topology", "room"]),
   shownTypes: z.array(z.string()).max(100).optional(),
-  // Rack / Wall only (rule 150): the region the view stands for.
+  // Room only (rules 150, 156): the room the view stands for.
   region: z.unknown().optional(),
-  // Wall: the first wall's size in inches; Rack: the first rack's size in U.
+  // Room: an opening junction box's size in inches and / or an opening rack's size in U.
   wallWidth: z.number().int().optional(),
   wallHeight: z.number().int().optional(),
   rackUnits: z.number().int().optional(),
+  // Room with a region: false skips the fill from existing codes (rule 150(a)).
+  fill: z.boolean().optional(),
 });
 
 const UpdateViewSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  mode: z.enum(["layer2", "topology", "rack", "wall"]).optional(),
+  mode: z.enum(["layer2", "topology", "room"]).optional(),
   shownTypes: z.array(z.string()).max(100).optional(),
   background: z.unknown().optional(),
   polygons: z.array(z.unknown()).optional(),

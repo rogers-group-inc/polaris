@@ -1,7 +1,7 @@
 /**
  * src/jobs/pruneHistory.ts
  *
- * Daily retention for the tables that only ever grew (business rule 157):
+ * Daily retention for the tables that only ever grew (business rule 158):
  * cleared alerts and their delivery rows, sent quiet-time summaries, idle
  * automation state rows, finished discovery runs, FortiGate sightings past the
  * quarantine window, and finished Discovery scan runs. The windows and the

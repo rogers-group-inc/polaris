@@ -666,7 +666,7 @@ async function acceptAssetConflict(
       await tx.asset.update({ where: { id: existing.id }, data: update });
       await tx.asset.delete({ where: { id: ghost.id } });
     });
-    // Rule 156: pins and per-asset config that named the ghost follow it.
+    // Rule 157: pins and per-asset config that named the ghost follow it.
     await afterAssetMerged(ghost.id, existing.id);
     // Keep monitorOverride faithful to the carried-over monitoring intent —
     // best-effort, a recompute failure must not undo the merge.

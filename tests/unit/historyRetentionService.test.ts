@@ -1,5 +1,5 @@
 /**
- * tests/unit/historyRetentionService.test.ts — business rule 157, the parts
+ * tests/unit/historyRetentionService.test.ts — business rule 158, the parts
  * that need no database: what counts as a valid alert-history period, and the
  * exact predicate for a rule-state row that is safe to delete.
  *

@@ -1,5 +1,5 @@
 /**
- * tests/integration/assetRemoval.test.ts — business rule 156 against a real
+ * tests/integration/assetRemoval.test.ts — business rule 157 against a real
  * database: deleting an asset leaves nothing naming it, merging one moves the
  * operator's intent to the survivor, and neither ever widens a target.
  *
@@ -87,7 +87,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("deleting an asset (rule 156)", () => {
+d("deleting an asset (rule 157)", () => {
   it("DELETE /assets/:id prunes its pins and purges every row that named it", async () => {
     const gone = await mkAsset("gone");
     const other = await mkAsset("other");
@@ -160,7 +160,7 @@ d("deleting an asset (rule 156)", () => {
   });
 });
 
-d("merging an asset (rule 156)", () => {
+d("merging an asset (rule 157)", () => {
   it("moves pins, automation scope, log rules and process log config to the survivor", async () => {
     const ghost = await mkAsset("ghost");
     const keep = await mkAsset("keep");
@@ -212,7 +212,7 @@ d("merging an asset (rule 156)", () => {
   });
 });
 
-d("a private Discovery whose owner was deleted (rule 156(d))", () => {
+d("a private Discovery whose owner was deleted (rule 157(d))", () => {
   it("is reachable by the housekeeping level, and only by it", async () => {
     const role = await prisma.role.findUnique({ where: { name: "readonly" } });
     const owner = await prisma.user.create({ data: { username: `${PFX}-owner`, passwordHash: "x", roleId: role!.id, authProvider: "local" } });
@@ -245,7 +245,7 @@ d("the clean-up migration (what earlier deletes left on an existing install)", (
     const dead = await mkAsset("mig-dead");
     const deadRefs = await seedReferences(dead.id, live.id, "mig-dead");
     const liveRefs = await seedReferences(live.id, live.id, "mig-live");
-    // Remove the asset the way a pre-156 release did: the row only.
+    // Remove the asset the way a pre-157 release did: the row only.
     await prisma.$executeRaw`DELETE FROM "assets" WHERE "id" = ${dead.id}`;
     expect(await prisma.assetProcess.count({ where: { assetId: dead.id } })).toBe(1);
 

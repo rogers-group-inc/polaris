@@ -304,7 +304,7 @@ router.post("/syslog-test", requirePermission("events", "write"), async (req, re
 // GET /api/v1/events/retention-settings
 router.get("/retention-settings", requirePermission("events", "read"), async (_req, res, next) => {
   try {
-    // Alert history rides the same dialog tab (business rule 157) but is its
+    // Alert history rides the same dialog tab (business rule 158) but is its
     // own setting: Events are pruned hourly, cleared alerts daily.
     res.json({ ...(await getRetentionSettings()), ...(await getAlertHistorySettings()) });
   } catch (err) {

@@ -102,7 +102,7 @@ export interface ScanViewer {
   /**
    * `networkScan:fullwrite` — the housekeeping level. It already edits and
    * deletes other people's PUBLIC Discoveries; it also sees a private one that
-   * has NO owner (business rule 156(d)). Never someone else's private one.
+   * has NO owner (business rule 157(d)). Never someone else's private one.
    */
   housekeeping?: boolean;
 }
@@ -175,7 +175,7 @@ export function ownsScan(row: { ownerId: string | null }, viewerId: string | nul
 
 /**
  * Own it, or it is published — or it is an ORPHAN and the viewer does the
- * housekeeping (business rule 156(d)).
+ * housekeeping (business rule 157(d)).
  *
  * `NetworkScan.owner` is `onDelete: SetNull`, so deleting a user used to leave
  * their private Discoveries with no owner and still private: visible to nobody,
@@ -267,7 +267,7 @@ export async function listScans(
   housekeeping = false,
 ): Promise<(ScanRecord & { latestRun: RunSummary | null })[]> {
   // The same three arms as scanVisibleTo: published, mine, or an orphan the
-  // housekeeper may see (rule 156(d)).
+  // housekeeper may see (rule 157(d)).
   const or: Record<string, unknown>[] = [{ visibility: "public" }];
   if (viewerId) or.push({ ownerId: viewerId });
   if (housekeeping) or.push({ ownerId: null });

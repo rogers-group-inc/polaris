@@ -57,7 +57,7 @@ Not asked; defaulted by the implementer and open to change:
 | 0.3 | A disabled account still received alert email and web push | fixed@e691d579c — recipient index holds only enabled accounts; push subscriptions deleted on disable (rule 140(a)) |
 | 0.4 | Reboots / firmware upgrades booked by a disabled or deleted account fired unseen | fixed@553ada257 — listed in the Disable / Delete dialogs with tick-to-cancel (rule 140(b)) |
 
-## Batch A — done (rule 156)
+## Batch A — done (rule 157)
 
 | # | Leftover | Fix |
 |---|---|---|
@@ -66,13 +66,13 @@ Not asked; defaulted by the implementer and open to change:
 | A.3 | Asset- / process-scoped `LogFlagRule` unreachable after its asset is deleted, still compiled | deleted on delete, moved on merge |
 | A.4 | `AssetProcessConfig`, `AssetProcess`, `AssetService`, `AssetSdwanRule`, `AssetInventoryScrape` rows for a deleted asset | purged; process config moved on merge |
 | A.5 | Commands / agent script runs waiting on a deleted device | withdrawn |
-| A.6 | A path check's dead pin could not be unticked; a check pinned only to a dead host saved and ran nowhere | dead pins dropped on save (156(c)) |
-| A.7 | `dns_resolved` reservations left by a BULK delete (`deleteMany` runs no hook) | released first (156(b)) |
-| A.8 | A deleted user's private Discoveries unreachable by anyone | visible to `networkScan:fullwrite` when ownerless (156(d)) |
+| A.6 | A path check's dead pin could not be unticked; a check pinned only to a dead host saved and ran nowhere | dead pins dropped on save (157(c)) |
+| A.7 | `dns_resolved` reservations left by a BULK delete (`deleteMany` runs no hook) | released first (157(b)) |
+| A.8 | A deleted user's private Discoveries unreachable by anyone | visible to `networkScan:fullwrite` when ownerless (157(d)) |
 | A.9 | All of the above already sitting on existing installs | migration `20261111120000_orphan_asset_references` |
 
 Deliberately not done in A: an automation's `scope.assetIds` is left alone on a DELETE (an
-empty list means every device — rule 156(a)); it is in batch E as "silent".
+empty list means every device — rule 157(a)); it is in batch E as "silent".
 
 ## Batch B — integration delete / disable / re-scope (open)
 
@@ -110,17 +110,17 @@ Decisions needed:
 
 | # | Table | State today |
 |---|---|---|
-| C.1 | `Notification`, `NotificationDelivery`, `QuietTimeSummary` (alert history) | fixed — `alertHistoryDays`, default 365 (rule 157) |
-| C.2 | `NotificationRuleState` | fixed — idle `clear` rows deleted after 7 days (rule 157) |
+| C.1 | `Notification`, `NotificationDelivery`, `QuietTimeSummary` (alert history) | fixed — `alertHistoryDays`, default 365 (rule 158) |
+| C.2 | `NotificationRuleState` | fixed — idle `clear` rows deleted after 7 days (rule 158) |
 | C.3 | `Conflict` (resolved) | **kept on purpose**: a rejected conflict suppresses re-raising (rule 139). Open question: prune ACCEPTED ones only |
-| C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 157) |
-| C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 157) |
+| C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 158) |
+| C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 158) |
 | C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` |
 | C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
 | C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
-| C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 157) |
-| C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 157) |
-| C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 157) |
+| C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 158) |
+| C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 158) |
+| C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 158) |
 | C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob |
 
 Still open in C: C.3 (accepted conflicts only?), C.6 (archive Delete, per the C-D2 default),
@@ -164,7 +164,7 @@ Decisions needed:
 | E.9 | `dns_resolved` reservation surviving a SWEEP decommission (`updateMany` skips the reconcile; rule 40(k) nulls the address the periodic job scans by) | active system reservation on an address a retired device holds |
 | E.10 | A pushed reservation that EXPIRES (`expireStaleReservations`) is not un-pushed | the device entry stays; rediscovered later |
 | E.11 | A full-subnet reservation that expires leaves `Subnet.status = reserved` | manual edit |
-| E.12 | An automation's `scope.assetIds` naming a deleted asset (left on purpose by rule 156(a)) | matches nothing; shown in the wizard |
+| E.12 | An automation's `scope.assetIds` naming a deleted asset (left on purpose by rule 157(a)) | matches nothing; shown in the wizard |
 | E.13 | Stale SD-WAN rule rows when collection stops on a monitored gate | alert readings have no age gate, so a rule frozen at "down" may never recover (suspected) |
 | E.14 | A role granted through a group mapping survives the mapping's deletion | documented choice in `ssoProvisioning`; listed for review |
 

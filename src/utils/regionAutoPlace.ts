@@ -215,7 +215,7 @@ export function autoPlaceWall(
   const unplaced: string[] = [];
   const claimed = new Set<string>();
   const used = (wallId: string) => placements.some((p) => p.wallId === wallId);
-  const placeholder = (w: AutoWall) => /^wall \d+$/i.test(w.name.trim()) || (!!opts.viewName && norm(w.name) === norm(opts.viewName));
+  const placeholder = (w: AutoWall) => /^(wall|jb) \d+$/i.test(w.name.trim()) || (!!opts.viewName && norm(w.name) === norm(opts.viewName));
 
   for (const g of groupRegionDevices(region, devices, "junctionBox")) {
     const todo = g.devices.filter((d) => !already.has(d.assetId));

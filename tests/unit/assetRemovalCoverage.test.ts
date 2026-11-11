@@ -1,9 +1,9 @@
 /**
- * tests/unit/assetRemovalCoverage.test.ts — business rule 156: every code path
+ * tests/unit/assetRemovalCoverage.test.ts — business rule 157: every code path
  * that removes an asset ROW calls assetRemovalService afterwards.
  *
  * The service is called explicitly (not from a Prisma hook — see its header
- * and narrative-156), so a new delete path that forgets it would bring back
+ * and narrative-157), so a new delete path that forgets it would bring back
  * exactly the leftovers the rule removed, silently. This scans `src/` and
  * fails on a file that deletes an asset without importing the service.
  */

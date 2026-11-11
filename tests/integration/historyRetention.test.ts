@@ -1,5 +1,5 @@
 /**
- * tests/integration/historyRetention.test.ts — business rule 157 against a
+ * tests/integration/historyRetention.test.ts — business rule 158 against a
  * real database: each prune deletes what is past its window and nothing else.
  *
  * The cases that matter are the survivors: an OPEN alert however old, a rule
@@ -68,7 +68,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("alert history (rule 157)", () => {
+d("alert history (rule 158)", () => {
   async function alert(name: string, over: Record<string, unknown>) {
     const n = await prisma.notification.create({ data: { message: `${PFX} ${name}`, ...over } as never });
     await prisma.notificationDelivery.create({ data: { notificationId: n.id, transport: "email", target: "ops@example.test" } as never });
@@ -140,7 +140,7 @@ d("alert history (rule 157)", () => {
   });
 });
 
-d("idle automation state rows (rule 157)", () => {
+d("idle automation state rows (rule 158)", () => {
   it("deletes only rows that are clear, carry nothing, and have not been written for a week", async () => {
     const rule = await prisma.notificationRule.create({ data: { name: `${PFX} rule`, trigger: {}, enabled: false } as never });
     const mk = (assetId: string, over: Record<string, unknown> = {}) =>
@@ -164,7 +164,7 @@ d("idle automation state rows (rule 157)", () => {
   });
 });
 
-d("finished discovery runs, sightings, Discovery scan runs (rule 157)", () => {
+d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
   it("deletes a finished discovery run whose integration is gone, and never one that is queued or still has its integration", async () => {
     // One row per integration (unique on integrationId, no foreign key).
     const live = await prisma.integration.create({ data: { name: `${PFX} live`, type: "fortigate", config: {} } as never });

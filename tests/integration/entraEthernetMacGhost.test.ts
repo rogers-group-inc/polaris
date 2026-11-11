@@ -141,7 +141,7 @@ d("Entra sync — Intune Ethernet MAC absorbs the endpoint duplicate", () => {
     expect(after.macAddress).toBe(ETH);
     // logEvent is fire-and-forget: the sync returns before the row is written.
     // (Read straight away this lost the race about 2 runs in 5 once the merge
-    // gained its post-commit reference clean-up, rule 156.)
+    // gained its post-commit reference clean-up, rule 157.)
     await waitForEventCount("asset.duplicate_merged", 1, intune.id);
     const ev = await prisma.event.findFirst({ where: { action: "asset.duplicate_merged", resourceId: intune.id } });
     expect(ev?.message).toContain(ETH);

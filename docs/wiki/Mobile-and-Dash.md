@@ -118,6 +118,13 @@ again to drop it, or tap **Any** to clear them all.
 | **Assets** | hostname, DNS name, IP, MAC, asset tag, assigned-to | Recently added, Name, IP address, Status, Type, Last seen | monitor **Status** (Down, Missed, Dep. Down, …), one or several — named on the sort chip while it applies |
 | **Networks** | name, network, purpose, VLAN, FortiGate, block, tags — every word must match | Name, Network (address order), Utilization, Reservations, VLAN | the **All / Available / Reserved / Deprecated** chips |
 
+**Sharing.** The asset sheet and the network sheet each have a **Share** button
+in the header. It opens the phone's share sheet (Teams, Messages, mail…) with a
+link to that device or network. If the browser has no share sheet, the link is
+copied instead. The recipient needs a Polaris account. The link opens the
+mobile app on their phone and the desktop page on a computer
+([Sharing a device](Assets#sharing-a-device)).
+
 On **Alerts**, **Assets** and **Networks** the controls above the list (the
 severity counts, Assets' tab row, the filter field, the sort chip and the chips)
 stay at the top while the list scrolls under them. The list passes under the

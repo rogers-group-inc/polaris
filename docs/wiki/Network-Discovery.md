@@ -130,7 +130,7 @@ run** one; ownership decides who may **edit** it.
 |---|---|
 | See / run | anyone the visibility admits — running a shared Discovery is what publishing one is *for* |
 | Edit / delete | the owner, with `networkScan:fullwrite` reaching anyone's |
-| A private Discovery whose owner was deleted | visible to `networkScan:fullwrite` only, so it can be made public or deleted ([rule 156](Business-Rules#rule-156)). It cannot stay private — nobody owns it |
+| A private Discovery whose owner was deleted | visible to `networkScan:fullwrite` only, so it can be made public or deleted ([rule 157](Business-Rules#rule-157)). It cannot stay private — nobody owns it |
 | An invisible row | answers **404, not 403** |
 | Name | unique per owner |
 | Export | carries **no visibility at all** |

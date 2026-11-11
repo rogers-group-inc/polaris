@@ -24,10 +24,22 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { hasPermission } from "../api/middleware/permissions.js";
 import { isWorkloadPlatform } from "../utils/workloadSources.js";
-import { resolveMonitorSettingsWithProvenance } from "./monitoringService.js";
+import { resolveMonitorSettingsWithProvenance, resolveMonitorSettings } from "./monitoringService.js";
 import { snmpPollingCredentialId } from "./assetCredentialScopeService.js";
 import { describeDownDetectionFor, recoveryPollsFor } from "./downDetectionService.js";
 import { deviceUptime } from "../utils/uptime.js";
+import { getIpHistory } from "./assetIpHistoryService.js";
+import { descriptionSyncEnabledForRole } from "../utils/descriptionSyncFlags.js";
+import { buildIpContexts, networksForAddresses } from "./subnetService.js";
+import { getDiscoveredHostname } from "./discoveredHostnameService.js";
+import { shapeMacRows, MAC_ROW_SELECT } from "../utils/macAddresses.js";
+import { pickSampleTierForAsset } from "./sampleQueryRouter.js";
+import { extendSinceForLookback } from "../utils/chartRange.js";
+import { readMonitorHistory, readLastMonitorSuccessAt } from "./sampleHistoryService.js";
+import { isFortinetIntegrationType } from "../utils/pollingCompatibility.js";
+import { logger } from "../utils/logger.js";
+import { reconcileAddressesWithIpam, shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "./assetAddressService.js";
+import { buildAddressConfidence, confidenceToJson } from "./addressConfidenceService.js";
 
 // ─── Effective monitor settings ──────────────────────────────────────────────
 
@@ -614,4 +626,249 @@ export async function assetTlsPins(id: string) {
     ? { ...asset.discoveredByIntegration, config: (asset.discoveredByIntegration.config ?? {}) as Record<string, unknown> }
     : null;
   return assetTlsEndpoints({ assetType: asset.assetType, ipAddress: asset.ipAddress }, integration);
+}
+
+/**
+ * GET /assets/:id — the asset details payload: re-checks the DHCP addresses
+ * against IPAM first (rule 102(a), never fails the read), then the asset with
+ * its credentials, IP context, address confidence (rule 103), associated IPs
+ * with their networks, MACs, the discovered hostname when pinned, and the
+ * discovering integration with its secret-bearing config stripped. The route
+ * adds the caller's per-row write-scope flags (rule 141(e)). 404 when absent.
+ */
+export async function getAssetDetail(id: string, actor: string | undefined) {
+  // Opening the details re-checks the asset's DHCP addresses against IPAM
+  // (business rule 102(a)) so an IPAM release or re-assignment shows here
+  // without waiting for the next gate read. A read grant is enough: it only
+  // drops or re-labels rows discovery itself wrote. Never fails the read.
+  try {
+    await reconcileAddressesWithIpam(id, actor);
+  } catch (err) {
+    logger.warn({ err, assetId: id }, "IPAM address cross-check failed; serving stored addresses");
+  }
+  const asset = await prisma.asset.findUnique({
+    where: { id: id },
+    include: {
+      discoveredByIntegration:  { select: { id: true, name: true, type: true, config: true } },
+      monitorCredential:        { select: { id: true, name: true, type: true } },
+      responseTimeCredential:   { select: { id: true, name: true, type: true } },
+      cpuMemoryCredential:      { select: { id: true, name: true, type: true } },
+      temperatureCredential:    { select: { id: true, name: true, type: true } },
+      interfacesCredential:     { select: { id: true, name: true, type: true } },
+      lldpCredential:           { select: { id: true, name: true, type: true } },
+      associatedIpRows:         { select: ASSOCIATED_IP_SELECT },
+      macAddressRows:           { select: MAC_ROW_SELECT },
+    },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  const ipCtx = asset.ipAddress
+    ? (await buildIpContexts([asset.ipAddress])).get(asset.ipAddress) || null
+    : null;
+
+  // Resolve the integration's response-time probe override so the details
+  // panel can label the chart with the actual probe method (SNMP via the
+  // override credential, vs. the default FortiOS REST API path). The
+  // integration's full `config` is not safe to leak to the client (it
+  // contains API tokens), so strip it after extracting the credential id
+  // and the FMG `useProxy` toggle (the System tab badges need to know
+  // whether REST API traffic rides FMG's `/sys/proxy/json` or hits the
+  // FortiGate directly).
+  let integrationMonitorCredential: { id: string; name: string; type: string } | null = null;
+  let integrationUseProxy: boolean | null = null;
+  let integrationSyncDescriptions: boolean | null = null;
+  // The FMG ADOM — not a secret — so the Device Query tab's API Query can
+  // address the gate through FortiManager's /sys/proxy/json.
+  let integrationAdom: string | null = null;
+  if (asset.discoveredByIntegration) {
+    const cfg = (asset.discoveredByIntegration.config as Record<string, unknown> | null) || {};
+    const credId = typeof cfg.monitorCredentialId === "string" ? cfg.monitorCredentialId : null;
+    if (credId) {
+      const cred = await prisma.credential.findUnique({
+        where: { id: credId },
+        select: { id: true, name: true, type: true },
+      });
+      if (cred) integrationMonitorCredential = cred;
+    }
+    // Only meaningful for FortiManager; standalone FortiGate is always direct.
+    if (asset.discoveredByIntegration.type === "fortimanager") {
+      integrationUseProxy = cfg.useProxy !== false;
+      integrationAdom = typeof cfg.adom === "string" && cfg.adom ? cfg.adom : "root";
+    }
+    // Description Sync is a FortiManager + standalone FortiGate toggle. Expose
+    // a derived boolean (the raw config is stripped below — it holds API
+    // tokens) so the asset edit form can cap the FortiAP Description at the
+    // 35-char device `location` limit, but only when this AP's integration
+    // actually syncs descriptions to the device. The toggle is per device
+    // class, so this is resolved for THIS asset's Fortinet role.
+    if (isFortinetIntegrationType(asset.discoveredByIntegration.type)) {
+      const role = ((asset.fortinetTopology ?? {}) as { role?: string }).role;
+      integrationSyncDescriptions = descriptionSyncEnabledForRole(cfg, role);
+    }
+  }
+  const { config: _omit, ...integrationLite } = (asset.discoveredByIntegration as { config?: unknown } | null) || {};
+  const { associatedIpRows, macAddressRows, ...assetRest } = asset;
+  // Same second line as the list's hostname cell: what discovery says, for a
+  // row whose hostname is currently pinned. Only queried when pinned.
+  const hostnameDiscovered = asset.hostnameOverride
+    ? await getDiscoveredHostname(asset.id)
+    : null;
+  // Business rule 103 — every address's confidence with its breakdown.
+  const addressConfidence = confidenceToJson((await buildAddressConfidence([asset.id])).get(asset.id));
+  // The IPAM network each address sits in, for the address hover — the
+  // narrowest containing network, on the row's own gate where ranges repeat.
+  const shapedIps = shapeAssociatedIps(associatedIpRows);
+  const networks = await networksForAddresses(
+    shapedIps.map((r) => ({ ip: r.ip, gate: r.device ?? null })),
+    asset.learnedLocation,
+  );
+  const safeAsset = {
+    ...assetRest,
+    addressConfidence,
+    associatedIps: shapedIps.map((r) => ({ ...r, network: networks.get(`${r.ip}|${r.device ?? ""}`) ?? null })),
+    macAddresses:  shapeMacRows(macAddressRows),
+    hostnameDiscovered,
+    discoveredByIntegration: asset.discoveredByIntegration
+      ? { ...integrationLite, useProxy: integrationUseProxy, adom: integrationAdom, syncDescriptions: integrationSyncDescriptions }
+      : null,
+    integrationMonitorCredential,
+  };
+  return { safeAsset, ipCtx, scopeRec: { createdBy: (asset as { createdBy?: string | null }).createdBy ?? null, tags: (asset as { tags?: string[] }).tags ?? [] } };
+}
+
+/**
+ * GET /assets/:id/ip-history — the IP history with each row's network (the
+ * VLAN column): a "<gate>" / "<gate>:arp" source names the gate that settles a
+ * repeated range, then the asset's own gate. 404 when absent.
+ */
+export async function getAssetIpHistory(id: string) {
+  const asset = await prisma.asset.findUnique({ where: { id: id }, select: { id: true, learnedLocation: true } });
+  if (!asset) throw new AppError(404, "Asset not found");
+  const history = await getIpHistory(id);
+  // Each row's network (the IP History table's VLAN column): a source of
+  // "<gate>" or "<gate>:arp" names the gate that settles a repeated range,
+  // then the asset's own gate.
+  const gateOf = (source: string | null) => (source ? source.split(":")[0].trim() || null : null);
+  const networks = await networksForAddresses(
+    history.map((h) => ({ ip: h.ip, gate: gateOf(h.source) })),
+    asset.learnedLocation,
+  );
+  return history.map((h) => {
+    const network = networks.get(`${h.ip}|${gateOf(h.source) ?? ""}`) ?? null;
+    return { ...h, vlan: network?.vlan ?? null, network };
+  });
+}
+
+/** The owner + tags the write-scope judgement reads (rule 141(e)) for one asset. 404 when absent. */
+export async function loadAssetScopeRecord(id: string) {
+  const asset = await prisma.asset.findUnique({ where: { id }, select: { id: true, createdBy: true, tags: true } });
+  if (!asset) throw new AppError(404, "Asset not found");
+  return asset;
+}
+
+/**
+ * GET /assets/:id/monitor-history — the response-time series for a preset
+ * range (1h / 12h / 24h / 7d / 30d, default 24h) or a custom from / to (400
+ * when invalid, reversed or over a year), on the tier the window needs, with
+ * the loss overlay, the last real success on a rollup tier, and the covering
+ * automation's missed / recovery polls and severity (rules 30, 36).
+ */
+export async function readAssetMonitorHistory(id: string, fromQ: string | null, toQ: string | null, rangeQ: string): Promise<Record<string, unknown>> {
+  let since: Date;
+  let until: Date;
+  let rangeLabel: string;
+  if (fromQ && toQ) {
+    const f = new Date(fromQ), t = new Date(toQ);
+    if (isNaN(+f) || isNaN(+t)) throw new AppError(400, "Invalid from/to date");
+    if (+f >= +t) throw new AppError(400, "from must be before to");
+    const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+    if (+t - +f > oneYearMs) throw new AppError(400, "Custom range cannot exceed 1 year");
+    since = f;
+    until = t;
+    rangeLabel = "custom";
+  } else {
+    const range = rangeQ;
+    const windowMs =
+      range === "1h"  ?  1 * 60 * 60 * 1000 :
+      range === "12h" ? 12 * 60 * 60 * 1000 :
+      range === "7d"  ?  7 * 24 * 60 * 60 * 1000 :
+      range === "30d" ? 30 * 24 * 60 * 60 * 1000 :
+                          24 * 60 * 60 * 1000;
+    until = new Date();
+    since = new Date(+until - windowMs);
+    rangeLabel = range;
+  }
+  const pick = await pickSampleTierForAsset(id, "assets", since);
+  const fetchSince = extendSinceForLookback(since, pick.bucketSeconds);
+  const result = await readMonitorHistory(id, since, until, pick.tier, fetchSince);
+  // On a rollup tier every sample timestamp is a bucketStart, so the client
+  // can't measure probe freshness from the series (a daily bucket is up to
+  // 24h "old" the moment it's written). Hand it the real last-success
+  // timestamp from the detail table instead — the stale banner reads this
+  // when present. Detail tier needs no extra query: its own newest
+  // successful sample already is the answer.
+  const lastSuccessAt = pick.tier === "detail" ? null : await readLastMonitorSuccessAt(id, since);
+  // WHICH MISSES ARE ALREADY A VERDICT. The chart replays the leaky bucket to
+  // colour its dive (business rule 30 + 36): amber while the count is short
+  // of the covering automation's `missedPolls`, red once it reaches it — the
+  // same split the Last-30-min strip draws directly above it. It rides this
+  // payload rather than a second request because the chart renders the moment
+  // this resolves, and a threshold arriving later would repaint the outage
+  // under the operator. `passive: true` means no automation covers the device,
+  // so nothing may go red. Reads the resolver's cached index — no query in the
+  // steady state — and degrades to null rather than failing the history.
+  const downCoverage = await describeDownDetectionFor(id).catch(() => null);
+  // The counterpart count: how many probes must ANSWER before the device
+  // reads Up again (business rule 36). The chart needs it for the same reason
+  // the strip does — the climb out of an outage stays purple until the run is
+  // served, which is LONGER than the bucket's drain whenever the automation's
+  // reset asks for more. Resolving it costs an asset read only when the
+  // automation actually sets a reset hold; without one the answer is the
+  // missed-poll count itself and no cadence is involved.
+  let recoveryPolls: number | null = null;
+  const downWinner = downCoverage?.winner ?? null;
+  if (downWinner) {
+    if (!downWinner.recoverySustainSec) {
+      recoveryPolls = downWinner.threshold;
+    } else {
+      const ctx = await prisma.asset.findUnique({
+        where: { id },
+        select: {
+          assetType: true, discoveredByIntegrationId: true, monitorIntervalSec: true,
+          cpuMemoryIntervalSec: true, temperatureIntervalSec: true, systemInfoIntervalSec: true,
+          probeTimeoutMs: true,
+          discoveredByIntegration: { select: { type: true } },
+        },
+      });
+      if (ctx) {
+        const resolved = await resolveMonitorSettings({
+          ...ctx,
+          discoveredByIntegrationType: ctx.discoveredByIntegration?.type ?? null,
+        });
+        recoveryPolls = recoveryPollsFor(downWinner, resolved.intervalSeconds);
+      }
+    }
+  }
+  return {
+    range: rangeLabel,
+    since,
+    until,
+    tier: pick.tier,
+    bucketSeconds: pick.bucketSeconds,
+    lastSuccessAt,
+    downDetection: downCoverage
+      ? {
+          passive: downCoverage.passive,
+          missedPolls: downWinner?.threshold ?? null,
+          recoveryPolls,
+          // What the covering automation rated this outage — the colour the
+          // response-time chart draws a `down` probe in. See business rule 36.
+          severity: downWinner?.severity ?? null,
+        }
+      : null,
+    samples: result.samples,
+    // The packet-loss line the chart overlays on its right axis — every
+    // probe kind, the ICMP sweep's packets included (see MonitorLossSeries).
+    loss: result.loss,
+    stats: result.stats,
+  };
 }

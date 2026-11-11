@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const db = {
-  /** Asset ids that no longer exist (rule 156(c)); every other id asked for does. */
+  /** Asset ids that no longer exist (rule 157(c)); every other id asked for does. */
   deadAssets: [] as string[],
   checks: [] as any[],
   sources: [] as any[],
@@ -263,7 +263,7 @@ describe("normalizeCheckInput — refusals", () => {
     await expect(normalizeCheckInput({ ...base, scope: {} })).rejects.toThrow(/Choose where this check runs/);
     await expect(normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1"] })).resolves.toBeTruthy();
   });
-  it("drops a pin that names no asset, and a check pinned only to dead hosts no longer saves (rule 156(c))", async () => {
+  it("drops a pin that names no asset, and a check pinned only to dead hosts no longer saves (rule 157(c))", async () => {
     db.deadAssets = ["gone"];
     const n = await normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1", "gone"] });
     expect(n.assetIds).toEqual(["a1"]);

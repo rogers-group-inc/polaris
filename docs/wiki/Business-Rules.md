@@ -3298,6 +3298,16 @@ as it is then. A script the agent started but never reported on is shown as
 
 ### Rule 156
 
+**A Room view is one room's racks and junction boxes, and a device is in one place in it.** A
+Room view stands for one room. It holds the room's racks and its junction boxes side by side; a
+wall is just a big junction box with no door, and a rack never goes in a junction box. A device in
+a rack gets the room and that rack (`r:` + `ra:`), a device in a junction box gets the room and that
+box (`r:` + `jb:`); nothing else in its description changes. A device can be in a rack or a junction
+box, not both. The older Rack and Wall views were converted to Room views, and the views of one room
+became one; the Events list shows what each conversion did.
+
+### Rule 157
+
 **An asset leaves nothing behind, and a merge keeps what you said about either record.**
 Deleting an asset also removes it from the path checks, contacts and maintenance schedules
 it was pinned to, deletes the log rules and process log settings that belonged to it, and
@@ -3310,7 +3320,7 @@ never lets this widen a target: an automation scoped to one deleted device keeps
 Discovery left private by a deleted user can be seen, republished or deleted by holders of
 Full Read-Write on Discovery. See [Assets](Assets#deleting-an-asset).
 
-### Rule 157
+### Rule 158
 
 **Nothing Polaris writes grows without a limit.** Samples, events and script runs have
 always aged out; these now do too. **Cleared alerts** are deleted 365 days after they

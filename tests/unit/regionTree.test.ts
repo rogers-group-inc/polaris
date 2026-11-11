@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildRegionIndex, resolveLocation, uniqueKeyFor, chainOf,
-  remapLocationCodes, remapLocationKey, remapLayoutViewKey, remapPositionKeys, rewritesFor,
+  remapLocationCodes, remapLocationKey, remapLayoutViewKey, remapPositionKeys, rewritesFor, renameRoomContainers,
   type RegionNodeDto,
 } from "../../src/services/regionTreeService.js";
 import type { LocationCodes } from "../../src/utils/locationCodes.js";
@@ -124,5 +124,34 @@ describe("carrying a tree edit", () => {
     ]);
     const r = rewritesFor("room", before, renamed, devices);
     expect(r.map((x) => [x.name, x.codes.room])).toEqual([["full", "IDF-2"], ["short", "IDF-2"]]);
+  });
+});
+
+describe("a Room view's racks and junction boxes follow a tree rename (rule 156)", () => {
+  const C = (o: Partial<LocationCodes>): LocationCodes =>
+    ({ area: null, building: null, floor: null, room: null, rack: null, junctionBox: null, ...o }) as LocationCodes;
+  const before = C({ building: "Plant", room: "MDF", rack: "R1" });
+  const after = C({ building: "Plant", room: "MDF", rack: "R10" });
+  const racks = [{ id: "a", name: "r1", units: 42 }, { id: "b", name: "R2", units: 42 }];
+
+  it("renames the rack carrying the old name in the view of its room", () => {
+    expect(renameRoomContainers(C({ building: "Plant", room: "MDF" }), racks, "rack", before, after))
+      .toEqual([{ id: "a", name: "R10", units: 42 }, { id: "b", name: "R2", units: 42 }]);
+    // A view that sets only the room still names it.
+    expect(renameRoomContainers(C({ room: "mdf" }), racks, "rack", before, after)).not.toBeNull();
+  });
+
+  it("leaves another room's view, a view with no room, and a no-op rename alone", () => {
+    expect(renameRoomContainers(C({ building: "Plant", room: "IDF" }), racks, "rack", before, after)).toBeNull();
+    expect(renameRoomContainers(C({ building: "Plant" }), racks, "rack", before, after)).toBeNull();
+    expect(renameRoomContainers(null, racks, "rack", before, after)).toBeNull();
+    expect(renameRoomContainers(C({ room: "MDF" }), racks, "rack", before, before)).toBeNull();
+    expect(renameRoomContainers(C({ room: "MDF" }), [{ id: "x", name: "R3" }], "rack", before, after)).toBeNull();
+  });
+
+  it("does the same for a junction box", () => {
+    const b = C({ room: "MDF", junctionBox: "JB-7" }), a = C({ room: "MDF", junctionBox: "JB-8" });
+    expect(renameRoomContainers(C({ room: "MDF" }), [{ id: "w", name: "JB-7", width: 96 }], "junctionBox", b, a))
+      .toEqual([{ id: "w", name: "JB-8", width: 96 }]);
   });
 });

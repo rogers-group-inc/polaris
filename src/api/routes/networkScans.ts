@@ -145,7 +145,7 @@ function viewer(req: Request): ScanViewer {
   return {
     id: req.session?.userId ?? null,
     username: requestActor(req) ?? "unknown",
-    // Rule 156(d): the housekeeping level also sees a private Discovery whose
+    // Rule 157(d): the housekeeping level also sees a private Discovery whose
     // owner was deleted, so it can be republished or removed.
     housekeeping: hasPermission(req, "networkScan", "fullwrite"),
   };

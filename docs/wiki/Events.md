@@ -207,7 +207,7 @@ still open is never deleted, however old it is. Enter `0` to keep alert history
 forever, or 30 to 3650 days. Polaris deletes a backlog in slices over several
 nightly runs, so the first run after an upgrade does not remove years of history
 at once, and writes an Event each time it deletes alerts
-([rule 157](Business-Rules#rule-157)).
+([rule 158](Business-Rules#rule-158)).
 
 Archive Export and Syslog each have a **Test Connection** button. Archive Export
 refuses a host that is not a hostname or IP address, a username with anything

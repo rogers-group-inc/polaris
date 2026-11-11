@@ -1,7 +1,7 @@
 /**
  * src/services/assetRemovalService.ts — what an asset leaves behind when its
  * row goes: nothing the database's foreign keys do not already take, and
- * nothing a merge's survivor should have kept (business rule 156).
+ * nothing a merge's survivor should have kept (business rule 157).
  *
  * The 2026-11-11 orphan audit found that every delete path ended at
  * `prisma.asset.delete` and trusted the cascade. But a dozen places hold an

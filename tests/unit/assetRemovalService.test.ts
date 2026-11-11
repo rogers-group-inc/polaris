@@ -1,5 +1,5 @@
 /**
- * tests/unit/assetRemovalService.test.ts — business rule 156, the pure half:
+ * tests/unit/assetRemovalService.test.ts — business rule 157, the pure half:
  * how a list of asset ids is re-pointed or pruned, and when pruning must be
  * refused because an empty list would mean "every device".
  *
@@ -57,7 +57,7 @@ describe("the entry points with nothing to do", () => {
   });
 });
 
-describe("rule 156(d): a private Discovery with no owner", () => {
+describe("rule 157(d): a private Discovery with no owner", () => {
   const orphan = { ownerId: null, visibility: "private" };
   const someoneElses = { ownerId: "u2", visibility: "private" };
 

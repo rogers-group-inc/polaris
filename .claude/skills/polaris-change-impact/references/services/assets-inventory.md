@@ -185,6 +185,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetLiveActionService.ts
+
+**What it owns:** The asset details buttons that reach a device or start a run, moved out of `routes/assets/detail.ts` (CQ-B062 slice 2): Poll now (probe-now), the system-info Refresh, Discover now (rediscover) and the SNMP Walk tab, plus their shared gate `resolveIntegrationFilterBlock` (the originating integration's device filter — AD's own `ouPath`, a VM's / workload's own name — evaluated before any traffic leaves the box). The route keeps the Zod body, the gates and the request-bound inputs (the caller's `assets:write`, the credential-use actor).
+
+**Public API:** `LiveActionResult` (`{ status, body }` — what probe-now / refresh / rediscover send, since each can answer 409 or 202), `pollAssetNow(id, actor)`, `refreshAssetSystemInfo(id, actor)`, `rediscoverAsset(id, actor)`, `snmpWalkAsset(id, { credentialId, oid, maxRows }, canWriteAssets, credentialActor, actor)`.
+
+**Cross-service deps:** monitoringService (the probe / collectors / recorders, `runSdwanFor`, `snmpWalkRaw`), discovery/assetDiscoveryScope, discovery/discoveryEngine (`triggerDiscovery`), discoveryRunState, assetCredentialScopeService (rule 112(e)), credentialService, credentialUseAuditService (rule 112), eventLogService, utils/integrationFilter, utils/assetDialAddress, ipv6GateService.
+
+**Used by:** `src/api/routes/assets/detail.ts` (POST /:id/probe-now, /:id/refresh-system-info, /:id/rediscover, /:id/snmp-walk).
+
+**Invariants:**
+- An asset outside its integration's filter is refused 409 with an `asset.refresh` / `asset.rediscover` warning Event before any probe, collector or run.
+- Every operator-initiated action leaves an Event whatever the outcome; Refresh writes no monitor state (it cannot mark a device down or clear a miss).
+- The SNMP walk at read level may use only a credential the asset already uses (rule 112(e)); the use is recorded (rule 112); a device failure is a 502.
+
+**When changing this:** `tests/unit/assetLiveActionService.test.ts`; integration coverage in `currentStateRefresh`, `secretFollowsDestinationPhase10` and `writeScope`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
@@ -336,7 +355,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/assetRemovalService.ts
 
-**What it owns:** Business rule 156 — everything that names an asset WITHOUT a foreign key, at the moment the asset row goes. Two post-commit entry points: `afterAssetsDeleted(ids)` (prune / purge) and `afterAssetMerged(fromId, toId)` (re-point the operator's intent to the survivor, then purge what is left of the absorbed id).
+**What it owns:** Business rule 157 — everything that names an asset WITHOUT a foreign key, at the moment the asset row goes. Two post-commit entry points: `afterAssetsDeleted(ids)` (prune / purge) and `afterAssetMerged(fromId, toId)` (re-point the operator's intent to the survivor, then purge what is left of the absorbed id).
 
 **Public API:** `afterAssetsDeleted(ids)`, `afterAssetMerged(fromId, toId)` (both resolve with `AssetReferenceCounts`, or `null` after logging a failure — never throw); pure helpers `repointIdList`, `pruneIdList`, `pruneMayWiden`.
 
@@ -346,7 +365,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - **Called after the commit, never inside the caller's transaction and never from a `src/db.ts` hook.** None of these rows cascade, so they are still there after the commit; a re-point inside a transaction that rolled back would move intent off a record that still exists. A hook on `asset.delete` would also fire for the merges' `tx.asset.delete` and run on the base client mid-transaction.
-- **Never widen a target (156(a)).** `NotificationRule.scope.assetIds` is re-pointed on a merge and left untouched on a delete, because an empty list means no device restriction. An Application Map rule with `scope: null` and no pins means every monitored asset: an auto rule is deleted with its last device, a manual one keeps the dead id. The three string-array pin lists are safe to empty.
+- **Never widen a target (157(a)).** `NotificationRule.scope.assetIds` is re-pointed on a merge and left untouched on a delete, because an empty list means no device restriction. An Application Map rule with `scope: null` and no pins means every monitored asset: an auto rule is deleted with its last device, a manual one keeps the dead id. The three string-array pin lists are safe to empty.
 - Best-effort and silent to the caller: a failure is `logger.warn`ed and the references are merely stale.
 - A merge moves `LogFlagRule` and `AssetProcessConfig` (operator intent) and purges `AssetProcess` / `AssetService` / `AssetSdwanRule` / `AssetInventoryScrape` (the survivor has its own). On a config-name clash the survivor's row wins.
 

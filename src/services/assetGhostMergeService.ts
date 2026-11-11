@@ -145,7 +145,7 @@ export async function mergeEndpointGhostIntoAsset(
     return { adoptedMac, transferredMonitored };
   });
 
-  // Rule 156: whatever named the ghost without a foreign key now names the
+  // Rule 157: whatever named the ghost without a foreign key now names the
   // canonical asset (or is dropped). After the commit; best-effort.
   await afterAssetMerged(ghostId, canonicalId);
 
@@ -556,6 +556,6 @@ export async function mergeDuplicateHostnameGhost(
 
     await tx.asset.delete({ where: { id: ghost.id } });
   });
-  // Rule 156 — as mergeEndpointGhostIntoAsset.
+  // Rule 157 — as mergeEndpointGhostIntoAsset.
   await afterAssetMerged(ghost.id, canonical.id);
 }
