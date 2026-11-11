@@ -19,7 +19,7 @@ dbDescribe("POST /server-settings/ntp/test", () => {
 
   it("refuses an entry that is not a host, and more than ten servers", async () => {
     const { agent, csrf } = await authedAgent(app);
-    const post = (body: unknown) => agent.post("/api/v1/server-settings/ntp/test").set("x-csrf-token", csrf).send(body);
+    const post = (body: object) => agent.post("/api/v1/server-settings/ntp/test").set("x-csrf-token", csrf).send(body);
     expect((await post({ mode: "ntp", servers: ["http://time.example/x"] })).status).toBe(400);
     expect((await post({ mode: "ntp", servers: Array.from({ length: 11 }, (_, i) => `t${i}.example`) })).status).toBe(400);
     expect((await post({ mode: "chrony", servers: ["a.example"] })).status).toBe(400);
