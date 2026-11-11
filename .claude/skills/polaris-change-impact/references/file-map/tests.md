@@ -6,6 +6,9 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 ```
 └── tests/
     ├── unit/
+    │   ├── _dbStub.ts                     # CQ-T009: the shared src/db.ts stand-in — every prisma.<model>.<method> a stable vi.fn() made on first touch; $transaction runs what it gets; stubbed() (loosely typed spy), resetDbStub(). `vi.mock("../../src/db.js", () => import("./_dbStub.js"))` replaces a hand-rolled prisma literal
+    │   ├── _eventLogStub.ts               # CQ-T009: eventLogService with only its writers (logEvent, logEventsBatch, logDiscoveryAsset*) swapped for shared spies — the pure builders stay real; withEventLogStubs(orig), resetEventLogStub()
+    │   ├── sharedTestStubs.test.ts        # the two stubs behave as their headers promise (stable spies, not thenable, $transaction, reset, real builders)
     │   ├── cidr.test.ts
     │   ├── primaryAddressPin.test.ts      # applyPrimaryAddressPin (reassert / follow / none, and the primaryAddressContestedAt stamp: set on a different staged address, not on a follow or a staged clear) + assetAddressService pure helpers (business rule 102)
     │   ├── assetAddressesDom.test.ts      # General-tab Address row (primary IP only, label "Address") + its pills (addressPillsHTML: N IPs hover primary-first and starred with copyable IP + MAC and Set as primary; N MACs hover with per-card IPs matched case/separator-blind, first three named, "Not on MAC list" with no ×, remove ×; port-MAC pill; MAC pill still drawn with no IP). Also pins the rule 103 address-confidence chips (banded chip + hover breakdown on the Address row, plain titled chips in the IPs hover and the list cell).
