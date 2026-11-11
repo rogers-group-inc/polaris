@@ -44,7 +44,12 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     g.escapeHtml = (s: any) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     g.PolarisTabs = { showSnackbar: vi.fn(), attachSwipeToDismiss: vi.fn() };
     charts = [];
-    g.PolarisCharts = { lineChart: (o: any) => { charts.push(o); return '<div class="chart-stub"></div>'; } };
+    g.PolarisCharts = {
+      lineChart: (o: any) => { charts.push(o); return '<div class="chart-stub"></div>'; },
+      // Rule 159a: the error charts are stacked bars.
+      barChart: (o: any) => { charts.push(o); return '<div class="chart-stub"></div>'; },
+      formatRate: (v: number) => String(Math.round(v * 100) / 100),
+    };
     g.PolarisMonitorStates = {
       fromPayload: () => ({ known: false, threshold: 1, recoveryPolls: 1, severity: null }),
       replay: (s: any[]) => s.map(() => ({ status: "up" })),
@@ -224,9 +229,13 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     expect(tput.yUnit).toBe("Kbps");
     expect(tput.series[0].values[0].v).toBeCloseTo(100);
     expect(tput.series[1].values[0].v).toBeCloseTo(10);
-    const errs = charts.find((c) => /errors/.test(c.ariaLabel));
-    expect(errs.series[0].values[0].v).toBe(3);
-    expect(document.getElementById("iface-err-sub")!.textContent).toContain("total 5");
+    // Errors are stacked bars in errors PER SECOND (rule 159a): 3 in and 2
+    // out over 60 s.
+    const errs = charts.find((c) => /errors per second/.test(c.ariaLabel));
+    expect(errs.points[0].values[0]).toBeCloseTo(3 / 60);
+    expect(errs.points[0].values[1]).toBeCloseTo(2 / 60);
+    expect(errs.series.map((s: any) => s.color)).toEqual(["var(--md-primary)", "var(--md-tertiary)"]);
+    expect(document.getElementById("iface-err-sub")!.textContent).toContain("in peak 0.05/s");
 
     seg("iface-range-seg", "7d").click();
     await flush();
@@ -238,6 +247,53 @@ describe("mobile asset sheet: chart ranges, polling chips, PoE, interface charts
     seg("iface-range-seg", "30d").click();
     await flush();
     expect(calls.interfaceHistory.at(-1)!.slice(1)).toEqual(["port1", { range: "30d" }]);
+  });
+
+  // Rule 159a: a fibre-channel port's page — WWN and FC errors rows, the FC
+  // errors per minute chart with the port's bands, and Logged in cards.
+  it("a fibre-channel port shows its WWN, FC counters, FC chart with bands, and what is logged in", async () => {
+    const fc = (invalidCrcs: number, linkFailures: number) => ({ invalidCrcs, linkFailures, syncLosses: 0, sigLosses: 0, invalidTxWords: 10, linkResetIns: 0, linkResetOuts: 0 });
+    Object.assign(sysInfo.interfaces[0], {
+      wwn: "20:05:00:3a:9c:12:34:56",
+      fc: {
+        errorCounters: fc(54, 1),
+        logins: [{ vsan: 101, portWwn: "10:00:00:90:fa:00:00:01", hostName: "esx01", matchMethod: "wwn", matchedAsset: { id: "h1", hostname: "esx01.example.test" } }],
+      },
+    });
+    const prev = g.api.assets;
+    const thresholdCalls: any[] = [];
+    g.api = { assets: new Proxy({}, { get: (_t, k: string) => {
+      if (k === "interfaceHistory") return async () => ({ samples: [
+        { timestamp: "2026-10-07T11:00:00Z", inErrors: 0, outErrors: 0, fcErrors: fc(10, 0) },
+        { timestamp: "2026-10-07T11:01:00Z", inErrors: 0, outErrors: 0, fcErrors: fc(22, 1) },
+      ] });
+      if (k === "metricThresholds") return async (_id: string, o: any) => {
+        thresholdCalls.push(o);
+        return { tiers: o.metric === "fcCrcErrorRate" ? [{ severity: "warning", operator: ">", threshold: 5, ruleName: "FC CRC" }] : [] };
+      };
+      return prev[k];
+    } }) };
+    await openSheet();
+    charts = [];
+    (document.querySelector(".iface-row") as HTMLElement).click();
+    await flush();
+    const page = document.querySelector('#asset-host .asset-page[data-page="iface"]')!;
+    expect(page.textContent).toContain("20:05:00:3a:9c:12:34:56");
+    expect(page.textContent).toContain("CRC 54 · words 10 · link 1");
+    expect(page.textContent).toContain("Logged in");
+    expect(page.textContent).toContain("esx01.example.test");
+    expect(page.textContent).toContain("matched by WWN");
+
+    const fcChart = charts.find((c) => /fibre-channel/.test(c.ariaLabel));
+    expect(fcChart.points[0].values[0]).toBeCloseTo(12);              // 12 CRC in one minute
+    expect(fcChart.points[0].event).toEqual({ count: 1, severity: null });
+    expect(fcChart.series[0].tiers).toEqual([{ severity: "warning", operator: ">", threshold: 5, ruleName: "FC CRC" }]);
+    expect(document.getElementById("iface-fc-sub")!.textContent).toContain("bands: FC CRC");
+    // The bands are asked for THIS port, for the two error rates and the five FC metrics.
+    expect(thresholdCalls.every((o) => o.ifName === "port1")).toBe(true);
+    expect(thresholdCalls.map((o) => o.metric).sort()).toEqual([
+      "fcCrcErrorRate", "fcInvalidTxWordRate", "fcLinkFailureRate", "fcSignalLossRate", "fcSyncLossRate", "ifInErrorRate", "ifOutErrorRate",
+    ]);
   });
 
   it("an unmonitored interface's slide-up has no charts", async () => {
