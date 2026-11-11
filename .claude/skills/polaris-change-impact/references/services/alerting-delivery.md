@@ -56,7 +56,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `eventLogService` (`logEvent`), `notificationTypes` (`deviceFilterConditionSchema`, `evaluateScopeCondition`, `conditionFields`, `scopeConditionStats` + the depth/rule caps), `utils/criteriaToCondition`, `tagAssignmentService` (`normalizeCriteria`, `resolveMatchingAssetIds`, `assetMatchesCriteria`, `collectCidrs`, `cidrsContainingIp`, `SINGLE_ASSET_CANDIDATE_SELECT` — all now only for LEGACY rows), `notificationRecipientService` (`listRecipientUsers`), `scopeRelationIndex.decorateSubnetNameHits` (subnet-NAME leaves on the one asset in `resolveContactsForAsset`), `utils/ttlCache`, `utils/logger`.
 
-**Used by:** `src/api/routes/contacts.ts` (CRUD + search + preview), `src/api/routes/assets.ts` (`GET /assets/:id/contacts`), `src/services/automationActionService.ts` (`resolveContactEmailsForAsset` on the fire path, for `recipientAssetContacts`), `public/js/automations-address-book.js` (both surfaces), `public/js/automations-wizard.js` (the recipient typeahead + the save-to-book affordance).
+**Used by:** `src/api/routes/contacts.ts` (CRUD + search + preview), `src/api/routes/assets/system.ts` (`GET /assets/:id/contacts`), `src/services/automationActionService.ts` (`resolveContactEmailsForAsset` on the fire path, for `recipientAssetContacts`), `public/js/automations-address-book.js` (both surfaces), `public/js/automations-wizard.js` (the recipient typeahead + the save-to-book affordance).
 
 **Readers of the state it writes:** the Automations → Address Book tab, the automation wizard's recipient fields, the asset slide-over's General-tab Contacts rows, and every alert whose notify action sets `recipientAssetContacts`.
 

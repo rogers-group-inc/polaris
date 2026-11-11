@@ -104,7 +104,7 @@ turn orchestrator, its playbooks, the conversation store, the per-user memory, t
 **Cross-service deps:** monitoringService (resolveMonitorSettingsWithProvenance), downDetectionService (describeDownDetectionFor, recoveryPollsFor), utils/workloadSources (isWorkloadPlatform), permissions.ts (hasPermission); dynamically imported per section: assetUpstreamService (resolveAssetUpstream), assetVipService (resolveAssetVips), contactService (resolveContactsForAsset), maintenanceScheduleService (getAssetMaintenanceInfo), peerInferredLldpService (buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap), apRadioService (getApRadioInventory), sampleHistoryService (readSdwanMembers), ipsecConnectionService (readAssetIpsec), applicationMapService (getAssetProcessConnections), softwareInventoryService (getAssetSoftware), firmwareUpgradeService (getUpgradeAvailability, listRunsForAsset), rebootService (getRebootAvailability, listRebootRunsForAsset), agentHostPinService (hostPinsForAsset), assetSightingService (getSightingsForAsset), notificationService (getAssetNotifications).
 
 **Used by:**
-- src/api/routes/assets.ts → GET /:id/effective-monitor-settings — getEffectiveMonitorSettings
+- src/api/routes/assets/detail.ts → GET /:id/effective-monitor-settings — getEffectiveMonitorSettings
 - src/services/assistantToolService.ts → asset_details — readAssetSections, ASSET_SECTIONS, ASSET_SECTION_HELP
 
 **Invariants:**
