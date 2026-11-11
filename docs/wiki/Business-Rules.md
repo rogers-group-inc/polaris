@@ -3412,3 +3412,16 @@ you choose to delete anyway — or delete through the API — Polaris writes a w
 `agent.left_on_host`, naming each host, so there is a record of what still has to be
 removed by hand. See [Assets](Assets#deleting-an-asset) and
 [Polaris Agent](Polaris-Agent#when-the-asset-is-deleted).
+
+### Rule 164
+
+**Device-type rules can run on the devices a FortiGate detects, using everything known about
+them.** Each device type chooses where its matching rules run: **Directory discovery**,
+**Network Discovery scans**, and **Firewall device inventory**, which covers the devices a
+FortiGate or FortiManager detects on its networks. In firewall device inventory a rule can test
+the gate's OS fingerprint, the network card's vendor (Manufacturer), the hostname, and any model
+or product type the asset already has. A device whose type is already set is never re-typed.
+When this option arrived, every type that ran under Directory discovery was switched on for
+firewall device inventory too, so existing behaviour carries over; untick it on a type to stop
+that. **Apply rules to existing "Other" assets** uses both Directory discovery and firewall
+device inventory rules. See [Server Settings](Server-Settings).

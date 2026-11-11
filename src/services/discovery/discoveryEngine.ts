@@ -221,6 +221,17 @@ function inferAssetTypeFromOs(
   return resolveAssetTypeCached({ os: os ?? null, ...(extra ?? {}) }, "directory") ?? "other";
 }
 
+/**
+ * FortiGate detected-device inventory type inference (discovery Phase 7,
+ * business rule 164): the `inventory` context, over every fact the caller
+ * has — the gate's OS fingerprint, the NIC vendor, the client hostname and
+ * what the asset already carries — so an operator's rule on Manufacturer or
+ * Model can claim an endpoint the gate fingerprinted only as "APC AOS".
+ */
+function inferInventoryAssetType(facts: AssetTypeFacts): string {
+  return resolveAssetTypeCached(facts, "inventory") ?? "other";
+}
+
 // ─── Shared discovery trigger (used by route handler + scheduler) ─────────────
 
 export async function isDiscoveryRunning(integrationId: string): Promise<boolean> {
@@ -2929,7 +2940,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   await syncDeviceInventory({
     result, assetIdx, allReservationsRaw, claims, arpMacDeviceIndex, arpIpsByMacDevice, bestGateClaimMsByAsset,
     addressSightings, fortigateEndpointAssetIds, inventoryAssets, now,
-    noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferAssetTypeFromOs,
+    noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferInventoryAssetType,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   });
 

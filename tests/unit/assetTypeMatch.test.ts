@@ -281,6 +281,25 @@ describe("resolution", () => {
     expect(resolveAssetType([...tied].reverse(), { os: "x" }, "scan")).toBe("alpha");
   });
 
+  it("runs a Manufacturer rule in the inventory context (business rule 164)", () => {
+    // The prod case: a FortiGate fingerprints an APC PDU's OS as "APC AOS" and
+    // its NIC vendor as APC; the operator's Power rule reads Manufacturer.
+    const power: MatchableType[] = [{
+      name: "power", matchPriority: 100, matchContexts: ["directory", "scan", "inventory"],
+      matchRules: { op: "or", children: [{ field: "manufacturer", operator: "contains", value: "APC" }] },
+    }];
+    expect(resolveAssetType(power, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBe("power");
+    // Without the box ticked, inventory never reaches it.
+    const untick = [{ ...power[0]!, matchContexts: ["directory"] as MatchContext[] }];
+    expect(resolveAssetType(untick, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBeNull();
+  });
+
+  it("ships the OS ladders in the inventory context too, so Phase 7 types as before", () => {
+    expect(DEFAULT_TYPE_MATCHING.server!.contexts).toEqual(["directory", "inventory"]);
+    expect(DEFAULT_TYPE_MATCHING.workstation!.contexts).toEqual(["directory", "inventory"]);
+    expect(MATCH_CONTEXTS).toContain("inventory");
+  });
+
   it("skips a type whose contexts exclude this one", () => {
     expect(resolveAssetType(types, { os: "Axis camera" }, "directory")).toBeNull();
     expect(resolveAssetType(types, { os: "Axis camera" }, "scan")).toBe("camera");
