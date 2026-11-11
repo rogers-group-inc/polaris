@@ -37,6 +37,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseSnmpIdentity,
   hasSnmpIdentity,
+  isFactoryDefaultSysName,
   vendorFromSysObjectId,
   vendorFromSysDescr,
   enterpriseFromSysObjectId,
@@ -49,6 +50,36 @@ import {
 // A profile's Model identity row names a symbol, and the registry resolves it
 // to the DEFINITION oid. APC's upsBasicIdentModel answers only at `.0`, so a
 // GET of the bare oid left every UPS model blank (2026-10-23).
+describe("an APC rack PDU's system group (rules 154(a), 161)", () => {
+  // A real prod walk, verbatim values.
+  const rows = [
+    { oid: SYS_OIDS.sysDescr, value: "APC Web/SNMP Management Card (MB:v4.2.9 PF:v1.5.1.1 PN:apc_hw21_aos_1.5.1.1.bin AF1:v1.2.0.4 AN1:apc_hw21_rpdu2g_1.2.0.4.bin MN:AP8870 HR:03 SN: ZA2406030655 MD:02/10/2024)" },
+    { oid: SYS_OIDS.sysObjectID, value: "1.3.6.1.4.1.318.1.3.4.6" },
+    { oid: SYS_OIDS.sysName, value: "apc8F29C4" },
+    { oid: SYS_OIDS.sysContact, value: "Unknown" },
+    { oid: SYS_OIDS.sysLocation, value: "Unknown" },
+  ];
+
+  it("reads model, firmware and type, and drops the Unknown placeholders", () => {
+    const id = parseSnmpIdentity(rows);
+    expect(id.manufacturer).toBe("APC");
+    expect(id.model).toBe("AP8870");
+    expect(id.osVersion).toBe("1.5.1.1");
+    expect(id.productType).toBe("Rack PDU");
+    expect(id.hostname).toBe("apc8F29C4");
+    expect(id.snmpLocation).toBeUndefined();
+    expect(id.contact).toBeUndefined();
+  });
+
+  it("recognizes the factory name, and nothing a person would choose", () => {
+    expect(isFactoryDefaultSysName("apc8F29C4")).toBe(true);
+    expect(isFactoryDefaultSysName(" APC0A1B2C ")).toBe(true);
+    for (const name of ["apc-pdu-a3", "apc8F29C4x", "dc-pdu-a3", "apc12345", "", null, undefined]) {
+      expect(isFactoryDefaultSysName(name), String(name)).toBe(false);
+    }
+  });
+});
+
 describe("pickScalar", () => {
   const MODEL = "1.3.6.1.4.1.318.1.1.1.1.1.1";
   const text = (v: unknown) => (v == null ? "" : String(v));

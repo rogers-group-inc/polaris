@@ -76,6 +76,13 @@ export interface ProbeResult {
    * is up whatever it says about its own name.
    */
   sysDescr?: string;
+  /**
+   * sysObjectID, carried beside sysDescr on the same GET. A vendor format
+   * whose fields mean different things on different products needs it to
+   * decide which it is reading (business rule 161: an APC card's model and
+   * serial are the device's only on a rack PDU).
+   */
+  sysObjectId?: string;
 }
 
 // ─── System tab: telemetry + system-info collection ────────────────────────
@@ -385,6 +392,8 @@ export interface SystemInfoSample {
   descrIdentity?: SysDescrDetail;
   /** The raw sysDescr behind it, so Asset.os can follow the firmware. */
   sysDescr?: string | null;
+  /** sysObjectID from the same multi-GET (business rule 161). */
+  sysObjectId?: string | null;
   /**
    * What the device stated about itself through sysName and its ENTITY-MIB
    * chassis row (business rule 154, utils/snmpEntityIdentity.ts). Undefined
