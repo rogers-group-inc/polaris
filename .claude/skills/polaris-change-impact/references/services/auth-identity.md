@@ -476,6 +476,20 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A new table whose rows `assertOwnership` or the write scope (`inWriteScope`, rule 141(e)) judges by `createdBy` MUST join `OWNED_MODELS` and `tombstoneOps`, or a re-used username or token name inherits its rows. `tests/unit/userOwnershipService.test.ts → ownedModelsCoverage` scans the files that judge ownership and fails on a model it finds missing. A model whose `createdBy` is only displayed (automations, channels, scripts) stays out.
 - A token can only be deleted through `apiTokenService.deleteToken` — never `prisma.apiToken.delete` directly, which skips the tombstone. There is no token rename; adding one would need the same rewrite.
 - A new way to create or rename a local account must call `assertUsernameNotReserved`. SSO / LDAP provisioning cannot produce `:` (USERNAME_SAFE_RE).
+## services/userBookingService.ts
+
+**Purpose:** business rule 140(b) — the reboots and firmware upgrades an account has booked that have not happened yet, for the Disable / Delete dialogs. Read-only.
+
+**Public API:** `listPendingBookingsBy(username)` → `PendingBooking[]` (`kind` reboot | firmware | firmwareGroup, `id`, `assetId`, `assetName`, `scheduledFor`, `detail`, and `scope` — the `{ createdBy, tags }` record the write scope judges: the device for a reboot / firmware booking, the booking itself for a group); `PENDING_BOOKING_LIMIT` (200 per kind).
+
+**Reads:** `RebootSchedule`, `FirmwareUpgradeSchedule`, `FirmwareGroupSchedule` where `createdBy = username AND status = "pending"`, with the asset's name, `createdBy` and tags. **Callers:** `GET /users/:id/disable-preview` (`routes/users.ts`), which turns `scope` into `canCancel` with `hasPermission(assets, write)` + `resolveWriteScope(req, "assets")` + `inWriteScope`.
+
+**When changing this:**
+- It must never grow a cancel. Cancelling goes through the booking's own route (`DELETE /assets/:id/reboot/schedules/:sid`, `…/firmware-upgrade/schedules/:sid`, `/assets/firmware-groups/:groupId`) so the gate is never copied; `public/js/users.js → _cancelOneBooking` is the caller.
+- `scope` must stay what those cancel routes judge. If a cancel route's gate changes (a group gaining tags, say), change `scope` here in the same commit or `canCancel` lies.
+- A new kind of booked work that outlives its creator (a fourth schedule table with a `createdBy`) joins this list, `_BOOKING_KIND_LABEL` and `_cancelOneBooking` in `users.js`.
+- Three bounded reads on a dialog open — not on any ticking path; the `[status, scheduledFor]` indexes carry it at any fleet size.
+
 ## services/accountSelfService.ts
 
 **What it owns:** A signed-in user managing their OWN account — the self-service half of `src/api/routes/auth.ts`, extracted 2026-11-06 (CQ-B044): changing a local password (business rule 61), TOTP enrol / confirm / self-disable / status, and the passkey-registration password step-up (business rule 108). Every User read and write those routes made, and every check that decides their outcome.

@@ -3103,7 +3103,9 @@ Deleting a folder moves what it held up a level. When an account is
 deleted and its public ones lose their owner. A disabled account cannot sign
 in by any method and is signed out everywhere. It also **receives nothing**: it
 stops matching as a recipient of any automation, and its push-enabled devices
-are removed. See
+are removed. The reboots and firmware upgrades an account booked **still run**
+after it is disabled or deleted; the Disable and Delete dialogs list them so
+an administrator can cancel any that should not. See
 [Assets](Assets#view-tabs-and-saved-filters), [Dashboard](Dashboard#saved-dashboards)
 and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-account).
 

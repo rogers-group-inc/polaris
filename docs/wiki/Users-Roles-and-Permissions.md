@@ -427,7 +427,21 @@ yourself. Disabling:
   ([rule 140](Business-Rules#rule-140)).
 
 The dialog shows how many items each of those will affect before you confirm.
-Deleting a user does the same to their saved items. **Enable account** lets the
+Deleting a user does the same to their saved items.
+
+**Scheduled work the account booked.** A reboot or firmware upgrade someone
+booked is approved work and **still runs on schedule** after their account is
+disabled or deleted. So that this is never a surprise, the Disable dialog — and
+the Delete dialog, when there is anything to show — lists every pending reboot,
+firmware upgrade and group firmware upgrade the account booked, with the device
+and the time. Tick the ones that should be cancelled; nothing is ticked for
+you. The ticked bookings are cancelled first, and if one cannot be cancelled
+the account is left as it was so you can choose again. Cancelling a booking
+here needs what it needs anywhere else — Read-Write on **Assets**, and the
+device within your reach — so a booking you may not cancel is still listed,
+with its box locked. A group upgrade that is already running is stopped from
+the nav bar's operations panel instead, and maintenance windows are not
+listed: they stay on the Maintenance page ([rule 140](Business-Rules#rule-140)). **Enable account** lets the
 user sign in again and receive alerts again; nothing that was deleted or
 released comes back, and each of their browsers turns push back on by itself the
 next time it opens Polaris. A disabled account shows a **Disabled** badge beside
