@@ -42,18 +42,11 @@
 
 import { appendMissingTags } from "../../utils/tagNormalize.js";
 import { prisma } from "../../db.js";
-import { logEvent, logDiscoveryAssetCreated, logDiscoveryAssetUpdated, snapshotMaterialAssetFields } from "../eventLogService.js";
-import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
+import { logDiscoveryAssetCreated, logDiscoveryAssetUpdated, snapshotMaterialAssetFields } from "../eventLogService.js";
+import { projectAssetFromSources, copyProjectedFields } from "../../utils/assetProjection.js";
 import { clampAcquiredToLastSeen } from "../../utils/assetInvariants.js";
-import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
-import {
-  MAC_ROW_SELECT,
-  buildMacRowsForCreate,
-  selectPrimaryMac,
-  shapeMacRows,
-  type MacJsonEntry,
-} from "../../utils/macAddresses.js";
+import { buildMacRowsForCreate, mergeObservedMacs, type MacJsonEntry } from "../../utils/macAddresses.js";
 import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { indexUniqueBy, normalizeHardwareSerial } from "../../utils/hardwareIdentity.js";
 import {
@@ -67,6 +60,7 @@ import type { GenericApiDiscoveryResult, GenericApiMappedRecord, GenericApiIdent
 import { listAssetTypes } from "../assetTypeService.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
+import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 
 const KIND = GENERIC_API_SOURCE_KIND;
 const MAC_SOURCE = "generic-api";
@@ -259,20 +253,10 @@ export async function syncGenericApiDevices(
   const knownTypes = new Set((await listAssetTypes()).map((t) => t.name));
 
   // Preload — tight selects, once (2000-asset scale: no per-record reads).
-  const allAssetsWithRows = await prisma.asset.findMany({
-    select: {
-      id: true, hostname: true, hostnameOverride: true, assetType: true, status: true,
-      monitored: true, monitorOverride: true, acquiredAt: true, lastSeen: true,
-      tags: true, discoveredByIntegrationId: true, dnsName: true, ipAddress: true,
-      os: true, osVersion: true, serialNumber: true, manufacturer: true, model: true,
-      learnedLocation: true, notes: true, assignedTo: true, macAddress: true,
-      department: true, description: true, purchaseOrder: true, warrantyExpiry: true, assetTag: true,
-      coordSource: true, latitude: true, longitude: true,
-      macAddressRows: { select: MAC_ROW_SELECT },
-    },
+  const { allAssets, assetById } = await loadAssetsForSync({
+    department: true, description: true, purchaseOrder: true, warrantyExpiry: true, assetTag: true,
+    coordSource: true, latitude: true, longitude: true,
   });
-  const allAssets = allAssetsWithRows.map((a: any) => ({ ...a, macAddresses: shapeMacRows(a.macAddressRows) }));
-  const assetById = new Map<string, any>(allAssets.map((a: any) => [a.id, a]));
   const assetIdByTag = new Map<string, string>();
   for (const a of allAssets) if (a.assetTag) assetIdByTag.set(a.assetTag, a.id);
   const feedCtx: FeedFieldContext = { integrationId, assetIdByTag };
@@ -333,18 +317,9 @@ export async function syncGenericApiDevices(
   const obsTags = (o: Record<string, unknown> | null | undefined): string[] =>
     Array.isArray(o?.tags) ? (o!.tags as unknown[]).filter((t): t is string => typeof t === "string") : [];
 
-  const mergeMacs = (existingMacs: any[], macs: string[]): { primary: string | null; merged: any[] } => {
-    const merged = Array.isArray(existingMacs) ? existingMacs.map((m) => ({ ...m })) : [];
-    for (const mac of macs) {
-      const key = normalizeMacKey(mac);
-      if (!key) continue;
-      const hit = merged.find((m: any) => normalizeMacKey(m?.mac) === key);
-      if (hit) { hit.lastSeen = nowIso; if (!hit.source) hit.source = MAC_SOURCE; }
-      else merged.push({ mac, lastSeen: nowIso, source: MAC_SOURCE });
-    }
-    merged.sort((a: any, b: any) => new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime());
-    return { primary: selectPrimaryMac(merged) ?? merged[0]?.mac ?? null, merged };
-  };
+  // A feed never relabels a MAC a richer source named — it only fills a missing source.
+  const mergeMacs = (existingMacs: unknown, macs: string[]) =>
+    mergeObservedMacs(existingMacs, macs.map((mac) => ({ mac, source: MAC_SOURCE })), nowIso, { keepSource: true });
 
   const upsertSource = async (assetId: string, externalId: string, observed: Record<string, unknown>): Promise<void> => {
     await prisma.assetSource.upsert({
@@ -400,16 +375,11 @@ export async function syncGenericApiDevices(
         const before = snapshotMaterialAssetFields(existing);
         const { projected } = projectAssetFromSources(sourcesByAssetId.get(existing.id) ?? []);
         const updateData: Record<string, unknown> = {};
-        if (projected.hostname !== null) updateData.hostname = projected.hostname;
-        if (projected.os !== null) updateData.os = projected.os;
-        if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-        if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-        if (projected.model !== null) updateData.model = projected.model;
-        if (projected.serialNumber !== null && projected.serialNumber !== undefined && !existing.serialNumber) {
-          updateData.serialNumber = projected.serialNumber;
-        }
-        if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
-        if (projected.learnedLocation !== null && projected.learnedLocation !== undefined) updateData.learnedLocation = projected.learnedLocation;
+        copyProjectedFields(
+          updateData, projected,
+          ["hostname", "os", "osVersion", "manufacturer", "model", "serialNumber", "ipAddress", "learnedLocation"],
+          { fillOnly: { serialNumber: existing.serialNumber } },
+        );
         // Retype only from the unclassified default; an operator's or a
         // better source's classification stands.
         if (existing.assetType === "other" && assetType !== "other") updateData.assetType = assetType;
@@ -550,49 +520,14 @@ export async function syncGenericApiDevices(
       } else if (gone.length > 0) {
         await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
         syncLog("info", `Swept ${gone.length} source row(s) for records no longer in the feed.`);
-        const candidateIds = [...new Set(gone.map((r) => r.assetId))];
-        const remaining = await prisma.assetSource.findMany({
-          where: { assetId: { in: candidateIds }, sourceKind: { notIn: [...ENRICHMENT_SOURCE_KINDS] } },
-          select: { assetId: true },
+        // Ownership decides (rule 70): an asset another integration owns
+        // loses only this feed's row; the feed's word is final only on what
+        // it owns, or on what nothing owns.
+        const swept = await decommissionUnclaimedAssets(gone.map((r) => r.assetId), {
+          now, actor, integrationId, integrationName, ownedOnly: true,
+          action: "asset.genericapi.decommissioned", reason: "missing-from-generic-api-feed",
         });
-        const stillClaimed = new Set(remaining.map((r) => r.assetId));
-        const orphanIds = candidateIds.filter((id) => !stillClaimed.has(id));
-        if (orphanIds.length > 0) {
-          // Ownership decides (rule 70): an asset another integration owns
-          // loses only this feed's row; the feed's word is final only on
-          // what it owns, or on what nothing owns.
-          const orphans = await prisma.asset.findMany({
-            where: {
-              id: { in: orphanIds },
-              status: { not: "decommissioned" },
-              OR: [{ discoveredByIntegrationId: integrationId }, { discoveredByIntegrationId: null }],
-            },
-            select: { id: true, hostname: true, ipAddress: true },
-          });
-          if (orphans.length > 0) {
-            const ids = orphans.map((a) => a.id);
-            await releaseAssetsForDecommission(ids, {
-              at: now, actor, statusChangedBy: integrationName, reason: `no longer present in "${integrationName}"`,
-            });
-            await prisma.asset.updateMany({
-              where: { id: { in: ids } },
-              data: { status: "decommissioned", statusChangedAt: now, statusChangedBy: integrationName },
-            });
-            for (const a of orphans) {
-              const name = a.hostname || a.ipAddress || a.id;
-              decommissioned.push(name);
-              logEvent({
-                action: "asset.genericapi.decommissioned",
-                resourceType: "asset",
-                resourceId: a.id,
-                resourceName: name,
-                actor,
-                message: `"${name}" decommissioned — no longer present in "${integrationName}", and no other discovery source claims it`,
-                details: { reason: "missing-from-generic-api-feed", integrationId, integrationName },
-              });
-            }
-          }
-        }
+        decommissioned.push(...swept.decommissioned);
       }
     }
   } catch (err: any) {

@@ -41,6 +41,7 @@ import { recordObservedIpv6 } from "./dhcp/observedIpv6.js";
 import { adoptPlaceholderMacs } from "./dhcp/placeholderMacAdoption.js";
 import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
+import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 import * as azureArc from "../azureArcService.js";
 import { ipInCidr, cidrContains } from "../../utils/cidr.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
@@ -49,7 +50,7 @@ import { macHexKeyOrNull, normalizeMacOrNull } from "../../utils/mac.js";
 import { isFortinetIntegrationType } from "../../utils/pollingCompatibility.js";
 import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX, AD_GUID_TAG_PREFIX, SID_TAG_PREFIX } from "../../utils/assetSourceTags.js";
 import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanagerService.js";
-import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
+import { projectAssetFromSources, copyProjectedFields } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
 import type { AddressSighting } from "../assetAddressService.js";
@@ -133,6 +134,7 @@ import {
   selectPrimaryMac,
   isUnverifiedMacSource,
   type MacJsonEntry,
+  mergeObservedMacs,
 } from "../../utils/macAddresses.js";
 import { isHostnameAdoptProtected } from "../../utils/hostnameAdoptGuard.js";
 import {
@@ -142,7 +144,6 @@ import {
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
 import { deviceSerialOrNull } from "../../utils/safeText.js";
-import { sortNewestFirst } from "../../utils/sortByTime.js";
 import { normalizeConflictValue } from "../../utils/conflictValue.js";
 
 /** Auto-disable window for per-integration verbose debug logging (30 minutes). */
@@ -3737,10 +3738,7 @@ async function syncArcClusters(
       if (existing) {
         const before = snapshotMaterialAssetFields(existing);
         const updateData: Record<string, unknown> = {};
-        if (projected.hostname !== null) updateData.hostname = projected.hostname;
-        if (projected.os !== null) updateData.os = projected.os;
-        if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-        if (projected.learnedLocation !== null) updateData.learnedLocation = projected.learnedLocation;
+        copyProjectedFields(updateData, projected, ["hostname", "os", "osVersion", "learnedLocation"]);
         // Same posture as the machine path: connectivityStatus is reachability,
         // never a lifecycle state, so status is left alone entirely.
         if (existing.assetType === "other") updateData.assetType = "kubernetes_cluster";
@@ -4136,14 +4134,9 @@ export async function syncArcDevices(
       ];
       const { projected } = projectAssetFromSources(sourceRows);
 
-      if (projected.hostname !== null) updateData.hostname = projected.hostname;
-      if (projected.os !== null) updateData.os = projected.os;
-      if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-      if (projected.serialNumber !== null) updateData.serialNumber = projected.serialNumber;
-      if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-      if (projected.model !== null) updateData.model = projected.model;
-      if (projected.learnedLocation !== null) updateData.learnedLocation = projected.learnedLocation;
-      if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+      copyProjectedFields(updateData, projected, [
+        "hostname", "os", "osVersion", "serialNumber", "manufacturer", "model", "learnedLocation", "ipAddress",
+      ]);
 
       // NOTE: this sync deliberately never writes `status`. Unlike Entra's
       // accountEnabled (a lifecycle fact that maps to `decommissioned`), an
@@ -4525,24 +4518,9 @@ export async function syncEntraDevices(
   // properties below. macAddressRows are hydrated to .macAddresses so the
   // Entra sync's MAC index builder + mergeIntuneMacs pipeline keep
   // working with the legacy JSON shape.
-  const allAssetsWithRows = await prisma.asset.findMany({
-    // Tight select (the AD/vCenter/Arc shape): every column this sync's loop,
-    // the material-field snapshot, the conflict snapshot, buildMonitoredSweep
-    // and clampAcquiredToLastSeen read. The unprojected load pulled every
-    // column of every asset — the big JSON blobs included — for the fleet.
-    select: {
-      id: true, hostname: true, hostnameOverride: true, assetTag: true, assetType: true, status: true,
-      monitored: true, monitorOverride: true, acquiredAt: true, lastSeen: true,
-      tags: true, discoveredByIntegrationId: true, dnsName: true, ipAddress: true,
-      os: true, osVersion: true, serialNumber: true, manufacturer: true, model: true,
-      learnedLocation: true, learnedAddress: true, notes: true, assignedTo: true, macAddress: true,
-      macAddressRows: { select: MAC_ROW_SELECT },
-    },
-  });
-  const allAssets = allAssetsWithRows.map((a: any) => ({
-    ...a,
-    macAddresses: shapeMacRows(a.macAddressRows),
-  }));
+  // Tight select (the shared sync shape, plus assetTag and learnedAddress) —
+  // never the unprojected load, which pulled every JSON blob for the fleet.
+  const { allAssets } = await loadAssetsForSync({ assetTag: true, learnedAddress: true });
   const {
     assetByEntraDeviceId,
     assetIdBySid,
@@ -4891,13 +4869,9 @@ export async function syncEntraDevices(
           : {}),
       };
       // Discovery-owned fields from the projection.
-      if (projected.hostname !== null) updateData.hostname = projected.hostname;
-      if (projected.os !== null) updateData.os = projected.os;
-      if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-      if (projected.serialNumber !== null) updateData.serialNumber = projected.serialNumber;
-      if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-      if (projected.model !== null) updateData.model = projected.model;
-      if (projected.learnedLocation !== null) updateData.learnedLocation = projected.learnedLocation;
+      copyProjectedFields(updateData, projected, [
+        "hostname", "os", "osVersion", "serialNumber", "manufacturer", "model", "learnedLocation",
+      ]);
       // Phase 4d: assetTag is no longer the cross-source identity link —
       // AssetSource is. The takeover is realized by the entra source row
       // upsert above (priority rule: Entra source wins on hybrid devices,
@@ -5661,13 +5635,9 @@ export async function syncActiveDirectoryDevices(
       // Discovery-owned fields from the projection. Only write when
       // projection has a value (null = "no source has an opinion" — leave
       // the existing Asset value alone).
-      if (projected.hostname !== null) updateData.hostname = projected.hostname;
-      if (projected.os !== null) updateData.os = projected.os;
-      if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-      if (projected.learnedLocation !== null) updateData.learnedLocation = projected.learnedLocation;
-      if (projected.serialNumber !== null) updateData.serialNumber = projected.serialNumber;
-      if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-      if (projected.model !== null) updateData.model = projected.model;
+      copyProjectedFields(updateData, projected, [
+        "hostname", "os", "osVersion", "learnedLocation", "serialNumber", "manufacturer", "model",
+      ]);
       // dnsName is AD-specific (not in projection — separate Asset column).
       if (dev.dnsHostName) updateData.dnsName = dev.dnsHostName;
       // lastSeen: NOT written from AD. lastLogonTimestamp is replication-lazy
@@ -6004,23 +5974,7 @@ export async function syncVcenterDevices(
   // bumpLastSeen read; the unprojected load pulled every column of every
   // asset, JSON blobs included) with MAC rows hydrated for the vNIC identity
   // join, plus the AssetSource index.
-  const allAssetsWithRows = await prisma.asset.findMany({
-    select: {
-      id: true, hostname: true, hostnameOverride: true, assetType: true, status: true,
-      monitored: true, monitorOverride: true, acquiredAt: true, lastSeen: true,
-      tags: true, discoveredByIntegrationId: true, dnsName: true, ipAddress: true,
-      os: true, osVersion: true, serialNumber: true, manufacturer: true, model: true,
-      learnedLocation: true, learnedAddress: true, notes: true, assignedTo: true,
-      macAddress: true, dependencyLayer: true,
-      macAddressRows: { select: MAC_ROW_SELECT },
-    },
-  });
-  const allAssets = allAssetsWithRows.map((a: any) => ({
-    ...a,
-    macAddresses: shapeMacRows(a.macAddressRows),
-  }));
-  const assetById = new Map<string, any>();
-  for (const a of allAssets) assetById.set(a.id, a);
+  const { allAssets, assetById } = await loadAssetsForSync({ learnedAddress: true, dependencyLayer: true });
 
   // ALL kinds, tight select: the vcenter kinds feed the identity indexes
   // below, and every kind feeds sourcesByAssetId — the projection input, which
@@ -6231,9 +6185,7 @@ export async function syncVcenterDevices(
       const updateData: Record<string, unknown> = {
         virtualization: virtualization as any,
       };
-      if (projected.hostname !== null) updateData.hostname = projected.hostname;
-      if (projected.os !== null) updateData.os = projected.os;
-      if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+      copyProjectedFields(updateData, projected, ["hostname", "os", "ipAddress"]);
       // Layer stamp only on vcenter-typed assets — never clobber a Fortinet-
       // computed layer on some exotic merge target.
       if (existing.assetType === "hypervisor") updateData.dependencyLayer = 1;
@@ -6362,23 +6314,8 @@ export async function syncVcenterDevices(
     const vmMacEntries = [...vm.nicMacs]
       .sort((a, b) => Number(b.connected) - Number(a.connected))
       .map((n) => ({ mac: n.mac, source: "vcenter-vnic" }));
-    const mergeVmMacs = (existingMacs: any[]): { primary: string | null; merged: any[] } => {
-      const merged = Array.isArray(existingMacs) ? [...existingMacs] : [];
-      for (const e of vmMacEntries) {
-        const key = normalizeMacKey(e.mac);
-        if (!key) continue;
-        const hit = merged.find((m: any) => normalizeMacKey(m?.mac) === key);
-        if (hit) {
-          hit.lastSeen = nowIso;
-          hit.source = e.source;
-        } else {
-          merged.push({ mac: e.mac, lastSeen: nowIso, source: e.source });
-        }
-      }
-      sortNewestFirst(merged, (e) => e.lastSeen);
-      // vcenter-vnic rows are hardware truth — see selectPrimaryMac.
-      return { primary: selectPrimaryMac(merged) ?? merged[0]?.mac ?? null, merged };
-    };
+    // vcenter-vnic rows are hardware truth — see selectPrimaryMac.
+    const mergeVmMacs = (existingMacs: unknown) => mergeObservedMacs(existingMacs, vmMacEntries, nowIso);
 
     // Match cascade: (1) vcenter-vm source by externalId → (2) vNIC MAC
     // (positive identity — the VM already exists via AD/Entra/FortiGate) →
@@ -6411,12 +6348,7 @@ export async function syncVcenterDevices(
         const updateData: Record<string, unknown> = {
           virtualization: virtualization as any,
         };
-        if (projected.hostname !== null) updateData.hostname = projected.hostname;
-        if (projected.os !== null) updateData.os = projected.os;
-        if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-        if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-        if (projected.model !== null) updateData.model = projected.model;
-        if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
+        copyProjectedFields(updateData, projected, ["hostname", "os", "osVersion", "manufacturer", "model", "ipAddress"]);
         // Type flip only from the "other" default — a directory-typed
         // workstation/server keeps its class (and thus its monitoring
         // class-block); the Virtualization section marks it as a VM anyway.
@@ -6738,60 +6670,21 @@ export async function syncVcenterDevices(
       // one as a claim and a VM deleted from vCenter stays active forever,
       // vouched for by its own SNMP reply. Only ownership-bearing kinds
       // answer "does something still claim this device exists?".
-      const orphanCandidateIds = [...new Set(gone.map((r) => r.assetId))];
-      if (orphanCandidateIds.length > 0) {
-        const remaining = await prisma.assetSource.findMany({
-          where: {
-            assetId: { in: orphanCandidateIds },
-            sourceKind: { notIn: [...ENRICHMENT_SOURCE_KINDS] },
-          },
-          select: { assetId: true },
-        });
-        const stillClaimed = new Set(remaining.map((r) => r.assetId));
-        const orphanIds = orphanCandidateIds.filter((id) => !stillClaimed.has(id));
-        const keptCount = orphanCandidateIds.length - orphanIds.length;
-        if (keptCount > 0) {
-          syncLog("info", `${keptCount} asset(s) left vCenter but are still claimed by another discovery source — left active.`);
-        }
-
-        if (orphanIds.length > 0) {
-          const orphans = await prisma.asset.findMany({
-            // Maintenance-window assets ARE judged here, on the FortiGate
-            // roster sweep's reasoning: absence from the inventory is
-            // configuration truth, not a reachability signal — and
-            // releaseAssetsForDecommission force-closes the window first so the
-            // 30s maintenance reconcile can't re-flip the status back.
-            where: { id: { in: orphanIds }, status: { not: "decommissioned" } },
-            select: { id: true, hostname: true, ipAddress: true, assetType: true },
-          });
-          if (orphans.length > 0) {
-            const ids = orphans.map((a: any) => a.id);
-            await releaseAssetsForDecommission(ids, {
-              at: now,
-              actor,
-              statusChangedBy: integrationName,
-              reason: `no longer present in "${integrationName}"`,
-            });
-            await prisma.asset.updateMany({
-              where: { id: { in: ids } },
-              data: { status: "decommissioned", statusChangedAt: now, statusChangedBy: integrationName },
-            });
-            for (const a of orphans) {
-              const name = a.hostname || a.ipAddress || a.id;
-              decommissioned.push(name);
-              logEvent({
-                action: "asset.vcenter.decommissioned",
-                resourceType: "asset",
-                resourceId: a.id,
-                resourceName: name,
-                actor,
-                message: `${a.assetType === "hypervisor" ? "ESXi host" : "VM"} "${name}" decommissioned — no longer present in "${integrationName}", and no other discovery source claims it`,
-                details: { reason: "missing-from-vcenter-inventory", integrationId, integrationName },
-              });
-            }
-            syncLog("info", `Decommissioned ${orphans.length} asset(s) that vanished from vCenter with no other source claiming them.`);
-          }
-        }
+      // Maintenance-window assets ARE judged, on the FortiGate roster sweep's
+      // reasoning: absence from the inventory is configuration truth, not a
+      // reachability signal (decommissionUnclaimedAssets force-closes the
+      // window first so the 30s maintenance reconcile can't re-flip it).
+      const swept = await decommissionUnclaimedAssets(gone.map((r) => r.assetId), {
+        now, actor, integrationId, integrationName,
+        action: "asset.vcenter.decommissioned", reason: "missing-from-vcenter-inventory",
+        noun: (t) => (t === "hypervisor" ? "ESXi host" : "VM"),
+      });
+      if (swept.keptCount > 0) {
+        syncLog("info", `${swept.keptCount} asset(s) left vCenter but are still claimed by another discovery source — left active.`);
+      }
+      if (swept.decommissioned.length > 0) {
+        decommissioned.push(...swept.decommissioned);
+        syncLog("info", `Decommissioned ${swept.decommissioned.length} asset(s) that vanished from vCenter with no other source claiming them.`);
       }
     }
   } catch (err: any) {

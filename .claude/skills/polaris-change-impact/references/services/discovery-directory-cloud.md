@@ -78,7 +78,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncWorkloadDevices, applyWorkloadFilters, passesNameFilter, workloadSweepBlockedReason, buildWorkloadDependencyEdges, resolveWorkloadHostAddress, staleContainerIps; re-exports normalizeWorkloadState, workloadContainerKey, workloadHostUsageKey + the externalId builders from utils/workloadSources.ts; the Workload* types.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), dnsService.getConfiguredResolver (host-name resolution, with `node:dns/promises.lookup` as the fallback), eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), monitorOverrideService (`getAddAsMonitoredFromConfig` / `buildMonitoredSweep`), discovery/syncSteps (`loadAssetsForSync` — the asset preload; `decommissionUnclaimedAssets` — Pass E's decommission tail), macAddressService.reconcileMacAddresses; utils `mergeObservedMacs` / `copyProjectedFields` (the steps shared with vCenter and the Generic API, CQ-B036).
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's unraid / truenas / proxmox branch). The services and collectors import only its TYPES (runtime imports of it from a service would cycle through discoveryEngine).
 
@@ -187,7 +187,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** syncGenericApiDevices, genericApiObserved, resolveGenericAssetType, genericApiSweepBlockedReason, genericApiFeedFieldUpdates, mergeGenericFeedTags, GENERIC_API_FEED_FIELDS, GenericApiSyncSummary.
 
-**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), assetTypeService.listAssetTypes, eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), maintenanceScheduleService.releaseAssetsForDecommission, macAddressService.reconcileMacAddresses.
+**Cross-service deps:** discoveryEngine (exported `indexHostname` / `lookupHostname` / `normalizeMacKey` / `upsertAssetConflict`), assetTypeService.listAssetTypes, eventLogService, discovery/syncLog.makeSyncLog (the sync-pass log writer), discovery/syncSteps (`loadAssetsForSync`; `decommissionUnclaimedAssets` with `ownedOnly` — rule 70), macAddressService.reconcileMacAddresses; utils `mergeObservedMacs` (`keepSource`) / `copyProjectedFields` (serial `fillOnly`).
 
 **Used by:** src/services/discovery/discoveryEngine.ts (runDiscovery's genericapi branch).
 
