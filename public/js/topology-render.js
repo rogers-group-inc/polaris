@@ -355,6 +355,7 @@
       return { color: sig === "unknown" ? ec.neutral : ec[sig], width: MESH_LINK_WIDTH, dash: "6 4" };
     }
     if (d.isEndpointLink) return { color: ec.neutral, width: 1.4, dash: null };
+    if (d.isFcLink) return { color: ec.fc, width: 2.2, dash: null };
     var cls = d.linkSpeed || "unknown";
     var st = LINK_SPEED_STYLE[cls] || LINK_SPEED_STYLE.unknown;
     var color = cls === "unknown" ? ec.neutral : ec[cls];
@@ -413,6 +414,57 @@
           },
         });
       }
+    });
+    // Fibre-channel links (business rule 160): drawn only while their FC
+    // switch is a shown node. A matched host becomes a node of its own when its
+    // type is shown, even when it hangs off none of this site's Ethernet
+    // switches; an unmatched login (a storage array port) is a small ghost
+    // named for what it registered.
+    (data.fcLinks || []).forEach(function (l) {
+      if (!l || !l.switchId || !nodeIds[l.switchId]) return;
+      var targetId;
+      if (l.host && l.host.id) {
+        targetId = l.host.id;
+        if (!nodeIds[targetId]) {
+          if (!shown[l.host.assetType]) return;
+          nodeIds[targetId] = true;
+          out.push({
+            data: Object.assign({
+              id: targetId,
+              label: l.host.hostname || l.host.ipAddress || "host",
+              role: "endpoint",
+              assetId: targetId,
+              assetType: l.host.assetType,
+              nodeColor: fortinetNodeColor(l.host),
+              iconUrl: l.host.iconUrl || null,
+              hasIcon: l.host.iconUrl ? 1 : 0,
+            }, locationData(l.host.location)),
+          });
+        }
+      } else {
+        targetId = "fc:" + l.portWwn;
+        if (!nodeIds[targetId]) {
+          nodeIds[targetId] = true;
+          out.push({ data: { id: targetId, label: l.label || l.portWwn, role: "fcport", portWwn: l.portWwn } });
+        }
+      }
+      out.push({
+        data: {
+          id: "fc-" + l.switchId + "-" + l.portWwn,
+          source: l.switchId,
+          target: targetId,
+          label: l.port || "",
+          isFcLink: 1,
+          fcPortWwn: l.portWwn,
+          fcVsan: l.vsan,
+          fcMatch: l.matchMethod || null,
+          reason: "Fibre channel: logged in on " + (l.port || "an FC port") +
+            (l.vsan != null ? ", VSAN " + l.vsan : "") + ", WWN " + l.portWwn +
+            (l.matchMethod === "wwn" ? ". Matched by the WWN the host reports."
+              : l.matchMethod === "name" ? ". Matched by the host name its HBA registered."
+              : l.label && l.label !== l.portWwn ? ". Registered as " + l.label + "; no single asset matches it." : "."),
+        },
+      });
     });
     return out.filter(function (el) {
       var d = el.data || {};
@@ -489,6 +541,9 @@
       if (!d || !d.source) return;
       if (d.isMesh) { d.meshSignal = meshSignalClass(d.signalDbm); return; }
       if (d.isWireless) return;
+      // A fibre-channel link (rule 160) is not Ethernet: it takes its own
+      // colour, never a speed class.
+      if (d.isFcLink) return;
       var bps = linkSpeedBps(d);
       d.speedBps = bps;
       d.linkSpeed = linkSpeedClass(bps);
@@ -637,12 +692,12 @@
     dark: {
       neutral: "#5b6478", "10g": "#a78bfa", "5g": "#60a5fa", "2g5": "#67e8f9", "1g": "#14b8a6",
       "100m": "#94a3b8", "10m": "#94a3b8", good: "#22c55e", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
-      halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee",
+      halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee", fc: "#f472b6",
     },
     light: {
       neutral: "#b4bcc8", "10g": "#7c3aed", "5g": "#2563eb", "2g5": "#0891b2", "1g": "#0f766e",
       "100m": "#64748b", "10m": "#64748b", good: "#16a34a", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
-      halo: "#111827", portal: "#64748b", wireless: "#0e7490",
+      halo: "#111827", portal: "#64748b", wireless: "#0e7490", fc: "#be185d",
     },
   };
   // Line weight and pattern per speed class: faster is heavier; 10 Mb is
@@ -685,6 +740,17 @@
       { selector: 'node[role="fortigate"]',   style: { "background-color": "data(nodeColor)", width: 64, height: 64, "font-weight": 700 } },
       { selector: 'node[role="fortiswitch"]', style: { "background-color": "data(nodeColor)" } },
       { selector: 'node[role="fortiap"]',     style: { "background-color": "data(nodeColor)", width: 36, height: 36 } },
+      {
+        selector: 'node[role="fcport"]',
+        style: {
+          "background-color": isDark ? "#4a1d36" : "#fce7f3",
+          "border-color": ec.fc,
+          "border-style": "dashed",
+          shape: "round-rectangle",
+          width: 32,
+          height: 32,
+        },
+      },
       {
         selector: 'node[role="lldp"]',
         style: {
@@ -827,6 +893,12 @@
       {
         selector: 'edge[isMclag = 1]',
         style: { "line-style": "dashed", "target-arrow-shape": "none" },
+      },
+      // FIBRE CHANNEL (rule 160): a SAN login, not Ethernet — its own pink,
+      // never a speed colour, solid, no arrow.
+      {
+        selector: 'edge[isFcLink = 1]',
+        style: { "line-color": ec.fc, "target-arrow-color": ec.fc, "target-arrow-shape": "none", width: 2.2 },
       },
       // LAST KNOWN: a switch link kept on the map while an end is not being
       // fully polled (dependency-down, down, recovering), drawn from evidence
@@ -1203,6 +1275,7 @@
         { key: "role:fortiap",      label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
         { key: "role:endpoint",     label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
         { key: "role:remote-asset", label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
+        { key: "role:fcport",       label: "FC device, no asset", kind: "round-rectangle", size: "sm", fill: fam === "dark" ? "#4a1d36" : "#fce7f3", border: ec.fc },
       ],
       health: [
         { key: "health:up",          label: "Up",                color: HEALTH_NODE_COLORS.up },
@@ -1232,6 +1305,7 @@
         { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
         { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
         { key: "edge:lastKnown", section: "also",  label: "Last known, an end not being polled", color: ec.neutral, style: "dashed", width: LINK_SPEED_STYLE.unknown.width },
+        { key: "edge:fc",       section: "also",   label: "Fibre channel (SAN login)", color: ec.fc, style: "solid", width: 2.2 },
       ],
       // Location grouping hulls — colors + border styles must mirror
       // LOC_GROUP_KINDS (all levels are rounded rectangles, identified by a
@@ -1253,6 +1327,7 @@
   // has no row (null).
   function edgeLegendKind(edge) {
     var d = function (k) { return edge.data(k) === 1 || edge.data(k) === true; };
+    if (d("isFcLink")) return "fc";
     if (d("isMesh")) return "mesh";
     if (d("isBridge")) return "apLink";
     if (d("isWireless")) return null;
@@ -4407,7 +4482,7 @@
       if (!s || !t) return;
       var d = e.data();
       var flags = [];
-      ["isIface", "isLldp", "isVerifiedUplink", "isApLink", "isBridge", "isMesh", "isMclag", "isWireless", "isInterGroup", "isFanOut", "inLoop", "customPath", "detoured"].forEach(function (f) {
+      ["isIface", "isLldp", "isVerifiedUplink", "isApLink", "isBridge", "isMesh", "isMclag", "isWireless", "isFcLink", "isInterGroup", "isFanOut", "inLoop", "customPath", "detoured"].forEach(function (f) {
         if (d[f] && d[f] !== 0) flags.push(f.replace(/^is/, "").replace(/^./, function (c) { return c.toLowerCase(); }));
       });
       var pts = null;
@@ -4659,7 +4734,8 @@
     var ports = String(edge.data("label") || "").trim();
     // The legend shows one "Switch ↔ switch"; HOW a link was found (interface
     // naming or an LLDP report) is told here.
-    var kind = edge.data("isMesh")     ? "AP to AP — wireless mesh backhaul"
+    var kind = edge.data("isFcLink")   ? "Fibre channel — SAN login"
+             : edge.data("isMesh")     ? "AP to AP — wireless mesh backhaul"
              : edge.data("isBridge")   ? "Switch bridged behind AP (wired)"
              : edge.data("isWireless") ? "Wireless client"
              : edge.data("isMclag")    ? "MCLAG inter-chassis link"

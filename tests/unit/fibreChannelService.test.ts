@@ -57,7 +57,7 @@ vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: vi.fn(async (e: any) => { h.events.push(e); }),
 }));
 
-const { persistFibreChannel, getFibreChannelForAsset, recordHostHbaPorts, resetHbaPortCache } = await import("../../src/services/fibreChannelService.js");
+const { persistFibreChannel, getFibreChannelForAsset, recordHostHbaPorts, resetHbaPortCache, getFcLoginsForSwitches } = await import("../../src/services/fibreChannelService.js");
 
 const counters = (invalidTxWords: number) => ({
   linkFailures: 0, syncLosses: 0, sigLosses: 0, invalidTxWords, invalidCrcs: 0, linkResetIns: 0, linkResetOuts: 0,
@@ -160,5 +160,23 @@ describe("host-reported HBA ports (WWN matching)", () => {
     const byName = Object.fromEntries(r.host!.hbas.map((x) => [x.name, x]));
     expect(byName.host3.seenBy).toEqual([{ switch: { id: "sw", hostname: "mds-a", dnsName: null, model: "DS-C9148S-K9" }, ifName: "fc1/1", vsan: 101 }]);
     expect(byName.host4.seenBy).toEqual([]);
+  });
+});
+
+describe("getFcLoginsForSwitches (the Device Map's FC links, rule 160)", () => {
+  it("returns each login with its live host, and unmatches a retired one", async () => {
+    await persistFibreChannel("sw", INV);
+    let rows = await getFcLoginsForSwitches(["sw"]);
+    const lnx = rows.find((r) => r.ifName === "fc1/1")!;
+    expect(lnx).toMatchObject({ matchMethod: "name", matchedAsset: { id: "host" } });
+    expect(rows.find((r) => r.ifName === "fc1/8")).toMatchObject({ hostName: "PURE01-ct0", matchedAsset: null });
+
+    h.assets.find((a) => a.id === "host")!.status = "decommissioned";
+    rows = await getFcLoginsForSwitches(["sw"]);
+    expect(rows.find((r) => r.ifName === "fc1/1")).toMatchObject({ matchedAsset: null, matchMethod: null });
+  });
+
+  it("asks nothing for no switches", async () => {
+    expect(await getFcLoginsForSwitches([])).toEqual([]);
   });
 });

@@ -3349,3 +3349,13 @@ A connection links to a server in one of two ways, in this order:
 If two servers claim the WWN, or two assets match the name, the connection is shown with its
 WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
 an asset in a different domain. When a device logs out of a port, Polaris records it in Events.
+
+### Rule 160
+
+**Fibre-channel links are drawn on the Device Map's Layer 2 view from a fibre-channel switch you
+are showing.** Turn on the switch's device type (an MDS is usually *Other*) and its fibre-channel
+logins are drawn as pink lines labelled with the FC port. Each line ends at the server it matched
+(see [rule 159](#rule-159)) when that server's type is shown, even if the server isn't under one
+of this site's Ethernet switches. A login that matched no asset, such as a storage array's port,
+ends at a small dashed box named for what it registered (for example *PURE01-ct0*). Hide the
+switch's type and its fibre-channel lines go with it.
