@@ -37,6 +37,9 @@ type SystemInfo struct {
 	PrimaryMAC    string `json:"primaryMac,omitempty"`
 	PrimaryIP     string `json:"primaryIp,omitempty"`
 	AgentVersion  string `json:"agentVersion,omitempty"` // stamped by caller from main.version
+	// The host's FC HBA ports (fcports.go). A pointer so "cannot say" (nil,
+	// omitted) and "no FC ports" (an empty list, sent) stay distinct.
+	FcPorts *[]FcPort `json:"fcPorts,omitempty"`
 }
 
 // SystemInfoOnce snapshots the host's identity right now. agentVersion
@@ -80,6 +83,10 @@ func SystemInfoOnce(agentVersion string) *SystemInfo {
 		info.PrimaryMAC = mac
 		info.PrimaryIP = ip
 	}
+
+	// Fibre-channel HBA ports: a directory read on Linux, two WMI queries on
+	// Windows, once per heartbeat. The server acts only on a change.
+	info.FcPorts = FcPortsOnce()
 
 	return info
 }

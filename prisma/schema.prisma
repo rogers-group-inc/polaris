@@ -1338,6 +1338,10 @@ model Asset {
   mclagPeers             AssetMclagPeer[]         @relation("AssetMclagPeers")
   ipsecConnections       AssetIpsecConnection[]   @relation("AssetIpsecConnections")
   physicalEntities       AssetPhysicalEntity[]    @relation("AssetPhysicalEntities")
+  fcPorts                AssetFcPort[]            @relation("AssetFcPorts")
+  fcLogins               AssetFcLogin[]           @relation("AssetFcLogins")
+  fcLoginMatches         AssetFcLogin[]           @relation("AssetFcLoginMatch")
+  hbaPorts               AssetHbaPort[]           @relation("AssetHbaPorts")
   // Current-state interface inventory (one row per ifName), delete-replaced per
   // full system-info scrape. The pinned-only time-series lives in
   // AssetInterfaceSample.
@@ -2606,6 +2610,108 @@ model AssetPhysicalEntity {
   @@index([assetId])
   @@index([assetId, entClass])
   @@map("asset_physical_entities")
+}
+
+// A fibre-channel switch port, from CISCO-FC-FE-MIB fcIfErrorTable (business
+// rule 159). CURRENT STATE, full-replaced on each SNMP system-info pass that
+// found FC ports; never written for a device that has none. The counters are
+// the switch's cumulative totals since they were last cleared, kept as one
+// JSON blob because Counter32 values pass Int's range (2.3e9 seen on a bad
+// optic) and the tab only ever reads them together.
+model AssetFcPort {
+  id       String  @id @default(uuid())
+  assetId  String
+  asset    Asset   @relation("AssetFcPorts", fields: [assetId], references: [id], onDelete: Cascade)
+  ifIndex  Int
+  // IF-MIB ifName ("fc1/5"); null when the interface walk did not name it.
+  ifName   String?
+  // { linkFailures, syncLosses, sigLosses, invalidTxWords, invalidCrcs,
+  //   linkResetIns, linkResetOuts } — each a number or null.
+  errorCounters Json?
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([assetId, ifIndex])
+  @@index([assetId])
+  @@map("asset_fc_ports")
+}
+
+// One device logged into a fibre-channel switch port (an HBA, a storage
+// array's target port), from CISCO-FC-FE-MIB fcIfFLoginTable, named through
+// the switch's name server (CISCO-NS-MIB) and FDMI (CISCO-FDMI-MIB) — business
+// rule 159. CURRENT STATE on the SWITCH asset. `matchedAssetId` is the asset
+// the device was resolved to (`matchMethod` "name": the registered host name
+// equalled exactly one asset's hostname or DNS name — rule 91).
+model AssetFcLogin {
+  id       String  @id @default(uuid())
+  assetId  String
+  asset    Asset   @relation("AssetFcLogins", fields: [assetId], references: [id], onDelete: Cascade)
+  ifIndex  Int
+  ifName   String?
+  vsan     Int
+  // The attached N_Port's WWNs, lower-case colon hex ("10:00:5c:ba:2c:ff:ac:5a").
+  portWwn  String
+  nodeWwn  String?
+  // FC address from the name server ("0xbf1f00"); null when it has no entry.
+  fcid     String?
+  // fcNameServerSymbolicNodeName, verbatim ("Emulex SN1200E2P FV… HN:… OS:Linux").
+  symbolicName String? @db.Text
+  // The registered host name: FDMI cfdmiHbaPortHostName, else the HN: field
+  // of an Emulex symbolic name. A storage array registers its port label
+  // here ("PURE01-ct0").
+  hostName     String?
+  hbaModel     String?
+  hbaFirmware  String?
+  hbaDriver    String?
+  osInfo       String?
+
+  matchedAssetId String?
+  matchedAsset   Asset?  @relation("AssetFcLoginMatch", fields: [matchedAssetId], references: [id], onDelete: SetNull)
+  matchMethod    String?
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([assetId, ifIndex, vsan, portWwn])
+  @@index([assetId])
+  @@index([matchedAssetId])
+  @@index([portWwn])
+  @@map("asset_fc_logins")
+}
+
+// A fibre-channel HBA port as the HOST reports it (business rule 159): the
+// Polaris Agent (Linux sysfs fc_host / Windows MSFT_InitiatorPort) or vCenter
+// (HostSystem config.storageDevice.hostBusAdapter). CURRENT STATE per
+// (asset, source), replaced when the source's reading changes. The port WWN
+// is what a switch's login table names, so a login whose WWN exactly one
+// asset reports here is matched to that asset outright (`matchMethod` "wwn").
+model AssetHbaPort {
+  id         String  @id @default(uuid())
+  assetId    String
+  asset      Asset   @relation("AssetHbaPorts", fields: [assetId], references: [id], onDelete: Cascade)
+  // "agent" | "vcenter"
+  source     String
+  // Lower-case colon hex, normalised from whatever the source printed.
+  portWwn    String
+  nodeWwn    String?
+  // host3 (Linux), vmhba2 (ESXi), the instance name (Windows).
+  name       String?
+  portState  String?
+  speed      String?
+  // The WWN of the fabric this port is attached to (Linux sysfs): which
+  // fabric, even when its switch is not monitored.
+  fabricWwn  String?
+  model      String?
+  firmware   String?
+  driver     String?
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+
+  @@unique([assetId, source, portWwn])
+  @@index([portWwn])
+  @@map("asset_hba_ports")
 }
 
 // Layer-2 MAC forwarding database (the switch's CAM table), from Q-BRIDGE-MIB

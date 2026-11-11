@@ -1211,6 +1211,7 @@ func pushSystemInfoOne(client *transport.Client) {
 		PrimaryMAC:    info.PrimaryMAC,
 		PrimaryIP:     info.PrimaryIP,
 		AgentVersion:  info.AgentVersion,
+		FcPorts:       info.FcPorts,
 	}
 	if err := client.PushSystemInfo(body); err != nil {
 		log.Printf("push system-info: %v", err)

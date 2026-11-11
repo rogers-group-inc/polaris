@@ -1732,6 +1732,80 @@ Carries the cadence · freshness · **Poll** row described above. An unmonitored
 switch shows no cadence at all: nothing refreshes a forwarding database except
 the system-info pass, and discovery does not fill in for it.
 
+### Fibre Channel (FC switches and the servers on them)
+
+Shown on a Cisco MDS fibre-channel switch monitored over SNMP, and on any server
+Polaris has matched to one of its ports. It needs three things:
+
+- **The Cisco MIBs uploaded** in the MIB Database: `CISCO-FC-FE-MIB`,
+  `CISCO-NS-MIB` and `CISCO-FDMI-MIB`, plus the modules they import
+  (`CISCO-SMI`, `CISCO-TC`, `CISCO-ST-TC`, `CISCO-VSAN-MIB`, `CISCO-ZS-MIB`,
+  `CISCO-IF-EXTENSION-MIB`, `INET-ADDRESS-MIB`). Polaris reads these tables by
+  name from the MIBs you upload; without them the tab doesn't appear.
+- **The switch's interfaces, LLDP or storage stream** turned on.
+- **One system-info poll** after both of the above, which fills the tab in.
+
+**On the switch:** one row per port in use. Each row shows:
+
+- **Device**: the device logged into the port. This is a link when it matched an
+  asset; otherwise it is the name the device registered.
+- **Port WWN** and **VSAN**.
+- **HBA / OS**: the host's HBA model, firmware, driver and operating system, as
+  the HBA reported them.
+- **Error counters**: link failures, sync losses, signal losses, invalid
+  transmission words and CRC errors. Non-zero corruption counts are amber.
+
+The error counts are the switch's totals since its counters were last cleared,
+not a rate. A port with error history but nothing logged in now reads *nothing
+logged in*, which usually means something was unplugged. Ports with neither
+history nor a device are listed in one line underneath.
+
+**On a server:** one section per switch the server is connected to, labelled
+Fabric A, Fabric B and so on. Each section lists the server's HBA ports there:
+
+- the port WWN;
+- the switch port it lands on;
+- the HBA, firmware, driver and OS;
+- that link's error counters.
+
+Under each section, the other devices on the same switch and VSAN that
+registered no HBA, which are usually the storage array's ports (for example
+*PURE01-ct0*). If only one switch in Polaris sees the server, a warning says so.
+Either the server has no second path, or the other switch isn't monitored.
+
+**HBA ports this host reports** appears when the server reports its own HBAs.
+The Polaris Agent reports them on Linux and Windows (agent 0.29.0 and later),
+and vCenter reports them for ESXi hosts, refreshed by vCenter discovery. Each
+port shows:
+
+- its WWN, state and speed;
+- the fabric it is attached to (Linux), so a server can tell you it is on two
+  fabrics even when only one of their switches is monitored;
+- the switch port that has it logged in, or *no monitored switch*.
+
+A port that is down on the host is amber.
+
+**How a server is matched**, shown per port as *Matched by*:
+
+- **WWN:** the server itself reports the logged-in WWN. This is exact.
+- **Name:** the host name the HBA registered with the switch matches exactly one
+  asset's hostname or DNS name.
+
+Two servers claiming one WWN, or two assets matching a name, link nothing
+([rule 159](Business-Rules#rule-159)). A device that logs out of a port is
+recorded in Events, on the switch, as `asset.fc_logins_changed`: a warning when
+a device logged out, info when one only logged in. The message names the port,
+the device and its WWN.
+
+**To be alerted when a device drops off the fabric**, create an automation with
+an **Event** trigger:
+
+- action pattern `asset.fc_logins_changed`;
+- minimum level **warning**;
+- a device filter on the switch, if you only want some of them.
+
+See [Automation Triggers](Automation-Triggers#event).
+
 ### ARP Table (firewalls)
 
 The gate's layer-3 neighbour cache, grouped interface-first. Headed by the

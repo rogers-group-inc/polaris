@@ -41,6 +41,7 @@ import { logger } from "../utils/logger.js";
 import { pickInterfaceAddresses } from "../utils/interfaceAddress.js";
 import { chunkArray } from "../utils/chunk.js";
 import { toFiniteOrNull } from "../utils/num.js";
+import { wwnFromVimLong } from "../utils/fibreChannel.js";
 
 export interface VcenterConfig {
   host: string;
@@ -71,6 +72,21 @@ export interface DiscoveredVcenterHost {
   // renders nothing rather than claiming the host has no vSwitches.
   vswitches: VcenterHostVswitch[] | null;
   portgroups: VcenterHostPortgroup[] | null;
+  // The host's fibre-channel HBAs (business rule 159), from the same SOAP
+  // fetch. `null` = not read this run; `[]` = read, none.
+  fcHbas?: VcenterHostFcHba[] | null;
+}
+
+/** One fibre-channel HBA as vCenter describes it (HostFibreChannelHba). */
+export interface VcenterHostFcHba {
+  device: string;          // vmhba2
+  portWwn: string;         // normalised colon hex
+  nodeWwn: string | null;
+  status: string | null;   // online | offline | unbound | unknown
+  speed: string | null;    // "16 Gbit"
+  portType: string | null; // fabric | loop | pointToPoint | …
+  model: string | null;
+  driver: string | null;
 }
 
 interface VcenterVmDisk {
@@ -1284,6 +1300,8 @@ export interface VcenterHostStats {
    */
   vswitches: VcenterHostVswitch[] | null;
   portgroups: VcenterHostPortgroup[] | null;
+  /** FC HBAs (rule 159); null = not published. */
+  fcHbas: VcenterHostFcHba[] | null;
 }
 
 const HOST_STATS_PATHS = [
@@ -1302,7 +1320,45 @@ const HOST_STATS_PATHS = [
   "config.network.vswitch",
   "config.network.proxySwitch",
   "config.network.portgroup",
+  // The host's HBAs (business rule 159) — FC ones carry the WWNs a switch logs in.
+  "config.storageDevice.hostBusAdapter",
 ];
+
+/**
+ * Fibre-channel HBAs out of a `config.storageDevice.hostBusAdapter` value.
+ * The array holds every adapter kind (block, iSCSI, SAS, FC); only the
+ * `HostFibreChannelHba` and `HostFibreChannelOverEthernetHba` entries carry
+ * WWNs, matched by their xsi:type whatever the element is named. A WWN is an
+ * xsd:long (`wwnFromVimLong`). `null` = the property was not published.
+ * Exported for tests.
+ */
+export function parseHostFcHbas(block: string): VcenterHostFcHba[] | null {
+  const xml = parsePropXml(block, "config.storageDevice.hostBusAdapter");
+  if (xml === null) return null;
+  const out: VcenterHostFcHba[] = [];
+  const re = /<([A-Za-z]+)\b[^>]*xsi:type="(?:[\w-]+:)?HostFibreChannel(?:OverEthernet)?Hba"[^>]*>([\s\S]*?)<\/\1>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null && out.length < 64) {
+    const entry = m[2];
+    const tag = (name: string) => entry.match(new RegExp(`<${name}>([^<]*)</${name}>`))?.[1]?.trim() || null;
+    const portWwn = wwnFromVimLong(tag("portWorldWideName"));
+    const device = tag("device");
+    if (!portWwn || !device) continue;
+    const speed = Number(tag("speed"));
+    out.push({
+      device,
+      portWwn,
+      nodeWwn: wwnFromVimLong(tag("nodeWorldWideName")),
+      status: tag("status"),
+      // HostFibreChannelHba.speed is in Gbit/s; 0 means not negotiated.
+      speed: Number.isFinite(speed) && speed > 0 ? `${speed} Gbit` : null,
+      portType: tag("portType"),
+      model: tag("model"),
+      driver: tag("driver"),
+    });
+  }
+  return out;
+}
 
 /**
  * Split one managed-object entry at its `<spec>`. VIM emits a data object's
@@ -1508,6 +1564,7 @@ export function parseHostStatsBlock(block: string): VcenterHostStats | null {
     vnics: parseHostVnics(block),
     vswitches: mergeVswitchLists(parseHostVswitches(block), parseHostProxySwitches(block)),
     portgroups: parseHostPortgroups(block),
+    fcHbas: parseHostFcHbas(block),
   };
 }
 
@@ -1970,6 +2027,7 @@ export async function discoverInventory(
         if (!stats) continue;
         host.vswitches = stats.vswitches;
         host.portgroups = stats.portgroups;
+        host.fcHbas = stats.fcHbas;
         if (stats.vswitches) withNet++;
       }
       if (snapshot.hostError) {

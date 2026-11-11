@@ -14,6 +14,7 @@ import { applyTransform } from "../../utils/symbolTransforms.js";
 import { makeOidMonotonicGuard } from "../../utils/oidCompare.js";
 import { SYS_OIDS, scalarInstanceOid, pickScalar } from "../../utils/snmpIdentity.js";
 import { parseVendorSysDescr, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
+import { buildFcInventory, FC_ERROR_COLUMNS, FC_SYMBOLS, type FcErrorCounters, type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
 import { snmpSelfIdentity, hasSelfIdentity, type EntityIdentityRow, type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
 import { logger } from "../../utils/logger.js";
 import type { ApRadioSample, ApVapSample } from "../../utils/fortiapMonitorRow.js";
@@ -809,6 +810,72 @@ async function collectPhysicalEntitiesSnmp(
 }
 
 /**
+ * A fibre-channel switch's ports and the devices logged into them (business
+ * rule 159, utils/fibreChannel.ts).
+ *
+ * Every table is named by its MIB SYMBOL and resolved at the asset's scope
+ * through the registry (`resolveOidSync`), like every vendor object Polaris
+ * reads: the OIDs come from the CISCO-FC-FE-MIB / CISCO-NS-MIB /
+ * CISCO-FDMI-MIB the operator uploaded, never from a literal in code.
+ *
+ * Returns undefined — "not an FC switch, leave stored rows alone" — when
+ * CISCO-FC-FE-MIB does not resolve at this scope (no query at all), or when
+ * the first error column answers nothing (one GETNEXT). Only a device that
+ * answered walks the rest, in parallel; a table whose MIB is missing, or a
+ * walk that fails, reads as empty and never fails the pass.
+ */
+async function collectFibreChannelSnmp(
+  session: any,
+  ifNameByIndex: ReadonlyMap<string, string>,
+  scope: ResolveScope,
+): Promise<{ ports: FcPortRow[]; logins: FcLoginRow[] } | undefined> {
+  await ensureRegistryLoaded();
+  const oid = (symbol: string) => resolveOidSync(symbol, scope);
+  const [firstField, firstSymbol] = FC_ERROR_COLUMNS[0];
+  const probeOid = oid(firstSymbol);
+  if (!probeOid) return undefined;
+  const probe = await snmpWalk(session, probeOid).catch(() => new Map());
+  if (probe.size === 0) return undefined;
+
+  const empty = () => new Map();
+  const walk = (symbol: string) => {
+    const o = oid(symbol);
+    return o ? snmpWalk(session, o).catch(empty) : Promise.resolve(new Map());
+  };
+  const otherCols = FC_ERROR_COLUMNS.slice(1);
+  const [errCols, loginPort, loginNode, nsPort, nsSym, fdmiHost] = await Promise.all([
+    Promise.all(otherCols.map(([, symbol]) => walk(symbol))),
+    walk(FC_SYMBOLS.loginPortWwn),
+    walk(FC_SYMBOLS.loginNodeWwn),
+    walk(FC_SYMBOLS.nsPortWwn),
+    walk(FC_SYMBOLS.nsSymbolic),
+    walk(FC_SYMBOLS.fdmiHostName),
+  ]);
+
+  const numbers = (m: Map<string, unknown>) =>
+    new Map([...m].map(([k, v]) => [k, snmpVbToNumber(v)] as [string, number | null]));
+  const bytes = (m: Map<string, unknown>) =>
+    new Map([...m].map(([k, v]) => [k, Buffer.isBuffer(v) ? [...v] : null] as [string, number[] | null]));
+  const texts = (m: Map<string, unknown>) =>
+    new Map([...m].map(([k, v]) => [k, snmpVbToString(v) || null] as [string, string | null]));
+
+  const errors = new Map<keyof FcErrorCounters, Map<string, number | null>>([[firstField, numbers(probe)]]);
+  otherCols.forEach(([field], i) => errors.set(field, numbers(errCols[i])));
+
+  return buildFcInventory(
+    {
+      errors,
+      loginPortWwn: bytes(loginPort),
+      loginNodeWwn: bytes(loginNode),
+      nsPortWwn: bytes(nsPort),
+      nsSymbolic: texts(nsSym),
+      fdmiHostName: texts(fdmiHost),
+    },
+    ifNameByIndex,
+  );
+}
+
+/**
  * Full-replace an asset's hardware inventory. Same delete-replace shape as
  * persistLldpNeighbors / persistMclagPeers: current state, no history.
  *
@@ -1389,6 +1456,7 @@ export async function collectSystemInfoSnmp(
     const interfaces: InterfaceSample[] = [];
     let physicalEntities: PhysicalEntitySample[] | undefined;
     let entityIdentityRows: EntityIdentityRow[] | undefined;
+    let fibreChannel: { ports: FcPortRow[]; logins: FcLoginRow[] } | undefined;
     let macTable: FdbEntry[] | undefined;
     let arpNeighbors: ArpNeighborEntry[] | undefined;
     let trunkMembers: TrunkPortEntry[] | undefined;
@@ -1486,6 +1554,10 @@ export async function collectSystemInfoSnmp(
         .catch(() => undefined);
       physicalEntities = entityWalk?.rows;
       entityIdentityRows = entityWalk?.identityRows;
+
+      // Fibre-channel ports and logins (business rule 159). One GETNEXT for a
+      // device that is not an FC switch; port names from the IF-MIB walk above.
+      fibreChannel = await collectFibreChannelSnmp(session, poeIfNames, vendorScope).catch(() => undefined);
 
       // IP neighbour cache — firewall-class only, mirroring where the MAC
       // table is gated. A switch's neighbour table holds its own management
@@ -1627,6 +1699,7 @@ export async function collectSystemInfoSnmp(
       descrIdentity,
       sysDescr: sysDescrText,
       selfIdentity: hasSelfIdentity(selfIdentity) ? selfIdentity : undefined,
+      fibreChannel,
     };
   }, opts.timeoutMs);
 }
