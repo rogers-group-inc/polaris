@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  findFirst: stubbed(prisma.assetSource.findFirst),
+};
 
 const h = vi.hoisted(() => ({
-  findFirst: vi.fn(),
   fetchUnraidSnapshot: vi.fn(),
   fetchTrueNasSnapshot: vi.fn(),
   fetchProxmoxSnapshot: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: { assetSource: { findFirst: h.findFirst } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/unraidService.js", () => ({ fetchUnraidSnapshot: h.fetchUnraidSnapshot }));
 vi.mock("../../src/services/truenasService.js", () => ({ fetchTrueNasSnapshot: h.fetchTrueNasSnapshot }));
 vi.mock("../../src/services/proxmoxService.js", () => ({ fetchProxmoxSnapshot: h.fetchProxmoxSnapshot }));
@@ -53,32 +58,33 @@ function snapshot(over: Record<string, unknown> = {}) {
 const source = (sourceKind: string, externalId: string) => ({ sourceKind, externalId, integration: INTEGRATION });
 
 beforeEach(() => {
+  resetDbStub();
   wm.invalidateWorkloadSnapshot();
-  h.findFirst.mockReset();
+  db.findFirst.mockReset();
   h.fetchUnraidSnapshot.mockReset();
   h.fetchUnraidSnapshot.mockResolvedValue(snapshot());
 });
 
 describe("probeWorkload", () => {
   it("passes a running container, reporting 0 ms — a state read carries no latency", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     expect(await wm.probeWorkload("a", performance.now())).toEqual({ success: true, responseTimeMs: 0 });
   });
 
   it("fails a stopped container, naming the platform's state", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:db"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:db"));
     const r = await wm.probeWorkload("a", performance.now());
     expect(r.success).toBe(false);
     expect(r.error).toBe("Container is Exited (1)");
   });
 
   it("skips (no verdict) a workload in transition", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:boot"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:boot"));
     expect((await wm.probeWorkload("a", performance.now())).skipped).toBe(true);
   });
 
   it("fails a container the host no longer reports", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:gone"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:gone"));
     const r = await wm.probeWorkload("a", performance.now());
     expect(r).toMatchObject({ success: false, error: expect.stringMatching(/not present/) });
     expect(r.skipped).toBeUndefined();
@@ -86,9 +92,9 @@ describe("probeWorkload", () => {
 
   it("SKIPS a workload when the host API is unreachable — but FAILS the host itself", async () => {
     h.fetchUnraidSnapshot.mockRejectedValue(new Error("Connection refused"));
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     expect(await wm.probeWorkload("a", performance.now())).toMatchObject({ success: false, skipped: true });
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     const host = await wm.probeWorkload("h", performance.now());
     expect(host.success).toBe(false);
     expect(host.skipped).toBeUndefined();
@@ -98,43 +104,43 @@ describe("probeWorkload", () => {
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
       inventory: { ...snapshot().inventory, containers: [], inventoryComplete: false },
     }));
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     expect((await wm.probeWorkload("a", performance.now())).skipped).toBe(true);
   });
 
   it("passes the host with its uptime, and shares one snapshot across assets", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect(await wm.probeWorkload("h", performance.now())).toEqual({ success: true, responseTimeMs: 0, uptimeSec: 99 });
-    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    db.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
     expect((await wm.probeWorkload("v", performance.now())).success).toBe(true);
     expect(h.fetchUnraidSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it("treats a disabled integration as unreachable", async () => {
-    h.findFirst.mockResolvedValue({ ...source("unraid-container", "int1:ctr:plex"), integration: { ...INTEGRATION, enabled: false } });
+    db.findFirst.mockResolvedValue({ ...source("unraid-container", "int1:ctr:plex"), integration: { ...INTEGRATION, enabled: false } });
     expect((await wm.probeWorkload("a", performance.now())).skipped).toBe(true);
   });
 });
 
 describe("collectors", () => {
   it("reports host CPU / memory / per-core, and a container's usage clamped to 100 %", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect(await wm.collectTelemetryWorkload("h")).toEqual({
       supported: true, data: { cpuPct: 25, memUsedBytes: 400, memTotalBytes: 1000, cpuCorePcts: [20, 30] },
     });
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     expect(await wm.collectTelemetryWorkload("c")).toEqual({
       supported: true, data: { cpuPct: 100, memUsedBytes: 10, memTotalBytes: 1000 },
     });
   });
 
   it("declares an Unraid VM's usage unsupported rather than charting nothing as zero", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    db.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
     expect(await wm.collectTelemetryWorkload("v")).toEqual({ supported: false });
   });
 
   it("gives the host its interfaces + pools, each gated on its own method", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     const r = await wm.collectSystemInfoWorkload("h", { interfacesPolling: "unraid", storagePolling: "disabled" });
     expect(r.data?.interfaces[0]).toMatchObject({ ifName: "eth0", operStatus: "up", speedBps: 1e9, inOctets: 5 });
     expect(r.data?.storage).toEqual([]);
@@ -149,7 +155,7 @@ describe("collectors", () => {
         interfaces: [{ name: "br0", operUp: true, rxBytes: 700, txBytes: 800, rxErrors: null, txErrors: null, rxDrops: null, txDrops: null, speedMbps: null }],
       }]]),
     }));
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     const r = await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null });
     expect(r).toEqual({
       supported: true,
@@ -161,24 +167,24 @@ describe("collectors", () => {
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
       hosts: new Map([["", { ...HOST_USAGE, interfaces: [{ name: "br0.20", operUp: true, rxBytes: 1, txBytes: 2, rxErrors: 0, txErrors: 0, rxDrops: 0, txDrops: 0, speedMbps: null, ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:01", vlanId: 20 }] }]]),
     }));
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     const r = await wm.collectSystemInfoWorkload("h", { interfacesPolling: "unraid", storagePolling: null });
     expect(r.data?.interfaces[0]).toMatchObject({ ifName: "br0.20", ipAddress: "10.0.20.2", macAddress: "AA:BB:CC:DD:EE:01", vlanId: 20 });
   });
 
   it("answers nothing (not an empty table) for a running container missing from this tick's stats", async () => {
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({ containerUsage: new Map() }));
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     const r = await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null });
     expect(r).toMatchObject({ supported: true, error: expect.stringMatching(/No usage/) });
     expect(r.data).toBeUndefined();
   });
 
   it("gives a stopped container an empty interface set, and a VM nothing", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:db"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:db"));
     expect(await wm.collectSystemInfoWorkload("c", { interfacesPolling: "unraid", storagePolling: null }))
       .toEqual({ supported: true, data: { interfaces: [], storage: [] } });
-    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    db.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
     expect(await wm.collectSystemInfoWorkload("v", { interfacesPolling: "unraid", storagePolling: null })).toEqual({ supported: false });
   });
 
@@ -186,16 +192,16 @@ describe("collectors", () => {
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({
       hosts: new Map([["", { ...HOST_USAGE, memUsedBytes: 300, memCachedBytes: 500, memFreeBytes: 200 }]]),
     }));
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect((await wm.collectTelemetryWorkload("h")).data).toMatchObject({ memUsedBytes: 300, memCachedBytes: 500, memFreeBytes: 200 });
   });
 
   it("reports readable disk temperatures as disk-class sensors on the host only", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect((await wm.collectHardwareSensorsWorkload("h")).data).toEqual([
       { sensorName: "disk1 (array)", sensorClass: "disk", value: 35, unit: "°C", alarmStatus: null },
     ]);
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:plex"));
     expect(await wm.collectHardwareSensorsWorkload("c")).toEqual({ supported: false });
   });
 });
@@ -203,7 +209,7 @@ describe("collectors", () => {
 describe("snapshot dispatch", () => {
   it("reads a Proxmox asset through the Proxmox client — never another platform's", async () => {
     h.fetchProxmoxSnapshot.mockResolvedValue(snapshot());
-    h.findFirst.mockResolvedValue({ sourceKind: "proxmox-lxc", externalId: "int9:ctr:plex", integration: { ...INTEGRATION, id: "int9", type: "proxmox" } });
+    db.findFirst.mockResolvedValue({ sourceKind: "proxmox-lxc", externalId: "int9:ctr:plex", integration: { ...INTEGRATION, id: "int9", type: "proxmox" } });
     await wm.probeWorkload("c", 0);
     expect(h.fetchProxmoxSnapshot).toHaveBeenCalledTimes(1);
     expect(h.fetchUnraidSnapshot).not.toHaveBeenCalled();
@@ -230,7 +236,7 @@ describe("a multi-host (clustered) snapshot", () => {
   beforeEach(() => h.fetchUnraidSnapshot.mockResolvedValue(cluster()));
 
   it("reads each node by its own identity, and passes the online one with its uptime", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve1"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve1"));
     expect(await wm.probeWorkload("n1", 0)).toEqual({ success: true, responseTimeMs: 0, uptimeSec: 11 });
     expect((await wm.collectTelemetryWorkload("n1")).data).toMatchObject({ cpuPct: 7 });
     const sys = await wm.collectSystemInfoWorkload("n1", { interfacesPolling: null, storagePolling: "unraid" });
@@ -238,7 +244,7 @@ describe("a multi-host (clustered) snapshot", () => {
   });
 
   it("FAILS a node the cluster reports offline — the answer came through a peer", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve2"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve2"));
     const r = await wm.probeWorkload("n2", 0);
     expect(r.success).toBe(false);
     expect(r.skipped).toBeUndefined();
@@ -247,25 +253,25 @@ describe("a multi-host (clustered) snapshot", () => {
   });
 
   it("calls a node no longer in the cluster absent, and never answers the single-host id", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve9"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:node:pve9"));
     expect((await wm.probeWorkload("n9", 0)).error).toMatch(/removed from the cluster/);
-    h.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
+    db.findFirst.mockResolvedValue(source("unraid-host", "int1:host"));
     expect((await wm.probeWorkload("h", 0)).success).toBe(false);
   });
 
   it("charts a VM's traffic where the platform reports it, and still answers nothing for one that does not", async () => {
     const vmIfaces = [{ name: "all interfaces", operUp: true, rxBytes: 10, txBytes: 20, rxErrors: null, txErrors: null, rxDrops: null, txDrops: null, speedMbps: null }];
     h.fetchUnraidSnapshot.mockResolvedValue(snapshot({ vmUsage: new Map([["vm1", { cpuPct: 5, memUsedBytes: 1, memTotalBytes: 2, interfaces: vmIfaces }]]) }));
-    h.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
+    db.findFirst.mockResolvedValue(source("unraid-vm", "int1:vm:win"));
     const r = await wm.collectSystemInfoWorkload("v", { interfacesPolling: "unraid", storagePolling: "unraid" });
     expect(r.data?.interfaces).toEqual([expect.objectContaining({ ifName: "all interfaces", inOctets: 10, outOctets: 20 })]);
     expect(r.data?.storage).toEqual([]);
   });
 
   it("tells two same-named containers apart by identityKey", async () => {
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:200"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:200"));
     expect(await wm.probeWorkload("c200", 0)).toEqual({ success: true, responseTimeMs: 0 });
-    h.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:web"));
+    db.findFirst.mockResolvedValue(source("unraid-container", "int1:ctr:web"));
     expect((await wm.probeWorkload("cweb", 0)).error).toMatch(/not present/);
   });
 });

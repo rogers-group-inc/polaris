@@ -6,19 +6,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  findMany: stubbed(prisma.asset.findMany),
+  updateMany: stubbed(prisma.asset.updateMany),
+  update: stubbed(prisma.asset.update),
+};
 
 const m = vi.hoisted(() => ({
-  findMany: vi.fn(),
-  updateMany: vi.fn(),
-  update: vi.fn(),
   logEvent: vi.fn(),
   releaseForDecommission: vi.fn(),
   releaseInfra: vi.fn(),
   reconcileAddresses: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: { asset: { findMany: m.findMany, updateMany: m.updateMany, update: m.update } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
@@ -30,9 +33,10 @@ const { createDhcpClaimState } = await import("../../src/utils/dhcpClaimFreshnes
 
 const NOW = "2026-11-10T12:00:00.000Z";
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.updateMany.mockResolvedValue({ count: 0 });
-  m.update.mockResolvedValue({});
+  db.updateMany.mockResolvedValue({ count: 0 });
+  db.update.mockResolvedValue({});
   m.reconcileAddresses.mockResolvedValue({ upserted: 0, pruned: 0 });
 });
 
@@ -53,10 +57,10 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
     ({ id, hostname, serialNumber: serial, assetType: "switch", fortinetTopology: topo, status: "active" });
 
   it("decommissions a switch its inventoried controller no longer reports, and releases its holds and address", async () => {
-    m.findMany.mockResolvedValue([sw("a1", "S1", { controllerFortigate: "SITE-A-FW" })]);
+    db.findMany.mockResolvedValue([sw("a1", "S1", { controllerFortigate: "SITE-A-FW" })]);
     const input = base();
     await decommissionStaleManagedDevices(input);
-    expect(m.updateMany).toHaveBeenCalledWith({
+    expect(db.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ["a1"] } },
       data: { status: "decommissioned", statusChangedAt: new Date(NOW), statusChangedBy: "FortiManager" },
     });
@@ -70,7 +74,7 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
   });
 
   it("spares a switch whose serial was seen, or that its controller's CMDB still holds", async () => {
-    m.findMany.mockResolvedValue([
+    db.findMany.mockResolvedValue([
       sw("a1", "S1", { controllerFortigate: "SITE-A-FW" }),
       sw("a2", "S2", { controllerFortigate: "SITE-A-FW" }),
     ]);
@@ -78,12 +82,12 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
       seenSwitchSerials: new Set(["S1"]),
       cmdbSwitchSerialsByDevice: new Map([["site-a-fw", new Set(["S2"])]]),
     }));
-    expect(m.updateMany).not.toHaveBeenCalled();
+    expect(db.updateMany).not.toHaveBeenCalled();
     expect(m.logEvent).not.toHaveBeenCalled();
   });
 
   it("judges a switch under its gate's CURRENT name when the gate was renamed (rule 41(b))", async () => {
-    m.findMany.mockResolvedValue([sw("a1", "S1", { controllerFortigate: "OLD-NAME", controllerSerial: "FG100FTK20000001" })]);
+    db.findMany.mockResolvedValue([sw("a1", "S1", { controllerFortigate: "OLD-NAME", controllerSerial: "FG100FTK20000001" })]);
     await decommissionStaleManagedDevices(base());
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('controller "SITE-A-FW" (formerly "OLD-NAME")'),
@@ -93,24 +97,24 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
 
   it("decommissions an orphan only when the run read the whole roster and no gate reports it", async () => {
     const orphan = sw("a1", "S1", { controllerFortigate: "GONE-FW" });
-    m.findMany.mockResolvedValue([orphan]);
+    db.findMany.mockResolvedValue([orphan]);
     await decommissionStaleManagedDevices(base({ rosterJudgeable: false }));
-    expect(m.updateMany).not.toHaveBeenCalled();
+    expect(db.updateMany).not.toHaveBeenCalled();
 
-    m.findMany.mockResolvedValue([orphan]);
+    db.findMany.mockResolvedValue([orphan]);
     await decommissionStaleManagedDevices(base({ seenSwitchSerials: new Set(["S1"]) }));
-    expect(m.updateMany).not.toHaveBeenCalled();
+    expect(db.updateMany).not.toHaveBeenCalled();
 
-    m.findMany.mockResolvedValue([orphan]);
+    db.findMany.mockResolvedValue([orphan]);
     await decommissionStaleManagedDevices(base());
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       details: expect.objectContaining({ reason: "controller-not-in-roster", controllerFortigate: "GONE-FW" }),
     }));
-    expect(m.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("records an AP under the FortiAP event and the AP list", async () => {
-    m.findMany.mockResolvedValue([{ ...sw("p1", "AP1", { controllerFortigate: "SITE-A-FW" }, "ap-1"), assetType: "access_point" }]);
+    db.findMany.mockResolvedValue([{ ...sw("p1", "AP1", { controllerFortigate: "SITE-A-FW" }, "ap-1"), assetType: "access_point" }]);
     const input = base({ switchInventoriedDevices: new Set<string>(), apInventoriedDevices: new Set(["SITE-A-FW"]) });
     await decommissionStaleManagedDevices(input);
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortiap.decommissioned" }));
@@ -155,7 +159,7 @@ describe("Phase 7.5 — FortiSwitch MAC table + FortiGate ARP enrichment", () =>
     }, idx);
     await done;
     expect(idx.findById("pc")!.lastSeenSwitch).toBe("SW2/port7");
-    expect(m.update).toHaveBeenCalledWith({ where: { id: "pc" }, data: { lastSeenSwitch: "SW2/port7" } });
+    expect(db.update).toHaveBeenCalledWith({ where: { id: "pc" }, data: { lastSeenSwitch: "SW2/port7" } });
     expect(state.noteChangeBaseline).toHaveBeenCalledWith(idx.findById("pc"), ["lastSeenSwitch"]);
     expect(state.noteEndpointGate).toHaveBeenCalledWith("pc", "FGT-A");
     expect(state.fortigateEndpointAssetIds.has("pc")).toBe(true);
@@ -165,7 +169,7 @@ describe("Phase 7.5 — FortiSwitch MAC table + FortiGate ARP enrichment", () =>
     const idx = index([{ id: "fsw", mac: "BB:BB:BB:BB:BB:01", assetType: "switch", ipAddress: null, lastSeenSwitch: null }]);
     const { done } = run({ switchMacTable: [{ mac: "BB:BB:BB:BB:BB:01", switchId: "SW1", portName: "port1", fortigateDevice: "FGT-A" }] }, idx);
     await done;
-    expect(m.update).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
   });
 
   it("ARP fills an EMPTY address and records every binding as a sighting, but never overwrites one with no ladder claim", async () => {
@@ -182,7 +186,7 @@ describe("Phase 7.5 — FortiSwitch MAC table + FortiGate ARP enrichment", () =>
     }, idx);
     await done;
     expect(idx.findById("empty")!.ipAddress).toBe("10.1.0.10");
-    expect(m.update).toHaveBeenCalledWith({ where: { id: "empty" }, data: { ipAddress: "10.1.0.10", ipSource: "FGT-A:arp" } });
+    expect(db.update).toHaveBeenCalledWith({ where: { id: "empty" }, data: { ipAddress: "10.1.0.10", ipSource: "FGT-A:arp" } });
     expect(idx.findById("held")!.ipAddress).toBe("10.1.0.20");
     expect(state.addressSightings.map((s) => [s.assetId, s.mac, s.ip, s.source])).toEqual([
       ["empty", "CC:CC:CC:CC:CC:01", "10.1.0.10", "arp"],
@@ -194,7 +198,7 @@ describe("Phase 7.5 — FortiSwitch MAC table + FortiGate ARP enrichment", () =>
   it("reconciles the address list even with no MAC or ARP rows, when a gate's read succeeded", async () => {
     const { done } = run({ dhcpLeasesInventoriedDevices: ["FGT-A"] }, index([]));
     await done;
-    expect(m.update).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
     expect(m.reconcileAddresses).toHaveBeenCalledWith([], { dhcpDevices: ["FGT-A"], inventoryDevices: [], arpDevices: [] }, new Date(NOW));
   });
 

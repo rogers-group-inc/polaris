@@ -77,6 +77,13 @@ validate a backup or restore change — use the podman stack for that
 - **Every audit-worthy action writes an `Event`** via `logEvent`
   (`src/services/eventLogService.ts`).
 - **Unit-test every public function in `src/utils/` and `src/services/`.**
+  A service test stubs the database with the shared stub rather than a
+  hand-rolled `prisma` literal: `vi.mock("../../src/db.js", () =>
+  import("./_dbStub.js"))`, then `import { prisma } from "../../src/db.js"`
+  and `vi.mocked(prisma.asset.findUnique).mockResolvedValue(...)`; call
+  `resetDbStub()` in `beforeEach`. Event writes go through
+  `tests/unit/_eventLogStub.ts` the same way (the writers are spies, the pure
+  builders stay real). Both headers have the full recipe.
 - **Zod schemas live at the top of their route file.**
 - **Scale-check every change at 100 and 2000 monitored assets** — no
   `for...of { await prisma.update() }` loops in jobs/reconcilers; batch with

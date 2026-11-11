@@ -15,31 +15,27 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  schedFindMany: stubbed(prisma.quietTimeSchedule.findMany),
+  schedFindUnique: stubbed(prisma.quietTimeSchedule.findUnique),
+  schedCreate: stubbed(prisma.quietTimeSchedule.create),
+  schedUpdate: stubbed(prisma.quietTimeSchedule.update),
+  schedDelete: stubbed(prisma.quietTimeSchedule.delete),
+  sumFindMany: stubbed(prisma.quietTimeSummary.findMany),
+  sumFindUnique: stubbed(prisma.quietTimeSummary.findUnique),
+  notifCount: stubbed(prisma.notification.count),
+  notifFindMany: stubbed(prisma.notification.findMany),
+};
 
 const m = vi.hoisted(() => ({
-  schedFindMany: vi.fn(),
-  schedFindUnique: vi.fn(),
-  schedCreate: vi.fn(),
-  schedUpdate: vi.fn(),
-  schedDelete: vi.fn(),
-  sumFindMany: vi.fn(),
-  sumFindUnique: vi.fn(),
-  notifCount: vi.fn(),
-  notifFindMany: vi.fn(),
   bump: vi.fn(),
   logEvent: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    quietTimeSchedule: {
-      findMany: m.schedFindMany, findUnique: m.schedFindUnique, create: m.schedCreate,
-      update: m.schedUpdate, delete: m.schedDelete,
-    },
-    quietTimeSummary: { findMany: m.sumFindMany, findUnique: m.sumFindUnique },
-    notification: { count: m.notifCount, findMany: m.notifFindMany },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/quietTimeHoldService.js", async (orig) => ({
   ...(await orig<typeof import("../../src/services/quietTimeHoldService.js")>()),
@@ -62,46 +58,47 @@ const input = (over: Record<string, unknown> = {}) =>
   ({ name: "Nights", scope: {}, quiet: { windows: [NIGHTLY] }, ...over }) as never;
 
 beforeEach(() => {
+  resetDbStub();
   for (const fn of Object.values(m)) fn.mockReset();
-  m.sumFindMany.mockResolvedValue([]);
-  m.schedCreate.mockImplementation(async (a: { data: Record<string, unknown> }) => sched({ ...a.data }));
-  m.schedUpdate.mockImplementation(async (a: { data: Record<string, unknown> }) => sched({ ...a.data }));
+  db.sumFindMany.mockResolvedValue([]);
+  db.schedCreate.mockImplementation(async (a: { data: Record<string, unknown> }) => sched({ ...a.data }));
+  db.schedUpdate.mockImplementation(async (a: { data: Record<string, unknown> }) => sched({ ...a.data }));
 });
 
 // ─── The at-a-glance state ───────────────────────────────────────────────────
 
 describe("the list's at-a-glance state", () => {
   it("inside a window: quiet now, and until when", async () => {
-    m.schedFindUnique.mockResolvedValue(sched());
+    db.schedFindUnique.mockResolvedValue(sched());
     const s = await svc.getQuietTimeSchedule("q1", new Date(2026, 10, 9, 23, 30));
     expect(s).toMatchObject({ configValid: true, inWindow: true, windowEnd: "2026-11-10T06:00", nextWindow: null });
   });
 
   it("outside every window: the SOONEST next window across all of them", async () => {
-    m.schedFindUnique.mockResolvedValue(sched({ quiet: { windows: [NIGHTLY, LUNCH] } }));
+    db.schedFindUnique.mockResolvedValue(sched({ quiet: { windows: [NIGHTLY, LUNCH] } }));
     const s = await svc.getQuietTimeSchedule("q1", new Date(2026, 10, 9, 9, 0));
     expect(s).toMatchObject({ inWindow: false, windowEnd: null, nextWindow: { start: "2026-11-09T12:00", end: "2026-11-09T13:00" } });
   });
 
   it("flags a stored config that no longer parses instead of throwing", async () => {
-    m.schedFindUnique.mockResolvedValue(sched({ quiet: { windows: [] } }));
+    db.schedFindUnique.mockResolvedValue(sched({ quiet: { windows: [] } }));
     const s = await svc.getQuietTimeSchedule("q1", new Date(2026, 10, 9, 23, 30));
     expect(s).toMatchObject({ configValid: false, inWindow: false, nextWindow: null });
   });
 
   it("404s an unknown schedule", async () => {
-    m.schedFindUnique.mockResolvedValue(null);
+    db.schedFindUnique.mockResolvedValue(null);
     await expect(svc.getQuietTimeSchedule("x")).rejects.toMatchObject({ httpStatus: 404 });
   });
 
   it("attaches each schedule's NEWEST global summary, or null", async () => {
-    m.schedFindMany.mockResolvedValue([sched({ id: "q1" }), sched({ id: "q2" })]);
-    m.sumFindMany.mockResolvedValue([
+    db.schedFindMany.mockResolvedValue([sched({ id: "q1" }), sched({ id: "q2" })]);
+    db.sumFindMany.mockResolvedValue([
       { sourceId: "q1", createdAt: new Date(2026, 10, 9), status: "sent", listedCount: 3, recurringCount: 0 },
       { sourceId: "q1", createdAt: new Date(2026, 10, 8), status: "sent", listedCount: 9, recurringCount: 1 },
     ]);
     const rows = await svc.listQuietTimeSchedules(new Date(2026, 10, 9, 9, 0));
-    expect(m.sumFindMany.mock.calls[0][0].where).toEqual({ sourceKind: "global", sourceId: { in: ["q1", "q2"] } });
+    expect(db.sumFindMany.mock.calls[0][0].where).toEqual({ sourceKind: "global", sourceId: { in: ["q1", "q2"] } });
     expect(rows[0].lastSummary).toMatchObject({ listedCount: 3 });
     expect(rows[1].lastSummary).toBeNull();
   });
@@ -112,37 +109,37 @@ describe("the list's at-a-glance state", () => {
 describe("writes bump the hold cache and are audited", () => {
   it("create defaults to enabled, records the creator and bumps the cache", async () => {
     await svc.createQuietTimeSchedule(input(), "alice");
-    expect(m.schedCreate.mock.calls[0][0].data).toMatchObject({ enabled: true, createdBy: "alice" });
+    expect(db.schedCreate.mock.calls[0][0].data).toMatchObject({ enabled: true, createdBy: "alice" });
     expect(m.bump).toHaveBeenCalledTimes(1);
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "quiet_time.created", details: expect.objectContaining({ windows: 1 }) }));
   });
 
   it("create honours an explicit enabled:false", async () => {
     await svc.createQuietTimeSchedule(input({ enabled: false }));
-    expect(m.schedCreate.mock.calls[0][0].data.enabled).toBe(false);
+    expect(db.schedCreate.mock.calls[0][0].data.enabled).toBe(false);
   });
 
   it("update 404s an unknown schedule without bumping the cache", async () => {
-    m.schedFindUnique.mockResolvedValue(null);
+    db.schedFindUnique.mockResolvedValue(null);
     await expect(svc.updateQuietTimeSchedule("x", input())).rejects.toMatchObject({ httpStatus: 404 });
     expect(m.bump).not.toHaveBeenCalled();
   });
 
   it("update names an enable/disable flip in the Event", async () => {
-    m.schedFindUnique.mockResolvedValue({ id: "q1", name: "Nights", enabled: true });
+    db.schedFindUnique.mockResolvedValue({ id: "q1", name: "Nights", enabled: true });
     await svc.updateQuietTimeSchedule("q1", input({ enabled: false }), "alice");
     expect(m.bump).toHaveBeenCalledTimes(1);
     expect(m.logEvent.mock.calls[0][0].message).toBe('Global quiet time "Nights" updated (disabled)');
   });
 
   it("delete counts the alerts it is holding right now (they flush, they are not dropped)", async () => {
-    m.schedFindUnique.mockResolvedValue({ id: "q1", name: "Nights" });
-    m.notifCount.mockResolvedValue(4);
+    db.schedFindUnique.mockResolvedValue({ id: "q1", name: "Nights" });
+    db.notifCount.mockResolvedValue(4);
     await svc.deleteQuietTimeSchedule("q1", "alice");
-    expect(m.notifCount.mock.calls[0][0].where).toEqual({
+    expect(db.notifCount.mock.calls[0][0].where).toEqual({
       quietSummarizedAt: null, quietHeldAt: { not: null }, quietSource: { path: ["id"], equals: "q1" },
     });
-    expect(m.schedDelete).toHaveBeenCalledWith({ where: { id: "q1" } });
+    expect(db.schedDelete).toHaveBeenCalledWith({ where: { id: "q1" } });
     expect(m.bump).toHaveBeenCalledTimes(1);
     expect(m.logEvent.mock.calls[0][0]).toMatchObject({
       action: "quiet_time.deleted", details: { heldAlerts: 4 }, message: expect.stringContaining("4 held alert(s) will be summarised now"),
@@ -154,21 +151,21 @@ describe("writes bump the hold cache and are audited", () => {
 
 describe("summary review", () => {
   it("clamps the recent-summaries limit to 1..100 and carries only the live COUNT", async () => {
-    m.sumFindMany.mockResolvedValue([{ id: "s1", details: { live: [{}, {}] } }, { id: "s2", details: null }]);
+    db.sumFindMany.mockResolvedValue([{ id: "s1", details: { live: [{}, {}] } }, { id: "s2", details: null }]);
     const rows = await svc.listQuietTimeSummaries(500);
-    expect(m.sumFindMany.mock.calls[0][0].take).toBe(100);
+    expect(db.sumFindMany.mock.calls[0][0].take).toBe(100);
     expect(rows).toEqual([{ id: "s1", liveCount: 2 }, { id: "s2", liveCount: 0 }]);
     await svc.listQuietTimeSummaries(0);
-    expect(m.sumFindMany.mock.calls[1][0].take).toBe(1);
+    expect(db.sumFindMany.mock.calls[1][0].take).toBe(1);
   });
 
   it("404s an unknown summary", async () => {
-    m.sumFindUnique.mockResolvedValue(null);
+    db.sumFindUnique.mockResolvedValue(null);
     await expect(svc.getQuietTimeSummary("x")).rejects.toMatchObject({ httpStatus: 404 });
   });
 
   it("reads covered alerts live, marks which were listed, and counts each reader's own copy (rule 92)", async () => {
-    m.sumFindUnique.mockResolvedValue({
+    db.sumFindUnique.mockResolvedValue({
       id: "s1", notificationIds: ["n1", "n2", "n3"],
       details: {
         outstanding: [{ notificationId: "n1" }, { notificationId: "n2" }],
@@ -181,7 +178,7 @@ describe("summary review", () => {
         { address: "bob@example.com", alertIds: ["n2"], liveAlertIds: ["n9"] },
       ],
     });
-    m.notifFindMany.mockResolvedValue([
+    db.notifFindMany.mockResolvedValue([
       { id: "n1", rule: { name: "Down" } },
       { id: "n3", rule: null },
     ]);
@@ -198,9 +195,9 @@ describe("summary review", () => {
   });
 
   it("skips the covered-alert read for a summary that names none", async () => {
-    m.sumFindUnique.mockResolvedValue({ id: "s1", notificationIds: [], details: null, recipients: null });
+    db.sumFindUnique.mockResolvedValue({ id: "s1", notificationIds: [], details: null, recipients: null });
     const r = await svc.getQuietTimeSummary("s1");
-    expect(m.notifFindMany).not.toHaveBeenCalled();
+    expect(db.notifFindMany).not.toHaveBeenCalled();
     expect(r.covered).toEqual([]);
     expect(r.summary.recipients).toEqual([]);
   });

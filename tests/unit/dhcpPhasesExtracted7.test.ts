@@ -5,24 +5,28 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  resUpdate: stubbed(prisma.reservation.update),
+  conflictUpdateMany: stubbed(prisma.conflict.updateMany),
+};
 
 const m = vi.hoisted(() => ({
-  resUpdate: vi.fn(),
-  conflictUpdateMany: vi.fn(),
   logEvent: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: { reservation: { update: m.resUpdate }, conflict: { updateMany: m.conflictUpdateMany } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 
 const { releaseStaleAuthoritativeRows } = await import("../../src/services/discovery/dhcp/staleAuthoritativeRows.js");
 const { Prisma } = await import("../../src/generated/prisma/client.js");
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.resUpdate.mockResolvedValue({});
-  m.conflictUpdateMany.mockResolvedValue({ count: 0 });
+  db.resUpdate.mockResolvedValue({});
+  db.conflictUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 const key = (s: string, ip: string) => `${s}|${ip}`;
@@ -50,8 +54,8 @@ describe("Phase 5b — VIP sweep", () => {
   it("releases a VIP reservation whose VIP left a gate whose VIP table read this cycle", async () => {
     const { state, done } = run({ [key("net1", "10.1.0.10")]: vipRow("v1", "10.1.0.10") });
     await done;
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "v1" }, data: { status: "released", vipInfo: null } });
-    expect(m.conflictUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { reservationId: "v1", status: "pending" } }));
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "v1" }, data: { status: "released", vipInfo: null } });
+    expect(db.conflictUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { reservationId: "v1", status: "pending" } }));
     expect(state.activeResMap.has(key("net1", "10.1.0.10"))).toBe(false);
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.released" }));
     expect(state.syncLog).toHaveBeenCalledWith("info", "Stale-row sweep: released 1 VIP reservation(s), cleared 0 stale VIP stamp(s), released 0 DHCP reservation(s)");
@@ -63,7 +67,7 @@ describe("Phase 5b — VIP sweep", () => {
       { currentVipKeys: new Set([key("net1", "10.1.0.10")]) },
     );
     await done;
-    expect(m.resUpdate).not.toHaveBeenCalled();
+    expect(db.resUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -74,7 +78,7 @@ describe("Phase 5b — stale VIP stamp on a row that owns its address (rule 77)"
     const row = stamped();
     const { state, done } = run({ [key("net1", "10.1.0.20")]: row });
     await done;
-    expect(m.resUpdate).toHaveBeenCalledWith({ where: { id: "d1" }, data: { vipInfo: Prisma.DbNull } });
+    expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "d1" }, data: { vipInfo: Prisma.DbNull } });
     expect(row.vipInfo).toBeNull();
     expect(row.status).toBe("active");
     expect(state.activeResMap.has(key("net1", "10.1.0.20"))).toBe(true);
@@ -84,7 +88,7 @@ describe("Phase 5b — stale VIP stamp on a row that owns its address (rule 77)"
   it("keeps a stamp whose named VIP is still on the gate", async () => {
     const { done } = run({ [key("net1", "10.1.0.20")]: stamped() }, { currentVipStampKeys: new Set([`FGT-A|web|${key("net1", "10.1.0.20")}`]) });
     await done;
-    expect(m.resUpdate).not.toHaveBeenCalled();
+    expect(db.resUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -95,7 +99,7 @@ describe("Phase 5b — dhcp_reservation sweep", () => {
   it("releases a reservation the gate's CMDB no longer has, clearing its push pointers", async () => {
     const { state, done } = run({ [key("net1", "10.1.0.30")]: res("r1", "net1", "10.1.0.30") });
     await done;
-    expect(m.resUpdate).toHaveBeenCalledWith({
+    expect(db.resUpdate).toHaveBeenCalledWith({
       where: { id: "r1" },
       data: { status: "released", pushedToId: null, pushedScopeId: null, pushedEntryId: null, pushStatus: null },
     });
@@ -119,7 +123,7 @@ describe("Phase 5b — dhcp_reservation sweep", () => {
     await done;
     // FGT-A's CMDB read this cycle and no longer lists 10.1.0.33, so that row
     // goes; the same row survives a cycle in which the CMDB did not read.
-    expect(m.resUpdate.mock.calls.map((c) => c[0].where.id)).toEqual(["unread"]);
+    expect(db.resUpdate.mock.calls.map((c) => c[0].where.id)).toEqual(["unread"]);
 
     vi.clearAllMocks();
     const { done: done2 } = run(
@@ -127,11 +131,11 @@ describe("Phase 5b — dhcp_reservation sweep", () => {
       { result: { dhcpReservationsInventoriedDevices: [], dhcpEntries: [] } },
     );
     await done2;
-    expect(m.resUpdate).not.toHaveBeenCalled();
+    expect(db.resUpdate).not.toHaveBeenCalled();
   });
 
   it("logs, rather than throws, a failed release and keeps the row indexed", async () => {
-    m.resUpdate.mockRejectedValueOnce(new Error("locked"));
+    db.resUpdate.mockRejectedValueOnce(new Error("locked"));
     const { state, done } = run({ [key("net1", "10.1.0.30")]: res("r1", "net1", "10.1.0.30") });
     await done;
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to release stale DHCP reservation 10.1.0.30: locked");

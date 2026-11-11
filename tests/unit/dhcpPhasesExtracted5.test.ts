@@ -7,23 +7,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  assetFindMany: stubbed(prisma.asset.findMany),
+  assetUpdateMany: stubbed(prisma.asset.updateMany),
+  assetUpdate: stubbed(prisma.asset.update),
+  sourceFindMany: stubbed(prisma.assetSource.findMany),
+};
 
 const m = vi.hoisted(() => ({
-  assetFindMany: vi.fn(),
-  assetUpdateMany: vi.fn(),
-  assetUpdate: vi.fn(),
-  sourceFindMany: vi.fn(),
   logEvent: vi.fn(),
   releaseForDecommission: vi.fn(),
   releaseInfra: vi.fn(),
   project: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { findMany: m.assetFindMany, updateMany: m.assetUpdateMany, update: m.assetUpdate },
-    assetSource: { findMany: m.sourceFindMany },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
@@ -34,10 +34,11 @@ const { stampEndpointSources, applyEndpointProjection } = await import("../../sr
 
 const NOW = "2026-11-10T12:00:00.000Z";
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.assetUpdateMany.mockResolvedValue({ count: 0 });
-  m.assetUpdate.mockResolvedValue({});
-  m.sourceFindMany.mockResolvedValue([]);
+  db.assetUpdateMany.mockResolvedValue({ count: 0 });
+  db.assetUpdate.mockResolvedValue({});
+  db.sourceFindMany.mockResolvedValue([]);
 });
 
 function index(rows: Array<Record<string, any>>) {
@@ -58,7 +59,7 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
 
   it("decommissions a gate gone from the roster and cascades to the switches and APs it controlled", async () => {
     const idxRows = [{ id: "fw1", status: "active" }, { id: "sw1", status: "active" }, { id: "ap1", status: "active" }];
-    m.assetFindMany
+    db.assetFindMany
       .mockResolvedValueOnce([fw("fw1", "GONE-FW", "FGT60FGONE000001"), fw("fw2", "SITE-A-FW", "FGT60FAAA0000001")])
       .mockResolvedValueOnce([
         { id: "sw1", hostname: "sw-1", serialNumber: "S1", assetType: "switch", fortinetTopology: { controllerFortigate: "gone-fw" } },
@@ -68,8 +69,8 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
     const input = base({ assetIdx: index(idxRows) });
     await decommissionStaleFirewalls(input);
 
-    expect(m.assetUpdateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: { id: { in: ["fw1"] } } }));
-    expect(m.assetUpdateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+    expect(db.assetUpdateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: { id: { in: ["fw1"] } } }));
+    expect(db.assetUpdateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
       where: { id: { in: ["sw1", "ap1"] } },
       data: { status: "decommissioned", statusChangedAt: new Date(NOW), statusChangedBy: "FortiManager" },
     }));
@@ -83,23 +84,23 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
   });
 
   it("retires a replaced chassis without cascading — its name now belongs to the new gate (rule 41(a))", async () => {
-    m.assetFindMany
+    db.assetFindMany
       .mockResolvedValueOnce([fw("old", "SITE-A-FW", "FGT60FOLD0000001")])
       .mockResolvedValueOnce([{ id: "sw1", hostname: "sw-1", serialNumber: "S1", assetType: "switch", fortinetTopology: { controllerFortigate: "SITE-A-FW" } }]);
     await decommissionStaleFirewalls(base({
       clusterSerialsByDevice: new Map([["site-a-fw", new Set(["FGT60FAAA0000001"])]]),
     }));
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ reason: "chassis-replaced", oldSerial: "FGT60FOLD0000001" }) }));
-    expect(m.assetUpdateMany).toHaveBeenCalledTimes(1);
+    expect(db.assetUpdateMany).toHaveBeenCalledTimes(1);
     // The cascade query runs, and the new gate's switch under that same name is left alone.
-    expect(m.assetFindMany).toHaveBeenCalledTimes(2);
+    expect(db.assetFindMany).toHaveBeenCalledTimes(2);
     expect(m.releaseInfra).not.toHaveBeenCalled();
   });
 
   it("on a scoped run judges only the scoped gate's firewalls, and acts only on a replaced chassis (rule 142)", async () => {
-    m.assetFindMany.mockResolvedValueOnce([fw("fw1", "GONE-FW", "FGT60FGONE000001")]);
+    db.assetFindMany.mockResolvedValueOnce([fw("fw1", "GONE-FW", "FGT60FGONE000001")]);
     await decommissionStaleFirewalls(base({ scopedRun: true, clusterSerialsByDevice: new Map([["gone-fw", new Set(["FGT60FGONE000001"])]]) }));
-    expect(m.assetUpdateMany).not.toHaveBeenCalled();
+    expect(db.assetUpdateMany).not.toHaveBeenCalled();
     expect(m.logEvent).not.toHaveBeenCalled();
   });
 });
@@ -124,7 +125,7 @@ describe("Phase 10 — fortigate-endpoint AssetSource flush", () => {
   };
 
   it("names the gate whose network holds the address, then the pathway's gate, then the row's prior one (rule 101(b))", async () => {
-    m.sourceFindMany.mockResolvedValue([{ assetId: "e2", observed: { learnedLocation: "FGT-PRIOR" } }]);
+    db.sourceFindMany.mockResolvedValue([{ assetId: "e2", observed: { learnedLocation: "FGT-PRIOR" } }]);
     const { state, upsert } = run();
     const stamped = await stampEndpointSources(state);
     expect(stamped).toBe(2);
@@ -145,7 +146,7 @@ describe("Phase 10 — fortigate-endpoint AssetSource flush", () => {
   it("does nothing when the run touched no endpoint", async () => {
     const { state, upsert } = run({ fortigateEndpointAssetIds: new Set<string>() });
     expect(await stampEndpointSources(state)).toBe(0);
-    expect(m.sourceFindMany).not.toHaveBeenCalled();
+    expect(db.sourceFindMany).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
   });
 });
@@ -160,34 +161,34 @@ describe("Phase 11 — projection apply pass", () => {
 
   it("writes only the fields the projection disagrees with, baselining os / osVersion first", async () => {
     const asset = { id: "e1", hostname: "pc-1", os: "Windows", osVersion: "10.0", ipAddress: "10.1.0.5" };
-    m.sourceFindMany.mockResolvedValue([{ assetId: "e1", sourceKind: "intune", inferred: false, observed: {}, lastSeen: null }]);
+    db.sourceFindMany.mockResolvedValue([{ assetId: "e1", sourceKind: "intune", inferred: false, observed: {}, lastSeen: null }]);
     m.project.mockReturnValue({ projected: { ...nothing, hostname: "pc-1", osVersion: "10.0.19045" } });
     const state = run([asset]);
     expect(await applyEndpointProjection(state)).toBe(1);
     expect(m.project).toHaveBeenCalledWith([{ sourceKind: "intune", inferred: false, observed: {}, lastSeen: null }]);
     expect(state.noteChangeBaseline).toHaveBeenCalledWith(asset, ["osVersion"]);
-    expect(m.assetUpdate).toHaveBeenCalledWith({ where: { id: "e1" }, data: { osVersion: "10.0.19045" } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "e1" }, data: { osVersion: "10.0.19045" } });
     expect(asset.osVersion).toBe("10.0.19045");
   });
 
   it("an address correction re-tags ipSource; a primary-address pin keeps its address (rule 102)", async () => {
     m.project.mockReturnValue({ projected: { ...nothing, ipAddress: "10.1.0.99" } });
     await applyEndpointProjection(run([{ id: "free", ipAddress: "10.1.0.5" }, { id: "pinned", ipAddress: "10.1.0.6", primaryAddressIp: "10.1.0.6" }]));
-    expect(m.assetUpdate).toHaveBeenCalledTimes(1);
-    expect(m.assetUpdate).toHaveBeenCalledWith({ where: { id: "free" }, data: { ipAddress: "10.1.0.99", ipSource: "fortimanager:fortigate-endpoint" } });
+    expect(db.assetUpdate).toHaveBeenCalledTimes(1);
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "free" }, data: { ipAddress: "10.1.0.99", ipSource: "fortimanager:fortigate-endpoint" } });
   });
 
   it("an IP override the projection agrees with is staged so the pin can release", async () => {
     m.project.mockReturnValue({ projected: { ...nothing, ipAddress: "10.1.0.6" } });
     await applyEndpointProjection(run([{ id: "o1", ipAddress: "10.1.0.6", ipOverride: "10.1.0.6" }]));
-    expect(m.assetUpdate).toHaveBeenCalledWith({ where: { id: "o1" }, data: { ipAddress: "10.1.0.6", ipSource: "fortimanager:fortigate-endpoint" } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "o1" }, data: { ipAddress: "10.1.0.6", ipSource: "fortimanager:fortigate-endpoint" } });
   });
 
   it("a quiet sync writes nothing", async () => {
     m.project.mockReturnValue({ projected: { ...nothing, hostname: "pc-1" } });
     const state = run([{ id: "e1", hostname: "pc-1" }]);
     expect(await applyEndpointProjection(state)).toBe(0);
-    expect(m.assetUpdate).not.toHaveBeenCalled();
+    expect(db.assetUpdate).not.toHaveBeenCalled();
     expect(state.syncLog).not.toHaveBeenCalled();
   });
 });

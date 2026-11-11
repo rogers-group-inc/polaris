@@ -5,21 +5,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  subnetUpdateMany: stubbed(prisma.subnet.updateMany),
+  integrationFindUnique: stubbed(prisma.integration.findUnique),
+};
 
 const m = vi.hoisted(() => ({
-  subnetUpdateMany: vi.fn(),
-  integrationFindUnique: vi.fn(),
   logEvent: vi.fn(),
   logEventsBatch: vi.fn(),
   applyAutoMonitorForClass: vi.fn(),
   roamsWanted: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    subnet: { updateMany: m.subnetUpdateMany },
-    integration: { findUnique: m.integrationFindUnique },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", async (orig) => ({
   ...(await orig<typeof import("../../src/services/eventLogService.js")>()),
   logEvent: m.logEvent,
@@ -35,7 +35,8 @@ const { deprecateStaleSubnets, applyAutoMonitorInterfaces } = await import("../.
 const { flushChangeEvents } = await import("../../src/services/discovery/dhcp/changeEvents.js");
 
 const log = vi.fn();
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  resetDbStub(); vi.clearAllMocks(); });
 
 describe("Phase 2 — deprecate stale subnets", () => {
   const subnet = (over: Record<string, unknown>) => ({
@@ -60,7 +61,7 @@ describe("Phase 2 — deprecate stale subnets", () => {
       integrationName: "FMG",
       actor: "tester",
     });
-    expect(m.subnetUpdateMany).toHaveBeenCalledWith({ where: { id: { in: ["gone"] } }, data: { status: "deprecated" } });
+    expect(db.subnetUpdateMany).toHaveBeenCalledWith({ where: { id: { in: ["gone"] } }, data: { status: "deprecated" } });
     expect(deprecated).toEqual(["10.0.0.0/24"]);
     expect(all.find((s) => s.id === "gone")!.status).toBe("deprecated");
     expect(m.logEvent).toHaveBeenCalledTimes(1);
@@ -72,16 +73,16 @@ describe("Phase 2 — deprecate stale subnets", () => {
       allSubnets: [subnet({})], knownDeviceNamesLc: new Set(["fgt-a"]), subnetExclusions: [],
       deprecated: [], integrationId: "i1", integrationName: "FMG", actor: undefined,
     });
-    expect(m.subnetUpdateMany).not.toHaveBeenCalled();
+    expect(db.subnetUpdateMany).not.toHaveBeenCalled();
   });
 });
 
 describe("Phase 2c — auto-monitor interfaces", () => {
   it("runs only for a Fortinet integration, per configured class, scoped when the run is", async () => {
     await applyAutoMonitorInterfaces({ integrationId: "i1", integrationName: "W", integrationType: "windowsserver", actor: "t", scopedInfra: undefined, syncLog: log });
-    expect(m.integrationFindUnique).not.toHaveBeenCalled();
+    expect(db.integrationFindUnique).not.toHaveBeenCalled();
 
-    m.integrationFindUnique.mockResolvedValue({ config: { fortiswitchMonitor: { autoMonitorInterfaces: { mode: "uplinks" } } } });
+    db.integrationFindUnique.mockResolvedValue({ config: { fortiswitchMonitor: { autoMonitorInterfaces: { mode: "uplinks" } } } });
     m.applyAutoMonitorForClass.mockResolvedValue({ interfacesAdded: 3, devices: 2 });
     const scoped = new Set(["a1"]);
     await applyAutoMonitorInterfaces({ integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", actor: "t", scopedInfra: scoped, syncLog: log });
@@ -91,7 +92,7 @@ describe("Phase 2c — auto-monitor interfaces", () => {
   });
 
   it("a failing class logs and does not stop the run", async () => {
-    m.integrationFindUnique.mockResolvedValue({ config: { fortigateMonitor: { autoMonitorInterfaces: {} } } });
+    db.integrationFindUnique.mockResolvedValue({ config: { fortigateMonitor: { autoMonitorInterfaces: {} } } });
     m.applyAutoMonitorForClass.mockRejectedValue(new Error("boom"));
     await applyAutoMonitorInterfaces({ integrationId: "i1", integrationName: "F", integrationType: "fortigate", actor: "t", scopedInfra: undefined, syncLog: log });
     expect(log).toHaveBeenCalledWith("error", "Auto-monitor (fortigate) failed: boom");

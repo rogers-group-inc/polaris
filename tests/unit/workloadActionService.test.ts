@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  assetFind: stubbed(prisma.asset.findUnique),
+  assetUpdate: stubbed(prisma.asset.update),
+  sourceFind: stubbed(prisma.assetSource.findFirst),
+};
 
 const h = vi.hoisted(() => ({
-  assetFind: vi.fn(),
-  assetUpdate: vi.fn(),
-  sourceFind: vi.fn(),
   snapshot: vi.fn(),
   invalidate: vi.fn(),
   openHold: vi.fn(),
@@ -15,9 +20,7 @@ const h = vi.hoisted(() => ({
   appAction: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: { asset: { findUnique: h.assetFind, update: h.assetUpdate }, assetSource: { findFirst: h.sourceFind } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/workloadMonitorService.js", () => ({
   fetchWorkloadSnapshotCached: h.snapshot, invalidateWorkloadSnapshot: h.invalidate,
 }));
@@ -36,8 +39,8 @@ const ctr = (state: string, updateAvailable: boolean | null = false) => ({
 
 function setup(opts: { state?: string; updateAvailable?: boolean | null; monitored?: boolean; virtualization?: Record<string, unknown>; platform?: "unraid" | "truenas" } = {}) {
   const platform = opts.platform ?? "unraid";
-  h.assetFind.mockResolvedValue({ id: "a1", hostname: "plex", monitored: opts.monitored ?? true, virtualization: opts.virtualization ?? { role: "container" } });
-  h.sourceFind.mockResolvedValue({
+  db.assetFind.mockResolvedValue({ id: "a1", hostname: "plex", monitored: opts.monitored ?? true, virtualization: opts.virtualization ?? { role: "container" } });
+  db.sourceFind.mockResolvedValue({
     sourceKind: platform === "unraid" ? "unraid-container" : "truenas-app",
     externalId: "int1:ctr:plex",
     integration: { id: "int1", name: "Tower", type: platform, config: { host: "h", apiToken: "k" }, enabled: true },
@@ -49,10 +52,11 @@ function setup(opts: { state?: string; updateAvailable?: boolean | null; monitor
 }
 
 beforeEach(() => {
+  resetDbStub();
   for (const f of Object.values(h)) f.mockReset();
   h.openHold.mockResolvedValue(true);
   h.releaseHold.mockResolvedValue(true);
-  h.assetUpdate.mockResolvedValue({});
+  db.assetUpdate.mockResolvedValue({});
 });
 
 describe("allowedVerbs", () => {
@@ -85,7 +89,7 @@ describe("runWorkloadAction", () => {
     await expect(svc.runWorkloadAction({ assetId: "a1", verb: "update", actor: "alice" })).rejects.toThrow(/pull failed/);
     expect(h.releaseHold).toHaveBeenCalledWith({ assetId: "a1", kind: "workload-update" });
     expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.workload.update", level: "error" }));
-    expect(h.assetUpdate).not.toHaveBeenCalled();
+    expect(db.assetUpdate).not.toHaveBeenCalled();
   });
 
   it("refuses a verb the state does not allow, and audits the refusal", async () => {
@@ -104,7 +108,7 @@ describe("runWorkloadAction", () => {
     setup();
     await svc.runWorkloadAction({ assetId: "a1", verb: "stop", actor: "a" });
     expect(h.openHold).not.toHaveBeenCalled();
-    expect(h.assetUpdate).toHaveBeenCalledWith({
+    expect(db.assetUpdate).toHaveBeenCalledWith({
       where: { id: "a1" },
       data: { virtualization: { role: "container", monitoringPausedByStop: true }, monitored: false },
     });
@@ -113,20 +117,20 @@ describe("runWorkloadAction", () => {
     for (const f of Object.values(h)) f.mockClear();
     setup({ state: "stopped", monitored: false, virtualization: { role: "container", monitoringPausedByStop: true } });
     await svc.runWorkloadAction({ assetId: "a1", verb: "start", actor: "a" });
-    expect(h.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" }, monitored: true } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" }, monitored: true } });
   });
 
   it("leaves monitoring alone when the operator opts out of the pause", async () => {
     setup();
     await svc.runWorkloadAction({ assetId: "a1", verb: "stop", actor: "a", pauseMonitoring: false });
-    expect(h.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" } } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" } } });
     expect(h.recompute).not.toHaveBeenCalled();
   });
 
   it("does not resume monitoring an operator paused by hand", async () => {
     setup({ state: "stopped", monitored: false });
     await svc.runWorkloadAction({ assetId: "a1", verb: "start", actor: "a" });
-    expect(h.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" } } });
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "a1" }, data: { virtualization: { role: "container" } } });
   });
 
   it("routes a TrueNAS App through appAction by name", async () => {
@@ -137,9 +141,9 @@ describe("runWorkloadAction", () => {
 
   it("refuses the host and anything without a workload source", async () => {
     setup();
-    h.sourceFind.mockResolvedValue({ sourceKind: "unraid-host", externalId: "int1:host", integration: { id: "int1", name: "T", type: "unraid", config: {}, enabled: true } });
+    db.sourceFind.mockResolvedValue({ sourceKind: "unraid-host", externalId: "int1:host", integration: { id: "int1", name: "T", type: "unraid", config: {}, enabled: true } });
     await expect(svc.runWorkloadAction({ assetId: "a1", verb: "stop", actor: "a" })).rejects.toThrow(/not to the host/);
-    h.sourceFind.mockResolvedValue(null);
+    db.sourceFind.mockResolvedValue(null);
     await expect(svc.runWorkloadAction({ assetId: "a1", verb: "stop", actor: "a" })).rejects.toThrow(/Only a VM or container/);
   });
 });

@@ -7,16 +7,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  subnetUpdate: stubbed(prisma.subnet.update),
+};
 
 const m = vi.hoisted(() => ({
-  subnetUpdate: vi.fn(),
   createChecked: vi.fn(),
   snapshot: vi.fn(),
   archive: vi.fn(),
   raiseConflict: vi.fn(),
   logEvent: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({ prisma: { subnet: { update: m.subnetUpdate } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/subnetService.js", () => ({ createSubnetRowChecked: m.createChecked }));
 vi.mock("../../src/services/subnetArchiveService.js", () => ({ snapshotSubnet: m.snapshot, archiveSubnet: m.archive }));
@@ -27,8 +32,9 @@ const { AppError } = await import("../../src/utils/errors.js");
 
 const BLOCK = { id: "b1", cidr: "10.0.0.0/8" };
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.subnetUpdate.mockResolvedValue({});
+  db.subnetUpdate.mockResolvedValue({});
   m.createChecked.mockImplementation(async (data: Record<string, unknown>) => ({ id: `new-${String(data.cidr)}`, ...data }));
   m.snapshot.mockResolvedValue({ archivedSubnetId: "arch-1", reservationCount: 3 });
   m.archive.mockResolvedValue({ reservationCount: 2 });
@@ -108,7 +114,7 @@ describe("Phase 1 — existing networks", () => {
     const row = { id: "s1", cidr: "10.1.0.0/24", blockId: "b1", name: "my lan", discoveredBy: null, purpose: "Office", tags: ["hq"], fortigateDevice: null, fortigateSerial: null };
     const { state, done } = run([entry()], { allSubnets: [row], subnetByCidr: new Map([["10.1.0.0/24", row]]) });
     await done;
-    const data = m.subnetUpdate.mock.calls[0][0].data;
+    const data = db.subnetUpdate.mock.calls[0][0].data;
     expect(data).toMatchObject({ discoveredBy: "i1", name: "DHCP: lan (FGT-A)", status: "available", fortigateSerial: "FGT60F0000000001" });
     expect(data.tags).toEqual(["hq", "dhcp-discovered", "fortimanager"]);
     expect(data.purpose).toBeUndefined();
@@ -121,7 +127,7 @@ describe("Phase 1 — existing networks", () => {
     const row = { id: "s1", cidr: "10.1.0.0/24", blockId: "b1", name: "DHCP: lan", discoveredBy: "i1", fortigateDevice: "FGT-OLD", fortigateSerial: "FGT60F0000000099" };
     const { state, done } = run([entry()], { allSubnets: [row], subnetByCidr: new Map([["10.1.0.0/24", row]]) });
     await done;
-    expect(m.subnetUpdate.mock.calls[0][0].data.fortigateSerial).toBeUndefined();
+    expect(db.subnetUpdate.mock.calls[0][0].data.fortigateSerial).toBeUndefined();
     expect(m.snapshot).toHaveBeenCalledWith("s1", { reason: "chassis-replaced", actor: "system" });
     expect(m.raiseConflict).toHaveBeenCalledWith(expect.objectContaining({ oldSerial: "FGT60F0000000099", newSerial: "FGT60F0000000001", archivedSubnetId: "arch-1" }));
     expect(state.syncLog).toHaveBeenCalledWith("warning", expect.stringContaining("3 reservation(s) archived, conflict raised"));
@@ -134,7 +140,7 @@ describe("Phase 1 — existing networks", () => {
       clusterSerialsByDevice: new Map([["fgt-a", new Set(["FGT60F0000000001", "FGT60F0000000002"])]]),
     }).done;
     expect(m.raiseConflict).not.toHaveBeenCalled();
-    expect(m.subnetUpdate.mock.calls[0][0].data.fortigateSerial).toBe("FGT60F0000000001");
+    expect(db.subnetUpdate.mock.calls[0][0].data.fortigateSerial).toBe("FGT60F0000000001");
   });
 });
 

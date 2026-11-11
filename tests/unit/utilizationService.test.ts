@@ -9,55 +9,52 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const m = vi.hoisted(() => ({
-  blockCount: vi.fn(),
-  blockFindMany: vi.fn(),
-  blockFindUnique: vi.fn(),
-  subnetCount: vi.fn(),
-  subnetGroupBy: vi.fn(),
-  resCount: vi.fn(),
-  resFindMany: vi.fn(),
-}));
+const db = {
+  blockCount: stubbed(prisma.ipBlock.count),
+  blockFindMany: stubbed(prisma.ipBlock.findMany),
+  blockFindUnique: stubbed(prisma.ipBlock.findUnique),
+  subnetCount: stubbed(prisma.subnet.count),
+  subnetGroupBy: stubbed(prisma.subnet.groupBy),
+  resCount: stubbed(prisma.reservation.count),
+  resFindMany: stubbed(prisma.reservation.findMany),
+};
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    ipBlock: { count: m.blockCount, findMany: m.blockFindMany, findUnique: m.blockFindUnique },
-    subnet: { count: m.subnetCount, groupBy: m.subnetGroupBy },
-    reservation: { count: m.resCount, findMany: m.resFindMany },
-  },
-}));
+
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const svc = await import("../../src/services/utilizationService.js");
 
 const t = new Date("2026-11-01T00:00:00Z");
 
 beforeEach(() => {
-  for (const fn of Object.values(m)) fn.mockReset();
-  m.blockCount.mockResolvedValue(0);
-  m.subnetCount.mockResolvedValue(0);
-  m.subnetGroupBy.mockResolvedValue([]);
-  m.resCount.mockResolvedValue(0);
-  m.resFindMany.mockResolvedValue([]);
-  m.blockFindMany.mockResolvedValue([]);
+  resetDbStub();
+  db.blockCount.mockResolvedValue(0);
+  db.subnetCount.mockResolvedValue(0);
+  db.subnetGroupBy.mockResolvedValue([]);
+  db.resCount.mockResolvedValue(0);
+  db.resFindMany.mockResolvedValue([]);
+  db.blockFindMany.mockResolvedValue([]);
 });
 
 describe("getGlobalUtilization", () => {
   it("fills every status bucket, defaulting an absent one to zero", async () => {
-    m.subnetGroupBy.mockResolvedValue([{ status: "reserved", _count: { id: 4 } }]);
+    db.subnetGroupBy.mockResolvedValue([{ status: "reserved", _count: { id: 4 } }]);
     const r = await svc.getGlobalUtilization();
     expect(r.subnetsByStatus).toEqual({ available: 0, reserved: 4, deprecated: 0 });
   });
 
   it("counts only active reservations and lists the ten newest with their subnet", async () => {
-    m.resCount.mockResolvedValue(42);
-    m.resFindMany.mockResolvedValue([{
+    db.resCount.mockResolvedValue(42);
+    db.resFindMany.mockResolvedValue([{
       id: "r1", ipAddress: "10.0.0.5", owner: "ops", projectRef: null, createdAt: t, expiresAt: null,
       subnet: { cidr: "10.0.0.0/24", name: "Core", purpose: "infra", vlan: 10 },
     }]);
     const r = await svc.getGlobalUtilization();
-    expect(m.resCount).toHaveBeenCalledWith({ where: { status: "active" } });
-    expect(m.resFindMany.mock.calls[0][0]).toMatchObject({ where: { status: "active" }, orderBy: { createdAt: "desc" }, take: 10 });
+    expect(db.resCount).toHaveBeenCalledWith({ where: { status: "active" } });
+    expect(db.resFindMany.mock.calls[0][0]).toMatchObject({ where: { status: "active" }, orderBy: { createdAt: "desc" }, take: 10 });
     expect(r.totalActiveReservations).toBe(42);
     expect(r.recentReservations[0]).toEqual({
       id: "r1", subnetCidr: "10.0.0.0/24", subnetName: "Core", subnetPurpose: "infra", vlan: 10,
@@ -66,7 +63,7 @@ describe("getGlobalUtilization", () => {
   });
 
   it("splits discovered from hand-carved available networks and leaves deprecated ones out of the allocation", async () => {
-    m.blockFindMany.mockResolvedValue([{
+    db.blockFindMany.mockResolvedValue([{
       id: "b1", name: "Campus", cidr: "10.0.0.0/16",
       subnets: [
         { cidr: "10.0.0.0/24", status: "available", discoveredBy: "int-1" },
@@ -90,7 +87,7 @@ describe("getGlobalUtilization", () => {
   });
 
   it("keeps an IPv6 block's used-percent exact (one /64 in a /48 is not 100%)", async () => {
-    m.blockFindMany.mockResolvedValue([{
+    db.blockFindMany.mockResolvedValue([{
       id: "b6", name: "v6", cidr: "2001:db8::/48",
       subnets: [{ cidr: "2001:db8:0:1::/64", status: "available", discoveredBy: null }],
     }]);
@@ -101,7 +98,7 @@ describe("getGlobalUtilization", () => {
   });
 
   it("reads 100% for a fully carved IPv4 block", async () => {
-    m.blockFindMany.mockResolvedValue([{
+    db.blockFindMany.mockResolvedValue([{
       id: "b1", name: "Small", cidr: "192.168.0.0/23",
       subnets: [
         { cidr: "192.168.0.0/24", status: "reserved", discoveredBy: null },
@@ -122,23 +119,23 @@ describe("getRecentManualReservations", () => {
 
   it("defaults to operator-typed (manual) reservations only", async () => {
     await svc.getRecentManualReservations();
-    expect(m.resFindMany.mock.calls[0][0]).toMatchObject({ where: { status: "active", sourceType: { in: ["manual"] } }, take: 10 });
+    expect(db.resFindMany.mock.calls[0][0]).toMatchObject({ where: { status: "active", sourceType: { in: ["manual"] } }, take: 10 });
   });
 
   it("broadens to the caller's source types, and an empty list means no source filter", async () => {
     await svc.getRecentManualReservations(5, ["manual", "dhcp_reservation"]);
-    expect(m.resFindMany.mock.calls[0][0].where).toEqual({ status: "active", sourceType: { in: ["manual", "dhcp_reservation"] } });
+    expect(db.resFindMany.mock.calls[0][0].where).toEqual({ status: "active", sourceType: { in: ["manual", "dhcp_reservation"] } });
     await svc.getRecentManualReservations(5, []);
-    expect(m.resFindMany.mock.calls[1][0].where).toEqual({ status: "active" });
+    expect(db.resFindMany.mock.calls[1][0].where).toEqual({ status: "active" });
   });
 
   it("a null limit lists everything", async () => {
     await svc.getRecentManualReservations(null);
-    expect(m.resFindMany.mock.calls[0][0].take).toBeUndefined();
+    expect(db.resFindMany.mock.calls[0][0].take).toBeUndefined();
   });
 
   it("returns full attribution (hostname, MAC, createdBy) without a second fetch", async () => {
-    m.resFindMany.mockResolvedValue([raw]);
+    db.resFindMany.mockResolvedValue([raw]);
     const [r] = await svc.getRecentManualReservations();
     expect(r).toEqual({
       id: "r1", subnetId: "s1", subnetCidr: "10.0.0.0/24", subnetName: "Core", vlan: null,
@@ -150,12 +147,12 @@ describe("getRecentManualReservations", () => {
 
 describe("getBlockUtilization", () => {
   it("returns null for an unknown block", async () => {
-    m.blockFindUnique.mockResolvedValue(null);
+    db.blockFindUnique.mockResolvedValue(null);
     await expect(svc.getBlockUtilization("x")).resolves.toBeNull();
   });
 
   it("reports each network's usable host count beside its reservation count", async () => {
-    m.blockFindUnique.mockResolvedValue({
+    db.blockFindUnique.mockResolvedValue({
       id: "b1",
       subnets: [{ id: "s1", cidr: "10.0.0.0/24", name: "Core", purpose: null, vlan: 1, status: "available", tags: [], _count: { reservations: 3 } }],
     });
@@ -168,9 +165,9 @@ describe("getBlockUtilization", () => {
   // kept, status "released"), so a churned network reported far more than it
   // holds. The count is filtered to status "active" (rule 69).
   it("counts only ACTIVE reservations toward activeReservations", async () => {
-    m.blockFindUnique.mockResolvedValue({ id: "b1", subnets: [] });
+    db.blockFindUnique.mockResolvedValue({ id: "b1", subnets: [] });
     await svc.getBlockUtilization("b1");
-    const include = m.blockFindUnique.mock.calls[0][0].include;
+    const include = db.blockFindUnique.mock.calls[0][0].include;
     expect(include.subnets.include._count.select.reservations).toEqual({ where: { status: "active" } });
   });
 });
