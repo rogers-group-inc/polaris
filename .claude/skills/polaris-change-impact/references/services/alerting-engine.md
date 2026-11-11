@@ -79,7 +79,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma`, `eventLogService` (`logEvent` + `logEventsBatch`), `notificationRuleService.findRulesMatchingAsset`, `dependencyTreeService.resolveDependencyBlameMany` (lazy import, the sweep's blame filter).
 
-**Used by:** `src/api/routes/notifications.ts` (list/ack/clear), `src/api/routes/assets.ts` (`getAssetNotifications` at `/assets/:id/notifications`, and `activeAlertSummaryByAsset` in `enrichAssetList` for the list's `activeAlert` field and in `GET /assets/:id/dependencies` for every tree node's `activeAlert`), `src/jobs/evaluateNotificationRules.ts` (`clearSuppressedAlerts` — its ONLY caller, the tick-wide sweep ahead of the rules; the maintenance entering edge stopped calling it 2026-09-30).
+**Used by:** `src/api/routes/notifications.ts` (list/ack/clear), `src/api/routes/assets.ts` (`getAssetNotifications` at `/assets/:id/notifications`, and `activeAlertSummaryByAsset` in `services/assetListService.ts → enrichAssetList` for the list's `activeAlert` field and in `GET /assets/:id/dependencies` for every tree node's `activeAlert`), `src/jobs/evaluateNotificationRules.ts` (`clearSuppressedAlerts` — its ONLY caller, the tick-wide sweep ahead of the rules; the maintenance entering edge stopped calling it 2026-09-30).
 
 **Invariants:**
 - **An operator Clear runs the EXPANDED reset list** (business rule 145): `runResetActionsForCleared` selects `escalationFired` plus the owner's `actions` / `severityBands` / `escalation` and executes `expandResetActions(owner, parseEscalationFired(...))` — the same expansion `fireReset` runs, with no extra read.

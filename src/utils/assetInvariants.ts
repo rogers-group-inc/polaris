@@ -524,3 +524,22 @@ export function applyPrimaryAddressPin(
   }
   return followed ? { action: "followed", fromIp: pin.ip, ip: target } : { action: "reasserted", ip: target };
 }
+
+/**
+ * Apply Asset.monitored side-effects on save. The polling-method resolver is
+ * the source of truth for HOW the asset gets probed — we don't re-validate
+ * polling/credential consistency at write-time; the dispatcher reports
+ * errors clearly when a missing credential surfaces during a probe.
+ */
+export function clampMonitoredState(data: Record<string, unknown>): void {
+  const monitored = data.monitored === undefined ? undefined : Boolean(data.monitored);
+  if (monitored === false) {
+    data.consecutiveFailures = 0;
+  } else if (monitored === true) {
+    // Reset probe state so the pill always starts at Recovering on re-enable
+    // rather than carrying over stale Down/Missed from the previous session.
+    data.monitorStatus = "recovering";
+    data.consecutiveFailures = 0;
+    data.consecutiveSuccesses = 0;
+  }
+}

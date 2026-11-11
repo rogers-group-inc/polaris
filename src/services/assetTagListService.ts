@@ -192,3 +192,16 @@ export async function listAssetsWithTag(
   ]);
   return { total, assets: assets as AssetWithTagRow[] };
 }
+
+/**
+ * Every distinct tag on any asset, sorted — GET /assets/tags, the assets-page
+ * filter's autocomplete. Deliberately unfiltered by `monitored`, unlike
+ * tagAssignmentService.listAssetTags (the automation builder's list). One scan
+ * with a tight select. Moved out of routes/assets/list.ts (CQ-B062 slice 2).
+ */
+export async function listAllAssetTags(): Promise<string[]> {
+  const rows = await prisma.asset.findMany({ where: { NOT: { tags: { isEmpty: true } } }, select: { tags: true } });
+  const set = new Set<string>();
+  for (const r of rows) for (const t of r.tags) set.add(t);
+  return Array.from(set).sort();
+}

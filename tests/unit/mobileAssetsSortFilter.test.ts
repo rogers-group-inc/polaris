@@ -27,7 +27,8 @@ import { assetsRouteSource } from "./_assetsRouteSource.js";
 
 const TAB_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "assets-tab.js"), "utf-8");
 const LIST_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
-const ROUTE_SRC = assetsRouteSource();
+// The list engine (ASSET_SORT_COLUMNS, monitorClause) moved to assetListService (CQ-B062 slice 2).
+const ROUTE_SRC = [assetsRouteSource(), readFileSync(join(process.cwd(), "src", "services", "assetListService.ts"), "utf-8")].join("\n");
 
 const g = globalThis as any;
 const flush = () => new Promise((r) => setTimeout(r, 0));
