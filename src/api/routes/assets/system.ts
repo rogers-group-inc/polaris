@@ -30,7 +30,7 @@ import { getAssetProcessConnections } from "../../../services/applicationMapServ
 import { readProbeOutages, serializeOutages } from "../../../services/probeOutageService.js";
 import { loadMemoryForecastSeries } from "../../../services/memoryForecastService.js";
 import { buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap } from "../../../services/peerInferredLldpService.js";
-import { resolveCurrentStateIntervalSec } from "./shared.js";
+import { resolveCurrentStateIntervalSec } from "../../../services/monitoring/monitorSettings.js";
 
 const router = Router();
 

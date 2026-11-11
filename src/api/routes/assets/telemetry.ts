@@ -35,7 +35,7 @@ import { readProbeOutages, serializeOutages } from "../../../services/probeOutag
 import { isFortinetIntegrationType } from "../../../utils/pollingCompatibility.js";
 import { isWorkloadPlatform } from "../../../utils/workloadSources.js";
 import { buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap } from "../../../services/peerInferredLldpService.js";
-import { resolveCurrentStateIntervalSec } from "./shared.js";
+import { resolveCurrentStateIntervalSec } from "../../../services/monitoring/monitorSettings.js";
 
 const router = Router();
 

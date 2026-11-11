@@ -41,7 +41,8 @@ import { listAssetTypes } from "../../../services/assetTypeService.js";
 import { applyMassPins, getPinInventoryForAssets, MASS_PIN_MAX_ASSETS, MASS_PIN_MAX_DELTAS } from "../../../services/massPinService.js";
 import { type PollingMethod } from "../../../utils/pollingCompatibility.js";
 import { buildAddressConfidence } from "../../../services/addressConfidenceService.js";
-import { shapeAssociatedIps, ASSOCIATED_IP_SELECT, clampMonitoredState, assertCredentialAssignments } from "./shared.js";
+import { shapeAssociatedIps, ASSOCIATED_IP_SELECT, clampMonitoredState } from "./shared.js";
+import { assertCredentialAssignments } from "../../../services/credentialService.js";
 
 const router = Router();
 

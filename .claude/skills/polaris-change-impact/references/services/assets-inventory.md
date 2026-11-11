@@ -377,7 +377,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Push/pull FortiGate MAC quarantine via persistent `user.quarantine.targets` CMDB tree; orchestrates multi-FortiGate best-effort with per-device all-or-nothing atomicity.
 
-**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
+**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 

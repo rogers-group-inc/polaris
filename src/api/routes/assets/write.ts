@@ -35,7 +35,8 @@ import { workloadPlatformLabel, workloadSourceKindsFor } from "../../../utils/wo
 import { collectorCapability } from "../../../utils/pollingCapability.js";
 import { logger } from "../../../utils/logger.js";
 import { CLEAR_PRIMARY_ADDRESS_PIN, gateForPinnedAddress } from "../../../services/primaryAddressService.js";
-import { clampMonitoredState, assertCredentialAssignments, assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { clampMonitoredState, assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { assertCredentialAssignments } from "../../../services/credentialService.js";
 
 const router = Router();
 

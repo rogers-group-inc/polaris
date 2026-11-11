@@ -50,7 +50,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │       ├── assets/dependencies.ts # Dependency tree (rule 38), the override, the admin dependency test, connection path
 │   │       ├── assets/quarantine.ts # Quarantine status / quarantine / release / verify, bulk quarantine + release (assetsQuarantine)
 │   │       ├── assets/agent.ts      # Polaris Agent on an asset: bulk install, agent card, install / retry / reinstall / upgrade / uninstall (agentDeploy)
-│   │       ├── assets/shared.ts     # Helpers several assets sub-routers need: associated-IP shape, clampMonitoredState, credential-assignment guards, write-time quarantine / integration-token guards, current-state interval
+│   │       ├── assets/shared.ts     # Helpers several assets sub-routers need: associated-IP shape, clampMonitoredState, write-time quarantine / integration-token guards (no Prisma; the credential guard lives in credentialService, the current-state interval in monitoring/monitorSettings)
 │   │       ├── map.ts               # Device Map: site list, search, per-FortiGate topology graph (thin route — graph construction lives in services/topologyGraphService.ts) + shared topology-layout writes
 │   │       ├── applicationMap.ts    # Application Map: GET / (the connectivity graph payload from applicationMapService, gated applicationMap=read) + PUT/DELETE /layout (shared ApplicationMapLayout drag positions, gated applicationMap=write, audited application_map.layout.saved/reset). Mounted at /application-map. The per-asset connections read lives on assets.ts (/assets/:id/process-connections).
 │   │       ├── mapRegions.ts        # CRUD for operator-drawn map regions (admin/networkadmin); reconciles `region:<name>` tags

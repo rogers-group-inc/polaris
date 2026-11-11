@@ -1732,3 +1732,54 @@ export async function loadSnmpCredentialConfigForFortinetAsset(
   if (cred.type !== "snmp") throw new AppError(409, `Integration's monitor credential must be SNMP (got "${cred.type}")`);
   return (cred.config as Record<string, unknown>) || {};
 }
+
+/**
+ * How often THIS device's current-state tables are actually refreshed, in
+ * seconds — the figure the ARP Table, MAC Table and Wireless tabs state next
+ * to their data, and the threshold they turn amber past.
+ *
+ * The system-info pass is the writer, so its resolved per-asset cadence is the
+ * answer for a monitored device. `discoveryFallback` covers the one table
+ * discovery ALSO writes: an unmonitored firewall — or one with system info off
+ * — still gets ARP rows on its integration's pollInterval (12 h by default for
+ * both Fortinet types), two orders of magnitude apart from the monitor
+ * cadence, which is exactly why the tab cannot state one number for the fleet.
+ * The forwarding database has no such second writer, so the MAC Table passes
+ * `false` and gets null — "not being collected" rather than a cadence
+ * borrowed from a pass that does not touch it.
+ *
+ * Returns null when nothing refreshes it, which the tab renders as "on
+ * discovery only" / "not polled" rather than inventing a figure.
+ */
+export async function resolveCurrentStateIntervalSec(
+  assetId: string,
+  opts: { discoveryFallback: boolean },
+): Promise<number | null> {
+  const asset = await prisma.asset.findUnique({
+    where: { id: assetId },
+    select: {
+      id: true, assetType: true, monitored: true, status: true,
+      discoveredByIntegrationId: true, monitorOverride: true,
+      discoveredByIntegration: { select: { type: true, pollInterval: true } },
+    },
+  });
+  if (!asset) return null;
+
+  const discoverySec = opts.discoveryFallback && asset.discoveredByIntegration?.pollInterval
+    ? asset.discoveredByIntegration.pollInterval * 3600
+    : null;
+  // A device that isn't being polled can only be refreshed by discovery.
+  if (!asset.monitored || asset.status === "decommissioned" || asset.status === "disabled") {
+    return discoverySec;
+  }
+  try {
+    const resolved = await resolveMonitorSettings({
+      ...(asset as any),
+      discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
+    } as any);
+    const sec = (resolved as any)?.systemInfoIntervalSeconds;
+    return typeof sec === "number" && sec > 0 ? sec : discoverySec;
+  } catch {
+    return discoverySec;
+  }
+}
