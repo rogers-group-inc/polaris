@@ -204,6 +204,61 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetLookupService.ts
+
+**What it owns:** The asset lookups and imports, moved out of `routes/assets/lookups.ts` (CQ-B062 slice 2): the fleet PTR sweep and the per-asset PTR / forward (A/AAAA) lookup, the OUI vendor lookup (fleet and per asset), and the two imports — CSV serial + date (back-dates `createdAt`) and PDF invoice rows (create or update by serial). The route keeps the gates, the body checks, and the rule 111(c) retarget guard, which reads the caller's permission and is handed in as `assertRetarget`.
+
+**Public API:** `RetargetGuard`, `bulkDnsLookup(actor)`, `assetDnsLookup(id, actor)`, `assetForwardLookup(id, actor, assertRetarget)`, `bulkOuiLookup(actor)`, `assetOuiLookup(id, actor)`, `importFirstSeenDates(rows, dryRun, actor)`, `importPdfAssets(rows, dryRun, actor, assertRetarget)`.
+
+**Cross-service deps:** dnsService (`getConfiguredResolver`), ouiService, assetQuarantineService (`assertQuarantineStatusUntouched`), eventLogService (incl. `logEventsBatch`, `buildFirmwareChangedEvent`), utils/concurrency, utils/chunk, utils/assetInvariants, utils/mac.
+
+**Used by:** `src/api/routes/assets/lookups.ts` (POST /dns-lookup, /:id/dns-lookup, /:id/forward-lookup, /oui-lookup, /:id/oui-lookup, /import, /import-pdf).
+
+**Invariants:**
+- Fleet scale: the PTR sweep looks up through a bounded pool (`DNS_SWEEP_LOOKUP_CONCURRENCY`) and writes in chunked transactions; the OUI sweep writes one statement per vendor; the CSV import resolves every serial in one read and writes chunked. None is a per-row await loop.
+- A forward-lookup address and a PDF row's address are typed addresses by another route: the rule 111(c) guard runs before the write; a PDF row may not enter or leave quarantine by status.
+- The CSV import only moves first-seen EARLIER; a dry run writes nothing.
+
+**When changing this:** `tests/unit/assetLookupService.test.ts`, `tests/integration/assetsImportBackdate.test.ts`.
+
+---
+
+## services/assetSystemTabService.ts
+
+**What it owns:** The asset details System-tab family's reads, moved out of `routes/assets/system.ts` (CQ-B062 slice 2): the System tab itself (latest telemetry, interfaces with tags / optics / alerts, storage, hardware sensors, reported + peer-inferred LLDP neighbours, wireless stations, physical entities, IPsec tunnels, AP radios, probe outages), the process list, the MAC table (VLAN fill, VLAN names, per-port configured VLANs) and the ARP table (ranges, retention, interface counts), each with its freshness pair, and the service inventory. The route keeps the gates and the query parsing.
+
+**Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
+
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), utils/sfpOptics.
+
+**Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
+
+**Invariants:**
+- The ARP `current` view is the newest read only — rows within `ARP_CURRENT_TOLERANCE_MS` of the asset's max `lastSeen` — never every retained row; the "" interface sentinel leaves the API as null.
+- The MAC table's `pollIntervalSec` takes no discovery fallback (only the system-info pass writes the FDB); the ARP table's does (discovery writes ARP too).
+
+**When changing this:** `tests/unit/assetSystemTabService.test.ts`; integration `arpTable` and `currentStateRefresh`.
+
+---
+
+## services/assetTelemetryService.ts
+
+**What it owns:** The asset details telemetry family's data, moved out of `routes/assets/telemetry.ts` (CQ-B062 slice 2): the Custom MIB widgets with their latest samples, interface history, the operator's interface comment (with Description Sync), the manual port-tag read a tag save is judged against, the SD-WAN Performance SLA links and rules, path-check traceroutes, MCLAG peers, virtualization (a VM's host, a host's guests, datastores), process / service logs, and the pinned-process log config (rule 107). The route keeps the gates, the query / body parsing and the request-bound inputs (the actor, the caller's Agent Deploy grant).
+
+**Public API:** `ProcessLogConfigInput`, `getAssetCustomWidgets(id)`, `getInterfaceHistory(id, ifName, since, until, rangeLabel)`, `setInterfaceComment(id, ifName, trimmed, actor)`, `listManualInterfaceTags(id, ifName)`, `getPerfSlaLinks(id)`, `getSdwanRules(id)`, `getPathCheckTraceroutes(id, checkId, limit)`, `getMclagPeers(id)`, `getAssetVirtualization(id)`, `getProcessLogs(id, name, limit, since, onlyFlagged)`, `getServiceLogs(id, unit, limit, since, onlyFlagged)`, `setProcessLogConfig(id, name, body, canDeployAgents, actor)`.
+
+**Cross-service deps:** sampleQueryRouter, sampleHistoryService, descriptionSyncService (`syncDescriptionsOnSave`), manufacturerProfileService, utils/logPathGlob, eventLogService.
+
+**Used by:** `src/api/routes/assets/telemetry.ts` (the custom-widgets, interface-history, interface comment / tags, perf-sla-links, sdwan-rules, path-check-traceroutes, mclag-peers, virtualization, process-logs, service-logs and process config routes).
+
+**Invariants:**
+- A CHANGED process log glob is shape-checked and needs Agent Deploy (`canDeployAgents`): the agent reads that path as a privileged user (rule 107). Resaving the current glob, or clearing it, needs neither.
+- An empty interface comment deletes the override and does not push to the device; a non-empty one upserts and asks Description Sync.
+
+**When changing this:** `tests/unit/assetTelemetryService.test.ts`, `tests/unit/logPathGlob.test.ts`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
