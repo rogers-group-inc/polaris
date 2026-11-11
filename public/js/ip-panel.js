@@ -33,12 +33,23 @@ function _ensurePanelDOM() {
   // (app.js). Escape goes to the topmost layer only — this panel can open over
   // the asset panel (an interface's "Open network") and under a modal (Reserve
   // IP), and in both cases the key belongs to whatever is on top.
-  buildSlideover({
+  var built = buildSlideover({
     id: "ip-panel",
+    // Share copies the network's link (public/js/share-link.js) — the panel,
+    // not the address it may have been opened focused on.
+    headerActions: window.PolarisShare
+      ? '<button type="button" class="btn btn-glyph btn-glyph-share btn-sm btn-secondary" id="ip-panel-share" title="Share — copy a link to this network for another Polaris user">Share</button>'
+      : "",
     bodyHTML: '<p class="empty-state">Loading...</p>',
     footer: true,
     close: closeIpPanel,
     resizeKey: "polaris.panel.width.ip",
+  });
+  var shareBtn = built.panel.querySelector("#ip-panel-share");
+  if (shareBtn) shareBtn.addEventListener("click", function () {
+    if (!_ipPanelSubnetId) return;
+    var t = document.getElementById("ip-panel-title");
+    window.PolarisShare.share("network", _ipPanelSubnetId, { title: (t && t.textContent) || "Network" });
   });
 }
 

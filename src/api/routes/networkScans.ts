@@ -142,7 +142,13 @@ const adoptSchema = z.object({
  * `username` still comes from `requestActor` so audit rows name the token.
  */
 function viewer(req: Request): ScanViewer {
-  return { id: req.session?.userId ?? null, username: requestActor(req) ?? "unknown" };
+  return {
+    id: req.session?.userId ?? null,
+    username: requestActor(req) ?? "unknown",
+    // Rule 157(d): the housekeeping level also sees a private Discovery whose
+    // owner was deleted, so it can be republished or removed.
+    housekeeping: hasPermission(req, "networkScan", "fullwrite"),
+  };
 }
 
 /**
@@ -164,7 +170,8 @@ router.use(requirePermission("networkScan", "read"));
 
 router.get("/", async (req, res, next) => {
   try {
-    res.json({ scans: await listScans(viewer(req).id) });
+    const v = viewer(req);
+    res.json({ scans: await listScans(v.id, v.housekeeping) });
   } catch (err) { next(err); }
 });
 
@@ -177,7 +184,8 @@ router.post("/preview-targets", async (req, res, next) => {
 
 router.get("/runs/:runId", async (req, res, next) => {
   try {
-    res.json({ run: await getRun((req.params.runId as string), viewer(req).id) });
+    const v = viewer(req);
+    res.json({ run: await getRun((req.params.runId as string), v.id, v.housekeeping) });
   } catch (err) { next(err); }
 });
 
@@ -220,14 +228,15 @@ router.post("/", requirePermission("networkScan", "write"), async (req, res, nex
 // never read as ids.
 router.get("/:id", async (req, res, next) => {
   try {
-    res.json({ scan: await getScan((req.params.id as string), viewer(req).id) });
+    const v = viewer(req);
+    res.json({ scan: await getScan((req.params.id as string), v.id, v.housekeeping) });
   } catch (err) { next(err); }
 });
 
 router.put("/:id", requirePermission("networkScan", "write"), async (req, res, next) => {
   try {
     const body = saveSchema.parse(req.body ?? {}) as SaveScanInput;
-    const row = await getScanForWrite((req.params.id as string), viewer(req).id);
+    const row = await getScanForWrite((req.params.id as string), viewer(req).id, viewer(req).housekeeping);
     assertMayEditScan(req, row, "editing");
     const scan = await updateScan(row, body, viewer(req));
     await recordCredentialUse(credentialUseActor(req), "network-scan.save", scanCredentialUses(row, scan));
@@ -237,7 +246,7 @@ router.put("/:id", requirePermission("networkScan", "write"), async (req, res, n
 
 router.delete("/:id", requirePermission("networkScan", "write"), async (req, res, next) => {
   try {
-    const row = await getScanForWrite((req.params.id as string), viewer(req).id);
+    const row = await getScanForWrite((req.params.id as string), viewer(req).id, viewer(req).housekeeping);
     assertMayEditScan(req, row, "deleting");
     await deleteScan(row.id, requestActor(req));
     res.status(204).end();
@@ -253,7 +262,7 @@ router.post("/:id/run", requirePermission("networkScan", "write"), async (req, r
     const run = await triggerScan((req.params.id as string), viewer(req));
     // A run sends every credential the Discovery carries to every target, and
     // the person running it need not be the person who saved it.
-    const scan = await getScan((req.params.id as string), viewer(req).id);
+    const scan = await getScan((req.params.id as string), viewer(req).id, viewer(req).housekeeping);
     await recordCredentialUse(credentialUseActor(req), "network-scan.run", scanCredentialUses(null, scan, true));
     res.status(202).json({ run });
   } catch (err) { next(err); }

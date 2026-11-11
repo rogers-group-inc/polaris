@@ -7,13 +7,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const m = vi.hoisted(() => ({ findUnique: vi.fn(), update: vi.fn(), logEvent: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { asset: { findUnique: m.findUnique, update: m.update } } }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 import { getQuarantineStatus, recordQuarantineDrift } from "../../src/services/assetQuarantineService.js";
 
-beforeEach(() => { m.findUnique.mockReset(); m.update.mockReset(); m.logEvent.mockReset(); });
+const m = { findUnique: stubbed(prisma.asset.findUnique), update: stubbed(prisma.asset.update), logEvent: eventLog.logEvent };
+
+beforeEach(() => { resetDbStub(); resetEventLogStub(); });
 
 describe("getQuarantineStatus", () => {
   it("returns the quarantine columns of the asset", async () => {

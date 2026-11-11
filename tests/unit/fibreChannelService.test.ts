@@ -1,7 +1,7 @@
 /**
  * tests/unit/fibreChannelService.test.ts
  *
- * Business rule 156 — the writer and reader (services/fibreChannelService.ts).
+ * Business rule 159 — the writer and reader (services/fibreChannelService.ts).
  * Pinned:
  *   - logins are stored with the asset their host name uniquely matches;
  *   - first-seen survives a re-read;

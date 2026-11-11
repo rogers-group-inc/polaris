@@ -371,9 +371,16 @@ type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 async function carryStoredChains(tx: Tx, siteId: string, kind: RegionKind, before: LocationCodes, after: LocationCodes): Promise<{ views: number; layouts: number }> {
   let views = 0;
   let layouts = 0;
-  const rows = await tx.topologyView.findMany({ where: { siteId }, select: { id: true, region: true, polygons: true } });
+  const rows = await tx.topologyView.findMany({ where: { siteId }, select: { id: true, mode: true, region: true, polygons: true, racks: true, walls: true } });
   for (const v of rows) {
-    const data: { region?: object; polygons?: object[] } = {};
+    const data: { region?: object; polygons?: object[]; racks?: object[]; walls?: object[] } = {};
+    // Rule 156: a Room view's racks and junction boxes are named by their
+    // codes, so a renamed rack / box renames the one in its room's view.
+    if (v.mode === "room" && (kind === "rack" || kind === "junctionBox")) {
+      const field = kind === "rack" ? "racks" : "walls";
+      const renamed = renameRoomContainers(v.region as unknown as LocationCodes | null, v[field], kind, before, after);
+      if (renamed) data[field] = renamed;
+    }
     const region = remapLocationCodes(v.region as unknown as LocationCodes | null, kind, before, after);
     if (region) data.region = region;
     if (Array.isArray(v.polygons)) {
@@ -407,6 +414,36 @@ async function carryStoredChains(tx: Tx, siteId: string, kind: RegionKind, befor
     }
   }
   return { views, layouts };
+}
+
+/**
+ * Pure (rule 156) — a Room view's racks or junction boxes after the region
+ * tree renames one: the view must stand for the renamed container's room,
+ * and only a container carrying the old name takes the new one. Null when
+ * nothing changes. A move to another room renames nothing here.
+ */
+export function renameRoomContainers(
+  viewRegion: LocationCodes | null,
+  containers: unknown,
+  kind: "rack" | "junctionBox",
+  before: LocationCodes,
+  after: LocationCodes,
+): object[] | null {
+  if (!viewRegion || !Array.isArray(containers)) return null;
+  const n = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const from = n(before[kind]), to = String(after[kind] ?? "").trim();
+  if (!from || !to || from === n(to)) return null;
+  // The view's room must be the container's room (levels the view sets).
+  for (const k of ["area", "building", "floor", "room"] as const) {
+    if (n(viewRegion[k]) && n(viewRegion[k]) !== n(before[k])) return null;
+  }
+  if (!n(viewRegion.room)) return null;
+  let changed = false;
+  const out = (containers as Array<{ name?: unknown }>).map((c) => {
+    if (c && typeof c.name === "string" && n(c.name) === from) { changed = true; return { ...c, name: to }; }
+    return c;
+  });
+  return changed ? (out as object[]) : null;
 }
 
 /** A region's chain after a rename / move, read from the index as it stands before it. */

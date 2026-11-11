@@ -737,7 +737,7 @@ function _renderPerfSlaMultiChart(container, series, metricKey, meta, opts) {
   _observeChartResize(container, function (c) { _renderPerfSlaMultiChart(c, series, metricKey, meta, opts); });
 }
 
-// ─── Fibre Channel tab (business rule 156) ─────────────────────────────────
+// ─── Fibre Channel tab (business rule 159) ─────────────────────────────────
 //
 // One tab, two readings of one fetch (`api.assets.fibreChannel`):
 //  - on an FC switch, its ports and the device logged into each one, with the

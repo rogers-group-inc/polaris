@@ -811,7 +811,7 @@ async function collectPhysicalEntitiesSnmp(
 
 /**
  * A fibre-channel switch's ports and the devices logged into them (business
- * rule 156, utils/fibreChannel.ts).
+ * rule 159, utils/fibreChannel.ts).
  *
  * Every table is named by its MIB SYMBOL and resolved at the asset's scope
  * through the registry (`resolveOidSync`), like every vendor object Polaris
@@ -1555,7 +1555,7 @@ export async function collectSystemInfoSnmp(
       physicalEntities = entityWalk?.rows;
       entityIdentityRows = entityWalk?.identityRows;
 
-      // Fibre-channel ports and logins (business rule 156). One GETNEXT for a
+      // Fibre-channel ports and logins (business rule 159). One GETNEXT for a
       // device that is not an FC switch; port names from the IF-MIB walk above.
       fibreChannel = await collectFibreChannelSnmp(session, poeIfNames, vendorScope).catch(() => undefined);
 

@@ -13,15 +13,20 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Prisma } from "../../src/generated/prisma/client.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  subnetFindUnique: stubbed(prisma.subnet.findUnique),
+  subnetUpdate: stubbed(prisma.subnet.update),
+  resUpdate: stubbed(prisma.reservation.update),
+  resUpdateMany: stubbed(prisma.reservation.updateMany),
+  resCreateMany: stubbed(prisma.reservation.createMany),
+  resFindMany: stubbed(prisma.reservation.findMany),
+  transaction: stubbed(prisma.$transaction),
+};
 
 const m = vi.hoisted(() => ({
-  subnetFindUnique: vi.fn(),
-  subnetUpdate: vi.fn(),
-  resUpdate: vi.fn(),
-  resUpdateMany: vi.fn(),
-  resCreateMany: vi.fn(),
-  resFindMany: vi.fn(),
-  transaction: vi.fn(),
   logEvent: vi.fn(),
   callFortiOs: vi.fn(),
   listReservedAddresses: vi.fn(),
@@ -29,18 +34,7 @@ const m = vi.hoisted(() => ({
   buildTransport: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    subnet: { findUnique: m.subnetFindUnique, update: m.subnetUpdate },
-    reservation: {
-      update: m.resUpdate,
-      updateMany: m.resUpdateMany,
-      createMany: m.resCreateMany,
-      findMany: m.resFindMany,
-    },
-    $transaction: m.transaction,
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/reservationPushService.js", async () => {
   const mac = await import("../../src/utils/mac.js");
@@ -96,18 +90,19 @@ let vipFails: Error | null = null;
 let liveRows: Row[] = [];
 
 function updatesFor(id: string): Row[] {
-  return m.resUpdate.mock.calls
+  return db.resUpdate.mock.calls
     .filter(([a]) => (a as { where: { id: string } }).where.id === id)
     .map(([a]) => (a as { data: Row }).data);
 }
 function created(): Row[] {
-  return m.resCreateMany.mock.calls.flatMap(([a]) => (a as { data: Row[] }).data);
+  return db.resCreateMany.mock.calls.flatMap(([a]) => (a as { data: Row[] }).data);
 }
 function eventsWith(action: string): Row[] {
   return m.logEvent.mock.calls.map(([e]) => e as Row).filter((e) => e.action === action);
 }
 
 beforeEach(() => {
+  resetDbStub();
   for (const fn of Object.values(m)) fn.mockReset();
   leasesResponse = [];
   vipResponse = [];
@@ -124,29 +119,29 @@ beforeEach(() => {
     }
     throw new Error(`unexpected path ${path}`);
   });
-  m.resUpdate.mockImplementation(async (a: unknown) => a);
-  m.resUpdateMany.mockResolvedValue({ count: 0 });
-  m.resCreateMany.mockImplementation(async (a: { data: unknown[] }) => ({ count: a.data.length }));
-  m.resFindMany.mockImplementation(async () => liveRows);
-  m.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
-  m.subnetUpdate.mockResolvedValue({});
+  db.resUpdate.mockImplementation(async (a: unknown) => a);
+  db.resUpdateMany.mockResolvedValue({ count: 0 });
+  db.resCreateMany.mockImplementation(async (a: { data: unknown[] }) => ({ count: a.data.length }));
+  db.resFindMany.mockImplementation(async () => liveRows);
+  db.transaction.mockImplementation(async (ops: Promise<unknown>[]) => Promise.all(ops));
+  db.subnetUpdate.mockResolvedValue({});
 });
 
 // ─── Preconditions ───────────────────────────────────────────────────────────
 
 describe("refreshSubnet — which subnets it will discover", () => {
   it("404s for a subnet that does not exist", async () => {
-    m.subnetFindUnique.mockResolvedValue(null);
+    db.subnetFindUnique.mockResolvedValue(null);
     await expect(refreshSubnet("nope", "alice")).rejects.toMatchObject({ httpStatus: 404 });
   });
 
   it("400s for a manually created subnet (no discovering integration)", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet([], { discoveredBy: null, integration: null }));
+    db.subnetFindUnique.mockResolvedValue(subnet([], { discoveredBy: null, integration: null }));
     await expect(refreshSubnet("sub-1", "alice")).rejects.toMatchObject({ httpStatus: 400 });
   });
 
   it("400s for a subnet discovered by a non-Fortinet integration", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([], { integration: { id: "i", name: "DHCP", type: "windowsserver", config: {} } }),
     );
     await expect(refreshSubnet("sub-1", "alice")).rejects.toMatchObject({ httpStatus: 400 });
@@ -154,12 +149,12 @@ describe("refreshSubnet — which subnets it will discover", () => {
   });
 
   it("400s when the subnet names no FortiGate device", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet([], { fortigateDevice: null }));
+    db.subnetFindUnique.mockResolvedValue(subnet([], { fortigateDevice: null }));
     await expect(refreshSubnet("sub-1", "alice")).rejects.toMatchObject({ httpStatus: 400 });
   });
 
   it("accepts a standalone FortiGate integration as well as FortiManager", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([], { integration: { id: "i", name: "FG", type: "fortigate", config: {} } }),
     );
     await expect(refreshSubnet("sub-1", "alice")).resolves.toMatchObject({ created: 0 });
@@ -171,7 +166,7 @@ describe("refreshSubnet — which subnets it will discover", () => {
 
 describe("refreshSubnet — reading the live lease table", () => {
   it("accepts the grouped shape, keeps only this scope's interface, and drops 0.0.0.0", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     leasesResponse = [
       { server_interface: "lan", leases: [{ ip: "10.1.0.20", mac: "AA-BB-CC-00-00-20", hostname: "pc20" }, { ip: "0.0.0.0" }] },
       // Another server's lease outside this subnet: filtered out.
@@ -185,14 +180,14 @@ describe("refreshSubnet — reading the live lease table", () => {
   });
 
   it("keeps a lease on a different interface when its IP is still inside the subnet (VDOM case)", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     leasesResponse = [{ server_interface: "vdom-link", leases: [{ ip: "10.1.0.30" }] }];
     await refreshSubnet("sub-1", null);
     expect(created().map((c) => c.ipAddress)).toEqual(["10.1.0.30"]);
   });
 
   it("accepts the flat shape and the .results wrapper", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     leasesResponse = { results: [{ ip: "10.1.0.40", reserved: true }, { ip: "10.2.0.1" }] };
     await refreshSubnet("sub-1", null);
     // A lease the gate marks reserved is a reservation, not a lease.
@@ -202,7 +197,7 @@ describe("refreshSubnet — reading the live lease table", () => {
 
 describe("refreshSubnet — DHCP reconcile", () => {
   it("lets a CMDB reservation win over a live lease at the same IP", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     m.listReservedAddresses.mockResolvedValue([{ id: 11, ip: "10.1.0.10", mac: "AA:BB:CC:00:00:10", description: "printer" }]);
     leasesResponse = [{ ip: "10.1.0.10", mac: "aa:bb:cc:99:99:99", hostname: "lease-name" }];
     await refreshSubnet("sub-1", null);
@@ -212,7 +207,7 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("recovers the hostname from a Polaris-written description, bracketed or legacy, and not from a foreign one", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     m.listReservedAddresses.mockResolvedValue([
       { id: 1, ip: "10.1.0.11", description: "Polaris/alice: front desk printer [prn-11]" },
       { id: 2, ip: "10.1.0.12", description: "Polaris: prn-12" },
@@ -224,11 +219,11 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("creates discovered rows unowned and active, with skipDuplicates, and reports what actually landed", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     leasesResponse = [{ ip: "10.1.0.50" }, { ip: "10.1.0.51" }];
-    m.resCreateMany.mockResolvedValueOnce({ count: 1 }); // one IP lost a race on @@unique
+    db.resCreateMany.mockResolvedValueOnce({ count: 1 }); // one IP lost a race on @@unique
     const r = await refreshSubnet("sub-1", "alice");
-    const call = m.resCreateMany.mock.calls[0][0] as { data: Row[]; skipDuplicates: boolean };
+    const call = db.resCreateMany.mock.calls[0][0] as { data: Row[]; skipDuplicates: boolean };
     expect(call.skipDuplicates).toBe(true);
     for (const row of call.data) {
       expect(row).toMatchObject({ status: "active", createdBy: null, subnetId: "sub-1" });
@@ -237,7 +232,7 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("flips sourceType on a lease that became a reservation, and the canonical owner placeholder with it", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([
         res({ ipAddress: "10.1.0.60", sourceType: "dhcp_lease", owner: "dhcp-lease", macAddress: "aa:bb:cc:00:00:60" }),
         res({ ipAddress: "10.1.0.61", sourceType: "dhcp_lease", owner: "Facilities", macAddress: "aa:bb:cc:00:00:61" }),
@@ -257,7 +252,7 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("an unchanged reservation seen again only refreshes lastSeenLeased", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.62", sourceType: "dhcp_reservation", macAddress: "aa:bb:cc:00:00:62" })]),
     );
     m.listReservedAddresses.mockResolvedValue([{ id: 62, ip: "10.1.0.62", mac: "aa:bb:cc:00:00:62" }]);
@@ -267,7 +262,7 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("releases dhcp_* rows the device no longer reports, in one updateMany", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([
         res({ ipAddress: "10.1.0.70", sourceType: "dhcp_lease" }),
         res({ ipAddress: "10.1.0.71", sourceType: "dhcp_reservation" }),
@@ -275,8 +270,8 @@ describe("refreshSubnet — DHCP reconcile", () => {
       ]),
     );
     const r = await refreshSubnet("sub-1", null);
-    expect(m.resUpdateMany).toHaveBeenCalledTimes(1);
-    expect(m.resUpdateMany.mock.calls[0][0]).toEqual({
+    expect(db.resUpdateMany).toHaveBeenCalledTimes(1);
+    expect(db.resUpdateMany.mock.calls[0][0]).toEqual({
       where: { id: { in: ["r-10.1.0.70", "r-10.1.0.71"] } },
       data: { status: "released" },
     });
@@ -284,7 +279,7 @@ describe("refreshSubnet — DHCP reconcile", () => {
   });
 
   it("leaves a manual row alone, counts it skipped, and never releases it", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([
         res({ ipAddress: "10.1.0.80", sourceType: "manual", owner: "ops" }),
         res({ ipAddress: "10.1.0.81", sourceType: "manual" }),
@@ -295,13 +290,13 @@ describe("refreshSubnet — DHCP reconcile", () => {
     expect(r.skipped).toBe(1);
     expect(updatesFor("r-10.1.0.80")).toEqual([]);
     expect(created()).toEqual([]);
-    expect(m.resUpdateMany).not.toHaveBeenCalled();
+    expect(db.resUpdateMany).not.toHaveBeenCalled();
   });
 });
 
 describe("refreshSubnet — pending push-queued rows", () => {
   it("adopts a pending row in place when the gate already holds the same reservation (same MAC)", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.90", sourceType: "manual", pushStatus: "pending", macAddress: "AA-BB-CC-00-00-90", hostname: "kiosk" })]),
     );
     m.listReservedAddresses.mockResolvedValue([{ id: 90, ip: "10.1.0.90", mac: "aa:bb:cc:00:00:90" }]);
@@ -321,7 +316,7 @@ describe("refreshSubnet — pending push-queued rows", () => {
   });
 
   it("marks a pending row failed_permanent when the gate leased its IP to another MAC, and creates nothing there", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.91", sourceType: "manual", pushStatus: "pending", macAddress: "aa:bb:cc:00:00:91" })]),
     );
     leasesResponse = [{ ip: "10.1.0.91", mac: "aa:bb:cc:ff:ff:ff" }];
@@ -337,7 +332,7 @@ describe("refreshSubnet — pending push-queued rows", () => {
   });
 
   it("treats a same-MAC live LEASE (not a CMDB entry) as a collision, not an adoption", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.92", sourceType: "manual", pushStatus: "pending", macAddress: "aa:bb:cc:00:00:92" })]),
     );
     leasesResponse = [{ ip: "10.1.0.92", mac: "aa:bb:cc:00:00:92" }];
@@ -357,7 +352,7 @@ const vipRow = (name: string, extip: string, mapped: string[] = []) => ({
 
 describe("refreshSubnet — a vip row learns the DHCP fact", () => {
   it("stamps dhcpBinding on a vip row at a leased address and never flips its sourceType", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.100", sourceType: "vip", owner: "web-vip" })]),
     );
     leasesResponse = [{ ip: "10.1.0.100", mac: "aa:bb:cc:00:01:00" }];
@@ -373,7 +368,7 @@ describe("refreshSubnet — a vip row learns the DHCP fact", () => {
 
 describe("refreshSubnet — VIP table read", () => {
   it("creates a vip row where nothing holds a VIP address, and ignores VIP addresses outside the subnet", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     vipResponse = [vipRow("web", "203.0.113.5", ["10.1.0.110"])];
     const r = await refreshSubnet("sub-1", null);
     const vipCreates = created().filter((c) => c.sourceType === "vip");
@@ -391,7 +386,7 @@ describe("refreshSubnet — VIP table read", () => {
 
   it("stamps the snapshot onto a row a DHCP pass already holds, and only when it differs", async () => {
     const snap = { name: "web", device: GATE, extip: "203.0.113.5", role: "mapped", isVirtualServer: false };
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     vipResponse = [vipRow("web", "203.0.113.5", ["10.1.0.111", "10.1.0.112"])];
     liveRows = [
       { id: "lease-111", ipAddress: "10.1.0.111", sourceType: "dhcp_lease", vipInfo: null },
@@ -404,10 +399,10 @@ describe("refreshSubnet — VIP table read", () => {
   });
 
   it("reads the subnet's rows AFTER the DHCP flush so a row created this pass gets its snapshot", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     const order: string[] = [];
-    m.resCreateMany.mockImplementation(async (a: { data: unknown[] }) => { order.push("createMany"); return { count: a.data.length }; });
-    m.resFindMany.mockImplementation(async () => { order.push("findMany"); return []; });
+    db.resCreateMany.mockImplementation(async (a: { data: unknown[] }) => { order.push("createMany"); return { count: a.data.length }; });
+    db.resFindMany.mockImplementation(async () => { order.push("findMany"); return []; });
     leasesResponse = [{ ip: "10.1.0.113" }];
     vipResponse = [vipRow("web", "203.0.113.5", ["10.1.0.114"])];
     await refreshSubnet("sub-1", null);
@@ -415,7 +410,7 @@ describe("refreshSubnet — VIP table read", () => {
   });
 
   it("an unreadable VIP table is reported, never treated as 'no VIPs', and the DHCP reconcile still completes", async () => {
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([res({ ipAddress: "10.1.0.120", sourceType: "dhcp_lease" })]),
     );
     leasesResponse = [{ ip: "10.1.0.121" }];
@@ -426,19 +421,19 @@ describe("refreshSubnet — VIP table read", () => {
     expect(r.created).toBe(1);
     expect(r.released).toBe(1);
     // No VIP decision ran: the stored VIP is untouched.
-    expect(m.resFindMany).not.toHaveBeenCalled();
+    expect(db.resFindMany).not.toHaveBeenCalled();
     expect(updatesFor("vip-1")).toEqual([]);
     expect(r.vipsCleared).toBe(0);
     const ev = eventsWith("subnet.refresh")[0];
     expect(String(ev.message)).toContain("could not be read");
     expect((ev.details as Row).vipError).toBe("403 Forbidden");
-    expect(m.subnetUpdate).toHaveBeenCalled();
+    expect(db.subnetUpdate).toHaveBeenCalled();
   });
 });
 
 describe("refreshSubnet — retiring a VIP the gate no longer reports", () => {
   beforeEach(() => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     vipResponse = [];
   });
 
@@ -465,7 +460,7 @@ describe("refreshSubnet — retiring a VIP the gate no longer reports", () => {
     ];
     // The two DHCP addresses also exist as vip rows in the pre-read snapshot,
     // so the DHCP half only stamps dhcpBinding on them.
-    m.subnetFindUnique.mockResolvedValue(
+    db.subnetFindUnique.mockResolvedValue(
       subnet([
         res({ id: "canon", ipAddress: "10.1.0.132", sourceType: "vip" }),
         res({ id: "custom", ipAddress: "10.1.0.133", sourceType: "vip" }),
@@ -495,10 +490,10 @@ describe("refreshSubnet — completion", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-11-09T12:00:00Z"));
-      m.subnetFindUnique.mockResolvedValue(subnet());
+      db.subnetFindUnique.mockResolvedValue(subnet());
       leasesResponse = [{ ip: "10.1.0.140" }];
       const r = await refreshSubnet("sub-1", "alice");
-      expect(m.subnetUpdate).toHaveBeenCalledWith({
+      expect(db.subnetUpdate).toHaveBeenCalledWith({
         where: { id: "sub-1" },
         data: { lastDiscoveredAt: new Date("2026-11-09T12:00:00Z") },
       });
@@ -513,9 +508,9 @@ describe("refreshSubnet — completion", () => {
   });
 
   it("does not bump lastDiscoveredAt when the DHCP read fails", async () => {
-    m.subnetFindUnique.mockResolvedValue(subnet());
+    db.subnetFindUnique.mockResolvedValue(subnet());
     m.listReservedAddresses.mockRejectedValue(new Error("timeout"));
     await expect(refreshSubnet("sub-1", null)).rejects.toThrow("timeout");
-    expect(m.subnetUpdate).not.toHaveBeenCalled();
+    expect(db.subnetUpdate).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 /**
  * src/services/fibreChannelService.ts
  *
- * Business rule 156: a fibre-channel switch's ports and the devices logged
+ * Business rule 159: a fibre-channel switch's ports and the devices logged
  * into them, stored as CURRENT STATE on the switch asset (`AssetFcPort`,
  * `AssetFcLogin`), each login resolved to the asset it is when the device
  * registered a host name that exactly one asset answers to.
@@ -289,7 +289,7 @@ const text = (v: string | null | undefined, max = 255) => {
 
 /**
  * Record a host's own HBA ports as one source reported them (business rule
- * 156): `source` "agent" or "vcenter". An empty list clears that source's
+ * 159): `source` "agent" or "vcenter". An empty list clears that source's
  * rows (the host was read and has none); a port whose WWN is not a WWN is
  * dropped. Edge-triggered: an unchanged reading costs an in-memory compare.
  * Matching happens on the switch's next pass, which looks these rows up.

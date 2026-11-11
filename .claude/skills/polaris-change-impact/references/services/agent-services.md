@@ -673,6 +673,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Wired into GET /agents/config and the heartbeat:** `agents.ts` ships `pathChecks: await agentConfigChecks(assetId, agentVersion)` in the payload (strong ETag covers it) AND folds `pathCheckEtagFold(...)` into `computeConfigEtag` as `conn`. **Both halves or neither** — the heartbeat etag is the only thing that makes a running agent refetch.
 
 **When changing this:** a field the agent reads → `agentDefCore` + `transport.PathCheckDef` in `agent/internal/transport/client.go` + an `agent/VERSION` bump, in lockstep — AND `services/pathCheckServerRunner.ts`, which runs the same definition on the server. A new kind → `CHECK_KINDS`, `targetHostOf`, the route's Zod enum, the agent's `ValidateCheckDef` + runner, the server runner, and the wizard. A new membership signal → the 5-minute job catches it; a write path that changes membership should reconcile inline.
+- Rule 157(c): `normalizeCheckInput` drops a pinned `assetIds` entry that names no asset (one `asset.findMany` on save), so a check pinned only to deleted hosts fails the "runs somewhere" validation instead of saving and running nowhere. Deleting or merging an asset prunes / re-points `PathCheck.assetIds` in `assetRemovalService`; the 5-minute `reconcilePathCheckSources` then rebuilds the sources.
 
 ---
 

@@ -1,5 +1,5 @@
 // fcports.go — the host's own fibre-channel HBA ports (Polaris business
-// rule 156).
+// rule 159).
 //
 // Rides the system-info push. What a fibre-channel switch logs in is a
 // port WWN; the host reporting the same WWN is the exact match between the

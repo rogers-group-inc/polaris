@@ -692,7 +692,7 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
     endEnt({ entities: d.physicalEntities.length });
     stopWrite();
   }
-  // Fibre-channel ports and logins (business rule 156). Same undefined /
+  // Fibre-channel ports and logins (business rule 159). Same undefined /
   // walked contract: undefined = not an FC switch, nothing written.
   if (d.fibreChannel) {
     const endFc = startPhase("systeminfo.persist.fibre_channel");

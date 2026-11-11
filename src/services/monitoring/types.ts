@@ -394,7 +394,7 @@ export interface SystemInfoSample {
   selfIdentity?: SnmpSelfIdentity;
   /**
    * A fibre-channel switch's ports and the devices logged into them (business
-   * rule 156, utils/fibreChannel.ts). Undefined = not an FC switch, or a
+   * rule 159, utils/fibreChannel.ts). Undefined = not an FC switch, or a
    * transport that cannot say: stored rows stay. An object = the device was
    * walked, and its rows replace the stored ones.
    */

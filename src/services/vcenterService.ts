@@ -72,7 +72,7 @@ export interface DiscoveredVcenterHost {
   // renders nothing rather than claiming the host has no vSwitches.
   vswitches: VcenterHostVswitch[] | null;
   portgroups: VcenterHostPortgroup[] | null;
-  // The host's fibre-channel HBAs (business rule 156), from the same SOAP
+  // The host's fibre-channel HBAs (business rule 159), from the same SOAP
   // fetch. `null` = not read this run; `[]` = read, none.
   fcHbas?: VcenterHostFcHba[] | null;
 }
@@ -1300,7 +1300,7 @@ export interface VcenterHostStats {
    */
   vswitches: VcenterHostVswitch[] | null;
   portgroups: VcenterHostPortgroup[] | null;
-  /** FC HBAs (rule 156); null = not published. */
+  /** FC HBAs (rule 159); null = not published. */
   fcHbas: VcenterHostFcHba[] | null;
 }
 
@@ -1320,7 +1320,7 @@ const HOST_STATS_PATHS = [
   "config.network.vswitch",
   "config.network.proxySwitch",
   "config.network.portgroup",
-  // The host's HBAs (business rule 156) — FC ones carry the WWNs a switch logs in.
+  // The host's HBAs (business rule 159) — FC ones carry the WWNs a switch logs in.
   "config.storageDevice.hostBusAdapter",
 ];
 

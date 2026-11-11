@@ -1,7 +1,7 @@
 /**
  * tests/unit/fibreChannel.test.ts
  *
- * Business rule 156 — the pure half (utils/fibreChannel.ts). The walk shapes
+ * Business rule 159 — the pure half (utils/fibreChannel.ts). The walk shapes
  * are a Cisco MDS 9148S's (2026-11-11), with synthetic WWNs:
  *
  *   fcIfNxPortName   …289.1.1.5.1.3.<ifIndex>.<vsan>.<loginIndex> = 8 bytes

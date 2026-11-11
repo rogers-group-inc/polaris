@@ -589,7 +589,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/fibreChannelService.ts
 
-**What it owns:** Business rule 156 — a fibre-channel switch's ports and the devices logged into them, as CURRENT STATE on the switch (`AssetFcPort`, `AssetFcLogin`); a server's own HBA ports as its sources report them (`AssetHbaPort`); each login resolved to the asset reporting its WWN, else the one its registered host name names; and the Fibre Channel tab's payload for either side.
+**What it owns:** Business rule 159 — a fibre-channel switch's ports and the devices logged into them, as CURRENT STATE on the switch (`AssetFcPort`, `AssetFcLogin`); a server's own HBA ports as its sources report them (`AssetHbaPort`); each login resolved to the asset reporting its WWN, else the one its registered host name names; and the Fibre Channel tab's payload for either side.
 
 **Public API:** `persistFibreChannel(switchId, { ports, logins }, now?)` — full replace keeping `firstSeen`, matching through `pickWwnMatch` then `pickHostMatch`, one `asset.fc_logins_changed` Event on a change; never throws. `recordHostHbaPorts(assetId, "agent" | "vcenter", ports, now?)` — normalises (`normalizeWwn`, bad WWNs dropped, 64 max), edge-triggered in memory (`lastHbaReading`, reset by `resetHbaPortCache()`), delete + create per (asset, source) keeping `firstSeen`, `[]` clears; never throws. `getFibreChannelForAsset(assetId)` → `{ collectedAt, switch: { ports, logins } | null, host: { fabrics: [{ switch, vsans, ports (+ the switch port's `errorCounters`, `matchMethod`), others }], hbas: [{ source, name, portWwn, nodeWwn, portState, speed, fabricWwn, model, firmware, driver, seenBy: [{ switch, ifName, vsan }] }] } | null }`.
 

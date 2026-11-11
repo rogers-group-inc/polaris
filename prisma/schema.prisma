@@ -2613,7 +2613,7 @@ model AssetPhysicalEntity {
 }
 
 // A fibre-channel switch port, from CISCO-FC-FE-MIB fcIfErrorTable (business
-// rule 156). CURRENT STATE, full-replaced on each SNMP system-info pass that
+// rule 159). CURRENT STATE, full-replaced on each SNMP system-info pass that
 // found FC ports; never written for a device that has none. The counters are
 // the switch's cumulative totals since they were last cleared, kept as one
 // JSON blob because Counter32 values pass Int's range (2.3e9 seen on a bad
@@ -2640,7 +2640,7 @@ model AssetFcPort {
 // One device logged into a fibre-channel switch port (an HBA, a storage
 // array's target port), from CISCO-FC-FE-MIB fcIfFLoginTable, named through
 // the switch's name server (CISCO-NS-MIB) and FDMI (CISCO-FDMI-MIB) — business
-// rule 156. CURRENT STATE on the SWITCH asset. `matchedAssetId` is the asset
+// rule 159. CURRENT STATE on the SWITCH asset. `matchedAssetId` is the asset
 // the device was resolved to (`matchMethod` "name": the registered host name
 // equalled exactly one asset's hostname or DNS name — rule 91).
 model AssetFcLogin {
@@ -2680,7 +2680,7 @@ model AssetFcLogin {
   @@map("asset_fc_logins")
 }
 
-// A fibre-channel HBA port as the HOST reports it (business rule 156): the
+// A fibre-channel HBA port as the HOST reports it (business rule 159): the
 // Polaris Agent (Linux sysfs fc_host / Windows MSFT_InitiatorPort) or vCenter
 // (HostSystem config.storageDevice.hostBusAdapter). CURRENT STATE per
 // (asset, source), replaced when the source's reading changes. The port WWN

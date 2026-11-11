@@ -296,6 +296,10 @@
       + '    <button class="icon-btn" id="asset-sheet-back" aria-label="Back" disabled><svg viewBox="0 0 24 24"><use href="#i-chev-left"/></svg></button>'
       + '    <button class="icon-btn" id="asset-sheet-fwd" aria-label="Forward" disabled><svg viewBox="0 0 24 24"><use href="#i-chev-right"/></svg></button>'
       + '    <span class="asset-sheet-toolbar-gap"></span>'
+      // Share: the phone's share sheet with this device's surface-neutral
+      // link (public/js/share-link.js) — it opens the desktop panel or this
+      // sheet, whichever the recipient opens it on.
+      + (window.PolarisShare ? '    <button class="icon-btn" id="asset-sheet-share" aria-label="Share"><svg viewBox="0 0 24 24"><use href="#i-share"/></svg></button>' : '')
       + '    <button class="icon-btn" id="asset-sheet-screenshot" aria-label="Screenshot"><svg viewBox="0 0 24 24"><use href="#i-camera"/></svg></button>'
       + '    <button class="icon-btn" id="asset-sheet-refresh" aria-label="Refresh"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
       + '    <button class="icon-btn" id="asset-sheet-close" aria-label="Close"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button>'
@@ -346,6 +350,16 @@
     document.getElementById("asset-sheet-screenshot").addEventListener("click", function () {
       if (_state !== "expanded") return;
       screenshotSheet(this);
+    });
+    // Same peek rule as the camera: a tap on a peeked band expands first.
+    var shareBtn = document.getElementById("asset-sheet-share");
+    if (shareBtn) shareBtn.addEventListener("click", function () {
+      if (_state !== "expanded" || !_openAsset || !_openAsset.id) return;
+      var a = _openAsset;
+      window.PolarisShare.share("asset", a.id, {
+        native: true,
+        title: a.hostname || a.dnsName || a.ipAddress || "Device",
+      });
     });
     // Tapping the header while peeked re-expands (ignore taps on the buttons).
     sheet.querySelector(".asset-sheet-header").addEventListener("click", function (e) {

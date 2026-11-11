@@ -565,7 +565,8 @@ Every site has a default view, and you can save more. A view is a name, one
   once you move things.
 - **Topology** — a map or floor plan you place devices on, with polygons for
   your location groups.
-- **Rack** — rack elevations you put devices into.
+- **Room** — one room's racks and junction boxes, side by side, that you put
+  devices into.
 
 The view button beside the site's name opens the view menu: pick a view to
 switch to it, or choose **New view**, **View settings** (its name and mode) or
@@ -606,14 +607,14 @@ change: the device's room (`r:`), rack (`ra:`) and junction box (`jb:`) stay as
 they are, and a device whose building is already right isn't listed at all. A
 device placed outside every polygon keeps its codes
 ([rule 148](Business-Rules#rule-148)). Rooms, racks and junction boxes are
-placed on Rack and Wall views, which likewise change only the levels their
-region names. Links between
+placed on Room views, which likewise change only the room, rack and junction
+box. Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.
 Right-click a placed device to remove it from the map (its codes stay), or
 click it and press **Delete**: it goes back to the Device List.
 
-**Click a device** — a node in Layer 2, a placed device in Topology, a racked
-device in Rack, or a row in the Device List — and the details pane's info card
+**Click a device** — a node in Layer 2, a placed device in Topology, a device
+in a Room view's rack or junction box, or a row in the Device List — and the details pane's info card
 (serial, model, address, status, location…) shows that device instead of the
 FortiGate. Click the canvas background, or the card's **×**, to go back to the
 FortiGate.
@@ -625,56 +626,45 @@ skipped. On a FortiSwitch or FortiAP the new description is also sent to the
 device when description sync is on. **Load** offers **Discard changes since
 the last save**, and **Export** copies a picture of the map.
 
-**A Rack view** opens with one empty 42U rack, its U numbers up the rail
-(U1 at the bottom). In edit mode:
+**A Room view** stands for one room and shows its **racks** and its
+**junction boxes** side by side, racks first. A wall is just a big junction box
+with no door, so there is no separate wall: give a junction box the size you
+need (96 × 48 in by default, drawn as pegboard with a hole every inch). A rack
+can't go in a junction box. In edit mode:
 
-- Drag a device from the **Device List** onto a rack (a racked device is
-  highlighted there, with an **×** to take it out of the rack): it lands as a 1U block at the
-  U under the pointer, or the nearest free U. Drag **Cable management** from
-  **Rack items** to add a placeholder; you can add as many as you need.
-  Drag **Third party** for equipment Polaris does not monitor (an ISP router,
-  a patch panel): name it when you drop it, and double-click it (or
-  right-click → **Rename**) to change the name.
-- Drag a block's top or bottom edge to change its height, and its body to
-  move it within a rack or to another rack. Both move a U at a time and stop
-  at the next item or the end of the rack.
-- Everything you rack is **half depth** at first: it takes its U on the face
-  you dropped it on only, so you can turn the rack round and rack another
-  device in the same U on the back. Right-click a block to make it **full
-  depth** (it then takes the U on both faces and shows as a dashed outline on
-  the other one), move it to the other face, or remove it. Or click a racked
-  device and press **Delete** to take it out of the rack.
-- The **Front** button in a rack's header turns the rack round and then reads
-  **Back** (while you are only viewing, that is just a look). Double-click the
-  rack's name to rename it and its **42U** to change its size; a rack can't
-  shrink below something racked in it. **Add rack** adds a 42U rack to the
-  right, drag a rack by its header to move it, and the **×** on every rack
-  after the first deletes it.
+- Drag a device from the **Device List** onto a rack (it lands as a 1U block at
+  the U under the pointer, or the nearest free U) or into a junction box (a
+  12 × 8 in shape at the pointer, or the nearest free space). A device is in one
+  place: one already in a junction box can't also be racked, and the Device List
+  says where each one is, with an **×** to take it out. **Room items** adds
+  **Cable management** and named **Third party** boxes (an ISP router, a patch
+  panel), in a rack or a junction box, as many as you need.
+- **In a rack:** drag a block's top or bottom edge to change its height, and its
+  body to move it within a rack or to another rack, a U at a time. Everything
+  you rack is **half depth** at first, so you can turn the rack round and rack
+  another device in the same U on the back; right-click a block to make it
+  **full depth**, move it to the other face, or remove it. The **Front** button
+  turns the rack round and then reads **Back**. Double-click the rack's name to
+  rename it and its **42U** to change its size; drag a rack by its header to
+  move it among the racks.
+- **In a junction box:** every item is a shape you edit like a map region: drag
+  it to move it, drag a corner to reshape it, drag the **+** on an edge to add a
+  corner, and right-click a corner to remove it. Corners snap to whole inches,
+  and items can't overlap: a move that would cover another item is put back.
+  Double-click a box's name to rename it and its size to change it. **Zoom in** /
+  **Zoom out** draw the junction boxes larger or smaller.
+- **Add rack** and **Add junction box** add one; the **×** on a header deletes
+  it. Undo and redo cover both racks and junction boxes.
 
-Racking a device never changes its description.
+When you save, a device in a rack gets the room and that rack in its description
+(`r:Wiring Closet ra:R1`) and loses any junction box; a device in a junction box
+gets the room and that box (`r:Wiring Closet jb:JB-7`) and loses any rack. The
+rest of its description stays, and you see the change first
+([rule 156](Business-Rules#rule-156)). A rack or junction box's name is the
+code, so renaming one in **Location regions** renames it here too.
 
-**A Wall view** is for gear mounted flat: a closet backboard, a pegboard, a
-junction box's backplate. It opens with one wall of the size you gave when you
-created it (96 × 48 in by default), drawn as pegboard with a hole every inch.
-In edit mode:
-
-- Drag a device from the **Device List** onto a wall: it lands as a 12 × 8 in
-  shape at the pointer, or in the nearest free space. **Wall items** adds
-  **Cable management**, a named **Third party** box, and a **Rack**: a Rack asks
-  for its size in U and whether it opens a saved Rack view, a new one, or none.
-  Double-click a linked rack (when you're not editing) to open its Rack view.
-- Every item is a shape you edit like a map region: drag it to move it, drag a
-  corner to reshape it, drag the **+** on an edge to add a corner, and
-  right-click a corner to remove it. Corners snap to whole inches.
-- Items can't overlap, because they're mounted flat: a move or reshape that
-  would cover another item is put back, and Polaris names what it hit. Items
-  may touch along an edge.
-- Double-click a wall's name to rename it and its size to change it; **Add
-  wall** adds another to the right, and the **×** deletes any wall after the
-  first. **Zoom in** / **Zoom out** draw the walls larger or smaller.
-
-A device's icon (Server Settings → Customization) is drawn on its shape here,
-and beside its name in a rack.
+A device's icon (Server Settings → Customization) is drawn on its shape in a
+junction box, and beside its name in a rack.
 
 **Floors are layers of a Topology view.** Every Topology view opens on **Layer
 0**, the flat view, which ignores floors and writes no floor code. The **Layer**
@@ -688,22 +678,20 @@ List says which, and clicking it takes you there. A device placed on a floor
 layer gets that floor's `f:` code when you save; it keeps its other codes unless
 you drop it inside a polygon on that layer ([rule 152](Business-Rules#rule-152)).
 
-**A Rack or Wall view can stand for a region.** When you create the view, or
-in **View settings**, choose the area, building, floor, room, rack or junction
-box it is for: any region the site's descriptions already name, or a custom
-one. Placing a device on that view then gives it the region's codes when you
-save, after the same summary a Topology view shows. Choosing a region never
-changes a description by itself, and existing regions are never removed —
-a region is still just the codes in device descriptions
-([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views don't take a
-region; they draw the regions themselves.
+**A Room view stands for a room.** When you create the view, or in **View
+settings**, choose the room it is for: any room the site's descriptions already
+name, or another one. Choosing a room never changes a description by itself, and
+existing regions are never removed — a region is still just the codes in device
+descriptions ([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views
+don't take a room; they draw the regions themselves.
 
 **Devices already in a rack or junction box are placed for you.** When you
-create a Rack or Wall view for a region, or link a view to a region in **View
-settings** or from the description prompt, every device whose description
-already names one of its racks (`ra:`) or junction boxes (`jb:`) is placed:
-one rack per rack name, each device a 1U block from the bottom up, and one
-wall per junction box. An empty placeholder rack or wall takes the name of
+create a Room view for a room (with **Start with: The room's racks and junction
+boxes**, the default), or link a view to a room in **View settings** or from the
+description prompt, every device whose description already names one of the
+room's racks (`ra:`) or junction boxes (`jb:`) is placed: one rack per rack name,
+each device a 1U block from the bottom up, and one junction box per box name. A
+device naming both is racked. An empty placeholder rack or box takes the name of
 the rack or box. Anything already in the view stays where it is, and a device
 that doesn't fit is counted in the message rather than squeezed in. It
 happens only when the region is set or changed, so a device you take out
@@ -727,18 +715,26 @@ is built, nothing about the map changes ([rule 153](Business-Rules#rule-153)).
 
 **Saving a description that names a new region offers a view for it.** When
 you save a device's description (in its Edit form, or with right-click on the
-map) and it names a room, rack or junction box that no Wall or Rack view stands
-for yet, Polaris asks, for each one, whether to create a Wall view, create a
-Rack view, map it to one of the site's existing Wall or Rack views, or leave it
-unmapped. **Don't map** is remembered in that browser. The description is saved
+map) and it names a room that no Room view stands for yet, Polaris asks
+whether to create a Room view for it, map it to one of the site's existing Room
+views, or leave it unmapped. A new rack or junction box in a room that already
+has a view asks nothing; open the view to place the device. **Don't map** is remembered in that browser. The description is saved
 either way. This needs Read-Write on the Device Map, and in the Edit form it
 works for FortiGates, FortiSwitches and FortiAPs (the map's own editor covers
 every device).
 
+**Rack and Wall views became Room views (2026-11).** If your install had them,
+the update converted every one: a room's Rack and Wall views became one Room
+view (with the oldest one's name), its walls became junction boxes, and a Rack
+item that hung on a wall became a rack in the room. No description changed. The
+**Events** page has one *Topology views converted* entry per Room view, naming
+what was folded together and any device that had been placed twice (it keeps its
+rack spot).
+
 **Changing a view's mode resets it.** Polaris first shows what the change
-removes: placed devices, group polygons, the uploaded background and racks. If
-you accept, the view starts again in the new mode with the default device
-types (a Rack view with one empty 42U rack). The name is kept, and location
+removes: placed devices, group polygons, the uploaded background, racks and
+junction boxes. If you accept, the view starts again in the new mode with the
+default device types (a Room view with no racks or junction boxes yet). The name is kept, and location
 codes already written to device descriptions stay
 ([rule 149](Business-Rules#rule-149)). Finish editing first: the change is
 refused while the view has unsaved edits.

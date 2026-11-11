@@ -1,4 +1,4 @@
--- Host-side fibre-channel HBA ports (business rule 156): what the Polaris Agent
+-- Host-side fibre-channel HBA ports (business rule 159): what the Polaris Agent
 -- and vCenter report about a server's own HBAs. New table only.
 
 -- CreateTable

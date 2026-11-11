@@ -1213,7 +1213,7 @@ const SystemInfoSchema = z.object({
   primaryMac:     z.string().max(64).optional(),
   primaryIp:      z.string().max(64).optional(),
   agentVersion:   z.string().max(64).optional(),     // copy of the running binary's version; informational
-  // Fibre-channel HBA ports (agent 0.29.0+, business rule 156). Absent = the
+  // Fibre-channel HBA ports (agent 0.29.0+, business rule 159). Absent = the
   // agent cannot say (older agent, unsupported OS): stored rows stay. An empty
   // list = read, and the host has none: they are cleared.
   fcPorts: z.array(z.object({
@@ -1236,7 +1236,7 @@ agentsRouter.post("/system-info", async (req, res, next) => {
     const managedAgentId = req.managedAgent!.managedAgentId;
     const now          = new Date();
 
-    // The host's own HBA ports (rule 156) — their own table, never the
+    // The host's own HBA ports (rule 159) — their own table, never the
     // identity blob below. Edge-triggered in the service.
     if (fcPorts) {
       await recordHostHbaPorts(

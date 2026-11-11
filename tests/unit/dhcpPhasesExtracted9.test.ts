@@ -7,24 +7,24 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  create: stubbed(prisma.reservation.create),
+  update: stubbed(prisma.reservation.update),
+  updateMany: stubbed(prisma.reservation.updateMany),
+  del: stubbed(prisma.reservation.delete),
+  findFirst: stubbed(prisma.reservation.findFirst),
+  conflictUpdateMany: stubbed(prisma.conflict.updateMany),
+};
 
 const m = vi.hoisted(() => ({
-  create: vi.fn(),
-  update: vi.fn(),
-  updateMany: vi.fn(),
-  del: vi.fn(),
-  findFirst: vi.fn(),
-  conflictUpdateMany: vi.fn(),
   logEvent: vi.fn(),
   releaseDns: vi.fn(),
   decideInfra: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    reservation: { create: m.create, update: m.update, updateMany: m.updateMany, delete: m.del, findFirst: m.findFirst },
-    conflict: { updateMany: m.conflictUpdateMany },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
 vi.mock("../../src/services/dnsResolvedReservationService.js", () => ({ releaseDnsResolvedAt: m.releaseDns }));
 vi.mock("../../src/utils/infraDhcpBinding.js", () => ({
@@ -37,11 +37,12 @@ const { syncDhcpEntries } = await import("../../src/services/discovery/dhcp/dhcp
 const LABEL = "FortiManager Integration";
 const KEY = "net1|10.1.0.5";
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  m.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "new", ...data }));
-  m.update.mockResolvedValue({});
-  m.updateMany.mockResolvedValue({ count: 0 });
-  m.conflictUpdateMany.mockResolvedValue({ count: 0 });
+  db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "new", ...data }));
+  db.update.mockResolvedValue({});
+  db.updateMany.mockResolvedValue({ count: 0 });
+  db.conflictUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 const lease = (over: Record<string, unknown> = {}) => ({
@@ -74,7 +75,7 @@ describe("Phase 5 — new entries", () => {
     const { state, done } = run([lease({ expireTime: 1_800_000_000, vci: "MSFT 5.0" })], {}, { assetIdx: { findByMac: (mac: string) => (mac === "AA:BB:CC:DD:EE:01" ? asset : undefined) } });
     await done;
     expect(m.releaseDns).toHaveBeenCalledWith("net1", "10.1.0.5");
-    expect(m.create.mock.calls[0][0].data).toMatchObject({
+    expect(db.create.mock.calls[0][0].data).toMatchObject({
       subnetId: "net1", ipAddress: "10.1.0.5", hostname: "laptop-7", owner: "jdoe", projectRef: LABEL,
       macAddress: "AA:BB:CC:DD:EE:01", sourceType: "dhcp_lease", expiresAt: new Date(1_800_000_000 * 1000), lastSeenLeased: null,
       notes: "DHCP lease on FGT-A (lan) — MAC: aa-bb-cc-dd-ee-01 — Model: MSFT 5.0",
@@ -89,27 +90,27 @@ describe("Phase 5 — new entries", () => {
       reservation({ ipAddress: "10.1.0.6", vci: "FortiAP-231F", seenLeased: true }),
     ]);
     await done;
-    expect(m.create.mock.calls.map((c) => c[0].data.sourceType)).toEqual(["fortiswitch", "fortinap"]);
-    expect(m.create.mock.calls[1][0].data.lastSeenLeased).toBeInstanceOf(Date);
+    expect(db.create.mock.calls.map((c) => c[0].data.sourceType)).toEqual(["fortiswitch", "fortinap"]);
+    expect(db.create.mock.calls[1][0].data.lastSeenLeased).toBeInstanceOf(Date);
     expect(state.dhcpReservations).toEqual(["10.1.0.6 (pc-1)"]);
   });
 
   it("on a unique collision with a dns_resolved row, deletes it and retries once", async () => {
-    m.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
-    m.findFirst.mockResolvedValue({ id: "dns1", sourceType: "dns_resolved" });
+    db.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    db.findFirst.mockResolvedValue({ id: "dns1", sourceType: "dns_resolved" });
     const { state, done } = run([lease()]);
     await done;
-    expect(m.del).toHaveBeenCalledWith({ where: { id: "dns1" } });
-    expect(m.create).toHaveBeenCalledTimes(2);
+    expect(db.del).toHaveBeenCalledWith({ where: { id: "dns1" } });
+    expect(db.create).toHaveBeenCalledTimes(2);
     expect(summary(state.syncLog)).toContain("newCreateRetry=1");
   });
 
   it("on a collision with any other source, skips and logs it", async () => {
-    m.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
-    m.findFirst.mockResolvedValue({ id: "m1", sourceType: "manual" });
+    db.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    db.findFirst.mockResolvedValue({ id: "m1", sourceType: "manual" });
     const { state, done } = run([lease()]);
     await done;
-    expect(m.del).not.toHaveBeenCalled();
+    expect(db.del).not.toHaveBeenCalled();
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to create DHCP lease for 10.1.0.5: collided with active manual reservation");
     expect(state.dhcpLeases).toEqual([]);
   });
@@ -117,7 +118,7 @@ describe("Phase 5 — new entries", () => {
   it("skips an entry with no address or no known network, and counts both", async () => {
     const { state, done } = run([lease({ ipAddress: "" }), lease({ ipAddress: "192.0.2.9" })]);
     await done;
-    expect(m.create).not.toHaveBeenCalled();
+    expect(db.create).not.toHaveBeenCalled();
     expect(summary(state.syncLog)).toMatch(/skipNoIp=1, skipNoSubnet=1/);
   });
 });
@@ -128,16 +129,16 @@ describe("Phase 5 — a queued push at the address", () => {
   it("adopts it when the gate already holds the same MAC as a reservation", async () => {
     const row = { ...pending };
     await run([reservation({ scopeId: 3, entryId: 17 })], { [KEY]: row }).done;
-    expect(m.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", pushStatus: "synced", pushedScopeId: 3, pushedEntryId: 17 });
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", pushStatus: "synced", pushedScopeId: 3, pushedEntryId: 17 });
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.adopted" }));
     expect(row.pushStatus).toBe("synced");
   });
 
   it("fails it permanently when a different MAC (or a lease) won the address", async () => {
     await run([lease({ macAddress: "11:22:33:44:55:66" })], { [KEY]: { ...pending } }).done;
-    expect(m.update.mock.calls[0][0].data).toMatchObject({ pushStatus: "failed_permanent", pushError: "IP collided during queue — discovered dhcp_lease by 11:22:33:44:55:66" });
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ pushStatus: "failed_permanent", pushError: "IP collided during queue — discovered dhcp_lease by 11:22:33:44:55:66" });
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.collided", level: "warning" }));
-    expect(m.create).not.toHaveBeenCalled();
+    expect(db.create).not.toHaveBeenCalled();
   });
 });
 
@@ -145,8 +146,8 @@ describe("Phase 5 — an existing row at the address", () => {
   it("a Polaris-pushed manual row is its own echo: flipped silently, pending conflicts dismissed", async () => {
     const { state, done } = run([reservation()], { [KEY]: { id: "p1", sourceType: "manual", pushedToId: "i1" } });
     await done;
-    expect(m.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { sourceType: "dhcp_reservation" } });
-    expect(m.conflictUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { reservationId: "p1", status: "pending" } }));
+    expect(db.update).toHaveBeenCalledWith({ where: { id: "p1" }, data: { sourceType: "dhcp_reservation" } });
+    expect(db.conflictUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { reservationId: "p1", status: "pending" } }));
     expect(state.upsertConflict).not.toHaveBeenCalled();
   });
 
@@ -155,13 +156,13 @@ describe("Phase 5 — an existing row at the address", () => {
     const { state, done } = run([lease()], { [KEY]: row });
     await done;
     expect(state.upsertConflict).toHaveBeenCalledWith("m1", "i1", expect.objectContaining({ sourceType: "dhcp_lease", owner: "dhcp-lease", projectRef: LABEL }), row);
-    expect(m.update).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
   });
 
   it("a VIP the gate no longer reports is succeeded in place; canonical placeholders replaced, operator notes kept", async () => {
     const row: Record<string, unknown> = { id: "v1", sourceType: "vip", owner: "web-dnat", hostname: "web-dnat", notes: "my notes", macAddress: null, vipInfo: { name: "web-dnat", device: "FGT-A" } };
     await run([lease()], { [KEY]: row }).done;
-    expect(m.update.mock.calls[0][0].data).toEqual({ sourceType: "dhcp_lease", vipInfo: null, owner: "dhcp-lease", macAddress: "AA:BB:CC:DD:EE:01" });
+    expect(db.update.mock.calls[0][0].data).toEqual({ sourceType: "dhcp_lease", vipInfo: null, owner: "dhcp-lease", macAddress: "AA:BB:CC:DD:EE:01" });
     expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.replaced" }));
     expect(row.notes).toBe("my notes");
   });
@@ -170,13 +171,13 @@ describe("Phase 5 — an existing row at the address", () => {
     const row = { id: "v1", sourceType: "vip", macAddress: null, vipInfo: { name: "web", device: "FGT-A" } };
     const { state, done } = run([lease()], { [KEY]: row }, { currentVipKeys: new Set([KEY]) });
     await done;
-    expect(m.update).toHaveBeenCalledWith({ where: { id: "v1" }, data: { macAddress: "AA:BB:CC:DD:EE:01" } });
+    expect(db.update).toHaveBeenCalledWith({ where: { id: "v1" }, data: { macAddress: "AA:BB:CC:DD:EE:01" } });
     expect(state.upsertConflict).toHaveBeenCalledWith("v1", "i1", expect.anything(), row, "fill-only");
   });
 
   it("a lease that became a reservation flips type and its canonical owner", async () => {
     await run([reservation()], { [KEY]: { id: "d1", sourceType: "dhcp_lease", owner: "dhcp-lease", expiresAt: null } }).done;
-    expect(m.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", owner: "dhcp-reservation" });
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", owner: "dhcp-reservation" });
   });
 
   it("a steady held reservation costs one updateMany for the whole run, not a write per row", async () => {
@@ -186,16 +187,16 @@ describe("Phase 5 — an existing row at the address", () => {
     };
     const { state, done } = run([reservation({ seenLeased: true }), reservation({ ipAddress: "10.1.0.6", seenLeased: true })], rows);
     await done;
-    expect(m.update).not.toHaveBeenCalled();
-    expect(m.updateMany).toHaveBeenCalledTimes(1);
-    expect(m.updateMany.mock.calls[0][0].where).toEqual({ id: { in: ["r1", "r2"] } });
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.updateMany.mock.calls[0][0].where).toEqual({ id: { in: ["r1", "r2"] } });
     expect(summary(state.syncLog)).toContain("updateMany=1 covering 2 rows");
   });
 
   it("an observed row the gate's DHCP now binds becomes the DHCP row (rule 125)", async () => {
     const row = { id: "o1", sourceType: "observed", macAddress: null };
     await run([lease()], { [KEY]: row }).done;
-    expect(m.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_lease", owner: "dhcp-lease", hostname: "pc-1", macAddress: "AA:BB:CC:DD:EE:01", expiresAt: null });
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_lease", owner: "dhcp-lease", hostname: "pc-1", macAddress: "AA:BB:CC:DD:EE:01", expiresAt: null });
     expect(row.sourceType).toBe("dhcp_lease");
   });
 
@@ -203,11 +204,11 @@ describe("Phase 5 — an existing row at the address", () => {
     m.decideInfra.mockReturnValueOnce({ dhcpBinding: "reserved", macAddress: "AA:BB:CC:DD:EE:01", lastSeenLeased: true });
     const row: Record<string, unknown> = { id: "f1", sourceType: "fortiswitch", dhcpBinding: "none" };
     await run([reservation()], { [KEY]: row }).done;
-    expect(m.update.mock.calls[0][0].data).toMatchObject({ dhcpBinding: "reserved", macAddress: "AA:BB:CC:DD:EE:01", staleNotifiedAt: null });
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ dhcpBinding: "reserved", macAddress: "AA:BB:CC:DD:EE:01", staleNotifiedAt: null });
     expect(row.dhcpBinding).toBe("reserved");
     m.decideInfra.mockReturnValueOnce(null);
-    m.update.mockClear();
+    db.update.mockClear();
     await run([reservation()], { [KEY]: { id: "f2", sourceType: "fortinap" } }).done;
-    expect(m.update).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
   });
 });

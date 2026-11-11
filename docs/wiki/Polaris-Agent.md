@@ -499,7 +499,7 @@ fabric it is attached to, and the HBA model, firmware and driver:
 These are what a fibre-channel switch logs in. A switch monitored over SNMP
 links each of its ports to the server reporting that WWN, which is exact and
 needs no host name. The ports appear on the server's **Fibre Channel** tab (see
-[Assets](Assets) and [Business Rules](Business-Rules#rule-156)). A server with
+[Assets](Assets) and [Business Rules](Business-Rules#rule-159)). A server with
 no HBA reports none, and an older agent reports nothing, leaving what Polaris
 already knows in place.
 

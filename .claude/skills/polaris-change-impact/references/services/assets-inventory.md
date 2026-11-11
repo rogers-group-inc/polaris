@@ -182,6 +182,81 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - The reset lives here and not in monitorOverrideService: db.ts imports that module, which must not import prisma back.
 
 **When changing this:** `tests/integration/assetPutContract.test.ts` pins the guards, pin / override semantics, status stamps and the unmap side effect; `tests/unit/assetWriteService.test.ts` the request-free pieces. A new PollingMethod also widens `PollingMethodEnum` here ([polling-method-resolver](../cross-cutting/polling-method-resolver.md)).
+- Rule 157: `deleteAsset` and `bulkDeleteAssets` call `assetRemovalService.afterAssetsDeleted` after the delete; the bulk path also releases each asset's `dns_resolved` reservations first, because `deleteMany` runs no `src/db.ts` hook. A new delete path here must do both (`tests/unit/assetRemovalCoverage.test.ts`).
+
+---
+
+## services/assetLiveActionService.ts
+
+**What it owns:** The asset details buttons that reach a device or start a run, moved out of `routes/assets/detail.ts` (CQ-B062 slice 2): Poll now (probe-now), the system-info Refresh, Discover now (rediscover) and the SNMP Walk tab, plus their shared gate `resolveIntegrationFilterBlock` (the originating integration's device filter — AD's own `ouPath`, a VM's / workload's own name — evaluated before any traffic leaves the box). The route keeps the Zod body, the gates and the request-bound inputs (the caller's `assets:write`, the credential-use actor).
+
+**Public API:** `LiveActionResult` (`{ status, body }` — what probe-now / refresh / rediscover send, since each can answer 409 or 202), `pollAssetNow(id, actor)`, `refreshAssetSystemInfo(id, actor)`, `rediscoverAsset(id, actor)`, `snmpWalkAsset(id, { credentialId, oid, maxRows }, canWriteAssets, credentialActor, actor)`.
+
+**Cross-service deps:** monitoringService (the probe / collectors / recorders, `runSdwanFor`, `snmpWalkRaw`), discovery/assetDiscoveryScope, discovery/discoveryEngine (`triggerDiscovery`), discoveryRunState, assetCredentialScopeService (rule 112(e)), credentialService, credentialUseAuditService (rule 112), eventLogService, utils/integrationFilter, utils/assetDialAddress, ipv6GateService.
+
+**Used by:** `src/api/routes/assets/detail.ts` (POST /:id/probe-now, /:id/refresh-system-info, /:id/rediscover, /:id/snmp-walk).
+
+**Invariants:**
+- An asset outside its integration's filter is refused 409 with an `asset.refresh` / `asset.rediscover` warning Event before any probe, collector or run.
+- Every operator-initiated action leaves an Event whatever the outcome; Refresh writes no monitor state (it cannot mark a device down or clear a miss).
+- The SNMP walk at read level may use only a credential the asset already uses (rule 112(e)); the use is recorded (rule 112); a device failure is a 502.
+
+**When changing this:** `tests/unit/assetLiveActionService.test.ts`; integration coverage in `currentStateRefresh`, `secretFollowsDestinationPhase10` and `writeScope`.
+
+---
+
+## services/assetLookupService.ts
+
+**What it owns:** The asset lookups and imports, moved out of `routes/assets/lookups.ts` (CQ-B062 slice 2): the fleet PTR sweep and the per-asset PTR / forward (A/AAAA) lookup, the OUI vendor lookup (fleet and per asset), and the two imports — CSV serial + date (back-dates `createdAt`) and PDF invoice rows (create or update by serial). The route keeps the gates, the body checks, and the rule 111(c) retarget guard, which reads the caller's permission and is handed in as `assertRetarget`.
+
+**Public API:** `RetargetGuard`, `bulkDnsLookup(actor)`, `assetDnsLookup(id, actor)`, `assetForwardLookup(id, actor, assertRetarget)`, `bulkOuiLookup(actor)`, `assetOuiLookup(id, actor)`, `importFirstSeenDates(rows, dryRun, actor)`, `importPdfAssets(rows, dryRun, actor, assertRetarget)`.
+
+**Cross-service deps:** dnsService (`getConfiguredResolver`), ouiService, assetQuarantineService (`assertQuarantineStatusUntouched`), eventLogService (incl. `logEventsBatch`, `buildFirmwareChangedEvent`), utils/concurrency, utils/chunk, utils/assetInvariants, utils/mac.
+
+**Used by:** `src/api/routes/assets/lookups.ts` (POST /dns-lookup, /:id/dns-lookup, /:id/forward-lookup, /oui-lookup, /:id/oui-lookup, /import, /import-pdf).
+
+**Invariants:**
+- Fleet scale: the PTR sweep looks up through a bounded pool (`DNS_SWEEP_LOOKUP_CONCURRENCY`) and writes in chunked transactions; the OUI sweep writes one statement per vendor; the CSV import resolves every serial in one read and writes chunked. None is a per-row await loop.
+- A forward-lookup address and a PDF row's address are typed addresses by another route: the rule 111(c) guard runs before the write; a PDF row may not enter or leave quarantine by status.
+- The CSV import only moves first-seen EARLIER; a dry run writes nothing.
+
+**When changing this:** `tests/unit/assetLookupService.test.ts`, `tests/integration/assetsImportBackdate.test.ts`.
+
+---
+
+## services/assetSystemTabService.ts
+
+**What it owns:** The asset details System-tab family's reads, moved out of `routes/assets/system.ts` (CQ-B062 slice 2): the System tab itself (latest telemetry, interfaces with tags / optics / alerts, storage, hardware sensors, reported + peer-inferred LLDP neighbours, wireless stations, physical entities, IPsec tunnels, AP radios, probe outages), the process list, the MAC table (VLAN fill, VLAN names, per-port configured VLANs) and the ARP table (ranges, retention, interface counts), each with its freshness pair, and the service inventory. The route keeps the gates and the query parsing.
+
+**Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
+
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), utils/sfpOptics.
+
+**Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
+
+**Invariants:**
+- The ARP `current` view is the newest read only — rows within `ARP_CURRENT_TOLERANCE_MS` of the asset's max `lastSeen` — never every retained row; the "" interface sentinel leaves the API as null.
+- The MAC table's `pollIntervalSec` takes no discovery fallback (only the system-info pass writes the FDB); the ARP table's does (discovery writes ARP too).
+
+**When changing this:** `tests/unit/assetSystemTabService.test.ts`; integration `arpTable` and `currentStateRefresh`.
+
+---
+
+## services/assetTelemetryService.ts
+
+**What it owns:** The asset details telemetry family's data, moved out of `routes/assets/telemetry.ts` (CQ-B062 slice 2): the Custom MIB widgets with their latest samples, interface history, the operator's interface comment (with Description Sync), the manual port-tag read a tag save is judged against, the SD-WAN Performance SLA links and rules, path-check traceroutes, MCLAG peers, virtualization (a VM's host, a host's guests, datastores), process / service logs, and the pinned-process log config (rule 107). The route keeps the gates, the query / body parsing and the request-bound inputs (the actor, the caller's Agent Deploy grant).
+
+**Public API:** `ProcessLogConfigInput`, `getAssetCustomWidgets(id)`, `getInterfaceHistory(id, ifName, since, until, rangeLabel)`, `setInterfaceComment(id, ifName, trimmed, actor)`, `listManualInterfaceTags(id, ifName)`, `getPerfSlaLinks(id)`, `getSdwanRules(id)`, `getPathCheckTraceroutes(id, checkId, limit)`, `getMclagPeers(id)`, `getAssetVirtualization(id)`, `getProcessLogs(id, name, limit, since, onlyFlagged)`, `getServiceLogs(id, unit, limit, since, onlyFlagged)`, `setProcessLogConfig(id, name, body, canDeployAgents, actor)`.
+
+**Cross-service deps:** sampleQueryRouter, sampleHistoryService, descriptionSyncService (`syncDescriptionsOnSave`), manufacturerProfileService, utils/logPathGlob, eventLogService.
+
+**Used by:** `src/api/routes/assets/telemetry.ts` (the custom-widgets, interface-history, interface comment / tags, perf-sla-links, sdwan-rules, path-check-traceroutes, mclag-peers, virtualization, process-logs, service-logs and process config routes).
+
+**Invariants:**
+- A CHANGED process log glob is shape-checked and needs Agent Deploy (`canDeployAgents`): the agent reads that path as a privileged user (rule 107). Resaving the current glob, or clearing it, needs neither.
+- An empty interface comment deletes the override and does not push to the device; a non-empty one upserts and asks Description Sync.
+
+**When changing this:** `tests/unit/assetTelemetryService.test.ts`, `tests/unit/logPathGlob.test.ts`.
 
 ---
 
@@ -334,6 +409,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetRemovalService.ts
+
+**What it owns:** Business rule 157 — everything that names an asset WITHOUT a foreign key, at the moment the asset row goes. Two post-commit entry points: `afterAssetsDeleted(ids)` (prune / purge) and `afterAssetMerged(fromId, toId)` (re-point the operator's intent to the survivor, then purge what is left of the absorbed id).
+
+**Public API:** `afterAssetsDeleted(ids)`, `afterAssetMerged(fromId, toId)` (both resolve with `AssetReferenceCounts`, or `null` after logging a failure — never throw); pure helpers `repointIdList`, `pruneIdList`, `pruneMayWiden`.
+
+**Cross-service deps:** `appMapDiscoveryService.getConfig` / `saveConfig` (the Application Map rules live in a Setting); `prisma` for `PathCheck`, `Contact`, `MaintenanceSchedule`, `NotificationRule`, `LogFlagRule`, `AssetProcessConfig`, `AssetProcess`, `AssetService`, `AssetSdwanRule`, `AssetInventoryScrape`, `AgentCommand`, `AutomationScriptRun`, `ManagedAgent`.
+
+**Used by:** `assetWriteService → deleteAsset`, `bulkDeleteAssets`; `assetMergeService → mergeAssets`; `assetGhostMergeService → mergeEndpointGhostIntoAsset`, `mergeDuplicateHostnameGhost`; `conflictResolutionService` (the ghost absorb on accept).
+
+**Invariants:**
+- **Called after the commit, never inside the caller's transaction and never from a `src/db.ts` hook.** None of these rows cascade, so they are still there after the commit; a re-point inside a transaction that rolled back would move intent off a record that still exists. A hook on `asset.delete` would also fire for the merges' `tx.asset.delete` and run on the base client mid-transaction.
+- **Never widen a target (157(a)).** `NotificationRule.scope.assetIds` is re-pointed on a merge and left untouched on a delete, because an empty list means no device restriction. An Application Map rule with `scope: null` and no pins means every monitored asset: an auto rule is deleted with its last device, a manual one keeps the dead id. The three string-array pin lists are safe to empty.
+- Best-effort and silent to the caller: a failure is `logger.warn`ed and the references are merely stale.
+- A merge moves `LogFlagRule` and `AssetProcessConfig` (operator intent) and purges `AssetProcess` / `AssetService` / `AssetSdwanRule` / `AssetInventoryScrape` (the survivor has its own). On a config-name clash the survivor's row wins.
+
+**When changing this:**
+- **A new table, array or JSON field that stores an asset id without a foreign key joins this service** — in the same commit that adds it — and the clean-up migration's pattern if existing installs can already hold leftovers. Decide prune-vs-leave by asking what an EMPTY value means to its reader.
+- **A new code path that deletes an asset row must call it**; `tests/unit/assetRemovalCoverage.test.ts` scans `src/` for `asset.delete(` / `asset.deleteMany(` and fails on a file without a call, and on fewer calls than deletes.
+- Decommissioning is not deletion — nothing here runs for it (rules 40(k) and 123 own that).
+- Scale: cost follows what referenced the removed assets, not the fleet — three `hasSome` reads, one JSON-path read on a merge, one Setting read, one batched transaction per 500 ids.
+
 ## services/assetGhostMergeService.ts
 
 **What it owns:** Automated ghost merging, two flavors: (1) the endpoint-ghost merge — collapses a duplicate `fortigate-endpoint` placeholder Asset (created when a managed FortiSwitch/FortiAP's mgmt interface pulled a DHCP lease and the FortiGate's DHCP/device-inventory pathway learned its MAC as an ordinary client; hostname = the device serial) into the canonical infrastructure asset, then deletes the ghost; and (2) the duplicate-hostname policy + executor behind the mergeDuplicateHostnameAssets sweep (moved from the job 2026-08 so they're unit-testable): `decideDuplicateHostnameGroup` picks the canonical by source-kind tier (identity-tagged 1 > fortiswitch 2 > fortiap 3 > firewall 4 > endpoint 5 > manual 6 > orphan 7; lastSeen/updatedAt tiebreak; a group skips for operator review when two primary MACs differ at ANY tier, two usable serials differ, or it has more than `MAX_PLAUSIBLE_HOSTNAME_DUPLICATES` (3) rows — rule 91(f)) and `mergeDuplicateHostnameGhost` runs the per-ghost transaction (side-table transfer, null-fill scalar absorption + tag union, bumpLastSeen-gated lastSeen adoption, ghost cascade-delete). `decideDuplicateSerialGroup` (2026-09) is the serial-keyed sibling for the same sweep's first pass: identical tier ordering via the shared `rankBySourceTier`, and deliberately NO MAC tie-break — that guard exists because a shared hostname can mean two different devices, which a shared real serial rules out, and two MACs on one chassis (baseMac beside a DHCP-learned mgmt MAC) must not block the merge. It TRUSTS its caller's grouping, so a caller must filter through rule 83's `isUsableSerial` + `MAX_PLAUSIBLE_DUPLICATES` first. (3) The serial-as-hostname pass (business rule 91(d), 2026-10-28): `decideSerialHostnameGhost` (pure) pairs a `fortigate-endpoint` placeholder whose HOSTNAME is a usable serial with the one non-placeholder asset carrying it as SERIAL, and `mergeSerialHostnameGhosts` runs the grouping query (a self-join of `assets` on `upper(btrim(serialNumber)) = upper(btrim(hostname))`, live canonicals only, `hostnameOverride` excluded) and executes through `mergeEndpointGhostIntoAsset`, writing an `asset.duplicate_merged` Event with `details.matchedOn: "serial-hostname"`.
@@ -355,6 +452,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Ghost sample hypertable rows are orphaned (no Asset FK since migration `20260615000000`) and age out via `drop_chunks` — never row-deleted (compressed-chunk bloat).
 
 **When changing this:**
+- Rule 157: both `mergeEndpointGhostIntoAsset` and `mergeDuplicateHostnameGhost` call `assetRemovalService.afterAssetMerged` after the commit. It adds awaited queries between the ghost's delete and the caller's (fire-and-forget) `logEvent` — a test that reads that Event must `waitForEventCount`, as `entraEthernetMacGhost.test.ts` does.
 - Keep `AUTHORITATIVE_SOURCE_KINDS` in sync with the AssetSource `sourceKind` vocabulary — a new authoritative kind that isn't listed makes its assets eligible for absorption.
 - The discovery-side caller updates the in-memory `AssetIndex` (`remove(ghost)` + `reindex(canonical)`) after each merge — later phases in the same sync would otherwise write to the deleted ghost.
 - **`AssetIndex` normalizes EVERY identity key, and `add` / `remove` / `find*` must agree** (`services/discovery/discoveryEngine.ts`, exported for tests). MAC upper-cases, hostname lower-cases, and serial goes through `utils/fortinetParentKey.ts → normalizeSerialKey` (trim + upper) — the same key rule 83's duplicate-serial sweep groups on. Serial was the ONE key stored verbatim until 2026-09, and the cost is not a failed lookup but a DUPLICATE ASSET: the FortiSwitch/FortiAP/firewall loops try serial FIRST, their next rung is MAC (on a FortiSwitch, the MAC its controller sees at `connecting_from` — rule 91(g); null when the gate has no single answer), and a miss on all three rungs creates a second row for a device Polaris already had. Prod carried exactly that — one switch on two Asset rows, the older holding no `AssetSource` because the newer one's claim on the unique `(fortiswitch, serial)` key re-bound it away. The three Fortinet RMA guards (firewall HA member / switch / AP: "matched by name but carries a DIFFERENT serial ⇒ don't bind") use the same helper, because comparing them with a bare `.toUpperCase()` while the index trims would let a padded serial match the index and then fail the guard — landing back on a fresh asset. Adding a new identity key, or a new serial comparison anywhere in discovery, means using these helpers rather than an inline `.toUpperCase()`.
@@ -386,6 +484,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Rule 111(c), either side (2026-10-13).** `mergeAssets({ canManageIntegrations })` — set by every operator merge, left undefined by system merges — refuses, before any write, a merge that would leave a Fortinet-managed member's API token following an address no managed member holds. `assertMergeTokenSafe({ canonicalId, ghostId, ipWinner?, canManageIntegrations })` applies the same ipAddress rule as the merge (explicit winner, else blank-fill) and is what conflict merges and the chassis adoption run for every ghost BEFORE their own writes. A new operator merge path MUST pass `canManageIntegrations`.
 
 **When changing this:**
+- **Rule 157: `mergeAssets` calls `assetRemovalService.afterAssetMerged(ghost, survivor)` after its transaction commits** — pins, automation scope, Application Map rules, log-flag rules and per-process log config that named the absorbed record move to the survivor. `absorbAssetRelations` moves only what has a foreign key; anything new that names an asset WITHOUT one belongs in `assetRemovalService`, not here.
 - Keep `MERGEABLE_FIELDS` in sync with the comparison UI in `public/js/asset-merge-modal.js` (`_mergeCompareFields`; `combine: true` marks the concatenated ones).
 - The comparison UI defaults the survivor to the side with the longer polling history (`GET /assets/:id/polling-history` → `sampleHistoryService.readPollingHistorySummary`; span first, sample count as tiebreak) precisely because the ghost's samples are orphaned here — if the merge ever starts carrying sample history over, retire that auto-select + the confirm-step "deleting the longer record" warning in `public/js/asset-merge-modal.js`.
 - A new per-asset monitoring override column (polling method / credential / cadence / pin array) belongs in `MONITOR_CONFIG_FIELDS` or `MONITOR_PIN_FIELDS`, or a merge will enable monitoring without it. `ASSET_SELECT` derives from both lists, so adding it there is enough.

@@ -11,11 +11,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  create: stubbed(prisma.asset.create),
+  update: stubbed(prisma.asset.update),
+  sourceDeleteMany: stubbed(prisma.assetSource.deleteMany),
+};
 
 const m = vi.hoisted(() => ({
-  create: vi.fn(),
-  update: vi.fn(),
-  sourceDeleteMany: vi.fn(),
   logEvent: vi.fn(),
   logCreated: vi.fn(),
   logUpdated: vi.fn(),
@@ -26,9 +31,7 @@ const m = vi.hoisted(() => ({
   pushCoords: vi.fn(),
   reconcileMacs: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: { asset: { create: m.create, update: m.update }, assetSource: { deleteMany: m.sourceDeleteMany } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: m.logEvent,
   snapshotMaterialAssetFields: (a: Record<string, unknown>) => ({ ...a }),
@@ -50,11 +53,12 @@ const PROJECTED = {
 };
 let nextId = 0;
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   nextId = 0;
-  m.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `fw${++nextId}`, ...data }));
-  m.update.mockResolvedValue({});
-  m.sourceDeleteMany.mockResolvedValue({ count: 0 });
+  db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `fw${++nextId}`, ...data }));
+  db.update.mockResolvedValue({});
+  db.sourceDeleteMany.mockResolvedValue({ count: 0 });
   m.project.mockReturnValue({ projected: { ...PROJECTED } });
   m.geocode.mockResolvedValue({ latitude: null, longitude: null, failure: null });
   m.logGeoFailures.mockResolvedValue(undefined);
@@ -99,7 +103,7 @@ describe("Phase 3 — new FortiGates", () => {
   it("creates a standalone gate as a monitored firewall and records its fortigate-firewall source", async () => {
     const { state, done } = run([gate()]);
     await done;
-    const data = m.create.mock.calls[0][0].data;
+    const data = db.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
       ipAddress: "10.0.0.1", hostname: "site-a-fw", serialNumber: "FGT60F0000000001", assetType: "firewall",
       manufacturer: "Fortinet", model: "FortiGate", monitored: true, discoveredByIntegrationId: "i1",
@@ -117,8 +121,8 @@ describe("Phase 3 — new FortiGates", () => {
       { serial: "FGT60F0000000002", hostname: "site-a-fw-2", role: "secondary", isPrimary: false },
     ] });
     await run([pair]).done;
-    expect(m.create).toHaveBeenCalledTimes(2);
-    const bySerial = new Map(m.create.mock.calls.map((c) => [c[0].data.serialNumber, c[0].data]));
+    expect(db.create).toHaveBeenCalledTimes(2);
+    const bySerial = new Map(db.create.mock.calls.map((c) => [c[0].data.serialNumber, c[0].data]));
     expect(bySerial.get("FGT60F0000000001")).toMatchObject({ ipAddress: "10.0.0.1", monitored: true });
     const standby = bySerial.get("FGT60F0000000002")!;
     expect(standby.ipAddress).toBeNull();
@@ -129,8 +133,8 @@ describe("Phase 3 — new FortiGates", () => {
   it("a hostname match carrying a DIFFERENT serial is not this gate — a new asset is created (rule 41)", async () => {
     const other = { id: "old", hostname: "site-a-fw", serialNumber: "FGT60F0000000099", monitored: false };
     await run([gate()], { assetIdx: index([other]) as never }).done;
-    expect(m.update).not.toHaveBeenCalled();
-    expect(m.create).toHaveBeenCalledTimes(1);
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -142,7 +146,7 @@ describe("Phase 3 — the monitored stamp on an existing gate", () => {
 
   it("follows the integration's flag on the primary", async () => {
     await run([gate()], { assetIdx: index([existing()]) as never }).done;
-    expect(m.update.mock.calls[0][0].data.monitored).toBe(true);
+    expect(db.update.mock.calls[0][0].data.monitored).toBe(true);
   });
 
   it("sweeps a monitored standby off, resetting its failure streak; an operator override is left alone", async () => {
@@ -153,14 +157,14 @@ describe("Phase 3 — the monitored stamp on an existing gate", () => {
     const primary = existing({ monitored: true });
     const standby = existing({ id: "fw-s", hostname: "site-a-fw-2", serialNumber: "FGT60F0000000002", monitored: true });
     await run([pair], { assetIdx: index([primary, standby]) as never }).done;
-    const dataFor = (id: string) => m.update.mock.calls.find((c) => c[0].where.id === id)![0].data;
+    const dataFor = (id: string) => db.update.mock.calls.find((c) => c[0].where.id === id)![0].data;
     expect(dataFor("fw-s")).toMatchObject({ monitored: false, consecutiveFailures: 0 });
     expect(dataFor("fw-e").monitored).toBeUndefined(); // already monitored
 
-    m.update.mockClear();
+    db.update.mockClear();
     const pinned = existing({ id: "fw-s", hostname: "site-a-fw-2", serialNumber: "FGT60F0000000002", monitored: true, monitorOverride: true });
     await run([pair], { assetIdx: index([existing({ monitored: true }), pinned]) as never }).done;
-    expect(m.update.mock.calls.find((c) => c[0].where.id === "fw-s")![0].data.monitored).toBeUndefined();
+    expect(db.update.mock.calls.find((c) => c[0].where.id === "fw-s")![0].data.monitored).toBeUndefined();
   });
 });
 
@@ -183,7 +187,7 @@ describe("Phase 3 — which location reaches the geocoder", () => {
   });
 
   it("a failing device is logged and the next one still syncs", async () => {
-    m.create.mockRejectedValueOnce(new Error("boom"));
+    db.create.mockRejectedValueOnce(new Error("boom"));
     const { state, done } = run([gate(), gate({ name: "SITE-B-FW", hostname: "site-b-fw", serial: "FGT60F0000000003" })]);
     await done;
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to create/update asset for device SITE-A-FW: boom");

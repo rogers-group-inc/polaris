@@ -82,6 +82,7 @@
  */
 
 import { prisma } from "../db.js";
+import { afterAssetMerged } from "./assetRemovalService.js";
 import { AppError } from "../utils/errors.js";
 import { ENTRA_ASSET_TAG_PREFIX, AD_ASSET_TAG_PREFIX } from "../utils/assetSourceTags.js";
 import { logEvent } from "./eventLogService.js";
@@ -665,6 +666,8 @@ async function acceptAssetConflict(
       await tx.asset.update({ where: { id: existing.id }, data: update });
       await tx.asset.delete({ where: { id: ghost.id } });
     });
+    // Rule 157: pins and per-asset config that named the ghost follow it.
+    await afterAssetMerged(ghost.id, existing.id);
     // Keep monitorOverride faithful to the carried-over monitoring intent —
     // best-effort, a recompute failure must not undo the merge.
     if (carriedMonitoring) {

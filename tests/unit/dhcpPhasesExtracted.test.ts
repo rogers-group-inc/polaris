@@ -7,23 +7,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  reservationFindMany: stubbed(prisma.reservation.findMany),
+  reservationUpdateMany: stubbed(prisma.reservation.updateMany),
+  assetUpdate: stubbed(prisma.asset.update),
+};
 
 const m = vi.hoisted(() => ({
-  reservationFindMany: vi.fn(),
-  reservationUpdateMany: vi.fn(),
-  assetUpdate: vi.fn(),
   reverse: vi.fn(),
   lookupOui: vi.fn(),
   lookupOuiOverride: vi.fn(),
   reconcileMacAddresses: vi.fn(),
   persistFortigateArpTables: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    reservation: { findMany: m.reservationFindMany, updateMany: m.reservationUpdateMany },
-    asset: { update: m.assetUpdate },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/dnsService.js", () => ({ getConfiguredResolver: async () => ({ reverse: m.reverse }) }));
 vi.mock("../../src/services/ouiService.js", () => ({ lookupOui: m.lookupOui, lookupOuiOverride: m.lookupOuiOverride }));
 vi.mock("../../src/services/macAddressService.js", () => ({ reconcileMacAddresses: m.reconcileMacAddresses }));
@@ -34,11 +34,12 @@ const { reverseDnsForAssets, applyOuiManufacturers } = await import("../../src/s
 const { clearStaleMacDeviceStamps } = await import("../../src/services/discovery/dhcp/staleMacDeviceStamps.js");
 
 const log = vi.fn();
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  resetDbStub(); vi.clearAllMocks(); });
 
 describe("Phase 7.6 — ARP presence for DHCP reservations", () => {
   it("stamps only reservations whose reserved MAC the owning gate sees at that IP", async () => {
-    m.reservationFindMany.mockResolvedValue([
+    db.reservationFindMany.mockResolvedValue([
       { id: "match", ipAddress: "10.0.0.5", macAddress: "aa:bb:cc:00:00:01", subnet: { fortigateDevice: "FGT-A" } },
       { id: "other-mac", ipAddress: "10.0.0.6", macAddress: "aa:bb:cc:00:00:09", subnet: { fortigateDevice: "FGT-A" } },
       { id: "other-gate", ipAddress: "10.0.0.5", macAddress: "aa:bb:cc:00:00:01", subnet: { fortigateDevice: "FGT-B" } },
@@ -51,15 +52,15 @@ describe("Phase 7.6 — ARP presence for DHCP reservations", () => {
       integrationId: "i1",
       syncLog: log,
     });
-    expect(m.reservationUpdateMany).toHaveBeenCalledTimes(1);
-    expect(m.reservationUpdateMany.mock.calls[0][0].where).toEqual({ id: { in: ["match"] } });
-    expect(m.reservationUpdateMany.mock.calls[0][0].data).toMatchObject({ staleNotifiedAt: null, staleSnoozedUntil: null });
+    expect(db.reservationUpdateMany).toHaveBeenCalledTimes(1);
+    expect(db.reservationUpdateMany.mock.calls[0][0].where).toEqual({ id: { in: ["match"] } });
+    expect(db.reservationUpdateMany.mock.calls[0][0].data).toMatchObject({ staleNotifiedAt: null, staleSnoozedUntil: null });
   });
 
   it("does nothing without ARP rows, or when no row carries a usable MAC", async () => {
     await stampArpPresence({ result: {} as never, integrationId: "i1", syncLog: log });
     await stampArpPresence({ result: { arpTable: [{ ip: "10.0.0.5", mac: "00:00:00:00:00:00", fortigateDevice: "A" }] } as never, integrationId: "i1", syncLog: log });
-    expect(m.reservationFindMany).not.toHaveBeenCalled();
+    expect(db.reservationFindMany).not.toHaveBeenCalled();
   });
 });
 

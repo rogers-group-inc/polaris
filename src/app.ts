@@ -70,7 +70,7 @@ import { recordDbConnectionMode, setDbPoolRoleCapacity } from "./metrics.js";
 import { startFmgActivityHeartbeat } from "./services/fmgActivityService.js";
 import { rememberLoginTarget } from "./utils/loginRedirect.js";
 import { canonicalRoutePath, nonCanonicalRequestPath } from "./utils/routePath.js";
-import { isPhoneUserAgent, resolveAssetOpenTarget } from "./utils/assetOpenLink.js";
+import { isPhoneUserAgent, resolveAssetOpenTarget, resolveBlockOpenTarget, resolveNetworkOpenTarget } from "./utils/assetOpenLink.js";
 import { bearerSatisfies, healthToken, metricsToken } from "./utils/endpointTokens.js";
 import { derivePolarisPort } from "./utils/publicUrl.js";
 
@@ -673,23 +673,34 @@ app.use((req, res, next) => {
 // login finishes in the page).
 // UA-dependent, so never cacheable; an id that is not a UUID falls through to
 // the static handler's 404 rather than redirecting anywhere.
-app.get("/assets/:id", assetLinkLimiter, async (req: express.Request<{ id: string }>, res, next) => {
-  const target = resolveAssetOpenTarget({
-    id: req.params.id,
-    userAgent: req.get("user-agent"),
-    desktop: req.query.desktop,
-  });
-  if (!target) return next();
-  res.set("Cache-Control", "no-store");
-  res.set("Vary", "User-Agent");
-  if (!req.session?.userId) {
-    // originalUrl, not assetOpenPath(id): it keeps `?desktop=1`, so a phone
-    // that asked for the desktop still gets it after signing in.
-    rememberLoginTarget(req, res, req.originalUrl);
-    if (target.startsWith("/assets.html")) return sendToSignIn(req, res);
-  }
-  return res.redirect(target);
-});
+//
+// `/networks/:id` and `/blocks/:id` are the same landing for the other two
+// things a slide-over shows — the Share button's links (public/js/share-link.js)
+// — and behave identically: a block has no phone view, so it always resolves
+// to the desktop page.
+type OpenTargetResolver = (opts: { id: string; userAgent: string | undefined; desktop: unknown }) => string | null;
+function openLinkHandler(resolve: OpenTargetResolver) {
+  return (req: express.Request<{ id: string }>, res: express.Response, next: express.NextFunction) => {
+    const target = resolve({
+      id: req.params.id,
+      userAgent: req.get("user-agent"),
+      desktop: req.query.desktop,
+    });
+    if (!target) return next();
+    res.set("Cache-Control", "no-store");
+    res.set("Vary", "User-Agent");
+    if (!req.session?.userId) {
+      // originalUrl, not assetOpenPath(id): it keeps `?desktop=1`, so a phone
+      // that asked for the desktop still gets it after signing in.
+      rememberLoginTarget(req, res, req.originalUrl);
+      if (!target.startsWith("/mobile.html")) return sendToSignIn(req, res);
+    }
+    return res.redirect(target);
+  };
+}
+app.get("/assets/:id", assetLinkLimiter, openLinkHandler(resolveAssetOpenTarget));
+app.get("/networks/:id", assetLinkLimiter, openLinkHandler(resolveNetworkOpenTarget));
+app.get("/blocks/:id", assetLinkLimiter, openLinkHandler(resolveBlockOpenTarget));
 
 // Protect dashboard pages — redirect unauthenticated users to login
 const protectedPages = ["/", "/index.html", "/ipam.html", "/blocks.html", "/subnets.html", "/reservations.html", "/users.html", "/integrations.html", "/assets.html", "/events.html", "/notifications.html", "/automations.html", "/server-settings.html", "/map.html", "/appmap.html", "/path-monitor.html", "/alert-ack.html"];
@@ -1284,6 +1295,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/monitorAssets.js",
       "./jobs/expireReservations.js",
       "./jobs/pruneEvents.js",
+      "./jobs/pruneHistory.js",
       "./jobs/ouiRefresh.js",
       "./jobs/updateCheck.js",
       "./jobs/discoverySlowCheck.js",

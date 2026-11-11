@@ -17,12 +17,17 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const h = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { assetSource: { findMany: h.findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const gm = await import("../../src/services/genericApiMonitorService.js");
 const ga = await import("../../src/services/genericApiService.js");
 import type { GenericApiMonitorQuery, RawJsonResponse, RequestJsonOptions } from "../../src/services/genericApiService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  findMany: stubbed(prisma.assetSource.findMany),
+};
 
 const BASE = { host: "inventory.example.com", useHttps: true, identityField: "id", detailConcurrency: 2 };
 
@@ -45,8 +50,9 @@ function fakeTransport(answer: (url: URL, opts: RequestJsonOptions) => Partial<R
 }
 
 beforeEach(() => {
+  resetDbStub();
   gm.invalidateGenericApiMonitorCache();
-  h.findMany.mockReset();
+  db.findMany.mockReset();
 });
 afterEach(() => ga._setRequestImplForTests(null));
 
@@ -139,7 +145,7 @@ describe("fleet queries", () => {
   it("one request answers every asset and every stream on the same query", async () => {
     const intg = integration([fleetStatus, fleetCpu]);
     const seen = fakeTransport(() => ({ json: { items: [{ device: "a", state: "up", cpu: 10 }, { device: "b", state: "down", cpu: 90 }] } }));
-    h.findMany.mockImplementation(async ({ where }: any) => rowsFor(intg, where.assetId === "asset-a" ? "a" : "b"));
+    db.findMany.mockImplementation(async ({ where }: any) => rowsFor(intg, where.assetId === "asset-a" ? "a" : "b"));
     expect((await gm.probeGenericApi("asset-a")).success).toBe(true);
     expect(await gm.probeGenericApi("asset-b")).toMatchObject({ success: false, error: 'The feed reports "down"' });
     // The CPU query makes the identical request, so it reads the same cached response.
@@ -150,20 +156,20 @@ describe("fleet queries", () => {
   it("an asset a COMPLETE read does not list is absent — the probe fails", async () => {
     const intg = integration([fleetStatus]);
     fakeTransport(() => ({ json: { items: [{ device: "other", state: "up" }] } }));
-    h.findMany.mockResolvedValue(rowsFor(intg, "a"));
+    db.findMany.mockResolvedValue(rowsFor(intg, "a"));
     const r = await gm.probeGenericApi("asset-a");
     expect(r.skipped).toBeUndefined();
     expect(r).toMatchObject({ success: false, error: 'Not in "Status" on "CMDB"' });
   });
 
   it("an unreachable API, or an incomplete read, SKIPS the probe — one outage never downs the fleet", async () => {
-    h.findMany.mockResolvedValue(rowsFor(integration([fleetStatus]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([fleetStatus]), "a"));
     fakeTransport(() => ({ status: 503, text: "maintenance" }));
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ success: false, skipped: true });
 
     gm.invalidateGenericApiMonitorCache();
     const paged = q({ ...fleetStatus, paginate: true });
-    h.findMany.mockResolvedValue(rowsFor(integration([paged], { pagination: { mode: "page", pageParam: "page", maxPages: 1 } }), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([paged], { pagination: { mode: "page", pageParam: "page", maxPages: 1 } }), "a"));
     fakeTransport(() => ({ json: { items: [{ device: "other", state: "up" }] } }));
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ success: false, skipped: true });
   });
@@ -171,7 +177,7 @@ describe("fleet queries", () => {
   it("matches on the identity normalized like the integration's identity field", async () => {
     const intg = integration([q({ ...fleetStatus, matchPath: "mac" })], { identityField: "macAddress" });
     fakeTransport(() => ({ json: { items: [{ mac: "aa-bb-cc-00-00-09", state: "ok" }] } }));
-    h.findMany.mockResolvedValue(rowsFor(intg, "AA:BB:CC:00:00:09"));
+    db.findMany.mockResolvedValue(rowsFor(intg, "AA:BB:CC:00:00:09"));
     expect((await gm.probeGenericApi("asset-a")).success).toBe(true);
   });
 });
@@ -181,13 +187,13 @@ describe("per-asset queries", () => {
 
   it("fills the path from the asset's record, URL-encoded", async () => {
     const seen = fakeTransport(() => ({ json: { ok: true } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([perAsset]), "dev 1/a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([perAsset]), "dev 1/a"));
     expect((await gm.probeGenericApi("asset-a")).success).toBe(true);
     expect(seen[0].url).toBe("https://inventory.example.com/api/devices/dev%201%2Fa/status");
   });
 
   it("a 404 is absent (fails); any other failure is unreachable (skipped)", async () => {
-    h.findMany.mockResolvedValue(rowsFor(integration([perAsset]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([perAsset]), "a"));
     fakeTransport(() => ({ status: 404 }));
     expect((await gm.probeGenericApi("asset-a")).skipped).toBeUndefined();
     gm.invalidateGenericApiMonitorCache();
@@ -197,7 +203,7 @@ describe("per-asset queries", () => {
 
   it("a placeholder the record cannot fill fails the probe without a request", async () => {
     const seen = fakeTransport(() => ({ json: { ok: true } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([q({ ...perAsset, path: "/api/{{serial}}" })]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([q({ ...perAsset, path: "/api/{{serial}}" })]), "a"));
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ success: false, error: "the record has no usable value at {{serial}}" });
     expect(seen).toHaveLength(0);
   });
@@ -212,7 +218,7 @@ describe("per-asset queries", () => {
       return { status: 200, headers: {}, text: "", json: { ok: true } };
     });
     const intg = integration([perAsset]);
-    h.findMany.mockImplementation(async ({ where }: any) => rowsFor(intg, where.assetId));
+    db.findMany.mockImplementation(async ({ where }: any) => rowsFor(intg, where.assetId));
     await Promise.all(["a1", "a2", "a3", "a4", "a5"].map((id) => gm.probeGenericApi(id)));
     expect(peak).toBeLessThanOrEqual(2);
   });
@@ -220,19 +226,19 @@ describe("per-asset queries", () => {
 
 describe("what the method answers without a query", () => {
   it("no query for the stream: the probe fails and says so; a collector is simply not supported", async () => {
-    h.findMany.mockResolvedValue(rowsFor(integration([]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([]), "a"));
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ success: false, error: expect.stringMatching(/no response time monitor query/) });
     expect(await gm.collectTelemetryGenericApi("asset-a")).toEqual({ supported: false });
     expect(await gm.collectHardwareSensorsGenericApi("asset-a")).toEqual({ supported: false });
   });
 
   it("no Generic API record at all", async () => {
-    h.findMany.mockResolvedValue([]);
+    db.findMany.mockResolvedValue([]);
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ success: false, error: expect.stringMatching(/no Generic API record/) });
   });
 
   it("a disabled integration is unreachable — skipped, never down", async () => {
-    h.findMany.mockResolvedValue(rowsFor(integration([q({ matchPath: "id", map: { up: "s" } })], {}), "a").map((r) => ({ ...r, integration: { ...r.integration, enabled: false } })));
+    db.findMany.mockResolvedValue(rowsFor(integration([q({ matchPath: "id", map: { up: "s" } })], {}), "a").map((r) => ({ ...r, integration: { ...r.integration, enabled: false } })));
     expect(await gm.probeGenericApi("asset-a")).toMatchObject({ skipped: true, error: 'Integration "CMDB" is disabled' });
   });
 });
@@ -244,7 +250,7 @@ describe("collectSystemInfoGenericApi", () => {
 
   it("reads each stream whose method is genericapi, from its own query, and marks LLDP as this source", async () => {
     fakeTransport((url) => ({ json: url.pathname.endsWith("/lldp") ? { n: [{ p: "port1", s: "sw" }] } : { ports: [{ n: "eth0" }], vols: [{ m: "/", t: 5 }] } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
     const r = await gm.collectSystemInfoGenericApi("asset-a", { interfacesPolling: "genericapi", storagePolling: "genericapi", lldpPolling: "genericapi" });
     expect(r.supported).toBe(true);
     expect(r.data?.interfaces.map((i) => i.ifName)).toEqual(["eth0"]);
@@ -255,7 +261,7 @@ describe("collectSystemInfoGenericApi", () => {
 
   it("a stream on another method contributes nothing, and LLDP that was not read stays undefined (no wipe)", async () => {
     fakeTransport(() => ({ json: { ports: [{ n: "eth0" }], vols: [{ m: "/", t: 5 }] } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
     const r = await gm.collectSystemInfoGenericApi("asset-a", { interfacesPolling: "genericapi", storagePolling: "snmp", lldpPolling: null });
     expect(r.data?.storage).toEqual([]);
     expect(r.data?.lldpNeighbors).toBeUndefined();
@@ -263,7 +269,7 @@ describe("collectSystemInfoGenericApi", () => {
 
   it("the pinned pass filters to the pinned rows and never reads LLDP", async () => {
     const seen = fakeTransport((url) => ({ json: url.pathname.endsWith("/lldp") ? { n: [] } : { ports: [{ n: "eth0" }, { n: "eth1" }], vols: [] } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([ifq, stq, llq]), "a"));
     const r = await gm.collectSystemInfoGenericApi("asset-a", { interfacesPolling: "genericapi", storagePolling: null, lldpPolling: "genericapi" }, { interfaces: ["eth1"], storage: [] });
     expect(r.data?.interfaces.map((i) => i.ifName)).toEqual(["eth1"]);
     expect(seen.some((s) => s.url.endsWith("/lldp"))).toBe(false);
@@ -271,7 +277,7 @@ describe("collectSystemInfoGenericApi", () => {
 
   it("every wanted stream unreadable: a failure, not an empty answer", async () => {
     fakeTransport(() => ({ status: 502 }));
-    h.findMany.mockResolvedValue(rowsFor(integration([ifq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([ifq]), "a"));
     const r = await gm.collectSystemInfoGenericApi("asset-a", { interfacesPolling: "genericapi", storagePolling: null });
     expect(r.supported).toBe(true);
     expect(r.data).toBeUndefined();
@@ -287,14 +293,14 @@ describe("custom widgets", () => {
 
   it("collects every widgets query's samples", async () => {
     fakeTransport(() => ({ json: { toner: 40, door: "closed" } }));
-    h.findMany.mockResolvedValue(rowsFor(integration([wq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([wq]), "a"));
     const got = await gm.collectGenericApiWidgetSamples("asset-a");
     expect(got.samples).toEqual([{ widgetId: "ga:int1:toner", kind: "scalar", value: 40 }]);
     expect(got.stateRows).toEqual([{ probeId: "ga:int1:door", rowKey: "", rowLabel: "Door", value: 0, rawValue: "closed" }]);
   });
 
   it("defines the widgets in the shape the asset tab renders, tagged with their source", async () => {
-    h.findMany.mockResolvedValue(rowsFor(integration([wq]), "a"));
+    db.findMany.mockResolvedValue(rowsFor(integration([wq]), "a"));
     const defs = await gm.genericApiWidgetDefsForAsset("asset-a");
     expect(defs.map((d) => [d.id, d.widgetType, d.displayOptions])).toEqual([
       ["ga:int1:toner", "gauge", { unit: "%", min: 0, max: 100, warningAt: 15 }],

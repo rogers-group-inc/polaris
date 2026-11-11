@@ -1,7 +1,7 @@
 /**
  * tests/unit/fibreChannelHostWwn.test.ts
  *
- * Business rule 156, the host side: the WWN a server reports about its own
+ * Business rule 159, the host side: the WWN a server reports about its own
  * HBAs, in the three spellings its sources use, and the match it makes.
  *
  *   - Linux sysfs `0x10000090fa1b2c3d`, Windows bare hex, colon / dash forms;

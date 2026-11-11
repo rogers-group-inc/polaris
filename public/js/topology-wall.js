@@ -132,7 +132,6 @@
       placements: JSON.parse(JSON.stringify(staged.wallPlacements || view.wallPlacements || [])),
       history: { entries: [], index: -1 },
     };
-    if (!state.walls.length) state.walls = [{ id: newId("wall"), name: "Wall 1", width: DEFAULT_W, height: DEFAULT_H, order: 0 }];
     var scale = 6;
     var selectedId = ctx.selectedId ? ctx.selectedId() : null; // an ASSET id
     var selectedItem = null;                                      // a placement id (any kind)
@@ -170,7 +169,7 @@
       var html = state.walls.map(wallHtml).join("");
       if (state.editing) {
         html += '<button type="button" class="topo-rack-add btn btn-secondary" data-wall-add>' +
-          '<span class="topo-rack-add-plus" aria-hidden="true">+</span>Add wall<span class="hint" style="margin:0">' + DEFAULT_W + ' × ' + DEFAULT_H + '</span></button>';
+          '<span class="topo-rack-add-plus" aria-hidden="true">+</span>Add junction box<span class="hint" style="margin:0">' + DEFAULT_W + ' × ' + DEFAULT_H + ' in</span></button>';
       }
       strip.innerHTML = html;
     }
@@ -183,7 +182,7 @@
         '<header class="topo-wall-head">' +
           '<span class="topo-rack-name"' + (ed ? ' data-wall-rename="' + esc(w.id) + '" title="Double-click to rename"' : '') + '>' + esc(w.name) + '</span>' +
           '<span class="topo-rack-units"' + (ed ? ' data-wall-resize="' + esc(w.id) + '" title="Double-click to change the size"' : '') + '>' + w.width + ' × ' + w.height + ' in</span>' +
-          (ed && idx > 0 ? '<button type="button" class="btn-icon topo-rack-delete" data-wall-delete="' + esc(w.id) + '" aria-label="Delete ' + esc(w.name) + '">×</button>' : '') +
+          (ed ? '<button type="button" class="btn-icon topo-rack-delete" data-wall-delete="' + esc(w.id) + '" aria-label="Delete ' + esc(w.name) + '">×</button>' : '') +
         '</header>' +
         '<svg class="topo-wall-board" data-wall-board="' + esc(w.id) + '" width="' + W + '" height="' + H + '" viewBox="0 0 ' + w.width + ' ' + w.height + '" role="img" aria-label="' + esc(w.name) + '">' +
           '<defs><pattern id="pg-' + esc(w.id) + '" width="1" height="1" patternUnits="userSpaceOnUse"><circle cx="0.5" cy="0.5" r="' + (hole / scale) + '" class="topo-wall-hole"></circle></pattern></defs>' +
@@ -258,6 +257,7 @@
     }
     function changed() {
       stage();
+      if (ctx.historyPushed) ctx.historyPushed();
       var h = state.history;
       h.entries = h.entries.slice(0, h.index + 1);
       h.entries.push(snapshot());
@@ -277,8 +277,8 @@
       ctx.refreshSidebar();
       ctx.historyChanged();
     }
-    // Rule 150: a device mounted on a region-mapped wall takes the region's
-    // codes; rule 148(a): only the levels the region names change.
+    // Rule 150 (Room view): a device in a junction box takes the view's room plus
+    // that junction box's name; rule 148(a): only the levels set here change.
     var region = view.region || null;
     var stagedAssets = {};
     function restageCodes() {
@@ -288,11 +288,14 @@
         if (p.kind !== "asset" || !p.assetId) return;
         now[p.assetId] = true;
         var cur = locById[p.assetId] || null;
-        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); });
-        var same = levels.every(function (k) { return String(region[k]).trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
-        if (!levels.length || same) { ctx.stageLocationCode(p.assetId, null); return; }
+        var want = Object.assign({}, region);
+        want.junctionBox = (wallById(p.wallId) || {}).name || null;
+        want.rack = null;
+        var levels = CODE_KEYS.slice(0, 4).filter(function (k) { return String(region[k] || "").trim(); }).concat(["junctionBox", "rack"]);
+        var same = levels.every(function (k) { return String(want[k] || "").trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
+        if (!want.junctionBox || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
-        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
+        ctx.stageLocationCode(p.assetId, want, { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
       Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
       stagedAssets = now;
@@ -331,9 +334,12 @@
         return;
       }
       if (token !== CABLE_TOKEN && token !== THIRD_PARTY_TOKEN && state.placements.some(function (p) { return p.assetId === token; })) {
-        ctx.toast("That device is already on a wall in this view", "error");
+        ctx.toast("That device is already in a junction box in this view", "error");
         return;
       }
+      // A device is in one place in a room: a rack or a junction box.
+      var elsewhere = token !== CABLE_TOKEN && token !== THIRD_PARTY_TOKEN && ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
+      if (elsewhere) { ctx.toast("That device is already in " + elsewhere + ": remove it there first", "error"); return; }
       if (token === CABLE_TOKEN) mount(wall, at, { kind: "cableManagement", w: 3, h: 24 });
       else if (token === THIRD_PARTY_TOKEN) mount(wall, at, { kind: "thirdParty", w: 12, h: 8, label: "Third party", rename: true });
       else mount(wall, at, { kind: "asset", assetId: token, w: 12, h: 8 });
@@ -453,7 +459,7 @@
     strip.addEventListener("click", function (e) {
       if (e.target.closest("[data-wall-add]")) {
         if (!state.editing) return;
-        state.walls.push({ id: newId("wall"), name: "Wall " + (state.walls.length + 1), width: DEFAULT_W, height: DEFAULT_H, order: state.walls.length });
+        state.walls.push({ id: newId("wall"), name: "JB " + (state.walls.length + 1), width: DEFAULT_W, height: DEFAULT_H, order: state.walls.length });
         changed();
         strip.scrollLeft = strip.scrollWidth;
         return;
@@ -512,7 +518,7 @@
         if (it.linkedViewId && ctx.openView) items.push({ label: "Open the linked Rack view", title: "Save or close the wall first", disabled: state.editing, onSelect: function () { ctx.openView(it.linkedViewId); } });
       }
       items.push({ label: "Remove", danger: true, onSelect: function () { removeItem(it.id); } });
-      showRowMenu(itemEl, items, { menuAt: { x: e.clientX, y: e.clientY }, label: "Wall item" });
+      showRowMenu(itemEl, items, { menuAt: { x: e.clientX, y: e.clientY }, label: "Junction box item" });
     });
 
     function removeItem(id) {
@@ -535,7 +541,7 @@
       return dlg;
     }
     function renameItem(p) {
-      simpleDialog(p.kind === "rack" ? "Name this rack" : "Name this wall item",
+      simpleDialog(p.kind === "rack" ? "Name this rack" : "Name this item",
         '<div class="form-group"><label for="tw-name">Name</label><input id="tw-name" type="text" maxlength="64" value="' + esc(p.label || "") + '"></div>',
         function (root) {
           var v = root.querySelector("#tw-name").value.trim().replace(/\s+/g, " ");
@@ -547,20 +553,20 @@
     function editWall(w, field) {
       if (!w) return;
       if (field === "name") {
-        simpleDialog("Rename wall", '<div class="form-group"><label for="tw-wn">Name</label><input id="tw-wn" type="text" maxlength="60" value="' + esc(w.name) + '"></div>',
+        simpleDialog("Rename junction box", '<div class="form-group"><label for="tw-wn">Name</label><input id="tw-wn" type="text" maxlength="60" value="' + esc(w.name) + '"></div>',
           function (root) {
             var v = root.querySelector("#tw-wn").value.trim();
-            if (!v) { ctx.toast("Give the wall a name", "error"); return false; }
+            if (!v) { ctx.toast("Give the junction box a name", "error"); return false; }
             w.name = v;
             changed();
           });
         return;
       }
-      simpleDialog("Wall size",
+      simpleDialog("Junction box size",
         '<div class="form-group"><label>Size</label><div style="display:flex;align-items:center;gap:8px">' +
         '<input id="tw-ww" type="number" min="' + MIN_SIDE + '" max="' + MAX_SIDE + '" value="' + w.width + '" style="width:6rem" aria-label="Width (in)"><span>×</span>' +
         '<input id="tw-wh" type="number" min="' + MIN_SIDE + '" max="' + MAX_SIDE + '" value="' + w.height + '" style="width:6rem" aria-label="Height (in)"><span>in</span></div>' +
-        '<div class="hint">A wall can’t shrink below something mounted on it.</div></div>',
+        '<div class="hint">A junction box can’t shrink below something mounted in it. A wall is just a big one.</div></div>',
         function (root) {
           var nw = Number(root.querySelector("#tw-ww").value), nh = Number(root.querySelector("#tw-wh").value);
           if (!Number.isInteger(nw) || !Number.isInteger(nh) || nw < MIN_SIDE || nh < MIN_SIDE || nw > MAX_SIDE || nh > MAX_SIDE) {
@@ -573,10 +579,10 @@
         });
     }
     async function deleteWall(w) {
-      if (!w || !state.editing || state.walls.indexOf(w) <= 0) return;
+      if (!w || !state.editing || state.walls.indexOf(w) < 0) return;
       var n = state.placements.filter(function (p) { return p.wallId === w.id; }).length;
       if (n) {
-        var ok = typeof showConfirm === "function" ? await showConfirm('Delete "' + w.name + '" and the ' + n + " item" + (n === 1 ? "" : "s") + " on it?") : false;
+        var ok = typeof showConfirm === "function" ? await showConfirm('Delete "' + w.name + '" and the ' + n + " item" + (n === 1 ? "" : "s") + " in it?") : false;
         if (!ok) return;
       }
       state.walls = state.walls.filter(function (x) { return x.id !== w.id; });
@@ -747,10 +753,23 @@
         removeItem(id);
         return true;
       },
+      // The Room canvas (topology-room.js): one Device List for both parts.
+      whereIs: function (assetId) {
+        var p = state.placements.filter(function (x) { return x.assetId === assetId; })[0];
+        var w = p ? wallById(p.wallId) : null;
+        return p ? (w ? w.name : "?") : null;
+      },
+      removeAsset: function (assetId) {
+        if (!state.editing || !state.placements.some(function (p) { return p.assetId === assetId; })) return false;
+        state.placements = state.placements.filter(function (p) { return p.assetId !== assetId; });
+        changed();
+        return true;
+      },
+      isEmpty: function () { return !state.walls.length; },
       cornerButtons: function () {
         return [
-          { id: "topology-wall-zoom-in", label: "Zoom in", tip: "Draw the walls larger", icon: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>', onClick: function () { zoom(1); } },
-          { id: "topology-wall-zoom-out", label: "Zoom out", tip: "Draw the walls smaller", icon: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>', onClick: function () { zoom(-1); } },
+          { id: "topology-wall-zoom-in", label: "Zoom in", tip: "Draw the junction boxes larger", icon: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>', onClick: function () { zoom(1); } },
+          { id: "topology-wall-zoom-out", label: "Zoom out", tip: "Draw the junction boxes smaller", icon: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>', onClick: function () { zoom(-1); } },
         ];
       },
       canUndo: function () { return state.history.index > 0; },

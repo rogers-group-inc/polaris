@@ -1,4 +1,4 @@
--- Fibre-channel switch ports and logins (business rule 156). New tables only:
+-- Fibre-channel switch ports and logins (business rule 159). New tables only:
 -- nothing existing is touched. Filled by the SNMP system-info pass for a device
 -- that publishes CISCO-FC-FE-MIB; empty everywhere else.
 

@@ -1,7 +1,7 @@
 /**
  * src/utils/fibreChannel.ts
  *
- * Pure half of business rule 156: what a fibre-channel switch says about the
+ * Pure half of business rule 159: what a fibre-channel switch says about the
  * devices logged into its ports, and which asset each one is.
  *
  * The collector walks four Cisco tables and hands the raw rows here:

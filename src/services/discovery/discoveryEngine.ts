@@ -6289,7 +6289,7 @@ export async function syncVcenterDevices(
     }
   }
 
-  // ── Pass A2 — each ESXi host's fibre-channel HBAs (business rule 156) ─────
+  // ── Pass A2 — each ESXi host's fibre-channel HBAs (business rule 159) ─────
   // The WWNs a fibre-channel switch's login table names, so the switch's next
   // pass can match its logins to these hosts exactly. `null` = the SOAP host
   // fetch did not read them this run: nothing is touched. Edge-triggered in

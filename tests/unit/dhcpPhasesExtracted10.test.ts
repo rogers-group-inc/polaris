@@ -9,16 +9,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const db = {
+  create: stubbed(prisma.asset.create),
+  update: stubbed(prisma.asset.update),
+};
 
 const m = vi.hoisted(() => ({
-  create: vi.fn(),
-  update: vi.fn(),
   logCreated: vi.fn(),
   logUpdated: vi.fn(),
   reconcileMacs: vi.fn(),
   planSuffixes: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({ prisma: { asset: { create: m.create, update: m.update } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({ logDiscoveryAssetCreated: m.logCreated, logDiscoveryAssetUpdated: m.logUpdated }));
 vi.mock("../../src/services/macAddressService.js", () => ({ reconcileMacAddresses: m.reconcileMacs }));
 vi.mock("../../src/services/hostnameMacSuffixService.js", () => ({ planHostnameMacSuffixes: m.planSuffixes }));
@@ -31,10 +36,11 @@ const NOW = "2026-11-10T12:00:00.000Z";
 const MAC = "AA:BB:CC:DD:EE:01";
 let nextId = 0;
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   nextId = 0;
-  m.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `a${++nextId}`, ...data }));
-  m.update.mockResolvedValue({});
+  db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: `a${++nextId}`, ...data }));
+  db.update.mockResolvedValue({});
   m.planSuffixes.mockResolvedValue([]);
 });
 
@@ -81,7 +87,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
   it("creates it with the row's facts, its switch port, and a local gate as its location", async () => {
     const { state, done } = run({ deviceInventory: [inv({ hardwareVendor: "Dell", user: "CORP\\jdoe" })] });
     await done;
-    const data = m.create.mock.calls[0][0].data;
+    const data = db.create.mock.calls[0][0].data;
     expect(data).toMatchObject({
       ipAddress: "10.1.0.40", ipSource: "FGT-A", macAddress: MAC, hostname: "pc-40", manufacturer: "Dell",
       assetType: "workstation", status: "active", learnedLocation: "FGT-A", lastSeenSwitch: "SW1/port7",
@@ -98,7 +104,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
   it("a row with no local evidence (no switch / AP, no ARP on that gate) records no location, gate or address", async () => {
     const { state, done } = run({ deviceInventory: [inv({ switchName: null, switchPort: null })] });
     await done;
-    expect(m.create.mock.calls[0][0].data).toMatchObject({ ipSource: "fortimanager", learnedLocation: null });
+    expect(db.create.mock.calls[0][0].data).toMatchObject({ ipSource: "fortimanager", learnedLocation: null });
     expect(state.noteEndpointGate).not.toHaveBeenCalled();
     expect(state.addressSightings).toEqual([]);
   });
@@ -109,7 +115,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
       arpTable: [{ mac: MAC, ip: "10.1.0.40", fortigateDevice: "FGT-A" }],
     });
     await done;
-    expect(m.create.mock.calls[0][0].data.learnedLocation).toBe("FGT-A");
+    expect(db.create.mock.calls[0][0].data.learnedLocation).toBe("FGT-A");
     expect(state.noteEndpointGate).toHaveBeenCalledWith("a1", "FGT-A");
   });
 
@@ -126,20 +132,20 @@ describe("Phase 7 — creating an asset from a detected device", () => {
       { allReservationsRaw: [{ hostname: "by-res", ipAddress: "10.1.0.53" }, { hostname: "nowhere", ipAddress: "2001:db8::9" }] },
     );
     await done;
-    expect(m.create.mock.calls.map((c) => [c[0].data.hostname, c[0].data.ipAddress])).toEqual([["by-dhcp", "10.1.0.52"], ["By-Res", "10.1.0.53"]]);
+    expect(db.create.mock.calls.map((c) => [c[0].data.hostname, c[0].data.ipAddress])).toEqual([["by-dhcp", "10.1.0.52"], ["By-Res", "10.1.0.53"]]);
   });
 
   it("a row with neither MAC nor address is ignored", async () => {
     await run({ deviceInventory: [inv({ macAddress: null, ipAddress: null })] }).done;
-    expect(m.create).not.toHaveBeenCalled();
+    expect(db.create).not.toHaveBeenCalled();
   });
 
   it("a failed create is logged and the rest of the run continues", async () => {
-    m.create.mockRejectedValueOnce(new Error("unique"));
+    db.create.mockRejectedValueOnce(new Error("unique"));
     const { state, done } = run({ deviceInventory: [inv(), inv({ macAddress: "aa:bb:cc:dd:ee:09", hostname: "pc-9" })] });
     await done;
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to create inventory asset pc-40: unique");
-    expect(m.create).toHaveBeenCalledTimes(2);
+    expect(db.create).toHaveBeenCalledTimes(2);
     expect(state.inventoryAssets).toEqual(["pc-9"]);
   });
 });
@@ -150,7 +156,7 @@ describe("Phase 7 — naming created assets apart (rule 91(i))", () => {
     const { state, done } = run({ deviceInventory: [inv()] });
     await done;
     expect(m.planSuffixes).toHaveBeenCalledWith([{ id: "a1", hostname: "pc-40" }]);
-    expect(m.update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { hostname: "pc-40-dd-ee-01" } });
+    expect(db.update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { hostname: "pc-40-dd-ee-01" } });
     expect((state.assetIdx as any).findById("a1").hostname).toBe("pc-40-dd-ee-01");
     expect(m.logUpdated).toHaveBeenCalledWith({ hostname: "pc-40" }, { hostname: "pc-40-dd-ee-01" }, "a1", "pc-40-dd-ee-01", expect.anything());
   });

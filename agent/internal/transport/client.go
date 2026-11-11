@@ -404,7 +404,7 @@ type SystemInfoBody struct {
 }
 
 // FcPort is one fibre-channel HBA port as the host sees it (collectors/
-// fcports.go fills it; Polaris business rule 156). Declared here, with the
+// fcports.go fills it; Polaris business rule 159). Declared here, with the
 // rest of the wire shapes, because collectors imports transport.
 type FcPort struct {
 	Name       string `json:"name,omitempty"`       // host3, an instance name

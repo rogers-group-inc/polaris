@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import { prisma } from "../db.js";
+import { chunkArray } from "../utils/chunk.js";
 import { AppError } from "../utils/errors.js";
 import { recordCredentialUse, assetCredentialUses, type AssetCredentialSlots, type CredentialUseVia, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { reconcileDuplicateIpForAddresses, type WriteTimeIpConflict } from "./duplicateIpConflictService.js";
@@ -42,6 +43,8 @@ import { assertQuarantineStatusUntouched } from "./assetQuarantineService.js";
 import { assertCredentialAssignments } from "./credentialService.js";
 import { isAzureTag } from "../utils/tagNormalize.js";
 import { syncAzureTagRegistry } from "./tagAssignmentService.js";
+import { afterAssetsDeleted } from "./assetRemovalService.js";
+import { releaseDnsResolvedForAsset } from "./dnsResolvedReservationService.js";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
 
@@ -961,7 +964,15 @@ export async function bulkDeleteAssets(ids: string[], actor: string | undefined)
   if (infraIds.length > 0) {
     await releaseInfraReservationsForAssets(infraIds, { reason: "asset deleted", actor });
   }
+  // Rule 157: `deleteMany` runs no per-row delete hook, so the dns_resolved
+  // reservations the single delete releases in src/db.ts are released here
+  // first, while each asset's hostname and address can still be read.
+  for (const chunk of chunkArray(targets.map((a) => a.id), 25)) {
+    await Promise.all(chunk.map((id) => releaseDnsResolvedForAsset(id)));
+  }
   const { count } = await prisma.asset.deleteMany({ where: { id: { in: ids } } });
+  // Rule 157: everything that named these assets without a foreign key.
+  await afterAssetsDeleted(targets.map((a) => a.id));
   logEvent({ action: "asset.bulk_deleted", resourceType: "asset", actor, message: `Bulk deleted ${count} asset(s)` });
   // An `azure:` registry row no remaining asset carries goes with them.
   void syncAzureTagRegistry();
@@ -985,6 +996,8 @@ export async function deleteAsset(id: string, actor: string | undefined): Promis
     await releaseInfraReservationsForAssets([id], { reason: "asset deleted", actor });
   }
   await prisma.asset.delete({ where: { id } });
+  // Rule 157: everything that named this asset without a foreign key.
+  await afterAssetsDeleted([id]);
   if (existing.tags.some(isAzureTag)) void syncAzureTagRegistry();
   logEvent({ action: "asset.deleted", resourceType: "asset", resourceId: id, resourceName: existing.hostname || existing.ipAddress || undefined, actor, message: `Asset "${existing.hostname || existing.ipAddress || "unknown"}" deleted` });
 }

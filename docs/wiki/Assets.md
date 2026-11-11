@@ -451,6 +451,20 @@ The header also carries **Screenshot** and **Export PDF** (below), **Open HTTPS*
 Right of the device's name, on every tab, are its two verbs:
 [Discover Now](#discover-now) and [Reboot](#reboot).
 
+### Sharing a device
+
+The **Share** button (three joined dots, first in the header's icon row) copies
+a link to this device. Paste it into a chat or an email for anyone with a
+Polaris account. The link works the same on any device: on a computer it
+opens this slide-over, and on a phone it opens the device in the
+[mobile app](Mobile-and-Dash). A reader who is signed out signs in first and
+then lands on the device. The link gives no extra access. The reader's own
+role still decides what they can see, so someone without **Assets** read
+access cannot open it.
+
+The network and IP-block slide-overs on the [IPAM](IPAM) page have the same
+button.
+
 ### Screenshot and Export PDF
 
 The slide-over header carries two icon buttons, **Screenshot** (the camera) and
@@ -1776,7 +1790,7 @@ A port that is down on the host is amber.
   asset's hostname or DNS name.
 
 Two servers claiming one WWN, or two assets matching a name, link nothing
-([rule 156](Business-Rules#rule-156)). A device that logs out of a port is
+([rule 159](Business-Rules#rule-159)). A device that logs out of a port is
 recorded in Events, on the switch, as `asset.fc_logins_changed`: a warning when
 a device logged out, info when one only logged in. The message names the port,
 the device and its WWN.
@@ -2190,6 +2204,13 @@ sightings. If the device is simply gone from the network rather than gone from
 the business, set its **State** to `decommissioned` instead: that stops polling
 and keeps the record. A device a source still discovers will also come back on
 the next discovery run, as a new record with no history.
+
+The delete also cleans up after the device ([rule 157](Business-Rules#rule-157)): it is
+removed from every path check, contact and maintenance schedule it was pinned to; its log
+rules and process log settings are deleted; and anything still queued for its Polaris Agent
+is withdrawn. An automation that was scoped to exactly this device keeps naming it and stops
+matching — open it in the wizard to re-aim or delete it. **Merging** is not deleting: when one
+record is merged into another, those same pins, automations and settings move to the survivor.
 
 Two things the delete does for you, and one it refuses:
 

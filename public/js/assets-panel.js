@@ -607,7 +607,7 @@ async function openViewModal(id, opts) {
       if (asset.assetType !== "firewall") return null;
       return api.assets.childCounts(asset.id).catch(function () { return null; });
     });
-    // Fibre Channel (business rule 156) — whether the tab is drawn, and its
+    // Fibre Channel (business rule 159) — whether the tab is drawn, and its
     // content. Beside the wave for the same reason: wave slots are positional.
     var fcP = api.assets.fibreChannel(id).catch(function () { return null; });
 
@@ -890,7 +890,11 @@ async function openViewModal(id, opts) {
     // drops DOWN (the default) since this group lives in the panel HEADER, and
     // right-anchors (also the default) so it stays inside the slide-over — the
     // group sits at the header's right edge, left of the lock + close pair.
+    // Share copies this device's surface-neutral link (public/js/share-link.js)
+    // — it opens the desktop panel or the phone sheet, whichever the
+    // recipient opens it on.
     var copyBtns =
+      (window.PolarisShare ? '<button type="button" class="btn btn-glyph btn-glyph-share btn-sm btn-secondary" id="btn-asset-share" title="Share — copy a link to this device for another Polaris user">Share</button>' : '') +
       '<button type="button" class="btn btn-glyph btn-glyph-camera btn-sm btn-secondary" id="btn-asset-screenshot" title="Screenshot — copy this tab as an image">Screenshot</button>' +
       '<button type="button" class="btn btn-glyph btn-glyph-download btn-sm btn-secondary" id="btn-asset-pdf" title="Export this tab to PDF">Export PDF</button>' +
       '<span class="btn-dropdown-wrap" id="asset-export-wrap" style="display:none">' +
@@ -955,6 +959,10 @@ async function openViewModal(id, opts) {
     _mountAssetViewAsyncSections(a, dependencies, sources, sightings, managedAgent, agentSubpanelHTML, firmwareAvail);
     _wireHoverTriggersIn(bodyEl);
     bodyEl.addEventListener("click", _handleCopyClick);
+    var shareBtn = document.getElementById("btn-asset-share");
+    if (shareBtn) shareBtn.addEventListener("click", function () {
+      window.PolarisShare.share("asset", a.id, { title: a.hostname || a.dnsName || a.ipAddress || "Device" });
+    });
     document.getElementById("btn-asset-screenshot").addEventListener("click", function () {
       _openScreenshotOptions(a);
     });

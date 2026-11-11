@@ -936,7 +936,7 @@ const api = {
     // so threw on every open — `request` is module-scope here, never a member
     // of `api`.
     macTable:             (id)  => request("GET", `/assets/${id}/mac-table`),
-    // Fibre Channel tab (business rule 156): a switch's ports + logins and a
+    // Fibre Channel tab (business rule 159): a switch's ports + logins and a
     // server's HBA ports per switch, from one read.
     fibreChannel:         (id)  => request("GET", `/assets/${id}/fibre-channel`),
     childCounts:          (id)  => request("GET", `/assets/${id}/child-counts`),
