@@ -778,6 +778,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetDependencyService.ts
+
+**What it owns:** The asset Dependencies tab's server half, moved out of `routes/assets/dependencies.ts` (CQ-B062 slice 2): the dependency view (effective / computed / override parents, infra children with grandchildren under `DEP_INFRA_CHILD_CAP` / `DEP_GRANDCHILD_CAP`, the HA peer, active-alert summaries), the operator parent override, and the Dependency Test simulation. The suppression engine itself stays in dependencyTreeService; this module is its operator surface.
+
+**Public API:** `getAssetDependencies(id)`, `setDependencyOverride(id, { parentAssetIds })`, `clearDependencyOverride(id)`, `startDependencyTest(id, durationMinutes, actor)`, `clearDependencyTest(id, actor)`.
+
+**Cross-service deps:** dependencyTreeService (`propagateAfterStatusChange`, `FORTINET_INFRA_ASSET_TYPES`), notificationService (`activeAlertSummaryByAsset`), eventLogService.
+
+**Used by:** `src/api/routes/assets/dependencies.ts` (GET /:id/dependencies, PUT + DELETE /:id/dependencies/override, POST + DELETE /:id/dependency-test). `GET /:id/connection-path` calls connectionPathService directly.
+
+**Invariants:**
+- An override parent must exist, be a firewall / switch / access_point, not be the asset itself, and not lead back to it through the effective parents (override set when present, else computed) — refused 400 before anything is written; the edge swap is one transaction.
+- Both downward layers of the view are infra-only and capped (a site FortiGate's child set is fleet-sized).
+- A Dependency Test applies only to Fortinet infra; clearing one that is not running is a no-op with no Event.
+
+**When changing this:** `tests/integration/assetDependenciesContract.test.ts` pins the view; `tests/unit/assetDependencyService.test.ts` the override refusals and the test's branches. See [dependency-aware-monitoring-suppression](../cross-cutting/dependency-aware-monitoring-suppression.md).
+
+---
+
 ## services/dependencyTreeService.ts
 
 **What it owns:** Dependency-DAG computation and multi-parent suppression semantics — assigns layers via BFS from FortiGate roots, prefers the most-physical edge per (child,parent) pair, hangs every non-infra asset off that tree as a leaf, and reconciles `Asset.dependencySuppressed` on the reconciler cadence.
@@ -812,7 +831,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - `propagateAfterStatusChange` is a latency optimization; `reconcileDependencySuppression` is the source of truth.
-- Anything that resolves "the effective parent set" must treat every NON-`override` source as computed — `loadEffectiveParents` does, and `loadBoundChildRows` + the parents shaping in `GET /assets/:id/dependencies` were fixed in 2026-08 to match (they tested `source === "computed"` literally, which hid both `endpoint` and `vcenter` rows from the asset-details tree while the reconciler was suppressing on them).
+- Anything that resolves "the effective parent set" must treat every NON-`override` source as computed — `loadEffectiveParents` does, and `loadBoundChildRows` + the parents shaping in `GET /assets/:id/dependencies` (both in `assetDependencyService.ts`) were fixed in 2026-08 to match (they tested `source === "computed"` literally, which hid both `endpoint` and `vcenter` rows from the asset-details tree while the reconciler was suppressing on them).
 - The endpoint half makes a site FortiGate's child set fleet-sized. `GET /assets/:id/dependencies` keeps BOTH downward layers infra-only and capped (`DEP_INFRA_CHILD_CAP` / `DEP_GRANDCHILD_CAP`); any new consumer that walks children downward needs its own type filter and its own bound. Suppression itself is unaffected — the reconciler reads every edge regardless of what the tree displays.
 
 ---
