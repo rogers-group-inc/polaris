@@ -128,10 +128,10 @@ function parseAxis(fields: string[]): SysDescrDetail | undefined {
  * PDU's own; in a UPS's SmartSlot (AP9630 / AP9631 / AP9640 / AP9641) they are
  * the add-on card's, and storing them would call a Smart-UPS an "AP9631" and
  * give every UPS the card's serial. APC registers each product under
- * `318.1.3.<family>`, and `318.1.3.4` is `masterSwitch` — every rack PDU
- * generation (rPDU, rPDU2, sPDU, ePDU …). Model and serial are claimed only
- * under that branch; anywhere else, or with no sysObjectID at all, the parse
- * yields the firmware alone.
+ * `318.1.3.<family>`; model and serial are claimed only under a family whose
+ * card is built in (`APC_EMBEDDED_CARD_ARCS`: rack PDUs, rack transfer
+ * switches, environmental monitors). Anywhere else, or with no sysObjectID
+ * at all, the parse yields the firmware alone.
  *
  * Firmware is PF, the card's operating system (AOS), falling back to AF1 when
  * a card states no platform. Not the application version: the asset page
@@ -142,8 +142,30 @@ function parseAxis(fields: string[]): SysDescrDetail | undefined {
  */
 const APC_NMC_ANCHOR = /^\s*APC Web\/SNMP Management Card\s*\(([^)]*)\)/i;
 
-/** PowerNet-MIB `masterSwitch` — the rack-PDU product family, card built in. */
-const APC_PDU_ARC = /^\.?1\.3\.6\.1\.4\.1\.318\.1\.3\.4(\.|$)/;
+/**
+ * PowerNet-MIB product families whose management card is BUILT IN — so the
+ * card's MN / SN are the device's own (business rule 161) — with the
+ * productType each states. An arc is admitted only on evidence that the card
+ * cannot be removed into another product:
+ *
+ *  - `318.1.3.4` masterSwitch — every rack-PDU generation (rPDU, rPDU2,
+ *    sPDU, rPDUB, ePDU). Confirmed on an AP8870 (rPDU2, `.4.6`).
+ *  - `318.1.3.11` / `.32` / `.38` automaticXferSwitch, 4G, 5G — the rack
+ *    Automatic Transfer Switches, management integrated. No hardware in hand.
+ *  - `318.1.3.8` monitors — environmental, EMS, EMU2 and `mem`, the NetBotz
+ *    Rack Monitor 200 (a published walk: `MN:NBRK0200 … SN: ZA…` on `.8.4`;
+ *    its manual says the card is inside the unit). No hardware in hand.
+ *
+ * NOT admitted: UPS families (SmartSlot cards move between units), the
+ * InfraStruXure ATS `.19` (not confirmed built in), and the NetBotz 450 / 550
+ * / 750 / 755 appliances, which are NetBotz enterprise 5528 with a sysDescr
+ * that is not this format and never reach this parser.
+ */
+const APC_EMBEDDED_CARD_ARCS: readonly { arc: RegExp; productType: string }[] = [
+  { arc: /^\.?1\.3\.6\.1\.4\.1\.318\.1\.3\.4(\.|$)/,            productType: "Rack PDU" },
+  { arc: /^\.?1\.3\.6\.1\.4\.1\.318\.1\.3\.(11|32|38)(\.|$)/,   productType: "Transfer Switch" },
+  { arc: /^\.?1\.3\.6\.1\.4\.1\.318\.1\.3\.8(\.|$)/,            productType: "Environmental Monitor" },
+];
 
 /** `KEY:value` tokens; a key whose value is blank takes the next non-key token. */
 function apcTokens(body: string): Map<string, string> {
@@ -175,8 +197,11 @@ function parseApcNmc(raw: string, sysObjectId: string | undefined): SysDescrDeta
   const fw = apcVersion(t.get("PF")) ?? apcVersion(t.get("AF1"));
   if (fw) out.osVersion = fw;
 
-  if (sysObjectId && APC_PDU_ARC.test(sysObjectId.trim())) {
-    out.productType = "Rack PDU";
+  const family = sysObjectId
+    ? APC_EMBEDDED_CARD_ARCS.find((f) => f.arc.test(sysObjectId.trim()))
+    : undefined;
+  if (family) {
+    out.productType = family.productType;
     // A model is a part number: one token, letters and digits. Anything else
     // is a card that reordered its own format, and yields no model.
     const model = field(t.get("MN"));

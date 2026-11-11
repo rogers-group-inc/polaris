@@ -298,10 +298,42 @@ describe("parseVendorSysDescr — APC Network Management Card (business rule 161
     expect(parseVendorSysDescr(APC_AP8870, "")?.serialNumber).toBeUndefined();
   });
 
+  it("claims a rack transfer switch's own model and serial (no hardware in hand)", () => {
+    // Built-in management on every rack ATS generation: 318.1.3.11 / .32 (4G) / .38 (5G).
+    const ats =
+      "APC Web/SNMP Management Card (MB:v3.8.6 PF:v6.4.0 PN:apc_hw05_aos_640.bin " +
+      "AF1:v6.4.0 AN1:apc_hw05_ats4g_640.bin MN:AP4423 HR:01 SN: 5A1234E56789 MD:06/15/2018)";
+    for (const oid of ["1.3.6.1.4.1.318.1.3.11", "1.3.6.1.4.1.318.1.3.32", "1.3.6.1.4.1.318.1.3.38.1"]) {
+      expect(parseVendorSysDescr(ats, oid), oid).toEqual({
+        manufacturer: "APC", model: "AP4423", serialNumber: "5A1234E56789",
+        osVersion: "6.4.0", productType: "Transfer Switch",
+      });
+    }
+  });
+
+  it("claims a NetBotz Rack Monitor 200's own model and serial", () => {
+    // The layout and sysObjectID (monitors.mem, 318.1.3.8.4) of a published
+    // NBRK0200 walk; the serial is replaced with a made-up one.
+    const nb200 =
+      "APC Web/SNMP Management Card (MB:v4.0.6 PF:v3.7.5 PN:apc_hw03_aos_375.bin AF1:v3.7.5 " +
+      "AN1:apc_hw03_nb200_375.bin MN:NBRK0200 HR:05 SN: ZA0000000001 MD:04/29/2013)";
+    expect(parseVendorSysDescr(nb200, "1.3.6.1.4.1.318.1.3.8.4")).toEqual({
+      manufacturer: "APC", model: "NBRK0200", serialNumber: "ZA0000000001",
+      osVersion: "3.7.5", productType: "Environmental Monitor",
+    });
+  });
+
+  it("does not admit the InfraStruXure ATS, whose card is not confirmed built in", () => {
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.19.1")?.model).toBeUndefined();
+  });
+
   it("does not mistake a neighbouring arc for the PDU branch", () => {
     // 318.1.3.40 is not 318.1.3.4.
     expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.40.1")?.model).toBeUndefined();
     expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.3180.1.3.4.6")?.model).toBeUndefined();
+    // 318.1.3.110 is not 318.1.3.11, and .80 is not .8.
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.110")?.model).toBeUndefined();
+    expect(parseVendorSysDescr(APC_AP8870, "1.3.6.1.4.1.318.1.3.80")?.model).toBeUndefined();
   });
 
   it("reads the platform version alone, and the application when no platform is stated", () => {

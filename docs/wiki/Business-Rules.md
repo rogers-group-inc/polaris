@@ -3372,11 +3372,19 @@ See [Integrations](Integrations#deleting-an-integration).
 into it.** An APC rack PDU, UPS or other device monitored over SNMP describes itself through its
 Network Management Card (`APC Web/SNMP Management Card (… MN:AP8870 … SN: ZA2406030655 …)`).
 Polaris reads the card's operating-system (AOS) version as the device's firmware on every APC
-device. It takes the model and serial number only on a rack PDU, which Polaris recognises from the
-product identifier the device reports (`sysObjectID`). A PDU's card is part of the PDU, so its model
-and serial are the PDU's own. A UPS's card is a removable add-on, so its model and serial belong to
-the card and are not written onto the UPS. A rack PDU's type also reads "Rack PDU", which a device
-type's matching rules can use.
+device. It takes the model and serial number only from products whose card is built in, which
+Polaris recognises from the product identifier the device reports (`sysObjectID`):
+
+| Product | Product type Polaris records |
+|---|---|
+| Rack PDUs (every generation) | Rack PDU |
+| Rack Automatic Transfer Switches | Transfer Switch |
+| Environmental monitors, including the NetBotz Rack Monitor 200 | Environmental Monitor |
+
+On these the card is part of the device, so its model and serial are the device's own. A UPS's
+card is a removable add-on, so its model and serial belong to the card and are not written onto
+the UPS. The product type can be used by a device type's matching rules. The larger NetBotz
+appliances (450, 550, 570, 750, 755) describe themselves differently and are not read this way.
 
 To keep UPS and PDU custom widgets apart under the one APC manufacturer profile, give each widget a
 model pattern. PDU models start with `AP8` (for example `^AP8`); UPS models are named by the UPS's
