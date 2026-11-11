@@ -71,7 +71,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The operator-pinned PRIMARY ADDRESS (business rule 102) — `Asset.primaryAddressMac` / `primaryAddressIp` / `primaryAddressPinnedAt` / `primaryAddressPinnedBy` / `primaryAddressContestedAt`: one (MAC, IP) pair from the asset's `AssetAssociatedIp` rows that the asset is monitored on. The pure enforcement lives in `applyPrimaryAddressPin` (`utils/assetInvariants.ts`), executed inside the `enforceOperatorOverrides` guard in `src/db.ts`; this service sets / clears the pin and audits.
 
-**Public API:** `pinPrimaryAddress({assetId, mac, ip, actor})`, `unpinPrimaryAddress({assetId, actor})` (business rule 103(b): clears the pin and moves `ipAddress` to the LISTED address — the asset's `AssetAssociatedIp` rows — with the highest `evidenceScore` (no operator weight; polling counts) via `bestListedAddress` (exported for the rule 102(b) release detach in `assetAddressService`), ties keeping the current address, then the lowest IP string; `ipSource` = that row's gate, else "discovery". Only an EMPTY list falls back to re-projecting from the `AssetSource` rows, where an asset no source has an opinion on keeps its address. The Event's details carry `chosenBy: "address-confidence" | "projection"` and `evidenceScore`), `releaseConfirmedPins(now?)` (business rule 103(a): releases every pin whose address's discovery confidence reaches 50 and beats every other address, considering only pins with no `primaryAddressContestedAt` inside `PIN_CONTEST_WINDOW_MS` (3 days, `utils/assetInvariants.ts`) — run by `jobs/releaseConfirmedPins.ts`; reads `addressConfidenceService.buildAddressConfidence`, keeps the address, conditional `updateMany`, `asset.primary_address.released` Event), `handlePrimaryAddressFollowed(assetId, fromIp, ip)` (best-effort audit, called fire-and-forget by the db.ts guard), `gateForPinnedAddress(ip, candidates)` (business rule 101(b): the gate whose IPAM network holds a pinned address — `pinPrimaryAddress` and the PUT route's typed address write it to `learnedLocation`; one read of the gate-owned subnets per operator pin), `CLEAR_PRIMARY_ADDRESS_PIN` (the data spread by routes that set another pin; nulls all five columns).
+**Public API:** `pinPrimaryAddress({assetId, mac, ip, actor})`, `unpinPrimaryAddress({assetId, actor})` (business rule 103(b): clears the pin and moves `ipAddress` to the LISTED address — the asset's `AssetAssociatedIp` rows — with the highest `evidenceScore` (no operator weight; polling counts) via `bestListedAddress` (exported for the rule 102(b) release detach in `assetAddressService`), ties keeping the current address, then the lowest IP string; `ipSource` = that row's gate, else "discovery". Only an EMPTY list falls back to re-projecting from the `AssetSource` rows, where an asset no source has an opinion on keeps its address. The Event's details carry `chosenBy: "address-confidence" | "projection"` and `evidenceScore`), `releaseConfirmedPins(now?)` (business rule 103(a): releases every pin whose address's discovery confidence reaches 50 and beats every other address, considering only pins with no `primaryAddressContestedAt` inside `PIN_CONTEST_WINDOW_MS` (3 days, `utils/assetInvariants.ts`) — run by `jobs/releaseConfirmedPins.ts`; reads `addressConfidenceService.buildAddressConfidence`, keeps the address, conditional `updateMany`, `asset.primary_address.released` Event), `handlePrimaryAddressFollowed(assetId, fromIp, ip)` (best-effort audit, called fire-and-forget by the db.ts guard), `gateForPinnedAddress(ip, candidates)` (business rule 101(b): the gate whose IPAM network holds a pinned address — `pinPrimaryAddress` and the PUT route's typed address write it to `learnedLocation`; one read of the gate-owned subnets per operator pin), `CLEAR_PRIMARY_ADDRESS_PIN` (the data spread by routes that set another pin; nulls all five columns). Also `loadIntegrationTokenTarget(assetId)` — the `{ ipAddress, discoveredByIntegration.type }` the rule 111(c) guard judges a pin against (the guard reads the caller's permission, so it stays in the route; CQ-B062 slice 2).
 
 **Cross-service deps:** `prisma`, `AppError`, `utils/mac.normalizeMacOrNull`, `utils/assetInvariants.PIN_CONTEST_WINDOW_MS`, `utils/assetProjection.projectAssetFromSources` (unpin's empty-list fallback only), `addressConfidenceService.buildAddressConfidence` (unpin's pick and the release sweep), `eventLogService.logEvent`, `ipOverrideService.resolvePendingIpOverrideConflicts`.
 
@@ -164,6 +164,24 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - The credential use is recorded only for assets that did not already carry it.
 
 **When changing this:** keep `tests/unit/assetBulkMonitorService.test.ts` and `tests/integration/monitorableStatusClamp.test.ts` green.
+
+---
+
+## services/assetWriteService.ts
+
+**What it owns:** Creating and updating an asset, moved out of `routes/assets/write.ts` (CQ-B062 slice 2): the body schemas (`CreateAssetSchema`, `UpdateAssetSchema`, `AssetAddressSchema`, `PollingMethodEnum` — here because the pipeline is typed by them), the create path, the PUT pipeline, and resetting a monitor-override pin. The route keeps only the checks that read the request — `assertTagChangeAllowed` (the Tags key) and `assertIpChangeMayRetargetIntegrationToken` (rule 111(c)) — and runs them in the original order between parse and the service call.
+
+**Public API:** `CreateAssetSchema`, `UpdateAssetSchema`, `validateAssetCreate(input)` (quarantine-status guard + coordinate pair), `createAsset(input, actor, credentialActor)` → the asset + `ipConflict`, `loadAssetForUpdate(id)`, `updateAsset(id, existing, input, actor, credentialActor)` → the asset + `ipConflict`, `resetMonitorOverrideToIntegrationDefault(id, actor)`. Also the deletes: `bulkDeleteAssets(ids, actor)` → count (409 for the whole call when any id is quarantined; infra reservations released BEFORE the one `deleteMany`; `asset.bulk_deleted`) and `deleteAsset(id, actor)` (404 / 409; a switch's or AP's reservation released first; `azure:` registry resync only when the asset carried one; `asset.deleted`).
+
+**Cross-service deps:** credentialService (`assertCredentialAssignments`), credentialUseAuditService (rule 112), duplicateIpConflictService (rule 40(i) write-time check), assetQuarantineService (`assertQuarantineStatusUntouched`), monitorOverrideService (`recomputeMonitorOverrideForAssets`, `getAddAsMonitoredFromConfig`), mapRegionService, tagAssignmentService, descriptionSyncService, ipOverrideService, agentHostPinService, maintenanceScheduleService, reservationService, appMapDiscoveryService, primaryAddressService, eventLogService, utils/assetInvariants, utils/pollingCompatibility.
+
+**Used by:** `src/api/routes/assets/write.ts` (POST /, PUT /:id, POST /:id/monitor-override/reset).
+
+**Invariants:**
+- The PUT phases keep their order: validate (the only guard that queries is `assertCredentialAssignments`, last) → build the patch → one `asset.update` → side effects → credential record → the duplicate-ip re-check of BOTH ends of a moved address.
+- The reset lives here and not in monitorOverrideService: db.ts imports that module, which must not import prisma back.
+
+**When changing this:** `tests/integration/assetPutContract.test.ts` pins the guards, pin / override semantics, status stamps and the unmap side effect; `tests/unit/assetWriteService.test.ts` the request-free pieces. A new PollingMethod also widens `PollingMethodEnum` here ([polling-method-resolver](../cross-cutting/polling-method-resolver.md)).
 
 ---
 
@@ -415,7 +433,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Push/pull FortiGate MAC quarantine via persistent `user.quarantine.targets` CMDB tree; orchestrates multi-FortiGate best-effort with per-device all-or-nothing atomicity.
 
-**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
+**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), assertQuarantineStatusUntouched(next, current)` (the write-time guard every asset create / PUT / PDF import runs: status may enter or leave `quarantined` only through the quarantine verbs) `, getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 
@@ -830,7 +848,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Business rule 91(j) — splitting MACs off an asset onto assets of their own (the recovery for devices fused before 91(f)).
 
-**Public API:** `splitMacsToNewAssets({ assetId, macs, actor })` → `{ originalAssetId, created[], renamed[] }`; pure `macSplitRefusal(row, primaryMac)` and `hostnameBase(hostname)`.
+**Public API:** `splitMacsToNewAssets({ assetId, macs, actor })` → `{ originalAssetId, created[], renamed[] }`; pure `macSplitRefusal(row, primaryMac)` and `hostnameBase(hostname)`. Also `removeAssetMac(id, normalizedMac, actor)` — DELETE /assets/:id/macs/:mac (rule 79: one-shot, no tombstone; one transaction drops the row, its discovery addresses (rule 102) and a pin on it, and re-picks `Asset.macAddress` through `selectPrimaryMac`; writes `asset.mac_removed`), moved from routes/assets/addresses.ts (CQ-B062 slice 2). Integration coverage: `tests/integration/assetMacRemove.test.ts`.
 
 **Cross-service deps:** prisma (`asset`, `assetMacAddress`, `assetAssociatedIp`, `assetIpHistory`, `assetSource`) in one `$transaction`; `primaryAddressService` (`CLEAR_PRIMARY_ADDRESS_PIN`, `bestListedAddress`); `hostnameMacSuffixService.planHostnameMacSuffixes` (naming, after the transaction); `utils/macAddresses.ts` (`HARDWARE_MAC_SOURCES`, `INTERFACE_MAC_SOURCE`, `selectPrimaryMac`); `eventLogService.logEvent` (`asset.mac_split`, `asset.renamed_by_mac`).
 

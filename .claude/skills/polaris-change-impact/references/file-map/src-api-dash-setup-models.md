@@ -46,14 +46,14 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │       ├── assets/detail.ts     # One asset: GET /:id, effective monitor settings, IP history, alerts, metric thresholds, monitor history; probe-now, refresh-system-info, rediscover, snmp-walk
 │   │       ├── assets/system.ts     # The slide-over System tab: maintenance windows / info, contacts, telemetry history, memory forecast, system-info, processes, MAC / ARP tables, child counts, services, software, inventory presence, process connections
 │   │       ├── assets/telemetry.ts  # Per-asset history reads: custom widgets, interface history + interface comment / tags, hardware, IPsec, Perf SLA / SD-WAN, path checks, MCLAG, upstream, VIPs, virtualization, storage / process history, process / service logs, process config
-│   │       ├── assets/write.ts      # POST / and PUT /:id (CreateAssetSchema / UpdateAssetSchema, validateAssetUpdate → buildAssetUpdatePatch → applyAssetUpdateSideEffects), monitor-override reset
+│   │       ├── assets/write.ts      # POST / and PUT /:id: parse, the request-bound checks (Tags permission, integration-token retarget, rule 111(c)), then assetWriteService; POST /:id/monitor-override/reset
 │   │       ├── assets/lookups.ts    # Reverse / forward DNS (one asset, or the sweep), OUI lookup, CSV and PDF import
 │   │       ├── assets/addresses.ts  # MAC split / remove, TLS + SSH host pins, decommission preview, primary IPv4 / IPv6 pin, DELETE / and DELETE /:id
 │   │       ├── assets/sources.ts    # Sightings, per-source records + split, polling history, merge (assetMerge)
 │   │       ├── assets/dependencies.ts # Dependency tree (rule 38), the override, the admin dependency test, connection path
 │   │       ├── assets/quarantine.ts # Quarantine status / quarantine / release / verify, bulk quarantine + release (assetsQuarantine)
 │   │       ├── assets/agent.ts      # Polaris Agent on an asset: bulk install, agent card, install / retry / reinstall / upgrade / uninstall (agentDeploy)
-│   │       ├── assets/shared.ts     # The write-time guards several assets sub-routers need: assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken (no Prisma; slice 2 moved the rest to services and utils)
+│   │       ├── assets/shared.ts     # assertIpChangeMayRetargetIntegrationToken — the one shared guard that reads the request (rule 111(c)); everything else moved to services / utils in CQ-B062 slice 2
 │   │       ├── map.ts               # Device Map: site list, search, per-FortiGate topology graph (thin route — graph construction lives in services/topologyGraphService.ts) + shared topology-layout writes
 │   │       ├── applicationMap.ts    # Application Map: GET / (the connectivity graph payload from applicationMapService, gated applicationMap=read) + PUT/DELETE /layout (shared ApplicationMapLayout drag positions, gated applicationMap=write, audited application_map.layout.saved/reset). Mounted at /application-map. The per-asset connections read lives on assets.ts (/assets/:id/process-connections).
 │   │       ├── mapRegions.ts        # CRUD for operator-drawn map regions (admin/networkadmin); reconciles `region:<name>` tags

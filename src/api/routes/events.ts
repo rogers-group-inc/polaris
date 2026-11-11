@@ -356,5 +356,4 @@ export default router;
 
 export {
   logEvent,
-  buildChanges,
 } from "../../services/eventLogService.js";

@@ -1162,3 +1162,21 @@ export async function recordQuarantineDrift(
     details: { targets },
   });
 }
+
+/**
+ * Quarantine status is owned by the quarantine endpoints (assetsQuarantine):
+ * setting it anywhere else skips the FortiGate push, and discovery's
+ * auto-quarantine pass then pushes a REAL quarantine for any sighted asset
+ * whose status says "quarantined". `PUT /assets/:id` has always refused it;
+ * create and the PDF import did not (re-scan F61). `current` is null for a
+ * create. Throws 400.
+ */
+export function assertQuarantineStatusUntouched(next: unknown, current: string | null): void {
+  if (next === undefined || next === null || next === "") return;
+  if (next === "quarantined" && current !== "quarantined") {
+    throw new AppError(400, "Quarantine an asset with POST /assets/:id/quarantine (Quarantine permission), not by setting its status");
+  }
+  if (next !== "quarantined" && current === "quarantined") {
+    throw new AppError(400, "Release the quarantine with DELETE /assets/:id/quarantine before changing this asset's status");
+  }
+}
