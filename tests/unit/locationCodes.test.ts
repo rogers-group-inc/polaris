@@ -17,12 +17,13 @@ describe("parseLocationCodes", () => {
       building: "Shop",
       floor: "2",
       room: "North Closet",
+      rack: null,
       junctionBox: "112-305",
     });
   });
 
   it("returns all-null for empty / null / undefined / prose-only input", () => {
-    const empty = { area: null, building: null, floor: null, room: null, junctionBox: null };
+    const empty = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
     expect(parseLocationCodes(null)).toEqual(empty);
     expect(parseLocationCodes(undefined)).toEqual(empty);
     expect(parseLocationCodes("")).toEqual(empty);
@@ -35,13 +36,14 @@ describe("parseLocationCodes", () => {
       building: "Shop",
       floor: null,
       room: "MDF",
+      rack: null,
       junctionBox: "A-1",
     });
   });
 
   it("only matches keys at start or after whitespace (hub:/shelf: are not tokens)", () => {
     const parsed = parseLocationCodes("hub:5 shelf:3");
-    expect(parsed).toEqual({ area: null, building: null, floor: null, room: null, junctionBox: null });
+    expect(parsed).toEqual({ area: null, building: null, floor: null, room: null, rack: null, junctionBox: null });
     // ...but a real token after prose still parses
     expect(parseLocationCodes("core switch b:Office").building).toBe("Office");
   });
@@ -55,12 +57,21 @@ describe("parseLocationCodes", () => {
     expect(parseLocationCodes("a:North Campus b:Lab").area).toBe("North Campus");
   });
 
+  it("reads ra: as rack, never as r: (room) or a: (area)", () => {
+    expect(parseLocationCodes("r:MDF ra:R2 jb:7")).toEqual({ area: null, building: null, floor: null, room: "MDF", rack: "R2", junctionBox: "7" });
+    expect(parseLocationCodes("ra:Rack 12")).toMatchObject({ rack: "Rack 12", room: null, area: null });
+    expect(parseLocationCodes("RA:r3")).toMatchObject({ rack: "r3" });
+    // "bra:" / "para:" are not tokens: a key matches only after whitespace.
+    expect(parseLocationCodes("cobra:x")).toMatchObject({ rack: null, area: null, building: null });
+  });
+
   it("does not let b: match inside jb:", () => {
     expect(parseLocationCodes("jb:12")).toEqual({
       area: null,
       building: null,
       floor: null,
       room: null,
+      rack: null,
       junctionBox: "12",
     });
   });
@@ -89,6 +100,7 @@ describe("parseLocationCodes", () => {
       building: null,
       floor: null,
       room: "MDF",
+      rack: null,
       junctionBox: null,
     });
   });
@@ -104,7 +116,7 @@ describe("resolveEffectiveLocation", () => {
         deviceDescription: "b:Mine jb:Fuel",
         description: "a:Mine jb:Fuel",
       })
-    ).toEqual({ area: "Mine", building: null, floor: null, room: null, junctionBox: "Fuel" });
+    ).toEqual({ area: "Mine", building: null, floor: null, room: null, rack: null, junctionBox: "Fuel" });
   });
 
   it("a description with no codes falls back to the device description wholesale", () => {
@@ -113,10 +125,10 @@ describe("resolveEffectiveLocation", () => {
         deviceDescription: "b:Shop f:1 r:MDF",
         description: "edge switch by the dock door",
       })
-    ).toEqual({ area: null, building: "Shop", floor: "1", room: "MDF", junctionBox: null });
+    ).toEqual({ area: null, building: "Shop", floor: "1", room: "MDF", rack: null, junctionBox: null });
     expect(
       resolveEffectiveLocation({ deviceDescription: "b:Shop", description: null })
-    ).toEqual({ area: null, building: "Shop", floor: null, room: null, junctionBox: null });
+    ).toEqual({ area: null, building: "Shop", floor: null, room: null, rack: null, junctionBox: null });
   });
 
   it("returns all-null when no source carries codes", () => {

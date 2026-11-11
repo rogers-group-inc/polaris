@@ -31,6 +31,7 @@ import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js"
 import { INTERFACE_LAST_KNOWN_MS, inferInterfaceTopology } from "./interfaceTopologyService.js";
 import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
+import { loadRegionIndex, resolveLocation, type LocationStatus } from "./regionTreeService.js";
 import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
 
 // ─── Which of a site's switches an endpoint sits on (business rule 91) ──────
@@ -161,6 +162,9 @@ type TopologyMeta = {
 
 // Effective location codes for a topology node, or null when the node
 // carries none — keeps untagged fleets' payloads noise-free.
+/** Cap on the site-wide `endpoints` list the topology payload carries. */
+const MAX_SITE_ENDPOINTS = 2000;
+
 function nodeLocation(codes: LocationCodes): LocationCodes | null {
   return hasLocationCodes(codes) ? codes : null;
 }
@@ -450,7 +454,7 @@ export async function fetchRecentSampleStats(
 //     edges:     [{ source, target, label? }, ...]
 //   }
 //
-// `location` is { area, building, floor, room, junctionBox } (each
+// `location` is { area, building, floor, room, rack, junctionBox } (each
 // string|null) or null when the node carries no a:/b:/f:/r:/jb: codes —
 // resolved server-side by utils/locationCodes.ts: the Asset.description's
 // codes when it carries any (exclusively — no per-key fall-through), else
@@ -462,7 +466,34 @@ export async function fetchRecentSampleStats(
 // the whole object to a graph renderer (Cytoscape) without doing any extra
 // lookups. APs that could not be paired to a switch port fall back to a direct
 // edge from the FortiGate.
+/**
+ * The site's topology with every device's location RESOLVED through the
+ * site's region tree (rule 153): `location` is the full chain a short code
+ * (`ra:rack1`) stands for, `locationWritten` the codes as typed, and
+ * `locationStatus` whether the tree confirmed them ("resolved"), had nothing
+ * to say ("asWritten"), disagrees ("conflict": shown as written), can't
+ * place a lone floor ("ambiguous"), or names nothing it has ("unknown").
+ * An empty tree changes nothing. One query.
+ */
 export async function buildSiteTopology(siteId: string) {
+  const payload = await buildSiteTopologyAsWritten(siteId);
+  const index = await loadRegionIndex(siteId);
+  const conflicts: Array<{ id: string; hostname: string | null; status: LocationStatus; written: LocationCodes | null }> = [];
+  const resolve = (n: { id?: string; hostname?: string | null; location?: LocationCodes | null } | null | undefined): void => {
+    if (!n) return;
+    const written = n.location ?? null;
+    const r = resolveLocation(index, written);
+    Object.assign(n, { location: r.location, locationWritten: written, locationStatus: r.status });
+    if ((r.status === "conflict" || r.status === "ambiguous" || r.status === "unknown") && n.id) conflicts.push({ id: n.id, hostname: n.hostname ?? null, status: r.status, written });
+  };
+  resolve(payload.fortigate);
+  (payload.switches as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  (payload.aps as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  (payload.endpoints as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);
+  return { ...payload, regionCount: index.size, regionConflicts: conflicts };
+}
+
+async function buildSiteTopologyAsWritten(siteId: string) {
     const id = siteId;
     const fg = await prisma.asset.findFirst({
       where: { id, status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } },
@@ -560,6 +591,26 @@ export async function buildSiteTopology(siteId: string) {
       port: string;
       lastSeen: Date | null;
     };
+    // Every endpoint attributed to one of this site's switches, for the
+    // Device-types toggles (rule 147: a type switched on draws its devices in
+    // the Layer 2 graph, hung off their switch). Capped at MAX_SITE_ENDPOINTS,
+    // newest first; `endpointsTruncated` says when the cap cut the list.
+    type SiteEndpoint = {
+      id: string;
+      hostname: string | null;
+      ipAddress: string | null;
+      macAddress: string | null;
+      assetType: string;
+      status: string;
+      monitored: boolean;
+      monitorHealth: MonitorHealth | null;
+      location: LocationCodes | null;
+      switchId: string;
+      port: string;
+      iconUrl: string | null;
+    };
+    const siteEndpoints: SiteEndpoint[] = [];
+    let endpointsTruncated = false;
     const switches = siblings
       .filter((s) => s.assetType === "switch")
       .map((s) => {
@@ -578,6 +629,7 @@ export async function buildSiteTopology(siteId: string) {
           monitorHealth: s.monitored ? monitorStatusToHealth(s.monitorStatus) : null,
           dependencyLayer: s.dependencyLayer,
           dependencySuppressed: s.dependencySuppressed,
+          assetType: "switch",
           iconUrl: resolveIconUrl({ manufacturer: s.manufacturer, model: s.model, assetType: "switch" }, iconCache),
           // Physical-location codes (a:/b:/f:/r:/jb:): Asset.description's
           // codes when present, else the device admin description. Drives
@@ -623,10 +675,17 @@ export async function buildSiteTopology(siteId: string) {
             assignedTo: true,
             lastSeenSwitch: true,
             lastSeen: true,
+            status: true,
+            monitored: true,
+            monitorStatus: true,
+            description: true,
+            manufacturer: true,
+            model: true,
             dependencyParents: attribution.edgeSelect,
           },
           orderBy: { lastSeen: "desc" },
-          take: switches.length * 25,
+          // One extra row says whether the cap truncated the list.
+          take: MAX_SITE_ENDPOINTS + 1,
         }),
         // Same attribution in SQL: the edge first, the hostname prefix only
         // for a fleet-unique name. `split_part` rather than LIKE so a `_` or
@@ -653,11 +712,29 @@ export async function buildSiteTopology(siteId: string) {
       for (const r of countRows) countBySwitch.set(r.switch_id, Number(r.cnt));
       const switchById = new Map<string, typeof switches[number]>();
       for (const s of switches) switchById.set(s.id, s);
+      if (endpointSamples.length > MAX_SITE_ENDPOINTS) {
+        endpointsTruncated = true;
+        endpointSamples.length = MAX_SITE_ENDPOINTS;
+      }
       for (const ep of endpointSamples) {
         const switchId = attributeEndpointToSiteSwitch(ep, attribution);
         const sw = switchId ? switchById.get(switchId) : undefined;
         if (!sw) continue;
-        if (sw.endpoints.length >= 25) continue; // per-switch cap
+        siteEndpoints.push({
+          id: ep.id,
+          hostname: ep.hostname,
+          ipAddress: ep.ipAddress,
+          macAddress: ep.macAddress,
+          assetType: String(ep.assetType),
+          status: String(ep.status),
+          monitored: !!ep.monitored,
+          monitorHealth: ep.monitored ? monitorStatusToHealth(ep.monitorStatus ?? null) : null,
+          location: nodeLocation(resolveEffectiveLocation({ description: ep.description })),
+          switchId: sw.id,
+          port: portOfLastSeenSwitch(ep.lastSeenSwitch),
+          iconUrl: resolveIconUrl({ manufacturer: ep.manufacturer, model: ep.model, assetType: String(ep.assetType) }, iconCache),
+        });
+        if (sw.endpoints.length >= 25) continue; // per-switch sidebar sample cap
         sw.endpoints.push({
           id: ep.id,
           hostname: ep.hostname,
@@ -723,6 +800,7 @@ export async function buildSiteTopology(siteId: string) {
           monitorHealth: s.monitored ? monitorStatusToHealth(s.monitorStatus) : null,
           dependencyLayer: s.dependencyLayer,
           dependencySuppressed: s.dependencySuppressed,
+          assetType: "access_point",
           iconUrl: resolveIconUrl({ manufacturer: s.manufacturer, model: s.model, assetType: "access_point" }, iconCache),
           // Same location-code resolution as the switch nodes above.
           location: nodeLocation(resolveEffectiveLocation({ description: s.description, deviceDescription: t.deviceDescription })),
@@ -1831,6 +1909,7 @@ export async function buildSiteTopology(siteId: string) {
         monitorRecentFailures: fgMonitorStats?.failures ?? 0,
         dependencyLayer: fg.dependencyLayer,
         dependencySuppressed: fg.dependencySuppressed,
+        assetType: "firewall",
         iconUrl: resolveIconUrl({ manufacturer: fg.manufacturer, model: fg.model, assetType: "firewall" }, iconCache),
         // FortiGates have no discovery-captured device description (their
         // device-side surface would be the 35-char system/global alias), so
@@ -1840,6 +1919,10 @@ export async function buildSiteTopology(siteId: string) {
       },
       switches,
       aps,
+      // Every endpoint under this site's switches (rule 147), capped at
+      // MAX_SITE_ENDPOINTS — what the Device-types toggles draw.
+      endpoints: siteEndpoints,
+      endpointsTruncated,
       subnets,
       edges,
       // CMDB-inferred edges from FortiOS interface naming conventions —

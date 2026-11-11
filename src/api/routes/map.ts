@@ -13,10 +13,22 @@
  *                                 button. Note the DELIBERATE permission
  *                                 widening documented at the route itself.
  *
+ *   GET /map/sites/:id/topology/views — the site's saved views (rule 147)
+ *   GET /map/sites/:id/topology/views/:viewId/mode-change — what a mode change would remove
+ *   GET /map/sites/:id/topology/background/:imageId — an uploaded view background
+ *   GET /map/satellite          — whether the operator configured satellite imagery
+ *   GET /map/satellite/:z/:x/:y — one satellite tile, proxied (satelliteTileService)
+ *
  * Write endpoints (escalate to deviceMap=write per-route):
  *   PUT    /map/sites/:id/topology/layout — full-replace one (site, view) layout
  *   POST   /map/sites/:id/topology/layout/checkpoint — stamp the restore point
  *   DELETE /map/sites/:id/topology/layout?view=<key> — reset one view's layout
+ *   POST   /map/sites/:id/topology/views — create a view
+ *   PUT    /map/sites/:id/topology/views/:viewId — update a view (a mode change resets it, rule 149)
+ *   DELETE /map/sites/:id/topology/views/:viewId — delete a view
+ *   POST   /map/sites/:id/topology/views/:viewId/background — upload a background image
+ *   POST   /map/sites/:id/topology/location-codes — rewrite descriptions from
+ *          polygon placements (rule 148; assets=write + the assets write scope, not deviceMap)
  *
  * Coordinates and topology metadata are populated by the FortiManager / FortiGate
  * discovery pipelines (see fortimanagerService.ts step 3d.5/3d.6 and
@@ -41,6 +53,34 @@ import {
   MAX_LAYOUT_NODES,
   MAX_VIEW_KEY_LEN,
 } from "../../services/topologyLayoutService.js";
+import {
+  listViews,
+  createView,
+  updateView,
+  deleteView,
+  describeModeChangeLoss,
+  saveBackgroundImage,
+  getBackgroundImage,
+  sanitizeLocationCodeChanges,
+  applyLocationCodeChanges,
+  regionViewsForSite,
+  MAX_BACKGROUND_IMAGE_BYTES,
+} from "../../services/topologyViewService.js";
+import multer from "multer";
+import {
+  listRegionNodes,
+  createRegionNode,
+  buildFromDescriptions,
+  updateRegionNode,
+  mergeRegionNodes,
+  deleteRegionNode,
+  loadRegionIndex,
+  resolveLocation,
+  siteForAsset,
+} from "../../services/regionTreeService.js";
+import { hasLocationCodes, parseLocationCodes, type LocationCodes } from "../../utils/locationCodes.js";
+import type { PlaceableDevice } from "../../utils/regionAutoPlace.js";
+import { getSatelliteStatus, getSatelliteTile } from "../../services/satelliteTileService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope } from "../../services/writeScopeService.js";
@@ -155,7 +195,11 @@ router.get("/sites/:id/topology", async (req, res, next) => {
       getSiteLayoutOwner(req.params.id as string),
     ]);
     const canEditLayout = site ? inWriteScope(await resolveWriteScope(req, "deviceMap"), site) : false;
-    res.json({ ...(topo as object), canEditLayout });
+    // Rule 147: the site's saved views ride along (buildSiteTopology has
+    // already 404ed a non-firewall id, so the default view is never
+    // materialised for one).
+    const views = await listViews(req.params.id as string);
+    res.json({ ...(topo as object), canEditLayout, views });
   } catch (err) {
     next(err);
   }
@@ -259,6 +303,373 @@ router.delete("/sites/:id/topology/layout", requirePermission("deviceMap", "writ
       });
     }
     res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Saved topology views (business rules 147-149) ──────────────────────────────
+// A view is name + ONE mode + shown device types + mode-specific content.
+// The service validates every field in depth (sanitize*); the Zod schemas
+// here only check the outer shape so a malformed body fails fast.
+const CreateViewSchema = z.object({
+  name: z.string().min(1).max(200),
+  mode: z.enum(["layer2", "topology", "rack", "wall"]),
+  shownTypes: z.array(z.string()).max(100).optional(),
+  // Rack / Wall only (rule 150): the region the view stands for.
+  region: z.unknown().optional(),
+  // Wall: the first wall's size in inches; Rack: the first rack's size in U.
+  wallWidth: z.number().int().optional(),
+  wallHeight: z.number().int().optional(),
+  rackUnits: z.number().int().optional(),
+});
+
+const UpdateViewSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  mode: z.enum(["layer2", "topology", "rack", "wall"]).optional(),
+  shownTypes: z.array(z.string()).max(100).optional(),
+  background: z.unknown().optional(),
+  polygons: z.array(z.unknown()).optional(),
+  racks: z.array(z.unknown()).optional(),
+  rackPlacements: z.array(z.unknown()).optional(),
+  region: z.unknown().optional(),
+  walls: z.array(z.unknown()).optional(),
+  wallPlacements: z.array(z.unknown()).optional(),
+  layers: z.array(z.unknown()).optional(),
+}).refine((b) => Object.keys(b).length > 0, "Nothing to update");
+
+const LocationCodesSchema = z.object({ changes: z.array(z.unknown()).min(1).max(500) });
+
+const viewWriteGate = [
+  requirePermission("deviceMap", "write"),
+  scopeAssetParam("deviceMap", "edit topology views for sites"),
+];
+
+router.get("/sites/:id/topology/views", async (req, res, next) => {
+  try {
+    res.json(await listViews(req.params.id as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/topology/views", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const input = CreateViewSchema.parse(req.body);
+    // Rule 150(a): a view made for a region is filled with the devices already in it.
+    const devices = input.region ? await siteDevicesPlaceable(siteId) : [];
+    const { view, autoPlaced } = await createView(siteId, input, req.session?.username ?? null, devices);
+    logEvent({
+      action: "map.topology.view_created",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Topology view "${view.name}" created (${view.mode})` +
+        (autoPlaced.placed.length ? `, ${autoPlaced.placed.length} device${autoPlaced.placed.length === 1 ? "" : "s"} placed from its region` : ""),
+      details: { viewId: view.id, name: view.name, mode: view.mode, autoPlaced },
+    });
+    res.status(201).json({ ...view, autoPlaced });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/sites/:id/topology/views/:viewId/mode-change", async (req, res, next) => {
+  try {
+    res.json(await describeModeChangeLoss(req.params.id as string, req.params.viewId as string));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const input = UpdateViewSchema.parse(req.body);
+    // Only a patch that links a region (or resets a view that keeps one) can fill it (rule 150(a)).
+    const devices = input.region || input.mode !== undefined ? await siteDevicesPlaceable(siteId) : [];
+    const { view, modeChange, autoPlaced } = await updateView(siteId, req.params.viewId as string, input, req.session?.username ?? null, devices);
+    if (modeChange) {
+      logEvent({
+        action: "map.topology.view_mode_changed",
+        resourceType: "asset",
+        resourceId: siteId,
+        actor: req.session?.username,
+        level: "warning",
+        message: `Topology view "${view.name}" changed from ${modeChange.from} to ${modeChange.to} and reset`,
+        details: { viewId: view.id, ...modeChange, autoPlaced },
+      });
+    } else {
+      logEvent({
+        action: "map.topology.view_updated",
+        resourceType: "asset",
+        resourceId: siteId,
+        actor: req.session?.username,
+        message: `Topology view "${view.name}" saved`,
+        details: { viewId: view.id, fields: Object.keys(input), ...(autoPlaced.placed.length || autoPlaced.unplaced.length ? { autoPlaced } : {}) },
+      });
+    }
+    res.json({ view, modeChange, autoPlaced });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const view = await deleteView(siteId, req.params.viewId as string);
+    logEvent({
+      action: "map.topology.view_deleted",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Topology view "${view.name}" deleted`,
+      details: { viewId: view.id, name: view.name, mode: view.mode },
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── The site's region tree (rule 153) ──────────────────────────────────────
+// Read on the map router's deviceMap floor; every write is a view edit
+// (deviceMap write + the site's write scope). None of them writes a
+// description: a rename / move RETURNS the descriptions it would change,
+// committed (or not) through POST …/topology/location-codes.
+
+/** Every device of a site with the codes its description WRITES (for build / rewrite). */
+async function siteDevicesWritten(siteId: string): Promise<Array<{ assetId: string; name: string; written: LocationCodes | null }>> {
+  const t = await buildSiteTopology(siteId);
+  const rows = [t.fortigate as unknown].concat(t.switches as unknown[], t.aps as unknown[], t.endpoints as unknown[]) as Array<{
+    id: string; hostname?: string | null; ipAddress?: string | null; locationWritten?: LocationCodes | null;
+  }>;
+  return rows.filter((r) => r && r.id).map((r) => ({ assetId: r.id, name: r.hostname || r.ipAddress || r.id, written: r.locationWritten ?? null }));
+}
+
+/** Every device of a site with its location resolved through the tree (rule 150(a) fills). */
+async function siteDevicesPlaceable(siteId: string): Promise<PlaceableDevice[]> {
+  const t = await buildSiteTopology(siteId);
+  const rows = [t.fortigate as unknown].concat(t.switches as unknown[], t.aps as unknown[], t.endpoints as unknown[]) as Array<{
+    id: string; hostname?: string | null; ipAddress?: string | null; location?: LocationCodes | null;
+  }>;
+  return rows.filter((r) => r && r.id).map((r) => ({ assetId: r.id, name: r.hostname || r.ipAddress || r.id, location: r.location ?? null }));
+}
+
+const RegionCreateSchema = z.object({
+  kind: z.enum(["area", "building", "floor", "room", "rack", "junctionBox"]),
+  name: z.string().min(1).max(64),
+  parentId: z.string().uuid().nullable().optional(),
+});
+const RegionUpdateSchema = z.object({
+  name: z.string().min(1).max(64).optional(),
+  parentId: z.string().uuid().nullable().optional(),
+}).refine((b) => Object.keys(b).length > 0, "Nothing to update");
+const RegionMergeSchema = z.object({ into: z.string().uuid() });
+
+router.get("/sites/:id/regions", async (req, res, next) => {
+  try {
+    res.json({ nodes: await listRegionNodes(req.params.id as string) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions/build", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const devices = await siteDevicesWritten(siteId);
+    const result = await buildFromDescriptions(siteId, devices.map((d) => d.written), req.session?.username ?? null);
+    logEvent({
+      action: "map.region.tree_built",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Region tree built from descriptions: ${result.added} region${result.added === 1 ? "" : "s"} added`,
+      details: result,
+    });
+    res.json({ ...result, nodes: await listRegionNodes(siteId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const node = await createRegionNode(siteId, RegionCreateSchema.parse(req.body), req.session?.username ?? null);
+    logEvent({ action: "map.region.created", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${node.kind} "${node.name}" created`, details: { ...node } });
+    res.status(201).json({ node });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/sites/:id/regions/:nodeId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const patch = RegionUpdateSchema.parse(req.body);
+    const devices = await siteDevicesWritten(siteId);
+    const result = await updateRegionNode(siteId, req.params.nodeId as string, patch, devices);
+    logEvent({ action: "map.region.updated", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${result.node.kind} "${result.node.name}" updated (${result.rewrites.length} description${result.rewrites.length === 1 ? "" : "s"} name it)`,
+      details: { node: result.node, patch, rewrites: result.rewrites.length, carried: result.carried } });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/sites/:id/regions/:nodeId/merge", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const { into } = RegionMergeSchema.parse(req.body);
+    const devices = await siteDevicesWritten(siteId);
+    const result = await mergeRegionNodes(siteId, req.params.nodeId as string, into, devices);
+    logEvent({ action: "map.region.merged", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region merged into ${result.node.kind} "${result.node.name}" (${result.rewrites.length} description${result.rewrites.length === 1 ? "" : "s"} name it)`,
+      details: { from: req.params.nodeId, into: result.node, rewrites: result.rewrites.length, carried: result.carried } });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Read: resolve descriptions through the site's tree — what the region
+// prompt (rule 150) compares, so it asks about the region a short code names.
+const RegionResolveSchema = z.object({ descriptions: z.array(z.string().max(1024).nullable()).min(1).max(50) });
+router.post("/sites/:id/regions/resolve", async (req, res, next) => {
+  try {
+    const { descriptions } = RegionResolveSchema.parse(req.body);
+    const index = await loadRegionIndex(req.params.id as string);
+    res.json({
+      results: descriptions.map((d) => {
+        const written = parseLocationCodes(d);
+        return resolveLocation(index, hasLocationCodes(written) ? written : null);
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/sites/:id/regions/:nodeId", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const node = await deleteRegionNode(siteId, req.params.nodeId as string);
+    logEvent({ action: "map.region.deleted", resourceType: "asset", resourceId: siteId, actor: req.session?.username,
+      message: `Region ${node.kind} "${node.name}" deleted`, details: { ...node } });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+const backgroundUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BACKGROUND_IMAGE_BYTES, files: 1 } });
+
+router.post("/sites/:id/topology/views/:viewId/background", ...viewWriteGate, (req, res, next) => {
+  backgroundUpload.single("file")(req, res, (err: unknown) => {
+    const code = (err as { code?: string } | undefined)?.code;
+    if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `Background images are limited to ${MAX_BACKGROUND_IMAGE_BYTES / (1024 * 1024)} MB`));
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    if (!req.file) throw new AppError(400, "No image uploaded (form field \"file\")");
+    const img = await saveBackgroundImage(siteId, req.params.viewId as string, req.file.buffer, req.session?.username ?? null);
+    logEvent({
+      action: "map.topology.background_uploaded",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `Background image uploaded to a topology view (${img.width} × ${img.height})`,
+      details: { viewId: img.viewId, imageId: img.id, width: img.width, height: img.height, size: img.size },
+    });
+    res.status(201).json(img);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Authenticated only (the /map mount's deviceMap=read floor) — never the
+// unauthenticated /uploads static mount. An image id is immutable, so the
+// browser may cache it privately.
+router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => {
+  try {
+    const img = await getBackgroundImage(req.params.id as string, req.params.imageId as string);
+    res.setHeader("Content-Type", img.mimeType);
+    res.setHeader("Content-Length", String(img.data.length));
+    res.setHeader("Cache-Control", "private, max-age=86400, immutable");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(img.data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Rule 150: the description-save prompt asks which site an asset belongs to
+// and which of that site's Rack / Wall views already stand for which region.
+// Read-only (the map router's deviceMap read floor); creating or mapping a
+// view goes through the usual write-gated view routes.
+router.get("/assets/:id/region-views", async (req, res, next) => {
+  try {
+    const siteId = await siteForAsset(req.params.id as string);
+    res.json({ siteId, views: siteId ? await regionViewsForSite(siteId) : [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The optional satellite basemap (Server Settings → Customization). Status is
+// all a viewer learns — never the provider URL or key; the tiles come back
+// through Polaris so the CSP keeps its one tile host.
+router.get("/satellite", async (_req, res, next) => {
+  try {
+    res.json(await getSatelliteStatus());
+  } catch (err) {
+    next(err);
+  }
+});
+
+const SatelliteTileParams = z.object({
+  z: z.coerce.number().int(),
+  x: z.coerce.number().int(),
+  y: z.coerce.number().int(),
+});
+
+router.get("/satellite/:z/:x/:y", async (req, res, next) => {
+  try {
+    const p = SatelliteTileParams.safeParse(req.params);
+    if (!p.success) throw new AppError(400, "Invalid satellite tile request");
+    const tile = await getSatelliteTile(p.data.z, p.data.x, p.data.y);
+    res.setHeader("Content-Type", tile.contentType);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(tile.body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Rule 148: the asset half of saving a Topology view. Gated assets=write (a
+// description is an asset field), and each asset is checked against the
+// caller's assets write scope inside the service — a refusal is reported per
+// asset, the rest still land.
+router.post("/sites/:id/topology/location-codes", requirePermission("assets", "write"), async (req, res, next) => {
+  try {
+    const input = LocationCodesSchema.parse(req.body);
+    const changes = sanitizeLocationCodeChanges(input.changes);
+    const scope = await resolveWriteScope(req, "assets");
+    const results = await applyLocationCodeChanges(changes, {
+      actor: req.session?.username ?? null,
+      inScope: (rec) => inWriteScope(scope, rec),
+    });
+    res.json({ results });
   } catch (err) {
     next(err);
   }

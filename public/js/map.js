@@ -28,7 +28,9 @@
   // graph, the dashboard's pencil) is pressed; never persisted — every open
   // starts view-only, and it survives re-renders (refresh, view switches)
   // until Done or close.
-  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false, editing: false };
+  // viewId: the saved view on screen (rule 147); shownTypesOverride: device
+  // types toggled while viewing, which last until the map closes.
+  var topoState = { siteId: null, hostname: null, data: null, pathOverlay: null, activeView: "flat", floorViews: [], hasLocationCodes: false, editing: false, viewId: null, shownTypesOverride: null };
   var topoSearchDebounce = null;
   var topoSuggestState  = { open: false, items: [], index: -1 };
   var POSITION_STORAGE_PREFIX = "polaris.topology.positions:";
@@ -255,8 +257,10 @@
   // else — markers, clusters, region polygons, the status legend and the
   // attribution — over them with the tile pane and the top corners' buttons
   // left out.
-  async function captureMapCanvas() {
-    var el = map.getContainer();
+  // `target` (optional): another map container to capture — a Topology or
+  // Rack view's canvas (rule 147). Default: the Device Map itself.
+  async function captureMapCanvas(target) {
+    var el = target && target.nodeType === 1 ? target : map.getContainer();
     var box = el.getBoundingClientRect();
     var SCALE = 2;
     var canvas = document.createElement("canvas");
@@ -1007,14 +1011,15 @@
     // every render.
     if (fullscreenBtn) fullscreenBtn.addEventListener("click", toggleFullscreenTopology);
     if (refreshBtn) refreshBtn.addEventListener("click", refreshTopology);
-    // The legend sits in the graph's bottom-left corner and collapses into
-    // its own button there (legend-toggle.js), its header × collapsing it
-    // again — the Device Map / Application Map / Status Map pattern. The
-    // open state is the existing per-browser legend pref.
+    // The legend's button sits in the graph's bottom-left corner and the
+    // open legend appears to its RIGHT (legend-toggle.js `beside`, operator
+    // request 2026-11-10): a second click on the button closes it, as does
+    // the header ×. The open state is the existing per-browser legend pref.
     var legendOverlay = document.getElementById("topology-legend-overlay");
     if (legendOverlay && window.PolarisLegendToggle) {
-      window.PolarisLegendToggle.attach(legendOverlay, {
+      var legendToggle = window.PolarisLegendToggle.attach(legendOverlay, {
         closeButton: legendCloseBtn,
+        beside: true,
         expanded: _readLegendPrefs().visible,
         onChange: function (expanded) {
           var prefs = _readLegendPrefs();
@@ -1022,6 +1027,10 @@
           _writeLegendPrefs(prefs);
         },
       });
+      if (legendToggle && legendToggle.button) {
+        legendToggle.button.id = "topology-legend-toggle";
+        legendToggle.button.classList.add("topology-legend-toggle");
+      }
     }
     // Graph / details edge: hides and restores the details pane. The state is
     // a per-browser convenience; cytoscape re-measures once the column has
@@ -1058,9 +1067,13 @@
     renderTopologyLegend();
     // Intercept clicks on asset links in the topology right-bar so they open
     // the asset details slide-over instead of navigating away to assets.html.
+    var viewPicker = document.getElementById("topology-view-picker");
+    if (viewPicker) viewPicker.addEventListener("click", function () { openTopologyViewMenu(viewPicker); });
     var infoPanel = document.getElementById("topology-info");
     if (infoPanel) {
       infoPanel.addEventListener("click", function (e) {
+        var eye = e.target.closest("button[data-topo-type]");
+        if (eye) { e.preventDefault(); _toggleShownType(eye.getAttribute("data-topo-type")); return; }
         var link = e.target.closest("a[href]");
         if (!link) return;
         var id = _assetIdFromTopoHref(link.getAttribute("href"));
@@ -1077,6 +1090,20 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape" && overlay.classList.contains("open")) closeTopology();
+      // Delete / Backspace on a Topology or Rack canvas, editing: the selected
+      // device comes off the map / out of its rack and is back in the Device
+      // List (operator request 2026-11-10). Never while typing, and never
+      // under a dialog stacked on the modal.
+      if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && topoState.editing) {
+        var dt = e.target;
+        var typing = dt && (dt.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(dt.tagName));
+        var stacked = document.querySelector(".modal-overlay.open:not(#topology-overlay)");
+        var modeInst = _modeInstance();
+        if (!typing && !stacked && modeInst && typeof modeInst.deleteSelected === "function" && modeInst.deleteSelected()) {
+          e.preventDefault();
+          return;
+        }
+      }
       // Delete / Backspace removes the selected connection-path handles (a
       // bend goes; an end point returns to automatic). Never while typing.
       if ((e.key === "Delete" || e.key === "Backspace") && overlay.classList.contains("open") && edgeEditor) {
@@ -1579,9 +1606,9 @@
     // silently no-op. Detach + re-append preserves its event listeners
     // (close button, header drag).
     var graphEl = document.getElementById("topology-graph");
-    var legendEl = document.getElementById("topology-legend-overlay");
+    var keep = _legendNodes();
     graphEl.innerHTML = "";
-    if (legendEl) graphEl.appendChild(legendEl);
+    keep.forEach(function (n) { graphEl.appendChild(n); });
     document.getElementById("topology-info").innerHTML = '<p class="muted">Loading…</p>';
     var searchInput = document.getElementById("topology-search-input");
     if (searchInput) searchInput.value = "";
@@ -1591,14 +1618,20 @@
     topoState.siteId = id;
     topoState.hostname = hostname || null;
     topoState.data = null;
+    topoState.selectedAssetId = null;
     topoState.activeView = "flat";
     topoState.floorViews = [];
     topoState.editing = false;
+    topoState.viewId = null;
+    topoState.shownTypesOverride = null;
     _editStaged = null;
+    _renderViewPicker();
 
     try {
       var data = await api.map.topology(id);
       topoState.data = data;
+      _pickInitialView();
+      _renderViewPicker();
       renderTopologyGraph(data);
       renderTopologyInfo(data);
     } catch (err) {
@@ -1635,6 +1668,775 @@
       }
     } finally {
       if (btn) btn.disabled = false;
+    }
+  }
+
+  // == Topology / Rack canvases ============================================
+  // A view whose mode is not Layer 2 draws through its own module
+  // (window.PolarisTopologyPhysical / window.PolarisTopologyRack), handed a
+  // context of the state and helpers it needs. Until a module is loaded the
+  // graph says so rather than drawing a Layer 2 map under a Topology name.
+  var _modeCanvas = null; // { mode, instance }
+  function _modeCanvasModule(mode) {
+    return mode === "topology" ? window.PolarisTopologyPhysical : mode === "rack" ? window.PolarisTopologyRack
+      : mode === "wall" ? window.PolarisTopologyWall : null;
+  }
+  function _teardownModeCanvas() {
+    if (!_modeCanvas) return;
+    try { if (_modeCanvas.instance && _modeCanvas.instance.destroy) _modeCanvas.instance.destroy(); } catch (e) { /* already gone */ }
+    _modeCanvas = null;
+    var graphEl = document.getElementById("topology-graph");
+    var host = graphEl && graphEl.querySelector(".topology-mode-canvas");
+    if (host) host.remove();
+  }
+  function _renderModeCanvas(data) {
+    var mode = _currentMode();
+    _teardownModeCanvas();
+    _destroyGraphKeepingLegend();
+    var graphEl = document.getElementById("topology-graph");
+    if (!graphEl) return;
+    // Layer 2 chrome that does not belong on another mode's canvas.
+    ["topology-floor-views", "topology-corner-tools", "topology-corner-stack"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.remove();
+    });
+    var host = document.createElement("div");
+    host.className = "topology-mode-canvas";
+    graphEl.insertBefore(host, graphEl.firstChild);
+    var mod = _modeCanvasModule(mode);
+    if (!mod || typeof mod.render !== "function") {
+      host.innerHTML = '<div class="empty-state topology-mode-empty">The ' + escapeHtml(VIEW_MODE_LABELS[mode] || mode) +
+        ' canvas could not be loaded. Refresh the page and try again.</div>';
+      return;
+    }
+    _modeCanvas = { mode: mode, instance: mod.render(host, _modeCanvasContext(data)) };
+    _modeCornerTools();
+    _applyTopologyEditMode();
+  }
+  // What a mode canvas may read and call. Kept small and explicit so the
+  // modules never reach into map.js's closure.
+  function _modeCanvasContext(data) {
+    return {
+      data: data,
+      closePopovers: function () { if (document.getElementById("topology-mouse-controls")) _closeMouseControls(); },
+      siteId: topoState.siteId,
+      view: _currentView(),
+      shownTypes: _effectiveShownTypes(),
+      editing: !!topoState.editing,
+      canEdit: _canEditViews(),
+      stageViewPatch: function (patch) {
+        if (!_editSessionActive()) return false;
+        if (!_editStaged.viewPatch) _editStaged.viewPatch = {};
+        Object.assign(_editStaged.viewPatch, patch);
+        return true;
+      },
+      stagedViewPatch: function () { return _editSessionActive() ? (_editStaged.viewPatch || {}) : {}; },
+      layoutKey: function () { return _viewScopedKey("topo"); },
+      // The view's Topology placements ({ assetId: {x, y} } in background
+      // coordinates): a staged edit first, then the shared layout.
+      // `layer` (rule 152): 0 / absent = the flat view, n = "topo|L<n>".
+      loadPlacements: function (layer) {
+        var key = _viewScopedKey(layer ? "topo|L" + layer : "topo");
+        if (_editSessionActive() && _editStaged.views[key]) return _editStaged.views[key].positions;
+        var layouts = topoState.data && topoState.data.savedLayouts;
+        var entry = layouts && layouts[key];
+        return entry && entry.positions && typeof entry.positions === "object" ? entry.positions : {};
+      },
+      stagePlacements: function (positions, layer) {
+        if (!_editSessionActive()) return false;
+        _stageLayout(_viewScopedKey(layer ? "topo|L" + layer : "topo"), positions);
+        return true;
+      },
+      // Rule 148: a code change staged for one asset (null withdraws it).
+      stageLocationCode: function (assetId, codes, info) {
+        if (!_editSessionActive() || !assetId) return;
+        if (!_editStaged.locationCodes) _editStaged.locationCodes = {};
+        if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from };
+        else delete _editStaged.locationCodes[assetId];
+      },
+      uploadBackground: function (file) {
+        var v = _currentView();
+        return api.map.uploadTopologyBackground(topoState.siteId, v && v.id, file);
+      },
+      backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(topoState.siteId, imageId); },
+      refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
+      selectAsset: function (id) { _selectTopologyAsset(id); },
+      selectedId: function () { return topoState.selectedAssetId || null; },
+      // The site's views, and making / opening one (a wall rack links a Rack view).
+      listViews: function () { return _siteViews(); },
+      createView: async function (body) {
+        var created = await api.map.createTopologyView(topoState.siteId, body);
+        if (topoState.data) topoState.data.views = _siteViews().concat([created]);
+        _renderViewPicker();
+        return created;
+      },
+      openView: function (viewId) {
+        if (topoState.editing) { if (typeof showToast === "function") showToast("Save or close your edits first", "error"); return; }
+        _switchTopologyView(viewId);
+      },
+      historyChanged: function () { _paintUndoRedo(); },
+      openAsset: function (id) { if (id && window.PolarisPanels) PolarisPanels.openAsset(id); },
+      toast: function (msg, kind) { if (typeof showToast === "function") showToast(msg, kind); },
+    };
+  }
+  function _modeInstance() { return _modeCanvas && _modeCanvas.instance ? _modeCanvas.instance : null; }
+  // Export on a Topology / Rack canvas: a picture of the canvas as drawn
+  // (the Layer 2 PDF / Visio writers read a Cytoscape scene it does not have).
+  function _openModeCanvasExport(anchor) {
+    if (typeof showRowMenu !== "function") return;
+    showRowMenu(anchor, [
+      { heading: "Export" },
+      { label: "Copy map as image", onSelect: _copyModeCanvasImage },
+    ], { label: "Export", align: "end" });
+  }
+  async function _copyModeCanvasImage() {
+    var inst = _modeInstance();
+    var el = inst && inst.captureElement ? inst.captureElement() : null;
+    if (!el) return;
+    try {
+      var canvas = await captureMapCanvas(el);
+      var blob = await new Promise(function (resolve) {
+        try { canvas.toBlob(resolve, "image/png"); } catch (e) { resolve(null); }
+      });
+      var ok = blob ? await copyPngToClipboard(blob) : false;
+      if (typeof showToast === "function") {
+        showToast(ok ? "View copied to clipboard" : "Screenshot failed — requires HTTPS or clipboard permission", ok ? "success" : "error");
+      }
+    } catch (err) {
+      if (typeof showToast === "function") showToast("Screenshot failed — " + (err && err.message ? err.message : String(err)), "error");
+    }
+  }
+  // The corner tools on a mode canvas: the Layer 2 set minus its grid and
+  // snapping (a map and a rack have neither), plus the canvas's own edit-mode
+  // buttons (Topology: Background, Draw polygon) at the end of the column.
+  function _modeCornerTools() {
+    _ensureTopologyCornerTools();
+    ["topology-snap-points", "topology-snap-devices", "topology-grid"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.remove();
+    });
+    var inst = _modeInstance();
+    var stack = document.getElementById("topology-corner-stack");
+    if (!inst || !stack || typeof inst.cornerButtons !== "function") return;
+    inst.cornerButtons().forEach(function (b) {
+      var btn = _cornerButton(b.id, "btn-icon topology-tool", function (el) { b.onClick(el); });
+      btn.innerHTML = _svg(b.icon);
+      _setCornerTip(btn, b.label, b.tip);
+      if (b.editOnly) btn.setAttribute("data-edit-only", "1");
+      stack.appendChild(btn);
+    });
+  }
+  // Staged rule-148 code changes of the open edit session, as a list.
+  function _stagedLocationCodeChanges() {
+    var map = _editSessionActive() && _editStaged.locationCodes;
+    if (!map) return [];
+    return Object.keys(map).map(function (id) {
+      return { assetId: id, codes: map[id].codes, name: map[id].name || id, from: map[id].from || null };
+    });
+  }
+  function _codesText(c) {
+    if (!c) return "no codes";
+    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]]
+      .filter(function (p) { return c[p[0]]; })
+      .map(function (p) { return p[1] + ":" + c[p[0]]; });
+    return parts.length ? parts.join(" ") : "no codes";
+  }
+  // The Save summary (rule 148): which descriptions the commit rewrites.
+  // Resolves "save" (codes too), "layout" (no assets write: save the view
+  // only) or "back" (keep editing).
+  function _confirmLocationCodeChanges(changes) {
+    var canAssets = typeof permAtLeast === "function" && permAtLeast("assets", "write");
+    var n = changes.length;
+    var rows = changes.map(function (c) {
+      return '<tr><td>' + escapeHtml(c.name) + '</td><td class="mono">' + escapeHtml(_codesText(c.from)) +
+        '</td><td class="mono">' + escapeHtml(_codesText(c.codes)) + '</td></tr>';
+    }).join("");
+    var body =
+      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, on a floor layer, or on a view that stands for a region, so their location codes change. ' +
+        'The free text in each description stays; only the a:/b:/f:/r:/ra:/jb: codes are replaced.</p>' +
+      '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+      '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. Devices placed outside every polygon keep their codes.</p>' +
+      (canAssets || typeof calloutHTML !== "function" ? '' : calloutHTML("warning", "Descriptions will be skipped",
+        escapeHtml("You have Device Map write but not Assets write: the view will save, the " + n + " description change" + (n === 1 ? "" : "s") + " will be skipped.")));
+    return new Promise(function (resolve) {
+      var settled = false;
+      var footer =
+        '<button type="button" class="btn btn-secondary" data-lc="back">Back to editing</button>' +
+        '<button type="button" class="btn btn-primary" data-lc="ok">' + (canAssets ? 'Save view and ' + n + ' description' + (n === 1 ? '' : 's') : 'Save the view only') + '</button>';
+      var dlg = buildOverlay(1300, "Save view — " + n + " description" + (n === 1 ? "" : "s") + " will change", body, footer, function () {
+        if (!settled) { settled = true; resolve("back"); }
+      }, true);
+      dlg.overlay.querySelector('[data-lc="back"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector('[data-lc="ok"]').addEventListener("click", function () {
+        settled = true;
+        resolve(canAssets ? "save" : "layout");
+        dlg.close();
+      });
+    });
+  }
+  async function _commitLocationCodes(siteId, changes) {
+    if (!changes.length) return;
+    try {
+      var res = await api.map.commitTopologyLocationCodes(siteId, changes.map(function (c) { return { assetId: c.assetId, codes: c.codes }; }));
+      var results = (res && res.results) || [];
+      var updated = results.filter(function (r) { return r.status === "updated"; }).length;
+      var refused = results.filter(function (r) { return r.status === "refused"; });
+      if (typeof showToast === "function") {
+        if (refused.length) {
+          showToast(updated + " description" + (updated === 1 ? "" : "s") + " updated; " + refused.length + " refused — " + refused[0].reason, "warning");
+        } else if (updated) {
+          showToast(updated + " description" + (updated === 1 ? "" : "s") + " updated with location codes");
+        }
+      }
+      // The payload's location codes are now stale: re-read it.
+      if (updated && topoState.siteId === siteId) refreshTopology({ silent: true });
+    } catch (err) {
+      if (typeof showToast === "function") showToast("Location codes not written — " + (err && err.message ? err.message : String(err)), "error");
+    }
+  }
+  // Commit a mode canvas's edit session (the tick or Save): the canvas
+  // captures anything it stages lazily (the OSM view), the rule-148 summary
+  // is confirmed, then the session lands and the codes are written. Resolves
+  // false when the operator chose to keep editing.
+  async function _commitModeCanvasSession() {
+    var inst = _modeInstance();
+    if (inst && typeof inst.beforeCommit === "function") inst.beforeCommit();
+    var changes = _stagedLocationCodeChanges();
+    var choice = changes.length ? await _confirmLocationCodeChanges(changes) : "save";
+    if (choice === "back") return false;
+    var siteId = topoState.siteId;
+    await _commitEditSession();
+    if (choice === "save") await _commitLocationCodes(siteId, changes);
+    return true;
+  }
+
+  // == Saved views (business rules 147-149) ================================
+  // A site has a default view and may have more, SHARED (deviceMap=write to
+  // create or change). Each view has ONE mode — Layer 2 (this graph),
+  // Topology (topology-physical.js) or Rack (topology-rack.js) — and the
+  // asset types it draws. Its layouts live under its own TopologyLayout key
+  // prefix (`_activeViewKey`), so every save / load / reset path below keeps
+  // working per view without knowing views exist.
+  var VIEW_PREF_PREFIX = "polaris.topology.view:";
+  var DEFAULT_SHOWN_TYPES = ["firewall", "router", "switch", "access_point"];
+  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", rack: "Rack", wall: "Wall" };
+  var DEVICE_TYPE_LABELS = {
+    firewall: "Firewalls", router: "Routers", switch: "Switches", access_point: "Access points",
+    server: "Servers", workstation: "Workstations", printer: "Printers", other: "Other",
+    hypervisor: "Hypervisors", container: "Containers", kubernetes_cluster: "Kubernetes clusters",
+  };
+  function _deviceTypeLabel(t) {
+    if (DEVICE_TYPE_LABELS[t]) return DEVICE_TYPE_LABELS[t];
+    var s = String(t || "").replace(/_/g, " ");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+  function _siteViews() {
+    return topoState.data && Array.isArray(topoState.data.views) ? topoState.data.views : [];
+  }
+  function _currentView() {
+    var views = _siteViews();
+    var byId = null, def = null;
+    views.forEach(function (v) {
+      if (v.id === topoState.viewId) byId = v;
+      if (v.isDefault) def = v;
+    });
+    return byId || def || null;
+  }
+  function _currentMode() {
+    var v = _currentView();
+    return v && VIEW_MODE_LABELS[v.mode] ? v.mode : "layer2";
+  }
+  function _readViewPref(siteId) {
+    try { return localStorage.getItem(VIEW_PREF_PREFIX + siteId); } catch (e) { return null; }
+  }
+  function _writeViewPref(siteId, viewId) {
+    try { localStorage.setItem(VIEW_PREF_PREFIX + siteId, viewId); } catch (e) { /* per-viewer convenience */ }
+  }
+  // The view a freshly loaded site opens on: the one this browser last
+  // looked at, while it still exists; otherwise the default.
+  function _pickInitialView() {
+    var views = _siteViews();
+    var pref = topoState.siteId ? _readViewPref(topoState.siteId) : null;
+    var hit = pref && views.some(function (v) { return v.id === pref; });
+    var def = views.filter(function (v) { return v.isDefault; })[0];
+    topoState.viewId = hit ? pref : (def ? def.id : null);
+  }
+  // The types drawn right now: a staged edit, else this session's view-mode
+  // toggles, else the view's own set.
+  function _effectiveShownTypes() {
+    var patch = _editSessionActive() && _editStaged.viewPatch;
+    if (patch && Array.isArray(patch.shownTypes)) return patch.shownTypes;
+    if (Array.isArray(topoState.shownTypesOverride)) return topoState.shownTypesOverride;
+    var v = _currentView();
+    return v && Array.isArray(v.shownTypes) ? v.shownTypes : DEFAULT_SHOWN_TYPES;
+  }
+  function _canEditViews() { return _canWriteServerLayout(); }
+  // The TopologyLayout key of a location key (or "flat") in the CURRENT
+  // view: the default view keeps the legacy keys; any other view prefixes
+  // its id, its base being the bare "v:<id>".
+  function _viewScopedKey(locationKey) {
+    var v = _currentView();
+    if (!v || v.isDefault) return locationKey;
+    var prefix = "v:" + v.id;
+    return locationKey === "flat" ? prefix : prefix + "|" + locationKey;
+  }
+  // True when a stored Layer 2 layout key belongs to the current view.
+  function _layoutKeyBelongsToCurrentView(key) {
+    var v = _currentView();
+    // The Topology placements ("topo", and a floor layer's "topo|L<n>") are not Layer 2 layouts.
+    if (!v || v.isDefault) return key.indexOf("v:") !== 0 && key !== "topo" && key.indexOf("topo|") !== 0;
+    var prefix = "v:" + v.id;
+    return key === prefix || (key.indexOf(prefix + "|") === 0 && key !== prefix + "|topo" && key.indexOf(prefix + "|topo|") !== 0);
+  }
+  // Re-draw the open site after a view-level change, keeping the canvas's
+  // current positions for the nodes that survive.
+  function _rerenderTopology() {
+    if (!topoState.data) return;
+    if (cyInstance && !topoState.pathOverlay && topoState.siteId) saveNodePositions(topoState.siteId);
+    renderTopologyGraph(topoState.data);
+    renderTopologyInfo(topoState.data);
+  }
+  // A Device-types toggle (the sidebar's eye buttons). In edit mode, for a
+  // view editor, it is staged and saved with the view; otherwise it lasts
+  // until the map closes. The FortiGate is the root and cannot be hidden.
+  function _toggleShownType(type) {
+    if (!type || type === "firewall") return;
+    var next = _effectiveShownTypes().slice();
+    var at = next.indexOf(type);
+    if (at === -1) next.push(type); else next.splice(at, 1);
+    if (topoState.editing && _canEditViews() && _editSessionActive()) {
+      if (!_editStaged.viewPatch) _editStaged.viewPatch = {};
+      _editStaged.viewPatch.shownTypes = next;
+    } else {
+      topoState.shownTypesOverride = next;
+    }
+    _rerenderTopology();
+  }
+  // Device types as a row of icon toggles (operator request 2026-11-10: the
+  // eye-and-name list was too tall). One icon per asset type on the site; the
+  // tooltip names the type, its count and whether it is drawn; a click shows
+  // or hides it. Line icons in the 24-unit stroke style of the corner tools.
+  var TYPE_ICON_PATHS = {
+    firewall: '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="M4 11h16M12 5.5V11M8 11v5.5M16 11v5.5"/>',
+    router: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 17h.01M10 17h.01M15 13V9M12 6.5a4.5 4.5 0 0 1 6 0M10 4a8 8 0 0 1 10 0"/>',
+    "switch": '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M9 11v2M12 11v2M15 11v2M18 11v2"/>',
+    access_point: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/>',
+    server: '<rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+    workstation: '<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>',
+    printer: '<path d="M6 9V2h12v7"/><rect x="2" y="9" width="20" height="8" rx="2"/><path d="M6 14h12v7H6z"/>',
+    hypervisor: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/>',
+    container: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    kubernetes_cluster: '<path d="m12 2 8.5 5v10L12 22l-8.5-5V7z"/><circle cx="12" cy="12" r="3"/>',
+  };
+  var TYPE_ICON_OTHER = '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2.5"/>';
+  function _typeIconSvg(type) {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (TYPE_ICON_PATHS[type] || TYPE_ICON_OTHER) + '</svg>';
+  }
+  function _deviceTypesHtml(data) {
+    var types = window.PolarisTopologyRender && window.PolarisTopologyRender.siteDeviceTypes
+      ? window.PolarisTopologyRender.siteDeviceTypes(data) : [];
+    if (!types.length) return "";
+    var shown = {};
+    _effectiveShownTypes().forEach(function (t) { shown[t] = true; });
+    shown.firewall = true;
+    var staged = topoState.editing && _canEditViews();
+    var icons = types.map(function (t) {
+      var on = !!shown[t.type];
+      var locked = t.type === "firewall";
+      var word = _deviceTypeLabel(t.type);
+      var tip = word + " (" + t.count + ") — " +
+        (locked ? "always shown, the site's root" : on ? "shown; click to hide" : "hidden; click to show");
+      return '<button type="button" class="topology-type-icon' + (on ? " is-on" : "") + '" data-topo-type="' + escapeHtml(t.type) + '"' +
+        ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="' + escapeHtml(tip) + '" title="' + escapeHtml(tip) + '"' +
+        (locked ? " disabled" : "") + '>' + _typeIconSvg(t.type) +
+        '<span class="topology-type-icon-count" aria-hidden="true">' + t.count + '</span></button>';
+    }).join("");
+    var hint = staged
+      ? "Editing: these are saved with this view."
+      : "Shown until you close the map. Edit the map to save them with the view.";
+    if (data && data.endpointsTruncated) hint += " Only the 2000 most recently seen endpoints are drawn.";
+    return '<div class="topology-section topology-types"><h5>Device types</h5>' +
+      '<div class="topology-type-icons" role="group" aria-label="Device types to show">' + icons + '</div>' +
+      '<p class="topology-type-hint">' + escapeHtml(hint) + '</p></div>';
+  }
+  // The header's view picker label: the view's name and its mode.
+  function _renderViewPicker() {
+    var btn = document.getElementById("topology-view-picker");
+    var name = document.getElementById("topology-view-name");
+    var mode = document.getElementById("topology-view-mode");
+    var v = _currentView();
+    if (btn) btn.hidden = !v;
+    if (mode) mode.hidden = !v;
+    if (!v) return;
+    if (name) name.textContent = v.name;
+    if (mode) mode.textContent = (VIEW_MODE_LABELS[v.mode] || "Layer 2") + " view";
+  }
+  function openTopologyViewMenu(anchor) {
+    if (!topoState.data || typeof showRowMenu !== "function") return;
+    var current = _currentView();
+    var canEdit = _canEditViews();
+    var items = [{ heading: "Views" }];
+    _siteViews().forEach(function (v) {
+      items.push({
+        label: (current && v.id === current.id ? "✓ " : "") + v.name + " — " + (VIEW_MODE_LABELS[v.mode] || "Layer 2"),
+        onSelect: function () { _switchTopologyView(v.id); },
+      });
+    });
+    items.push({ separator: true });
+    // Rule 153: the site's region tree (viewing is open to Device Map readers).
+    items.push({ label: "Location regions", title: "The site's areas, buildings, floors, rooms, racks and junction boxes", onSelect: function () {
+      if (!window.PolarisRegionTreePanel) return;
+      var siteId = topoState.siteId;
+      window.PolarisRegionTreePanel.open({
+        siteId: siteId,
+        data: function () { return topoState.data; },
+        canEdit: _canEditViews(),
+        onChanged: function () { return topoState.siteId === siteId ? refreshTopology({ silent: true }) : null; },
+      });
+    } });
+    items.push({ separator: true });
+    var noEdit = "Creating and changing views requires Device Map write access";
+    items.push({ label: "New view", disabled: !canEdit, title: canEdit ? "Create a view of this site" : noEdit, onSelect: openNewTopologyViewDialog });
+    items.push({ label: "View settings", disabled: !canEdit || !current, title: canEdit ? "Rename this view or change its mode" : noEdit, onSelect: openTopologyViewSettings });
+    items.push({
+      label: "Delete view",
+      danger: true,
+      disabled: !canEdit || !current || current.isDefault,
+      title: current && current.isDefault ? "The default view can't be deleted" : (canEdit ? "Delete this view and its layouts" : noEdit),
+      onSelect: deleteCurrentTopologyView,
+    });
+    showRowMenu(anchor, items, { label: "Views", align: "start" });
+  }
+  function _switchTopologyView(viewId) {
+    if (!topoState.data || viewId === topoState.viewId) return;
+    if (topoState.editing) {
+      if (typeof showToast === "function") showToast("Finish editing (the tick) before switching views", "error");
+      return;
+    }
+    if (cyInstance && !topoState.pathOverlay && topoState.siteId) saveNodePositions(topoState.siteId);
+    _flushServerLayoutSaves();
+    topoState.viewId = viewId;
+    topoState.shownTypesOverride = null;
+    topoState.activeView = "flat";
+    if (topoState.siteId) _writeViewPref(topoState.siteId, viewId);
+    _renderViewPicker();
+    renderTopologyGraph(topoState.data);
+    renderTopologyInfo(topoState.data);
+  }
+  function _modeSelectHtml(id, selected) {
+    return '<select id="' + id + '">' + ["layer2", "topology", "rack", "wall"].map(function (m) {
+      return '<option value="' + m + '"' + (m === selected ? " selected" : "") + '>' + VIEW_MODE_LABELS[m] + '</option>';
+    }).join("") + '</select>';
+  }
+  var MODE_HINT =
+    "A view has one mode. Layer 2 lays the devices out automatically. Topology starts empty: choose a " +
+    "map or floor-plan background, draw group polygons and drag devices onto it. Rack starts with one rack, " +
+    "Wall with one wall (a backboard, pegboard or junction box backplate) to mount devices on.";
+
+  // ── Regions (rule 150): a Rack or Wall view may stand for one ─────────────
+  // A region is the code chain devices carry in their descriptions; the list
+  // offers every chain the site's descriptions already name, at any level,
+  // so a view can stand for an area, a building, a floor, a room, a rack or
+  // a junction box. Nothing here writes a description.
+  var REGION_FIELDS = [["area", "a", "Area"], ["building", "b", "Building"], ["floor", "f", "Floor"],
+    ["room", "r", "Room"], ["rack", "ra", "Rack"], ["junctionBox", "jb", "Junction box"]];
+  function _regionLabel(codes) {
+    if (!codes) return "No region";
+    var parts = REGION_FIELDS.filter(function (f) { return codes[f[0]]; }).map(function (f) { return f[1] + ":" + codes[f[0]]; });
+    return parts.length ? parts.join(" ") : "No region";
+  }
+  function _regionName(codes) {
+    if (!codes) return "";
+    var last = null;
+    REGION_FIELDS.forEach(function (f) { if (codes[f[0]]) last = f; });
+    return last ? last[2] + " " + codes[last[0]] : "";
+  }
+  function _regionKey(codes) {
+    if (!codes) return "";
+    return REGION_FIELDS.map(function (f) { return String(codes[f[0]] || "").trim().toLowerCase(); }).join("|");
+  }
+  function _siteRegions() {
+    var P = window.PolarisTopologyPhysical;
+    return P && P._groupsFromData && topoState.data ? P._groupsFromData(topoState.data) : [];
+  }
+  function _modeTakesRegion(mode) { return mode === "rack" || mode === "wall"; }
+  function _regionPickerHtml(prefix, current) {
+    var regions = _siteRegions();
+    var curKey = _regionKey(current);
+    var known = regions.some(function (r) { return _regionKey(r) === curKey; });
+    var opts = '<option value="">No region</option>' + regions.map(function (r, i) {
+      return '<option value="' + i + '"' + (curKey && _regionKey(r) === curKey ? " selected" : "") + '>' +
+        escapeHtml(_regionName(r) + " — " + _regionLabel(r)) + '</option>';
+    }).join("") + '<option value="custom"' + (current && !known ? " selected" : "") + '>Custom region…</option>';
+    var custom = REGION_FIELDS.map(function (f) {
+      return '<label style="display:flex;flex-direction:column;gap:2px;font-size:0.75rem">' + f[2] +
+        '<input type="text" data-region-field="' + f[0] + '" maxlength="64" value="' + escapeHtml((current && current[f[0]]) || "") + '"></label>';
+    }).join("");
+    return '<div class="form-group" data-region-picker="' + prefix + '"><label for="' + prefix + '-region">Location region</label>' +
+      '<select id="' + prefix + '-region">' + opts + '</select>' +
+      '<div data-region-custom style="display:' + (current && !known ? "grid" : "none") + ';grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:6px">' + custom + '</div>' +
+      '<div class="hint">The area, building, floor, room, rack or junction box this view is for. Placing a device on it adds that region’s codes to its description when you save (you see the change first). Choosing one never changes a description by itself.</div></div>';
+  }
+  function _wireRegionPicker(root, prefix) {
+    var sel = root.querySelector("#" + prefix + "-region");
+    var box = root.querySelector('[data-region-picker="' + prefix + '"] [data-region-custom]');
+    if (!sel || !box) return;
+    sel.addEventListener("change", function () {
+      box.style.display = sel.value === "custom" ? "grid" : "none";
+      if (sel.value !== "" && sel.value !== "custom") {
+        var r = _siteRegions()[Number(sel.value)] || {};
+        Array.prototype.forEach.call(box.querySelectorAll("[data-region-field]"), function (inp) { inp.value = r[inp.getAttribute("data-region-field")] || ""; });
+      }
+    });
+  }
+  // The picked region (codes) or null; "custom" reads the six fields.
+  function _collectRegion(root, prefix) {
+    var sel = root.querySelector("#" + prefix + "-region");
+    if (!sel || sel.value === "") return null;
+    if (sel.value !== "custom") return _siteRegions()[Number(sel.value)] || null;
+    var out = {}, any = false;
+    Array.prototype.forEach.call(root.querySelectorAll('[data-region-picker="' + prefix + '"] [data-region-field]'), function (inp) {
+      var v = inp.value.trim();
+      out[inp.getAttribute("data-region-field")] = v || null;
+      if (v) any = true;
+    });
+    return any ? out : null;
+  }
+  function openNewTopologyViewDialog() {
+    if (!topoState.siteId || typeof buildOverlay !== "function") return;
+    var siteId = topoState.siteId;
+    var body =
+      '<div class="form-group"><label for="topo-nv-name">Name</label><input id="topo-nv-name" type="text" maxlength="80" autocomplete="off"></div>' +
+      '<div class="form-group"><label for="topo-nv-mode">Mode</label>' + _modeSelectHtml("topo-nv-mode", "layer2") +
+        '<div class="hint">' + escapeHtml(MODE_HINT) + '</div></div>' +
+      '<div class="form-group" data-nv-only="wall" hidden><label>Wall size</label>' +
+        '<div style="display:flex;align-items:center;gap:8px"><input id="topo-nv-ww" type="number" min="4" max="600" value="96" style="width:6rem" aria-label="Width (in)">' +
+        '<span>×</span><input id="topo-nv-wh" type="number" min="4" max="600" value="48" style="width:6rem" aria-label="Height (in)"><span>in</span></div>' +
+        '<div class="hint">A 4 × 8 ft sheet is 96 × 48; a junction box backplate perhaps 24 × 30. More walls can be added in the view.</div></div>' +
+      '<div class="form-group" data-nv-only="rack" hidden><label for="topo-nv-ru">Rack size (U)</label>' +
+        '<input id="topo-nv-ru" type="number" min="1" max="60" value="42" style="width:6rem"></div>' +
+      '<div data-nv-only="region" hidden>' + _regionPickerHtml("topo-nv", null) + '</div>' +
+      '<div class="form-group"><label for="topo-nv-types">Start device types from</label>' +
+        '<select id="topo-nv-types"><option value="current">This view (' + escapeHtml((_currentView() || {}).name || "Base view") + ')</option>' +
+        '<option value="defaults">Defaults (firewalls, routers, switches, access points)</option></select></div>';
+    var footer =
+      '<button type="button" class="btn btn-secondary" data-nv="cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary" data-nv="create">Create view</button>';
+    var dlg = buildOverlay(1100, "New view", body, footer);
+    var nameEl = dlg.overlay.querySelector("#topo-nv-name");
+    var modeEl = dlg.overlay.querySelector("#topo-nv-mode");
+    function paintModeFields() {
+      var md = modeEl.value;
+      dlg.overlay.querySelector('[data-nv-only="wall"]').hidden = md !== "wall";
+      dlg.overlay.querySelector('[data-nv-only="rack"]').hidden = md !== "rack";
+      dlg.overlay.querySelector('[data-nv-only="region"]').hidden = !_modeTakesRegion(md);
+    }
+    modeEl.addEventListener("change", paintModeFields);
+    _wireRegionPicker(dlg.overlay, "topo-nv");
+    dlg.overlay.querySelector('[data-nv="cancel"]').addEventListener("click", dlg.close);
+    var createBtn = dlg.overlay.querySelector('[data-nv="create"]');
+    createBtn.addEventListener("click", async function () {
+      var name = nameEl.value.trim();
+      if (!name) { if (typeof showToast === "function") showToast("Give the view a name", "error"); nameEl.focus(); return; }
+      var mode = dlg.overlay.querySelector("#topo-nv-mode").value;
+      var fromCurrent = dlg.overlay.querySelector("#topo-nv-types").value === "current";
+      createBtn.disabled = true;
+      try {
+        var body = { name: name, mode: mode };
+        if (fromCurrent) body.shownTypes = _effectiveShownTypes();
+        if (mode === "wall") {
+          body.wallWidth = Number(dlg.overlay.querySelector("#topo-nv-ww").value);
+          body.wallHeight = Number(dlg.overlay.querySelector("#topo-nv-wh").value);
+        }
+        if (mode === "rack") body.rackUnits = Number(dlg.overlay.querySelector("#topo-nv-ru").value);
+        if (_modeTakesRegion(mode)) {
+          var region = _collectRegion(dlg.overlay, "topo-nv");
+          if (region) body.region = region;
+        }
+        var view = await api.map.createTopologyView(siteId, body);
+        dlg.close();
+        if (!topoState.data || topoState.siteId !== siteId) return;
+        topoState.data.views = _siteViews().concat([view]);
+        if (typeof showToast === "function") showToast('View "' + view.name + '" created' + _autoPlacedNote(view.autoPlaced), _autoPlacedKind(view.autoPlaced));
+        _switchTopologyView(view.id);
+      } catch (err) {
+        createBtn.disabled = false;
+        if (typeof showToast === "function") showToast("View not created — " + (err && err.message ? err.message : String(err)), "error");
+      }
+    });
+    setTimeout(function () { nameEl.focus(); }, 60);
+  }
+  // Rule 150(a): a view created for a region, or linked to one, is filled by
+  // the server with the devices whose codes already put them there.
+  function _autoPlacedNote(ap) {
+    if (!ap) return "";
+    var n = (ap.placed || []).length, m = (ap.unplaced || []).length;
+    if (!n && !m) return "";
+    return " — " + (n ? n + " device" + (n === 1 ? "" : "s") + " placed from " + (n === 1 ? "its" : "their") + " location codes" : "") +
+      (n && m ? "; " : "") + (m ? m + " didn't fit" : "");
+  }
+  function _autoPlacedKind(ap) { return ap && ap.unplaced && ap.unplaced.length ? "warning" : undefined; }
+  // Name + mode. A changed mode RESETS the view (rule 149), so it is
+  // confirmed first with what the reset would remove.
+  function openTopologyViewSettings() {
+    var view = _currentView();
+    if (!view || !topoState.siteId || typeof buildOverlay !== "function") return;
+    if (topoState.editing) {
+      if (typeof showToast === "function") showToast("Save or discard your edits first (the tick, or close the map)", "error");
+      return;
+    }
+    var siteId = topoState.siteId;
+    var body =
+      '<div class="form-group"><label for="topo-vs-name">Name</label><input id="topo-vs-name" type="text" maxlength="80" autocomplete="off" value="' + escapeHtml(view.name) + '"></div>' +
+      '<div class="form-group"><label for="topo-vs-mode">Mode</label>' + _modeSelectHtml("topo-vs-mode", view.mode) +
+        '<div class="hint">Changing the mode resets this view: its placements, polygons, background, racks and walls are removed.</div></div>' +
+      '<div data-vs-region' + (_modeTakesRegion(view.mode) ? "" : " hidden") + '>' + _regionPickerHtml("topo-vs", view.region || null) + '</div>';
+    var footer =
+      '<button type="button" class="btn btn-secondary" data-vs="cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary" data-vs="save">Save</button>';
+    var dlg = buildOverlay(1100, "View settings", body, footer);
+    dlg.overlay.querySelector('[data-vs="cancel"]').addEventListener("click", dlg.close);
+    _wireRegionPicker(dlg.overlay, "topo-vs");
+    dlg.overlay.querySelector("#topo-vs-mode").addEventListener("change", function () {
+      dlg.overlay.querySelector("[data-vs-region]").hidden = !_modeTakesRegion(dlg.overlay.querySelector("#topo-vs-mode").value);
+    });
+    var saveBtn = dlg.overlay.querySelector('[data-vs="save"]');
+    saveBtn.addEventListener("click", async function () {
+      var name = dlg.overlay.querySelector("#topo-vs-name").value.trim();
+      var mode = dlg.overlay.querySelector("#topo-vs-mode").value;
+      if (!name) { if (typeof showToast === "function") showToast("Give the view a name", "error"); return; }
+      var patch = {};
+      if (name !== view.name) patch.name = name;
+      if (_modeTakesRegion(mode)) {
+        var region = _collectRegion(dlg.overlay, "topo-vs");
+        if (_regionKey(region) !== _regionKey(view.region || null)) patch.region = region;
+      }
+      if (mode !== view.mode) {
+        var ok = await _confirmModeChange(siteId, view, mode);
+        if (!ok) return;
+        patch.mode = mode;
+      }
+      if (!Object.keys(patch).length) { dlg.close(); return; }
+      saveBtn.disabled = true;
+      try {
+        var res = await api.map.updateTopologyView(siteId, view.id, patch);
+        dlg.close();
+        _replaceSiteView(res.view);
+        if (res.modeChange) {
+          // The reset deleted this view's layouts on the server; drop the
+          // cached copies so nothing restores them.
+          _forgetCurrentViewLayouts();
+          topoState.shownTypesOverride = null;
+          topoState.activeView = "flat";
+          if (typeof showToast === "function") showToast('"' + res.view.name + '" is now a ' + VIEW_MODE_LABELS[res.view.mode] + " view" + _autoPlacedNote(res.autoPlaced), _autoPlacedKind(res.autoPlaced));
+        } else if (typeof showToast === "function") {
+          showToast("View saved" + _autoPlacedNote(res.autoPlaced), _autoPlacedKind(res.autoPlaced));
+        }
+        _renderViewPicker();
+        renderTopologyGraph(topoState.data);
+        renderTopologyInfo(topoState.data);
+      } catch (err) {
+        saveBtn.disabled = false;
+        if (typeof showToast === "function") showToast("View not saved — " + (err && err.message ? err.message : String(err)), "error");
+      }
+    });
+  }
+  function _replaceSiteView(view) {
+    if (!topoState.data || !view) return;
+    topoState.data.views = _siteViews().map(function (v) { return v.id === view.id ? view : v; });
+  }
+  // Remove the current view's cached layouts (server embed + this browser).
+  function _forgetCurrentViewLayouts() {
+    var layouts = topoState.data && topoState.data.savedLayouts;
+    var v = _currentView();
+    if (!layouts || !v) return;
+    Object.keys(layouts).forEach(function (key) {
+      var mine = v.isDefault ? key.indexOf("v:") !== 0 : (key === "v:" + v.id || key.indexOf("v:" + v.id + "|") === 0);
+      if (!mine) return;
+      delete layouts[key];
+      try {
+        localStorage.removeItem(_positionsStorageKey(topoState.siteId, key));
+        localStorage.removeItem(CHECKPOINT_STORAGE_PREFIX + topoState.siteId + (key !== "flat" ? ":" + key : ""));
+      } catch (e) { /* per-viewer */ }
+    });
+  }
+  // The rule-149 warning: what changing the mode would remove, on its own
+  // overlay above the settings dialog. Resolves true when the operator
+  // accepts the reset.
+  async function _confirmModeChange(siteId, view, mode) {
+    var loss = null;
+    try { loss = await api.map.topologyViewModeChange(siteId, view.id); } catch (e) { loss = null; }
+    var items = [];
+    if (loss) {
+      if (loss.placedDevices) items.push(loss.placedDevices + " placed device" + (loss.placedDevices === 1 ? "" : "s"));
+      if (loss.polygons) items.push(loss.polygons + " group polygon" + (loss.polygons === 1 ? "" : "s"));
+      if (loss.hasImage) items.push("the uploaded background image");
+      if (loss.racks && view.mode === "rack") items.push(loss.racks + " rack" + (loss.racks === 1 ? "" : "s"));
+      if (loss.rackPlacements) items.push(loss.rackPlacements + " racked item" + (loss.rackPlacements === 1 ? "" : "s"));
+      if (loss.walls && view.mode === "wall") items.push(loss.walls + " wall" + (loss.walls === 1 ? "" : "s"));
+      if (loss.wallPlacements) items.push(loss.wallPlacements + " mounted item" + (loss.wallPlacements === 1 ? "" : "s"));
+      if (loss.layers) items.push(loss.layers + " floor layer" + (loss.layers === 1 ? "" : "s"));
+    }
+    if (view.mode === "layer2") {
+      items.push("its hand-placed device positions (the automatic layout comes back)");
+      items.push("its saved restore points");
+    }
+    if (!items.length) items.push("nothing yet — the view is empty");
+    var target = VIEW_MODE_LABELS[mode];
+    var body =
+      '<p style="margin:0 0 10px">Changing the mode resets <strong>' + escapeHtml(view.name) + '</strong> to a new ' + escapeHtml(target) + ' view. This removes, for everyone:</p>' +
+      '<ul style="margin:0 0 10px 18px;padding:0;line-height:1.7">' + items.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join("") + '</ul>' +
+      '<p class="hint" style="margin:0">It starts again with the default device types' + (mode === "rack" ? " and one empty 42U rack" : mode === "wall" ? " and one empty 96 × 48 in wall" : "") +
+      '. The view’s name stays. Location codes already written to asset descriptions are not changed. This can’t be undone.</p>';
+    return new Promise(function (resolve) {
+      var settled = false;
+      var footer =
+        '<button type="button" class="btn btn-secondary" data-mc="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" data-mc="ok">Reset and change to ' + escapeHtml(target) + '</button>';
+      var dlg = buildOverlay(1300, "Change this view to " + target + "?", body, footer, function () {
+        if (!settled) { settled = true; resolve(false); }
+      });
+      dlg.overlay.querySelector('[data-mc="cancel"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector('[data-mc="ok"]').addEventListener("click", function () {
+        settled = true;
+        resolve(true);
+        dlg.close();
+      });
+    });
+  }
+  async function deleteCurrentTopologyView() {
+    var view = _currentView();
+    if (!view || view.isDefault || !topoState.siteId) return;
+    if (topoState.editing) {
+      if (typeof showToast === "function") showToast("Finish editing (the tick) before deleting a view", "error");
+      return;
+    }
+    var ok = typeof showConfirm === "function"
+      ? await showConfirm('Delete the view "' + view.name + '"? Its layouts, polygons, background and racks are removed for everyone.')
+      : false;
+    if (!ok) return;
+    var siteId = topoState.siteId;
+    try {
+      await api.map.deleteTopologyView(siteId, view.id);
+      if (!topoState.data || topoState.siteId !== siteId) return;
+      _forgetCurrentViewLayouts();
+      topoState.data.views = _siteViews().filter(function (v) { return v.id !== view.id; });
+      var def = _siteViews().filter(function (v) { return v.isDefault; })[0];
+      // Straight to the default view — never through _switchTopologyView,
+      // whose position capture would save the deleted view's canvas under
+      // the default view's keys.
+      topoState.viewId = def ? def.id : null;
+      topoState.shownTypesOverride = null;
+      topoState.activeView = "flat";
+      if (def) _writeViewPref(siteId, def.id);
+      if (typeof showToast === "function") showToast('View "' + view.name + '" deleted');
+      _renderViewPicker();
+      renderTopologyGraph(topoState.data);
+      renderTopologyInfo(topoState.data);
+    } catch (err) {
+      if (typeof showToast === "function") showToast("View not deleted — " + (err && err.message ? err.message : String(err)), "error");
     }
   }
 
@@ -1762,6 +2564,14 @@
   // PUT may not have landed yet and a restore point of a layout the server
   // never stored would restore a state nobody displayed.
   async function saveTopologyLayoutCheckpoint() {
+    // A Topology / Rack view: Save commits the edit so far (with the
+    // rule-148 summary) and keeps editing. Its layout has no restore point.
+    if (_modeInstance()) {
+      if (!topoState.editing) return;
+      var done = await _commitModeCanvasSession();
+      if (done && typeof showToast === "function") showToast("View saved");
+      return;
+    }
     if (!topoState.siteId || !cyInstance) return;
     if (_layoutActionBlockedByOverlay()) return;
     var view = _activeViewKey();
@@ -1813,6 +2623,24 @@
   // entries grey out.
   function openResetLayoutMenu(anchor) {
     if (!topoState.siteId || !topoState.data) return;
+    if (_modeInstance()) {
+      if (typeof showRowMenu !== "function") return;
+      showRowMenu(anchor, [
+        { heading: "Load" },
+        {
+          label: "Discard changes since the last save",
+          title: "Put the view back as it was last saved",
+          danger: true,
+          onSelect: function () {
+            _discardEditSession();
+            _beginEditSession();
+            renderTopologyGraph(topoState.data);
+            renderTopologyInfo(topoState.data);
+          },
+        },
+      ], { label: "Load", align: "end" });
+      return;
+    }
     if (typeof showRowMenu !== "function") { resetTopologyLayoutToBaseline(); return; }
     var cp = _readCheckpoint(topoState.siteId);
     showRowMenu(anchor, [
@@ -1981,10 +2809,10 @@
       '<div style="margin-top:10px;font-size:0.8rem;color:var(--color-text-secondary)">' +
         'Device grouping shortcuts — include anywhere in the description:' +
         '<div style="margin-top:4px;font-family:monospace">' +
-          'a:<i>Area</i> &nbsp; b:<i>Building</i> &nbsp; f:<i>Floor</i> &nbsp; r:<i>Room</i> &nbsp; jb:<i>Junction box</i>' +
+          'a:<i>Area</i> &nbsp; b:<i>Building</i> &nbsp; f:<i>Floor</i> &nbsp; r:<i>Room</i> &nbsp; ra:<i>Rack</i> &nbsp; jb:<i>Junction box</i>' +
         '</div>' +
         '<div style="margin-top:4px;color:var(--color-text-tertiary)">' +
-          'e.g. <code>a:Mine b:Shop f:2 r:North Closet jb:112-305</code> — a value runs until the ' +
+          'e.g. <code>a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305</code> — a value runs until the ' +
           'next code, so multi-word names need no quotes. Codes in the asset’s Notes override ' +
           'the same code here.' +
         '</div>' +
@@ -2008,10 +2836,22 @@
       if (save) save.addEventListener("click", async function () {
         save.disabled = true;
         try {
-          await api.assets.update(assetId, { description: input ? input.value.trim() : "" });
+          var descAfter = input ? input.value.trim() : "";
+          await api.assets.update(assetId, { description: descAfter });
           if (typeof closeModal === "function") closeModal();
           if (typeof showToast === "function") showToast("Description saved");
           refreshTopology({ silent: true });
+          // Rule 150: offer a Wall / Rack view for each new room, rack or junction box.
+          if (descAfter !== (asset.description || "") && typeof _loadPanelScript === "function") {
+            var siteForPrompt = topoState.siteId;
+            _loadPanelScript("/js/region-view-prompt.js").then(function () {
+              if (window.PolarisRegionViewPrompt) {
+                window.PolarisRegionViewPrompt.afterSave({ assetId: assetId, before: asset.description || "", after: descAfter, siteId: siteForPrompt, assetName: asset.hostname,
+                  // The new views belong in the view picker straight away.
+                  onDone: function () { if (topoState.siteId === siteForPrompt) refreshTopology({ silent: true }); } });
+              }
+            }).catch(function () { /* the prompt is optional */ });
+          }
         } catch (err) {
           save.disabled = false;
           if (typeof showToast === "function") {
@@ -2087,6 +2927,74 @@
       ["Snap devices / Snap line points", "Devices land on the thick lines; line points on any line"],
       ["Right-click a device", "Edit its description / grouping codes"],
   ];
+  // The Topology and Rack canvases have their own gestures (rule 147).
+  var MOUSE_CONTROLS_BY_MODE = {
+    topology: {
+      view: [
+        ["Drag", "Pan the map (scroll wheel zooms)"],
+        ["Hover a device or link", "Show its name / the link's ports"],
+        ["Double-click a device", "Open its asset details"],
+        ["Map | Satellite (under the zoom)", "Switch the basemap for a look — shown when satellite imagery is set up"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Place it on the map — inside a group polygon it takes that group's location codes when you save"],
+        ["Drag a placed device", "Move it; its links follow"],
+        ["Right-click a placed device", "Open it, or remove it from the map (its codes are left as they are)"],
+        ["Click a placed device, then Delete", "Take it off the map — it goes back to the Device List"],
+        ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
+        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
+        ["Click a polygon", "Reshape it, change its group or delete it"],
+        ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
+        ["Drag / scroll", "Pan and zoom — on OpenStreetMap the view you leave is saved with the view"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+    wall: {
+      view: [
+        ["Scroll", "Move along the walls"],
+        ["Click a mounted device", "Show it in the details pane"],
+        ["Double-click a device", "Open its asset details"],
+        ["Double-click a linked rack", "Open its Rack view"],
+        ["Zoom buttons (right)", "Draw the walls larger or smaller"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Mount it — it lands as a 12 × 8 in shape at the pointer, or the nearest free space"],
+        ["Drag Cable management / Third party", "Add a placeholder or a named box (any number)"],
+        ["Drag Rack", "Asks its size in U and which Rack view it opens, then mounts it"],
+        ["Drag a mounted item", "Move it, an inch at a time; it can't overlap another"],
+        ["Drag a corner", "Reshape the item"],
+        ["Drag the + on an edge", "Add a corner there"],
+        ["Right-click a corner", "Remove it"],
+        ["Right-click an item", "Open, rename, change a rack's size, or remove it"],
+        ["Click an item, then Delete", "Take it off the wall"],
+        ["Double-click a wall's name / size", "Rename it / change its size (in)"],
+        ["× (wall header)", "Delete that wall — every wall after the first has one"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+    rack: {
+      view: [
+        ["Scroll", "Move along the racks"],
+        ["Double-click a device", "Open its asset details"],
+        ["Front / Back (rack header)", "Turn the rack round to show its other face"],
+      ],
+      edit: [
+        ["Drag a device from the details pane", "Rack it — it lands as 1U at the U under the pointer"],
+        ["Drag Cable management", "Add a cable-management placeholder (any number)"],
+        ["Drag Third party", "Add a box for equipment Polaris does not monitor; double-click it to name it"],
+        ["Drag a racked item", "Move it within a rack or to another rack, a U at a time"],
+        ["Drag an item's top or bottom edge", "Change its height, a U at a time"],
+        ["Right-click a racked item", "Move it to the other face, make it half or full depth, or remove it"],
+        ["Click a racked device, then Delete", "Take it out of the rack — it goes back to the Device List"],
+        ["Front / Back (rack header)", "Turn the rack round to show its other face"],
+        ["Drag a rack by its header", "Move it among the racks"],
+        ["Double-click a rack's name", "Rename it"],
+        ["Double-click a rack's 42U", "Change its size (U)"],
+        ["× (rack header)", "Delete that rack — every rack after the first has one"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+      ],
+    },
+  };
 
   // The Mouse controls panel: a legend-styled card under the corner tools.
   // Only its button closes it — a click elsewhere on the map leaves it open,
@@ -2129,7 +3037,11 @@
     panel.innerHTML =
       '<header class="topology-legend-header"><span class="topology-legend-title">' + title + "</span></header>" +
       '<div class="topology-legend-body">' +
-        (editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW)
+        (function () {
+          var byMode = MOUSE_CONTROLS_BY_MODE[_currentMode()];
+          if (byMode) return editing ? byMode.edit : byMode.view;
+          return editing ? MOUSE_CONTROLS_EDIT : MOUSE_CONTROLS_VIEW;
+        })()
           .map(function (c) { return row("", c[0], c[1]); }).join("") +
       "</div>";
   }
@@ -2160,7 +3072,9 @@
   // drag happens in edit mode, and there it is STAGED (the edit session
   // below) — it reaches these stores only on Done Editing or Save.
   function _activeViewKey() {
-    return topoState.activeView && topoState.activeView !== "flat" ? topoState.activeView : "flat";
+    var loc = topoState.activeView && topoState.activeView !== "flat" ? topoState.activeView : "flat";
+    // Rule 147: a saved view's layouts live under its own key prefix.
+    return _viewScopedKey(loc);
   }
   function _positionsStorageKey(siteId, view) {
     if (!view) view = _activeViewKey();
@@ -2243,7 +3157,7 @@
   function _beginEditSession() {
     // Anything queued before editing began was already a committed layout.
     _flushServerLayoutSaves();
-    _editStaged = { siteId: topoState.siteId, views: {} };
+    _editStaged = { siteId: topoState.siteId, views: {}, viewPatch: {}, locationCodes: {} };
   }
   function _stageLayout(view, positions, opts) {
     if (!_editStaged) return;
@@ -2258,7 +3172,9 @@
     var session = _editStaged;
     _editStaged = null;
     if (!session) return false;
-    var had = Object.keys(session.views).length > 0;
+    var had = Object.keys(session.views).length > 0 ||
+      !!(session.viewPatch && Object.keys(session.viewPatch).length) ||
+      !!(session.locationCodes && Object.keys(session.locationCodes).length);
     var prefix = session.siteId + "|";
     Object.keys(_layoutDirty).forEach(function (k) {
       if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
@@ -2275,8 +3191,27 @@
     // Capture the canvas as it stands (a drag's 250 ms save may be pending).
     if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
     var views = session.views;
-    _editStaged = { siteId: siteId, views: {} };
+    var viewPatch = session.viewPatch || {};
+    _editStaged = { siteId: siteId, views: {}, viewPatch: {}, locationCodes: {} };
     var pending = [];
+    // The view's own staged fields (rule 147: its shown device types; the
+    // Topology / Rack canvases stage theirs here too) land as one PUT.
+    var editedView = _currentView();
+    if (editedView && Object.keys(viewPatch).length && _canEditViews()) {
+      pending.push(api.map.updateTopologyView(siteId, editedView.id, viewPatch).then(function (res) {
+        if (res && res.view && topoState.siteId === siteId) _replaceSiteView(res.view);
+        return res;
+      }).catch(function (err) {
+        if (typeof showToast === "function") {
+          showToast("View not saved — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      }));
+      // Until the PUT answers, the patch is what the view now is.
+      if (viewPatch.shownTypes) {
+        var copy = Object.assign({}, editedView, { shownTypes: viewPatch.shownTypes });
+        _replaceSiteView(copy);
+      }
+    }
     Object.keys(views).forEach(function (view) {
       var s = views[view];
       if (s.reset) {
@@ -2664,8 +3599,12 @@
     topoState.siteId = null;
     topoState.hostname = null;
     topoState.data = null;
+    topoState.selectedAssetId = null;
     topoState.pathOverlay = null;
     topoState.editing = false;
+    topoState.viewId = null;
+    topoState.shownTypesOverride = null;
+    _teardownModeCanvas();
     var showFullBtn = document.getElementById("topology-show-full");
     if (showFullBtn) showFullBtn.hidden = true;
     // Exit native fullscreen first — otherwise the browser stays in
@@ -2695,11 +3634,18 @@
   function _destroyGraphKeepingLegend() {
     if (!cyInstance) return;
     var graphEl = document.getElementById("topology-graph");
-    var legendEl = document.getElementById("topology-legend-overlay");
-    if (legendEl && legendEl.parentNode) legendEl.parentNode.removeChild(legendEl);
+    var keep = _legendNodes();
+    keep.forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
     try { cyInstance.destroy(); } catch (e) {}
     cyInstance = null;
-    if (legendEl && graphEl) graphEl.appendChild(legendEl);
+    if (graphEl) keep.forEach(function (n) { graphEl.appendChild(n); });
+  }
+  // The legend's button (its previous sibling — legend-toggle.js `beside`)
+  // and the legend itself, in DOM order, so a rebuild can put both back.
+  function _legendNodes() {
+    return ["topology-legend-toggle", "topology-legend-overlay"]
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
   }
 
   function renderTopologyGraph(data) {
@@ -2716,13 +3662,17 @@
     // surface — see public/js/topology-render.js. Desktop opts into the
     // endpoint-overlay styles because the connection-path search dims
     // off-path elements and adds a synthetic round-rectangle endpoint node.
-    var elements = window.PolarisTopologyRender.buildTopologyElements(data);
+    // A Topology or Rack view draws its own canvas (business rule 147).
+    if (_currentMode() !== "layer2") { _renderModeCanvas(data); return; }
+    _teardownModeCanvas();
+
+    var elements = window.PolarisTopologyRender.buildTopologyElements(data, { shownTypes: _effectiveShownTypes() });
 
     // Does ANY device on this site carry a location code? (Location boxes
     // are always drawn when one does — the Locations chip is gone.)
     topoState.hasLocationCodes = elements.some(function (el) {
       var d = el && el.data;
-      return !!(d && !d.source && (d.locA || d.locB || d.locF || d.locR || d.locJb));
+      return !!(d && !d.source && (d.locA || d.locB || d.locF || d.locR || d.locRa || d.locJb));
     });
 
     // Floor views present in this payload (empty unless some device carries
@@ -2949,7 +3899,13 @@
         return;
       }
       _lastNodeTap = { id: id, t: now };
-      // Single tap: selection highlight is handled by Cytoscape automatically.
+      // Single tap: Cytoscape draws the selection; the details pane's info
+      // card shows the device (an asset-backed node only).
+      var tapped = _assetIdForNode(node);
+      if (tapped && topoState.data && _topologyAssetById(topoState.data, tapped)) _selectTopologyAsset(tapped);
+    });
+    cyInstance.on("tap", function (evt) {
+      if (evt.target === cyInstance && topoState.selectedAssetId) _selectTopologyAsset(null);
     });
 
     // Right-click on an asset-backed node opens the in-place description
@@ -3013,7 +3969,7 @@
     // shape it nests inside (hit-testing hands the hover to the innermost
     // hull, so a jb inside a room inside a building lists all three).
     // Reuses the edge-tooltip element/positioning helpers.
-    var LOC_KIND_LABELS = { area: "Area", building: "Building", floor: "Floor", room: "Room", jb: "Junction box" };
+    var LOC_KIND_LABELS = { area: "Area", building: "Building", floor: "Floor", room: "Room", ra: "Rack", jb: "Junction box" };
     cyInstance.on("mouseover", "node[isLocGroup]", function (evt) {
       var parts = window.PolarisTopologyRender.locationGroupTooltipParts(cyInstance, evt.target);
       if (!parts.length) return;
@@ -3297,6 +4253,7 @@
       function () { _paintTopologyGrid(); });
 
     var exportBtn = _cornerButton("topology-export", "btn-icon topology-tool", function (btn) {
+      if (_modeInstance()) { _openModeCanvasExport(btn); return; }
       if (!window.PolarisGraphExport) return;
       window.PolarisGraphExport.openMenu(btn, topologyExportContext, {
         screenshots: [
@@ -3436,14 +4393,33 @@
   // (Closing the map instead discards it — closeTopology.)
   function _setTopologyEditing(on) {
     on = !!on;
+    // A mode canvas's Done editing confirms the rule-148 description changes
+    // first, and may stay in edit mode ("Back to editing").
+    if (!on && topoState.editing && _modeInstance()) {
+      _commitModeCanvasSession().then(function (done) {
+        if (!done) return;
+        _editStaged = null;
+        topoState.editing = false;
+        _applyTopologyEditMode();
+      });
+      return;
+    }
     if (on && !topoState.editing) {
       _beginEditSession();
+      // Types toggled while viewing become the edit's starting point, so
+      // the tick saves the map the operator is looking at.
+      if (Array.isArray(topoState.shownTypesOverride) && _canEditViews()) {
+        _editStaged.viewPatch.shownTypes = topoState.shownTypesOverride;
+        topoState.shownTypesOverride = null;
+      }
     } else if (!on && topoState.editing) {
       _commitEditSession();
       _editStaged = null;
     }
     topoState.editing = on;
     _applyTopologyEditMode();
+    // The Device types hint says whether a toggle is saved.
+    if (topoState.data) renderTopologyInfo(topoState.data);
   }
   function _applyTopologyEditMode() {
     var on = !!topoState.editing;
@@ -3478,7 +4454,19 @@
     });
     var viewMouse = document.getElementById("topology-mouse-help");
     if (viewMouse) viewMouse.hidden = on;
+    // A mode canvas's own buttons (Background, Draw polygon) are edit-only.
+    document.querySelectorAll("#topology-corner-stack [data-edit-only]").forEach(function (el) { el.hidden = !on; });
     _paintMouseControls(); // an open panel swaps to this mode's rows
+    var modeInst = _modeInstance();
+    if (modeInst) {
+      // A Topology / Rack canvas keeps its own undo history (_paintUndoRedo
+      // asks it), so the Layer 2 snapshot history is not started.
+      if (typeof modeInst.setEditing === "function") modeInst.setEditing(on);
+      layoutHistory = null;
+      if (topoState.data) renderTopologyInfo(topoState.data);
+      _paintUndoRedo();
+      return;
+    }
     // Undo history belongs to one edit session in one view: started when
     // editing starts (or the view changes under it), dropped on Done. A
     // re-render while editing (Refresh, Reset, restore) records its result
@@ -3569,6 +4557,8 @@
     saveNodePositions(topoState.siteId);
   }
   function _layoutUndo() {
+    var modeInst = _modeInstance();
+    if (modeInst) { if (topoState.editing && modeInst.undo) modeInst.undo(); return; }
     if (!topoState.editing || !layoutHistory || layoutHistory.index <= 0) return;
     if (_historyTimer) { clearTimeout(_historyTimer); _historyTimer = null; _layoutHistoryRecord(); }
     if (layoutHistory.index <= 0) return;
@@ -3577,6 +4567,8 @@
     _paintUndoRedo();
   }
   function _layoutRedo() {
+    var modeInst = _modeInstance();
+    if (modeInst) { if (topoState.editing && modeInst.redo) modeInst.redo(); return; }
     if (!topoState.editing || !layoutHistory || layoutHistory.index >= layoutHistory.entries.length - 1) return;
     layoutHistory.index++;
     _layoutHistoryApply(layoutHistory.entries[layoutHistory.index]);
@@ -3588,6 +4580,11 @@
     var h = layoutHistory;
     var canUndo = !!(h && h.index > 0);
     var canRedo = !!(h && h.index < h.entries.length - 1);
+    var modeInst = _modeInstance();
+    if (modeInst) {
+      canUndo = !!(modeInst.canUndo && modeInst.canUndo());
+      canRedo = !!(modeInst.canRedo && modeInst.canRedo());
+    }
     if (undo) {
       undo.disabled = !canUndo;
       _setCornerTip(undo, "Undo (Ctrl+Z)", canUndo ? "Undo the last layout change" : "Nothing to undo");
@@ -3884,6 +4881,9 @@
       var activeView = _activeViewKey();
       Object.keys(topoState.data.savedLayouts).forEach(function (view) {
         if (view === activeView) return;
+        // Only this view's other Layer 2 layouts — never another saved
+        // view's, nor a Topology placement (rule 147).
+        if (!_layoutKeyBelongsToCurrentView(view)) return;
         var entry = topoState.data.savedLayouts[view];
         var positions = entry && entry.positions;
         // Mid-edit, a view already staged is snapped from its staged blob.
@@ -3971,27 +4971,118 @@
     if (_edgeTooltipEl) _edgeTooltipEl.classList.remove("visible");
   }
 
+  // ── The info card: the selected device, else the site's FortiGate ────────
+  // A click on a device (a graph node, a placed marker, a racked block, a
+  // Device List row) fills it; a click on the canvas background returns it
+  // to the FortiGate. Repainted on its own, so the Device List keeps its
+  // filter text and scroll position.
+  function _topologyAssetById(data, id) {
+    if (!data || !id) return null;
+    var fg = data.fortigate;
+    if (fg && fg.id === id) return { kind: "firewall", item: fg };
+    var lists = [["switch", data.switches], ["access point", data.aps], ["endpoint", data.endpoints]];
+    for (var i = 0; i < lists.length; i++) {
+      var arr = lists[i][1] || [];
+      for (var j = 0; j < arr.length; j++) if (arr[j] && arr[j].id === id) return { kind: lists[i][0], item: arr[j] };
+    }
+    return null;
+  }
+  function _locationText(loc) {
+    if (!loc) return "";
+    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
+    return keys.filter(function (k) { return loc[k[0]]; }).map(function (k) { return k[1] + ":" + loc[k[0]]; }).join(" ");
+  }
+  function _topologyAssetCardHtml(data) {
+    var fg = data.fortigate || {};
+    var hit = _topologyAssetById(data, topoState.selectedAssetId) || { kind: "firewall", item: fg };
+    var a = hit.item || {};
+    var isFg = a === fg;
+    var label = escapeHtml(a.hostname || a.ipAddress || a.macAddress || (isFg ? "FortiGate" : "(unnamed)"));
+    var rows = [];
+    var head = a.id
+      ? '<a href="/assets.html#asset=' + encodeURIComponent(a.id) + '">' + label + '</a>'
+      : label;
+    rows.push('<h4 class="topology-asset-card-head">' + head +
+      (isFg ? "" : '<button type="button" class="btn-icon topology-asset-card-clear" data-asset-card-clear title="Show the site\'s FortiGate" aria-label="Show the site\'s FortiGate">×</button>') +
+      '</h4>');
+    function row(lbl, valueHtml) { rows.push('<div class="detail-row"><span class="label">' + lbl + '</span>' + valueHtml + '</div>'); }
+    function text(v) { return '<span class="value">' + escapeHtml(v == null || v === "" ? "—" : String(v)) + '</span>'; }
+    if (!isFg) row("Type", text(String(a.assetType || hit.kind).replace(/_/g, " ")));
+    if (hit.kind !== "endpoint") {
+      row("Serial", copyableValue(a.serial));
+      row("Model", text(a.model));
+      row("Mgmt IP", copyableValue(a.ip));
+    } else {
+      row("IP", copyableValue(a.ipAddress));
+      row("MAC", copyableValue(a.macAddress));
+    }
+    row("Status", text(a.status));
+    if (a.monitored) row("Health", text(a.monitorHealth));
+    if (hit.kind === "switch" && a.uplinkInterface) row("Uplink", text(displayableUplink(a.uplinkInterface)));
+    if (hit.kind === "access point") row("Connected to", text(a.peerSwitch ? a.peerSwitch + "/" + (a.peerPort || "?") : (a.meshUplink ? "mesh" : "direct")));
+    if (hit.kind === "endpoint") {
+      var sw = (data.switches || []).filter(function (s) { return s.id === a.switchId; })[0];
+      row("Connected to", text(sw ? (sw.hostname || "switch") + (a.port ? "/" + a.port : "") : (a.port || null)));
+    }
+    var loc = _locationText(a.location);
+    if (loc) row("Location", text(loc));
+    if (a.lastSeen) row("Last seen", text(formatDateTime(a.lastSeen)));
+    if (isFg && fg.latitude != null && fg.longitude != null) row("Coords", copyableValue(fg.latitude.toFixed(4) + ", " + fg.longitude.toFixed(4)));
+    return rows.join("");
+  }
+  function _paintTopologyAssetCard() {
+    var el = document.getElementById("topology-asset-card");
+    if (!el || !topoState.data) return;
+    el.innerHTML = _topologyAssetCardHtml(topoState.data);
+    _wireCopyableValues(el);
+    var clr = el.querySelector("[data-asset-card-clear]");
+    if (clr) clr.addEventListener("click", function () { _selectTopologyAsset(null); });
+  }
+  function _selectTopologyAsset(id) {
+    var next = id && topoState.data && _topologyAssetById(topoState.data, id) ? id : null;
+    topoState.selectedAssetId = next;
+    _paintTopologyAssetCard();
+    // Mirror the choice onto the canvas that did not make it.
+    var inst = _modeInstance();
+    if (inst && typeof inst.setSelected === "function") inst.setSelected(next);
+    if (cyInstance && !inst) {
+      try {
+        cyInstance.$("node:selected").filter(function (n) { return n.id() !== next; }).unselect();
+        if (next) { var n = cyInstance.getElementById(next); if (n && n.length && !n.selected()) n.select(); }
+      } catch (e) { /* graph mid-rebuild */ }
+    }
+    var info = document.getElementById("topology-info");
+    if (info) {
+      Array.prototype.forEach.call(info.querySelectorAll("[data-device-row]"), function (li) {
+        li.classList.toggle("is-selected", li.getAttribute("data-device-row") === next);
+      });
+    }
+  }
+
   function renderTopologyInfo(data) {
     var fg = data.fortigate || {};
     var parts = [];
-    var fgLabel = escapeHtml(fg.hostname || "FortiGate");
-    if (fg.id) {
-      parts.push('<h4><a href="/assets.html#asset=' + encodeURIComponent(fg.id) + '">' + fgLabel + '</a></h4>');
-    } else {
-      parts.push('<h4>' + fgLabel + '</h4>');
-    }
+    // Rule 147: the Device types toggles head the details pane; a Topology /
+    // Rack canvas adds its own lists (what to drag on, what is placed).
+    var typesHtml = _deviceTypesHtml(data);
+    if (typesHtml) parts.push(typesHtml);
+    var modeInstForPane = _modeInstance();
+    if (modeInstForPane && typeof modeInstForPane.sidebarHtml === "function") parts.push(modeInstForPane.sidebarHtml());
+    if (topoState.selectedAssetId && !_topologyAssetById(data, topoState.selectedAssetId)) topoState.selectedAssetId = null;
+    parts.push('<div id="topology-asset-card" class="topology-asset-card">' + _topologyAssetCardHtml(data) + '</div>');
 
-    parts.push('<div class="detail-row"><span class="label">Serial</span>' + copyableValue(fg.serial) + '</div>');
-    parts.push('<div class="detail-row"><span class="label">Model</span><span class="value">' + escapeHtml(fg.model || "—") + '</span></div>');
-    parts.push('<div class="detail-row"><span class="label">Mgmt IP</span>' + copyableValue(fg.ip) + '</div>');
-    parts.push('<div class="detail-row"><span class="label">Status</span><span class="value">' + escapeHtml(fg.status || "—") + '</span></div>');
-    if (fg.lastSeen) {
-      parts.push('<div class="detail-row"><span class="label">Last seen</span><span class="value">' + escapeHtml(formatDateTime(fg.lastSeen)) + '</span></div>');
-    }
-    if (fg.latitude != null && fg.longitude != null) {
-      var coordsText = fg.latitude.toFixed(4) + ', ' + fg.longitude.toFixed(4);
-      parts.push('<div class="detail-row"><span class="label">Coords</span>' + copyableValue(coordsText) + '</div>');
-    }
+    // On a Topology or Rack canvas the lists below name only what is on the
+    // canvas (operator request 2026-11-10): the Device List above is where
+    // everything else waits.
+    var placed = modeInstForPane && typeof modeInstForPane.placedIds === "function" ? modeInstForPane.placedIds() : null;
+    function onCanvas(id) { return !placed || !!placed[id]; }
+    data = Object.assign({}, data, {
+      switches: (data.switches || []).filter(function (s) { return onCanvas(s.id); }),
+      aps: (data.aps || []).filter(function (a) { return onCanvas(a.id); }),
+      interfaceEdges: placed ? (data.interfaceEdges || []).filter(function (e) { return onCanvas(e.source) && onCanvas(e.target); }) : data.interfaceEdges,
+      lldpEdges: placed ? (data.lldpEdges || []).filter(function (e) { return onCanvas(e.source); }) : data.lldpEdges,
+      lldpNodes: placed ? [] : data.lldpNodes,
+    });
 
     // With the location boxes on, the switch and AP lists follow the boxes'
     // nesting — area › building › floor › room › junction box — under one
@@ -4110,11 +5201,14 @@
     var infoEl = document.getElementById("topology-info");
     infoEl.innerHTML = parts.join("");
     _wireCopyableValues(infoEl);
+    var clr = infoEl.querySelector("[data-asset-card-clear]");
+    if (clr) clr.addEventListener("click", function () { _selectTopologyAsset(null); });
+    if (modeInstForPane && typeof modeInstForPane.wireSidebar === "function") modeInstForPane.wireSidebar(infoEl);
   }
 
   // The location tiers in nesting order — the same chain the grouping boxes
   // nest by (topology-render.js locationData).
-  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "junctionBox"];
+  var _TOPO_LOC_TIERS = ["area", "building", "floor", "room", "rack", "junctionBox"];
   function _topoLocKey(value) {
     return String(value).replace(/\s+/g, " ").trim().toLowerCase();
   }

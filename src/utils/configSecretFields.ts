@@ -43,7 +43,8 @@
  *   Channel      — password (smtp), clientSecret (oauth_m365),
  *                  accessToken (pushbullet), webhookUrl (slack, teams),
  *                  privateKey (web_push VAPID)
- *   Setting      — bindPassword (ldap), clientSecret (oidc),
+ *   Setting      — apiToken (satelliteConfig — the satellite imagery key),
+ *                  bindPassword (ldap), clientSecret (oidc),
  *                  keystorePassword (agent signing keystore),
  *                  privateKey / signingKey,
  *                  password / passphrase (event-archive SFTP, backupSchedule)

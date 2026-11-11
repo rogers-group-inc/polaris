@@ -75,9 +75,15 @@
   }
 
   // Location-code node-data stamps from a payload node's `location` object
-  // ({ area, building, floor, room, junctionBox } | null). locA/locB/locF/
-  // locR/locJb are normalized grouping keys (drive the row-clustering pass +
+  // ({ area, building, floor, room, rack, junctionBox } | null). locA/locB/
+  // locF/locR/locRa/locJb are normalized grouping keys (drive the row-clustering pass +
   // grouping hulls); loc*Name keep the operator's original casing for labels.
+  // A junction box's group key. Without a rack it is the key it has always
+  // had ("jb|a|b|f|r|jb"), so layouts saved against it before ra: existed
+  // still match; inside a rack it carries the rack as an extra segment.
+  function jbKey(a, b, f, r, ra, jb) {
+    return "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + (ra ? ra + "|" : "") + jb;
+  }
   function locationData(loc) {
     var d = {};
     if (!loc) return d;
@@ -85,6 +91,7 @@
     if (loc.building) { d.locB = locKey(loc.building); d.locBName = String(loc.building); }
     if (loc.floor) { d.locF = locKey(loc.floor); d.locFName = String(loc.floor); }
     if (loc.room) { d.locR = locKey(loc.room); d.locRName = String(loc.room); }
+    if (loc.rack) { d.locRa = locKey(loc.rack); d.locRaName = String(loc.rack); }
     if (loc.junctionBox) { d.locJb = locKey(loc.junctionBox); d.locJbName = String(loc.junctionBox); }
     return d;
   }
@@ -93,7 +100,14 @@
   // The shape mirrors what desktop map.js used to construct inline; mobile
   // and desktop now both call this so a new node/edge type only needs to
   // be added in one place.
-  function buildTopologyElements(data) {
+  //
+  // opts.shownTypes (business rule 147, the desktop modal's Device-types
+  // toggles): the asset types a saved view draws. Absent → the backbone as
+  // it always was (the phone, the dashboard widget). Present → a hidden
+  // switch / AP / cross-site type is dropped with its links, and every
+  // payload endpoint of a shown type (`data.endpoints`) becomes a node
+  // hung off its switch by a link labelled with the port.
+  function buildTopologyElements(data, opts) {
     if (!data) return [];
     var elements = [];
 
@@ -320,10 +334,112 @@
       });
     });
 
+    if (opts && Array.isArray(opts.shownTypes)) {
+      elements = applyShownTypes(elements, data, opts.shownTypes);
+    }
+
     markLinkClasses(elements);
     markPhysicalLoops(elements);
     markInterGroupEdges(elements);
     return elements;
+  }
+
+  // How a link is drawn, for a surface that is not Cytoscape (the Topology
+  // canvas, topology-physical.js): the same colour, weight and dash the
+  // stylesheet gives it. `d` is an edge's data after markLinkClasses.
+  function edgeLineStyle(d, theme) {
+    var ec = EDGE_COLORS[paletteFamily(theme)];
+    d = d || {};
+    if (d.isMesh) {
+      var sig = d.meshSignal || "unknown";
+      return { color: sig === "unknown" ? ec.neutral : ec[sig], width: MESH_LINK_WIDTH, dash: "6 4" };
+    }
+    if (d.isEndpointLink) return { color: ec.neutral, width: 1.4, dash: null };
+    var cls = d.linkSpeed || "unknown";
+    var st = LINK_SPEED_STYLE[cls] || LINK_SPEED_STYLE.unknown;
+    var color = cls === "unknown" ? ec.neutral : ec[cls];
+    var dash = d.isMclag || d.isLastKnown ? "8 5" : (st.dotted ? "1 4" : null);
+    return { color: color, width: st.width, dash: dash };
+  }
+
+  // The asset type a backbone node stands for (endpoint and cross-site nodes
+  // carry their own `assetType`).
+  var ROLE_ASSET_TYPE = { fortigate: "firewall", fortiswitch: "switch", fortiap: "access_point" };
+  function nodeAssetType(d) {
+    if (!d) return null;
+    if (ROLE_ASSET_TYPE[d.role]) return ROLE_ASSET_TYPE[d.role];
+    return d.assetType || null;
+  }
+
+  // Rule 147: keep only the shown types (the FortiGate always — it is the
+  // root), add the shown endpoints, and drop any link left without both ends.
+  function applyShownTypes(elements, data, shownTypes) {
+    var shown = { firewall: true };
+    shownTypes.forEach(function (t) { if (t) shown[String(t)] = true; });
+    var nodeIds = {};
+    var out = elements.filter(function (el) {
+      var d = el.data || {};
+      if (d.source) return true; // edges are settled below
+      var t = nodeAssetType(d);
+      if (t && !shown[t]) return false;
+      nodeIds[d.id] = true;
+      return true;
+    });
+    (data.endpoints || []).forEach(function (ep) {
+      if (!ep || !ep.id || nodeIds[ep.id]) return;
+      if (!shown[ep.assetType]) return;
+      nodeIds[ep.id] = true;
+      out.push({
+        data: Object.assign({
+          id: ep.id,
+          label: ep.hostname || ep.ipAddress || ep.macAddress || "endpoint",
+          role: "endpoint",
+          assetId: ep.id,
+          assetType: ep.assetType,
+          nodeColor: fortinetNodeColor(ep),
+          iconUrl: ep.iconUrl || null,
+          hasIcon: ep.iconUrl ? 1 : 0,
+        }, locationData(ep.location)),
+      });
+      if (ep.switchId) {
+        out.push({
+          data: {
+            id: "ep-" + ep.id,
+            source: ep.switchId,
+            target: ep.id,
+            label: ep.port && ep.port !== "unknown" ? ep.port : "",
+            isEndpointLink: 1,
+            reason: "Seen on this switch port (MAC table)",
+          },
+        });
+      }
+    });
+    return out.filter(function (el) {
+      var d = el.data || {};
+      return !d.source || (nodeIds[d.source] && nodeIds[d.target]);
+    });
+  }
+
+  // The asset types present on a site, for the Device-types toggles: each
+  // with how many devices of it the payload holds. Firewall first, then the
+  // backbone, then the endpoint types by count.
+  function siteDeviceTypes(data) {
+    var counts = {};
+    function add(t) { if (t) counts[t] = (counts[t] || 0) + 1; }
+    if (data && data.fortigate) add("firewall");
+    ((data && data.switches) || []).forEach(function () { add("switch"); });
+    ((data && data.aps) || []).forEach(function () { add("access_point"); });
+    ((data && data.remoteAssetNodes) || []).forEach(function (n) {
+      var t = (n.assetType || "").toLowerCase();
+      if (t === "firewall" || t === "switch" || t === "access_point") add(t);
+    });
+    ((data && data.endpoints) || []).forEach(function (ep) { add(ep && ep.assetType); });
+    var order = ["firewall", "router", "switch", "access_point"];
+    return Object.keys(counts).sort(function (a, b) {
+      var ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia !== -1 || ib !== -1) return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      return counts[b] - counts[a] || a.localeCompare(b);
+    }).map(function (t) { return { type: t, count: counts[t] }; });
   }
 
   // ── Link colour classes ───────────────────────────────────────────────────
@@ -505,8 +621,10 @@
   // on the "Device Map link colors" canvas). Every device-to-device link is
   // `neutral` until it has something to say: a wired link takes its SPEED's
   // colour — a cool ramp, violet 10 Gb → blue → cyan → teal 1 Gb → slate
-  // 100 / 10 Mb — and a mesh link turns `fair` yellow → `weak` orange →
-  // `poor` red as its signal weakens. Warm hues are kept for signal alone, so
+  // 100 / 10 Mb — and a mesh link is `good` green (operator request
+  // 2026-11-10; it was the neutral grey until then), then turns `fair`
+  // yellow → `weak` orange → `poor` red as its signal weakens; a mesh link
+  // with no reading stays the neutral dashed line. Warm hues are kept for signal alone, so
   // a slow cable never reads as a failing radio; weight carries speed too
   // (LINK_SPEED_STYLE), so the ramp still reads in grayscale. The daylight
   // set steps each hue to its 600/700 shade (≥ 3:1 on noon / morning); the
@@ -518,12 +636,12 @@
   var EDGE_COLORS = {
     dark: {
       neutral: "#5b6478", "10g": "#a78bfa", "5g": "#60a5fa", "2g5": "#67e8f9", "1g": "#14b8a6",
-      "100m": "#94a3b8", "10m": "#94a3b8", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
+      "100m": "#94a3b8", "10m": "#94a3b8", good: "#22c55e", fair: "#eab308", weak: "#f97316", poor: "#ef4444",
       halo: "#f8fafc", portal: "#6a7388", wireless: "#22d3ee",
     },
     light: {
       neutral: "#b4bcc8", "10g": "#7c3aed", "5g": "#2563eb", "2g5": "#0891b2", "1g": "#0f766e",
-      "100m": "#64748b", "10m": "#64748b", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
+      "100m": "#64748b", "10m": "#64748b", good: "#16a34a", fair: "#ca8a04", weak: "#ea580c", poor: "#dc2626",
       halo: "#111827", portal: "#64748b", wireless: "#0e7490",
     },
   };
@@ -731,7 +849,7 @@
         },
       },
       // Wireless mesh backhaul (root AP → leaf AP): dashed, the neutral
-      // colour at a good signal or none reported, then by signal band.
+      // colour when no signal is reported, else by signal band.
       {
         selector: 'edge[isMesh = 1]',
         style: {
@@ -741,6 +859,10 @@
           "target-arrow-shape": "none",
           width: MESH_LINK_WIDTH,
         },
+      },
+      {
+        selector: 'edge[meshSignal = "good"]',
+        style: { "line-color": ec.good, "target-arrow-color": ec.good },
       },
       {
         selector: 'edge[meshSignal = "fair"]',
@@ -1102,10 +1224,11 @@
         { key: "speed:100m",    section: "speed",  label: "100 Mb",          color: ec["100m"], style: "solid",  width: LINK_SPEED_STYLE["100m"].width },
         { key: "speed:10m",     section: "speed",  label: "10 Mb",           color: ec["10m"],  style: "dotted", width: LINK_SPEED_STYLE["10m"].width },
         { key: "speed:unknown", section: "speed",  label: "Speed not known", color: ec.neutral, style: "solid",  width: LINK_SPEED_STYLE.unknown.width },
-        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:good",   section: "signal", label: "Good, −65 dBm or better", color: ec.good,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:fair",   section: "signal", label: "Fair, −66 to −72",        color: ec.fair,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:weak",   section: "signal", label: "Weak, −73 to −80",        color: ec.weak,    style: "dashed", width: MESH_LINK_WIDTH },
         { key: "signal:poor",   section: "signal", label: "Poor, below −80",         color: ec.poor,    style: "dashed", width: MESH_LINK_WIDTH },
+        { key: "signal:unknown", section: "signal", label: "Signal not reported",   color: ec.neutral, style: "dashed", width: MESH_LINK_WIDTH },
         { key: "edge:mclag",    section: "also",   label: "MCLAG peer link, its speed's color", color: ec["10g"], style: "dashed", width: LINK_SPEED_STYLE["10g"].width },
         { key: "edge:loop",     section: "also",   label: "Part of a ring",  color: ec["1g"], halo: ec.halo, style: "solid", width: LINK_SPEED_STYLE["1g"].width },
         { key: "edge:lastKnown", section: "also",  label: "Last known, an end not being polled", color: ec.neutral, style: "dashed", width: LINK_SPEED_STYLE.unknown.width },
@@ -1118,6 +1241,7 @@
         { key: "loc:building", label: "Building",     shape: "rect", style: "solid",  color: loc("building") },
         { key: "loc:floor",    label: "Floor",        shape: "rect", style: "dashed", color: loc("floor") },
         { key: "loc:room",     label: "Room",         shape: "rect", style: "solid",  color: loc("room") },
+        { key: "loc:ra",       label: "Rack",         shape: "rect", style: "solid",  color: loc("ra") },
         { key: "loc:jb",       label: "Junction box", shape: "rect", style: "dashed", color: loc("jb") },
       ],
     };
@@ -1161,12 +1285,8 @@
       });
     }
     if (kind === "speed") return cy.edges().filter(function (e) { return e.data("linkSpeed") === val; });
-    // "Good" lights the links drawn like it: a good signal and none reported.
     if (kind === "signal") {
-      return cy.edges().filter(function (e) {
-        var c = e.data("meshSignal");
-        return c === val || (val === "good" && c === "unknown");
-      });
+      return cy.edges().filter(function (e) { return !!e.data("isMesh") && e.data("meshSignal") === val; });
     }
     if (kind === "loc") return cy.nodes().filter(function (n) { return !!n.data("isLocGroup") && n.data("locKind") === val; });
     return cy.collection();
@@ -1239,7 +1359,9 @@
     building: { rank: 1, pad: 34, color: "#4fc3f7", colorLight: "#0369a1", shape: "round-rectangle", dash: "solid",  z: 2, scaleW: 1, scaleH: 1 },
     floor:    { rank: 2, pad: 26, color: "#a78bfa", colorLight: "#6d28d9", shape: "round-rectangle", dash: "dashed", z: 3, scaleW: 1, scaleH: 1 },
     room:     { rank: 3, pad: 18, color: "#4ade80", colorLight: "#15803d", shape: "round-rectangle", dash: "solid",  z: 4, scaleW: 1, scaleH: 1 },
-    jb:       { rank: 4, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 5, scaleW: 1, scaleH: 1 },
+    // Rack (ra:, 2026-11-10): between room and junction box.
+    ra:       { rank: 4, pad: 15, color: "#2dd4bf", colorLight: "#0f766e", shape: "round-rectangle", dash: "solid",  z: 5, scaleW: 1, scaleH: 1 },
+    jb:       { rank: 5, pad: 12, color: "#f59e0b", colorLight: "#b45309", shape: "round-rectangle", dash: "dashed", z: 6, scaleW: 1, scaleH: 1 },
   };
 
   // The box name lives inside the box, under its top wall (stylesheet
@@ -1298,15 +1420,17 @@
       var b = n.data("locB") || "";
       var f = n.data("locF") || "";
       var r = n.data("locR") || "";
+      var ra = n.data("locRa") || "";
       var jb = n.data("locJb") || "";
       var id = n.id();
       if (a) addTo("a|" + a, "area", n.data("locAName"), [a], id);
       if (b) addTo("b|" + a + "|" + b, "building", n.data("locBName"), [a, b], id);
       if (f) addTo("f|" + a + "|" + b + "|" + f, "floor", n.data("locFName"), [a, b, f], id);
       if (r) addTo("r|" + a + "|" + b + "|" + f + "|" + r, "room", n.data("locRName"), [a, b, f, r], id);
-      if (jb) addTo("jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, "jb", n.data("locJbName"), [a, b, f, r, jb], id);
+      if (ra) addTo("ra|" + a + "|" + b + "|" + f + "|" + r + "|" + ra, "ra", n.data("locRaName"), [a, b, f, r, ra], id);
+      if (jb) addTo(jbKey(a, b, f, r, ra, jb), "jb", n.data("locJbName"), ra ? [a, b, f, r, ra, jb] : [a, b, f, r, jb], id);
     });
-    var kindRank = { area: 0, building: 1, floor: 2, room: 3, jb: 4 };
+    var kindRank = { area: 0, building: 1, floor: 2, room: 3, ra: 4, jb: 5 };
     order.sort(function (a2, b2) { return kindRank[a2.kind] - kindRank[b2.kind]; });
     return order;
   }
@@ -2214,12 +2338,14 @@
   // plus the device's segments down to that level, a missing level an empty
   // segment — the same keys computeLocationGroups gives its boxes:
   // area "a|<a>", building "b|<a>|<b>", floor "f|<a>|<b>|<f>",
-  // room "r|<a>|<b>|<f>|<r>", junction box "jb|<a>|<b>|<f>|<r>|<jb>".
+  // room "r|<a>|<b>|<f>|<r>", rack "ra|<a>|<b>|<f>|<r>|<ra>", junction box
+  // "jb|<a>|<b>|<f>|<r>|<jb>" (or "jb|<a>|<b>|<f>|<r>|<ra>|<jb>" inside a rack).
   var VIEW_LEVELS = [
     { kind: "area", prefix: "a", field: "locA" },
     { kind: "building", prefix: "b", field: "locB" },
     { kind: "floor", prefix: "f", field: "locF" },
     { kind: "room", prefix: "r", field: "locR" },
+    { kind: "ra", prefix: "ra", field: "locRa" },
     { kind: "jb", prefix: "jb", field: "locJb" },
   ];
   var VIEW_LEVEL_BY_PREFIX = {};
@@ -2237,7 +2363,13 @@
   function _viewKeyAt(d, i) {
     if (!d[VIEW_LEVELS[i].field]) return "";
     var segs = [];
-    for (var j = 0; j <= i; j++) segs.push(d[VIEW_LEVELS[j].field] || "");
+    for (var j = 0; j <= i; j++) {
+      // A missing RACK is left out below its own level, not an empty segment:
+      // a junction box with no rack keeps the key it had before ra: existed
+      // (jbKey), so its saved layout still matches.
+      if (VIEW_LEVELS[j].kind === "ra" && j < i && !d[VIEW_LEVELS[j].field]) continue;
+      segs.push(d[VIEW_LEVELS[j].field] || "");
+    }
     return VIEW_LEVELS[i].prefix + "|" + segs.join("|");
   }
   // The name a level shows on its chip. A floor with no building says so
@@ -2977,6 +3109,7 @@
     var locBById = {};
     var locFById = {};
     var locRById = {};
+    var locRaById = {};
     var locJbById = {};
 
     elements.forEach(function (el) {
@@ -2991,6 +3124,7 @@
       if (d.locB) locBById[d.id] = d.locB;
       if (d.locF) locFById[d.id] = d.locF;
       if (d.locR) locRById[d.id] = d.locR;
+      if (d.locRa) locRaById[d.id] = d.locRa;
       if (d.locJb) locJbById[d.id] = d.locJb;
       if (d.role === "fortigate" && !rootId) rootId = d.id;
       // A location view whose FortiGate lives elsewhere roots on its stub.
@@ -3278,7 +3412,7 @@
 
     // The full location-tier chain, outermost first — one array so pass 5a
     // (anchor regrouping) and pass 5b (leaf-block ordering) can't drift apart.
-    var LOC_TIERS = [locAById, locBById, locFById, locRById, locJbById];
+    var LOC_TIERS = [locAById, locBById, locFById, locRById, locRaById, locJbById];
     // Recursive stable bucketing over a tier chain: bucket by the first
     // tier's key (buckets keep the order in which their first member
     // appeared; members keep relative order), then recurse into each bucket
@@ -3658,7 +3792,7 @@
   var LEVEL_CELL_PX = 130;
   var LEVEL_DEVICE_EXT = 32;
   var LEVEL_LINK_GAP = 20;
-  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", jb: "jb" };
+  var _LEVEL_KIND = { a: "area", b: "building", f: "floor", r: "room", ra: "ra", jb: "jb" };
   function _ceilHalf(v) { return Math.ceil(v * 2 - 1e-9) / 2; }
   function _levelSep(extA, extB) {
     return Math.max(1, _ceilHalf((extA + extB + LOC_GROUP_SIBLING_GAP) / LEVEL_CELL_PX));
@@ -3670,13 +3804,14 @@
   var _levelRankMemo = {};
 
   function _locPath(d) {
-    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", jb = d.locJb || "";
+    var a = d.locA || "", b = d.locB || "", f = d.locF || "", r = d.locR || "", ra = d.locRa || "", jb = d.locJb || "";
     var path = [];
     if (a) path.push({ key: "a|" + a, name: d.locAName || a });
     if (b) path.push({ key: "b|" + a + "|" + b, name: d.locBName || b });
     if (f) path.push({ key: "f|" + a + "|" + b + "|" + f, name: d.locFName || f });
     if (r) path.push({ key: "r|" + a + "|" + b + "|" + f + "|" + r, name: d.locRName || r });
-    if (jb) path.push({ key: "jb|" + a + "|" + b + "|" + f + "|" + r + "|" + jb, name: d.locJbName || jb });
+    if (ra) path.push({ key: "ra|" + a + "|" + b + "|" + f + "|" + r + "|" + ra, name: d.locRaName || ra });
+    if (jb) path.push({ key: jbKey(a, b, f, r, ra, jb), name: d.locJbName || jb });
     return path;
   }
 
@@ -4145,7 +4280,7 @@
   // and say which cable is which. Pure over the cy instance; `meta` carries
   // what the page knows (the active view key, the pane size).
   var _ANON_ROLE = { fortigate: "FW", fortiswitch: "SW", fortiap: "AP", endpoint: "EP", "remote-asset": "REM", "wireless-station": "STA" };
-  var _ANON_KIND = { a: "AREA", b: "BLDG", f: "FLOOR", r: "ROOM", jb: "JB" };
+  var _ANON_KIND = { a: "AREA", b: "BLDG", f: "FLOOR", r: "ROOM", ra: "RACK", jb: "JB" };
   function anonymisedLayout(cy, meta) {
     meta = meta || {};
     function r1(v) { return typeof v === "number" && isFinite(v) ? Math.round(v * 10) / 10 : null; }
@@ -4488,7 +4623,7 @@
       html += _tipSwatch(ec.neutral, true) + '<b>Signal not reported</b></div>';
     } else {
       var wordColor = cls === "good" ? "var(--color-success)" : ec[cls];
-      html += _tipSwatch(cls === "good" ? ec.neutral : ec[cls], true) +
+      html += _tipSwatch(ec[cls], true) +
         '<b>' + _escTip(String(dbm).replace("-", "−")) + ' dBm</b>' +
         '<span style="font-weight:600;color:' + wordColor + '">' + _SIGNAL_WORD[cls] + '</span></div>';
     }
@@ -4893,6 +5028,10 @@
     fortinetNodeColor: fortinetNodeColor,
     endpointNodeColor: endpointNodeColor,
     buildTopologyElements: buildTopologyElements,
+    siteDeviceTypes: siteDeviceTypes,
+    edgeLineStyle: edgeLineStyle,
+    locGroupColor: locGroupColor,
+    nodeAssetType: nodeAssetType,
     markPhysicalLoops: markPhysicalLoops,
     topologyStylesheet: topologyStylesheet,
     topologyLegendSpec: topologyLegendSpec,

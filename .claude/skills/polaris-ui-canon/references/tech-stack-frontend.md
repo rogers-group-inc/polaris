@@ -6,6 +6,8 @@ The Tech Stack table cells CLAUDE.md used to carry in full (the screenshot and g
 
 Every geographic surface draws its basemap from **one host, one URL**: `https://tile.openstreetmap.org/{z}/{x}/{y}.png`. The OSM tile usage policy permits that URL and no other — the older `{s}` a/b/c subdomain form spreads a single viewport across three hosts instead of one multiplexed HTTP/2 connection, and OSM's operators read it as a policy violation and answer with the "Access blocked" tile image in place of the map. Polaris shipped the subdomain form until 2026-09-15, when a personal install's maps came back blocked while the Rogers Group production install — same code, different viewer egress IP — kept rendering.
 
+**Satellite imagery is the one sanctioned second basemap, and it never reaches the browser as a second host.** OpenStreetMap has no aerial imagery, so the topology view's Topology canvas offers a Map | Satellite switch ONLY when an operator configures a provider (Server Settings → Customization → Satellite imagery; `satelliteTileService`). The browser loads those tiles from `/api/v1/map/satellite/{z}/{x}/{y}` on its own origin — the server fetches the provider with the operator's sealed key — so `imgSrc` is unchanged. Never add a provider host to the CSP or hardcode a satellite URL in a page.
+
 Four files declare the URL and they move together: `public/js/map.js → applyBasemapTheme()` (Device Map), `public/js/mobile/map-tab.js → applyBasemapTheme()` (phone Map tab), and `public/js/widgets/deviceMap.js → applyBasemap()` + `public/js/widgets/siteMap.js → applyBasemap()` (the two dashboard widgets). `src/utils/securityHeaders.ts → buildHelmetOptions()` whitelists exactly that host in CSP `imgSrc`, deliberately **without** a `*.tile.openstreetmap.org` wildcard, so a reintroduced subdomain form fails loudly at the CSP instead of quietly earning another block.
 
 **The gate is the `Referer` header, not the URL and not the IP.** Measured 2026-09-15 with curl from the corporate network: the same tile URL returns a real tile when a `Referer` is sent (on the `a.` subdomain too) and the "Access blocked" image, with an `x-blocked: Access denied` response header, when it is not — OSM blocks every referer-less request outright. Polaris does its part: `src/utils/securityHeaders.ts → buildHelmetOptions()` sends `Referrer-Policy: strict-origin-when-cross-origin` (on OSM's accepted list), every layer renders the `© OpenStreetMap contributors` attribution, and `public/sw.js` registers no fetch handler, so the PWA never re-requests a tile the browser has cached. So when an install on current code still shows blocked tiles, the Referer is being dropped between browser and OSM — almost always a **reverse proxy in front of Polaris appending its own `Referrer-Policy: same-origin` / `no-referrer`** (SWAG's `ssl.conf` hardening block, Nginx Proxy Manager advanced config, Traefik/Caddy/Cloudflare header rules; browsers apply the *last* Referrer-Policy value they receive, so the edge wins), less often a browser privacy extension, rarely an IP-level block. That is why `deploy/nginx/polaris.conf` and `polaris.conf.template` carry a comment forbidding a Referrer-Policy at the edge, and why `docs/INSTALL.md` has the operator-facing section "Map tiles come back as Access blocked". Diagnose with DevTools → Network → a tile request's `Referer` header, or `curl -sI <polaris>/login | grep -i referrer-policy` (one line, `strict-origin-when-cross-origin`). **Never** by pasting a tile URL into the address bar: an address-bar navigation carries no Referer and shows the blocked image on every network, including ones where the map works — the home install's first diagnosis went wrong on exactly that.
@@ -44,18 +46,70 @@ has something to say. `markLinkClasses` (run by `buildTopologyElements`) stamps 
 `linkSpeed` = `linkSpeedClass(min of the two ends' srcIf/tgtIf.speedBps)` — `10g` (≥ 10 Gb,
 aggregates included) / `5g` / `2g5` / `1g` / `100m` / `10m` / `unknown` — and a mesh link
 `meshSignal` = `meshSignalClass(signalDbm)` — `good` ≥ −65 / `fair` ≥ −72 / `weak` ≥ −80 /
-`poor` / `unknown` (no reading, drawn like `good`). The stylesheet has one rule per class
+`poor` / `unknown` (no reading — the neutral dashed line, its own "Signal not reported"
+legend row). `good` is GREEN (`EDGE_COLORS.good`, `#22c55e` dark / `#16a34a` light — operator
+request 2026-11-10; until then it was drawn neutral like `unknown`). The stylesheet has one rule per class
 (colour + `LINK_SPEED_STYLE` weight; 10 Mb a round-capped dot pattern); how a link was found
 (isIface / isLldp / isApLink / controller) no longer has a colour and lives in the tooltip.
-**Warm hues are reserved for signal** — no speed may take yellow / orange / red, which the
-palette test enforces. MCLAG stays dashed in its speed's colour; the ring halo is
+**Signal hues are reserved for signal** — no speed may take green / yellow / orange / red
+(the 1 Gb teal is the nearest; the palette test enforces the warm three). MCLAG stays dashed in its speed's colour; the ring halo is
 `EDGE_COLORS.halo` (white / near-black — yellow was given to signal). The server side:
 `attachIfDetails` covers bridge and MCLAG edges too, and a mesh leaf's station row carries
 `signalDbm` / `noiseDbm` / `band` / `channel` / `channelWidthMhz`
 (`topologyGraphService → meshLinkDetail`, the root AP's `AssetApRadio` for channel and width;
 signal only exists where the controller's REST overlay ran). The tooltip
 (`edgeTooltipHtml` → `_speedTipRows` / `_meshTipRows`) writes every value out in words, so
-colour is never the only carrier. Under each end's port line `_opticsTipRow` adds that port's
+colour is never the only carrier.
+
+**Device types and saved views (business rule 147).** `buildTopologyElements(data, { shownTypes })`
+(desktop modal only — the phone and the widget call it without opts and keep the backbone)
+drops a hidden switch / AP / cross-site type with its links and adds every payload `endpoints`
+row of a shown type as a `role: "endpoint"` node (`assetId`, `assetType`, health colour,
+location codes) linked from its `switchId` by an `isEndpointLink` edge labelled with the port;
+the column solver already treats endpoints as leaves. `siteDeviceTypes(data)` feeds the
+sidebar's Device types rows. In map.js the view on screen (`topoState.viewId`) scopes every
+layout key through `_activeViewKey` → `_viewScopedKey` (`v:<id>` / `v:<id>|<location key>` for a
+saved view, the legacy keys for the default), so save / load / checkpoint / reset need no view
+logic of their own; "snap other views" only touches `_layoutKeyBelongsToCurrentView` keys. A
+view-level change in edit mode is staged in `_editStaged.viewPatch` and lands as ONE
+`PUT …/views/:id` in `_commitEditSession`; a Topology or Rack view renders through
+`_renderModeCanvas` → `window.PolarisTopologyPhysical` / `window.PolarisTopologyRack`, handed
+`_modeCanvasContext`.
+
+**The Topology canvas (`topology-physical.js`)** is Leaflet, not Cytoscape: one module owns a view's
+map (OSM through the single tile host, or the uploaded image on `L.CRS.Simple`), its polygons,
+placed markers and links, and reaches map.js only through the context. map.js routes the shared
+corner tools to it (`_modeCornerTools`: the Layer 2 row minus grid / snapping, plus its edit-only
+Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse controls branch on
+`_modeInstance()`), adds its Not placed / Placed lists to the details pane (`sidebarHtml` /
+`wireSidebar`, HTML5 drag with the `application/x-polaris-asset` type), and commits through
+`_commitModeCanvasSession`: `beforeCommit` (the OSM centre + zoom), the rule-148 summary
+(`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
+`_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
+picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.
+**The Wall canvas (`topology-wall.js`)** is plain SVG in inch units, one `<svg>` per wall with a
+`viewBox` of the wall's inches (so geometry never converts), redrawn whole on each change. Two
+traps it hit: a gesture must re-find its board on every pointer move (a redraw replaces the SVG and
+a detached one measures 0 × 0, so every inch became Infinity), and every mode canvas must read
+`window.PolarisTopologyRender` inside `render()`, never at file load (map.html loads it after the
+canvases). Region-mapped Rack / Wall views stage the region's codes through `ctx.stageLocationCode`,
+the rule-148 Save summary.
+**Floor layers** (`topology-physical.js`, rule 152) keep the canvas's code shape by making
+`state.background` and `state.placements` property accessors onto the CURRENT layer, and
+`layerPolys()` the only polygon list drawing and hit-testing read. Layer 2 must skip the new
+`topo|L<n>` layout keys (`_layoutKeyBelongsToCurrentView`), or a floor layer's placements
+read as a Layer 2 layout.
+**The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
+(no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
+match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.
+**Selection and the info card** are shared by all three modes: `map.js → _selectTopologyAsset(id)`
+repaints only `#topology-asset-card` (never the whole pane, so the Device List keeps its filter and
+scroll) and mirrors the choice onto the canvas (`instance.setSelected`, or the Cytoscape
+selection); canvases report clicks through `ctx.selectAsset`, and must ring the selection with a
+class toggle, never a redraw — a redraw between the two clicks of a double-click swallows the
+dblclick. A canvas's `placedIds()` limits the switch / AP lists below the card to what is on it.
+
+Under each end's port line `_opticsTipRow` adds that port's
 SFP readings (`srcIf` / `tgtIf.optics`, rule 143) — Rx at or below `OPTICS_RX_LOW_DBM` (−20,
 the Interfaces table's `RX_LOW_DBM`; keep the two equal) in red, plus one line naming the end
 receiving too little light; a port whose readings are all null (copper SFP, empty cage) gets

@@ -317,7 +317,7 @@ function calloutHTML(variant, title, bodyHtml) {
 }
 
 // ─── Location-code nesting diagram ──────────────────────────────────────────
-// How the a:/b:/f:/r:/jb: description codes nest on the Device Map: each tier
+// How the a:/b:/f:/r:/ra:/jb: description codes nest on the Device Map: each tier
 // is a box inside the one above it, drawn in that tier's hull colour and
 // border style. Shown under the grouping-shortcut hint wherever a description
 // is edited (the Device Map's right-click editor, the asset Edit form). The
@@ -329,6 +329,7 @@ var LOC_DIAGRAM_TIERS = [
   { code: "b",  name: "Building",     example: "Shop",         color: "#4fc3f7", colorLight: "#0369a1", dash: "solid" },
   { code: "f",  name: "Floor",        example: "2",            color: "#a78bfa", colorLight: "#6d28d9", dash: "dashed" },
   { code: "r",  name: "Room",         example: "North Closet", color: "#4ade80", colorLight: "#15803d", dash: "solid" },
+  { code: "ra", name: "Rack",         example: "R2",           color: "#2dd4bf", colorLight: "#0f766e", dash: "solid" },
   { code: "jb", name: "Junction box", example: "112-305",      color: "#f59e0b", colorLight: "#b45309", dash: "dashed" },
 ];
 function locationCodesDiagramHTML() {
@@ -728,7 +729,12 @@ function showRowMenu(anchor, items, opts) {
   if (reopening) return;
 
   var menu = document.createElement("div");
-  menu.className = "btn-dropdown-menu row-context-menu open";
+  // overMap: the denser map glass (--map-glass-bg). Asked for explicitly, or
+  // implied by an anchor inside a surface marked data-menu-glass="map" (the
+  // Device Map topology modal), so every menu there matches its legend.
+  var overMap = (opts && opts.overMap) ||
+    !!(anchor && typeof anchor.closest === "function" && anchor.closest('[data-menu-glass="map"]'));
+  menu.className = "btn-dropdown-menu row-context-menu open" + (overMap ? " is-over-map" : "");
   menu.setAttribute("role", "menu");
   if (opts && opts.label) menu.setAttribute("aria-label", opts.label);
 

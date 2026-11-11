@@ -1,0 +1,1048 @@
+/**
+ * public/js/topology-physical.js — the Device Map topology's TOPOLOGY mode
+ * (business rules 147-148): a physical canvas for one saved view.
+ *
+ *   window.PolarisTopologyPhysical.render(host, ctx) → instance
+ *
+ * The canvas is a Leaflet map: an OpenStreetMap basemap (the single tile host
+ * every map surface uses), or an uploaded floor plan on `L.CRS.Simple`, its
+ * natural width × height scaled to a fixed extent so any resolution behaves
+ * the same (no grid, no snapping). On it:
+ *   - group POLYGONS, each standing for one location group (its a:/b:/f:/r:/jb:
+ *     codes, kept in display casing), drawn with leaflet-draw after the
+ *     operator picks the group;
+ *   - PLACED devices, dragged in from the details pane (nothing is placed by
+ *     default); a device dropped inside a polygon stages that group's codes
+ *     for its description (the innermost polygon wins), and one dropped
+ *     outside every polygon stages nothing (rule 148);
+ *   - LINKS between placed devices, drawn automatically from the same edge
+ *     set and colours as the Layer 2 graph.
+ *
+ * map.js owns the edit session; this module only stages through `ctx`
+ * (stageViewPatch / stagePlacements / stageLocationCode) and never writes to
+ * the server itself, except the background image upload (which does not
+ * change the view until the session commits).
+ */
+(function () {
+  "use strict";
+
+  var IMAGE_EXTENT = 1000;    // the long side of an uploaded image, in map units
+  var DEFAULT_OSM_ZOOM = 19;  // a site, not a city (operator: "zoomed in much further")
+  var OSM_NATIVE_MAX = 19;    // tile.openstreetmap.org's deepest tiles
+  var OSM_MAX_ZOOM = 22;      // overzoom past the tiles for indoor placement
+  // The optional satellite basemap (Server Settings → Customization), proxied
+  // through Polaris so the CSP keeps its one tile host. Asked once per page;
+  // null until the answer arrives.
+  var SATELLITE_TILE_URL = "/api/v1/map/satellite/{z}/{x}/{y}";
+  var _satelliteStatus = null;
+  var _satellitePending = null;
+  function loadSatelliteStatus() {
+    if (_satelliteStatus) return Promise.resolve(_satelliteStatus);
+    if (!_satellitePending) {
+      _satellitePending = (typeof api !== "undefined" && api.map && api.map.satellite ? api.map.satellite() : Promise.reject(new Error("no api")))
+        .then(function (s) { _satelliteStatus = s || { available: false }; return _satelliteStatus; },
+              function () { _satelliteStatus = { available: false }; return _satelliteStatus; });
+    }
+    return _satellitePending;
+  }
+  var HISTORY_MAX = 100;
+  var DRAG_MIME = "application/x-polaris-asset";
+
+  var CODE_FIELDS = [
+    { field: "area", key: "a", kind: "area", word: "Area" },
+    { field: "building", key: "b", kind: "building", word: "Building" },
+    { field: "floor", key: "f", kind: "floor", word: "Floor" },
+    { field: "room", key: "r", kind: "room", word: "Room" },
+    { field: "rack", key: "ra", kind: "ra", word: "Rack" },
+    { field: "junctionBox", key: "jb", kind: "jb", word: "Junction box" },
+  ];
+  var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
+
+  function esc(s) {
+    return typeof escapeHtml === "function" ? escapeHtml(String(s == null ? "" : s))
+      : String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; });
+  }
+  function emptyCodes() { return { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null }; }
+  function normCodes(c) {
+    var out = emptyCodes();
+    if (!c) return out;
+    CODE_FIELDS.forEach(function (f) {
+      var v = c[f.field];
+      if (v != null && String(v).trim() !== "") out[f.field] = String(v).trim().replace(/\s+/g, " ");
+    });
+    return out;
+  }
+  function codesKey(c) {
+    var n = normCodes(c);
+    return CODE_FIELDS.map(function (f) { return (n[f.field] || "").toLowerCase(); }).join("|");
+  }
+  function codesEqual(a, b) { return codesKey(a) === codesKey(b); }
+  function hasCodes(c) { var n = normCodes(c); return CODE_FIELDS.some(function (f) { return n[f.field] !== null; }); }
+  function codesLabel(c) {
+    var n = normCodes(c);
+    var parts = CODE_FIELDS.filter(function (f) { return n[f.field] !== null; }).map(function (f) { return f.key + ":" + n[f.field]; });
+    return parts.length ? parts.join(" ") : "no codes";
+  }
+  // The innermost level a set of codes names — what a polygon is "for".
+  function deepestField(c) {
+    var n = normCodes(c);
+    var hit = null;
+    CODE_FIELDS.forEach(function (f) { if (n[f.field] !== null) hit = f; });
+    return hit;
+  }
+  function groupName(c) {
+    var f = deepestField(c);
+    return f ? f.word + " " + normCodes(c)[f.field] : "No group";
+  }
+
+  // ── Geometry (pure) ──────────────────────────────────────────────────────
+  // Points are [x, y]: x = longitude / image x, y = latitude / image y.
+  function pointInRing(pt, ring) {
+    var x = pt[0], y = pt[1], inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function ringArea(ring) {
+    var a = 0;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+    return Math.abs(a / 2);
+  }
+  // The smallest polygon containing the point — the group a drop lands in.
+  function innermostPolygon(polygons, pt) {
+    var best = null, bestArea = Infinity;
+    (polygons || []).forEach(function (p) {
+      if (!p || !Array.isArray(p.points) || p.points.length < 3) return;
+      if (!pointInRing(pt, p.points)) return;
+      var a = ringArea(p.points);
+      if (a < bestArea) { best = p; bestArea = a; }
+    });
+    return best;
+  }
+
+  // Every location group the site's devices already name, as code chains
+  // (each prefix of a device's chain is a group of its own), outermost first.
+  function groupsFromData(data) {
+    var seen = {};
+    var out = [];
+    function addChain(loc) {
+      var n = normCodes(loc);
+      var chain = emptyCodes();
+      CODE_FIELDS.forEach(function (f) {
+        if (n[f.field] === null) return;
+        chain = Object.assign({}, chain);
+        chain[f.field] = n[f.field];
+        var k = codesKey(chain);
+        if (!seen[k]) { seen[k] = true; out.push(chain); }
+      });
+    }
+    if (!data) return out;
+    if (data.fortigate) addChain(data.fortigate.location);
+    (data.switches || []).forEach(function (s) { addChain(s.location); });
+    (data.aps || []).forEach(function (a) { addChain(a.location); });
+    (data.endpoints || []).forEach(function (e) { addChain(e.location); });
+    return out.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
+  }
+  function groupDepth(c) {
+    var d = -1;
+    var n = normCodes(c);
+    CODE_FIELDS.forEach(function (f, i) { if (n[f.field] !== null) d = i; });
+    return d;
+  }
+
+  function newId(prefix) {
+    var s = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+      : Math.random().toString(36).slice(2, 14);
+    return prefix + "-" + s;
+  }
+
+  // ── The canvas ───────────────────────────────────────────────────────────
+  function render(host, ctx) {
+    var L = window.L;
+    var R = window.PolarisTopologyRender;
+    if (!L || !R) {
+      host.innerHTML = '<div class="empty-state topology-mode-empty">The map library did not load.</div>';
+      return { destroy: function () {} };
+    }
+    var data = ctx.data || {};
+    var view = ctx.view || {};
+    var staged = ctx.stagedViewPatch() || {};
+    var state = {
+      editing: !!ctx.editing,
+      polygons: (staged.polygons || view.polygons || []).map(function (p) {
+        return { id: p.id, codes: normCodes(p.codes), points: p.points.map(function (q) { return [q[0], q[1]]; }), layer: p.layer || 0 };
+      }),
+      // Floor layers (rule 152): layer 0 is the view itself; the others are
+      // listed with their floor name and their own background.
+      layers: JSON.parse(JSON.stringify(staged.layers || view.layers || [])),
+      layer: 0,
+      history: { entries: [], index: -1 },
+    };
+    // Layer 0's background is the view's; a floor layer's is its own, and a
+    // layer without one shows layer 0's until it gets one.
+    var background0 = staged.background !== undefined ? staged.background : (view.background || null);
+    function layerObj(level) { return state.layers.filter(function (l) { return l.level === level; })[0] || null; }
+    Object.defineProperty(state, "background", {
+      get: function () {
+        if (state.layer === 0) return background0;
+        var l = layerObj(state.layer);
+        return (l && l.background) || background0;
+      },
+      set: function (v) {
+        if (state.layer === 0) { background0 = v; return; }
+        var l = layerObj(state.layer);
+        if (l) l.background = v;
+      },
+    });
+    // Placements per layer, loaded the first time a layer is shown.
+    var byLayer = {};
+    function placementsOf(level) {
+      if (!byLayer[level]) byLayer[level] = Object.assign({}, ctx.loadPlacements(level) || {});
+      return byLayer[level];
+    }
+    state.layers.forEach(function (l) { placementsOf(l.level); });
+    placementsOf(0);
+    Object.defineProperty(state, "placements", {
+      get: function () { return placementsOf(state.layer); },
+      set: function (v) { byLayer[state.layer] = v; },
+    });
+    function layerPolys() { return state.polygons.filter(function (p) { return (p.layer || 0) === state.layer; }); }
+    // The layer a device is placed on, or null.
+    function layerOfDevice(id) {
+      var found = null;
+      Object.keys(byLayer).forEach(function (k) { if (byLayer[k][id] && found === null) found = Number(k); });
+      return found;
+    }
+
+    // Nodes and links from the same builder as the Layer 2 graph, so a
+    // switched-on endpoint type and every link class match (rule 147).
+    var elements = R.buildTopologyElements(data, { shownTypes: ctx.shownTypes });
+    var nodeById = {};
+    var edges = [];
+    elements.forEach(function (el) {
+      var d = el.data;
+      if (d.source) edges.push(d); else nodeById[d.id] = d;
+    });
+    var edgesByNode = {};
+    edges.forEach(function (e) {
+      (edgesByNode[e.source] = edgesByNode[e.source] || []).push(e);
+      (edgesByNode[e.target] = edgesByNode[e.target] || []).push(e);
+    });
+    // Each device's current codes in display casing (the payload's location).
+    var currentCodes = {};
+    function note(n) { if (n && n.id) currentCodes[n.id] = normCodes(n.location); }
+    note(data.fortigate);
+    (data.switches || []).forEach(note);
+    (data.aps || []).forEach(note);
+    (data.endpoints || []).forEach(note);
+    // Placements of devices no longer drawn (a type switched off, a device
+    // retired) are kept in the blob but not shown.
+
+    host.innerHTML = '<div class="topo-phys-map"></div>';
+    var mapEl = host.firstChild;
+    var map = null;
+    var polygonLayer = null, linkLayer = null, markerLayer = null;
+    var markers = {};       // nodeId → L.marker
+    var linkLines = {};     // edge id → L.polyline
+    var polygonShapes = {}; // polygon id → L.polygon
+    var drawHandler = null;
+    var listFilter = "";        // the Device List's filter text, kept across pane redraws
+    var selectedId = ctx.selectedId ? ctx.selectedId() : null;
+    var baseLayer = null;
+    var layerSwitch = null;
+    var satelliteErrorShown = false;
+    // While VIEWING, Map / Satellite is just a look (like a rack's Front /
+    // Back); while editing it is staged into the view's background.
+    var viewLayer = null;
+
+    function family() { return typeof isLightTheme === "function" && isLightTheme() ? "light" : "dark"; }
+
+    // Which basemap the map shows: the view's saved choice, a viewer's
+    // transient pick over it, and plain Map whenever satellite is not
+    // (or no longer) configured.
+    function currentLayer() {
+      var bg = state.background;
+      var want = viewLayer || (bg && bg.kind === "osm" && bg.layer === "satellite" ? "satellite" : "map");
+      return want === "satellite" && _satelliteStatus && _satelliteStatus.available ? "satellite" : "map";
+    }
+    function applyBaseLayer() {
+      if (!map) return;
+      if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
+      if (currentLayer() === "satellite") {
+        baseLayer = L.tileLayer(SATELLITE_TILE_URL, {
+          maxNativeZoom: _satelliteStatus.maxNativeZoom || OSM_NATIVE_MAX,
+          maxZoom: OSM_MAX_ZOOM,
+          attribution: esc(_satelliteStatus.attribution || ""),
+        });
+        baseLayer.on("tileerror", function () {
+          if (satelliteErrorShown) return;
+          satelliteErrorShown = true;
+          ctx.toast("Some satellite tiles did not load — the imagery provider may be refusing them (Server Settings → Customization → Test)", "error");
+        });
+      } else {
+        baseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxNativeZoom: OSM_NATIVE_MAX,
+          maxZoom: OSM_MAX_ZOOM,
+          crossOrigin: "anonymous",
+          attribution: "© <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+        });
+      }
+      baseLayer.addTo(map);
+      baseLayer.bringToBack();
+      mapEl.classList.toggle("is-satellite", currentLayer() === "satellite");
+      paintLayerSwitch();
+    }
+    // The Map | Satellite switch, under the zoom bar (bottom-left is the
+    // legend button's corner), only when an
+    // operator configured satellite imagery and the view is not an image.
+    function addLayerSwitch() {
+      if (!map || layerSwitch || (state.background && state.background.kind === "image")) return;
+      var Ctl = L.Control.extend({
+        options: { position: "topleft" },
+        onAdd: function () {
+          var el = L.DomUtil.create("div", "topo-phys-layer-switch");
+          el.setAttribute("role", "group");
+          el.setAttribute("aria-label", "Basemap");
+          el.innerHTML =
+            '<button type="button" data-layer="map">Map</button>' +
+            '<button type="button" data-layer="satellite">Satellite</button>';
+          L.DomEvent.disableClickPropagation(el);
+          L.DomEvent.disableScrollPropagation(el);
+          el.addEventListener("click", function (e) {
+            var b = e.target.closest("[data-layer]");
+            if (b) setLayer(b.getAttribute("data-layer"));
+          });
+          return el;
+        },
+      });
+      layerSwitch = new Ctl();
+      layerSwitch.addTo(map);
+      paintLayerSwitch();
+    }
+    function paintLayerSwitch() {
+      var el = layerSwitch && layerSwitch.getContainer ? layerSwitch.getContainer() : null;
+      if (!el) return;
+      var on = currentLayer();
+      Array.prototype.forEach.call(el.querySelectorAll("[data-layer]"), function (b) {
+        var is = b.getAttribute("data-layer") === on;
+        b.classList.toggle("is-on", is);
+        b.setAttribute("aria-pressed", is ? "true" : "false");
+      });
+    }
+    function setLayer(layer) {
+      if (layer !== "map" && layer !== "satellite") return;
+      if (state.editing) {
+        // Staged with the framing the operator sees, like Done editing does.
+        var c = map.getCenter();
+        state.background = { kind: "osm", center: [Number(c.lat.toFixed(7)), Number(c.lng.toFixed(7))], zoom: map.getZoom(), layer: layer };
+        viewLayer = null;
+        changed("background");
+      } else {
+        viewLayer = layer;
+      }
+      applyBaseLayer();
+    }
+
+    function buildMap() {
+      if (map) { map.remove(); map = null; }
+      baseLayer = null; layerSwitch = null;
+      markers = {}; linkLines = {}; polygonShapes = {};
+      var bg = state.background;
+      if (bg && bg.kind === "image") {
+        map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
+        var m = Math.max(bg.width || 1, bg.height || 1);
+        var w = IMAGE_EXTENT * (bg.width || 1) / m;
+        var h = IMAGE_EXTENT * (bg.height || 1) / m;
+        var bounds = [[0, 0], [h, w]];
+        L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds).addTo(map);
+        map.fitBounds(bounds, { padding: [20, 20] });
+        map.setMaxBounds(L.latLngBounds([[-h, -w], [2 * h, 2 * w]]));
+      } else {
+        map = L.map(mapEl, { maxZoom: OSM_MAX_ZOOM, zoomSnap: 0.5 });
+        applyBaseLayer();
+        loadSatelliteStatus().then(function (s) { if (map && s.available) { applyBaseLayer(); addLayerSwitch(); } });
+        var center = bg && bg.kind === "osm" && Array.isArray(bg.center) ? bg.center : null;
+        var fg = data.fortigate || {};
+        if (!center && fg.latitude != null && fg.longitude != null) center = [fg.latitude, fg.longitude];
+        if (center) {
+          map.setView(center, bg && bg.kind === "osm" ? bg.zoom : DEFAULT_OSM_ZOOM);
+        } else {
+          map.setView([20, 0], 2);
+          ctx.toast("This site has no coordinates — pan and zoom to it, then Done editing to keep that view");
+        }
+      }
+      map.on("click", function () { if (!drawHandler && selectedId) select(null); });
+      polygonLayer = L.featureGroup().addTo(map);
+      linkLayer = L.layerGroup().addTo(map);
+      markerLayer = L.layerGroup().addTo(map);
+      drawPolygons();
+      drawMarkers();
+      drawLinks();
+      wireDrop();
+    }
+
+    // ── Polygons ────────────────────────────────────────────────────────
+    function polygonColor(p) {
+      var f = deepestField(p.codes);
+      return R.locGroupColor(f ? f.kind : "building", family());
+    }
+    function drawPolygons() {
+      polygonLayer.clearLayers();
+      polygonShapes = {};
+      layerPolys().forEach(function (p) {
+        var color = polygonColor(p);
+        var dashed = (deepestField(p.codes) || {}).kind === "floor" || (deepestField(p.codes) || {}).kind === "jb";
+        var shape = L.polygon(p.points.map(function (q) { return [q[1], q[0]]; }), {
+          color: color, weight: 2, fillColor: color, fillOpacity: 0.12, dashArray: dashed ? "6 4" : null,
+        });
+        shape.bindTooltip(esc(groupName(p.codes)) + ' <span class="topo-phys-codes">' + esc(codesLabel(p.codes)) + '</span>',
+          { permanent: true, direction: "center", className: "topo-phys-polygon-label" });
+        shape.on("click", function (e) {
+          if (!state.editing) return;
+          L.DomEvent.stopPropagation(e);
+          openPolygonMenu(p, e.originalEvent, shape.getElement());
+        });
+        shape.addTo(polygonLayer);
+        polygonShapes[p.id] = shape;
+      });
+    }
+    // The menu is anchored to the shape / marker element, never to mapEl:
+    // showRowMenu ignores a pointerdown INSIDE its anchor, so a mapEl anchor
+    // meant a click anywhere on the map could never dismiss the menu.
+    function openPolygonMenu(p, ev, anchorEl) {
+      if (typeof showRowMenu !== "function") return;
+      showRowMenu(anchorEl || ev.target, [
+        { heading: groupName(p.codes) },
+        { label: "Reshape", onSelect: function () { reshapePolygon(p); } },
+        { label: "Change group", onSelect: function () { pickGroup(function (codes) { p.codes = codes; changed("polygons"); drawPolygons(); restageAllCodes(); }, p.codes); } },
+        { label: "Delete polygon", danger: true, onSelect: function () {
+          state.polygons = state.polygons.filter(function (q) { return q.id !== p.id; });
+          changed("polygons"); drawPolygons(); restageAllCodes();
+        } },
+      ], { menuAt: { x: ev.clientX, y: ev.clientY }, label: "Polygon", overMap: true });
+    }
+    function reshapePolygon(p) {
+      var shape = polygonShapes[p.id];
+      if (!shape || !shape.editing) { ctx.toast("Reshaping needs the drawing tools", "error"); return; }
+      shape.editing.enable();
+      ctx.toast("Drag the corner points; click the map outside the polygon when done");
+      var finish = function () {
+        map.off("click", finish);
+        shape.editing.disable();
+        var ring = shape.getLatLngs()[0] || [];
+        p.points = ring.map(function (ll) { return [ll.lng, ll.lat]; });
+        changed("polygons");
+        drawPolygons();
+        restageAllCodes();
+      };
+      setTimeout(function () { map.on("click", finish); }, 0);
+    }
+    function startDrawing() {
+      if (!state.editing) return;
+      if (!L.Draw || !L.Draw.Polygon) { ctx.toast("The drawing tools did not load", "error"); return; }
+      pickGroup(function (codes) {
+        if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
+        var color = polygonColor({ codes: codes });
+        drawHandler = new L.Draw.Polygon(map, { shapeOptions: { color: color, weight: 2, fillOpacity: 0.12 }, showArea: false, allowIntersection: false });
+        map.once(L.Draw.Event.CREATED, function (e) {
+          var ring = (e.layer.getLatLngs()[0] || []).map(function (ll) { return [ll.lng, ll.lat]; });
+          drawHandler = null;
+          if (ring.length < 3) return;
+          state.polygons.push({ id: newId("poly"), codes: codes, points: ring, layer: state.layer });
+          changed("polygons");
+          drawPolygons();
+          restageAllCodes();
+        });
+        drawHandler.enable();
+        ctx.toast("Drawing " + groupName(codes) + " — click to add points, click the first point to close, Esc cancels");
+      });
+    }
+
+    // The "Draw polygon for which group?" dialog: the groups the site's
+    // descriptions already name, plus a new group inside any of them.
+    function pickGroup(onPick, current) {
+      if (typeof buildOverlay !== "function") return;
+      var groups = groupsFromData(data);
+      state.polygons.forEach(function (p) {
+        if (!groups.some(function (g) { return codesEqual(g, p.codes); })) groups.push(normCodes(p.codes));
+      });
+      groups.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
+      var drawn = {};
+      layerPolys().forEach(function (p) { drawn[codesKey(p.codes)] = true; });
+      var rows = groups.map(function (g, i) {
+        var f = deepestField(g);
+        var color = R.locGroupColor(f ? f.kind : "building", family());
+        var checked = current ? codesEqual(current, g) : i === 0;
+        return '<label class="topo-phys-group" style="margin-left:' + (groupDepth(g) * 18) + 'px">' +
+          '<input type="radio" name="topo-pg" value="' + i + '"' + (checked ? " checked" : "") + '>' +
+          '<span class="topo-phys-swatch" style="background:' + color + '"></span>' +
+          '<span>' + esc(groupName(g)) + '</span>' +
+          (drawn[codesKey(g)] ? ' <span class="badge badge-readonly">drawn</span>' : '') +
+          '<span class="topo-phys-codes">' + esc(codesLabel(g)) + '</span></label>';
+      }).join("");
+      var parentOptions = '<option value="-1">Nothing — a group of its own</option>' + groups.map(function (g, i) {
+        return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
+      }).join("");
+      var body =
+        '<p class="hint" style="margin:0 0 8px">Groups come from the location codes in device descriptions (the Layer 2 boxes). A device dropped inside the polygon takes these codes when you save.</p>' +
+        '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
+        '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
+        '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
+          '<select id="topo-pg-kind" aria-label="Kind">' + CODE_FIELDS.filter(function (f) { return state.layer === 0 || f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
+          '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
+          '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
+          '<select id="topo-pg-parent">' + parentOptions + '</select>' +
+          '<p class="hint" style="grid-column:1 / -1;margin:0">The group this one sits within. A Floor "2" that is part of <code>b:Plant</code> gives a device <code>b:Plant f:2</code>; with Nothing it gets only <code>f:2</code>.</p>' +
+        '</div>';
+      var footer = '<button type="button" class="btn btn-secondary" data-pg="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" data-pg="ok">' + (current ? "Use this group" : "Start drawing") + '</button>';
+      var dlg = buildOverlay(1100, current ? "Change the polygon's group" : "Draw polygon for which group?", body, footer);
+      dlg.overlay.querySelector('[data-pg="cancel"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector("#topo-pg-name").addEventListener("input", function () {
+        var nw = dlg.overlay.querySelector('input[name="topo-pg"][value="new"]');
+        if (nw) nw.checked = true;
+      });
+      dlg.overlay.querySelector('[data-pg="ok"]').addEventListener("click", function () {
+        var pick = dlg.overlay.querySelector('input[name="topo-pg"]:checked');
+        if (!pick) return;
+        var codes;
+        if (pick.value === "new") {
+          var field = dlg.overlay.querySelector("#topo-pg-kind").value;
+          var name = dlg.overlay.querySelector("#topo-pg-name").value.trim().replace(/\s+/g, " ");
+          var parentIdx = Number(dlg.overlay.querySelector("#topo-pg-parent").value);
+          if (!name) { ctx.toast("Give the new group a name", "error"); return; }
+          if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
+          var parent = parentIdx >= 0 ? normCodes(groups[parentIdx]) : emptyCodes();
+          var fieldIdx = CODE_FIELDS.findIndex(function (f) { return f.field === field; });
+          if (fieldIdx <= groupDepth(parent)) {
+            ctx.toast("A " + CODE_FIELDS[fieldIdx].word.toLowerCase() + " can't sit inside " + groupName(parent), "error");
+            return;
+          }
+          codes = Object.assign({}, parent);
+          codes[field] = name;
+        } else {
+          codes = normCodes(groups[Number(pick.value)]);
+        }
+        dlg.close();
+        onPick(codes);
+      });
+    }
+
+    // ── Devices ─────────────────────────────────────────────────────────
+    function nodeColor(d) { return d.nodeColor || "#64748b"; }
+    function iconHtml(d) {
+      var t = R.nodeAssetType(d) || "";
+      var inner = d.iconUrl ? '<img src="' + esc(d.iconUrl) + '" alt="">'
+        : '<span>' + esc(TYPE_INITIALS[t] || String(t || "?").slice(0, 2).toUpperCase()) + '</span>';
+      return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '">' + inner + '</div>' +
+        '<div class="topo-phys-name">' + esc(d.label || d.id) + '</div>';
+    }
+    function drawMarkers() {
+      markerLayer.clearLayers();
+      markers = {};
+      Object.keys(state.placements).forEach(function (id) {
+        if (!nodeById[id]) return;
+        addMarker(id);
+      });
+    }
+    function addMarker(id) {
+      var d = nodeById[id];
+      var p = state.placements[id];
+      if (!d || !p) return;
+      var m = L.marker([p.y, p.x], {
+        icon: L.divIcon({ className: "topo-phys-marker", html: iconHtml(d), iconSize: [34, 34], iconAnchor: [17, 17] }),
+        draggable: state.editing,
+        keyboard: false,
+        title: d.label || "",
+      });
+      m.on("drag", function () { var ll = m.getLatLng(); state.placements[id] = { x: ll.lng, y: ll.lat }; drawLinksFor(id); });
+      m.on("dragend", function () {
+        var ll = m.getLatLng();
+        state.placements[id] = { x: ll.lng, y: ll.lat };
+        changed("placements");
+        stageCodesFor(id);
+        drawLinksFor(id);
+      });
+      m.on("click", function () { select(id); });
+      m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
+      m.on("contextmenu", function (e) {
+        if (!state.editing || typeof showRowMenu !== "function") return;
+        showRowMenu(m.getElement() || e.originalEvent.target, [
+          { heading: d.label || "Device" },
+          { label: "Open", onSelect: function () { ctx.openAsset(d.assetId || id); } },
+          { label: "Remove from map", danger: true, onSelect: function () { removePlacement(id); } },
+        ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
+      });
+      m.addTo(markerLayer);
+      markers[id] = m;
+      paintSelected();
+    }
+    function place(id, latlng) {
+      if (!state.editing || !nodeById[id]) return;
+      // A device is on one layer at a time (rule 152): placing it here takes
+      // it off any other layer.
+      Object.keys(byLayer).forEach(function (k) {
+        if (Number(k) !== state.layer && byLayer[k][id]) {
+          delete byLayer[k][id];
+          ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k));
+        }
+      });
+      state.placements[id] = { x: latlng.lng, y: latlng.lat };
+      if (markers[id]) markers[id].setLatLng(latlng); else addMarker(id);
+      changed("placements");
+      stageCodesFor(id);
+      drawLinksFor(id);
+      ctx.refreshSidebar();
+    }
+    // Removing a placement never touches codes (rule 148) — but a change
+    // this session staged for it no longer has a drop behind it.
+    // The selected device: its marker is ringed and map.js fills the details
+    // pane's info card with it. A click on the map's background clears it.
+    function select(id) {
+      selectedId = id || null;
+      paintSelected();
+      if (typeof ctx.selectAsset === "function") ctx.selectAsset(selectedId);
+    }
+    function paintSelected() {
+      Object.keys(markers).forEach(function (mid) {
+        var el = markers[mid].getElement && markers[mid].getElement();
+        if (el) el.classList.toggle("is-selected", mid === selectedId);
+      });
+    }
+
+    function removePlacement(id) {
+      delete state.placements[id];
+      if (markers[id]) { markerLayer.removeLayer(markers[id]); delete markers[id]; }
+      ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null);
+      changed("placements");
+      drawLinksFor(id);
+      ctx.refreshSidebar();
+    }
+    // Rule 148: inside a polygon → that group's codes (when they differ);
+    // outside every polygon → nothing staged for this device.
+    function stageCodesFor(id) {
+      var d = nodeById[id];
+      var p = state.placements[id];
+      if (!d || !p) return;
+      var assetId = d.assetId || id;
+      var poly = innermostPolygon(layerPolys(), [p.x, p.y]);
+      var want = null;
+      if (state.layer === 0) {
+        want = poly ? normCodes(poly.codes) : null;
+      } else {
+        // Rule 152: a floor layer gives its floor. Inside a polygon: the
+        // polygon's codes plus that floor; outside: the device keeps every
+        // other code it has and only its floor changes.
+        var l = layerObj(state.layer);
+        want = Object.assign({}, poly ? normCodes(poly.codes) : normCodes(currentCodes[id]), { floor: l ? l.name : String(state.layer) });
+      }
+      if (!want || codesEqual(want, currentCodes[id])) { ctx.stageLocationCode(assetId, null); return; }
+      ctx.stageLocationCode(assetId, want, {
+        name: d.label || assetId,
+        from: currentCodes[id] || emptyCodes(),
+      });
+    }
+    function restageAllCodes() { Object.keys(state.placements).forEach(stageCodesFor); }
+
+    // ── Links ───────────────────────────────────────────────────────────
+    function lineFor(e) {
+      var a = state.placements[e.source], b = state.placements[e.target];
+      if (!a || !b || !nodeById[e.source] || !nodeById[e.target]) return null;
+      var st = R.edgeLineStyle(e, family());
+      var line = L.polyline([[a.y, a.x], [b.y, b.x]], { color: st.color, weight: st.width, dashArray: st.dash, interactive: true });
+      var tip = (e.label ? esc(e.label) : "") + (e.reason ? '<div class="topo-phys-tip">' + esc(e.reason) + '</div>' : "");
+      if (tip) line.bindTooltip(tip, { sticky: true });
+      return line;
+    }
+    function drawLinks() {
+      linkLayer.clearLayers();
+      linkLines = {};
+      edges.forEach(function (e) {
+        var line = lineFor(e);
+        if (line) { line.addTo(linkLayer); linkLines[e.id] = line; }
+      });
+    }
+    function drawLinksFor(id) {
+      (edgesByNode[id] || []).forEach(function (e) {
+        if (linkLines[e.id]) { linkLayer.removeLayer(linkLines[e.id]); delete linkLines[e.id]; }
+        var line = lineFor(e);
+        if (line) { line.addTo(linkLayer); linkLines[e.id] = line; }
+      });
+    }
+
+    // ── Drag in from the details pane ───────────────────────────────────
+    function wireDrop() {
+      mapEl.addEventListener("dragover", function (e) {
+        if (!state.editing) return;
+        var types = e.dataTransfer && e.dataTransfer.types;
+        if (types && Array.prototype.indexOf.call(types, DRAG_MIME) !== -1) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        }
+      });
+      mapEl.addEventListener("drop", function (e) {
+        if (!state.editing) return;
+        var id = e.dataTransfer && e.dataTransfer.getData(DRAG_MIME);
+        if (!id) return;
+        e.preventDefault();
+        place(id, map.mouseEventToLatLng(e));
+      });
+    }
+
+    // ── Background ──────────────────────────────────────────────────────
+    function hasDrawing() { return layerPolys().length > 0 || Object.keys(state.placements).length > 0; }
+    async function confirmClear(kindWord) {
+      if (!hasDrawing()) return true;
+      return typeof showConfirm === "function"
+        ? showConfirm("Changing to " + kindWord + " clears the polygons and device placements drawn on the current background. Continue?")
+        : false;
+    }
+    function clearDrawing() {
+      Object.keys(state.placements).forEach(function (id) { ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null); });
+      state.placements = {};
+      state.polygons = state.polygons.filter(function (q) { return (q.layer || 0) !== state.layer; });
+    }
+    function openBackgroundMenu(anchor) {
+      if (!state.editing || typeof showRowMenu !== "function") return;
+      // One corner popover at a time: the menu drawn over the open Mouse
+      // controls panel read as two-tone glass.
+      if (typeof ctx.closePopovers === "function") ctx.closePopovers();
+      var bg = state.background;
+      var isImage = bg && bg.kind === "image";
+      showRowMenu(anchor, [
+        { heading: "Background" },
+        { label: (isImage ? "" : "✓ ") + "OpenStreetMap", onSelect: async function () {
+          if (!isImage) return;
+          if (!(await confirmClear("the map"))) return;
+          clearDrawing();
+          state.background = null;
+          changed("background", "polygons", "placements");
+          buildMap();
+          ctx.refreshSidebar();
+        } },
+        { label: isImage ? "Replace image" : "Upload image", onSelect: function () { chooseImage(); } },
+      ], { label: "Background", align: "end", overMap: true });
+    }
+    function chooseImage() {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/webp";
+      input.addEventListener("change", async function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        if (!(await confirmClear("an image"))) return;
+        ctx.toast("Uploading the background…");
+        try {
+          var img = await ctx.uploadBackground(file);
+          if (!img || !img.id) throw new Error("no image returned");
+          clearDrawing();
+          state.background = { kind: "image", imageId: img.id, width: img.width, height: img.height };
+          changed("background", "polygons", "placements");
+          buildMap();
+          ctx.refreshSidebar();
+          ctx.toast("Background uploaded — it is saved with the view when you save");
+        } catch (err) {
+          ctx.toast("Background not uploaded — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      });
+      input.click();
+    }
+    // The OSM view the operator framed becomes the view's background on
+    // commit (operator request: "when they exit edit mode it saves the zoom
+    // and coordinates").
+    function captureOsmView() {
+      if (!map || (state.background && state.background.kind === "image")) return;
+      var c = map.getCenter();
+      var cur = state.background;
+      var layer = cur && cur.kind === "osm" && cur.layer === "satellite" ? "satellite" : "map";
+      var next = { kind: "osm", center: [Number(c.lat.toFixed(7)), Number(c.lng.toFixed(7))], zoom: map.getZoom(), layer: layer };
+      if (cur && cur.kind === "osm" && cur.zoom === next.zoom && cur.center[0] === next.center[0] && cur.center[1] === next.center[1] && (cur.layer || "map") === layer) return;
+      state.background = next;
+      ctx.stageViewPatch({ background: next });
+    }
+
+    // ── Staging + history ───────────────────────────────────────────────
+    function snapshot() {
+      return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer });
+    }
+    function stageAll(fields) {
+      fields.forEach(function (f) {
+        if (f === "polygons") ctx.stageViewPatch({ polygons: state.polygons });
+        if (f === "background") {
+          if (state.layer === 0) ctx.stageViewPatch({ background: background0 });
+          else ctx.stageViewPatch({ layers: state.layers });
+        }
+        if (f === "layers") ctx.stageViewPatch({ layers: state.layers });
+        if (f === "placements") ctx.stagePlacements(Object.assign({}, state.placements), state.layer);
+        if (f === "allPlacements") Object.keys(byLayer).forEach(function (k) { ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k)); });
+      });
+    }
+    function changed() {
+      var fields = Array.prototype.slice.call(arguments);
+      stageAll(fields);
+      var h = state.history;
+      h.entries = h.entries.slice(0, h.index + 1);
+      h.entries.push(snapshot());
+      if (h.entries.length > HISTORY_MAX) h.entries.shift();
+      h.index = h.entries.length - 1;
+      ctx.historyChanged();
+      if (fields.indexOf("placements") !== -1) paintLayerCtl();
+    }
+    function applySnapshot(s) {
+      var o = JSON.parse(s);
+      var before = JSON.stringify(state.background);
+      background0 = o.background0;
+      state.layers = o.layers;
+      state.polygons = o.polygons;
+      byLayer = o.byLayer;
+      if (state.layer !== 0 && !layerObj(state.layer)) state.layer = 0;
+      ctx.stageViewPatch({ background: background0, layers: state.layers, polygons: state.polygons });
+      stageAll(["allPlacements"]);
+      paintLayerCtl();
+      if (JSON.stringify(state.background) !== before) buildMap(); else { drawPolygons(); drawMarkers(); drawLinks(); }
+      restageAllCodes();
+      ctx.refreshSidebar();
+      ctx.historyChanged();
+    }
+    function resetHistory() {
+      state.history = { entries: [snapshot()], index: 0 };
+      ctx.historyChanged();
+    }
+
+    function setEditing(on) {
+      state.editing = !!on;
+      if (viewLayer) { viewLayer = null; applyBaseLayer(); }
+      Object.keys(markers).forEach(function (id) {
+        var m = markers[id];
+        if (m.dragging) { if (on) m.dragging.enable(); else m.dragging.disable(); }
+      });
+      if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
+      host.classList.toggle("is-editing", !!on);
+      if (on) resetHistory();
+      paintLayerCtl();
+    }
+
+    // The details pane: what can be dragged on and what is already placed.
+    // ── Floor layers (rule 152) ─────────────────────────────────────────
+    // Layer 0 is the flat view. + / − step through the listed layers; while
+    // editing, stepping past the last one offers to add a layer there.
+    var layerCtl = document.createElement("div");
+    layerCtl.className = "topo-layer-ctl";
+    layerCtl.setAttribute("role", "group");
+    layerCtl.setAttribute("aria-label", "Floor layer");
+    host.appendChild(layerCtl);
+    function levels() { return [0].concat(state.layers.map(function (l) { return l.level; })).sort(function (a, b) { return a - b; }); }
+    function layerName(level) { var l = layerObj(level); return level === 0 ? "Flat view" : "Floor " + (l ? l.name : level); }
+    function countOn(level) { return Object.keys(placementsOf(level)).filter(function (id) { return nodeById[id]; }).length; }
+    function paintLayerCtl() {
+      var lv = levels();
+      var i = lv.indexOf(state.layer);
+      var canUp = i < lv.length - 1 || state.editing;
+      var canDown = i > 0 || state.editing;
+      var n = countOn(state.layer);
+      layerCtl.innerHTML =
+        '<span class="topo-layer-cap">Layer</span>' +
+        '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="1"' + (canUp ? "" : " disabled") + ' aria-label="Up a layer">+</button>' +
+        '<span class="topo-layer-now" aria-live="polite"' + (state.editing && state.layer !== 0 ? ' title="Right-click to rename or delete this layer"' : "") + '>' +
+          '<strong>' + state.layer + '</strong><span>' + esc(layerName(state.layer)) + '</span><span class="topo-layer-n">' + n + ' device' + (n === 1 ? "" : "s") + '</span></span>' +
+        '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="-1"' + (canDown ? "" : " disabled") + ' aria-label="Down a layer">−</button>' +
+        (state.layer !== 0 ? '<button type="button" class="btn btn-secondary btn-sm topo-layer-zero" data-layer-zero>Layer 0</button>' : "");
+    }
+    function setLayer(level) {
+      if (level === state.layer) return;
+      state.layer = level;
+      selectedId = null;
+      buildMap();
+      paintLayerCtl();
+      ctx.refreshSidebar();
+    }
+    layerCtl.addEventListener("click", function (e) {
+      if (e.target.closest("[data-layer-zero]")) { setLayer(0); return; }
+      var step = e.target.closest("[data-layer-step]");
+      if (!step) return;
+      var dir = Number(step.getAttribute("data-layer-step"));
+      var lv = levels();
+      var i = lv.indexOf(state.layer);
+      var next = lv[i + dir];
+      if (next !== undefined) { setLayer(next); return; }
+      if (state.editing) addLayer(dir > 0 ? lv[lv.length - 1] + 1 : lv[0] - 1);
+    });
+    layerCtl.addEventListener("contextmenu", function (e) {
+      if (!state.editing || state.layer === 0 || !e.target.closest(".topo-layer-now") || typeof showRowMenu !== "function") return;
+      e.preventDefault();
+      var level = state.layer;
+      showRowMenu(e.target.closest(".topo-layer-now"), [
+        { heading: layerName(level) },
+        { label: "Rename", onSelect: function () { nameLayer(level, false); } },
+        { label: "Delete layer", danger: true, onSelect: function () { deleteLayer(level); } },
+      ], { menuAt: { x: e.clientX, y: e.clientY }, label: "Layer", overMap: true });
+    });
+    function defaultFloorName(level) { return level > 0 ? String(level) : "B" + (-level); }
+    function addLayer(level) { nameLayer(level, true); }
+    function nameLayer(level, isNew) {
+      if (typeof buildOverlay !== "function") return;
+      var l = layerObj(level);
+      var body = '<div class="form-group"><label for="tl-name">Floor name</label>' +
+        '<input id="tl-name" type="text" maxlength="64" value="' + esc(isNew ? defaultFloorName(level) : (l ? l.name : "")) + '">' +
+        '<div class="hint">Layer ' + level + '. A device placed on it gets <code>f:</code> this name when you save' +
+        (level < 0 ? ' (below ground: B1, B2…)' : '') + '.</div></div>';
+      var footer = '<button type="button" class="btn btn-secondary" data-tl="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" data-tl="ok">' + (isNew ? "Add layer" : "Apply") + '</button>';
+      var dlg = buildOverlay(1100, isNew ? "Add layer " + level : "Rename layer " + level, body, footer);
+      var input = dlg.overlay.querySelector("#tl-name");
+      function apply() {
+        var name = input.value.trim().replace(/\s+/g, " ");
+        if (!name) { ctx.toast("Give the floor a name", "error"); return; }
+        if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A floor name can't contain another location code", "error"); return; }
+        var clash = state.layers.some(function (x) { return x.level !== level && x.name.toLowerCase() === name.toLowerCase(); });
+        if (clash) { ctx.toast("Another layer is already called " + name, "error"); return; }
+        if (isNew) state.layers.push({ level: level, name: name, background: null });
+        else if (l) l.name = name;
+        state.layers.sort(function (a, b) { return a.level - b.level; });
+        dlg.close();
+        changed("layers");
+        if (isNew) setLayer(level); else { paintLayerCtl(); Object.keys(state.placements).forEach(stageCodesFor); }
+      }
+      dlg.overlay.querySelector('[data-tl="cancel"]').addEventListener("click", dlg.close);
+      dlg.overlay.querySelector('[data-tl="ok"]').addEventListener("click", apply);
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); apply(); } });
+      setTimeout(function () { try { input.focus(); input.select(); } catch (_) { /* closed */ } }, 0);
+    }
+    async function deleteLayer(level) {
+      var n = countOn(level), polys = state.polygons.filter(function (q) { return (q.layer || 0) === level; }).length;
+      var what = [n ? n + " placed device" + (n === 1 ? "" : "s") : "", polys ? polys + " polygon" + (polys === 1 ? "" : "s") : ""].filter(Boolean).join(" and ");
+      var ok = typeof showConfirm === "function"
+        ? await showConfirm("Delete " + layerName(level) + (what ? " and its " + what : "") + "? Codes already written to descriptions are not changed.")
+        : false;
+      if (!ok) return;
+      Object.keys(placementsOf(level)).forEach(function (id) { ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null); });
+      byLayer[level] = {};
+      ctx.stagePlacements({}, level);
+      state.polygons = state.polygons.filter(function (q) { return (q.layer || 0) !== level; });
+      state.layers = state.layers.filter(function (x) { return x.level !== level; });
+      state.layer = 0;
+      changed("layers", "polygons");
+      buildMap();
+      paintLayerCtl();
+      ctx.refreshSidebar();
+    }
+
+    // The details pane's Device List (topology-device-list.js): every shown
+    // device, the ones on the map highlighted with an × to take them off.
+    function sidebarHtml() {
+      var DL = window.PolarisTopologyDeviceList;
+      if (!DL) return "";
+      var rows = Object.keys(nodeById).map(function (id) {
+        var d = nodeById[id];
+        var t = R.nodeAssetType(d) || "";
+        var codes = currentCodes[id];
+        var on = layerOfDevice(id);
+        return {
+          id: id,
+          label: d.label || id,
+          // A device on ANOTHER layer says which; selecting it goes there.
+          meta: on !== null && on !== state.layer ? (on === 0 ? "layer 0 · flat view" : "layer " + on + " · floor " + (layerObj(on) ? layerObj(on).name : on))
+            : hasCodes(codes) ? codesLabel(codes) : String(t).replace(/_/g, " "),
+          inUse: on === state.layer,
+          title: on !== null && on !== state.layer ? "Placed on layer " + on : "",
+        };
+      }).sort(function (a, b) {
+        return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
+      });
+      return DL.html({
+        title: "Device List",
+        hint: state.editing ? "Drag device from list to map." : "Edit the map to place devices.",
+        rows: rows,
+        editing: state.editing,
+        filter: listFilter,
+        selectedId: selectedId,
+        removeLabel: "Remove from the map",
+      });
+    }
+    function wireSidebar(pane) {
+      var DL = window.PolarisTopologyDeviceList;
+      if (!pane || !DL) return;
+      DL.wire(pane, {
+        dragMime: DRAG_MIME,
+        onFilter: function (f) { listFilter = f; },
+        onRemove: function (id) { if (state.editing && state.placements[id]) removePlacement(id); },
+        onSelect: function (id) {
+          var on = layerOfDevice(id);
+          if (on !== null && on !== state.layer) setLayer(on);
+          select(id);
+          // A placed device is brought into view; one not on the map just
+          // fills the info card.
+          if (markers[id] && map) map.panTo(markers[id].getLatLng());
+        },
+      });
+    }
+
+    function onKey(e) {
+      if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
+    }
+    document.addEventListener("keydown", onKey);
+
+    buildMap();
+    setEditing(state.editing);
+    // Leaflet measures its container on creation; the modal may still be
+    // animating in.
+    setTimeout(function () { if (map) map.invalidateSize(); }, 60);
+
+    return {
+      mode: "topology",
+      setEditing: setEditing,
+      sidebarHtml: sidebarHtml,
+      wireSidebar: wireSidebar,
+      // The devices on the map — map.js lists only these under the info card.
+      placedIds: function () {
+        var o = {};
+        Object.keys(byLayer).forEach(function (k) { Object.keys(byLayer[k]).forEach(function (id) { o[id] = true; }); });
+        return o;
+      },
+      setSelected: function (id) { selectedId = id || null; paintSelected(); },
+      // The Delete key (map.js): the selected placed device comes off the map.
+      deleteSelected: function () {
+        if (!state.editing || !selectedId || !state.placements[selectedId]) return false;
+        var id = selectedId;
+        select(null);
+        removePlacement(id);
+        return true;
+      },
+      beforeCommit: captureOsmView,
+      cornerButtons: function () {
+        return [
+          { id: "topology-background", label: "Background", tip: "Choose the map or upload a floor-plan image",
+            icon: '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>',
+            onClick: openBackgroundMenu, editOnly: true },
+          { id: "topology-draw-polygon", label: "Draw polygon", tip: "Draw a polygon for a location group",
+            icon: '<polygon points="12 2 22 9 18 21 6 21 2 9 12 2"/>', onClick: startDrawing, editOnly: true },
+        ];
+      },
+      canUndo: function () { return state.history.index > 0; },
+      canRedo: function () { return state.history.index < state.history.entries.length - 1; },
+      undo: function () { if (state.history.index > 0) { state.history.index--; applySnapshot(state.history.entries[state.history.index]); } },
+      redo: function () {
+        if (state.history.index < state.history.entries.length - 1) { state.history.index++; applySnapshot(state.history.entries[state.history.index]); }
+      },
+      resize: function () { if (map) map.invalidateSize(); },
+      captureElement: function () { return mapEl; },
+      destroy: function () {
+        document.removeEventListener("keydown", onKey);
+        if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
+        if (map) { map.remove(); map = null; }
+      },
+    };
+  }
+
+  window.PolarisTopologyPhysical = {
+    render: render,
+    // Pure helpers, exported for tests.
+    _pointInRing: pointInRing,
+    _innermostPolygon: innermostPolygon,
+    _groupsFromData: groupsFromData,
+    _codesLabel: codesLabel,
+    _codesEqual: codesEqual,
+  };
+})();

@@ -1,0 +1,233 @@
+/**
+ * tests/unit/topologyViewService.test.ts
+ *
+ * Pure validators of saved topology views (business rules 147-149): names,
+ * modes, shown types, backgrounds, polygons, racks and rack placements
+ * (bounds + overlap + full / half depth), and the location-code commit body.
+ * The DB-touching functions are covered by tests/integration/topologyViews.test.ts.
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  sanitizeViewName,
+  sanitizeMode,
+  sanitizeShownTypes,
+  sanitizeBackground,
+  sanitizePolygons,
+  sanitizeRacks,
+  sanitizeRackPlacements,
+  sanitizeLocationCodeChanges,
+  sanitizeWalls,
+  sanitizeWallPlacements,
+  sanitizeLayers,
+  sanitizeRegion,
+  MAX_RACK_UNITS,
+  MAX_VIEW_NAME_LEN,
+  type TopologyRack,
+} from "../../src/services/topologyViewService.js";
+
+const A1 = "11111111-1111-4111-8111-111111111111";
+const A2 = "22222222-2222-4222-8222-222222222222";
+
+function status(fn: () => unknown): number | undefined {
+  try {
+    fn();
+  } catch (err) {
+    return (err as { httpStatus?: number }).httpStatus;
+  }
+  return undefined;
+}
+
+describe("view name / mode / shown types", () => {
+  it("normalises names and rejects empty or oversize ones", () => {
+    expect(sanitizeViewName("  Plant   floor ")).toBe("Plant floor");
+    expect(status(() => sanitizeViewName("   "))).toBe(400);
+    expect(status(() => sanitizeViewName("x".repeat(MAX_VIEW_NAME_LEN + 1)))).toBe(400);
+  });
+
+  it("accepts the three modes only", () => {
+    expect(sanitizeMode("rack")).toBe("rack");
+    expect(status(() => sanitizeMode("map"))).toBe(400);
+  });
+
+  it("always keeps firewall shown and de-duplicates", () => {
+    expect(sanitizeShownTypes(["switch", "switch", "server"])).toEqual(["firewall", "switch", "server"]);
+    expect(sanitizeShownTypes([])).toEqual(["firewall"]);
+    expect(status(() => sanitizeShownTypes(["bad type!"]))).toBe(400);
+  });
+});
+
+describe("sanitizeBackground", () => {
+  it("accepts OSM centre + zoom and an image id; null clears", () => {
+    expect(sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19 })).toEqual({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "map" });
+    expect(sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "satellite" })).toMatchObject({ layer: "satellite" });
+    expect(status(() => sanitizeBackground({ kind: "osm", center: [36.1, -86.7], zoom: 19, layer: "terrain" }))).toBe(400);
+    expect(sanitizeBackground({ kind: "image", imageId: A1, width: 9, height: 9 })).toEqual({ kind: "image", imageId: A1 });
+    expect(sanitizeBackground(null)).toBeNull();
+  });
+
+  it("rejects out-of-range coordinates, zoom and unknown kinds", () => {
+    expect(status(() => sanitizeBackground({ kind: "osm", center: [91, 0], zoom: 10 }))).toBe(400);
+    expect(status(() => sanitizeBackground({ kind: "osm", center: [0, 0], zoom: 23 }))).toBe(400);
+    expect(status(() => sanitizeBackground({ kind: "osm", center: [0, 0], zoom: 0 }))).toBe(400);
+    expect(status(() => sanitizeBackground({ kind: "image", imageId: "x" }))).toBe(400);
+    expect(status(() => sanitizeBackground({ kind: "tiles" }))).toBe(400);
+  });
+});
+
+describe("sanitizePolygons", () => {
+  const sq = [[0, 0], [10, 0], [10, 10]];
+  it("keeps the group's codes in their display casing", () => {
+    const out = sanitizePolygons([{ id: "p1", codes: { building: " Plant ", floor: "1" }, points: sq }]);
+    expect(out[0].codes).toEqual({ area: null, building: "Plant", floor: "1", room: null, rack: null, junctionBox: null });
+  });
+
+  it("rejects too few points, no codes, duplicate ids and an embedded code", () => {
+    expect(status(() => sanitizePolygons([{ id: "p", codes: { building: "x" }, points: [[0, 0], [1, 1]] }]))).toBe(400);
+    expect(status(() => sanitizePolygons([{ id: "p", codes: {}, points: sq }]))).toBe(400);
+    expect(status(() => sanitizePolygons([
+      { id: "p", codes: { building: "a" }, points: sq },
+      { id: "p", codes: { building: "b" }, points: sq },
+    ]))).toBe(400);
+    expect(status(() => sanitizePolygons([{ id: "p", codes: { building: "x f:2" }, points: sq }]))).toBe(400);
+  });
+});
+
+describe("racks and rack placements", () => {
+  const racks: TopologyRack[] = sanitizeRacks([
+    { id: "rA", name: "Rack A", units: 42, order: 0 },
+    { id: "rB", name: "Rack B", units: 24, order: 1, face: "rear" },
+  ]);
+
+  it("normalises rack order and defaults the face", () => {
+    const r = sanitizeRacks([{ id: "b", name: "B", units: 10, order: 7 }, { id: "a", name: "A", units: 10, order: 2 }]);
+    expect(r.map((x) => [x.id, x.order, x.face])).toEqual([["a", 0, "front"], ["b", 1, "front"]]);
+    expect(status(() => sanitizeRacks([{ id: "a", name: "A", units: MAX_RACK_UNITS + 1 }]))).toBe(400);
+  });
+
+  it("accepts devices and cable management that fit and do not overlap", () => {
+    const out = sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 41, heightU: 2 },
+      { id: "cm1", kind: "cableManagement", rackId: "rA", face: "front", startU: 40, heightU: 1 },
+    ], racks);
+    expect(out[0].fullDepth).toBe(false); // half depth unless marked full
+    expect(out[1]).toMatchObject({ assetId: null, fullDepth: false });
+  });
+
+  it("keeps a third-party box's name, defaults it, and refuses a bad one", () => {
+    const out = sanitizeRackPlacements([
+      { id: "tp1", kind: "thirdParty", label: "  ISP   router ", rackId: "rA", face: "front", startU: 30, heightU: 2 },
+      { id: "tp2", kind: "thirdParty", rackId: "rA", face: "front", startU: 20, heightU: 1, assetId: A1 },
+      { id: "p1", kind: "asset", assetId: A2, label: "ignored", rackId: "rA", face: "front", startU: 10, heightU: 1 },
+    ], racks);
+    expect(out[0]).toMatchObject({ kind: "thirdParty", label: "ISP router", assetId: null, fullDepth: false });
+    expect(out[1]).toMatchObject({ label: "Third party", assetId: null }); // no name → the default, never an asset
+    expect(out[2].label).toBeNull();
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "thirdParty", label: "x".repeat(65), rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "thirdParty", label: "a\u0007b", rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "t", kind: "shelf", rackId: "rA", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+  });
+
+  it("rejects a placement past the top of the rack or in an unknown rack", () => {
+    expect(status(() => sanitizeRackPlacements([{ id: "p", kind: "asset", assetId: A1, rackId: "rB", face: "front", startU: 24, heightU: 2 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "p", kind: "asset", assetId: A1, rackId: "nope", face: "front", startU: 1, heightU: 1 }], racks))).toBe(400);
+  });
+
+  it("a front device and a rear device share a U by default", () => {
+    expect(sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 1 },
+      { id: "p2", kind: "asset", assetId: A2, rackId: "rA", face: "rear", startU: 10, heightU: 1 },
+    ], racks)).toHaveLength(2);
+  });
+
+  it("a full-depth device blocks the rear; two half-depth items share a U", () => {
+    expect(status(() => sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 2, fullDepth: true },
+      { id: "p2", kind: "asset", assetId: A2, rackId: "rA", face: "rear", startU: 11, heightU: 1, fullDepth: false },
+    ], racks))).toBe(400);
+    expect(sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 10, heightU: 1, fullDepth: false },
+      { id: "p2", kind: "asset", assetId: A2, rackId: "rA", face: "rear", startU: 10, heightU: 1, fullDepth: false },
+    ], racks)).toHaveLength(2);
+  });
+
+  it("racks a device at most once per view", () => {
+    expect(status(() => sanitizeRackPlacements([
+      { id: "p1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 1, heightU: 1 },
+      { id: "p2", kind: "asset", assetId: A1, rackId: "rB", face: "front", startU: 1, heightU: 1 },
+    ], racks))).toBe(400);
+  });
+});
+
+describe("sanitizeLocationCodeChanges", () => {
+  it("parses a valid body and rejects duplicates and codeless changes", () => {
+    expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" } }])[0].codes.building).toBe("Plant");
+    expect(status(() => sanitizeLocationCodeChanges([]))).toBe(400);
+    expect(status(() => sanitizeLocationCodeChanges([
+      { assetId: A1, codes: { building: "a" } },
+      { assetId: A1, codes: { building: "b" } },
+    ]))).toBe(400);
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: {} }]))).toBe(400);
+  });
+});
+
+describe("wall views (rule 151)", () => {
+  const walls = sanitizeWalls([{ id: "w1", name: "MDF wall", width: 96, height: 48 }]);
+  const rect = (x: number, y: number, w: number, h: number) => [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+
+  it("sizes walls in whole inches within limits", () => {
+    expect(walls[0]).toMatchObject({ width: 96, height: 48, order: 0 });
+    expect(status(() => sanitizeWalls([{ id: "w", name: "x", width: 2, height: 48 }]))).toBe(400);
+    expect(status(() => sanitizeWalls([{ id: "w", name: "x", width: 700, height: 48 }]))).toBe(400);
+  });
+
+  it("accepts items that share an edge and refuses an overlap", () => {
+    expect(sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 12, 8) },
+      { id: "b", kind: "asset", assetId: A2, wallId: "w1", points: rect(12, 0, 12, 8) },
+    ], walls)).toHaveLength(2);
+    expect(status(() => sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 12, 8) },
+      { id: "b", kind: "cableManagement", wallId: "w1", points: rect(11, 7, 4, 4) },
+    ], walls))).toBe(400);
+  });
+
+  it("keeps corners on the wall, an asset once, and a rack's size", () => {
+    expect(status(() => sanitizeWallPlacements([{ id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(90, 0, 12, 8) }], walls))).toBe(400);
+    expect(status(() => sanitizeWallPlacements([
+      { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 4, 4) },
+      { id: "b", kind: "asset", assetId: A1, wallId: "w1", points: rect(10, 0, 4, 4) },
+    ], walls))).toBe(400);
+    const [r] = sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", units: 12, label: " Wall rack ", points: rect(0, 0, 24, 24) }], walls);
+    expect(r).toMatchObject({ kind: "rack", units: 12, label: "Wall rack", linkedViewId: null, assetId: null });
+    expect(status(() => sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", points: rect(0, 0, 24, 24) }], walls))).toBe(400);
+  });
+
+  it("refuses a shape with no area", () => {
+    expect(status(() => sanitizeWallPlacements([{ id: "a", kind: "cableManagement", wallId: "w1", points: [[0, 0], [4, 0], [8, 0]] }], walls))).toBe(400);
+  });
+});
+
+describe("floor layers and regions (rules 150, 152)", () => {
+  it("orders layers by level, needs a floor name, and never lists layer 0", () => {
+    const out = sanitizeLayers([{ level: 2, name: "2" }, { level: -1, name: "B1" }]);
+    expect(out.map((l) => l.level)).toEqual([-1, 2]);
+    expect(out[0]).toMatchObject({ name: "B1", background: null });
+    expect(status(() => sanitizeLayers([{ level: 0, name: "Ground" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "1" }, { level: 1, name: "One" }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "2 r:x" }]))).toBe(400);
+  });
+
+  it("polygons default to layer 0", () => {
+    const [p] = sanitizePolygons([{ id: "p", codes: { room: "MDF" }, points: [[0, 0], [1, 0], [1, 1]] }]);
+    expect(p.layer).toBe(0);
+  });
+
+  it("a region is a code chain or null", () => {
+    expect(sanitizeRegion(null)).toBeNull();
+    expect(sanitizeRegion({ building: "Plant", room: "MDF", junctionBox: "7" })).toMatchObject({ building: "Plant", room: "MDF", junctionBox: "7", rack: null });
+    expect(status(() => sanitizeRegion({}))).toBe(400);
+  });
+});
+

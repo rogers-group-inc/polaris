@@ -174,7 +174,7 @@ A `monitor status is down` automation can opt out of the silence with the
   suppressed switch's FortiGate);
 - its email **draws the dependency path** under the alert's details: the device
   that is actually down on the left, this device on the right, every device in
-  the location box its `a:` / `b:` / `f:` / `r:` / `jb:` codes put it in on the
+  the location box its `a:` / `b:` / `f:` / `r:` / `ra:` / `jb:` codes put it in on the
   [Device Map](Device-Map) (a device with no codes sits in a plain box named
   after its **Location**), and the port names on each link where LLDP knows
   them. At most four devices are drawn: a longer chain shows the two at each

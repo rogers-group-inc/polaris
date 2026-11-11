@@ -42,7 +42,7 @@ type Kind = { rank: number; color: string; colorLight: string; dash: string };
 
 const TIERS = literal(APP_JS, "LOC_DIAGRAM_TIERS", "[", "]") as Tier[];
 const KINDS = literal(TOPO_JS, "LOC_GROUP_KINDS", "{", "}") as Record<string, Kind>;
-const KIND_FOR_CODE: Record<string, string> = { a: "area", b: "building", f: "floor", r: "room", jb: "jb" };
+const KIND_FOR_CODE: Record<string, string> = { a: "area", b: "building", f: "floor", r: "room", ra: "ra", jb: "jb" };
 
 function build(light: boolean): string {
   const fn = new Function(

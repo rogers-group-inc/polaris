@@ -344,26 +344,34 @@
    plus a 1px contact edge — the topology graph's --topology-btn-shadow and the
    Application Map's (appmap.css), so the three maps match; the earlier 1px/2px
    cast all but vanished on the light themes. */
-.map-canvas.leaflet-container {
+.map-canvas.leaflet-container,
+.topo-phys-map.leaflet-container {
   --map-btn-shadow: 0 2px 4px rgba(0,0,0,.3), 0 1px 1px rgba(0,0,0,.25);
 }
-.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar {
+/* The topology view's Topology canvas (.topo-phys-map) wears the same zoom
+   bar — without it Leaflet's stock white / basemap-tinted +/- showed. */
+.map-canvas.leaflet-container .leaflet-control-zoom.leaflet-bar,
+.topo-phys-map.leaflet-container .leaflet-control-zoom.leaflet-bar {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: var(--map-btn-shadow);
   overflow: hidden;
 }
-.map-canvas.leaflet-container .leaflet-control-zoom a {
+.map-canvas.leaflet-container .leaflet-control-zoom a,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a {
   background-color: var(--color-bg-primary);
   color: var(--color-text-secondary);
   border-bottom-color: var(--color-border);
 }
 .map-canvas.leaflet-container .leaflet-control-zoom a:hover,
-.map-canvas.leaflet-container .leaflet-control-zoom a:focus {
+.map-canvas.leaflet-container .leaflet-control-zoom a:focus,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a:hover,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a:focus {
   background-color: var(--color-surface);
   color: var(--color-text-primary);
 }
-.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
+.map-canvas.leaflet-container .leaflet-control-zoom a.leaflet-disabled,
+.topo-phys-map.leaflet-container .leaflet-control-zoom a.leaflet-disabled {
   background-color: var(--color-bg-primary);
   color: var(--color-text-tertiary);
   opacity: 0.6;
@@ -863,6 +871,448 @@
 .topology-info .topology-section li.topology-loc-group:first-child { margin-top: 0; }
 .topology-info .topology-section li.topology-loc-group .sep { color: var(--color-text-tertiary); font-weight: 400; }
 .topology-info .topology-section li.topology-loc-group.is-none { font-style: italic; font-weight: 400; }
+/* Device types (business rule 147): one icon toggle per asset type on the
+   site, in a row that wraps. On = the accent outline; off = dimmed and struck
+   through. The count sits on the icon's corner; the tooltip names the type.
+   The FortiGate's icon is locked on. */
+.topology-info .topology-types { margin-top: 0; }
+.topology-type-icons { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 4px; }
+.topology-types .topology-type-hint { margin-top: 8px; }
+.topology-type-icon {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-primary);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.topology-type-icon:not(.is-on)::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 50%;
+  border-top: 2px solid currentColor;
+  transform: rotate(-35deg);
+}
+.topology-type-icon:hover { background: var(--color-hover-tint); opacity: 0.85; }
+.topology-type-icon.is-on { color: var(--color-accent); border-color: var(--color-accent); opacity: 1; }
+.topology-type-icon:disabled { cursor: default; }
+.topology-type-icon:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.topology-type-icon-count {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font: 600 10px/14px "Roboto Mono", monospace;
+  text-align: center;
+}
+.topology-type-hint { margin: 6px 4px 0; font-size: 0.72rem; color: var(--color-text-tertiary); }
+/* The header's view picker and mode pill (rule 147). */
+.topology-view-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+.topology-view-picker-label { color: var(--color-text-tertiary); }
+#topology-view-mode { margin-left: 6px; }
+/* A Topology / Rack view's canvas fills the graph area (topology-physical.js,
+   topology-rack.js); the legend and its button sit above it. */
+.topology-mode-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+.topology-mode-empty { padding: 3rem 1rem; text-align: center; }
+
+/* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
+   an uploaded floor plan, with location-group polygons and placed devices. */
+.topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+/* The Regions panel (region-tree-panel.js, rule 153). */
+.region-tree, .region-tree-conflicts { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.region-tree-row { display: flex; align-items: center; gap: 8px; min-height: 30px; border-radius: var(--radius-sm); }
+.region-tree-row:hover { background: var(--color-hover-tint); }
+.region-tree-kind { width: 92px; flex: none; font-size: 0.72rem; color: var(--color-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+.region-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-tree-code { font-size: 0.75rem; color: var(--color-text-secondary); }
+.region-tree-more { flex: none; padding: 0 6px; font-size: 16px; }
+.region-tree-h { margin: 14px 0 6px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-secondary); }
+.region-tree-conflicts li { padding: 4px 0; font-size: 0.85rem; }
+/* The floor Layer control (rule 152): left edge, vertically centred. */
+.topo-layer-ctl {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 800;
+  width: 76px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--map-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  box-shadow: var(--map-btn-shadow, 0 2px 4px rgba(0,0,0,.3));
+}
+.topo-layer-cap { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-secondary); }
+.topo-layer-step { width: 40px; height: 30px; padding: 0; justify-content: center; font-size: 18px; line-height: 1; }
+.topo-layer-now { display: flex; flex-direction: column; align-items: center; line-height: 1.15; text-align: center; }
+.topo-layer-now strong { font-size: 22px; color: var(--color-accent); }
+.topo-layer-now span { font-size: 11px; color: var(--color-text-primary); }
+.topo-layer-now .topo-layer-n { font-size: 10px; color: var(--color-text-secondary); }
+.topo-layer-zero { width: 60px; padding: 0 4px; justify-content: center; font-size: 11px; }
+/* Map | Satellite (only when Server Settings configures satellite imagery):
+   the zoom bar's look, as a two-button segmented control. */
+.topo-phys-layer-switch {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--map-btn-shadow);
+}
+.topo-phys-layer-switch button {
+  padding: 5px 12px;
+  border: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font: 600 0.78rem var(--font-sans);
+  cursor: pointer;
+}
+.topo-phys-layer-switch button + button { border-left: 1px solid var(--color-border); }
+.topo-phys-layer-switch button:hover { background: var(--color-surface); color: var(--color-text-primary); }
+.topo-phys-layer-switch button.is-on { background: var(--color-accent); color: #fff; }
+.topo-phys-marker { background: none; border: none; }
+.topo-phys-node {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2.5px solid #64748b;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.topo-phys-node img { width: 20px; height: 20px; object-fit: contain; }
+.topo-phys-name {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  /* A solid label, not a text halo: a 3px glow of the theme ground left light
+     text unreadable over bright OSM tiles (and dark text over a dark floor
+     plan). The theme's own ground at 92% reads on any background. */
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-primary) 92%, transparent);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  color: var(--color-text-primary);
+  line-height: 15px;
+  pointer-events: none;
+}
+.topo-phys-polygon-label {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg-primary) 92%, transparent);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--color-text-primary);
+}
+.topo-phys-polygon-label .topo-phys-codes { color: var(--color-text-secondary); margin-left: 4px; }
+.topo-phys-polygon-label::before { display: none; }
+.topo-phys-codes { font-family: "Roboto Mono", monospace; font-size: 10px; color: var(--color-text-tertiary); font-weight: 400; }
+.topo-phys-tip { color: var(--color-text-tertiary); font-size: 11px; }
+.topology-mode-canvas.is-editing .topo-phys-marker { cursor: grab; }
+/* The selected device on a canvas: an accent ring (the info card shows it). */
+.topo-phys-marker.is-selected .topo-phys-node { box-shadow: 0 0 0 3px var(--color-accent), 0 2px 4px rgba(0, 0, 0, 0.4); }
+.topo-rack-blk.is-selected { box-shadow: 0 0 0 2px var(--color-accent); z-index: 1; }
+
+/* The Device List (topology-device-list.js) of the Topology and Rack
+   canvases, and the Rack items above it. A row is a fixed 30px so the list
+   can show five and a half of them and scroll past that. */
+.topo-device-count { font-family: "Roboto Mono", monospace; font-weight: 400; color: var(--color-text-tertiary); margin-left: 4px; }
+.topology-info .topology-section input.topo-device-filter { width: 100%; box-sizing: border-box; margin: 0 0 6px; }
+.topology-info .topology-section ul.topo-device-list {
+  --topo-device-row-h: 30px;
+  max-height: calc(5.5 * var(--topo-device-row-h));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The section lists are flex columns with a gap: without these the rows
+     SHRINK to fit the cap instead of scrolling. */
+  gap: 0;
+}
+.topology-info .topology-section li.topo-device-row {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  height: var(--topo-device-row-h, 30px);
+  flex: none;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.topology-info .topology-section li.topo-device-row[hidden] { display: none; }
+.topology-info .topology-section li.topo-device-row:hover { background: var(--color-hover-tint); }
+.topology-info .topology-section li.topo-device-row[draggable="true"] { cursor: grab; }
+/* On the canvas: highlighted, with the × that takes it off. */
+.topology-info .topology-section li.topo-device-row.is-in-use {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.topology-info .topology-section li.topo-device-row.is-selected { outline: 1px solid var(--color-accent); outline-offset: -1px; }
+.topo-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.topology-info .topology-section li.topo-device-row .meta { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-device-unplace { flex: none; font-size: 16px; line-height: 1; padding: 0 4px; color: var(--color-text-tertiary); }
+.topo-device-unplace:hover { color: var(--color-danger); }
+.topo-device-none { margin: 4px 0 0; }
+
+/* The info card's head: the device's name, and an × back to the FortiGate. */
+.topology-asset-card { margin-top: 12px; }
+.topology-asset-card-head { display: flex; align-items: center; gap: 6px; }
+.topology-asset-card-head a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topology-asset-card-clear { font-size: 16px; line-height: 1; padding: 0 4px; color: var(--color-text-tertiary); }
+/* The group picker dialog. */
+.topo-phys-groups { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow: auto; }
+.topo-phys-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.topo-phys-group .topo-phys-codes { margin-left: auto; }
+.topo-phys-group-new { margin-top: 10px; }
+.topo-phys-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+/* Rack mode (topology-rack.js, rules 147 / 149): racks side by side, U1 at
+   the bottom of each rail, one rack unit = 16px (U_PX — change both). */
+.topo-rack-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  padding: 24px 32px 56px;
+  overflow: auto;
+  background: var(--color-bg-secondary);
+}
+.topo-rack { flex: none; width: 375px; display: flex; flex-direction: column; }
+
+/* ── Wall mode (topology-wall.js; rule 151) ───────────────────────────────
+   Walls side by side like racks; each board is an SVG in inch units, a
+   pegboard of one hole per inch. Items are polygons: a device bordered in its
+   health colour, Cable management striped, a Third party box neutral, a rack
+   with U lines. A refused move (an overlap) outlines the item in danger red. */
+.topo-wall-strip {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 40px;
+  padding: 24px 32px 56px;
+  overflow: auto;
+  background: var(--color-bg-secondary);
+}
+.topo-wall { flex: none; display: flex; flex-direction: column; }
+.topo-wall-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  user-select: none;
+}
+.topo-wall-head .topo-rack-delete { margin-left: auto; }
+.is-editing .topo-wall-head [data-wall-rename],
+.is-editing .topo-wall-head [data-wall-resize] { cursor: text; border-radius: var(--radius-sm); padding: 1px 3px; }
+.is-editing .topo-wall-head [data-wall-rename]:hover,
+.is-editing .topo-wall-head [data-wall-resize]:hover { background: var(--color-hover-tint); }
+.topo-wall-board { display: block; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); user-select: none; touch-action: none; }
+.topo-wall-ground { fill: #b98d5c; }
+.topo-wall-hole { fill: rgba(40, 24, 8, 0.55); }
+:is([data-theme="nightfall"]) .topo-wall-ground { fill: #5c4630; }
+:is([data-theme="nightfall"]) .topo-wall-hole { fill: rgba(0, 0, 0, 0.6); }
+.topo-wall-item polygon {
+  fill: var(--color-surface);
+  stroke: var(--color-success);
+  stroke-width: 0.35;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.topo-wall-item polygon { stroke-width: 2px; }
+.topo-wall-item text { fill: var(--color-text-primary); font-family: var(--font-sans); font-weight: 600; pointer-events: none; }
+.topo-wall-item .topo-wall-sub { fill: var(--color-text-secondary); font-weight: 400; }
+.topo-wall-item image { pointer-events: none; }
+.topo-wall-item.is-cableManagement polygon { fill: var(--color-bg-elevated); stroke: var(--color-border); stroke-dasharray: 3 2; }
+.topo-wall-item.is-thirdParty polygon { fill: var(--color-bg-tertiary); stroke: var(--color-text-tertiary); }
+.topo-wall-item.is-rack polygon { fill: var(--color-bg-tertiary); stroke: var(--color-text-secondary); }
+.is-editing .topo-wall-item { cursor: move; }
+.topo-wall-item.is-selected polygon { stroke: var(--color-accent); stroke-width: 3px; }
+.topo-wall-item.is-refused polygon { stroke: var(--color-danger); stroke-dasharray: 4 3; fill: color-mix(in srgb, var(--color-danger) 18%, var(--color-surface)); }
+.topo-wall-corner { fill: #ffffff; stroke: var(--color-accent); stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: grab; }
+.topo-wall-mid { fill: var(--color-bg-primary); stroke: var(--color-accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; cursor: copy; }
+.topo-wall-rack-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-text-secondary);
+  background: repeating-linear-gradient(0deg, var(--color-bg-elevated) 0 2px, var(--color-bg-tertiary) 2px 3px);
+}
+.topo-rack.is-dragging { opacity: 0.6; transform: rotate(1deg); }
+.topo-rack-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-bottom: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  user-select: none;
+}
+.is-editing .topo-rack-head[data-rack-grip] { cursor: grab; }
+.topo-rack-name { font-weight: 600; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topo-rack-units { font-family: "Roboto Mono", monospace; font-size: 0.72rem; color: var(--color-text-tertiary); white-space: nowrap; }
+.topo-rack-face { margin-left: auto; min-width: 58px; }
+.is-editing .topo-rack-name[data-rack-rename],
+.is-editing .topo-rack-units[data-rack-resize] { cursor: text; border-radius: var(--radius-sm); padding: 1px 3px; }
+.is-editing .topo-rack-name[data-rack-rename]:hover,
+.is-editing .topo-rack-units[data-rack-resize]:hover { background: var(--color-hover-tint); }
+.topo-rack-delete { font-size: 18px; line-height: 1; padding: 0 4px; }
+.topo-rack-body { display: flex; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-bg-primary); }
+.topo-rack-rail { width: 38px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
+.topo-rack-rail span {
+  height: 20px;
+  line-height: 20px;
+  font-family: "Roboto Mono", monospace;
+  font-size: 11px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border-light);
+  box-sizing: border-box;
+}
+.topo-rack-bay {
+  position: relative;
+  flex: 1;
+  background-image: repeating-linear-gradient(to bottom, transparent 0 19px, var(--color-border-light) 19px 20px);
+}
+.topo-rack-blk {
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1.5px solid var(--color-success);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.is-editing .topo-rack-blk:not(.is-ghost) { cursor: move; }
+.topo-rack-blk-name { overflow: hidden; text-overflow: ellipsis; }
+.topo-rack-blk-icon { flex: none; width: 14px; height: 14px; object-fit: contain; }
+.topo-rack-blk-meta { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--color-text-tertiary); }
+.topo-rack-blk.is-ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); font-weight: 500; }
+.topo-rack-blk.is-cable {
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px);
+}
+.topo-rack-grip-top, .topo-rack-grip-bottom {
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--color-accent);
+  opacity: 0;
+  cursor: ns-resize;
+}
+.topo-rack-grip-top { top: -1px; }
+.topo-rack-grip-bottom { bottom: -1px; }
+.topo-rack-blk:hover .topo-rack-grip-top, .topo-rack-blk:hover .topo-rack-grip-bottom { opacity: 1; }
+.topo-rack-add {
+  flex: none;
+  width: 150px;
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-style: dashed;
+}
+.topo-rack-add-plus { font-size: 24px; line-height: 1; }
+/* A third-party box: equipment Polaris does not monitor, named by the
+   operator. Solid like a device (it is real hardware) but with the neutral
+   border, since it has no health to colour it. */
+.topo-rack-blk.is-third-party {
+  border: 1.5px solid var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+}
+.is-editing .topo-rack-blk.is-third-party { cursor: move; }
+.topo-rack-third-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  border: 1.5px solid var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  box-sizing: border-box;
+}
+.topo-rack-cable-swatch {
+  width: 26px;
+  height: 10px;
+  flex: none;
+  border: 1px solid var(--color-border);
+  background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 3px, var(--color-bg-elevated) 3px 4px);
+}
 .topology-info .topology-section li .meta {
   color: var(--color-text-tertiary);
   font-family: "Roboto Mono", monospace;

@@ -1072,12 +1072,14 @@ describe("topology palette by theme family", () => {
         expect(st["line-color"], row.key).toBe(row.color);
         expect(st.width, row.key).toBe(row.width);
       }
-      // Every link starts neutral; the neutral is the unknown-speed and good-signal colour.
+      // Every link starts neutral; the neutral is the unknown-speed and
+      // no-signal-reported colour. A GOOD signal is green (2026-11-10).
       const neutral = rows.find((r) => r.key === "speed:unknown")!.color;
       expect(rule("edge")["line-color"]).toBe(neutral);
       expect(rule("edge[isMesh = 1]")["line-color"]).toBe(neutral);
-      expect(rows.find((r) => r.key === "signal:good")!.color).toBe(neutral);
-      for (const cls of ["fair", "weak", "poor"]) {
+      expect(rows.find((r) => r.key === "signal:unknown")!.color).toBe(neutral);
+      expect(rows.find((r) => r.key === "signal:good")!.color).toBe(fam === "dark" ? "#22c55e" : "#16a34a");
+      for (const cls of ["good", "fair", "weak", "poor"]) {
         expect(rule(`edge[meshSignal = "${cls}"]`)["line-color"]).toBe(rows.find((r) => r.key === "signal:" + cls)!.color);
       }
       // How a link was found no longer colours it.

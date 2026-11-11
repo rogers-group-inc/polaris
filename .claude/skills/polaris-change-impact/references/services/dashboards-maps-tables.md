@@ -257,6 +257,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A retired device is never a node, at either end.** Every site list filters `EXCLUDED_LIFECYCLE_STATUSES`, and so do the two paths that reach assets outside the site: the LLDP query drops a row whose `matchedAsset` is decommissioned / disabled (no remote node, no ghost), and `interfaceTopologyService` drops them from its candidate inventory. Before both filters a retired AP still on the wire came back as a "remote" node.
 - **No aggregate on a label.** After the per-cable expansion (which still needs aggregate names to find members), every edge class's label halves go through `physicalLabelHalf`: the aggregate's only member, else the port this side's LLDP saw on this link (`siblingLldpPort` — the right leg of a FortiGate `fortilink` split across an MCLAG pair), else `unknown`. "Aggregate" = `isAggregateName`: parents physical members, a non-physical `ifType`, or a FortiOS logical name (`isLogicalInterfaceName`: `fortilink`, `_FlInK*`). `srcIf` / `tgtIf` are attached after this pass, so the tooltip and label name the same port — on every WIRED class (controller, interface, LLDP, bridge, MCLAG): the Device Map colours each cable by the slower end's `speedBps` (polaris-ui-canon → tech-stack-frontend.md), so a class without them draws as "speed not known". A port's detail also carries `optics` (Rx / Tx dBm, temperature, voltage, bias — `latestOpticsByPort`, the newest port-attributed hardware-sensor row per sensor in the last hour, folded through rule 143's `splitOpticsSamples` against the ports in the interface table), so the link tooltip and the asset's Interfaces table read one attribution. `topology-render.js` keeps a verified FG→switch uplink's server label (`unknown` on an unresolved side) and prints `fortilink` only for a link with no confirmed cable.
 
+- **The payload carries every attributed endpoint, not just the sidebar sample** (rule 147): `endpoints` (id, hostname, ip, mac, `assetType`, status, monitorHealth, location from `Asset.description` only, `switchId`, `port`, iconUrl) from the same rule-91 query, newest first, capped at the module constant `MAX_SITE_ENDPOINTS` (2000) with `endpointsTruncated`; `switches[].endpoints` stays the 25-per-switch sidebar sample cut from the same rows. Every node also carries `assetType` (firewall / switch / access_point for the three infrastructure arrays) — the device-type toggles key on it.
+
 **When changing this:**
 - A new edge class needs a place in the dedupe order and a `reason` string (the hover tooltip is the operator's audit trail), and `topology-render.js` must know it.
 - Changing which LLDP rows count as a link changes what the map shows but not the dependency tree (`dependencyTreeService` reads LLDP itself) — keep the two consistent or say why they differ.
@@ -268,7 +270,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Shared Device Map topology layouts — the `TopologyLayout` table (one row per `(siteId, view)`, siteId = the FortiGate Asset the graph is rooted on, `positions` = `{nodeId: {x,y}}` pixel model coords). The server-side half of topology drag persistence; the browser's localStorage layout remains a per-browser fallback. Each row carries TWO blobs: `positions` (the LIVE layout every drag rewrites) and `savedPositions` + `savedBy`/`savedAt` (the operator's RESTORE POINT, written only by the explicit Save).
 
-**Public API:** TopologyNodePosition, TopologyPositions, TopologyLayoutDto, LayoutResetResult, MAX_LAYOUT_NODES, MAX_VIEW_KEY_LEN, MAX_NODE_ID_LEN, MAX_COORD, isValidViewKey, sanitizePositions, getLayoutsForSite, saveLayout, saveCheckpoint, resetLayout.
+**Public API:** TopologyNodePosition, TopologyPositions, TopologyLayoutDto, LayoutResetResult, MAX_LAYOUT_NODES, MAX_VIEW_KEY_LEN, MAX_NODE_ID_LEN, MAX_COORD, isValidViewKey, viewLayoutPrefix, sanitizePositions, getLayoutsForSite, saveLayout, saveCheckpoint, resetLayout, deleteLayoutsForView (a saved view's rows, inside the caller's transaction — rule 149), countTopologyPlacements (the mode-change warning's "placed devices").
 
 **Cross-service deps:** `prisma.topologyLayout`, `prisma.asset` (firewall existence check on save).
 
@@ -293,6 +295,94 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - If node ids in the topology payload ever stop being Asset UUIDs (or synthetics become persistable), revisit `MAX_NODE_ID_LEN` and the stale-entry story.
 - Keep the localStorage key scheme in sync — `polaris.topology.positions:<siteId>[:<view>]` for the live layout and `polaris.topology.saved:<siteId>[:<view>]` for the restore point (bare key = flat in both) — they're the seed/fallback the server store was modeled on, and the second is the ONLY restore point a non-writer gets.
 - Tests: `tests/unit/topologyLayoutService.test.ts` (pure validators), `tests/integration/topologyLayout.test.ts` (RBAC, the savedLayouts embed, checkpoint stamping, drag-leaves-the-restore-point-alone, and the empty-not-delete baseline reset).
+- **Saved views own key prefixes (rule 147).** The default view keeps the legacy keys plus `topo` (its Topology-mode placements); any other view's keys are `v:<uuid>` (its Layer 2 base — a saved view has no `flat`), `v:<uuid>|<floor key>` and `v:<uuid>|topo`. `deleteLayoutsForView` treats every non-`v:` key as the default view's, so a new legacy-style key shape is automatically the default's; a new per-view shape must start `v:<uuid>|`.
+
+---
+
+## services/topologyViewService.ts
+
+**What it owns:** Saved, SHARED per-site Device Map topology views (business rules 147-152; a fourth mode, `wall`, mounts devices on walls — `walls` + `wallPlacements`, overlap-checked by `utils/wallGeometry.ts`; a Rack / Wall view may carry a `region` code chain that is only a pointer at description codes; a Topology view may carry floor `layers`, its polygons a `layer`) — the `TopologyView` and `TopologyBackgroundImage` tables (single writer). A view is a name + ONE mode (`layer2` / `topology` / `rack`) + `shownTypes` + that mode's content: a Topology view's `background` (OSM centre + zoom + `layer` map / satellite — satelliteTileService — or an uploaded image) and `polygons` (location-group codes in display casing + points in background coordinates); a Rack view's `racks` and `rackPlacements` (devices and cable-management placeholders). Also commits the location-code rewrites a Topology view's polygon placements stage (rule 148). Node positions stay in `TopologyLayout` (topologyLayoutService) under the view's prefix.
+
+**Public API:** MAX_RACK_UNITS, MAX_VIEW_NAME_LEN, MAX_BACKGROUND_IMAGE_BYTES; types TopologyViewMode, TopologyPolygon, TopologyRack, TopologyRackPlacement, TopologyViewDto, ViewPatch, UpdateViewResult (+ `autoPlaced`), AutoPlaced, LocationCodeChange, LocationCodeResult, BackgroundImageDto; pure validators sanitizeViewName, sanitizeMode, sanitizeShownTypes, sanitizeBackground, sanitizePolygons, sanitizeRacks, sanitizeRackPlacements, sanitizeLocationCodeChanges; DB functions listViews (materialises the default through the private ensureDefaultView), createView (returns `{ view, autoPlaced }`) and updateView (both take the site's resolved devices for rule 150(a)'s fill), describeModeChangeLoss, deleteView, applyLocationCodeChanges, saveBackgroundImage, getBackgroundImage, sanitizeRegion, sanitizeWalls, sanitizeWallPlacements, sanitizeLayers, siteForAsset (an asset's Device Map site through utils/fortinetParentKey.ts) and regionViewsForSite (rule 150's prompt). The limits (racks, placements, polygons, views per site, image side, changes per commit) and defaults (shown types, view name, 42U) are module constants.
+
+**Cross-service deps:** `topologyLayoutService.deleteLayoutsForView` / `countTopologyPlacements`, `eventLogService.logEventsBatch` + `buildChanges` (the `asset.updated` Events of a location-code commit), `descriptionSyncService.syncDescriptionsOnSave` (pushes a rewritten description to the device, fire-and-forget), `utils/locationCodes.ts → setLocationCodes` / `locationCodeValueProblem`, `utils/imageMagic.ts → detectImageMagic`, `utils/imageDimensions.ts → readImageSize`, `utils/regionAutoPlace.ts` + `regionTreeService.loadRegionIndex` / `resolveLocation` (the region fill); reads/writes `prisma.topologyView`, `prisma.topologyBackgroundImage`, `prisma.asset` (site check; description write).
+
+**Used by:**
+- `src/api/routes/map.ts` — `GET /map/sites/:id/topology` embeds `listViews` as `views`; `GET|POST /map/sites/:id/topology/views`, `PUT|DELETE …/views/:viewId`, `GET …/views/:viewId/mode-change`, `POST …/views/:viewId/background`, `GET …/background/:imageId` (writes `deviceMap=write` + `scopeAssetParam`), and `POST …/topology/location-codes` (`assets=write` + the per-asset assets write scope). The route writes the `map.topology.view_*` / `background_uploaded` Events.
+- `public/js/map.js` — the view picker, the device-type toggles, the Topology and Rack canvases (frontend batches of the topology-views project).
+
+**Invariants:**
+- **One mode per view; a mode change resets** (rule 149): `updateView` deletes the view's layouts + images and clears background / polygons / rackPlacements in ONE transaction, defaults `shownTypes`, seeds a 42U rack for Rack; other mode-specific fields in that patch are ignored.
+- **The default view is materialised on first read** (`ensureDefaultView`); the partial unique index `topology_views_one_default` (migration only — Prisma cannot express it) makes a racing second insert fail and re-read. It cannot be deleted.
+- **`shownTypes` is the SHOWN set**, firewall always in it — a custom asset type added later starts hidden.
+- **Polygons store codes, not group keys** — group keys are lowercased client-side, so writing one back would lose the operator's casing (rule 148).
+- **A location-code commit is per asset**: `assets=write` at the route, each asset judged by `inScope`, results `updated` / `unchanged` / `refused`; updates run in one `$transaction`, then `logEventsBatch` and per-asset `syncDescriptionsOnSave`. A description that would pass 255 is refused, never truncated.
+- **Rack placements are validated whole** on every save: inside the rack, an asset at most once per view, no overlap on any face a placement occupies (half depth — the default when `fullDepth` is absent — is its own face; full depth both). A rack change that strands an existing placement is refused, never dropped.
+- **A region fills a view once, at the moment it is set** (rule 150(a), private `fillFromRegion`): on create with a region, a region change to a DIFFERENT place (`sameRegion`, tree-resolved), or a mode-change reset that keeps one; never on read, and never when the same patch carries placements. The route builds the device list (`siteDevicesPlaceable` over `buildSiteTopology`, resolved `location`) only for such a patch, so an ordinary Save costs nothing extra. The fill's output goes through `sanitizeRacks` / `sanitizeRackPlacements` / `sanitizeWalls` / `sanitizeWallPlacements` like any client save. No description is written.
+- **An upload never changes the view.** The client stages `background: {kind:"image", imageId}`; saving it deletes the view's other images (abandoned or replaced uploads), and an upload prunes unreferenced ones older than a day. Width / height come from the stored image, never the client.
+- Images are served only by the authenticated `GET …/background/:imageId` (private, immutable cache) — never the unauthenticated `/uploads` mount.
+
+**When changing this:**
+- A new mode needs `TOPOLOGY_VIEW_MODES`, `freshModeFields`, both route Zod enums, the client's mode dropdown, and what `describeModeChangeLoss` counts.
+- A new mode-specific field must be cleared by the mode-change reset (`freshModeFields`) and counted by `describeModeChangeLoss`, or a mode change silently carries it over.
+- Scale: `listViews` is one query per topology GET (≤100 views per site); the location-code commit is one findMany + one `$transaction` + one batched Event insert for up to 500 assets — keep it batched.
+- Tests: `tests/unit/topologyViewService.test.ts` (pure validators), `tests/unit/regionAutoPlace.test.ts` (the fill), `tests/unit/setLocationCodes.test.ts`, `tests/unit/imageDimensions.test.ts`, `tests/integration/topologyViews.test.ts` (default materialisation, CRUD + RBAC, rack overlap / shrink, background upload + authenticated GET, the mode-change reset, delete, the location-code commit).
+
+---
+
+## services/regionTreeService.ts
+
+**What it owns:** A Device Map site's REGION TREE (business rule 153) — the `RegionNode` table (single writer): areas > buildings > floors > rooms > racks > junction boxes, a name unique per site per level except a floor (unique within its parent). And the resolution of a device's written location codes through it, so a short code (`ra:rack1` alone) stands for its full chain.
+
+**Public API:** types RegionKind / RegionNodeDto / LocationStatus / RegionIndex / RegionRewrite; pure uniqueKeyFor, buildRegionIndex, chainOf, resolveLocation, remapLocationCodes, remapLocationKey, remapLayoutViewKey, remapPositionKeys, rewritesFor; DB listRegionNodes, loadRegionIndex, createRegionNode, buildFromDescriptions, updateRegionNode and mergeRegionNodes (both return `rewrites` and `carried`), deleteRegionNode, siteForAsset (the Device Map site of any asset: a FortiGate itself, a FortiSwitch / FortiAP through `utils/fortinetParentKey.ts`, anything else through its switch — the `switch-port` dependency edge, else a fleet-unique `lastSeenSwitch` name).
+
+**Cross-service deps:** `prisma.regionNode`; writes `prisma.topologyView` (`region`, `polygons`) and `prisma.topologyLayout` (`view`, `positions`, `savedPositions`) inside a tree edit's transaction; `utils/locationCodes.ts → locationCodeValueProblem`; `utils/fortinetParentKey.ts` (siteForAsset). Consumed by `topologyGraphService.buildSiteTopology` (resolves every payload location once per request: one query), `topologyViewService` (views resolved on read) and `alertDependencyPathService` (≤4 devices).
+
+**Used by:**
+- `src/services/topologyGraphService.ts` — the topology payload's `location` (resolved) / `locationWritten` / `locationStatus`, plus `regionCount` and `regionConflicts`.
+- `src/api/routes/map.ts` — `GET /map/sites/:id/regions`, `POST …/regions/build`, `POST …/regions`, `PUT …/regions/:nodeId`, `POST …/regions/:nodeId/merge`, `DELETE …/regions/:nodeId` (writes at deviceMap write + scopeAssetParam, Events `map.region.*`).
+- `src/services/topologyViewService.ts` — `listViews` / `regionViewsForSite` return each view's `region` and polygon codes resolved through the tree (storage untouched).
+- `src/services/alertDependencyPathService.ts` — the alert email's path diagram resolves each drawn device through its own site's tree.
+- `src/api/routes/map.ts` — also `POST …/regions/resolve` (descriptions → resolved codes, for the region prompt) and `GET /map/assets/:id/region-views` (siteForAsset).
+- `public/js/region-tree-panel.js` — the Location regions panel; `public/js/region-view-prompt.js` — the description-save prompt compares resolved chains.
+
+**Invariants:**
+- **Never writes a description.** A rename / move returns the descriptions naming the region's OLD place in a full chain, with the codes they'd get; the client commits them through `POST …/topology/location-codes` (rule 148) only after the operator confirms.
+- **Build only adds.** An existing node keeps its place even when a description disagrees — that description reads `conflict`.
+- **An empty tree is a no-op**: `resolveLocation` returns the written codes with status `asWritten`, so an install that never builds a tree reads exactly as before.
+- **Disagreement is shown, never resolved by moving**: `conflict` / `ambiguous` / `unknown` locations stay as written and are listed.
+- **A tree edit carries Polaris's own stored chains** (`carryStoredChains`, same transaction): view regions and polygon codes take the new chain in full; TopologyLayout view keys and `locgroup:` position keys are re-keyed in the topology-render.js key grammar (lowercased segments; a junction box gains a rack segment only inside a rack). A re-key never overwrites a key already saved, and a key that doesn't round-trip (a value with `|`) is left alone. A new place that stores a region name must be added here, or a rename orphans it.
+
+**When changing this:**
+- A new location level is the rule-15 tier lockstep (cross-cutting/location-codes.md) plus `REGION_KINDS` / `RANK` here and in region-tree-panel.js.
+- Scale: one `findMany` per topology GET (≤5000 nodes per site), resolution is O(devices × levels) in memory; build reads the site's payload once and creates in one `$transaction`.
+- Tests: `tests/unit/regionTree.test.ts` (resolution + the carry / rewrite helpers), `tests/unit/alertDependencyPathTree.test.ts`, `tests/unit/regionViewPrompt.test.ts`.
+
+---
+
+## services/satelliteTileService.ts
+
+**What it owns:** The OPTIONAL, operator-configured satellite basemap of the Device Map topology view's Topology canvas — `Setting("satelliteConfig")` `{enabled, urlTemplate, apiToken, attribution, maxNativeZoom}` (single writer) and the tile proxy that serves it. OpenStreetMap has no aerial imagery and the browser's basemap rule is one tile host (polaris-ui-canon → tech-stack-frontend.md), so the provider (Esri, Mapbox, an in-house ArcGIS server…) is the operator's choice under their own licence, and Polaris fetches its tiles server-side. Off by default.
+
+**Public API:** types SatelliteSettings, SatelliteSettingsView (the token replaced by `apiTokenSet`), SatelliteStatus, SatelliteSettingsPatch; pure parseSatelliteSettings, urlTemplateProblem, buildTileUrl, mergeSatelliteSettings; getSatelliteSettings, getSatelliteStatus, saveSatelliteSettings (Event `setting.satellite_updated`, never the key), getSatelliteTile (z/x/y → `{body, contentType}`), testSatelliteSettings (one tile with the unsaved values); `_resetSatelliteForTests`.
+
+**Cross-service deps:** `settingsStore.createSettingStore` (10 s TTL), `eventLogService.logEvent`, `utils/version.getAppVersion` (User-Agent); global `fetch`. The key is sealed at rest by the Setting.value hook in `src/db.ts` because `apiToken` is in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS` — no sealing code here.
+
+**Used by:**
+- `src/api/routes/serverSettings.ts` — `GET /server-settings/satellite` (the blanket read), `PUT /server-settings/satellite` and `POST /server-settings/satellite/test` (`serverSettingsSystem=write`).
+- `src/api/routes/map.ts` — `GET /map/satellite` (status only: available, attribution, deepest zoom) and `GET /map/satellite/:z/:x/:y` (the tile), both under the deviceMap read floor.
+- `public/js/topology-physical.js` (the Map | Satellite switch) and `public/js/server-settings-customization.js` (the Satellite imagery card).
+
+**Invariants:**
+- **The key never leaves the server**: no read returns it (`apiTokenSet` only), the Event records `apiTokenChanged`, and the browser only ever sees `/api/v1/map/satellite/...` — so the CSP `imgSrc` keeps its one tile host.
+- **A switched-on source must work**: https, `{z}` `{x}` `{y}` present, `{key}` only with a key, no user:password in the URL, an attribution (the provider's terms). A switched-off one may be left half filled in. An omitted `apiToken` keeps the stored key; `""` clears it.
+- **The fetch is constrained**: `redirect: "error"`, 8 s timeout, `image/*` only (never `image/svg+xml`), ≤4 MB, zoom ≤ `maxNativeZoom`, x/y in range. An internal host is allowed on purpose (an on-premises imagery server), which is why the setting is write-gated.
+- **A settings read failure means "not offered"**, never a broken map. A satellite choice saved on a view (`background.layer`) falls back to the map while satellite is off.
+
+**When changing this:**
+- The cache (64 MB / 4000 tiles, per process, keyed by a hash of template + key) is cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL plus its own cache — acceptable for imagery.
+- Scale: tiles are requested only by open Topology views on the satellite layer; one upstream fetch per tile per process (in-flight dedupe). At 2000 assets nothing here runs per asset.
+- Tests: `tests/unit/satelliteTileService.test.ts`.
 
 ---
 

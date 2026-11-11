@@ -29,6 +29,18 @@ describe("isValidViewKey", () => {
     expect(isValidViewKey("jb||shop|||305")).toBe(true);
   });
 
+  it("accepts saved-view keys (rule 147): topo, v:<uuid>, its floor views and its topo", () => {
+    const id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    expect(isValidViewKey("topo")).toBe(true);
+    expect(isValidViewKey(`v:${id}`)).toBe(true);
+    expect(isValidViewKey(`v:${id}|topo`)).toBe(true);
+    expect(isValidViewKey(`v:${id}|f|plant|mill|1`)).toBe(true);
+    // A saved view has no "flat" of its own — its base IS v:<id>.
+    expect(isValidViewKey(`v:${id}|flat`)).toBe(false);
+    expect(isValidViewKey("v:not-a-uuid")).toBe(false);
+    expect(isValidViewKey(`v:${id}|x|y`)).toBe(false);
+  });
+
   it("rejects non-strings, empty, oversize, control chars, and foreign prefixes", () => {
     expect(isValidViewKey(undefined)).toBe(false);
     expect(isValidViewKey(42)).toBe(false);

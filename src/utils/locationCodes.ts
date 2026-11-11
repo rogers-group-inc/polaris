@@ -2,11 +2,14 @@
  * src/utils/locationCodes.ts
  *
  * Physical-location codes embedded in FortiSwitch/FortiAP admin descriptions,
- * e.g. "a:Mine b:Shop f:2 r:North Closet jb:112-305":
+ * e.g. "a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305":
  *
- *   a: area    b: building    f: floor    r: room    jb: junction box
+ *   a: area    b: building    f: floor    r: room    ra: rack    jb: junction box
  *
- * Hierarchy (outermost first): area > building > floor > room > junction box.
+ * Hierarchy (outermost first): area > building > floor > room > rack >
+ * junction box. `ra:` was added 2026-11-10 (operator request); `r:` still
+ * means room — a key matches only when the colon follows it directly, so
+ * "ra:" is never read as "r:" with a value of "a:…".
  *
  * Parsed server-side only — the topology endpoint resolves each node's
  * effective codes (Asset.description → device description; Asset.notes is
@@ -26,24 +29,27 @@ export type LocationCodes = {
   building: string | null;
   floor: string | null;
   room: string | null;
+  rack: string | null;
   junctionBox: string | null;
 };
 
-const EMPTY: LocationCodes = { area: null, building: null, floor: null, room: null, junctionBox: null };
+const EMPTY: LocationCodes = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
 
 const KEY_TO_FIELD: Record<string, keyof LocationCodes> = {
   a: "area",
   b: "building",
   f: "floor",
   r: "room",
+  ra: "rack",
   jb: "junctionBox",
 };
 
-// Longest keys first ("jb" before "b") so a multi-letter key is never
-// shadowed by a single-letter prefix. Matches only at ^ or after whitespace.
-const TOKEN_RE = /(?:^|\s)(jb|a|b|f|r):/gi;
+// Longest keys first ("jb" before "b", "ra" before "r") so a multi-letter key
+// is never shadowed by a single-letter prefix. Matches only at ^ or after
+// whitespace.
+const TOKEN_RE = /(?:^|\s)(jb|ra|a|b|f|r):/gi;
 
-/** Parse a:/b:/f:/r:/jb: codes out of a free-text description. */
+/** Parse a:/b:/f:/r:/ra:/jb: codes out of a free-text description. */
 export function parseLocationCodes(raw: string | null | undefined): LocationCodes {
   if (!raw || typeof raw !== "string") return { ...EMPTY };
   const out: LocationCodes = { ...EMPTY };
@@ -91,7 +97,61 @@ export function resolveEffectiveLocation(sources: {
 /** True when the resolved codes carry at least one value. */
 export function hasLocationCodes(codes: LocationCodes): boolean {
   return codes.area !== null || codes.building !== null || codes.floor !== null ||
-    codes.room !== null || codes.junctionBox !== null;
+    codes.room !== null || codes.rack !== null || codes.junctionBox !== null;
+}
+
+/** Output order of the codes, outermost first. */
+const CODE_ORDER: Array<[keyof LocationCodes, string]> = [
+  ["area", "a"],
+  ["building", "b"],
+  ["floor", "f"],
+  ["room", "r"],
+  ["rack", "ra"],
+  ["junctionBox", "jb"],
+];
+
+/** Longest code value setLocationCodes accepts. */
+export const MAX_LOCATION_CODE_VALUE_LEN = 64;
+
+/**
+ * Why a code value cannot be written, or null when it can. A value must be
+ * non-empty after trimming, short, free of control characters, and must not
+ * itself contain a token (" b:…"), which would re-parse as a second code.
+ */
+export function locationCodeValueProblem(value: string): string | null {
+  const v = value.trim();
+  if (!v) return "is empty";
+  if (v.length > MAX_LOCATION_CODE_VALUE_LEN) return `is longer than ${MAX_LOCATION_CODE_VALUE_LEN} characters`;
+  if (/[\u0000-\u001f\u007f]/.test(v)) return "contains a control character";
+  if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(v)) return "contains another location code";
+  return null;
+}
+
+/**
+ * Rewrite the a:/b:/f:/r:/ra:/jb: codes of a description (business rule 148):
+ * the free text BEFORE the first code is kept, every existing code is
+ * dropped, and `codes` is appended in a: b: f: r: ra: jb: order. Free text must
+ * stay in front because a code's value runs to the next code or the end of
+ * the string — text after the last code would be read as part of its value.
+ * A null/empty field writes no code. Throws on a value
+ * locationCodeValueProblem rejects; the caller owns the 255-character cap.
+ */
+export function setLocationCodes(description: string | null | undefined, codes: Partial<LocationCodes>): string {
+  const raw = typeof description === "string" ? description : "";
+  TOKEN_RE.lastIndex = 0;
+  const first = TOKEN_RE.exec(raw);
+  TOKEN_RE.lastIndex = 0;
+  const prefix = (first ? raw.slice(0, first.index) : raw).trim();
+  const parts: string[] = [];
+  if (prefix) parts.push(prefix);
+  for (const [field, key] of CODE_ORDER) {
+    const value = codes[field];
+    if (value == null || String(value).trim() === "") continue;
+    const problem = locationCodeValueProblem(String(value));
+    if (problem) throw new Error(`${key}: value ${problem}`);
+    parts.push(`${key}:${String(value).trim().replace(/\s+/g, " ")}`);
+  }
+  return parts.join(" ");
 }
 
 /**

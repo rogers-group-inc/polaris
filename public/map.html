@@ -43,10 +43,19 @@
   </div>
 
   <!-- Topology modal — populated by map.js on marker click -->
-  <div class="modal-overlay" id="topology-overlay" aria-hidden="true">
+  <div class="modal-overlay" id="topology-overlay" aria-hidden="true" data-menu-glass="map">
     <div class="modal modal-xl" role="dialog" aria-modal="true" aria-labelledby="topology-title">
       <div class="modal-header">
         <h3 id="topology-title">Site topology</h3>
+        <!-- Saved views (business rule 147): the picker opens the view menu
+             (switch, New view, View settings, Delete view); the pill names
+             the view's one mode. map.js → openTopologyViewMenu. -->
+        <button type="button" class="btn btn-secondary btn-sm topology-view-picker" id="topology-view-picker" aria-haspopup="menu" hidden>
+          <span class="topology-view-picker-label">View</span>
+          <strong id="topology-view-name">Base view</strong>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <span class="badge badge-readonly" id="topology-view-mode" hidden>Layer 2 view</span>
         <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end">
           <div class="topology-search-wrap" style="position:relative;flex:0 1 320px;max-width:320px">
             <input
@@ -146,6 +155,11 @@
        for it when a click comes first. Only what this page's own code reads
        stays: temp-unit.js (topology-render.js reads PolarisTempUnit). -->
   <script src="/js/temp-unit.js"></script>
+  <script src="/js/topology-device-list.js"></script>
+  <script src="/js/topology-physical.js"></script>
+  <script src="/js/topology-rack.js"></script>
+  <script src="/js/topology-wall.js"></script>
+  <script src="/js/region-tree-panel.js"></script>
   <script src="/js/topology-render.js"></script>
   <script src="/js/topology-edge-editor.js"></script>
   <script src="/js/graph-export.js"></script>
