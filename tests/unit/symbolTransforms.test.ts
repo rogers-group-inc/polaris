@@ -94,6 +94,17 @@ describe("the conversions", () => {
     expect(applyTransform(-55, "tenths_to_units")).toBe(-5.5);
   });
 
+  it("hundredths_to_units reads a DISPLAY-HINT d-2 integer as two decimal places", () => {
+    // PowerNet-MIB rPDU2DeviceStatusPower / rPDU2PhaseStatusPower: hundredths of a kW.
+    expect(applyTransform(123, "hundredths_to_units")).toBe(1.23);
+    expect(applyTransform(0, "hundredths_to_units")).toBe(0);
+  });
+
+  it("offers hundredths_to_units on widgets only, never on a metric row", () => {
+    expect(isTransformKind("hundredths_to_units")).toBe(true);
+    expect(metricRowTransforms("temperature", "scalar")).not.toContain("hundredths_to_units");
+  });
+
   it("has no Celsius↔Fahrenheit transform — temperature converts at render only", () => {
     // Polaris stores and alerts in Celsius; converting before storage would
     // re-point every temperature automation's threshold.

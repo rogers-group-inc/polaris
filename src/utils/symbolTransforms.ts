@@ -58,7 +58,8 @@ export type TransformKind =
   | "ratio_to_percent"
   | "percent_to_ratio"
   | "signed_to_unsigned"
-  | "tenths_to_units";
+  | "tenths_to_units"
+  | "hundredths_to_units";
 
 export const TRANSFORM_KINDS: TransformKind[] = [
   "bytes_to_mb",
@@ -69,6 +70,7 @@ export const TRANSFORM_KINDS: TransformKind[] = [
   "percent_to_ratio",
   "signed_to_unsigned",
   "tenths_to_units",
+  "hundredths_to_units",
 ];
 
 export const TRANSFORM_LABELS: Record<TransformKind, string> = {
@@ -80,6 +82,7 @@ export const TRANSFORM_LABELS: Record<TransformKind, string> = {
   percent_to_ratio:      "Percent (0..100) → Ratio (0..1)",
   signed_to_unsigned:    "Signed Int32 → Unsigned (negative values shifted by 2³²)",
   tenths_to_units:       "Tenths → Units (DISPLAY-HINT d-1)",
+  hundredths_to_units:   "Hundredths → Units (DISPLAY-HINT d-2)",
 };
 
 export function isTransformKind(value: unknown): value is TransformKind {
@@ -126,6 +129,10 @@ export function applyTransform(value: number | null | undefined, kind: Transform
     // place, so 315 means 31.5. Common on vendor sensor objects; MikroTik's
     // Temperature / Power / Voltage textual conventions all use it.
     case "tenths_to_units":       return value / 10;
+    // DISPLAY-HINT "d-2" — two implied decimals. APC's rPDU2 power objects
+    // report hundredths of a kilowatt (123 = 1.23 kW). Widgets only: no
+    // metric row offers it (METRIC_ROW_TRANSFORMS).
+    case "hundredths_to_units":   return value / 100;
     default:                      return value;
   }
 }
