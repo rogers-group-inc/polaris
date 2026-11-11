@@ -981,6 +981,25 @@ choice appears only for roles that can read networks, and only when a network
 actually contains the address. An interface with no IPv4 address looks up the
 network of its IPv6 address instead.
 
+**Error charts and automation bands.** The history panel's **Errors per
+second** chart draws in and out errors as stacked bars, in errors per second,
+the unit the **Interface in-error rate** and **out-error rate** automations
+compare. On a fibre-channel port an **FC errors per minute** chart follows it:
+CRC errors and invalid transmission words as bars, with a diamond above the
+plot in each interval where a link failure, loss of sync or loss of signal
+occurred. When an automation on this port uses one of these metrics, each of
+its severity bands is a dashed line with its threshold labelled, and the bars
+take the band's colour (amber for Warning, red for Critical, and so on) while
+they are inside it, as the CPU, memory and sensor charts do. The chart's scale
+always reaches the lowest band, so a quiet port still shows how far it is from
+alerting. Only automations that would read this port draw a band: one filtered
+to other interface names, or to a port tag this port does not carry, does not.
+
+An alert email for one of these automations leads with the same port's chart
+for the last hour, with the automation's threshold dashed, above the CPU and
+memory charts. On a fibre-channel alert it also names what is logged into the
+port: the device, its WWN, VSAN and HBA, and how Polaris matched it.
+
 **An interface's IPv6 address has its own column.** The **IPv6** column, beside
 **IP**, appears while IPv6 is on for the install and at least one interface on the asset reports an IPv6
 address, and it sorts and filters like **IP**. Each interface shows its first

@@ -1035,6 +1035,8 @@ const api = {
       if (opts.sensorName)  qs.push("sensorName="  + encodeURIComponent(opts.sensorName));
       if (opts.sensorClass) qs.push("sensorClass=" + encodeURIComponent(opts.sensorClass));
       if (opts.checkId)     qs.push("checkId="     + encodeURIComponent(opts.checkId));
+      if (opts.ifName)      qs.push("ifName="      + encodeURIComponent(opts.ifName));
+      if (opts.alias)       qs.push("alias="       + encodeURIComponent(opts.alias));
       return request("GET", `/assets/${id}/metric-thresholds?` + qs.join("&"));
     },
     // Agent-run path checks this host runs (+ latest result each).

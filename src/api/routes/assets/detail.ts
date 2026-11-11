@@ -85,7 +85,10 @@ router.get("/:id/metric-thresholds", requirePermission("assets", "read"), async 
     const sensorClass = req.query.sensorClass ? String(req.query.sensorClass) : undefined;
     // Path charts are one check's series (path* metrics).
     const checkId = req.query.checkId ? String(req.query.checkId) : undefined;
-    const dimension = sensorName || sensorClass || checkId ? { sensorName, sensorClass, checkId } : undefined;
+    // Interface charts are one port's series (if* / fc* metrics, rule 159a).
+    const ifName = req.query.ifName ? String(req.query.ifName).slice(0, 255) : undefined;
+    const alias = req.query.alias ? String(req.query.alias).slice(0, 255) : undefined;
+    const dimension = sensorName || sensorClass || checkId || ifName ? { sensorName, sensorClass, checkId, ifName, alias } : undefined;
     res.json({ metric, tiers: await getMetricSeverityTiers(id, metric, dimension) });
   } catch (err) {
     next(err);

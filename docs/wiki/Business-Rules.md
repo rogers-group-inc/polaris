@@ -3368,6 +3368,12 @@ negative rate.
 The Interfaces table also shows each FC port's own **WWN**, what is **logged in** to it, and its
 **FC errors** total.
 
+The interface panel charts errors in the same units as the automations: **Errors per second**
+on every port, and **FC errors per minute** on an FC port. Each severity band of an automation
+that reads the port is drawn as a dashed line, and the bars take that band's colour while they
+are inside it. An alert email for one of these automations leads with the port's chart for the
+last hour; on an FC alert it also names what is logged into the port.
+
 ### Rule 160
 
 **Deleting an integration keeps what it discovered, and detaches it.** The assets and
