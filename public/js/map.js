@@ -1678,8 +1678,7 @@
   // graph says so rather than drawing a Layer 2 map under a Topology name.
   var _modeCanvas = null; // { mode, instance }
   function _modeCanvasModule(mode) {
-    return mode === "topology" ? window.PolarisTopologyPhysical : mode === "rack" ? window.PolarisTopologyRack
-      : mode === "wall" ? window.PolarisTopologyWall : null;
+    return mode === "topology" ? window.PolarisTopologyPhysical : mode === "room" ? window.PolarisTopologyRoom : null;
   }
   function _teardownModeCanvas() {
     if (!_modeCanvas) return;
@@ -1860,11 +1859,11 @@
         '</td><td class="mono">' + escapeHtml(_codesText(_codesAfter(c))) + '</td></tr>';
     }).join("");
     var body =
-      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, on a floor layer, or on a view that stands for a region, so their location codes change. ' +
+      '<p style="margin:0 0 10px">These devices were placed inside a group polygon, on a floor layer, or in a room’s rack or junction box, so their location codes change. ' +
         'Only the levels the polygon, floor or view sets change; the free text and every other code in each description stay as they are.</p>' +
       '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>' +
-      '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. Devices placed outside every polygon keep their codes.</p>' +
+      '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. A device placed outside every polygon, or already in its rack or junction box, keeps its codes.</p>' +
       (canAssets || typeof calloutHTML !== "function" ? '' : calloutHTML("warning", "Descriptions will be skipped",
         escapeHtml("You have Device Map write but not Assets write: the view will save, the " + n + " description change" + (n === 1 ? "" : "s") + " will be skipped.")));
     return new Promise(function (resolve) {
@@ -1928,7 +1927,7 @@
   // working per view without knowing views exist.
   var VIEW_PREF_PREFIX = "polaris.topology.view:";
   var DEFAULT_SHOWN_TYPES = ["firewall", "router", "switch", "access_point"];
-  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", rack: "Rack", wall: "Wall" };
+  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", room: "Room" };
   var DEVICE_TYPE_LABELS = {
     firewall: "Firewalls", router: "Routers", switch: "Switches", access_point: "Access points",
     server: "Servers", workstation: "Workstations", printer: "Printers", other: "Other",
@@ -2134,14 +2133,14 @@
     renderTopologyInfo(topoState.data);
   }
   function _modeSelectHtml(id, selected) {
-    return '<select id="' + id + '">' + ["layer2", "topology", "rack", "wall"].map(function (m) {
+    return '<select id="' + id + '">' + ["layer2", "topology", "room"].map(function (m) {
       return '<option value="' + m + '"' + (m === selected ? " selected" : "") + '>' + VIEW_MODE_LABELS[m] + '</option>';
     }).join("") + '</select>';
   }
   var MODE_HINT =
     "A view has one mode. Layer 2 lays the devices out automatically. Topology starts empty: choose a " +
-    "map or floor-plan background, draw group polygons and drag devices onto it. Rack starts with one rack, " +
-    "Wall with one wall (a backboard, pegboard or junction box backplate) to mount devices on.";
+    "map or floor-plan background, draw area, building and floor polygons and drag devices onto it. Room is one " +
+    "room's racks and junction boxes side by side (a wall is just a big junction box).";
 
   // ── Regions (rule 150): a Rack or Wall view may stand for one ─────────────
   // A region is the code chain devices carry in their descriptions; the list
@@ -2165,27 +2164,31 @@
     if (!codes) return "";
     return REGION_FIELDS.map(function (f) { return String(codes[f[0]] || "").trim().toLowerCase(); }).join("|");
   }
+  // Rule 156: a Room view stands for a room, so the picker offers the rooms
+  // the site's descriptions name (each cut to its room chain).
+  var ROOM_FIELDS = REGION_FIELDS.slice(0, 4);
   function _siteRegions() {
     var P = window.PolarisTopologyPhysical;
-    return P && P._groupsFromData && topoState.data ? P._groupsFromData(topoState.data) : [];
+    var all = P && P._groupsFromData && topoState.data ? P._groupsFromData(topoState.data) : [];
+    return all.filter(function (r) { return r.room && !r.rack && !r.junctionBox; });
   }
-  function _modeTakesRegion(mode) { return mode === "rack" || mode === "wall"; }
+  function _modeTakesRegion(mode) { return mode === "room"; }
   function _regionPickerHtml(prefix, current) {
     var regions = _siteRegions();
     var curKey = _regionKey(current);
     var known = regions.some(function (r) { return _regionKey(r) === curKey; });
-    var opts = '<option value="">No region</option>' + regions.map(function (r, i) {
+    var opts = '<option value="">No room</option>' + regions.map(function (r, i) {
       return '<option value="' + i + '"' + (curKey && _regionKey(r) === curKey ? " selected" : "") + '>' +
         escapeHtml(_regionName(r) + " — " + _regionLabel(r)) + '</option>';
-    }).join("") + '<option value="custom"' + (current && !known ? " selected" : "") + '>Custom region…</option>';
-    var custom = REGION_FIELDS.map(function (f) {
+    }).join("") + '<option value="custom"' + (current && !known ? " selected" : "") + '>Another room…</option>';
+    var custom = ROOM_FIELDS.map(function (f) {
       return '<label style="display:flex;flex-direction:column;gap:2px;font-size:0.75rem">' + f[2] +
         '<input type="text" data-region-field="' + f[0] + '" maxlength="64" value="' + escapeHtml((current && current[f[0]]) || "") + '"></label>';
     }).join("");
-    return '<div class="form-group" data-region-picker="' + prefix + '"><label for="' + prefix + '-region">Location region</label>' +
+    return '<div class="form-group" data-region-picker="' + prefix + '"><label for="' + prefix + '-region">Room</label>' +
       '<select id="' + prefix + '-region">' + opts + '</select>' +
-      '<div data-region-custom style="display:' + (current && !known ? "grid" : "none") + ';grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:6px">' + custom + '</div>' +
-      '<div class="hint">The area, building, floor, room, rack or junction box this view is for. Placing a device on it adds that region’s codes to its description when you save (you see the change first). Choosing one never changes a description by itself.</div></div>';
+      '<div data-region-custom style="display:' + (current && !known ? "grid" : "none") + ';grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px">' + custom + '</div>' +
+      '<div class="hint">The room this view is for. A device placed in one of its racks or junction boxes takes the room’s codes plus that rack or box when you save (you see the change first). Choosing a room never changes a description by itself.</div></div>';
   }
   function _wireRegionPicker(root, prefix) {
     var sel = root.querySelector("#" + prefix + "-region");
@@ -2219,13 +2222,11 @@
       '<div class="form-group"><label for="topo-nv-name">Name</label><input id="topo-nv-name" type="text" maxlength="80" autocomplete="off"></div>' +
       '<div class="form-group"><label for="topo-nv-mode">Mode</label>' + _modeSelectHtml("topo-nv-mode", "layer2") +
         '<div class="hint">' + escapeHtml(MODE_HINT) + '</div></div>' +
-      '<div class="form-group" data-nv-only="wall" hidden><label>Wall size</label>' +
-        '<div style="display:flex;align-items:center;gap:8px"><input id="topo-nv-ww" type="number" min="4" max="600" value="96" style="width:6rem" aria-label="Width (in)">' +
-        '<span>×</span><input id="topo-nv-wh" type="number" min="4" max="600" value="48" style="width:6rem" aria-label="Height (in)"><span>in</span></div>' +
-        '<div class="hint">A 4 × 8 ft sheet is 96 × 48; a junction box backplate perhaps 24 × 30. More walls can be added in the view.</div></div>' +
-      '<div class="form-group" data-nv-only="rack" hidden><label for="topo-nv-ru">Rack size (U)</label>' +
-        '<input id="topo-nv-ru" type="number" min="1" max="60" value="42" style="width:6rem"></div>' +
       '<div data-nv-only="region" hidden>' + _regionPickerHtml("topo-nv", null) + '</div>' +
+      '<div class="form-group" data-nv-only="room" hidden><label for="topo-nv-start">Start with</label>' +
+        '<select id="topo-nv-start"><option value="fill">The room’s racks and junction boxes</option>' +
+        '<option value="rack">One 42U rack</option><option value="empty">Nothing</option></select>' +
+        '<div class="hint">The room’s racks and junction boxes: one rack per <code>ra:</code> and one junction box per <code>jb:</code> the room’s descriptions already name, with their devices placed.</div></div>' +
       '<div class="form-group"><label for="topo-nv-types">Start device types from</label>' +
         '<select id="topo-nv-types"><option value="current">This view (' + escapeHtml((_currentView() || {}).name || "Base view") + ')</option>' +
         '<option value="defaults">Defaults (firewalls, routers, switches, access points)</option></select></div>';
@@ -2237,8 +2238,7 @@
     var modeEl = dlg.overlay.querySelector("#topo-nv-mode");
     function paintModeFields() {
       var md = modeEl.value;
-      dlg.overlay.querySelector('[data-nv-only="wall"]').hidden = md !== "wall";
-      dlg.overlay.querySelector('[data-nv-only="rack"]').hidden = md !== "rack";
+      dlg.overlay.querySelector('[data-nv-only="room"]').hidden = md !== "room";
       dlg.overlay.querySelector('[data-nv-only="region"]').hidden = !_modeTakesRegion(md);
     }
     modeEl.addEventListener("change", paintModeFields);
@@ -2254,11 +2254,11 @@
       try {
         var body = { name: name, mode: mode };
         if (fromCurrent) body.shownTypes = _effectiveShownTypes();
-        if (mode === "wall") {
-          body.wallWidth = Number(dlg.overlay.querySelector("#topo-nv-ww").value);
-          body.wallHeight = Number(dlg.overlay.querySelector("#topo-nv-wh").value);
+        if (mode === "room") {
+          var start = dlg.overlay.querySelector("#topo-nv-start").value;
+          if (start === "rack") body.rackUnits = 42;
+          body.fill = start === "fill";
         }
-        if (mode === "rack") body.rackUnits = Number(dlg.overlay.querySelector("#topo-nv-ru").value);
         if (_modeTakesRegion(mode)) {
           var region = _collectRegion(dlg.overlay, "topo-nv");
           if (region) body.region = region;
@@ -2381,10 +2381,10 @@
       if (loss.placedDevices) items.push(loss.placedDevices + " placed device" + (loss.placedDevices === 1 ? "" : "s"));
       if (loss.polygons) items.push(loss.polygons + " group polygon" + (loss.polygons === 1 ? "" : "s"));
       if (loss.hasImage) items.push("the uploaded background image");
-      if (loss.racks && view.mode === "rack") items.push(loss.racks + " rack" + (loss.racks === 1 ? "" : "s"));
+      if (loss.racks && view.mode === "room") items.push(loss.racks + " rack" + (loss.racks === 1 ? "" : "s"));
       if (loss.rackPlacements) items.push(loss.rackPlacements + " racked item" + (loss.rackPlacements === 1 ? "" : "s"));
-      if (loss.walls && view.mode === "wall") items.push(loss.walls + " wall" + (loss.walls === 1 ? "" : "s"));
-      if (loss.wallPlacements) items.push(loss.wallPlacements + " mounted item" + (loss.wallPlacements === 1 ? "" : "s"));
+      if (loss.walls && view.mode === "room") items.push(loss.walls + " junction box" + (loss.walls === 1 ? "" : "es"));
+      if (loss.wallPlacements) items.push(loss.wallPlacements + " item" + (loss.wallPlacements === 1 ? "" : "s") + " in junction boxes");
       if (loss.layers) items.push(loss.layers + " floor layer" + (loss.layers === 1 ? "" : "s"));
     }
     if (view.mode === "layer2") {
@@ -2396,7 +2396,7 @@
     var body =
       '<p style="margin:0 0 10px">Changing the mode resets <strong>' + escapeHtml(view.name) + '</strong> to a new ' + escapeHtml(target) + ' view. This removes, for everyone:</p>' +
       '<ul style="margin:0 0 10px 18px;padding:0;line-height:1.7">' + items.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join("") + '</ul>' +
-      '<p class="hint" style="margin:0">It starts again with the default device types' + (mode === "rack" ? " and one empty 42U rack" : mode === "wall" ? " and one empty 96 × 48 in wall" : "") +
+      '<p class="hint" style="margin:0">It starts again with the default device types' + (mode === "room" ? " and no racks or junction boxes" : "") +
       '. The view’s name stays. Location codes already written to asset descriptions are not changed. This can’t be undone.</p>';
     return new Promise(function (resolve) {
       var settled = false;
@@ -2957,49 +2957,27 @@
         ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
       ],
     },
-    wall: {
+    room: {
       view: [
-        ["Scroll", "Move along the walls"],
-        ["Click a mounted device", "Show it in the details pane"],
-        ["Double-click a device", "Open its asset details"],
-        ["Double-click a linked rack", "Open its Rack view"],
-        ["Zoom buttons (right)", "Draw the walls larger or smaller"],
-      ],
-      edit: [
-        ["Drag a device from the details pane", "Mount it — it lands as a 12 × 8 in shape at the pointer, or the nearest free space"],
-        ["Drag Cable management / Third party", "Add a placeholder or a named box (any number)"],
-        ["Drag Rack", "Asks its size in U and which Rack view it opens, then mounts it"],
-        ["Drag a mounted item", "Move it, an inch at a time; it can't overlap another"],
-        ["Drag a corner", "Reshape the item"],
-        ["Drag the + on an edge", "Add a corner there"],
-        ["Right-click a corner", "Remove it"],
-        ["Right-click an item", "Open, rename, change a rack's size, or remove it"],
-        ["Click an item, then Delete", "Take it off the wall"],
-        ["Double-click a wall's name / size", "Rename it / change its size (in)"],
-        ["× (wall header)", "Delete that wall — every wall after the first has one"],
-        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
-      ],
-    },
-    rack: {
-      view: [
-        ["Scroll", "Move along the racks"],
+        ["Scroll", "Move along the room's racks and junction boxes"],
+        ["Click a placed device", "Show it in the details pane"],
         ["Double-click a device", "Open its asset details"],
         ["Front / Back (rack header)", "Turn the rack round to show its other face"],
+        ["Zoom buttons (right)", "Draw the junction boxes larger or smaller"],
       ],
       edit: [
-        ["Drag a device from the details pane", "Rack it — it lands as 1U at the U under the pointer"],
-        ["Drag Cable management", "Add a cable-management placeholder (any number)"],
-        ["Drag Third party", "Add a box for equipment Polaris does not monitor; double-click it to name it"],
+        ["Drag a device from the details pane", "Rack it (1U at the pointer) or put it in a junction box (12 × 8 in) — a device is in one place only"],
+        ["Drag Cable management / Third party", "Add a placeholder or a named box, in a rack or a junction box (any number)"],
         ["Drag a racked item", "Move it within a rack or to another rack, a U at a time"],
-        ["Drag an item's top or bottom edge", "Change its height, a U at a time"],
+        ["Drag an item's top or bottom edge (rack)", "Change its height, a U at a time"],
         ["Right-click a racked item", "Move it to the other face, make it half or full depth, or remove it"],
-        ["Click a racked device, then Delete", "Take it out of the rack — it goes back to the Device List"],
-        ["Front / Back (rack header)", "Turn the rack round to show its other face"],
+        ["Drag an item in a junction box", "Move it, an inch at a time; it can't overlap another"],
+        ["Drag a corner / the + on an edge", "Reshape the item / add a corner there"],
+        ["Click an item, then Delete", "Take it out — a device goes back to the Device List"],
         ["Drag a rack by its header", "Move it among the racks"],
-        ["Double-click a rack's name", "Rename it"],
-        ["Double-click a rack's 42U", "Change its size (U)"],
-        ["× (rack header)", "Delete that rack — every rack after the first has one"],
-        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
+        ["Double-click a name / size", "Rename it / change its size (U for a rack, inches for a junction box)"],
+        ["× (header)", "Delete that rack or junction box"],
+        ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo, across racks and junction boxes"],
       ],
     },
   };

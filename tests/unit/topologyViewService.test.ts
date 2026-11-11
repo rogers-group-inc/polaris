@@ -45,8 +45,10 @@ describe("view name / mode / shown types", () => {
     expect(status(() => sanitizeViewName("x".repeat(MAX_VIEW_NAME_LEN + 1)))).toBe(400);
   });
 
-  it("accepts the three modes only", () => {
-    expect(sanitizeMode("rack")).toBe("rack");
+  it("accepts the three modes only (Rack and Wall became Room, rule 156)", () => {
+    expect(sanitizeMode("room")).toBe("room");
+    expect(status(() => sanitizeMode("rack"))).toBe(400);
+    expect(status(() => sanitizeMode("wall"))).toBe(400);
     expect(status(() => sanitizeMode("map"))).toBe(400);
   });
 
@@ -199,15 +201,15 @@ describe("wall views (rule 151)", () => {
     ], walls))).toBe(400);
   });
 
-  it("keeps corners on the wall, an asset once, and a rack's size", () => {
+  it("keeps corners on the junction box, an asset once, and never a rack (rule 156)", () => {
     expect(status(() => sanitizeWallPlacements([{ id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(90, 0, 12, 8) }], walls))).toBe(400);
     expect(status(() => sanitizeWallPlacements([
       { id: "a", kind: "asset", assetId: A1, wallId: "w1", points: rect(0, 0, 4, 4) },
       { id: "b", kind: "asset", assetId: A1, wallId: "w1", points: rect(10, 0, 4, 4) },
     ], walls))).toBe(400);
-    const [r] = sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", units: 12, label: " Wall rack ", points: rect(0, 0, 24, 24) }], walls);
-    expect(r).toMatchObject({ kind: "rack", units: 12, label: "Wall rack", linkedViewId: null, assetId: null });
-    expect(status(() => sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", points: rect(0, 0, 24, 24) }], walls))).toBe(400);
+    expect(status(() => sanitizeWallPlacements([{ id: "r", kind: "rack", wallId: "w1", units: 12, label: "Wall rack", points: rect(0, 0, 24, 24) }], walls))).toBe(400);
+    const [t] = sanitizeWallPlacements([{ id: "t", kind: "thirdParty", wallId: "w1", label: " Carrier NID ", points: rect(0, 0, 12, 8) }], walls);
+    expect(t).toMatchObject({ kind: "thirdParty", label: "Carrier NID", units: null, linkedViewId: null, assetId: null });
   });
 
   it("refuses a shape with no area", () => {
@@ -231,9 +233,10 @@ describe("floor layers and regions (rules 150, 152)", () => {
     expect(p.layer).toBe(0);
   });
 
-  it("a region is a code chain or null", () => {
+  it("a region is a room chain or null (a rack or junction box is the Room view's own)", () => {
     expect(sanitizeRegion(null)).toBeNull();
-    expect(sanitizeRegion({ building: "Plant", room: "MDF", junctionBox: "7" })).toMatchObject({ building: "Plant", room: "MDF", junctionBox: "7", rack: null });
+    expect(sanitizeRegion({ building: "Plant", room: "MDF", junctionBox: "7" })).toMatchObject({ building: "Plant", room: "MDF", junctionBox: null, rack: null });
+    expect(sanitizeRegion({ rack: "R1" })).toBeNull();
     expect(status(() => sanitizeRegion({}))).toBe(400);
   });
 });

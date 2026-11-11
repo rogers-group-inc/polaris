@@ -31,20 +31,22 @@ describe("region-view prompt", () => {
     }
   });
 
-  it("asks about room, rack and junction box chains only", () => {
+  it("asks about the room chain only (rule 156: racks and junction boxes live in their room's view)", () => {
     const chains = P._askableChains(P._parseCodes("a:Mine b:Plant f:2 r:MDF ra:R2 jb:7"));
-    expect(chains.map((c) => c.level)).toEqual(["room", "rack", "junctionBox"]);
+    expect(chains.map((c) => c.level)).toEqual(["room"]);
     expect(chains[0].codes).toMatchObject({ area: "Mine", building: "Plant", floor: "2", room: "MDF", rack: null });
     expect(P._askableChains(P._parseCodes("a:Mine b:Plant f:2"))).toEqual([]);
   });
 
   it("skips regions the old description had, ones a view stands for, and ones the operator skipped", () => {
     const after = "b:Plant r:MDF ra:R2 jb:7";
-    expect(P._newRegions("b:Plant r:MDF", after, [], {}).map((r) => r.level)).toEqual(["rack", "junctionBox"]);
-    const view = { region: { area: null, building: "Plant", floor: null, room: "mdf", rack: "R2", junctionBox: null } };
-    expect(P._newRegions("", after, [view], {}).map((r) => r.level)).toEqual(["room", "junctionBox"]);
-    const skipKey = P._chainKey({ building: "Plant", room: "MDF", rack: "R2", junctionBox: "7" });
-    expect(P._newRegions("", after, [view], { [skipKey]: true }).map((r) => r.level)).toEqual(["room"]);
+    // The room was already named: a new rack or box in it asks nothing.
+    expect(P._newRegions("b:Plant r:MDF", after, [], {})).toEqual([]);
+    expect(P._newRegions("", after, [], {}).map((r) => r.level)).toEqual(["room"]);
+    const view = { region: { area: null, building: "Plant", floor: null, room: "mdf", rack: null, junctionBox: null } };
+    expect(P._newRegions("", after, [view], {})).toEqual([]);
+    const skipKey = P._chainKey({ building: "Plant", room: "MDF" });
+    expect(P._newRegions("", after, [], { [skipKey]: true })).toEqual([]);
   });
 
   it("compares chains resolved through the region tree, so a short code is the region it names", () => {

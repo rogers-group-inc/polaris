@@ -134,9 +134,6 @@
         html += '<button type="button" class="topo-rack-add btn btn-secondary" data-rack-add>' +
           '<span class="topo-rack-add-plus" aria-hidden="true">+</span>Add rack<span class="hint" style="margin:0">' + DEFAULT_UNITS + 'U</span></button>';
       }
-      if (!state.racks.length && !state.editing) {
-        html = '<div class="empty-state topology-mode-empty">No racks yet. Edit the map to add one.</div>';
-      }
       strip.innerHTML = html;
     }
     function rackHtml(r) {
@@ -157,7 +154,7 @@
           // The face button names the face on show; a click turns the rack round.
           '<button type="button" class="btn btn-secondary btn-sm topo-rack-face" data-rack-rotate="' + esc(r.id) + '" title="Show the ' +
             (r.face === "rear" ? "front" : "back") + ' of the rack">' + faceWord(r.face) + '</button>' +
-          (ed && !first ? '<button type="button" class="btn-icon topo-rack-delete" data-rack-delete="' + esc(r.id) + '" title="Delete this rack" aria-label="Delete ' + esc(r.name) + '">×</button>' : '') +
+          (ed ? '<button type="button" class="btn-icon topo-rack-delete" data-rack-delete="' + esc(r.id) + '" title="Delete this rack" aria-label="Delete ' + esc(r.name) + '">×</button>' : '') +
         '</header>' +
         '<div class="topo-rack-body">' +
           '<div class="topo-rack-rail" aria-hidden="true">' + rail + '</div>' +
@@ -234,6 +231,9 @@
         ctx.toast("That device is already racked in this view", "error");
         return;
       }
+      // A device is in one place in a room: a rack or a junction box.
+      var elsewhere = !isCable && !isThird && ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
+      if (elsewhere) { ctx.toast("That device is already in " + elsewhere + ": remove it there first", "error"); return; }
       // Half depth by default (operator request 2026-11-10): a device racked
       // on the front leaves the same U free on the back. Full depth is the
       // right-click opt-in for gear that fills the rack.
@@ -509,7 +509,7 @@
     // The × on every rack after the first. An empty rack goes at once; one
     // holding items asks first, naming how many go with it.
     async function deleteRack(r) {
-      if (!r || !state.editing || state.racks.indexOf(r) <= 0) return;
+      if (!r || !state.editing || state.racks.indexOf(r) < 0) return;
       var n = state.placements.filter(function (p) { return p.rackId === r.id; }).length;
       if (n) {
         var ok = typeof showConfirm === "function"
@@ -529,14 +529,14 @@
       ctx.stageViewPatch({ racks: state.racks, rackPlacements: state.placements });
       restageCodes();
     }
-    // Rule 150: a device racked in a region-mapped view takes the region's
-    // codes; rule 148(a): only the levels the region names change.
-    var CODE_KEYS = ["area", "building", "floor", "room", "rack", "junctionBox"];
-    var region = view.region || null;
+    var CODE_KEYS = ["area", "building", "floor", "room"];
     var locById = {};
     [data.fortigate].concat(data.switches || [], data.aps || [], data.endpoints || []).forEach(function (x) {
       if (x && x.id) locById[x.id] = x.location || null;
     });
+    // Rule 150 (Room view): a device in a rack takes the view's room plus
+    // that rack's name; rule 148(a): only the levels set here change.
+    var region = view.region || null;
     var stagedAssets = {};
     function restageCodes() {
       if (!region || !ctx.stageLocationCode) return;
@@ -545,18 +545,21 @@
         if (p.kind !== "asset" || !p.assetId) return;
         now[p.assetId] = true;
         var cur = locById[p.assetId] || null;
-        // Rule 148(a): only the levels the region names change.
-        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); });
-        var same = levels.every(function (k) { return String(region[k]).trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
-        if (!levels.length || same) { ctx.stageLocationCode(p.assetId, null); return; }
+        var want = Object.assign({}, region);
+        want.rack = (rackById(p.rackId) || {}).name || null;
+        want.junctionBox = null;
+        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); }).concat(["rack", "junctionBox"]);
+        var same = levels.every(function (k) { return String(want[k] || "").trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
+        if (!want.rack || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
-        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
+        ctx.stageLocationCode(p.assetId, want, { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
       Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
       stagedAssets = now;
     }
     function changed() {
       stage();
+      if (ctx.historyPushed) ctx.historyPushed();
       var h = state.history;
       h.entries = h.entries.slice(0, h.index + 1);
       h.entries.push(snapshot());
@@ -670,6 +673,21 @@
         return true;
       },
       cornerButtons: function () { return []; },
+      // The Room canvas (topology-room.js): one Device List for both parts.
+      whereIs: function (assetId) {
+        var p = state.placements.filter(function (x) { return x.assetId === assetId; })[0];
+        if (!p) return null;
+        var r = rackById(p.rackId);
+        var top = p.startU + p.heightU - 1;
+        return (r ? r.name : "?") + " · U" + (p.heightU > 1 ? p.startU + "–" + top : p.startU);
+      },
+      removeAsset: function (assetId) {
+        if (!state.editing || !state.placements.some(function (p) { return p.assetId === assetId; })) return false;
+        state.placements = state.placements.filter(function (p) { return p.assetId !== assetId; });
+        changed();
+        return true;
+      },
+      isEmpty: function () { return !state.racks.length; },
       canUndo: function () { return state.history.index > 0; },
       canRedo: function () { return state.history.index < state.history.entries.length - 1; },
       undo: function () { if (state.history.index > 0) { state.history.index--; applySnapshot(state.history.entries[state.history.index]); } },

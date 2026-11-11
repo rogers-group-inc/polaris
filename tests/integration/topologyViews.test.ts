@@ -116,10 +116,10 @@ d("topology views", () => {
     expect(again.body.filter((v: any) => v.isDefault)).toHaveLength(1);
   });
 
-  it("creates a rack view seeded with one 42U rack; refuses a duplicate name and a read-only caller", async () => {
+  it("creates a Room view opening with one 42U rack; refuses a duplicate name and a read-only caller", async () => {
     const { agent, csrf } = await authedAgent(app);
     const res = await agent.post(`/api/v1/map/sites/${fgId}/topology/views`).set("X-CSRF-Token", csrf)
-      .send({ name: "MDF racks", mode: "rack" });
+      .send({ name: "MDF racks", mode: "room", rackUnits: 42 });
     expect(res.status).toBe(201);
     expect(res.body.racks).toHaveLength(1);
     expect(res.body.racks[0].units).toBe(42);
@@ -195,7 +195,7 @@ d("topology views", () => {
     expect(anon.status).toBe(401);
   });
 
-  it("a mode change resets the view: layouts, image, polygons gone, racks seeded, Event written", async () => {
+  it("a mode change resets the view: layouts, image, polygons gone, an empty room, Event written", async () => {
     const { agent, csrf } = await authedAgent(app);
     const views = (await agent.get(`/api/v1/map/sites/${fgId}/topology/views`)).body;
     const view = views.find((v: any) => v.name === "Plant floor");
@@ -207,11 +207,10 @@ d("topology views", () => {
     expect(loss.body).toMatchObject({ mode: "topology", placedDevices: 1, polygons: 1, hasImage: true });
 
     const changed = await agent.put(`/api/v1/map/sites/${fgId}/topology/views/${view.id}`).set("X-CSRF-Token", csrf)
-      .send({ mode: "rack", polygons: [] });
+      .send({ mode: "room", polygons: [] });
     expect(changed.status).toBe(200);
-    expect(changed.body.modeChange).toMatchObject({ from: "topology", to: "rack", layoutsCleared: 1, polygonsCleared: 1, imagesCleared: 1 });
-    expect(changed.body.view).toMatchObject({ mode: "rack", background: null, polygons: [] });
-    expect(changed.body.view.racks).toHaveLength(1);
+    expect(changed.body.modeChange).toMatchObject({ from: "topology", to: "room", layoutsCleared: 1, polygonsCleared: 1, imagesCleared: 1 });
+    expect(changed.body.view).toMatchObject({ mode: "room", background: null, polygons: [], racks: [], walls: [] });
     expect(await prisma.topologyLayout.count({ where: { siteId: fgId, view: `v:${view.id}|topo` } })).toBe(0);
     expect(await prisma.topologyBackgroundImage.count({ where: { viewId: view.id } })).toBe(0);
     expect(await waitForEventCount("map.topology.view_mode_changed", 1, fgId)).toBeGreaterThanOrEqual(1);
