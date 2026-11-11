@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -314,7 +315,7 @@ describe("Dashboards menu — signed in", () => {
 
 describe("app.js announces the authoritative user", () => {
   it("dispatches polaris:user-loaded after fetchCurrentUser", () => {
-    const app = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const app = appSource();
     const fetchAt = app.indexOf("await fetchCurrentUser();");
     const evtAt = app.indexOf('new CustomEvent("polaris:user-loaded")');
     expect(fetchAt).toBeGreaterThan(-1);

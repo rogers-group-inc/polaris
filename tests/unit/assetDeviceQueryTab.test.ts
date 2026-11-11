@@ -9,11 +9,9 @@
  *     reads for that integration type, and every one is a GET.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
-const ROOT = resolve(__dirname, "../..");
-const src = readFileSync(resolve(ROOT, "public/js/assets.js"), "utf8");
+const src = assetsSource();
 
 function sliceFn(name: string): string {
   const start = src.indexOf("function " + name + "(");

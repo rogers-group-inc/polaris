@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="/css/page-transitions.css">
   <link rel="stylesheet" href="/css/assistant.css">
 </head>
-<body>
+<body data-prefetch-panels="asset">
   <div class="layout">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="main">
@@ -177,13 +177,12 @@
     </main>
   </div>
 
-  <!-- jspdf / html-to-image + favorites/integrations/assets are loaded so the
-       canonical asset-details slide-in (openViewModal, page-agnostic) works when
-       an asset name is clicked — same pattern as map.html. assets.js / integrations.js
-       skip their page-init when their page DOM is absent. -->
-  <script src="/js/vendor/jspdf.umd.min.js"></script>
-  <script src="/js/vendor/jspdf.plugin.autotable.min.js"></script>
-  <script src="/js/vendor/html-to-image.min.js"></script>
+  <!-- The asset details slide-in (openViewModal) and all it opens — integrations,
+       the asset tabs, the charts — is not loaded statically here (CQ-F041):
+       app-panels.js loads its asset bundle in the background once the page is
+       idle (data-prefetch-panels on <body>), skipping what the page already
+       carries, and PolarisPanels.openAsset waits for it when a click comes
+       first. What stays is what this page's own code reads: table-sf.js, recurrence-editor.js, monitor-down-after.js (the wizard reads PolarisMonitorDownAfter), temp-unit.js and the wizard's own stack. -->
   <script src="/js/api.js"></script>
   <script src="/js/brand-logo.js"></script>
   <script src="/js/assistant-markdown.js"></script>
@@ -192,30 +191,21 @@
   <script src="/js/panel-lock.js"></script>
   <script src="/js/theme-core.js"></script>
   <script src="/js/app.js"></script>
+  <script src="/js/app-search.js"></script>
+  <script src="/js/app-sidebar.js"></script>
+  <script src="/js/app-modals.js"></script>
+  <script src="/js/app-rows.js"></script>
+  <script src="/js/app-panels.js"></script>
+  <script src="/js/app-tags.js"></script>
+  <script src="/js/app-boot.js"></script>
   <span id="polaris-nav-ready" hidden></span>
   <script src="/js/table-sf.js"></script>
-  <script src="/js/favorites.js"></script>
-  <script src="/js/monitor-states.js"></script>
   <script src="/js/monitor-down-after.js"></script>
-  <script src="/js/polling-methods.js"></script>
-  <script src="/js/integrations.js"></script>
-  <script src="/js/integrations-feature-tabs.js"></script>
-  <script src="/js/integrations-monitoring.js"></script>
-  <script src="/js/integrations-forms.js"></script>
-  <script src="/js/integrations-generic-api.js"></script>
-  <script src="/js/integrations-query.js"></script>
   <script src="/js/temp-unit.js"></script>
-  <script src="/js/chart-severity.js"></script>
-  <script src="/js/chart-shared.js"></script>
-  <script src="/js/asset-shared.js"></script>
-  <script src="/js/assets.js"></script>
-  <!-- Asset modal's Maintenance tab (ad-hoc "enter maintenance until…") needs
-       maintCreateAdhoc; the Maintenance MODAL itself is wired on assets.html only. -->
   <script src="/js/recurrence-editor.js"></script>
   <!-- The quiet-time policy editor (business rule 92). After recurrence-editor.js,
        which it builds on; before the two wizards that render it. -->
   <script src="/js/quiet-time-editor.js"></script>
-  <script src="/js/assets-maintenance.js"></script>
   <script src="/js/push.js"></script>
   <script src="/js/password-self.js"></script>
   <script src="/js/totp-self.js"></script>
@@ -237,6 +227,10 @@
   <script src="/js/automations-address-book.js"></script>
   <script src="/js/recipient-picker.js"></script>
   <script src="/js/automations-wizard.js"></script>
+  <script src="/js/automations-wizard-recipients.js"></script>
+  <script src="/js/automations-wizard-sentences.js"></script>
+  <script src="/js/automations-wizard-dimensions.js"></script>
+  <script src="/js/automations-wizard-filters.js"></script>
   <script src="/js/automations-portability.js"></script>
 </body>
 </html>

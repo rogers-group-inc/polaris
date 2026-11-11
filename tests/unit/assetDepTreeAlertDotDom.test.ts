@@ -23,15 +23,14 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 const g = globalThis as Record<string, any>;
-const read = (f: string) => readFileSync(resolve(__dirname, "../../public/js/" + f), "utf8").split(/\r?\n/);
-const assetsLines = read("assets.js");
-const appLines = read("app.js");
+const assetsLines = assetsSource().split(/\r?\n/);
+const appLines = appSource().split(/\r?\n/);
 
 /** Slice a top-level `function NAME(...) {` … `}` or `var NAME = {` … `};` block. */
 function src(lines: string[], name: string): string {

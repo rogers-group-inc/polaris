@@ -57,7 +57,7 @@ no Events, because one that did would feed its own trigger); this Event is writt
 it.
 
 So `runEventTail` skips it before both matcher sets — trigger and reset — through
-`notificationTypes.ts → eventFeedsAutomations`, keyed on `ALERT_EMAIL_SENT_ACTION`. The
+`notificationTypes/scopeConditions.ts → eventFeedsAutomations`, keyed on `ALERT_EMAIL_SENT_ACTION`. The
 cursor still advances past it with the rest of the batch. Nothing is lost by the exclusion:
 "an email was sent" is the consequence of an alert, and any automation that wants to act on
 the alert can trigger on the alert itself.

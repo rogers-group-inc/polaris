@@ -23,10 +23,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { assetsRouteSource } from "./_assetsRouteSource.js";
 
 const TAB_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "assets-tab.js"), "utf-8");
 const LIST_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
-const ROUTE_SRC = readFileSync(join(process.cwd(), "src", "api", "routes", "assets.ts"), "utf-8");
+const ROUTE_SRC = assetsRouteSource();
 
 const g = globalThis as any;
 const flush = () => new Promise((r) => setTimeout(r, 0));

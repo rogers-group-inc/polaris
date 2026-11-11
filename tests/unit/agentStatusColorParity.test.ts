@@ -14,12 +14,13 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
 /** Source text of `function <name>(...) { ... }` from a file, braces balanced. */
 function extractFn(file: string, name: string): string {
-  const src = readFileSync(resolve(here, "../../public/js", file), "utf8");
+  const src = file === "assets.js" ? assetsSource() : readFileSync(resolve(here, "../../public/js", file), "utf8");
   const start = src.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`${name} not found in ${file}`);
   let depth = 0;

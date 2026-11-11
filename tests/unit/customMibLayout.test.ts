@@ -15,11 +15,10 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { sanitizeWidgetLayout } from "../../src/services/manufacturerProfileService.js";
+import { assetsSource } from "./_assetsSource.js";
 
-const lines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const lines = assetsSource().split(/\r?\n/);
 
 function fnSrc(name: string): string {
   const start = lines.findIndex((l) => l.startsWith(`function ${name}(`));

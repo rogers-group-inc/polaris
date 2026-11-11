@@ -37,18 +37,20 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { APP_SHELL_STUBS } from "./_appShellStubs.js";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
 const SPLIT = /\r?\n/;
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(SPLIT);
+const assetsLines = assetsSource().split(SPLIT);
 // Two of the functions the tab calls — the severity colour and the severity
 // rank behind its strobe — live in app.js, because the global search dropdown
 // draws the same dot on pages that never load assets.js. The slicer falls
 // through to app.js rather than pinning which file each name is in: this test
 // is about the tab's behaviour, not about where the source happens to sit.
-const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(SPLIT);
+const appLines = appSource().split(SPLIT);
 // The panel states the resulting wall-clock time using the SHARED helper the
 // settings cards and the wizard also read, so load the real module rather than
 // stub it — the point of the assertion is that the two halves agree.

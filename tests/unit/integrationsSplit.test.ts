@@ -23,6 +23,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import vm from "node:vm";
 import { INTEGRATIONS_FILES, integrationsFileSource } from "./_integrationsSource.js";
+import { appSource } from "./_appSource.js";
 
 const PUBLIC = resolve(__dirname, "../../public");
 const INVENTORY = JSON.parse(
@@ -56,7 +57,7 @@ describe("integrations split — pages", () => {
 
   it("every page that carried integrations.js before the split carries the split", () => {
     expect(pages.map((p) => p.page).sort()).toEqual(
-      ["appmap.html", "assets.html", "automations.html", "index.html", "integrations.html", "map.html", "path-monitor.html"],
+      ["assets.html", "integrations.html"] /* every other page prefetches it with the asset bundle (CQ-F041) */,
     );
   });
 
@@ -75,7 +76,7 @@ describe("integrations split — pages", () => {
   });
 
   it("app.js's asset panel bundle carries the split, in order, after polling-methods.js", () => {
-    const app = readFileSync(join(PUBLIC, "js/app.js"), "utf8");
+    const app = appSource();
     const start = app.indexOf("var _PANEL_SCRIPT_BUNDLES = {");
     const body = app.slice(start, app.indexOf("\n};", start));
     const asset = /^\s{2}asset:\s*\[([\s\S]*?)\]/m.exec(body)![1];

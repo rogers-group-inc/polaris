@@ -44,8 +44,8 @@ describe("assistant pre-paint wiring", () => {
     });
   }
 
-  it("app.js draws it in the pre-paint pass, beside the cached nav", () => {
-    const app = readFileSync(join(PUBLIC, "js", "app.js"), "utf-8");
+  it("the shell draws it in the pre-paint pass (app-boot.js), beside the cached nav", () => {
+    const app = readFileSync(join(PUBLIC, "js", "app-boot.js"), "utf-8");
     const nav = app.lastIndexOf("_navFromCache = _renderNavFromCache();");
     const early = app.indexOf("window.PolarisAssistant.earlyMount()");
     expect(early).toBeGreaterThan(nav);

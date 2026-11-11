@@ -11,9 +11,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { FUNCTION_KEYS, FUNCTION_SECTIONS } from "../../src/api/middleware/permissions.js";
+import { appSource } from "./_appSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -51,7 +50,7 @@ describe("function-key sections", () => {
   });
 
   it("the page sections follow the sidebar's order", () => {
-    const app = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const app = appSource();
     const navBlock = app.slice(app.indexOf("const NAV_ITEMS = ["), app.indexOf("];", app.indexOf("const NAV_ITEMS = [")));
     const navLabels = Array.from(navBlock.matchAll(/label:\s*"([^"]+)"/g)).map((m) => m[1]);
     expect(navLabels.length).toBeGreaterThan(5);

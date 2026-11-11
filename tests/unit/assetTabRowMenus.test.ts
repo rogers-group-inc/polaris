@@ -11,10 +11,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
-const SRC = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
+const SRC = assetsSource();
 const LINES = SRC.split(/\r?\n/);
 
 function fnSrc(name: string): string {

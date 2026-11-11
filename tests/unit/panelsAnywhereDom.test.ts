@@ -27,12 +27,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
 
 const g = globalThis as Record<string, any>;
-const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const appLines = appSource().split(/\r?\n/);
 
 /** Slice a top-level block that starts with `prefix` and ends at the first bare `}` / `};`. */
 function blockSrc(prefix: string): string {
@@ -123,7 +122,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 /** Fire onload on every appended script, defining the opener when the named file lands. */
 async function loadAll(openerFile: string, opener: string): Promise<void> {
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 80; i++) {
     const pending = appended.filter((s: any) => !s.__fired);
     if (!pending.length) { await settle(); continue; }
     for (const s of pending) {

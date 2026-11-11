@@ -123,7 +123,7 @@ it. Under the inherited default a total outage of the target never fired, and a 
 failure-rate alert CLEARED (`system:reading-saturated`) as the rate climbed to 100%.
 
 So the ceiling is now scoped by metric, not by "is a windowed ratio":
-`SATURATION_CEILING_METRICS` (`notificationTypes.ts`, `["probeLossPct"]`) is what
+`SATURATION_CEILING_METRICS` (`notificationTypes/metricMeta.ts`, `["probeLossPct"]`) is what
 `readingAtOrAboveCeiling` checks, a stored `ignoreAtOrAbove` on any other metric is inert,
 the `pathFailurePct` resolver does not consult it, and the wizard offers and saves the
 "Ignore readings at or above" box only for a condition on a listed metric (the schema

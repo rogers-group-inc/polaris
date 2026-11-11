@@ -15,11 +15,9 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 import { foldValuePairs } from "../../src/services/notificationDimensionService.js";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 interface DimResult {
   values: { value: string; assetCount: number }[];
@@ -44,8 +42,7 @@ let narrow: (
 ) => Record<string, string>;
 
 beforeAll(() => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const code = readFileSync(resolve(here, "../../public/js/automations-wizard.js"), "utf8");
+  const code = wizardSource();
   const sandbox: Record<string, any> = {
     window: {},
     document: { addEventListener() {}, getElementById: () => null },

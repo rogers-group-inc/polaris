@@ -7,8 +7,9 @@
  *   1. theme-init.js in <head>, so the first style pass has the theme;
  *   2. <link rel="expect" href="#polaris-nav-ready" blocking="render"> in
  *      <head>, which holds the first paint until the parser reaches…
- *   3. …the #polaris-nav-ready marker right after app.js, whose last lines
- *      build the rail from the cached user (_renderNavFromCache).
+ *   3. …the #polaris-nav-ready marker right after app-boot.js — the last of
+ *      the app shell's split files (CQ-F051) — whose last lines build the
+ *      rail from the cached user (_renderNavFromCache).
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -16,6 +17,7 @@ import { join } from "node:path";
 
 const PUBLIC = join(process.cwd(), "public");
 const APP_SCRIPT = '<script src="/js/app.js"></script>';
+const BOOT_SCRIPT = '<script src="/js/app-boot.js"></script>';
 const appPages = readdirSync(PUBLIC)
   .filter((f) => f.endsWith(".html"))
   .filter((f) => readFileSync(join(PUBLIC, f), "utf-8").includes(APP_SCRIPT));
@@ -32,11 +34,14 @@ describe("page-change view transition wiring", () => {
       expect(head).toContain('<link rel="stylesheet" href="/css/page-transitions.css">');
       expect(head).toContain('<script src="/js/theme-init.js"></script>');
       expect(head).toContain('<link rel="expect" href="#polaris-nav-ready" blocking="render">');
-      // The marker must come AFTER app.js, or the render-block releases first.
+      // The marker must come right AFTER the shell's last file, or the
+      // render-block releases before the cached rail is built.
       const app = html.indexOf(APP_SCRIPT);
+      const boot = html.indexOf(BOOT_SCRIPT);
       const marker = html.indexOf('<span id="polaris-nav-ready" hidden></span>');
-      expect(marker).toBeGreaterThan(app);
-      expect(html.slice(app + APP_SCRIPT.length, marker).trim()).toBe("");
+      expect(boot).toBeGreaterThan(app);
+      expect(marker).toBeGreaterThan(boot);
+      expect(html.slice(boot + BOOT_SCRIPT.length, marker).trim()).toBe("");
     });
   }
 
@@ -63,8 +68,8 @@ describe("page-change view transition wiring", () => {
     }
   });
 
-  it("builds the rail from cache at the END of app.js, not only at DOMContentLoaded", () => {
-    const js = readFileSync(join(PUBLIC, "js", "app.js"), "utf-8");
+  it("builds the rail from cache at the END of the shell (app-boot.js), not only at DOMContentLoaded", () => {
+    const js = readFileSync(join(PUBLIC, "js", "app-boot.js"), "utf-8");
     const tail = js.slice(js.lastIndexOf("});"));
     expect(tail).toContain('if (document.getElementById("sidebar")) _navFromCache = _renderNavFromCache();');
   });

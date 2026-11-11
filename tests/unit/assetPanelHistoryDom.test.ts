@@ -30,12 +30,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 
 /** Slice a top-level `[async ]function NAME(...) {` … `}` block out of assets.js. */
 function fnSrc(name: string): string {
@@ -51,7 +51,7 @@ function fnSrc(name: string): string {
 /** The two app.js helpers the panel's keyboard gates run through — the real
  *  ones, not stubs, so the "yields to a nested drilldown / a modal" cases
  *  exercise the stacking rule the page actually uses. */
-const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+const appLines = appSource().split(/\r?\n/);
 function appFnSrc(name: string): string {
   const start = appLines.findIndex((l) => l.startsWith(`function ${name}(`));
   if (start < 0) throw new Error(`app.js: function ${name} not found`);

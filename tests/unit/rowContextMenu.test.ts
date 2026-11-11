@@ -19,6 +19,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -26,7 +28,7 @@ const g = globalThis as Record<string, unknown>;
 // The page order: the shared theme engine (theme-core.js) runs before app.js.
 const APP_SRC =
   readFileSync(resolve(__dirname, "../../public/js/theme-core.js"), "utf8") + "\n" +
-  readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+  appSource();
 
 interface MenuItem {
   label?: string;
@@ -617,7 +619,7 @@ describe("double click anywhere on a data-row-menu-row", () => {
 // open and the whole-row right-click menu; pin the count per file.
 describe("list pages that open on double click and menu on right click", () => {
   const cases: Array<[string, number]> = [
-    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row)
+    ["public/js/assets.js", 2], // the Assets list + Firewall Sightings (a resolved gate's row) — every assets-*.js split file (assetsSource)
     ["public/js/users.js", 3],
     ["public/js/automations.js", 1],
     ["public/js/blocks.js", 1],
@@ -627,7 +629,7 @@ describe("list pages that open on double click and menu on right click", () => {
   ];
   for (const [file, n] of cases) {
     it(file + " marks its row" + (n > 1 ? "s" : ""), () => {
-      const src = readFileSync(resolve(__dirname, "../..", file), "utf8");
+      const src = file === "public/js/assets.js" ? assetsSource() : readFileSync(resolve(__dirname, "../..", file), "utf8");
       expect((src.match(/<tr data-row-menu-row/g) || []).length).toBe(n);
     });
   }

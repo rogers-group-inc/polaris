@@ -19,10 +19,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 
 function fnSrc(name: string): string {
   const start = assetsLines.findIndex((l) => l.startsWith(`function ${name}(`));

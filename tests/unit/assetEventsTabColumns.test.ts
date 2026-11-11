@@ -16,9 +16,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 const tableSfSrc = readFileSync(resolve(__dirname, "../../public/js/table-sf.js"), "utf8");
 
 function fnSrc(name: string): string {

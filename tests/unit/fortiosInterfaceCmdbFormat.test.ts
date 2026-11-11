@@ -21,6 +21,7 @@ import { fortiosSecondaryIpStrings } from "../../src/utils/fortiosSecondaryIp.js
 import { parseInterfaceIpv6 } from "../../src/utils/fortiosIpv6.js";
 import { parseFortiCmdbInterfaceTable, fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoringService.js";
 import { buildFirewallSummary } from "../../src/services/fortinetManagementAccessService.js";
+import { monitoringServiceSource } from "./_monitoringServiceSource.js";
 
 const NOISE = { mtu: 1500, "mtu-override": "disable", speed: "auto", allowaccess: "ping https", "dhcp-relay-service": "disable",
   vdom: "root", role: "lan", "device-identification": "enable", estimated_upstream_bandwidth: 0, q_origin_key: "x" };
@@ -101,7 +102,8 @@ describe("FORTIOS_INTERFACE_CMDB_FORMAT carries everything the interface readers
   it("is passed by every reader of the endpoint", () => {
     const read = (p: string) => readFileSync(join(process.cwd(), "src", "services", p), "utf-8");
     for (const [file, expected] of [["fortigateService.ts", 1], ["monitoringService.ts", 2]] as const) {
-      const src = read(file);
+      // monitoringService.ts is split into monitoring/*.ts (CQ-B061): read it whole.
+      const src = file === "monitoringService.ts" ? monitoringServiceSource() : read(file);
       const calls = src.match(/fgRequest<[^>]*>\([^)]*"GET", "\/api\/v2\/cmdb\/system\/interface"[^\n]*(\n[^\n]*){0,3}/g) ?? [];
       expect(calls.length, file).toBe(expected);
       for (const c of calls) expect(c, file).toContain("FORTIOS_INTERFACE_CMDB_FORMAT");

@@ -13,10 +13,8 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import vm from "node:vm";
+import { wizardSource } from "./_automationsWizardSource.js";
 import {
   parseMemberIpFilter,
   memberIpPasses,
@@ -122,8 +120,7 @@ describe("the wizard side", () => {
   };
 
   beforeAll(() => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const code = readFileSync(resolve(here, "../../public/js/automations-wizard.js"), "utf8");
+    const code = wizardSource();
     const sandbox: Record<string, any> = {
       window: {},
       document: { addEventListener() {}, getElementById: () => null },
@@ -166,8 +163,7 @@ describe("the wizard side", () => {
   });
 
   it("no longer draws or collects a Skip unused ports box", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const code = readFileSync(resolve(here, "../../public/js/automations-wizard.js"), "utf8");
+    const code = wizardSource();
     expect(code).not.toMatch(/skipUnused|tgl-skip-unused/);
   });
 });

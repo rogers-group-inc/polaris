@@ -22,10 +22,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
 
 const g = globalThis as Record<string, any>;
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 const tableSfSrc = readFileSync(resolve(__dirname, "../../public/js/table-sf.js"), "utf8");
 
 /** Slice a top-level `function NAME(...) {` … `}` block out of assets.js. */
@@ -882,7 +884,7 @@ describe("IPsec tunnels live on the IPsec tab, not here", () => {
 // strobing severity dot the Assets list draws (app.js → alertSummaryDotHTML),
 // from the `alert` summary GET /assets/:id/system-info stamps on matchedAsset.
 describe("neighbor alert dot", () => {
-  const appLines = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8").split(/\r?\n/);
+  const appLines = appSource().split(/\r?\n/);
   function appFnSrc(name: string): string {
     const start = appLines.findIndex((l) => l.startsWith(`function ${name}(`));
     const end = appLines.findIndex((l, i) => i > start && l === "}");

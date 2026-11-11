@@ -23,9 +23,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { appSource } from "./_appSource.js";
 
 const PUBLIC = resolve(__dirname, "../../public");
-const appSrc = readFileSync(resolve(PUBLIC, "js/app.js"), "utf8");
+const appSrc = appSource();
 
 /** `_PANEL_SCRIPT_BUNDLES` as written in app.js: kind → ordered script list. */
 function readBundles(): Record<string, string[]> {

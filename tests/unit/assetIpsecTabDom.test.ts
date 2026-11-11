@@ -13,13 +13,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Window } from "happy-dom";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
 loadSharedModules();
 
 const g = globalThis as Record<string, any>;
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 const tableSfSrc = readFileSync(resolve(__dirname, "../../public/js/table-sf.js"), "utf8");
 
 function fnSrc(name: string): string {

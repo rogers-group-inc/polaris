@@ -35,12 +35,13 @@ import { readFileSync } from "node:fs";
 import { replayProbeStates } from "../../src/services/probeOutageService.js";
 import { resolve } from "node:path";
 import { loadSharedModules } from "./_sharedModules.js";
+import { assetsSource } from "./_assetsSource.js";
 
 // assets.js / the mobile files read PolarisChartShared + PolarisAssetShared,
 // which their pages load first (public/js/chart-shared.js, asset-shared.js).
 loadSharedModules();
 
-const assetsLines = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8").split(/\r?\n/);
+const assetsLines = assetsSource().split(/\r?\n/);
 const chartSharedSrc = readFileSync(resolve(__dirname, "../../public/js/chart-shared.js"), "utf8");
 
 const statesSrc = readFileSync(resolve(__dirname, "../../public/js/monitor-states.js"), "utf8");

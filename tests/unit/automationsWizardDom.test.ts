@@ -21,6 +21,8 @@ import { installAppOverlay } from "../fixtures/appOverlay.js";
 import { buildSchemaCatalog, ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { dimensionPickerMeta } from "../../src/services/notificationDimensionService.js";
 import { fixSelects } from "../fixtures/happyDomSelects.js";
+import { appSource } from "./_appSource.js";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
@@ -89,7 +91,7 @@ beforeAll(() => {
   };
   g.MutationObserver = win.MutationObserver;
   {
-    const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+    const appSrc = appSource();
     const start = appSrc.indexOf("function _lockModalReadOnly(");
     if (start === -1) throw new Error("_lockModalReadOnly not found in public/js/app.js");
     let depth = 0;
@@ -224,7 +226,7 @@ beforeAll(() => {
   (0, eval)(qteSrc);
   // The recipient picker the wizard binds (lifted out 2026-11-09), before the wizard as on the pages.
   (0, eval)(readFileSync(resolve(__dirname, "../../public/js/recipient-picker.js"), "utf8"));
-  const src = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
+  const src = wizardSource();
   (0, eval)(src);
   // Export / import / view-code. Loaded on every page that loads the wizard.
   const portSrc = readFileSync(resolve(__dirname, "../../public/js/automations-portability.js"), "utf8");

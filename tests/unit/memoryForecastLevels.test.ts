@@ -8,9 +8,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import vm from "node:vm";
 
 vi.mock("../../src/db.js", () => ({
@@ -32,6 +29,7 @@ import { processRankingForMetric } from "../../src/services/alertProcessService.
 import { METRIC_STREAM } from "../../src/services/notificationCadenceService.js";
 import { triggerSummary, triggerSubject } from "../../src/utils/triggerSummary.js";
 import { prisma } from "../../src/db.js";
+import { wizardSource } from "./_automationsWizardSource.js";
 
 const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
@@ -143,8 +141,7 @@ describe("memForecastPct in the wizard sentence", () => {
   let make: (s: Record<string, unknown>) => { triggerSentence: (tr: Record<string, unknown>, opts?: Record<string, unknown>) => string };
 
   beforeAll(() => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const code = readFileSync(resolve(here, "../../public/js/automations-wizard.js"), "utf8");
+    const code = wizardSource();
     const sandbox: Record<string, any> = {
       window: {},
       document: { addEventListener() {}, getElementById: () => null },

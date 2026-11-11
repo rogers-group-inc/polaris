@@ -27,13 +27,16 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { clampLevelToKey, levelsFor } from "../../src/api/middleware/permissions.js";
+import { appSource } from "./_appSource.js";
+import { assetsSource } from "./_assetsSource.js";
+import { assetsRouteSource } from "./_assetsRouteSource.js";
 
-const assetsSrc = readFileSync(resolve(__dirname, "../../public/js/assets.js"), "utf8");
-const appSrc = readFileSync(resolve(__dirname, "../../public/js/app.js"), "utf8");
+const assetsSrc = assetsSource();
+const appSrc = appSource();
 const assetsHtml = readFileSync(resolve(__dirname, "../../public/assets.html"), "utf8");
 const mobileSrc = readFileSync(resolve(__dirname, "../../public/js/mobile/asset-detail.js"), "utf8");
 const apiSrc = readFileSync(resolve(__dirname, "../../public/js/api.js"), "utf8");
-const assetsRouteSrc = readFileSync(resolve(__dirname, "../../src/api/routes/assets.ts"), "utf8");
+const assetsRouteSrc = assetsRouteSource();
 
 describe("quarantine reason dialog", () => {
   // Three desktop paths can start a quarantine — the row menu, the bulk bar and

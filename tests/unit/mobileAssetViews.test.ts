@@ -22,10 +22,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { assetsSource } from "./_assetsSource.js";
 
 const TAB_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "assets-tab.js"), "utf-8");
 const LIST_SRC = readFileSync(join(process.cwd(), "public", "js", "mobile", "list-controls.js"), "utf-8");
-const DESKTOP_SRC = readFileSync(join(process.cwd(), "public", "js", "assets.js"), "utf-8");
+const DESKTOP_SRC = assetsSource();
 
 const g = globalThis as any;
 const flush = () => new Promise((r) => setTimeout(r, 0));

@@ -1084,10 +1084,11 @@
   };
 
   // Open an asset's details slide-in in place. The canonical slide-over
-  // (openViewModal from assets.js) is loaded statically on the dashboard,
-  // map and assets pages and on demand everywhere else (PolarisPanels in
-  // app.js, which also owns the navigation fallback when its scripts can't
-  // load). Returns true when the opener was reached synchronously. opts.tab
+  // (openViewModal from assets-panel.js) is loaded statically on the Assets
+  // page, prefetched when idle on the dashboard (and every other page that
+  // offers it, CQ-F041), and
+  // on demand everywhere else (PolarisPanels in app-panels.js, which also owns
+  // the navigation fallback when its scripts can't load). Returns true when the opener was reached synchronously. opts.tab
   // names the slide-over tab to land on (openViewModal's opts.tab); the deep
   // link carries it as #view=asset:<id>&tab=<key>, which processSearchHash
   // hands back to openViewModal on the Assets page.
