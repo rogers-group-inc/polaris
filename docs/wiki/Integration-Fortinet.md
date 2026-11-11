@@ -231,7 +231,15 @@ exists on one and could sensibly exist on the other, it does.
 ### Networks
 
 Discovered from the gate's interfaces, subject to the interface filters. Each
-records the **serial of the gate serving it** alongside the device name.
+records the **serial of the gate serving it** alongside the device name, and is
+named `DHCP: <interface> (<gate>)`.
+
+**The name follows a gate rename.** Rename a FortiGate in FortiManager (or on a
+standalone gate) and the next discovery — the integration's scheduled run, or
+**Discover Now** on the gate's asset — updates both the network's device and the
+`(<gate>)` at the end of its name. If you edited the rest of the name, that
+edit is kept. A name you replaced entirely, so it no longer ends in the gate's
+name, is left as you typed it. Each rename is recorded in [Events](Events).
 
 **A subnet dies with its FortiGate, and the chassis — not the name — says which
 gate that is** ([rule 41](Business-Rules#rule-41)). A name cannot tell a rename

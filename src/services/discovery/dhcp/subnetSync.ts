@@ -24,6 +24,7 @@ import { createSubnetRowChecked } from "../../subnetService.js";
 import { snapshotSubnet, archiveSubnet } from "../../subnetArchiveService.js";
 import { raiseChassisReplacedConflict } from "../../subnetChassisConflictService.js";
 import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
+import { renameDeviceSuffix, rebuildStaleGeneratedName } from "../../../utils/discoveredSubnetName.js";
 
 /**
  * The FortiGate interface a discovered network is served on and, for a VLAN
@@ -87,6 +88,16 @@ export async function syncDiscoveredSubnets(input: {
     previousName: string;
     newName: string;
     fortigateDevice: string;
+  }> = [];
+  // Networks whose name followed a gate rename this run — one
+  // `subnet.updated` Event each after the batch update.
+  const deviceRenames: Array<{
+    id: string;
+    cidr: string;
+    previousName: string;
+    newName: string;
+    oldDevice: string;
+    newDevice: string;
   }> = [];
   // Subnets whose serving chassis changed this run (business rule 41).
   // Collected here and processed AFTER the batch update, because each one
@@ -187,6 +198,29 @@ export async function syncDiscoveredSubnets(input: {
           newName: baseData.name,
           fortigateDevice: entry.fortigateDevice,
         });
+      } else {
+        // The gate was renamed (or a different device now serves the range):
+        // `fortigateDevice` above follows it, so the `(<device>)` suffix the
+        // name was built with must too, or the Networks list shows the new
+        // device beside the old one's name. A name the operator changed no
+        // longer ends with that suffix and is left as typed. The second form
+        // heals rows an earlier run already re-pointed (stored device is the
+        // new name, so there is no old one to compare) while the name is still
+        // exactly the generated one.
+        const renamed =
+          renameDeviceSuffix(existing.name, existing.fortigateDevice, entry.fortigateDevice) ??
+          rebuildStaleGeneratedName(existing.name, `${originLabel}: ${entry.name}`, entry.fortigateDevice);
+        if (renamed) {
+          baseData.name = renamed;
+          deviceRenames.push({
+            id: existing.id,
+            cidr,
+            previousName: existing.name,
+            newName: renamed,
+            oldDevice: existing.fortigateDevice ?? "",
+            newDevice: entry.fortigateDevice,
+          });
+        }
       }
       subnetUpdates.push({ id: existing.id, data: baseData });
       updated.push(cidr);
@@ -397,6 +431,27 @@ export async function syncDiscoveredSubnets(input: {
         integrationName,
         fortigateDevice: c.fortigateDevice,
         cidr: c.cidr,
+      },
+    });
+  }
+
+  for (const r of deviceRenames) {
+    logEvent({
+      action: "subnet.updated",
+      resourceType: "subnet",
+      resourceId: r.id,
+      resourceName: r.newName,
+      actor,
+      message: `Network ${r.cidr} renamed "${r.previousName}" → "${r.newName}" to follow FortiGate "${r.newDevice}" in "${integrationName}"`,
+      details: {
+        reason: "device-renamed",
+        previousName: r.previousName,
+        newName: r.newName,
+        oldDevice: r.oldDevice,
+        newDevice: r.newDevice,
+        integrationId,
+        integrationName,
+        cidr: r.cidr,
       },
     });
   }
