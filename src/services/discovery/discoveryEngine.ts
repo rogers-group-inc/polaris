@@ -222,7 +222,7 @@ function inferAssetTypeFromOs(
 
 /**
  * FortiGate detected-device inventory type inference (discovery Phase 7,
- * business rule 163): the `inventory` context, over every fact the caller
+ * business rule 164): the `inventory` context, over every fact the caller
  * has — the gate's OS fingerprint, the NIC vendor, the client hostname and
  * what the asset already carries — so an operator's rule on Manufacturer or
  * Model can claim an endpoint the gate fingerprinted only as "APC AOS".

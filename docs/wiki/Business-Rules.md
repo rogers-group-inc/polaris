@@ -3402,6 +3402,19 @@ switch's type and its fibre-channel lines go with it.
 
 ### Rule 163
 
+**An agent is never left on a host without you being told.** The Polaris Agent's record
+belongs to its asset, so deleting the asset removes the record, its token and the
+Uninstall button — but the agent itself keeps running on the host. When any asset you are
+deleting has the agent, Polaris says so and offers **Uninstall, then delete**. If the
+uninstall works, the delete follows. If it does not, nothing is deleted: you are shown
+why for each host and asked again, with **Delete the others only** on a bulk delete. If
+you choose to delete anyway — or delete through the API — Polaris writes a warning Event,
+`agent.left_on_host`, naming each host, so there is a record of what still has to be
+removed by hand. See [Assets](Assets#deleting-an-asset) and
+[Polaris Agent](Polaris-Agent#when-the-asset-is-deleted).
+
+### Rule 164
+
 **Device-type rules can run on the devices a FortiGate detects, using everything known about
 them.** Each device type chooses where its matching rules run: **Directory discovery**,
 **Network Discovery scans**, and **Firewall device inventory**, which covers the devices a

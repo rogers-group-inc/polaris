@@ -71,7 +71,7 @@ function run(resultOver: Record<string, unknown>, over: Record<string, unknown> 
     noteChangeBaseline: vi.fn(), noteEndpointGate: vi.fn(),
     hostnameAdoptRefused: () => false, noteHostnameAdoptRefused: vi.fn(),
     // Stands in for the inventory-context rules: the shipped OS ladder plus an
-    // operator's Manufacturer rule (business rule 163).
+    // operator's Manufacturer rule (business rule 164).
     inferInventoryAssetType: vi.fn((f: { os?: string | null; manufacturer?: string | null }) =>
       f.os && /windows/i.test(f.os) ? "workstation" : f.manufacturer && /apc/i.test(f.manufacturer) ? "power" : "other"),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",
@@ -104,7 +104,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     expect(m.logCreated).toHaveBeenCalledWith("a1", "pc-40", expect.objectContaining({ sourceKind: "fortigate-endpoint" }));
   });
 
-  it("types a new device from every fact, not the OS alone (rule 163)", async () => {
+  it("types a new device from every fact, not the OS alone (rule 164)", async () => {
     const { state, done } = run({ deviceInventory: [inv({ os: "APC AOS", osVersion: "", hardwareVendor: "APC", hostname: "pdu-a3" })] });
     await done;
     expect(db.create.mock.calls[0][0].data.assetType).toBe("power");
@@ -162,7 +162,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
   });
 });
 
-describe("Phase 7 — typing an existing 'other' asset (rule 163)", () => {
+describe("Phase 7 — typing an existing 'other' asset (rule 164)", () => {
   /** A run index whose MAC rung finds `asset`. */
   function indexWith(asset: Record<string, unknown>) {
     const base = index();

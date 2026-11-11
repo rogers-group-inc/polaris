@@ -67,6 +67,7 @@
 
 import { prisma } from "../db.js";
 import { afterAssetMerged } from "./assetRemovalService.js";
+import { listAgentHosts, recordAgentsLeftOnHosts } from "./agentOrphanService.js";
 import { AppError } from "../utils/errors.js";
 import { clampAcquiredToLastSeen } from "../utils/assetInvariants.js";
 import { isGenericAssetType } from "../utils/assetTypes.js";
@@ -789,6 +790,14 @@ export async function mergeAssets(opts: {
   let replacedDependencyParents = false;
   let movedDependents = 0;
 
+  // Rule 163: when BOTH records have a Polaris Agent the survivor keeps its own
+  // and the absorbed record's agent row cascades away with it — leaving that
+  // agent installed on its host with a dead token. Read it before it goes.
+  const agentsBefore = await listAgentHosts([g.id, c.id]);
+  const strandedAgents = agentsBefore.some((a) => a.assetId === c.id)
+    ? agentsBefore.filter((a) => a.assetId === g.id)
+    : [];
+
   await prisma.$transaction(async (tx) => {
     // Sources / side tables / dependency edges / managed agent — re-bound onto
     // the canonical so the ghost delete below can't cascade them away. Shared
@@ -821,6 +830,10 @@ export async function mergeAssets(opts: {
   // named the absorbed record now name the survivor. After the commit, and
   // best-effort — see assetRemovalService.
   await afterAssetMerged(g.id, c.id);
+  await recordAgentsLeftOnHosts(strandedAgents, {
+    reason: "asset-merged",
+    survivorName: (c.hostname as string | null) || (c.ipAddress as string | null) || c.id,
+  });
 
   // Keep monitorOverride faithful to the carried-over monitoring intent — the
   // same post-write hook the operator asset-write paths and the endpoint-ghost

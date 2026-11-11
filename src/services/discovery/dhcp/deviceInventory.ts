@@ -67,7 +67,7 @@ export async function syncDeviceInventory(input: {
     source: "dhcp-lease" | "device-inventory", device: string | null | undefined,
   ) => void;
   /**
-   * The device-type rules in the `inventory` context (business rule 163),
+   * The device-type rules in the `inventory` context (business rule 164),
    * over everything known about the client: the gate's fingerprint and what
    * the asset already carries. "other" when nothing claims it.
    */
@@ -288,7 +288,7 @@ export async function syncDeviceInventory(input: {
         // OS / vendor / type / switch-port / AP describe the claimant.
         if (!invAdoptRefused) {
           if (inv.os && !existingAsset.os && !invIsFortinetInfra) updateData.os = inv.os;
-          // Business rule 163: every fact, not the OS string alone — a rule
+          // Business rule 164: every fact, not the OS string alone — a rule
           // on Manufacturer ("APC" → Power) could never claim a device the
           // gate fingerprinted as "APC AOS". Still `other`-only, so a type an
           // authoritative source or an operator set is never overwritten.

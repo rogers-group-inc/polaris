@@ -542,7 +542,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `mintEnrollmentToken`, `consumeEnrollmentToken`, `shouldEnableMonitoringOnEnroll`, `verifyBearer`, `revokeBearer`, `ConsumedEnrollment`, `VerifiedAgent`
 
-**Cross-service deps:** `prisma` (managedAgent), password hash/verify util, `agentHostPinService.noteArchivedAgentCheckin` (business rule 123).
+**Cross-service deps:** `prisma` (managedAgent), password hash/verify util, `agentHostPinService.noteArchivedAgentCheckin` (business rule 123), `agentChannelService.detach` (lazily imported: `revokeBearer` closes the agent's WebSocket session with reason `revoked`, business rule 163 — before this the session outlived the revoke until the agent stopped or the web role restarted).
 
 **Used by:** `src/api/middleware/auth.ts` (`verifyBearer` for agent endpoints), `src/api/routes/agents.ts` (`consumeEnrollmentToken` at `/enroll`), `src/api/routes/agentsWs.ts` (`verifyBearer` on WS upgrade), `src/api/routes/assets.ts` (`revokeBearer` on uninstall), `src/services/agentInstallService.ts` (`mintEnrollmentToken`).
 
@@ -595,6 +595,27 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Tests: `tests/unit/agentHostPinService.test.ts` (pure helpers, `pinFingerprintQuery`), `tests/integration/agentHostPinArchive.test.ts` (archive / reinstate / shared address / skipped pin / check-in conflict / reject silencing / reconcile / thumbprint lookup + search gate + archived list route).
 
 ---
+
+## services/agentOrphanService.ts
+
+**What it owns:** Business rule 163 — the Polaris Agent that outlives its asset record. `listAgentHosts` answers which assets have an agent (the delete dialogs ask before confirming); `recordAgentsLeftOnHosts` closes the session and writes the Event when a delete or merge goes ahead and leaves one installed. Never refuses a delete and never uninstalls anything.
+
+**Public API:** `listAgentHosts(assetIds)` → `AgentHost[]` (`assetId`, `managedAgentId`, `name`, `installStatus`, `agentVersion`); `recordAgentsLeftOnHosts(hosts, { actor?, reason: "asset-deleted" | "asset-merged", survivorName? })` → count.
+
+**Cross-service deps:** `agentChannelService.detach`, `eventLogService.logEvent` (`agent.left_on_host`), `prisma.managedAgent`.
+
+**Used by:** `src/api/routes/assets/agent.ts` (`POST /assets/agent-hosts`); `assetWriteService → deleteAsset`, `bulkDeleteAssets`; `assetMergeService → mergeAssets`.
+
+**Invariants:**
+- **`listAgentHosts` is read BEFORE the asset row is deleted**, `recordAgentsLeftOnHosts` is called AFTER. `ManagedAgent` cascades, so once the delete has run nothing knows an agent was there.
+- An agent in ANY install state counts — a failed or half-removed agent may still have left files on the host.
+- The Event's resource is `agent` (the managed-agent id), never the asset: the asset id no longer resolves.
+- A merge records only when BOTH sides had an agent (the absorbed one's row cascades away). A merge that moves the agent strands nothing.
+
+**When changing this:**
+- **A new code path that deletes an asset row must call both halves** — and `public/js/assets-panel.js → confirmAssetDeletion` must sit in front of any new delete control in the UI, or an agent can be left behind without the operator being asked.
+- The two automatic ghost merges and the conflict-resolution absorb do NOT record (`docs/ORPHAN-AUDIT-LEDGER.md`); extend them through the same before / after pair.
+- The browser's uninstall poll reads `GET /assets/:id/agent` and treats `null` (204) as "gone" and `installStatus = "uninstall_failed"` as failed with `installError` as the reason; changing either contract breaks the dialog.
 
 ## services/agentCommandService.ts
 

@@ -179,7 +179,7 @@ export const MATCH_GROUP_OPS = ["and", "or", "none", "notAll"] as const;
 type MatchGroupOp = (typeof MATCH_GROUP_OPS)[number];
 
 /**
- * Where a type's rules run (business rule 163):
+ * Where a type's rules run (business rule 164):
  *  - `directory` — AD / Entra / Intune / Azure Arc records (an OS string, a chassis);
  *  - `scan`      — a device's own self-description: Network Discovery, and
  *                  the monitor path's sysDescr read;
@@ -749,7 +749,7 @@ export const DEFAULT_TYPE_MATCHING: Readonly<
   Record<string, { contexts: MatchContext[]; priority: number; rules: MatchRules }>
 > = {
   // `inventory` beside `directory` on the two OS-ladder types: Phase 7 ran
-  // these in the directory context until business rule 163 gave it its own,
+  // these in the directory context until business rule 164 gave it its own,
   // and migration 20261112000000_asset_type_inventory_context ticked it
   // wherever `directory` was, so behaviour carried over unchanged.
   server: {

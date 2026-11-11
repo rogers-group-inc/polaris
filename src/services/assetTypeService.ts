@@ -425,7 +425,7 @@ function eligibleAssets() {
 /**
  * A stored asset's match, for the retroactive preview / apply: the directory
  * context first (the one this always used), then `inventory` (business rule
- * 163) — the "other" bucket on a FortiGate install is mostly devices that
+ * 164) — the "other" bucket on a FortiGate install is mostly devices that
  * came from a gate's detected-device inventory, so a type ticked only for
  * that context must be able to reach them here too. Never `scan`: those rules
  * read a device's own self-description, which a stored row does not carry.

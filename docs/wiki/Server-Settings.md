@@ -53,7 +53,7 @@ Five cards about what Polaris calls things it finds:
   device's own SNMP description), and **Firewall device inventory** — the devices a
   FortiGate detects on its networks, judged on the gate's OS fingerprint, the
   network card's vendor (Manufacturer), the hostname, and any model or product type
-  the asset already has. See [Business Rules](Business-Rules#rule-163).
+  the asset already has. See [Business Rules](Business-Rules#rule-164).
 - **[Tags](#tags)** — the tag registry.
 
 The manufacturer boxes on this tab (Device Icons, both halves of a Manufacturer

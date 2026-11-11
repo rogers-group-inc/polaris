@@ -396,6 +396,27 @@ you, is picked up within ten minutes.
 
 ---
 
+### When the asset is deleted
+
+The agent's record belongs to its asset. Deleting the asset removes the record and its
+token, but it does **not** uninstall the agent: the service keeps running on the host and
+is refused by Polaris from then on. The Uninstall button is on the Agent card, which goes
+with the record — so uninstall **before** you delete.
+
+Polaris asks you to. Deleting an asset that has the agent opens a dialog that offers
+**Uninstall, then delete**, and if the uninstall fails it tells you why and asks before
+deleting anything ([rule 163](Business-Rules#rule-163), [Assets](Assets#deleting-an-asset)).
+
+If an agent is left behind anyway — you chose **Delete anyway**, the asset was deleted
+through the API, or two records that each had an agent were merged — Polaris writes a
+warning Event, `agent.left_on_host`, naming the host. Remove it there by hand, as an
+administrator. These are the same steps Polaris's own uninstall runs:
+
+| Host | Steps |
+|---|---|
+| **Linux** | `systemctl stop polaris-agent` and `systemctl disable polaris-agent`; delete `/etc/systemd/system/polaris-agent.service` and run `systemctl daemon-reload`; delete `/var/lib/polaris-agent`, `/var/lib/private/polaris-agent` and `/usr/local/bin/polaris-agent`. Where reboots were enabled for the host, also remove the reboot marker and polkit rule ([Reboots](#reboots)) |
+| **Windows** | stop the `polaris-agent` service and remove it (`sc.exe delete polaris-agent`); delete `%ProgramFiles%\Polaris\Agent` and `%ProgramData%\Polaris\agent` |
+
 ## TLS certificate pinning
 
 The agent does **not** use system roots. It compares the server's leaf

@@ -281,7 +281,7 @@ describe("resolution", () => {
     expect(resolveAssetType([...tied].reverse(), { os: "x" }, "scan")).toBe("alpha");
   });
 
-  it("runs a Manufacturer rule in the inventory context (business rule 163)", () => {
+  it("runs a Manufacturer rule in the inventory context (business rule 164)", () => {
     // The prod case: a FortiGate fingerprints an APC PDU's OS as "APC AOS" and
     // its NIC vendor as APC; the operator's Power rule reads Manufacturer.
     const power: MatchableType[] = [{

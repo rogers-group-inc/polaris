@@ -43,7 +43,7 @@ describe("previewMatchRules — productType is a fact", () => {
   });
 });
 
-describe("previewMatchRules — the inventory context (business rule 163)", () => {
+describe("previewMatchRules — the inventory context (business rule 164)", () => {
   it("claims a stored asset for a type ticked ONLY for firewall device inventory", async () => {
     vi.mocked(prisma.assetTypeDef.findMany).mockResolvedValue([
       {

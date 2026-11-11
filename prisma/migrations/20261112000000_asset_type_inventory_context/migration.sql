@@ -1,4 +1,4 @@
--- Business rule 163: device-type rules get a third context, `inventory` — a
+-- Business rule 164: device-type rules get a third context, `inventory` — a
 -- FortiGate's detected-device inventory (discovery Phase 7).
 --
 -- Phase 7 used to run the rules in the `directory` context with the OS

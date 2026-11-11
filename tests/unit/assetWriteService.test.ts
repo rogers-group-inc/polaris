@@ -10,6 +10,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const m = vi.hoisted(() => ({ logEvent: vi.fn(), releaseInfra: vi.fn(), syncAzure: vi.fn(),
 }));
+// Rule 163: the agent lookup around a delete / merge is agentOrphanService;
+// its own behaviour is tests/integration/agentLeftOnHost.test.ts.
+vi.mock("../../src/services/agentOrphanService.js", () => ({
+  listAgentHosts: vi.fn(async () => []),
+  recordAgentsLeftOnHosts: vi.fn(async () => 0),
+}));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", async (orig) => ({ ...(await orig<object>()), logEvent: m.logEvent }));
 vi.mock("../../src/services/reservationService.js", async (orig) => ({ ...(await orig<object>()), releaseInfraReservationsForAssets: m.releaseInfra }));
