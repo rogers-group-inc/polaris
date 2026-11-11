@@ -18,7 +18,8 @@ import { lookupOui, lookupOuiOverride } from "../../../services/ouiService.js";
 import { EXCLUDED_LIFECYCLE_STATUSES } from "../../../utils/assetInvariants.js";
 import { isAllZeroMac } from "../../../utils/mac.js";
 import { chunkArray } from "../../../utils/chunk.js";
-import { assertQuarantineStatusUntouched, assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { assertIpChangeMayRetargetIntegrationToken } from "./shared.js";
+import { assertQuarantineStatusUntouched } from "../../../services/assetQuarantineService.js";
 
 const router = Router();
 

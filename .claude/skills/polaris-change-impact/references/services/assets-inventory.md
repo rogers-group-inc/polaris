@@ -167,6 +167,24 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetWriteService.ts
+
+**What it owns:** Creating and updating an asset, moved out of `routes/assets/write.ts` (CQ-B062 slice 2): the body schemas (`CreateAssetSchema`, `UpdateAssetSchema`, `AssetAddressSchema`, `PollingMethodEnum` — here because the pipeline is typed by them), the create path, the PUT pipeline, and resetting a monitor-override pin. The route keeps only the checks that read the request — `assertTagChangeAllowed` (the Tags key) and `assertIpChangeMayRetargetIntegrationToken` (rule 111(c)) — and runs them in the original order between parse and the service call.
+
+**Public API:** `CreateAssetSchema`, `UpdateAssetSchema`, `validateAssetCreate(input)` (quarantine-status guard + coordinate pair), `createAsset(input, actor, credentialActor)` → the asset + `ipConflict`, `loadAssetForUpdate(id)`, `updateAsset(id, existing, input, actor, credentialActor)` → the asset + `ipConflict`, `resetMonitorOverrideToIntegrationDefault(id, actor)`.
+
+**Cross-service deps:** credentialService (`assertCredentialAssignments`), credentialUseAuditService (rule 112), duplicateIpConflictService (rule 40(i) write-time check), assetQuarantineService (`assertQuarantineStatusUntouched`), monitorOverrideService (`recomputeMonitorOverrideForAssets`, `getAddAsMonitoredFromConfig`), mapRegionService, tagAssignmentService, descriptionSyncService, ipOverrideService, agentHostPinService, maintenanceScheduleService, reservationService, appMapDiscoveryService, primaryAddressService, eventLogService, utils/assetInvariants, utils/pollingCompatibility.
+
+**Used by:** `src/api/routes/assets/write.ts` (POST /, PUT /:id, POST /:id/monitor-override/reset).
+
+**Invariants:**
+- The PUT phases keep their order: validate (the only guard that queries is `assertCredentialAssignments`, last) → build the patch → one `asset.update` → side effects → credential record → the duplicate-ip re-check of BOTH ends of a moved address.
+- The reset lives here and not in monitorOverrideService: db.ts imports that module, which must not import prisma back.
+
+**When changing this:** `tests/integration/assetPutContract.test.ts` pins the guards, pin / override semantics, status stamps and the unmap side effect; `tests/unit/assetWriteService.test.ts` the request-free pieces. A new PollingMethod also widens `PollingMethodEnum` here ([polling-method-resolver](../cross-cutting/polling-method-resolver.md)).
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
@@ -415,7 +433,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Push/pull FortiGate MAC quarantine via persistent `user.quarantine.targets` CMDB tree; orchestrates multi-FortiGate best-effort with per-device all-or-nothing atomicity.
 
-**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
+**Public API:** `quarantineAsset(), releaseQuarantine(), verifyAssetQuarantine(), getQuarantineStatus(), recordQuarantineDrift(), assertQuarantineStatusUntouched(next, current)` (the write-time guard every asset create / PUT / PDF import runs: status may enter or leave `quarantined` only through the quarantine verbs) `, getQuarantinePushAvailability(), buildTransportForIntegration(), pushQuarantineToFortigate(), unpushQuarantineFromFortigate(), normalizeMac(), quarantineTargetName()`
 
 **Cross-service deps:** `assetSightingService.ts` (for candidate targeting).
 
