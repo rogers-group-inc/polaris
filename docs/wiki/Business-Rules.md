@@ -3389,3 +3389,13 @@ appliances (450, 550, 570, 750, 755) describe themselves differently and are not
 To keep UPS and PDU custom widgets apart under the one APC manufacturer profile, give each widget a
 model pattern. PDU models start with `AP8` (for example `^AP8`); UPS models are named by the UPS's
 own model reading.
+
+### Rule 162
+
+**Fibre-channel links are drawn on the Device Map's Layer 2 view from a fibre-channel switch you
+are showing.** Turn on the switch's device type (an MDS is usually *Other*) and its fibre-channel
+logins are drawn as pink lines labelled with the FC port. Each line ends at the server it matched
+(see [rule 159](#rule-159)) when that server's type is shown, even if the server isn't under one
+of this site's Ethernet switches. A login that matched no asset, such as a storage array's port,
+ends at a small dashed box named for what it registered (for example *PURE01-ct0*). Hide the
+switch's type and its fibre-channel lines go with it.
