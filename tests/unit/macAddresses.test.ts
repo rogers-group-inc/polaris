@@ -15,6 +15,7 @@ import {
   HARDWARE_MAC_SOURCES,
   UNVERIFIED_HOSTNAME_MAC_SOURCE,
   isUnverifiedMacSource,
+  mergeObservedMacs,
 } from "../../src/utils/macAddresses.js";
 
 const entry = (mac: string, source: string, lastSeen: string, macEnd?: string) => ({
@@ -129,5 +130,44 @@ describe("buildMacRowsForCreate", () => {
       { mac: "AA:AA:AA:AA:AA:01", source: "dhcp-lease" },
     ] as any);
     expect(rows.map((r) => r.mac)).toEqual(["AA:AA:AA:AA:AA:01"]);
+  });
+});
+
+describe("mergeObservedMacs (the vCenter VM / workload / Generic API step, CQ-B036)", () => {
+  const NOW = "2026-11-11T12:00:00.000Z";
+  const OLD = "2026-01-01T00:00:00.000Z";
+
+  it("re-stamps a known MAC (any punctuation) and takes the record's source; appends a new one; newest first", () => {
+    const existing = [entry("AA:BB:CC:00:00:01", "fortigate-arp", OLD), entry("AA:BB:CC:00:00:09", "dhcp-lease", "2026-06-01T00:00:00.000Z")];
+    const { merged } = mergeObservedMacs(existing, [
+      { mac: "aabb.cc00.0001", source: "vcenter-vnic" },
+      { mac: "AA:BB:CC:00:00:02", source: "vcenter-vnic" },
+    ], NOW);
+    expect(merged.map((m) => [m.mac, m.source, m.lastSeen])).toEqual([
+      ["AA:BB:CC:00:00:01", "vcenter-vnic", NOW],
+      ["AA:BB:CC:00:00:02", "vcenter-vnic", NOW],
+      ["AA:BB:CC:00:00:09", "dhcp-lease", "2026-06-01T00:00:00.000Z"],
+    ]);
+  });
+
+  it("keepSource only fills a missing source, never relabels one", () => {
+    const existing = [entry("AA:BB:CC:00:00:01", "intune-ethernet", OLD), { mac: "AA:BB:CC:00:00:02", lastSeen: OLD }];
+    const { merged } = mergeObservedMacs(existing, [
+      { mac: "AA:BB:CC:00:00:01", source: "generic-api" },
+      { mac: "AA:BB:CC:00:00:02", source: "generic-api" },
+    ], NOW, { keepSource: true });
+    expect(Object.fromEntries(merged.map((m) => [m.mac, m.source]))).toEqual({
+      "AA:BB:CC:00:00:01": "intune-ethernet", "AA:BB:CC:00:00:02": "generic-api",
+    });
+  });
+
+  it("skips an unparseable MAC, never mutates its input, and picks the primary by selectPrimaryMac", () => {
+    const existing = [entry("AA:BB:CC:00:00:01", "fortigate-arp", OLD)];
+    const snapshot = JSON.parse(JSON.stringify(existing));
+    const r = mergeObservedMacs(existing, [{ mac: "not-a-mac", source: "x" }, { mac: "AA:BB:CC:00:00:07", source: "vcenter-vnic" }], NOW);
+    expect(existing).toEqual(snapshot);
+    expect(r.merged).toHaveLength(2);
+    expect(r.primary).toBe("AA:BB:CC:00:00:07");
+    expect(mergeObservedMacs(null, [], NOW)).toEqual({ primary: null, merged: [] });
   });
 });

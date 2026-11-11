@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   projectAssetFromSources,
+  copyProjectedFields,
   type AssetSourceForProjection,
 } from "../../src/utils/assetProjection.js";
 
@@ -952,5 +953,30 @@ describe("projectAssetFromSources — fortinet-live (the device's running firmwa
       src("fortinet-live", { osVersion: "7.4.5" }),
     ]);
     expect(projected.osVersion).toBe("7.2.0");
+  });
+});
+
+describe("copyProjectedFields (CQ-B036)", () => {
+  const projected = {
+    hostname: "web01", os: null, osVersion: "22.04", serialNumber: "SN-NEW", manufacturer: null,
+    model: "VMware7,1", learnedLocation: null, ipAddress: "10.0.0.5",
+  };
+
+  it("copies only the named fields, and never one the projection left null", () => {
+    const data: Record<string, unknown> = { tags: ["x"] };
+    copyProjectedFields(data, projected, ["hostname", "os", "model", "ipAddress"]);
+    expect(data).toEqual({ tags: ["x"], hostname: "web01", model: "VMware7,1", ipAddress: "10.0.0.5" });
+  });
+
+  it("a fillOnly field is written only over an empty current value", () => {
+    const keep: Record<string, unknown> = {};
+    copyProjectedFields(keep, projected, ["serialNumber"], { fillOnly: { serialNumber: "SN-OLD" } });
+    expect(keep).toEqual({});
+    const fill: Record<string, unknown> = {};
+    copyProjectedFields(fill, projected, ["serialNumber"], { fillOnly: { serialNumber: null } });
+    expect(fill).toEqual({ serialNumber: "SN-NEW" });
+    const overwrite: Record<string, unknown> = {};
+    copyProjectedFields(overwrite, projected, ["serialNumber"]);
+    expect(overwrite).toEqual({ serialNumber: "SN-NEW" });
   });
 });
