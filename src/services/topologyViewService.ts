@@ -27,6 +27,7 @@ import { locationCodeValueProblem, setLocationCodes, type LocationCodes } from "
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type RegionIndex } from "./regionTreeService.js";
 import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
+import { autoPlaceRack, autoPlaceWall, type PlaceableDevice } from "../utils/regionAutoPlace.js";
 import { buildChanges, logEventsBatch } from "./eventLogService.js";
 import { syncDescriptionsOnSave } from "./descriptionSyncService.js";
 
@@ -686,11 +687,96 @@ function nameTaken(err: unknown): boolean {
   return (err as { code?: string }).code === "P2002";
 }
 
+/** What filling a view from its region did (rule 150(a)): asset ids placed, and those that found no room. */
+export interface AutoPlaced {
+  placed: string[];
+  unplaced: string[];
+}
+
+type PlacementFields = {
+  racks: TopologyRack[];
+  rackPlacements: TopologyRackPlacement[];
+  walls: TopologyWall[];
+  wallPlacements: TopologyWallPlacement[];
+};
+
+/**
+ * Rule 150(a): a Rack or Wall view created for a region, or linked to one,
+ * takes the devices whose codes already put them in that region's racks or
+ * junction boxes. The region is resolved through the site's tree (rule 153)
+ * and the devices arrive resolved (buildSiteTopology's `location`). Nothing
+ * already placed moves, and no description is written — the codes are
+ * already there. The result is validated as any client save would be.
+ */
+async function fillFromRegion(
+  siteId: string,
+  mode: TopologyViewMode,
+  region: LocationCodes,
+  fields: PlacementFields,
+  devices: PlaceableDevice[],
+  viewName: string,
+): Promise<{ fields: Partial<PlacementFields>; autoPlaced: AutoPlaced }> {
+  const index = await loadRegionIndex(siteId);
+  const resolved = (index.size ? resolveLocation(index, region).location : region) ?? region;
+  if (mode === "rack") {
+    const r = autoPlaceRack(resolved, fields.racks, fields.rackPlacements, devices, {
+      maxRacks: MAX_RACKS, maxPlacements: MAX_RACK_PLACEMENTS, defaultUnits: fields.racks[0]?.units ?? DEFAULT_RACK_UNITS, maxNameLen: MAX_RACK_NAME_LEN,
+    });
+    if (!r.placed.length) return { fields: {}, autoPlaced: { placed: [], unplaced: r.unplaced } };
+    const racks = sanitizeRacks(r.containers);
+    return {
+      fields: { racks, rackPlacements: sanitizeRackPlacements(r.placements, racks) },
+      autoPlaced: { placed: r.placed, unplaced: r.unplaced },
+    };
+  }
+  if (mode === "wall") {
+    const r = autoPlaceWall(resolved, fields.walls, fields.wallPlacements, devices, {
+      maxWalls: MAX_WALLS, maxPlacements: MAX_WALL_PLACEMENTS, defaultWidth: DEFAULT_WALL_W, defaultHeight: DEFAULT_WALL_H,
+      maxNameLen: MAX_RACK_NAME_LEN, viewName,
+    });
+    if (!r.placed.length) return { fields: {}, autoPlaced: { placed: [], unplaced: r.unplaced } };
+    const walls = sanitizeWalls(r.containers);
+    return {
+      fields: { walls, wallPlacements: sanitizeWallPlacements(r.placements, walls) },
+      autoPlaced: { placed: r.placed, unplaced: r.unplaced },
+    };
+  }
+  return { fields: {}, autoPlaced: { placed: [], unplaced: [] } };
+}
+
+function asPlacementFields(v: { racks: unknown; rackPlacements: unknown; walls: unknown; wallPlacements: unknown }): PlacementFields {
+  const arr = <T>(x: unknown) => (Array.isArray(x) ? x : []) as T[];
+  return {
+    racks: arr<TopologyRack>(v.racks),
+    rackPlacements: arr<TopologyRackPlacement>(v.rackPlacements),
+    walls: arr<TopologyWall>(v.walls),
+    wallPlacements: arr<TopologyWallPlacement>(v.wallPlacements),
+  };
+}
+
+function placementData(f: Partial<PlacementFields>): Record<string, Prisma.InputJsonValue> {
+  const out: Record<string, Prisma.InputJsonValue> = {};
+  for (const k of ["racks", "rackPlacements", "walls", "wallPlacements"] as const) if (f[k]) out[k] = json(f[k]);
+  return out;
+}
+
+/** Two regions name the same place (after the tree resolves them). */
+async function sameRegion(siteId: string, a: LocationCodes | null, b: LocationCodes | null): Promise<boolean> {
+  if (!a || !b) return !a && !b;
+  const index = await loadRegionIndex(siteId);
+  const r = (c: LocationCodes): LocationCodes => (index.size ? resolveLocation(index, c).location : c) ?? c;
+  const ra = r(a), rb = r(b);
+  const keys: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "rack", "junctionBox"];
+  const n = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  return keys.every((k) => n(ra[k]) === n(rb[k]));
+}
+
 export async function createView(
   siteId: string,
   input: { name: unknown; mode: unknown; shownTypes?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown },
   actor: string | null,
-): Promise<TopologyViewDto> {
+  devices: PlaceableDevice[] = [],
+): Promise<{ view: TopologyViewDto; autoPlaced: AutoPlaced }> {
   await assertSite(siteId);
   const name = sanitizeViewName(input.name);
   const mode = sanitizeMode(input.mode);
@@ -712,11 +798,17 @@ export async function createView(
     r.units = int(input.rackUnits, "rack size (U)", 1, MAX_RACK_UNITS);
     fields.racks = json([r]);
   }
+  let autoPlaced: AutoPlaced = { placed: [], unplaced: [] };
+  if (region && devices.length) {
+    const fill = await fillFromRegion(siteId, mode, region, asPlacementFields(fields), devices, name);
+    Object.assign(fields, placementData(fill.fields));
+    autoPlaced = fill.autoPlaced;
+  }
   try {
     const row = await prisma.topologyView.create({
       data: { siteId, name, isDefault: false, ...fields, createdBy: actor, updatedBy: actor },
     });
-    return toDto(row);
+    return { view: toDto(row), autoPlaced };
   } catch (err) {
     if (nameTaken(err)) throw new AppError(409, `A view named "${name}" already exists for this site`);
     throw err;
@@ -751,6 +843,8 @@ export interface UpdateViewResult {
   view: TopologyViewDto;
   /** Set when the patch changed the mode (rule 149): what the reset removed. */
   modeChange: ModeChangeSummary | null;
+  /** Devices placed because the patch linked the view to a region (rule 150(a)). */
+  autoPlaced: AutoPlaced;
 }
 
 /**
@@ -765,8 +859,10 @@ export async function updateView(
   viewId: string,
   patch: ViewPatch,
   actor: string | null,
+  devices: PlaceableDevice[] = [],
 ): Promise<UpdateViewResult> {
   const row = await loadView(siteId, viewId);
+  let autoPlaced: AutoPlaced = { placed: [], unplaced: [] };
   const current = toDto(row);
   const data: Prisma.TopologyViewUpdateInput = { updatedBy: actor };
   if (patch.name !== undefined) data.name = sanitizeViewName(patch.name);
@@ -779,6 +875,13 @@ export async function updateView(
     else if (patch.region !== undefined) {
       const r = sanitizeRegion(patch.region);
       fresh.region = r === null ? (null as unknown as Prisma.InputJsonValue) : json(r);
+    }
+    // A reset view that still stands for a region is filled from it (rule 150(a)).
+    const keptRegion = !modeTakesRegion(to) ? null : patch.region !== undefined ? sanitizeRegion(patch.region) : current.region;
+    if (keptRegion && devices.length) {
+      const fill = await fillFromRegion(siteId, to, keptRegion, asPlacementFields(fresh), devices, current.name);
+      Object.assign(fresh, placementData(fill.fields));
+      autoPlaced = fill.autoPlaced;
     }
     try {
       const result = await prisma.$transaction(async (tx) => {
@@ -798,6 +901,7 @@ export async function updateView(
           rackPlacementsCleared: current.rackPlacements.length,
           imagesCleared: result.imagesCleared,
         },
+        autoPlaced,
       };
     } catch (err) {
       if (nameTaken(err)) throw new AppError(409, `A view with that name already exists for this site`);
@@ -806,10 +910,13 @@ export async function updateView(
   }
 
   if (patch.shownTypes !== undefined) data.shownTypes = sanitizeShownTypes(patch.shownTypes);
+  let linkedRegion: LocationCodes | null = null;
   if (patch.region !== undefined) {
     const region = sanitizeRegion(patch.region);
     if (region && !modeTakesRegion(current.mode)) throw new AppError(400, "Only a Rack or Wall view can stand for a location region");
     data.region = region === null ? (null as unknown as Prisma.InputJsonValue) : json(region);
+    // Newly linked, or linked to a different place: fill from it below (rule 150(a)).
+    if (region && !(await sameRegion(siteId, current.region, region))) linkedRegion = region;
   }
   // An image background, on the view or on a layer, must be an upload of this
   // view; its size comes from the stored image, never the client.
@@ -863,6 +970,17 @@ export async function updateView(
       throw new AppError(400, `${stranded.length} rack placement${stranded.length === 1 ? "" : "s"} would no longer fit — move ${stranded.length === 1 ? "it" : "them"} first`);
     }
   }
+  // A patch that places devices itself is the operator's layout; only a bare link fills.
+  if (linkedRegion && devices.length && patch.rackPlacements === undefined && patch.wallPlacements === undefined) {
+    const fill = await fillFromRegion(siteId, current.mode, linkedRegion, {
+      racks,
+      rackPlacements: current.rackPlacements,
+      walls,
+      wallPlacements: current.wallPlacements,
+    }, devices, typeof data.name === "string" ? data.name : current.name);
+    Object.assign(data, placementData(fill.fields));
+    autoPlaced = fill.autoPlaced;
+  }
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
@@ -877,7 +995,7 @@ export async function updateView(
       }
       return u;
     });
-    return { view: toDto(updated), modeChange: null };
+    return { view: toDto(updated), modeChange: null, autoPlaced };
   } catch (err) {
     if (nameTaken(err)) throw new AppError(409, `A view with that name already exists for this site`);
     throw err;

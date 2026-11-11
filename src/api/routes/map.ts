@@ -79,6 +79,7 @@ import {
   siteForAsset,
 } from "../../services/regionTreeService.js";
 import { hasLocationCodes, parseLocationCodes, type LocationCodes } from "../../utils/locationCodes.js";
+import type { PlaceableDevice } from "../../utils/regionAutoPlace.js";
 import { getSatelliteStatus, getSatelliteTile } from "../../services/satelliteTileService.js";
 import { logEvent } from "./events.js";
 import { requirePermission } from "../middleware/permissions.js";
@@ -356,16 +357,19 @@ router.post("/sites/:id/topology/views", ...viewWriteGate, async (req, res, next
   try {
     const siteId = req.params.id as string;
     const input = CreateViewSchema.parse(req.body);
-    const view = await createView(siteId, input, req.session?.username ?? null);
+    // Rule 150(a): a view made for a region is filled with the devices already in it.
+    const devices = input.region ? await siteDevicesPlaceable(siteId) : [];
+    const { view, autoPlaced } = await createView(siteId, input, req.session?.username ?? null, devices);
     logEvent({
       action: "map.topology.view_created",
       resourceType: "asset",
       resourceId: siteId,
       actor: req.session?.username,
-      message: `Topology view "${view.name}" created (${view.mode})`,
-      details: { viewId: view.id, name: view.name, mode: view.mode },
+      message: `Topology view "${view.name}" created (${view.mode})` +
+        (autoPlaced.placed.length ? `, ${autoPlaced.placed.length} device${autoPlaced.placed.length === 1 ? "" : "s"} placed from its region` : ""),
+      details: { viewId: view.id, name: view.name, mode: view.mode, autoPlaced },
     });
-    res.status(201).json(view);
+    res.status(201).json({ ...view, autoPlaced });
   } catch (err) {
     next(err);
   }
@@ -383,7 +387,9 @@ router.put("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, re
   try {
     const siteId = req.params.id as string;
     const input = UpdateViewSchema.parse(req.body);
-    const { view, modeChange } = await updateView(siteId, req.params.viewId as string, input, req.session?.username ?? null);
+    // Only a patch that links a region (or resets a view that keeps one) can fill it (rule 150(a)).
+    const devices = input.region || input.mode !== undefined ? await siteDevicesPlaceable(siteId) : [];
+    const { view, modeChange, autoPlaced } = await updateView(siteId, req.params.viewId as string, input, req.session?.username ?? null, devices);
     if (modeChange) {
       logEvent({
         action: "map.topology.view_mode_changed",
@@ -392,7 +398,7 @@ router.put("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, re
         actor: req.session?.username,
         level: "warning",
         message: `Topology view "${view.name}" changed from ${modeChange.from} to ${modeChange.to} and reset`,
-        details: { viewId: view.id, ...modeChange },
+        details: { viewId: view.id, ...modeChange, autoPlaced },
       });
     } else {
       logEvent({
@@ -401,10 +407,10 @@ router.put("/sites/:id/topology/views/:viewId", ...viewWriteGate, async (req, re
         resourceId: siteId,
         actor: req.session?.username,
         message: `Topology view "${view.name}" saved`,
-        details: { viewId: view.id, fields: Object.keys(input) },
+        details: { viewId: view.id, fields: Object.keys(input), ...(autoPlaced.placed.length || autoPlaced.unplaced.length ? { autoPlaced } : {}) },
       });
     }
-    res.json({ view, modeChange });
+    res.json({ view, modeChange, autoPlaced });
   } catch (err) {
     next(err);
   }
@@ -441,6 +447,15 @@ async function siteDevicesWritten(siteId: string): Promise<Array<{ assetId: stri
     id: string; hostname?: string | null; ipAddress?: string | null; locationWritten?: LocationCodes | null;
   }>;
   return rows.filter((r) => r && r.id).map((r) => ({ assetId: r.id, name: r.hostname || r.ipAddress || r.id, written: r.locationWritten ?? null }));
+}
+
+/** Every device of a site with its location resolved through the tree (rule 150(a) fills). */
+async function siteDevicesPlaceable(siteId: string): Promise<PlaceableDevice[]> {
+  const t = await buildSiteTopology(siteId);
+  const rows = [t.fortigate as unknown].concat(t.switches as unknown[], t.aps as unknown[], t.endpoints as unknown[]) as Array<{
+    id: string; hostname?: string | null; ipAddress?: string | null; location?: LocationCodes | null;
+  }>;
+  return rows.filter((r) => r && r.id).map((r) => ({ assetId: r.id, name: r.hostname || r.ipAddress || r.id, location: r.location ?? null }));
 }
 
 const RegionCreateSchema = z.object({

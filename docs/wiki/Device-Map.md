@@ -693,6 +693,17 @@ a region is still just the codes in device descriptions
 ([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views don't take a
 region; they draw the regions themselves.
 
+**Devices already in a rack or junction box are placed for you.** When you
+create a Rack or Wall view for a region, or link a view to a region in **View
+settings** or from the description prompt, every device whose description
+already names one of its racks (`ra:`) or junction boxes (`jb:`) is placed:
+one rack per rack name, each device a 1U block from the bottom up, and one
+wall per junction box. An empty placeholder rack or wall takes the name of
+the rack or box. Anything already in the view stays where it is, and a device
+that doesn't fit is counted in the message rather than squeezed in. It
+happens only when the region is set or changed, so a device you take out
+stays out.
+
 **Location regions: one name, one place.** **Location regions** in the view
 menu shows the site's areas, buildings, floors, rooms, racks and junction boxes
 as a tree. Each name is used once per site (a floor once per building), so a

@@ -3232,7 +3232,9 @@ at one (for example `b:Plant r:MDF jb:7`). Only Rack and Wall views take a regio
 device on a region-mapped view adds that region's codes to its description when you save, after
 the same summary a Topology view shows. When you save a description that names a new room, rack
 or junction box, Polaris offers to make or pick a Wall or Rack view for it; skipping saves the
-description as typed.
+description as typed. When a Rack or Wall view is created for a region, or linked to one, the
+devices whose descriptions already name its racks or junction boxes are placed for you, one rack
+per rack and one wall per junction box. Nothing already placed moves and no description changes.
 
 ### Rule 151
 

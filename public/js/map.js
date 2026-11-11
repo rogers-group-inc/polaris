@@ -2259,7 +2259,7 @@
         dlg.close();
         if (!topoState.data || topoState.siteId !== siteId) return;
         topoState.data.views = _siteViews().concat([view]);
-        if (typeof showToast === "function") showToast('View "' + view.name + '" created');
+        if (typeof showToast === "function") showToast('View "' + view.name + '" created' + _autoPlacedNote(view.autoPlaced), _autoPlacedKind(view.autoPlaced));
         _switchTopologyView(view.id);
       } catch (err) {
         createBtn.disabled = false;
@@ -2268,6 +2268,16 @@
     });
     setTimeout(function () { nameEl.focus(); }, 60);
   }
+  // Rule 150(a): a view created for a region, or linked to one, is filled by
+  // the server with the devices whose codes already put them there.
+  function _autoPlacedNote(ap) {
+    if (!ap) return "";
+    var n = (ap.placed || []).length, m = (ap.unplaced || []).length;
+    if (!n && !m) return "";
+    return " — " + (n ? n + " device" + (n === 1 ? "" : "s") + " placed from " + (n === 1 ? "its" : "their") + " location codes" : "") +
+      (n && m ? "; " : "") + (m ? m + " didn't fit" : "");
+  }
+  function _autoPlacedKind(ap) { return ap && ap.unplaced && ap.unplaced.length ? "warning" : undefined; }
   // Name + mode. A changed mode RESETS the view (rule 149), so it is
   // confirmed first with what the reset would remove.
   function openTopologyViewSettings() {
@@ -2320,9 +2330,9 @@
           _forgetCurrentViewLayouts();
           topoState.shownTypesOverride = null;
           topoState.activeView = "flat";
-          if (typeof showToast === "function") showToast('"' + res.view.name + '" is now a ' + VIEW_MODE_LABELS[res.view.mode] + " view");
+          if (typeof showToast === "function") showToast('"' + res.view.name + '" is now a ' + VIEW_MODE_LABELS[res.view.mode] + " view" + _autoPlacedNote(res.autoPlaced), _autoPlacedKind(res.autoPlaced));
         } else if (typeof showToast === "function") {
-          showToast("View saved");
+          showToast("View saved" + _autoPlacedNote(res.autoPlaced), _autoPlacedKind(res.autoPlaced));
         }
         _renderViewPicker();
         renderTopologyGraph(topoState.data);

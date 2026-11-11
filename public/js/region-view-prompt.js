@@ -154,7 +154,9 @@
     var okBtn = dlg.overlay.querySelector('[data-rvp="ok"]');
     okBtn.addEventListener("click", async function () {
       okBtn.disabled = true;
-      var made = 0, mapped = 0, failed = [];
+      var made = 0, mapped = 0, placed = 0, unplaced = 0, failed = [];
+      // Rule 150(a): the server fills a view from the devices already in its region.
+      function count(ap) { if (ap) { placed += (ap.placed || []).length; unplaced += (ap.unplaced || []).length; } }
       for (var i = 0; i < regions.length; i++) {
         var r = regions[i];
         var choice = dlg.overlay.querySelector('[data-region-choice="' + i + '"]').value;
@@ -162,10 +164,10 @@
         try {
           if (choice === "skip") rememberSkip(siteId, chainKey(r.codes));
           else if (choice.indexOf("new:") === 0) {
-            await api.map.createTopologyView(siteId, { name: label, mode: choice.slice(4), region: r.codes });
+            count((await api.map.createTopologyView(siteId, { name: label, mode: choice.slice(4), region: r.codes })).autoPlaced);
             made++;
           } else if (choice.indexOf("map:") === 0) {
-            await api.map.updateTopologyView(siteId, choice.slice(4), { region: r.codes });
+            count((await api.map.updateTopologyView(siteId, choice.slice(4), { region: r.codes })).autoPlaced);
             mapped++;
           }
         } catch (err) {
@@ -176,7 +178,11 @@
       if ((made || mapped) && typeof onDone === "function") { try { onDone(); } catch (e) { /* caller's refresh */ } }
       if (typeof showToast === "function") {
         if (failed.length) showToast("Some regions were not mapped: " + failed.join("; "), "error");
-        else if (made || mapped) showToast((made ? made + " view" + (made === 1 ? "" : "s") + " created" : "") + (made && mapped ? ", " : "") + (mapped ? mapped + " mapped" : ""));
+        else if (made || mapped) {
+          showToast((made ? made + " view" + (made === 1 ? "" : "s") + " created" : "") + (made && mapped ? ", " : "") + (mapped ? mapped + " mapped" : "") +
+            (placed ? "; " + placed + " device" + (placed === 1 ? "" : "s") + " placed from " + (placed === 1 ? "its" : "their") + " codes" : "") +
+            (unplaced ? "; " + unplaced + " didn't fit" : ""), unplaced ? "warning" : undefined);
+        }
       }
     });
   }
