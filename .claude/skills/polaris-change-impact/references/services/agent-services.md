@@ -480,6 +480,26 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/agentDeployService.ts
+
+**What it owns:** The operator verbs on ONE asset's Polaris Agent, moved out of `routes/assets/agent.ts` (CQ-B062 slice 2): the agent card, install kickoff, retry, reinstall, upgrade and removal. The route keeps the Zod schemas, the `agentDeploy` / `assets` gates, the 204 for "no agent", and reads the reinstall's optional `privilegeTier` off the body.
+
+**Public API:** `getAgentCard(assetId)` (null when there is no agent), `AgentInstallInput`, `kickoffAgentInstall(assetId, input, actor)`, `retryAgentInstall(assetId, actor)`, `reinstallAgent(assetId, actor, bodyTier)`, `upgradeAgent(assetId, credentialId, actor)`, `removeAgent(assetId, actor, force)`.
+
+**Cross-service deps:** credentialService (`getCredential`), eventLogService, ipv6GateService, utils/assetDialAddress, utils/pollingCompatibility, utils/publicUrl; loaded on demand as the route did: agentInstallService (`startInstall`, `startUpgrade`, `startUninstall`), agentTokenService (`revokeBearer`), certInfo, agentInstallScripts, utils/capEff.
+
+**Used by:** `src/api/routes/assets/agent.ts` (GET /:id/agent, POST /:id/agent/install, retry, reinstall, upgrade, DELETE /:id/agent).
+
+**Invariants:**
+- The card never carries `enrollmentTokenHash`, `enrollmentTokenPrefix` or `bearerHash`.
+- Install refuses Fortinet-sourced assets, hypervisors and containers; needs a server cert to pin and a callback URL a remote host can reach.
+- Retry resets only a `failed` install; reinstall runs whatever the status, revokes the bearer first and holds the asset in maintenance (`agent-reinstall`, rule 80); a legacy root agent downgrades to unprivileged unless a tier is picked.
+- Removal revokes the bearer BEFORE anything else; `force` drops the row and resets the agent polling + Application Map facts in one transaction.
+
+**When changing this:** `tests/unit/agentDeployService.test.ts`, and `tests/integration/agentDeployGrant.test.ts` for the gates.
+
+---
+
 ## services/agentInstallService.ts
 
 **Input rule (business rule 107):** the server URL is allowlisted by `utils/agentServerUrl.ts`. `inferOwnServerUrl` / `inferOwnServerUrlSync` return only a normalized URL (an invalid stored override, `POLARIS_PUBLIC_URL` or cert-derived value is skipped for the next source, the override with a warning), and each of the five `__SERVER_URL__` replace sites calls `assertScriptSafeServerUrl`, so a Windows installer / upgrader script is never built from a URL that fails the allowlist. `PUT /server-settings/agents/server-url` applies the same check at save.
