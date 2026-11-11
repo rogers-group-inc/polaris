@@ -450,6 +450,7 @@
     "_pushAssetText",
     "_quarantineMenuItems",
     "_quarantinePushAvailable",
+    "_quarantineStrandedHTML",
     "_radioBandLabel",
     "_radioPowerLabel",
     "_rasterizeChartSvgToImage",

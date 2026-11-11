@@ -528,6 +528,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/quarantineStrandedService.ts
+
+**What it owns:** Business rule 164 — the quarantine block that outlived its release: reading and shrinking `Asset.quarantineStranded`. (`assetQuarantineService.releaseQuarantine` WRITES the list, through `utils/quarantineStranded.ts`.)
+
+**Public API:** `retryStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds?, onlyDue? })` → `{ assetId, cleared, remaining }`; `dismissStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds? })`; `retryAllStrandedQuarantine(now?)` (the job's pass).
+
+**Cross-service deps:** `assetQuarantineService.unpushQuarantineFromFortigate`, `reservationPushService.buildTransportForIntegration`, `eventLogService.logEvent` (`asset.quarantine.stranded_cleared`, `asset.quarantine.stranded_dismissed`), `utils/quarantineStranded.ts`.
+
+**Used by:** `src/api/routes/assets/quarantine.ts` (`POST /:id/quarantine/stranded/retry`, `DELETE /:id/quarantine/stranded`); `src/jobs/retryStrandedQuarantine.ts`.
+
+**Invariants:**
+- **This module imports `assetQuarantineService`; that service must never import this one** (a cycle). Anything the quarantine service needs about the list is a pure helper in `utils/quarantineStranded.ts`.
+- The retry re-reads the row before it writes and folds its outcome into what is stored THEN — a dismiss or a second release that landed mid-attempt is not overwritten.
+- An entry whose integration no longer exists is kept and reported, never silently dropped: only a dismiss removes it.
+- Dismiss never calls a device and always writes a warning Event.
+- A scoped bearer token may only retry or dismiss gates reached through its own integrations (rule 114(d)).
+
+**When changing this:**
+- FortiManager and standalone FortiGate share this path through `buildTransportForIntegration` — never branch on the integration type here.
+- The job runs where schedulers run (web / all); it calls devices, so it must not be registered under another role.
+- `Asset.quarantineStranded` is NOT cleared when the asset is deleted or merged away (`docs/ORPHAN-AUDIT-LEDGER.md`, D.3) — a delete path that should record it reads `parseStranded` first.
+
 ## services/assetQuarantineService.ts
 
 **What it owns:** Push/pull FortiGate MAC quarantine via persistent `user.quarantine.targets` CMDB tree; orchestrates multi-FortiGate best-effort with per-device all-or-nothing atomicity.

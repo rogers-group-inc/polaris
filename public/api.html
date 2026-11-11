@@ -746,7 +746,10 @@
           <div class="endpoint-head"><span class="method m-get">GET</span> /assets/:id/quarantine-status
             <span class="gate">assetsQuarantine:read</span></div>
           <p><code>{ id, status, statusBeforeQuarantine, quarantineReason, quarantinedAt,
-            quarantinedBy, quarantineTargets }</code>.</p>
+            quarantinedBy, quarantineTargets, quarantineStranded }</code>.
+            <code>quarantineStranded</code> lists the FortiGates that still hold the block
+            after a release (see below); it is <code>[]</code> otherwise and is independent of
+            <code>status</code>.</p>
         </div>
 
         <div class="endpoint">
@@ -755,7 +758,24 @@
           <p>Release. Restores the device's prior status and monitoring; device-side unpush
             failures are reported (<code>{ assetId, newStatus, unpushedFrom, failedToUnpush,
             message }</code>) but never block the release. <code>409</code> when the device is
-            not quarantined.</p>
+            not quarantined. A FortiGate that could not be reached is remembered on the asset
+            as <code>quarantineStranded</code> and retried in the background (15 minutes after
+            the failure, backing off to every 6 hours) until it clears or is dismissed.</p>
+        </div>
+
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-post">POST</span> /assets/:id/quarantine/stranded/retry
+            <span class="gate">assetsQuarantine:write</span></div>
+          <p>Retry now on the FortiGates that still hold the block after a release. Body
+            <code>{ "fortigateDevice": "..." }</code> for one gate, <code>{}</code> for all.
+            Response <code>{ assetId, cleared, remaining }</code> — <code>cleared</code> is the
+            gate names it was removed from, <code>remaining</code> the entries still listed
+            (<code>{ fortigateDevice, integrationId, error, since, lastAttemptAt,
+            attempts }</code>). <code>404</code> when the named gate is not listed.
+            <span class="method m-delete" style="font-size:0.65rem">DELETE</span>
+            <code>/assets/:id/quarantine/stranded</code> (optionally <code>?device=</code>)
+            stops tracking an entry <strong>without</strong> touching the device — for a gate
+            that is gone for good, or once the entry has been removed there by hand.</p>
         </div>
 
         <div class="endpoint">

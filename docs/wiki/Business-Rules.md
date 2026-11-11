@@ -3412,3 +3412,15 @@ you choose to delete anyway — or delete through the API — Polaris writes a w
 `agent.left_on_host`, naming each host, so there is a record of what still has to be
 removed by hand. See [Assets](Assets#deleting-an-asset) and
 [Polaris Agent](Polaris-Agent#when-the-asset-is-deleted).
+
+### Rule 164
+
+**A quarantine release that cannot reach a FortiGate still releases, and Polaris keeps
+trying.** Releasing a quarantine lifts the block on every FortiGate that holds it. If one
+cannot be reached, the device is released everywhere else and its status and monitoring
+come back as usual — but it is still blocked at that one gate. Polaris now remembers that
+gate on the asset, shows it on the asset's **Quarantine** tab under **Still blocked on**,
+and retries in the background (15 minutes after the failure, backing off to every six
+hours) until it clears. **Retry** tries immediately. **Dismiss** stops the tracking without
+touching the FortiGate — use it once the entry has been removed there by hand, or the
+FortiGate is gone for good. See [Assets](Assets#still-blocked-on-a-fortigate).

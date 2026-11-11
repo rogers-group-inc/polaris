@@ -248,6 +248,8 @@ POST   /assets/:id/quarantine
 POST   /assets/:id/quarantine/verify
 GET    /assets/:id/quarantine-status
 DELETE /assets/:id/quarantine
+POST   /assets/:id/quarantine/stranded/retry   a gate that still holds the block after a release
+DELETE /assets/:id/quarantine/stranded         stop tracking it (does not touch the device)
 POST   /assets/bulk-quarantine
 GET    /assets/sighting-settings            PUT to change
 ```
@@ -259,6 +261,13 @@ withholds the verb when it is false. **Release is never gated on it.**
 
 A token granting quarantine at `write` or above **must** name its scoped
 integrations.
+
+**A release never fails because a FortiGate is unreachable.** The device is
+released and the response lists the gates that could not be reached in
+`failedToUnpush`, as before. Those gates are now also remembered on the asset as
+`quarantineStranded` (on `quarantine-status`) and retried in the background until
+they clear ([rule 164](Business-Rules#rule-164)). A client that wants to be sure a
+device is unblocked everywhere reads `quarantineStranded` and waits for `[]`.
 
 Note that quarantining a device also makes it **unmonitorable**
 ([rule 10](Business-Rules#rule-10)) — every probe would fail by design, since

@@ -1270,6 +1270,13 @@ model Asset {
   quarantinedAt             DateTime?
   quarantinedBy             String?
   quarantineTargets         Json         @default("[]")
+  // Business rule 164: FortiGates that still hold this asset's quarantine
+  // block AFTER it was released — the gate could not be reached, or its
+  // integration is gone. [{ fortigateDevice, integrationId, error, since,
+  // lastAttemptAt, attempts }]. Written by releaseQuarantine, shrunk by a
+  // retry that succeeds or an operator's dismiss; `[]` on almost every row.
+  // Independent of `status`: the asset is NOT quarantined while this is set.
+  quarantineStranded        Json         @default("[]")
 
   // Dependency-aware monitoring suppression. dependencyLayer is the BFS
   // shortest-path distance from any FortiGate root (1 = FortiGate, 2 =

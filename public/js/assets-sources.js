@@ -1059,6 +1059,46 @@ function _loadAssetHostPins(rootEl) {
 
 // ─── Quarantine tab ─────────────────────────────────────────────────────────
 
+/**
+ * Business rule 164: the FortiGates that still hold this asset's quarantine
+ * block after it was released, because they could not be reached at the time.
+ * The asset is NOT quarantined — this block is a leftover on one site — so the
+ * section shows whatever the asset's status is. Polaris retries on its own;
+ * Retry does it now, Dismiss stops tracking a gate without touching it.
+ * "" when nothing is stranded, which is nearly always.
+ */
+function _quarantineStrandedHTML(a) {
+  var list = Array.isArray(a.quarantineStranded) ? a.quarantineStranded : [];
+  if (!list.length) return "";
+  var mayAct = typeof canQuarantineAsset === "function" ? canQuarantineAsset(a) : false;
+  var rows = list.map(function (e, i) {
+    return "<tr>" +
+      "<td>" + escapeHtml(e.fortigateDevice || "?") + "</td>" +
+      "<td>" + (e.since ? formatDate(e.since) : "—") + "</td>" +
+      "<td>" + (e.lastAttemptAt ? formatDate(e.lastAttemptAt) : "—") + (e.attempts > 1 ? " (" + e.attempts + " tries)" : "") + "</td>" +
+      '<td style="white-space:normal">' + escapeHtml(e.error || "—") + "</td>" +
+      (mayAct
+        ? '<td style="white-space:nowrap">' +
+            '<button class="btn btn-sm btn-secondary" data-qtn-stranded-retry="' + i + '">Retry</button> ' +
+            '<button class="btn btn-sm btn-secondary" data-qtn-stranded-dismiss="' + i + '" title="Stop tracking this FortiGate without touching it">Dismiss</button>' +
+          "</td>"
+        : "") +
+    "</tr>";
+  }).join("");
+  var n = list.length;
+  return '<div data-shot-section="qStranded" data-shot-label="Still Blocked">' +
+    '<div class="section-block" style="margin-bottom:1rem">' +
+      '<div class="section-label" style="margin-bottom:0.25rem">Still blocked on ' + n + " FortiGate" + (n === 1 ? "" : "s") + "</div>" +
+      '<p style="margin:0 0 0.5rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">' +
+        "This asset's quarantine was released, but " + (n === 1 ? "this FortiGate" : "these FortiGates") +
+        " could not be reached, so the device is still blocked there. Polaris keeps trying in the background. " +
+        "<strong>Dismiss</strong> only stops the tracking — use it once the entry has been removed on the FortiGate, or the FortiGate is gone for good.</p>" +
+      '<table class="data-table" style="font-size:0.82rem"><thead><tr><th>FortiGate</th><th>Since</th><th>Last tried</th><th>Why</th>' +
+        (mayAct ? "<th></th>" : "") + "</tr></thead><tbody>" + rows + "</tbody></table>" +
+    "</div>" +
+  "</div>";
+}
+
 function _assetQuarantineTabHTML(a) {
   var isQ = a.status === "quarantined";
   var macs = [];
@@ -1118,6 +1158,7 @@ function _assetQuarantineTabHTML(a) {
   var verifyBtn = isQ ? '<button class="btn btn-secondary" id="btn-qtn-verify">Verify Push</button>' : '';
 
   return '<div style="padding:0.5rem 0">' +
+    _quarantineStrandedHTML(a) +
     statusSection +
     '<div data-shot-section="qMacs" data-shot-label="Associated MACs">' +
     '<div class="section-block" style="margin-bottom:1rem">' +
@@ -1178,6 +1219,45 @@ function _wireQuarantineTab(a) {
     });
   }
 
+  // Rule 164: Retry / Dismiss on a FortiGate that still holds the block.
+  var stranded = Array.isArray(a.quarantineStranded) ? a.quarantineStranded : [];
+  Array.prototype.forEach.call(tabPanel.querySelectorAll("[data-qtn-stranded-retry]"), function (btn) {
+    btn.addEventListener("click", async function () {
+      var e = stranded[Number(btn.getAttribute("data-qtn-stranded-retry"))];
+      if (!e) return;
+      btn.disabled = true;
+      btn.textContent = "Retrying…";
+      try {
+        var r = await api.assets.retryStrandedQuarantine(a.id, e.fortigateDevice);
+        if (r.cleared && r.cleared.length) showToast("Removed from " + r.cleared.join(", "), "success");
+        else showToast(e.fortigateDevice + " still could not be reached", "warning");
+        openViewModal(a.id);
+      } catch (err) {
+        showToast(err.message || "Retry failed", "error");
+        btn.disabled = false;
+        btn.textContent = "Retry";
+      }
+    });
+  });
+  Array.prototype.forEach.call(tabPanel.querySelectorAll("[data-qtn-stranded-dismiss]"), function (btn) {
+    btn.addEventListener("click", async function () {
+      var e = stranded[Number(btn.getAttribute("data-qtn-stranded-dismiss"))];
+      if (!e) return;
+      var ok = await showConfirm('Stop tracking the quarantine entry on "' + e.fortigateDevice + '"?\n\n' +
+        "Polaris will not remove it. If the entry is still on that FortiGate, this device stays blocked there and Polaris will no longer know.");
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await api.assets.dismissStrandedQuarantine(a.id, e.fortigateDevice);
+        showToast("No longer tracking " + e.fortigateDevice);
+        openViewModal(a.id);
+      } catch (err) {
+        showToast(err.message || "Dismiss failed", "error");
+        btn.disabled = false;
+      }
+    });
+  });
+
   var releaseBtn = tabPanel.querySelector("#btn-qtn-release");
   if (releaseBtn) {
     releaseBtn.addEventListener("click", async function () {
@@ -1186,7 +1266,14 @@ function _wireQuarantineTab(a) {
       releaseBtn.disabled = true;
       try {
         var result = await api.assets.unquarantine(a.id);
-        showToast(result.message || "Quarantine released");
+        // Rule 164: say so when a gate still holds the block — the asset is
+        // released, but not everywhere.
+        var leftOn = (result.failedToUnpush || []).map(function (f) { return f.fortigateDevice; });
+        if (leftOn.length) {
+          showToast("Released, but still blocked on " + leftOn.join(", ") + " — Polaris will keep retrying. See the Quarantine tab.", "warning");
+        } else {
+          showToast(result.message || "Quarantine released");
+        }
         closeAssetPanel();
         loadAssets();
       } catch (err) {

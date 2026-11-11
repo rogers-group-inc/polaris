@@ -27,7 +27,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
 | B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
-| D | Leftovers outside the database (hosts, devices, disk) | **D.1 and D.7 done** — this commit (rule 163); D.2–D.6, D.8 open |
+| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.7 done** (rules 163, 164); D.3–D.6, D.8 open |
 | E | Removable by hand, but silent | open — no decisions needed |
 
 ## Decisions (operator, 2026-11-11)
@@ -37,6 +37,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | B-D1 | What happens to what a deleted integration discovered | **Keep the assets and networks and detach them cleanly** (remove that integration's source rows, tags and dependency edges; re-project from the remaining sources), **plus a tick-box in the delete dialog to decommission the assets no other source still reports.** The dialog shows the counts first |
 | B-D2 | DHCP reservations pushed to a FortiGate when its integration is deleted | **Leave them on the device, and write an Event listing every entry left behind** |
 | C-D1 | How long cleared alerts are kept | **A setting, default 365 days** (0 = keep forever) |
+| D-D2 | A quarantine release that cannot reach a FortiGate | **Release, remember, retry**: release as today (response unchanged), store the gates that still hold the block on the asset, show them with Retry / Dismiss, retry in the background |
 | D-D1 | Deleting an asset that has the Polaris Agent installed | **Warn about the agent and offer to attempt the uninstall first. If it succeeds, carry on. If it fails, say so and ask whether to continue with the delete** |
 
 Not asked; defaulted by the implementer and open to change:
@@ -45,7 +46,7 @@ Not asked; defaulted by the implementer and open to change:
 |---|---|
 | B-D3 | `azure:` tags are stripped when the Arc integration is deleted or a machine leaves Arc (it is part of the clean detach of B-D1) |
 | C-D2 | The subnet archive gains a Delete at Full Read-Write rather than a retention period — the operator has consistently preferred a visible, operator-decided removal over a silent automatic one |
-| D-D2 | A quarantine release that cannot reach a gate keeps that gate on the record as still blocked, with a retry, rather than dropping it |
+| D-D2 | A quarantine release that cannot reach a gate | (first defaulted to "stay quarantined until all clear"; put to the operator once the API and monitoring impact was clear) |
 | D-D3 | An offboarding script is generated beside the onboarding one; Intune / Arc objects Polaris created are listed for removal |
 
 ## Batch 0 — done (rules 155, 48(e), 140(a), 140(b))
@@ -131,8 +132,8 @@ C.7 (topology layouts), C.11 (process config on unpin).
 | # | Leftover | Consequence |
 |---|---|---|
 | D.1 | The agent stays installed and running when its asset is deleted or merged away | 401s forever; the Uninstall button went with the asset **→ fixed for the three UI delete paths and the operator merge (rule 163): warn, offer the uninstall, ask again if it fails, record `agent.left_on_host`. **Open:** the two automatic ghost merges and the conflict-resolution absorb do not record a dropped agent** |
-| D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry |
-| D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id |
+| D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry **→ fixed (rule 164): the gate is remembered in `Asset.quarantineStranded`, retried every 15 min on a backoff, with Retry / Dismiss on the Quarantine tab** |
+| D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id **→ open; also: an asset DELETED while it has stranded entries loses the list (a released asset can be deleted)** |
 | D.4 | Onboarding artefacts: service account, authorized key, sudoers file, Intune remediation, Arc run-command | no removal path; key rotation appends, so old keys stay authorized |
 | D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI |
 | D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way |
