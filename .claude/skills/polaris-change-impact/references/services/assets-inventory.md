@@ -241,6 +241,24 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetTelemetryService.ts
+
+**What it owns:** The asset details telemetry family's data, moved out of `routes/assets/telemetry.ts` (CQ-B062 slice 2): the Custom MIB widgets with their latest samples, interface history, the operator's interface comment (with Description Sync), the manual port-tag read a tag save is judged against, the SD-WAN Performance SLA links and rules, path-check traceroutes, MCLAG peers, virtualization (a VM's host, a host's guests, datastores), process / service logs, and the pinned-process log config (rule 107). The route keeps the gates, the query / body parsing and the request-bound inputs (the actor, the caller's Agent Deploy grant).
+
+**Public API:** `ProcessLogConfigInput`, `getAssetCustomWidgets(id)`, `getInterfaceHistory(id, ifName, since, until, rangeLabel)`, `setInterfaceComment(id, ifName, trimmed, actor)`, `listManualInterfaceTags(id, ifName)`, `getPerfSlaLinks(id)`, `getSdwanRules(id)`, `getPathCheckTraceroutes(id, checkId, limit)`, `getMclagPeers(id)`, `getAssetVirtualization(id)`, `getProcessLogs(id, name, limit, since, onlyFlagged)`, `getServiceLogs(id, unit, limit, since, onlyFlagged)`, `setProcessLogConfig(id, name, body, canDeployAgents, actor)`.
+
+**Cross-service deps:** sampleQueryRouter, sampleHistoryService, descriptionSyncService (`syncDescriptionsOnSave`), manufacturerProfileService, utils/logPathGlob, eventLogService.
+
+**Used by:** `src/api/routes/assets/telemetry.ts` (the custom-widgets, interface-history, interface comment / tags, perf-sla-links, sdwan-rules, path-check-traceroutes, mclag-peers, virtualization, process-logs, service-logs and process config routes).
+
+**Invariants:**
+- A CHANGED process log glob is shape-checked and needs Agent Deploy (`canDeployAgents`): the agent reads that path as a privileged user (rule 107). Resaving the current glob, or clearing it, needs neither.
+- An empty interface comment deletes the override and does not push to the device; a non-empty one upserts and asks Description Sync.
+
+**When changing this:** `tests/unit/assetTelemetryService.test.ts`, `tests/unit/logPathGlob.test.ts`.
+
+---
+
 ## services/assetBulkTagService.ts
 
 **What it owns:** The bulk tag edit behind the Assets bulk bar's **Tags** button — one tag set applied to many assets in one of three modes (`add` / `remove` / `replace`), and the list of managed namespaces a replace keeps.
