@@ -217,6 +217,21 @@ const PLACEHOLDER_TEXT = new Set([
   "configure sysdescr",
 ]);
 
+/**
+ * A sysName the vendor generated rather than anyone chose (business rule
+ * 154(a)). APC network management cards name themselves `apc` + the last three
+ * octets of the card's MAC ("apc8F29C4") until someone sets a name. Unlike the
+ * placeholders above it is still UNIQUE per device, so it is kept — but ranked
+ * below every other hostname source, so a DHCP client name or an operator's
+ * edit always wins over it.
+ */
+const FACTORY_SYSNAME = [/^apc[0-9a-f]{6}$/i];
+
+export function isFactoryDefaultSysName(name: string | null | undefined): boolean {
+  const s = (name ?? "").trim();
+  return !!s && FACTORY_SYSNAME.some((re) => re.test(s));
+}
+
 /** Longest field we keep. sysDescr in particular can run to a paragraph. */
 const MAX_TEXT = 512;
 
@@ -324,7 +339,7 @@ export function parseSnmpIdentity(rows: SnmpIdentityRow[]): SnmpIdentity {
   // names itself while it is at it — so it takes the description's side of the
   // precedence rule below, ahead of the bare word match, having proved the
   // vendor by parsing the layout rather than by spotting a word.
-  const detail = parseVendorSysDescr(descr);
+  const detail = parseVendorSysDescr(descr, sysObjectId);
   if (detail?.model) out.model = detail.model;
   if (detail?.osVersion) out.osVersion = detail.osVersion;
   if (detail?.productType) out.productType = detail.productType;

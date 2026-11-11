@@ -58,6 +58,7 @@ import { normalizeManufacturer } from "./manufacturerNormalize.js";
 import { normalizeWindowsOs } from "./osNormalize.js";
 import { isValidGeoCoord } from "./geo.js";
 import { usableSerialOrNull } from "./serialNumber.js";
+import { isFactoryDefaultSysName } from "./snmpIdentity.js";
 import {
   contributedLocation,
   defaultSourceLocationPriority,
@@ -300,7 +301,12 @@ const HOSTNAME_RULES: FieldRule[] = [
   // above the Generic API feed (rule 100: a feed never outranks a first-party
   // source) and the DHCP client identifier. An operator's typed name is a
   // `hostnameOverride` pin and beats this whatever the ladder says.
-  { sourceKind: "snmp-identity", pick: (o) => obsString(o, "hostname") },
+  // A vendor-generated factory name ("apc8F29C4") is skipped HERE and offered
+  // again at the very bottom of the ladder (rule 154(a)).
+  { sourceKind: "snmp-identity", pick: (o) => {
+      const name = obsString(o, "hostname");
+      return name && !isFactoryDefaultSysName(name) ? name : null;
+    } },
   // Generic API (an operator-built feed — a CMDB, a vendor portal, a
   // spreadsheet behind an API). Below every directory, hypervisor, controller
   // and agent source; above only the DHCP client identifier, because a name
@@ -312,6 +318,13 @@ const HOSTNAME_RULES: FieldRule[] = [
   // match the device's "real" hostname (random strings, owner names,
   // serial numbers). Useful only when no MDM/AD source has an opinion.
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "hostname") },
+  // Business rule 154(a): the device's FACTORY sysName — unique, so better
+  // than no name, but chosen by nobody, so below every name anyone chose,
+  // the DHCP client identifier included.
+  { sourceKind: "snmp-identity", pick: (o) => {
+      const name = obsString(o, "hostname");
+      return name && isFactoryDefaultSysName(name) ? name : null;
+    } },
 ];
 
 /**
@@ -349,6 +362,11 @@ const SERIAL_RULES: FieldRule[] = [
   // The NAS host's SMBIOS serial, as its own OS reads it. Through obsSerial,
   // so a "To Be Filled By O.E.M." board yields nothing (rule 84).
   ...workloadRule("host", (o) => obsSerial(o, "serial")),
+  // The serial a vendor's own sysDescr format states, only where it is the
+  // device's and not an add-on card's (business rule 161 — an APC rack PDU).
+  // Above ENTITY-MIB for the same reason as the model ladder: a parsed vendor
+  // format is the narrower claim.
+  { sourceKind: "snmp-sysdescr", pick: (o) => obsSerial(o, "serialNumber") },
   // The ENTITY-MIB chassis serial the device reports itself (business rule
   // 154) — only ever from a single chassis row, never a stack member's.
   // Through obsSerial like every serial rule (rule 84).
