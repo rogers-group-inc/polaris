@@ -597,6 +597,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/integrationDetachService.ts
+
+**What it owns:** Business rule 159 — what deleting an integration does to everything it discovered. `previewIntegrationDetach` (the delete dialog's numbers) and `detachIntegration` (run BEFORE the integration row is deleted). Never deletes the integration, an asset or a network.
+
+**Public API:** `previewIntegrationDetach({ id, name, type })` → `{ sourcedAssets, soleSourceAssets, soleSourceMonitored, networks, pushedReservations, azureTaggedAssets }`; `detachIntegration({ id, name, type }, { decommission, actor })` → `IntegrationDetachResult`; pure `detachSummary(result)` (the text on the `integration.deleted` Event).
+
+**Cross-service deps:** `eventLogService.logEvent` (`integration.dhcp_entries_left`, `asset.integration_deleted.decommissioned`); `tagAssignmentService.syncAzureTagRegistry`; `maintenanceScheduleService.releaseAssetsForDecommission`; `reservationService.releaseInfraReservationsForAssets`; `dependencyTreeService.recomputeDependencyTree`; `utils/assetProjection.ENRICHMENT_SOURCE_KINDS`; `utils/tagNormalize.isAzureTag`.
+
+**Used by:** `src/api/routes/integrations.ts` — `GET /:id/delete-preview` and `DELETE /:id`.
+
+**Invariants:**
+- **Runs before `prisma.integration.delete`.** Afterwards the FK has nulled the integration id on everything and nothing can find its rows — that is the bug this service exists for.
+- **A row with NO integration is a claim.** The sole-source query is `OR: [{ integrationId: null }, { integrationId: { not: id } }]`. `NOT: { integrationId }` drops null rows in SQL, and the operator's `manual` row and the agent's row have no integration — the first version decommissioned hand-made assets.
+- Ownership decides who may be decommissioned (rule 70): owned by this integration or by nothing, never by another.
+- Pushed DHCP reservations are never un-pushed here (operator decision); they are listed in one Event, capped at 500 entries in `details` with the true count in the message.
+- A failure throws; the caller has not deleted the integration yet.
+
+**When changing this:**
+- **A new integration type that writes something keyed to itself joins this service**: a source kind is covered by the `integrationId` delete, but a tag namespace needs a strip, a placement-edge `source` needs an entry in `PLACEMENT_SOURCE_BY_TYPE`, and a new per-integration table needs a delete. If its source kind is ALWAYS written with an integration id, add it to the kind list a future clean-up migration would use (`20261111140000_orphan_integration_sources` is the pattern).
+- Anything added here that should be visible to the operator first also goes in `previewIntegrationDetach` and `public/js/integrations.js → _integrationDeleteBodyHTML`.
+- Scale: chunked by 500 asset ids, batched writes, once per operator click; a 2000-VM vCenter is four chunks.
+
 ## services/assetSourceService.ts
 
 **What it owns:** The server half of the asset details **Sources** tab, moved out of `routes/assets/sources.ts` (CQ-B062 slice 2): the per-discovery-source view, splitting one source off into a new asset, and the operator-driven merge with its audit Event and conflict settling. The route keeps only Zod validation and the merge body's "this" / "other" -> canonical / ghost translation.

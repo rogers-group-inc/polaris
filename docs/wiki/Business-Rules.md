@@ -3332,3 +3332,15 @@ evaluated a week ago; the last-run record of an integration that has been delete
 FortiGate sightings older than the quarantine sighting window; and Discovery runs older
 than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
 a slice at a time over several nights. See [Events](Events#retention-and-archival).
+
+### Rule 159
+
+**Deleting an integration keeps what it discovered, and detaches it.** The assets and
+networks stay. What that integration reported about them is removed, so they stop being
+updated from it and stand as ordinary manual records; for an Azure Arc integration the
+`azure:` tags come off too, and a hypervisor's VM-to-host links are removed. The delete
+dialog shows the numbers first and offers to **decommission** the assets that no other
+source still reports — unticked by default, and it needs Full Read-Write on Assets. DHCP
+reservations the integration pushed to a device **stay on the device**; Polaris can no
+longer change them, and each one is listed in a warning Event so you know what is there.
+See [Integrations](Integrations#deleting-an-integration).
