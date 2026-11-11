@@ -326,3 +326,16 @@ export async function handlePrimaryAddressFollowed(assetId: string, fromIp: stri
     );
   }
 }
+
+/**
+ * What the integration-token retarget guard (rule 111(c)) needs to judge an
+ * address change on this asset: its current IPv4 and the discovering
+ * integration's type. null for an unknown asset. The guard itself reads the
+ * caller's permission, so it stays in the route (CQ-B062 slice 2).
+ */
+export async function loadIntegrationTokenTarget(assetId: string) {
+  return prisma.asset.findUnique({
+    where: { id: assetId },
+    select: { ipAddress: true, discoveredByIntegration: { select: { type: true } } },
+  });
+}

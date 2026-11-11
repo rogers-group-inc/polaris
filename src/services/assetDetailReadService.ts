@@ -596,3 +596,22 @@ export async function assertAssetExists(id: string): Promise<void> {
   const asset = await prisma.asset.findUnique({ where: { id }, select: { id: true } });
   if (!asset) throw new AppError(404, "Asset not found");
 }
+
+/**
+ * GET /assets/:id/tls-pins — the TLS endpoints this asset's discovering
+ * integration dials with a token and the certificate pinned for each (rule
+ * 113(e)). 404 for an unknown asset. tlsCertPinService is loaded on demand, as
+ * the route did. Moved out of routes/assets/addresses.ts (CQ-B062 slice 2).
+ */
+export async function assetTlsPins(id: string) {
+  const asset = await prisma.asset.findUnique({
+    where: { id },
+    select: { assetType: true, ipAddress: true, discoveredByIntegration: { select: { type: true, name: true, config: true } } },
+  });
+  if (!asset) throw new AppError(404, "Asset not found");
+  const { assetTlsEndpoints } = await import("./tlsCertPinService.js");
+  const integration = asset.discoveredByIntegration
+    ? { ...asset.discoveredByIntegration, config: (asset.discoveredByIntegration.config ?? {}) as Record<string, unknown> }
+    : null;
+  return assetTlsEndpoints({ assetType: asset.assetType, ipAddress: asset.ipAddress }, integration);
+}

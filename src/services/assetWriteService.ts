@@ -40,6 +40,8 @@ import { logger } from "../utils/logger.js";
 import { CLEAR_PRIMARY_ADDRESS_PIN, gateForPinnedAddress } from "./primaryAddressService.js";
 import { assertQuarantineStatusUntouched } from "./assetQuarantineService.js";
 import { assertCredentialAssignments } from "./credentialService.js";
+import { isAzureTag } from "../utils/tagNormalize.js";
+import { syncAzureTagRegistry } from "./tagAssignmentService.js";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
 
@@ -925,4 +927,64 @@ export async function resetMonitorOverrideToIntegrationDefault(id: string, actor
     message: `Reset monitor override on "${asset.hostname || asset.ipAddress || "unknown"}" to integration default (monitored=${flag})`,
   });
   return asset;
+}
+
+/**
+ * DELETE /assets (bulk): refuse the whole call (409) when any id is
+ * quarantined, release the managed-infra rows' reservations first, delete in
+ * one statement, write asset.bulk_deleted, then drop `azure:` registry rows no
+ * asset carries any more. Returns the deleted count. Moved out of
+ * routes/assets/addresses.ts (CQ-B062 slice 2).
+ */
+export async function bulkDeleteAssets(ids: string[], actor: string | undefined): Promise<number> {
+  // ONE read answers both questions about this id set — which rows are
+  // quarantined (refuse the delete) and which are managed infra (release
+  // their reservations first). They used to be two findMany calls over the
+  // same ids.
+  const targets = await prisma.asset.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, hostname: true, ipAddress: true, status: true, assetType: true },
+  });
+  // Refuse to bulk-delete any quarantined asset — the operator must release
+  // the quarantine first so the device-side targets get cleaned up.
+  const quarantined = targets.filter((a) => a.status === "quarantined");
+  if (quarantined.length > 0) {
+    const names = quarantined.map((a) => a.hostname || a.ipAddress || a.id).slice(0, 5);
+    const more = quarantined.length > 5 ? ` (+${quarantined.length - 5} more)` : "";
+    throw new AppError(409, `Cannot delete quarantined asset(s): ${names.join(", ")}${more}. Release the quarantine first.`);
+  }
+  // Same as the single delete: release before the rows go away, and only for
+  // the managed-infra types.
+  const infraIds = targets
+    .filter((a) => a.assetType === "switch" || a.assetType === "access_point")
+    .map((a) => a.id);
+  if (infraIds.length > 0) {
+    await releaseInfraReservationsForAssets(infraIds, { reason: "asset deleted", actor });
+  }
+  const { count } = await prisma.asset.deleteMany({ where: { id: { in: ids } } });
+  logEvent({ action: "asset.bulk_deleted", resourceType: "asset", actor, message: `Bulk deleted ${count} asset(s)` });
+  // An `azure:` registry row no remaining asset carries goes with them.
+  void syncAzureTagRegistry();
+  return count;
+}
+
+/**
+ * DELETE /assets/:id: 404 / 409 (quarantined), release a switch's or AP's
+ * infra reservation BEFORE the row goes, delete, resync the `azure:` registry
+ * when the asset carried one, write asset.deleted.
+ */
+export async function deleteAsset(id: string, actor: string | undefined): Promise<void> {
+  const existing = await prisma.asset.findUnique({ where: { id } });
+  if (!existing) throw new AppError(404, "Asset not found");
+  if (existing.status === "quarantined") {
+    throw new AppError(409, `Cannot delete quarantined asset "${existing.hostname || existing.ipAddress || id}". Release the quarantine first.`);
+  }
+  // Give the address back BEFORE the row goes away — the release resolves the
+  // reservation from the asset's ipAddress, which is unreadable once deleted.
+  if (existing.assetType === "switch" || existing.assetType === "access_point") {
+    await releaseInfraReservationsForAssets([id], { reason: "asset deleted", actor });
+  }
+  await prisma.asset.delete({ where: { id } });
+  if (existing.tags.some(isAzureTag)) void syncAzureTagRegistry();
+  logEvent({ action: "asset.deleted", resourceType: "asset", resourceId: id, resourceName: existing.hostname || existing.ipAddress || undefined, actor, message: `Asset "${existing.hostname || existing.ipAddress || "unknown"}" deleted` });
 }
