@@ -33,7 +33,9 @@ import { syncDescriptionsOnSave } from "./descriptionSyncService.js";
 
 // ─── Limits + defaults ────────────────────────────────────────────────────────
 
-const TOPOLOGY_VIEW_MODES = ["layer2", "topology", "rack", "wall"] as const;
+// Rule 156: Rack and Wall views became one Room mode (migration
+// 20261111120000_room_views converted every stored one).
+const TOPOLOGY_VIEW_MODES = ["layer2", "topology", "room"] as const;
 export type TopologyViewMode = (typeof TOPOLOGY_VIEW_MODES)[number];
 
 /** Types a new (or reset) view draws: the infrastructure tier. */
@@ -45,7 +47,7 @@ const MAX_RACKS = 50;
 const MAX_RACK_PLACEMENTS = 2000;
 const MAX_POLYGONS = 500;
 // Wall mode (rule 151): inches; one wall at most 50 ft a side.
-const MAX_WALLS = 20;
+const MAX_WALLS = 50;
 const MAX_WALL_SIDE_IN = 600;
 const MIN_WALL_SIDE_IN = 4;
 const MAX_WALL_PLACEMENTS = 1000;
@@ -190,7 +192,8 @@ function toDto(row: ViewRow): TopologyViewDto {
     siteId: row.siteId,
     name: row.name,
     isDefault: row.isDefault,
-    mode: (TOPOLOGY_VIEW_MODES as readonly string[]).includes(row.mode) ? (row.mode as TopologyViewMode) : "layer2",
+    mode: (TOPOLOGY_VIEW_MODES as readonly string[]).includes(row.mode) ? (row.mode as TopologyViewMode)
+      : row.mode === "rack" || row.mode === "wall" ? "room" : "layer2",
     shownTypes: row.shownTypes,
     background: (row.background ?? null) as unknown as TopologyBackground | null,
     polygons: ((Array.isArray(row.polygons) ? row.polygons : []) as unknown as TopologyPolygon[])
@@ -347,13 +350,19 @@ export function sanitizePolygons(raw: unknown): TopologyPolygon[] {
  * would say nothing (operator decision 2026-11-10).
  */
 function modeTakesRegion(mode: TopologyViewMode): boolean {
-  return mode === "rack" || mode === "wall";
+  return mode === "room";
 }
 
-/** The region a view stands for (rule 150): codes with at least one value, or null. */
+/**
+ * The region a view stands for (rules 150, 156): a Room view stands for a
+ * room, so a rack or junction box in the codes is dropped (they are the
+ * view's own racks and boxes). Null when nothing is left.
+ */
 export function sanitizeRegion(raw: unknown): LocationCodes | null {
   if (raw === null || raw === undefined) return null;
-  return sanitizeLocationCodesObject(raw, "region");
+  const codes = sanitizeLocationCodesObject(raw, "region");
+  const room: LocationCodes = { ...codes, rack: null, junctionBox: null };
+  return (["area", "building", "floor", "room"] as const).some((k) => room[k]) ? room : null;
 }
 
 /** A Wall view's walls, in whole inches; order normalised 0..n-1. */
@@ -405,9 +414,11 @@ export function sanitizeWallPlacements(raw: unknown, walls: TopologyWall[]): Top
     const id = itemId(pr.id, "wall item");
     if (ids.has(id)) bad(`wall item id "${id}" is used twice`);
     ids.add(id);
-    const kind = pr.kind === "asset" || pr.kind === "cableManagement" || pr.kind === "thirdParty" || pr.kind === "rack"
+    // Rule 156: a junction box holds devices and placeholders, never a rack.
+    if (pr.kind === "rack") bad(`${what}: a rack can't go in a junction box; add it to the room as a rack`);
+    const kind = pr.kind === "asset" || pr.kind === "cableManagement" || pr.kind === "thirdParty"
       ? pr.kind
-      : bad(`${what} kind must be "asset", "cableManagement", "thirdParty" or "rack"`);
+      : bad(`${what} kind must be "asset", "cableManagement" or "thirdParty"`);
     let assetId: string | null = null;
     if (kind === "asset") {
       if (typeof pr.assetId !== "string" || !/^[0-9a-f-]{36}$/.test(pr.assetId)) bad(`${what} needs an assetId`);
@@ -416,18 +427,14 @@ export function sanitizeWallPlacements(raw: unknown, walls: TopologyWall[]): Top
       assets.add(assetId);
     }
     let label: string | null = null;
-    if (kind === "thirdParty" || kind === "rack") {
+    if (kind === "thirdParty") {
       label = typeof pr.label === "string" ? pr.label.trim().replace(/\s+/g, " ") : "";
-      if (!label) label = kind === "rack" ? "Rack" : THIRD_PARTY_DEFAULT_LABEL;
+      if (!label) label = THIRD_PARTY_DEFAULT_LABEL;
       if (label.length > MAX_RACK_LABEL_LEN) bad(`${what} name may be at most ${MAX_RACK_LABEL_LEN} characters`);
       if (/[\x00-\x1f\x7f]/.test(label)) bad(`${what} name contains a control character`);
     }
-    const units = kind === "rack" ? int(pr.units, `${what} size (U)`, 1, MAX_RACK_UNITS) : null;
-    let linkedViewId: string | null = null;
-    if (kind === "rack" && pr.linkedViewId !== undefined && pr.linkedViewId !== null) {
-      if (typeof pr.linkedViewId !== "string" || !/^[0-9a-f-]{36}$/.test(pr.linkedViewId)) bad(`${what} linkedViewId must be a view id`);
-      linkedViewId = pr.linkedViewId as string;
-    }
+    const units = null;
+    const linkedViewId = null;
     if (typeof pr.wallId !== "string" || !wallById.has(pr.wallId)) bad(`${what} names a wall that does not exist`);
     const wall = wallById.get(pr.wallId as string)!;
     if (!Array.isArray(pr.points)) bad(`${what} points must be an array`);
@@ -605,9 +612,9 @@ function freshModeFields(mode: TopologyViewMode) {
     shownTypes: [...DEFAULT_SHOWN_TYPES],
     background: null as unknown as Prisma.InputJsonValue,
     polygons: json([]),
-    racks: json(mode === "rack" ? [newRack()] : []),
+    racks: json([]),
     rackPlacements: json([]),
-    walls: json(mode === "wall" ? [newWall()] : []),
+    walls: json([]),
     wallPlacements: json([]),
     layers: json([]),
   };
@@ -716,32 +723,30 @@ async function fillFromRegion(
   devices: PlaceableDevice[],
   viewName: string,
 ): Promise<{ fields: Partial<PlacementFields>; autoPlaced: AutoPlaced }> {
+  if (mode !== "room") return { fields: {}, autoPlaced: { placed: [], unplaced: [] } };
   const index = await loadRegionIndex(siteId);
   const resolved = (index.size ? resolveLocation(index, region).location : region) ?? region;
-  if (mode === "rack") {
-    const r = autoPlaceRack(resolved, fields.racks, fields.rackPlacements, devices, {
-      maxRacks: MAX_RACKS, maxPlacements: MAX_RACK_PLACEMENTS, defaultUnits: fields.racks[0]?.units ?? DEFAULT_RACK_UNITS, maxNameLen: MAX_RACK_NAME_LEN,
-    });
-    if (!r.placed.length) return { fields: {}, autoPlaced: { placed: [], unplaced: r.unplaced } };
-    const racks = sanitizeRacks(r.containers);
-    return {
-      fields: { racks, rackPlacements: sanitizeRackPlacements(r.placements, racks) },
-      autoPlaced: { placed: r.placed, unplaced: r.unplaced },
-    };
+  // Rule 156: one place per device. Racks fill first (a device naming both a
+  // rack and a junction box is racked), then junction boxes take the rest.
+  const inBoxes = new Set(fields.wallPlacements.map((p) => p.assetId).filter((a): a is string => !!a));
+  const r = autoPlaceRack(resolved, fields.racks, fields.rackPlacements, devices.filter((d) => !inBoxes.has(d.assetId)), {
+    maxRacks: MAX_RACKS, maxPlacements: MAX_RACK_PLACEMENTS, defaultUnits: fields.racks[0]?.units ?? DEFAULT_RACK_UNITS, maxNameLen: MAX_RACK_NAME_LEN,
+  });
+  const inRacks = new Set(r.placements.map((p) => p.assetId).filter((a): a is string => !!a));
+  const w = autoPlaceWall(resolved, fields.walls, fields.wallPlacements, devices.filter((d) => !inRacks.has(d.assetId)), {
+    maxWalls: MAX_WALLS, maxPlacements: MAX_WALL_PLACEMENTS, defaultWidth: DEFAULT_WALL_W, defaultHeight: DEFAULT_WALL_H,
+    maxNameLen: MAX_RACK_NAME_LEN, viewName,
+  });
+  const out: Partial<PlacementFields> = {};
+  if (r.placed.length) {
+    out.racks = sanitizeRacks(r.containers);
+    out.rackPlacements = sanitizeRackPlacements(r.placements, out.racks);
   }
-  if (mode === "wall") {
-    const r = autoPlaceWall(resolved, fields.walls, fields.wallPlacements, devices, {
-      maxWalls: MAX_WALLS, maxPlacements: MAX_WALL_PLACEMENTS, defaultWidth: DEFAULT_WALL_W, defaultHeight: DEFAULT_WALL_H,
-      maxNameLen: MAX_RACK_NAME_LEN, viewName,
-    });
-    if (!r.placed.length) return { fields: {}, autoPlaced: { placed: [], unplaced: r.unplaced } };
-    const walls = sanitizeWalls(r.containers);
-    return {
-      fields: { walls, wallPlacements: sanitizeWallPlacements(r.placements, walls) },
-      autoPlaced: { placed: r.placed, unplaced: r.unplaced },
-    };
+  if (w.placed.length) {
+    out.walls = sanitizeWalls(w.containers);
+    out.wallPlacements = sanitizeWallPlacements(w.placements, out.walls);
   }
-  return { fields: {}, autoPlaced: { placed: [], unplaced: [] } };
+  return { fields: out, autoPlaced: { placed: [...r.placed, ...w.placed], unplaced: [...r.unplaced, ...w.unplaced] } };
 }
 
 function asPlacementFields(v: { racks: unknown; rackPlacements: unknown; walls: unknown; wallPlacements: unknown }): PlacementFields {
@@ -773,7 +778,7 @@ async function sameRegion(siteId: string, a: LocationCodes | null, b: LocationCo
 
 export async function createView(
   siteId: string,
-  input: { name: unknown; mode: unknown; shownTypes?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown },
+  input: { name: unknown; mode: unknown; shownTypes?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown; fill?: unknown },
   actor: string | null,
   devices: PlaceableDevice[] = [],
 ): Promise<{ view: TopologyViewDto; autoPlaced: AutoPlaced }> {
@@ -785,21 +790,21 @@ export async function createView(
   const fields: ReturnType<typeof freshModeFields> & { region?: Prisma.InputJsonValue } = freshModeFields(mode);
   if (input.shownTypes !== undefined) fields.shownTypes = sanitizeShownTypes(input.shownTypes);
   const region = sanitizeRegion(input.region);
-  if (region && !modeTakesRegion(mode)) throw new AppError(400, "Only a Rack or Wall view can stand for a location region");
+  if (region && !modeTakesRegion(mode)) throw new AppError(400, "Only a Room view can stand for a room");
   if (region) fields.region = json(region);
-  // A Wall view opens with one wall of the size asked for; a Rack view with one rack.
-  if (mode === "wall" && (input.wallWidth !== undefined || input.wallHeight !== undefined)) {
-    const w = int(input.wallWidth ?? DEFAULT_WALL_W, "wall width (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
-    const h = int(input.wallHeight ?? DEFAULT_WALL_H, "wall height (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
-    fields.walls = json([newWall(w, h, name.length <= MAX_RACK_NAME_LEN ? name : "Wall 1")]);
+  // A Room view may open with one rack and / or one junction box of the size asked for.
+  if (mode === "room" && (input.wallWidth !== undefined || input.wallHeight !== undefined)) {
+    const w = int(input.wallWidth ?? DEFAULT_WALL_W, "junction box width (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
+    const h = int(input.wallHeight ?? DEFAULT_WALL_H, "junction box height (in)", MIN_WALL_SIDE_IN, MAX_WALL_SIDE_IN);
+    fields.walls = json([newWall(w, h, "JB 1")]);
   }
-  if (mode === "rack" && input.rackUnits !== undefined) {
+  if (mode === "room" && input.rackUnits !== undefined) {
     const r = newRack();
     r.units = int(input.rackUnits, "rack size (U)", 1, MAX_RACK_UNITS);
     fields.racks = json([r]);
   }
   let autoPlaced: AutoPlaced = { placed: [], unplaced: [] };
-  if (region && devices.length) {
+  if (region && devices.length && input.fill !== false) {
     const fill = await fillFromRegion(siteId, mode, region, asPlacementFields(fields), devices, name);
     Object.assign(fields, placementData(fill.fields));
     autoPlaced = fill.autoPlaced;
@@ -913,7 +918,7 @@ export async function updateView(
   let linkedRegion: LocationCodes | null = null;
   if (patch.region !== undefined) {
     const region = sanitizeRegion(patch.region);
-    if (region && !modeTakesRegion(current.mode)) throw new AppError(400, "Only a Rack or Wall view can stand for a location region");
+    if (region && !modeTakesRegion(current.mode)) throw new AppError(400, "Only a Room view can stand for a room");
     data.region = region === null ? (null as unknown as Prisma.InputJsonValue) : json(region);
     // Newly linked, or linked to a different place: fill from it below (rule 150(a)).
     if (region && !(await sameRegion(siteId, current.region, region))) linkedRegion = region;
@@ -969,6 +974,12 @@ export async function updateView(
     if (stranded.length) {
       throw new AppError(400, `${stranded.length} rack placement${stranded.length === 1 ? "" : "s"} would no longer fit — move ${stranded.length === 1 ? "it" : "them"} first`);
     }
+  }
+  // Rule 156: a device is in one place in a room, a rack or a junction box.
+  if (current.mode === "room" && (patch.rackPlacements !== undefined || patch.wallPlacements !== undefined)) {
+    const racked = new Set(((data.rackPlacements ?? current.rackPlacements) as unknown as TopologyRackPlacement[]).map((p) => p.assetId).filter(Boolean));
+    const both = ((data.wallPlacements ?? current.wallPlacements) as unknown as TopologyWallPlacement[]).filter((p) => p.assetId && racked.has(p.assetId));
+    if (both.length) throw new AppError(400, "A device can be in one place in a room: a rack or a junction box, not both");
   }
   // A patch that places devices itself is the operator's layout; only a bare link fills.
   if (linkedRegion && devices.length && patch.rackPlacements === undefined && patch.wallPlacements === undefined) {
@@ -1038,7 +1049,7 @@ export async function describeModeChangeLoss(siteId: string, viewId: string): Pr
 
 /** A site's Rack and Wall views with the regions they stand for (rule 150). */
 export async function regionViewsForSite(siteId: string): Promise<Array<{ id: string; name: string; mode: TopologyViewMode; region: LocationCodes | null }>> {
-  const rows = await prisma.topologyView.findMany({ where: { siteId, mode: { in: ["rack", "wall"] } }, orderBy: { name: "asc" } });
+  const rows = await prisma.topologyView.findMany({ where: { siteId, mode: "room" }, orderBy: { name: "asc" } });
   const index = await loadRegionIndex(siteId);
   return rows.map(toDto).map((v) => resolveViewChains(index, v)).map((v) => ({ id: v.id, name: v.name, mode: v.mode, region: v.region }));
 }

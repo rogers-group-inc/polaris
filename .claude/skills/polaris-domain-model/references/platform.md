@@ -52,7 +52,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 - **SavedFolder** — a nested folder of saved filters (`kind` `filter`, `scope` = the table) or saved dashboards (`kind` `dashboard`, `scope` `dashboards`), business rule 140. Private or public and OWNED like the items it holds; each row keeps its own visibility, so an item or folder whose parent a viewer cannot see is drawn at the top level. Deleting one moves its contents up a level (`deleteFoldersReparenting`) — nothing inside is deleted. ≤8 deep, 200 per user per kind + scope.
 - **Saved-item ownership** (business rule 140) — `SavedFolder`, `SavedTableFilter` and `SavedDashboard` share four columns: `ownerId` (a USER), `ownerRoleId` (FK → Role, SetNull — every holder), `ownerRegion` (a bare region name — every user whose effective region scope names it; an unrestricted user does not count), or none = OWNERLESS (only a fullwrite holder of the page's key manages it). `ownerName` is the current owner's display snapshot, kept when the owner goes so an ownerless row reads "was <name>". Only the owner edits / moves / deletes / re-owns — fullwrite no longer deletes someone's OWNED public row. `savedOwnershipService` is the one decider.
 
-- **TopologyView** — a named, SHARED per-site Device Map view with exactly ONE mode (`layer2` / `topology` / `rack`), its shown asset types and that mode's content (background + polygons, or racks + rack placements). One lazily materialised default per site. A mode change resets the view (rule 149); a polygon placement's location codes are written to asset descriptions on Save (rule 148). Single writer: `topologyViewService` (rule 147).
+- **TopologyView** — a named, SHARED per-site Device Map view with exactly ONE mode (`layer2` / `topology` / `room`), its shown asset types and that mode's content (background + polygons + floor layers, or a room's racks + junction boxes and what is placed in them — a device in one place; rule 156 converted the former `rack` / `wall` modes). One lazily materialised default per site. A mode change resets the view (rule 149); a polygon placement's location codes are written to asset descriptions on Save (rule 148). Single writer: `topologyViewService` (rule 147).
 - **TopologyBackgroundImage** — an uploaded Topology-view background image, bytea, cascades with its view and site; served only through the authenticated topology background GET. Single writer: `topologyViewService`.
 - **TopologyLayout** — SHARED Device Map topology node positions, one row per (siteId, view). Written full-replace by operator drags (gated `deviceMap=write`, last-write-wins); server layout wins over the per-browser localStorage fallback. Cascades with the site Asset. **Two blobs, and the second is what makes Reset a choice**: `positions` is the LIVE layout every drag rewrites, `savedPositions` (+ `savedBy`/`savedAt`) is the operator's RESTORE POINT, written ONLY by the explicit Save (`POST …/layout/checkpoint`) and never by a drag — a drag is not a decision, and letting one overwrite the restore point would leave nothing to reset to. So Reset has two destinations: **last save** (copy the restore point back over the live blob, keeping the restore point so it can be used again) and **baseline** (clear the live blob and re-run the column solver). A baseline reset **empties** a row that carries a restore point rather than deleting it — an operator who resets to baseline must still be able to change their mind — and deletes one that does not, which is the pre-checkpoint behavior. `positions: {}` restores nothing at render, which IS the baseline. NULL `savedPositions` = never saved, which is every pre-existing row (nothing is backfilled) and what greys out "Reset to last save".
 
@@ -408,7 +408,8 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
   name          String          -- unique per site
   isDefault     Boolean         -- one per site (partial unique index topology_views_one_default,
                                 -- migration only); materialised on first read (ensureDefaultView)
-  mode          String          -- "layer2" | "topology" | "rack" — exactly one per view
+  mode          String          -- "layer2" | "topology" | "room" — exactly one per view ("rack" /
+                                -- "wall" were converted by migration 20261111120000_room_views)
   shownTypes    String[]        -- the SHOWN asset types (firewall always); default firewall/router/
                                 -- switch/access_point, so a custom type added later starts hidden
   background    Json?           -- null | {kind:"osm", center:[lat,lng], zoom} |
@@ -417,19 +418,20 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- (satellite = the Setting("satelliteConfig") provider)
   polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
                                 -- in background coordinates; codes in display casing (rule 148)
-  racks         Json            -- [{id, name, units 1-60, order, face}]  (rack views)
+  racks         Json            -- [{id, name, units 1-60, order, face}]  (room views; name = ra:)
   rackPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty", assetId?, label?,
                                 -- rackId, face, startU, heightU, fullDepth}] — bounded + overlap-free per
                                 -- face; label = a thirdParty box's name (≤64, default "Third party")
-  region        Json?           -- the location region a RACK or WALL view stands for (rule 150): a code
-                                -- chain {area, building, floor, room, rack, junctionBox}; refused on
+  region        Json?           -- the ROOM a Room view stands for (rules 150, 156): a code chain
+                                -- {area, building, floor, room} (rack / junctionBox always null); refused on
                                 -- layer2 / topology views, cleared by a mode change to one. A POINTER to
                                 -- codes in descriptions — regions are never stored anywhere else
-  walls         Json            -- [{id, name, width, height, order}] inches, 4-600 a side (wall views)
-  wallPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty"|"rack", assetId?,
-                                -- label?, wallId, points:[[x,y]…] whole inches, units? (rack),
-                                -- linkedViewId? (a Rack view of the site)}] — no two share a 1-inch cell
-                                -- (rule 151, utils/wallGeometry.ts)
+  walls         Json            -- a Room view's JUNCTION BOXES (a wall is a big one, rule 156):
+                                -- [{id, name (= jb:), width, height, order}] inches, 4-600 a side, ≤50
+  wallPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty", assetId?, label?,
+                                -- wallId, points:[[x,y]…] whole inches, units null, linkedViewId null}]
+                                -- — never a rack; no two share a 1-inch cell (rule 151); an asset is
+                                -- never in both wallPlacements and rackPlacements (rule 156)
   layers        Json            -- [{level (non-zero, −20..99), name (the floor code value), background}]
                                 -- (see RegionNode below for the site's region tree, rule 153)
                                 -- floor layers of a topology view (rule 152); layer 0 is the view

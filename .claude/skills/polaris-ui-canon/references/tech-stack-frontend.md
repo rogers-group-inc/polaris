@@ -72,9 +72,15 @@ layout key through `_activeViewKey` → `_viewScopedKey` (`v:<id>` / `v:<id>|<lo
 saved view, the legacy keys for the default), so save / load / checkpoint / reset need no view
 logic of their own; "snap other views" only touches `_layoutKeyBelongsToCurrentView` keys. A
 view-level change in edit mode is staged in `_editStaged.viewPatch` and lands as ONE
-`PUT …/views/:id` in `_commitEditSession`; a Topology or Rack view renders through
-`_renderModeCanvas` → `window.PolarisTopologyPhysical` / `window.PolarisTopologyRack`, handed
-`_modeCanvasContext`.
+`PUT …/views/:id` in `_commitEditSession`; a Topology or Room view renders through
+`_renderModeCanvas` → `window.PolarisTopologyPhysical` / `window.PolarisTopologyRoom`, handed
+`_modeCanvasContext`. **The Room canvas (`topology-room.js`, rule 156)** is a host for two parts —
+`topology-rack.js` (racks) and `topology-wall.js` (junction boxes) — mounted side by side in
+`.topo-room-strip`, whose CSS takes the parts' own strips out of absolute positioning and scrolling.
+It gives each part a copy of the context with `historyPushed` (one undo order across both: the
+composite records which part changed and undoes that part) and `placedElsewhere` (a device in one
+place), and builds the one Device List from each part's `whereIs`. A new Room-view feature that
+needs both parts goes through those hooks, never by one part reaching into the other.
 
 **The Topology canvas (`topology-physical.js`)** is Leaflet, not Cytoscape: one module owns a view's
 map (OSM through the single tile host, or the uploaded image on `L.CRS.Simple`), its polygons,
@@ -92,8 +98,8 @@ picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio wr
 traps it hit: a gesture must re-find its board on every pointer move (a redraw replaces the SVG and
 a detached one measures 0 × 0, so every inch became Infinity), and every mode canvas must read
 `window.PolarisTopologyRender` inside `render()`, never at file load (map.html loads it after the
-canvases). Region-mapped Rack / Wall views stage the region's codes through `ctx.stageLocationCode`,
-the rule-148 Save summary.
+canvases). A Room view's parts stage the room's codes plus the rack's `ra:` or the box's `jb:`
+through `ctx.stageLocationCode` (with `levels`, rule 148(a)), the rule-148 Save summary.
 **Floor layers** (`topology-physical.js`, rule 152) keep the canvas's code shape by making
 `state.background` and `state.placements` property accessors onto the CURRENT layer, and
 `layerPolys()` the only polygon list drawing and hit-testing read. Layer 2 must skip the new

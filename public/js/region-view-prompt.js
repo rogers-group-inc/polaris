@@ -1,17 +1,17 @@
 /**
  * public/js/region-view-prompt.js — after an asset's description is saved,
- * offer a Wall or Rack view for each NEW room, rack or junction box region it
- * names (business rule 150).
+ * offer a Room view for each NEW room it names (business rules 150, 156).
  *
  *   window.PolarisRegionViewPrompt.afterSave({ assetId, before, after, siteId? })
  *
  * A region is the code chain down to that level (`b:Plant r:MDF jb:7` → the
  * room "Plant › MDF" and the junction box "Plant › MDF › 7"), read through
  * the site's region tree (rule 153), so a short `r:MDF` is the same region
- * as its full chain. It is NEW when the old description did not name it. A region some Rack / Wall view of the
- * site already stands for is not asked about, nor one the operator chose
- * "Don't map" for in this browser. Area, building and floor regions are never
- * asked about: Topology and Layer 2 views draw them.
+ * as its full chain. It is NEW when the old description did not name it. A room
+ * some Room view of the site already stands for is not asked about, nor one the
+ * operator chose "Don't map" for in this browser. Racks and junction boxes are
+ * not asked about: they live inside their room's view. Area, building and floor
+ * regions are never asked about: Topology and Layer 2 views draw them.
  *
  * Nothing here changes a description; the save already happened. Creating or
  * mapping a view needs Device Map write, so a caller without it is not asked.
@@ -21,7 +21,7 @@
 
   var FIELDS = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
   var KEY_TO_FIELD = { a: "area", b: "building", f: "floor", r: "room", ra: "rack", jb: "junctionBox" };
-  var ASK_LEVELS = { room: "Room", rack: "Rack", junctionBox: "Junction box" };
+  var ASK_LEVELS = { room: "Room" };
   var SKIP_PREFIX = "polaris.regionPrompt.skip:";
 
   function esc(s) {
@@ -49,7 +49,7 @@
   function chainText(c) {
     return FIELDS.filter(function (f) { return c[f[0]]; }).map(function (f) { return f[1] + ":" + c[f[0]]; }).join(" ");
   }
-  /** Pure — the room / rack / junction-box chains a set of codes names, outermost first. */
+  /** Pure — the room chain a set of codes names (rack and junction box left out). */
   function askableChains(codes) {
     var out = [];
     var chain = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
@@ -108,7 +108,7 @@
     if (!siteId) return;
     if (!views) {
       try {
-        views = (await api.map.topologyViews(siteId)).filter(function (v) { return v.mode === "rack" || v.mode === "wall"; });
+        views = (await api.map.topologyViews(siteId)).filter(function (v) { return v.mode === "room"; });
       } catch (e) { return; }
     }
     // Read both through the site's region tree, as the map does; a failed
@@ -130,23 +130,20 @@
       var name = r.codes[r.level];
       var label = ASK_LEVELS[r.level] + " " + name;
       var opts = [
-        '<option value="new:wall">Create a Wall view “' + esc(label) + '”</option>',
-        '<option value="new:rack">Create a Rack view “' + esc(label) + '”</option>',
+        '<option value="new:room">Create a Room view “' + esc(name) + '”</option>',
       ].concat(views.map(function (v) {
-        return '<option value="map:' + esc(v.id) + '">Map to ' + esc(v.mode === "rack" ? "Rack" : "Wall") + ' view: ' + esc(v.name) +
-          (v.region ? " (replaces its region)" : "") + '</option>';
+        return '<option value="map:' + esc(v.id) + '">Map to Room view: ' + esc(v.name) +
+          (v.region ? " (replaces its room)" : "") + '</option>';
       })).concat(['<option value="skip">Don’t map</option>']);
-      // A junction box or rack reads as a wall first; a room as a rack.
-      if (r.level === "room") opts = [opts[1], opts[0]].concat(opts.slice(2));
       return '<div style="display:contents">' +
         '<span style="display:flex;flex-direction:column"><strong>' + esc(label) + '</strong><code style="font-size:0.75rem;color:var(--color-text-secondary)">' + esc(chainText(r.codes)) + '</code></span>' +
         '<select data-region-choice="' + i + '" aria-label="View for ' + esc(label) + '">' + opts.join("") + '</select></div>';
     }).join("");
     var body =
       '<p style="margin:0 0 12px">' + esc(assetName) + '’s description names ' + regions.length + ' region' + (regions.length === 1 ? "" : "s") +
-      ' no Wall or Rack view stands for yet. Choose a view for each, or leave it unmapped. The description is already saved.</p>' +
+      ' no Room view stands for yet. Choose a view for each, or leave it unmapped. The description is already saved.</p>' +
       '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:10px 16px;align-items:center">' + rows + '</div>' +
-      '<p class="hint" style="margin:12px 0 0">Room, rack and junction box regions map to a Wall or Rack view. Areas, buildings and floors are drawn on the Topology and Layer 2 maps.</p>';
+      '<p class="hint" style="margin:12px 0 0">A Room view shows the room’s racks and junction boxes, and places the devices whose descriptions already name them. Areas, buildings and floors are drawn on the Topology and Layer 2 maps.</p>';
     var footer = '<button type="button" class="btn btn-secondary" data-rvp="skip">Not now</button>' +
       '<button type="button" class="btn btn-primary" data-rvp="ok">Save and map</button>';
     var dlg = buildOverlay(1100, "New regions in the description", body, footer);

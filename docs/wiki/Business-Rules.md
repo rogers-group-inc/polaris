@@ -3295,3 +3295,13 @@ script when it comes back. Polaris does not queue it again: if the condition
 still holds, the automation fires again and that run is judged against the host
 as it is then. A script the agent started but never reported on is shown as
 **timeout**. See [Automation Scripts](Automation-Scripts#agent).
+
+### Rule 156
+
+**A Room view is one room's racks and junction boxes, and a device is in one place in it.** A
+Room view stands for one room. It holds the room's racks and its junction boxes side by side; a
+wall is just a big junction box with no door, and a rack never goes in a junction box. A device in
+a rack gets the room and that rack (`r:` + `ra:`), a device in a junction box gets the room and that
+box (`r:` + `jb:`); nothing else in its description changes. A device can be in a rack or a junction
+box, not both. The older Rack and Wall views were converted to Room views, and the views of one room
+became one; the Events list shows what each conversion did.
