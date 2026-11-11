@@ -42,3 +42,33 @@ describe("previewMatchRules — productType is a fact", () => {
     expect(args.select.productType).toBe(true);
   });
 });
+
+describe("previewMatchRules — the inventory context (business rule 163)", () => {
+  it("claims a stored asset for a type ticked ONLY for firewall device inventory", async () => {
+    vi.mocked(prisma.assetTypeDef.findMany).mockResolvedValue([
+      {
+        name: "power",
+        matchRules: { op: "or", children: [{ field: "manufacturer", operator: "contains", value: "APC" }] },
+        matchContexts: ["inventory"],
+        matchPriority: 100,
+      },
+    ] as never);
+    vi.mocked(prisma.asset.findMany).mockResolvedValue([
+      { id: "pdu", hostname: "pdu-a3", os: "APC AOS", osVersion: null, manufacturer: "APC", model: null, productType: null },
+    ] as never);
+    const res = await previewMatchRules();
+    expect(res.byType).toEqual([{ type: "power", count: 1 }]);
+  });
+
+  it("lets a directory match win over an inventory one", async () => {
+    vi.mocked(prisma.assetTypeDef.findMany).mockResolvedValue([
+      { name: "power", matchRules: { op: "or", children: [{ field: "manufacturer", operator: "contains", value: "APC" }] }, matchContexts: ["inventory"], matchPriority: 1 },
+      { name: "server", matchRules: { op: "or", children: [{ field: "os", operator: "contains", value: "server" }] }, matchContexts: ["directory"], matchPriority: 20 },
+    ] as never);
+    vi.mocked(prisma.asset.findMany).mockResolvedValue([
+      { id: "x", hostname: "x", os: "Windows Server", osVersion: null, manufacturer: "APC", model: null, productType: null },
+    ] as never);
+    const res = await previewMatchRules();
+    expect(res.byType).toEqual([{ type: "server", count: 1 }]);
+  });
+});

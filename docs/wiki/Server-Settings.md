@@ -48,7 +48,12 @@ Five cards about what Polaris calls things it finds:
 - **Device Types** — the asset-type registry and the matching rules that file a
   newly discovered device. Built-in types cannot be renamed or removed, but
   their rules are editable; **Apply rules to existing "Other" assets…** re-files
-  what was left unclassified.
+  what was left unclassified. Each type chooses where its rules run: **Directory
+  discovery** (AD, Entra, Intune, Azure Arc), **Network Discovery scans** (and a
+  device's own SNMP description), and **Firewall device inventory** — the devices a
+  FortiGate detects on its networks, judged on the gate's OS fingerprint, the
+  network card's vendor (Manufacturer), the hostname, and any model or product type
+  the asset already has. See [Business Rules](Business-Rules#rule-163).
 - **[Tags](#tags)** — the tag registry.
 
 The manufacturer boxes on this tab (Device Icons, both halves of a Manufacturer

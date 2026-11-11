@@ -70,7 +70,10 @@ function run(resultOver: Record<string, unknown>, over: Record<string, unknown> 
     addressSightings: [] as any[], fortigateEndpointAssetIds: new Set<string>(), inventoryAssets: [] as string[], now: NOW,
     noteChangeBaseline: vi.fn(), noteEndpointGate: vi.fn(),
     hostnameAdoptRefused: () => false, noteHostnameAdoptRefused: vi.fn(),
-    inferAssetTypeFromOs: (os: string | null | undefined) => (os && /windows/i.test(os) ? "workstation" : "other"),
+    // Stands in for the inventory-context rules: the shipped OS ladder plus an
+    // operator's Manufacturer rule (business rule 163).
+    inferInventoryAssetType: vi.fn((f: { os?: string | null; manufacturer?: string | null }) =>
+      f.os && /windows/i.test(f.os) ? "workstation" : f.manufacturer && /apc/i.test(f.manufacturer) ? "power" : "other"),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",
     actor: "system", syncLog: vi.fn(),
     ...over,
@@ -99,6 +102,15 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     expect(state.noteEndpointGate).toHaveBeenCalledWith("a1", "FGT-A");
     expect(state.addressSightings).toEqual([expect.objectContaining({ assetId: "a1", mac: MAC, ip: "10.1.0.40", source: "device-inventory", device: "FGT-A" })]);
     expect(m.logCreated).toHaveBeenCalledWith("a1", "pc-40", expect.objectContaining({ sourceKind: "fortigate-endpoint" }));
+  });
+
+  it("types a new device from every fact, not the OS alone (rule 163)", async () => {
+    const { state, done } = run({ deviceInventory: [inv({ os: "APC AOS", osVersion: "", hardwareVendor: "APC", hostname: "pdu-a3" })] });
+    await done;
+    expect(db.create.mock.calls[0][0].data.assetType).toBe("power");
+    expect(state.inferInventoryAssetType).toHaveBeenCalledWith(
+      expect.objectContaining({ os: "APC AOS", manufacturer: "APC", hostname: "pdu-a3" }),
+    );
   });
 
   it("a row with no local evidence (no switch / AP, no ARP on that gate) records no location, gate or address", async () => {
@@ -147,6 +159,46 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     expect(state.syncLog).toHaveBeenCalledWith("error", "Failed to create inventory asset pc-40: unique");
     expect(db.create).toHaveBeenCalledTimes(2);
     expect(state.inventoryAssets).toEqual(["pc-9"]);
+  });
+});
+
+describe("Phase 7 — typing an existing 'other' asset (rule 163)", () => {
+  /** A run index whose MAC rung finds `asset`. */
+  function indexWith(asset: Record<string, unknown>) {
+    const base = index();
+    base.rows.set(String(asset.id), asset);
+    return { ...base, findByEntryWithRung: () => ({ asset, rung: "mac" as const }) };
+  }
+  const pdu = (over: Record<string, unknown> = {}) => ({
+    id: "pdu1", hostname: "Datacenter APC PURE 208v 1", macAddress: MAC, macAddresses: [], ipAddress: "10.1.0.40",
+    assetType: "other", manufacturer: "APC", os: "APC AOS", osVersion: null, model: "AP8870", productType: "Rack PDU",
+    status: "active", lastSeen: null, fortinetTopology: null, learnedLocation: "FGT-A", ...over,
+  });
+
+  it("re-types it from what the asset carries — manufacturer, model, product type — not the OS alone", async () => {
+    const asset = pdu();
+    const { state, done } = run(
+      { deviceInventory: [inv({ os: "APC AOS", osVersion: "", hardwareVendor: "", hostname: "apc8F29C4" })] },
+      { assetIdx: indexWith(asset) as never },
+    );
+    await done;
+    expect(state.inferInventoryAssetType).toHaveBeenCalledWith(expect.objectContaining({
+      manufacturer: "APC", model: "AP8870", productType: "Rack PDU",
+      // The asset's own (typed) name, not the client's DHCP name.
+      hostname: "Datacenter APC PURE 208v 1",
+    }));
+    const writes = db.update.mock.calls.map((c) => c[0].data);
+    expect(writes.some((d) => d.assetType === "power")).toBe(true);
+  });
+
+  it("never re-types an asset that already has a type", async () => {
+    const { state, done } = run(
+      { deviceInventory: [inv({ os: "APC AOS", hardwareVendor: "APC" })] },
+      { assetIdx: indexWith(pdu({ assetType: "server" })) as never },
+    );
+    await done;
+    expect(state.inferInventoryAssetType).not.toHaveBeenCalled();
+    expect(db.update.mock.calls.some((c) => "assetType" in c[0].data)).toBe(false);
   });
 });
 

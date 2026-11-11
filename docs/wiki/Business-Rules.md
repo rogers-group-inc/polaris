@@ -3399,3 +3399,16 @@ logins are drawn as pink lines labelled with the FC port. Each line ends at the 
 of this site's Ethernet switches. A login that matched no asset, such as a storage array's port,
 ends at a small dashed box named for what it registered (for example *PURE01-ct0*). Hide the
 switch's type and its fibre-channel lines go with it.
+
+### Rule 163
+
+**Device-type rules can run on the devices a FortiGate detects, using everything known about
+them.** Each device type chooses where its matching rules run: **Directory discovery**,
+**Network Discovery scans**, and **Firewall device inventory**, which covers the devices a
+FortiGate or FortiManager detects on its networks. In firewall device inventory a rule can test
+the gate's OS fingerprint, the network card's vendor (Manufacturer), the hostname, and any model
+or product type the asset already has. A device whose type is already set is never re-typed.
+When this option arrived, every type that ran under Directory discovery was switched on for
+firewall device inventory too, so existing behaviour carries over; untick it on a type to stop
+that. **Apply rules to existing "Other" assets** uses both Directory discovery and firewall
+device inventory rules. See [Server Settings](Server-Settings).

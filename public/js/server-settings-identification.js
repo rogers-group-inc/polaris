@@ -844,8 +844,9 @@ var _DT_GROUP_OP_PROSE = {
 var _DT_CONTEXT_LABELS = {
   directory: "Directory discovery (AD / Entra / Intune / Azure Arc)",
   scan: "Network Discovery scans",
+  inventory: "Firewall device inventory (FortiGate / FortiManager detected devices)",
 };
-var _DT_CONTEXT_SHORT = { directory: "Directory", scan: "Scans" };
+var _DT_CONTEXT_SHORT = { directory: "Directory", scan: "Scans", inventory: "Inventory" };
 
 function _dtLabelFor(name) {
   var t = (_assetTypes || []).find(function (x) { return x.name === name; });
@@ -1041,13 +1042,17 @@ function deviceTypesCardHTML() {
     });
     html += '</ol>' +
       '<p style="margin:0 0 0.75rem"><strong>Then the matching rules above</strong>, walked in priority order — ' +
-      'the first type whose rules claim the device wins. Rules run in two separate places, and each type ' +
+      'the first type whose rules claim the device wins. Rules run in three separate places, and each type ' +
       'declares which of them it takes part in:</p>' +
       '<ul style="margin:0 0 1rem;padding-left:1.25rem">' +
         '<li><strong>Directory discovery</strong> reads a directory record’s OS string. Out of the box only ' +
         '<em>Server</em> and <em>Workstation</em> run here.</li>' +
         '<li><strong>Network Discovery scans</strong> read a scanned device’s own self-description. Out of the box ' +
         '<em>Firewall</em>, <em>Switch</em>, <em>Access Point</em>, <em>Router</em> and <em>Printer</em> run here.</li>' +
+        '<li><strong>Firewall device inventory</strong> reads what a FortiGate detected about a client: its OS ' +
+        'fingerprint, the network card’s vendor (Manufacturer), its hostname, and the model or product type the ' +
+        'asset already has. Out of the box <em>Server</em> and <em>Workstation</em> run here, and so does every type ' +
+        'that ran under Directory discovery before this context existed.</li>' +
       '</ul>' +
       '<p style="margin:0"><strong>Otherwise the device lands in “Other.”</strong> ' +
       'Editing a rule changes what discovery does the next time it sees a device — it does not re-type anything ' +
@@ -1170,7 +1175,7 @@ function openDeviceTypeModal(id) {
   var isNew = !t;
   var locked = !!(t && t.isProtected);
   var contexts = (t && t.matchContexts) || [];
-  var ctxList = _assetTypeMatchSchema.contexts || ["directory", "scan"];
+  var ctxList = _assetTypeMatchSchema.contexts || ["directory", "scan", "inventory"];
 
   // The vocabulary is already on the page (loadIdentificationTab fetches
   // /match-schema alongside the registry), so the builder can be created
