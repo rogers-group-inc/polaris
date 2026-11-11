@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const db = {
+  /** Asset ids that no longer exist (rule 156(c)); every other id asked for does. */
+  deadAssets: [] as string[],
   checks: [] as any[],
   sources: [] as any[],
   agents: [] as any[],
@@ -131,7 +133,10 @@ vi.mock("../../src/db.js", () => ({
       findMany: vi.fn(async ({ where }: any) => db.agents.filter((a) => a.installStatus === where.installStatus)),
     },
     credential: { findUnique: vi.fn(async ({ where }: any) => db.credentials.find((c) => c.id === where.id) ?? null) },
-    asset: { findMany: vi.fn(async () => []) },
+    asset: {
+      findMany: vi.fn(async ({ where }: any = {}) =>
+        ((where?.id?.in ?? []) as string[]).filter((id) => !db.deadAssets.includes(id)).map((id) => ({ id }))),
+    },
     $transaction: vi.fn(async (ops: any[]) => Promise.all(ops)),
   },
 }));
@@ -167,6 +172,7 @@ import { parseStatusSpec, statusInRanges, agentRegexProblem } from "../../src/ut
 const base = { name: "Intranet", kind: "https" as const, target: "https://intranet.example/health", scope: { allAssets: true } };
 
 beforeEach(() => {
+  db.deadAssets = [];
   db.checks = [];
   db.sources = [];
   db.agents = [];
@@ -256,6 +262,13 @@ describe("normalizeCheckInput — refusals", () => {
   it("refuses a check that names no sources", async () => {
     await expect(normalizeCheckInput({ ...base, scope: {} })).rejects.toThrow(/Choose where this check runs/);
     await expect(normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1"] })).resolves.toBeTruthy();
+  });
+  it("drops a pin that names no asset, and a check pinned only to dead hosts no longer saves (rule 156(c))", async () => {
+    db.deadAssets = ["gone"];
+    const n = await normalizeCheckInput({ ...base, scope: {}, assetIds: ["a1", "gone"] });
+    expect(n.assetIds).toEqual(["a1"]);
+    // Before, the dead id satisfied "runs somewhere" and the check ran nowhere.
+    await expect(normalizeCheckInput({ ...base, scope: {}, assetIds: ["gone"] })).rejects.toThrow(/Choose where this check runs/);
   });
   it("accepts the Polaris server as the only source", async () => {
     const n = await normalizeCheckInput({ ...base, scope: {}, runOnServer: true });

@@ -2117,6 +2117,13 @@ the business, set its **State** to `decommissioned` instead: that stops polling
 and keeps the record. A device a source still discovers will also come back on
 the next discovery run, as a new record with no history.
 
+The delete also cleans up after the device ([rule 156](Business-Rules#rule-156)): it is
+removed from every path check, contact and maintenance schedule it was pinned to; its log
+rules and process log settings are deleted; and anything still queued for its Polaris Agent
+is withdrawn. An automation that was scoped to exactly this device keeps naming it and stops
+matching — open it in the wizard to re-aim or delete it. **Merging** is not deleting: when one
+record is merged into another, those same pins, automations and settings move to the survivor.
+
 Two things the delete does for you, and one it refuses:
 
 - a managed switch or AP gives its **infrastructure reservation** back first,

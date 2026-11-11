@@ -334,6 +334,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetRemovalService.ts
+
+**What it owns:** Business rule 156 — everything that names an asset WITHOUT a foreign key, at the moment the asset row goes. Two post-commit entry points: `afterAssetsDeleted(ids)` (prune / purge) and `afterAssetMerged(fromId, toId)` (re-point the operator's intent to the survivor, then purge what is left of the absorbed id).
+
+**Public API:** `afterAssetsDeleted(ids)`, `afterAssetMerged(fromId, toId)` (both resolve with `AssetReferenceCounts`, or `null` after logging a failure — never throw); pure helpers `repointIdList`, `pruneIdList`, `pruneMayWiden`.
+
+**Cross-service deps:** `appMapDiscoveryService.getConfig` / `saveConfig` (the Application Map rules live in a Setting); `prisma` for `PathCheck`, `Contact`, `MaintenanceSchedule`, `NotificationRule`, `LogFlagRule`, `AssetProcessConfig`, `AssetProcess`, `AssetService`, `AssetSdwanRule`, `AssetInventoryScrape`, `AgentCommand`, `AutomationScriptRun`, `ManagedAgent`.
+
+**Used by:** `assetWriteService → deleteAsset`, `bulkDeleteAssets`; `assetMergeService → mergeAssets`; `assetGhostMergeService → mergeEndpointGhostIntoAsset`, `mergeDuplicateHostnameGhost`; `conflictResolutionService` (the ghost absorb on accept).
+
+**Invariants:**
+- **Called after the commit, never inside the caller's transaction and never from a `src/db.ts` hook.** None of these rows cascade, so they are still there after the commit; a re-point inside a transaction that rolled back would move intent off a record that still exists. A hook on `asset.delete` would also fire for the merges' `tx.asset.delete` and run on the base client mid-transaction.
+- **Never widen a target (156(a)).** `NotificationRule.scope.assetIds` is re-pointed on a merge and left untouched on a delete, because an empty list means no device restriction. An Application Map rule with `scope: null` and no pins means every monitored asset: an auto rule is deleted with its last device, a manual one keeps the dead id. The three string-array pin lists are safe to empty.
+- Best-effort and silent to the caller: a failure is `logger.warn`ed and the references are merely stale.
+- A merge moves `LogFlagRule` and `AssetProcessConfig` (operator intent) and purges `AssetProcess` / `AssetService` / `AssetSdwanRule` / `AssetInventoryScrape` (the survivor has its own). On a config-name clash the survivor's row wins.
+
+**When changing this:**
+- **A new table, array or JSON field that stores an asset id without a foreign key joins this service** — in the same commit that adds it — and the clean-up migration's pattern if existing installs can already hold leftovers. Decide prune-vs-leave by asking what an EMPTY value means to its reader.
+- **A new code path that deletes an asset row must call it**; `tests/unit/assetRemovalCoverage.test.ts` scans `src/` for `asset.delete(` / `asset.deleteMany(` and fails on a file without a call, and on fewer calls than deletes.
+- Decommissioning is not deletion — nothing here runs for it (rules 40(k) and 123 own that).
+- Scale: cost follows what referenced the removed assets, not the fleet — three `hasSome` reads, one JSON-path read on a merge, one Setting read, one batched transaction per 500 ids.
+
 ## services/assetGhostMergeService.ts
 
 **What it owns:** Automated ghost merging, two flavors: (1) the endpoint-ghost merge — collapses a duplicate `fortigate-endpoint` placeholder Asset (created when a managed FortiSwitch/FortiAP's mgmt interface pulled a DHCP lease and the FortiGate's DHCP/device-inventory pathway learned its MAC as an ordinary client; hostname = the device serial) into the canonical infrastructure asset, then deletes the ghost; and (2) the duplicate-hostname policy + executor behind the mergeDuplicateHostnameAssets sweep (moved from the job 2026-08 so they're unit-testable): `decideDuplicateHostnameGroup` picks the canonical by source-kind tier (identity-tagged 1 > fortiswitch 2 > fortiap 3 > firewall 4 > endpoint 5 > manual 6 > orphan 7; lastSeen/updatedAt tiebreak; a group skips for operator review when two primary MACs differ at ANY tier, two usable serials differ, or it has more than `MAX_PLAUSIBLE_HOSTNAME_DUPLICATES` (3) rows — rule 91(f)) and `mergeDuplicateHostnameGhost` runs the per-ghost transaction (side-table transfer, null-fill scalar absorption + tag union, bumpLastSeen-gated lastSeen adoption, ghost cascade-delete). `decideDuplicateSerialGroup` (2026-09) is the serial-keyed sibling for the same sweep's first pass: identical tier ordering via the shared `rankBySourceTier`, and deliberately NO MAC tie-break — that guard exists because a shared hostname can mean two different devices, which a shared real serial rules out, and two MACs on one chassis (baseMac beside a DHCP-learned mgmt MAC) must not block the merge. It TRUSTS its caller's grouping, so a caller must filter through rule 83's `isUsableSerial` + `MAX_PLAUSIBLE_DUPLICATES` first. (3) The serial-as-hostname pass (business rule 91(d), 2026-10-28): `decideSerialHostnameGhost` (pure) pairs a `fortigate-endpoint` placeholder whose HOSTNAME is a usable serial with the one non-placeholder asset carrying it as SERIAL, and `mergeSerialHostnameGhosts` runs the grouping query (a self-join of `assets` on `upper(btrim(serialNumber)) = upper(btrim(hostname))`, live canonicals only, `hostnameOverride` excluded) and executes through `mergeEndpointGhostIntoAsset`, writing an `asset.duplicate_merged` Event with `details.matchedOn: "serial-hostname"`.

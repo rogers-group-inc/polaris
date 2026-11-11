@@ -66,6 +66,7 @@
  */
 
 import { prisma } from "../db.js";
+import { afterAssetMerged } from "./assetRemovalService.js";
 import { AppError } from "../utils/errors.js";
 import { clampAcquiredToLastSeen } from "../utils/assetInvariants.js";
 import { isGenericAssetType } from "../utils/assetTypes.js";
@@ -815,6 +816,11 @@ export async function mergeAssets(opts: {
     // streams remain to cascade.
     await tx.asset.delete({ where: { id: g.id } });
   });
+
+  // Rule 156: pins, automation scopes, log rules and process log config that
+  // named the absorbed record now name the survivor. After the commit, and
+  // best-effort — see assetRemovalService.
+  await afterAssetMerged(g.id, c.id);
 
   // Keep monitorOverride faithful to the carried-over monitoring intent — the
   // same post-write hook the operator asset-write paths and the endpoint-ghost

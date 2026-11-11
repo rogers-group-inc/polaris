@@ -3295,3 +3295,17 @@ script when it comes back. Polaris does not queue it again: if the condition
 still holds, the automation fires again and that run is judged against the host
 as it is then. A script the agent started but never reported on is shown as
 **timeout**. See [Automation Scripts](Automation-Scripts#agent).
+
+### Rule 156
+
+**An asset leaves nothing behind, and a merge keeps what you said about either record.**
+Deleting an asset also removes it from the path checks, contacts and maintenance schedules
+it was pinned to, deletes the log rules and process log settings that belonged to it, and
+withdraws anything still queued for its agent. Merging two assets is different: whatever
+named the absorbed record — path-check and contact pins, maintenance schedules, automations
+scoped to that device, Application Map rules, log rules, process log settings — now names
+the survivor, so the merged device keeps being checked, covered and alerted on. Polaris
+never lets this widen a target: an automation scoped to one deleted device keeps naming it
+(and matches nothing) rather than quietly becoming an automation for every device. A
+Discovery left private by a deleted user can be seen, republished or deleted by holders of
+Full Read-Write on Discovery. See [Assets](Assets#deleting-an-asset).
