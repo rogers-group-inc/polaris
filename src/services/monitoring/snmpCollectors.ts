@@ -14,6 +14,7 @@ import { applyTransform } from "../../utils/symbolTransforms.js";
 import { makeOidMonotonicGuard } from "../../utils/oidCompare.js";
 import { SYS_OIDS, scalarInstanceOid, pickScalar } from "../../utils/snmpIdentity.js";
 import { parseVendorSysDescr, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
+import { snmpSelfIdentity, hasSelfIdentity, type EntityIdentityRow, type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
 import { logger } from "../../utils/logger.js";
 import type { ApRadioSample, ApVapSample } from "../../utils/fortiapMonitorRow.js";
 import { FAP_RADIO_OID, FAP_VAP_OID, decodeRadioMode, decodeChannelWidth, decodeRadioType, parseStationInfoCount, parseVapSuffix } from "../../utils/fortiapRadioSnmp.js";
@@ -727,8 +728,8 @@ const PHYSICAL_ENTITY_ROW_CAP = 500;
 
 async function collectPhysicalEntitiesSnmp(
   session: any,
-): Promise<PhysicalEntitySample[]> {
-  const [classes, descrs, names, hwRevs, fwRevs, serials, mfgs, models, isFrus] = await Promise.all([
+): Promise<{ rows: PhysicalEntitySample[]; identityRows: EntityIdentityRow[] }> {
+  const [classes, descrs, names, hwRevs, fwRevs, serials, mfgs, models, isFrus, swRevs] = await Promise.all([
     snmpWalk(session, OID.entPhysicalClass).catch(() => new Map()),
     snmpWalk(session, OID.entPhysicalDescr).catch(() => new Map()),
     snmpWalk(session, OID.entPhysicalName).catch(() => new Map()),
@@ -738,10 +739,18 @@ async function collectPhysicalEntitiesSnmp(
     snmpWalk(session, OID.entPhysicalMfgName).catch(() => new Map()),
     snmpWalk(session, OID.entPhysicalModelName).catch(() => new Map()),
     snmpWalk(session, OID.entPhysicalIsFRU).catch(() => new Map()),
+    // The tenth column, for the device's own firmware (business rule 154).
+    // Same heavy cadence as the other nine.
+    snmpWalk(session, OID.entPhysicalSoftwareRev).catch(() => new Map()),
   ]);
-  if (classes.size === 0) return [];
+  if (classes.size === 0) return { rows: [], identityRows: [] };
 
   const out: PhysicalEntitySample[] = [];
+  // The rows the device's own identity is read from: the chassis (which the
+  // inventory filter below drops, being no part anyone swaps) and the modules
+  // (whose agreed software revision stands in for a blank chassis cell).
+  // Kept apart from `out` and never persisted — utils/snmpEntityIdentity.ts.
+  const identityRows: EntityIdentityRow[] = [];
   let dropped = 0;
   const str = (m: Map<string, unknown>, idx: string): string | null => {
     const v = snmpVbToString(m.get(idx)).trim();
@@ -754,6 +763,16 @@ async function collectPhysicalEntitiesSnmp(
     const entClass  = entityPhysicalClassLabel(snmpVbToNumber(classRaw));
     const serialNum = str(serials, idx);
     const modelName = str(models, idx);
+    if ((entClass === "chassis" || entClass === "module") && identityRows.length < PHYSICAL_ENTITY_ROW_CAP) {
+      identityRows.push({
+        entIndex,
+        entClass,
+        serialNum,
+        mfgName:     str(mfgs, idx),
+        modelName,
+        softwareRev: str(swRevs, idx),
+      });
+    }
     // RFC 4133 TruthValue: true(1) / false(2).
     const isFru     = snmpVbToNumber(isFrus.get(idx)) === 1;
     if (!entityPhysicalIsInventory({ entClass, isFru, serialNum, modelName })) continue;
@@ -786,7 +805,7 @@ async function collectPhysicalEntitiesSnmp(
   if (dropped > 0) {
     logger.warn({ dropped, cap: PHYSICAL_ENTITY_ROW_CAP }, "entPhysicalTable inventory truncated");
   }
-  return out;
+  return { rows: out, identityRows };
 }
 
 /**
@@ -1333,6 +1352,9 @@ export async function collectSystemInfoSnmp(
     let detectedModel: string | null = null;
     let descrIdentity: SysDescrDetail | undefined;
     let sysDescrText: string | null = null;
+    // sysName rides the same multi-GET (business rule 154): the device's own
+    // name, for an asset no inventory source names.
+    let sysNameText: string | null = null;
     try {
       // Registry load stays behind the model profile that needs it — sysDescr
       // is a fixed OID and every device without a profile is the common case.
@@ -1344,10 +1366,11 @@ export async function collectSystemInfoSnmp(
       // The registry holds the symbol's DEFINITION oid: its `.0` instance
       // rides this batch, and pickScalar asks for the bare oid alone only if
       // that came back empty (utils/snmpIdentity.ts says why).
-      const oids = [SYS_OIDS.sysDescr, ...(modelOid ? [scalarInstanceOid(modelOid)] : [])];
+      const oids = [SYS_OIDS.sysDescr, SYS_OIDS.sysName, ...(modelOid ? [scalarInstanceOid(modelOid)] : [])];
       const vbs = await snmpMultiGet(session, oids).catch(() => new Map<string, unknown>());
 
       sysDescrText = snmpVbToString(vbs.get(SYS_OIDS.sysDescr)) || null;
+      sysNameText = snmpVbToString(vbs.get(SYS_OIDS.sysName)) || null;
       descrIdentity = parseVendorSysDescr(sysDescrText ?? undefined);
 
       if (modelOid && vendorProfile?.model) {
@@ -1365,6 +1388,7 @@ export async function collectSystemInfoSnmp(
     // to the legacy 32-bit columns.
     const interfaces: InterfaceSample[] = [];
     let physicalEntities: PhysicalEntitySample[] | undefined;
+    let entityIdentityRows: EntityIdentityRow[] | undefined;
     let macTable: FdbEntry[] | undefined;
     let arpNeighbors: ArpNeighborEntry[] | undefined;
     let trunkMembers: TrunkPortEntry[] | undefined;
@@ -1458,8 +1482,10 @@ export async function collectSystemInfoSnmp(
 
       // Hardware inventory rides the same walk — heavy cadence only, since a
       // module's serial changes on a swap, not on a poll.
-      physicalEntities = await collectPhysicalEntitiesSnmp(session)
+      const entityWalk = await collectPhysicalEntitiesSnmp(session)
         .catch(() => undefined);
+      physicalEntities = entityWalk?.rows;
+      entityIdentityRows = entityWalk?.identityRows;
 
       // IP neighbour cache — firewall-class only, mirroring where the MAC
       // table is gated. A switch's neighbour table holds its own management
@@ -1576,6 +1602,16 @@ export async function collectSystemInfoSnmp(
       endRadios({ radios: apRadios?.length ?? null });
     }
 
+    // The device's own name and chassis identity (business rule 154). Pure,
+    // from readings this pass already took — no extra round trip beyond the
+    // sysName varbind and the softwareRev column.
+    const selfIdentity: SnmpSelfIdentity = snmpSelfIdentity(sysNameText, entityIdentityRows);
+    // A manufacturer profile's `model` row that answered is the operator's own
+    // statement of where this device publishes its model (business rule 68:
+    // a profile is an override), so the chassis row does not compete with it —
+    // a FortiSwitch keeps "FortiSwitch S548DF" from fsSysVersion.
+    if (detectedModel) delete selfIdentity.model;
+
     return {
       interfaces,
       storage,
@@ -1590,6 +1626,7 @@ export async function collectSystemInfoSnmp(
       detectedModel,
       descrIdentity,
       sysDescr: sysDescrText,
+      selfIdentity: hasSelfIdentity(selfIdentity) ? selfIdentity : undefined,
     };
   }, opts.timeoutMs);
 }

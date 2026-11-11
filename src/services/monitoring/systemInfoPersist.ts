@@ -17,6 +17,7 @@ import { type FortiswitchMclagPeer } from "../../utils/fortiswitchCmdb.js";
 import { logEvent, buildFirmwareChangedEvent } from "../eventLogService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { lookupOuiOverride } from "../ouiService.js";
+import { reconcileSnmpSelfIdentity } from "../snmpSelfIdentityService.js";
 import { resolveAssetTypeCached } from "../../utils/assetTypeMatch.js";
 import { sameDescrObserved, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
 import { maybeEmitChangeEvents, type ChangeItem } from "../notificationChangeEvents.js";
@@ -754,6 +755,9 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
 
   await adoptDetectedModel(assetId, d.detectedModel, pinned);
   await adoptSysDescrIdentity(assetId, d, pinned);
+  // sysName + the ENTITY-MIB chassis row (business rule 154). Edge-triggered
+  // in memory, so an unchanged device costs no query.
+  await reconcileSnmpSelfIdentity(assetId, d.selfIdentity);
 
   // Only bump lastSystemInfoAt when the scrape returned interfaces. The
   // /system-info GET endpoint anchors its interface query to this
