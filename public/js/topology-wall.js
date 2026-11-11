@@ -277,10 +277,8 @@
       ctx.refreshSidebar();
       ctx.historyChanged();
     }
-    // Rule 150: a device mounted on a region-mapped wall takes the region's codes.
-    function codesEqual(a, b) {
-      return CODE_KEYS.every(function (k) { return String((a && a[k]) || "").trim().toLowerCase() === String((b && b[k]) || "").trim().toLowerCase(); });
-    }
+    // Rule 150: a device mounted on a region-mapped wall takes the region's
+    // codes; rule 148(a): only the levels the region names change.
     var region = view.region || null;
     var stagedAssets = {};
     function restageCodes() {
@@ -290,9 +288,11 @@
         if (p.kind !== "asset" || !p.assetId) return;
         now[p.assetId] = true;
         var cur = locById[p.assetId] || null;
-        if (codesEqual(cur, region)) { ctx.stageLocationCode(p.assetId, null); return; }
+        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); });
+        var same = levels.every(function (k) { return String(region[k]).trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
+        if (!levels.length || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
-        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {} });
+        ctx.stageLocationCode(p.assetId, Object.assign({}, region), { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
       Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
       stagedAssets = now;

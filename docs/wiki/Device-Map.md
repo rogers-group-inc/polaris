@@ -598,11 +598,16 @@ map is highlighted, and in edit mode it has an **×** that takes it off the map
 again (its codes stay). The FortiSwitch and FortiAP lists further down the pane
 name only the devices on the map.
 
-Drag a device from the **Device List** onto the map. A device
-dropped inside a group polygon takes that group's `a:` / `b:` / `f:` / `r:` /
-`ra:` / `jb:` codes in its description when you save; the innermost polygon wins, so
-a device on a floor inside a building gets both. A device placed outside every
-polygon keeps its codes ([rule 148](Business-Rules#rule-148)). Links between
+Drag a device from the **Device List** onto the map. Polygons stand for
+areas, buildings and floors. A device dropped inside one takes that group's
+`a:` / `b:` / `f:` codes in its description when you save; the innermost polygon
+wins, so a device on a floor inside a building gets both. Only those levels
+change: the device's room (`r:`), rack (`ra:`) and junction box (`jb:`) stay as
+they are, and a device whose building is already right isn't listed at all. A
+device placed outside every polygon keeps its codes
+([rule 148](Business-Rules#rule-148)). Rooms, racks and junction boxes are
+placed on Rack and Wall views, which likewise change only the levels their
+region names. Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.
 Right-click a placed device to remove it from the map (its codes stay), or
 click it and press **Delete**: it goes back to the Device List.

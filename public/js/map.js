@@ -1751,7 +1751,7 @@
       stageLocationCode: function (assetId, codes, info) {
         if (!_editSessionActive() || !assetId) return;
         if (!_editStaged.locationCodes) _editStaged.locationCodes = {};
-        if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from };
+        if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from, levels: (info && info.levels) || null };
         else delete _editStaged.locationCodes[assetId];
       },
       uploadBackground: function (file) {
@@ -1831,8 +1831,16 @@
     var map = _editSessionActive() && _editStaged.locationCodes;
     if (!map) return [];
     return Object.keys(map).map(function (id) {
-      return { assetId: id, codes: map[id].codes, name: map[id].name || id, from: map[id].from || null };
+      return { assetId: id, codes: map[id].codes, name: map[id].name || id, from: map[id].from || null, levels: map[id].levels || null };
     });
+  }
+  // Rule 148(a): what a change leaves the device with — its codes now, with
+  // only the levels the change sets replaced.
+  function _codesAfter(c) {
+    if (!c.levels) return c.codes;
+    var out = Object.assign({}, c.from || {});
+    c.levels.forEach(function (k) { out[k] = (c.codes && c.codes[k]) || null; });
+    return out;
   }
   function _codesText(c) {
     if (!c) return "no codes";
@@ -1849,11 +1857,11 @@
     var n = changes.length;
     var rows = changes.map(function (c) {
       return '<tr><td>' + escapeHtml(c.name) + '</td><td class="mono">' + escapeHtml(_codesText(c.from)) +
-        '</td><td class="mono">' + escapeHtml(_codesText(c.codes)) + '</td></tr>';
+        '</td><td class="mono">' + escapeHtml(_codesText(_codesAfter(c))) + '</td></tr>';
     }).join("");
     var body =
       '<p style="margin:0 0 10px">These devices were placed inside a group polygon, on a floor layer, or on a view that stands for a region, so their location codes change. ' +
-        'The free text in each description stays; only the a:/b:/f:/r:/ra:/jb: codes are replaced.</p>' +
+        'Only the levels the polygon, floor or view sets change; the free text and every other code in each description stay as they are.</p>' +
       '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr><th>Device</th><th>Codes now</th><th>After save</th></tr></thead>' +
       '<tbody>' + rows + '</tbody></table></div>' +
       '<p class="hint">On a FortiSwitch or FortiAP the new description is also sent to the device when description sync is on. Devices placed outside every polygon keep their codes.</p>' +
@@ -1878,7 +1886,7 @@
   async function _commitLocationCodes(siteId, changes) {
     if (!changes.length) return;
     try {
-      var res = await api.map.commitTopologyLocationCodes(siteId, changes.map(function (c) { return { assetId: c.assetId, codes: c.codes }; }));
+      var res = await api.map.commitTopologyLocationCodes(siteId, changes.map(function (c) { return c.levels ? { assetId: c.assetId, codes: c.codes, levels: c.levels } : { assetId: c.assetId, codes: c.codes }; }));
       var results = (res && res.results) || [];
       var updated = results.filter(function (r) { return r.status === "updated"; }).length;
       var refused = results.filter(function (r) { return r.status === "refused"; });

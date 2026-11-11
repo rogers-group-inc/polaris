@@ -45,6 +45,13 @@ describe("innermostPolygon", () => {
   });
 });
 
+describe("polyCodes (polygons are areas, buildings and floors)", () => {
+  it("keeps area / building / floor and drops room, rack and junction box", () => {
+    expect(P._polyCodes({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: "R1", junctionBox: "7" }))
+      .toEqual({ area: "Mine", building: "Plant", floor: "1", room: null, rack: null, junctionBox: null });
+  });
+});
+
 describe("groupsFromData", () => {
   it("lists every chain prefix once, display casing kept", () => {
     const groups = P._groupsFromData({
