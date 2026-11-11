@@ -442,6 +442,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/assetSourceService.ts
+
+**What it owns:** The server half of the asset details **Sources** tab, moved out of `routes/assets/sources.ts` (CQ-B062 slice 2): the per-discovery-source view, splitting one source off into a new asset, and the operator-driven merge with its audit Event and conflict settling. The route keeps only Zod validation and the merge body's "this" / "other" -> canonical / ghost translation.
+
+**Public API:** `listAssetSourcesForDisplay(id)`, `splitAssetSource(id, sourceId, actor)`, `mergeAssetsAudited({ canonicalId, ghostId, fieldWinners, dependencyWinner, canManageIntegrations, actor })`.
+
+**Cross-service deps:** assetMergeService (`mergeAssets`), duplicateIpConflictService (`repointDuplicateIpConflicts`, `reconcileDuplicateIpForAddresses`), duplicateSerialConflictService (`repointDuplicateSerialConflicts`, `settleDuplicateSerialConflictsAfterMerge`), assetDetailReadService (`assertAssetExists`), eventLogService (`logEvent`), utils/assetProjection (`projectAssetFromSources`), utils/assetSourceState (`deriveAssetSourceState`), utils/workloadSources.
+
+**Used by:** `src/api/routes/assets/sources.ts — GET /assets/:id/sources, POST /assets/:id/sources/:sourceId/split, POST /assets/:id/merge`.
+
+**Invariants:**
+- The source view sorts identity-first (entra, intune, ad, the Fortinet kinds, snmp-sysdescr, fortinet-live), unknown kinds at 50, `manual` last, and collapses rows to one per (sourceKind, integrationId), keeping the newest — a churned `fortigate-endpoint` MAC must not render as several cards.
+- A split refuses a `manual` source and an asset's only source (409); the new asset and the moved source are one transaction, so no AssetSource is ever left pointing at an asset that was never created. Writes `asset.split`.
+- The merge moves the duplicate-serial and duplicate-ip cards off the absorbed row BEFORE `mergeAssets` deletes it (rules 83 and 40(i)), writes `asset.merged`, then settles both card kinds AWAITED; a settle failure is logged and never fails a merge that already committed.
+- The merge orchestration lives here, not in assetMergeService, because both conflict services import assetMergeService.
+
+**When changing this:**
+- A new source kind: give it a place in the view's ORDER table and a branch in the split's assetType / tag mapping, or it sorts at 50 and splits as `other`.
+- Keep `tests/unit/assetSourceService.test.ts` and `tests/integration/assetMerge.test.ts` green; the second is the HTTP contract.
+
+---
+
 ## services/assetSightingService.ts
 
 **What it owns:** Records DHCP-only (asset, FortiGate) sightings to drive quarantine fan-out targeting.

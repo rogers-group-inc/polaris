@@ -586,3 +586,13 @@ export async function readAssetSections(
   }));
   return out;
 }
+
+/**
+ * 404 unless the asset exists — the guard the assets routes run before a read
+ * whose own service would answer an unknown id with an empty result rather
+ * than a 404 (CQ-B062 slice 2).
+ */
+export async function assertAssetExists(id: string): Promise<void> {
+  const asset = await prisma.asset.findUnique({ where: { id }, select: { id: true } });
+  if (!asset) throw new AppError(404, "Asset not found");
+}
