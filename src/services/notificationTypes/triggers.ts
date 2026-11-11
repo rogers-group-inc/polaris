@@ -508,6 +508,9 @@ export const ASSET_METRICS = [
   "cpuPct", "cpuCorePct", "memPct", "memUsedBytes", "memDaysUntilFull", "memForecastPct", "sessionCount", "responseTimeMs", "uptimeSec", "probeLossPct",
   "hwSensorValue", "hwSensorAlarm", "storageUsedPct", "storageUsedBytes", "storageDaysUntilFull",
   "ifInErrorRate", "ifOutErrorRate", "ifInBps", "ifOutBps",
+  // A pinned fibre-channel port's fcIfErrorTable counters as a rate per
+  // minute, one metric per counter (business rule 159a, FC_RATE_METRICS).
+  "fcCrcErrorRate", "fcLinkFailureRate", "fcSyncLossRate", "fcSignalLossRate", "fcInvalidTxWordRate",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
   // Agent-run path checks — the asset is the AGENT HOST and the

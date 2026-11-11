@@ -22,6 +22,8 @@
  */
 
 import { prisma } from "../db.js";
+import { Prisma } from "../generated/prisma/client.js";
+import { fcErrorsFrom, type FcErrorCounters } from "../utils/fibreChannel.js";
 import { foldProbeOutages, foldProbeRecoveries, replayProbeStates, type OutageKind } from "./probeOutageService.js";
 import { describeDownDetectionFor, recoveryPollsFor } from "./downDetectionService.js";
 import { downSeverityCss } from "../utils/severityStyle.js";
@@ -51,9 +53,76 @@ export const CHART_TOKENS = [
   "chart.trigger", "chart.sensor", "chart.probeLoss",
   "chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss",
   "chart.cpu", "chart.memory", "chart.responseTime",
-  "chart.storage",
+  "chart.storage", "chart.interface",
 ] as const;
 export type ChartToken = (typeof CHART_TOKENS)[number];
+
+/**
+ * The interface RATE metrics whose alert charts the port itself (business
+ * rule 159a): the error rates every port has, and a fibre-channel port's five
+ * counters. Each charts its own series — per second for the error rates, per
+ * minute for the FC counters, the unit the automation compared — with the
+ * automation's threshold as the dashed line. The device charts stay: an
+ * erroring port plausibly correlates with the device's own load (see
+ * PORT_SCOPED_METRICS for why only the STATE fields drop them).
+ */
+const INTERFACE_RATE_CHART: Record<string, { label: string; unit: string; perMinute: boolean; column: "inErrors" | "outErrors" | "fc"; fcField?: keyof FcErrorCounters }> = {
+  ifInErrorRate: { label: "In errors", unit: " /s", perMinute: false, column: "inErrors" },
+  ifOutErrorRate: { label: "Out errors", unit: " /s", perMinute: false, column: "outErrors" },
+  fcCrcErrorRate: { label: "FC CRC errors", unit: " /min", perMinute: true, column: "fc", fcField: "invalidCrcs" },
+  fcLinkFailureRate: { label: "FC link failures", unit: " /min", perMinute: true, column: "fc", fcField: "linkFailures" },
+  fcSyncLossRate: { label: "FC loss of sync", unit: " /min", perMinute: true, column: "fc", fcField: "syncLosses" },
+  fcSignalLossRate: { label: "FC loss of signal", unit: " /min", perMinute: true, column: "fc", fcField: "sigLosses" },
+  fcInvalidTxWordRate: { label: "FC invalid transmission words", unit: " /min", perMinute: true, column: "fc", fcField: "invalidTxWords" },
+};
+
+export function isInterfaceRateAlert(metric: string | null | undefined): boolean {
+  return !!metric && Object.prototype.hasOwnProperty.call(INTERFACE_RATE_CHART, metric);
+}
+
+/**
+ * One port's rate for the metric an alert fired on, over [since, now]: the
+ * newest-first sample rows paired in time order, a counter that went
+ * backwards (cleared on the device) skipped — the reading the engine took
+ * (`readings.rateReadings`), drawn as a line. FC rows that carry no reading
+ * are skipped, never paired, as the resolver skips them.
+ */
+async function loadInterfaceRateSeries(assetId: string, ifName: string, metric: string, since: Date): Promise<SparkPoint[]> {
+  const spec = INTERFACE_RATE_CHART[metric];
+  if (!spec) return [];
+  const rows = await prisma.assetInterfaceSample.findMany({
+    where: { assetId, ifName, timestamp: { gte: since }, ...(spec.column === "fc" ? { fcErrors: { not: Prisma.DbNull } } : {}) },
+    orderBy: { timestamp: "asc" },
+    select: { timestamp: true, inErrors: true, outErrors: true, fcErrors: true },
+  });
+  return interfaceRatePoints(rows, metric);
+}
+
+/** Pure half of loadInterfaceRateSeries, exported for the tests. */
+export function interfaceRatePoints(
+  rows: Array<{ timestamp: Date; inErrors?: bigint | null; outErrors?: bigint | null; fcErrors?: unknown }>,
+  metric: string,
+): SparkPoint[] {
+  const spec = INTERFACE_RATE_CHART[metric];
+  if (!spec) return [];
+  const valueOf = (r: (typeof rows)[number]): number | null => {
+    if (spec.column === "fc") return fcErrorsFrom(r.fcErrors)?.[spec.fcField!] ?? null;
+    const v = r[spec.column];
+    return v === null || v === undefined ? null : Number(v);
+  };
+  const out: SparkPoint[] = [];
+  let prev: { t: number; v: number } | null = null;
+  for (const r of rows) {
+    const v = valueOf(r);
+    if (v === null) continue;
+    const t = r.timestamp.getTime();
+    if (prev && t > prev.t && v >= prev.v) {
+      out.push({ t, v: ((v - prev.v) * (spec.perMinute ? 60 : 1)) / ((t - prev.t) / 1000) });
+    }
+    prev = { t, v };
+  }
+  return thin(out);
+}
 
 /** The metric an automation triggers on → the chart that explains it. */
 export function chartTokenForMetric(metric: string | null | undefined): ChartToken | null {
@@ -111,10 +180,19 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     case "storageUsedBytes":
     case "storageDaysUntilFull":
       return "chart.storage";
+    // A port's error rate and a fibre-channel port's counters chart the port
+    // (rule 159a, INTERFACE_RATE_CHART); the device charts follow it.
+    case "ifInErrorRate":
+    case "ifOutErrorRate":
+    case "fcCrcErrorRate":
+    case "fcLinkFailureRate":
+    case "fcSyncLossRate":
+    case "fcSignalLossRate":
+    case "fcInvalidTxWordRate":
+      return "chart.interface";
     default:
-      // Interface counters have no chart of their own yet, so the trigger
-      // token renders away and the generic charts below it still tell the
-      // device's story.
+      // Throughput has no chart of its own yet, so the trigger token renders
+      // away and the generic charts below it still tell the device's story.
       return null;
   }
 }
@@ -252,7 +330,9 @@ export function storageThresholdFromTrigger(trigger: unknown): number | null {
   if (!trigger || typeof trigger !== "object") return null;
   const t = trigger as { type?: unknown; metric?: unknown; threshold?: unknown };
   if (t.type !== "asset_metric" && t.type !== "host_metric") return null;
-  if (typeof t.metric !== "string" || !STORAGE_SCOPED_METRICS.has(t.metric)) return null;
+  // The interface rate charts draw it too (rule 159a): the dashed line is the
+  // automation's own threshold, in the unit the chart draws.
+  if (typeof t.metric !== "string" || (!STORAGE_SCOPED_METRICS.has(t.metric) && !isInterfaceRateAlert(t.metric))) return null;
   return typeof t.threshold === "number" && Number.isFinite(t.threshold) ? t.threshold : null;
 }
 
@@ -309,11 +389,14 @@ const DEVICE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory",
 export function chartTokensForAlert(
   tokens: Iterable<ChartToken>,
   metric: string | null | undefined,
-  has: { port: boolean; sensor: boolean; mount: boolean },
+  has: { port: boolean; sensor: boolean; mount: boolean; ratePort?: boolean },
 ): Set<ChartToken> {
   const wanted = new Set(tokens);
   const primary = chartTokenForMetric(metric);
   if (wanted.delete("chart.trigger") && primary) wanted.add(primary);
+  // The port's own rate chart (rule 159a): only on an interface rate alert
+  // that names its port; every other alert loses the token, no query.
+  if (!isInterfaceRateAlert(metric) || !has.ratePort) wanted.delete("chart.interface");
   // An alert about one port never draws the device charts — see
   // isPortScopedAlert. The only thing it can draw is the SD-WAN trio, when the
   // port is an SD-WAN member; without a port to ask about it draws nothing.
@@ -428,6 +511,9 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
   // Label, unit and axis come from the storage spec (storageUsageSpec /
   // storageForecastSpec); only the colour is read from here.
   "chart.storage": { label: "Storage", unit: "%", color: "#0f766e", percent: true },
+  // Label and unit come from INTERFACE_RATE_CHART; the blue is the email's
+  // informational blue, the one the approved canvas drew CRC errors in.
+  "chart.interface": { label: "Interface errors", unit: "", color: "#0277bd", percent: false },
 };
 
 /** Even-ish downsample that always keeps the newest point (the alerting one). */
@@ -1754,6 +1840,54 @@ async function renderStorageChart(spec: StorageChartSpec, color: string, token: 
   };
 }
 
+/**
+ * The port's rate chart (rule 159a): the last hour of the metric the alert
+ * fired on, for its port, in the unit the automation compared, with the
+ * automation's threshold as the dashed line. Labelled with the port, since a
+ * switch has dozens and the reader needs to know which one this is.
+ */
+async function renderInterfaceRateChart(
+  points: SparkPoint[],
+  o: { metric: string; ifName: string; threshold: number | null; from: number; to: number },
+): Promise<RenderedChart> {
+  const spec = INTERFACE_RATE_CHART[o.metric]!;
+  const label = `${spec.label} — ${o.ifName}`;
+  const svg = sparklineSvg(points, {
+    label,
+    unit: spec.unit,
+    color: META["chart.interface"].color,
+    yMin: 0,
+    threshold: o.threshold,
+    from: o.from,
+    to: o.to,
+  });
+  const png = points.length > 0 ? await rasterize(svg) : null;
+  const token: ChartToken = "chart.interface";
+  const cid = `polaris-${token.replace(".", "-")}@polaris`;
+  return {
+    token,
+    cid,
+    hasData: points.length > 0,
+    summary: summaryLine(label, spec.unit, points),
+    attachment: png ? { cid, filename: `${token.replace(".", "-")}.png`, contentType: "image/png", content: png } : null,
+  };
+}
+
+/** A test alert's port series: quiet, then a climb past the threshold. */
+function sampleInterfaceRateSeries(metric: string, threshold: number | null, now: Date): SparkPoint[] {
+  const spec = INTERFACE_RATE_CHART[metric];
+  if (!spec) return [];
+  const peak = threshold && threshold > 0 ? threshold * 1.8 : spec.perMinute ? 9 : 1.4;
+  const end = now.getTime();
+  const out: SparkPoint[] = [];
+  for (let i = 59; i >= 0; i--) {
+    const k = 59 - i;
+    const v = k < 40 ? peak * 0.05 * ((k % 7) / 7) : peak * Math.min(1, (k - 39) / 12);
+    out.push({ t: end - i * 60_000, v: Math.round(v * 100) / 100 });
+  }
+  return out;
+}
+
 async function rasterize(svg: string): Promise<Buffer | null> {
   try {
     // Lazy import: resvg resolves a per-platform native binding, and an alert
@@ -1992,14 +2126,33 @@ export async function buildAlertCharts(
   const interfaceScoped = isPortScopedAlert(opts?.metric);
   const wanPort = interfaceScoped ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
   const mountPath = isStorageScopedAlert(opts?.metric) ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
+  // The port an interface RATE alert fired on (rule 159a) — its dimension.
+  const ratePort = isInterfaceRateAlert(opts?.metric) ? (opts?.dimension ?? opts?.sensorName ?? null) : null;
   const wanted = chartTokensForAlert(tokens, opts?.metric, {
     // A test alert (sampleData) has an invented device, so whether its port is
     // a WAN member is not a question with an answer.
     port: !!assetId && !opts?.sampleData && !!wanPort,
     sensor: !!opts?.sensorName,
     mount: !!mountPath,
+    ratePort: !!ratePort,
   });
   if (wanted.size === 0) return out;
+
+  // The port's rate chart is built on its own, like storage's: its series and
+  // unit come from the metric (INTERFACE_RATE_CHART), its line is the
+  // automation's threshold, and the device charts render beside it as usual.
+  let rateSeries: SparkPoint[] | null = null;
+  if (wanted.has("chart.interface") && ratePort) {
+    if (opts?.sampleData) {
+      rateSeries = sampleInterfaceRateSeries(opts!.metric!, opts?.ruleThreshold ?? null, opts?.now ?? new Date());
+    } else if (assetId) {
+      try {
+        rateSeries = await loadInterfaceRateSeries(assetId, ratePort, opts!.metric!, new Date((opts?.now ?? new Date()).getTime() - CHART_WINDOW_MS));
+      } catch (err) {
+        logger.warn({ err: (err as Error)?.message, assetId, ifName: ratePort }, "alert interface chart load failed — sending without it");
+      }
+    }
+  }
 
   const now = opts?.now ?? new Date();
   const since = new Date(now.getTime() - CHART_WINDOW_MS);
@@ -2144,6 +2297,7 @@ export async function buildAlertCharts(
     "chart.responseTime": rt,
     // Rendered from its own spec above; never read from here.
     "chart.storage": [],
+    "chart.interface": [],
   };
 
   /** The health check's own SLA target for a chart, when it configures one. */
@@ -2171,6 +2325,15 @@ export async function buildAlertCharts(
     }
     if (token === "chart.memory" && memForecastAlert) {
       if (memForecast) out.set(token, await renderStorageChart(memForecast, META[token].color, token));
+      continue;
+    }
+    if (token === "chart.interface") {
+      if (rateSeries && ratePort) {
+        out.set(token, await renderInterfaceRateChart(rateSeries, {
+          metric: opts!.metric!, ifName: ratePort, threshold: opts?.ruleThreshold ?? null,
+          from: since.getTime(), to: now.getTime(),
+        }));
+      }
       continue;
     }
     const meta = META[token];

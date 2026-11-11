@@ -1051,7 +1051,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // appear once any port carries them. Rx / Tx show by default; temperature,
   // voltage and bias start hidden and are one tick away in the column gear.
   var showOpticsCols = rows.some(function (r) { return r.optics != null; });
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0);
+  // And for a fibre-channel switch (business rule 159a): the port's own WWN,
+  // what is logged into it, and its FC error counters — once any port is FC.
+  var showFcCols = rows.some(function (r) { return !!r.wwn || r.fc != null; });
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0) + (showFcCols ? 3 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -1282,6 +1285,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       (showIpv6Col ? '<td class="mono">' + escapeHtml(iface.ipv6Address || "—") + "</td>" : "") +
       addressingCell(iface) +
       '<td class="mono">' + escapeHtml(iface.macAddress || "—") + "</td>" +
+      (showFcCols ? _fcIfaceCellsHTML(iface) : "") +
       vlanCellsHTML(iface) +
       poeCellHTML(iface) +
       opticsCellsHTML(iface) +
@@ -1425,6 +1429,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       ipv6: iface.ipv6Address || "",
       addressing: iface.addressingMode ? String(iface.addressingMode).toLowerCase() : "",
       mac: iface.macAddress || "",
+      wwn: iface.wwn || "",
+      "fc-login": _fcLoginText(iface.fc),
+      "fc-errors": _fcErrorTotal(iface.fc),
       "native-vlan": iface.nativeVlan != null ? Number(iface.nativeVlan) : null,
       "tagged-vlans": taggedVlanList(iface),
       poe: iface.poeStatus || "",
@@ -1595,6 +1602,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       (showIpv6Col ? '<th data-col-id="ipv6" data-sf-key="ipv6" data-sf-type="ip" title="The interface\'s IPv6 address — the first one that is not link-local (fe80::) or loopback">IPv6</th>' : "") +
       '<th data-col-id="addressing" data-sf-key="addressing" data-sf-options="dhcp=DHCP|static=Static|pppoe=PPPoE" title="L3 addressing mode — FortiOS only (CMDB system/interface mode). DHCP, Static, or PPPoE; other sources show —">Addressing</th>' +
       '<th data-col-id="mac" data-sf-key="mac" data-sf-type="string">MAC</th>' +
+      (showFcCols
+        ? '<th data-col-id="wwn" data-sf-key="wwn" data-sf-type="string" title="The fibre-channel port\'s own port WWN">WWN</th>' +
+          '<th data-col-id="fc-login" data-sf-key="fc-login" data-sf-type="string" title="What is logged into this fibre-channel port: the asset it was matched to (by its HBA WWN, else its registered host name) and the port WWN it logged in with">Logged in</th>' +
+          '<th data-col-id="fc-errors" data-sf-key="fc-errors" data-sf-type="number" data-sf-nofilter title="Fibre-channel error counters since the switch last cleared them: CRC errors, link failures, loss of sync, loss of signal and invalid transmission words. Hover a cell for each one. Monitor the port to alert on them as a rate.">FC errors</th>'
+        : "") +
       vlanHeader +
       poeHeader +
       opticsHeader +
@@ -2109,6 +2121,86 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
 // alert carries the same strobing severity dot as the Assets list
 // (alertSummaryDotHTML, from matchedAsset.alert stamped by GET
 // /assets/:id/system-info).
+// The fibre-channel counters an operator acts on, in the order they read: a
+// link that dropped, then words / frames the optic mangled. Zero is shown as a
+// dash so a non-zero cell stands out; a non-zero corruption counter is amber.
+// Shared with the Fibre Channel tab (assets-network.js, which loads after this
+// file) so the two surfaces name the counters the same way.
+var _FC_ERROR_COLS = [
+  ["linkFailures",   "Link failures",  "Times the link went down (fcIfLinkFailures)", false],
+  ["syncLosses",     "Sync losses",    "Losses of synchronisation (fcIfSyncLosses)", true],
+  ["sigLosses",      "Signal losses",  "Losses of signal (fcIfSigLosses)", false],
+  ["invalidTxWords", "Invalid words",  "Invalid transmission words received — usually an optic, cable or connector (fcIfInvalidTxWords)", true],
+  ["invalidCrcs",    "CRC errors",     "Frames received with a bad CRC (fcIfInvalidCrcs)", true],
+];
+
+// Sum of an FC port's error counters, or null when it carries none (business
+// rule 159a) — the FC errors column's value and sort key.
+function _fcErrorTotal(fc) {
+  var c = fc && fc.errorCounters;
+  if (!c) return null;
+  var total = null;
+  _FC_ERROR_COLS.forEach(function (col) {
+    var v = c[col[0]];
+    if (typeof v === "number" && isFinite(v)) total = (total || 0) + v;
+  });
+  return total;
+}
+
+// "host / WWN" of what is logged into an FC port — the Logged in column's text
+// for its sort and filter.
+function _fcLoginText(fc) {
+  var logins = (fc && fc.logins) || [];
+  return logins.map(function (l) {
+    var name = (l.matchedAsset && l.matchedAsset.hostname) || l.hostName || "";
+    return (name ? name + " " : "") + l.portWwn;
+  }).join(", ");
+}
+
+// The three FC cells of an Interfaces row (business rule 159a): the port's
+// own WWN, what is logged into it, and its error counters summed with each one
+// in the tooltip — amber when a corruption counter is non-zero, like the Fibre
+// Channel tab.
+function _fcIfaceCellsHTML(iface) {
+  var fc = iface.fc || null;
+  var wwnCell = '<td class="mono">' + escapeHtml(iface.wwn || "—") + '</td>';
+
+  var logins = (fc && fc.logins) || [];
+  var loginCell;
+  if (logins.length === 0) {
+    loginCell = "<td>—</td>";
+  } else {
+    var first = logins[0];
+    var name = (first.matchedAsset && first.matchedAsset.hostname) || first.hostName || "";
+    var nameHtml = first.matchedAsset && first.matchedAsset.id
+      ? '<a href="#" class="asset-lldp-link" data-asset-id="' + escapeHtml(first.matchedAsset.id) + '"' +
+        ' title="Matched by ' + (first.matchMethod === "wwn" ? "the WWN the host reports for its HBA" : "the host name the HBA registered") + '"' +
+        ' style="color:var(--color-accent);text-decoration:none">' + escapeHtml(name || first.portWwn) + '</a>'
+      : (name ? escapeHtml(name) : "");
+    var wwnHtml = '<span class="mono" style="opacity:0.7">' + (nameHtml ? " / " : "") + escapeHtml(first.portWwn) + '</span>';
+    var more = logins.length > 1
+      ? ' <span class="badge hue-pill" style="--hue:#6b7280" title="' + escapeHtml(_fcLoginText(fc)) + '">+' + (logins.length - 1) + '</span>'
+      : "";
+    loginCell = "<td>" + nameHtml + wwnHtml + more + "</td>";
+  }
+
+  var total = _fcErrorTotal(fc);
+  var errCell;
+  if (total == null) {
+    errCell = '<td class="mono" style="color:var(--color-text-tertiary)">—</td>';
+  } else {
+    var c = fc.errorCounters;
+    var warn = _FC_ERROR_COLS.some(function (col) { return col[3] && typeof c[col[0]] === "number" && c[col[0]] > 0; });
+    var tip = _FC_ERROR_COLS.map(function (col) {
+      var v = c[col[0]];
+      return col[1] + ": " + (typeof v === "number" ? Number(v).toLocaleString() : "—");
+    }).join("\n");
+    errCell = '<td class="mono"' + (warn ? ' style="color:var(--color-warning);font-weight:600"' : "") +
+      ' title="' + escapeHtml(tip) + '">' + escapeHtml(Number(total).toLocaleString()) + '</td>';
+  }
+  return wwnCell + loginCell + errCell;
+}
+
 function _lldpNeighborInlineCell(neighbors) {
   if (!neighbors || neighbors.length === 0) return "—";
   var first = neighbors[0];

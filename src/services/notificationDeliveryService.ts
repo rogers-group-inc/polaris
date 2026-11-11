@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, assetUrlForPush } from "../utils/notificationTemplate.js";
-import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, storageThresholdFromTrigger, isMemoryForecastAlert, memoryForecastTargetFromRule, type ChartToken, type RenderedChart, type MemoryForecastTarget } from "./alertChartService.js";
+import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, isInterfaceRateAlert, storageThresholdFromTrigger, isMemoryForecastAlert, memoryForecastTargetFromRule, type ChartToken, type RenderedChart, type MemoryForecastTarget } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
 import { buildDependencyPathBlocks, dependencyPathTokensIn, substituteDependencyPathTokens } from "./alertDependencyPathService.js";
@@ -289,7 +289,9 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
       // A storage alert's chart draws the automation's own threshold (or, for
       // days-until-full, uses it as the forecast horizon). Read only for an
       // alert that will actually draw one.
-      const ruleThreshold = isStorageScopedAlert(d.notification.metric) && (wanted.has("chart.storage") || wanted.has("chart.trigger"))
+      // An interface rate alert's chart (rule 159a) draws the threshold too.
+      const ruleThreshold = ((isStorageScopedAlert(d.notification.metric) && (wanted.has("chart.storage") || wanted.has("chart.trigger")))
+          || (isInterfaceRateAlert(d.notification.metric) && (wanted.has("chart.interface") || wanted.has("chart.trigger"))))
         ? await memoize(memo.storageThreshold, d.notification.ruleId ?? "", () => storageChartThreshold(d.notification.ruleId))
         : null;
       // A memory forecast draws toward the level the alert is counting down to

@@ -239,7 +239,19 @@ describe("PolarisChartShared.derivePerIntervalSeries", () => {
       { timestamp: "2026-11-06T00:00:00Z", inOctets: 0, outOctets: 100, inErrors: 0, outErrors: 5 },
       { timestamp: "2026-11-06T00:01:00Z", inOctets: 600, outOctets: 50, inErrors: 2, outErrors: 5 },
     ], { bucketSeconds: 0 });
-    expect(out).toEqual([{ timestamp: "2026-11-06T00:01:00Z", inBps: 80, outBps: null, inErr: 2, outErr: 0 }]);
+    // inErrRate / outErrRate: the rate ifIn/OutErrorRate compares (rule 159a).
+    expect(out).toEqual([{ timestamp: "2026-11-06T00:01:00Z", inBps: 80, outBps: null, inErr: 2, outErr: 0, inErrRate: 2 / 60, outErrRate: 0, fc: null }]);
+  });
+  it("detail tier: an FC port's counters per MINUTE, paired across a row with none, a cleared counter = null", () => {
+    const fc = (invalidCrcs: number, linkFailures: number) => ({ invalidCrcs, linkFailures, syncLosses: 0, sigLosses: 0, invalidTxWords: 0 });
+    const out = CS.derivePerIntervalSeries([
+      { timestamp: "2026-11-06T00:00:00Z", fcErrors: fc(10, 1) },
+      { timestamp: "2026-11-06T00:01:00Z" },
+      { timestamp: "2026-11-06T00:02:00Z", fcErrors: fc(16, 0) },
+    ], { bucketSeconds: 0 });
+    expect(out[0].fc).toBeNull();
+    expect(out[1].fc.invalidCrcs).toBeCloseTo(3); // 6 in 2 min
+    expect(out[1].fc.linkFailures).toBeNull();    // went backwards: cleared
   });
   // DRIFT PIN: the desktop copy threw on null samples and emitted NaN rates
   // for an unparseable pair; both now skip.
@@ -254,7 +266,14 @@ describe("PolarisChartShared.derivePerIntervalSeries", () => {
     const out = CS.derivePerIntervalSeries([
       { timestamp: "T", inBytesPerSec: 10, outBytesPerSec: null, inErrorsPerSec: 0.5, outErrorsPerSec: 0, maxInBytesPerSec: 20 },
     ], { bucketSeconds: 60 });
-    expect(out).toEqual([{ timestamp: "T", inBps: 80, outBps: null, inErr: 30, outErr: 0, inMaxBps: 160, outMaxBps: null }]);
+    expect(out).toEqual([{ timestamp: "T", inBps: 80, outBps: null, inErr: 30, outErr: 0, inErrRate: 0.5, outErrRate: 0, inMaxBps: 160, outMaxBps: null, fc: null }]);
+  });
+  it("rollup tier: the server's FC per-second rates become per minute", () => {
+    const out = CS.derivePerIntervalSeries([
+      { timestamp: "T", fcErrorsPerSec: { invalidCrcs: 0.1, linkFailures: null } },
+    ], { bucketSeconds: 3600 });
+    expect(out[0].fc.invalidCrcs).toBeCloseTo(6);
+    expect(out[0].fc.linkFailures).toBeNull();
   });
 });
 

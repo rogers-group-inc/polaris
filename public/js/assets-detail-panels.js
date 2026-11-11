@@ -734,9 +734,17 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
       '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Throughput</h5>' +
       '<div id="iface-tput-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
       '<div id="iface-tput-chart" class="iface-chart-box"></div>' +
-      '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Errors per interval (in / out)</h5>' +
+      '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">Errors per second (in / out)</h5>' +
       '<div id="iface-err-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
       '<div id="iface-err-chart" class="iface-chart-box"></div>' +
+      // A fibre-channel port's own counters (rule 159a); shown once the port
+      // is known to be FC — its WWN, its logins, or a sample carrying them.
+      '<div id="iface-fc-block" style="display:' + (ifaceRow && (ifaceRow.wwn || ifaceRow.fc) ? "block" : "none") + '">' +
+        '<h5 style="margin:0.75rem 0 0.25rem;font-size:0.85rem">FC errors per minute</h5>' +
+        '<div id="iface-fc-stats" style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem">Loading…</div>' +
+        '<div id="iface-fc-chart" class="iface-chart-box"></div>' +
+        '<p class="hint" style="margin:0.25rem 0 0">The switch\'s counters, as their increase per minute. A minute in which they were cleared on the switch shows no bar.</p>' +
+      '</div>' +
       _ifaceOpticsBlockHTML(asset, ifName, ifaceRow) +
     '</div>';
   document.querySelectorAll(".iface-chart-box").forEach(function (el) {
@@ -821,7 +829,7 @@ async function openInterfaceDetailPanel(asset, ifName, ifaceRow, opts) {
     });
   }
   // Drag-select on any chart applies the selection as the custom range.
-  ["iface-tput-chart", "iface-err-chart", "iface-rx-chart", "iface-tx-chart"].forEach(function (cid) {
+  ["iface-tput-chart", "iface-err-chart", "iface-fc-chart", "iface-rx-chart", "iface-tx-chart"].forEach(function (cid) {
     _wireChartDragSelect(document.getElementById(cid), function (fromIso, toIso) {
       _applyCustomRangeSelection({
         btnClass: "iface-range-btn", customBtnId: "btn-iface-custom",
@@ -851,7 +859,15 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
   // Accept range as a string or `{from, to}` object (canonical convention).
   var opts = (typeof range === "string" || !range) ? { range: range || "1h" } : range;
   try {
-    var data = await api.assets.interfaceHistory(assetId, ifName, opts);
+    // The bands of every automation that reads this port (rule 159a), fetched
+    // beside the history; a failure is no shading, never no chart.
+    var tierMetrics = ["ifInErrorRate", "ifOutErrorRate"].concat(_FC_CHART_METRICS);
+    var fetched = await Promise.all([
+      api.assets.interfaceHistory(assetId, ifName, opts),
+      _loadIfaceSeverityTiers(assetId, ifName, _ifacePanelRow && _ifacePanelRow.alias, tierMetrics).catch(function () { return {}; }),
+    ]);
+    var data = fetched[0];
+    var ifaceTiers = fetched[1] || {};
     var derived = _derivePerIntervalSeries(data.samples || [], data);
     var visRaw = _inChartWindow(data.samples, data.since);
     var visDerived = _inChartWindow(derived, data.since);
@@ -866,9 +882,20 @@ async function _loadInterfaceHistoryFor(assetId, ifName, range, callOpts) {
     _populateInterfaceCommentEditor(assetId, ifName, data, { silent: silent });
     _renderIfaceLldpBlock(data.lldpNeighbors || []);
     _renderIfaceAddressHistory(visRaw, _ifacePanelRow);
-    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages, maxTier: _chartRollupTier(data) };
+    var ifaceOpts = { since: data.since, until: data.until, subject: ifName, outages: data.outages, maxTier: _chartRollupTier(data), tiers: ifaceTiers };
     _renderIfaceThroughputChart(tputEl, derived, ifaceOpts);
     _renderIfaceErrorChart(errEl, derived, ifaceOpts);
+    var fcBlock = document.getElementById("iface-fc-block");
+    var fcEl = document.getElementById("iface-fc-chart");
+    if (fcBlock && fcEl) {
+      var isFc = derived.some(function (d) { return !!d.fc; }) ||
+        !!(_ifacePanelRow && (_ifacePanelRow.wwn || _ifacePanelRow.fc));
+      fcBlock.style.display = isFc ? "block" : "none";
+      if (isFc) {
+        _renderIfaceFcStats(document.getElementById("iface-fc-stats"), visRaw, visDerived);
+        _renderIfaceFcChart(fcEl, derived, ifaceOpts);
+      }
+    }
     // Stash the active selection on each chart container so silent ticks /
     // probe-now refetch the same view (canonical convention).
     if (opts.from && opts.to) {
@@ -1522,94 +1549,191 @@ function _renderIfaceThroughputChart(container, derived, opts) {
   _observeChartResize(container, function (c) { _renderIfaceThroughputChart(c, derived, opts); });
 }
 
-function _renderIfaceErrorChart(container, derived, opts) {
+// ─── Interface error charts (rule 159a) ────────────────────────────────────
+//
+// Both interface error charts — Errors on every port, FC errors on a
+// fibre-channel port — are stacked bars in the RATE an automation compares:
+// errors per second for ifIn/OutErrorRate, per minute for the fc*Rate metrics.
+// So the number on the axis is the number an operator typed as a threshold.
+//
+// Severity follows the convention the CPU, memory, sensor and path charts set
+// (_severityChartLayer): every band of an automation that reads THIS port
+// (getMetricSeverityTiers, filtered by the port's name and tags) is a dashed,
+// labelled line in the band's colour, and the series that automation reads
+// takes the band's colour while it sits inside it. A series no automation
+// reads keeps its own colour. The fail / maintenance / date markers are the
+// throughput chart's. Colour is inline, never a class: the screenshot button
+// sees no stylesheet.
+
+/** "0", "0.04", "1.5", "12" — a rate small enough to need its decimals. */
+function _fmtErrRate(v) {
+  if (typeof v !== "number" || !isFinite(v)) return "—";
+  if (v === 0) return "0";
+  var a = Math.abs(v);
+  if (a >= 10) return String(Math.round(v));
+  if (a >= 1) return String(Math.round(v * 10) / 10);
+  if (a >= 0.01) return String(Math.round(v * 100) / 100);
+  return v.toExponential(1);
+}
+
+/**
+ * Severity tiers for each interface metric a chart draws, for one port. One
+ * request per metric, cached a minute per (asset, port) so the panel's
+ * auto-refresh does not re-ask; a failure is no shading, never no chart.
+ */
+var _ifaceTierCache = {};
+function _loadIfaceSeverityTiers(assetId, ifName, alias, metrics) {
+  var key = assetId + "|" + ifName + "|" + metrics.join(",");
+  var hit = _ifaceTierCache[key];
+  if (hit && Date.now() - hit.at < 60000) return Promise.resolve(hit.tiers);
+  return Promise.all(metrics.map(function (m) {
+    return _loadMetricSeverityTiers(assetId, m, { ifName: ifName, alias: alias || null });
+  })).then(function (lists) {
+    var tiers = {};
+    metrics.forEach(function (m, i) { tiers[m] = lists[i] || []; });
+    _ifaceTierCache[key] = { at: Date.now(), tiers: tiers };
+    return tiers;
+  });
+}
+
+/**
+ * One stacked-bar rate chart. `spec`:
+ *   kind      — clip / gradient id prefix
+ *   unit      — "/s" | "/min", appended to tier labels and the tooltip
+ *   floorMax  — the smallest axis top, so a quiet port is not all axis
+ *   series    — bottom → top: {key, label, short, color, tiers, get(d)}
+ *   events    — optional {label, get(d) → {count, severity|null}}: a diamond
+ *               above the plot for each interval with a count, in the band's
+ *               colour when an automation reads it
+ *   tooltip   — (d) → extra rows of HTML under the timestamp
+ *   title, yAxis, statsId, rerender
+ */
+function _renderIfaceRateBars(container, derived, opts, spec) {
   opts = opts || {};
-  var inSeries  = derived.filter(function (d) { return typeof d.inErr  === "number"; });
-  var outSeries = derived.filter(function (d) { return typeof d.outErr === "number"; });
-  if (inSeries.length === 0 && outSeries.length === 0) {
-    container.textContent = "No error samples reported by this interface.";
+  var CS = window.PolarisChartSeverity;
+  var rows = derived.filter(function (d) {
+    return spec.series.some(function (s) { return typeof s.get(d) === "number"; }) ||
+      (spec.events && spec.events.get(d) && spec.events.get(d).count > 0);
+  });
+  if (rows.length === 0) {
+    container.textContent = spec.empty || "No error samples reported by this interface.";
     return;
   }
-  var W = container.clientWidth || 600, H = 180;
-  var padL = 44, padR = 10, padT = 10, padB = 32;
+  var W = container.clientWidth || 600, H = spec.events ? 210 : 190;
+  var padL = 48, padR = 10, padT = spec.events ? 34 : 20, padB = 32;
   var innerW = W - padL - padR, innerH = H - padT - padB;
   var bounds = _chartTimeBounds(derived, opts.since, opts.until);
   var t0 = bounds.t0, t1 = bounds.t1;
-  var spanMs = t1 - t0, oneDayMs = 86400000;
-  var pad2 = _chartPad2;
-  var maxE = 0;
-  derived.forEach(function (d) {
-    if (typeof d.inErr  === "number" && d.inErr  > maxE) maxE = d.inErr;
-    if (typeof d.outErr === "number" && d.outErr > maxE) maxE = d.outErr;
+
+  var maxV = 0;
+  rows.forEach(function (d) {
+    var sum = 0;
+    spec.series.forEach(function (s) { var v = s.get(d); if (typeof v === "number" && v > 0) sum += v; });
+    if (sum > maxV) maxV = sum;
   });
-  if (maxE < 5) maxE = 5;
-  var ceil = Math.ceil(maxE * 1.2);
+  // The axis reaches the lowest upward threshold, so the bands an automation
+  // set are on the chart even while the port is quiet: how close it came is
+  // the question the chart answers.
+  var lowestUp = null;
+  spec.series.forEach(function (s) {
+    (s.tiers || []).forEach(function (t) {
+      if ((t.operator === ">" || t.operator === ">=") && typeof t.threshold === "number" && t.threshold > 0) {
+        if (lowestUp === null || t.threshold < lowestUp) lowestUp = t.threshold;
+      }
+    });
+  });
+  var ceil = Math.max(maxV * 1.2, spec.floorMax, lowestUp !== null ? lowestUp * 1.15 : 0);
+
   var xFor = _chartXScale(padL, innerW, t0, t1);
   var yFor = _chartYScale(padT, innerH, 0, ceil);
-  // In-errors render amber, out-errors purple — red is reserved for the
-  // missed-poll markers so a poll outage can't be misread as an error burst.
-  var inErrColor  = "#f59e0b";
-  var outErrColor = "#9b5de5";
-  // Same missed-poll treatment as the throughput chart: red baseline dots
-  // flanking each probe outage, with the series lines fading into red.
-  var gapMarkers = _outageMarkers(opts && opts.outages, derived.map(function (d) { return new Date(d.timestamp).getTime(); }));
   var baselineY = padT + innerH;
-  function failAwarePts(list, key) {
-    if (!list.length) return [];
-    var pts = list.map(function (d) {
-      return { t: new Date(d.timestamp).getTime(), x: xFor(d.timestamp), y: yFor(d[key]), ok: true };
-    });
-    _outagePts(gapMarkers, xFor, baselineY).forEach(function (mp) { pts.push(mp); });
-    pts.sort(function (a, b) { return a.t - b.t; });
-    return pts;
+  var slot = innerW / Math.max(1, Math.round((t1 - t0) / Math.max(1, _ifaceIntervalMs(rows))));
+  var barW = Math.max(1, Math.min(14, slot * 0.75));
+
+  function colorFor(s, v) {
+    if (!CS || !s.tiers || !s.tiers.length || typeof v !== "number") return s.color;
+    var sev = CS.severityAt(s.tiers, v);
+    return sev ? CS.colorOf(sev) : s.color;
   }
+
+  var bars = "", hits = "", events = "";
+  rows.forEach(function (d) {
+    var cx = xFor(d.timestamp);
+    var acc = 0;
+    spec.series.forEach(function (s) {
+      var v = s.get(d);
+      if (typeof v !== "number" || v <= 0) return;
+      var yBot = yFor(Math.min(ceil, acc));
+      var yTop = yFor(Math.min(ceil, acc + v));
+      var h = Math.max(1, yBot - yTop);
+      bars += '<rect x="' + (cx - barW / 2) + '" y="' + (yBot - h) + '" width="' + barW + '" height="' + h + '" fill="' + colorFor(s, v) + '"/>';
+      acc += v;
+    });
+    if (spec.events) {
+      var ev = spec.events.get(d);
+      if (ev && ev.count > 0) {
+        var ec = ev.severity && CS ? CS.colorOf(ev.severity) : "var(--color-text-secondary)";
+        events += '<rect x="' + (cx - 3.5) + '" y="' + (padT - 11) + '" width="7" height="7" fill="' + ec + '" transform="rotate(45 ' + cx + ' ' + (padT - 7.5) + ')"/>';
+      }
+    }
+    hits += '<rect class="chart-hit" x="' + (cx - Math.max(3, slot / 2)) + '" y="' + (padT - 14) + '" width="' + Math.max(6, slot) + '" height="' + (innerH + 14) + '"' +
+      ' fill="transparent" style="cursor:crosshair" data-ts="' + escapeHtml(String(d.timestamp)) + '" data-i="' + derived.indexOf(d) + '"/>';
+  });
+
+  // Band lines + captions, one per visible tier per series that has them.
+  var lines = "", labels = "";
+  if (CS) {
+    var seen = {};
+    spec.series.forEach(function (s) {
+      CS.visibleTiers(s.tiers || [], 0, ceil).forEach(function (t) {
+        var y = yFor(t.threshold);
+        var color = CS.colorOf(t.severity);
+        var cap = CS.tierLabel(t, spec.unit) + (spec.series.length > 1 ? " (" + s.short + ")" : "");
+        var k = t.severity + "|" + t.threshold;
+        lines += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y +
+          '" stroke="' + color + '" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.8">' +
+          '<title>' + escapeHtml((t.ruleName || "") + " — " + cap) + '</title></line>';
+        labels += '<text x="' + (W - padR - 2) + '" y="' + Math.max(padT + 8, y - 3 - (seen[k] ? 10 : 0)) +
+          '" text-anchor="end" font-size="9" font-weight="600" fill="' + color + '">' + escapeHtml(cap) + '</text>';
+        seen[k] = true;
+      });
+    });
+  }
+
+  var gapMarkers = _outageMarkers(opts.outages, derived.map(function (d) { return new Date(d.timestamp).getTime(); }));
   var failDots = _outageDotsSVG(gapMarkers, xFor, baselineY);
   var missHits = _outageHitsSVG(gapMarkers, xFor, padT, innerH);
-  var hits = derived.map(function (d) {
-    var y = padT + innerH;
-    if (typeof d.inErr === "number") y = Math.min(y, yFor(d.inErr));
-    if (typeof d.outErr === "number") y = Math.min(y, yFor(d.outErr));
-    return '<circle class="chart-hit" cx="' + xFor(d.timestamp) + '" cy="' + y + '" r="6" fill="transparent" style="cursor:crosshair"' +
-      ' data-ts="' + escapeHtml(String(d.timestamp)) + '"' +
-      ' data-in="'  + (typeof d.inErr  === "number" ? d.inErr  : "") + '"' +
-      ' data-out="' + (typeof d.outErr === "number" ? d.outErr : "") + '"/>';
-  }).join("");
 
   var ticks = "";
   for (var i = 0; i <= 4; i++) {
-    var v = (ceil * i / 4);
-    var y = padT + innerH - (i / 4) * innerH;
+    var v = ceil * i / 4;
+    var ty = padT + innerH - (i / 4) * innerH;
     ticks +=
-      '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
-      '<text x="' + (padL - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + Math.round(v) + '</text>';
+      '<line x1="' + padL + '" y1="' + ty + '" x2="' + (W - padR) + '" y2="' + ty + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 4) + '" y="' + (ty + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + _fmtErrRate(v) + '</text>';
   }
   var xTicks = _chartXTicksSVG(t0, t1, padL, padT, innerW, innerH);
-  var legend =
-    '<g font-size="10" fill="currentColor">' +
-      '<rect x="' + (padL + 10) + '" y="2" width="10" height="10" fill="' + inErrColor + '"/>' +
-      '<text x="' + (padL + 24) + '" y="11">In errors</text>' +
-      '<rect x="' + (padL + 110) + '" y="2" width="10" height="10" fill="' + outErrColor + '"/>' +
-      '<text x="' + (padL + 124) + '" y="11">Out errors</text>' +
-    '</g>';
-  var clipId = _chartClipId("ifaceErr");
-  var inLine  = _failureAwareSeriesSVG(failAwarePts(inSeries,  "inErr"),  inErrColor,  clipId + "-in");
-  var outLine = _failureAwareSeriesSVG(failAwarePts(outSeries, "outErr"), outErrColor, clipId + "-out");
+  var lx = padL + 10, legend = '<g font-size="10" fill="currentColor">';
+  spec.series.forEach(function (s) {
+    legend += '<rect x="' + lx + '" y="2" width="10" height="10" fill="' + s.color + '"/>' +
+      '<text x="' + (lx + 14) + '" y="11">' + escapeHtml(s.label + " " + spec.unit) + '</text>';
+    lx += 14 + (s.label.length + spec.unit.length + 2) * 5.6 + 14;
+  });
+  if (spec.events) {
+    legend += '<rect x="' + (lx + 1.5) + '" y="3.5" width="7" height="7" fill="var(--color-text-secondary)" transform="rotate(45 ' + (lx + 5) + ' 7)"/>' +
+      '<text x="' + (lx + 14) + '" y="11">' + escapeHtml(spec.events.label) + '</text>';
+  }
+  legend += '</g>';
+
+  var clipId = _chartClipId(spec.kind);
   container.innerHTML =
     '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
       _chartClipDefs(clipId, padL, padT, innerW, innerH) +
-      '<defs>' + inLine.defs + outLine.defs + '</defs>' +
       ticks + xTicks +
       _dateChangeMarkers(t0, t1, padL, padT, innerW, innerH) +
       _maintenanceBandLayer(t0, t1, padL, padT, innerW, innerH) +
-      '<g ' + _chartClipAttr(clipId) + '>' +
-        inLine.segments +
-        outLine.segments +
-        inSeries .map(function (d) { return '<circle cx="' + xFor(d.timestamp) + '" cy="' + yFor(d.inErr)  + '" r="1.5" fill="' + inErrColor + '"/>'; }).join("") +
-        outSeries.map(function (d) { return '<circle cx="' + xFor(d.timestamp) + '" cy="' + yFor(d.outErr) + '" r="1.5" fill="' + outErrColor + '"/>'; }).join("") +
-        failDots +
-        missHits +
-        hits +
-      '</g>' +
+      '<g ' + _chartClipAttr(clipId) + '>' + bars + lines + failDots + '</g>' +
+      events + labels + missHits + hits +
       legend +
     '</svg>' + CHART_TOOLTIP_HTML;
   container.style.position = "relative";
@@ -1617,17 +1741,125 @@ function _renderIfaceErrorChart(container, derived, opts) {
   container.style.justifyContent = "flex-start";
   _stashChartGeometry(container, t0, t1, padL, innerW, W);
   _wireChartTooltip(container, function (target) {
-    if (target.getAttribute("data-miss") === "1") {
-      return _missTooltipHTML(target);
-    }
-    var inE  = target.getAttribute("data-in");
-    var outE = target.getAttribute("data-out");
+    if (target.getAttribute("data-miss") === "1") return _missTooltipHTML(target);
+    var d = derived[Number(target.getAttribute("data-i"))];
+    if (!d) return "";
     return '<div style="font-weight:600;margin-bottom:2px">' + escapeHtml(_fmtTooltipTs(target.getAttribute("data-ts"))) + '</div>' +
-      '<div>In errors: ' + (inE  !== "" ? inE  : "—") + '</div>' +
-      '<div>Out errors: ' + (outE !== "" ? outE : "—") + '</div>';
+      spec.tooltip(d);
   });
-  _addChartScreenshotButton(container, "Interface errors", { yAxis: "Errors per interval", subject: opts.subject, getStats: _statsSummaryFrom("iface-err-stats") });
-  _observeChartResize(container, function (c) { _renderIfaceErrorChart(c, derived, opts); });
+  _addChartScreenshotButton(container, spec.title, { yAxis: spec.yAxis, subject: opts.subject, getStats: _statsSummaryFrom(spec.statsId) });
+  _observeChartResize(container, function (c) { spec.rerender(c); });
+}
+
+/** The typical spacing of a chart's points, for the bar width. */
+function _ifaceIntervalMs(rows) {
+  var gaps = [];
+  for (var i = 1; i < rows.length; i++) {
+    var g = new Date(rows[i].timestamp).getTime() - new Date(rows[i - 1].timestamp).getTime();
+    if (g > 0) gaps.push(g);
+  }
+  if (!gaps.length) return 60000;
+  gaps.sort(function (a, b) { return a - b; });
+  return gaps[Math.floor(gaps.length / 2)];
+}
+
+function _renderIfaceErrorChart(container, derived, opts) {
+  opts = opts || {};
+  var tiers = opts.tiers || {};
+  _renderIfaceRateBars(container, derived, opts, {
+    kind: "ifaceErr",
+    unit: "/s",
+    floorMax: 0.05,
+    // In errors take the accent (the colour a reading no band claims), out
+    // errors stay purple; neither is amber any more, so amber only ever means
+    // a Warning band. Red stays reserved for missed polls.
+    series: [
+      { key: "in",  label: "In errors",  short: "in",  color: "var(--color-accent)", tiers: tiers.ifInErrorRate  || [], get: function (d) { return d.inErrRate; } },
+      { key: "out", label: "Out errors", short: "out", color: "#9b5de5",             tiers: tiers.ifOutErrorRate || [], get: function (d) { return d.outErrRate; } },
+    ],
+    tooltip: function (d) {
+      return '<div>In errors: ' + _fmtErrRate(d.inErrRate) + ' /s' + (typeof d.inErr === "number" ? ' (' + d.inErr + ')' : '') + '</div>' +
+        '<div>Out errors: ' + _fmtErrRate(d.outErrRate) + ' /s' + (typeof d.outErr === "number" ? ' (' + d.outErr + ')' : '') + '</div>';
+    },
+    title: "Interface errors",
+    yAxis: "Errors per second",
+    statsId: "iface-err-stats",
+    rerender: function (c) { _renderIfaceErrorChart(c, derived, opts); },
+  });
+}
+
+// The fibre-channel counters an FC chart draws (business rule 159a), each with
+// the automation metric that reads it. CRC and invalid words are the bars —
+// the optic / cable story; the three link counters are the diamond row.
+var _FC_CHART_BARS = [
+  { key: "invalidCrcs",    metric: "fcCrcErrorRate",      label: "CRC errors",    short: "CRC",   color: "var(--color-accent)" },
+  { key: "invalidTxWords", metric: "fcInvalidTxWordRate", label: "Invalid words", short: "words", color: "#2a9d8f" },
+];
+var _FC_CHART_EVENTS = [
+  { key: "linkFailures", metric: "fcLinkFailureRate", label: "Link failures" },
+  { key: "syncLosses",   metric: "fcSyncLossRate",    label: "Sync losses" },
+  { key: "sigLosses",    metric: "fcSignalLossRate",  label: "Signal losses" },
+];
+var _FC_CHART_METRICS = _FC_CHART_BARS.concat(_FC_CHART_EVENTS).map(function (c) { return c.metric; });
+
+function _renderIfaceFcChart(container, derived, opts) {
+  opts = opts || {};
+  var tiers = opts.tiers || {};
+  var CS = window.PolarisChartSeverity;
+  _renderIfaceRateBars(container, derived, opts, {
+    kind: "ifaceFc",
+    unit: "/min",
+    floorMax: 5,
+    empty: "No fibre-channel counters recorded for this port yet. Monitor it to record them every minute.",
+    series: _FC_CHART_BARS.map(function (c) {
+      return { key: c.key, label: c.label, short: c.short, color: c.color, tiers: tiers[c.metric] || [],
+        get: function (d) { return d.fc ? d.fc[c.key] : null; } };
+    }),
+    events: {
+      label: "Link failure, loss of sync or signal",
+      get: function (d) {
+        if (!d.fc) return null;
+        var count = 0, sev = null;
+        _FC_CHART_EVENTS.forEach(function (c) {
+          var v = d.fc[c.key];
+          if (typeof v !== "number" || v <= 0) return;
+          count += v;
+          var s = CS ? CS.severityAt(tiers[c.metric] || [], v) : null;
+          if (s && (!sev || CS.SEV_ORDER.indexOf(s) > CS.SEV_ORDER.indexOf(sev))) sev = s;
+        });
+        return { count: count, severity: sev };
+      },
+    },
+    tooltip: function (d) {
+      if (!d.fc) return '<div>No FC reading</div>';
+      return _FC_CHART_BARS.concat(_FC_CHART_EVENTS).map(function (c) {
+        return '<div>' + escapeHtml(c.label) + ': ' + _fmtErrRate(d.fc[c.key]) + ' /min</div>';
+      }).join("");
+    },
+    title: "Fibre-channel errors",
+    yAxis: "Errors per minute",
+    statsId: "iface-fc-stats",
+    rerender: function (c) { _renderIfaceFcChart(c, derived, opts); },
+  });
+}
+
+function _renderIfaceFcStats(container, rawSamples, derived) {
+  if (!container) return;
+  var peak = {};
+  var linkEvents = 0;
+  derived.forEach(function (d) {
+    if (!d.fc) return;
+    _FC_CHART_BARS.forEach(function (c) {
+      var v = d.fc[c.key];
+      if (typeof v === "number" && (peak[c.key] == null || v > peak[c.key])) peak[c.key] = v;
+    });
+    _FC_CHART_EVENTS.forEach(function (c) { if (typeof d.fc[c.key] === "number" && d.fc[c.key] > 0) linkEvents++; });
+  });
+  _renderChartStats(container, rawSamples.length, [
+    { label: "Peak CRC", value: peak.invalidCrcs != null ? _fmtErrRate(peak.invalidCrcs) + " /min" : "—" },
+    { label: "Peak invalid words", value: peak.invalidTxWords != null ? _fmtErrRate(peak.invalidTxWords) + " /min" : "—" },
+    { label: "Intervals with a link event", value: String(linkEvents) },
+  ]);
 }
 
 // ─── IPsec tunnel slide-over ───────────────────────────────────────────────

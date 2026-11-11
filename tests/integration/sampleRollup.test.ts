@@ -417,6 +417,35 @@ d("rollup statements — every source, both tiers", () => {
     await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
     await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
   });
+
+  // Business rule 159a: an FC port's counters roll up as first / last
+  // endpoints, like inErrors — the 30-day FC error chart reads them.
+  it("rolls an FC port's counters into the hourly and daily buckets", async () => {
+    await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleDaily.deleteMany({ where: { assetId: ASSET } });
+    const bucket = recentHourBucket();
+    const fc = (invalidCrcs: number) => ({ linkFailures: 1, syncLosses: 0, sigLosses: 0, invalidTxWords: 0, invalidCrcs, linkResetIns: 0, linkResetOuts: 0 });
+    await prisma.assetInterfaceSample.createMany({
+      data: [
+        { assetId: ASSET, ifName: "fc1/1", timestamp: new Date(bucket.getTime() + 60_000), fcErrors: fc(4), cadence: "fast" },
+        { assetId: ASSET, ifName: "fc1/1", timestamp: new Date(bucket.getTime() + 120_000), cadence: "fast" },
+        { assetId: ASSET, ifName: "fc1/1", timestamp: new Date(bucket.getTime() + 180_000), fcErrors: fc(9), cadence: "fast" },
+      ],
+    });
+
+    await rollupHourly();
+    await rollupDaily();
+
+    const [hourly] = await prisma.assetInterfaceSampleHourly.findMany({ where: { assetId: ASSET } });
+    expect((hourly!.firstFcErrors as { invalidCrcs: number }).invalidCrcs).toBe(4);
+    expect((hourly!.lastFcErrors as { invalidCrcs: number }).invalidCrcs).toBe(9);
+    const [daily] = await prisma.assetInterfaceSampleDaily.findMany({ where: { assetId: ASSET } });
+    expect((daily!.lastFcErrors as { invalidCrcs: number }).invalidCrcs).toBe(9);
+    await prisma.assetInterfaceSample.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleHourly.deleteMany({ where: { assetId: ASSET } });
+    await prisma.assetInterfaceSampleDaily.deleteMany({ where: { assetId: ASSET } });
+  });
 });
 
 // ─── BUCKET EDGES: a re-roll never rewrites a bucket with part of it ────────────

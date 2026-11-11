@@ -51,6 +51,7 @@ import { coreVector, coreVectorWithGaps } from "../utils/cpuCores.js";
 import { sdwanSegmentVerdict, type SdwanStripMetric, type SdwanStripSample, type SdwanStripTier } from "../utils/sdwanDimensions.js";
 import { severityRank } from "./notificationTypes.js";
 import { probeLossSeriesFrom } from "./alertChartService.js";
+import { FC_ERROR_COLUMNS, fcErrorsFrom, type FcErrorCounters } from "../utils/fibreChannel.js";
 
 function bn(v: bigint | null | undefined): number | null {
   if (v == null) return null;
@@ -881,6 +882,19 @@ export interface InterfaceHistoryRow {
   maxInBytesPerSec?:  number | null;
   maxOutBytesPerSec?: number | null;
   sampleCount?:    number;
+  /** A fibre-channel port's cumulative counters (rule 159a). Detail tier; absent elsewhere and on non-FC ports. */
+  fcErrors?: FcErrorCounters | null;
+  /** Rollup tier: each FC counter's rate across the bucket, per SECOND (the chart scales it). */
+  fcErrorsPerSec?: Partial<Record<keyof FcErrorCounters, number | null>> | null;
+}
+
+/** Per-counter rate between a bucket's first and last FC readings (rule 159a). */
+function fcRates(first: unknown, last: unknown, startMs: number, lastMs: number): InterfaceHistoryRow["fcErrorsPerSec"] {
+  const a = fcErrorsFrom(first), b = fcErrorsFrom(last);
+  if (!a || !b) return null;
+  const out: Partial<Record<keyof FcErrorCounters, number | null>> = {};
+  for (const [field] of FC_ERROR_COLUMNS) out[field] = rate(a[field], b[field], startMs, lastMs);
+  return out;
 }
 
 export interface InterfaceHistoryMeta {
@@ -922,6 +936,7 @@ export async function readInterfaceHistory(
         outOctets:   bn(s.outOctets),
         inErrors:    bn(s.inErrors),
         outErrors:   bn(s.outErrors),
+        ...(s.fcErrors != null ? { fcErrors: fcErrorsFrom(s.fcErrors) } : {}),
       })),
       meta: {
         alias:                 latest?.alias       ?? null,
@@ -951,12 +966,15 @@ export async function readInterfaceHistory(
     lastBucketSampleAt: Date;
     maxInBytesPerSec: number | null;
     maxOutBytesPerSec: number | null;
+    firstFcErrors: unknown;
+    lastFcErrors: unknown;
   }>>(
     `SELECT "bucketStart", "sampleCount",
             "firstInOctets", "lastInOctets",
             "firstOutOctets", "lastOutOctets",
             "firstInErrors", "lastInErrors",
             "firstOutErrors", "lastOutErrors",
+            "firstFcErrors", "lastFcErrors",
             "maxSpeedBps",
             "lastAdminStatus", "lastOperStatus",
             "lastIpAddress", "lastIpv6Address", "lastMacAddress",
@@ -991,6 +1009,7 @@ export async function readInterfaceHistory(
       maxInBytesPerSec:  r.maxInBytesPerSec,
       maxOutBytesPerSec: r.maxOutBytesPerSec,
       sampleCount:     r.sampleCount,
+      ...(r.lastFcErrors != null ? { fcErrorsPerSec: fcRates(r.firstFcErrors, r.lastFcErrors, startMs, lastMs) } : {}),
     };
   });
   return {

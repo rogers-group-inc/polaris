@@ -76,6 +76,7 @@ vi.mock("../../src/services/alertChartService.js", () => ({
   substituteChartTokens: (t: string) => t,
   attachmentsFor: () => [],
   isStorageScopedAlert: () => false,
+  isInterfaceRateAlert: () => false,
   storageThresholdFromTrigger: () => null,
   isMemoryForecastAlert: () => false,
   memoryForecastTargetFromRule: () => null,
