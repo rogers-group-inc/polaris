@@ -322,7 +322,7 @@ var _activeSettingsTab = "archive";
 async function openEventSettingsModal() {
   var archiveDefaults = { enabled: false, protocol: "scp", host: "", port: 22, username: "", password: "", keyPath: "", remotePath: "/var/archive/polaris" };
   var syslogDefaults = { enabled: false, protocol: "udp", host: "", port: 514, facility: "local0", severity: "info", format: "rfc5424", tlsCaPath: "", tlsCertPath: "", tlsKeyPath: "" };
-  var retentionDefaults = { retentionDays: 7, minLevel: "info" };
+  var retentionDefaults = { retentionDays: 7, minLevel: "info", alertHistoryDays: 365 };
   var alertsDefaults = { staleAfterDays: 60 };
 
   if (_activeSettingsTab === "assets") _activeSettingsTab = "archive";
@@ -361,6 +361,8 @@ async function openEventSettingsModal() {
     if (results[2]) {
       retentionDefaults.retentionDays = results[2].retentionDays || 7;
       retentionDefaults.minLevel = results[2].minLevel || "info";
+      // 0 is a real value here (keep forever), so no `||` fallback.
+      if (typeof results[2].alertHistoryDays === "number") retentionDefaults.alertHistoryDays = results[2].alertHistoryDays;
     }
     if (results[3]) {
       alertsDefaults.staleAfterDays = typeof results[3].staleAfterDays === "number" ? results[3].staleAfterDays : 60;
@@ -656,14 +658,31 @@ function retentionFormHTML(d) {
       '<option value="warning"' + (d.minLevel === "warning" ? ' selected' : '') + '>Warning — drop info events permanently</option>' +
       '<option value="error"' + (d.minLevel === "error" ? ' selected' : '') + '>Error — drop info and warning events permanently</option>' +
     '</select>' +
-    '<p class="hint"><strong>This is a retention filter, not a display filter.</strong> Events below the selected level are never written to the database and cannot be recovered later — they will also be missing from syslog and SFTP archive exports. To hide events from the page without losing the data, use the Level dropdown at the top of the Events page instead. Default is Info (all events stored).</p>' +
+    '<p class="hint" id="f-retention-minlevel-hint"><strong>This is a retention filter, not a display filter.</strong> Events below the selected level are never written to the database and cannot be recovered later — they will also be missing from syslog and SFTP archive exports. To hide events from the page without losing the data, use the Level dropdown at the top of the Events page instead. Default is Info (all events stored).</p>' +
+  '</div>' +
+  // Business rule 157: cleared alerts are history too, and were never pruned.
+  '<div class="form-group">' +
+    '<label for="f-alert-history-days">Alert History (days)</label>' +
+    '<input type="number" id="f-alert-history-days" value="' + escapeHtml(String(d.alertHistoryDays)) + '" min="0" max="3650" style="max-width:120px">' +
+    '<p class="hint">Alerts that have <strong>cleared</strong> are deleted this many days after they cleared, with their delivery records. ' +
+      'An alert that is still open is never deleted, however old. ' +
+      'Enter <strong>0</strong> to keep alert history forever; otherwise 30 to 3650. Default is 365 days.</p>' +
   '</div>';
+}
+
+/** The Alert History field as a number; a blank or unreadable field is sent as
+ *  typed (NaN → the server's 400 names the allowed range) rather than guessed. */
+function _alertHistoryDaysFromForm() {
+  var el = document.getElementById("f-alert-history-days");
+  var raw = el ? String(el.value).trim() : "";
+  return raw === "" ? 365 : Number(raw);
 }
 
 function getRetentionFormData() {
   return {
     retentionDays: Math.max(1, parseInt(document.getElementById("f-retention-days").value, 10) || 7),
     minLevel: document.getElementById("f-retention-minlevel").value || "info",
+    alertHistoryDays: _alertHistoryDaysFromForm(),
   };
 }
 

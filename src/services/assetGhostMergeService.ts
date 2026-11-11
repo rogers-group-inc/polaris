@@ -45,6 +45,7 @@
  */
 
 import { prisma } from "../db.js";
+import { afterAssetMerged } from "./assetRemovalService.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import { transferAssetSideTables } from "./assetMergeService.js";
@@ -143,6 +144,10 @@ export async function mergeEndpointGhostIntoAsset(
 
     return { adoptedMac, transferredMonitored };
   });
+
+  // Rule 157: whatever named the ghost without a foreign key now names the
+  // canonical asset (or is dropped). After the commit; best-effort.
+  await afterAssetMerged(ghostId, canonicalId);
 
   // Keep monitorOverride faithful after carrying operator monitoring intent
   // over — same post-write hook the operator asset-write paths use.
@@ -551,4 +556,6 @@ export async function mergeDuplicateHostnameGhost(
 
     await tx.asset.delete({ where: { id: ghost.id } });
   });
+  // Rule 157 — as mergeEndpointGhostIntoAsset.
+  await afterAssetMerged(ghost.id, canonical.id);
 }

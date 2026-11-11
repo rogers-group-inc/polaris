@@ -91,8 +91,8 @@ The integration's Monitoring tab additionally carries a **Discovery Defaults** s
 - `GET    /events/syslog-settings`              *(admin)* — reveals host/port/TLS paths
 - `PUT    /events/syslog-settings`              *(admin)*
 - `POST   /events/syslog-test`                  *(admin)*
-- `GET    /events/retention-settings`           *(auth)*
-- `PUT    /events/retention-settings`           *(admin)*
+- `GET    /events/retention-settings`           *(auth)* — `{ retentionDays, minLevel, alertHistoryDays }`; `alertHistoryDays` is the alert-history period (business rule 158; 0 = keep forever).
+- `PUT    /events/retention-settings`           *(admin)* — `alertHistoryDays` optional (an older client still saves the Event settings); 400 when present and not 0 or 30–3650, before anything is written. A blank / null is refused, not read as 0.
 - `GET    /events/asset-decommission-settings`  *(auth)*
 - `PUT    /events/asset-decommission-settings`  *(admin)* — `{ inactivityMonths }`; 0 disables auto-decommission
 

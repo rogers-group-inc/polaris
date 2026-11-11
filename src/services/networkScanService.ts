@@ -99,6 +99,12 @@ export interface SaveScanInput {
 export interface ScanViewer {
   id: string | null;
   username: string;
+  /**
+   * `networkScan:fullwrite` — the housekeeping level. It already edits and
+   * deletes other people's PUBLIC Discoveries; it also sees a private one that
+   * has NO owner (business rule 157(d)). Never someone else's private one.
+   */
+  housekeeping?: boolean;
 }
 
 // ─── Caps ───────────────────────────────────────────────────────────────────
@@ -167,12 +173,26 @@ export function ownsScan(row: { ownerId: string | null }, viewerId: string | nul
   return row.ownerId != null && viewerId != null && row.ownerId === viewerId;
 }
 
-/** Own it, or it is published. */
+/**
+ * Own it, or it is published — or it is an ORPHAN and the viewer does the
+ * housekeeping (business rule 157(d)).
+ *
+ * `NetworkScan.owner` is `onDelete: SetNull`, so deleting a user used to leave
+ * their private Discoveries with no owner and still private: visible to nobody,
+ * the administrator included, with their targets, credential ids and every
+ * run's hits still in the database and no way to list, open or delete them. A
+ * private row with no owner is nobody's secret any more; `networkScan:fullwrite`
+ * — which already manages rows that are not its own — can see it, so it can be
+ * republished or deleted. A private row that still HAS an owner stays private
+ * to that owner, whatever the viewer's level.
+ */
 export function scanVisibleTo(
   row: { ownerId: string | null; visibility: string },
   viewerId: string | null,
+  housekeeping = false,
 ): boolean {
-  return normalizeVisibility(row.visibility) === "public" || ownsScan(row, viewerId);
+  if (normalizeVisibility(row.visibility) === "public" || ownsScan(row, viewerId)) return true;
+  return housekeeping && row.ownerId == null;
 }
 
 /**
@@ -184,8 +204,9 @@ export function scanVisibleTo(
 function assertScanVisible(
   row: { ownerId: string | null; visibility: string },
   viewerId: string | null,
+  housekeeping = false,
 ): void {
-  if (!scanVisibleTo(row, viewerId)) throw new AppError(404, "Discovery not found");
+  if (!scanVisibleTo(row, viewerId, housekeeping)) throw new AppError(404, "Discovery not found");
 }
 
 /**
@@ -243,9 +264,15 @@ export function validateScanInput(input: SaveScanInput): string | null {
  */
 export async function listScans(
   viewerId: string | null,
+  housekeeping = false,
 ): Promise<(ScanRecord & { latestRun: RunSummary | null })[]> {
+  // The same three arms as scanVisibleTo: published, mine, or an orphan the
+  // housekeeper may see (rule 157(d)).
+  const or: Record<string, unknown>[] = [{ visibility: "public" }];
+  if (viewerId) or.push({ ownerId: viewerId });
+  if (housekeeping) or.push({ ownerId: null });
   const rows = await prisma.networkScan.findMany({
-    where: viewerId ? { OR: [{ ownerId: viewerId }, { visibility: "public" }] } : { visibility: "public" },
+    where: { OR: or },
     orderBy: { name: "asc" },
   });
   // One query for every Discovery's newest run rather than N+1 — the list is
@@ -263,15 +290,15 @@ export async function listScans(
 }
 
 /** One Discovery, scoped to what the caller may see. */
-export async function getScan(id: string, viewerId: string | null): Promise<ScanRecord> {
-  return toRecord(await loadVisible(id, viewerId), viewerId);
+export async function getScan(id: string, viewerId: string | null, housekeeping = false): Promise<ScanRecord> {
+  return toRecord(await loadVisible(id, viewerId, housekeeping), viewerId);
 }
 
 /** Load a row the caller may see, or 404. The read every other verb starts from. */
-async function loadVisible(id: string, viewerId: string | null): Promise<ScanRow> {
+async function loadVisible(id: string, viewerId: string | null, housekeeping = false): Promise<ScanRow> {
   const row = await prisma.networkScan.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Discovery not found");
-  assertScanVisible(row, viewerId);
+  assertScanVisible(row, viewerId, housekeeping);
   return row;
 }
 
@@ -280,8 +307,8 @@ async function loadVisible(id: string, viewerId: string | null): Promise<ScanRow
  * the route can apply its own ownership rule (`ownsScan` or fullwrite) — that
  * decision needs `req.permissionLevel`, which only the route has.
  */
-export async function getScanForWrite(id: string, viewerId: string | null): Promise<ScanRow> {
-  return loadVisible(id, viewerId);
+export async function getScanForWrite(id: string, viewerId: string | null, housekeeping = false): Promise<ScanRow> {
+  return loadVisible(id, viewerId, housekeeping);
 }
 
 /**
@@ -485,7 +512,7 @@ export async function triggerScan(
   const who = normalizeActor(viewer.username);
   // Visibility, NOT ownership: running someone else's SHARED Discovery is the
   // whole point of publishing one. Ownership only governs editing it.
-  const scan = await loadVisible(scanId, viewer.id);
+  const scan = await loadVisible(scanId, viewer.id, viewer.housekeeping);
 
   const problem = validateScanInput({
     name: scan.name,
@@ -516,7 +543,7 @@ export async function triggerScan(
 /** Ask a run to stop. The worker notices on its next throttle tick. */
 export async function cancelRun(runId: string, viewer: ScanViewer): Promise<RunSummary> {
   const who = normalizeActor(viewer.username);
-  const run = await loadVisibleRun(runId, viewer.id);
+  const run = await loadVisibleRun(runId, viewer.id, viewer.housekeeping);
   if (run.status !== "queued" && run.status !== "running") {
     // Not an error: the operator clicked Cancel as it finished.
     return summarizeRun(run);
@@ -547,15 +574,15 @@ export interface RunDetail extends RunSummary {
  * so a run row must never be a way around a private Discovery. 404 like its
  * parent, and for the same reason.
  */
-async function loadVisibleRun(runId: string, viewerId: string | null) {
+async function loadVisibleRun(runId: string, viewerId: string | null, housekeeping = false) {
   const run = await prisma.networkScanRun.findUnique({ where: { id: runId }, include: { scan: true } });
   if (!run) throw new AppError(404, "Run not found");
-  if (!scanVisibleTo(run.scan, viewerId)) throw new AppError(404, "Run not found");
+  if (!scanVisibleTo(run.scan, viewerId, housekeeping)) throw new AppError(404, "Run not found");
   return run;
 }
 
-export async function getRun(runId: string, viewerId: string | null): Promise<RunDetail> {
-  const run = await loadVisibleRun(runId, viewerId);
+export async function getRun(runId: string, viewerId: string | null, housekeeping = false): Promise<RunDetail> {
+  const run = await loadVisibleRun(runId, viewerId, housekeeping);
   return {
     ...summarizeRun(run),
     hits: Array.isArray(run.hits) ? (run.hits as unknown as ScanHit[]) : [],
@@ -682,7 +709,7 @@ export async function adoptHits(
   viewer: ScanViewer,
 ): Promise<AdoptResult> {
   const who = normalizeActor(viewer.username);
-  const run = await loadVisibleRun(runId, viewer.id);
+  const run = await loadVisibleRun(runId, viewer.id, viewer.housekeeping);
   const wanted = Array.from(new Set((addresses ?? []).map((a) => a.trim()).filter(Boolean)));
   if (!wanted.length) throw new AppError(400, "Select at least one address to add.");
   if (wanted.length > MAX_ADOPT_PER_CALL) {

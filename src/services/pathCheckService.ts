@@ -419,8 +419,19 @@ export async function normalizeCheckInput(input: PathCheckInput): Promise<Normal
   }
 
   const scope: RuleScope = (input.scope ?? {}) as RuleScope;
-  const assetIds = [...new Set((input.assetIds ?? []).filter((s) => typeof s === "string" && s))];
-  if (assetIds.length > 2000) throw new AppError(400, "At most 2000 pinned hosts");
+  const requestedPins = [...new Set((input.assetIds ?? []).filter((s) => typeof s === "string" && s))];
+  if (requestedPins.length > 2000) throw new AppError(400, "At most 2000 pinned hosts");
+  // Rule 157(c): a pin that names no asset is dropped on save. The editor
+  // re-posts the whole stored pin list but can only draw a box for a host
+  // that still exists, so a deleted host's id was kept on every save with no
+  // way to untick it — and it satisfied the "runs somewhere" check below, so a
+  // check pinned only to a dead host saved cleanly and ran nowhere.
+  const assetIds = requestedPins.length === 0 ? [] : await (async () => {
+    const live = new Set(
+      (await prisma.asset.findMany({ where: { id: { in: requestedPins } }, select: { id: true } })).map((a) => a.id),
+    );
+    return requestedPins.filter((id) => live.has(id));
+  })();
   const hasScope = scope.allAssets === true || !!scope.condition || Object.keys(scope).some((k) => {
     const v = (scope as Record<string, unknown>)[k];
     return Array.isArray(v) && v.length > 0;

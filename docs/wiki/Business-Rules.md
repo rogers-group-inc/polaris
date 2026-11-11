@@ -3305,3 +3305,30 @@ a rack gets the room and that rack (`r:` + `ra:`), a device in a junction box ge
 box (`r:` + `jb:`); nothing else in its description changes. A device can be in a rack or a junction
 box, not both. The older Rack and Wall views were converted to Room views, and the views of one room
 became one; the Events list shows what each conversion did.
+
+### Rule 157
+
+**An asset leaves nothing behind, and a merge keeps what you said about either record.**
+Deleting an asset also removes it from the path checks, contacts and maintenance schedules
+it was pinned to, deletes the log rules and process log settings that belonged to it, and
+withdraws anything still queued for its agent. Merging two assets is different: whatever
+named the absorbed record — path-check and contact pins, maintenance schedules, automations
+scoped to that device, Application Map rules, log rules, process log settings — now names
+the survivor, so the merged device keeps being checked, covered and alerted on. Polaris
+never lets this widen a target: an automation scoped to one deleted device keeps naming it
+(and matches nothing) rather than quietly becoming an automation for every device. A
+Discovery left private by a deleted user can be seen, republished or deleted by holders of
+Full Read-Write on Discovery. See [Assets](Assets#deleting-an-asset).
+
+### Rule 158
+
+**Nothing Polaris writes grows without a limit.** Samples, events and script runs have
+always aged out; these now do too. **Cleared alerts** are deleted 365 days after they
+cleared, with their delivery records — a period you set on the Events page's
+**Settings → Retention** tab (`0` keeps them forever). An alert that is still open is
+never deleted. Polaris also removes, without a setting because nothing reads them: the
+leftover state an automation kept for a device, port or check that stopped being
+evaluated a week ago; the last-run record of an integration that has been deleted;
+FortiGate sightings older than the quarantine sighting window; and Discovery runs older
+than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
+a slice at a time over several nights. See [Events](Events#retention-and-archival).
