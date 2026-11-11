@@ -316,5 +316,14 @@ export async function revokeBearer(managedAgentId: string): Promise<boolean> {
     where: { id: managedAgentId },
     data: { bearerRevokedAt: new Date() },
   });
+  // Rule 163: a revoked agent has no business holding a live channel. The
+  // session used to outlive the revoke (and the uninstall, and the asset) until
+  // the agent stopped or the web role restarted — `detach` handled a "revoked"
+  // reason that nothing ever passed. Imported lazily: the channel module opens
+  // a LISTEN connection at load, which the token paths must not drag in.
+  try {
+    const { detach } = await import("./agentChannelService.js");
+    detach(managedAgentId, "revoked");
+  } catch { /* no session in this process */ }
   return true;
 }

@@ -1713,8 +1713,11 @@ async function openEditModal(id, opts) {
     if (deleteBtn) {
       deleteBtn.addEventListener("click", async function () {
         var btn = this;
-        var ok = await showConfirm('Delete asset "' + (asset.hostname || "-") + '"? This cannot be undone.');
-        if (!ok) return;
+        // Rule 163: warns, and offers an uninstall first, when this device has
+        // the Polaris Agent. Its dialogs stack over this modal, as showConfirm
+        // does, so a cancel still lands back on the unsaved edits.
+        var go = await confirmAssetDeletion([id], 'Delete asset "' + (asset.hostname || "-") + '"? This cannot be undone.');
+        if (!go || !go.length) return;
         btn.disabled = true;
         try {
           await api.assets.delete(id);

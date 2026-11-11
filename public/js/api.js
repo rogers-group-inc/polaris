@@ -1157,6 +1157,9 @@ const api = {
     retryInstallAgent:    (id)       => request("POST",   `/assets/${id}/agent/retry`),
     reinstallAgent:       (id, body) => request("POST",   `/assets/${id}/agent/reinstall`, body || {}),
     upgradeAgent:         (id, body) => request("POST",   `/assets/${id}/agent/upgrade`, body || {}),
+    // Business rule 163: which of these assets have a Polaris Agent — asked
+    // before a delete is confirmed.
+    agentHosts:           (ids)      => request("POST",   "/assets/agent-hosts", { ids }),
     deleteAgent:          (id, opts) => {
       var qs = (opts && opts.force) ? "?force=true" : "";
       return request("DELETE", `/assets/${id}/agent${qs}`);

@@ -2947,9 +2947,173 @@ function associatedUsersViewHTML(users) {
     '<span class="detail-value">' + rows + '</span></div>';
 }
 
+// ─── Deleting an asset that has the Polaris Agent (business rule 163) ────────
+// The agent's record goes with the asset, and with it the token, the Agent
+// card and its Uninstall button — but nothing on the host changes: the agent
+// keeps running there, refused by Polaris, with no way left to remove it from
+// here. So every delete path asks first. If any of the assets has an agent the
+// operator is told, offered an uninstall attempt, and — when an uninstall
+// fails — told why and asked whether to delete anyway. One function, three
+// callers (the row menu, the edit modal, the bulk delete), so the three cannot
+// drift.
+
+/** How often the uninstall is polled, and how long before it counts as failed. */
+var _AGENT_UNINSTALL_POLL_MS = 3000;
+var _AGENT_UNINSTALL_TIMEOUT_MS = 180000;
+/** Uninstalls started at once on a bulk delete. */
+var _AGENT_UNINSTALL_CONCURRENCY = 4;
+
+function _agentHostCount(n) { return n + " " + (n === 1 ? "device" : "devices"); }
+
+/**
+ * Start the uninstall on one host and wait for it to finish. Resolves
+ * `{ ok: true }` when the agent record is gone, else `{ ok: false, reason }`.
+ * Never rejects: a refused request is a failed uninstall, with its message.
+ */
+async function _uninstallAgentAndWait(assetId) {
+  try {
+    await api.assets.deleteAgent(assetId, { force: false });
+  } catch (err) {
+    return { ok: false, reason: (err && err.message) || "The uninstall could not be started" };
+  }
+  var deadline = Date.now() + _AGENT_UNINSTALL_TIMEOUT_MS;
+  for (;;) {
+    var card = null;
+    try { card = await api.assets.agent(assetId); } catch (_err) { card = undefined; }
+    if (card === null) return { ok: true };
+    if (card && card.installStatus === "uninstall_failed") {
+      return { ok: false, reason: card.installError || "The uninstall failed on the host" };
+    }
+    if (Date.now() >= deadline) {
+      return { ok: false, reason: "The uninstall did not finish in " + Math.round(_AGENT_UNINSTALL_TIMEOUT_MS / 60000) + " minutes" };
+    }
+    await new Promise(function (r) { setTimeout(r, _AGENT_UNINSTALL_POLL_MS); });
+  }
+}
+
+/** Uninstall on every host, a few at a time; `onProgress(done, total)`. */
+async function _uninstallAgentsOn(hosts, onProgress) {
+  var results = new Array(hosts.length);
+  var next = 0, done = 0;
+  async function worker() {
+    while (next < hosts.length) {
+      var i = next++;
+      results[i] = await _uninstallAgentAndWait(hosts[i].assetId);
+      done++;
+      if (onProgress) onProgress(done, hosts.length);
+    }
+  }
+  var workers = [];
+  for (var w = 0; w < Math.min(_AGENT_UNINSTALL_CONCURRENCY, hosts.length); w++) workers.push(worker());
+  await Promise.all(workers);
+  return results;
+}
+
+/**
+ * Confirm a delete of `ids`. Resolves the ids to delete — all of them, or only
+ * the ones whose agent was removed when the operator chose that — or `null`
+ * when it was cancelled. With no agent among them it is the plain confirm the
+ * delete always had (`plainMessage`).
+ */
+async function confirmAssetDeletion(ids, plainMessage) {
+  var hosts = [];
+  try { hosts = ((await api.assets.agentHosts(ids)) || {}).hosts || []; } catch (_err) { /* the check is a courtesy */ }
+  if (!hosts.length) return (await showConfirm(plainMessage)) ? ids : null;
+
+  var total = ids.length;
+  var one = total === 1;
+  return new Promise(function (resolve) {
+    var settled = false;
+    var layer = null;
+    // Closing a layer fires its onClose (the X, Escape, an off-click all mean
+    // "cancel"). `swapping` is set while WE close one — to move to the next
+    // stage, or because the answer is already in — so that is not a cancel.
+    var swapping = false;
+    function closeLayer(l) { swapping = true; try { l.close(); } finally { swapping = false; } }
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      if (layer) closeLayer(layer);
+      resolve(value);
+    }
+    function show(title, body, footer, wire) {
+      var prev = layer;
+      layer = buildOverlay(1300, title, body, footer, function () { if (!swapping) finish(null); });
+      if (prev) closeLayer(prev);
+      wire(layer.overlay);
+    }
+    var names = hosts.slice(0, 8).map(function (h) { return "<li>" + escapeHtml(h.name) + "</li>"; }).join("") +
+      (hosts.length > 8 ? "<li>… and " + (hosts.length - 8) + " more</li>" : "");
+    var mayUninstall = typeof canDeployAgent === "function" && canDeployAgent();
+
+    // ── 1. The warning ──
+    show(one ? "Delete asset" : "Delete " + total + " assets",
+      '<p style="margin:0 0 0.6rem"><strong>' + (one
+        ? escapeHtml(hosts[0].name) + " has the Polaris Agent installed."
+        : _agentHostCount(hosts.length) + " of these " + total + " have the Polaris Agent installed.") + "</strong></p>" +
+      (one ? "" : '<ul style="margin:0 0 0.6rem;padding-left:1.1rem;font-size:0.85rem">' + names + "</ul>") +
+      '<p style="margin:0;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.5">Deleting the record does not remove the agent. It keeps running on the host, ' +
+        "Polaris stops accepting it, and the Uninstall button goes with the record — so it can only be removed on the host itself. " +
+        "Uninstall it first, and the delete follows when the agent is gone." +
+        (mayUninstall ? "" : " <strong>Uninstalling needs the Agent Deploy permission, which you do not have.</strong>") + "</p>",
+      '<button class="btn btn-secondary" data-act="cancel">Cancel</button>' +
+      '<button class="btn btn-danger" data-act="anyway">Delete anyway</button>' +
+      '<button class="btn btn-primary" data-act="uninstall"' + (mayUninstall ? "" : " disabled") + ">Uninstall, then delete</button>",
+      function (el) {
+        el.querySelector('[data-act="cancel"]').addEventListener("click", function () { finish(null); });
+        el.querySelector('[data-act="anyway"]').addEventListener("click", function () { finish(ids); });
+        el.querySelector('[data-act="uninstall"]').addEventListener("click", runUninstall);
+      });
+
+    // ── 2. The attempt ──
+    async function runUninstall() {
+      show("Uninstalling the Polaris Agent",
+        '<p style="margin:0" id="adel-progress">Uninstalling on ' + _agentHostCount(hosts.length) + "…</p>" +
+        '<p class="hint" style="margin:0.5rem 0 0">This can take a minute or two per host. Nothing is deleted until it finishes.</p>',
+        '<button class="btn btn-secondary" data-act="cancel">Cancel</button>',
+        function (el) { el.querySelector('[data-act="cancel"]').addEventListener("click", function () { finish(null); }); });
+      var results = await _uninstallAgentsOn(hosts, function (done, n) {
+        var p = document.getElementById("adel-progress");
+        if (p) p.textContent = "Uninstalling… " + done + " of " + n + " finished";
+      });
+      if (settled) return; // cancelled while waiting; the uninstalls carry on
+      var failed = hosts.map(function (h, i) { return { host: h, reason: results[i].reason }; }).filter(function (_f, i) { return !results[i].ok; });
+      if (!failed.length) { finish(ids); return; }
+      showFailures(failed);
+    }
+
+    // ── 3. What failed, and the question ──
+    function showFailures(failed) {
+      var failedIds = {};
+      failed.forEach(function (f) { failedIds[f.host.assetId] = true; });
+      var others = ids.filter(function (id) { return !failedIds[id]; });
+      var rows = failed.slice(0, 12).map(function (f) {
+        return "<li><strong>" + escapeHtml(f.host.name) + "</strong> — " + escapeHtml(f.reason) + "</li>";
+      }).join("") + (failed.length > 12 ? "<li>… and " + (failed.length - 12) + " more</li>" : "");
+      show("The agent could not be uninstalled",
+        '<p style="margin:0 0 0.6rem">' + (failed.length === 1 && one
+          ? "The Polaris Agent could not be removed from <strong>" + escapeHtml(failed[0].host.name) + "</strong>."
+          : "The Polaris Agent could not be removed from " + _agentHostCount(failed.length) + ".") + "</p>" +
+        '<ul style="margin:0 0 0.6rem;padding-left:1.1rem;font-size:0.85rem;line-height:1.5">' + rows + "</ul>" +
+        '<p style="margin:0;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.5">' +
+          "Nothing has been deleted. If you delete " + (failed.length === 1 ? "this record" : "these records") +
+          " anyway, the agent stays on the host and has to be removed there; Polaris writes an Event naming each one.</p>",
+        '<button class="btn btn-secondary" data-act="cancel">Cancel</button>' +
+        (others.length && !one ? '<button class="btn btn-secondary" data-act="others">Delete the other ' + others.length + " only</button>" : "") +
+        '<button class="btn btn-danger" data-act="anyway">Delete anyway</button>',
+        function (el) {
+          el.querySelector('[data-act="cancel"]').addEventListener("click", function () { finish(null); });
+          el.querySelector('[data-act="anyway"]').addEventListener("click", function () { finish(ids); });
+          var o = el.querySelector('[data-act="others"]');
+          if (o) o.addEventListener("click", function () { finish(others); });
+        });
+    }
+  });
+}
+
 async function confirmDelete(id, name) {
-  var ok = await showConfirm('Delete asset "' + name + '"? This cannot be undone.');
-  if (!ok) return;
+  var go = await confirmAssetDeletion([id], 'Delete asset "' + name + '"? This cannot be undone.');
+  if (!go || !go.length) return;
   try {
     await api.assets.delete(id);
     showToast("Asset deleted");

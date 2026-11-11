@@ -95,6 +95,12 @@ async function openEdit(opts?: { perm?: string; hostname?: string }) {
   g.closeModal = () => { ctx.modalOpen = false; };
   g.showToast = (msg: string, type?: string) => ctx.toasts.push({ msg, type: type || "success" });
   g.showConfirm = vi.fn(async () => ctx.confirmAnswer);
+  // Rule 163: every delete path asks through confirmAssetDeletion, which lives
+  // in assets-panel.js. With no Polaris Agent on the asset it IS the plain
+  // confirm — that is the case this file covers; the agent conversation is
+  // assetDeleteAgentDialogDom.test.ts.
+  g.confirmAssetDeletion = async (ids: string[], message: string) =>
+    ((await (g.showConfirm as (m: string) => Promise<boolean>)(message)) ? ids : null);
   g.loadAssets = () => { ctx.assetsReloaded++; };
   g._isCurrentAsset = (id: string) => ctx.currentPanelAssetId === id;
   g.closeAssetPanel = () => { ctx.panelClosed = true; ctx.currentPanelAssetId = null; };

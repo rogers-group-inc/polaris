@@ -3361,3 +3361,16 @@ source still reports — unticked by default, and it needs Full Read-Write on As
 reservations the integration pushed to a device **stay on the device**; Polaris can no
 longer change them, and each one is listed in a warning Event so you know what is there.
 See [Integrations](Integrations#deleting-an-integration).
+
+### Rule 163
+
+**An agent is never left on a host without you being told.** The Polaris Agent's record
+belongs to its asset, so deleting the asset removes the record, its token and the
+Uninstall button — but the agent itself keeps running on the host. When any asset you are
+deleting has the agent, Polaris says so and offers **Uninstall, then delete**. If the
+uninstall works, the delete follows. If it does not, nothing is deleted: you are shown
+why for each host and asked again, with **Delete the others only** on a bulk delete. If
+you choose to delete anyway — or delete through the API — Polaris writes a warning Event,
+`agent.left_on_host`, naming each host, so there is a record of what still has to be
+removed by hand. See [Assets](Assets#deleting-an-asset) and
+[Polaris Agent](Polaris-Agent#when-the-asset-is-deleted).
