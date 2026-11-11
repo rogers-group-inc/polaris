@@ -8,34 +8,27 @@
 
 import { Router } from "express";
 import { intQuery, boolQuery } from "../../../utils/queryParams.js";
-import { tryCompileSafeRegex } from "../../../utils/safeRegex.js";
 import { z } from "zod";
-import { prisma } from "../../../db.js";
 import { AppError } from "../../../utils/errors.js";
 import { requirePermission, hasPermission, assertTagChangeAllowed } from "../../middleware/permissions.js";
 import { scopeAssetParam } from "../../middleware/writeScope.js";
-import { logPathGlobProblem } from "../../../utils/logPathGlob.js";
 import { requestActor } from "../../middleware/auth.js";
-import { logEvent } from "../events.js";
 import { readAssetIpsec } from "../../../services/ipsecConnectionService.js";
-import { syncDescriptionsOnSave } from "../../../services/descriptionSyncService.js";
-import { descriptionSyncEnabledForRole } from "../../../utils/descriptionSyncFlags.js";
 import { resolveSdwanPollIntervalForAsset } from "../../../services/monitoringService.js";
 import { resolveAssetUpstream } from "../../../services/assetUpstreamService.js";
 import { resolveAssetVips } from "../../../services/assetVipService.js";
 import { setInterfaceTags } from "../../../services/interfaceTagService.js";
 import { pickSampleTierForAsset } from "../../../services/sampleQueryRouter.js";
 import { resolveRange, extendSinceForLookback } from "../../../utils/chartRange.js";
-import { readHardwareSensorHistory, readInterfaceHistory, readStorageHistory, readProcessHistory } from "../../../services/sampleHistoryService.js";
-import { evaluateLogFlags } from "../../../services/logFlagRuleService.js";
+import { readHardwareSensorHistory, readStorageHistory, readProcessHistory } from "../../../services/sampleHistoryService.js";
 import { getMetricSeverityTierResolver } from "../../../services/notificationRuleService.js";
 import { getAssetChecks as getAssetPathChecks } from "../../../services/pathCheckService.js";
 import { readIpsecHistory, readPerfSlaHistory, readPathCheckHistory, readSdwanMembers } from "../../../services/sampleHistoryService.js";
 import { readProbeOutages, serializeOutages } from "../../../services/probeOutageService.js";
-import { isFortinetIntegrationType } from "../../../utils/pollingCompatibility.js";
-import { isWorkloadPlatform } from "../../../utils/workloadSources.js";
-import { buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap } from "../../../services/peerInferredLldpService.js";
 import { resolveCurrentStateIntervalSec } from "../../../services/monitoring/monitorSettings.js";
+
+import { getAssetCustomWidgets, getInterfaceHistory, setInterfaceComment, getPerfSlaLinks, getPathCheckTraceroutes, getSdwanRules, getMclagPeers, getAssetVirtualization, getProcessLogs, getServiceLogs, setProcessLogConfig, listManualInterfaceTags } from "../../../services/assetTelemetryService.js";
+
 
 const router = Router();
 
@@ -61,137 +54,7 @@ const ProcessConfigSchema = z.object({
 router.get("/:id/custom-widgets", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const asset = await prisma.asset.findUnique({
-      where:  { id },
-      select: {
-        id: true, monitored: true, manufacturer: true, os: true, model: true, assetType: true,
-        customWidgetPolling: true, lastCustomWidgetAt: true,
-      },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-
-    // The governing profile — keyed by canonical manufacturer, else its "also
-    // applies when" (business rule 131) — the same answer the collector and
-    // the enable switch use.
-    const { widgetProfileForAsset } = await import("../../../services/customWidgetEnablementService.js");
-    const profile = widgetProfileForAsset(asset);
-
-    // Apply per-model gating. Empty modelPattern = applies to every asset
-    // under the manufacturer; non-empty regex must match Asset.model.
-    const modelStr = asset.model ?? "";
-    const profileWidgets = (profile?.widgets ?? []).filter((w) => {
-      if (!w.modelPattern) return true;
-      // RE2 (business rule 116); a pattern RE2 cannot compile matches nothing.
-      return tryCompileSafeRegex(w.modelPattern, { ignoreCase: true })?.test(modelStr) ?? false;
-    });
-    // Widgets the asset's Generic API integrations define for it (rule
-    // 100(i)) ride the same tab, after the manufacturer's, each carrying a
-    // `source` so the card can say where its value comes from.
-    const { genericApiWidgetDefsForAsset } = await import("../../../services/genericApiMonitorService.js");
-    const genericWidgets = await genericApiWidgetDefsForAsset(id);
-    const applicableWidgets: Array<(typeof profileWidgets)[number] | (typeof genericWidgets)[number]> = [...profileWidgets, ...genericWidgets];
-
-    if (applicableWidgets.length === 0) {
-      return res.json({
-        assetId:         asset.id,
-        manufacturer:    asset.manufacturer,
-        profileId:       profile?.id ?? null,
-        polling:         asset.customWidgetPolling ?? null,
-        lastCustomWidgetAt: asset.lastCustomWidgetAt,
-        widgets:         [],
-      });
-    }
-
-    // Bulk-fetch the last 60 samples per widget — line charts need a window;
-    // gauges + tables grab the freshest. One query covering every applicable
-    // widget id, then partition client-side.
-    const ids = applicableWidgets.map((w) => w.id);
-    const { enabledWidgetIdsForAsset } = await import("../../../services/customWidgetEnablementService.js");
-    const enabledIds = await enabledWidgetIdsForAsset(id);
-    const samples = await prisma.assetCustomWidgetSample.findMany({
-      where: { assetId: id, widgetId: { in: ids } },
-      orderBy: { timestamp: "desc" },
-      take:    60 * ids.length,
-      select:  { id: true, widgetId: true, timestamp: true, kind: true, value: true },
-    });
-    const byWidget = new Map<string, typeof samples>();
-    for (const s of samples) {
-      const arr = byWidget.get(s.widgetId) ?? [];
-      if (arr.length < 60) arr.push(s);
-      byWidget.set(s.widgetId, arr);
-    }
-
-    // State probes keep their 0/1 readings in asset_state_samples, one row per
-    // probe row. The tab wants the CURRENT state of each row, so take the recent
-    // rows newest-first and keep the first sighting of each (probeId, rowKey) —
-    // one scrape writes a probe's whole row set at one timestamp, so the take cap
-    // below covers several full snapshots even for a probe at the row cap.
-    const stateProbeIds = applicableWidgets.filter((w) => w.widgetType === "state").map((w) => w.id);
-    const latestState = new Map<string, Array<{ rowKey: string; rowLabel: string; value: number; rawValue: string | null; timestamp: Date }>>();
-    if (stateProbeIds.length > 0) {
-      const rows = await prisma.assetStateSample.findMany({
-        where:   { assetId: id, probeId: { in: stateProbeIds } },
-        orderBy: { timestamp: "desc" },
-        take:    2000,
-        select:  { probeId: true, rowKey: true, rowLabel: true, value: true, rawValue: true, timestamp: true },
-      });
-      const seen = new Set<string>();
-      for (const r of rows) {
-        const key = `${r.probeId}|${r.rowKey}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const arr = latestState.get(r.probeId) ?? [];
-        arr.push({ rowKey: r.rowKey, rowLabel: r.rowLabel, value: r.value, rawValue: r.rawValue, timestamp: r.timestamp });
-        latestState.set(r.probeId, arr);
-      }
-      // Problem rows first, then by name — an operator opening the tab is looking
-      // for what's wrong, and a 60-row sensor table shouldn't need scanning.
-      for (const [probeId, arr] of latestState) {
-        const probe = applicableWidgets.find((w) => w.id === probeId);
-        const trueIsProblem = probe?.stateMap?.trueIsProblem !== false;
-        arr.sort((a, b) => {
-          const pa = (a.value === 1) === trueIsProblem ? 0 : 1;
-          const pb = (b.value === 1) === trueIsProblem ? 0 : 1;
-          return pa - pb || a.rowLabel.localeCompare(b.rowLabel);
-        });
-      }
-    }
-
-    return res.json({
-      assetId:         asset.id,
-      manufacturer:    asset.manufacturer,
-      profileId:       profile?.id ?? null,
-      widgetLayout:    profile?.widgetLayout ?? null,
-      polling:         asset.customWidgetPolling ?? null,
-      lastCustomWidgetAt: asset.lastCustomWidgetAt,
-      widgets: applicableWidgets.map((w) => {
-        const window = byWidget.get(w.id) ?? [];
-        // Reverse so caller gets oldest-first for charts.
-        window.reverse();
-        return {
-          id:             w.id,
-          name:           w.name,
-          symbol:         w.symbol,
-          mibId:          w.mibId,
-          type:           w.type,
-          widgetType:     w.widgetType,
-          transform:      w.transform,
-          displayOptions: w.displayOptions,
-          order:          w.order,
-          modelPattern:   w.modelPattern,
-          samples:        window,
-          latest:         window.length ? window[window.length - 1] : null,
-          // State probes only: the mapping (for labels/colour) + current rows.
-          stateMap:       w.stateMap,
-          labelSymbol:    w.labelSymbol,
-          stateRows:      w.widgetType === "state" ? (latestState.get(w.id) ?? []) : undefined,
-          source:         "source" in w ? w.source : { kind: "manufacturer" },
-          // Business rule 130: a manufacturer widget polls this asset only when
-          // switched on here. Generic API widgets carry no switch (null).
-          enabled:        "source" in w ? null : enabledIds.has(w.id),
-        };
-      }),
-    });
+    res.json(await getAssetCustomWidgets(id));
   } catch (err) { next(err); }
 });
 
@@ -219,129 +82,7 @@ router.get("/:id/interface-history", requirePermission("assets", "read"), async 
     const ifName = req.query.ifName ? String(req.query.ifName) : null;
     if (!ifName) throw new AppError(400, "ifName query parameter is required");
     const { since, until, rangeLabel } = resolveRange(req);
-    const pick = await pickSampleTierForAsset(id, "interfaces", since);
-    const fetchSince = extendSinceForLookback(since, pick.bucketSeconds);
-    // Full system-info pass timestamp → the complete interface snapshot for
-    // the aggregate-membership map (the fast cadence only writes pinned rows).
-    const assetMeta = await prisma.asset.findUnique({
-      where: { id },
-      select: {
-        lastSystemInfoAt: true,
-        // Description-sync context: whether the originating integration syncs
-        // interface comments to the device (drives the editor's badge copy).
-        fortinetTopology: true,
-        discoveredByIntegration: { select: { type: true, config: true } },
-      },
-    });
-
-    // Samples come from the tier-aware reader. LLDP neighbors and the
-    // operator-typed comment override are stream-independent — both fetch
-    // in parallel against the asset directly, not against the rollup
-    // tables. The reader's meta carries the discovered alias/description
-    // from the latest sample inside the requested window so the slide-over
-    // header reflects what was configured during that window; the
-    // operator-typed override (Polaris-local) takes precedence for the
-    // resolved `description` field shown in the UI.
-    const [history, override, allNeighbors, inferredAll, interfaceMeta, outages] = await Promise.all([
-      readInterfaceHistory(id, since, until, pick.tier, ifName, fetchSince),
-      prisma.assetInterfaceOverride.findUnique({
-        where: { assetId_ifName: { assetId: id, ifName } },
-      }),
-      // All real LLDP neighbors for the asset. We display only the rows on the
-      // requested interface (filtered below), but the full set is needed for
-      // dedupe: a row learned on an aggregate's member port must suppress an
-      // inferred row emitted on the aggregate itself (FortiLink). Returned with
-      // the matched-asset cross-link so the slide-over can surface a "Go to
-      // <hostname>" button. Usually a handful of rows at branch-class sizes.
-      prisma.assetLldpNeighbor.findMany({
-        where: { assetId: id },
-        orderBy: [{ localIfName: "asc" }, { systemName: "asc" }],
-        include: {
-          matchedAsset: {
-            select: { id: true, hostname: true, ipAddress: true, assetType: true },
-          },
-        },
-      }),
-      // Peer-inferred neighbors for the whole asset, filtered to this
-      // interface below. Cheap enough at branch-class fleet sizes that
-      // a per-interface query isn't worth the extra surface area on the
-      // service.
-      buildInferredNeighborsForAsset(id),
-      // Interface metadata (ifType/ifParent) → aggregate membership map for the
-      // inferred-on-aggregate dedupe. Current-state, so this is a plain indexed
-      // read with no snapshot-timestamp gate. It is also strictly MORE correct
-      // than the sample-table version: the fast pinned re-walk writes
-      // ifType/ifParent as NULL, so on a pinned aggregate the newest sample row
-      // carried nulls and the membership map silently lost that aggregate.
-      prisma.assetInterface.findMany({
-        where: { assetId: id },
-        select: { ifName: true, ifType: true, ifParent: true },
-      }),
-      // Response-time failures over the same window — the interface counters
-      // carry no success flag of their own and the cadence doesn't run while
-      // the asset is down, so this is what tells the chart where to dive. See
-      // the note on telemetry-history.
-      readProbeOutages(id, since, until),
-    ]);
-    const neighbors = allNeighbors.filter((n) => n.localIfName === ifName);
-    const inferredForIf = inferredAll.filter((n) => n.localIfName === ifName);
-    const mergedNeighbors = [
-      ...neighbors,
-      ...dedupeInferredNeighbors(allNeighbors, inferredForIf, aggregateMembershipMap(interfaceMeta)),
-    ];
-    const overrideDescription = override?.description ?? null;
-    // Interface comments sync to the device only when the originating
-    // integration's toggle for this device class is on AND the asset is a
-    // synced Fortinet role (FortiGate interface / FortiSwitch port — FortiAPs
-    // have no per-interface description).
-    const dsIntegration = assetMeta?.discoveredByIntegration ?? null;
-    const dsRole = ((assetMeta?.fortinetTopology ?? {}) as { role?: string }).role;
-    const descriptionSyncEnabled =
-      (isFortinetIntegrationType(dsIntegration?.type)) &&
-      (dsRole === "fortigate" || dsRole === "fortiswitch") &&
-      descriptionSyncEnabledForRole(dsIntegration?.config, dsRole);
-    res.json({
-      range: rangeLabel,
-      ifName,
-      alias:       history.meta.alias,
-      description: overrideDescription ?? history.meta.discoveredDescription,
-      discoveredDescription: history.meta.discoveredDescription,
-      overrideDescription,
-      descriptionSync: {
-        enabled: descriptionSyncEnabled,
-        status: override?.syncStatus ?? null,
-        lastSyncAt: override?.lastSyncAt ?? null,
-        error: override?.syncError ?? null,
-      },
-      since,
-      until,
-      tier: pick.tier,
-      bucketSeconds: pick.bucketSeconds,
-      samples: history.samples,
-      outages: serializeOutages(outages),
-      lldpNeighbors: mergedNeighbors.map((n) => ({
-        chassisIdSubtype:  n.chassisIdSubtype,
-        chassisId:         n.chassisId,
-        portIdSubtype:     n.portIdSubtype,
-        portId:            n.portId,
-        portDescription:   n.portDescription,
-        systemName:        n.systemName,
-        systemDescription: n.systemDescription,
-        managementIp:      n.managementIp,
-        capabilities:      n.capabilities,
-        source:            n.source,
-        firstSeen:         n.firstSeen,
-        lastSeen:          n.lastSeen,
-        matchedAsset:      n.matchedAsset
-          ? {
-              id:        n.matchedAsset.id,
-              hostname:  n.matchedAsset.hostname,
-              ipAddress: n.matchedAsset.ipAddress,
-              assetType: n.matchedAsset.assetType,
-            }
-          : null,
-      })),
-    });
+    res.json(await getInterfaceHistory(id, ifName, since, until, rangeLabel));
   } catch (err) { next(err); }
 });
 
@@ -367,46 +108,7 @@ router.put("/:id/interfaces/:ifName/comment", requirePermission("assets", "write
     const trimmed = raw.trim();
     const actor = requestActor(req);
 
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: { id: true, hostname: true, ipAddress: true },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-
-    if (trimmed.length === 0) {
-      // Clear override — fall back to discovered description
-      await prisma.assetInterfaceOverride.deleteMany({ where: { assetId: id, ifName } });
-    } else {
-      await prisma.assetInterfaceOverride.upsert({
-        where: { assetId_ifName: { assetId: id, ifName } },
-        create: { assetId: id, ifName, description: trimmed, updatedBy: actor },
-        update: { description: trimmed, updatedBy: actor },
-      });
-    }
-
-    logEvent({
-      action: "asset.interface.comment_updated",
-      resourceType: "asset",
-      resourceId: id,
-      resourceName: asset.hostname || asset.ipAddress || undefined,
-      actor,
-      level: "info",
-      message: trimmed.length === 0
-        ? `Cleared interface comment override on ${asset.hostname || asset.ipAddress || id} / ${ifName}`
-        : `Updated interface comment override on ${asset.hostname || asset.ipAddress || id} / ${ifName}`,
-      details: { ifName, length: trimmed.length },
-    });
-
-    // Description sync (Polaris-primary): mirror the saved comment to the
-    // device when the originating integration opted in. No-op (attempted:
-    // false) when the toggle is off / asset isn't a synced Fortinet role /
-    // the override was cleared. Best-effort — the override row above is
-    // already persisted either way; a failed push surfaces via `sync`.
-    const sync = trimmed.length > 0
-      ? await syncDescriptionsOnSave({ assetId: id, scope: "interface", ifName, actor })
-      : { attempted: false as const };
-
-    res.json({ ok: true, ifName, description: trimmed.length === 0 ? null : trimmed, sync });
+    res.json(await setInterfaceComment(id, ifName, trimmed, actor));
   } catch (err) { next(err); }
 });
 
@@ -428,7 +130,7 @@ router.put("/:id/interfaces/:ifName/tags", requirePermission("assets", "write"),
     // judged on the change against what the port carries today.
     // Manual rows only: the auto / network rows are the engines' and the form
     // never posts them, so counting them would make every save look like a change.
-    const current = await prisma.assetInterfaceTag.findMany({ where: { assetId: id, ifName, source: "manual" }, select: { tag: true } });
+    const current = await listManualInterfaceTags(id, ifName);
     assertTagChangeAllowed(req, current.map((t) => t.tag), tags);
     const result = await setInterfaceTags(id, ifName, tags, requestActor(req));
     res.json({ ok: true, ifName, tags: result });
@@ -485,21 +187,7 @@ router.get("/:id/ipsec-history", requirePermission("assets", "read"), async (req
 router.get("/:id/perf-sla-links", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    // Latest sample per (healthCheck, link) so the SLA thresholds reflect the
-    // current health-check config. DISTINCT ON keeps the newest row per pair.
-    const rows = await prisma.$queryRawUnsafe<Array<{
-      healthCheck: string; link: string;
-      latencyThresholdMs: number | null; jitterThresholdMs: number | null; packetLossThreshold: number | null;
-    }>>(
-      `SELECT DISTINCT ON ("healthCheck", "link")
-              "healthCheck", "link",
-              "latencyThresholdMs", "jitterThresholdMs", "packetLossThreshold"
-       FROM "asset_perf_sla_samples"
-       WHERE "assetId" = $1
-       ORDER BY "healthCheck" ASC, "link" ASC, "timestamp" DESC`,
-      id,
-    );
-    res.json({ links: rows });
+    res.json(await getPerfSlaLinks(id));
   } catch (err) { next(err); }
 });
 
@@ -598,12 +286,7 @@ router.get("/:id/path-check-traceroutes", requirePermission("assets", "read"), a
     const checkId = req.query.checkId ? String(req.query.checkId) : null;
     if (!checkId) throw new AppError(400, "checkId query parameter is required");
     const limit = intQuery(req.query.limit, { fallback: 10, min: 1, max: 50 })!;
-    const traceroutes = await prisma.assetPathCheckTraceroute.findMany({
-      where: { assetId: id, checkId },
-      orderBy: { timestamp: "desc" },
-      take: limit,
-    });
-    res.json({ checkId, traceroutes });
+    res.json(await getPathCheckTraceroutes(id, checkId, limit));
   } catch (err) { next(err); }
 });
 
@@ -615,31 +298,7 @@ router.get("/:id/path-check-traceroutes", requirePermission("assets", "read"), a
 router.get("/:id/sdwan-rules", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const rowsP = prisma.assetSdwanRule.findMany({
-      where: { assetId: id },
-      orderBy: [{ seq: "asc" }, { ruleName: "asc" }],
-      select: {
-        ruleName: true, ruleId: true, seq: true, enabled: true, mode: true,
-        criteria: true, healthChecks: true, dst: true, status: true,
-        selectedMember: true, availableMembers: true, priorityZones: true,
-        updatedAt: true,
-      },
-    });
-    const [rows, pollIntervalSec] = await Promise.all([
-      rowsP,
-      // The SD-WAN stream's own cadence, not the system-info one.
-      resolveSdwanPollIntervalForAsset(id),
-    ]);
-    // One stamp for the whole table: persistSdwanRules delete-replaces every
-    // rule in one transaction, so the newest updatedAt IS the scrape time.
-    // Null on an empty table — never scraped and scraped-with-no-rules are
-    // indistinguishable from the rows, and the tab says "never collected"
-    // rather than inventing an age.
-    let collectedAt: Date | null = null;
-    for (const r of rows) {
-      if (!collectedAt || r.updatedAt > collectedAt) collectedAt = r.updatedAt;
-    }
-    res.json({ rules: rows, collectedAt, pollIntervalSec });
+    res.json(await getSdwanRules(id));
   } catch (err) { next(err); }
 });
 
@@ -668,15 +327,7 @@ router.get("/:id/ipsec", requirePermission("assets", "read"), async (req, res, n
 router.get("/:id/mclag-peers", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const rows = await prisma.assetMclagPeer.findMany({
-      where: { assetId: id },
-      orderBy: [{ localPort: "asc" }],
-      select: {
-        localPort: true, iclTrunk: true, peerSn: true, peerName: true, peerPort: true,
-        matchedAsset: { select: { id: true, hostname: true } },
-      },
-    });
-    res.json({ peers: rows });
+    res.json(await getMclagPeers(id));
   } catch (err) { next(err); }
 });
 
@@ -743,127 +394,7 @@ router.get(
 router.get("/:id/virtualization", requirePermission("assets", "read"), async (req, res, next) => {
   try {
     const id = req.params.id as string;
-    const asset = await prisma.asset.findUnique({
-      where: { id },
-      select: { id: true, virtualization: true },
-    });
-    if (!asset) throw new AppError(404, "Asset not found");
-    const v = asset.virtualization as Record<string, any> | null;
-    // Unraid / TrueNAS / Proxmox blobs (`platform` set) have their own shape: a
-    // VM or container links to its host; the host lists the workloads placed on
-    // it (VMs and containers alike) and carries its pools inline.
-    if (v && isWorkloadPlatform(v.platform)) {
-      if (v.role === "vm" || v.role === "container") {
-        const hostAsset = typeof v.hostAssetId === "string" && v.hostAssetId
-          ? await prisma.asset.findUnique({
-              where: { id: v.hostAssetId },
-              select: { id: true, hostname: true, monitorStatus: true, monitored: true },
-            })
-          : null;
-        res.json({ virtualization: v, hostAsset });
-        return;
-      }
-      if (v.role === "host") {
-        const children = await prisma.asset.findMany({
-          where: { virtualization: { path: ["hostAssetId"], equals: id }, status: { not: "decommissioned" } },
-          select: { id: true, hostname: true, assetType: true, monitorStatus: true, monitored: true, virtualization: true },
-          orderBy: { hostname: "asc" },
-          take: 1000,
-        });
-        res.json({
-          virtualization: v,
-          workloads: children.map((c) => {
-            const cv = (c.virtualization as Record<string, any> | null) ?? {};
-            return {
-              id: c.id,
-              hostname: c.hostname,
-              role: cv.role ?? null,
-              state: cv.state ?? null,
-              image: cv.image ?? null,
-              networkMode: cv.networkMode ?? null,
-              updateAvailable: cv.updateAvailable ?? null,
-              monitorStatus: c.monitorStatus,
-              monitored: c.monitored,
-            };
-          }),
-        });
-        return;
-      }
-    }
-    if (!v || (v.role !== "vm" && v.role !== "host")) {
-      res.json({ virtualization: null });
-      return;
-    }
-    const integrationId = typeof v.vcenterIntegrationId === "string" ? v.vcenterIntegrationId : null;
-    const bigintToString = (x: bigint | null): string | null => (x === null ? null : x.toString());
-
-    if (v.role === "vm") {
-      // Running host link (hostAssetId is re-resolved every discovery cycle).
-      const hostAsset = typeof v.hostAssetId === "string" && v.hostAssetId
-        ? await prisma.asset.findUnique({
-            where: { id: v.hostAssetId },
-            select: { id: true, hostname: true, monitorStatus: true, monitored: true },
-          })
-        : null;
-      // Datastore names + backing labels for the disks table.
-      const dsMorefs = [...new Set(
-        (Array.isArray(v.disks) ? v.disks : [])
-          .map((d: any) => (typeof d?.datastoreMoref === "string" ? d.datastoreMoref : null))
-          .filter((m: string | null): m is string => !!m),
-      )];
-      const datastores = integrationId && dsMorefs.length > 0
-        ? await prisma.vcenterDatastore.findMany({
-            where: { integrationId, moref: { in: dsMorefs } },
-            select: { moref: true, name: true, dsType: true, backingLabel: true },
-          })
-        : [];
-      res.json({
-        virtualization: v,
-        hostAsset,
-        diskDatastores: datastores,
-      });
-      return;
-    }
-
-    // role === "host"
-    const hostMoref = typeof v.hostMoref === "string" ? v.hostMoref : null;
-    const datastores = integrationId && hostMoref
-      ? await prisma.vcenterDatastore.findMany({
-          where: { integrationId, hostMorefs: { has: hostMoref } },
-          orderBy: { name: "asc" },
-        })
-      : [];
-    // VMs currently placed on this host — their virtualization blobs carry
-    // hostAssetId (re-stamped every cycle), which indexes cheaper than a
-    // JSON-path filter on hostMoref.
-    const vms = await prisma.asset.findMany({
-      where: {
-        virtualization: { path: ["hostAssetId"], equals: id },
-      },
-      select: { id: true, hostname: true, monitorStatus: true, monitored: true, virtualization: true },
-      take: 500,
-    });
-    res.json({
-      virtualization: v,
-      datastores: datastores.map((d) => ({
-        moref: d.moref,
-        name: d.name,
-        dsType: d.dsType,
-        capacityBytes: bigintToString(d.capacityBytes),
-        freeBytes: bigintToString(d.freeBytes),
-        provisionedBytes: bigintToString(d.provisionedBytes),
-        accessible: d.accessible,
-        backingLabel: d.backingLabel,
-        backing: d.backing,
-      })),
-      vms: vms.map((vm) => ({
-        id: vm.id,
-        hostname: vm.hostname,
-        monitorStatus: vm.monitorStatus,
-        monitored: vm.monitored,
-        powerState: (vm.virtualization as Record<string, any> | null)?.powerState ?? null,
-      })),
-    });
+    res.json(await getAssetVirtualization(id));
   } catch (err) { next(err); }
 });
 
@@ -932,20 +463,7 @@ router.get("/:id/process-logs", requirePermission("assets", "read"), async (req,
     const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
     const onlyFlagged = boolQuery(req.query.flagged);
-    const rows = await prisma.assetProcessLogSample.findMany({
-      where: { assetId: id, name, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
-      orderBy: { timestamp: "desc" },
-      take: limit,
-    });
-    // Annotate each line with the operator-defined flag rules it matches
-    // (read-time eval — see logFlagRuleService). ?flagged=1 returns only matches.
-    const logs = await evaluateLogFlags(
-      id,
-      name,
-      rows.map((r) => ({ timestamp: r.timestamp, level: r.level, message: r.message, source: r.source })),
-      onlyFlagged,
-    );
-    res.json({ name, logs });
+    res.json(await getProcessLogs(id, name, limit, since, onlyFlagged));
   } catch (err) { next(err); }
 });
 
@@ -961,18 +479,7 @@ router.get("/:id/service-logs", requirePermission("assets", "read"), async (req,
     const limit = intQuery(req.query.limit, { fallback: 500, min: 1, max: 2000 })!;
     const since = req.query.since ? new Date(String(req.query.since)) : null;
     const onlyFlagged = boolQuery(req.query.flagged);
-    const rows = await prisma.assetServiceLogSample.findMany({
-      where: { assetId: id, unit, ...(since && !isNaN(since.getTime()) ? { timestamp: { gte: since } } : {}) },
-      orderBy: { timestamp: "desc" },
-      take: limit,
-    });
-    const logs = await evaluateLogFlags(
-      id,
-      unit,
-      rows.map((r) => ({ timestamp: r.timestamp, level: r.level, message: r.message, source: r.source })),
-      onlyFlagged,
-    );
-    res.json({ unit, logs });
+    res.json(await getServiceLogs(id, unit, limit, since, onlyFlagged));
   } catch (err) { next(err); }
 });
 
@@ -990,41 +497,7 @@ router.put("/:id/processes/:name/config", requirePermission("assets", "write"), 
     // changing one needs assets=fullwrite — the grant that already means "may
     // deploy and drive agents" (rule 43) — while an `assets:write` caller can
     // still edit the log source and notes, or clear the glob. Rule 107.
-    const newGlob = body.logPathGlob ?? null;
-    if (newGlob !== null) {
-      const existing = await prisma.assetProcessConfig.findUnique({
-        where: { assetId_name: { assetId: id, name } },
-        select: { logPathGlob: true },
-      });
-      // Only a CHANGE is judged: resaving the log source with the glob as it
-      // already stands must keep working (a legacy value is withheld from
-      // agents anyway — see GET /agents/config).
-      if ((existing?.logPathGlob ?? null) !== newGlob) {
-        const problem = logPathGlobProblem(newGlob);
-        if (problem) throw new AppError(400, problem);
-        if (!hasPermission(req, "agentDeploy", "write")) {
-          throw new AppError(
-            403,
-            "Setting a log path needs Agent Deploy: the agent reads that path as a privileged user.",
-          );
-        }
-      }
-    }
-
-    const updated = await prisma.assetProcessConfig.upsert({
-      where:  { assetId_name: { assetId: id, name } },
-      update: { logSource: body.logSource, logPathGlob: body.logPathGlob ?? null, notes: body.notes ?? null, updatedBy: requestActor(req) ?? null },
-      create: { assetId: id, name, logSource: body.logSource ?? "auto", logPathGlob: body.logPathGlob ?? null, notes: body.notes ?? null, updatedBy: requestActor(req) ?? null },
-    });
-    logEvent({
-      action: "asset.process.log_config_set",
-      resourceType: "asset",
-      resourceId: id,
-      actor: requestActor(req),
-      message: `Log config set for process "${name}"`,
-      details: { name, logSource: updated.logSource, logPathGlob: updated.logPathGlob },
-    });
-    res.json({ config: { name: updated.name, logSource: updated.logSource, logPathGlob: updated.logPathGlob, detectedUnit: updated.detectedUnit, notes: updated.notes } });
+    res.json(await setProcessLogConfig(id, name, body, hasPermission(req, "agentDeploy", "write"), requestActor(req)));
   } catch (err) { next(err); }
 });
 
