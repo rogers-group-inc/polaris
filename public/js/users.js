@@ -350,34 +350,145 @@ function _savedCountsText(c, adjective) {
   return parts.join(", ");
 }
 
+// ─── Scheduled work a departing account booked (business rule 140(b)) ────────
+// A booked reboot or firmware upgrade is approved when it is booked and fires
+// on schedule whoever its creator has become — so disabling or deleting the
+// account would leave that work running with nobody having looked at it. The
+// Disable and Delete dialogs list it (from GET /users/:id/disable-preview) and
+// cancel what the administrator ticks, through each booking's OWN cancel route:
+// this dialog can never cancel something its user could not cancel from the
+// device's card. Nothing is ticked by default — leaving a planned window in
+// place and cancelling it are both decisions, and neither should be silent.
+
+var _BOOKING_KIND_LABEL = { reboot: "Reboot", firmware: "Firmware upgrade", firmwareGroup: "Group firmware upgrade" };
+
+/** "Firmware upgrade · fw-01 · Nov 14, 2026 02:00:00 · to 7.6.8" — one booking, as text. */
+function _bookingLabel(b) {
+  var parts = [_BOOKING_KIND_LABEL[b.kind] || b.kind, b.assetName || b.assetId, formatDateTime(b.scheduledFor)];
+  if (b.detail) parts.push(b.detail);
+  return parts.join(" · ");
+}
+
+/**
+ * The "Scheduled work" block of the Disable / Delete dialogs: one checkbox row
+ * per pending booking, or "" when there are none. A booking the caller may not
+ * cancel is listed (it still fires — hiding it would defeat the point) with
+ * its box disabled and the reason. `verb` is "disabled" or "deleted".
+ */
+function _bookingsSectionHTML(bookings, verb) {
+  if (!bookings || !bookings.length) return "";
+  var anyCancellable = bookings.some(function (b) { return b.canCancel; });
+  var rows = bookings.map(function (b, i) {
+    var id = "ub-" + i;
+    var locked = !b.canCancel;
+    return '<label for="' + id + '" style="display:flex;gap:0.5rem;align-items:flex-start;padding:0.3rem 0;font-size:0.85rem;' + (locked ? "opacity:0.65" : "cursor:pointer") + '"' +
+        (locked ? ' title="Cancelling this needs Read-Write on Assets, and the device in your scope"' : "") + ">" +
+      '<input type="checkbox" class="ub-box" id="' + id + '" data-idx="' + i + '" style="width:auto;margin-top:0.15rem"' + (locked ? " disabled" : "") + ">" +
+      "<span>" + escapeHtml(_bookingLabel(b)) + (locked ? ' <em style="color:var(--color-text-secondary)">— you cannot cancel this one</em>' : "") + "</span>" +
+    "</label>";
+  }).join("");
+  var n = bookings.length;
+  return '<div id="ub-section" style="margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--color-border)">' +
+    '<p style="margin:0 0 0.35rem;font-weight:600">Scheduled work this account booked</p>' +
+    '<p style="margin:0 0 0.5rem;font-size:0.85rem;color:var(--color-text-secondary)">' +
+      (n === 1 ? "This booking still runs" : "These " + n + " bookings still run") +
+      " on schedule after the account is " + verb + ". " +
+      (anyCancellable ? "Tick any that should be cancelled." : "") +
+    "</p>" +
+    (anyCancellable && n > 1
+      ? '<label for="ub-all" style="display:flex;gap:0.5rem;align-items:center;font-size:0.85rem;padding-bottom:0.25rem;cursor:pointer"><input type="checkbox" id="ub-all" style="width:auto"><span>Cancel all of them</span></label>'
+      : "") +
+    '<div style="max-height:14rem;overflow:auto">' + rows + "</div>" +
+  "</div>";
+}
+
+/** Wire the "Cancel all of them" box to the row boxes it can reach. */
+function _wireBookingsSection() {
+  var all = document.getElementById("ub-all");
+  if (!all) return;
+  var boxes = function () { return Array.prototype.slice.call(document.querySelectorAll(".ub-box:not(:disabled)")); };
+  all.addEventListener("change", function () { boxes().forEach(function (b) { b.checked = all.checked; }); });
+  boxes().forEach(function (b) {
+    b.addEventListener("change", function () { all.checked = boxes().every(function (x) { return x.checked; }); });
+  });
+}
+
+/** The bookings whose boxes are ticked, in list order. */
+function _tickedBookings(bookings) {
+  return Array.prototype.slice.call(document.querySelectorAll(".ub-box:checked"))
+    .map(function (el) { return bookings[Number(el.getAttribute("data-idx"))]; })
+    .filter(Boolean);
+}
+
+/** One booking's own cancel route. */
+function _cancelOneBooking(b) {
+  if (b.kind === "reboot") return api.assets.cancelRebootSchedule(b.assetId, b.id);
+  if (b.kind === "firmware") return api.assets.cancelFirmwareSchedule(b.assetId, b.id);
+  if (b.kind === "firmwareGroup") return api.assets.cancelFirmwareGroup(b.id);
+  return Promise.reject(new Error("Unknown booking kind: " + b.kind));
+}
+
+/**
+ * Cancel the ticked bookings, one after another, BEFORE the account changes —
+ * so a refusal stops the dialog with the account untouched and the operator
+ * able to choose again. A booking that already fired, was cancelled or was
+ * removed since the dialog opened (409 / 404) has nothing left to cancel and
+ * is passed over. Resolves with how many were cancelled; rejects, naming the
+ * booking, on anything else.
+ */
+async function _cancelBookings(list) {
+  var done = 0;
+  for (var i = 0; i < list.length; i++) {
+    try {
+      await _cancelOneBooking(list[i]);
+      done++;
+    } catch (err) {
+      if (err && (err.status === 409 || err.status === 404)) continue;
+      throw new Error("Could not cancel " + _bookingLabel(list[i]) + ": " + ((err && err.message) || "request failed"));
+    }
+  }
+  return done;
+}
+
+function _cancelledNote(n) {
+  return n ? "; " + n + " scheduled " + (n === 1 ? "booking" : "bookings") + " cancelled" : "";
+}
+
 /**
  * Disable an account (business rule 140): sessions end, every sign-in is
- * refused, private saved items are deleted and public ones lose their owner.
- * The dialog states the numbers first, from GET /users/:id/disable-preview.
+ * refused, alerts stop, private saved items are deleted and public ones lose
+ * their owner. The dialog states the numbers first, and lists the reboots and
+ * firmware upgrades the account has booked (140(b)), from
+ * GET /users/:id/disable-preview.
  */
 async function confirmDisableUser(id, username) {
-  var preview = { deleted: {}, ownerless: {} };
+  var preview = { deleted: {}, ownerless: {}, bookings: [] };
   try { preview = await api.users.disablePreview(id); } catch (_err) { /* numbers are a courtesy */ }
+  var bookings = preview.bookings || [];
   var gone = _savedCountsText(preview.deleted || {}, "private");
   var orphan = _savedCountsText(preview.ownerless || {}, "public");
   var body =
     '<p style="margin:0 0 0.75rem">Disable <strong>' + escapeHtml(username) + "</strong>?</p>" +
     '<ul style="margin:0;padding-left:1.1rem;font-size:0.85rem;color:var(--color-text-secondary);line-height:1.5">' +
       "<li>They are signed out everywhere and can’t sign in — by password, passkey or SSO — until re-enabled.</li>" +
+      "<li>They stop receiving alerts, and their push-enabled devices are removed.</li>" +
       (gone ? "<li>Their " + escapeHtml(gone) + " are <strong>deleted</strong>.</li>" : "") +
       (orphan ? "<li>Their " + escapeHtml(orphan) + " become <strong>ownerless</strong>: only holders of full read-write can edit, reassign or delete them.</li>" : "") +
       "<li>Re-enabling the account does not give any of them back.</li>" +
-    "</ul>";
+    "</ul>" +
+    _bookingsSectionHTML(bookings, "disabled");
   openModal("Disable account", body,
     '<button class="btn btn-secondary" id="ud-cancel">Cancel</button><button class="btn btn-danger" id="ud-ok">Disable account</button>');
+  _wireBookingsSection();
   document.getElementById("ud-cancel").addEventListener("click", closeModal);
   var ok = document.getElementById("ud-ok");
   ok.addEventListener("click", async function () {
     ok.disabled = true;
     try {
+      var cancelled = await _cancelBookings(_tickedBookings(bookings));
       await api.users.disable(id);
       closeModal();
-      showToast('Disabled "' + username + '"');
+      showToast('Disabled "' + username + '"' + _cancelledNote(cancelled));
       loadUsers();
     } catch (err) {
       showToast(err.message || "Could not disable the account", "error");
@@ -591,16 +702,47 @@ function openResetPasswordModal(id, username) {
   });
 }
 
+/**
+ * Delete an account. With nothing booked it is the plain confirm it always
+ * was; an account that has booked reboots or firmware upgrades gets a dialog
+ * that lists them first (business rule 140(b)), as Disable does.
+ */
 async function confirmDeleteUser(id, username) {
-  var ok = await showConfirm('Delete user "' + username + '"? This cannot be undone.');
-  if (!ok) return;
-  try {
-    await api.users.delete(id);
-    showToast("User deleted");
-    loadUsers();
-  } catch (err) {
-    showToast(err.message, "error");
+  var bookings = [];
+  try { bookings = (await api.users.disablePreview(id)).bookings || []; } catch (_err) { /* the list is a courtesy */ }
+  if (!bookings.length) {
+    var yes = await showConfirm('Delete user "' + username + '"? This cannot be undone.');
+    if (!yes) return;
+    try {
+      await api.users.delete(id);
+      showToast("User deleted");
+      loadUsers();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+    return;
   }
+  var body =
+    '<p style="margin:0">Delete user <strong>' + escapeHtml(username) + "</strong>? This cannot be undone.</p>" +
+    _bookingsSectionHTML(bookings, "deleted");
+  openModal("Delete user", body,
+    '<button class="btn btn-secondary" id="udel-cancel">Cancel</button><button class="btn btn-danger" id="udel-ok">Delete user</button>');
+  _wireBookingsSection();
+  document.getElementById("udel-cancel").addEventListener("click", closeModal);
+  var ok = document.getElementById("udel-ok");
+  ok.addEventListener("click", async function () {
+    ok.disabled = true;
+    try {
+      var cancelled = await _cancelBookings(_tickedBookings(bookings));
+      await api.users.delete(id);
+      closeModal();
+      showToast("User deleted" + _cancelledNote(cancelled));
+      loadUsers();
+    } catch (err) {
+      showToast(err.message || "Could not delete the user", "error");
+      ok.disabled = false;
+    }
+  });
 }
 
 // val() is the app.js canonical (2026-08 audit — five identical top-level copies shadowed each other on co-loaded pages).

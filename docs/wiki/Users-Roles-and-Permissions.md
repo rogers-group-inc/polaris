@@ -417,15 +417,35 @@ yourself. Disabling:
   Entra App Proxy. The refusal comes only after the password or sign-in checks
   out, so someone guessing passwords does not learn that the account is
   disabled. Signing in through SSO does not re-enable it;
+- stops every alert to the account: it no longer matches as a recipient of any
+  automation (by role, region, tag, name, Cc or Bcc, or an escalation tier),
+  and its push-enabled devices are removed. An email address typed into an
+  automation is not an account and keeps receiving;
 - deletes the account's **private** saved filters, saved dashboards and folders,
   and leaves its **public** ones in place with no owner, so the people using
   them keep them. Full read-write holders can then reassign, take or delete them
   ([rule 140](Business-Rules#rule-140)).
 
 The dialog shows how many items each of those will affect before you confirm.
-Deleting a user does the same to their saved items. **Enable account** lets the
-user sign in again; nothing that was deleted or released comes back. A disabled
-account shows a **Disabled** badge beside its name.
+Deleting a user does the same to their saved items.
+
+**Scheduled work the account booked.** A reboot or firmware upgrade someone
+booked is approved work and **still runs on schedule** after their account is
+disabled or deleted. So that this is never a surprise, the Disable dialog — and
+the Delete dialog, when there is anything to show — lists every pending reboot,
+firmware upgrade and group firmware upgrade the account booked, with the device
+and the time. Tick the ones that should be cancelled; nothing is ticked for
+you. The ticked bookings are cancelled first, and if one cannot be cancelled
+the account is left as it was so you can choose again. Cancelling a booking
+here needs what it needs anywhere else — Read-Write on **Assets**, and the
+device within your reach — so a booking you may not cancel is still listed,
+with its box locked. A group upgrade that is already running is stopped from
+the nav bar's operations panel instead, and maintenance windows are not
+listed: they stay on the Maintenance page ([rule 140](Business-Rules#rule-140)). **Enable account** lets the
+user sign in again and receive alerts again; nothing that was deleted or
+released comes back, and each of their browsers turns push back on by itself the
+next time it opens Polaris. A disabled account shows a **Disabled** badge beside
+its name.
 
 ### Sessions
 
@@ -585,6 +605,11 @@ grants, filter-don't-403 surfaces included.
   immediately; an expired or revoked token gets the same `401` as no token.
 - A token granting quarantine at `write` or above **must** name the
   integrations it is scoped to.
+- A token owns the records it creates, the way a user does. **Deleting** a
+  token ends that ownership: what it created is shown as owned by
+  `deleted:api:<name>` and only Full Read-Write holders can change it, so a new
+  token given the same name inherits nothing ([rule 48](Business-Rules#rule-48)).
+  Revoking a token leaves its ownership stamps alone.
 - Binding a token to an admin-equivalent role needs you to be admin-equivalent yourself: **API Tokens** Read-Write alone is refused **403**. When an administrator does it, a **warning Event** is logged.
 - **Trusted hosts** (optional) limit the source addresses a token is accepted
   from. Set them at creation or change them later with **Edit Hosts** on the

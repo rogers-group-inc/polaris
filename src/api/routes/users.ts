@@ -25,13 +25,16 @@ import {
   countAdminEquivalentUsers,
   isAdminEquivalentRole,
 } from "../../services/roleService.js";
-import { requirePermission, assertNoPrivilegeEscalation, assertGrantWithinCaller, assertTagChangeAllowed } from "../middleware/permissions.js";
+import { requirePermission, hasPermission, assertNoPrivilegeEscalation, assertGrantWithinCaller, assertTagChangeAllowed } from "../middleware/permissions.js";
 import { revokeUserSessions } from "../../services/sessionRevocationService.js";
 import { normalizeTags } from "../../utils/tagNormalize.js";
 import * as mfaPending from "../../utils/mfaPending.js";
 import { logEvent } from "./events.js";
-import { deleteUserAndTombstoneOwnership, assertUsernameNotReserved } from "../../services/userOwnershipService.js";
+import { deleteUserAndTombstoneOwnership, assertUsernameNotReserved, tombstoneTotal } from "../../services/userOwnershipService.js";
 import { releaseUserOwnership, type ReleasedOwnership } from "../../services/savedOwnershipService.js";
+import { bumpRecipientIndex } from "../../services/notificationRecipientService.js";
+import { listPendingBookingsBy } from "../../services/userBookingService.js";
+import { inWriteScope, resolveWriteScope } from "../../services/writeScopeService.js";
 
 /** "3 private filters deleted; 2 public items now ownerless" — for the audit Event. */
 function releasedSummary(r: ReleasedOwnership): string {
@@ -471,6 +474,24 @@ router.get("/:id/disable-preview", requirePermission("users", "write"), async (r
     const mine = { ownerId: id };
     const priv = { ...mine, visibility: "private" };
     const pub = { ...mine, visibility: "public" };
+    // Rule 140(b): the reboots and firmware upgrades this account has booked
+    // still fire after it is disabled or deleted, so the dialog lists them.
+    // `canCancel` is the cancel route's own gate (assets:write + the write
+    // scope), judged for THIS caller — the dialog cancels through those routes.
+    const target = await prisma.user.findUnique({ where: { id }, select: { username: true } });
+    if (!target) throw new AppError(404, "User not found");
+    const pending = await listPendingBookingsBy(target.username);
+    const mayWriteAssets = hasPermission(req, "assets", "write");
+    const assetScope = mayWriteAssets && pending.length > 0 ? await resolveWriteScope(req, "assets") : null;
+    const bookings = pending.map((b) => ({
+      kind: b.kind,
+      id: b.id,
+      assetId: b.assetId,
+      assetName: b.assetName,
+      scheduledFor: b.scheduledFor.toISOString(),
+      detail: b.detail,
+      canCancel: !!assetScope && inWriteScope(assetScope, b.scope),
+    }));
     const [pf, pfi, pd, uf, ufi, ud] = await Promise.all([
       prisma.savedFolder.count({ where: priv }),
       prisma.savedTableFilter.count({ where: priv }),
@@ -482,6 +503,7 @@ router.get("/:id/disable-preview", requirePermission("users", "write"), async (r
     res.json({
       deleted: { folders: pf, filters: pfi, dashboards: pd },
       ownerless: { folders: uf, filters: ufi, dashboards: ud },
+      bookings,
     });
   } catch (err) {
     next(err);
@@ -516,6 +538,13 @@ router.post("/:id/disable", requirePermission("users", "write"), async (req, res
     await revokeUserSessions(id);
     // A password step already passed must not finish into a session.
     mfaPending.revokeForUser(id);
+    // Rule 140(a): a disabled account receives nothing. Its browsers stop being
+    // push endpoints (nobody else can remove another user's subscriptions, and
+    // more than one sender reads them), and the recipient index drops it now
+    // rather than at its next refresh. A re-enabled user's browser subscribes
+    // again by itself the next time it opens Polaris (rule 39).
+    const pushDevices = (await prisma.pushSubscription.deleteMany({ where: { userId: id } })).count;
+    bumpRecipientIndex();
     const released = await releaseUserOwnership(id);
     const savedNote = releasedSummary(released);
     logEvent({
@@ -525,9 +554,10 @@ router.post("/:id/disable", requirePermission("users", "write"), async (req, res
       resourceName: user.username,
       actor: req.session?.username,
       level: "warning",
-      message: `User "${user.username}" disabled — signed out everywhere and can no longer sign in` +
+      message: `User "${user.username}" disabled — signed out everywhere, can no longer sign in and no longer receives alerts` +
+        (pushDevices ? `; ${pushDevices} push device(s) removed` : "") +
         (savedNote ? `; ${savedNote}` : ""),
-      details: { savedItems: released },
+      details: { savedItems: released, pushDevicesRemoved: pushDevices },
     });
     res.json({ ok: true, released });
   } catch (err) {
@@ -545,6 +575,7 @@ router.post("/:id/enable", requirePermission("users", "write"), async (req, res,
     assertMayActOnAccount(req, user);
     if (!user.disabledAt) throw new AppError(409, `"${user.username}" is not disabled`);
     await prisma.user.update({ where: { id }, data: { disabledAt: null, disabledBy: null } });
+    bumpRecipientIndex(); // rule 140(a): a recipient again from now, not from the index's next refresh
     // A lockout earned before the disable should not greet the returning user.
     clearLockout(user.username);
     logEvent({
@@ -591,7 +622,7 @@ router.delete("/:id", requirePermission("users", "write"), async (req, res, next
 
     // Rule 48(e), re-scan F85: their rows' ownership goes with the account.
     const tomb = await deleteUserAndTombstoneOwnership(user);
-    const owned = tomb.subnets + tomb.reservations + tomb.credentials + tomb.contacts;
+    const owned = tombstoneTotal(tomb);
     await endSessionsOf(req, id);
     const savedNote = releasedSummary(released);
     logEvent({

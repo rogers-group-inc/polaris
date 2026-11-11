@@ -447,9 +447,11 @@ their two-factor methods or passkeys, deleting them or changing their role, and
 creating an API token bound to an admin-equivalent role, all need the caller to
 be admin-equivalent too — and so does taking admin-equivalence away from a
 role, which may never leave the install without an administrator. Deleting an
-account ends its ownership: the networks, reservations, credentials and
-contacts it created become owned by no account (shown as `deleted:<name>`), so
-a later account with the same name inherits nothing. Accounts and roles below that tier stay within reach of
+account ends its ownership: the networks, reservations, credentials, contacts,
+devices, maintenance windows, path checks and group firmware bookings it created
+become owned by no account (shown as `deleted:<name>`), so a later account with
+the same name inherits nothing. Deleting an **API token** does the same for what
+the token created. Accounts and roles below that tier stay within reach of
 **Users** Read-Write and **API Tokens** Read-Write. Not four-eyes; the mirror of
 the last-admin guard. A request with no role snapshot **fails closed**.
 
@@ -3099,7 +3101,11 @@ setting; an item whose folder you cannot see appears at the top level.
 Deleting a folder moves what it held up a level. When an account is
 **disabled** or deleted, its private folders, filters and dashboards are
 deleted and its public ones lose their owner. A disabled account cannot sign
-in by any method and is signed out everywhere. See
+in by any method and is signed out everywhere. It also **receives nothing**: it
+stops matching as a recipient of any automation, and its push-enabled devices
+are removed. The reboots and firmware upgrades an account booked **still run**
+after it is disabled or deleted; the Disable and Delete dialogs list them so
+an administrator can cancel any that should not. See
 [Assets](Assets#view-tabs-and-saved-filters), [Dashboard](Dashboard#saved-dashboards)
 and [Users, Roles and Permissions](Users-Roles-and-Permissions#disabling-an-account).
 
@@ -3277,3 +3283,15 @@ model, serial, manufacturer and OS / firmware only when no integration that mana
 otherwise. A hostname you typed is kept. When the answer is ambiguous Polaris writes nothing: a
 device with no chassis entry gives no model or serial, and a switch stack gives no serial. The
 first fill is quiet; a later change of model, serial or name is recorded in Events.
+
+### Rule 155
+
+**A command queued for an agent runs soon or not at all.** When an automation
+runs a script on a device's Polaris Agent, the agent has **15 minutes** to pick
+it up. After that the script is withdrawn and will never run, the run is shown
+as **failed** with the reason, and a warning Event is written. A host that was
+off or unreachable when the automation fired is therefore never handed an old
+script when it comes back. Polaris does not queue it again: if the condition
+still holds, the automation fires again and that run is judged against the host
+as it is then. A script the agent started but never reported on is shown as
+**timeout**. See [Automation Scripts](Automation-Scripts#agent).
