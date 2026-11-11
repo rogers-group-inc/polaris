@@ -28,7 +28,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `runPendingServerScripts()` (the job tick), `executeServerScript(run)` (exported for tests), `buildScriptEnv(base, context)` (pure — the secret-stripped child environment), `buildCmdCommandLine(scriptPath, args)` (pure — the cmd.exe escaping, returns null when the args cannot be represented; both unit-tested in tests/unit/automationScripts.test.ts).
 
-**Cross-service deps:** `prisma`, `eventLogService.logEvent`, `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 154 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
+**Cross-service deps:** `prisma`, `eventLogService.logEvent`, `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 155 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
 
 **Used by:** `src/jobs/runAutomationScripts.ts`.
 

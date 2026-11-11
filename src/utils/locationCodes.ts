@@ -85,6 +85,25 @@ export function parseLocationCodes(raw: string | null | undefined): LocationCode
  * device copy lagged a sync/discovery cycle. Notes are deliberately not a
  * source.
  */
+/** The six location levels, outermost first. */
+export const LOCATION_LEVELS = ["area", "building", "floor", "room", "rack", "junctionBox"] as const;
+export type LocationLevel = (typeof LOCATION_LEVELS)[number];
+
+/**
+ * `base` with only `levels` taken from `set` (business rule 148(a)): a
+ * building polygon changes the building and leaves the room, a rack view
+ * changes the rack chain and leaves the junction box. A listed level `set`
+ * leaves empty is cleared; an unlisted level is never touched.
+ */
+export function mergeLocationLevels(base: LocationCodes, set: Partial<LocationCodes>, levels: readonly LocationLevel[]): LocationCodes {
+  const out: LocationCodes = { ...EMPTY, ...base };
+  for (const l of levels) {
+    const v = set[l];
+    out[l] = typeof v === "string" && v.trim() ? v.trim() : null;
+  }
+  return out;
+}
+
 export function resolveEffectiveLocation(sources: {
   description?: string | null;
   deviceDescription?: string | null;

@@ -23,7 +23,7 @@ import { AppError } from "../utils/errors.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { detectImageMagic } from "../utils/imageMagic.js";
 import { readImageSize } from "../utils/imageDimensions.js";
-import { locationCodeValueProblem, setLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
+import { locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type RegionIndex } from "./regionTreeService.js";
 import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
@@ -1062,6 +1062,12 @@ const MAX_DESCRIPTION_LEN = 255;
 export interface LocationCodeChange {
   assetId: string;
   codes: LocationCodes;
+  /**
+   * The levels this change sets (rule 148(a)): only these are taken from
+   * `codes`; every other level keeps what the device has now. Absent = the
+   * codes replace all of them (a region-tree rewrite).
+   */
+  levels?: LocationLevel[];
 }
 
 export type LocationCodeResult =
@@ -1082,7 +1088,14 @@ export function sanitizeLocationCodeChanges(raw: unknown): LocationCodeChange[] 
     if (typeof cr.assetId !== "string" || !/^[0-9a-f-]{36}$/.test(cr.assetId)) bad(`change ${i + 1} needs an assetId`);
     if (seen.has(cr.assetId as string)) bad("an asset appears twice in changes");
     seen.add(cr.assetId as string);
-    return { assetId: cr.assetId as string, codes: sanitizeLocationCodesObject(cr.codes, `change ${i + 1}`) };
+    let levels: LocationLevel[] | undefined;
+    if (cr.levels !== undefined) {
+      if (!Array.isArray(cr.levels) || !cr.levels.length || cr.levels.some((l) => !(LOCATION_LEVELS as readonly unknown[]).includes(l))) {
+        bad(`change ${i + 1}: levels must list one or more of ${LOCATION_LEVELS.join(", ")}`);
+      }
+      levels = [...new Set(cr.levels as LocationLevel[])];
+    }
+    return { assetId: cr.assetId as string, codes: sanitizeLocationCodesObject(cr.codes, `change ${i + 1}`), ...(levels ? { levels } : {}) };
   });
 }
 
@@ -1103,7 +1116,7 @@ export async function applyLocationCodeChanges(
 ): Promise<LocationCodeResult[]> {
   const rows = await prisma.asset.findMany({
     where: { id: { in: changes.map((c) => c.assetId) } },
-    select: { id: true, hostname: true, ipAddress: true, description: true, status: true, createdBy: true, tags: true },
+    select: { id: true, hostname: true, ipAddress: true, description: true, status: true, createdBy: true, tags: true, fortinetTopology: true },
   });
   const byId = new Map(rows.map((r) => [r.id, r]));
   const results: LocationCodeResult[] = [];
@@ -1116,7 +1129,15 @@ export async function applyLocationCodeChanges(
       results.push({ assetId: a.id, status: "refused", reason: "Outside your assets write scope" });
       continue;
     }
-    const next = setLocationCodes(a.description, c.codes);
+    // Rule 148(a): a placement sets only its own levels; the rest stay as the
+    // device has them now (its description, else the device-side one, as the map reads it).
+    const codes = c.levels
+      ? mergeLocationLevels(resolveEffectiveLocation({
+          description: a.description,
+          deviceDescription: (a.fortinetTopology as { deviceDescription?: string | null } | null)?.deviceDescription ?? null,
+        }), c.codes, c.levels)
+      : c.codes;
+    const next = setLocationCodes(a.description, codes);
     if (next.length > MAX_DESCRIPTION_LEN) {
       results.push({ assetId: a.id, status: "refused", reason: `The description would be ${next.length} characters (the limit is ${MAX_DESCRIPTION_LEN})` });
       continue;

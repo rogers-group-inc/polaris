@@ -290,7 +290,7 @@ export async function executeServerScript(run: {
 const AGENT_SWEEP_INTERVAL_MS = 60_000;
 let lastAgentSweepAt = 0;
 
-/** Rule 154: settle expired agent commands and their runs, then age out old
+/** Rule 155: settle expired agent commands and their runs, then age out old
  *  command rows. Throttled, and never allowed to stop server-side scripts
  *  from running — a failed sweep is logged and retried a minute later. */
 async function sweepAgentQueue(now: Date): Promise<void> {

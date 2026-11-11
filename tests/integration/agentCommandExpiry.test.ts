@@ -1,5 +1,5 @@
 /**
- * tests/integration/agentCommandExpiry.test.ts — business rule 154 against a
+ * tests/integration/agentCommandExpiry.test.ts — business rule 155 against a
  * real database: the queries the unit test fakes (tests/unit/
  * agentCommandExpiry.test.ts) select and settle the rows they should.
  *
@@ -56,7 +56,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("a queued agent command expires (rule 154)", () => {
+d("a queued agent command expires (rule 155)", () => {
   it("is not handed to an agent that reconnects after the window, and is settled by the sweep", async () => {
     const stale = await queue(ago(AGENT_COMMAND_TTL_MS + 5 * MIN));
     const fresh = await queue(ago(MIN));

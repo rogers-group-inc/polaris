@@ -1,5 +1,5 @@
 /**
- * src/services/assetMacSplitService.ts
+ * src/services/assetMacSplitService.ts — MAC edits on an asset: the split (rule 91(j)) and the one-shot removal (rule 79, removeAssetMac).
  *
  * Business rule 91(j): split a MAC off an asset onto an asset of its own — the
  * recovery for devices fused before 91(f) stopped matching DHCP hostnames
@@ -42,6 +42,7 @@ import { isIpv6Address } from "../utils/cidr.js";
 import { CLEAR_PRIMARY_ADDRESS_PIN, bestListedAddress } from "./primaryAddressService.js";
 import { planHostnameMacSuffixes, type PlannedRename } from "./hostnameMacSuffixService.js";
 import { logEvent } from "./eventLogService.js";
+import { DISCOVERED_ADDRESS_SOURCES } from "./assetAddressService.js";
 
 export interface MacSplitResult {
   originalAssetId: string;
@@ -212,4 +213,81 @@ export async function splitMacsToNewAssets(opts: {
   }
 
   return { originalAssetId: asset.id, created, renamed };
+}
+
+/**
+ * DELETE /assets/:id/macs/:mac — remove one MAC row (a RANGE row whole) from
+ * an asset: one transaction drops the row, the discovery addresses recorded
+ * under it (rule 102) and a primary-address pin on it, and re-picks
+ * `Asset.macAddress` through selectPrimaryMac (rule 79). One-shot by design: no
+ * tombstone. Writes asset.mac_removed. `normalized` is upper-case, colon-
+ * separated. Moved out of routes/assets/addresses.ts (CQ-B062 slice 2).
+ */
+export async function removeAssetMac(id: string, normalized: string, actor: string | undefined) {
+  const existing = await prisma.asset.findUnique({
+    where: { id },
+    include: { macAddressRows: { select: MAC_ROW_SELECT } },
+  });
+  if (!existing) throw new AppError(404, "Asset not found");
+
+  const allRows = existing.macAddressRows;
+  const target = allRows.find((m) => m.mac.toUpperCase().replace(/-/g, ":") === normalized);
+  if (!target) {
+    throw new AppError(404, "MAC address not found on this asset");
+  }
+
+  // Compute the new primary `Asset.macAddress` scalar after removal, or null
+  // if nothing usable survives. Side-table delete + scalar-column update run
+  // as a single transaction so the asset never points at a MAC that no longer
+  // exists.
+  //
+  // This goes through `selectPrimaryMac` rather than a local freshest-wins
+  // sort (business rule 79) so the promotion obeys the same two rules every other writer does:
+  // hardware-truth sources (agent / Intune / vCenter vNIC) outrank network
+  // sightings, and a RANGE row is never primary — it is a port block, not a
+  // device identity. The hand-rolled sort this replaced honoured neither, so
+  // removing an asset's primary MAC could promote the start of an
+  // interface-scrape range into `Asset.macAddress`, which the next discovery
+  // reconcile would then overwrite again.
+  let primary = existing.macAddress;
+  if (primary && primary.toUpperCase().replace(/-/g, ":") === normalized) {
+    primary = selectPrimaryMac(shapeMacRows(allRows.filter((m) => m.mac !== target.mac)));
+  }
+
+  // The addresses discovery recorded under that MAC go with it (business
+  // rule 102) — like the MAC itself, they come back on the next read if the
+  // gate still reports them. Manual and interface-scrape rows stay. A pin on
+  // the removed MAC is released: the pair it named is no longer on the list.
+  const [, , updated] = await prisma.$transaction([
+    prisma.assetMacAddress.deleteMany({
+      where: { assetId: id, mac: target.mac },
+    }),
+    prisma.assetAssociatedIp.deleteMany({
+      where: { assetId: id, mac: target.mac, source: { in: [...DISCOVERED_ADDRESS_SOURCES] } },
+    }),
+    prisma.asset.update({
+      where: { id },
+      data: {
+        macAddress: primary,
+        ...(existing.primaryAddressMac === target.mac ? CLEAR_PRIMARY_ADDRESS_PIN : {}),
+      },
+    }),
+  ]);
+
+  // Name the RANGE when the removed row was one — "removed MAC AA:…:00" for a
+  // row that took 48 port MACs with it reads as a far smaller act than it was.
+  const removedLabel = target.macEnd ? `MAC range ${target.mac} – ${target.macEnd}` : `MAC ${normalized}`;
+  logEvent({
+    action: "asset.mac_removed",
+    resourceType: "asset",
+    resourceId: id,
+    resourceName: updated.hostname || updated.ipAddress || undefined,
+    actor,
+    message: `Removed ${removedLabel} from asset "${updated.hostname || updated.ipAddress || "unknown"}"`,
+    details: {
+      mac: target.mac, macEnd: target.macEnd, source: target.source, primaryAfter: primary,
+      ...(existing.primaryAddressMac === target.mac ? { releasedPrimaryAddressPin: existing.primaryAddressIp } : {}),
+    },
+  });
+  return updated;
 }

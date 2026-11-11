@@ -13,7 +13,7 @@
  * / status) used by run_script.
  *
  * A QUEUED COMMAND IS GOOD FOR `AGENT_COMMAND_TTL_MS`, THEN IT IS DEAD
- * (business rule 154). A script queued for an agent that was offline used to
+ * (business rule 155). A script queued for an agent that was offline used to
  * wait in the queue with no expiry: it ran — as root / LocalSystem — whenever
  * the host next polled, days later, after the alert had cleared and even after
  * the automation that asked for it had been deleted. Nothing could cancel it
@@ -43,7 +43,7 @@ export interface AgentCommandView {
  */
 export async function fetchPendingCommands(managedAgentId: string, now: Date = new Date()): Promise<AgentCommandView[]> {
   const cmds = await prisma.agentCommand.findMany({
-    // Rule 154: an expired command is never delivered, swept yet or not.
+    // Rule 155: an expired command is never delivered, swept yet or not.
     where: { managedAgentId, status: "pending", requestedAt: { gte: commandExpiryCutoff(now) } },
     orderBy: { requestedAt: "asc" },
     take: 20,
@@ -68,7 +68,7 @@ export async function fetchPendingCommands(managedAgentId: string, now: Date = n
   return cmds.map((c) => ({ id: c.id, action: c.action, target: c.target, ...(c.payload ? { payload: c.payload } : {}) }));
 }
 
-// ─── Expiry and retention (business rule 154) ────────────────────────────────
+// ─── Expiry and retention (business rule 155) ────────────────────────────────
 
 /**
  * How long a queued command waits for its agent. An online agent polls every

@@ -3223,6 +3223,10 @@ a Topology view, a device you drop inside a polygon takes that group's `a:` / `b
 codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
 needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
 
+Polygons stand for areas, buildings and floors, and a save changes only the levels that the
+polygon (or floor layer) sets: a device's room, rack and junction box are left as they are. A Rack
+or Wall view changes only the levels its region names, so a junction box below a rack is kept.
+
 ### Rule 149
 
 **Changing a view's mode resets the view.** Polaris first shows what will be removed: placed
@@ -3270,6 +3274,17 @@ own saved data (a view's region, polygon groups, saved layouts) follows a rename
 automatically, so nothing saved against the old name is lost.
 
 ### Rule 154
+
+**An SNMP device fills in its own identity when nothing else does.** On each SNMP system-info
+poll, Polaris reads the device's own name (`sysName`) and its chassis entry in ENTITY-MIB (model,
+serial number, manufacturer and running software version). These fill the asset's hostname,
+model, serial, manufacturer and OS / firmware only when no integration that manages the device
+(FortiManager, a FortiGate's switch or AP inventory, vCenter, AD, Intune, the Polaris Agent) says
+otherwise. A hostname you typed is kept. When the answer is ambiguous Polaris writes nothing: a
+device with no chassis entry gives no model or serial, and a switch stack gives no serial. The
+first fill is quiet; a later change of model, serial or name is recorded in Events.
+
+### Rule 155
 
 **A command queued for an agent runs soon or not at all.** When an automation
 runs a script on a device's Polaris Agent, the agent has **15 minutes** to pick

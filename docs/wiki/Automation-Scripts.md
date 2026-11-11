@@ -168,7 +168,7 @@ at most 15 minutes and is then **withdrawn**: it will never run, the run shows a
 `failed` with the reason, and a warning Event is written. A host that comes back
 later is not handed the old script. Polaris does not queue it again by itself;
 if the automation's condition still holds, its next fire, reminder or escalation
-queues a new run ([rule 154](Business-Rules#rule-154)).
+queues a new run ([rule 155](Business-Rules#rule-155)).
 
 The agent is a **satellite** — it never self-acts and refuses unknown actions.
 For a script it:

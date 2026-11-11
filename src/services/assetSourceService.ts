@@ -49,6 +49,7 @@ export async function listAssetSourcesForDisplay(id: string) {
     // Enrichment, so it sorts under the sources that own the device — but
     // above "manual", since it is a real reading rather than a fallback.
     "snmp-sysdescr": 8,
+    "snmp-identity": 8,
     "fortinet-live": 9,
     "manual": 99,
   };

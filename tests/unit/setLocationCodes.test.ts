@@ -12,7 +12,26 @@ import {
   parseLocationCodes,
   locationCodeValueProblem,
   MAX_LOCATION_CODE_VALUE_LEN,
+  mergeLocationLevels,
 } from "../../src/utils/locationCodes.js";
+
+describe("mergeLocationLevels (rule 148(a))", () => {
+  const now = parseLocationCodes("b:Scale House r:Weigh Room jb:7");
+  it("a building polygon changes the building and keeps the room and junction box", () => {
+    const m = mergeLocationLevels(now, { building: "Office" }, ["building"]);
+    expect(setLocationCodes("Core b:Scale House r:Weigh Room jb:7", m)).toBe("Core b:Office r:Weigh Room jb:7");
+  });
+  it("a building already right changes nothing; a floor layer only adds the floor", () => {
+    expect(mergeLocationLevels(now, { building: "Scale House" }, ["building"])).toEqual(now);
+    expect(mergeLocationLevels(parseLocationCodes("b:Hoist f:Surface"), { floor: "2" }, ["floor"]))
+      .toMatchObject({ building: "Hoist", floor: "2" });
+  });
+  it("a rack region sets its chain and leaves the junction box; a listed empty level clears", () => {
+    const m = mergeLocationLevels(now, { room: "MDF", rack: "R1" }, ["room", "rack"]);
+    expect(m).toMatchObject({ building: "Scale House", room: "MDF", rack: "R1", junctionBox: "7" });
+    expect(mergeLocationLevels(now, {}, ["junctionBox"]).junctionBox).toBeNull();
+  });
+});
 
 describe("setLocationCodes", () => {
   it("replaces existing codes and keeps the leading free text", () => {

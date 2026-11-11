@@ -100,6 +100,11 @@ export type AssetSourceKind =
   // ENRICHMENT, not ownership: it says what the device claims to be, never
   // that the device is in anyone's inventory — see ENRICHMENT_SOURCE_KINDS.
   | "snmp-sysdescr"
+  // The device's OWN answer through the standard MIBs every vendor
+  // implements: sysName for the hostname, the ENTITY-MIB chassis row for
+  // model / serial / manufacturer / firmware (utils/snmpEntityIdentity.ts,
+  // business rule 154). ENRICHMENT, like snmp-sysdescr.
+  | "snmp-identity"
   // The firmware a FortiGate / FortiSwitch / FortiAP reports about itself on
   // the monitor path (services/fortinetLiveVersionService.ts) — osVersion
   // only. ENRICHMENT, like snmp-sysdescr.
@@ -122,7 +127,7 @@ export type AssetSourceKind =
  * would leave a deleted VM active forever. Callers asking about EXISTENCE
  * filter these out; callers asking about IDENTITY (projection) do not.
  */
-export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "fortinet-live"];
+export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "snmp-identity", "fortinet-live"];
 
 export interface AssetSourceForProjection {
   sourceKind: AssetSourceKind | string;
@@ -289,6 +294,13 @@ const HOSTNAME_RULES: FieldRule[] = [
   { sourceKind: "fortigate-firewall", pick: (o) => obsString(o, "hostname") },
   { sourceKind: "fortiswitch", pick: (o) => obsString(o, "switchId") },
   { sourceKind: "fortiap", pick: (o) => obsString(o, "name") },
+  // The device's own sysName (business rule 154). Below every directory,
+  // hypervisor, controller and agent — those name the device from where it is
+  // MANAGED, and a sysName is often a factory string nobody changed — but
+  // above the Generic API feed (rule 100: a feed never outranks a first-party
+  // source) and the DHCP client identifier. An operator's typed name is a
+  // `hostnameOverride` pin and beats this whatever the ladder says.
+  { sourceKind: "snmp-identity", pick: (o) => obsString(o, "hostname") },
   // Generic API (an operator-built feed — a CMDB, a vendor portal, a
   // spreadsheet behind an API). Below every directory, hypervisor, controller
   // and agent source; above only the DHCP client identifier, because a name
@@ -337,6 +349,10 @@ const SERIAL_RULES: FieldRule[] = [
   // The NAS host's SMBIOS serial, as its own OS reads it. Through obsSerial,
   // so a "To Be Filled By O.E.M." board yields nothing (rule 84).
   ...workloadRule("host", (o) => obsSerial(o, "serial")),
+  // The ENTITY-MIB chassis serial the device reports itself (business rule
+  // 154) — only ever from a single chassis row, never a stack member's.
+  // Through obsSerial like every serial rule (rule 84).
+  { sourceKind: "snmp-identity", pick: (o) => obsSerial(o, "serialNumber") },
   // Generic API: last, and through obsSerial (rule 84) — the sync also drops
   // a placeholder before it reaches the blob, but the projection does not
   // rely on that.
@@ -402,6 +418,12 @@ const MANUFACTURER_RULES: FieldRule[] = [
       const raw = obsString(o, "manufacturer");
       return raw ? normalizeManufacturer(raw) : null;
     } },
+  // The ENTITY-MIB chassis row's entPhysicalMfgName (business rule 154) —
+  // the same self-report argument, one rung under the vendor-format parse.
+  { sourceKind: "snmp-identity", pick: (o) => {
+      const raw = obsString(o, "manufacturer");
+      return raw ? normalizeManufacturer(raw) : null;
+    } },
   // fortigate-endpoint hardwareVendor — populated from FortiOS device-
   // inventory or OUI lookup at discovery time. Coarser than Intune
   // (vendor only, no model fidelity) but better than nothing for assets
@@ -452,6 +474,10 @@ const MODEL_RULES: FieldRule[] = [
   // Software: Windows Version 6.3" never gets one, and cannot displace
   // Intune's model with it.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsString(o, "model") },
+  // The ENTITY-MIB chassis entPhysicalModelName (business rule 154): the
+  // device's own part number ("DS-C9148S-K9", "WS-C3850-48P"), on any vendor
+  // that implements RFC 4133.
+  { sourceKind: "snmp-identity", pick: (o) => obsString(o, "model") },
   { sourceKind: "generic-api", pick: (o) => obsString(o, "model") },
   // fortigate-endpoint model — DHCP fingerprint or device-inventory model
   // string. Coarse signal but better than nothing for non-MDM assets.
@@ -551,6 +577,9 @@ const OS_VERSION_RULES: FieldRule[] = [
   // Software: Windows Version 6.3" never gets one, and cannot displace
   // Intune's model with it.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsString(o, "osVersion") },
+  // entPhysicalSoftwareRev of the chassis, or the one value the modules
+  // agree on (business rule 154).
+  { sourceKind: "snmp-identity", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "generic-api", pick: (o) => obsString(o, "osVersion") },
   { sourceKind: "fortigate-endpoint", pick: (o) => obsString(o, "osVersion") },
 ];

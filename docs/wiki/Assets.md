@@ -558,6 +558,20 @@ plain text when nothing settles it ([rule 91](Business-Rules#rule-91)).
    "(owns 10.x.x.x/24)" ([rule 55](Business-Rules#rule-55)).
 4. If there is none, it shows the newest reported name as plain text.
 
+**An SNMP-polled device fills in its own identity.** When no integration that
+manages a device names it (a switch a FortiGate only saw on the network, a
+storage or fibre-channel switch), the SNMP system-info poll fills **Hostname**
+from the device's own `sysName`. It fills **Model**, **Serial Number**,
+**Manufacturer** and **OS / Firmware** from the device's chassis entry in
+ENTITY-MIB. This needs an interfaces, LLDP or storage stream enabled, and
+happens on the first poll after the device is up. A hostname you typed is never
+replaced. Polaris leaves a field blank rather than guess: a device that reports
+no chassis entry gets no model or serial, and a switch stack gets no serial
+because each member has its own. A manufacturer profile's model setting
+(FortiSwitch) still decides the model. The **Sources** tab shows the reading as
+*Device self-report (SNMP sysName + ENTITY-MIB)*
+([rule 154](Business-Rules#rule-154)).
+
 The tag picker in the edit form shows every tag the asset carries except its
 `azure:` tags, which it leaves out. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones

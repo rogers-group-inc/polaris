@@ -261,4 +261,20 @@ d("topology views", () => {
       .send({ changes: [{ assetId: swId, codes: { building: "X" } }] });
     expect(denied.status).toBe(403);
   });
+
+  it("changes only the levels a placement sets (rule 148(a))", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await prisma.asset.update({ where: { id: swId }, data: { description: "Core b:Scale House r:Weigh Room jb:7" } });
+    const post = (change: Record<string, unknown>) =>
+      agent.post(`/api/v1/map/sites/${fgId}/topology/location-codes`).set("X-CSRF-Token", csrf).send({ changes: [change] });
+    // A building polygon: the room and junction box stay.
+    const b = await post({ assetId: swId, codes: { building: "Office" }, levels: ["building"] });
+    expect(b.body.results[0]).toEqual({ assetId: swId, status: "updated", description: "Core b:Office r:Weigh Room jb:7" });
+    // A rack view's region: its room and rack, the junction box kept.
+    const r = await post({ assetId: swId, codes: { building: "Office", room: "MDF", rack: "R1" }, levels: ["building", "room", "rack"] });
+    expect(r.body.results[0].description).toBe("Core b:Office r:MDF ra:R1 jb:7");
+    // The building already right: nothing changes.
+    const same = await post({ assetId: swId, codes: { building: "Office" }, levels: ["building"] });
+    expect(same.body.results[0].status).toBe("unchanged");
+  });
 });

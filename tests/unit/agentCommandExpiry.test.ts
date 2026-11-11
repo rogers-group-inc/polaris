@@ -1,5 +1,5 @@
 /**
- * tests/unit/agentCommandExpiry.test.ts — business rule 154: a queued agent
+ * tests/unit/agentCommandExpiry.test.ts — business rule 155: a queued agent
  * command is good for AGENT_COMMAND_TTL_MS, then it is withdrawn and never
  * runs; its script run is settled; finished command rows age out.
  *

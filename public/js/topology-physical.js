@@ -56,6 +56,17 @@
     { field: "rack", key: "ra", kind: "ra", word: "Rack" },
     { field: "junctionBox", key: "jb", kind: "jb", word: "Junction box" },
   ];
+  // A Topology view's polygons stand for areas, buildings and floors only
+  // (operator decision 2026-11-11): rooms, racks and junction boxes are the
+  // Rack and Wall views' business, so a polygon never sets them.
+  var POLY_FIELDS = CODE_FIELDS.slice(0, 3);
+  function polyCodes(c) {
+    var n = normCodes(c);
+    var out = emptyCodes();
+    POLY_FIELDS.forEach(function (f) { out[f.field] = n[f.field]; });
+    return out;
+  }
+  function polyHasCodes(c) { var n = polyCodes(c); return POLY_FIELDS.some(function (f) { return n[f.field] !== null; }); }
   var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
 
   function esc(s) {
@@ -464,9 +475,11 @@
     // descriptions already name, plus a new group inside any of them.
     function pickGroup(onPick, current) {
       if (typeof buildOverlay !== "function") return;
-      var groups = groupsFromData(data);
-      state.polygons.forEach(function (p) {
-        if (!groups.some(function (g) { return codesEqual(g, p.codes); })) groups.push(normCodes(p.codes));
+      // Areas, buildings and floors only: each group cut back to those levels.
+      var groups = [];
+      groupsFromData(data).concat(state.polygons.map(function (p) { return p.codes; })).forEach(function (g) {
+        var c = polyCodes(g);
+        if (polyHasCodes(c) && !groups.some(function (x) { return codesEqual(x, c); })) groups.push(c);
       });
       groups.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
       var drawn = {};
@@ -474,7 +487,7 @@
       var rows = groups.map(function (g, i) {
         var f = deepestField(g);
         var color = R.locGroupColor(f ? f.kind : "building", family());
-        var checked = current ? codesEqual(current, g) : i === 0;
+        var checked = current ? codesEqual(polyCodes(current), g) : i === 0;
         return '<label class="topo-phys-group" style="margin-left:' + (groupDepth(g) * 18) + 'px">' +
           '<input type="radio" name="topo-pg" value="' + i + '"' + (checked ? " checked" : "") + '>' +
           '<span class="topo-phys-swatch" style="background:' + color + '"></span>' +
@@ -486,11 +499,11 @@
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
-        '<p class="hint" style="margin:0 0 8px">Groups come from the location codes in device descriptions (the Layer 2 boxes). A device dropped inside the polygon takes these codes when you save.</p>' +
+        '<p class="hint" style="margin:0 0 8px">Areas, buildings and floors from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save; its room, rack and junction box stay as they are.</p>' +
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
-          '<select id="topo-pg-kind" aria-label="Kind">' + CODE_FIELDS.filter(function (f) { return state.layer === 0 || f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
+          '<select id="topo-pg-kind" aria-label="Kind">' + POLY_FIELDS.filter(function (f) { return state.layer === 0 || f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
           '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
           '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
           '<select id="topo-pg-parent">' + parentOptions + '</select>' +
@@ -620,28 +633,29 @@
       drawLinksFor(id);
       ctx.refreshSidebar();
     }
-    // Rule 148: inside a polygon → that group's codes (when they differ);
-    // outside every polygon → nothing staged for this device.
+    // Rule 148: inside a polygon → that group's area / building / floor
+    // (rule 148(a): only the levels the polygon sets; the room, rack and
+    // junction box are never touched); outside every polygon → nothing.
     function stageCodesFor(id) {
       var d = nodeById[id];
       var p = state.placements[id];
       if (!d || !p) return;
       var assetId = d.assetId || id;
       var poly = innermostPolygon(layerPolys(), [p.x, p.y]);
-      var want = null;
-      if (state.layer === 0) {
-        want = poly ? normCodes(poly.codes) : null;
-      } else {
-        // Rule 152: a floor layer gives its floor. Inside a polygon: the
-        // polygon's codes plus that floor; outside: the device keeps every
-        // other code it has and only its floor changes.
+      var want = poly ? polyCodes(poly.codes) : emptyCodes();
+      // Rule 152: a floor layer gives its floor, inside a polygon or not.
+      if (state.layer !== 0) {
         var l = layerObj(state.layer);
-        want = Object.assign({}, poly ? normCodes(poly.codes) : normCodes(currentCodes[id]), { floor: l ? l.name : String(state.layer) });
+        want.floor = l ? l.name : String(state.layer);
       }
-      if (!want || codesEqual(want, currentCodes[id])) { ctx.stageLocationCode(assetId, null); return; }
+      var levels = POLY_FIELDS.map(function (f) { return f.field; }).filter(function (k) { return want[k] !== null; });
+      var cur = normCodes(currentCodes[id]);
+      var same = levels.every(function (k) { return String(want[k]).toLowerCase() === String(cur[k] || "").toLowerCase(); });
+      if (!levels.length || same) { ctx.stageLocationCode(assetId, null); return; }
       ctx.stageLocationCode(assetId, want, {
         name: d.label || assetId,
         from: currentCodes[id] || emptyCodes(),
+        levels: levels,
       });
     }
     function restageAllCodes() { Object.keys(state.placements).forEach(stageCodesFor); }
@@ -1041,6 +1055,7 @@
     // Pure helpers, exported for tests.
     _pointInRing: pointInRing,
     _innermostPolygon: innermostPolygon,
+    _polyCodes: polyCodes,
     _groupsFromData: groupsFromData,
     _codesLabel: codesLabel,
     _codesEqual: codesEqual,
