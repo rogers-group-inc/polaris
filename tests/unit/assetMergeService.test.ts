@@ -20,6 +20,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Rule 163: the agent lookup around a delete / merge is agentOrphanService;
+// its own behaviour is tests/integration/agentLeftOnHost.test.ts.
+vi.mock("../../src/services/agentOrphanService.js", () => ({
+  listAgentHosts: vi.fn(async () => []),
+  recordAgentsLeftOnHosts: vi.fn(async () => 0),
+}));
 vi.mock("../../src/db.js", () => {
   const tx = {
     asset: { update: vi.fn(), delete: vi.fn() },

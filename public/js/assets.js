@@ -2657,8 +2657,11 @@ async function openBulkTagsModal() {
 async function bulkDeleteAssets() {
   var ids = Array.from(_assetsSelected);
   if (!ids.length) return;
-  var ok = await showConfirm("Delete " + ids.length + " asset" + (ids.length !== 1 ? "s" : "") + "? This cannot be undone.");
-  if (!ok) return;
+  // Rule 163: warns, and offers an uninstall first, when any of them has the
+  // Polaris Agent. It may hand back fewer ids than it was given ("delete the
+  // others only").
+  ids = await confirmAssetDeletion(ids, "Delete " + ids.length + " asset" + (ids.length !== 1 ? "s" : "") + "? This cannot be undone.");
+  if (!ids || !ids.length) return;
   var btn = document.getElementById("assets-bulk-delete-btn");
   if (btn) btn.disabled = true;
   try {

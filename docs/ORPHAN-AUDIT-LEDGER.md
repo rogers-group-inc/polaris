@@ -27,7 +27,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
 | B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
-| D | Leftovers outside the database (hosts, devices, disk) | open — D-D1 decided; D-D2, D-D3 defaulted |
+| D | Leftovers outside the database (hosts, devices, disk) | **D.1 and D.7 done** — this commit (rule 163); D.2–D.6, D.8 open |
 | E | Removable by hand, but silent | open — no decisions needed |
 
 ## Decisions (operator, 2026-11-11)
@@ -130,13 +130,13 @@ C.7 (topology layouts), C.11 (process config on unpin).
 
 | # | Leftover | Consequence |
 |---|---|---|
-| D.1 | The agent stays installed and running when its asset is deleted or merged away | 401s forever; the Uninstall button went with the asset |
+| D.1 | The agent stays installed and running when its asset is deleted or merged away | 401s forever; the Uninstall button went with the asset **→ fixed for the three UI delete paths and the operator merge (rule 163): warn, offer the uninstall, ask again if it fails, record `agent.left_on_host`. **Open:** the two automatic ghost merges and the conflict-resolution absorb do not record a dropped agent** |
 | D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry |
 | D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id |
 | D.4 | Onboarding artefacts: service account, authorized key, sudoers file, Intune remediation, Arc run-command | no removal path; key rotation appends, so old keys stay authorized |
 | D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI |
 | D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way |
-| D.7 | Agent WebSocket session survives a revoke or an asset delete | until the agent stops or the web role restarts |
+| D.7 | Agent WebSocket session survives a revoke or an asset delete | until the agent stops or the web role restarts **→ fixed — `revokeBearer` and `recordAgentsLeftOnHosts` detach the session (rule 163)** |
 | D.8 | Browser `localStorage` keys embedding site / integration ids | cosmetic |
 
 Decisions needed:

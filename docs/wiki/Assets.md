@@ -2207,6 +2207,22 @@ the business, set its **State** to `decommissioned` instead: that stops polling
 and keeps the record. A device a source still discovers will also come back on
 the next discovery run, as a new record with no history.
 
+**If the device has the Polaris Agent installed**, the delete stops to tell you first
+([rule 163](Business-Rules#rule-163)). Deleting the record does not remove the agent: it
+keeps running on the host, Polaris stops accepting it, and the Uninstall button goes with
+the record. You are offered three things:
+
+| | |
+|---|---|
+| **Uninstall, then delete** | Polaris uninstalls the agent and deletes the record once the agent is gone. Needs `agentDeploy:write`; without it the button is locked and says why |
+| **Delete anyway** | the record is deleted and the agent is left on the host, to be removed there. Polaris writes a warning Event naming the host |
+| **Cancel** | nothing happens |
+
+If the uninstall fails — the host is off, or there is no credential on file — **nothing is
+deleted**. You are shown the reason and asked again. On a bulk delete the question names
+each host that failed and adds **Delete the other N only**, which deletes everything
+except those hosts.
+
 The delete also cleans up after the device ([rule 157](Business-Rules#rule-157)): it is
 removed from every path check, contact and maintenance schedule it was pinned to; its log
 rules and process log settings are deleted; and anything still queued for its Polaris Agent

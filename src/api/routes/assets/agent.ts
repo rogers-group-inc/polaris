@@ -61,6 +61,20 @@ const BulkAgentInstallSchema = z.object({
 // still see what is installed. The client hides these controls behind
 // canDeployAgent() in public/js/app.js; keep the two in lockstep.
 
+// POST /assets/agent-hosts — which of these assets have a Polaris Agent
+// (business rule 163). The delete dialogs ask this before they confirm, so an
+// agent is never left running on a host without the operator having been
+// told. `read`: it says nothing the Agent card does not already show.
+const AgentHostsSchema = z.object({ ids: z.array(z.string().min(1).max(64)).max(5000) });
+router.post("/agent-hosts", requirePermission("assets", "read"), async (req, res, next) => {
+  try {
+    const { ids } = AgentHostsSchema.parse(req.body);
+    const { listAgentHosts } = await import("../../../services/agentOrphanService.js");
+    const hosts = await listAgentHosts(ids);
+    res.json({ hosts: hosts.map((h) => ({ assetId: h.assetId, name: h.name, installStatus: h.installStatus, agentVersion: h.agentVersion })) });
+  } catch (err) { next(err); }
+});
+
 router.post("/bulk-agent-install", requirePermission("agentDeploy", "write"), async (req, res, next) => {
   try {
     const input = BulkAgentInstallSchema.parse(req.body);

@@ -44,6 +44,7 @@ import { assertCredentialAssignments } from "./credentialService.js";
 import { isAzureTag } from "../utils/tagNormalize.js";
 import { syncAzureTagRegistry } from "./tagAssignmentService.js";
 import { afterAssetsDeleted } from "./assetRemovalService.js";
+import { listAgentHosts, recordAgentsLeftOnHosts } from "./agentOrphanService.js";
 import { releaseDnsResolvedForAsset } from "./dnsResolvedReservationService.js";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
@@ -970,7 +971,11 @@ export async function bulkDeleteAssets(ids: string[], actor: string | undefined)
   for (const chunk of chunkArray(targets.map((a) => a.id), 25)) {
     await Promise.all(chunk.map((id) => releaseDnsResolvedForAsset(id)));
   }
+  // Rule 163: read which of these have a Polaris Agent BEFORE the cascade takes
+  // the rows — afterwards nothing knows an agent was ever there.
+  const agentHosts = await listAgentHosts(targets.map((a) => a.id));
   const { count } = await prisma.asset.deleteMany({ where: { id: { in: ids } } });
+  await recordAgentsLeftOnHosts(agentHosts, { actor, reason: "asset-deleted" });
   // Rule 157: everything that named these assets without a foreign key.
   await afterAssetsDeleted(targets.map((a) => a.id));
   logEvent({ action: "asset.bulk_deleted", resourceType: "asset", actor, message: `Bulk deleted ${count} asset(s)` });
@@ -995,7 +1000,10 @@ export async function deleteAsset(id: string, actor: string | undefined): Promis
   if (existing.assetType === "switch" || existing.assetType === "access_point") {
     await releaseInfraReservationsForAssets([id], { reason: "asset deleted", actor });
   }
+  // Rule 163: read the agent BEFORE the cascade takes its row.
+  const agentHosts = await listAgentHosts([id]);
   await prisma.asset.delete({ where: { id } });
+  await recordAgentsLeftOnHosts(agentHosts, { actor, reason: "asset-deleted" });
   // Rule 157: everything that named this asset without a foreign key.
   await afterAssetsDeleted([id]);
   if (existing.tags.some(isAzureTag)) void syncAzureTagRegistry();
