@@ -6,6 +6,7 @@
 
 import { type FortiswitchMclagPeer } from "../../utils/fortiswitchCmdb.js";
 import { type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
+import { type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
 import type { ApRadioSample } from "../../utils/fortiapMonitorRow.js";
 import { type FdbEntry } from "../../utils/macForwarding.js";
 import { type ArpNeighborEntry } from "../../utils/arpNeighbors.js";
@@ -383,6 +384,13 @@ export interface SystemInfoSample {
   descrIdentity?: SysDescrDetail;
   /** The raw sysDescr behind it, so Asset.os can follow the firmware. */
   sysDescr?: string | null;
+  /**
+   * What the device stated about itself through sysName and its ENTITY-MIB
+   * chassis row (business rule 154, utils/snmpEntityIdentity.ts). Undefined
+   * when the transport has no such reading (REST, agent) or the device stated
+   * nothing; persisted as the `snmp-identity` enrichment source.
+   */
+  selfIdentity?: SnmpSelfIdentity;
 }
 
 export interface CollectionResult<T> {

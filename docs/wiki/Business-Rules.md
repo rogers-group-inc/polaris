@@ -3262,3 +3262,14 @@ summary; it never changes one by itself. Everything reads locations through the 
 the dependency-path picture in alert emails, the new-region prompt, and saved views. Polaris's
 own saved data (a view's region, polygon groups, saved layouts) follows a rename, move or merge
 automatically, so nothing saved against the old name is lost.
+
+### Rule 154
+
+**An SNMP device fills in its own identity when nothing else does.** On each SNMP system-info
+poll, Polaris reads the device's own name (`sysName`) and its chassis entry in ENTITY-MIB (model,
+serial number, manufacturer and running software version). These fill the asset's hostname,
+model, serial, manufacturer and OS / firmware only when no integration that manages the device
+(FortiManager, a FortiGate's switch or AP inventory, vCenter, AD, Intune, the Polaris Agent) says
+otherwise. A hostname you typed is kept. When the answer is ambiguous Polaris writes nothing: a
+device with no chassis entry gives no model or serial, and a switch stack gives no serial. The
+first fill is quiet; a later change of model, serial or name is recorded in Events.
