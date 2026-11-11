@@ -599,7 +599,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/integrationDetachService.ts
 
-**What it owns:** Business rule 159 — what deleting an integration does to everything it discovered. `previewIntegrationDetach` (the delete dialog's numbers) and `detachIntegration` (run BEFORE the integration row is deleted). Never deletes the integration, an asset or a network.
+**What it owns:** Business rule 160 — what deleting an integration does to everything it discovered. `previewIntegrationDetach` (the delete dialog's numbers) and `detachIntegration` (run BEFORE the integration row is deleted). Never deletes the integration, an asset or a network.
 
 **Public API:** `previewIntegrationDetach({ id, name, type })` → `{ sourcedAssets, soleSourceAssets, soleSourceMonitored, networks, pushedReservations, azureTaggedAssets }`; `detachIntegration({ id, name, type }, { decommission, actor })` → `IntegrationDetachResult`; pure `detachSummary(result)` (the text on the `integration.deleted` Event).
 

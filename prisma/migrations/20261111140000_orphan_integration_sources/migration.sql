@@ -1,4 +1,4 @@
--- Business rule 159: deleting an integration detaches what it discovered.
+-- Business rule 160: deleting an integration detaches what it discovered.
 --
 -- integrationDetachService now does this at delete time. This migration is the
 -- other half: it removes what integrations deleted BEFORE this release left

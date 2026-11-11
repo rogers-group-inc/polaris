@@ -193,7 +193,7 @@ Everything else Polaris does is a **read**.
 ## Deleting an integration
 
 **Delete** on an integration's card removes the integration, not the inventory it built
-([rule 159](Business-Rules#rule-159)). The dialog tells you what will happen before you
+([rule 160](Business-Rules#rule-160)). The dialog tells you what will happen before you
 confirm:
 
 | | What happens |

@@ -75,6 +75,7 @@ import { normalizeMacOrNull } from "../../utils/mac.js";
 import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
 import { ipv6Enabled } from "../../services/ipv6GateService.js";
 import { sortNewestFirst } from "../../utils/sortByTime.js";
+import { recordHostHbaPorts } from "../../services/fibreChannelService.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -1212,14 +1213,39 @@ const SystemInfoSchema = z.object({
   primaryMac:     z.string().max(64).optional(),
   primaryIp:      z.string().max(64).optional(),
   agentVersion:   z.string().max(64).optional(),     // copy of the running binary's version; informational
+  // Fibre-channel HBA ports (agent 0.29.0+, business rule 159). Absent = the
+  // agent cannot say (older agent, unsupported OS): stored rows stay. An empty
+  // list = read, and the host has none: they are cleared.
+  fcPorts: z.array(z.object({
+    name:       z.string().max(128).optional(),
+    portWwn:    z.string().max(64),
+    nodeWwn:    z.string().max(64).optional(),
+    portState:  z.string().max(64).optional(),
+    speed:      z.string().max(64).optional(),
+    fabricName: z.string().max(64).optional(),
+    model:      z.string().max(255).optional(),
+    firmware:   z.string().max(255).optional(),
+    driver:     z.string().max(255).optional(),
+  })).max(64).optional(),
 });
 
 agentsRouter.post("/system-info", async (req, res, next) => {
   try {
-    const body         = SystemInfoSchema.parse(req.body ?? {});
+    const { fcPorts, ...body } = SystemInfoSchema.parse(req.body ?? {});
     const assetId      = req.managedAgent!.assetId;
     const managedAgentId = req.managedAgent!.managedAgentId;
     const now          = new Date();
+
+    // The host's own HBA ports (rule 159) — their own table, never the
+    // identity blob below. Edge-triggered in the service.
+    if (fcPorts) {
+      await recordHostHbaPorts(
+        assetId,
+        "agent",
+        fcPorts.map(({ fabricName, ...p }) => ({ ...p, fabricWwn: fabricName })),
+        now,
+      );
+    }
 
     // Build the observed blob — strip undefined so the priority rules'
     // truthy-check works cleanly.

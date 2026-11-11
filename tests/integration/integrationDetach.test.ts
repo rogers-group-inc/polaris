@@ -1,5 +1,5 @@
 /**
- * tests/integration/integrationDetach.test.ts — business rule 159 against a
+ * tests/integration/integrationDetach.test.ts — business rule 160 against a
  * real database: deleting an integration keeps what it discovered but
  * detaches it, decommissions the assets nothing else reports only when asked,
  * and records the DHCP entries it leaves on the device.
@@ -86,7 +86,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("deleting an integration (rule 159)", () => {
+d("deleting an integration (rule 160)", () => {
   it("previews what it discovered, and which of it nothing else reports", async () => {
     const s = await seedVcenter();
     const adm = await authedAgent(app);
@@ -195,7 +195,7 @@ d("deleting an integration (rule 159)", () => {
   });
 });
 
-d("the clean-up migration (what integrations deleted before rule 159 left behind)", () => {
+d("the clean-up migration (what integrations deleted before rule 160 left behind)", () => {
   it("removes dead source rows, frozen placement edges and stranded azure: tags, and nothing that is still live", async () => {
     const live = await mkIntegration("live-vc", "vcenter");
     const host = await mkAsset("mig-host", { tags: ["vcenter"] });
@@ -204,7 +204,7 @@ d("the clean-up migration (what integrations deleted before rule 159 left behind
     const exArc = await mkAsset("mig-ex-arc", { tags: ["azurearc", "azure:env=prod", "keep-me"] });
     const stillArc = await mkAsset("mig-still-arc", { tags: ["azurearc", "azure:env=dev"] });
     const arc = await mkIntegration("live-arc", "azurearc");
-    // What a pre-159 delete left: rows whose integration id the FK nulled.
+    // What a pre-160 delete left: rows whose integration id the FK nulled.
     await source(deadVm.id, null, "vcenter-vm", "mig-dead-vm");
     await source(exArc.id, null, "arc", "mig-ex-arc");
     // Live rows, and a kind that legitimately has no integration.

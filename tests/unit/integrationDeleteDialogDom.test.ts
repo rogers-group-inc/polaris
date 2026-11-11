@@ -1,5 +1,5 @@
 /**
- * tests/unit/integrationDeleteDialogDom.test.ts — business rule 159: the
+ * tests/unit/integrationDeleteDialogDom.test.ts — business rule 160: the
  * Delete Integration dialog says what the integration discovered before it is
  * deleted, offers to decommission what nothing else reports, and says that
  * pushed DHCP entries stay on the device.

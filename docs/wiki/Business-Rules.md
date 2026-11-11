@@ -3335,6 +3335,23 @@ a slice at a time over several nights. See [Events](Events#retention-and-archiva
 
 ### Rule 159
 
+**A fibre-channel connection is linked to the server that reports its WWN, or failing that to
+the one server its registered name matches.** On a Cisco MDS switch monitored over SNMP,
+Polaris reads which device is logged into each port, the name each HBA registered with the
+switch, and each port's error counters. Servers report their own HBA WWNs: the Polaris Agent
+on Linux and Windows (agent 0.29.0 and later), and vCenter for ESXi hosts.
+
+A connection links to a server in one of two ways, in this order:
+
+1. **By WWN:** exactly one server reports the logged-in WWN as its own.
+2. **By name:** the registered host name matches exactly one asset's hostname or DNS name.
+
+If two servers claim the WWN, or two assets match the name, the connection is shown with its
+WWN and registered name but not linked. A full name such as `esx07.example.com` never matches
+an asset in a different domain. When a device logs out of a port, Polaris records it in Events.
+
+### Rule 160
+
 **Deleting an integration keeps what it discovered, and detaches it.** The assets and
 networks stay. What that integration reported about them is removed, so they stop being
 updated from it and stand as ordinary manual records; for an Azure Arc integration the

@@ -2054,7 +2054,7 @@ router.put("/:id", async (req, res, next) => {
 
 // DELETE /api/v1/integrations/:id
 // GET /api/v1/integrations/:id/delete-preview — what deleting this integration
-// would detach, for the confirm dialog's numbers (business rule 159).
+// would detach, for the confirm dialog's numbers (business rule 160).
 // `canDecommission` is whether THIS caller may tick the box: decommissioning is
 // a fleet-wide act on assets, so it needs Full Read-Write there.
 router.get("/:id/delete-preview", async (req, res, next) => {
@@ -2075,7 +2075,7 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const existing = await prisma.integration.findUnique({ where: { id: req.params.id } });
     if (!existing) throw new AppError(404, "Integration not found");
-    // Rule 159: the tick-box in the dialog. Refused, before anything changes,
+    // Rule 160: the tick-box in the dialog. Refused, before anything changes,
     // for a caller who could not decommission those assets one by one.
     const decommission = req.query.decommission === "true" || req.query.decommission === "1";
     if (decommission && !hasPermission(req, "assets", "fullwrite")) {
@@ -2094,7 +2094,7 @@ router.delete("/:id", async (req, res, next) => {
         req.session?.username ?? "unknown",
       );
     }
-    // Rule 159: detach what it discovered BEFORE the row goes, while its id
+    // Rule 160: detach what it discovered BEFORE the row goes, while its id
     // still finds its source rows, sightings, edges and pushed reservations.
     // A failure here leaves the integration in place to try again.
     const detached = await detachIntegration(

@@ -1987,7 +1987,7 @@ async function abortIntegrationDiscovery(id, name) {
   try { await api.integrations.abortDiscover(id); } catch (_) {}
 }
 
-// ─── Delete (business rule 159) ──────────────────────────────────────────────
+// ─── Delete (business rule 160) ──────────────────────────────────────────────
 // Deleting an integration keeps what it discovered — the inventory is not the
 // integration's to take with it — but detaches it: that integration's source
 // data, tags and placement links go, so the records stand as plain manual ones.

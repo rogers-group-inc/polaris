@@ -1,6 +1,6 @@
 /**
  * src/services/integrationDetachService.ts — what deleting an integration
- * does to everything it discovered (business rule 159).
+ * does to everything it discovered (business rule 160).
  *
  * `DELETE /integrations/:id` used to delete the row and leave the rest to the
  * schema, whose answer for almost every reference is `onDelete: SetNull`. But

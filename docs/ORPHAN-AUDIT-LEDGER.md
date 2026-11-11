@@ -25,7 +25,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 |---|---|---|
 | 0 | Queued agent commands, ownership stamps, disabled-account alerts, departing-account bookings | **done** — pushed `3d7bde734` |
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
-| B | Integration delete / disable / re-scope | **delete done** — this commit (rule 159); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
+| B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
 | D | Leftovers outside the database (hosts, devices, disk) | open — D-D1 decided; D-D2, D-D3 defaulted |
 | E | Removable by hand, but silent | open — no decisions needed |
@@ -74,7 +74,7 @@ Not asked; defaulted by the implementer and open to change:
 Deliberately not done in A: an automation's `scope.assetIds` is left alone on a DELETE (an
 empty list means every device — rule 157(a)); it is in batch E as "silent".
 
-## Batch B — integration delete / disable / re-scope (delete done, rule 159)
+## Batch B — integration delete / disable / re-scope (delete done, rule 160)
 
 Root cause shared by most rows: deleting an integration nulls the integration reference
 (`onDelete: SetNull`) on what it discovered, and every clean-up sweep is keyed on that
