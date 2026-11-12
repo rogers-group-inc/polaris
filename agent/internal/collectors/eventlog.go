@@ -12,8 +12,6 @@
 package collectors
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,52 +41,10 @@ type rawEvent struct {
 
 const defaultMaxPerPush = 100
 
-// cursorFile is the per-channel resume state, stored as JSON next to agent.conf.
-type cursorFile struct {
-	Version  int               `json:"version"`
-	Channels map[string]string `json:"channels"`
-}
-
+// cursorPath is the per-channel cursor map (load/save + codec in
+// cursorstate.go). Missing/corrupt file → every channel first-run-seeds at "now".
 func cursorPath(stateDir string) string {
 	return filepath.Join(stateDir, "eventlog-cursors.json")
-}
-
-// loadCursors reads the per-channel cursor map. Missing/corrupt file → empty
-// map (every channel then first-run-seeds at "now").
-func loadCursors(stateDir string) map[string]string {
-	b, err := os.ReadFile(cursorPath(stateDir))
-	if err != nil {
-		return map[string]string{}
-	}
-	return parseCursors(b)
-}
-
-// parseCursors is the pure decode half of loadCursors (unit-tested).
-func parseCursors(b []byte) map[string]string {
-	var cf cursorFile
-	if err := json.Unmarshal(b, &cf); err != nil || cf.Channels == nil {
-		return map[string]string{}
-	}
-	return cf.Channels
-}
-
-// saveCursors atomically writes the cursor map (temp + rename, 0600 — matches
-// config.Save's posture even though the cursor holds no secret).
-func saveCursors(stateDir string, cursors map[string]string) error {
-	b, err := marshalCursors(cursors)
-	if err != nil {
-		return err
-	}
-	tmp := cursorPath(stateDir) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, cursorPath(stateDir))
-}
-
-// marshalCursors is the pure encode half of saveCursors (unit-tested).
-func marshalCursors(cursors map[string]string) ([]byte, error) {
-	return json.Marshal(cursorFile{Version: 1, Channels: cursors})
 }
 
 // normalizeLevel maps OS-native level strings/integers to the wire vocabulary
@@ -224,12 +180,12 @@ func itoa64(v int64) string {
 // Returns nil on an unsupported platform or any reader error (best-effort, like
 // the other collectors).
 func EventLogOnce(stateDir string, filter EventLogFilter) []*transport.EventLogSample {
-	cursors := loadCursors(stateDir)
+	cursors := loadCursorFile(cursorPath(stateDir))
 	events, newCursors, err := readPlatformEvents(cursors, filter)
 	// Persist whatever cursor progress the reader made even if it also
 	// returned an error mid-stream — avoids re-reading the same entries.
 	if newCursors != nil {
-		_ = saveCursors(stateDir, newCursors)
+		_ = saveCursorFile(cursorPath(stateDir), newCursors)
 	}
 	if err != nil || len(events) == 0 {
 		return nil

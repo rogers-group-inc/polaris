@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"os/exec"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -80,26 +79,21 @@ func readPlatformEvents(cursors map[string]string, filter EventLogFilter) ([]raw
 	return events, out, nil
 }
 
-// journalTailCursor returns the cursor of the most recent journal entry without
-// emitting any entries (`-n 0 --show-cursor`). Empty on any failure.
-func journalTailCursor() string {
+// journalTailCursor returns the cursor of the most recent journal entry
+// matching `match` (journalctl match args placed before the fixed flags: none
+// for the whole journal, "_COMM=<name>" for a program, "-u", "<unit>" for a
+// unit) without emitting any entries (`-n 0 --show-cursor`). Empty on any
+// failure. Shared by the event-log, process-log and service-log tails.
+func journalTailCursor(match ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "journalctl", "-n", "0", "--show-cursor", "--no-pager", "-o", "cat")
+	args := append(append([]string{}, match...), "-n", "0", "--show-cursor", "--no-pager", "-o", "cat")
+	cmd := exec.CommandContext(ctx, "journalctl", args...)
 	outb, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
-	// The cursor is printed on a trailing line: "-- cursor: s=abc...".
-	sc := bufio.NewScanner(bytes.NewReader(outb))
-	cursor := ""
-	for sc.Scan() {
-		line := sc.Text()
-		if idx := strings.Index(line, "cursor:"); idx >= 0 {
-			cursor = trimSpace(line[idx+len("cursor:"):])
-		}
-	}
-	return cursor
+	return parseShowCursor(outb)
 }
 
 // parseJournalJSON parses one-JSON-object-per-line journalctl output into
@@ -120,45 +114,32 @@ func parseJournalJSON(b []byte) ([]rawEvent, string) {
 		if err := json.Unmarshal(line, &m); err != nil {
 			continue
 		}
-		msg := journalStr(m["MESSAGE"])
+		msg := jsonLineField(m, "MESSAGE")
 		if msg == "" {
 			continue // binary/blob message — skip
 		}
-		channel := journalStr(m["_SYSTEMD_UNIT"])
+		channel := jsonLineField(m, "_SYSTEMD_UNIT")
 		if channel == "" {
-			channel = journalStr(m["SYSLOG_IDENTIFIER"])
+			channel = jsonLineField(m, "SYSLOG_IDENTIFIER")
 		}
 		if channel == "" {
 			channel = "journald"
 		}
 		var idPtr *int64 // journald has no stable numeric event id
 		ev := rawEvent{
-			Timestamp: realtimeToRFC3339(journalStr(m["__REALTIME_TIMESTAMP"])),
+			Timestamp: realtimeToRFC3339(jsonLineField(m, "__REALTIME_TIMESTAMP")),
 			Channel:   channel,
-			Provider:  journalStr(m["SYSLOG_IDENTIFIER"]),
+			Provider:  jsonLineField(m, "SYSLOG_IDENTIFIER"),
 			EventID:   idPtr,
-			Level:     journalStr(m["PRIORITY"]),
+			Level:     jsonLineField(m, "PRIORITY"),
 			Message:   msg,
 		}
 		events = append(events, ev)
-		if c := journalStr(m["__CURSOR"]); c != "" {
+		if c := jsonLineField(m, "__CURSOR"); c != "" {
 			lastCursor = c
 		}
 	}
 	return events, lastCursor
-}
-
-// journalStr decodes a journald JSON field that is normally a string but can be
-// an array of byte values for non-UTF8 data; returns "" for the array case.
-func journalStr(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	return ""
 }
 
 // realtimeToRFC3339 converts journald __REALTIME_TIMESTAMP (microseconds since
@@ -172,16 +153,4 @@ func realtimeToRFC3339(micros string) string {
 		return ""
 	}
 	return time.Unix(us/1_000_000, (us%1_000_000)*1000).UTC().Format(time.RFC3339Nano)
-}
-
-// trimSpace is a tiny dependency-free strings.TrimSpace for the cursor line.
-func trimSpace(s string) string {
-	start, end := 0, len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r' || s[start] == '\n') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r' || s[end-1] == '\n') {
-		end--
-	}
-	return s[start:end]
 }

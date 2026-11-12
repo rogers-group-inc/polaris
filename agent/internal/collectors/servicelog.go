@@ -16,7 +16,6 @@
 package collectors
 
 import (
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -81,26 +80,6 @@ func serviceLogCursorPath(stateDir string) string {
 	return filepath.Join(stateDir, "servicelog-cursors.json")
 }
 
-func loadServiceLogCursors(stateDir string) map[string]string {
-	b, err := os.ReadFile(serviceLogCursorPath(stateDir))
-	if err != nil {
-		return map[string]string{}
-	}
-	return parseCursors(b) // reuse eventlog.go's tolerant codec
-}
-
-func saveServiceLogCursors(stateDir string, cursors map[string]string) error {
-	b, err := marshalCursors(cursors)
-	if err != nil {
-		return err
-	}
-	tmp := serviceLogCursorPath(stateDir) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, serviceLogCursorPath(stateDir))
-}
-
 // ServiceLogOnce tails every pinned unit's log since its cursor and returns
 // the new lines as wire samples. Mutates + persists the cursor map. Best-effort:
 // a per-unit failure is skipped, not fatal. Returns nil when nothing is pinned.
@@ -111,7 +90,7 @@ func ServiceLogOnce(stateDir string, units []string, maxPerUnit int) []*transpor
 	if maxPerUnit <= 0 {
 		maxPerUnit = defaultMaxLogLinesPerProcess
 	}
-	cursors := loadServiceLogCursors(stateDir)
+	cursors := loadCursorFile(serviceLogCursorPath(stateDir))
 	var out []*transport.ServiceLogSample
 	for _, unit := range units {
 		lines, src := readServiceUnitLog(unit, cursors, maxPerUnit)
@@ -125,6 +104,6 @@ func ServiceLogOnce(stateDir string, units []string, maxPerUnit int) []*transpor
 			out = append(out, sample)
 		}
 	}
-	_ = saveServiceLogCursors(stateDir, cursors)
+	_ = saveCursorFile(serviceLogCursorPath(stateDir), cursors)
 	return out
 }
