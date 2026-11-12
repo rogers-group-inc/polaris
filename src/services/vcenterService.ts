@@ -1791,15 +1791,6 @@ export function hostExternalId(hostMoref: string, integrationId: string): string
   return `${integrationId}:${hostMoref}`;
 }
 
-/** cluster moref → member host morefs, from the per-cluster host listing. */
-export function buildClusterHostMap(
-  hostsByCluster: ReadonlyArray<{ clusterMoref: string; hostMorefs: string[] }>,
-): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const entry of hostsByCluster) out.set(entry.clusterMoref, [...entry.hostMorefs]);
-  return out;
-}
-
 /**
  * Build VM→host dependency edges, vMotion-safe:
  *  - VM on a CLUSTERED host → one edge per cluster-member host asset. Under

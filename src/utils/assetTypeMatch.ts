@@ -178,7 +178,19 @@ function positiveMatchOp(op: string): string {
 export const MATCH_GROUP_OPS = ["and", "or", "none", "notAll"] as const;
 type MatchGroupOp = (typeof MATCH_GROUP_OPS)[number];
 
-export const MATCH_CONTEXTS = ["directory", "scan"] as const;
+/**
+ * Where a type's rules run (business rule 164):
+ *  - `directory` — AD / Entra / Intune / Azure Arc records (an OS string, a chassis);
+ *  - `scan`      — a device's own self-description: Network Discovery, and
+ *                  the monitor path's sysDescr read;
+ *  - `inventory` — a FortiGate's detected-device inventory (discovery Phase 7):
+ *                  the gate's OS fingerprint, the NIC vendor, the client's
+ *                  hostname, plus what the asset already carries (model,
+ *                  productType). Its own context because those are neither a
+ *                  directory's nor the device's own words, and an operator
+ *                  must be able to see — and choose — which types it reaches.
+ */
+export const MATCH_CONTEXTS = ["directory", "scan", "inventory"] as const;
 export type MatchContext = (typeof MATCH_CONTEXTS)[number];
 
 /**
@@ -420,19 +432,6 @@ export function normalizeMatchRules(raw: unknown): MatchRules | null {
     return children.length ? { op: group.op, children } : null;
   };
   return prune(root);
-}
-
-/** Every leaf in a tree, in walk order. */
-export function matchClauses(rules: MatchRules | null | undefined): MatchClause[] {
-  const out: MatchClause[] = [];
-  const walk = (group: MatchGroup): void => {
-    for (const child of group.children) {
-      if (isMatchGroup(child)) walk(child);
-      else out.push(child);
-    }
-  };
-  if (rules) walk(rules);
-  return out;
 }
 
 // ─── Evaluation ────────────────────────────────────────────────────────────
@@ -694,10 +693,6 @@ function activeRegistry(): readonly MatchableType[] {
   );
 }
 
-export function getAssetTypeMatchRegistry(): readonly MatchableType[] {
-  return activeRegistry();
-}
-
 /** Resolve against the live cache. */
 export function resolveAssetTypeCached(facts: AssetTypeFacts, context: MatchContext): string | null {
   return resolveAssetType(activeRegistry(), facts, context);
@@ -736,8 +731,12 @@ function anyContains(field: MatchField, values: readonly string[]): MatchGroup {
 export const DEFAULT_TYPE_MATCHING: Readonly<
   Record<string, { contexts: MatchContext[]; priority: number; rules: MatchRules }>
 > = {
+  // `inventory` beside `directory` on the two OS-ladder types: Phase 7 ran
+  // these in the directory context until business rule 164 gave it its own,
+  // and migration 20261112000000_asset_type_inventory_context ticked it
+  // wherever `directory` was, so behaviour carried over unchanged.
   server: {
-    contexts: ["directory"],
+    contexts: ["directory", "inventory"],
     priority: 20,
     rules: anyContains("os", [
       "server", "centos", "red hat", "rhel", "rocky linux", "almalinux",
@@ -745,7 +744,7 @@ export const DEFAULT_TYPE_MATCHING: Readonly<
     ]),
   },
   workstation: {
-    contexts: ["directory"],
+    contexts: ["directory", "inventory"],
     priority: 30,
     rules: {
       op: "or",

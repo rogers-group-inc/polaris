@@ -28,7 +28,7 @@ describe("getQuarantineStatus", () => {
     expect(arg.where).toEqual({ id: "a1" });
     expect(Object.keys(arg.select)).toEqual([
       "id", "status", "statusBeforeQuarantine", "quarantineReason", "quarantinedAt", "quarantinedBy", "quarantineTargets",
-      "quarantineStranded", // business rule 164
+      "quarantineStranded", // business rule 165
     ]);
   });
 

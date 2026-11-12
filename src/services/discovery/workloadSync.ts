@@ -41,18 +41,17 @@ import { prisma } from "../../db.js";
 import { isValidIpAddress } from "../../utils/cidr.js";
 import { getConfiguredResolver } from "../dnsService.js";
 import { logEvent, logDiscoveryAssetCreated, logDiscoveryAssetUpdated, snapshotMaterialAssetFields } from "../eventLogService.js";
-import { projectAssetFromSources, ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
+import { projectAssetFromSources, copyProjectedFields } from "../../utils/assetProjection.js";
 import { bumpLastSeen, clampAcquiredToLastSeen } from "../../utils/assetInvariants.js";
 import { buildMonitoredSweep, getAddAsMonitoredFromConfig } from "../monitorOverrideService.js";
-import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { isMergeableEndpointGhost, mergeEndpointGhostIntoAsset } from "../assetGhostMergeService.js";
 import {
   MAC_ROW_SELECT,
   buildMacRowsForCreate,
-  selectPrimaryMac,
   shapeMacRows,
   type MacJsonEntry,
+  mergeObservedMacs,
 } from "../../utils/macAddresses.js";
 import { matchesWildcard } from "../../utils/integrationFilter.js";
 import { absenceExceedsGuard } from "../../utils/directoryAbsence.js";
@@ -73,6 +72,7 @@ import {
 } from "../../utils/workloadSources.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
+import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 
 // ─── The normalized shape both services return ────────────────────────────────
 
@@ -328,18 +328,6 @@ export interface WorkloadSnapshot {
   containerUsage: Map<string, WorkloadUsage>;
 }
 
-// Identity + state live in utils/workloadSources.ts (no imports) so the
-// services and collectors can share them without importing this file, which
-// pulls discoveryEngine. Re-exported here for the sync's own callers.
-export {
-  normalizeWorkloadState,
-  workloadContainerExternalId,
-  workloadContainerKey,
-  workloadHostExternalId,
-  workloadHostUsageKey,
-  workloadVmExternalId,
-} from "../../utils/workloadSources.js";
-
 // ─── Filters (the post-hoc twin is utils/integrationFilter.ts) ───────────────
 
 function asStringArray(v: unknown): string[] {
@@ -580,19 +568,7 @@ export async function syncWorkloadDevices(
   };
 
   // Preload — tight selects, once (2000-asset scale: no per-device reads).
-  const allAssetsWithRows = await prisma.asset.findMany({
-    select: {
-      id: true, hostname: true, hostnameOverride: true, assetType: true, status: true,
-      monitored: true, monitorOverride: true, acquiredAt: true, lastSeen: true,
-      tags: true, discoveredByIntegrationId: true, dnsName: true, ipAddress: true,
-      os: true, osVersion: true, serialNumber: true, manufacturer: true, model: true,
-      learnedLocation: true, learnedAddress: true, notes: true, assignedTo: true,
-      macAddress: true, dependencyLayer: true, virtualization: true,
-      macAddressRows: { select: MAC_ROW_SELECT },
-    },
-  });
-  const allAssets = allAssetsWithRows.map((a: any) => ({ ...a, macAddresses: shapeMacRows(a.macAddressRows) }));
-  const assetById = new Map<string, any>(allAssets.map((a: any) => [a.id, a]));
+  const { allAssets, assetById } = await loadAssetsForSync({ learnedAddress: true, dependencyLayer: true, virtualization: true });
 
   const allSources = await prisma.assetSource.findMany({
     select: { assetId: true, sourceKind: true, externalId: true, integrationId: true, inferred: true, observed: true, lastSeen: true },
@@ -736,18 +712,7 @@ export async function syncWorkloadDevices(
     const layer = role === "host" ? 1 : 2;
     const nowIso = now.toISOString();
     const macEntries = macs.map((mac) => ({ mac, source: role === "container" ? `${platform}-container` : `${platform}-vnic` }));
-    const mergeMacs = (existingMacs: any[]): { primary: string | null; merged: any[] } => {
-      const merged = Array.isArray(existingMacs) ? [...existingMacs] : [];
-      for (const e of macEntries) {
-        const key = normalizeMacKey(e.mac);
-        if (!key) continue;
-        const hit = merged.find((m: any) => normalizeMacKey(m?.mac) === key);
-        if (hit) { hit.lastSeen = nowIso; hit.source = e.source; }
-        else merged.push({ mac: e.mac, lastSeen: nowIso, source: e.source });
-      }
-      merged.sort((a: any, b: any) => new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime());
-      return { primary: selectPrimaryMac(merged) ?? merged[0]?.mac ?? null, merged };
-    };
+    const mergeMacs = (existingMacs: unknown) => mergeObservedMacs(existingMacs, macEntries, nowIso);
 
     let existing: any = assetByExternalId.get(`${kind}|${externalId}`) ?? null;
     if (!existing && role === "vm") {
@@ -788,14 +753,10 @@ export async function syncWorkloadDevices(
         const priorBlob = (existing.virtualization ?? null) as Record<string, unknown> | null;
         if (priorBlob?.monitoringPausedByStop === true) virtualization.monitoringPausedByStop = true;
         const updateData: Record<string, unknown> = { virtualization: virtualization as any };
-        if (projected.hostname !== null) updateData.hostname = projected.hostname;
-        if (projected.os !== null) updateData.os = projected.os;
-        if (projected.osVersion !== null) updateData.osVersion = projected.osVersion;
-        if (projected.manufacturer !== null) updateData.manufacturer = projected.manufacturer;
-        if (projected.model !== null) updateData.model = projected.model;
-        if (projected.serialNumber !== null && projected.serialNumber !== undefined && !existing.serialNumber) {
-          updateData.serialNumber = projected.serialNumber;
-        }
+        copyProjectedFields(
+          updateData, projected, ["hostname", "os", "osVersion", "manufacturer", "model", "serialNumber"],
+          { fillOnly: { serialNumber: existing.serialNumber } },
+        );
         if (projected.ipAddress !== null) updateData.ipAddress = projected.ipAddress;
         // A host first synced before its name was resolved carries the name in
         // ipAddress; clear it when this pass could not resolve a real address.
@@ -1148,42 +1109,12 @@ export async function syncWorkloadDevices(
       } else if (gone.length > 0) {
         await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
         syncLog("info", `Swept ${gone.length} stale ${label} source row(s) no longer present on the host.`);
-        const candidateIds = [...new Set(gone.map((r) => r.assetId))];
-        const remaining = await prisma.assetSource.findMany({
-          where: { assetId: { in: candidateIds }, sourceKind: { notIn: [...ENRICHMENT_SOURCE_KINDS] } },
-          select: { assetId: true },
+        const swept = await decommissionUnclaimedAssets(gone.map((r) => r.assetId), {
+          now, actor, integrationId, integrationName,
+          action: `asset.${platform}.decommissioned`, reason: `missing-from-${platform}-inventory`,
+          noun: (t) => (t === "container" ? workloadContainerNoun(platform) : t === "hypervisor" ? "Host" : "VM"),
         });
-        const stillClaimed = new Set(remaining.map((r) => r.assetId));
-        const orphanIds = candidateIds.filter((id) => !stillClaimed.has(id));
-        if (orphanIds.length > 0) {
-          const orphans = await prisma.asset.findMany({
-            where: { id: { in: orphanIds }, status: { not: "decommissioned" } },
-            select: { id: true, hostname: true, ipAddress: true, assetType: true },
-          });
-          if (orphans.length > 0) {
-            const ids = orphans.map((a) => a.id);
-            await releaseAssetsForDecommission(ids, {
-              at: now, actor, statusChangedBy: integrationName, reason: `no longer present in "${integrationName}"`,
-            });
-            await prisma.asset.updateMany({
-              where: { id: { in: ids } },
-              data: { status: "decommissioned", statusChangedAt: now, statusChangedBy: integrationName },
-            });
-            for (const a of orphans) {
-              const name = a.hostname || a.ipAddress || a.id;
-              decommissioned.push(name);
-              logEvent({
-                action: `asset.${platform}.decommissioned`,
-                resourceType: "asset",
-                resourceId: a.id,
-                resourceName: name,
-                actor,
-                message: `${a.assetType === "container" ? workloadContainerNoun(platform) : a.assetType === "hypervisor" ? "Host" : "VM"} "${name}" decommissioned — no longer present in "${integrationName}", and no other discovery source claims it`,
-                details: { reason: `missing-from-${platform}-inventory`, integrationId, integrationName },
-              });
-            }
-          }
-        }
+        decommissioned.push(...swept.decommissioned);
       }
     }
   } catch (err: any) {

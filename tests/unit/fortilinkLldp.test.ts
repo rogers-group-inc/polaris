@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoringService.js";
+import { fortilinkInterfaceNamesFromCmdb } from "../../src/services/monitoring/fortiosCollectors.js";
 
 describe("fortilinkInterfaceNamesFromCmdb", () => {
   it("returns the fortilink aggregate plus its member ports", () => {

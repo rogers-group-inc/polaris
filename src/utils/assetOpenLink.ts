@@ -96,17 +96,9 @@ export function resolveAssetOpenTarget(opts: {
 // The slide-overs' Share button (public/js/share-link.js) hands out the same
 // kind of link for the other two things a slide-over shows, for the same
 // reason: the sharer cannot know whether the recipient opens it on a laptop or
-// a phone. Networks and blocks are UUIDs too (`Subnet.id`, `IpBlock.id`).
-
-/** The surface-neutral path for ONE network (subnet). */
-export function networkOpenPath(subnetId: string): string {
-  return `/networks/${encodeURIComponent(subnetId)}`;
-}
-
-/** The surface-neutral path for ONE IP block. */
-export function blockOpenPath(blockId: string): string {
-  return `/blocks/${encodeURIComponent(blockId)}`;
-}
+// a phone. Networks and blocks are UUIDs too (`Subnet.id`, `IpBlock.id`). The
+// surface-neutral `/networks/<id>` and `/blocks/<id>` paths themselves are built
+// in the browser by share-link.js; this half resolves them per request.
 
 /** The desktop network slide-over — ipam.js / subnets.js read `subnet=`. */
 export function desktopNetworkPath(subnetId: string): string {

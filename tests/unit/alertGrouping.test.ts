@@ -13,39 +13,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  buildSchemaCatalog,
-  type AlertMember,
-  MAX_GROUP_MEMBERS,
-  GROUP_LABEL_CAP,
-  groupKeyOf,
-  triggerIsPerDimension,
-  ruleGroupsByAsset,
-  activeMembers,
-  mergeMembers,
-  markMemberLeft,
-  groupSeverity,
-  primaryMember,
-  renderMemberList,
-  naturalCompare,
-  triggerCanJoinGroup,
-  alertScopeOf,
-  alertOwnerOf,
-  classifyGroupChanges,
-  describeGroupChanges,
-  memberMatches,
-  subnetFoldTarget,
-  automationFoldTarget,
-  WHOLE_GROUP_FOLD_TARGET,
-  wholeGroupSubject,
-  countNoun,
-  foldSpansDevices,
-  ALERT_GROUP_FOLD_BY,
-  mergeGroupChanges,
-  queueGroupChanges,
-  refreshMemberContext,
-} from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, buildSchemaCatalog, type AlertMember, groupKeyOf, ruleGroupsByAsset, activeMembers, mergeMembers, markMemberLeft, groupSeverity, primaryMember, renderMemberList, triggerCanJoinGroup, alertScopeOf, alertOwnerOf, classifyGroupChanges, describeGroupChanges, memberMatches, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, foldSpansDevices, ALERT_GROUP_FOLD_BY, queueGroupChanges, refreshMemberContext } from "../../src/services/notificationTypes.js";
+import { MAX_GROUP_MEMBERS, GROUP_LABEL_CAP, naturalCompare, mergeGroupChanges } from "../../src/services/notificationTypes/alertGroups.js";
+import { triggerIsPerDimension } from "../../src/services/notificationTypes/dimensions.js";
 
 const RULE = "11111111-1111-4111-8111-111111111111";
 const RULE_B = "22222222-2222-4222-8222-222222222222";

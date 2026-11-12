@@ -1,17 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  DEVICE_FILTER_FIELD_OPS,
-  DEVICE_FILTER_ONLY_FIELDS,
-  SCOPE_FIELD_OPS,
-  deviceFilterConditionSchema,
-  evaluateScopeCondition,
-  positiveNativeVlans,
-  scopeConditionMeta,
-  scopeConditionSchema,
-  scopeRank,
-  type ScopeConditionAsset,
-  type ScopeConditionGroup,
-} from "../../src/services/notificationTypes.js";
+import { DEVICE_FILTER_FIELD_OPS, SCOPE_FIELD_OPS, deviceFilterConditionSchema, evaluateScopeCondition, positiveNativeVlans, scopeConditionMeta, scopeConditionSchema, scopeRank, type ScopeConditionAsset, type ScopeConditionGroup } from "../../src/services/notificationTypes.js";
 
 const and = (...children: unknown[]): ScopeConditionGroup =>
   ({ op: "and", children } as ScopeConditionGroup);
@@ -41,7 +29,8 @@ describe("the two condition vocabularies", () => {
   });
 
   it("adds the four fields the flat criteria builder had, plus Native VLAN (rule 133)", () => {
-    expect(DEVICE_FILTER_ONLY_FIELDS.sort()).toEqual(
+    const deviceFilterOnly = Object.keys(DEVICE_FILTER_FIELD_OPS).filter((f) => !(f in SCOPE_FIELD_OPS));
+    expect(deviceFilterOnly.sort()).toEqual(
       ["department", "fortigate", "location", "nativeVlan", "osVersion"],
     );
   });

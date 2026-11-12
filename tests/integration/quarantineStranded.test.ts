@@ -1,5 +1,5 @@
 /**
- * tests/integration/quarantineStranded.test.ts — business rule 164 against a
+ * tests/integration/quarantineStranded.test.ts — business rule 165 against a
  * real database: a release that cannot reach a FortiGate still releases the
  * asset, REMEMBERS the gate, and that entry can be retried, cleared by the
  * background pass, dismissed, or superseded by a new quarantine.
@@ -79,7 +79,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("releasing a quarantine when a FortiGate cannot be reached (rule 164)", () => {
+d("releasing a quarantine when a FortiGate cannot be reached (rule 165)", () => {
   it("releases the asset as before, and remembers the gates that still hold the block", async () => {
     const a = await quarantined("release", ["FG-HQ", "FG-BRANCH"]);
     const adm = await authedAgent(app);
@@ -114,7 +114,7 @@ d("releasing a quarantine when a FortiGate cannot be reached (rule 164)", () => 
   });
 });
 
-d("retrying, dismissing and superseding a stranded entry (rule 164)", () => {
+d("retrying, dismissing and superseding a stranded entry (rule 165)", () => {
   async function releasedWithStranded(suffix: string, devices: string[]) {
     const a = await quarantined(suffix, devices);
     const adm = await authedAgent(app);
@@ -190,7 +190,7 @@ d("retrying, dismissing and superseding a stranded entry (rule 164)", () => {
     expect(await strandedOf(a.id)).toHaveLength(1);
   });
 
-  // ── Rule 164(a): the record of a block survives a delete and a merge ──────
+  // ── Rule 165(a): the record of a block survives a delete and a merge ──────
 
   it("refuses to delete an asset still blocked on a FortiGate, single and bulk, until it is dismissed", async () => {
     const { a, adm } = await releasedWithStranded("del", ["FG-HQ"]);

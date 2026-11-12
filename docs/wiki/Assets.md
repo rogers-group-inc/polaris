@@ -947,6 +947,30 @@ them depends on the switch's sensor table having a known layout; when it
 doesn't, the readings stay in Hardware Sensors. See
 [rule 143](Business-Rules#rule-143).
 
+### Fibre-channel ports in the Interfaces table
+
+On a fibre-channel switch (a Cisco MDS with the MIBs listed under
+[Fibre Channel](#fibre-channel-fc-switches-and-the-servers-on-them) uploaded),
+the Interfaces table gains three columns:
+
+- **WWN**: the port's own port WWN. The MAC column stays blank on FC ports,
+  because a fibre-channel port has a WWN instead of a MAC address.
+- **Logged in**: what is plugged into the port. A server Polaris matched is a
+  link to that asset, followed by the WWN it logged in with; **+N** means more
+  than one device is logged in, and hovering it lists them all.
+- **FC errors**: the port's CRC errors, link failures, sync losses, signal
+  losses and invalid transmission words, added up. Hover the cell for each one.
+  It is amber when a CRC, sync-loss or invalid-word count is above zero, which
+  usually means an optic, a cable or a connector. These are the switch's totals
+  since its counters were last cleared.
+
+**To alert on them**, set the FC port to **Monitored** in this table. Polaris
+then reads its counters every minute and keeps their history. Create an
+automation with one of the **FC port … rate** metrics (see
+[Automation Triggers](Automation-Triggers#asset-metric)): for example **FC port
+CRC error rate** `> 0` on interfaces matching `fc` (a name pattern matches part of a name, so `fc` covers every FC port). The rates are per minute.
+See [rule 159a](Business-Rules#rule-159a).
+
 **An interface name opens the interface — or the network its address is in.**
 Click a name in the Interfaces table to open that interface's history panel.
 It opens inside the asset details panel, in place of the tabs: use the
@@ -958,6 +982,25 @@ that network's address table in over the asset, scrolled to the address. The
 choice appears only for roles that can read networks, and only when a network
 actually contains the address. An interface with no IPv4 address looks up the
 network of its IPv6 address instead.
+
+**Error charts and automation bands.** The history panel's **Errors per
+second** chart draws in and out errors as stacked bars, in errors per second,
+the unit the **Interface in-error rate** and **out-error rate** automations
+compare. On a fibre-channel port an **FC errors per minute** chart follows it:
+CRC errors and invalid transmission words as bars, with a diamond above the
+plot in each interval where a link failure, loss of sync or loss of signal
+occurred. When an automation on this port uses one of these metrics, each of
+its severity bands is a dashed line with its threshold labelled, and the bars
+take the band's colour (amber for Warning, red for Critical, and so on) while
+they are inside it, as the CPU, memory and sensor charts do. The chart's scale
+always reaches the lowest band, so a quiet port still shows how far it is from
+alerting. Only automations that would read this port draw a band: one filtered
+to other interface names, or to a port tag this port does not carry, does not.
+
+An alert email for one of these automations leads with the same port's chart
+for the last hour, with the automation's threshold dashed, above the CPU and
+memory charts. On a fibre-channel alert it also names what is logged into the
+port: the device, its WWN, VSAN and HBA, and how Polaris matched it.
 
 **An interface's IPv6 address has its own column.** The **IPv6** column, beside
 **IP**, appears while IPv6 is on for the install and at least one interface on the asset reports an IPv6
@@ -2191,7 +2234,7 @@ another field on an asset with no address never pins it blank.
 Releasing a quarantine lifts the block on every FortiGate that holds it. If one of them
 cannot be reached at that moment, the release still goes ahead: the asset's status and
 monitoring come back, and the toast tells you which gate was missed. The device is then
-still blocked at that one site ([rule 164](Business-Rules#rule-164)).
+still blocked at that one site ([rule 165](Business-Rules#rule-165)).
 
 The asset's **Quarantine** tab shows this under **Still blocked on**, with the FortiGate,
 when the release failed there, when Polaris last tried, and why it failed. Polaris retries

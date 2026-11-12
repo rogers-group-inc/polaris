@@ -9,7 +9,7 @@
  * deferred to one concurrent flush at the end of the phase while every
  * in-memory effect stays inline. CQ-B060; the body moved verbatim, its free
  * variables made parameters. Phase 6's hostname-adopt guard closures and the
- * engine's inferAssetTypeFromOs are passed in, so this module imports nothing
+ * engine's inferInventoryAssetType are passed in, so this module imports nothing
  * from the engine at runtime.
  */
 
@@ -17,6 +17,7 @@ import type { DiscoveryResult } from "../../fortimanagerService.js";
 import type { AssetIndex, AssetIndexRung } from "../discoveryEngine.js";
 import type { SyncLog } from "../syncLog.js";
 import type { ChangeBaselineFields } from "./changeEvents.js";
+import type { AssetTypeFacts } from "../../../utils/assetTypeMatch.js";
 import type { AddressSighting } from "../../assetAddressService.js";
 import { scoreAddressClaim, claimBeats, claimMedium, type DhcpClaimState } from "../../../utils/dhcpClaimFreshness.js";
 import {
@@ -65,7 +66,12 @@ export async function syncDeviceInventory(input: {
     asset: any, mac: string, ip: string | null | undefined, hostname: string | null | undefined,
     source: "dhcp-lease" | "device-inventory", device: string | null | undefined,
   ) => void;
-  inferAssetTypeFromOs: (os: string | null | undefined) => string;
+  /**
+   * The device-type rules in the `inventory` context (business rule 164),
+   * over everything known about the client: the gate's fingerprint and what
+   * the asset already carries. "other" when nothing claims it.
+   */
+  inferInventoryAssetType: (facts: AssetTypeFacts) => string;
   integrationId: string;
   integrationName: string;
   integrationType: string;
@@ -76,7 +82,7 @@ export async function syncDeviceInventory(input: {
   const {
     result, assetIdx, allReservationsRaw, claims, arpMacDeviceIndex, arpIpsByMacDevice, bestGateClaimMsByAsset,
     addressSightings, fortigateEndpointAssetIds, inventoryAssets, now,
-    noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferAssetTypeFromOs,
+    noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferInventoryAssetType,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
 
@@ -282,8 +288,20 @@ export async function syncDeviceInventory(input: {
         // OS / vendor / type / switch-port / AP describe the claimant.
         if (!invAdoptRefused) {
           if (inv.os && !existingAsset.os && !invIsFortinetInfra) updateData.os = inv.os;
-          if (inv.os && (existingAsset as any).assetType === "other") {
-            const inferred = inferAssetTypeFromOs(inv.os);
+          // Business rule 164: every fact, not the OS string alone — a rule
+          // on Manufacturer ("APC" → Power) could never claim a device the
+          // gate fingerprinted as "APC AOS". Still `other`-only, so a type an
+          // authoritative source or an operator set is never overwritten.
+          if ((existingAsset as any).assetType === "other") {
+            const a = existingAsset as any;
+            const inferred = inferInventoryAssetType({
+              os:           a.os || inv.os || null,
+              osVersion:    a.osVersion || inv.osVersion || null,
+              hostname:     a.hostname || inv.hostname || null,
+              manufacturer: a.manufacturer || inv.hardwareVendor || null,
+              model:        a.model ?? null,
+              productType:  a.productType ?? null,
+            });
             if (inferred !== "other") updateData.assetType = inferred;
           }
           if (inv.osVersion && !invIsFortinetInfra) updateData.osVersion = inv.osVersion;
@@ -445,7 +463,12 @@ export async function syncDeviceInventory(input: {
                 : {}),
               hostname: inv.hostname || null,
               manufacturer: inv.hardwareVendor || null,
-              assetType: inferAssetTypeFromOs(inv.os),
+              assetType: inferInventoryAssetType({
+                os: inv.os || null,
+                osVersion: inv.osVersion || null,
+                hostname: inv.hostname || null,
+                manufacturer: inv.hardwareVendor || null,
+              }),
               status: "active",
               statusChangedAt: new Date(now),
               statusChangedBy: integrationLabel,

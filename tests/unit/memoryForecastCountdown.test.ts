@@ -12,16 +12,10 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 import { forecastLevelReading, nextForecastLevel } from "../../src/services/memoryForecastService.js";
-import {
-  forecastLevelsOf,
-  linkForecastLevels,
-  isForecastLevelSource,
-  forecastLevelsSourceId,
-  severityForValue,
-  triggerSchema,
-} from "../../src/services/notificationTypes.js";
+import { forecastLevelsOf, linkForecastLevels, isForecastLevelSource, forecastLevelsSourceId, severityForValue } from "../../src/services/notificationTypes.js";
+import { triggerSchema } from "../../src/services/notificationTypes/triggers.js";
 import { buildTemplateContext, forecastCountdown } from "../../src/utils/notificationTemplate.js";
-import { forecastCountdownMoved } from "../../src/services/notificationEngine.js";
+import { forecastCountdownMoved } from "../../src/services/notifications/alertLifecycle.js";
 import {
   memoryForecastChartSpec,
   memoryForecastTargetFromRule,

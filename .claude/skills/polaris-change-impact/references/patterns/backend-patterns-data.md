@@ -226,10 +226,10 @@ Docs a new table owes: an the skill references (formerly ARCHITECTURE.md) "Core 
 **What it is:** A device publishes something whose NUMBER is meaningless without vendor knowledge — a status enum, an alarm bit, a present/absent flag. Rather than teaching Polaris every vendor's convention (or making the operator encode it as a threshold and hope), the operator DECLARES the mapping once at config time, the collector applies it and stores the already-normalized result, and everything downstream compares normalized values only. Use this whenever "what does 2 mean here?" is a per-vendor question.
 
 **Canonical implementation:** **state probes** — a `ManufacturerCustomWidget` with `widgetType="state"`.
-- Pure mapping + evaluation: `src/utils/stateProbes.ts` (`StateMap`, `evaluateStateMap`, `joinStateRows`, `normalizeStateMap`, `validateStateMap`, `describeStateMap`) — dependency-free, fully unit-tested in `tests/unit/stateProbes.test.ts`.
+- Pure mapping + evaluation: `src/utils/stateProbes.ts` (`StateMap`, `evaluateStateMap`, `joinStateRows`, `normalizeStateMap`, `validateStateMap`) — dependency-free, fully unit-tested in `tests/unit/stateProbes.test.ts`.
 - Declaration: `ManufacturerCustomWidget.stateMap` + `labelSymbol` (nullable), validated on write by `stateFieldsForWrite` in `manufacturerProfileService.ts`, authored on Server Settings → Identification (`_widgetStateOptionsForm` in `public/js/server-settings-profiles.js`).
 - Collection: the state branch of `collectAndRecordCustomWidgets` (`monitoringService.ts`) → `AssetStateSample` (0/1 rows).
-- Consumption: the `customStateValue` asset_metric (`notificationTypes` + `notificationEngine`), the builder's probe/row pickers (`notificationDimensionService`), and the Custom MIB tab's per-row pills (`_renderCustomWidgetState` in `public/js/assets.js`).
+- Consumption: the `customStateValue` asset_metric (`notificationTypes` + `notificationEngine`), the builder's probe/row pickers (`notificationDimensionService`), and the Custom MIB tab's per-row pills (`_renderCustomWidgetState` + `_stateProbeIsProblem` in `public/js/assets-snmp.js`).
 
 **Key conventions:**
 - **Declare the mapping, don't infer it.** The mode set exists because real MIBs disagree: `nonzero` (plain alarm bit) / `zero` (inverted health register) / `equals` / `notEquals` (SNMPv2 TruthValue, where `true(1)` is the GOOD state) / `gte` / `lte`. Comparisons are numeric when both sides parse as numbers and case-insensitive strings otherwise, so ONE declaration covers an agent answering `2` and one answering `"alarm"`.

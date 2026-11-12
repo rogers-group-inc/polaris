@@ -1,7 +1,7 @@
 /**
  * tests/unit/quarantineCarry.test.ts
  *
- * Business rule 164(a): a MAC block on a FortiGate is recorded on an asset
+ * Business rule 165(a): a MAC block on a FortiGate is recorded on an asset
  * row, and it does not go away because that row is merged into another or
  * deleted. A merge hands the absorbed record's quarantine and its stranded
  * gates to the survivor; a delete of an asset still blocked on a gate is
@@ -73,7 +73,7 @@ describe("the pure unions", () => {
   });
 });
 
-describe("rule 164(a): carryQuarantineState", () => {
+describe("rule 165(a): carryQuarantineState", () => {
   it("writes nothing on an ordinary merge", async () => {
     const { tx, update } = txWith([plain("ghost"), plain("keep")]);
     expect(await carryQuarantineState(tx, "ghost", "keep")).toEqual({ carried: false });

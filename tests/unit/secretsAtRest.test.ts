@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   transformSecretFields,
   containsSecretField,
@@ -159,5 +161,31 @@ describe("secret-bearing model map", () => {
                      "accessToken", "webhookUrl", "passphrase", "signingKey"]) {
       expect(SECRET_CONFIG_KEYS.has(k)).toBe(true);
     }
+  });
+
+  // The three places that name the secret-bearing tables must agree. db.ts
+  // seals on write and opens on read; the backfill seals rows written before a
+  // key was set; SECRET_BEARING_MODELS / secretJsonFieldFor is the declared
+  // list. A table added to one and not the others is either stored in the clear
+  // (no write hook), left in the clear on an existing install (no backfill), or
+  // sealed by the backfill and then never opened on read (no read hook). Read
+  // as source text: the hooks are inside a Prisma $extends call and the
+  // backfill's tables are inline findMany calls, neither exported.
+  it("db.ts hooks, the backfill job and SECRET_BEARING_MODELS name the same tables and columns", () => {
+    const camel = (m: string) => m[0].toLowerCase() + m.slice(1);
+    const declared = new Map([...SECRET_BEARING_MODELS].map((m) => [camel(m), secretJsonFieldFor(m)]));
+
+    const dbSrc = readFileSync(resolve(__dirname, "../../src/db.ts"), "utf8");
+    const hooked = new Map([...dbSrc.matchAll(/^\s*(\w+): secretHooks\("(\w+)"\)/gm)].map((m) => [m[1], m[2]]));
+
+    const jobSrc = readFileSync(resolve(__dirname, "../../src/jobs/backfillSecretEncryption.ts"), "utf8");
+    const backfilled = new Map(
+      [...jobSrc.matchAll(/prismaBase\.(\w+)\.findMany\(\{ select: \{ \w+: true, (\w+): true \} \}\)/g)]
+        .map((m) => [m[1], m[2]]),
+    );
+
+    expect(declared.size).toBeGreaterThan(0);
+    expect(Object.fromEntries(hooked)).toEqual(Object.fromEntries(declared));
+    expect(Object.fromEntries(backfilled)).toEqual(Object.fromEntries(declared));
   });
 });

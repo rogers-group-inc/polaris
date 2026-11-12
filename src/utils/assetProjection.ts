@@ -928,3 +928,29 @@ export function projectAssetFromSources(
 
   return { projected, provenance };
 }
+
+/** The projected identity fields a discovery sync writes straight onto Asset. */
+export type CopiedProjectionField =
+  | "hostname" | "os" | "osVersion" | "serialNumber" | "manufacturer" | "model" | "learnedLocation" | "ipAddress";
+
+/**
+ * Copy the named projected fields onto a sync's `updateData`, skipping any the
+ * projection left null ("no source has an opinion" — the Asset keeps its
+ * value). A field named in `fillOnly` is copied only when the value given
+ * there (the asset's current one) is empty: the Generic API and workload syncs
+ * fill a serial and never replace one. Each sync names its own field list —
+ * which fields a source may write is that sync's decision, not this helper's.
+ */
+export function copyProjectedFields(
+  updateData: Record<string, unknown>,
+  projected: Pick<ProjectionResult["projected"], CopiedProjectionField>,
+  fields: readonly CopiedProjectionField[],
+  opts: { fillOnly?: Partial<Record<CopiedProjectionField, unknown>> } = {},
+): void {
+  for (const f of fields) {
+    const v = projected[f];
+    if (v === null) continue;
+    if (opts.fillOnly && f in opts.fillOnly && opts.fillOnly[f]) continue;
+    updateData[f] = v;
+  }
+}

@@ -7,18 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  isPathTrigger,
-  isPathMetric,
-  pathTriggerIncludesServer,
-  pathMonitorScope,
-  scopeForTrigger,
-  eventMatchesPathServer,
-  buildSchemaCatalog,
-  AGENT_INSTALLED_RULE,
-  PATH_METRICS,
-} from "../../src/services/notificationTypes.js";
+import { ruleInputSchema, isPathTrigger, isPathMetric, pathTriggerIncludesServer, pathMonitorScope, scopeForTrigger, eventMatchesPathServer, buildSchemaCatalog } from "../../src/services/notificationTypes.js";
+import { AGENT_INSTALLED_RULE, PATH_METRICS } from "../../src/services/notificationTypes/triggers.js";
 
 const pathLeaf = (metric: string, extra: Record<string, unknown> = {}) => ({
   type: "asset_metric", metric, aggregation: "latest", windowSec: 0, operator: ">", threshold: 1, ...extra,

@@ -502,7 +502,7 @@ export function symbolReadiness(
 ): SymbolReadiness {
   const base: SymbolReadiness = { symbol, resolved: false, oid: null, fromScope: null, fromModuleName: null, hint: null };
   if (!_mibs) return base;
-  const r = getScopeMap(manufacturer, null).get(symbol);
+  const r = getWithRow(getScopeMap(manufacturer, null), symbol);
   if (r) return { ...base, resolved: true, oid: r.oid, fromScope: r.fromScope, fromModuleName: r.fromModuleName };
   if (pinnedMibId) {
     const mib = _mibs.find((m) => m.id === pinnedMibId);
@@ -623,13 +623,36 @@ export interface ResolveScope {
   profileManufacturer?: string | null;
 }
 
+/** A symbol naming one table row: `rPDU2PhaseStatusPower.2` → base + `.2`. */
+const ROW_SUFFIX_RE = /^([A-Za-z][\w-]*)((?:\.\d+)+)$/;
+
+/**
+ * `name` in one scope map, or — when the name carries a numeric row suffix the
+ * map does not know as a whole — its base symbol with the suffix appended to
+ * the OID. That is how a widget reads ONE row of a table (phase 2 of a PDU's
+ * phase table) instead of the first readable row.
+ */
+function getWithRow(map: Map<string, ResolvedSymbol>, name: string): ResolvedSymbol | undefined {
+  const whole = map.get(name);
+  if (whole) return whole;
+  const m = ROW_SUFFIX_RE.exec(name);
+  if (!m) return undefined;
+  const base = map.get(m[1]);
+  return base ? { ...base, oid: base.oid + m[2] } : undefined;
+}
+
+/** True when `name` carries a numeric row suffix (`symbol.2`, `symbol.1.3`). */
+export function hasRowSuffix(name: string): boolean {
+  return ROW_SUFFIX_RE.test(name);
+}
+
 /** The asset's own scope, then the governing profile's (rule 131). */
 function lookupScoped(name: string, scope: ResolveScope): ResolvedSymbol | undefined {
-  const own = getScopeMap(scope.manufacturer, scope.model).get(name);
+  const own = getWithRow(getScopeMap(scope.manufacturer, scope.model), name);
   if (own) return own;
   const pm = scope.profileManufacturer?.trim();
   if (!pm || pm.toLowerCase() === (scope.manufacturer ?? "").trim().toLowerCase()) return undefined;
-  return getScopeMap(pm, scope.model).get(name);
+  return getWithRow(getScopeMap(pm, scope.model), name);
 }
 
 /**
@@ -666,37 +689,7 @@ export async function refreshRegistry(): Promise<void> {
   await ensureLoaded();
 }
 
-// ─── Introspection — used by the UI status pill ───────────────────────────
-
-export interface SymbolStatus {
-  symbol: string;
-  resolved: boolean;
-  oid: string | null;
-  fromScope: ResolvedSymbol["fromScope"] | null;
-  fromModuleName: string | null;
-}
-
-/**
- * Resolve a single symbol at the **universal** (manufacturer-only) scope.
- * That's the floor of coverage that every asset from this vendor gets
- * before any model-specific upload is layered on top — useful for the UI's
- * "is this vendor profile ready?" indicator.
- */
-export async function resolveSymbolAtVendorScope(
-  manufacturer: string,
-  symbol: string,
-): Promise<SymbolStatus> {
-  await ensureLoaded();
-  const map = getScopeMap(manufacturer, null);
-  const r = map.get(symbol);
-  return {
-    symbol,
-    resolved: !!r,
-    oid: r?.oid ?? null,
-    fromScope: r?.fromScope ?? null,
-    fromModuleName: r?.fromModuleName ?? null,
-  };
-}
+// ─── Introspection — the MIB browse / walk endpoints ──────────────────────
 
 /**
  * Resolve every symbol declared by the given MIB to its numeric OID at the

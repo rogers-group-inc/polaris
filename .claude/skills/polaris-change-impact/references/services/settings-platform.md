@@ -556,9 +556,9 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **What it owns:** Server-wide configuration: NTP (servers, timezone) and CA certificate management (upload, list, delete). Server-leaf certs are managed externally (nginx reads `POLARIS_PROXY_CERT_PATH`).
 
-**Public API:** `getNtpSettings`, `updateNtpSettings`, `testNtpSync`, `listCertificates`, `addCertificate`, `deleteCertificate`.
+**Public API:** `getNtpSettings`, `updateNtpSettings`, `testNtpSync` (+ `NtpTestDeps`, `NtpServerTestResult`), `listCertificates`, `addCertificate`, `deleteCertificate`.
 
-**Cross-service deps:** none.
+**Cross-service deps:** none. Utils: `sntp.ts` (`querySntp`, `checkNtsKe`) for the NTP test.
 
 **Used by:** `src/api/routes/serverSettings.ts — CA upload/list/delete + NTP settings`. Server-cert mutation routes (`POST /certificates` category=server, `DELETE` of a server cert) return 409 unconditionally — handled directly in the route handler, doesn't reach the service.
 
@@ -566,8 +566,11 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - NTP and certificate lists persist in Settings table under `key: "ntp"` and `"certificates"`.
 - Certificate store is a single JSON array in the "certificates" Setting; each cert carries id, category (ca/server), type (cert/key), PEM, and metadata. The route surface only handles `category="ca"`; the cleanup migration `20260608000000_drop_legacy_server_certs` strips any legacy `category="server"` entries on upgrade.
 - Backup/restore flows NOT in this service (they live in updateService).
+- `testNtpSync` is a REAL query, never an assumed answer (until 2026-11-11 it returned "Synchronized" with an invented +0.003 s offset): every distinct server (max 10, route `NtpTestSchema`) in parallel, one SNTP sample each — offset of THIS host's clock, delay, stratum; a reply must echo our transmit timestamp, be from a synchronized server, and a Kiss-o'-Death is reported by its code. `ok` only when every server answered. NTS mode runs the RFC 8915 key exchange (TLS 1.3, ALPN `ntske/1`, NTPv4 + AES-SIV-CMAC-256, cookies) and then a PLAIN sample from the server it names — the message says the sample was not NTS-authenticated (Node ships no AES-SIV). No netGuard on purpose: a fixed NTP payload to 123 / 4460, and real time sources live on link-local (169.254.169.123) and loopback (chronyd).
+- The stored NTP settings are NOT applied to the host by anything in Polaris (no chrony / timedatectl writer reads `key: "ntp"`); the OS time daemon keeps the clock. Ledger CQ-T010 records this.
 
 **When changing this:**
+- The NTP test: extend tests/unit/sntp.test.ts (packets, a real loopback UDP server, a scripted NTS-KE socket) and the `deps`-injected cases in tests/unit/serverSettingsService.test.ts.
 - Test CA upload validation (PEM parsing, magic-byte checks if added).
 - Confirm cert list dedup handles UUID collisions.
 

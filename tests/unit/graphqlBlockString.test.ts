@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { graphqlHasBlockString, graphqlOperationKinds, isQueryOnlyGraphql } from "../../src/utils/graphqlOperations.js";
+import { graphqlHasBlockString, isQueryOnlyGraphql } from "../../src/utils/graphqlOperations.js";
 
 // The finding's own document (two backslashes before the first closing
 // quotes). graphql-js: the first backslash is ordinary, the second plus `"""`
@@ -20,16 +20,17 @@ import { graphqlHasBlockString, graphqlOperationKinds, isQueryOnlyGraphql } from
 const EXPLOIT = 'fragment F on VmMutations { stop(id: """\\\\""" ) } query { x """) } mutation { vm { ...F real: stop(id: "vm-1") } }';
 
 describe("block strings", () => {
-  it("reads the F70 document as the server does: a mutation is present", () => {
-    expect(graphqlOperationKinds(EXPLOIT)).toContain("mutation");
+  it("refuses the F70 document: a mutation is present", () => {
     expect(isQueryOnlyGraphql(EXPLOIT)).toBe(false);
   });
 
-  it("treats only \\\"\"\" as an escape inside a block string", () => {
-    // `\"""` does not close the string, so the mutation inside is still text.
-    expect(graphqlOperationKinds('{ a(q: """ \\""" mutation { x } """) }')).toEqual(["query"]);
-    // A lone backslash before an ordinary character is just a character.
-    expect(graphqlOperationKinds('{ a(q: """ \\n """) } mutation { b }')).toEqual(["query", "mutation"]);
+  it("refuses a mutation after a block string, whatever its escapes", () => {
+    // `\"""` does not close the string, so the mutation inside is still text —
+    // but the block string alone is enough for the query tool to refuse it.
+    expect(isQueryOnlyGraphql('{ a(q: """ \\""" mutation { x } """) }')).toBe(false);
+    // A lone backslash before an ordinary character is just a character, so
+    // the trailing mutation is code — caught.
+    expect(isQueryOnlyGraphql('{ a(q: """ \\n """) } mutation { b }')).toBe(false);
   });
 
   it("the query tool refuses any document containing a block string", () => {

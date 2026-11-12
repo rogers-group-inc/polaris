@@ -15,11 +15,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  interfaceSampleCarries,
-  interfaceStateSeries,
-  type InterfaceStateRow,
-} from "../../src/services/notificationEngine.js";
+import { type InterfaceStateRow } from "../../src/services/notificationEngine.js";
+import { interfaceSampleCarries, interfaceStateSeries } from "../../src/services/notifications/readings.js";
 
 /** Newest-first, the order the resolver groups rows in. */
 const row = (o: Partial<InterfaceStateRow> = {}): InterfaceStateRow => ({

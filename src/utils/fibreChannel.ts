@@ -145,8 +145,12 @@ export function hostNameOrNull(raw: string | null | undefined): string | null {
   return s;
 }
 
-/** Per-port cumulative error counters (fcIfErrorTable). */
-export interface FcErrorCounters {
+/**
+ * Per-port cumulative error counters (fcIfErrorTable). A type alias, not an
+ * interface, so it is assignable to Prisma's JSON input (an interface has no
+ * implicit index signature) — it is stored as JSON on the interface sample.
+ */
+export type FcErrorCounters = {
   linkFailures: number | null;
   syncLosses: number | null;
   sigLosses: number | null;
@@ -154,7 +158,7 @@ export interface FcErrorCounters {
   invalidCrcs: number | null;
   linkResetIns: number | null;
   linkResetOuts: number | null;
-}
+};
 
 /**
  * Each counter and the CISCO-FC-FE-MIB symbol it is read from. Symbols, not
@@ -170,6 +174,51 @@ export const FC_ERROR_COLUMNS: ReadonlyArray<[keyof FcErrorCounters, string]> = 
   ["linkResetIns", "fcIfLinkResetIns"],
   ["linkResetOuts", "fcIfLinkResetOuts"],
 ];
+
+/** IANAifType fibreChannel(56): an interface whose fcIfErrorTable row is worth a GET. */
+export const IFTYPE_FIBRE_CHANNEL = 56;
+
+/**
+ * The automation metrics over an FC port's counters (business rule 159a),
+ * each the counter it reads. A rate per MINUTE: these counters move a handful
+ * at a time on a failing optic, and "0.0003 errors/s" is a number nobody can
+ * set a threshold on.
+ */
+export const FC_RATE_METRICS = {
+  fcCrcErrorRate: "invalidCrcs",
+  fcLinkFailureRate: "linkFailures",
+  fcSyncLossRate: "syncLosses",
+  fcSignalLossRate: "sigLosses",
+  fcInvalidTxWordRate: "invalidTxWords",
+} as const satisfies Record<string, keyof FcErrorCounters>;
+
+export type FcRateMetric = keyof typeof FC_RATE_METRICS;
+
+export function isFcRateMetric(metric: string | null | undefined): metric is FcRateMetric {
+  return !!metric && Object.prototype.hasOwnProperty.call(FC_RATE_METRICS, metric);
+}
+
+/**
+ * Stored counters (a JSON column) → the typed shape, keeping only finite
+ * non-negative numbers. Null when nothing usable is there, so a row that
+ * carries no FC reading never reads as "all counters zero".
+ */
+export function fcErrorsFrom(raw: unknown): FcErrorCounters | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const out = {} as FcErrorCounters;
+  let any = false;
+  for (const [field] of FC_ERROR_COLUMNS) {
+    const v = typeof src[field] === "string" ? Number(src[field]) : src[field];
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+      out[field] = v;
+      any = true;
+    } else {
+      out[field] = null;
+    }
+  }
+  return any ? out : null;
+}
 
 /** The other tables the collector walks, by MIB symbol. */
 export const FC_SYMBOLS = {

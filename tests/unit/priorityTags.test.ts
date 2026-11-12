@@ -8,9 +8,7 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 
 import {
   PRIORITY_TAGS,
-  PRIORITY_TAG_CATEGORY,
   priorityTagColor,
-  builtInPriorityTag,
   prioritySeverityOf,
 } from "../../src/utils/priorityTags.js";
 import {
@@ -25,16 +23,9 @@ describe("PRIORITY_TAGS", () => {
     expect(PRIORITY_TAGS.map((p) => p.severity)).toEqual([...SEVERITIES]);
   });
 
-  it("names the seeded tags in the Priority category", () => {
+  it("names the seeded tags and their severity colour", () => {
     expect(PRIORITY_TAGS.map((p) => p.name)).toEqual(["Notice", "Informational", "Warning", "Serious", "Critical"]);
-    expect(PRIORITY_TAG_CATEGORY).toBe("Priority");
     expect(priorityTagColor("critical")).toBe("severity:critical");
-  });
-
-  it("recognises a built-in name only in its seeded spelling", () => {
-    expect(builtInPriorityTag("Critical")?.severity).toBe("critical");
-    expect(builtInPriorityTag("critical")).toBeNull();
-    expect(builtInPriorityTag("P1")).toBeNull();
   });
 });
 

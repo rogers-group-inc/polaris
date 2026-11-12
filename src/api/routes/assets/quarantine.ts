@@ -59,7 +59,7 @@ router.delete("/:id/quarantine", requirePermission("assetsQuarantine", "write"),
   }
 });
 
-// Business rule 164: the FortiGates that still hold the block after a release.
+// Business rule 165: the FortiGates that still hold the block after a release.
 // POST …/stranded/retry  — try again now (one gate with `fortigateDevice`, else all)
 // DELETE …/stranded      — stop tracking without touching the device (`?device=` for one)
 // Same gate as release: assetsQuarantine write + the asset in the caller's write

@@ -13,7 +13,7 @@ A slice of the repository tree (`polaris/` is the root; `│` continuation bars 
 │   │   ├── discoverySlowCheck.ts    # 30s tick: flag in-flight discoveries that exceed their rolling-duration baseline, and auto-abort any full run past its autoAbortMs ceiling (~2× avg — sets cancelRequested, the operator-cancel plumbing); also calls expireVerboseLogging() to auto-disable verbose debug logging after 30 min
 │   │   ├── ouiRefresh.ts            # Refresh IEEE OUI database
 │   │   ├── pruneEvents.ts           # 7-day event log retention (nightly)
-│   │   ├── retryStrandedQuarantine.ts # Every 15 min: quarantineStrandedService.retryAllStrandedQuarantine — retry the FortiGates that still hold a released asset's quarantine block (business rule 164)
+│   │   ├── retryStrandedQuarantine.ts # Every 15 min: quarantineStrandedService.retryAllStrandedQuarantine — retry the FortiGates that still hold a released asset's quarantine block (business rule 165)
 │   │   ├── pruneHistory.ts          # Daily: historyRetentionService.pruneHistory — cleared alerts, idle rule state, orphaned discovery runs, old sightings and scan runs, firmware repository leftovers (business rule 158, 158(b))
 │   │   ├── updateCheck.ts           # Software update notifications
 │   │   ├── initIpv6Setting.ts       # One-shot startup (business rule 128; migrations role): the install-time IPv6 decision via `ipv6GateService.initializeIpv6Setting()` — on when the host holds a routable IPv6, off otherwise; a no-op once the `ipv6Config` row holds a decision (the row is the marker), so it never overrides an operator.

@@ -1,26 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  isUsableSerial,
-  controllerKeyFor,
-  claimFoldKey,
-  groupContestedSerials,
-  claimantSetKey,
-  groupDuplicateSerialAssets,
-  memberSetKey,
-  pickPrimaryMemberId,
-  resolveMergeTargets,
-  serialClaimRejectMessage,
-  duplicateSerialRejectMessage,
-  freshnessCutoff,
-  conflictSerialOf,
-  MAX_PLAUSIBLE_DUPLICATES,
-  SERIAL_CLAIM_COLLISION_REASON,
-  DUPLICATE_SERIAL_COLLISION_REASON,
-  EMPTY_CONTROLLER_CONTEXT,
-  type ControllerClaimRow,
-  type ControllerContext,
-  type DuplicateSerialAssetRow,
-} from "../../src/services/duplicateSerialConflictService.js";
+import { controllerKeyFor, claimFoldKey, groupContestedSerials, claimantSetKey, groupDuplicateSerialAssets, memberSetKey, pickPrimaryMemberId, resolveMergeTargets, serialClaimRejectMessage, duplicateSerialRejectMessage, freshnessCutoff, conflictSerialOf, MAX_PLAUSIBLE_DUPLICATES, SERIAL_CLAIM_COLLISION_REASON, DUPLICATE_SERIAL_COLLISION_REASON, EMPTY_CONTROLLER_CONTEXT, type ControllerClaimRow, type ControllerContext, type DuplicateSerialAssetRow } from "../../src/services/duplicateSerialConflictService.js";
+import { isUsableSerial } from "../../src/utils/serialNumber.js";
 
 const NOW = new Date("2026-09-22T12:00:00Z");
 const FRESH = new Date("2026-09-22T06:00:00Z");

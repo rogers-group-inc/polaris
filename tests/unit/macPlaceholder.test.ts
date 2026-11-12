@@ -3,7 +3,6 @@ import {
   DEFAULT_PLACEHOLDER_MAC_PREFIX,
   normalizePlaceholderPrefix,
   isPlaceholderMac,
-  generatePlaceholderMac,
 } from "../../src/utils/mac.js";
 
 describe("normalizePlaceholderPrefix", () => {
@@ -97,41 +96,5 @@ describe("isPlaceholderMac", () => {
   });
 });
 
-describe("generatePlaceholderMac", () => {
-  const seq = (bytes: number[]) => (n: number) => Uint8Array.from(bytes.slice(0, n));
-
-  it("keeps the prefix and fills out to six octets", () => {
-    const mac = generatePlaceholderMac("02:0F:5E", seq([0xaa, 0xbb, 0xcc]));
-    expect(mac).toBe("02:0F:5E:AA:BB:CC");
-    expect(mac.split(":")).toHaveLength(6);
-  });
-
-  it("pads single-digit octets", () => {
-    expect(generatePlaceholderMac("02:0F:5E", seq([0x01, 0x02, 0x03])))
-      .toBe("02:0F:5E:01:02:03");
-  });
-
-  it("works for any accepted prefix length", () => {
-    expect(generatePlaceholderMac("02", seq([1, 2, 3, 4, 5]))).toBe("02:01:02:03:04:05");
-    expect(generatePlaceholderMac("02:0F:5E:11:22", seq([0x33]))).toBe("02:0F:5E:11:22:33");
-  });
-
-  it("falls back to the default rather than throwing on a bad prefix", () => {
-    // Runs behind a UI button — refusing to produce a MAC because a stored
-    // setting drifted would be worse than producing a correct one.
-    for (const bad of ["00:50:56", "zz", "", null, undefined]) {
-      const mac = generatePlaceholderMac(bad as unknown as string, seq([1, 2, 3]));
-      expect(mac.startsWith(DEFAULT_PLACEHOLDER_MAC_PREFIX)).toBe(true);
-    }
-  });
-
-  it("produces a MAC its own predicate recognizes", () => {
-    const mac = generatePlaceholderMac("02:0F:5E");
-    expect(isPlaceholderMac(mac, "02:0F:5E")).toBe(true);
-  });
-
-  it("uses real randomness by default", () => {
-    const macs = new Set(Array.from({ length: 50 }, () => generatePlaceholderMac("02:0F:5E")));
-    expect(macs.size).toBeGreaterThan(45);
-  });
-});
+// The generator itself is the browser's public/js/placeholder-mac.js — tested
+// in placeholderMac.generate.test.ts.

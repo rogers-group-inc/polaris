@@ -29,7 +29,6 @@ import {
   clauseMatches,
   conditionMatches,
   explainAssetType,
-  matchClauses,
   matchConditionMeta,
   normalizeMatchRules,
   orderTypes,
@@ -37,14 +36,18 @@ import {
   resolveAssetTypeCached,
   resetAssetTypeMatchRegistry,
   setAssetTypeMatchRegistry,
-  getAssetTypeMatchRegistry,
   validateMatchContexts,
   validateMatchRules,
   type MatchableType,
   type MatchContext,
+  type MatchClause,
   type MatchGroup,
 } from "../../src/utils/assetTypeMatch.js";
-import { scopeConditionMeta, SCOPE_GROUP_OPS, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { scopeConditionMeta, DEVICE_FILTER_FIELD_OPS } from "../../src/services/notificationTypes.js";
+import { SCOPE_GROUP_OPS } from "../../src/services/notificationTypes/scopeConditions.js";
+
+/** The leaves of a flat (one-level) normalized tree — what a folded legacy list becomes. */
+const topLeaves = (rules: MatchGroup | null): MatchClause[] => (rules?.children ?? []) as MatchClause[];
 
 /** The shipped registry, shaped for the resolver. */
 function defaultTypes(): MatchableType[] {
@@ -205,7 +208,6 @@ describe("the process cache", () => {
       { name: "b", matchPriority: 9, matchContexts: ["scan"], matchRules: anyOf("x") },
       { name: "a", matchPriority: 1, matchContexts: ["scan"], matchRules: anyOf("x") },
     ]);
-    expect(getAssetTypeMatchRegistry().map((t) => t.name)).toEqual(["a", "b"]);
     expect(resolveAssetTypeCached({ os: "x" }, "scan")).toBe("a");
   });
 });
@@ -279,6 +281,25 @@ describe("resolution", () => {
     ];
     expect(resolveAssetType(tied, { os: "x" }, "scan")).toBe("alpha");
     expect(resolveAssetType([...tied].reverse(), { os: "x" }, "scan")).toBe("alpha");
+  });
+
+  it("runs a Manufacturer rule in the inventory context (business rule 164)", () => {
+    // The prod case: a FortiGate fingerprints an APC PDU's OS as "APC AOS" and
+    // its NIC vendor as APC; the operator's Power rule reads Manufacturer.
+    const power: MatchableType[] = [{
+      name: "power", matchPriority: 100, matchContexts: ["directory", "scan", "inventory"],
+      matchRules: { op: "or", children: [{ field: "manufacturer", operator: "contains", value: "APC" }] },
+    }];
+    expect(resolveAssetType(power, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBe("power");
+    // Without the box ticked, inventory never reaches it.
+    const untick = [{ ...power[0]!, matchContexts: ["directory"] as MatchContext[] }];
+    expect(resolveAssetType(untick, { os: "APC AOS", manufacturer: "APC" }, "inventory")).toBeNull();
+  });
+
+  it("ships the OS ladders in the inventory context too, so Phase 7 types as before", () => {
+    expect(DEFAULT_TYPE_MATCHING.server!.contexts).toEqual(["directory", "inventory"]);
+    expect(DEFAULT_TYPE_MATCHING.workstation!.contexts).toEqual(["directory", "inventory"]);
+    expect(MATCH_CONTEXTS).toContain("inventory");
   });
 
   it("skips a type whose contexts exclude this one", () => {
@@ -404,11 +425,11 @@ describe("the legacy flat shape folds forward", () => {
         { field: "hostname", op: "ends_with", value: "-01" },
       ],
     });
-    expect(matchClauses(out).map((c) => c.operator)).toEqual(["startsWith", "endsWith"]);
+    expect(topLeaves(out).map((c) => c.operator)).toEqual(["startsWith", "endsWith"]);
   });
 
   it("folds `negate` onto the operator's negative twin, and drops a falsy one", () => {
-    expect(matchClauses(normalizeMatchRules({
+    expect(topLeaves(normalizeMatchRules({
       clauses: [
         { field: "os", op: "contains", value: "a", negate: true },
         { field: "os", op: "equals", value: "b", negate: true },
@@ -424,7 +445,7 @@ describe("the legacy flat shape folds forward", () => {
       { field: "os", operator: "notRegex", value: "e" },
     ]);
     // A falsy negate is not stored — it was never a distinct state.
-    expect(matchClauses(normalizeMatchRules({
+    expect(topLeaves(normalizeMatchRules({
       clauses: [{ field: "os", op: "contains", value: "x", negate: false }],
     }))[0]).toEqual({ field: "os", operator: "contains", value: "x" });
   });

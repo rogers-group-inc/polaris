@@ -103,11 +103,6 @@ export function parseJsonPath(path: string): JsonPathSegment[] {
   return out;
 }
 
-/** True when the path parses. */
-export function isValidJsonPath(path: string): boolean {
-  try { parseJsonPath(path); return true; } catch { return false; }
-}
-
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

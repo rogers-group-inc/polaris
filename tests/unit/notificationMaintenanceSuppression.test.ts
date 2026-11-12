@@ -33,11 +33,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
   scopeRegionTagsOf: vi.fn(() => []),
 }));
 
-import {
-  evaluateAllNotificationRules,
-  isSuppressedForNotifications,
-  frozenReadingIsFresh,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules, isSuppressedForNotifications } from "../../src/services/notificationEngine.js";
+import { frozenReadingIsFresh } from "../../src/services/notifications/scope.js";
 import { MONITOR_CANDIDATE_WHERE } from "../../src/services/monitoringService.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {

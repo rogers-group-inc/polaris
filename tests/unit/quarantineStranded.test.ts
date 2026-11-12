@@ -1,5 +1,5 @@
 /**
- * tests/unit/quarantineStranded.test.ts — business rule 164, the pure half:
+ * tests/unit/quarantineStranded.test.ts — business rule 165, the pure half:
  * the list of FortiGates that still hold a released asset's quarantine block,
  * and when each is due for another try. Plus the Quarantine tab section that
  * shows it (`_quarantineStrandedHTML` in public/js/assets-sources.js).

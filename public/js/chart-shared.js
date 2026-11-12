@@ -141,19 +141,36 @@
   // counter wrap or a reboot) is dropped rather than drawn as a spike, and a
   // pair whose timestamps do not move forward — or do not parse — yields no
   // point (a NaN rate cannot be drawn).
+  // Each point also carries the RATES the automations compare (rule 159a):
+  // `inErrRate` / `outErrRate` in errors per second (ifIn/OutErrorRate's unit)
+  // and, on a fibre-channel port, `fc` — each FC counter per MINUTE (the
+  // fc*Rate metrics' unit) — so a chart's axis reads in the number an operator
+  // typed as the threshold. `fc` is null on every other port.
+  var FC_FIELDS = ["linkFailures", "syncLosses", "sigLosses", "invalidTxWords", "invalidCrcs"];
   function derivePerIntervalSeries(samples, data) {
     samples = samples || [];
     if (data && typeof data.bucketSeconds === "number" && data.bucketSeconds > 0) {
       var bucketSec = data.bucketSeconds;
       return samples.map(function (s) {
+        var fc = null;
+        if (s.fcErrorsPerSec) {
+          fc = {};
+          FC_FIELDS.forEach(function (k) {
+            var v = s.fcErrorsPerSec[k];
+            fc[k] = typeof v === "number" ? v * 60 : null;
+          });
+        }
         return {
           timestamp: s.timestamp,
           inBps:  typeof s.inBytesPerSec  === "number" ? s.inBytesPerSec  * 8 : null,
           outBps: typeof s.outBytesPerSec === "number" ? s.outBytesPerSec * 8 : null,
           inErr:  typeof s.inErrorsPerSec  === "number" ? Math.round(s.inErrorsPerSec  * bucketSec) : null,
           outErr: typeof s.outErrorsPerSec === "number" ? Math.round(s.outErrorsPerSec * bucketSec) : null,
+          inErrRate:  typeof s.inErrorsPerSec  === "number" ? s.inErrorsPerSec  : null,
+          outErrRate: typeof s.outErrorsPerSec === "number" ? s.outErrorsPerSec : null,
           inMaxBps:  typeof s.maxInBytesPerSec  === "number" ? s.maxInBytesPerSec  * 8 : null,
           outMaxBps: typeof s.maxOutBytesPerSec === "number" ? s.maxOutBytesPerSec * 8 : null,
+          fc: fc,
         };
       });
     }
@@ -162,18 +179,40 @@
       return b - a < 0 ? null : b - a;
     }
     var out = [];
-    for (var i = 1; i < samples.length; i++) {
-      var prev = samples[i - 1], cur = samples[i];
+    // The previous row that carried FC counters: a row with none (a pass that
+    // read no FC table) must not break the pair, as the alert resolver skips it.
+    var prevFc = null;
+    for (var i = 0; i < samples.length; i++) {
+      var cur = samples[i];
+      var fc = null;
+      if (cur.fcErrors && prevFc) {
+        var fdt = (new Date(cur.timestamp) - new Date(prevFc.timestamp)) / 1000;
+        if (fdt > 0) {
+          fc = {};
+          FC_FIELDS.forEach(function (k) {
+            var d = delta(prevFc.fcErrors[k], cur.fcErrors[k]);
+            fc[k] = d != null ? (d * 60) / fdt : null;
+          });
+        }
+      }
+      if (cur.fcErrors) prevFc = cur;
+      if (i === 0) continue;
+      var prev = samples[i - 1];
       var dtSec = (new Date(cur.timestamp) - new Date(prev.timestamp)) / 1000;
       if (!(dtSec > 0)) continue;
       var inOct = delta(prev.inOctets, cur.inOctets);
       var outOct = delta(prev.outOctets, cur.outOctets);
+      var inE = delta(prev.inErrors,  cur.inErrors);
+      var outE = delta(prev.outErrors, cur.outErrors);
       out.push({
         timestamp: cur.timestamp,
         inBps:  inOct  != null ? (inOct  * 8) / dtSec : null,
         outBps: outOct != null ? (outOct * 8) / dtSec : null,
-        inErr:  delta(prev.inErrors,  cur.inErrors),
-        outErr: delta(prev.outErrors, cur.outErrors),
+        inErr:  inE,
+        outErr: outE,
+        inErrRate:  inE  != null ? inE  / dtSec : null,
+        outErrRate: outE != null ? outE / dtSec : null,
+        fc: fc,
       });
     }
     return out;

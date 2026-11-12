@@ -24,14 +24,10 @@
  * them removes the whole class of lexer disagreement rather than one instance.
  */
 
-export type GraphqlOperationKind = "query" | "mutation" | "subscription";
+type GraphqlOperationKind ="query" | "mutation" | "subscription";
 
 const isNameStart = (c: string) => (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || c === "_";
 const isNameChar = (c: string) => isNameStart(c) || (c >= "0" && c <= "9");
-
-export function graphqlOperationKinds(doc: string): GraphqlOperationKind[] {
-  return scanGraphql(doc).kinds;
-}
 
 /** True when the document contains a `"""` block string anywhere outside a comment or string. */
 export function graphqlHasBlockString(doc: string): boolean {

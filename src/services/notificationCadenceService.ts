@@ -101,6 +101,11 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ifOutBps: "systemInfo",
   ifInErrorRate: "systemInfo",
   ifOutErrorRate: "systemInfo",
+  fcCrcErrorRate: "systemInfo",
+  fcLinkFailureRate: "systemInfo",
+  fcSyncLossRate: "systemInfo",
+  fcSignalLossRate: "systemInfo",
+  fcInvalidTxWordRate: "systemInfo",
   ifOperStatus: "systemInfo",
   ifAdminStatus: "systemInfo",
   ifIpAddress: "systemInfo",
@@ -135,12 +140,6 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   telemetryFailingMinutes: "cpuMemory",
   systemInfoFailingMinutes: "systemInfo",
 };
-
-/**
- * The Polaris host's own metrics are sampled by hostMetricsCollector, which
- * runs on a fixed 30s tick — no hierarchy, no scope, no range.
- */
-export const HOST_METRIC_INTERVAL_SEC = 30;
 
 export function streamForMetric(metric: string | null | undefined): CadenceStream {
   return (metric && METRIC_STREAM[metric]) || "responseTime";

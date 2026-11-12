@@ -15,15 +15,9 @@ vi.mock("../../src/db.js", () => ({
 }));
 
 import { computeMemoryProjection, projectMemoryPct } from "../../src/services/memoryForecastService.js";
-import {
-  ASSET_METRICS,
-  METRIC_META,
-  FORECAST_DAYS_DEFAULT,
-  FORECAST_HORIZON_METRICS,
-  forecastDaysOf,
-  severityForValue,
-  triggerSchema,
-} from "../../src/services/notificationTypes.js";
+import { METRIC_META, FORECAST_HORIZON_METRICS, forecastDaysOf, severityForValue } from "../../src/services/notificationTypes.js";
+import { ASSET_METRICS, triggerSchema } from "../../src/services/notificationTypes/triggers.js";
+import { FORECAST_DAYS_DEFAULT } from "../../src/services/notificationTypes/metricMeta.js";
 import { chartTokenForMetric, isResourceScopedAlert } from "../../src/services/alertChartService.js";
 import { processRankingForMetric } from "../../src/services/alertProcessService.js";
 import { METRIC_STREAM } from "../../src/services/notificationCadenceService.js";

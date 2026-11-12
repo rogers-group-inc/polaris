@@ -21,7 +21,6 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  INFRA_SOURCE_TYPES,
   classifyOrphanInfraRow,
   decideInfraDhcpBinding,
   isInfraSourceType,
@@ -43,7 +42,7 @@ function apRow(over: Partial<InfraReservationRow> = {}): InfraReservationRow {
 
 describe("isInfraSourceType", () => {
   it("covers exactly the two managed-infra source types", () => {
-    for (const t of INFRA_SOURCE_TYPES) expect(isInfraSourceType(t)).toBe(true);
+    for (const t of ["fortiswitch", "fortinap"]) expect(isInfraSourceType(t)).toBe(true);
     for (const t of ["manual", "dhcp_lease", "dhcp_reservation", "vip", "interface_ip", "dns_resolved"]) {
       expect(isInfraSourceType(t)).toBe(false);
     }

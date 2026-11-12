@@ -969,7 +969,7 @@ export async function bulkDeleteAssets(ids: string[], actor: string | undefined)
     const more = quarantined.length > 5 ? ` (+${quarantined.length - 5} more)` : "";
     throw new AppError(409, `Cannot delete quarantined asset(s): ${names.join(", ")}${more}. Release the quarantine first.`);
   }
-  // Rule 164(a): a released asset still blocked on a FortiGate is the only
+  // Rule 165(a): a released asset still blocked on a FortiGate is the only
   // record that the block exists. Deleting it would lose the gate list.
   const stranded = targets.filter((a) => parseStranded(a.quarantineStranded).length > 0);
   if (stranded.length > 0) {
@@ -1015,7 +1015,7 @@ export async function deleteAsset(id: string, actor: string | undefined): Promis
   if (existing.status === "quarantined") {
     throw new AppError(409, `Cannot delete quarantined asset "${existing.hostname || existing.ipAddress || id}". Release the quarantine first.`);
   }
-  // Rule 164(a) — as the bulk delete.
+  // Rule 165(a) — as the bulk delete.
   const strandedCount = parseStranded(existing.quarantineStranded).length;
   if (strandedCount > 0) {
     throw new AppError(409, `Cannot delete "${existing.hostname || existing.ipAddress || id}": it is still blocked on ${strandedCount} FortiGate${strandedCount === 1 ? "" : "s"}. Retry or dismiss ${strandedCount === 1 ? "it" : "them"} on the Quarantine tab first.`);

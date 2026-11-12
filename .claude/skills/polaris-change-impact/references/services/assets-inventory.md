@@ -230,7 +230,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
 
-**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), utils/sfpOptics.
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), fibreChannelService (`getFcByInterface` — each interface's `fc`: an FC switch port's counters and logins, beside `AssetInterface.wwn`, rule 159a), utils/sfpOptics.
 
 **Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
 
@@ -472,7 +472,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - The survivor keeps its owner; an ownerless survivor takes the absorbed record's `createdBy` (business rule 141 (e), 2026-11-04) so a merge never turns an owned device into a Full Read-Write-only one. The merge itself is `assetMerge` (any two) — rule 141 (a).
 - Canonical and ghost must be distinct IDs; all transfers run in a single `$transaction`.
-- **Quarantine state follows the merge (rule 164(a)).** `transferAssetSideTables` ends by calling `carryQuarantineState(tx, from, to)` — so the operator merge, the conflict absorb and both ghost merges all carry it: stranded gates union onto the survivor; a quarantined absorbed row hands over its targets and, to a survivor not already quarantined, the quarantine (the survivor's own status / `monitored` parked). `mergeAssets` deletes a `status` field winner when either row is quarantined. A new merge path MUST go through `transferAssetSideTables` before deleting a row, and a test's mock `tx` needs `asset.findMany`.
+- **Quarantine state follows the merge (rule 165(a)).** `transferAssetSideTables` ends by calling `carryQuarantineState(tx, from, to)` — so the operator merge, the conflict absorb and both ghost merges all carry it: stranded gates union onto the survivor; a quarantined absorbed row hands over its targets and, to a survivor not already quarantined, the quarantine (the survivor's own status / `monitored` parked). `mergeAssets` deletes a `status` field winner when either row is quarantined. A new merge path MUST go through `transferAssetSideTables` before deleting a row, and a test's mock `tx` needs `asset.findMany`.
 - Ghost `AssetSource` rows re-bind to canonical (global `(sourceKind, externalId)` uniqueness means no collision); `AssetMacAddress` / `AssetAssociatedIp` / `AssetIpHistory` / `AssetFortigateSighting` delete-on-conflict when duplicates exist.
 - `ManagedAgent` transfers only if the survivor has none; `lastSeen` keeps the more recent value; tags union; `acquiredAt` clamped to stay ≤ `lastSeen`.
 - **An empty value never overwrites a populated one, whatever `fieldWinners` says — and for `assetType` the `other` catch-all counts as empty** (`fieldIsEmpty`, built on `utils/assetTypes.isGenericAssetType`). Default: a survivor filed as `other` takes the ghost's specific type. Explicit: a `ghost` winner whose value is `other` is refused when the survivor holds a specific type; two specific types still go to whichever side the body names. Mirrored by `_mergeFieldIsEmpty` in `public/js/asset-merge-modal.js` (radio defaults + the review-step preview), and applied identically by `assetGhostMergeService.mergeDuplicateHostnameGhost` and `conflictResolutionService.acceptAssetConflict`.
@@ -531,7 +531,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/quarantineStrandedService.ts
 
-**What it owns:** Business rule 164 — the quarantine block that outlived its release: reading and shrinking `Asset.quarantineStranded`. (`assetQuarantineService.releaseQuarantine` WRITES the list, through `utils/quarantineStranded.ts`.)
+**What it owns:** Business rule 165 — the quarantine block that outlived its release: reading and shrinking `Asset.quarantineStranded`. (`assetQuarantineService.releaseQuarantine` WRITES the list, through `utils/quarantineStranded.ts`.)
 
 **Public API:** `retryStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds?, onlyDue? })` → `{ assetId, cleared, remaining }`; `dismissStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds? })`; `retryAllStrandedQuarantine(now?)` (the job's pass).
 

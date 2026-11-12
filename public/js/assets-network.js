@@ -758,17 +758,9 @@ function _assetFcTabHTML(assetId) {
     '<span class="empty-state">Loading…</span></div>';
 }
 
-// The counters an operator acts on, in the order they read: a link that
-// dropped, then words / frames the optic mangled. Zero is shown as a dash so a
-// non-zero cell stands out; a non-zero corruption counter is amber.
-var _FC_ERROR_COLS = [
-  ["linkFailures",   "Link failures",  "Times the link went down (fcIfLinkFailures)", false],
-  ["syncLosses",     "Sync losses",    "Losses of synchronisation (fcIfSyncLosses)", true],
-  ["sigLosses",      "Signal losses",  "Losses of signal (fcIfSigLosses)", false],
-  ["invalidTxWords", "Invalid words",  "Invalid transmission words received — usually an optic, cable or connector (fcIfInvalidTxWords)", true],
-  ["invalidCrcs",    "CRC errors",     "Frames received with a bad CRC (fcIfInvalidCrcs)", true],
-];
-
+// _FC_ERROR_COLS (the counters, their labels and which are amber) lives in
+// assets-system.js, which loads first: the Interfaces table shows the same
+// counters on an FC switch's ports (business rule 159a).
 function _fcCounterCells(counters) {
   var c = counters || {};
   return _FC_ERROR_COLS.map(function (col) {
@@ -1078,7 +1070,7 @@ async function _loadAssetMacTable(assetId) {
     // lands here, unattributable, and swamps the real per-port entries.
     // Hidden by DEFAULT rather than dropped: they are legitimate sightings,
     // they just can't be placed on a port. The per-port summary above already
-    // excludes them (macCountsByPort requires an ifName).
+    // excludes them (it requires an ifName).
     var attributed   = entries.filter(function (e) { return !!e.ifName; });
     var unattributed = entries.filter(function (e) { return !e.ifName; });
     var showUnattributed = false;

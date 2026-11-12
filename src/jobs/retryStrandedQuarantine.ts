@@ -2,7 +2,7 @@
  * src/jobs/retryStrandedQuarantine.ts
  *
  * Every 15 minutes: try again to remove a quarantine block from the FortiGates
- * that could not be reached when their asset was released (business rule 164,
+ * that could not be reached when their asset was released (business rule 165,
  * `Asset.quarantineStranded`). Each entry carries its own backoff — 15 minutes,
  * doubling to a six-hour ceiling — so the tick is the granularity, not the
  * cadence: a gate that comes back after a maintenance window clears within

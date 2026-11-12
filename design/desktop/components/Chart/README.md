@@ -33,6 +33,12 @@ Past the detail tier a point is a bucket and the solid line is its average, so e
 
 The key naming the colours the response-time chart drew (Up, Missed poll, Down, Recovering, Parent down, Packet loss, Maintenance, Polling change) sits ABOVE the plot, between the stats line and the chart box, where every other chart's legend sits, and carries the Max chip on a rollup range.
 
+## Error-rate bars and severity bands
+
+An interface's **Errors** chart and a fibre-channel port's **FC errors** chart are stacked bars, one per interval, in the unit the matching automation compares: errors per second (in errors in `color-accent`, out errors `#9b5de5`), and FC counters per minute (CRC errors in `color-accent`, invalid transmission words `#2a9d8f`). An FC port's link failures, loss of sync and loss of signal are a row of small diamonds above the plot, one per interval in which any occurred. Amber is not a series colour here, because amber is what Warning looks like.
+
+Every severity band of an automation that reads the port is a dashed line in the band's `color-sev-*` token with a right-aligned caption ("warning > 5 /min (CRC)"), and the series that automation reads turns the band's colour while it is inside it. The diamonds take the colour of the band their own counter's automation puts them in. The axis always reaches the lowest band, so a quiet port still shows how far it is from alerting. This is the convention the CPU, memory, sensor and path-latency charts already follow with a gradient line; bars apply it per interval.
+
 ## Many series
 
 Per-core CPU and SD-WAN members draw one line per dimension. Their legend is HTML toggle chips above the plot, never `<text>` inside the SVG; a hidden series' chip stays readable, and "Show all" appears once anything is hidden.

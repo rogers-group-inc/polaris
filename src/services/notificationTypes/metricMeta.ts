@@ -279,6 +279,13 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   ifOutErrorRate: { label: "Interface out-error rate", unit: "errors/s" },
   ifInBps: { label: "Interface inbound", unit: "bps" },
   ifOutBps: { label: "Interface outbound", unit: "bps" },
+  // Fibre-channel port counters (business rule 159a), per MINUTE: a failing
+  // optic moves them a handful at a time, so a per-second figure is unreadable.
+  fcCrcErrorRate: { label: "FC port CRC error rate", unit: "errors/min" },
+  fcLinkFailureRate: { label: "FC port link failure rate", unit: "failures/min" },
+  fcSyncLossRate: { label: "FC port loss-of-sync rate", unit: "events/min" },
+  fcSignalLossRate: { label: "FC port loss-of-signal rate", unit: "events/min" },
+  fcInvalidTxWordRate: { label: "FC port invalid transmission word rate", unit: "words/min" },
   sdwanLatencyMs: { label: "SD-WAN latency", unit: "ms" },
   sdwanJitterMs: { label: "SD-WAN jitter", unit: "ms" },
   sdwanPacketLoss: { label: "SD-WAN packet loss", unit: "%" },

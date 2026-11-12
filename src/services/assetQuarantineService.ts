@@ -854,7 +854,7 @@ export async function quarantineAsset(
       quarantinedAt: asset.quarantinedAt ?? now,
       quarantinedBy: params.actor,
       quarantineTargets: mergeQuarantineTargets(asset.quarantineTargets, targets, tokenScope) as any,
-      // Rule 164: a gate this quarantine has just pushed to holds the block on
+      // Rule 165: a gate this quarantine has just pushed to holds the block on
       // purpose again, so it is no longer a leftover to retry or dismiss.
       quarantineStranded: withoutStrandedDevices(asset.quarantineStranded, targets.map((t) => t.fortigateDevice)) as any,
     },
@@ -947,7 +947,7 @@ export async function releaseQuarantine(
 
   const unpushedFrom: string[] = [];
   const failedToUnpush: Array<{ fortigateDevice: string; error: string }> = [];
-  // Rule 164: the same failures, with the integration each gate was reached
+  // Rule 165: the same failures, with the integration each gate was reached
   // through — what a later retry needs to try again.
   const stranded: Array<{ fortigateDevice: string; integrationId: string; error: string }> = [];
 
@@ -1018,7 +1018,7 @@ export async function releaseQuarantine(
       quarantinedAt: null,
       quarantinedBy: null,
       quarantineTargets: [] as any,
-      // Rule 164: the gates that still hold the block are remembered on the
+      // Rule 165: the gates that still hold the block are remembered on the
       // asset (not only in an Event that is pruned in a week), so they can be
       // shown, retried in the background and dismissed.
       quarantineStranded: mergeStranded(asset.quarantineStranded, stranded, now) as any,

@@ -914,7 +914,7 @@ const api = {
     quarantine:           (id, reason) => request("POST", `/assets/${id}/quarantine`, reason !== undefined ? { reason } : {}),
     unquarantine:         (id)  => request("DELETE", `/assets/${id}/quarantine`),
     verifyQuarantine:     (id)  => request("POST", `/assets/${id}/quarantine/verify`),
-    // Business rule 164: a FortiGate that still holds the block after a release.
+    // Business rule 165: a FortiGate that still holds the block after a release.
     retryStrandedQuarantine:   (id, device) => request("POST", `/assets/${id}/quarantine/stranded/retry`, device ? { fortigateDevice: device } : {}),
     dismissStrandedQuarantine: (id, device) => request("DELETE", `/assets/${id}/quarantine/stranded` + (device ? "?device=" + encodeURIComponent(device) : "")),
     getSightings:         (id)  => request("GET", `/assets/${id}/sightings`),
@@ -1038,6 +1038,8 @@ const api = {
       if (opts.sensorName)  qs.push("sensorName="  + encodeURIComponent(opts.sensorName));
       if (opts.sensorClass) qs.push("sensorClass=" + encodeURIComponent(opts.sensorClass));
       if (opts.checkId)     qs.push("checkId="     + encodeURIComponent(opts.checkId));
+      if (opts.ifName)      qs.push("ifName="      + encodeURIComponent(opts.ifName));
+      if (opts.alias)       qs.push("alias="       + encodeURIComponent(opts.alias));
       return request("GET", `/assets/${id}/metric-thresholds?` + qs.join("&"));
     },
     // Agent-run path checks this host runs (+ latest result each).

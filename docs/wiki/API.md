@@ -266,7 +266,7 @@ integrations.
 released and the response lists the gates that could not be reached in
 `failedToUnpush`, as before. Those gates are now also remembered on the asset as
 `quarantineStranded` (on `quarantine-status`) and retried in the background until
-they clear ([rule 164](Business-Rules#rule-164)). A client that wants to be sure a
+they clear ([rule 165](Business-Rules#rule-165)). A client that wants to be sure a
 device is unblocked everywhere reads `quarantineStranded` and waits for `[]`.
 
 Note that quarantining a device also makes it **unmonitorable**

@@ -24,6 +24,8 @@ import {
   hwSensorFilterMatches,
   pathCheckFilterMatches,
   deviceFilterMatch,
+  interfacePatternMatch,
+  interfaceTagMatch,
   CHANGE_TYPE_ACTIONS,
   legacyMirrorOfV2,
   normalizeRuleToV2,
@@ -49,6 +51,7 @@ import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { bumpQuietTimeCache } from "./quietTimeHoldService.js";
 import { scopeMatchesAsset } from "./notificationTypes.js";
 import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
+import { METRIC_DIMENSIONS } from "./notificationTypes/dimensions.js";
 
 /**
  * Scope membership (ScopeAsset + scopeMatchesAsset) now lives in
@@ -165,6 +168,11 @@ export interface MetricSeverityDimension {
    *  members must not shade this one. */
   healthCheck?: string;
   link?: string;
+  /** One interface (the interface error / throughput / FC charts, rule 159a):
+   *  a rule whose name pattern or port-tag filter leaves this port out must
+   *  not draw its bands on it. `alias` is matched as the engine does. */
+  ifName?: string;
+  alias?: string | null;
 }
 
 /**
@@ -197,6 +205,18 @@ export async function getMetricSeverityTierResolver(
   const sdwanSelects = (metric: string, df: unknown, dimension?: MetricSeverityDimension): boolean =>
     !metric.startsWith("sdwan") || !dimension?.healthCheck || !dimension.link
       || sdwanFilterSelects(df as { healthCheck?: string; link?: string } | undefined, { healthCheck: dimension.healthCheck, link: dimension.link });
+  // An interface chart is ONE port: the engine's own name-pattern and port-tag
+  // predicates decide whether a rule reads it. The asset's port tags are read
+  // once, and only when some rule filters on a tag.
+  const anyIfTag = rules.some((r) => JSON.stringify(r.trigger ?? {}).includes("\"ifTag\""));
+  const preloadedTags = anyIfTag ? await prisma.assetInterfaceTag.findMany({ where: { assetId }, select: { ifName: true, tag: true } }) : [];
+  const interfaceSelects = (metric: string, df: unknown, dimension?: MetricSeverityDimension): boolean => {
+    if (!dimension?.ifName || !METRIC_DIMENSIONS[metric]?.includes("ifNamePattern")) return true;
+    const f = (df ?? {}) as { ifNamePattern?: string; ifTag?: string };
+    if (!interfacePatternMatch(dimension.ifName, dimension.alias ?? null, f.ifNamePattern)) return false;
+    if (!f.ifTag) return true;
+    return interfaceTagMatch(preloadedTags.filter((t) => t.ifName === dimension.ifName).map((t) => t.tag), f.ifTag);
+  };
 
   return (metric, dimension) => {
     const collected: MetricSeverityTier[] = [];
@@ -217,6 +237,7 @@ export async function getMetricSeverityTierResolver(
         // check must not shade it.
         if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(trigger.dimensionFilter, dimension)) continue;
         if (!sdwanSelects(metric, trigger.dimensionFilter, dimension)) continue;
+        if (!interfaceSelects(metric, trigger.dimensionFilter, dimension)) continue;
         for (const tier of resolveTierLadder(trigger.operator, trigger.threshold, ruleSeverity, trigger.forDurationSec ?? 0, v2.severityBands)) {
           push(tier.operator, tier.threshold, tier.severity as Severity);
         }
@@ -230,6 +251,7 @@ export async function getMetricSeverityTierResolver(
           if (metric === "hwSensorValue" && dimension && !hwSensorFilterMatches(leaf.dimensionFilter, dimension)) continue;
           if (metric.startsWith("path") && dimension?.checkId && !pathCheckFilterMatches(leaf.dimensionFilter, dimension)) continue;
           if (!sdwanSelects(metric, leaf.dimensionFilter, dimension)) continue;
+          if (!interfaceSelects(metric, leaf.dimensionFilter, dimension)) continue;
           push(leaf.operator, leaf.threshold, ruleSeverity);
         }
       }

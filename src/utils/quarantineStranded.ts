@@ -1,5 +1,5 @@
 /**
- * src/utils/quarantineStranded.ts — the pure half of business rule 164: the
+ * src/utils/quarantineStranded.ts — the pure half of business rule 165: the
  * list of FortiGates that still hold a quarantine block for an asset Polaris
  * has already released (`Asset.quarantineStranded`), and when each is due for
  * another attempt.
@@ -74,7 +74,7 @@ export function mergeStranded(
 }
 
 /**
- * Two records' stranded lists as one (business rule 164(a) — a merge). An
+ * Two records' stranded lists as one (business rule 165(a) — a merge). An
  * entry both hold keeps the first list's copy: its `since` and attempt count
  * are the survivor's own history with that gate.
  */
@@ -87,7 +87,7 @@ export function unionStranded(survivor: unknown, absorbed: unknown): StrandedQua
 }
 
 /**
- * Two records' quarantine TARGET lists as one (rule 164(a)). Targets are
+ * Two records' quarantine TARGET lists as one (rule 165(a)). Targets are
  * opaque here — only `fortigateDevice` + `integrationId` are read — and a gate
  * both hold keeps the survivor's record.
  */

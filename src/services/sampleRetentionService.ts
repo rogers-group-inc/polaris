@@ -369,16 +369,6 @@ export async function updateSampleRetention(
   return merged;
 }
 
-/** Retention days for one (entity, tier). Returns 0 (tier off) or FOREVER (-1)
- *  as stored. */
-export function getRetentionDays(
-  retention: SampleRetention,
-  entity: RetentionEntity,
-  tier: RetentionTier,
-): number {
-  return retention[entity][tier];
-}
-
 /**
  * Configured window (days) for the Application Map's connection facts. Returns 0
  * (prune everything) or FOREVER (-1) as stored. Two callers, both fine on the

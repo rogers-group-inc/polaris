@@ -50,11 +50,6 @@ export const POE_STATUS_VALUES = [
   "other-fault",
 ] as const;
 
-/** Statuses that mean the port is actively powering a device. */
-export function poeIsDelivering(status: string | null | undefined): boolean {
-  return status === "delivering";
-}
-
 /**
  * Statuses that represent a real PoE fault an operator would want to know
  * about. Deliberately excludes `searching` (a port with nothing plugged in
@@ -83,9 +78,6 @@ export function poeClassLabel(raw: number | null | undefined): string | null {
   if (raw < 1 || raw > 5) return null;
   return `class${raw - 1}`;
 }
-
-/** Every value `poeClassLabel` can produce. */
-export const POE_CLASS_VALUES = ["class0", "class1", "class2", "class3", "class4"] as const;
 
 /**
  * What a `pethPsePortDetectionStatus` walk told us — the three-way answer the

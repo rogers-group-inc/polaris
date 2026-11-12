@@ -390,7 +390,7 @@ export async function transferAssetSideTables(
     movedIpHistory: await moveUnique(tx.assetIpHistory, ["ip"]),
     movedSightings: await moveUnique(tx.assetFortigateSighting, ["fortigateDevice", "source"]),
   };
-  // Rule 164(a). Here, and not in each caller, because every path that merges
+  // Rule 165(a). Here, and not in each caller, because every path that merges
   // one asset into another — the operator merge, the conflict absorb and both
   // ghost merges — comes through this function before it deletes the absorbed row.
   await carryQuarantineState(tx, fromAssetId, toAssetId);
@@ -405,14 +405,14 @@ const QUARANTINE_CARRY_SELECT = {
 } as const;
 
 /**
- * Business rule 164(a): a MAC block Polaris pushed to a FortiGate is recorded
+ * Business rule 165(a): a MAC block Polaris pushed to a FortiGate is recorded
  * on an asset row, and the block does not go away because that row is merged
  * into another. Before this, the absorbed row's `quarantineTargets` and
  * `quarantineStranded` were deleted with it: the device stayed blocked, the
  * surviving record read as an ordinary active asset, and nothing in Polaris
  * could release it.
  *
- *   - STRANDED entries (rule 164) are unioned onto the survivor, which keeps
+ *   - STRANDED entries (rule 165) are unioned onto the survivor, which keeps
  *     retrying them and shows them on its Quarantine tab.
  *   - An absorbed asset that IS quarantined hands the quarantine to the
  *     survivor. A survivor already quarantined gains the gates it did not
@@ -799,7 +799,7 @@ export async function mergeAssets(opts: {
     }
   }
 
-  // Rule 164(a): quarantine owns `status` while either record is quarantined
+  // Rule 165(a): quarantine owns `status` while either record is quarantined
   // (carryQuarantineState settles it). A field winner must not write an
   // ordinary status over a quarantine — the block would stay on the device
   // with nothing recording it.

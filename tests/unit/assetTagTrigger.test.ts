@@ -8,14 +8,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  ruleInputSchema,
-  ASSET_STATE_FIELDS,
-  FIELD_META,
-  triggerSignature,
-  type Trigger,
-} from "../../src/services/notificationTypes.js";
-import { compareValue, triggerHandsOffWhenDeviceDown } from "../../src/services/notificationEngine.js";
+import { ruleInputSchema, FIELD_META, triggerSignature, type Trigger } from "../../src/services/notificationTypes.js";
+import { ASSET_STATE_FIELDS } from "../../src/services/notificationTypes/triggers.js";
+import { compareValue } from "../../src/services/notifications/ruleModel.js";
+import { triggerHandsOffWhenDeviceDown } from "../../src/services/notifications/scope.js";
 import { streamForMetric } from "../../src/services/notificationCadenceService.js";
 import { triggerSummary } from "../../src/utils/triggerSummary.js";
 

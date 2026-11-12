@@ -184,37 +184,6 @@ export function computeMonitorOverride(
 }
 
 /**
- * Convenience helper used by operator write paths (PUT /assets/:id,
- * POST /assets/bulk-monitor, status pill toggle) — pulls the asset's
- * type + integration config and returns the override value to stamp.
- *
- * Pass `{integrationConfig, integrationType}` already resolved (cheap if
- * the caller has them; otherwise the caller should load Integration and
- * pass the fields).
- */
-export function resolveMonitorOverride(input: {
-  monitored: boolean;
-  assetType: string | null;
-  integrationType: string | null;
-  integrationConfig: Record<string, unknown> | null;
-}): boolean {
-  const flag = getAddAsMonitoredFromConfig(
-    input.integrationType,
-    input.integrationConfig,
-    input.assetType,
-  );
-  return computeMonitorOverride(input.monitored, flag);
-}
-
-/**
- * The set of asset types that participate in the auto-monitor-asset sweep.
- * Anything outside this set leaves monitorOverride at its existing value
- * and is invisible to the per-class addAsMonitored flag.
- */
-export const AUTO_MONITOR_ASSET_TYPES: ReadonlySet<AddAsMonitoredAssetType> =
-  new Set(["firewall", "switch", "access_point", "workstation", "server", "hypervisor", "kubernetes_cluster", "container"]);
-
-/**
  * Maps Asset.assetType to its per-class config block key, when one applies.
  * `server` is integration-type-dependent (vCenter VMs are servers whose class
  * block kept the vmMonitor name) — pass the discovering integration's type;

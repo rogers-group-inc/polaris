@@ -1,6 +1,6 @@
 /**
  * src/services/quarantineStrandedService.ts — a quarantine block that outlived
- * its release (business rule 164).
+ * its release (business rule 165).
  *
  * Releasing a quarantine un-pushes the block from every FortiGate that holds
  * it. That is best-effort: a gate that is down, or reached through an

@@ -20,7 +20,7 @@ vi.mock("../../src/db.js", () => ({
   getDirectStatsPool: () => null,
 }));
 
-import { graphqlOperationKinds, isQueryOnlyGraphql } from "../../src/utils/graphqlOperations.js";
+import { isQueryOnlyGraphql } from "../../src/utils/graphqlOperations.js";
 import { ensurePrivateDir, makeFilePrivate } from "../../src/utils/privateFiles.js";
 import { databaseUsesPublicDefaultPassword } from "../../src/services/capacityService.js";
 
@@ -28,9 +28,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 const hasBash = spawnSync("bash", ["-c", "true"]).status === 0;
 
-describe("graphqlOperationKinds — the Unraid query tool reads documents as GraphQL does", () => {
+describe("isQueryOnlyGraphql — the Unraid query tool reads documents as GraphQL does", () => {
   it("an anonymous selection set is a query", () => {
-    expect(graphqlOperationKinds("{ info { os { platform } } }")).toEqual(["query"]);
+    expect(isQueryOnlyGraphql("{ info { os { platform } } }")).toBe(true);
     expect(isQueryOnlyGraphql("query Q { vms { id } }")).toBe(true);
   });
 
@@ -43,9 +43,8 @@ describe("graphqlOperationKinds — the Unraid query tool reads documents as Gra
 
   it("keywords inside strings, arguments and selections do not count", () => {
     expect(isQueryOnlyGraphql('{ search(q: "mutation { x }") { id } }')).toBe(true);
-    // Block strings are refused outright since re-scan F70 — but the
-    // operation scan still treats their contents as a string.
-    expect(graphqlOperationKinds('{ a(q: """\nmutation { x }\n""") }')).toEqual(["query"]);
+    // Block strings are refused outright since re-scan F70.
+    expect(isQueryOnlyGraphql('{ a(q: """\nmutation { x }\n""") }')).toBe(false);
     expect(isQueryOnlyGraphql("{ mutation subscription }")).toBe(true);
     expect(isQueryOnlyGraphql("fragment F on mutation { a } { b }")).toBe(true);
   });

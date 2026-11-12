@@ -73,11 +73,8 @@ vi.mock("../../src/db.js", () => ({
 
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
 
-import {
-  evaluateAllNotificationRules,
-  suppressedAtEventTime,
-  type MaintenanceSpan,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules, type MaintenanceSpan } from "../../src/services/notificationEngine.js";
+import { suppressedAtEventTime } from "../../src/services/notifications/eventTail.js";
 
 const NOW = Date.now();
 const ASSET = "a-agent-host";

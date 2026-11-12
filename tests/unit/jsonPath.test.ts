@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   JsonPathError,
   evaluateJsonPath,
-  isValidJsonPath,
   parseJsonPath,
   readJsonPathString,
   readJsonPathStrings,
@@ -44,7 +43,6 @@ describe("parseJsonPath", () => {
   it("refuses what it cannot parse, so a bad mapping fails at save time", () => {
     for (const bad of ["data.", "data..x", "a[", "a[foo]", "a['x", "a['x'", "a b[0", "a]"]) {
       expect(() => parseJsonPath(bad), bad).toThrow(JsonPathError);
-      expect(isValidJsonPath(bad), bad).toBe(false);
     }
     expect(() => parseJsonPath("a.".repeat(400))).toThrow(/longer than/);
   });

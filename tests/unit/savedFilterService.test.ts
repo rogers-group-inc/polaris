@@ -10,7 +10,6 @@
 import { describe, it, expect } from "vitest";
 import {
   functionKeyForScope,
-  isValidScope,
   normalizeName,
   sanitizeFilterState,
   MAX_FILTER_KEYS,
@@ -20,13 +19,17 @@ import {
 
 describe("scopes", () => {
   it("accepts the assets scope and maps it to the assets function key", () => {
-    expect(isValidScope("assets")).toBe(true);
     expect(functionKeyForScope("assets")).toBe("assets");
   });
 
   it("rejects an unknown scope rather than inventing a key", () => {
-    expect(isValidScope("subnets")).toBe(false);
     expect(() => functionKeyForScope("subnets")).toThrowError(/Unknown saved-filter scope/);
+  });
+
+  it("rejects an inherited Object.prototype name (toString / constructor / __proto__)", () => {
+    for (const s of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+      expect(() => functionKeyForScope(s)).toThrowError(/Unknown saved-filter scope/);
+    }
   });
 });
 

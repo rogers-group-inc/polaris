@@ -20,7 +20,8 @@
  *     discovery) is documented on the constants and functions below.
  */
 
-import { macColonUpperOrNull, normalizeMacOrNull, isAllZeroMac } from "./mac.js";
+import { macColonUpperOrNull, normalizeMacOrNull, isAllZeroMac, macHexKeyOrNull } from "./mac.js";
+import { sortNewestFirst } from "./sortByTime.js";
 
 export interface MacJsonEntry {
   mac: string;
@@ -132,6 +133,36 @@ export function selectPrimaryMac(
     if (ms > bestMs) { best = candidates[i]; bestMs = ms; }
   }
   return best.mac;
+}
+
+/**
+ * Fold the MACs one discovery record reports into the asset's in-memory MAC
+ * list — the step the vCenter VM, workload (Unraid / TrueNAS / Proxmox) and
+ * Generic API syncs share. A MAC already on the list (matched by hex key,
+ * whatever its punctuation) is re-stamped `nowIso` and takes the record's
+ * source — or, with `keepSource`, only fills a missing one (a Generic API
+ * feed never relabels a MAC a richer source named); a new MAC is appended.
+ * Unparseable MACs are skipped. The list comes back newest first with the
+ * primary chosen by `selectPrimaryMac`. The input list and its entries are
+ * never mutated: the caller hands `merged` to `reconcileMacAddresses`.
+ */
+export function mergeObservedMacs(
+  existing: unknown,
+  observed: ReadonlyArray<{ mac: string; source: string }>,
+  nowIso: string,
+  opts: { keepSource?: boolean } = {},
+): { primary: string | null; merged: MacJsonEntry[] } {
+  const merged: MacJsonEntry[] = Array.isArray(existing) ? existing.map((m) => ({ ...m })) : [];
+  for (const e of observed) {
+    const key = macHexKeyOrNull(e.mac);
+    if (!key) continue;
+    const hit = merged.find((m) => macHexKeyOrNull(m?.mac) === key);
+    if (!hit) { merged.push({ mac: e.mac, lastSeen: nowIso, source: e.source }); continue; }
+    hit.lastSeen = nowIso;
+    if (!opts.keepSource || !hit.source) hit.source = e.source;
+  }
+  sortNewestFirst(merged, (m) => m.lastSeen);
+  return { primary: selectPrimaryMac(merged) ?? merged[0]?.mac ?? null, merged };
 }
 
 /**

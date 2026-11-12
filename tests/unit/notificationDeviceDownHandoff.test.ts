@@ -47,11 +47,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
   scopeRegionTagsOf: vi.fn(() => []),
 }));
 
-import {
-  evaluateAllNotificationRules,
-  triggerHandsOffWhenDeviceDown,
-  assetIsDown,
-} from "../../src/services/notificationEngine.js";
+import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { triggerHandsOffWhenDeviceDown, assetIsDown } from "../../src/services/notifications/scope.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {
   return {

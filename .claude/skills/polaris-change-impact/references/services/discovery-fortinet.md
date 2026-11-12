@@ -77,6 +77,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/discovery/syncSteps.ts
+
+**What it owns:** Two steps the inventory syncs that own a source kind outright each carried a copy of (CQ-B036). `loadAssetsForSync(extra)` is the once-per-run asset preload: a tight shared select (the columns every sync's loop, the material-field snapshot, the conflict snapshot, `buildMonitoredSweep` and `clampAcquiredToLastSeen` read) plus the sync's own extras, with the MAC side-table rows shaped into `macAddresses`, and an id index. `decommissionUnclaimedAssets(candidateIds, opts)` is the tail of a missing-record sweep: of the assets whose source rows the sweep just deleted, it decommissions those no ownership-bearing source still claims, closing their maintenance windows first, then flipping status, then writing one Event per asset.
+
+**Public API:** `loadAssetsForSync`, `decommissionUnclaimedAssets`, `DecommissionUnclaimedOptions`
+
+**Cross-service deps:** prisma (`asset`, `assetSource`), eventLogService.logEvent, maintenanceScheduleService.releaseAssetsForDecommission; utils `ENRICHMENT_SOURCE_KINDS`, `MAC_ROW_SELECT` / `shapeMacRows`.
+
+**Used by:** src/services/discovery/discoveryEngine.ts (`syncVcenterDevices` — both; `syncEntraDevices` — the preload), src/services/discovery/workloadSync.ts (`syncWorkloadDevices` — both), src/services/discovery/genericApiSync.ts (`syncGenericApiDevices` — both, the sweep with `ownedOnly`).
+
+**Invariants:**
+- Enrichment kinds (`ENRICHMENT_SOURCE_KINDS`) are never a claim: an SNMP self-description says what a device answered, not that an inventory still holds it.
+- `releaseAssetsForDecommission` runs BEFORE the status flip, so the 30 s maintenance reconcile cannot re-flip a decommissioned asset; maintenance-window assets ARE judged (absence from an inventory is configuration truth).
+- `ownedOnly` is rule 70's ownership filter (only what this integration owns, or nothing owns); the Generic API feed passes it, vCenter and the workload sync do not.
+- The guard that refuses a sweep (`absenceExceedsGuard`), the choice of which rows are gone, and the source-row deletion stay in each sync — they differ per sync.
+- The preload stays tight: at 2000 assets every extra column is memory and serialization on every run. Add a column to the shared select only when every caller reads it; otherwise pass it as `extra`.
+
+**When changing this:**
+- The Event message and `details.reason` are per sync (`action`, `reason`, `noun`); a change to the shared sentence changes three integrations' decommission Events at once. Extend tests/unit/syncSteps.test.ts; the DB round trips are tests/integration/workloadSync.test.ts and genericApiSync.test.ts.
+
+---
+
 ## services/discoveryCancelWatchdog.ts
 
 **What it owns:** The force-exit backstop for discovery cancellation. Armed when a run's abort signal fires, disarmed when `runDiscovery` reaches its finally. If the run hasn't unwound within the grace window (2 min), it logs the in-flight devices with ages, writes an `integration.discover.force_exit` Event, finalizes the `DiscoveryRun` row as `aborted`, fails the run's pg-boss job, and exits the process with code 1 (systemd `Restart=on-failure` restarts it).
@@ -105,7 +127,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Rolling discovery-duration tracking per integration (and per-FortiGate within FMG runs), baseline computation for slow-run detection, the threshold formula, and the auto-abort ceiling.
 
-**Public API:** `recordSample`, `getBaseline`, `getBaselines`, `computeBaseline`.
+**Public API:** `recordSample`, `getBaselines`, `computeBaseline`.
 
 **Cross-service deps:** none (reads/writes Settings key "discoveryDurationStats").
 

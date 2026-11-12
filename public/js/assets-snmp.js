@@ -111,10 +111,12 @@ function _cmibCardHTML(w, opts) {
         (opts.editing ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
       '</span>' +
     '</div>' +
+    // Switched off for this asset: the notice alone. The last reading used to
+    // be drawn dimmed beneath it, which on a widget switched off because it
+    // reads nothing useful here (a PDU with no temperature probe) kept
+    // showing the bad value.
     (off
-      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
-          (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
-        (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
+      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.</p>'
       : _renderCustomWidgetBody(w)) +
   '</div>';
 }
@@ -350,6 +352,16 @@ document.addEventListener("click", async function (e) {
   }
 });
 
+// A line widget's hover tooltip: wired on the first pointer entry into each
+// chart, because the tab's HTML reaches the page by several paths (the panel's
+// tab list, _cmibRerender, the toggle refresh) and none of them runs a hook.
+document.addEventListener("mouseover", function (e) {
+  var chart = e.target && e.target.closest ? e.target.closest(".cw-line") : null;
+  if (!chart || chart.getAttribute("data-tip-wired")) return;
+  chart.setAttribute("data-tip-wired", "1");
+  _wireChartTooltip(chart, _cwLineTipHTML);
+});
+
 document.addEventListener("dragstart", function (e) {
   var grip = e.target && e.target.closest ? e.target.closest(".cmib-grip") : null;
   if (!grip || !_cmib.editing) return;
@@ -450,6 +462,28 @@ function _renderCustomWidgetBody(w) {
 }
 
 /**
+ * Is this 0/1 state-probe value the side the operator called the problem?
+ * `map.trueIsProblem` defaults to true when unset. Drives the pill colour and
+ * the "N of M rows in …" head on the state widget. No reading (anything but
+ * 0 / 1) is neither side, so never a problem — it is drawn as "—".
+ */
+function _stateProbeIsProblem(value, map) {
+  if (value !== 0 && value !== 1) return false;
+  var trueIsProblem = (map || {}).trueIsProblem !== false;
+  return (value === 1) === trueIsProblem;
+}
+
+/**
+ * The operator's label for a 0/1 state-probe value; "—" when the device has
+ * sent no reading, so an unread row never shows the healthy side's label.
+ */
+function _stateProbeLabel(value, map) {
+  if (value !== 0 && value !== 1) return "—";
+  var m = map || {};
+  return value === 1 ? (m.trueLabel || "true") : (m.falseLabel || "false");
+}
+
+/**
  * A state probe: one pill per row, using the probe's OWN labels and colouring
  * the side the operator called the problem. The raw device value rides a
  * tooltip — when a mapping looks wrong, the raw value is the thing you need,
@@ -464,16 +498,17 @@ function _renderCustomWidgetState(w) {
   var trueLabel = map.trueLabel || "true";
   var falseLabel = map.falseLabel || "false";
   var trueIsProblem = map.trueIsProblem !== false;
-  var probleml = rows.filter(function (r) { return (r.value === 1) === trueIsProblem; }).length;
+  var probleml = rows.filter(function (r) { return _stateProbeIsProblem(r.value, map); }).length;
   var head = '<div style="font-size:0.78rem;color:' + (probleml ? "var(--color-danger)" : "var(--color-text-tertiary)") + ';margin-bottom:6px">' +
     (probleml
       ? escapeHtml(String(probleml)) + ' of ' + rows.length + ' ' + escapeHtml(rows.length === 1 ? "row" : "rows") + ' in ' + escapeHtml(trueIsProblem ? trueLabel : falseLabel)
       : 'All ' + rows.length + ' ' + escapeHtml(rows.length === 1 ? "row" : "rows") + ' ' + escapeHtml(trueIsProblem ? falseLabel : trueLabel)) +
     '</div>';
   var body = rows.map(function (r) {
-    var isProblem = (r.value === 1) === trueIsProblem;
-    var label = r.value === 1 ? trueLabel : falseLabel;
-    var color = isProblem ? "var(--color-danger)" : "var(--color-success,#3ba55d)";
+    var isProblem = _stateProbeIsProblem(r.value, map);
+    var label = _stateProbeLabel(r.value, map);
+    var unread = r.value !== 0 && r.value !== 1;
+    var color = isProblem ? "var(--color-danger)" : unread ? "var(--color-text-tertiary)" : "var(--color-success,#3ba55d)";
     var title = r.rawValue != null && r.rawValue !== "" ? "Device reported: " + r.rawValue : "";
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;border-top:1px solid var(--color-border)"' +
         (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' +
@@ -502,6 +537,7 @@ function _cwDisplay(w) {
     return {
       conv: function (n) { return TU.toDisplay(n, o.unit); },
       text: function (n) { return _formatNumber(n) + " " + label; },
+      unit: label,
     };
   }
   if (o.format === "duration_s" || o.format === "duration_ticks") {
@@ -509,12 +545,14 @@ function _cwDisplay(w) {
     return {
       conv: function (n) { return n; },
       text: function (n) { return _formatDuration(n / div); },
+      unit: null, // a duration labels itself; an axis tick uses text()
     };
   }
   var unit = o.unit ? " " + o.unit : "";
   return {
     conv: function (n) { return n; },
     text: function (n) { return _formatNumber(n) + unit; },
+    unit: o.unit || "",
   };
 }
 
@@ -613,11 +651,52 @@ function _renderCustomWidgetGauge(w) {
   '</div>';
 }
 
+// Round a value axis to steps of 1 / 2 / 2.5 / 5 × 10ⁿ, about four intervals.
+// `lo` and `hi` are the data bounds the axis must hold; returns the widened
+// bounds, the step and every tick from lo to hi.
+function _cwNiceScale(lo, hi) {
+  if (!(hi > lo)) hi = lo + (Math.abs(lo) || 1);
+  var raw = (hi - lo) / 4;
+  var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  var f = raw / mag;
+  var step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * mag;
+  var nlo = Math.floor(lo / step + 1e-9) * step;
+  var nhi = Math.ceil(hi / step - 1e-9) * step;
+  if (nhi <= nlo) nhi = nlo + step;
+  var ticks = [];
+  for (var v = nlo, i = 0; v <= nhi + step / 2 && i < 12; v += step, i++) ticks.push(Math.round(v / step) * step);
+  return { lo: nlo, hi: nhi, step: step, ticks: ticks };
+}
+
+// The duration counterpart: bounds in SECONDS, step from a ladder of whole
+// time units, returned in the widget's raw units (× `div`, 100 for TimeTicks).
+function _cwDurationScale(lo, hi, div) {
+  var LADDER = [1, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800];
+  if (!(hi > lo)) hi = lo + 60;
+  var raw = (hi - lo) / 4;
+  var step = LADDER[LADDER.length - 1];
+  for (var i = 0; i < LADDER.length; i++) if (LADDER[i] >= raw) { step = LADDER[i]; break; }
+  var nlo = Math.floor(lo / step) * step, nhi = Math.ceil(hi / step) * step;
+  if (nhi <= nlo) nhi = nlo + step;
+  var ticks = [];
+  for (var v = nlo; v <= nhi && ticks.length < 12; v += step) ticks.push(v * div);
+  return { lo: nlo * div, hi: nhi * div, step: step * div, ticks: ticks };
+}
+
+// Hover text for a line-widget point; the tooltip is wired lazily (below) so
+// it works however the tab's HTML reached the page.
+function _cwLineTipHTML(target) {
+  return escapeHtml(_fmtTooltipTs(Number(target.getAttribute("data-ts")))) +
+    '<br><strong>' + escapeHtml(target.getAttribute("data-v") || "") + '</strong>';
+}
+
 function _renderCustomWidgetLine(w) {
-  // Minimal inline SVG line chart over the sample window the server
-  // returned. We don't reuse the larger System-tab chart helper (which
-  // hardcodes axes specific to telemetry / RTT) — custom widgets need to
-  // adapt their y-range to the actual data domain.
+  // A time-series chart in the System tab's style: value axis with the unit,
+  // time axis from the shared _chartXTicksSVG, gridlines and hover points
+  // through _wireChartTooltip. The value axis starts at ZERO when every
+  // reading is non-negative — it used to stretch to the data's own min..max,
+  // which drew an APC PDU's 0.74 → 0.75 kW wobble (about 1 %) as full-height
+  // dives (2026-11-11).
   var fmt = _cwDisplay(w);
   var pts = [];
   (w.samples || []).forEach(function (s) {
@@ -632,25 +711,51 @@ function _renderCustomWidgetLine(w) {
   var latest = pts[pts.length - 1].v;
   var opts = w.displayOptions || {};
   var warn = _customWidgetWarningShown(latest, opts, fmt);
-  // The y-domain stretches to take in the threshold, so its dashed line is on
-  // the chart rather than off the top; the min / max labels stay the data's.
+  // The y-domain takes in the threshold, so its dashed line is on the chart
+  // rather than off the top; the min / max labels stay the data's.
   var lo = warn ? Math.min(minV, warn.at) : minV;
   var hi = warn ? Math.max(maxV, warn.at) : maxV;
-  if (hi === lo) { hi = lo + 1; }
+  if (lo >= 0) lo = 0;
+  // A duration axis steps in whole time units (15 m, 30 m, 1 h …), not 2.5 × 10ⁿ
+  // seconds — "1 h 6 m" / "33 m 20 s" ticks read as noise.
+  var o = w.displayOptions || {};
+  var durDiv = o.format === "duration_ticks" ? 100 : o.format === "duration_s" ? 1 : 0;
+  var scale = durDiv ? _cwDurationScale(lo / durDiv, hi / durDiv, durDiv) : _cwNiceScale(lo, hi);
+  lo = scale.lo; hi = scale.hi;
   var minT = pts[0].t, maxT = pts[pts.length - 1].t;
-  var W = 280, H = 90, P = 4;
-  function yFor(v) { return (H - P) - (H - 2 * P) * ((v - lo) / (hi - lo)); }
-  var coords = pts.map(function (p) {
-    var x = P + (W - 2 * P) * ((p.t - minT) / Math.max(1, maxT - minT));
-    return x.toFixed(1) + "," + yFor(p.v).toFixed(1);
-  });
+  if (maxT <= minT) maxT = minT + 1;
+  // A fixed viewBox scaled uniformly (meet), so axis text never stretches.
+  var W = 440, H = 150, padL = 58, padR = 10, padT = 8, padB = 20;
+  var innerW = W - padL - padR, innerH = H - padT - padB;
+  function yFor(v) { return padT + innerH - innerH * ((v - lo) / (hi - lo)); }
+  function xFor(t) { return padL + innerW * ((t - minT) / (maxT - minT)); }
+  var dec = Math.max(0, -Math.floor(Math.log10(scale.step) + 1e-9));
+  if (scale.step % 1 !== 0 && dec === 0) dec = 1;
+  function tickText(v) { return fmt.unit === null ? fmt.text(v) : v.toFixed(dec) + (fmt.unit ? " " + fmt.unit : ""); }
+  var grid = scale.ticks.map(function (v) {
+    var y = yFor(v).toFixed(1);
+    return '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="rgba(127,127,127,0.15)"/>' +
+      '<text x="' + (padL - 6) + '" y="' + (Number(y) + 3) + '" text-anchor="end" font-size="10" fill="currentColor">' + escapeHtml(tickText(v)) + '</text>';
+  }).join("");
+  var coords = pts.map(function (p) { return xFor(p.t).toFixed(1) + "," + yFor(p.v).toFixed(1); });
+  var hits = pts.map(function (p) {
+    return '<circle class="chart-hit" cx="' + xFor(p.t).toFixed(1) + '" cy="' + yFor(p.v).toFixed(1) + '" r="5" fill="transparent" style="cursor:crosshair"' +
+      ' data-ts="' + p.t + '" data-v="' + escapeHtml(fmt.text(p.v)) + '"/>';
+  }).join("");
   var threshold = warn
-    ? '<line class="custom-widget-warn-line" x1="' + P + '" x2="' + (W - P) + '" y1="' + yFor(warn.at).toFixed(1) + '" y2="' + yFor(warn.at).toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="1" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/>'
+    ? '<line class="custom-widget-warn-line" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yFor(warn.at).toFixed(1) + '" y2="' + yFor(warn.at).toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="1" stroke-dasharray="4 3"/>'
     : "";
-  return '<svg width="100%" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block">' +
-    threshold +
-    '<polyline fill="none" stroke="#22d3ee" stroke-width="1.4" points="' + coords.join(" ") + '"/>' +
-  '</svg>' +
+  return '<div class="cw-line" style="position:relative">' +
+    '<svg width="100%" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">' +
+      grid +
+      '<line x1="' + padL + '" y1="' + (padT + innerH) + '" x2="' + (W - padR) + '" y2="' + (padT + innerH) + '" stroke="rgba(127,127,127,0.4)"/>' +
+      _chartXTicksSVG(minT, maxT, padL, padT, innerW, innerH) +
+      threshold +
+      '<polyline fill="none" stroke="var(--color-accent)" stroke-width="1.6" points="' + coords.join(" ") + '"/>' +
+      hits +
+    '</svg>' +
+    CHART_TOOLTIP_HTML +
+  '</div>' +
   '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--color-text-tertiary);margin-top:2px">' +
     '<span>min ' + escapeHtml(fmt.text(minV)) + '</span>' +
     '<span' + (warn && warn.breached ? ' style="color:var(--color-sev-warning);font-weight:600"' : '') + '>latest ' + escapeHtml(fmt.text(latest)) + '</span>' +

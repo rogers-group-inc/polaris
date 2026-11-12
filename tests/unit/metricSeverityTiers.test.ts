@@ -14,11 +14,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const findMany = vi.fn();
 const findUnique = vi.fn();
+const tagFindMany = vi.fn();
 
 vi.mock("../../src/db.js", () => ({
   prisma: {
     asset: { findUnique: (...a: unknown[]) => findUnique(...a) },
     notificationRule: { findMany: (...a: unknown[]) => findMany(...a) },
+    assetInterfaceTag: { findMany: (...a: unknown[]) => tagFindMany(...a) },
   },
 }));
 
@@ -116,6 +118,33 @@ describe("getMetricSeverityTiers", () => {
     expect(tierFor("sdwanPacketLoss", { healthCheck: "Metrocenter", link: "Overlay-3" }).map((t) => t.ruleId)).toEqual(["everything"]);
     // One rule read for any number of questions.
     expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // Business rule 159a: an interface chart is ONE port.
+  it("shades a port only with rules whose name pattern and port-tag filter select it", async () => {
+    const crc = (id: string, dimensionFilter?: Record<string, string>, threshold = 5) => rule({
+      id, name: id, severity: "warning",
+      trigger: { type: "asset_metric", metric: "fcCrcErrorRate", operator: ">", threshold, forDurationSec: 0, aggregation: "latest", windowSec: 0, ...(dimensionFilter ? { dimensionFilter } : {}) },
+    });
+    findMany.mockResolvedValue([
+      crc("fabric-a", { ifNamePattern: "fc1/1|fc1/2" }, 2),
+      crc("critical-ports", { ifTag: "Critical" }, 1),
+      crc("everything", undefined, 10),
+    ]);
+    tagFindMany.mockResolvedValue([{ ifName: "fc1/9", tag: "Critical" }]);
+    const tierFor = await getMetricSeverityTierResolver("a1");
+    expect(tierFor("fcCrcErrorRate", { ifName: "fc1/2" }).map((t) => t.ruleId)).toEqual(["fabric-a"]);
+    expect(tierFor("fcCrcErrorRate", { ifName: "fc1/9" }).map((t) => t.ruleId)).toEqual(["critical-ports"]);
+    expect(tierFor("fcCrcErrorRate", { ifName: "fc1/5" }).map((t) => t.ruleId)).toEqual(["everything"]);
+    // The tags are read once, and only because a rule filters on one.
+    expect(tagFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads no port tags when no rule filters on one", async () => {
+    tagFindMany.mockReset();
+    findMany.mockResolvedValue([rule()]);
+    await getMetricSeverityTierResolver("a1");
+    expect(tagFindMany).not.toHaveBeenCalled();
   });
 
   it("ignores rules on other metrics and non-numeric comparators", async () => {
