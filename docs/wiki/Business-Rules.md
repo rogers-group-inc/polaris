@@ -3441,3 +3441,18 @@ merged into another — by you, or by Polaris tidying up a duplicate — its qua
 FortiGates it is still blocked on move to the asset that remains. If the merged asset was
 quarantined, the remaining asset becomes quarantined, and releasing it restores the status
 and monitoring it had before the merge.
+
+### Rule 166
+
+**What SSH onboarding puts on a host, Polaris can also take off it.** The **SSH Deployment**
+card now offers an **Offboarding script** beside the onboarding and detection scripts. Run
+on a host that is leaving Polaris, it removes the Polaris key, the account if the
+onboarding script created it, on Linux the passwordless-sudo file, and the Polaris firewall
+rule. It leaves alone an account that existed before onboarding, the SSH server, and the
+Polaris Agent — uninstall the agent from Polaris first.
+
+**A regenerated key is removed from your hosts, not just replaced.** When you regenerate the
+deployment keypair, Polaris remembers the old public key. The next run of the onboarding
+script on each host removes it as it installs the new one, and the detection script reports
+a host that still trusts the old key as needing remediation. See
+[Polaris Agent](Polaris-Agent#removing-it-again).

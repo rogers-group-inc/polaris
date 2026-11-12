@@ -318,6 +318,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `SshOnboardingAccountMode`, `WindowsOnboardingScriptOptions`, `LinuxOnboardingScriptOptions`, `buildWindowsOnboardingScript`, `buildWindowsOnboardingDetectionScript` (takes `publicKey` + `username` + `accountMode` — every builder on both platforms names the account now), `buildLinuxOnboardingScript`, `buildLinuxOnboardingDetectionScript`, `assertValidPublicKey`, `assertValidUsername`, `assertValidLinuxUsername`, `assertValidServerIp`, `WINDOWS_ACCOUNT_DESCRIPTION`, `WINDOWS_DESCRIPTION_MAX`.
 
+**Retired keys (rule 166):** every builder takes `retiredPublicKeys`. `assertValidRetiredKeys` validates them and drops the current key. With any, remediation emits the strip helper (`POLARIS_SH_STRIP_HELPER` / `POLARIS_PS_STRIP_HELPER`) and a strip step, and detection a "retired key still authorized" check; with none, the output is byte-identical to before — a test pins that, because a changed script is a fleet-wide republish.
+
 **Cross-service deps:** `utils/errors` (AppError), `utils/cidr` (isValidIpv4 / isValidCidr).
 
 **Used by:**
@@ -353,13 +355,36 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/sshOffboardingScript.ts
+
+**What it owns:** Business rule 166 — pure generation of the SSH OFFBOARDING scripts, one per platform: the inverse of `sshOnboardingScript.ts`. Removes the current and retired Polaris keys, the account (create mode, and only while it carries the onboarding marker), the Linux sudoers drop-in (only with its "Managed by Polaris" header) and the Polaris firewall allowance.
+
+**Public API:** `OffboardingScriptOptions`, `buildLinuxOffboardingScript`, `buildWindowsOffboardingScript`, `LINUX_ACCOUNT_COMMENT`.
+
+**Cross-service deps:** `sshOnboardingScript` (the validators, `psLiteral` / `shLiteral`, the shared key helpers and strip helpers, `FIREWALL_RULE_NAME`, `OPENSSH_BUILTIN_RULE_NAME`, `LINUX_SUDOERS_PATH`, `WINDOWS_ACCOUNT_DESCRIPTION`), `utils/errors`.
+
+**Used by:** `windowsSshOnboardingService.getOnboardingScript` (kind `offboarding`).
+
+**Invariants:**
+- **It removes only what onboarding provably put there.** The markers it tests (`WINDOWS_ACCOUNT_DESCRIPTION`, `LINUX_ACCOUNT_COMMENT`, the sudoers header, `FIREWALL_RULE_NAME`) are the strings the onboarding script writes; the unit test asserts each pair against the onboarding output.
+- Never stops or uninstalls sshd / OpenSSH Server, never uninstalls the agent, never removes or demotes an `existing`-mode account, never re-enables Windows' built-in OpenSSH rule (closed is the safe state; the command is printed).
+- Continues past a failed step and exits 1; idempotent.
+- Same input contract as the onboarding builders (rule 107): validated, single-quoted, function replacers for anything holding `$`.
+
+**When changing this:**
+- Anything the ONBOARDING script starts leaving on a host gets its removal here in the same change, with a marker that proves Polaris wrote it.
+- Changing an onboarding marker string strands every host onboarded with the old one: keep accepting the old value here.
+- A changed shell script is checked with `bash -n` and the stripper is executed by `tests/unit/sshOffboardingScript.test.ts`; a changed PowerShell script must be parsed with the PowerShell parser by hand (the suite pins it by text only).
+
 ## services/windowsSshOnboardingService.ts
 
 **What it owns:** The "Windows SSH Deployment" workflow on Integrations → Polaris Agent — generating/rotating the ed25519 deployment keypair, owning the Polaris-managed `ssh` Credential that stores it, and the non-secret card config in the `windowsSshOnboarding` Setting.
 
 **Public API:** `WindowsSshOnboardingConfig`, `WindowsSshOnboardingState`, `SaveOnboardingConfigInput`, `OnboardingScriptKind`, `OnboardingScriptResult`, `MANAGED_CREDENTIAL_NAME`, `getOnboardingState`, `saveOnboardingConfig`, `generateKeypair`, `getOnboardingScript`, `sshPublicKeyFingerprint`, `_invalidateCache`.
 
-**Cross-service deps:** `credentialService` (createCredential / getCredential / validateConfig), `sshOnboardingScript`, `settingsStore`, `eventLogService`, `db` (prisma), `ssh2` utils.
+**Rotation (rule 166):** `generateKeypair` stores the public key it replaces in the setting's `retiredPublicKeys` (newest first, `RETIRED_KEY_LIMIT`), read before the credentials are overwritten; `getOnboardingScript` hands the list to every builder and serves kind `offboarding` from `sshOffboardingScript`. Any new field on the setting must survive `parseConfig` and every `store.save({ ...cfg })`.
+
+**Cross-service deps:** `credentialService` (createCredential / getCredential / validateConfig), `sshOnboardingScript`, `sshOffboardingScript`, `settingsStore`, `eventLogService`, `db` (prisma), `ssh2` utils.
 
 **Used by:**
 - src/api/routes/serverSettings.ts — `GET|PUT /server-settings/agents/windows-ssh`, `POST /agents/windows-ssh/generate`, `GET /agents/windows-ssh/script`

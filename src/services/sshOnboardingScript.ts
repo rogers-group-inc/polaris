@@ -60,10 +60,33 @@ export interface WindowsOnboardingScriptOptions {
   accountMode: SshOnboardingAccountMode;
   /** When set, inbound TCP/22 is scoped to this IPv4 address or CIDR. */
   polarisServerIp?: string;
+  /**
+   * Deployment keys Polaris has rotated away from (business rule 166). When
+   * any are given, the script removes them from the authorized-keys file as it
+   * authorizes the current one. Empty / absent: the script is unchanged.
+   */
+  retiredPublicKeys?: string[];
+}
+
+/**
+ * Validate a list of retired keys. A retired key identical to the current one
+ * is dropped: stripping it would remove the key the script just authorized.
+ */
+export function assertValidRetiredKeys(retired: readonly string[] | undefined, currentKey: string): string[] {
+  const body = (k: string) => k.split(" ").slice(0, 2).join(" ");
+  const seen = new Set([body(currentKey)]);
+  const out: string[] = [];
+  for (const raw of retired ?? []) {
+    const k = assertValidPublicKey(raw);
+    if (seen.has(body(k))) continue;
+    seen.add(body(k));
+    out.push(k);
+  }
+  return out;
 }
 
 /** Firewall rule DisplayName — also the key for idempotent replacement. */
-const FIREWALL_RULE_NAME = "Polaris SSH (TCP 22)";
+export const FIREWALL_RULE_NAME = "Polaris SSH (TCP 22)";
 
 /**
  * The rule WINDOWS creates when the OpenSSH Server capability installs, matched
@@ -78,14 +101,14 @@ const FIREWALL_RULE_NAME = "Polaris SSH (TCP 22)";
  * a Private network has port 22 open to every host on it. Firewall rules are
  * additive allows, so no amount of scoping on the Polaris rule narrows that.
  */
-const OPENSSH_BUILTIN_RULE_NAME = "OpenSSH-Server-In-*";
+export const OPENSSH_BUILTIN_RULE_NAME = "OpenSSH-Server-In-*";
 
 /**
  * Well-known SIDs rather than names. "Administrators" and "SYSTEM" are
  * LOCALIZED — on a German or French Windows install the literal strings don't
  * resolve and both the group-membership check and the ACL write fail.
  */
-const SID_ADMINISTRATORS = "S-1-5-32-544";
+export const SID_ADMINISTRATORS = "S-1-5-32-544";
 const SID_SYSTEM = "S-1-5-18";
 
 // ─── Input validation ─────────────────────────────────────────────────────
@@ -218,7 +241,7 @@ function assertNoControlChars(value: string): void {
  * doubling an embedded quote. Validation above already excludes quotes; this
  * is belt-and-braces so a future regex loosening can't become an injection.
  */
-function psLiteral(value: string): string {
+export function psLiteral(value: string): string {
   assertNoControlChars(value);
   // PowerShell treats U+2018, U+2019, U+201A and U+201B as single quotes too,
   // so each is doubled exactly like an ASCII one; escaping only `'` left a
@@ -237,7 +260,7 @@ function psLiteral(value: string): string {
  * deliberately ignores the trailing comment, so re-running after a comment
  * change doesn't append a duplicate line.
  */
-const POLARIS_PS_HELPERS = `
+export const POLARIS_PS_HELPERS = `
 function Test-PolarisKeyPresent {
   param([string[]] $Lines, [string] $Key)
   $wantParts = @($Key.Trim() -split '\\s+')
@@ -327,6 +350,48 @@ function Test-PolarisLocalAdmin {
   }
   return $false
 }
+`.trim();
+
+/**
+ * Removes key lines from an authorized-keys file, matching on the key BODY
+ * like Test-PolarisKeyPresent. Every other line is kept as it was. Emitted by
+ * the remediation script only when there are retired keys to remove, and by
+ * the offboarding script always. Set-Content rewrites the file in place, so
+ * its ACL survives.
+ */
+export const POLARIS_PS_STRIP_HELPER = `
+function Remove-PolarisKeys {
+  param([string] $Path, [string[]] $Keys)
+  if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+  $lines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+  $kept = New-Object System.Collections.Generic.List[string]
+  $removed = 0
+  foreach ($line in $lines) {
+    $drop = $false
+    foreach ($k in $Keys) {
+      if (Test-PolarisKeyPresent -Lines @($line) -Key $k) { $drop = $true; break }
+    }
+    if ($drop) { $removed++ } else { $kept.Add($line) }
+  }
+  if ($removed -gt 0) {
+    if ($kept.Count -eq 0) {
+      Clear-Content -LiteralPath $Path
+    } else {
+      Set-Content -LiteralPath $Path -Value $kept.ToArray() -Encoding ascii
+    }
+  }
+  return $removed
+}
+`.trim();
+
+/** Emitted into the Windows remediation script only when a key has been rotated. */
+const WINDOWS_RETIRED_KEYS_PS = `
+# --- 3b. Remove retired Polaris keys -------------------------------------------
+# The deployment key has been rotated. A key that is no longer Polaris's must
+# not keep opening administrator logons on this endpoint.
+$PolarisRetiredKeys = @(__RETIRED_KEYS__)
+$retiredRemoved = Remove-PolarisKeys -Path $authKeys -Keys $PolarisRetiredKeys
+Write-Host ('Removed ' + $retiredRemoved + ' retired Polaris key(s)')
 `.trim();
 
 // ─── Remediation script ───────────────────────────────────────────────────
@@ -421,7 +486,7 @@ if (Test-PolarisKeyPresent -Lines $existingLines -Key $PolarisPublicKey) {
   Add-Content -LiteralPath $authKeys -Value $PolarisPublicKey -Encoding ascii
   Write-Host 'Authorized the Polaris key'
 }
-
+__RETIRED_BLOCK__
 # sshd refuses administrators_authorized_keys unless it is owned by
 # Administrators/SYSTEM, inheritance is off, and no other ACEs are present.
 # Well-known SIDs, not names — group names are localized.
@@ -611,10 +676,17 @@ export function buildWindowsOnboardingScript(opts: WindowsOnboardingScriptOption
     : NO_FIREWALL_PS
   ).replace(/__BUILTIN_FW_NAME__/g, psLiteral(OPENSSH_BUILTIN_RULE_NAME));
 
+  // Rule 166. With nothing retired both replacements are empty and the
+  // script is byte-for-byte what it was before rotation was tracked.
+  const retired = assertValidRetiredKeys(opts.retiredPublicKeys, publicKey);
+  const retiredBlock = retired.length
+    ? "\n" + WINDOWS_RETIRED_KEYS_PS.replace(/__RETIRED_KEYS__/g, () => retired.map(psLiteral).join(", ")) + "\n"
+    : "";
+
   return WINDOWS_ONBOARDING_PS
     .replace(/__PUBLIC_KEY__/g, psLiteral(publicKey))
     .replace(/__USERNAME__/g, psLiteral(username))
-    .replace(/__PS_HELPERS__/g, POLARIS_PS_HELPERS)
+    .replace(/__PS_HELPERS__/g, () => (retired.length ? POLARIS_PS_HELPERS + "\n\n" + POLARIS_PS_STRIP_HELPER : POLARIS_PS_HELPERS))
     .replace(/__ACCOUNT_BLOCK__/g, accountBlock)
     .replace(/__FIREWALL_BLOCK__/g, firewallBlock)
     .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS))
@@ -630,8 +702,24 @@ export function buildWindowsOnboardingScript(opts: WindowsOnboardingScriptOption
       serverIp
         ? `scopes inbound TCP/22 to ${serverIp} on every profile, and disables Windows' own any-source OpenSSH rule`
         : "opens nothing, but extends Windows' own OpenSSH rule to the Domain profile so a domain-joined endpoint is reachable",
-    );
+    )
+    // Last, and by function: the block holds key text and `$`.
+    .replace(/__RETIRED_BLOCK__/g, () => retiredBlock);
 }
+
+/**
+ * Emitted into the Windows detection script only when a key has been rotated
+ * (rules 72 + 166): remediation removes a retired key, so detection must send
+ * an endpoint that still authorizes one back to remediation.
+ */
+const DETECT_RETIRED_KEYS_PS = `
+  foreach ($retiredKey in @(__RETIRED_KEYS__)) {
+    if (Test-PolarisKeyPresent -Lines $lines -Key $retiredKey) {
+      Write-Host 'remediate: a retired Polaris key is still authorized'
+      exit 1
+    }
+  }
+`.replace(/^\n+|\n+$/g, "");
 
 // ─── Detection script ─────────────────────────────────────────────────────
 
@@ -716,7 +804,7 @@ try {
     Write-Host 'remediate: Polaris key not authorized'
     exit 1
   }
-
+__DETECT_RETIRED_BLOCK__
 __DETECT_FIREWALL_BLOCK__
 
   Write-Host ('ok: Polaris SSH onboarding present (' + $PolarisUser + ' is a local administrator)')
@@ -838,8 +926,13 @@ export function buildWindowsOnboardingDetectionScript(opts: {
   username: string;
   accountMode: SshOnboardingAccountMode;
   polarisServerIp?: string;
+  retiredPublicKeys?: string[];
 }): string {
   const publicKey = assertValidPublicKey(opts.publicKey);
+  const retired = assertValidRetiredKeys(opts.retiredPublicKeys, publicKey);
+  const retiredBlock = retired.length
+    ? "\n" + DETECT_RETIRED_KEYS_PS.replace(/__RETIRED_KEYS__/g, () => retired.map(psLiteral).join(", ")) + "\n"
+    : "";
   const username = assertValidUsername(opts.username, opts.accountMode);
   const serverIp = assertValidServerIp(opts.polarisServerIp);
   const firewallCheck = (serverIp
@@ -856,7 +949,8 @@ export function buildWindowsOnboardingDetectionScript(opts: {
     // replacement would read its $' as "the text after the match".
     .replace(/__DETECT_HELPERS__/g, () => (serverIp ? CONVERT_NETWORK_PS : ""))
     .replace(/__DETECT_FIREWALL_BLOCK__/g, () => firewallCheck.replace(/^\n+|\n+$/g, ""))
-    .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS));
+    .replace(/__SID_ADMINS__/g, psLiteral(SID_ADMINISTRATORS))
+    .replace(/__DETECT_RETIRED_BLOCK__/g, () => retiredBlock);
 }
 
 // ─── Linux ────────────────────────────────────────────────────────────────
@@ -882,7 +976,7 @@ export function buildWindowsOnboardingDetectionScript(opts: {
 // SSH is not one this script was delivered to. It detects and reports instead.
 
 /** Sudoers drop-in path. Also the detection key. */
-const LINUX_SUDOERS_PATH = "/etc/sudoers.d/polaris-agent";
+export const LINUX_SUDOERS_PATH = "/etc/sudoers.d/polaris-agent";
 
 /**
  * Shared shell helpers, emitted into BOTH Linux scripts from one place so the
@@ -892,7 +986,7 @@ const LINUX_SUDOERS_PATH = "/etc/sudoers.d/polaris-agent";
  * Matches on the key BODY (algorithm + base64) and ignores the comment, so a
  * comment change does not append a duplicate line.
  */
-const POLARIS_SH_HELPERS = `
+export const POLARIS_SH_HELPERS = `
 polaris_key_body() {
   # "<type> <base64>" — the comment is deliberately dropped.
   awk '{ print $1 " " $2 }' <<< "$1"
@@ -913,6 +1007,63 @@ polaris_key_present() {
 polaris_home_for() {
   getent passwd "$1" | cut -d: -f6
 }
+`.trim();
+
+/**
+ * Removes key lines from an authorized_keys file, matching on the key BODY
+ * like polaris_key_present. Every other line is kept byte for byte, and the
+ * rewritten file keeps the original's mode and owner (sshd refuses the file
+ * otherwise). Prints how many lines were removed. Needs polaris_key_body from
+ * POLARIS_SH_HELPERS. Emitted by the remediation script only when there are
+ * retired keys to remove, and by the offboarding script always.
+ */
+export const POLARIS_SH_STRIP_HELPER = `
+polaris_strip_keys() {
+  # $1 = authorized_keys path, the rest = full key lines to remove
+  local file="$1"
+  shift
+  local tmp line body k drop removed=0
+  if [ ! -f "$file" ]; then
+    echo 0
+    return 0
+  fi
+  tmp="$(mktemp "$file.XXXXXX")"
+  while IFS= read -r line || [ -n "$line" ]; do
+    drop=0
+    if [ -n "$line" ]; then
+      body="$(polaris_key_body "$line")"
+      for k in "$@"; do
+        if [ "$body" = "$(polaris_key_body "$k")" ]; then
+          drop=1
+          break
+        fi
+      done
+    fi
+    if [ "$drop" -eq 1 ]; then
+      removed=$((removed + 1))
+    else
+      printf '%s\\n' "$line" >> "$tmp"
+    fi
+  done < "$file"
+  if [ "$removed" -gt 0 ]; then
+    chmod --reference="$file" "$tmp"
+    chown --reference="$file" "$tmp"
+    mv -f "$tmp" "$file"
+  else
+    rm -f "$tmp"
+  fi
+  echo "$removed"
+}
+`.trim();
+
+/** Emitted into the Linux remediation script only when a key has been rotated. */
+const LINUX_RETIRED_KEYS_SH = `
+# --- 2b. Remove retired Polaris keys ----------------------------------------
+# The deployment key has been rotated. A key that is no longer Polaris's must
+# not keep opening this account.
+POLARIS_RETIRED_KEYS=( __RETIRED_KEYS__ )
+POLARIS_RETIRED_REMOVED="$(polaris_strip_keys "$AUTH_KEYS" "\${POLARIS_RETIRED_KEYS[@]}")"
+echo "Removed $POLARIS_RETIRED_REMOVED retired Polaris key(s) for $POLARIS_USER"
 `.trim();
 
 const LINUX_ONBOARDING_SH = `#!/usr/bin/env bash
@@ -988,7 +1139,7 @@ else
   printf '%s\\n' "$POLARIS_PUBLIC_KEY" >> "$AUTH_KEYS"
   echo "Authorized the Polaris key for $POLARIS_USER"
 fi
-
+__RETIRED_BLOCK__
 # RHEL-family: a hand-created ~/.ssh carries the wrong SELinux context and
 # sshd refuses it, with nothing useful on the client.
 if command -v restorecon >/dev/null 2>&1; then
@@ -1088,7 +1239,7 @@ echo "firewall: not modified (no Polaris server address configured)"
 `.trim();
 
 /** Shell single-quoted literal; validated input, so the escape is belt-and-braces. */
-function shLiteral(value: string): string {
+export function shLiteral(value: string): string {
   assertNoControlChars(value);
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -1098,6 +1249,8 @@ export interface LinuxOnboardingScriptOptions {
   username: string;
   accountMode: SshOnboardingAccountMode;
   polarisServerIp?: string;
+  /** As WindowsOnboardingScriptOptions.retiredPublicKeys. */
+  retiredPublicKeys?: string[];
 }
 
 /**
@@ -1118,11 +1271,17 @@ export function buildLinuxOnboardingScript(opts: LinuxOnboardingScriptOptions): 
     ? LINUX_FIREWALL_SH.replace(/__SERVER_IP__/g, shLiteral(serverIp))
     : LINUX_NO_FIREWALL_SH;
 
+  // Rule 166 — as the Windows builder: nothing retired, nothing changes.
+  const retired = assertValidRetiredKeys(opts.retiredPublicKeys, publicKey);
+  const retiredBlock = retired.length
+    ? "\n" + LINUX_RETIRED_KEYS_SH.replace(/__RETIRED_KEYS__/g, () => retired.map(shLiteral).join(" ")) + "\n"
+    : "";
+
   return LINUX_ONBOARDING_SH
     .replace(/__PUBLIC_KEY__/g, shLiteral(publicKey))
     .replace(/__USERNAME__/g, shLiteral(username))
     .replace(/__SUDOERS_PATH__/g, shLiteral(LINUX_SUDOERS_PATH))
-    .replace(/__SH_HELPERS__/g, POLARIS_SH_HELPERS)
+    .replace(/__SH_HELPERS__/g, () => (retired.length ? POLARIS_SH_HELPERS + "\n\n" + POLARIS_SH_STRIP_HELPER : POLARIS_SH_HELPERS))
     .replace(/__ACCOUNT_BLOCK__/g, accountBlock)
     .replace(/__FIREWALL_BLOCK__/g, firewallBlock)
     .replace(
@@ -1134,8 +1293,19 @@ export function buildLinuxOnboardingScript(opts: LinuxOnboardingScriptOptions): 
     .replace(
       /__FIREWALL_SUMMARY__/g,
       serverIp ? `scopes inbound TCP/22 to ${serverIp}` : "leaves the firewall alone",
-    );
+    )
+    .replace(/__RETIRED_BLOCK__/g, () => retiredBlock);
 }
+
+/** The Linux counterpart of DETECT_RETIRED_KEYS_PS (rules 72 + 166). */
+const LINUX_DETECT_RETIRED_KEYS_SH = `
+for POLARIS_RETIRED_KEY in __RETIRED_KEYS__; do
+  if polaris_key_present "$POLARIS_HOME/.ssh/authorized_keys" "$POLARIS_RETIRED_KEY"; then
+    echo "remediate: a retired Polaris key is still authorized for $POLARIS_USER"
+    exit 1
+  fi
+done
+`.trim();
 
 const LINUX_DETECTION_SH = `#!/usr/bin/env bash
 # ---------------------------------------------------------------------------
@@ -1175,7 +1345,7 @@ if ! polaris_key_present "$POLARIS_HOME/.ssh/authorized_keys" "$POLARIS_PUBLIC_K
   echo "remediate: Polaris key not authorized for $POLARIS_USER"
   exit 1
 fi
-
+__DETECT_RETIRED_BLOCK__
 if [ ! -f "$POLARIS_SUDOERS" ]; then
   echo "remediate: sudoers drop-in missing (agent install needs passwordless sudo)"
   exit 1
@@ -1192,12 +1362,17 @@ exit 0
  * policy guessing). The firewall is still left out — too distro-dependent to
  * judge without false positives.
  */
-export function buildLinuxOnboardingDetectionScript(opts: { publicKey: string; username: string }): string {
+export function buildLinuxOnboardingDetectionScript(opts: { publicKey: string; username: string; retiredPublicKeys?: string[] }): string {
   const publicKey = assertValidPublicKey(opts.publicKey);
   const username = assertValidLinuxUsername(opts.username);
+  const retired = assertValidRetiredKeys(opts.retiredPublicKeys, publicKey);
+  const retiredBlock = retired.length
+    ? "\n" + LINUX_DETECT_RETIRED_KEYS_SH.replace(/__RETIRED_KEYS__/g, () => retired.map(shLiteral).join(" ")) + "\n"
+    : "";
   return LINUX_DETECTION_SH
     .replace(/__PUBLIC_KEY__/g, shLiteral(publicKey))
     .replace(/__USERNAME__/g, shLiteral(username))
     .replace(/__SUDOERS_PATH__/g, shLiteral(LINUX_SUDOERS_PATH))
-    .replace(/__SH_HELPERS__/g, POLARIS_SH_HELPERS);
+    .replace(/__SH_HELPERS__/g, POLARIS_SH_HELPERS)
+    .replace(/__DETECT_RETIRED_BLOCK__/g, () => retiredBlock);
 }

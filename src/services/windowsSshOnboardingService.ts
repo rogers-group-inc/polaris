@@ -53,6 +53,7 @@ import {
   buildLinuxOnboardingDetectionScript,
   type SshOnboardingAccountMode,
 } from "./sshOnboardingScript.js";
+import { buildLinuxOffboardingScript, buildWindowsOffboardingScript } from "./sshOffboardingScript.js";
 
 /** Setting row holding the card's non-secret configuration. */
 const SETTING_KEY = "windowsSshOnboarding";
@@ -96,7 +97,16 @@ interface WindowsSshOnboardingConfig {
   polarisServerIp: string;
   /** ISO timestamp of the last keypair generation, for display. */
   generatedAt: string | null;
+  /**
+   * Deployment keys rotated away from, newest first (business rule 166). The
+   * onboarding scripts remove them from every host they next run on, and the
+   * offboarding script removes them with the current key. Public halves only.
+   */
+  retiredPublicKeys: string[];
 }
+
+/** How many retired keys are remembered. Older ones fall off the end. */
+const RETIRED_KEY_LIMIT = 10;
 
 export interface WindowsSshOnboardingState extends WindowsSshOnboardingConfig {
   credentialNames: Record<SshOnboardingPlatform, string | null>;
@@ -149,6 +159,9 @@ function parseConfig(raw: unknown): WindowsSshOnboardingConfig {
     linux: parsePlatform(o.linux),
     polarisServerIp: typeof o.polarisServerIp === "string" ? o.polarisServerIp : "",
     generatedAt: typeof o.generatedAt === "string" && o.generatedAt ? o.generatedAt : null,
+    retiredPublicKeys: Array.isArray(o.retiredPublicKeys)
+      ? o.retiredPublicKeys.filter((k): k is string => typeof k === "string" && k.length > 0).slice(0, RETIRED_KEY_LIMIT)
+      : [],
   };
 }
 
@@ -352,6 +365,9 @@ export async function generateKeypair(actor: string): Promise<WindowsSshOnboardi
   // must touch both or one platform silently keeps trusting a retired key.
   const credentialIds: Record<SshOnboardingPlatform, string | null> = { windows: null, linux: null };
   let rotating = false;
+  // Rule 166: the key(s) being replaced. Read BEFORE the credentials are
+  // overwritten — afterwards nothing knows what the fleet still trusts.
+  const replaced: string[] = [];
 
   for (const platform of SSH_ONBOARDING_PLATFORMS) {
     const existing = await loadManagedCredential(cfg.credentialIds[platform]);
@@ -361,6 +377,8 @@ export async function generateKeypair(actor: string): Promise<WindowsSshOnboardi
     const nextConfig = { username: cfg[platform].username || DEFAULT_USERNAME, privateKey, publicKey, port: 22 };
     if (existing) {
       rotating = true;
+      const oldKey = (existing.config as { publicKey?: unknown } | null)?.publicKey;
+      if (typeof oldKey === "string" && oldKey.trim() && !replaced.includes(oldKey.trim())) replaced.push(oldKey.trim());
       // REPLACE the config rather than merging it. updateCredential() routes
       // through mergeConfigPreservingSecrets, which treats an empty string for
       // a secret field as "keep what's stored" — that's what lets the edit
@@ -387,7 +405,8 @@ export async function generateKeypair(actor: string): Promise<WindowsSshOnboardi
     }
   }
 
-  await store.save({ ...cfg, credentialIds, generatedAt: new Date().toISOString() });
+  const retiredPublicKeys = [...replaced, ...cfg.retiredPublicKeys.filter((k) => !replaced.includes(k))].slice(0, RETIRED_KEY_LIMIT);
+  await store.save({ ...cfg, credentialIds, generatedAt: new Date().toISOString(), retiredPublicKeys });
 
   // Warning level on purpose: rotating invalidates every endpoint that trusts
   // the old key until the onboarding script re-runs across the fleet.
@@ -430,7 +449,7 @@ async function uniqueCredentialName(base: string): Promise<string> {
   throw new AppError(409, "Could not allocate a name for the managed SSH credential");
 }
 
-export type OnboardingScriptKind = "remediation" | "detection";
+export type OnboardingScriptKind = "remediation" | "detection" | "offboarding";
 
 export interface OnboardingScriptResult {
   script: string;
@@ -462,6 +481,22 @@ export async function getOnboardingScript(
     );
   }
 
+  // Rule 166: every script knows the keys Polaris has rotated away from.
+  const retiredPublicKeys = state.retiredPublicKeys;
+
+  if (kind === "offboarding") {
+    const opts = {
+      publicKey: state.publicKey,
+      retiredPublicKeys,
+      username: acct.username,
+      accountMode: acct.accountMode,
+      polarisServerIp: state.polarisServerIp || undefined,
+    };
+    return platform === "linux"
+      ? { platform, kind, filename: "polaris-ssh-offboarding.sh", script: buildLinuxOffboardingScript(opts) }
+      : { platform, kind, filename: "polaris-ssh-offboarding.ps1", script: buildWindowsOffboardingScript(opts) };
+  }
+
   if (platform === "linux") {
     return kind === "detection"
       ? {
@@ -470,6 +505,7 @@ export async function getOnboardingScript(
           script: buildLinuxOnboardingDetectionScript({
             publicKey: state.publicKey,
             username: acct.username,
+            retiredPublicKeys,
           }),
         }
       : {
@@ -480,6 +516,7 @@ export async function getOnboardingScript(
             username: acct.username,
             accountMode: acct.accountMode,
             polarisServerIp: state.polarisServerIp || undefined,
+            retiredPublicKeys,
           }),
         };
   }
@@ -493,6 +530,7 @@ export async function getOnboardingScript(
           username: acct.username,
           accountMode: acct.accountMode,
           polarisServerIp: state.polarisServerIp || undefined,
+          retiredPublicKeys,
         }),
       }
     : {
@@ -503,6 +541,7 @@ export async function getOnboardingScript(
           username: acct.username,
           accountMode: acct.accountMode,
           polarisServerIp: state.polarisServerIp || undefined,
+          retiredPublicKeys,
         }),
       };
 }
