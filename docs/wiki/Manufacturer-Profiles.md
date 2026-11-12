@@ -104,7 +104,8 @@ indexes the device has.
 
 A new widget polls **no** device until you switch it on, either from the device
 list Polaris opens when you save it or from the switch on each card of the
-asset's Custom MIB tab ([rule 130](Business-Rules#rule-130)). A switched-on widget
+asset's Custom MIB tab ([rule 130](Business-Rules#rule-130)). The tab hides a
+switched-off widget until you click its pencil. A switched-on widget
 polls on the device's hardware-sensor interval, using its first SNMP credential.
 
 ## Checking it works

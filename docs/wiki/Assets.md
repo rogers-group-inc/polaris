@@ -1655,8 +1655,13 @@ the number the device reports.
 
 **A widget polls this asset only when its switch is on.** Each manufacturer
 widget's card has a switch at its top right. Off (the default for a new
-widget) means Polaris never asks the device for that widget. The card says
-so, and dims the last reading if one was collected earlier. On means Polaris
+widget) means Polaris never asks the device for that widget, and the card is
+hidden: the tab shows only the widgets switched on for this asset, and its
+hint says how many are hidden. Click the pencil at the tab's top right to show
+every widget, switched-off ones included (each says *Polling is off for this
+asset*), and switch them on or off. Each switch is saved at once; click ✓ to
+hide the off ones again. Without the Manufacturer Profiles permission the
+pencil only does this, with no layout tools. On means Polaris
 polls it as often as the asset's **hardware-sensor** interval (60 seconds by
 default), whatever the asset's CPU/memory polling is set to. A UPS can
 poll its battery widgets without a CPU/memory stream. Turning a switch on or

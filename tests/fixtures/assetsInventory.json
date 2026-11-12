@@ -133,6 +133,7 @@
     "_cmibCompleteLayout",
     "_cmibDropIndex",
     "_cmibFindCol",
+    "_cmibHiddenOff",
     "_cmibIsMfr",
     "_cmibLayoutHTML",
     "_cmibMoveWidget",

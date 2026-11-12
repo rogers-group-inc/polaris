@@ -2912,7 +2912,8 @@ asset its manufacturer profile and model pattern match, but it polls an asset
 only after you switch it on, either with the switch at the top right of its
 card on the asset's Custom MIB tab, or in the device list Polaris opens when
 you create a widget (and from the widget's **Devices…** button). A new widget
-starts switched off everywhere. Switched-on widgets poll as often as the
+starts switched off everywhere. The Custom MIB tab hides a switched-off widget
+until you click its pencil, which is where you switch one back on. Switched-on widgets poll as often as the
 asset's hardware-sensor interval, whatever its CPU/memory polling is set to,
 using the first SNMP credential on the asset (custom widget, then hardware
 sensors, then CPU/memory, then the general monitor credential). Every switch
