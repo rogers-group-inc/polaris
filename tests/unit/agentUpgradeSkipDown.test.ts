@@ -16,16 +16,13 @@ const h = vi.hoisted(() => ({
   prisma: {
     managedAgent: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
   },
-  logEvent: vi.fn(async () => {}),
-  logEventsBatch: vi.fn(async (_events: unknown) => 0),
   getInventory: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: h.logEvent,
-  logEventsBatch: h.logEventsBatch,
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/agentBuildService.js", () => ({
   getInventory: h.getInventory,
 }));
@@ -60,7 +57,7 @@ describe("upgradeAllOutdated — down hosts", () => {
     const attempted = h.prisma.managedAgent.findUnique.mock.calls.map((c: any[]) => c[0].where.id).sort();
     expect(attempted).toEqual(["stale", "up"]);
 
-    const deferred = h.logEventsBatch.mock.calls[0][0] as any[];
+    const deferred = eventLog.logEventsBatch.mock.calls[0][0] as any[];
     expect(deferred).toHaveLength(1);
     expect(deferred[0]).toMatchObject({
       action: "agent.upgrade_deferred", resourceId: "asset-down", resourceName: "HOST-down", level: "info",
@@ -69,7 +66,7 @@ describe("upgradeAllOutdated — down hosts", () => {
 
     // The skip Event belongs to rows that were attempted and refused, never
     // to the deferred one.
-    const skippedFor = h.logEvent.mock.calls
+    const skippedFor = eventLog.logEvent.mock.calls
       .map((c: any[]) => c[0])
       .filter((e: any) => e.action === "agent.upgrade_skipped")
       .map((e: any) => e.resourceId);
@@ -80,6 +77,6 @@ describe("upgradeAllOutdated — down hosts", () => {
     h.prisma.managedAgent.findMany.mockResolvedValue([row("up", true, "up")]);
     const r = await upgradeAllOutdated("tester");
     expect(r.deferredDown).toBe(0);
-    expect(h.logEventsBatch).not.toHaveBeenCalled();
+    expect(eventLog.logEventsBatch).not.toHaveBeenCalled();
   });
 });

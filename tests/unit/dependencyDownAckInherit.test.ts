@@ -16,11 +16,12 @@ const h = vi.hoisted(() => ({
     notification: { findMany: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
   },
-  logEvent: vi.fn(async (_event: unknown) => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent, logEventsBatch: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   acknowledgeNotifications,
@@ -105,7 +106,7 @@ describe("acknowledgeNotifications cascades to dependency-down alerts", () => {
       acknowledgedVia: { notificationId: "n-root", assetId: "fg", hostname: "FG-PLANT" },
     });
 
-    const events = h.logEvent.mock.calls.map((c) => c[0] as any);
+    const events = eventLog.logEvent.mock.calls.map((c) => c[0] as any);
     expect(events).toHaveLength(2);
     expect(events[1].details).toMatchObject({ ids: ["n-plc1", "n-plc2"], count: 2, inheritedFrom: ["n-root"] });
   });

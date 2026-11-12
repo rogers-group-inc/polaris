@@ -58,7 +58,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   verifyOrPin,
@@ -70,7 +72,6 @@ import {
   _resetCaches,
 } from "../../src/services/sshHostKeyService.js";
 import { buildHostVerifier } from "../../src/utils/remoteExec.js";
-import { logEvent } from "../../src/services/eventLogService.js";
 
 /** A plausible ed25519 host-key blob: length-prefixed type + 32-byte key. */
 function makeKeyBlob(type = "ssh-ed25519", seed = 1): Buffer {
@@ -129,7 +130,7 @@ describe("verifyOrPin", () => {
     expect(db.rows[0]).toMatchObject({
       host: "10.0.0.5", port: 22, keyType: "ssh-ed25519", fingerprint: fingerprintKeyBlob(KEY_A),
     });
-    const ev = (logEvent as any).mock.calls.map((c: any[]) => c[0]);
+    const ev = eventLog.logEvent.mock.calls.map((c: any[]) => c[0]);
     expect(ev.some((e: any) => e.action === "ssh.host_key.pinned")).toBe(true);
   });
 
@@ -154,7 +155,7 @@ describe("verifyOrPin", () => {
     // The pin is NOT overwritten — that would defeat the whole mechanism.
     expect(db.rows[0].fingerprint).toBe(fingerprintKeyBlob(KEY_A));
 
-    const ev = (logEvent as any).mock.calls.map((c: any[]) => c[0]);
+    const ev = eventLog.logEvent.mock.calls.map((c: any[]) => c[0]);
     const mismatch = ev.find((e: any) => e.action === "ssh.host_key.mismatch");
     expect(mismatch).toBeTruthy();
     expect(mismatch.level).toBe("warning");
@@ -208,7 +209,7 @@ describe("deleteHostKey", () => {
     vi.clearAllMocks();
     await deleteHostKey(db.rows[0].id, "alice");
     expect(db.rows).toHaveLength(0);
-    const ev = (logEvent as any).mock.calls.map((c: any[]) => c[0]);
+    const ev = eventLog.logEvent.mock.calls.map((c: any[]) => c[0]);
     const del = ev.find((e: any) => e.action === "ssh.host_key.deleted");
     // Deleting a pin re-opens first-use trust — it belongs in the audit log
     // at a level that stands out.

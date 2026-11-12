@@ -14,13 +14,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  logEvent: vi.fn(async () => {}),
   listModels: vi.fn(),
   probeToolCalling: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/llmService.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js");
   return { ...actual, listModels: h.listModels, probeToolCalling: h.probeToolCalling };
@@ -59,7 +60,7 @@ describe("checkLlmToolCalling", () => {
     expect(Date.parse(out.at)).not.toBeNaN();
     const written = (db.update.mock.calls[0] as any)[0].data.config;
     expect(written).toMatchObject({ temperature: 0.7, toolCheck: { model: "llama2:latest", result: "no" } });
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "integration.llm.tool_check", level: "warning", actor: "dana" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "integration.llm.tool_check", level: "warning", actor: "dana" }));
   });
 
   it("probes the default pick when Model is blank", async () => {
@@ -67,7 +68,7 @@ describe("checkLlmToolCalling", () => {
     h.probeToolCalling.mockResolvedValueOnce("yes");
     const out = await checkLlmToolCalling("i1", "dana");
     expect(out.model).toBe("qwen2.5:7b");
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "info" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "info" }));
   });
 
   it("Azure AI Foundry: probes the deployment directly, never listing models (rule 95(j))", async () => {
@@ -98,6 +99,6 @@ describe("checkLlmToolCalling", () => {
     h.probeToolCalling.mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
     await expect(checkLlmToolCalling("i1", "dana")).rejects.toThrow(/ECONNREFUSED/);
     expect(db.update).not.toHaveBeenCalled();
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });

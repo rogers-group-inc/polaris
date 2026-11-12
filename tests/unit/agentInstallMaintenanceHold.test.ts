@@ -37,7 +37,9 @@ vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   openMaintenanceHold:    h.openMaintenanceHold,
   releaseMaintenanceHold: h.releaseMaintenanceHold,
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { startInstall, startUninstall } from "../../src/services/agentInstallService.js";
 

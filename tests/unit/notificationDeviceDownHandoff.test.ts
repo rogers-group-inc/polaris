@@ -37,11 +37,12 @@ const h = vi.hoisted(() => ({
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
     hostMetricsSample: { findMany: vi.fn() },
   },
-  logEvent: vi.fn(async () => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRecipientService.js", () => ({
   expandDeliveries: vi.fn(async () => {}),
   scopeRegionTagsOf: vi.fn(() => []),
@@ -191,7 +192,7 @@ describe("device-down handoff", () => {
     expect(upd?.[0].data.notificationId).toBe(null);
     // No "resolved" — the alert did not recover, it was handed to asset-down.
     expect(h.prisma.notification.create).not.toHaveBeenCalled();
-    const ev = h.logEvent.mock.calls.map((c: any) => c[0]).find((e: any) => e.action === "notification.superseded");
+    const ev = eventLog.logEvent.mock.calls.map((c: any) => c[0]).find((e: any) => e.action === "notification.superseded");
     expect(ev?.details.reason).toBe("device-down");
   });
 

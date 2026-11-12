@@ -37,7 +37,6 @@ const h = vi.hoisted(() => {
   return {
     state,
     FakeConflict,
-    logEvent: vi.fn(async () => {}),
     sendEmail: vi.fn(async () => {}),
   };
 });
@@ -90,7 +89,9 @@ vi.mock("../../src/db.js", () => ({
     user: { findMany: vi.fn(async () => []) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/firmwareUpgradeService.js", () => ({
   FIRMWARE_ASSET_SELECT: {},
   FirmwareRunConflictError: h.FakeConflict,
@@ -166,7 +167,7 @@ beforeEach(() => {
   h.state.conflictOn.clear();
   h.state.seq = 0;
   h.sendEmail.mockClear();
-  h.logEvent.mockClear();
+  eventLog.logEvent.mockClear();
 });
 
 describe("group executor (rule 122)", () => {

@@ -11,7 +11,6 @@ const m = vi.hoisted(() => ({
   assertCreds: vi.fn(),
   recompute: vi.fn(),
   recordUse: vi.fn(),
-  logEvent: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/credentialService.js", () => ({ assertCredentialAssignments: m.assertCreds }));
@@ -20,7 +19,9 @@ vi.mock("../../src/services/credentialUseAuditService.js", () => ({
   recordCredentialUse: m.recordUse,
   assetCredentialDestination: (a: { ipAddress: string | null }) => a.ipAddress,
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { bulkSetMonitored } from "../../src/services/assetBulkMonitorService.js";
 import { listAllAssetTags } from "../../src/services/assetTagListService.js";
@@ -54,7 +55,7 @@ describe("bulkSetMonitored", () => {
     // clampMonitoredState: enabling resets the probe state.
     expect(call.data).toMatchObject({ monitored: true, monitorStatus: "recovering", consecutiveFailures: 0, consecutiveSuccesses: 0 });
     expect(m.recompute).toHaveBeenCalledWith(expect.anything(), ["a"]);
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "monitor.bulk_enabled", actor: "op" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "monitor.bulk_enabled", actor: "op" });
   });
 
   it("records the credential only for assets that did not already carry it (rule 112)", async () => {
@@ -76,7 +77,7 @@ describe("bulkSetMonitored", () => {
     const r = await bulkSetMonitored({ ids: ["x"], monitored: false }, credActor, undefined);
     expect(r).toEqual({ updated: 0, errors: [{ id: "x", error: "Asset not found" }] });
     expect(db.updateMany).not.toHaveBeenCalled();
-    expect(m.logEvent.mock.calls[0][0].action).toBe("monitor.bulk_disabled");
+    expect(eventLog.logEvent.mock.calls[0][0].action).toBe("monitor.bulk_disabled");
   });
 });
 

@@ -21,9 +21,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEventsBatch: vi.fn(async (rows: unknown[]) => rows.length),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   geocode,
@@ -35,13 +35,12 @@ import {
   type GeocodeFailureForAsset,
 } from "../../src/services/geocoderService.js";
 import { prisma } from "../../src/db.js";
-import { logEventsBatch } from "../../src/services/eventLogService.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const findUnique = prisma.geocodeCache.findUnique as unknown as Mock;
 const upsert = prisma.geocodeCache.upsert as unknown as Mock;
 const eventFindMany = prisma.event.findMany as unknown as Mock;
-const batchMock = logEventsBatch as unknown as Mock;
+const batchMock = eventLog.logEventsBatch;
 
 const NOMINATIM_HIT = [{ lat: "30.7293", lon: "-88.0602" }];
 const NOMINATIM_MISS: unknown[] = [];

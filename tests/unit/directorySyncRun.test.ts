@@ -28,9 +28,12 @@ const prismaMock = vi.hoisted(() => ({
 vi.mock("../../src/db.js", () => ({ prisma: prismaMock }));
 
 const events = vi.hoisted(() => ({ logged: [] as Record<string, any>[] }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async (e: Record<string, any>) => { events.logged.push(e); }),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { events.logged.push(e); return undefined; });
+});
 
 const readers = vi.hoisted(() => ({ entra: vi.fn(), ad: vi.fn() }));
 vi.mock("../../src/services/entraIdService.js", () => ({ listDirectoryPeople: readers.entra }));

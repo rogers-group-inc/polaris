@@ -52,7 +52,9 @@ vi.mock("../../src/services/reservationPushService.js", () => ({
   normalizeMac: (m: string) => String(m).trim().toLowerCase().replace(/-/g, ":"),
 }));
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/assetSightingService.js", () => ({ getQuarantineCandidates: vi.fn() }));
 
 const { pushQuarantineToFortigate, unpushQuarantineFromFortigate } = await import(

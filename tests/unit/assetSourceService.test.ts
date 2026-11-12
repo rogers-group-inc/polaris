@@ -9,7 +9,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   mergeAssets: vi.fn(),
   repointSerial: vi.fn(),
   repointIp: vi.fn(),
@@ -17,7 +16,9 @@ const m = vi.hoisted(() => ({
   settleSerial: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/assetMergeService.js", () => ({ mergeAssets: m.mergeAssets }));
 vi.mock("../../src/services/duplicateIpConflictService.js", () => ({
   repointDuplicateIpConflicts: m.repointIp,
@@ -100,7 +101,7 @@ describe("splitAssetSource", () => {
     expect(r).toMatchObject({ originalAssetId: "a", newAssetId: "new", movedSourceId: "s1" });
     expect(create.mock.calls[0][0].data).toMatchObject({ assetType: "workstation", statusChangedBy: "op", createdBy: "op" });
     expect(update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { assetId: "new" } });
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.split", actor: "op", resourceId: "a" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.split", actor: "op", resourceId: "a" });
   });
 });
 
@@ -122,7 +123,7 @@ describe("mergeAssetsAudited", () => {
     expect(await mergeAssetsAudited(input)).toBe(result);
     expect(m.repointSerial).toHaveBeenCalledWith("g", "c");
     expect(m.repointIp).toHaveBeenCalledWith("g", "c");
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.merged", actor: "op", resourceId: "c" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.merged", actor: "op", resourceId: "c" });
     expect(m.reconcileIp).toHaveBeenCalledWith(["10.0.0.2", "10.0.0.9"]);
     expect(m.settleSerial).toHaveBeenCalledWith(expect.objectContaining({ survivorAssetId: "c", absorbedAssetId: "g", actor: "op" }));
   });

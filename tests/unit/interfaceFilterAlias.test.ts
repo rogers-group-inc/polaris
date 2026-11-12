@@ -131,7 +131,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRecipientService.js", () => ({
   expandDeliveries: vi.fn(async () => {}),
   scopeRegionTagsOf: () => [],

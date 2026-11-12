@@ -53,9 +53,12 @@ vi.mock("../../src/db.js", () => ({
     automationScriptRun: table(() => db.runs),
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async (e: any) => { db.events.push(e); }),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { db.events.push(e); return undefined; });
+});
 vi.mock("../../src/services/automationScriptService.js", () => ({ SCRIPT_OUTPUT_CAP_BYTES: 65536 }));
 
 import {

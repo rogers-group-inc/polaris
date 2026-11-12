@@ -88,7 +88,9 @@ vi.mock("../../src/services/notificationChannels/emailChannel.js", () => ({
   sendM365Email: vi.fn(async () => {}),
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}), logEventsBatch: vi.fn(async () => 0) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { drainPendingDeliveries } from "../../src/services/notificationDeliveryService.js";
 import { DEPENDENCY_PATH_CID } from "../../src/services/alertDependencyPathService.js";
