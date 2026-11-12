@@ -191,7 +191,9 @@ describe("rule 166: the Linux offboarding script", () => {
   });
 });
 
-describe.runIf(hasBash)("polaris_strip_keys, executed", () => {
+// Each case starts a real bash; 5 s is not enough when the full suite runs
+// beside other sessions (timed out twice on 2026-11-12, passes alone).
+describe.runIf(hasBash)("polaris_strip_keys, executed", { timeout: 30_000 }, () => {
   function run(lines: string[], keys: string[], trailingNewline = true) {
     const dir = mkdtempSync(join(tmpdir(), "polaris-strip-"));
     try {
