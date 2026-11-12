@@ -452,11 +452,23 @@ function _renderCustomWidgetBody(w) {
 /**
  * Is this 0/1 state-probe value the side the operator called the problem?
  * `map.trueIsProblem` defaults to true when unset. Drives the pill colour and
- * the "N of M rows in …" head on the state widget.
+ * the "N of M rows in …" head on the state widget. No reading (anything but
+ * 0 / 1) is neither side, so never a problem — it is drawn as "—".
  */
 function _stateProbeIsProblem(value, map) {
+  if (value !== 0 && value !== 1) return false;
   var trueIsProblem = (map || {}).trueIsProblem !== false;
   return (value === 1) === trueIsProblem;
+}
+
+/**
+ * The operator's label for a 0/1 state-probe value; "—" when the device has
+ * sent no reading, so an unread row never shows the healthy side's label.
+ */
+function _stateProbeLabel(value, map) {
+  if (value !== 0 && value !== 1) return "—";
+  var m = map || {};
+  return value === 1 ? (m.trueLabel || "true") : (m.falseLabel || "false");
 }
 
 /**
@@ -482,8 +494,9 @@ function _renderCustomWidgetState(w) {
     '</div>';
   var body = rows.map(function (r) {
     var isProblem = _stateProbeIsProblem(r.value, map);
-    var label = r.value === 1 ? trueLabel : falseLabel;
-    var color = isProblem ? "var(--color-danger)" : "var(--color-success,#3ba55d)";
+    var label = _stateProbeLabel(r.value, map);
+    var unread = r.value !== 0 && r.value !== 1;
+    var color = isProblem ? "var(--color-danger)" : unread ? "var(--color-text-tertiary)" : "var(--color-success,#3ba55d)";
     var title = r.rawValue != null && r.rawValue !== "" ? "Device reported: " + r.rawValue : "";
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:3px 0;border-top:1px solid var(--color-border)"' +
         (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' +

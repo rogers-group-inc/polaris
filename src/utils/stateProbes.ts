@@ -218,12 +218,6 @@ export function evaluateStateMap(raw: unknown, map: StateMap): 0 | 1 | null {
   }
 }
 
-/** Operator-facing name for a 0/1 value. */
-export function stateLabel(value: 0 | 1 | null, map: StateMap): string {
-  if (value === null) return "—";
-  return value === 1 ? map.trueLabel : map.falseLabel;
-}
-
 /**
  * Join a value walk with an optional label walk on the shared OID suffix.
  *

@@ -18,7 +18,6 @@ import {
   evaluateStateMap,
   joinStateRows,
   normalizeStateMap,
-  stateLabel,
   validateStateMap,
   type StateMap,
 } from "../../src/utils/stateProbes.js";
@@ -170,17 +169,9 @@ describe("evaluateStateMap", () => {
   });
 });
 
-describe("stateLabel", () => {
-  it("names each side with the operator's own words", () => {
-    const m = map({ trueLabel: "Failed", falseLabel: "Present" });
-    expect(stateLabel(1, m)).toBe("Failed");
-    expect(stateLabel(0, m)).toBe("Present");
-    expect(stateLabel(null, m)).toBe("—");
-  });
-});
-
-// The pill polarity and the plain-English summary are browser code, tested
-// there: assetsSnmp.stateProbe.test.ts (_stateProbeIsProblem) and
+// The pill polarity, the pill label and the plain-English summary are browser
+// code, tested there: assetsSnmp.stateProbe.test.ts (_stateProbeIsProblem,
+// _stateProbeLabel) and
 // serverSettingsProfiles.stateMapSummary.test.ts (_stateMapSummary).
 
 describe("joinStateRows", () => {

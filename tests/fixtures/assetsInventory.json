@@ -625,6 +625,7 @@
     "_startRebootPoll",
     "_stashChartGeometry",
     "_stateProbeIsProblem",
+    "_stateProbeLabel",
     "_stationEndpointHTML",
     "_statsSummaryFrom",
     "_storageDetailsFor",

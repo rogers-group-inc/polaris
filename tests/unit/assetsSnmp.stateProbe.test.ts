@@ -45,4 +45,30 @@ describe("_stateProbeIsProblem", () => {
     expect(isProblem(1, null)).toBe(true);
     expect(isProblem(0, undefined)).toBe(false);
   });
+
+  it("never calls a row with no reading a problem, whichever side is", () => {
+    expect(isProblem(null, map({ trueIsProblem: false }))).toBe(false);
+    expect(isProblem(null, map())).toBe(false);
+  });
+});
+
+const label = new Function(
+  `${extractFn(assetsFileSource("assets-snmp.js"), "_stateProbeLabel")}; return _stateProbeLabel;`,
+)() as (value: 0 | 1 | null, map: unknown) => string;
+
+describe("_stateProbeLabel", () => {
+  it("names each side with the operator's labels", () => {
+    const m = map({ trueLabel: "Failed", falseLabel: "Present" });
+    expect(label(1, m)).toBe("Failed");
+    expect(label(0, m)).toBe("Present");
+  });
+
+  it("shows a row with no reading as a dash, never as the healthy side's label", () => {
+    expect(label(null, map({ trueLabel: "Failed", falseLabel: "Present" }))).toBe("—");
+  });
+
+  it("falls back to true / false when the map names no labels", () => {
+    expect(label(1, {})).toBe("true");
+    expect(label(0, null)).toBe("false");
+  });
 });
