@@ -306,6 +306,40 @@ const tierCache = new Map<string, MonitorTierSettings>();
 
 const classOverrideCache = new Map<string, MonitorOverrideSettings | null>();
 
+/**
+ * How long a cached tier or class override is trusted before it is re-read
+ * (business rule 176). `invalidateMonitorSettingsCache` only reaches the
+ * process that made the change — and on a production install that is the web
+ * role, while the resolver that matters runs in the monitor and discovery
+ * roles, which are separate processes. Without an expiry a cadence, a polling
+ * method or a credential saved in the UI was not applied by the monitor until
+ * it restarted, and a deleted integration's settings were never forgotten.
+ *
+ * An entry is REFRESHED IN PLACE, never dropped: the sidecars below are read
+ * synchronously after a resolve, and an expiry that cleared them could make a
+ * reader see "no SD-WAN interval" for a moment — which the SD-WAN alert sweep
+ * (rule 174) would act on. So a stale entry keeps serving until its reload
+ * has overwritten it.
+ */
+export const MONITOR_SETTINGS_CACHE_TTL_MS = 30_000;
+
+/** When each cache key was last loaded, or claimed for a reload. */
+const cacheLoadedAt = new Map<string, number>();
+
+/**
+ * Is this key due for a reload? Marks it loaded as it answers "yes", so of
+ * many concurrent resolves of one stale key (a monitor pass resolves hundreds
+ * of assets at once) exactly one reloads and the rest are served the cached
+ * value in the meantime.
+ */
+function claimReloadIfStale(key: string): boolean {
+  const now = Date.now();
+  const at = cacheLoadedAt.get(key);
+  if (at !== undefined && now - at < MONITOR_SETTINGS_CACHE_TTL_MS) return false;
+  cacheLoadedAt.set(key, now);
+  return true;
+}
+
 // Sidecar: did the cached integration tier-3 derive systemInfoIntervalSeconds
 // from Integration.pollInterval (true) or read it from an explicit tier-3
 // JSON value (false)? Drives the "integrationPollInterval" provenance label
@@ -394,6 +428,7 @@ export function invalidateMonitorSettingsCache(scope?: {
   assetType?: string;
 }): void {
   if (!scope) {
+    cacheLoadedAt.clear();
     tierCache.clear();
     classOverrideCache.clear();
     tierSystemInfoFromPollIntervalCache.clear();
@@ -837,14 +872,15 @@ function detectPerClassFieldOrigins(
  *     workstationMonitor.streams, server→serverMonitor.streams. Other types
  *     fall back to the flat baseline.
  *   - any other integration type: flat baseline only.
- * Cached keyed on `${integrationId}:${assetType}` so each (integration, class)
- * pair is computed at most once per process lifetime; writes route through
- * invalidateMonitorSettingsCache.
+ * Cached keyed on `${integrationId}:${assetType}`, so each (integration, class)
+ * pair is read at most once per MONITOR_SETTINGS_CACHE_TTL_MS; a write in this
+ * process routes through invalidateMonitorSettingsCache and is seen at once,
+ * a write in another process within the TTL (rule 176).
  */
 async function loadIntegrationTierSettings(integrationId: string, assetType: string): Promise<MonitorTierSettings> {
   const cacheKey = `${integrationId}:${assetType}`;
   const cached = tierCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached && !claimReloadIfStale(`tier:${cacheKey}`)) return cached;
   const integration = await prisma.integration.findUnique({
     where:  { id: integrationId },
     select: { config: true, pollInterval: true, type: true },
@@ -887,6 +923,7 @@ async function loadIntegrationTierSettings(integrationId: string, assetType: str
     systemInfoFromPollInterval = true;
   }
   tierCache.set(cacheKey, result);
+  cacheLoadedAt.set(`tier:${cacheKey}`, Date.now());
   tierSystemInfoFromPollIntervalCache.set(cacheKey, systemInfoFromPollInterval);
   // Proxy is the DEFAULT on a FortiManager integration, so an absent flag is
   // proxy — the same `!== false` reading every other consumer uses. Presence of
@@ -907,7 +944,7 @@ async function loadManualTierSettings(): Promise<MonitorTierSettings> {
   // invalidateMonitorSettingsCache({integrationId: null}) clear stays
   // single-key (instead of the per-class prefix-walk it does for integrations).
   const cached = tierCache.get(MANUAL_TIER_CACHE_KEY);
-  if (cached) return cached;
+  if (cached && !claimReloadIfStale(`tier:${MANUAL_TIER_CACHE_KEY}`)) return cached;
   const row = await prisma.setting.findUnique({ where: { key: MANUAL_SETTING_KEY } });
   let result: MonitorTierSettings;
   if (row?.value) {
@@ -917,6 +954,7 @@ async function loadManualTierSettings(): Promise<MonitorTierSettings> {
     result = { ...HARDCODED_FLOOR };
   }
   tierCache.set(MANUAL_TIER_CACHE_KEY, result);
+  cacheLoadedAt.set(`tier:${MANUAL_TIER_CACHE_KEY}`, Date.now());
   return result;
 }
 
@@ -925,7 +963,7 @@ async function loadClassOverride(
   assetType: string,
 ): Promise<MonitorOverrideSettings | null> {
   const key = classCacheKey(integrationId, assetType);
-  if (classOverrideCache.has(key)) return classOverrideCache.get(key) ?? null;
+  if (classOverrideCache.has(key) && !claimReloadIfStale(`class:${key}`)) return classOverrideCache.get(key) ?? null;
   const row = await prisma.monitorClassOverride.findFirst({
     where: { integrationId, assetType },
     select: {
@@ -1016,6 +1054,7 @@ async function loadClassOverride(
     if (row.eventLogTimeoutMs          != null)   result.eventLogTimeoutMs         = row.eventLogTimeoutMs;
   }
   classOverrideCache.set(key, result);
+  cacheLoadedAt.set(`class:${key}`, Date.now());
   return result;
 }
 
