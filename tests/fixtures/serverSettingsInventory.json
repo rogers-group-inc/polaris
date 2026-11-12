@@ -3,7 +3,9 @@
   "functions": [
     "_settingsTabVisible",
     "fetchServerTimezone",
-    "loadTimeSettings",
+    "timezoneCardHtml",
+    "wireTimezoneCard",
+    "tzUtcOffset",
     "updateCurrentTime",
     "loadTzOverride",
     "formatLocalTime",
@@ -344,7 +346,7 @@
     "_mfgStandardReadingHTML"
   ],
   "vars": [
-    "_timeLoaded",
+    "_tzClockTimer",
     "_serverTz",
     "_dnsDefaults",
     "_certsLoaded",
