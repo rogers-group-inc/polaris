@@ -229,7 +229,14 @@ device keeps the single chart of CPU and memory percentages.
 On a switch with PoE ports, Interfaces opens with a
 count of ports delivering, searching and faulted, naming the faulted ones, and
 each port shows its PoE state. Tapping a monitored interface shows its usage and
-error graphs (**1h · 12h · 24h · 7d · 30d**) along with its PoE state and class. Under the status pill, a device
+error graphs (**1h · 12h · 24h · 7d · 30d**) along with its PoE state and class.
+Errors are bars in errors per second. When an automation on that port watches the
+error rate, each of its severity bands is a dashed line, and the bars take the band's
+colour while they are inside it, as on the desktop. On a fibre-channel port the page
+also shows the port's **WWN**, its **FC errors**, an **FC errors per minute** chart
+(CRC errors and invalid words as bars, a diamond for each link failure or loss of
+sync or signal), and **Logged in**: each device logged into the port, with a link to
+the matched server ([rule 159a](Business-Rules#rule-159a)). Under the status pill, a device
 with a table to read carries a button for it, below **View SD-WAN** on a
 firewall that reports SD-WAN:
 

@@ -735,8 +735,159 @@
     return new Date(tMin).toLocaleDateString("en-CA", tz) !== new Date(tMax).toLocaleDateString("en-CA", tz);
   }
 
+  // ─── Stacked-bar rate chart with severity bands (rule 159a) ─────────────
+  // The phone half of the desktop `_renderIfaceRateBars` (assets-detail-panels.js):
+  // an interface's errors per second, an FC port's counters per minute.
+  //
+  //   PolarisCharts.barChart({
+  //     points: [{ ts, values: [v, v], event?: { count, severity } }],
+  //     series: [{ color, tiers? }],   // bottom → top, one per values[] slot
+  //     unit: "/s", floorMax: 0.05,
+  //     outages, maintenance, from, to, height, ariaLabel,
+  //   })
+  //
+  // A bar segment takes the colour of the most severe band its own series'
+  // automation puts it in (`tiers`, from GET /assets/:id/metric-thresholds),
+  // else the series colour. Each upward band is a dashed line in its md-sev
+  // colour, captioned at the right; the axis always reaches the lowest band,
+  // so a quiet port shows its distance to alerting. `event` draws a diamond in
+  // a strip above the plot. Captions and diamonds are HTML over the plot (the
+  // SVG is stretched, which would squash text and shapes) — the same overlay
+  // the maintenance labels use.
+  function sevColor(sev) {
+    return "var(--md-sev-" + (sev === "informational" ? "info" : sev) + ")";
+  }
+  function severityAt(tiers, v) {
+    var CSv = window.PolarisChartSeverity;
+    return CSv && tiers && tiers.length && typeof v === "number" ? CSv.severityAt(tiers, v) : null;
+  }
+  function upTiers(tiers) {
+    return (tiers || []).filter(function (t) {
+      return t && (t.operator === ">" || t.operator === ">=") && typeof t.threshold === "number" && isFinite(t.threshold) && t.threshold > 0;
+    });
+  }
+  function barChart(opts) {
+    opts = opts || {};
+    var series = opts.series || [];
+    var totalHeight = opts.height || 140;
+    var viewWidth = opts.width || 600;
+    var hasEvents = (opts.points || []).some(function (p) { return p && p.event; });
+    var topGutter = TOP_GUTTER + (hasEvents ? 12 : 0);
+    var pts = (opts.points || []).map(function (p) {
+      return { ts: +new Date(p.ts), values: p.values || [], event: p.event || null };
+    }).filter(function (p) {
+      return isFinite(p.ts) && (p.values.some(function (v) { return typeof v === "number"; }) || (p.event && p.event.count > 0));
+    }).sort(function (a, b) { return a.ts - b.ts; });
+    var hasRange = opts.from != null && opts.to != null && isFinite(+opts.from) && isFinite(+opts.to);
+    var edge = hasRange ? +opts.from : -Infinity;
+    var shown = pts.filter(function (p) { return p.ts >= edge; });
+    if (!shown.length) {
+      return '<div class="chart-wrap" style="height:' + totalHeight + 'px;"><div class="chart-empty">' + escapeAttr(opts.empty || "No data") + '</div></div>';
+    }
+    var tMin = hasRange ? +opts.from : shown[0].ts;
+    var tMax = hasRange ? +opts.to : shown[shown.length - 1].ts;
+    if (!(tMax > tMin)) tMax = tMin + 1;
+
+    var maxV = 0, lowest = null;
+    shown.forEach(function (p) {
+      var sum = 0;
+      p.values.forEach(function (v) { if (typeof v === "number" && v > 0) sum += v; });
+      if (sum > maxV) maxV = sum;
+    });
+    series.forEach(function (s) {
+      upTiers(s.tiers).forEach(function (t) { if (lowest === null || t.threshold < lowest) lowest = t.threshold; });
+    });
+    var ceil = Math.max(maxV * 1.2, opts.floorMax || 1, lowest !== null ? lowest * 1.15 : 0);
+
+    var plotHeight = totalHeight - topGutter - BOTTOM_GUTTER;
+    function x(t) { return (viewWidth * (t - tMin)) / (tMax - tMin); }
+    function y(v) { return plotHeight - (plotHeight * Math.min(v, ceil)) / ceil; }
+    // The median spacing sets the bar width, so a 30-day chart of daily
+    // buckets gets fat bars and a day of minutes gets slivers.
+    var gaps = [];
+    for (var i = 1; i < shown.length; i++) gaps.push(shown[i].ts - shown[i - 1].ts);
+    gaps.sort(function (a, b) { return a - b; });
+    var step = gaps.length ? gaps[Math.floor(gaps.length / 2)] : (tMax - tMin) / 60;
+    var barW = Math.max(1, Math.min(18, (viewWidth * step) / (tMax - tMin) * 0.75));
+
+    var body = [];
+    var bands = hasRange ? maintenanceSpans(opts.maintenance, +opts.from, +opts.to, Date.now()) : [];
+    var maint = maintenanceLayer(bands, x, plotHeight, viewWidth, 0);
+    body.push(maint.svg);
+    var overlay = maint.labels;
+
+    shown.forEach(function (p) {
+      var acc = 0, cx = x(p.ts);
+      series.forEach(function (s, si) {
+        var v = p.values[si];
+        if (typeof v !== "number" || v <= 0) return;
+        var top = y(acc + v), bot = y(acc);
+        var h = Math.max(1, bot - top);
+        var sev = severityAt(s.tiers, v);
+        body.push('<rect x="' + (cx - barW / 2).toFixed(1) + '" y="' + (bot - h).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) +
+          '" fill="' + (sev ? sevColor(sev) : (s.color || "var(--md-primary)")) + '"/>');
+        acc += v;
+      });
+      if (p.event && p.event.count > 0) {
+        overlay += '<span aria-hidden="true" style="position:absolute;top:-10px;left:' + ((cx / viewWidth) * 100).toFixed(2) +
+          '%;width:6px;height:6px;margin-left:-3px;transform:rotate(45deg);background:' +
+          (p.event.severity ? sevColor(p.event.severity) : "var(--md-on-surface-variant)") + ';"></span>';
+      }
+    });
+
+    // Band lines (SVG, non-scaling dash) and their captions (HTML).
+    var captions = [];
+    series.forEach(function (s, si) {
+      upTiers(s.tiers).forEach(function (t) {
+        if (t.threshold >= ceil) return;
+        var yy = y(t.threshold);
+        var col = sevColor(t.severity);
+        body.push('<line x1="0" x2="' + viewWidth + '" y1="' + yy.toFixed(1) + '" y2="' + yy.toFixed(1) +
+          '" stroke="' + col + '" stroke-width="1.5" stroke-dasharray="4,4" vector-effect="non-scaling-stroke"/>');
+        var key = t.severity + "|" + t.threshold;
+        var dup = captions.indexOf(key) >= 0;
+        captions.push(key);
+        overlay += '<span style="position:absolute;right:2px;bottom:calc(' + ((t.threshold / ceil) * 100).toFixed(2) + '% + ' + (dup ? 12 : 1) + 'px);' +
+          'font-size:10px;font-weight:500;line-height:1;white-space:nowrap;color:' + col + ';">' +
+          escapeAttr(t.severity + " > " + formatRate(t.threshold) + (series.length > 1 && s.short ? " (" + s.short + ")" : "")) + '</span>';
+      });
+    });
+
+    var aria = (opts.ariaLabel || "Chart") + (bands.length ? " (includes maintenance — polling paused)" : "");
+    var crossesDay = _crossesDay(tMin, tMax);
+    return ''
+      + '<div class="chart-wrap" style="height:' + totalHeight + 'px;padding:' + topGutter + 'px ' + RIGHT_GUTTER + 'px ' + BOTTOM_GUTTER + 'px ' + LEFT_GUTTER + 'px;">'
+      + '<div class="chart-y-labels" style="top:' + topGutter + 'px;">'
+      + '  <span class="chart-y-tick" style="top:0;">' + formatRate(ceil) + '</span>'
+      + '  <span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">' + formatRate(ceil / 2) + '</span>'
+      + '  <span class="chart-y-tick" style="bottom:0;">0</span>'
+      + '</div>'
+      + '<svg class="chart-svg" viewBox="0 0 ' + viewWidth + ' ' + plotHeight + '" preserveAspectRatio="none" role="img" aria-label="' + escapeAttr(aria) + '">'
+      + body.join("")
+      + '</svg>'
+      + '<div class="chart-maint-labels" style="top:' + topGutter + 'px;overflow:visible;">' + overlay + '</div>'
+      + '<div class="chart-x-labels">'
+      + '  <span class="chart-x-tick">' + formatX(tMin, tMax - tMin, crossesDay) + '</span>'
+      + '  <span class="chart-x-tick">' + formatX(tMax, tMax - tMin, crossesDay) + '</span>'
+      + '</div>'
+      + '</div>';
+  }
+
+  /** "0", "0.04", "1.5", "12" — a rate small enough to need its decimals. */
+  function formatRate(v) {
+    if (typeof v !== "number" || !isFinite(v)) return "";
+    if (v === 0) return "0";
+    var a = Math.abs(v);
+    if (a >= 10) return String(Math.round(v));
+    if (a >= 1) return String(Math.round(v * 10) / 10);
+    if (a >= 0.01) return String(Math.round(v * 100) / 100);
+    return v.toExponential(1);
+  }
+
   window.PolarisCharts = {
     lineChart: lineChart,
+    barChart: barChart,
+    formatRate: formatRate,
     stackChart: stackChart,
     formatBytesAxis: formatBytesAxis,
     maxChipHTML: maxChipHTML,
