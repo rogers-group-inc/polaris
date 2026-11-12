@@ -29,7 +29,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 vi.mock("../../src/services/manufacturerProfileService.js", () => svc);
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const port = await import("../../src/services/manufacturerProfilePortabilityService.js");
 

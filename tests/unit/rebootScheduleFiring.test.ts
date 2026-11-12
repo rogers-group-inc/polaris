@@ -39,7 +39,12 @@ vi.mock("../../src/db.js", () => ({
     asset: { findUnique: vi.fn(async () => ({ hostname: "SRV-01", ipAddress: "10.0.0.5" })) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async (e: unknown) => { h.calls.push(["logEvent", e]); }) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { h.calls.push(["logEvent", e]); return undefined; });
+});
 vi.mock("../../src/services/rebootService.js", () => ({
   checkSchedulableReboot: vi.fn(),
   startReboot: vi.fn(async (input: Record<string, unknown>) => { h.calls.push(["startReboot", input]); return h.startImpl(input); }),

@@ -9,10 +9,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(), getCredential: vi.fn(), revokeBearer: vi.fn(), startInstall: vi.fn(), startUninstall: vi.fn(),
+  getCredential: vi.fn(), revokeBearer: vi.fn(), startInstall: vi.fn(), startUninstall: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/credentialService.js", () => ({ getCredential: m.getCredential }));
 vi.mock("../../src/services/agentTokenService.js", () => ({ revokeBearer: m.revokeBearer }));
 vi.mock("../../src/services/agentInstallService.js", () => ({ startInstall: m.startInstall, startUninstall: m.startUninstall }));
@@ -83,7 +85,7 @@ describe("retryAgentInstall", () => {
     m.getCredential.mockResolvedValue({ id: "c" });
     expect(await retryAgentInstall("a", "op")).toEqual({ managedAgentId: "ag", installStatus: "pending" });
     expect(db.agentUpdate).toHaveBeenCalledWith({ where: { id: "ag" }, data: { installStatus: "pending", installError: null } });
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "agent.install_retry", actor: "op" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "agent.install_retry", actor: "op" });
     expect(m.startInstall).toHaveBeenCalledWith({ managedAgentId: "ag", credentialId: "c" });
   });
 });
@@ -95,7 +97,7 @@ describe("removeAgent", () => {
     expect(await removeAgent("a", "op", true)).toEqual({ ok: true, forced: true });
     expect(m.revokeBearer).toHaveBeenCalledWith("ag");
     expect(m.revokeBearer.mock.invocationCallOrder[0]).toBeLessThan(db.transaction.mock.invocationCallOrder[0]);
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "agent.force_removed" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "agent.force_removed" });
     expect(m.startUninstall).not.toHaveBeenCalled();
   });
   it("leaves the row revoked with a warning when the install credential is gone", async () => {

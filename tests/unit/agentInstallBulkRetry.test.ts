@@ -30,7 +30,6 @@ const h = vi.hoisted(() => ({
     if (id === "old-ssh-cred") return { id, name: "old-ssh", type: "ssh",   config: {} };
     throw new Error("Credential not found");
   }),
-  logEvent:      vi.fn(async (_e: unknown) => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -40,7 +39,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 vi.mock("../../src/services/credentialService.js", () => ({ getCredential: h.getCredential }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/certInfo.js", () => ({
   getServerCertFingerprint: () => "ab".repeat(32),
   getServerCertHostnames:   () => ["polaris.example.test"],
@@ -122,7 +123,7 @@ describe("bulkInstallAgents and rows whose install failed", () => {
       data:  { installStatus: "pending", installError: null, installedBy: "tester" },
     });
     // The Event is the per-asset retry's, marked as coming from the bulk verb.
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "agent.install_retry", resourceId: "web1", details: expect.objectContaining({ bulk: true }),
     }));
   });
@@ -154,7 +155,7 @@ describe("bulkInstallAgents and rows whose install failed", () => {
     expect(r.retried).toBe(1);
     expect(h.update.mock.calls[0][0].data).not.toHaveProperty("osPlatform");
     expect(h.update.mock.calls[0][0].data).not.toHaveProperty("arch");
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining("linux/arm64"),
     }));
   });
@@ -212,7 +213,7 @@ describe("bulkInstallAgents and rows whose install failed", () => {
     expect(r.retried).toBe(1);
     expect(h.create).toHaveBeenCalledTimes(2);
     expect(h.update).toHaveBeenCalledTimes(1);
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action).sort())
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action).sort())
       .toEqual(["agent.install_kickoff", "agent.install_kickoff", "agent.install_retry"]);
   });
 

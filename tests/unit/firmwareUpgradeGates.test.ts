@@ -53,7 +53,6 @@ const h = vi.hoisted(() => {
     state, primary, backup, stale,
     openMaintenanceHold: vi.fn(async () => true),
     releaseMaintenanceHold: vi.fn(async () => true),
-    logEvent: vi.fn(async (_e: { action: string }) => {}),
     resolveConnectionPath: vi.fn(async (id: string) => ({ hops: (state.paths.get(id) ?? []).map((hid) => ({ id: hid })) })),
     engineRun: vi.fn(async () => state.engineOutcome),
     stat: vi.fn(async () => ({ size: 100 })),
@@ -101,7 +100,9 @@ vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   openMaintenanceHold: h.openMaintenanceHold,
   releaseMaintenanceHold: h.releaseMaintenanceHold,
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 // The recovery wait probes the held device itself; here it never answers, so
 // the sample table (answerOnPoll) stays the only signal these cases steer.
 vi.mock("../../src/services/monitoringService.js", () => ({
@@ -184,7 +185,7 @@ describe("startFirmwareUpgrade — the gates, in order", () => {
     const run = await start();
     expect(run.status).toBe("queued");
     expect(run.toVersion).toBe("7.6.8 build1164");
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_started");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_started");
     expect(h.openMaintenanceHold).toHaveBeenCalledWith(expect.objectContaining({ assetId: "asset-1", kind: "firmware-upgrade" }));
     await flushRunner();
     expect(h.engineRun).toHaveBeenCalledTimes(1);
@@ -298,7 +299,7 @@ describe("the runner", () => {
   it("never writes Asset.osVersion; records the device's answer on the run and releases the hold before the terminal Event", async () => {
     const order: string[] = [];
     h.releaseMaintenanceHold.mockImplementation(async () => { order.push("release"); return true; });
-    h.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
+    eventLog.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
     await start();
     await flushRunner();
     expect(h.state.assetUpdates).toHaveLength(0);
@@ -310,11 +311,11 @@ describe("the runner", () => {
     h.state.engineOutcome = { outcome: "failed", error: "boom" };
     await start();
     await flushRunner();
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_failed");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_failed");
     h.state.engineOutcome = { outcome: "unverified", error: "no answer" };
     await start();
     await flushRunner();
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_unverified");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_unverified");
     expect(h.releaseMaintenanceHold).toHaveBeenCalledTimes(2);
   });
 });
@@ -332,7 +333,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
   const fast = { timeouts: { recoveryWaitMs: 400, recoveryPollMs: 10 } };
   const startFast = () => startFirmwareUpgrade({ assetId: "asset-1", imageId: "img-primary", actor: "tester", overrides: fast });
   const TERMINAL = new Set(["firmware.upgrade_succeeded", "firmware.upgrade_unverified", "firmware.upgrade_failed"]);
-  const terminalEvents = () => h.logEvent.mock.calls.filter((c) => TERMINAL.has((c[0] as { action: string }).action)).length;
+  const terminalEvents = () => eventLog.logEvent.mock.calls.filter((c) => TERMINAL.has((c[0] as { action: string }).action)).length;
   const settle = (runs = 1) => vi.waitFor(() => expect(terminalEvents()).toBe(runs), { timeout: 15_000, interval: 10 });
 
   it("holds until the first successful sample, then releases before the success Event", async () => {
@@ -341,7 +342,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     const order = h.state.order;
     const { prisma } = await import("../../src/db.js");
     h.releaseMaintenanceHold.mockImplementation(async () => { order.push("release"); return true; });
-    h.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
+    eventLog.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
     await startFast();
     await settle();
     // Three polls, the third answered, THEN the window closed, THEN the Event.
@@ -370,7 +371,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     const log = (vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { log: Array<{ msg: string }> } }).data.log.map((l) => l.msg);
     expect(log.some((m) => /did not answer its monitoring probe within .* ending the maintenance window anyway/.test(m))).toBe(true);
     // Still a success: the device reported the new version to the engine.
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
   });
 
   it("waits on an unverified run too, but a FAILED run releases at once", async () => {
@@ -394,7 +395,7 @@ describe("the runner keeps the maintenance window open until monitoring answers"
     await startFast();
     await settle();
     expect(h.state.monitorPolls).toBe(0);
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as { action: string }).action)).toContain("firmware.upgrade_succeeded");
   });
 });
 
@@ -417,7 +418,7 @@ describe("Abort (business rule 138)", () => {
     return prisma;
   };
   const lastWrite = (prisma: Awaited<ReturnType<typeof rowLookup>>) => vi.mocked(prisma.firmwareUpgradeRun.update).mock.calls.at(-1)![0] as { data: { status: string; result: string; error: string; log: Array<{ msg: string }> } };
-  const actions = () => h.logEvent.mock.calls.map((c) => c[0] as { action: string; actor?: string; message: string; details: Record<string, unknown> });
+  const actions = () => eventLog.logEvent.mock.calls.map((c) => c[0] as { action: string; actor?: string; message: string; details: Record<string, unknown> });
   // clearAllMocks keeps implementations; put back the defaults these cases replace.
   afterEach(async () => {
     const { prisma } = await import("../../src/db.js");
@@ -429,7 +430,7 @@ describe("Abort (business rule 138)", () => {
   it("mid-flash: ends failed / aborted in the aborter's name, says the device may still be flashing, and releases the hold before its Event", async () => {
     const order: string[] = [];
     h.releaseMaintenanceHold.mockImplementation(async () => { order.push("release"); return true; });
-    h.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
+    eventLog.logEvent.mockImplementation(async (e: { action: string }) => { order.push(e.action); });
     parkAt("deploying", ["preflight", "staging", "compat"]);
     const prisma = await rowLookup(runRow());
     await start();

@@ -21,12 +21,13 @@ const h = vi.hoisted(() => ({
       update: vi.fn(),
     },
   },
-  logEvent: vi.fn(),
   verifyPassword: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/utils/password.js", () => ({
   hashPassword: vi.fn(async () => "hash"),
   verifyPassword: h.verifyPassword,
@@ -118,8 +119,8 @@ describe("verifyToken with trusted hosts", () => {
     const r = await verifyToken(RAW, "10.30.1.1");
     expect(r).toEqual({ ok: false, reason: "untrusted_host", tokenName: "siem", callerIp: "10.30.1.1" });
     expect(h.prisma.apiToken.update).not.toHaveBeenCalled();
-    expect(h.logEvent).toHaveBeenCalledTimes(1);
-    expect(h.logEvent.mock.calls[0][0]).toMatchObject({
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({
       action: "api_token.untrusted_host",
       resourceId: "tok-1",
       level: "warning",
@@ -136,16 +137,16 @@ describe("verifyToken with trusted hosts", () => {
     await verifyToken(RAW, "10.30.1.1");
     await verifyToken(RAW, "10.30.1.1");
     await verifyToken(RAW, "10.30.1.1");
-    expect(h.logEvent).toHaveBeenCalledTimes(1);
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
     await verifyToken(RAW, "10.30.1.2");
-    expect(h.logEvent).toHaveBeenCalledTimes(2);
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(2);
   });
 
   it("a wrong token is invalid, never untrusted_host, and logs nothing", async () => {
     h.prisma.apiToken.findMany.mockResolvedValue([tokenRow(["10.20.0.0/16"])]);
     h.verifyPassword.mockResolvedValue({ valid: false });
     expect(await verifyToken(RAW, "10.30.1.1")).toEqual({ ok: false, reason: "invalid" });
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
   it("a non-polaris bearer is invalid without a DB read", async () => {

@@ -25,7 +25,6 @@ const h = vi.hoisted(() => ({
   recentTurns: vi.fn(async (_conversationId: string, _limit: number) => [{ role: "user", content: "what is down?" }]),
   getEfficiencyAdvisor: vi.fn(async () => false),
   recentAdvisorLines: vi.fn(async () => ({ prefaces: [] as string[], signOffs: [] as string[] })),
-  logEvent: vi.fn(async (_event: unknown) => {}),
   getMemoryEnabled: vi.fn(async () => false),
   listMemory: vi.fn(async () => [] as any[]),
   runMemoryTool: vi.fn(),
@@ -34,7 +33,9 @@ const h = vi.hoisted(() => ({
 const TURN_AT = new Date("2026-10-28T14:02:00Z");
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/llmService.js", async () => ({
   chatCompletionRound: h.chatCompletionRound,
   resolveChatModel: async (_id: string, c: any) => c.model || "picked-default",
@@ -383,7 +384,7 @@ describe("streamAssistantTurn", () => {
     await p;
     expect(h.finishTurn).not.toHaveBeenCalled();
     expect(events.at(-1)?.[0]).toBe("error");
-    const ev = h.logEvent.mock.calls[0][0] as any;
+    const ev = eventLog.logEvent.mock.calls[0][0] as any;
     expect(ev.action).toBe("assistant.chat");
     expect(JSON.stringify(ev)).not.toContain("what is down?");
   });
@@ -557,7 +558,7 @@ describe("playbooks steer round 0", () => {
     expect(round0Msgs[0].role).toBe("system");
     expect(round0Msgs[1]).toMatchObject({ role: "system" });
     expect(round0Msgs[1].content).toMatch(/^Playbook — outage correlation/);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ playbook: "correlate" }) }));
   });
 
   it("a MIB question gets the profile playbook's lookups on round 0, not the outage playbook's", async () => {

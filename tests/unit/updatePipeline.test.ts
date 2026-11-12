@@ -53,8 +53,9 @@ vi.mock("../../src/services/backupService.js", () => ({ createBackup }));
 
 // The audit trail. Recorded rather than swallowed so the tests can assert that
 // an update leaves Events behind — the 2026-09-09 gap.
-const logEvent = vi.fn(async () => {});
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 // nginx/proxy config sync runs late in the pipeline; stub it so the test does
 // not depend on /etc being writable.
@@ -124,10 +125,10 @@ async function runUpdate(password?: string | null, allowWithoutBackup?: boolean,
 
 /** Actions of every Event the run wrote, in order. */
 function eventActions(): string[] {
-  return logEvent.mock.calls.map((c: any[]) => c[0]?.action);
+  return eventLog.logEvent.mock.calls.map((c: any[]) => c[0]?.action);
 }
 function eventNamed(action: string): any {
-  return logEvent.mock.calls.map((c: any[]) => c[0]).find((e: any) => e?.action === action);
+  return eventLog.logEvent.mock.calls.map((c: any[]) => c[0]).find((e: any) => e?.action === action);
 }
 
 function steps() {

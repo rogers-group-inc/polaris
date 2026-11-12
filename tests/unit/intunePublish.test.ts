@@ -28,7 +28,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 /** Every Graph call the service makes, in order. */
 const graphCalls: Array<{ url: string; method: string; body?: any }> = [];
@@ -57,7 +59,6 @@ import {
   INTUNE_POLICY_NAME,
   _resetResolvedBase,
 } from "../../src/services/intunePublishService.js";
-import { logEvent } from "../../src/services/eventLogService.js";
 
 const V1 = "https://graph.microsoft.com/v1.0/deviceManagement/deviceHealthScripts";
 const BETA = "https://graph.microsoft.com/beta/deviceManagement/deviceHealthScripts";
@@ -314,7 +315,7 @@ describe("audit", () => {
     graphResponder = (url, opts) => (opts.method === "POST" ? { id: "policy-1" } : { value: [] });
     await publishOnboardingScripts(db.integrations[0].id, "alice");
 
-    const ev = (logEvent as any).mock.calls.map((c: any[]) => c[0])
+    const ev = eventLog.logEvent.mock.calls.map((c: any[]) => c[0])
       .find((e: any) => e.action === "intune.script_published");
     expect(ev.level).toBe("warning");
     expect(ev.actor).toBe("alice");

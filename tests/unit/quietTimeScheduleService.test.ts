@@ -32,11 +32,12 @@ const db = {
 
 const m = vi.hoisted(() => ({
   bump: vi.fn(),
-  logEvent: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/quietTimeHoldService.js", async (orig) => ({
   ...(await orig<typeof import("../../src/services/quietTimeHoldService.js")>()),
   bumpQuietTimeCache: m.bump,
@@ -111,7 +112,7 @@ describe("writes bump the hold cache and are audited", () => {
     await svc.createQuietTimeSchedule(input(), "alice");
     expect(db.schedCreate.mock.calls[0][0].data).toMatchObject({ enabled: true, createdBy: "alice" });
     expect(m.bump).toHaveBeenCalledTimes(1);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "quiet_time.created", details: expect.objectContaining({ windows: 1 }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "quiet_time.created", details: expect.objectContaining({ windows: 1 }) }));
   });
 
   it("create honours an explicit enabled:false", async () => {
@@ -129,7 +130,7 @@ describe("writes bump the hold cache and are audited", () => {
     db.schedFindUnique.mockResolvedValue({ id: "q1", name: "Nights", enabled: true });
     await svc.updateQuietTimeSchedule("q1", input({ enabled: false }), "alice");
     expect(m.bump).toHaveBeenCalledTimes(1);
-    expect(m.logEvent.mock.calls[0][0].message).toBe('Global quiet time "Nights" updated (disabled)');
+    expect(eventLog.logEvent.mock.calls[0][0].message).toBe('Global quiet time "Nights" updated (disabled)');
   });
 
   it("delete counts the alerts it is holding right now (they flush, they are not dropped)", async () => {
@@ -141,7 +142,7 @@ describe("writes bump the hold cache and are audited", () => {
     });
     expect(db.schedDelete).toHaveBeenCalledWith({ where: { id: "q1" } });
     expect(m.bump).toHaveBeenCalledTimes(1);
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({
       action: "quiet_time.deleted", details: { heldAlerts: 4 }, message: expect.stringContaining("4 held alert(s) will be summarised now"),
     });
   });

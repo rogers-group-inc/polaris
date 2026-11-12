@@ -14,7 +14,6 @@ const h = vi.hoisted(() => ({
   openHold: vi.fn(),
   releaseHold: vi.fn(),
   recompute: vi.fn(),
-  logEvent: vi.fn(),
   containerAction: vi.fn(),
   vmAction: vi.fn(),
   appAction: vi.fn(),
@@ -26,7 +25,9 @@ vi.mock("../../src/services/workloadMonitorService.js", () => ({
 }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ openMaintenanceHold: h.openHold, releaseMaintenanceHold: h.releaseHold }));
 vi.mock("../../src/services/monitorOverrideService.js", () => ({ recomputeMonitorOverrideForAssets: h.recompute }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/unraidService.js", () => ({ containerAction: h.containerAction, vmAction: h.vmAction, refreshUpdateChecks: vi.fn() }));
 vi.mock("../../src/services/truenasService.js", () => ({ appAction: h.appAction, vmAction: vi.fn(), refreshUpdateChecks: vi.fn() }));
 
@@ -80,7 +81,7 @@ describe("runWorkloadAction", () => {
     expect(h.openHold).toHaveBeenCalledWith({ assetId: "a1", kind: "workload-restart", actor: "alice" });
     expect(h.containerAction).toHaveBeenCalledWith(expect.anything(), "srv:NEWID", "restart");
     expect(h.releaseHold).toHaveBeenCalledWith({ assetId: "a1", kind: "workload-restart" });
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.workload.restart", level: "info", actor: "alice" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.workload.restart", level: "info", actor: "alice" }));
   });
 
   it("releases the hold and audits the failure when the platform refuses", async () => {
@@ -88,7 +89,7 @@ describe("runWorkloadAction", () => {
     h.containerAction.mockRejectedValue(new Error("pull failed"));
     await expect(svc.runWorkloadAction({ assetId: "a1", verb: "update", actor: "alice" })).rejects.toThrow(/pull failed/);
     expect(h.releaseHold).toHaveBeenCalledWith({ assetId: "a1", kind: "workload-update" });
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.workload.update", level: "error" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.workload.update", level: "error" }));
     expect(db.assetUpdate).not.toHaveBeenCalled();
   });
 
@@ -96,7 +97,7 @@ describe("runWorkloadAction", () => {
     setup({ state: "stopped" });
     await expect(svc.runWorkloadAction({ assetId: "a1", verb: "restart", actor: "a" })).rejects.toMatchObject({ httpStatus: 409 });
     expect(h.containerAction).not.toHaveBeenCalled();
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "warning" }));
   });
 
   it("refuses an update when none is available", async () => {

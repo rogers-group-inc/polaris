@@ -75,9 +75,9 @@ vi.mock("../../src/db.js", () => ({
 
 // logEvent reaches for retention settings and the Event table; neither is
 // under test here.
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   getOnboardingState,
@@ -89,7 +89,6 @@ import {
   _invalidateCache,
 } from "../../src/services/windowsSshOnboardingService.js";
 import { getCredential, stripSecrets } from "../../src/services/credentialService.js";
-import { logEvent } from "../../src/services/eventLogService.js";
 
 beforeEach(() => {
   db.credentials = [];
@@ -182,7 +181,7 @@ describe("generateKeypair", () => {
     await generateKeypair("tester");
     await generateKeypair("tester"); // rotate
 
-    const calls = (logEvent as any).mock.calls.map((c: any[]) => c[0]);
+    const calls = eventLog.logEvent.mock.calls.map((c: any[]) => c[0]);
     const gen = calls.filter((c: any) => c.action === "credential.ssh_keypair_generated");
     expect(gen).toHaveLength(2);
     expect(gen[0].level).toBe("warning");
@@ -303,7 +302,7 @@ describe("saveOnboardingConfig", () => {
     await saveOnboardingConfig({ username: "svc-polaris" }, "tester");
     vi.clearAllMocks();
     await saveOnboardingConfig({ username: "svc-polaris" }, "tester");
-    expect(logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
 

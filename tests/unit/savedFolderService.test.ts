@@ -35,7 +35,6 @@ const db = vi.hoisted(() => ({
   folderDeleteMany: [] as unknown[],
   folderUpdate: [] as unknown[],
   findManyWhere: [] as unknown[],
-  logEvent: vi.fn(),
 }));
 
 function matchIn(where: Record<string, unknown>, row: Record<string, unknown>): boolean {
@@ -90,7 +89,9 @@ vi.mock("../../src/db.js", () => ({
     }),
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: db.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const svc = await import("../../src/services/savedFolderService.js");
 type Viewer = Parameters<typeof svc.createFolder>[1];
@@ -134,7 +135,7 @@ beforeEach(() => {
   db.folderDeleteMany = [];
   db.folderUpdate = [];
   db.findManyWhere = [];
-  db.logEvent.mockReset();
+  eventLog.logEvent.mockReset();
 });
 
 // ─── Listing ─────────────────────────────────────────────────────────────────
@@ -194,7 +195,7 @@ describe("createFolder", () => {
   it("creates owned by the caller with the name normalized, and writes a created Event", async () => {
     const dto = await svc.createFolder(input(null), alice);
     expect(dto).toMatchObject({ name: "My folder", ownerId: alice.id, ownerName: "alice", isOwner: true, canManage: true, parentId: null });
-    expect(db.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.created", actor: "alice" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.created", actor: "alice" }));
   });
 
   it("allows a folder at depth 8 and refuses depth 9", async () => {
@@ -244,7 +245,7 @@ describe("moveFolder", () => {
     folder("k", "p");
     await svc.moveFolder("k", "p", alice);
     expect(db.folderUpdate).toEqual([]);
-    expect(db.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
   it("refuses a move into itself or into its own subtree", async () => {
@@ -272,7 +273,7 @@ describe("moveFolder", () => {
     folder("k", "p");
     await svc.moveFolder("k", null, alice);
     expect(db.folders.get("k")!.parentId).toBeNull();
-    expect(db.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.moved", details: { from: "p", to: null } }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.moved", details: { from: "p", to: null } }));
   });
 });
 
@@ -312,7 +313,7 @@ describe("changeFolderOwner / takeFolder with contents", () => {
     expect(folderWrite.where.id.in.sort()).toEqual(["mine-sub", "root"]);
     expect(folderWrite.data).toMatchObject({ ownerId: bob.id, ownerName: "bob" });
     expect((db.filterUpdateMany[0] as { where: { id: { in: string[] } } }).where.id.in).toEqual(["f-mine"]);
-    expect(db.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.owner_changed" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.owner_changed" }));
   });
 
   it("without includeContents re-owns the folder alone", async () => {
@@ -330,12 +331,12 @@ describe("changeFolderOwner / takeFolder with contents", () => {
     const r = await svc.takeFolder("root", true, admin);
     expect(r.moved).toEqual({ folders: 2, filters: 2, dashboards: 0 });
     expect((db.folderUpdateMany[0] as { data: Record<string, unknown> }).data).toMatchObject({ ownerId: admin.id, visibility: "private" });
-    expect(db.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.taken", level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.taken", level: "warning" }));
   });
 
   it("making your own folder private is an info-level 'updated' Event", async () => {
     await svc.takeFolder("root", false, alice);
-    expect(db.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.updated", level: "info" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "saved_folder.updated", level: "info" }));
   });
 
   it("a non-owner without fullwrite cannot take", async () => {

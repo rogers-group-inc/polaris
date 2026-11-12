@@ -19,10 +19,11 @@ const m = vi.hoisted(() => ({
   snapshot: vi.fn(),
   archive: vi.fn(),
   raiseConflict: vi.fn(),
-  logEvent: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/subnetService.js", () => ({ createSubnetRowChecked: m.createChecked }));
 vi.mock("../../src/services/subnetArchiveService.js", () => ({ snapshotSubnet: m.snapshot, archiveSubnet: m.archive }));
 vi.mock("../../src/services/subnetChassisConflictService.js", () => ({ raiseChassisReplacedConflict: m.raiseConflict }));
@@ -120,7 +121,7 @@ describe("Phase 1 — existing networks", () => {
     expect(data.purpose).toBeUndefined();
     expect(row.fortigateDevice).toBe("FGT-A"); // Phase 2 reads this row
     expect(state.updated).toEqual(["10.1.0.0/24"]);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "subnet.claimed", resourceId: "s1" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "subnet.claimed", resourceId: "s1" }));
   });
 
   it("a different chassis on a known network archives a copy and raises a conflict without re-pointing the serial (rule 41)", async () => {

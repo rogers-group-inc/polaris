@@ -8,10 +8,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const m = vi.hoisted(() => ({ logEvent: vi.fn(), sync: vi.fn(),
+const m = vi.hoisted(() => ({ sync: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/descriptionSyncService.js", () => ({ syncDescriptionsOnSave: m.sync }));
 
 import { setProcessLogConfig, setInterfaceComment } from "../../src/services/assetTelemetryService.js";
@@ -46,7 +48,7 @@ describe("setProcessLogConfig", () => {
     db.cfgFindUnique.mockResolvedValue({ logPathGlob: "/var/log/nginx/*.log" });
     const r = await setProcessLogConfig("a", "nginx", { logPathGlob: "/var/log/nginx/*.log", notes: "n" }, false, "op");
     expect(r.config).toMatchObject({ logPathGlob: "/var/log/nginx/*.log", notes: "n" });
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.process.log_config_set", actor: "op" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.process.log_config_set", actor: "op" });
   });
   it("clearing the glob needs no lookup and no grant", async () => {
     await setProcessLogConfig("a", "nginx", { logPathGlob: null }, false, "op");

@@ -20,12 +20,13 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   releaseDns: vi.fn(),
   decideInfra: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/dnsResolvedReservationService.js", () => ({ releaseDnsResolvedAt: m.releaseDns }));
 vi.mock("../../src/utils/infraDhcpBinding.js", () => ({
   isInfraSourceType: (t: string) => t === "fortiswitch" || t === "fortinap",
@@ -130,14 +131,14 @@ describe("Phase 5 — a queued push at the address", () => {
     const row = { ...pending };
     await run([reservation({ scopeId: 3, entryId: 17 })], { [KEY]: row }).done;
     expect(db.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", pushStatus: "synced", pushedScopeId: 3, pushedEntryId: 17 });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.adopted" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.adopted" }));
     expect(row.pushStatus).toBe("synced");
   });
 
   it("fails it permanently when a different MAC (or a lease) won the address", async () => {
     await run([lease({ macAddress: "11:22:33:44:55:66" })], { [KEY]: { ...pending } }).done;
     expect(db.update.mock.calls[0][0].data).toMatchObject({ pushStatus: "failed_permanent", pushError: "IP collided during queue — discovered dhcp_lease by 11:22:33:44:55:66" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.collided", level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.push.queued.collided", level: "warning" }));
     expect(db.create).not.toHaveBeenCalled();
   });
 });
@@ -163,7 +164,7 @@ describe("Phase 5 — an existing row at the address", () => {
     const row: Record<string, unknown> = { id: "v1", sourceType: "vip", owner: "web-dnat", hostname: "web-dnat", notes: "my notes", macAddress: null, vipInfo: { name: "web-dnat", device: "FGT-A" } };
     await run([lease()], { [KEY]: row }).done;
     expect(db.update.mock.calls[0][0].data).toEqual({ sourceType: "dhcp_lease", vipInfo: null, owner: "dhcp-lease", macAddress: "AA:BB:CC:DD:EE:01" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.replaced" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.replaced" }));
     expect(row.notes).toBe("my notes");
   });
 

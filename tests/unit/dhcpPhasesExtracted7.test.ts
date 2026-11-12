@@ -13,11 +13,10 @@ const db = {
   conflictUpdateMany: stubbed(prisma.conflict.updateMany),
 };
 
-const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
-}));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const { releaseStaleAuthoritativeRows } = await import("../../src/services/discovery/dhcp/staleAuthoritativeRows.js");
 const { Prisma } = await import("../../src/generated/prisma/client.js");
@@ -57,7 +56,7 @@ describe("Phase 5b — VIP sweep", () => {
     expect(db.resUpdate).toHaveBeenCalledWith({ where: { id: "v1" }, data: { status: "released", vipInfo: null } });
     expect(db.conflictUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { reservationId: "v1", status: "pending" } }));
     expect(state.activeResMap.has(key("net1", "10.1.0.10"))).toBe(false);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.released" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.released" }));
     expect(state.syncLog).toHaveBeenCalledWith("info", "Stale-row sweep: released 1 VIP reservation(s), cleared 0 stale VIP stamp(s), released 0 DHCP reservation(s)");
   });
 
@@ -82,7 +81,7 @@ describe("Phase 5b — stale VIP stamp on a row that owns its address (rule 77)"
     expect(row.vipInfo).toBeNull();
     expect(row.status).toBe("active");
     expect(state.activeResMap.has(key("net1", "10.1.0.20"))).toBe(true);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.cleared", message: expect.stringContaining("dhcp lease reservation at 10.1.0.20") }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "reservation.vip.cleared", message: expect.stringContaining("dhcp lease reservation at 10.1.0.20") }));
   });
 
   it("keeps a stamp whose named VIP is still on the gate", async () => {
@@ -103,7 +102,7 @@ describe("Phase 5b — dhcp_reservation sweep", () => {
       where: { id: "r1" },
       data: { status: "released", pushedToId: null, pushedScopeId: null, pushedEntryId: null, pushStatus: null },
     });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "reservation.dhcp_reservation.released", details: expect.objectContaining({ wasPushedByPolaris: true }),
     }));
     expect(state.activeResMap.size).toBe(0);

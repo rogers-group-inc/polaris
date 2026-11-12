@@ -16,13 +16,14 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   releaseForDecommission: vi.fn(),
   releaseInfra: vi.fn(),
   reconcileAddresses: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
 vi.mock("../../src/services/assetAddressService.js", () => ({ reconcileDiscoveredAddresses: m.reconcileAddresses }));
@@ -66,7 +67,7 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
     });
     expect(m.releaseForDecommission).toHaveBeenCalledWith(["a1"], expect.objectContaining({ statusChangedBy: "FortiManager" }));
     expect(m.releaseInfra).toHaveBeenCalledWith(["a1"], expect.objectContaining({ actor: "system" }));
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "asset.fortiswitch.decommissioned",
       details: expect.objectContaining({ reason: "missing-from-controller", controllerFortigate: "SITE-A-FW" }),
     }));
@@ -83,13 +84,13 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
       cmdbSwitchSerialsByDevice: new Map([["site-a-fw", new Set(["S2"])]]),
     }));
     expect(db.updateMany).not.toHaveBeenCalled();
-    expect(m.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
   it("judges a switch under its gate's CURRENT name when the gate was renamed (rule 41(b))", async () => {
     db.findMany.mockResolvedValue([sw("a1", "S1", { controllerFortigate: "OLD-NAME", controllerSerial: "FG100FTK20000001" })]);
     await decommissionStaleManagedDevices(base());
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('controller "SITE-A-FW" (formerly "OLD-NAME")'),
       details: expect.objectContaining({ renamedFrom: "OLD-NAME" }),
     }));
@@ -107,7 +108,7 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
 
     db.findMany.mockResolvedValue([orphan]);
     await decommissionStaleManagedDevices(base());
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       details: expect.objectContaining({ reason: "controller-not-in-roster", controllerFortigate: "GONE-FW" }),
     }));
     expect(db.updateMany).toHaveBeenCalledTimes(1);
@@ -117,7 +118,7 @@ describe("Phase 2b — stale FortiSwitch / FortiAP decommission", () => {
     db.findMany.mockResolvedValue([{ ...sw("p1", "AP1", { controllerFortigate: "SITE-A-FW" }, "ap-1"), assetType: "access_point" }]);
     const input = base({ switchInventoriedDevices: new Set<string>(), apInventoriedDevices: new Set(["SITE-A-FW"]) });
     await decommissionStaleManagedDevices(input);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortiap.decommissioned" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortiap.decommissioned" }));
     expect(input.decommissionedAps).toEqual(["ap-1"]);
     expect(input.decommissionedSwitches).toEqual([]);
   });

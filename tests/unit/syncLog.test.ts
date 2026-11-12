@@ -1,20 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({ logEvent: vi.fn() }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 
 import { makeSyncLog } from "../../src/services/discovery/syncLog.js";
 
 describe("makeSyncLog", () => {
   beforeEach(() => {
-    h.logEvent.mockReset();
+    resetEventLogStub();
   });
 
   it("writes an integration.sync Event with the name-prefixed message", () => {
     const syncLog = makeSyncLog("int-1", "Lab FMG", "alice");
     syncLog("warning", "3 subnets skipped");
-    expect(h.logEvent).toHaveBeenCalledTimes(1);
-    expect(h.logEvent).toHaveBeenCalledWith({
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(eventLog.logEvent).toHaveBeenCalledWith({
       action: "integration.sync",
       resourceType: "integration",
       resourceId: "int-1",
@@ -29,14 +29,14 @@ describe("makeSyncLog", () => {
     const syncLog = makeSyncLog("int-2", "vc", undefined);
     syncLog("info", "a");
     syncLog("error", "b");
-    expect(h.logEvent.mock.calls.map((c) => [c[0].actor, c[0].level, c[0].message])).toEqual([
+    expect(eventLog.logEvent.mock.calls.map((c) => [c[0].actor, c[0].level, c[0].message])).toEqual([
       [undefined, "info", "[vc] a"],
       [undefined, "error", "[vc] b"],
     ]);
   });
 
   it("does not await the write (fire-and-forget)", () => {
-    h.logEvent.mockReturnValue(new Promise(() => {}));
+    eventLog.logEvent.mockReturnValue(new Promise<undefined>(() => {}));
     const syncLog = makeSyncLog("int-3", "x", undefined);
     expect(syncLog("info", "m")).toBeUndefined();
   });

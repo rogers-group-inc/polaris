@@ -24,12 +24,13 @@ const h = vi.hoisted(() => ({
     asset:        { findUnique: vi.fn() },
     managedAgent: { update: vi.fn(async () => ({})) },
   },
-  logEvent: vi.fn(async (_event: unknown) => {}),
   releaseMaintenanceHold: vi.fn(async (_hold: unknown) => true),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
   releaseMaintenanceHold: h.releaseMaintenanceHold,
 }));
@@ -68,7 +69,7 @@ describe("agent WS lifecycle events", () => {
     attach("ma-1", "asset-1", fakeWs() as never);
     await settle();
 
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.connected", resourceName: "app-01" }),
     );
     detach("ma-1", "test");
@@ -77,11 +78,11 @@ describe("agent WS lifecycle events", () => {
   it("names the device on disconnect, in the message as well as the field", async () => {
     attach("ma-2", "asset-2", fakeWs() as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     detach("ma-2", "heartbeat timeout");
 
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action:       "agent.disconnected",
         resourceName: "app-01",
@@ -95,11 +96,11 @@ describe("agent WS lifecycle events", () => {
     h.prisma.asset.findUnique.mockResolvedValue({ hostname: null, ipAddress: "10.0.0.9" });
     attach("ma-3", "asset-3", fakeWs() as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     detach("ma-3", "socket error");
 
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.disconnected", resourceName: "10.0.0.9" }),
     );
   });
@@ -110,11 +111,11 @@ describe("agent WS lifecycle events", () => {
     h.prisma.asset.findUnique.mockRejectedValue(new Error("db down"));
     attach("ma-4", "asset-4", fakeWs() as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     detach("ma-4", "socket error");
 
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.disconnected", resourceName: undefined }),
     );
   });
@@ -154,11 +155,11 @@ describe("agent WS lifecycle events", () => {
   it("marks a replaced session info, not warning — Polaris caused that one", async () => {
     attach("ma-8", "asset-8", fakeWs() as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     detach("ma-8", "replaced");
 
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.disconnected", level: "info" }),
     );
   });
@@ -178,12 +179,12 @@ describe("a replaced socket cannot tear down its replacement", () => {
     attach("ma-20", "asset-20", oldWs as never);
     attach("ma-20", "asset-20", newWs as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     oldWs.fireClose();
 
     expect(isAttached("ma-20")).toBe(true);
-    expect(h.logEvent).not.toHaveBeenCalledWith(
+    expect(eventLog.logEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.disconnected" }),
     );
     detach("ma-20", "test");
@@ -194,12 +195,12 @@ describe("a replaced socket cannot tear down its replacement", () => {
     attach("ma-21", "asset-21", oldWs as never);
     attach("ma-21", "asset-21", fakeWs() as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     oldWs.handlers.get("error")?.(new Error("ECONNRESET"));
 
     expect(isAttached("ma-21")).toBe(true);
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
     detach("ma-21", "test");
   });
 
@@ -209,12 +210,12 @@ describe("a replaced socket cannot tear down its replacement", () => {
     attach("ma-22", "asset-22", oldWs as never);
     attach("ma-22", "asset-22", newWs as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     newWs.fireClose();
 
     expect(isAttached("ma-22")).toBe(false);
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "agent.disconnected", level: "warning" }),
     );
   });
@@ -234,7 +235,7 @@ describe("a socket that closed before attach is dropped", () => {
     const live = fakeWs();
     attach("ma-30", "asset-30", live as never);
     await settle();
-    h.logEvent.mockClear();
+    eventLog.logEvent.mockClear();
 
     const abandoned = fakeWs();
     abandoned.readyState = 3; // CLOSED — the agent gave up on this dial
@@ -243,7 +244,7 @@ describe("a socket that closed before attach is dropped", () => {
 
     expect(abandoned.terminated).toBe(true);
     expect(isAttached("ma-30")).toBe(true);
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
 
     // The live session is still the one registered: its close is the one that counts.
     live.fireClose();
@@ -257,6 +258,6 @@ describe("a socket that closed before attach is dropped", () => {
     await settle();
 
     expect(isAttached("ma-31")).toBe(false);
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
