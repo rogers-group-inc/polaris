@@ -525,7 +525,6 @@ export async function collectTelemetry(assetId: string, preloaded?: TelemetryAss
         asset.model,
         asset.os,
         telemetryTimeout,
-        effective.cpuMemoryMibId,
         asset.assetType,
       );
       return { supported: true, data };
@@ -637,7 +636,6 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
         asset.model,
         asset.os,
         timeoutMs,
-        effective.temperatureMibId,
         asset.assetType,
       );
       return { supported: true, data };
@@ -651,9 +649,7 @@ export async function collectHardwareSensors(assetId: string, preloaded?: Teleme
 
 /**
  * Open an SNMP session and run the collectHardwareSensorsSnmp walk inside it.
- * Shares collectTelemetrySnmp's MIB-pin handling (`profileSubjectFor`), so
- * pinning an uploaded MIB on the temperature stream feeds the right
- * manufacturer / module name / model into `pickDbProfile`.
+ * Picks the profile exactly as collectTelemetrySnmp does (`profileSubjectFor`).
  */
 async function collectHardwareSensorsViaSnmpSession(
   host: string,
@@ -662,13 +658,10 @@ async function collectHardwareSensorsViaSnmpSession(
   model?: string | null,
   os?: string | null,
   timeoutMs?: number,
-  temperatureMibId?: string | null,
   assetType?: string | null,
 ): Promise<HardwareSensorSample[]> {
   await ensureRegistryLoaded();
-  const profile = pickDbProfile(
-    await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: temperatureMibId }),
-  );
+  const profile = pickDbProfile(profileSubjectFor({ manufacturer, model, os, assetType }));
   // The asset's own scope, then the governing profile's (business rule 131).
   const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
   return await withSnmpSession(host, config, async (session) => {

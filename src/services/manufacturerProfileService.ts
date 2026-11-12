@@ -26,7 +26,7 @@ import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./o
 import { logEvent } from "./eventLogService.js";
 import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
 import { validateModelParse } from "../utils/modelParse.js";
-import { safeRegexProblem } from "../utils/safeRegex.js";
+import { safeRegexProblem, tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { logger } from "../utils/logger.js";
@@ -39,6 +39,7 @@ import {
 
 export type MetricKey =
   | "model"
+  | "serial"
   | "cpu"
   | "memory"
   | "temperature"
@@ -60,8 +61,14 @@ export type MetricKey =
 // `defaultParseTemplate`, src/utils/modelParse.ts). It replaces the
 // `ModelQuery.parse` FUNCTION the hardcoded FortiSwitch profile carried —
 // the last profile fact that could not be a row.
+//
+// `serial` (business rule 171) is its sibling: which vendor scalar carries
+// the device's own serial number, for a device whose serial is in no
+// standard MIB — an APC Smart-UPS (`upsAdvIdentSerialNumber`) answers
+// ENTITY-MIB with nothing, and its sysDescr `SN:` is the management card's
+// (rule 161). A plain scalar; no parse.
 export const METRIC_KEYS: MetricKey[] = [
-  "model", "cpu", "memory", "temperature", "interfaces", "storage", "lldp", "wirelessStations",
+  "model", "serial", "cpu", "memory", "temperature", "interfaces", "storage", "lldp", "wirelessStations",
 ];
 
 /** How a walked subtree collapses to one reading. Replaces the hardcoded `walkSubtree`. */
@@ -953,6 +960,90 @@ export function mergeManufacturerSuggestions(input: {
     // Most-used first, then alphabetical — the vendor with 400 devices is far
     // likelier to be what the operator is typing than an alias-only entry.
     .sort((a, b) => b.assetCount - a.assetCount || a.value.localeCompare(b.value));
+}
+
+// ─── Manufacturers without a profile (business rule 172) ──────────────────
+//
+// The Manufacturer Profiles card lists the manufacturers of devices that
+// ANSWER SNMP and have no profile of their own, each with a Create button.
+// Profiles are never created automatically: an empty profile named after a
+// manufacturer would silently take its devices from another profile's "Also
+// applies when" pattern (rule 131), and discovery learns hundreds of
+// manufacturers (phones, laptops, IoT) that are never polled over SNMP.
+
+/** How recently an SNMP probe must have read the device's sysDescr for it to count. */
+const UNPROFILED_SNMP_WINDOW_DAYS = 30;
+/** The enrichment kinds only an SNMP reading writes (rules 154, 161, 171). */
+const SNMP_SOURCE_KINDS = ["snmp-sysdescr", "snmp-identity", "snmp-profile"];
+
+export interface UnprofiledManufacturer {
+  manufacturer: string;
+  assetCount:   number;
+  /** A profile whose "Also applies when" already covers this name, if any. */
+  coveredBy:    { id: string; manufacturer: string } | null;
+}
+
+/**
+ * Manufacturers of SNMP-answering, non-decommissioned assets with no profile
+ * keyed by their canonical name. "Answers SNMP" is cheap and needs no
+ * per-asset settings walk: an SNMP probe's identity read stamped `lastDescrAt`
+ * in the last 30 days, or the asset carries a source only an SNMP reading
+ * writes. One groupBy; the cached profile list does the rest.
+ */
+export async function listUnprofiledManufacturers(now: Date = new Date()): Promise<UnprofiledManufacturer[]> {
+  await refreshProfileCacheIfStale();
+  const since = new Date(now.getTime() - UNPROFILED_SNMP_WINDOW_DAYS * 86_400_000);
+  const rows = await prisma.asset.groupBy({
+    by: ["manufacturer"],
+    where: {
+      manufacturer: { not: null },
+      status: { not: "decommissioned" },
+      OR: [
+        { lastDescrAt: { gte: since } },
+        { sources: { some: { sourceKind: { in: SNMP_SOURCE_KINDS } } } },
+      ],
+    },
+    _count: { _all: true },
+  });
+  return mergeUnprofiledManufacturers(
+    rows.map((r) => ({ manufacturer: r.manufacturer, count: r._count?._all ?? 0 })),
+    listCachedProfiles().map((p) => ({ id: p.id, manufacturer: p.manufacturer, matchPattern: p.matchPattern })),
+  );
+}
+
+/**
+ * Pure half of `listUnprofiledManufacturers`. Names are canonicalized
+ * (`normalizeManufacturer`) and merged case-insensitively; a name a profile
+ * is keyed by is dropped; `coveredBy` is the first profile, alphabetically,
+ * whose `matchPattern` matches the name — the same order `findDbProfile`
+ * tries them in, tested against the manufacturer alone (an asset's OS can
+ * widen a real match, never narrow it). Most devices first.
+ */
+export function mergeUnprofiledManufacturers(
+  assets:   { manufacturer: string | null; count: number }[],
+  profiles: { id: string; manufacturer: string; matchPattern: string | null }[],
+): UnprofiledManufacturer[] {
+  const keyed = new Set(profiles.map((p) => p.manufacturer.toLowerCase()));
+  const patterned = profiles
+    .filter((p) => p.matchPattern)
+    .sort((a, b) => a.manufacturer.localeCompare(b.manufacturer))
+    .map((p) => ({ p, re: tryCompileSafeRegex(p.matchPattern as string, { ignoreCase: true }) }))
+    .filter((x) => x.re);
+  const merged = new Map<string, UnprofiledManufacturer>();
+  for (const a of assets) {
+    const canonical = normalizeManufacturer(a.manufacturer ?? null);
+    if (!canonical) continue;
+    const key = canonical.toLowerCase();
+    if (keyed.has(key)) continue;
+    const entry = merged.get(key) ?? { manufacturer: canonical, assetCount: 0, coveredBy: null };
+    entry.assetCount += a.count;
+    merged.set(key, entry);
+  }
+  for (const entry of merged.values()) {
+    const hit = patterned.find((x) => x.re!.test(entry.manufacturer));
+    entry.coveredBy = hit ? { id: hit.p.id, manufacturer: hit.p.manufacturer } : null;
+  }
+  return [...merged.values()].sort((a, b) => b.assetCount - a.assetCount || a.manufacturer.localeCompare(b.manufacturer));
 }
 
 export async function getProfile(id: string): Promise<ProfileFull | null> {

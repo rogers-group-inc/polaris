@@ -23,14 +23,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const h = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    mibFile: { findMany: vi.fn(async () => h.rows) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const registry = await import("../../src/services/oidRegistry.js");
 
@@ -57,6 +55,11 @@ END
 function row(id: string, moduleName: string, contents: string, manufacturer: string | null = null, model: string | null = null) {
   return { id, moduleName, manufacturer, model, contents };
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.mibFile.findMany).mockImplementation(async () => h.rows);
+});
 
 beforeEach(async () => {
   h.rows = [];

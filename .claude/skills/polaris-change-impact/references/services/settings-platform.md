@@ -140,6 +140,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `pruneHistory(now?)` (all of them; `{ result, errors }`, never throws); the individual `pruneAlertHistory`, `pruneIdleRuleStates`, `pruneDiscoveryRuns`, `pruneSightings`, `pruneNetworkScanRuns`, `pruneHiddenRegionIds`, `pruneOrphanTagAssignments`; `getAlertHistorySettings()` / `updateAlertHistorySettings(raw, actor?)` (400 outside 0 or 30–3650; writes `settings.alert_history_retention.updated`); pure `normalizeAlertHistoryDays(raw)` and `idleRuleStateWhere(cutoff)`; constants `DEFAULT_ALERT_HISTORY_DAYS`, `RULE_STATE_IDLE_DAYS`, `SCAN_RUN_DAYS`, `BATCH`, `MAX_BATCHES`.
 
+**SD-WAN rule leftovers (rule 174):** `pruneStaleSdwanRules(now?)` — `AssetSdwanRule` rows untouched for `SDWAN_RULE_STALE_DAYS` on a gate nothing polls (`monitoringService.resolveSdwanPollIntervalForAsset` null, lazy import); `HistoryPruneResult.sdwanRules`.
+
 **Cross-service deps:** `assetSightingService.getSightingSettings` (the sighting window is the quarantine window), `mapRegionService.listRegions`, `firmwareRepositoryService.sweepFirmwareFiles` (`result.firmwareLeftovers`), `eventLogService.logEvent`; `prisma` for `Notification`, `QuietTimeSummary`, `NotificationRuleState`, `DiscoveryRun`, `Integration`, `AssetFortigateSighting`, `NetworkScanRun`, `User`, `Tag`, `TagAutoAssignment`, `Setting`.
 
 **Used by:** `src/jobs/pruneHistory.ts` (daily); `src/api/routes/events.ts` (`GET` / `PUT /events/retention-settings` merge the alert-history setting into the Event retention payload).

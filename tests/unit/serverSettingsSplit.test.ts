@@ -97,7 +97,7 @@ describe("server-settings split — declarations", () => {
 
   it("every function the original server-settings.js declared is declared exactly once", () => {
     const all = perFile.flatMap((p) => p.fns);
-    expect(INVENTORY.functions.length).toBe(338);
+    expect(INVENTORY.functions.length).toBe(343);
     for (const n of INVENTORY.functions) expect(all.filter((x) => x === n).length, n).toBe(1);
   });
 
@@ -146,7 +146,8 @@ describe("server-settings split — load-time evaluation in page order", () => {
     const { ctx } = evaluate(SERVER_SETTINGS_FILES);
     const core = serverSettingsFileSource("server-settings.js");
     const loaders = [...new Set(topLevel(core, /\b(load[A-Z]\w*)\(\)/g))];
-    expect(loaders.length).toBeGreaterThanOrEqual(8);
+    // 7 since the Time tab folded into Web Server (2026-11-12).
+    expect(loaders.length).toBeGreaterThanOrEqual(7);
     for (const n of loaders) expect(typeof ctx[n], n).toBe("function");
   });
 

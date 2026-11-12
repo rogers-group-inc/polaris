@@ -10,13 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    notification: { updateMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -25,21 +19,25 @@ vi.mock("../../src/services/notificationRuleService.js", () => ({
 }));
 
 import { clearExpiredTestAlerts, TEST_ALERT_TTL_MS } from "../../src/services/notificationService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+beforeEach(() => resetDbStub());
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.notification.updateMany.mockResolvedValue({ count: 0 });
+  stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 0 });
 });
 
 describe("clearExpiredTestAlerts", () => {
   it("clears only uncleared test alerts older than the TTL", async () => {
     const now = new Date("2026-09-01T12:00:00Z");
-    h.prisma.notification.updateMany.mockResolvedValue({ count: 2 });
+    stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 2 });
 
     const cleared = await clearExpiredTestAlerts(now);
 
     expect(cleared).toBe(2);
-    const arg = h.prisma.notification.updateMany.mock.calls[0]![0];
+    const arg = stubbed(prisma.notification.updateMany).mock.calls[0]![0];
     expect(arg.where.testRun).toBe(true);
     expect(arg.where.cleared).toBe(false);
     // An hour back, so a test fired 59 minutes ago is still on the board.
@@ -48,10 +46,10 @@ describe("clearExpiredTestAlerts", () => {
   });
 
   it("soft-clears with its own reason and preserves history", async () => {
-    h.prisma.notification.updateMany.mockResolvedValue({ count: 1 });
+    stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 1 });
     await clearExpiredTestAlerts(new Date("2026-09-01T12:00:00Z"));
 
-    const data = h.prisma.notification.updateMany.mock.calls[0]![0].data;
+    const data = stubbed(prisma.notification.updateMany).mock.calls[0]![0].data;
     expect(data).toMatchObject({ cleared: true, clearedBy: "system:test-expired" });
     expect(data.clearedAt).toBeInstanceOf(Date);
     // No acknowledge/history fields are touched — soft clear only.
@@ -59,7 +57,7 @@ describe("clearExpiredTestAlerts", () => {
   });
 
   it("audits one summary line per sweep, not one per row", async () => {
-    h.prisma.notification.updateMany.mockResolvedValue({ count: 3 });
+    stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 3 });
     await clearExpiredTestAlerts();
 
     expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
@@ -69,7 +67,7 @@ describe("clearExpiredTestAlerts", () => {
   });
 
   it("writes no Event when nothing expired", async () => {
-    h.prisma.notification.updateMany.mockResolvedValue({ count: 0 });
+    stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 0 });
     expect(await clearExpiredTestAlerts()).toBe(0);
     expect(eventLog.logEvent).not.toHaveBeenCalled();
   });

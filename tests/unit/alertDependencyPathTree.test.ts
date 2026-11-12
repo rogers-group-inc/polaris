@@ -16,12 +16,7 @@ const { assets, sites } = vi.hoisted(() => ({
   sites: new Map<string, string | null>(),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { findMany: vi.fn(async () => assets) },
-    assetLldpNeighbor: { findMany: vi.fn(async () => []) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/regionTreeService.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../src/services/regionTreeService.js")>();
@@ -40,6 +35,8 @@ vi.mock("../../src/services/regionTreeService.js", async (importOriginal) => {
 });
 
 import { loadDependencyPath } from "../../src/services/alertDependencyPathService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const alert = {
   assetId: "plc",
@@ -52,6 +49,12 @@ const codesOf = async () => {
   const spec = await loadDependencyPath(alert);
   return spec!.entries.flatMap((e) => (e.kind === "node" ? [[e.node.hostname, e.node.codes]] : []));
 };
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.asset.findMany).mockImplementation(async () => assets);
+  stubbed(prisma.assetLldpNeighbor.findMany).mockImplementation(async () => []);
+});
 
 beforeEach(() => sites.clear());
 

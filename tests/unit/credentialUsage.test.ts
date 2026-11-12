@@ -15,20 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    credential: { findUnique: vi.fn(), delete: vi.fn() },
-    asset: { findMany: vi.fn() },
-    monitorClassOverride: { findMany: vi.fn() },
-    integration: { findMany: vi.fn() },
-    managedAgent: { findMany: vi.fn(async () => []) },
-    firmwareCredentialBinding: { findMany: vi.fn(async () => []) },
-    // Path checks that authenticate with a credential (business rule 85).
-    pathCheck: { findMany: vi.fn(async () => []) },
-    // Discoveries that try a credential (business rule 167).
-    networkScan: { findMany: vi.fn(async () => []) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/windowsSshOnboardingService.js", () => ({
   getOnboardingState: vi.fn(async () => ({ credentialIds: { windows: null, linux: null } })),
@@ -40,6 +27,7 @@ import {
   deleteCredential,
 } from "../../src/services/credentialService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 import { getOnboardingState } from "../../src/services/windowsSshOnboardingService.js";
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -106,6 +94,16 @@ function seed(assets = [A1, A2, A3, A4], overrides = [CLASS_FW_INT1, CLASS_SW_MA
   classFindMany.mockResolvedValue(overrides);
   intFindMany.mockResolvedValue(integrations);
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.managedAgent.findMany).mockImplementation(async () => []);
+  stubbed(prisma.firmwareCredentialBinding.findMany).mockImplementation(async () => []);
+  // Path checks that authenticate with a credential (business rule 85).
+  stubbed(prisma.pathCheck.findMany).mockImplementation(async () => []);
+  // Discoveries that try a credential (business rule 167).
+  stubbed(prisma.networkScan.findMany).mockImplementation(async () => []);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

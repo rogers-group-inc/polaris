@@ -7,21 +7,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    $queryRawUnsafe: vi.fn(),
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    notification: { findMany: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { leastSquaresSlopePerDay, daysUntilFull } from "../../src/utils/linearTrend.js";
 import { computeStorageForecast, FORECAST_MAX_DAYS } from "../../src/services/storageForecastService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
 });
 

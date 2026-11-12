@@ -9,14 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    asset:        { findUnique: vi.fn(async () => ({ hostname: "app-01", ipAddress: null })) },
-    managedAgent: { update: vi.fn(async () => ({})) },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -24,6 +17,8 @@ vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseMain
 vi.mock("../../src/utils/dbConnections.js", () => ({ getDirectDatabaseUrl: () => null }));
 
 import { asFrame, attach, detach, isAttached } from "../../src/services/agentChannelService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function fakeWs() {
   const handlers = new Map<string, (...args: unknown[]) => void>();
@@ -37,6 +32,12 @@ function fakeWs() {
     terminate() { /* no-op */ },
   };
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.asset.findUnique).mockImplementation(async () => ({ hostname: "app-01", ipAddress: null }));
+  stubbed(prisma.managedAgent.update).mockImplementation(async () => ({}));
+});
 
 describe("asFrame", () => {
   it("refuses every JSON value that is not an object with a string type", () => {

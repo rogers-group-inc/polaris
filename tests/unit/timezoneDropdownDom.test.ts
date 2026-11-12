@@ -1,5 +1,5 @@
 /**
- * tests/unit/timezoneDropdownDom.test.ts — the Server Settings Time card's
+ * tests/unit/timezoneDropdownDom.test.ts — the Server Settings Server Timezone card's
  * searchable timezone picker (public/js/server-settings.js →
  * initTimezoneDropdown) picks an option through ONE delegated mousedown on
  * #tz-dropdown, bound once (CQ-F042).
@@ -37,6 +37,7 @@ beforeEach(() => {
   picks = 0;
   g.escapeHtml = (s: unknown) => String(s ?? "");
   g.updateCurrentTime = () => { picks++; };
+  (0, eval)(fnSrc("tzUtcOffset"));
   (0, eval)(fnSrc("initTimezoneDropdown"));
   g.initTimezoneDropdown("");
 });
@@ -82,5 +83,50 @@ describe("initTimezoneDropdown — delegated option pick", () => {
     typeInto("no-such-zone");
     press(dropdown.querySelector(".search-select-empty")!);
     expect(picks).toBe(0);
+  });
+});
+
+describe("tzUtcOffset + the offset on each zone", () => {
+  it("names a zone's offset as of the given moment, DST included", () => {
+    expect(g.tzUtcOffset("Asia/Tokyo", new Date("2026-01-15T12:00:00Z"))).toBe("UTC+09:00");
+    expect(g.tzUtcOffset("Asia/Kathmandu", new Date("2026-01-15T12:00:00Z"))).toBe("UTC+05:45");
+    expect(g.tzUtcOffset("America/St_Johns", new Date("2026-01-15T12:00:00Z"))).toBe("UTC-03:30");
+    expect(g.tzUtcOffset("America/Chicago", new Date("2026-01-15T12:00:00Z"))).toBe("UTC-06:00");
+    expect(g.tzUtcOffset("America/Chicago", new Date("2026-07-15T12:00:00Z"))).toBe("UTC-05:00");
+    expect(g.tzUtcOffset("UTC", new Date("2026-07-15T12:00:00Z"))).toBe("UTC+00:00");
+  });
+
+  it("is empty for a zone this engine does not know", () => {
+    expect(g.tzUtcOffset("Mars/Olympus", new Date())).toBe("");
+  });
+
+  it("shows the offset on every option, and a typed offset finds the zones at it", () => {
+    typeInto("Tokyo");
+    const opt = document.querySelector('#tz-dropdown .search-select-option[data-value="Asia/Tokyo"]');
+    expect(opt?.querySelector(".tz-offset")?.textContent).toBe("UTC+09:00");
+    typeInto("+09:00");
+    const values = [...document.querySelectorAll("#tz-dropdown .search-select-option")].map((o) => o.getAttribute("data-value"));
+    expect(values).toContain("Asia/Tokyo");
+    expect(values).toContain("Asia/Seoul");
+    expect(values).not.toContain("Asia/Shanghai");
+  });
+});
+
+describe("initTimezoneDropdown — the × clear button", () => {
+  // It used to re-focus the field, which opened every zone over the Save
+  // button: the next click, meant for Save, picked Africa/Algiers instead.
+  it("clears the zone and leaves the list closed and the field unfocused", () => {
+    document.body.innerHTML =
+      '<input id="f-ntp-timezone"><input type="hidden" id="f-ntp-timezone-val">' +
+      '<button id="tz-clear"></button><div class="search-select-dropdown" id="tz-dropdown"></div>';
+    g.initTimezoneDropdown("Asia/Tokyo");
+    const input = document.getElementById("f-ntp-timezone") as HTMLInputElement;
+    const hidden = document.getElementById("f-ntp-timezone-val") as HTMLInputElement;
+    hidden.value = "Asia/Tokyo";
+    (document.getElementById("tz-clear") as HTMLButtonElement).click();
+    expect(hidden.value).toBe("");
+    expect(input.value).toBe("");
+    expect(document.getElementById("tz-dropdown")!.classList.contains("open")).toBe(false);
+    expect(document.activeElement).not.toBe(input);
   });
 });

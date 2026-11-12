@@ -19,13 +19,7 @@ const h = vi.hoisted(() => ({
   scriptRuns: 0,
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    notification: { findUnique: vi.fn(async () => null), update: vi.fn() },
-    automationScript: { findMany: vi.fn(async () => []) },
-    notificationChannel: { findMany: vi.fn(async () => []) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => {
@@ -48,6 +42,15 @@ import { assertActionRefs } from "../../src/services/notificationRuleService.js"
 import { selectTestActions } from "../../src/services/automationTestService.js";
 import { assertScriptActionPermission } from "../../src/api/routes/notificationRules.js";
 import { actionSchema, escalatableActionSchema, type AutomationAction } from "../../src/services/notificationTypes.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.notification.findUnique).mockImplementation(async () => null);
+  stubbed(prisma.automationScript.findMany).mockImplementation(async () => []);
+  stubbed(prisma.notificationChannel.findMany).mockImplementation(async () => []);
+});
 
 const reboot = actionSchema.parse({ type: "reboot", when: "at", at: "03:15", notifyEmails: ["noc@example.com"] }) as AutomationAction;
 

@@ -1631,6 +1631,52 @@ export interface SweepStateRow {
   notificationId: string | null;
 }
 
+/** The conditions that read what the SD-WAN cadence collects. */
+const SDWAN_TARGETS: ReadonlySet<string> = new Set([
+  "sdwanRuleStatus", "sdwanSelectedMember", "sdwanMemberState", "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss",
+]);
+
+/**
+ * Business rule 174: which of these parked rows belong to a gate whose SD-WAN
+ * is no longer COLLECTED at all — the integration's SD-WAN pull was switched
+ * off, the gate's interfaces moved off FortiOS REST, or its integration is
+ * gone. That is a configuration edge, not a collection gap: nothing will ever
+ * re-read the rule that was "down" or the member that was failing, so the
+ * alert stood for ever on the last reading taken before collection stopped.
+ *
+ * `resolveSdwanPollInterval` is the scheduler's own eligibility test
+ * (`monitoringService.resolveSdwanPollIntervalForAsset`; null = nothing polls
+ * it), injected so this module does not import the monitoring service. A
+ * gate that is still polled and merely failing to answer is NOT here — it
+ * stays frozen, as a collection gap should (rule 118 reports the stream).
+ *
+ * Runs only over rows already parked, for SD-WAN conditions; one resolve per
+ * distinct gate.
+ */
+export async function sdwanCollectionStopped(
+  rule: DbRule,
+  rows: SweepStateRow[],
+  resolveSdwanPollInterval: (assetId: string) => Promise<number | null>,
+): Promise<Set<string>> {
+  const gone = new Set<string>();
+  const t = rule.trigger as { type?: string; metric?: string; field?: string };
+  const target = t.type === "asset_metric" ? t.metric : t.type === "asset_state" ? t.field : undefined;
+  if (!target || !SDWAN_TARGETS.has(target)) return gone;
+  const assetIds = [...new Set(rows.map((st) => st.assetId).filter((id): id is string => !!id))];
+  if (assetIds.length === 0) return gone;
+  const stopped = new Set<string>();
+  const BATCH = 10;
+  for (let i = 0; i < assetIds.length; i += BATCH) {
+    await Promise.all(assetIds.slice(i, i + BATCH).map(async (id) => {
+      // A failed resolve proves nothing; leave the row parked.
+      const interval = await resolveSdwanPollInterval(id).catch(() => 1);
+      if (interval === null) stopped.add(id);
+    }));
+  }
+  for (const st of rows) if (st.assetId && stopped.has(st.assetId)) gone.add(st.id);
+  return gone;
+}
+
 /**
  * Business rule 167(a): which of these parked rows are about a path check, a
  * custom widget or a state probe that no longer EXISTS. The vanished sweep

@@ -12,10 +12,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const findMany = vi.fn();
-const updateMany = vi.fn();
-vi.mock("../../src/db.js", () => ({ prisma: { conflict: { findMany, updateMany } } }));
+const findMany = stubbed(prisma.conflict.findMany);
+const updateMany = stubbed(prisma.conflict.updateMany);
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 const logEvent = vi.fn();
 vi.mock("../../src/services/eventLogService.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -25,6 +27,8 @@ vi.mock("../../src/services/eventLogService.js", async (importOriginal) => ({
 const { hostnameCollisionRefusal } = await import("../../src/utils/hostnameCollisionGuard.js");
 const { indexHostname, lookupHostname, dismissRefusedHostnameConflicts } =
   await import("../../src/services/discovery/discoveryEngine.js");
+
+beforeEach(() => resetDbStub());
 
 describe("hostnameCollisionRefusal", () => {
   it("refuses network infrastructure against an endpoint, either way round", () => {

@@ -616,6 +616,7 @@ enum values, which is what to read when choosing a profile row's symbol.
 ```
 GET    /server-settings/manufacturer-profiles          POST /server-settings/manufacturer-profiles
 GET    /server-settings/manufacturer-profiles/suggestions
+GET    /server-settings/manufacturer-profiles/unprofiled
 GET    /server-settings/manufacturer-profiles/:id      PUT  /server-settings/manufacturer-profiles/:id
 DELETE /server-settings/manufacturer-profiles/:id
 PUT    /server-settings/manufacturer-profiles/:id/metrics/:metricKey

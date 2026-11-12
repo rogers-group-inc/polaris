@@ -10,11 +10,9 @@
  * `customWidgetValue` reads.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-
-vi.mock("../../src/db.js", () => ({ prisma: { integration: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/manufacturerProfileService.js", () => ({
   listStateProbes: () => [],
   listCachedProfiles: () => [
@@ -33,6 +31,12 @@ vi.mock("../../src/services/manufacturerProfileService.js", () => ({
 
 import { listCustomWidgetCatalog } from "../../src/services/notificationDimensionService.js";
 import { genericApiWidgetId } from "../../src/services/genericApiService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findMany = stubbed(prisma.integration.findMany);
+
+beforeEach(() => resetDbStub());
 
 describe("listCustomWidgetCatalog", () => {
   it("lists the numeric widgets from both sources, keyed by the id their samples carry", async () => {

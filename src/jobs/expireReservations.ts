@@ -8,7 +8,7 @@
  *   import "./jobs/expireReservations.js";
  */
 
-import { expireStaleReservations } from "../services/reservationService.js";
+import { expireStaleReservations, unpushExpiredReservations } from "../services/reservationService.js";
 import { logger } from "../utils/logger.js";
 import { defineJob } from "./_defineJob.js";
 
@@ -23,6 +23,12 @@ defineJob({
     const count = await expireStaleReservations();
     if (count > 0) {
       logger.info({ count }, "Expired stale reservations");
+    }
+    // Rule 175: the device entries those rows pushed, and any an earlier
+    // tick could not reach.
+    const unpushed = await unpushExpiredReservations();
+    if (unpushed.removed > 0 || unpushed.failed > 0) {
+      logger.info(unpushed, "Expired reservations: device entries removed");
     }
   },
 });

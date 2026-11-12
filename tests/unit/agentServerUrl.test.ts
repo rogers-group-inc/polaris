@@ -8,11 +8,16 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { findUnique } = vi.hoisted(() => ({ findUnique: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { setting: { findUnique } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { assertScriptSafeServerUrl, normalizeAgentServerUrl } from "../../src/utils/agentServerUrl.js";
 import { inferOwnServerUrl } from "../../src/services/agentInstallService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findUnique = stubbed(prisma.setting.findUnique);
+
+beforeEach(() => resetDbStub());
 
 describe("normalizeAgentServerUrl", () => {
   it.each([

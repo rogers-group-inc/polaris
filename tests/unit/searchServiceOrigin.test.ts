@@ -14,28 +14,14 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    $queryRaw: vi.fn(async () => []),
-    assetIpsecConnection: { findMany: vi.fn(async () => []) },
-    ipBlock: { findMany: vi.fn(async () => []) },
-    subnet: { findMany: vi.fn(async () => []) },
-    reservation: { findMany: vi.fn(async () => []) },
-    asset: { findMany: vi.fn() },
-    assetSource: { findMany: vi.fn(async () => []) },
-    assetMacAddress: { findMany: vi.fn(async () => []) },
-    assetAssociatedIp: { findMany: vi.fn(async () => []) },
-    assetIpHistory: { findMany: vi.fn(async () => []) },
-    assetFortigateSighting: { findMany: vi.fn() },
-    assetDependencyParent: { findMany: vi.fn() },
-  },
-}));
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/applicationMapService.js", () => ({ resolveIpsToAssets: vi.fn(async () => new Map()) }));
 vi.mock("../../src/services/notificationService.js", () => ({ activeAlertSummaryByAsset: vi.fn(async () => new Map()) }));
 vi.mock("../../src/services/discoveredHostnameService.js", () => ({ findAssetIdsByDiscoveredHostname: vi.fn(async () => new Map()) }));
 
 import { searchAll } from "../../src/services/searchService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 type Row = Record<string, unknown> & { id: string };
 const asset = (id: string, over: Record<string, unknown> = {}): Row => ({
@@ -60,11 +46,24 @@ function byIds(where: any): Row[] {
 }
 
 beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.$queryRaw).mockImplementation(async () => []);
+  stubbed(prisma.assetIpsecConnection.findMany).mockImplementation(async () => []);
+  stubbed(prisma.ipBlock.findMany).mockImplementation(async () => []);
+  stubbed(prisma.subnet.findMany).mockImplementation(async () => []);
+  stubbed(prisma.reservation.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetSource.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetMacAddress.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetAssociatedIp.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetIpHistory.findMany).mockImplementation(async () => []);
+});
+
+beforeEach(() => {
   fleet = [SERVER, REMOTE_SW, REMOTE_FG, HQ_FG];
   edges = [];
   sightings = [{ assetId: SERVER.id, fortigateDevice: "FG-HQ", lastSeen: new Date("2026-10-01T00:00:00Z") }];
-  h.prisma.asset.findMany.mockReset();
-  h.prisma.asset.findMany.mockImplementation(async (args: any) => {
+  stubbed(prisma.asset.findMany).mockReset();
+  stubbed(prisma.asset.findMany).mockImplementation(async (args: any) => {
     const where = args?.where ?? {};
     // The search's own hostname query: the server is the only match.
     if (where.AND) return [SERVER];
@@ -74,11 +73,11 @@ beforeEach(() => {
     }
     return byIds(where);
   });
-  h.prisma.assetDependencyParent.findMany.mockReset();
-  h.prisma.assetDependencyParent.findMany.mockImplementation(async (args: any) =>
+  stubbed(prisma.assetDependencyParent.findMany).mockReset();
+  stubbed(prisma.assetDependencyParent.findMany).mockImplementation(async (args: any) =>
     edges.filter((e) => args.where.assetId.in.includes(e.assetId)));
-  h.prisma.assetFortigateSighting.findMany.mockReset();
-  h.prisma.assetFortigateSighting.findMany.mockImplementation(async (args: any) =>
+  stubbed(prisma.assetFortigateSighting.findMany).mockReset();
+  stubbed(prisma.assetFortigateSighting.findMany).mockImplementation(async (args: any) =>
     sightings.filter((s) => args.where.assetId.in.includes(s.assetId)));
 });
 
@@ -95,7 +94,7 @@ describe("searchAll — an asset hit's Device Map origin", () => {
     ];
     expect(await originOf()).toMatchObject({ siteId: REMOTE_FG.id, siteHostname: "FG-REMOTE" });
     // The tree answered; the sighting log was never read.
-    expect(h.prisma.assetFortigateSighting.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetFortigateSighting.findMany)).not.toHaveBeenCalled();
   });
 
   it("lets an override set win over the computed parents, as the dependency view does", async () => {

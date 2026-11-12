@@ -59,13 +59,7 @@ vi.mock("../../src/utils/publicUrl.js", () => ({
   getPublicApiBaseUrl: vi.fn(() => "https://polaris.example.com"),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    haEnrollment: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    setting: { upsert: vi.fn(), findUnique: vi.fn() },
-  },
-  prismaBase: {},
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { renderNodeScript, renderTeardownScript, buildNodeBundle, peerHostFingerprints, renderPatroniYml, TOKEN_TTL_MS, APPROVAL_WINDOW_MS } =
   await import("../../src/services/haEnrollmentService.js");

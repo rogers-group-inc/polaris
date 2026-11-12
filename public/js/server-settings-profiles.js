@@ -26,6 +26,7 @@
 // sections, then the tabs); this map only supplies labels.
 var METRIC_KEY_LABELS = {
   model:             "Model identity",
+  serial:            "Serial number",
   cpu:               "CPU",
   memory:            "Memory",
   temperature:       "Hardware Sensors",
@@ -70,8 +71,76 @@ function manufacturerProfilesCardHTML() {
     '<input type="file" id="f-import-mfg-profile" accept=".json,application/json" style="display:none">' +
   '</div>';
 
+  // Manufacturers of SNMP-answering devices with no profile (business rule
+  // 172) — filled after render by _loadUnprofiledManufacturers.
+  html += '<div id="mfg-unprofiled" style="margin-top:0.85rem"></div>';
+
   html += '</div>';
   return html;
+}
+
+// ─── Manufacturers without a profile (business rule 172) ─────────────────
+// Never created automatically: an empty profile named after a manufacturer
+// would take its devices from another profile's "Also applies when" (rule
+// 131). Listed instead, one click to create; the rows of a new profile show
+// the standard reading until a row is set.
+var _mfgUnprofiled = null;   // null = not loaded; [] = none
+
+function _mfgUnprofiledHTML(list) {
+  if (!list || !list.length) return "";
+  var canWrite = permAtLeast("manufacturerProfiles", "write");
+  var html = '<div style="font-size:0.78rem;font-weight:600;color:var(--color-text-secondary);margin-bottom:4px">Manufacturers without a profile</div>' +
+    '<p style="font-size:0.76rem;color:var(--color-text-tertiary);margin:0 0 6px">Devices that answer SNMP and are read with the standard MIBs only. ' +
+      'Create a profile to point a metric, a model or serial row or a custom widget at a vendor MIB.</p>' +
+    '<table class="ip-table" style="margin-bottom:0"><thead><tr><th>Manufacturer</th><th style="width:90px">Devices</th><th>Covered by</th><th style="width:110px"></th></tr></thead><tbody>';
+  list.forEach(function (m) {
+    html += '<tr data-manufacturer="' + escapeHtml(m.manufacturer) + '">' +
+      '<td><b>' + escapeHtml(m.manufacturer) + '</b></td>' +
+      '<td>' + m.assetCount + '</td>' +
+      '<td style="font-size:0.78rem;color:var(--color-text-secondary)">' +
+        (m.coveredBy
+          ? escapeHtml(m.coveredBy.manufacturer) + ' <span title="That profile\'s &quot;Also applies when&quot; pattern matches this name. A profile named after this manufacturer would take these devices from it.">(Also applies when) ⚠</span>'
+          : '—') +
+      '</td>' +
+      '<td>' + (canWrite
+        ? '<button type="button" class="btn btn-sm btn-primary mfg-unprofiled-create" data-manufacturer="' + escapeHtml(m.manufacturer) + '"' +
+            (m.coveredBy ? ' title="Creates a ' + escapeHtml(m.manufacturer) + ' profile. Its devices then leave the ' + escapeHtml(m.coveredBy.manufacturer) + ' profile."' : '') + '>Create profile</button>'
+        : '') + '</td>' +
+    '</tr>';
+  });
+  return html + '</tbody></table>';
+}
+
+function _loadUnprofiledManufacturers() {
+  var mount = document.getElementById("mfg-unprofiled");
+  if (!mount) return;
+  if (_mfgUnprofiled !== null) { mount.innerHTML = _mfgUnprofiledHTML(_mfgUnprofiled); return; }
+  api.serverSettings.listUnprofiledManufacturers().then(function (resp) {
+    _mfgUnprofiled = (resp && resp.manufacturers) || [];
+    var m = document.getElementById("mfg-unprofiled");
+    if (m) m.innerHTML = _mfgUnprofiledHTML(_mfgUnprofiled);
+  }).catch(function () { /* the list is a convenience; the card works without it */ });
+}
+
+// What an EMPTY row reads (no symbol set): the standard MIB, named so the
+// operator sees what is in use and only types over what they mean to change.
+// Not copied into the row — a release that improves a default reaches every
+// row left empty (rule 68).
+var _MFG_STANDARD_READING = {
+  model:            "ENTITY-MIB entPhysicalModelName (or a vendor sysDescr)",
+  serial:           "ENTITY-MIB entPhysicalSerialNum (or a vendor sysDescr)",
+  cpu:              "HOST-RESOURCES-MIB hrProcessorLoad (average)",
+  memory:           "HOST-RESOURCES-MIB hrStorage (RAM row)",
+  temperature:      "ENTITY-SENSOR-MIB entPhySensorValue",
+  interfaces:       "IF-MIB ifTable + ifXTable",
+  storage:          "HOST-RESOURCES-MIB hrStorage (disk rows)",
+  lldp:             "LLDP-MIB lldpRemTable",
+  wirelessStations: "FortiAP station table (fapSta…)",
+};
+function _mfgStandardReadingHTML(metricKey) {
+  var std = _MFG_STANDARD_READING[metricKey];
+  if (!std) return '<span style="color:var(--color-text-tertiary);font-style:italic">(built-in seed)</span>';
+  return '<span style="color:var(--color-text-tertiary);font-style:italic" title="No symbol set on this row: the standard MIB answers. Edit the row to override it.">Standard: ' + escapeHtml(std) + '</span>';
 }
 
 function renderProfileRow(p) {
@@ -152,7 +221,9 @@ function renderProfileDetail(detail) {
         '<td><button class="btn btn-sm btn-primary mfg-metric-save">Save</button> ' +
           '<button class="btn btn-sm btn-secondary mfg-metric-cancel">Cancel</button></td>';
     } else {
-      var defaultDisplay = _symbolCellViewHTML(m.defaultType, m.defaultSymbol, m.defaultSymbolB);
+      var defaultDisplay = (!m.defaultSymbol && !m.defaultSymbolB)
+        ? _mfgStandardReadingHTML(m.metricKey)
+        : _symbolCellViewHTML(m.defaultType, m.defaultSymbol, m.defaultSymbolB);
       // The MIB cell is PROVENANCE, not the operator's pick: where the row's
       // symbol actually resolves from at this manufacturer's scope (module +
       // layer), or what to upload when it does not. The pinned MIB / std hint
@@ -792,18 +863,18 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
 // `std:fortinet` deliberately omitted — vendor MIBs belong in the Uploaded
 // MIBs section, not the Standard MIBs optgroup.
 var STD_MIB_LABELS = {
-  "std:system":         "System (RFC 1213)",
-  "std:interfaces":     "Interfaces — ifTable (RFC 2863)",
-  "std:if-ext":         "Interfaces — ifXTable, 64-bit counters (RFC 2863)",
-  "std:host-resources": "HOST-RESOURCES-MIB (RFC 2790)",
-  "std:entity":         "ENTITY-MIB (RFC 4133)",
-  "std:entity-sensor":  "ENTITY-SENSOR-MIB (RFC 3433)",
-  "std:lldp":           "LLDP-MIB (IEEE 802.1AB)",
-  "std:poe":            "PoE — POWER-ETHERNET-MIB (RFC 3621)",
-  "std:bridge":         "Bridge — MAC forwarding + STP (RFC 4188)",
-  "std:q-bridge":       "Bridge — VLAN-aware forwarding (RFC 4363)",
-  "std:rstp":           "Rapid Spanning Tree (RFC 4318)",
-  "std:ip":             "IP — addresses + neighbour cache (RFC 4293)",
+  "std:system":         "System (SNMPv2-MIB, RFC 3418)",
+  "std:interfaces":     "Interfaces — ifTable (IF-MIB, RFC 2863)",
+  "std:if-ext":         "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)",
+  "std:host-resources": "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",
+  "std:entity":         "Entity (ENTITY-MIB, RFC 4133)",
+  "std:entity-sensor":  "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",
+  "std:lldp":           "LLDP (LLDP-MIB, IEEE 802.1AB)",
+  "std:poe":            "PoE (POWER-ETHERNET-MIB, RFC 3621)",
+  "std:bridge":         "Bridge — MAC forwarding + STP (BRIDGE-MIB, RFC 4188)",
+  "std:q-bridge":       "Bridge — VLAN-aware forwarding (Q-BRIDGE-MIB, RFC 4363)",
+  "std:rstp":           "Rapid Spanning Tree (RSTP-MIB, RFC 4318)",
+  "std:ip":             "IP — addresses + neighbour cache (IP-MIB, RFC 4293)",
 };
 var STD_MIB_ORDER = ["std:system", "std:interfaces", "std:if-ext", "std:host-resources", "std:entity", "std:entity-sensor", "std:lldp", "std:poe", "std:bridge", "std:q-bridge", "std:rstp", "std:ip"];
 
@@ -1577,6 +1648,13 @@ function wireManufacturerProfileControls() {
   }
 
   wireManufacturerSuggestCombo();
+
+  _loadUnprofiledManufacturers();
+  var unprofiled = document.getElementById("mfg-unprofiled");
+  if (unprofiled) unprofiled.addEventListener("click", function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest(".mfg-unprofiled-create") : null;
+    if (btn) addManufacturerProfile(btn.getAttribute("data-manufacturer"));
+  });
 
   var list = document.getElementById("mfg-profiles-list");
   if (!list) return;
@@ -2442,6 +2520,7 @@ async function openProfileImportModal(fileObj) {
       _mfgProfileDetail[res.profileId] = detail && detail.profile;
       _mfgProfileExpanded[res.profileId] = true;
       _mfgSuggestions = null;
+      _mfgUnprofiled = null;
       renderIdentificationTab();
     } catch (err) {
       go.disabled = false;
@@ -2451,9 +2530,9 @@ async function openProfileImportModal(fileObj) {
   refresh();
 }
 
-async function addManufacturerProfile() {
+async function addManufacturerProfile(nameArg) {
   var input = document.getElementById("f-mfg-profile-add-name");
-  var name = input && input.value ? input.value.trim() : "";
+  var name = typeof nameArg === "string" && nameArg ? nameArg.trim() : (input && input.value ? input.value.trim() : "");
   if (!name) { showToast("Manufacturer is required", "error"); return; }
   try {
     var resp = await api.serverSettings.createManufacturerProfile({ manufacturer: name });
@@ -2471,9 +2550,10 @@ async function addManufacturerProfile() {
       _mfgProfileDetail[resp.profile.id] = resp.profile;
       _mfgProfileExpanded[resp.profile.id] = true;
     }
-    input.value = "";
-    // The name just used now has a profile, so it must drop out of the list.
+    if (input && typeof nameArg !== "string") input.value = "";
+    // The name just used now has a profile, so it must drop out of the lists.
     _mfgSuggestions = null;
+    _mfgUnprofiled = null;
     showToast("Manufacturer profile added");
     renderIdentificationTab();
   } catch (err) {
@@ -2493,6 +2573,7 @@ async function deleteManufacturerProfile(id) {
     delete _mfgProfileExpanded[id];
     // Freed up — the manufacturer is suggestable again.
     _mfgSuggestions = null;
+    _mfgUnprofiled = null;
     showToast("Profile deleted");
     renderIdentificationTab();
   } catch (err) {

@@ -48,6 +48,7 @@ import { syncAzureTagRegistry } from "./tagAssignmentService.js";
 import { afterAssetsDeleted } from "./assetRemovalService.js";
 import { listAgentHosts, recordAgentsLeftOnHosts } from "./agentOrphanService.js";
 import { releaseDnsResolvedForAsset } from "./dnsResolvedReservationService.js";
+import { retiredStreamMibField } from "../utils/retiredStreamMib.js";
 
 // ─── Zod Schemas ─────────────────────────────────────────────────────────────
 
@@ -148,12 +149,12 @@ export const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   temperatureCredentialId:      z.string().guid().nullable().optional(),
   interfacesCredentialId:       z.string().guid().nullable().optional(),
   lldpCredentialId:             z.string().guid().nullable().optional(),
-  // Per-stream MIB overrides ("std:<key>" | uploaded MIB UUID | null = inherit)
-  responseTimeMibId:            z.string().nullable().optional(),
-  cpuMemoryMibId:               z.string().nullable().optional(),
-  temperatureMibId:             z.string().nullable().optional(),
-  interfacesMibId:              z.string().nullable().optional(),
-  lldpMibId:                    z.string().nullable().optional(),
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
+  responseTimeMibId:            retiredStreamMibField(),
+  cpuMemoryMibId:               retiredStreamMibField(),
+  temperatureMibId:             retiredStreamMibField(),
+  interfacesMibId:              retiredStreamMibField(),
+  lldpMibId:                    retiredStreamMibField(),
   monitorIntervalSec:           z.number().int().min(5).max(86400).nullable().optional(),
   // Per-asset probe timeout override. 100..60000 ms; null inherits from the
   // resolved tier-3 setting. The frontend renders a soft warning at <500 ms.

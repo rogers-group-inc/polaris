@@ -18,7 +18,9 @@
  * workload, not inventory. Discovered-only assets do not enter the calc.
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 // Mock queueService so isPgbossInstalled is configurable per-test without
 // pulling in the real module (which imports the pg-boss optional dep).
@@ -30,15 +32,7 @@ vi.mock("../../src/services/queueService.js", () => ({
 // Mock prisma (the service imports it for readIntegrationBreakdown / setting
 // upsert paths). buildAdvisorState is pure so these mocks are only loaded for
 // the unrelated transition Event path — set safe defaults.
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    integration: { findMany: vi.fn(async () => []) },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    event: { create: vi.fn() },
-    $queryRawUnsafe: vi.fn(async () => []),
-    asset: { count: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 // Mock the metrics accessor so percentile tests can supply controlled bucket
 // data. The exporting module re-exports HistogramBucketValue type via the
@@ -183,6 +177,12 @@ function buildInputs(snap: any, env?: Partial<AdvisorInputs["currentEnv"]>): Adv
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.integration.findMany).mockImplementation(async () => []);
+  stubbed(prisma.$queryRawUnsafe).mockImplementation(async () => []);
+});
 
 describe("roundUpToNearest", () => {
   it("rounds up to the nearest multiple", () => {

@@ -1,15 +1,16 @@
 /**
  * tests/integration/deleteGuards.test.ts — business rule 167 against a real
- * database: a MIB that is still selected for a monitoring stream, and a
- * credential a Discovery still tries, cannot be deleted. Both references are
- * bare ids with no foreign key, so before this the delete went through and the
- * reference dangled. Skips when DATABASE_URL isn't reachable.
+ * database: a credential a Discovery still tries cannot be deleted (a bare id
+ * with no foreign key, so before this the delete went through and the
+ * reference dangled). A MIB is no longer guarded: the per-stream pins that
+ * named one are retired (rule 173), and a stale pin must not block a delete.
+ * Skips when DATABASE_URL isn't reachable.
  */
 
 import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
-import { deleteMib, mibSelections } from "../../src/services/mibService.js";
+import { deleteMib } from "../../src/services/mibService.js";
 import { createCredential, deleteCredential } from "../../src/services/credentialService.js";
 import { deleteCheck } from "../../src/services/pathCheckService.js";
 import { deleteWidget, deleteProfile } from "../../src/services/manufacturerProfileService.js";
@@ -45,37 +46,13 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("deleting a MIB (rule 167)", () => {
-  it("is refused while an asset has it selected for any stream, naming the asset; allowed once cleared", async () => {
-    const m = await mib("ASSET");
-    const a = await prisma.asset.create({ data: { hostname: `${PFX}-sw1`, assetType: "switch", status: "active", temperatureMibId: m.id } as never });
-
-    expect(await mibSelections(m.id)).toEqual({ assets: 1, assetNames: [`${PFX}-sw1`], classSettings: 0 });
-    await expect(deleteMib(m.id)).rejects.toMatchObject({
-      httpStatus: 409,
-      message: `MIB DELETE-GUARD-TEST-ASSET is still selected for a monitoring stream on 1 asset: ${PFX}-sw1. Choose another MIB there first.`,
-    });
-    expect(await prisma.mibFile.findUnique({ where: { id: m.id } })).not.toBeNull();
-
-    await prisma.asset.update({ where: { id: a.id }, data: { temperatureMibId: null } });
+d("deleting a MIB (rule 173: no stream pin holds it)", () => {
+  it("deletes even when a retired stream pin still names it on an asset or a class setting", async () => {
+    const m = await mib("STALE");
+    await prisma.asset.create({ data: { hostname: `${PFX}-sw1`, assetType: "switch", status: "active", temperatureMibId: m.id } as never });
+    await prisma.monitorClassOverride.create({ data: { assetType: `${PFX}-type`, interfacesMibId: m.id } as never });
     await deleteMib(m.id);
     expect(await prisma.mibFile.findUnique({ where: { id: m.id } })).toBeNull();
-  });
-
-  it("is refused while a class monitoring setting selects it", async () => {
-    const m = await mib("CLASS");
-    await prisma.monitorClassOverride.create({ data: { assetType: `${PFX}-type`, interfacesMibId: m.id } as never });
-    await expect(deleteMib(m.id)).rejects.toMatchObject({ httpStatus: 409, message: expect.stringContaining("1 class monitoring setting") });
-  });
-
-  it("counts every stream column, and caps the names", async () => {
-    const m = await mib("MANY");
-    const cols = ["responseTimeMibId", "cpuMemoryMibId", "temperatureMibId", "interfacesMibId", "lldpMibId", "processesMibId", "cpuMemoryMibId"];
-    await Promise.all(cols.map((c, i) => prisma.asset.create({ data: { hostname: `${PFX}-m${i}`, assetType: "switch", status: "active", [c]: m.id } as never })));
-    const used = await mibSelections(m.id);
-    expect(used.assets).toBe(7);
-    expect(used.assetNames).toHaveLength(5);
-    await expect(deleteMib(m.id)).rejects.toMatchObject({ message: expect.stringContaining("(+2 more)") });
   });
 
   it("an unselected MIB deletes, and a missing one is a 404", async () => {

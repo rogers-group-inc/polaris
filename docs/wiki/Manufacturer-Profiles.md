@@ -26,6 +26,13 @@ in your inventory, with device counts. "Aruba Networks" and "Aruba" are two
 different names: fold the spelling with a **Manufacturer Alias** (MAC & Vendor
 Identification), or give the profile an **Also applies when** pattern.
 
+**Manufacturers without a profile** are listed under the profiles: the vendors of devices that
+answer SNMP and are read with the standard MIBs only, each with a device count and a **Create
+profile** button. Polaris never creates one for you ([rule 172](Business-Rules#rule-172)): a profile
+named after a manufacturer takes its devices from any other profile whose **Also applies when**
+matches it, and the list warns when that would happen. In a new profile every row shows the
+standard reading it uses until you set it, so change only what the vendor's MIB does better.
+
 **Upload the vendor's MIBs under that same name**, every module the objects need.
 A vendor's main module usually imports a core module (FORTINET-FORTIGATE-MIB
 imports FORTINET-CORE-MIB). Upload the core module first; the upload result names
@@ -38,6 +45,7 @@ A new profile has eight rows. Five are read when Polaris collects:
 | Row | What it reads |
 |---|---|
 | **Model identity** | one value holding the hardware model, plus a pattern that pulls the model out of it. Used only while the device's model is empty |
+| **Serial number** | one value holding the device's own serial number, for a device whose serial is in no standard MIB (an APC Smart-UPS: `upsAdvIdentSerialNumber`). Read with the model every 10 minutes, even when only Response Time is polled ([rule 171](Business-Rules#rule-171)) |
 | **CPU** | a percent from 0 to 100. A single value, or a table column whose rows are averaged |
 | **Memory** | a percent, or two byte counts: used and total, or used and free |
 | **Hardware Sensors** | one temperature value, or a whole vendor sensor table (below) |
@@ -104,7 +112,8 @@ indexes the device has.
 
 A new widget polls **no** device until you switch it on, either from the device
 list Polaris opens when you save it or from the switch on each card of the
-asset's Custom MIB tab ([rule 130](Business-Rules#rule-130)). A switched-on widget
+asset's Custom MIB tab ([rule 130](Business-Rules#rule-130)). The tab hides a
+switched-off widget until you click its pencil. A switched-on widget
 polls on the device's hardware-sensor interval, using its first SNMP credential.
 
 ## Checking it works

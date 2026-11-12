@@ -20,11 +20,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const queryRawUnsafe = vi.fn();
-vi.mock("../../src/db.js", () => ({
-  prisma: { $queryRawUnsafe: queryRawUnsafe, $queryRaw: vi.fn(), $disconnect: vi.fn() },
-}));
+const queryRawUnsafe = stubbed(prisma.$queryRawUnsafe);
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 // execFile is promisified at module load. Node's real execFile carries a
 // `[promisify.custom]` that resolves `{ stdout, stderr }`; a plain mock would be
@@ -66,7 +66,7 @@ function versionAnswers(byTool: Record<string, string | Error>) {
 }
 
 beforeEach(() => {
-  queryRawUnsafe.mockReset();
+  resetDbStub();
   execFileMock.mockReset();
   queryRawUnsafe.mockResolvedValue([{ server_version_num: "150018" }]);
 });

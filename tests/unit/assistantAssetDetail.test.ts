@@ -17,17 +17,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  prisma: {
-    asset: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
-    subnet: { findMany: vi.fn() },
-    reservation: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
-    managedAgent: { findUnique: vi.fn() },
-    assetMclagPeer: { findMany: vi.fn(async () => []) },
-    assetPhysicalEntity: { findMany: vi.fn(async () => []) },
-    assetStorageSample: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
-    assetHardwareSensorSample: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
-    assetSource: { findMany: vi.fn(async () => []) },
-  },
   upstream: vi.fn(async () => ({ switch: null })),
   vips: vi.fn(async () => ({ vips: [] })),
   contacts: vi.fn(async () => []),
@@ -37,7 +26,7 @@ const h = vi.hoisted(() => ({
   nextFree: vi.fn(async () => ["10.0.0.9"]),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/assetUpstreamService.js", () => ({ resolveAssetUpstream: h.upstream }));
 vi.mock("../../src/services/assetVipService.js", () => ({ resolveAssetVips: h.vips }));
 vi.mock("../../src/services/contactService.js", () => ({ resolveContactsForAsset: h.contacts }));
@@ -58,14 +47,27 @@ vi.mock("../../src/services/monitoringService.js", () => ({ resolveMonitorSettin
 vi.mock("../../src/services/downDetectionService.js", () => ({ describeDownDetectionFor: vi.fn(), recoveryPollsFor: vi.fn() }));
 
 import { runAssistantTool } from "../../src/services/assistantToolService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const reqWith = (perms: Record<string, string>) => ({ session: { userId: "u1", roleSnapshot: { permissions: perms } } }) as any;
 const details = async (perms: Record<string, string>, sections: string[]) =>
   (await runAssistantTool("asset_details", JSON.stringify({ hostname: "sw1", sections }), { req: reqWith(perms), maxRows: 50 })).data as any;
 
 beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.assetMclagPeer.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetPhysicalEntity.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetStorageSample.findFirst).mockImplementation(async () => null);
+  stubbed(prisma.assetStorageSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetHardwareSensorSample.findFirst).mockImplementation(async () => null);
+  stubbed(prisma.assetHardwareSensorSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetSource.findMany).mockImplementation(async () => []);
+});
+
+beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.asset.findFirst.mockResolvedValue({ id: "a1", hostname: "sw1", assetType: "switch" });
+  stubbed(prisma.asset.findFirst).mockResolvedValue({ id: "a1", hostname: "sw1", assetType: "switch" });
 });
 
 describe("asset_details", () => {
@@ -97,9 +99,9 @@ describe("asset_details", () => {
   });
 
   it("lifecycle never selects the agent's enrollment or bearer secrets, and a failing card does not sink the section", async () => {
-    h.prisma.managedAgent.findUnique.mockResolvedValue({ agentVersion: "1.2.3" });
+    stubbed(prisma.managedAgent.findUnique).mockResolvedValue({ agentVersion: "1.2.3" });
     const r = await details({ assets: "read" }, ["lifecycle"]);
-    const select = h.prisma.managedAgent.findUnique.mock.calls[0][0].select;
+    const select = stubbed(prisma.managedAgent.findUnique).mock.calls[0][0].select;
     expect(Object.keys(select)).not.toEqual(expect.arrayContaining(["bearerHash"]));
     for (const k of Object.keys(select)) expect(k).not.toMatch(/Hash|Token|Prefix|Fingerprint/);
     expect(r.lifecycle.agent).toEqual({ agentVersion: "1.2.3" });
@@ -120,9 +122,9 @@ describe("asset_details", () => {
   });
 
   it("an unknown device is found: false, with no section read", async () => {
-    h.prisma.asset.findFirst.mockResolvedValue(null);
+    stubbed(prisma.asset.findFirst).mockResolvedValue(null);
     expect(await details({ assets: "read" }, ["hardware"])).toEqual({ found: false });
-    expect(h.prisma.assetPhysicalEntity.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetPhysicalEntity.findMany)).not.toHaveBeenCalled();
   });
 });
 
@@ -146,9 +148,9 @@ describe("get_network", () => {
     (await runAssistantTool("get_network", JSON.stringify(args), { req: reqWith(perms), maxRows: 50 })).data as any;
 
   beforeEach(() => {
-    h.prisma.subnet.findMany.mockResolvedValue([subnet]);
-    h.prisma.reservation.groupBy.mockResolvedValue([{ sourceType: "dhcp_reservation", _count: { _all: 1 } }]);
-    h.prisma.reservation.count.mockResolvedValue(0);
+    stubbed(prisma.subnet.findMany).mockResolvedValue([subnet]);
+    stubbed(prisma.reservation.groupBy).mockResolvedValue([{ sourceType: "dhcp_reservation", _count: { _all: 1 } }]);
+    stubbed(prisma.reservation.count).mockResolvedValue(0);
     h.subnetIps.mockResolvedValue(page);
   });
 
@@ -180,7 +182,7 @@ describe("get_network", () => {
   });
 
   it("a CIDR in two blocks comes back as candidates, with no page read", async () => {
-    h.prisma.subnet.findMany.mockResolvedValue([subnet, { ...subnet, id: "s2", block: { name: "Other", cidr: "10.0.0.0/8" } }]);
+    stubbed(prisma.subnet.findMany).mockResolvedValue([subnet, { ...subnet, id: "s2", block: { name: "Other", cidr: "10.0.0.0/8" } }]);
     const r = await run({ subnets: "read" });
     expect(r).toMatchObject({ found: false, ambiguous: true });
     expect(r.candidates.map((c: any) => c.id)).toEqual(["s1", "s2"]);

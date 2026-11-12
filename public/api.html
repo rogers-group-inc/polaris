@@ -1905,7 +1905,7 @@
         <h2>Manufacturer profiles</h2>
         <p>
           A <strong>manufacturer profile</strong> says which MIB symbol carries each SNMP
-          telemetry metric for one vendor: model identity, CPU, memory, hardware sensors and
+          telemetry metric for one vendor: model identity, serial number, CPU, memory, hardware sensors and
           storage (the <code>interfaces</code>, <code>lldp</code> and
           <code>wirelessStations</code> rows are descriptive and change nothing), with
           device-type defaults and per-model exceptions under each, plus <strong>custom
@@ -1928,7 +1928,12 @@
             <code>partial</code>, <code>unresolvedCount</code>,
             <code>unresolvedSymbols</code>. <code>GET …/suggestions</code> lists the manufacturer
             names already in use (with device counts) and not yet profiled — create profiles
-            under one of these, or the profile matches no device.</p>
+            under one of these, or the profile matches no device. <code>GET …/unprofiled</code>
+            narrows that to devices that answer SNMP:
+            <code>{ manufacturers: [{ manufacturer, assetCount, coveredBy }] }</code>, where
+            <code>coveredBy</code> (<code>{ id, manufacturer }</code> or null) names a profile whose
+            "Also applies when" pattern already matches the name — creating a profile for it would
+            take those devices from that profile. Polaris never creates a profile on its own.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/server-settings/manufacturer-profiles"</code></pre>
         </div>
@@ -1956,7 +1961,7 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-put">PUT</span> /server-settings/manufacturer-profiles/:id/metrics/:metricKey
             <span class="gate">manufacturerProfiles:write</span></div>
-          <p>Set a metric row (<code>metricKey</code>: <code>model | cpu | memory | temperature | interfaces | storage | lldp | wirelessStations</code>;
+          <p>Set a metric row (<code>metricKey</code>: <code>model | serial | cpu | memory | temperature | interfaces | storage | lldp | wirelessStations</code>;
             <code>temperature</code> is the Hardware Sensors row). Fields, all optional on a
             partial update:</p>
           <ul>
