@@ -18,6 +18,7 @@ import { logEvent, buildFirmwareChangedEvent } from "../eventLogService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { lookupOuiOverride } from "../ouiService.js";
 import { reconcileSnmpSelfIdentity, reconcileSnmpProfileIdentity } from "../snmpSelfIdentityService.js";
+import { detectedModelMayReplace } from "../../utils/modelParse.js";
 import { persistFibreChannel } from "../fibreChannelService.js";
 import { resolveAssetTypeCached } from "../../utils/assetTypeMatch.js";
 import { sameDescrObserved, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
@@ -328,8 +329,7 @@ async function adoptDetectedModel(
 ): Promise<void> {
   if (typeof detectedModel !== "string" || !detectedModel || !pinned) return;
   const currentModel = (pinned.model ?? "").trim();
-  const overwritable = !currentModel || /^fortiswitch\b/i.test(currentModel);
-  if (!overwritable || currentModel === detectedModel) return;
+  if (!detectedModelMayReplace(currentModel) || currentModel === detectedModel) return;
   await prisma.asset.update({ where: { id: assetId }, data: { model: detectedModel } });
   logEvent({
     action: "asset.model_detected",

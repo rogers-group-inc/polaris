@@ -57,6 +57,7 @@ import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { hasSelfIdentity, type SnmpSelfIdentity } from "../utils/snmpEntityIdentity.js";
 import { usableSerialOrNull } from "../utils/serialNumber.js";
+import { detectedModelMayReplace } from "../utils/modelParse.js";
 import { buildFirmwareChangedEvent, logEvent } from "./eventLogService.js";
 import { lookupOuiOverride } from "./ouiService.js";
 
@@ -208,6 +209,12 @@ async function applyProjection(assetId: string, sourceKind: string): Promise<boo
   // this process role — a spelling is never a write or an audited "move".
   if (diff.manufacturer && sameVendor(diff.manufacturer, asset.manufacturer)) {
     delete diff.manufacturer;
+  }
+  // A profile-detected model fills only an empty or generic model, exactly as
+  // the system-info pass's direct adoption does (business rule 171) — never
+  // an operator-typed one.
+  if (sourceKind === SNMP_PROFILE_SOURCE_KIND && diff.model && !detectedModelMayReplace(asset.model)) {
+    delete diff.model;
   }
   // The operator's typed name is a pin; offering a different one would only
   // hand the db.ts guard a write to rewrite.

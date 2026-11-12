@@ -133,6 +133,18 @@ describe("reconcileSnmpProfileIdentity", () => {
     expect(h.assets.get("u1")).toMatchObject({ model: "Smart-UPS 3000", serialNumber: "AS1234567890" });
   });
 
+  it("never replaces an operator-typed model, but still fills the serial", async () => {
+    h.assets.set("u1", { ...EMPTY_ASSET, model: "Smart-UPS SRT 3000 (typed)" });
+    await reconcileSnmpProfileIdentity("u1", { model: "Smart-UPS 3000", serialNumber: "AS1234567890" });
+    expect(h.assets.get("u1")).toMatchObject({ model: "Smart-UPS SRT 3000 (typed)", serialNumber: "AS1234567890" });
+  });
+
+  it("replaces the generic FortiSwitch literal", async () => {
+    h.assets.set("u1", { ...EMPTY_ASSET, model: "FortiSwitch" });
+    await reconcileSnmpProfileIdentity("u1", { model: "FortiSwitch 448E-FPOE" });
+    expect(h.assets.get("u1")!.model).toBe("FortiSwitch 448E-FPOE");
+  });
+
   it("costs no DB call when the reading is unchanged", async () => {
     h.assets.set("u1", { ...EMPTY_ASSET });
     await reconcileSnmpProfileIdentity("u1", { serialNumber: "AS1234567890" });
