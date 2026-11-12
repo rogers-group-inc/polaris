@@ -84,3 +84,22 @@ describe("initTimezoneDropdown — delegated option pick", () => {
     expect(picks).toBe(0);
   });
 });
+
+describe("initTimezoneDropdown — the × clear button", () => {
+  // It used to re-focus the field, which opened every zone over the Save
+  // button: the next click, meant for Save, picked Africa/Algiers instead.
+  it("clears the zone and leaves the list closed and the field unfocused", () => {
+    document.body.innerHTML =
+      '<input id="f-ntp-timezone"><input type="hidden" id="f-ntp-timezone-val">' +
+      '<button id="tz-clear"></button><div class="search-select-dropdown" id="tz-dropdown"></div>';
+    g.initTimezoneDropdown("Asia/Tokyo");
+    const input = document.getElementById("f-ntp-timezone") as HTMLInputElement;
+    const hidden = document.getElementById("f-ntp-timezone-val") as HTMLInputElement;
+    hidden.value = "Asia/Tokyo";
+    (document.getElementById("tz-clear") as HTMLButtonElement).click();
+    expect(hidden.value).toBe("");
+    expect(input.value).toBe("");
+    expect(document.getElementById("tz-dropdown")!.classList.contains("open")).toBe(false);
+    expect(document.activeElement).not.toBe(input);
+  });
+});
