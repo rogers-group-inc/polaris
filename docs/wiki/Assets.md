@@ -801,6 +801,12 @@ pill — then
 the **Last 30 min** strip, one cell per probe coloured by the state it left
 the device in, and **Uptime** where the transport reports it.
 
+**A section whose stream is off is not shown.** When the CPU/Memory polling
+method resolves to *not delivered* (switched off, or Inherit with nothing to
+inherit), the CPU & Memory chart is hidden, even if it collected data before.
+Storage and LLDP are hidden the same way while their stream is off and they
+hold nothing. Turn the stream on (Edit → Monitoring) to bring the section back.
+
 **Each section header says how fresh its data is.** Beside the polling-method
 badge, **updated X ago** is the last poll that returned data — a failed poll
 never moves it ([rule 118](Business-Rules#rule-118)). When the CPU & Memory or

@@ -21,6 +21,7 @@
     "_agentStatusLabel",
     "_alertCountLabel",
     "_applyAssetsHashFilters",
+    "_applyCpuMemoryVisibility",
     "_applyCustomRangeSelection",
     "_applySnmpMibTreeSelection",
     "_arpAgeLabel",
