@@ -25,7 +25,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 let roster: any[] = [];
 const dispatchCalls: Array<{ targets: any[]; scripts: any; opts: any }> = [];
@@ -55,7 +57,6 @@ import {
   listMachines,
   ARC_RUN_COMMAND_NAME,
 } from "../../src/services/arcPublishService.js";
-import { logEvent } from "../../src/services/eventLogService.js";
 
 const INT_ID = "11111111-1111-1111-1111-111111111111";
 
@@ -108,7 +109,7 @@ describe("target resolution", () => {
     await runOnboardingOnMachines(INT_ID, [roster[0].armId, "/subscriptions/x/…/bogus"], "tester");
 
     expect(dispatchCalls[0].targets).toHaveLength(1);
-    const ev = (logEvent as any).mock.calls.map((c: any[]) => c[0])[0];
+    const ev = eventLog.logEvent.mock.calls.map((c: any[]) => c[0])[0];
     expect(ev.details.unknownArmIds).toEqual(["/subscriptions/x/…/bogus"]);
   });
 
@@ -193,7 +194,7 @@ describe("audit", () => {
     roster = [machine({ name: "a" }), machine({ name: "b" })];
     await runOnboardingOnMachines(INT_ID, roster.map((m) => m.armId), "alice");
 
-    const evs = (logEvent as any).mock.calls.map((c: any[]) => c[0])
+    const evs = eventLog.logEvent.mock.calls.map((c: any[]) => c[0])
       .filter((e: any) => e.action === "arc.run_command_executed");
     expect(evs).toHaveLength(1);
     expect(evs[0].level).toBe("warning");

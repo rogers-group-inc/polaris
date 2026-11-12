@@ -91,9 +91,12 @@ vi.mock("../../src/db.js", () => {
   };
   return { prisma };
 });
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async (e: any) => { db.events.push(e); }),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { db.events.push(e); return undefined; });
+});
 // The static-recipient resolvers are the recipient service's own, tested
 // there; here they read the in-memory users so the all-quiet audience can be
 // asserted without the user index's role / group-mapping reads.

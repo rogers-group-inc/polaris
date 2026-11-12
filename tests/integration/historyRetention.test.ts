@@ -9,7 +9,18 @@
  * Skips cleanly when DATABASE_URL isn't reachable; see _helpers.ts.
  */
 
-import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+
+// pruneHistory also sweeps the firmware repository's FILES (rule 158(b)). This
+// suite runs against a scratch database beside a real state directory: with no
+// FirmwareImage rows here, the real sweep would remove every image a developer
+// has stored. It is stubbed; tests/unit/firmwareFileSweep.test.ts covers it.
+const sweepFirmwareFiles = vi.hoisted(() => vi.fn(async () => ({ files: 2, incoming: 1, rows: 0 })));
+vi.mock("../../src/services/firmwareRepositoryService.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  sweepFirmwareFiles,
+}));
+
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
@@ -23,6 +34,8 @@ import {
   pruneHistory,
   pruneHiddenRegionIds,
   pruneOrphanTagAssignments,
+  pruneUnpinnedProcessConfigs,
+  PROCESS_CONFIG_UNPINNED_DAYS,
   updateAlertHistorySettings,
   getAlertHistorySettings,
   RULE_STATE_IDLE_DAYS,
@@ -249,11 +262,55 @@ d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
     }
   });
 
+  it("rule 158(c): removes the log config of a process that is no longer pinned, once it has sat for a week", async () => {
+    const a = await prisma.asset.create({ data: { hostname: `${PFX}-proc`, assetType: "server", status: "active", monitoredProcesses: ["nginx"] } as never });
+    const old = ago(PROCESS_CONFIG_UNPINNED_DAYS + 1);
+    const mk = (assetId: string, name: string, updatedAt: Date) =>
+      prisma.assetProcessConfig.create({ data: { assetId, name, logSource: "file", logPathGlob: "/var/log/x/*.log", updatedAt } as never });
+    try {
+      const pinned = await mk(a.id, "nginx", old);          // still pinned: kept
+      const unpinnedOld = await mk(a.id, "postgres", old);   // unpinned a week ago: removed
+      const unpinnedNew = await mk(a.id, "redis", ago(1));   // unpinned yesterday: kept, the pin may come back
+      const noAsset = await mk(`${PFX}-gone-asset`, "nginx", old); // its asset is gone: removed
+
+      expect(await pruneUnpinnedProcessConfigs()).toBe(2);
+      const left = (await prisma.assetProcessConfig.findMany({ where: { id: { in: [pinned.id, unpinnedOld.id, unpinnedNew.id, noAsset.id] } }, select: { id: true } })).map((r) => r.id).sort();
+      expect(left).toEqual([pinned.id, unpinnedNew.id].sort());
+      expect(await pruneUnpinnedProcessConfigs()).toBe(0);
+    } finally {
+      await prisma.assetProcessConfig.deleteMany({ where: { OR: [{ assetId: a.id }, { assetId: { startsWith: PFX } }] } });
+      await prisma.asset.delete({ where: { id: a.id } });
+    }
+  });
+
+  it("rule 158(c): an operator's unpin removes that process's log config at once, and only that one", async () => {
+    const a = await prisma.asset.create({ data: { hostname: `${PFX}-unpin`, assetType: "server", status: "active", monitoredProcesses: ["nginx", "postgres"] } as never });
+    try {
+      await prisma.assetProcessConfig.createMany({ data: [
+        { assetId: a.id, name: "nginx", logSource: "file", logPathGlob: "/var/log/nginx/*.log" },
+        { assetId: a.id, name: "postgres", logSource: "auto" },
+      ] });
+      const adm = await authedAgent(app);
+      const res = await adm.agent.put(`/api/v1/assets/${a.id}`).set("X-CSRF-Token", adm.csrf).send({ monitoredProcesses: ["postgres"] });
+      expect(res.status).toBe(200);
+      expect((await prisma.assetProcessConfig.findMany({ where: { assetId: a.id }, select: { name: true } })).map((r) => r.name)).toEqual(["postgres"]);
+
+      // Re-pinning starts from the default, not from the old privileged path.
+      await adm.agent.put(`/api/v1/assets/${a.id}`).set("X-CSRF-Token", adm.csrf).send({ monitoredProcesses: ["postgres", "nginx"] });
+      expect(await prisma.assetProcessConfig.findFirst({ where: { assetId: a.id, name: "nginx" } })).toBeNull();
+    } finally {
+      await prisma.assetProcessConfig.deleteMany({ where: { assetId: a.id } });
+      await prisma.asset.delete({ where: { id: a.id } });
+    }
+  });
+
   it("pruneHistory runs every prune and reports each count", async () => {
     await prisma.notification.create({ data: { message: `${PFX} gone`, cleared: true, clearedAt: ago(500) } as never });
     const { result, errors } = await pruneHistory();
     expect(errors).toEqual([]);
     expect(result.alerts).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "hiddenRegionIds", "ruleStates", "scanRuns", "sightings", "summaries", "tagAssignments"]);
+    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sightings", "summaries", "tagAssignments"]);
+    expect(sweepFirmwareFiles).toHaveBeenCalledTimes(1);
+    expect(result.firmwareLeftovers).toBe(3);
   });
 });

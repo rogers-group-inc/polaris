@@ -15,7 +15,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   rows: [] as Array<{ id: string; userId: string; text: string; source: string; createdAt: Date }>,
-  logEvent: vi.fn(async () => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -35,7 +34,9 @@ vi.mock("../../src/db.js", () => ({
     },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   checkMemoryText,
@@ -53,7 +54,7 @@ import {
 
 beforeEach(() => {
   h.rows = [];
-  h.logEvent.mockClear();
+  eventLog.logEvent.mockClear();
 });
 
 function turn(question: string, over: Partial<MemoryTurn> = {}): MemoryTurn {
@@ -149,8 +150,8 @@ describe("store", () => {
     const b = await addMemory("u1", "i manage the nashville REGION", "assistant", "alice");
     expect(b.duplicate).toBe(true);
     expect(h.rows).toHaveLength(1);
-    expect(h.logEvent).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(h.logEvent.mock.calls)).not.toContain("Nashville");
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(eventLog.logEvent.mock.calls)).not.toContain("Nashville");
   });
 
   it("refuses a filtered entry from the user too", async () => {

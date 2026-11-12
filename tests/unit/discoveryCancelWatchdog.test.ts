@@ -18,7 +18,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // discoveryRunState/eventLogService import the Prisma client at module load;
 // the watchdog only touches them through its injectable seams in these tests.
 vi.mock("../../src/services/discoveryRunState.js", () => ({ finishRun: vi.fn() }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   armDiscoveryCancelWatchdog,

@@ -18,13 +18,14 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   releaseForDecommission: vi.fn(),
   releaseInfra: vi.fn(),
   project: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
 vi.mock("../../src/utils/assetProjection.js", () => ({ projectAssetFromSources: m.project }));
@@ -74,8 +75,8 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
       where: { id: { in: ["sw1", "ap1"] } },
       data: { status: "decommissioned", statusChangedAt: new Date(NOW), statusChangedBy: "FortiManager" },
     }));
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortigate.decommissioned", details: expect.objectContaining({ reason: "missing-from-roster" }) }));
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortiswitch.decommissioned", details: expect.objectContaining({ reason: "controller-decommissioned" }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortigate.decommissioned", details: expect.objectContaining({ reason: "missing-from-roster" }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.fortiswitch.decommissioned", details: expect.objectContaining({ reason: "controller-decommissioned" }) }));
     expect(m.releaseInfra).toHaveBeenCalledWith(["sw1", "ap1"], expect.anything());
     expect(input.decommissionedSwitches).toEqual(["sw-1"]);
     expect(input.decommissionedAps).toEqual(["ap-1"]);
@@ -90,7 +91,7 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
     await decommissionStaleFirewalls(base({
       clusterSerialsByDevice: new Map([["site-a-fw", new Set(["FGT60FAAA0000001"])]]),
     }));
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ reason: "chassis-replaced", oldSerial: "FGT60FOLD0000001" }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ reason: "chassis-replaced", oldSerial: "FGT60FOLD0000001" }) }));
     expect(db.assetUpdateMany).toHaveBeenCalledTimes(1);
     // The cascade query runs, and the new gate's switch under that same name is left alone.
     expect(db.assetFindMany).toHaveBeenCalledTimes(2);
@@ -101,7 +102,7 @@ describe("Phase 2a — stale FortiGate decommission + cascade", () => {
     db.assetFindMany.mockResolvedValueOnce([fw("fw1", "GONE-FW", "FGT60FGONE000001")]);
     await decommissionStaleFirewalls(base({ scopedRun: true, clusterSerialsByDevice: new Map([["gone-fw", new Set(["FGT60FGONE000001"])]]) }));
     expect(db.assetUpdateMany).not.toHaveBeenCalled();
-    expect(m.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
 

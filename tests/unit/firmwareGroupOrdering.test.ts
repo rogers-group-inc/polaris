@@ -6,10 +6,12 @@
  * (pickNext, subtreeState, conflicts).
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/firmwareUpgradeService.js", () => ({ FIRMWARE_ASSET_SELECT: {}, FirmwareRunConflictError: class extends Error {} }));
 vi.mock("../../src/services/firmwareScheduleService.js", () => ({ CONFLICT_WAIT_MS: 1, LATE_GRACE_MS: 1 }));
 vi.mock("../../src/services/notificationDeliveryService.js", () => ({}));

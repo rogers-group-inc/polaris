@@ -27,12 +27,13 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   warn: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/utils/logger.js", () => ({ logger: { warn: m.warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const svc = await import("../../src/services/ipOverrideService.js");
@@ -66,7 +67,7 @@ describe("raiseIpOverrideConflict", () => {
       },
       existingAssetSnapshot: { ipAddress: "10.0.0.5", ipOverride: "10.0.0.5", ipBlankPinned: false },
     });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "conflict.detected", actor: "system", message: expect.stringContaining("(via fortigate)"),
     }));
   });
@@ -88,7 +89,7 @@ describe("raiseIpOverrideConflict", () => {
       where: { id: "c1" },
       data: expect.objectContaining({ proposedAssetFields: expect.objectContaining({ ipAddress: "10.0.0.99" }) }),
     });
-    expect(m.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
   it("does not re-raise an IP the operator already rejected", async () => {
@@ -125,7 +126,7 @@ describe("raiseIpOverrideConflict", () => {
     await svc.raiseIpOverrideConflict("a1", "10.0.0.5");
     const data = db.conflictCreate.mock.calls[0][0].data;
     expect(data.proposedAssetFields).toMatchObject({ overrideIp: null, blankPinned: true, ipAddress: "10.0.0.5" });
-    expect(m.logEvent.mock.calls[0][0].message).toContain("no address (cleared)");
+    expect(eventLog.logEvent.mock.calls[0][0].message).toContain("no address (cleared)");
   });
 
   it("swallows a database failure (the asset write already landed)", async () => {
@@ -158,7 +159,7 @@ describe("handleIpOverrideReleased", () => {
         },
         data: { status: "rejected", resolvedBy: "auto", resolvedAt: new Date("2026-11-09T08:00:00Z") },
       });
-      expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+      expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
         action: "asset.ip_override.released", resourceName: "printer-1", details: { autoResolvedConflicts: 2 },
       }));
     } finally {
@@ -169,20 +170,20 @@ describe("handleIpOverrideReleased", () => {
   it("omits details when nothing was pending, and names the IP when the asset has no hostname", async () => {
     db.assetFindUnique.mockResolvedValue({ hostname: null });
     await svc.handleIpOverrideReleased("a1", "10.0.0.5");
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ resourceName: "10.0.0.5", details: undefined });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ resourceName: "10.0.0.5", details: undefined });
   });
 
   it("swallows a failure", async () => {
     db.conflictUpdateMany.mockRejectedValue(new Error("db down"));
     await expect(svc.handleIpOverrideReleased("a1", "10.0.0.5")).resolves.toBeUndefined();
-    expect(m.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
 
 describe("handleIpClearedReleased (business rule 40(j))", () => {
   it("audits a blank filled by a NEW address", async () => {
     await svc.handleIpClearedReleased("a1", "10.0.0.7", "filled");
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({
       action: "asset.ip_cleared.filled", details: { ipAddress: "10.0.0.7", how: "filled" },
       message: expect.stringContaining("it now reports 10.0.0.7"),
     });
@@ -190,7 +191,7 @@ describe("handleIpClearedReleased (business rule 40(j))", () => {
 
   it("audits the blanked address returning once nothing else holds it", async () => {
     await svc.handleIpClearedReleased("a1", "10.0.0.5", "returned");
-    expect(m.logEvent.mock.calls[0][0].message).toContain("no longer held by another asset");
+    expect(eventLog.logEvent.mock.calls[0][0].message).toContain("no longer held by another asset");
   });
 });
 

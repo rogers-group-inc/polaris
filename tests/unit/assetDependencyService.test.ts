@@ -9,10 +9,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(), propagate: vi.fn(),
+  propagate: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/dependencyTreeService.js", () => ({ propagateAfterStatusChange: m.propagate, FORTINET_INFRA_ASSET_TYPES: ["firewall", "switch", "access_point"] }));
 vi.mock("../../src/services/notificationService.js", () => ({ activeAlertSummaryByAsset: vi.fn() }));
 
@@ -56,11 +58,11 @@ describe("clearDependencyOverride", () => {
   it("logs only when override edges were removed", async () => {
     db.edgeDeleteMany.mockResolvedValueOnce({ count: 0 });
     expect(await clearDependencyOverride("a")).toEqual({ ok: true, removed: 0 });
-    expect(m.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
     db.edgeDeleteMany.mockResolvedValueOnce({ count: 2 });
     expect(await clearDependencyOverride("a")).toEqual({ ok: true, removed: 2 });
     expect(db.edgeDeleteMany).toHaveBeenLastCalledWith({ where: { assetId: "a", source: "override" } });
-    expect(m.logEvent.mock.calls[0][0].action).toBe("asset.dependency.override_cleared");
+    expect(eventLog.logEvent.mock.calls[0][0].action).toBe("asset.dependency.override_cleared");
   });
 });
 
@@ -81,6 +83,6 @@ describe("Dependency Test", () => {
     expect(await clearDependencyTest("a", "op")).toEqual({ ok: true });
     expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "a" }, data: { dependencyTestUntil: null, dependencyTestStartedBy: null } });
     expect(m.propagate).toHaveBeenCalledWith("a");
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.dependency_test.cleared", actor: "op" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.dependency_test.cleared", actor: "op" });
   });
 });

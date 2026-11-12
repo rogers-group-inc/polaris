@@ -16,7 +16,9 @@ import { resolve, join, relative } from "node:path";
 
 const { subscribed } = vi.hoisted(() => ({ subscribed: vi.fn() }));
 vi.mock("../../src/services/notificationRuleService.js", () => ({ isChangeActionSubscribed: subscribed }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEventsBatch: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const { wirelessRoamEventsWanted } = await import("../../src/services/notificationChangeEvents.js");
 

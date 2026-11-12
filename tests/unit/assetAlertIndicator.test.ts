@@ -27,10 +27,9 @@ const h = vi.hoisted(() => ({
   prisma: { notification: { findMany: vi.fn() } },
 }));
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-  logEventsBatch: vi.fn(async () => {}),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRuleService.js", () => ({
   findRulesMatchingAsset: vi.fn(async () => []),
 }));

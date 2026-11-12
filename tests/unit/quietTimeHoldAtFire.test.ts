@@ -50,9 +50,12 @@ vi.mock("../../src/db.js", () => ({
     setting: { findUnique: vi.fn(async () => null) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async (e: any) => { db.events.push(e); }),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { db.events.push(e); return undefined; });
+});
 vi.mock("../../src/services/automationScriptService.js", () => ({
   requestScriptRun: vi.fn(async (args: any) => { db.scriptRuns.push(args); return { id: "run-1" }; }),
 }));

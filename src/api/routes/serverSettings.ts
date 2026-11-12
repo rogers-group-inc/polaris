@@ -1838,7 +1838,9 @@ router.post(
 // resource.
 router.get("/agents/windows-ssh/script", requirePermission("serverSettingsSystem", "read"), async (req, res, next) => {
   try {
-    const kind = req.query.kind === "detection" ? "detection" : "remediation";
+    // "offboarding" (business rule 166) is the script that removes what the
+    // other two establish. Same gate: it carries public keys only.
+    const kind = req.query.kind === "detection" ? "detection" : req.query.kind === "offboarding" ? "offboarding" : "remediation";
     const platform = req.query.platform === "linux" ? "linux" : "windows";
     const { getOnboardingScript } = await import("../../services/windowsSshOnboardingService.js");
     res.json(await getOnboardingScript(platform, kind));

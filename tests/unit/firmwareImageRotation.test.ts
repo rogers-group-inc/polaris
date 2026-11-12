@@ -45,7 +45,6 @@ const h = vi.hoisted(() => {
   return {
     state,
     model,
-    logEvent: vi.fn(async (_event: unknown) => {}),
     prisma: {
       firmwareImage: model,
       firmwareUpgradeRun: { count: vi.fn(async ({ where }: { where: { imageId: { in: string[] } } }) => where.imageId.in.filter((id) => state.activeRunImageIds.has(id)).length) },
@@ -58,7 +57,9 @@ const h = vi.hoisted(() => {
 
 vi.mock("../../src/utils/paths.js", () => ({ FIRMWARE_DIR: dirs.root, FIRMWARE_INCOMING_DIR: dirs.incoming, STATE_DIR: dirs.root }));
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/assetTypeService.js", () => ({ listAssetTypes: vi.fn(async () => [{ name: "switch", label: "Switch" }, { name: "access_point", label: "Access Point" }]) }));
 
 import { registerUploadedImage, discardIncomingUpload, setPrimaryImage, deleteImage, purgeModelImages, getFirmwareTree } from "../../src/services/firmwareRepositoryService.js";
@@ -75,7 +76,7 @@ const NODE = { manufacturer: "Fortinet", assetType: "switch", model: "FortiSwitc
 function upload(header: string, filler: string, name = "FSW_108F-v7-build0000-FORTINET.out") {
   return registerUploadedImage({ ...stageUpload(header, filler), originalName: name, ...NODE, actor: "tester" });
 }
-const events = () => h.logEvent.mock.calls.map((c) => c[0] as { action: string; message: string });
+const events = () => eventLog.logEvent.mock.calls.map((c) => c[0] as { action: string; message: string });
 const filesOnDisk = () => readdirSync(dirs.root).filter((f) => f.endsWith(".out"));
 
 beforeEach(() => {

@@ -63,7 +63,9 @@ vi.mock("../../src/services/regionScopeService.js", () => ({
   })),
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const { executeActions } = await import("../../src/services/automationActionService.js");
 const { bumpRecipientIndex } = await import("../../src/services/notificationRecipientService.js");

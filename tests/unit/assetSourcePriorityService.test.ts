@@ -19,7 +19,6 @@ const m = vi.hoisted(() => ({
   getFails: false,
   save: vi.fn(),
   setPriority: vi.fn(),
-  logEvent: vi.fn(),
 }));
 
 vi.mock("../../src/services/settingsStore.js", () => ({
@@ -32,7 +31,9 @@ vi.mock("../../src/services/settingsStore.js", () => ({
   }),
 }));
 vi.mock("../../src/utils/assetProjection.js", () => ({ setLearnedLocationPriority: m.setPriority }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const svc = await import("../../src/services/assetSourcePriorityService.js");
 const { defaultSourceLocationPriority, LOCATION_CONTRIBUTORS } = await import("../../src/utils/assetSourceLocation.js");
@@ -44,7 +45,7 @@ beforeEach(() => {
   m.getFails = false;
   m.save.mockReset().mockImplementation(async (v: unknown) => v);
   m.setPriority.mockReset();
-  m.logEvent.mockReset();
+  eventLog.logEvent.mockReset();
 });
 
 describe("getSourcePrioritySettings", () => {
@@ -105,7 +106,7 @@ describe("saveSourceLocationPriority — strict on write", () => {
     const [a, b] = DEFAULT.order;
     const saved = await svc.saveSourceLocationPriority({ order: [b, a], integrationPrefix: true }, "alice");
     expect(m.setPriority).toHaveBeenCalledWith(saved);
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "asset.source_priority.updated",
       actor: "alice",
       details: expect.objectContaining({
@@ -116,7 +117,7 @@ describe("saveSourceLocationPriority — strict on write", () => {
 
   it("audits a system caller as 'system'", async () => {
     await svc.saveSourceLocationPriority({});
-    expect(m.logEvent.mock.calls[0][0].actor).toBe("system");
+    expect(eventLog.logEvent.mock.calls[0][0].actor).toBe("system");
   });
 });
 

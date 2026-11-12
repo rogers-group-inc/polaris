@@ -28,7 +28,9 @@ const SEVERITY_HEX: Record<string, string> = {
 const FALLBACK_HEX = "808080";
 
 export function severityHex(severity: string | null | undefined): string {
-  return SEVERITY_HEX[String(severity ?? "")] ?? FALLBACK_HEX;
+  const key = String(severity ?? "");
+  // Own keys only: "constructor" must fall back, not return Object.
+  return Object.hasOwn(SEVERITY_HEX, key) ? SEVERITY_HEX[key]! : FALLBACK_HEX;
 }
 
 /**
@@ -73,7 +75,8 @@ const DOWN_SEVERITY_HEX: Record<string, string> = {
 
 /** Hex WITHOUT a leading "#". */
 export function downSeverityHex(severity: string | null | undefined): string {
-  return DOWN_SEVERITY_HEX[String(severity ?? "")] ?? DOWN_SEVERITY_HEX.critical!;
+  const key = String(severity ?? "");
+  return Object.hasOwn(DOWN_SEVERITY_HEX, key) ? DOWN_SEVERITY_HEX[key]! : DOWN_SEVERITY_HEX.critical!;
 }
 
 /** Same colour, CSS-ready — what the alert-email response-time chart strokes a

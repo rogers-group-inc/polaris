@@ -74,7 +74,9 @@ vi.mock("../../src/services/notificationChannels/webhookChannel.js", () => ({
 vi.mock("../../src/services/notificationChannels/pushbulletChannel.js", () => ({
   sendPushbullet: vi.fn(async (_c: unknown, p: unknown) => { bullets.push(p as never); }),
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}), logEventsBatch: vi.fn(async () => 0) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { drainPendingDeliveries } from "../../src/services/notificationDeliveryService.js";
 

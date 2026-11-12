@@ -152,6 +152,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/mibService.ts
 
+**Delete guard (business rule 167):** `deleteMib` answers 409 while `mibSelections(id)` finds the MIB in any of the six `*MibId` stream columns (`STREAM_MIB_COLUMNS`) on `Asset` or `MonitorClassOverride` — those hold a bare id with no FK. A seventh per-stream MIB picker must be added to `STREAM_MIB_COLUMNS`.
+
 **What it owns:** Parsing, validation, and CRUD for uploaded SNMP MIB modules. The light validator (`parseMib`) gates uploads (6 MiB cap via the exported `MIB_MAX_BYTES`, which the route also passes to multer as `fileSize` — vendors such as APC ship one ~3 MB module; an oversize file answers 413 naming the limit; rejects binaries, extracts moduleName + IMPORTS). The heavier peer (`parseMibStructured`) drives the Browse + MIB-aware Walk surface — extracts SYNTAX, INTEGER enum value labels, ACCESS, STATUS, DESCRIPTION, INDEX clauses, and SEQUENCE OF table structure. Per-(manufacturer, model, moduleName) uniqueness is enforced at create.
 
 **Public API:** `parseMib`, `parseMibStructured`, `listMibs`, `getMib`, `createMib`, `deleteMib`, `getMibFacets`, `ParsedMib`, `ParsedMibStructured`, `MibSymbol`, `MibTable`, `MibBaseType`, `MibAccess`, `MibStatus`, `MibSymbolKind`, `MibEnumValue`, `MibSummary`, `MibUploadResult`, `MibFilter`, `CreateMibInput`. (`getProfileStatus` / `ProfileStatus` / `ProfileSymbolStatus` / `exampleManufacturerForProfile` were removed in 2026-09 — an orphaned chain that read the hardcoded constant for a UI pill that no longer existed; readiness lives in `manufacturerProfileService` now.)

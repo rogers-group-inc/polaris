@@ -75,9 +75,9 @@ vi.mock("../../src/db.js", () => ({
 
 // logEvent reaches for retention settings and the Event table; neither is
 // under test here.
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import {
   getOnboardingState,
@@ -89,7 +89,6 @@ import {
   _invalidateCache,
 } from "../../src/services/windowsSshOnboardingService.js";
 import { getCredential, stripSecrets } from "../../src/services/credentialService.js";
-import { logEvent } from "../../src/services/eventLogService.js";
 
 beforeEach(() => {
   db.credentials = [];
@@ -182,7 +181,7 @@ describe("generateKeypair", () => {
     await generateKeypair("tester");
     await generateKeypair("tester"); // rotate
 
-    const calls = (logEvent as any).mock.calls.map((c: any[]) => c[0]);
+    const calls = eventLog.logEvent.mock.calls.map((c: any[]) => c[0]);
     const gen = calls.filter((c: any) => c.action === "credential.ssh_keypair_generated");
     expect(gen).toHaveLength(2);
     expect(gen[0].level).toBe("warning");
@@ -303,7 +302,7 @@ describe("saveOnboardingConfig", () => {
     await saveOnboardingConfig({ username: "svc-polaris" }, "tester");
     vi.clearAllMocks();
     await saveOnboardingConfig({ username: "svc-polaris" }, "tester");
-    expect(logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
 
@@ -347,5 +346,75 @@ describe("getOnboardingScript", () => {
     expect(script).toContain("'svc-polaris'");
     expect(script).toContain("New-LocalUser");
     expect(script).toContain("'10.9.9.9'");
+  });
+});
+
+describe("rule 166: rotation retires the old key, and offboarding removes all of them", () => {
+  it("a first generate retires nothing", async () => {
+    const state = await generateKeypair("tester");
+    expect(state.retiredPublicKeys).toEqual([]);
+  });
+
+  it("regenerating remembers the key it replaced, newest first, once", async () => {
+    const first = (await generateKeypair("tester")).publicKey!;
+    const second = (await generateKeypair("tester")).publicKey!;
+    expect(second).not.toBe(first);
+    // Both managed credentials carried the same key: it is retired once.
+    expect((await getOnboardingState()).retiredPublicKeys).toEqual([first]);
+
+    const third = await generateKeypair("tester");
+    expect(third.retiredPublicKeys).toEqual([second, first]);
+    expect(third.retiredPublicKeys).not.toContain(third.publicKey);
+  });
+
+  it("an old setting row with no retired list reads as none", async () => {
+    await generateKeypair("tester");
+    const key = [...db.settings.keys()][0];
+    const stored = { ...(db.settings.get(key) as Record<string, unknown>) };
+    delete stored.retiredPublicKeys;
+    db.settings.set(key, stored);
+    _invalidateCache();
+    expect((await getOnboardingState()).retiredPublicKeys).toEqual([]);
+  });
+
+  it("after a rotation the onboarding and detection scripts carry the retired key, on both platforms", async () => {
+    const first = (await generateKeypair("tester")).publicKey!;
+    await generateKeypair("tester");
+    await saveOnboardingConfig({ platform: "windows", accountMode: "create", username: "svc-polaris" }, "tester");
+    await saveOnboardingConfig({ platform: "linux", accountMode: "create", username: "svc-polaris" }, "tester");
+
+    for (const platform of ["windows", "linux"] as const) {
+      const rem = await getOnboardingScript(platform, "remediation");
+      const det = await getOnboardingScript(platform, "detection");
+      expect(rem.script).toContain(first);
+      expect(rem.script).toMatch(/retired Polaris key/);
+      expect(det.script).toContain(first);
+      expect(det.script).toContain("a retired Polaris key is still authorized");
+    }
+  });
+
+  it("serves the offboarding script per platform, naming the current and the retired keys", async () => {
+    const first = (await generateKeypair("tester")).publicKey!;
+    const current = (await generateKeypair("tester")).publicKey!;
+    await saveOnboardingConfig({ platform: "windows", accountMode: "create", username: "svc-polaris", polarisServerIp: "10.9.9.9" }, "tester");
+    await saveOnboardingConfig({ platform: "linux", accountMode: "existing", username: "deploy" }, "tester");
+
+    const win = await getOnboardingScript("windows", "offboarding");
+    expect(win).toMatchObject({ platform: "windows", kind: "offboarding", filename: "polaris-ssh-offboarding.ps1" });
+    expect(win.script).toContain(`$PolarisKeys = @('${current}', '${first}')`);
+    expect(win.script).toContain("Remove-LocalUser");
+
+    const lin = await getOnboardingScript("linux", "offboarding");
+    expect(lin).toMatchObject({ platform: "linux", kind: "offboarding", filename: "polaris-ssh-offboarding.sh" });
+    expect(lin.script).toContain(`POLARIS_KEYS=( '${current}' '${first}' )`);
+    // Linux is in "existing" mode here: its account is never removed.
+    expect(lin.script).not.toContain("userdel");
+    expect(lin.script).toContain("POLARIS_SERVER='10.9.9.9'");
+  });
+
+  it("the offboarding script needs a keypair and a named account like the others", async () => {
+    await expect(getOnboardingScript("linux", "offboarding")).rejects.toThrow(/Generate the deployment keypair/i);
+    await generateKeypair("tester");
+    await expect(getOnboardingScript("linux", "offboarding")).rejects.toThrow(/existing Linux account/i);
   });
 });

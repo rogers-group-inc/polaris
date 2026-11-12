@@ -36,13 +36,14 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   generateVapidKeys: vi.fn(),
   sendWebPush: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationChannels/webPushChannel.js", () => ({
   generateVapidKeys: m.generateVapidKeys,
   sendWebPush: m.sendWebPush,
@@ -261,7 +262,7 @@ describe("sendWebPushTest", () => {
     expect(r.message).toContain("1 dead subscription removed");
     expect(db.subDeleteMany).toHaveBeenCalledWith({ where: { endpoint: "https://push/b", userId: "u1" } });
     expect(m.sendWebPush.mock.calls[0][0]).toEqual({ publicKey: "PUB", privateKey: "PRIV", subject: "mailto:a" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "notification_channel.test", level: "info" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "notification_channel.test", level: "info" }));
   });
 
   it("surfaces the first error and logs a warning when nothing was delivered", async () => {
@@ -272,6 +273,6 @@ describe("sendWebPushTest", () => {
     expect(r).toMatchObject({ ok: false, sent: 0, failed: 1, pruned: 0 });
     expect(r.message).toContain("network down");
     expect(db.subDeleteMany).not.toHaveBeenCalled();
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ level: "warning" }));
   });
 });

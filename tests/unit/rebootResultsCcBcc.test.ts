@@ -34,7 +34,9 @@ vi.mock("../../src/db.js", () => ({
     user: { findMany: vi.fn(async () => []) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => undefined) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/rebootService.js", () => ({
   checkSchedulableReboot: vi.fn(async () => ({ plan: { method: "agent", authority: "Polaris Agent" }, warnings: [] })),
   startReboot: vi.fn(),

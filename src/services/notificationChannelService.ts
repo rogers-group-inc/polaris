@@ -164,6 +164,14 @@ export async function updateChannel(id: string, input: ChannelInput, actor?: str
 export async function deleteChannel(id: string, actor?: string) {
   const row = await prisma.notificationChannel.findUnique({ where: { id } });
   if (!row) throw new AppError(404, "Notification channel not found");
+  // Rule 167: a channel something still sends through is not deleted. Nothing
+  // checked before, and an automation whose channel was gone simply stopped
+  // delivering — no error, no Event, nothing on its page.
+  const { channelReferrers, summarizeReferrers } = await import("./actionReferenceService.js");
+  const referencedBy = await channelReferrers(id);
+  if (referencedBy.length > 0) {
+    throw new AppError(409, `Channel "${row.name}" is still used by ${summarizeReferrers(referencedBy)}. Point ${referencedBy.length === 1 ? "that" : "those"} at another channel first.`);
+  }
   // Pending deliveries through this channel get channelId=NULL (SetNull) and
   // the drain marks them failed (channel gone) — no orphaned history.
   await prisma.notificationChannel.delete({ where: { id } });

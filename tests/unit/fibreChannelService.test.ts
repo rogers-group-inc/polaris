@@ -53,9 +53,12 @@ vi.mock("../../src/db.js", () => {
   };
 });
 
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async (e: any) => { h.events.push(e); }),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { h.events.push(e); return undefined; });
+});
 
 const { persistFibreChannel, getFibreChannelForAsset, recordHostHbaPorts, resetHbaPortCache, getFcLoginsForSwitches, getFcByInterface } = await import("../../src/services/fibreChannelService.js");
 

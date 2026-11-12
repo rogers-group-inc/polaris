@@ -23,11 +23,10 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { publishCommandWake } from "./agentCommandWake.js";
+import { scriptReferrers, summarizeReferrers } from "./actionReferenceService.js";
 import { versionAtLeast } from "../utils/version.js";
 import {
-  normalizeRuleToV2,
   SCRIPT_INTERPRETERS,
-  type AutomationAction,
   type ScriptInterpreter,
 } from "./notificationTypes.js";
 
@@ -153,25 +152,16 @@ export async function updateScript(id: string, input: ScriptInput, actor?: strin
   return script;
 }
 
-/** Rules (actions or escalation tiers) referencing a script id. */
-async function rulesReferencingScript(scriptId: string): Promise<string[]> {
-  const rules = await prisma.notificationRule.findMany({
-    select: { id: true, name: true, targets: true, emailComposition: true, escalation: true, clearBehavior: true, clearAfterSec: true, reset: true, actions: true },
-  });
-  const names: string[] = [];
-  const refs = (actions: AutomationAction[]) => actions.some((a) => a.type === "script" && a.scriptId === scriptId);
-  for (const r of rules) {
-    const v2 = normalizeRuleToV2(r);
-    if (refs(v2.actions) || (v2.escalation?.tiers ?? []).some((t) => refs(t.actions))) names.push(r.name);
-  }
-  return names;
-}
-
+/** Delete a script nothing runs any more (409 while an automation or alert group still names it). */
 export async function deleteScript(id: string, actor?: string) {
   const script = await getScript(id);
-  const referencedBy = await rulesReferencingScript(id);
+  // Rule 167: every action location, on automations and alert groups. The
+  // guard here used to look at a rule's own actions and its rule-level tiers
+  // only, so a script named on a per-action tier, a severity band, an
+  // all-clear or a reset action could be deleted out from under it.
+  const referencedBy = await scriptReferrers(id);
   if (referencedBy.length > 0) {
-    throw new AppError(409, `Script "${script.name}" is used by ${referencedBy.length} automation(s): ${referencedBy.slice(0, 5).join(", ")}${referencedBy.length > 5 ? ", …" : ""}. Remove those actions first.`);
+    throw new AppError(409, `Script "${script.name}" is still used by ${summarizeReferrers(referencedBy)}. Remove it from ${referencedBy.length === 1 ? "that" : "those"} first.`);
   }
   await prisma.automationScript.delete({ where: { id } });
   await logEvent({

@@ -32,7 +32,12 @@ vi.mock("../../src/db.js", () => ({
     asset: { findUnique: vi.fn(async (args: { select: Record<string, unknown> }) => ("lastRebootAt" in args.select ? { lastRebootAt: h.lastRebootAt } : { hostname: "SRV-01", ipAddress: "10.0.0.5" })) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async (e: Record<string, unknown>) => { h.events.push(e); }) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { h.events.push(e); return undefined; });
+});
 vi.mock("../../src/services/rebootService.js", () => ({
   checkSchedulableReboot: vi.fn(async () => { if (h.checkThrows) throw h.checkThrows; return { plan: { method: "agent", authority: "Polaris Agent" }, warnings: [] }; }),
   startReboot: vi.fn(),
