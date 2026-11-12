@@ -261,14 +261,19 @@ async function collectMemoryHostResources(
   const types = await snmpWalk(session, OID.hrStorageType);
   const ramIdx = [...types.entries()].find(([, v]) => snmpVbToString(v) === OID.hrStorageRam)?.[0];
   if (!ramIdx) return null;
-  const [units, size, used] = await Promise.all([
-    snmpWalk(session, OID.hrStorageAllocationUnits + "." + ramIdx).catch(() => new Map()),
-    snmpWalk(session, OID.hrStorageSize             + "." + ramIdx).catch(() => new Map()),
-    snmpWalk(session, OID.hrStorageUsed             + "." + ramIdx).catch(() => new Map()),
-  ]);
-  const u = snmpVbToNumber(units.get("")) ?? 1;
-  const s = snmpVbToNumber(size.get(""));
-  const ud = snmpVbToNumber(used.get(""));
+  // One GET of the RAM row's three cells. These are single instances, so they
+  // must be GOT, not walked: a subtree walk returns only OIDs strictly BELOW its
+  // base (snmpWalk keeps `base + "."`), so walking `hrStorageSize.<idx>` can
+  // never return `hrStorageSize.<idx>` itself. Until 2026-11-12 this walked
+  // them, read key "", and every host without a vendor memory profile (net-snmp
+  // on Linux, Windows SNMP) reported no memory at all.
+  const unitsOid = OID.hrStorageAllocationUnits + "." + ramIdx;
+  const sizeOid  = OID.hrStorageSize            + "." + ramIdx;
+  const usedOid  = OID.hrStorageUsed            + "." + ramIdx;
+  const cells = await snmpMultiGet(session, [unitsOid, sizeOid, usedOid]).catch(() => new Map<string, unknown>());
+  const u = snmpVbToNumber(cells.get(unitsOid)) ?? 1;
+  const s = snmpVbToNumber(cells.get(sizeOid));
+  const ud = snmpVbToNumber(cells.get(usedOid));
   let memUsedBytes: number | null = null;
   let memTotalBytes: number | null = null;
   let memPct: number | null = null;
