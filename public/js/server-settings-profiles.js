@@ -312,8 +312,9 @@ function renderWidgetCard(profileId, w, manufacturer) {
   '</div>';
 }
 
-/** Plain-English mapping summary for the probe card — mirrors describeStateMap
- *  in src/utils/stateProbes.ts. */
+/** Plain-English mapping summary for the probe card. The modes are the ones
+ *  evaluateStateMap in src/utils/stateProbes.ts reads; tested in
+ *  tests/unit/serverSettingsProfiles.stateMapSummary.test.ts. */
 function _stateMapSummary(m) {
   if (!m) return "no mapping";
   var t = m.trueLabel || "Alarm";

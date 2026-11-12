@@ -13,7 +13,6 @@
 import { describe, it, expect } from "vitest";
 import {
   sdwanDimensionTerms,
-  joinSdwanTerms,
   sdwanDimensionMatch,
   sdwanFilterSelects,
   sdwanChildrenYielding,
@@ -23,17 +22,15 @@ import {
   type SdwanStripTier,
 } from "../../src/utils/sdwanDimensions.js";
 
-describe("sdwanDimensionTerms / joinSdwanTerms", () => {
+describe("sdwanDimensionTerms", () => {
   it("splits on |, trims, drops blanks", () => {
     expect(sdwanDimensionTerms(" Microsoft | Primary WAN ||")).toEqual(["Microsoft", "Primary WAN"]);
     expect(sdwanDimensionTerms("")).toEqual([]);
     expect(sdwanDimensionTerms(undefined)).toEqual([]);
     expect(sdwanDimensionTerms("wan1")).toEqual(["wan1"]);
   });
-  it("joins canonically, de-duplicating case-insensitively and keeping the first spelling", () => {
-    expect(joinSdwanTerms(["wan1", " WAN1 ", "", "wan2"])).toBe("wan1|wan2");
-    expect(joinSdwanTerms([])).toBe("");
-  });
+  // The canonical join is the wizard's awDimJoinTerms — tested in
+  // automationsWizardDimensions.joinTerms.test.ts.
 });
 
 describe("sdwanDimensionMatch", () => {

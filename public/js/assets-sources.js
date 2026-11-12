@@ -52,6 +52,16 @@ function _assetSourceStateBadge(state) {
   return '<span class="badge ' + cls + '" title="' + escapeHtml(tip) + '">' + escapeHtml(state.label) + '</span>';
 }
 
+// True when two or more ACCOUNT-kind source states disagree (one directory says
+// enabled, another disabled) — the case worth calling out, since a
+// directory-disabled account decommissions the asset. Runtime readings (a
+// powered-off VM) are excluded: they are not a lifecycle statement.
+function _assetSourceAccountStatesDisagree(states) {
+  var seen = {};
+  (states || []).forEach(function (st) { if (st && st.kind === "account") seen[st.state] = 1; });
+  return !!(seen.enabled && seen.disabled);
+}
+
 // One-line roll-up above the source cards: which sources call the asset
 // enabled and which call it disabled. Only rendered when at least one source
 // actually reports a state; account-kind disagreement (one directory says
@@ -74,10 +84,8 @@ function _assetSourceStateSummaryHTML(sources) {
   if (enabled.length)  lines.push('<div><strong style="color:var(--color-success)">Enabled</strong> per ' + render(enabled) + '</div>');
   if (disabled.length) lines.push('<div><strong style="color:#ef9a9a">Disabled</strong> per ' + render(disabled) + '</div>');
 
-  var accountStates = {};
-  reported.forEach(function (s) { if (s.state.kind === "account") accountStates[s.state.state] = 1; });
-  var conflict = accountStates.enabled && accountStates.disabled
-    ? '<div style="margin-top:0.35rem;color:var(--color-warning)">Directory sources disagree — a disabled account decommissions the asset, so the disabling directory wins on the next discovery run.</div>'
+  var conflict = _assetSourceAccountStatesDisagree(reported.map(function (s) { return s.state; }))
+    ?'<div style="margin-top:0.35rem;color:var(--color-warning)">Directory sources disagree — a disabled account decommissions the asset, so the disabling directory wins on the next discovery run.</div>'
     : '';
 
   return '<div class="section-block" style="margin-bottom:1rem;font-size:0.85rem;line-height:1.6">' +

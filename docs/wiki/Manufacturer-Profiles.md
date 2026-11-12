@@ -92,7 +92,9 @@ Widgets carry what the five rows can't: battery runtime, client counts, an HTTP
 health page, an alarm bit. Each needs its symbol's MIB uploaded (a standard MIB
 too, uploaded as a generic module). A **state probe** maps a status value to
 two named states ("Fault" / "Normal"), one per row of a table if you give it a
-name column, and an automation can alert on it by name.
+name column, and an automation can alert on it by name. A row the device sent
+no reading for shows **—** in grey on the asset's widget: never the healthy
+state's name, and never counted as a problem.
 
 A gauge, line or value widget on a table column shows the column's **first**
 row. To show another row, add its index to the symbol: `rPDU2PhaseStatusPower.2`

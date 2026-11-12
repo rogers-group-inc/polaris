@@ -33,7 +33,7 @@ vi.mock("../../src/db.js", () => {
   };
 });
 
-import { computeBaseline, recordSample, getBaseline } from "../../src/services/discoveryDurationService.js";
+import { computeBaseline, recordSample, getBaselines } from "../../src/services/discoveryDurationService.js";
 
 describe("recordSample", () => {
   beforeEach(() => {
@@ -54,7 +54,7 @@ describe("recordSample", () => {
 
   it("keeps every sample for one unit under concurrent writes", async () => {
     await Promise.all([10_000, 20_000, 30_000].map((ms) => recordSample("int:A", ms)));
-    const bl = await getBaseline("int:A");
+    const bl = (await getBaselines(["int:A"])).get("int:A");
     expect(bl?.sampleCount).toBe(3);
     expect(bl?.avgMs).toBe(20_000);
   });

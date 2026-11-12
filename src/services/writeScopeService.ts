@@ -122,11 +122,6 @@ export function inWriteScope(scope: WriteScope, rec: ScopeRecord): boolean {
   return false;
 }
 
-/** Pure: true when the scope could reach something beyond owned rows. */
-export function scopeHasTags(scope: WriteScope): boolean {
-  return scope.kind === "scoped" && (scope.regions.size > 0 || scope.tags.size > 0);
-}
-
 /**
  * 403 unless the record is in scope. `verb` reads as "you can only <verb>",
  * e.g. "edit assets", "acknowledge alerts". The message names both halves of

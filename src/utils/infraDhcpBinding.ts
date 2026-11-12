@@ -49,8 +49,6 @@ export interface InfraDhcpEntry {
 }
 
 /** The two source types whose binding state Phase 5 is the only observer of. */
-export const INFRA_SOURCE_TYPES = ["fortiswitch", "fortinap"] as const;
-
 export function isInfraSourceType(sourceType: string | null | undefined): boolean {
   return sourceType === "fortiswitch" || sourceType === "fortinap";
 }

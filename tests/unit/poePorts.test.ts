@@ -3,11 +3,9 @@ import {
   parsePoeIndex,
   poeClassLabel,
   poeIfNameByIndex,
-  poeIsDelivering,
   poeIsFault,
   poeStatusLabel,
   poeWalkOutcome,
-  POE_CLASS_VALUES,
   POE_STATUS_VALUES,
 } from "../../src/utils/poePorts.js";
 
@@ -35,7 +33,7 @@ describe("poeStatusLabel", () => {
   });
 });
 
-describe("poeIsFault / poeIsDelivering", () => {
+describe("poeIsFault", () => {
   it("counts both fault flavours as faults", () => {
     expect(poeIsFault("fault")).toBe(true);
     expect(poeIsFault("other-fault")).toBe(true);
@@ -48,11 +46,6 @@ describe("poeIsFault / poeIsDelivering", () => {
     expect(poeIsFault("searching")).toBe(false);
     expect(poeIsFault("disabled")).toBe(false);
     expect(poeIsFault(null)).toBe(false);
-  });
-
-  it("recognises the delivering state", () => {
-    expect(poeIsDelivering("delivering")).toBe(true);
-    expect(poeIsDelivering("searching")).toBe(false);
   });
 });
 
@@ -72,12 +65,6 @@ describe("poeClassLabel", () => {
     expect(poeClassLabel(0)).toBeNull();
     expect(poeClassLabel(6)).toBeNull();
     expect(poeClassLabel(null)).toBeNull();
-  });
-
-  it("keeps every produced value inside the declared enum", () => {
-    for (const raw of [1, 2, 3, 4, 5]) {
-      expect(POE_CLASS_VALUES).toContain(poeClassLabel(raw) as never);
-    }
   });
 });
 

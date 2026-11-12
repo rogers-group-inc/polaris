@@ -803,10 +803,10 @@ function _buildClient(base: PrismaClient) {
   return _applySecretOpen(base).$extends({
     query: {
       // Secret-at-rest coverage. Must stay in step with SECRET_BEARING_MODELS /
-      // secretJsonFieldFor() in utils/configSecretFields.ts, which is what the
-      // backfill job walks — a model listed there but missing here would have
-      // its existing rows sealed by the backfill and then never opened on read.
-      // The tests in tests/unit/secretsAtRest.test.ts assert the two agree.
+      // secretJsonFieldFor() in utils/configSecretFields.ts AND with the tables
+      // jobs/backfillSecretEncryption.ts seals — a model the backfill seals but
+      // missing here would have its existing rows sealed and then never opened
+      // on read. tests/unit/secretsAtRest.test.ts holds all three to one list.
       credential: secretHooks("config"),
       integration: secretHooks("config"),
       notificationChannel: secretHooks("config"),

@@ -2,7 +2,7 @@
  * tests/unit/vcenterService.test.ts
  *
  * Pure helpers of the vCenter discovery service: external-id selection,
- * cluster mapping, the vMotion-safe dependency-edge builder, VM name
+ * the vMotion-safe dependency-edge builder, VM name
  * filtering, NAA vendor identification, SOAP response parsing, the REST
  * VM-detail parser, and the two decisions behind the disappearance sweep
  * (is this inventory trustworthy, and which stale rows really vanished).
@@ -13,7 +13,6 @@ import { describe, it, expect } from "vitest";
 import {
   pickVmExternalId,
   hostExternalId,
-  buildClusterHostMap,
   buildVcenterDependencyEdges,
   matchesVmWildcard,
   filterVms,
@@ -57,18 +56,7 @@ describe("pickVmExternalId / hostExternalId", () => {
   });
 });
 
-// ─── cluster map + dependency edges ─────────────────────────────────────────
-
-describe("buildClusterHostMap", () => {
-  it("maps cluster morefs to member host morefs", () => {
-    const map = buildClusterHostMap([
-      { clusterMoref: "domain-c8", hostMorefs: ["host-1", "host-2"] },
-      { clusterMoref: "domain-c9", hostMorefs: ["host-3"] },
-    ]);
-    expect(map.get("domain-c8")).toEqual(["host-1", "host-2"]);
-    expect(map.get("domain-c9")).toEqual(["host-3"]);
-  });
-});
+// ─── dependency edges ───────────────────────────────────────────────────────
 
 describe("buildVcenterDependencyEdges — vMotion-safe multi-parent", () => {
   const hostAssets = new Map([

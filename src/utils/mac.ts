@@ -185,33 +185,3 @@ export function isPlaceholderMac(
   if (normPrefix === null) return false;
   return macHex.startsWith(normPrefix.replace(/:/g, ""));
 }
-
-/**
- * Build a placeholder MAC: the prefix, then random octets out to 48 bits.
- *
- * `randomBytes` is injected so tests are deterministic; callers pass nothing
- * and get crypto-quality randomness. An invalid prefix falls back to the
- * default rather than throwing — this runs behind a UI button, and refusing to
- * produce a MAC because a stored setting drifted would be worse than producing
- * a correct one under the default.
- */
-export function generatePlaceholderMac(
-  prefix?: string | null,
-  randomBytes: (n: number) => Uint8Array = defaultRandomBytes,
-): string {
-  const normPrefix = normalizePlaceholderPrefix(prefix) ?? DEFAULT_PLACEHOLDER_MAC_PREFIX;
-  const prefixOctets = normPrefix.split(":");
-  const need = 6 - prefixOctets.length;
-  const bytes = randomBytes(need);
-  const tail: string[] = [];
-  for (let i = 0; i < need; i++) {
-    tail.push((bytes[i]! & 0xff).toString(16).padStart(2, "0").toUpperCase());
-  }
-  return [...prefixOctets, ...tail].join(":");
-}
-
-function defaultRandomBytes(n: number): Uint8Array {
-  const out = new Uint8Array(n);
-  globalThis.crypto.getRandomValues(out);
-  return out;
-}

@@ -27,7 +27,6 @@ import {
   assertInWriteScope,
   assertAllInWriteScope,
   assertFleetWide,
-  scopeHasTags,
   reservationScopeRecord,
   type WriteScope,
 } from "../../src/services/writeScopeService.js";
@@ -60,7 +59,7 @@ describe("resolveWriteScope", () => {
   it("write with no tags is scoped to the actor alone", async () => {
     const s = await resolveWriteScope(req("write") as never, "assets");
     expect(s).toMatchObject({ kind: "scoped", actor: "alice" });
-    expect(scopeHasTags(s)).toBe(false);
+    expect(inWriteScope(s, { createdBy: "bob", tags: ["PCI"] })).toBe(false);
   });
 
   it("write with tags carries both dimensions, normalized", async () => {
@@ -89,7 +88,7 @@ describe("resolveWriteScope", () => {
 
   it("owner-only mode ignores the caller's tags", async () => {
     const s = await resolveWriteScope(req("write", { tags: ["PCI"] }) as never, "credentials", { ownerOnly: true });
-    expect(scopeHasTags(s)).toBe(false);
+    expect(inWriteScope(s, { createdBy: "bob", tags: ["PCI"] })).toBe(false);
     expect(findUnique).not.toHaveBeenCalled();
   });
 

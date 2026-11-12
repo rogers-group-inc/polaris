@@ -189,17 +189,3 @@ export function deriveAssetSourceState(
       return NOT_REPORTED;
   }
 }
-
-/**
- * True when two or more `account`-kind sources disagree about the asset — the
- * case worth calling out on the Sources tab, since a directory-disabled
- * account decommissions the asset while another directory still says it's
- * live. Runtime readings are excluded: a powered-off VM whose AD account is
- * enabled is not a contradiction.
- */
-export function hasAccountStateDisagreement(readings: AssetSourceStateReading[]): boolean {
-  const states = new Set(
-    readings.filter((r) => r.kind === "account").map((r) => r.state),
-  );
-  return states.has("enabled") && states.has("disabled");
-}

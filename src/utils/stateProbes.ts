@@ -218,36 +218,6 @@ export function evaluateStateMap(raw: unknown, map: StateMap): 0 | 1 | null {
   }
 }
 
-/** Operator-facing name for a 0/1 value. */
-export function stateLabel(value: 0 | 1 | null, map: StateMap): string {
-  if (value === null) return "—";
-  return value === 1 ? map.trueLabel : map.falseLabel;
-}
-
-/** Is this value the state the operator called the interesting one? Drives the
- *  asset tab's pill colour and the builder's default selection. */
-export function stateIsProblem(value: 0 | 1 | null, map: StateMap): boolean {
-  if (value === null) return false;
-  return value === 1 ? map.trueIsProblem : !map.trueIsProblem;
-}
-
-/**
- * Plain-English rendering of the mapping, for the profile editor's live hint
- * and the probe list ("Alarm when the value is not 0").
- */
-export function describeStateMap(map: StateMap): string {
-  const vals = map.values.join(", ");
-  switch (map.mode) {
-    case "nonzero":  return `${map.trueLabel} when the value is not 0, ${map.falseLabel} when it is 0`;
-    case "zero":     return `${map.trueLabel} when the value is 0, ${map.falseLabel} otherwise`;
-    case "equals":   return `${map.trueLabel} when the value is ${vals}, ${map.falseLabel} otherwise`;
-    case "notEquals":return `${map.falseLabel} when the value is ${vals}, ${map.trueLabel} otherwise`;
-    case "gte":      return `${map.trueLabel} when the value is ${vals} or more, ${map.falseLabel} below that`;
-    case "lte":      return `${map.trueLabel} when the value is ${vals} or less, ${map.falseLabel} above that`;
-    default:         return "";
-  }
-}
-
 /**
  * Join a value walk with an optional label walk on the shared OID suffix.
  *

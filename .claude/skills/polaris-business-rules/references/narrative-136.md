@@ -30,7 +30,7 @@ fleet, so the names became part of the alerting contract and had to stop being e
 
 - **A column, not a name list in the route.** `Tag.builtIn` says which rows are locked, so the guard
   never has to decide whether a lower-case "critical" an operator typed is the built-in one. The
-  registry is case-sensitive; only the seeded spelling is built in (`builtInPriorityTag`).
+  registry is case-sensitive; only the seeded spelling is built in (the `Tag.builtIn` column).
 - **No permission unlocks them.** The guard is not a grant check. An admin gets the same 409.
 - **Repeating a locked value is not a change.** The tag editor posts every field on save; refusing
   any body that mentions `name` would break the filter edit. Only a CHANGED value is refused, so a

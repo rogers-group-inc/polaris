@@ -4,13 +4,11 @@ import {
   fdbStatusIsUsable,
   inferDirectAttachments,
   fdbStatusLabel,
-  macCountsByPort,
   macFromOidParts,
   parseFdbIndex,
   macFromFdbAddressValue,
   resolveFdbIdentity,
   fillAccessPortVlans,
-  type FdbEntry,
   type PortVlanState,
 } from "../../src/utils/macForwarding.js";
 
@@ -128,38 +126,6 @@ describe("basePortToIfName", () => {
     );
     expect(out.get(1)).toBe("port1");
     expect(out.has(2)).toBe(false);
-  });
-});
-
-describe("macCountsByPort", () => {
-  const entries: FdbEntry[] = [
-    { macAddress: "AA:AA:AA:AA:AA:01", vlanId: 1, basePort: 1, ifName: "port1", status: "learned" },
-    { macAddress: "AA:AA:AA:AA:AA:02", vlanId: 1, basePort: 2, ifName: "port2", status: "learned" },
-    { macAddress: "AA:AA:AA:AA:AA:03", vlanId: 1, basePort: 2, ifName: "port2", status: "learned" },
-    { macAddress: "AA:AA:AA:AA:AA:04", vlanId: 1, basePort: 2, ifName: "port2", status: "learned" },
-    // The switch's own address — says nothing about what is reachable via the port.
-    { macAddress: "BB:BB:BB:BB:BB:BB", vlanId: 1, basePort: 1, ifName: "port1", status: "self" },
-    { macAddress: "CC:CC:CC:CC:CC:CC", vlanId: 1, basePort: null, ifName: null, status: "learned" },
-  ];
-
-  it("counts learned entries per port", () => {
-    const counts = macCountsByPort(entries);
-    expect(counts.get("port1")).toBe(1);
-    expect(counts.get("port2")).toBe(3);
-  });
-
-  it("excludes self entries and unresolved ports", () => {
-    const counts = macCountsByPort(entries);
-    // port1 has a self row too — it must not be counted.
-    expect(counts.get("port1")).toBe(1);
-    expect(counts.size).toBe(2);
-  });
-
-  // This is the number the access-vs-uplink distinction rests on.
-  it("separates a single-endpoint access port from a multi-MAC uplink", () => {
-    const counts = macCountsByPort(entries);
-    expect(counts.get("port1")).toBe(1);
-    expect((counts.get("port2") ?? 0) > 1).toBe(true);
   });
 });
 

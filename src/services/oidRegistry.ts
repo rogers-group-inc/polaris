@@ -689,37 +689,7 @@ export async function refreshRegistry(): Promise<void> {
   await ensureLoaded();
 }
 
-// ─── Introspection — used by the UI status pill ───────────────────────────
-
-export interface SymbolStatus {
-  symbol: string;
-  resolved: boolean;
-  oid: string | null;
-  fromScope: ResolvedSymbol["fromScope"] | null;
-  fromModuleName: string | null;
-}
-
-/**
- * Resolve a single symbol at the **universal** (manufacturer-only) scope.
- * That's the floor of coverage that every asset from this vendor gets
- * before any model-specific upload is layered on top — useful for the UI's
- * "is this vendor profile ready?" indicator.
- */
-export async function resolveSymbolAtVendorScope(
-  manufacturer: string,
-  symbol: string,
-): Promise<SymbolStatus> {
-  await ensureLoaded();
-  const map = getScopeMap(manufacturer, null);
-  const r = getWithRow(map, symbol);
-  return {
-    symbol,
-    resolved: !!r,
-    oid: r?.oid ?? null,
-    fromScope: r?.fromScope ?? null,
-    fromModuleName: r?.fromModuleName ?? null,
-  };
-}
+// ─── Introspection — the MIB browse / walk endpoints ──────────────────────
 
 /**
  * Resolve every symbol declared by the given MIB to its numeric OID at the

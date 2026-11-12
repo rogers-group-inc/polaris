@@ -1070,7 +1070,7 @@ async function _loadAssetMacTable(assetId) {
     // lands here, unattributable, and swamps the real per-port entries.
     // Hidden by DEFAULT rather than dropped: they are legitimate sightings,
     // they just can't be placed on a port. The per-port summary above already
-    // excludes them (macCountsByPort requires an ifName).
+    // excludes them (it requires an ifName).
     var attributed   = entries.filter(function (e) { return !!e.ifName; });
     var unattributed = entries.filter(function (e) { return !e.ifName; });
     var showUnattributed = false;

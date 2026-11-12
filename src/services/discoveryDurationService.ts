@@ -130,19 +130,9 @@ export function computeBaseline(samples: number[]): Baseline | null {
 }
 
 /**
- * Returns the computed baseline for a unit, or null if there aren't enough
- * samples yet (or the unit has never been recorded).
- */
-export async function getBaseline(unitKey: string): Promise<Baseline | null> {
-  const doc = await readDoc();
-  const u = doc.units[unitKey];
-  if (!u) return null;
-  return computeBaseline(u.samples);
-}
-
-/**
- * Batch variant: returns baselines for several unit keys in one read.
- * Useful for the slow-check loop that iterates over many active units.
+ * Returns baselines for several unit keys in one read — null for a unit with
+ * too few samples yet (or never recorded). The slow-check loop iterates over
+ * many active units.
  */
 export async function getBaselines(unitKeys: string[]): Promise<Map<string, Baseline | null>> {
   const doc = await readDoc();

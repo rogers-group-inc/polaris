@@ -8,7 +8,7 @@
  *
  *   - the registry resolves `<symbol>.<index…>` to the symbol's OID plus the
  *     index, at every entry point (resolveOid / resolveOidSync /
- *     symbolReadiness / resolveSymbolAtVendorScope), and only when the base
+ *     symbolReadiness), and only when the base
  *     symbol resolves;
  *   - a name the registry knows WHOLE is never split;
  *   - `readWidgetOid` GETs that exact instance (a walk below a leaf instance
@@ -60,12 +60,12 @@ describe("a symbol naming one row", () => {
     expect(registry.resolveOidSync("acmePhasePower.1.3", { manufacturer: "Acme" })).toBe(BASE + ".1.3");
   });
 
-  it("is ready for the readiness pill and the vendor-scope check", async () => {
+  it("is ready for the readiness pill (the vendor-scope check)", () => {
     const r = registry.symbolReadiness("Acme", "acmePhasePower.2");
     expect(r.resolved).toBe(true);
     expect(r.oid).toBe(BASE + ".2");
+    expect(r.fromScope).not.toBeNull();
     expect(r.fromModuleName).toBe("ACME-PDU-MIB");
-    expect((await registry.resolveSymbolAtVendorScope("Acme", "acmePhasePower.2")).oid).toBe(BASE + ".2");
   });
 
   it("does not resolve when the base symbol does not", async () => {

@@ -34,20 +34,6 @@ export function sdwanDimensionTerms(pattern: string | null | undefined): string[
   return String(pattern).split(SDWAN_TERM_SEPARATOR).map((t) => t.trim()).filter(Boolean);
 }
 
-/** The canonical stored form of a term list: de-duplicated (case-insensitive,
- *  first spelling kept), joined by "|". */
-export function joinSdwanTerms(terms: string[]): string {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of terms) {
-    const t = String(raw ?? "").trim();
-    if (!t || seen.has(t.toLowerCase())) continue;
-    seen.add(t.toLowerCase());
-    out.push(t);
-  }
-  return out.join(SDWAN_TERM_SEPARATOR);
-}
-
 /** Does `haystack` match ANY of the pattern's terms (case-insensitive
  *  substring)? No terms = match. MIRRORED client-side by the wizard's
  *  awSdwanDimensionMatch — keep the two in lockstep. */

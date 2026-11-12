@@ -16,7 +16,6 @@ vi.mock("../../src/db.js", () => ({
 
 import {
   defaultSampleRetention,
-  getRetentionDays,
   getSampleRetention,
   updateSampleRetention,
   invalidateSampleRetentionCache,
@@ -44,14 +43,6 @@ describe("sampleRetentionService — entity model + encoding", () => {
     for (const e of RETENTION_ENTITIES) {
       expect(def[e]).toEqual({ detail: 7, hourly: 30, daily: 365 });
     }
-  });
-
-  it("getRetentionDays returns the stored value, including 0 (off) and FOREVER", () => {
-    const r = defaultSampleRetention();
-    r.interfaces = { detail: 3, hourly: 0, daily: FOREVER };
-    expect(getRetentionDays(r, "interfaces", "detail")).toBe(3);
-    expect(getRetentionDays(r, "interfaces", "hourly")).toBe(0);
-    expect(getRetentionDays(r, "interfaces", "daily")).toBe(FOREVER);
   });
 
   it("exposes the FLAT entities, each defaulting to 30 days", () => {

@@ -4,11 +4,11 @@
  * Pure-logic coverage for the convergent monitor-override model:
  *  - getAddAsMonitoredFromConfig — JSON-path read of per-class addAsMonitored,
  *    gated by integration type ↔ asset-class compatibility.
- *  - computeMonitorOverride / resolveMonitorOverride — override is set exactly
- *    when the operator's `monitored` choice diverges from the integration flag.
+ *  - computeMonitorOverride (alone, and fed by getAddAsMonitoredFromConfig) —
+ *    override is set exactly when the operator's `monitored` choice diverges
+ *    from the integration flag.
  *  - classBlockKeyForAssetType — assetType → config block-key mapping.
  *  - buildMonitoredSweep — discovery-side add/remove decision (operator wins).
- *  - AUTO_MONITOR_ASSET_TYPES — the five participating classes.
  *
  * The DB-touching helpers (recomputeMonitorOverrideForAssets,
  * sweepMonitoredForIntegration) are integration territory and are not
@@ -23,11 +23,9 @@ import { describe, it, expect } from "vitest";
 import {
   getAddAsMonitoredFromConfig,
   computeMonitorOverride,
-  resolveMonitorOverride,
   classBlockKeyForAssetType,
   snapshotAddAsMonitoredByAssetType,
   buildMonitoredSweep,
-  AUTO_MONITOR_ASSET_TYPES,
   integrationAlwaysMonitorsGates,
   applyFixedMonitorDefaults,
   type AddAsMonitoredAssetType,
@@ -38,6 +36,19 @@ import {
 const cfg = (block: string, addAsMonitored: unknown): Record<string, unknown> => ({
   [block]: { addAsMonitored },
 });
+
+// The override an operator write would stamp: the class flag read from the
+// integration config, compared with the operator's `monitored` choice.
+const overrideFor = (input: {
+  monitored: boolean;
+  assetType: string | null;
+  integrationType: string | null;
+  integrationConfig: Record<string, unknown> | null;
+}): boolean =>
+  computeMonitorOverride(
+    input.monitored,
+    getAddAsMonitoredFromConfig(input.integrationType, input.integrationConfig, input.assetType),
+  );
 
 describe("getAddAsMonitoredFromConfig — per-class flag read + type gating", () => {
   it("reads the fortigateMonitor block for firewall on a fortimanager integration", () => {
@@ -169,10 +180,10 @@ describe("computeMonitorOverride — divergence rule", () => {
   });
 });
 
-describe("resolveMonitorOverride — config-aware convenience wrapper", () => {
+describe("computeMonitorOverride fed by getAddAsMonitoredFromConfig", () => {
   it("override true when monitored diverges from a resolved ON flag", () => {
     expect(
-      resolveMonitorOverride({
+      overrideFor({
         monitored: false,
         assetType: "firewall",
         integrationType: "fortimanager",
@@ -183,7 +194,7 @@ describe("resolveMonitorOverride — config-aware convenience wrapper", () => {
 
   it("override false when monitored converges with the resolved flag", () => {
     expect(
-      resolveMonitorOverride({
+      overrideFor({
         monitored: true,
         assetType: "firewall",
         integrationType: "fortimanager",
@@ -195,7 +206,7 @@ describe("resolveMonitorOverride — config-aware convenience wrapper", () => {
   it("override false when the flag resolves to null (incompatible class/type)", () => {
     // directory integration can't carry a firewall flag → null → no override
     expect(
-      resolveMonitorOverride({
+      overrideFor({
         monitored: true,
         assetType: "firewall",
         integrationType: "activedirectory",
@@ -206,7 +217,7 @@ describe("resolveMonitorOverride — config-aware convenience wrapper", () => {
 
   it("override false for a manually-created asset (no integration)", () => {
     expect(
-      resolveMonitorOverride({
+      overrideFor({
         monitored: true,
         assetType: "firewall",
         integrationType: null,
@@ -217,7 +228,7 @@ describe("resolveMonitorOverride — config-aware convenience wrapper", () => {
 
   it("override true when operator keeps a device monitored but the flag is OFF", () => {
     expect(
-      resolveMonitorOverride({
+      overrideFor({
         monitored: true,
         assetType: "server",
         integrationType: "windowsserver",
@@ -258,10 +269,6 @@ describe("classBlockKeyForAssetType — assetType → config block key", () => {
     expect(getAddAsMonitoredFromConfig("entraid", cfg("k8sMonitor", true), "kubernetes_cluster")).toBeNull();
   });
 
-  it("includes kubernetes_cluster in the auto-monitor asset-type set", () => {
-    expect(AUTO_MONITOR_ASSET_TYPES.has("kubernetes_cluster")).toBe(true);
-  });
-
   it("maps the Unraid / TrueNAS classes onto vCenter's block names plus containerMonitor", () => {
     for (const t of ["unraid", "truenas"]) {
       expect(classBlockKeyForAssetType("server", t)).toBe("vmMonitor");
@@ -293,14 +300,8 @@ describe("classBlockKeyForAssetType — assetType → config block key", () => {
   });
 });
 
-describe("AUTO_MONITOR_ASSET_TYPES — the eight participating classes", () => {
-  it("contains exactly firewall/switch/access_point/workstation/server/hypervisor/kubernetes_cluster/container", () => {
-    expect([...AUTO_MONITOR_ASSET_TYPES].sort()).toEqual(
-      ["access_point", "container", "firewall", "hypervisor", "kubernetes_cluster", "server", "switch", "workstation"],
-    );
-  });
-
-  it("a class is in the set iff it maps to a block key", () => {
+describe("the eight participating classes", () => {
+  it("every participating class maps to a block key", () => {
     const classes: AddAsMonitoredAssetType[] = [
       "firewall",
       "switch",
@@ -312,10 +313,8 @@ describe("AUTO_MONITOR_ASSET_TYPES — the eight participating classes", () => {
       "container",
     ];
     for (const c of classes) {
-      expect(AUTO_MONITOR_ASSET_TYPES.has(c)).toBe(true);
-      expect(classBlockKeyForAssetType(c)).not.toBeNull();
+      expect(classBlockKeyForAssetType(c), c).not.toBeNull();
     }
-    expect(AUTO_MONITOR_ASSET_TYPES.has("printer" as AddAsMonitoredAssetType)).toBe(false);
   });
 });
 
@@ -428,8 +427,8 @@ describe("rule 127 — a standalone FortiGate integration always monitors its ga
 
   it("an operator turning one gate off is an override", () => {
     const base = { assetType: "firewall", integrationType: "fortigate", integrationConfig: {} };
-    expect(resolveMonitorOverride({ ...base, monitored: false })).toBe(true);
-    expect(resolveMonitorOverride({ ...base, monitored: true })).toBe(false);
+    expect(overrideFor({ ...base, monitored: false })).toBe(true);
+    expect(overrideFor({ ...base, monitored: true })).toBe(false);
   });
 
   it("applyFixedMonitorDefaults stamps the flag on fortigate, keeping the rest of the block", () => {

@@ -145,17 +145,3 @@ export function pgEnvFromDatabaseUrl(rawUrl: string): PgEnv {
 export function pgChildEnv(rawUrl: string): NodeJS.ProcessEnv {
   return { ...process.env, ...pgEnvFromDatabaseUrl(rawUrl) };
 }
-
-/**
- * Redact the password from a connection URL so it can appear in a log line.
- * Never use the raw URL in an operator-facing message.
- */
-export function redactDatabaseUrl(rawUrl: string): string {
-  try {
-    const u = new URL(rawUrl);
-    if (u.password) u.password = "***";
-    return u.toString();
-  } catch {
-    return "<unparseable database URL>";
-  }
-}

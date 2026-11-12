@@ -13,8 +13,6 @@
  * same ascending order; tests/unit/priorityTags.test.ts pins the two together.
  */
 
-export const PRIORITY_TAG_CATEGORY = "Priority";
-
 /** Ascending, the order of SEVERITIES. The name is the tag; the severity is
  *  what an automation whose severity follows the Priority tag raises. */
 export const PRIORITY_TAGS = [
@@ -31,12 +29,6 @@ export type PrioritySeverity = (typeof PRIORITY_TAGS)[number]["severity"];
  *  theme token (`severity:<level>`, tagColorCss in public/js/app.js). */
 export function priorityTagColor(severity: PrioritySeverity): string {
   return `severity:${severity}`;
-}
-
-/** The built-in entry for a registry tag name, or null. Exact name: the
- *  registry is case-sensitive, and only the seeded spelling is locked. */
-export function builtInPriorityTag(name: string): (typeof PRIORITY_TAGS)[number] | null {
-  return PRIORITY_TAGS.find((p) => p.name === name) ?? null;
 }
 
 /**

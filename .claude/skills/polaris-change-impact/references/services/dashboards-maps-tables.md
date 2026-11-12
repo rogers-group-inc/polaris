@@ -193,7 +193,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Saved table-filter presets — the `SavedTableFilter` table (one row per named preset: `scope` + `name` + owner + `visibility` + the `state` blob). The server-side half of "save the filters I use on this table"; unlike the per-browser `polaris-prefs-assets-<user>` localStorage blob (which holds the LIVE filter state), a preset is named, durable, and optionally shared with everyone.
 
-**Public API:** SAVED_FILTER_SCOPES, MAX_NAME_LEN, MAX_FILTER_KEYS, MAX_FILTER_VALUES, MAX_VALUE_LEN, MAX_PRESETS_PER_USER, SavedFilterVisibility, SavedFilterState, SavedFilterDto, isValidScope, functionKeyForScope, normalizeName, sanitizeFilterState, listSavedFilters (→ `{ filters, folders }`), createSavedFilter, updateSavedFilter, deleteSavedFilter, moveSavedFilter, changeSavedFilterOwner, takeSavedFilter, getSavedFilter.
+**Public API:** SAVED_FILTER_SCOPES, MAX_NAME_LEN, MAX_FILTER_KEYS, MAX_FILTER_VALUES, MAX_VALUE_LEN, MAX_PRESETS_PER_USER, SavedFilterVisibility, SavedFilterState, SavedFilterDto, functionKeyForScope, normalizeName, sanitizeFilterState, listSavedFilters (→ `{ filters, folders }`), createSavedFilter, updateSavedFilter, deleteSavedFilter, moveSavedFilter, changeSavedFilterOwner, takeSavedFilter, getSavedFilter.
 
 **Cross-service deps:** `prisma.savedTableFilter`, `eventLogService.logEvent`.
 

@@ -552,14 +552,6 @@ export async function describeDownDetectionFor(assetId: string): Promise<{
   };
 }
 
-/** How many monitored assets currently have no down-detection automation.
- *  Feeds the NOC summary's Passive tile. */
-export async function countPassiveAssets(): Promise<number> {
-  const idx = await getIndex();
-  if (idx.fallback) return 0;
-  return Math.max(0, idx.assetCount - idx.byAsset.size);
-}
-
 /**
  * What happens to down detection if this automation goes away — the answer the
  * delete/disable confirmation needs.

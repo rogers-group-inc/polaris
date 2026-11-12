@@ -14,15 +14,12 @@ import {
   quietTimeConfigSchema,
   ruleQuietTimeSchema,
   isIgnoreGlobalQuietTime,
-  ruleQuietConfig,
   summaryTimeConflicts,
   summarySendAt,
-  quietHoldsSeverity,
   quietHoldsKind,
   quietHoldsFires,
   heldKindsFor,
   quietHoldsSend,
-  quietHeldSeverities,
   quietSummaryAlways,
   lastQuietStretch,
   MAX_QUIET_WINDOWS,
@@ -50,9 +47,6 @@ describe("ruleQuietTimeSchema — what an automation's quietTime column may hold
     expect(isIgnoreGlobalQuietTime({ ignoreGlobal: true })).toBe(true);
     expect(isIgnoreGlobalQuietTime({ windows: [NIGHTLY] })).toBe(false);
     expect(isIgnoreGlobalQuietTime(null)).toBe(false);
-    expect(ruleQuietConfig({ ignoreGlobal: true })).toBeNull();
-    expect(ruleQuietConfig(null)).toBeNull();
-    expect(ruleQuietConfig(quietTimeConfigSchema.parse({ windows: [NIGHTLY] }))!.windows).toHaveLength(1);
   });
 });
 
@@ -77,13 +71,11 @@ describe("the per-severity hold map (`held`)", () => {
     expect(quietHoldsSend(cfg, "critical", "escalation")).toBe(false);
     expect(quietHoldsSend(cfg, "critical", "escalationReminder")).toBe(false);
     expect(quietHoldsSend(cfg, "serious", "reminder")).toBe(false);
-    expect(quietHoldsSeverity(cfg, "critical")).toBe(true);
-    expect(quietHoldsSeverity(cfg, "serious")).toBe(false);
-    expect(quietHeldSeverities(cfg)).toEqual(["warning", "critical"]);
+    expect(heldKindsFor(cfg, "critical") !== null).toBe(true);
+    expect(heldKindsFor(cfg, "serious") !== null).toBe(false);
     // An entry with nothing ticked is no entry.
     const empty = { windows: [NIGHTLY], held: { warning: { alerts: false, alertReminders: false, escalations: false, escalationReminders: false } } } as never;
     expect(heldKindsFor(empty, "warning")).toBeNull();
-    expect(quietHeldSeverities(empty)).toEqual([]);
   });
 
   it("derives the map from the legacy severities + holds pair", () => {
@@ -92,7 +84,6 @@ describe("the per-severity hold map (`held`)", () => {
     expect(heldKindsFor({ windows: [NIGHTLY], severities: ["critical"] } as never, "warning")).toBeNull();
     expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "fire")).toBe(false);
     expect(quietHoldsSend({ windows: [NIGHTLY], holds: "followUps" } as never, "warning", "escalationReminder")).toBe(true);
-    expect(quietHeldSeverities({ windows: [NIGHTLY] } as never)).toBeNull();
     // `held` wins over the pair when both are present.
     expect(quietHoldsFires({ windows: [NIGHTLY], holds: "all", held: { warning: FOLLOW } } as never)).toBe(false);
   });
@@ -215,9 +206,9 @@ describe("summarySendAt", () => {
   });
 });
 
-describe("quietHoldsSeverity / quietHoldsKind / quietHoldsFires", () => {
+describe("heldKindsFor / quietHoldsKind / quietHoldsFires", () => {
   it("a null list holds everything", () => {
-    expect(quietHoldsSeverity({}, "critical")).toBe(true);
+    expect(heldKindsFor({}, "critical") !== null).toBe(true);
     expect(quietHoldsKind({}, null)).toBe(true);
   });
 
@@ -228,8 +219,8 @@ describe("quietHoldsSeverity / quietHoldsKind / quietHoldsFires", () => {
   });
 
   it("a list holds only its members, and an alert with no metric matches only 'any'", () => {
-    expect(quietHoldsSeverity({ severities: ["warning", "serious"] }, "critical")).toBe(false);
-    expect(quietHoldsSeverity({ severities: ["warning", "serious"] }, "serious")).toBe(true);
+    expect(heldKindsFor({ severities: ["warning", "serious"] }, "critical") !== null).toBe(false);
+    expect(heldKindsFor({ severities: ["warning", "serious"] }, "serious") !== null).toBe(true);
     expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, "cpuPct")).toBe(true);
     expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, "monitorStatus")).toBe(false);
     expect(quietHoldsKind({ alertKinds: ["cpuPct"] }, null)).toBe(false);

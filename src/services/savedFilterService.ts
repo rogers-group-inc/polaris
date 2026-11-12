@@ -95,13 +95,11 @@ export interface SavedFilterDto extends OwnershipDto {
   updatedAt: string;
 }
 
-export function isValidScope(scope: unknown): scope is string {
-  return typeof scope === "string" && Object.prototype.hasOwnProperty.call(SAVED_FILTER_SCOPES, scope);
-}
-
 /** The function key gating a scope. Throws 400 on an unknown scope. */
 export function functionKeyForScope(scope: string): string {
-  const key = SAVED_FILTER_SCOPES[scope];
+  // Own keys only: a bare index would resolve "toString" / "constructor" to
+  // Object.prototype members and hand a function back as the permission key.
+  const key = Object.hasOwn(SAVED_FILTER_SCOPES, scope) ? SAVED_FILTER_SCOPES[scope] : undefined;
   if (!key) throw new AppError(400, `Unknown saved-filter scope "${scope}"`);
   return key;
 }

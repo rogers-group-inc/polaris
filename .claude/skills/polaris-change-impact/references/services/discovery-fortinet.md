@@ -127,7 +127,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Rolling discovery-duration tracking per integration (and per-FortiGate within FMG runs), baseline computation for slow-run detection, the threshold formula, and the auto-abort ceiling.
 
-**Public API:** `recordSample`, `getBaseline`, `getBaselines`, `computeBaseline`.
+**Public API:** `recordSample`, `getBaselines`, `computeBaseline`.
 
 **Cross-service deps:** none (reads/writes Settings key "discoveryDurationStats").
 

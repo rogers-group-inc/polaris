@@ -65,7 +65,7 @@ beforeEach(async () => {
 
 describe("oidRegistry — standard layer", () => {
   it("resolves standard symbols with an empty MibFile table, attributed to their module", async () => {
-    const ifHC = await registry.resolveSymbolAtVendorScope("Nobody", "ifHCInOctets");
+    const ifHC = registry.symbolReadiness("Nobody", "ifHCInOctets");
     expect(ifHC.resolved).toBe(true);
     expect(ifHC.oid).toBe("1.3.6.1.2.1.31.1.1.1.6");
     expect(ifHC.fromScope).toBe("standard");
@@ -97,7 +97,7 @@ describe("oidRegistry — standard layer", () => {
   it("lets an uploaded generic module override the shipped standard", async () => {
     h.rows = [row("m1", "IF-MIB", IF_MIB_OVERRIDE)];
     await registry.refreshRegistry();
-    const r = await registry.resolveSymbolAtVendorScope("Nobody", "ifHCInOctets");
+    const r = registry.symbolReadiness("Nobody", "ifHCInOctets");
     expect(r.oid).toBe("1.3.6.1.2.1.31.1.1.1.99");
     expect(r.fromScope).toBe("generic");
     expect(r.fromModuleName).toBe("IF-MIB");
