@@ -37,6 +37,18 @@
  * sysDescr path already uses — and a firmware move writes the standard
  * `asset.firmware.changed`, which the firmware_changed automation trigger
  * watches.
+ *
+ * ── The manufacturer profile's identity rows (business rule 171) ──────────
+ * A device whose model and serial are in no standard MIB (an APC Smart-UPS:
+ * ENTITY-MIB empty, the sysDescr `SN:` is the management card's, rule 161)
+ * states them through its profile's `model` / `serial` rows. Those readings
+ * are recorded as a SECOND enrichment source, `snmp-profile`, through the
+ * same record-then-project path: its own row, its own in-memory edge, its own
+ * ladder rung (under `snmp-sysdescr`, over `snmp-identity` — the operator's
+ * profile is an override, rule 68). Two sources rather than one blob because
+ * the readers differ: the ENTITY-MIB reading rides the system-info pass only,
+ * the profile reading also rides the probe's identity read, and two writers
+ * of one row would trade values.
  */
 
 import { prisma } from "../db.js";
@@ -44,20 +56,24 @@ import { logger } from "../utils/logger.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { normalizeManufacturer } from "../utils/manufacturerNormalize.js";
 import { hasSelfIdentity, type SnmpSelfIdentity } from "../utils/snmpEntityIdentity.js";
+import { usableSerialOrNull } from "../utils/serialNumber.js";
 import { buildFirmwareChangedEvent, logEvent } from "./eventLogService.js";
 import { lookupOuiOverride } from "./ouiService.js";
 
 const SNMP_IDENTITY_SOURCE_KIND = "snmp-identity";
+const SNMP_PROFILE_SOURCE_KIND = "snmp-profile";
 
 const FIELDS = ["hostname", "serialNumber", "manufacturer", "model", "osVersion"] as const;
 type Field = (typeof FIELDS)[number];
 
-/** assetId → the observed blob (canonical JSON) last recorded. */
+/** assetId → the observed blob (canonical JSON) last recorded, per source kind. */
 const lastRecorded = new Map<string, string>();
+const lastRecordedProfile = new Map<string, string>();
 
 /** Test hook. */
 export function resetSnmpSelfIdentityCache(): void {
   lastRecorded.clear();
+  lastRecordedProfile.clear();
 }
 
 /** Corporate suffixes that never distinguish one vendor from another. */
@@ -100,16 +116,43 @@ export async function reconcileSnmpSelfIdentity(
   const key = observedKey(identity);
   if (lastRecorded.get(assetId) === key) return false;
   try {
-    return await recordOne(assetId, key);
+    return await recordOne(assetId, key, SNMP_IDENTITY_SOURCE_KIND, lastRecorded);
   } catch (err) {
     logger.debug({ assetId, err: (err as Error)?.message }, "snmp self-identity reconcile failed");
     return false;
   }
 }
 
-async function recordOne(assetId: string, key: string): Promise<boolean> {
+/**
+ * Reconcile what the manufacturer profile's `model` / `serial` rows read off
+ * the device (business rule 171) onto its asset, as the `snmp-profile`
+ * source. A serial goes through `usableSerialOrNull` (rule 84) before it is
+ * recorded. Nothing read → nothing recorded (an absent reading never clears a
+ * value). Best-effort; returns true when the asset row was written.
+ */
+export async function reconcileSnmpProfileIdentity(
+  assetId: string,
+  reading: { model?: string | null; serialNumber?: string | null },
+): Promise<boolean> {
+  const identity: SnmpSelfIdentity = {};
+  const model = reading.model?.trim();
+  if (model) identity.model = model;
+  const serial = usableSerialOrNull(reading.serialNumber?.trim() ?? null);
+  if (serial) identity.serialNumber = serial;
+  if (!hasSelfIdentity(identity)) return false;
+  const key = observedKey(identity);
+  if (lastRecordedProfile.get(assetId) === key) return false;
+  try {
+    return await recordOne(assetId, key, SNMP_PROFILE_SOURCE_KIND, lastRecordedProfile);
+  } catch (err) {
+    logger.debug({ assetId, err: (err as Error)?.message }, "snmp profile identity reconcile failed");
+    return false;
+  }
+}
+
+async function recordOne(assetId: string, key: string, sourceKind: string, cache: Map<string, string>): Promise<boolean> {
   const observed = JSON.parse(key) as Record<string, string>;
-  const where = { sourceKind_externalId: { sourceKind: SNMP_IDENTITY_SOURCE_KIND, externalId: assetId } };
+  const where = { sourceKind_externalId: { sourceKind, externalId: assetId } };
 
   // After a restart the map is empty: the stored row says whether the source
   // needs rewriting. The projection below is checked either way, once per
@@ -119,17 +162,17 @@ async function recordOne(assetId: string, key: string): Promise<boolean> {
     const now = new Date();
     await prisma.assetSource.upsert({
       where,
-      create: { assetId, sourceKind: SNMP_IDENTITY_SOURCE_KIND, externalId: assetId, observed, syncedAt: now, lastSeen: now },
+      create: { assetId, sourceKind, externalId: assetId, observed, syncedAt: now, lastSeen: now },
       update: { assetId, observed, syncedAt: now, lastSeen: now },
     });
   }
-  const written = await applyProjection(assetId);
+  const written = await applyProjection(assetId, sourceKind);
   // Cached only once the apply finished, so a failed one is retried next pass.
-  lastRecorded.set(assetId, key);
+  cache.set(assetId, key);
   return written;
 }
 
-async function applyProjection(assetId: string): Promise<boolean> {
+async function applyProjection(assetId: string, sourceKind: string): Promise<boolean> {
 
   const [sources, asset] = await Promise.all([
     prisma.assetSource.findMany({
@@ -180,7 +223,7 @@ async function applyProjection(assetId: string): Promise<boolean> {
 
   const name = diff.hostname ?? asset.hostname;
   const fw = buildFirmwareChangedEvent(
-    { assetId, assetName: name, actor: "system:monitor", source: SNMP_IDENTITY_SOURCE_KIND },
+    { assetId, assetName: name, actor: "system:monitor", source: sourceKind },
     { osVersion: asset.osVersion },
     { osVersion: diff.osVersion ?? asset.osVersion },
   );
@@ -200,7 +243,7 @@ async function applyProjection(assetId: string): Promise<boolean> {
       level: "info",
       message: `Identity restated by the device: ${name || assetId} ${moved.join("; ")}`,
       details: {
-        source: "snmp:entity-mib",
+        source: sourceKind === SNMP_PROFILE_SOURCE_KIND ? "snmp:manufacturer-profile" : "snmp:entity-mib",
         previous: Object.fromEntries(FIELDS.map((f) => [f, asset[f] ?? null])),
         next: Object.fromEntries(FIELDS.map((f) => [f, diff[f] ?? asset[f] ?? null])),
       },

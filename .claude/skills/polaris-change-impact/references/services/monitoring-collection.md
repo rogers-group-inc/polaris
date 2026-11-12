@@ -564,11 +564,11 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Business rule 154 — what an SNMP device says about ITSELF through the standard MIBs (its `sysName`, and the ENTITY-MIB `chassis` row's model / serial / manufacturer plus the agreed `entPhysicalSoftwareRev`, read by `utils/snmpEntityIdentity.ts`) landing on the asset. Records the reading as the ENRICHMENT `AssetSource` kind `snmp-identity` (externalId = assetId, `observed: { hostname?, serialNumber?, manufacturer?, model?, osVersion? }`) and applies ONLY those five fields from `projectAssetFromSources` — never a direct column write that skips the projection.
 
-**Public API:** `reconcileSnmpSelfIdentity(assetId, identity)` → true when the asset row was written; `observedKey(identity)` (pure, canonical JSON); `sameVendor(a, b)` (pure — "Cisco" vs "Cisco Systems, Inc." is one vendor); `resetSnmpSelfIdentityCache()` (tests). The kind string `snmp-identity` is module-private.
+**Public API:** `reconcileSnmpSelfIdentity(assetId, identity)` → true when the asset row was written; `reconcileSnmpProfileIdentity(assetId, { model?, serialNumber? })` (business rule 171 — the manufacturer profile's `model` / `serial` rows, recorded as the second enrichment kind `snmp-profile` through the same record-then-project path, its own edge map; the serial through `usableSerialOrNull`); `observedKey(identity)` (pure, canonical JSON); `sameVendor(a, b)` (pure — "Cisco" vs "Cisco Systems, Inc." is one vendor); `resetSnmpSelfIdentityCache()` (tests). The kind string `snmp-identity` is module-private.
 
 **Cross-service deps:** `utils/assetProjection.projectAssetFromSources`, `utils/manufacturerNormalize.normalizeManufacturer`, `utils/snmpEntityIdentity.hasSelfIdentity`, `ouiService.lookupOuiOverride`, `eventLogService.buildFirmwareChangedEvent` + `logEvent`.
 
-**Used by:** `monitoring/systemInfoPersist.recordSystemInfoResult`, after `adoptSysDescrIdentity`, with `SystemInfoSample.selfIdentity` from `monitoring/snmpCollectors.collectSystemInfoSnmp` (SNMP heavy pass only — REST and agent samples carry none).
+**Used by:** `monitoring/probes.ts` (the profile identity read after a successful SNMP probe when `descrReadDue`, detached — rule 171) and `monitoring/systemInfoPersist.recordSystemInfoResult`, after `adoptSysDescrIdentity`, with `SystemInfoSample.selfIdentity` from `monitoring/snmpCollectors.collectSystemInfoSnmp` (SNMP heavy pass only — REST and agent samples carry none).
 
 **Writes:** `AssetSource` (`snmp-identity` upsert — only when the reading differs from the stored row), `Asset.hostname` / `serialNumber` / `manufacturer` / `model` / `osVersion` (only the fields the projection moves), `Event` (`asset.model_detected` on a MOVE of hostname / model / manufacturer / serial, `asset.firmware.changed` on a firmware move; `actor: system:monitor`).
 
@@ -579,6 +579,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **The ladder decides, not this service.** `snmp-identity` ranks under `snmp-sysdescr` and every managing source, above `generic-api` (rule 100) and `fortigate-endpoint`, in the hostname / serial / manufacturer / model / osVersion ladders — and discovery's own projection apply reaches the same answer, so the two writers never trade values.
 - `hostnameOverride` set → no hostname offered; an OUI override → no manufacturer; `sameVendor` → no manufacturer write or audit.
 - A first learn is silent; only a move is audited.
+- **Two source kinds, two rows, two edge maps** (`snmp-identity`, `snmp-profile`): their readers differ (the profile reading also comes from the probe), so one row with two writers would trade blobs every pass. `snmp-profile` ranks under `snmp-sysdescr` and over `snmp-identity` for model and serial, and is in `ENRICHMENT_SOURCE_KINDS`.
 - Best-effort: a failure is a debug log and never fails the system-info pass.
 
 **When changing this:**

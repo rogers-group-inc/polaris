@@ -50,6 +50,7 @@ export async function listAssetSourcesForDisplay(id: string) {
     // above "manual", since it is a real reading rather than a fallback.
     "snmp-sysdescr": 8,
     "snmp-identity": 8,
+    "snmp-profile": 8,
     "fortinet-live": 9,
     "manual": 99,
   };

@@ -38,6 +38,7 @@ import {
 
 export type MetricKey =
   | "model"
+  | "serial"
   | "cpu"
   | "memory"
   | "temperature"
@@ -59,8 +60,14 @@ export type MetricKey =
 // `defaultParseTemplate`, src/utils/modelParse.ts). It replaces the
 // `ModelQuery.parse` FUNCTION the hardcoded FortiSwitch profile carried —
 // the last profile fact that could not be a row.
+//
+// `serial` (business rule 171) is its sibling: which vendor scalar carries
+// the device's own serial number, for a device whose serial is in no
+// standard MIB — an APC Smart-UPS (`upsAdvIdentSerialNumber`) answers
+// ENTITY-MIB with nothing, and its sysDescr `SN:` is the management card's
+// (rule 161). A plain scalar; no parse.
 export const METRIC_KEYS: MetricKey[] = [
-  "model", "cpu", "memory", "temperature", "interfaces", "storage", "lldp", "wirelessStations",
+  "model", "serial", "cpu", "memory", "temperature", "interfaces", "storage", "lldp", "wirelessStations",
 ];
 
 /** How a walked subtree collapses to one reading. Replaces the hardcoded `walkSubtree`. */

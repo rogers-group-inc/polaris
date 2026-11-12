@@ -1379,6 +1379,53 @@ export function snmpVendorScope(asset: {
   return { manufacturer: asset.manufacturer, model: asset.model, profileManufacturer: profile?.profileManufacturer };
 }
 
+/**
+ * Read the covering manufacturer profile's identity rows — `model` and
+ * `serial` (business rule 171) — off a device, for the probe path: an SNMP
+ * asset whose only stream is Response Time (a UPS polled for power alone)
+ * never runs the system-info pass that reads them otherwise.
+ *
+ * Its own session, and ONE OID PER GET: on SNMPv1 a single missing varbind
+ * fails the whole PDU, and a profile row can name an object this model does
+ * not publish (an APC PDU asked for `upsAdvIdentSerialNumber`). Each scalar
+ * is asked for at its `.0` instance, then — only if that came back empty — at
+ * the bare definition oid (the `pickScalar` rule; a row-suffixed symbol is
+ * already an instance). Nothing to read → no session at all. Never throws.
+ */
+export async function readProfileIdentity(
+  host: string,
+  config: Record<string, unknown>,
+  subject: ProfileSubject,
+  timeoutMs?: number,
+): Promise<{ model: string | null; serial: string | null }> {
+  const none = { model: null, serial: null };
+  try {
+    await ensureRegistryLoaded();
+    const profile = pickDbProfile(subject);
+    if (!profile?.model && !profile?.serial) return none;
+    const scope: ResolveScope = { manufacturer: subject.manufacturer, model: subject.model, profileManufacturer: profile.profileManufacturer };
+    const modelOid  = profile.model  ? resolveOidSync(profile.model.symbol, scope)  : null;
+    const serialOid = profile.serial ? resolveOidSync(profile.serial.symbol, scope) : null;
+    if (!modelOid && !serialOid) return none;
+    return await withSnmpSession(host, config, async (session) => {
+      const getOne = async (oid: string): Promise<string> => {
+        const vbs = await snmpMultiGet(session, [oid]).catch(() => new Map<string, unknown>());
+        return snmpVbToString(vbs.get(oid)).trim();
+      };
+      const readScalar = async (oid: string | null): Promise<string> =>
+        !oid ? "" : (await getOne(scalarInstanceOid(oid))) || (await getOne(oid));
+      const rawModel  = await readScalar(modelOid);
+      const rawSerial = await readScalar(serialOid);
+      return {
+        model:  rawModel && profile.model ? profile.model.parse(rawModel) : null,
+        serial: rawSerial || null,
+      };
+    }, timeoutMs);
+  } catch {
+    return none;
+  }
+}
+
 export async function collectSystemInfoSnmp(
   host: string,
   config: Record<string, unknown>,
@@ -1465,6 +1512,8 @@ export async function collectSystemInfoSnmp(
     // second across the fleet, inside the session and the per-host gate this
     // pass already holds.
     let detectedModel: string | null = null;
+    // The profile's `serial` row (business rule 171), read on its own GET below.
+    let detectedSerial: string | null = null;
     let descrIdentity: SysDescrDetail | undefined;
     let sysDescrText: string | null = null;
     // sysName rides the same multi-GET (business rule 154): the device's own
@@ -1475,8 +1524,8 @@ export async function collectSystemInfoSnmp(
       // Registry load stays behind the model profile that needs it — sysDescr
       // is a fixed OID and every device without a profile is the common case.
       let modelOid: string | null = null;
+      if (vendorProfile?.model || vendorProfile?.serial) await ensureRegistryLoaded();
       if (vendorProfile?.model) {
-        await ensureRegistryLoaded();
         modelOid = resolveOidSync(vendorProfile.model.symbol, vendorScope);
       }
       // The registry holds the symbol's DEFINITION oid: its `.0` instance
@@ -1499,6 +1548,16 @@ export async function collectSystemInfoSnmp(
           snmpVbToString,
         );
         if (raw) detectedModel = vendorProfile.model.parse(raw);
+      }
+
+      // Not in the batch above: on SNMPv1 one missing varbind fails the whole
+      // PDU, and a profile's serial row can name an object this model lacks
+      // (an APC PDU asked for upsAdvIdentSerialNumber). Instance, then bare.
+      const serialOid = vendorProfile?.serial ? resolveOidSync(vendorProfile.serial.symbol, vendorScope) : null;
+      if (serialOid) {
+        const getText = async (oid: string): Promise<string> =>
+          snmpVbToString((await snmpMultiGet(session, [oid]).catch(() => new Map<string, unknown>())).get(oid)).trim();
+        detectedSerial = (await getText(scalarInstanceOid(serialOid))) || (await getText(serialOid)) || null;
       }
     } catch { /* best-effort — identity stays undetected */ }
 
@@ -1753,6 +1812,7 @@ export async function collectSystemInfoSnmp(
       wirelessStations,
       apRadios,
       detectedModel,
+      detectedSerial,
       descrIdentity,
       sysDescr: sysDescrText,
       sysObjectId: sysObjectIdText,

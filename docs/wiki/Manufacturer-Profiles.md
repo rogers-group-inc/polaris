@@ -38,6 +38,7 @@ A new profile has eight rows. Five are read when Polaris collects:
 | Row | What it reads |
 |---|---|
 | **Model identity** | one value holding the hardware model, plus a pattern that pulls the model out of it. Used only while the device's model is empty |
+| **Serial number** | one value holding the device's own serial number, for a device whose serial is in no standard MIB (an APC Smart-UPS: `upsAdvIdentSerialNumber`). Read with the model every 10 minutes, even when only Response Time is polled ([rule 171](Business-Rules#rule-171)) |
 | **CPU** | a percent from 0 to 100. A single value, or a table column whose rows are averaged |
 | **Memory** | a percent, or two byte counts: used and total, or used and free |
 | **Hardware Sensors** | one temperature value, or a whole vendor sensor table (below) |

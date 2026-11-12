@@ -43,6 +43,8 @@ import { buildFortinetConfig } from "./fortiosCollectors.js";
 import { fetchFortinetControllerInventory } from "./fortinetControllers.js";
 import { probeFortimanagerNative, probeVcenter } from "./vcenterFmgCollectors.js";
 import { applyDescrIdentity } from "./systemInfoPersist.js";
+import { readProfileIdentity, profileSubjectFor } from "./snmpCollectors.js";
+import { reconcileSnmpProfileIdentity } from "../snmpSelfIdentityService.js";
 import { agentListeningSince, agentFleetLiveness, restartAgentListening } from "./agentSilence.js";
 
 // ─── Probe entry point ──────────────────────────────────────────────────────
@@ -304,9 +306,22 @@ export async function probeAsset(
       } catch (err: any) {
         return finish(start, false, err?.message || "SNMP credential lookup failed");
       }
+      const identityDue = descrReadDue(asset.lastDescrAt);
       const snmpRes = await probeSnmp(
-        targetIp, probeCfg, dispatchStart, timeoutMs, descrReadDue(asset.lastDescrAt),
+        targetIp, probeCfg, dispatchStart, timeoutMs, identityDue,
       );
+      // The manufacturer profile's model + serial rows (business rule 171),
+      // on the same 10-minute identity cadence, for the asset the system-info
+      // pass never reaches (a UPS polled for response time and sensors only).
+      // Detached: its own session and GETs must not lengthen the probe tick or
+      // its measured round trip, and a failure here is never a probe failure.
+      if (identityDue && snmpRes.success) {
+        void readProfileIdentity(targetIp, probeCfg, profileSubjectFor(asset), timeoutMs)
+          .then((r) => (r.model || r.serial)
+            ? reconcileSnmpProfileIdentity(asset.id, { model: r.model, serialNumber: r.serial })
+            : false)
+          .catch((err: any) => logger.debug({ assetId: asset.id, err: err?.message }, "profile identity read failed"));
+      }
       // The identity read rode this probe. Reconcile it here — the probe path
       // is the only reader that reaches an SNMP asset with no heavy stream
       // enabled, which is exactly the camera case: response time on SNMP and

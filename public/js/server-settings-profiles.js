@@ -26,6 +26,7 @@
 // sections, then the tabs); this map only supplies labels.
 var METRIC_KEY_LABELS = {
   model:             "Model identity",
+  serial:            "Serial number",
   cpu:               "CPU",
   memory:            "Memory",
   temperature:       "Hardware Sensors",

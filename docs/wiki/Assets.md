@@ -590,6 +590,13 @@ because each member has its own. A manufacturer profile's model setting
 *Device self-report (SNMP sysName + ENTITY-MIB)*
 ([rule 154](Business-Rules#rule-154)).
 
+**A device whose model or serial is in no standard MIB** (an APC Smart-UPS)
+gets them from its manufacturer profile's **Model identity** and **Serial
+number** rows. Polaris reads them every 10 minutes, even when Response Time is
+the device's only SNMP stream, and they rank above the ENTITY-MIB reading. The
+**Sources** tab shows them as *Device self-report (manufacturer profile over
+SNMP)* ([rule 171](Business-Rules#rule-171)).
+
 The tag picker in the edit form shows every tag the asset carries except its
 `azure:` tags, which it leaves out. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones

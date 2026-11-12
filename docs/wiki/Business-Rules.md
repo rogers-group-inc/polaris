@@ -3535,3 +3535,13 @@ ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufactu
 MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
 another manufacturer's profile; on upgrade, every asset where it could have done that gets a
 warning in its Events naming the MIB, and every pin is cleared.
+
+### Rule 171
+
+**A device whose model or serial is in no standard MIB gets them from its manufacturer
+profile.** A profile has a **Serial number** row beside **Model identity**. Point it at the
+object that holds the device's own serial (an APC Smart-UPS: `upsAdvIdentSerialNumber`). Polaris
+reads both rows every 10 minutes, even on a device whose only SNMP stream is Response Time, and
+shows them on the asset's General tab. They rank below what a device's own built-in card states
+(an APC rack PDU) and above the generic ENTITY-MIB chassis reading. Reading them never makes a
+probe slower or fail.
