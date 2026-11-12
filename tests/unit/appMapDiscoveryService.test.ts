@@ -15,17 +15,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    asset: { findMany: vi.fn(), update: vi.fn() },
-    assetProcess: { findMany: vi.fn() },
-    assetService: { findMany: vi.fn() },
-    assetProcessConnection: { deleteMany: vi.fn() },
-    $queryRaw: vi.fn(),
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   normalizeRule,

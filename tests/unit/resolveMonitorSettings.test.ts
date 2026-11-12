@@ -20,22 +20,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Module-mocked stubs so each test can override behaviour. The functions are
 // re-bound by re-mocking on the imported `prisma` reference below; vitest
 // preserves identity through the import.
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: {
-      findUnique: vi.fn(),
-    },
-    integration: {
-      findUnique: vi.fn(),
-    },
-    monitorClassOverride: {
-      findFirst: vi.fn(),
-    },
-    asset: {
-      findMany: vi.fn(),
-    },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   resolveMonitorSettings,
@@ -44,6 +29,7 @@ import {
   fleetCadences,
 } from "../../src/services/monitoringService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 // Tier-3 baseline values. After 3d the resolver also returns four per-stream
 // polling fields — those are computed from the asset's source kind and the
@@ -198,6 +184,7 @@ const VCENTER_POLLING_DEFAULT = {
 };
 
 beforeEach(() => {
+  resetDbStub();
   invalidateMonitorSettingsCache();
   vi.clearAllMocks();
 });

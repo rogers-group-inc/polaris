@@ -16,18 +16,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetMonitorSample: { findFirst: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { readLastMonitorSuccessAt } from "../../src/services/sampleHistoryService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const findFirst = prisma.assetMonitorSample.findFirst as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
 });
 

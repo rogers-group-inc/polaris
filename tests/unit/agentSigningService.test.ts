@@ -15,11 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: { findUnique: vi.fn(), upsert: vi.fn(), delete: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   MASK,
@@ -50,6 +46,7 @@ import {
   type AgentSigningConfig,
 } from "../../src/services/agentSigningService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const findUnique = prisma.setting.findUnique as unknown as Mock;
@@ -65,6 +62,7 @@ const FULL_CONFIG: AgentSigningConfig = {
 };
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   del.mockResolvedValue({});
   upsert.mockResolvedValue({});

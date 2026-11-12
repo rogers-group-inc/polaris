@@ -9,18 +9,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const subnetFindMany = vi.fn();
-const assetFindMany = vi.fn();
+const subnetFindMany = stubbed(prisma.subnet.findMany);
+const assetFindMany = stubbed(prisma.asset.findMany);
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    subnet: { findMany: subnetFindMany },
-    asset: { findMany: assetFindMany },
-    assetInterface: { groupBy: vi.fn(), findMany: vi.fn() },
-    assetApVap: { groupBy: vi.fn(), findMany: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { decorateSubnetNameHits, decorateRelationLeafHits, invalidateSubnetRegistryCache } =
   await import("../../src/services/scopeRelationIndex.js");
@@ -48,8 +43,7 @@ const REGISTRY = [
 ];
 
 beforeEach(() => {
-  subnetFindMany.mockReset();
-  assetFindMany.mockReset();
+  resetDbStub();
   subnetFindMany.mockResolvedValue(REGISTRY);
   invalidateSubnetRegistryCache();
 });

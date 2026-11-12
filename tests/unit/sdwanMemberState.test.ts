@@ -16,23 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    notificationRule: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn(), deleteMany: vi.fn(), delete: vi.fn() },
-    notification: { create: vi.fn(), updateMany: vi.fn() },
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    assetTelemetrySample: { findMany: vi.fn() },
-    assetInterfaceSample: { findMany: vi.fn() },
-    assetIpsecTunnelSample: { findMany: vi.fn() },
-    assetPerfSlaSample: { findMany: vi.fn() },
-    event: { findMany: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    hostMetricsSample: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -45,6 +29,8 @@ import { evaluateAllNotificationRules } from "../../src/services/notificationEng
 import { parseSdwanDimension, isSdwanScopedAlert, chartTokenForMetric } from "../../src/services/alertChartService.js";
 import { buildSchemaCatalog, triggerDimensionApplicable, ruleInputSchema } from "../../src/services/notificationTypes.js";
 import { streamForMetric } from "../../src/services/notificationCadenceService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 /** A FortiGate in scope, with NO pinned interfaces — the point of the field is
  *  that it needs none: SD-WAN members are not an operator-pinned set. */
@@ -104,28 +90,30 @@ const MEMBER_RULE = {
 
 /** Every (dimension, message) pair the pass raised. */
 function created() {
-  return h.prisma.notification.create.mock.calls.map(([args]: any[]) => args.data);
+  return stubbed(prisma.notification.create).mock.calls.map(([args]: any[]) => args.data);
 }
+
+beforeEach(() => resetDbStub());
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-  h.prisma.notification.create.mockResolvedValue({ id: "n-new" });
-  h.prisma.notification.updateMany.mockResolvedValue({ count: 1 });
-  h.prisma.setting.findUnique.mockResolvedValue(null);
-  h.prisma.event.findMany.mockResolvedValue([]);
-  h.prisma.asset.findMany.mockResolvedValue([]);
-  h.prisma.assetTelemetrySample.findMany.mockResolvedValue([]);
-  h.prisma.assetInterfaceSample.findMany.mockResolvedValue([]);
-  h.prisma.assetIpsecTunnelSample.findMany.mockResolvedValue([]);
-  h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([]);
+  stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+  stubbed(prisma.notification.create).mockResolvedValue({ id: "n-new" });
+  stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 1 });
+  stubbed(prisma.setting.findUnique).mockResolvedValue(null);
+  stubbed(prisma.event.findMany).mockResolvedValue([]);
+  stubbed(prisma.asset.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetTelemetrySample.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetInterfaceSample.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetIpsecTunnelSample.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([]);
 });
 
 describe("sdwanMemberState readings", () => {
   it("raises one alert per (health check, member) and names the pair", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([MEMBER_RULE]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1")]);
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([MEMBER_RULE]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1")]);
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([
       slaRow({ link: "wan1", state: "down" }),
       slaRow({ link: "wan2", state: "down" }),
       slaRow({ link: "wan3", state: "up" }),
@@ -143,23 +131,23 @@ describe("sdwanMemberState readings", () => {
   it("fires with no pinned interfaces at all — the ISP case the field exists for", async () => {
     // The WAN port is oper-up and not even monitored; only the health check
     // knows the member is dead. The interface resolvers would produce nothing.
-    h.prisma.notificationRule.findMany.mockResolvedValue([MEMBER_RULE]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1", { monitoredInterfaces: [] })]);
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([slaRow()]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([MEMBER_RULE]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1", { monitoredInterfaces: [] })]);
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([slaRow()]);
 
     await evaluateAllNotificationRules();
 
     expect(created()).toHaveLength(1);
-    expect(h.prisma.assetInterfaceSample.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetInterfaceSample.findMany)).not.toHaveBeenCalled();
   });
 
   it("narrows to one health check, leaving other checks' dead members alone", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([{
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([{
       ...MEMBER_RULE,
       trigger: { ...MEMBER_RULE.trigger, dimensionFilter: { healthCheck: "Primary WAN" } },
     }]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1")]);
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1")]);
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([
       slaRow({ healthCheck: "Primary WAN", link: "wan1", state: "down" }),
       slaRow({ healthCheck: "Backup LTE", link: "wan2", state: "down" }),
     ]);
@@ -172,12 +160,12 @@ describe("sdwanMemberState readings", () => {
   });
 
   it("narrows to one member when the operator names one", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([{
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([{
       ...MEMBER_RULE,
       trigger: { ...MEMBER_RULE.trigger, dimensionFilter: { healthCheck: "Primary WAN", link: "wan2" } },
     }]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1")]);
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1")]);
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([
       slaRow({ link: "wan1", state: "down" }),
       slaRow({ link: "wan2", state: "down" }),
     ]);
@@ -192,10 +180,10 @@ describe("sdwanMemberState readings", () => {
   it("reads the newest sample per member, not whichever row came back first", async () => {
     // Rows arrive newest-first per (asset, health check, member) — a member
     // that already recovered must not alert off its older down sample.
-    h.prisma.notificationRule.findMany.mockResolvedValue([MEMBER_RULE]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1")]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([MEMBER_RULE]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1")]);
     const now = Date.now();
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([
       slaRow({ link: "wan1", state: "up", timestamp: new Date(now) }),
       slaRow({ link: "wan1", state: "down", timestamp: new Date(now - 60_000) }),
     ]);
@@ -206,9 +194,9 @@ describe("sdwanMemberState readings", () => {
   });
 
   it("stores a dimension the SD-WAN alert charts can parse back to the same pair", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([MEMBER_RULE]);
-    h.prisma.asset.findMany.mockResolvedValue([gate("fw1")]);
-    h.prisma.assetPerfSlaSample.findMany.mockResolvedValue([slaRow({ healthCheck: "VPN-SLA", link: "wan1" })]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([MEMBER_RULE]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([gate("fw1")]);
+    stubbed(prisma.assetPerfSlaSample.findMany).mockResolvedValue([slaRow({ healthCheck: "VPN-SLA", link: "wan1" })]);
 
     await evaluateAllNotificationRules();
 

@@ -9,10 +9,13 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { assetInterfaceSample: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { resolveAssetMetricReadings } from "../../src/services/notifications/readings.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findMany = stubbed(prisma.assetInterfaceSample.findMany);
 
 const T0 = Date.now() - 60_000;
 const at = (s: number) => new Date(T0 + s * 1000);
@@ -23,7 +26,7 @@ const row = (ifName: string, s: number, invalidCrcs: number) => ({
 const asset = { id: "mds", hostname: "mds-a", tags: [], monitoredInterfaces: ["fc1/1", "fc1/2"] } as never;
 const trigger = (metric: string) => ({ type: "asset_metric", metric, operator: ">", value: 0 }) as never;
 
-beforeEach(() => findMany.mockReset());
+beforeEach(() => resetDbStub());
 
 describe("fcCrcErrorRate", () => {
   it("is the CRC count's growth per minute between the two newest FC samples", async () => {

@@ -16,14 +16,10 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetSource: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import {
   projectHostnamesFromSourceRows,
   getDiscoveredHostnames,
@@ -38,6 +34,8 @@ const findMany = prisma.assetSource.findMany as unknown as ReturnType<typeof vi.
 function row(over: Partial<HostnameSourceRow> & { assetId: string }): HostnameSourceRow {
   return { sourceKind: "ad", inferred: false, observed: {}, ...over };
 }
+
+beforeEach(() => resetDbStub());
 
 describe("projectHostnamesFromSourceRows", () => {
   it("groups by asset and projects each independently", () => {

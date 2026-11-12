@@ -8,22 +8,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { findMany: vi.fn(), update: vi.fn() },
-    assetInterfaceSample: { findMany: vi.fn() },
-    assetLldpNeighbor: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { applyAutoMonitorForClass, type AutoMonitorSelection } from "../../src/services/autoMonitorInterfacesService.js";
 
 const selection = { types: ["physical"] } as unknown as AutoMonitorSelection;
 
 beforeEach(() => {
+  resetDbStub();
   vi.mocked(prisma.asset.findMany).mockReset();
   vi.mocked(prisma.asset.findMany).mockResolvedValue([] as any);
 });

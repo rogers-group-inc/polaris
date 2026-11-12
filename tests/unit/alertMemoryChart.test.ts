@@ -12,17 +12,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { telemetryRows } = vi.hoisted(() => ({ telemetryRows: { rows: [] as unknown[] } }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetTelemetrySample: { findMany: vi.fn(async () => telemetryRows.rows) },
-    assetMonitorSample: { findMany: vi.fn(async () => []) },
-    assetHardwareSensorSample: { findMany: vi.fn(async () => []) },
-    assetPerfSlaSample: { findMany: vi.fn(async () => []) },
-    assetStorageSample: { findMany: vi.fn(async () => []) },
-    $queryRawUnsafe: vi.fn(async () => []),
-    asset: { findUnique: vi.fn(async () => null) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("@resvg/resvg-js", () => ({
   Resvg: class {
@@ -36,10 +26,23 @@ vi.mock("../../src/services/downDetectionService.js", () => ({
 }));
 
 import { buildAlertCharts, memorySeriesFrom } from "../../src/services/alertChartService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const GB = 1024 ** 3;
 const NOW = new Date("2026-10-01T12:00:00Z");
 const at = (minAgo: number) => NOW.getTime() - minAgo * 60_000;
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.assetTelemetrySample.findMany).mockImplementation(async () => telemetryRows.rows);
+  stubbed(prisma.assetMonitorSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetHardwareSensorSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetPerfSlaSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.assetStorageSample.findMany).mockImplementation(async () => []);
+  stubbed(prisma.$queryRawUnsafe).mockImplementation(async () => []);
+  stubbed(prisma.asset.findUnique).mockImplementation(async () => null);
+});
 
 describe("memorySeriesFrom", () => {
   it("charts used bytes in GB against installed memory", () => {

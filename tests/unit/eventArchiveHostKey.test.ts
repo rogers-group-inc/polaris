@@ -9,16 +9,13 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: { findUnique: vi.fn(async () => null), upsert: vi.fn(async () => ({})) },
-    event: { findMany: vi.fn(async () => []) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   testConnection,
@@ -52,6 +49,13 @@ function fakeChild(exitCode = 0, stderr = "") {
   });
   return child;
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.setting.findUnique).mockImplementation(async () => null);
+  stubbed(prisma.setting.upsert).mockImplementation(async () => ({}));
+  stubbed(prisma.event.findMany).mockImplementation(async () => []);
+});
 
 beforeEach(() => {
   spawnMock.mockReset();

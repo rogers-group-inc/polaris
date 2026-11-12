@@ -25,21 +25,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn(), delete: vi.fn() },
-    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    assetTelemetrySample: { findMany: vi.fn() },
-    assetMonitorSample: { findMany: vi.fn() },
-    event: { findMany: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    hostMetricsSample: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -50,6 +36,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
 
 import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
 import { triggerHandsOffWhenDeviceDown, assetIsDown } from "../../src/services/notifications/scope.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -110,16 +98,18 @@ function firingState(assetId: string, over: Partial<Record<string, unknown>> = {
   };
 }
 
+beforeEach(() => resetDbStub());
+
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-  h.prisma.notificationRuleState.findUnique.mockResolvedValue(null);
-  h.prisma.notification.create.mockResolvedValue({ id: "n1" });
-  h.prisma.notification.findMany.mockResolvedValue([]);
-  h.prisma.setting.findUnique.mockResolvedValue(null);
-  h.prisma.event.findMany.mockResolvedValue([]);
-  h.prisma.assetTelemetrySample.findMany.mockResolvedValue([]);
-  h.prisma.assetMonitorSample.findMany.mockResolvedValue([]);
+  stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+  stubbed(prisma.notificationRuleState.findUnique).mockResolvedValue(null);
+  stubbed(prisma.notification.create).mockResolvedValue({ id: "n1" });
+  stubbed(prisma.notification.findMany).mockResolvedValue([]);
+  stubbed(prisma.setting.findUnique).mockResolvedValue(null);
+  stubbed(prisma.event.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetTelemetrySample.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetMonitorSample.findMany).mockResolvedValue([]);
 });
 
 describe("triggerHandsOffWhenDeviceDown", () => {
@@ -177,138 +167,138 @@ describe("assetIsDown", () => {
 
 describe("device-down handoff", () => {
   it("clears a live response-time alert when its device goes down, with no reset actions", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(RTT, { name: "Slow response" })]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", consecutiveFailures: 9 })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("gate-1")]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(RTT, { name: "Slow response" })]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", consecutiveFailures: 9 })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("gate-1")]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.updateMany).toHaveBeenCalledTimes(1);
-    const cleared = h.prisma.notification.updateMany.mock.calls[0][0];
+    expect(stubbed(prisma.notification.updateMany)).toHaveBeenCalledTimes(1);
+    const cleared = stubbed(prisma.notification.updateMany).mock.calls[0][0];
     expect(cleared.where.id).toBe("n9");
     expect(cleared.data.clearedBy).toBe("system:device-down");
-    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s1");
+    const upd = stubbed(prisma.notificationRuleState.update).mock.calls.find((c: any) => c[0].where.id === "s1");
     expect(upd?.[0].data.state).toBe("clear");
     expect(upd?.[0].data.notificationId).toBe(null);
     // No "resolved" — the alert did not recover, it was handed to asset-down.
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
     const ev = eventLog.logEvent.mock.calls.map((c: any) => c[0]).find((e: any) => e.action === "notification.superseded");
     expect(ev?.details.reason).toBe("device-down");
   });
 
   it("does not let a timed reset fire on a row the handoff just cleared", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(RTT, { clearBehavior: "timed", clearAfterSec: 60 })]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(RTT, { clearBehavior: "timed", clearAfterSec: 60 })]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([
       firingState("gate-1", { firedAt: new Date(Date.now() - 3_600_000) }),
     ]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).toEqual(["system:device-down"]);
   });
 
   it("resets a pending row on a down device", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(RTT)]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(RTT)]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([
       firingState("gate-1", { state: "pending", notificationId: null }),
     ]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
-    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s1");
+    expect(stubbed(prisma.notification.updateMany)).not.toHaveBeenCalled();
+    const upd = stubbed(prisma.notificationRuleState.update).mock.calls.find((c: any) => c[0].where.id === "s1");
     expect(upd?.[0].data.state).toBe("clear");
   });
 
   it("keeps a live SD-WAN SLA alert through its gate's outage", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(SDWAN_LOSS, { name: "SLA packet loss" })]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", consecutiveFailures: 9 })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("gate-1", { dimensionKey: "Overlay_HC|vpn-overlay1" })]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(SDWAN_LOSS, { name: "SLA packet loss" })]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", consecutiveFailures: 9 })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("gate-1", { dimensionKey: "Overlay_HC|vpn-overlay1" })]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).not.toContain("system:device-down");
   });
 
   it("keeps a live memory alert through a WAN flap, so it cannot re-fire when the device returns", async () => {
     const MEM = { ...CPU, metric: "memPct", threshold: 80 };
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(MEM)]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("down-1", { lastValue: 83 })]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(MEM)]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("down-1", { lastValue: 83 })]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).not.toContain("system:device-down");
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("does not fire a new response-time alert on a down device", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(RTT)]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
-    h.prisma.assetMonitorSample.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(RTT)]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
+    stubbed(prisma.assetMonitorSample.findMany).mockResolvedValue([
       { assetId: "down-1", timestamp: new Date(), responseTimeMs: 900, uptimeSec: null },
     ]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("still evaluates a passive device — there is no asset-down alert to hand to", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([rule(RTT)]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("pas-1", { monitorStatus: "passive" })]);
-    h.prisma.assetMonitorSample.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([rule(RTT)]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("pas-1", { monitorStatus: "passive" })]);
+    stubbed(prisma.assetMonitorSample.findMany).mockResolvedValue([
       { assetId: "pas-1", timestamp: new Date(), responseTimeMs: 900, uptimeSec: null },
     ]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.create).toHaveBeenCalledTimes(1);
+    expect(stubbed(prisma.notification.create)).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the asset-down alert itself alone", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       rule({ type: "asset_state", field: "monitorStatus", operator: "==", value: "down", forDurationSec: 0 }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("gate-1")]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("gate-1")]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).not.toContain("system:device-down");
   });
 
   it("leaves a held fact alone — quarantine does not end with an outage", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       rule({ type: "asset_state", field: "quarantined", operator: "==", value: true, forDurationSec: 0 }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", quarantinedAt: new Date() })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("gate-1")]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("gate-1", { monitorStatus: "down", quarantinedAt: new Date() })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("gate-1")]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).not.toContain("system:device-down");
   });
 
   it("hands off a composite alert the same way", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       rule({ type: "composite", kind: "asset", op: "and", children: [RTT, { ...CPU, metric: "probeLossPct" }], forDurationSec: 0 }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingState("down-1")]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("down-1", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingState("down-1")]);
 
     await evaluateAllNotificationRules();
 
-    const clearedBy = h.prisma.notification.updateMany.mock.calls.map((c: any) => c[0].data.clearedBy);
+    const clearedBy = stubbed(prisma.notification.updateMany).mock.calls.map((c: any) => c[0].data.clearedBy);
     expect(clearedBy).toEqual(["system:device-down"]);
-    const upd = h.prisma.notificationRuleState.update.mock.calls.find((c: any) => c[0].where.id === "s1");
+    const upd = stubbed(prisma.notificationRuleState.update).mock.calls.find((c: any) => c[0].where.id === "s1");
     expect(upd?.[0].data.state).toBe("clear");
   });
 });

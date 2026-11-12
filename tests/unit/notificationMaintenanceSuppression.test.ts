@@ -13,20 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
-    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    event: { findMany: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    hostMetricsSample: { findMany: vi.fn() },
-    assetMaintenanceWindow: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -38,6 +25,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
 import { evaluateAllNotificationRules, isSuppressedForNotifications } from "../../src/services/notificationEngine.js";
 import { frozenReadingIsFresh } from "../../src/services/notifications/scope.js";
 import { MONITOR_CANDIDATE_WHERE } from "../../src/services/monitoringService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -74,14 +63,16 @@ const DOWN_RULE = {
   escalation: null,
 };
 
+beforeEach(() => resetDbStub());
+
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.notificationRule.findMany.mockResolvedValue([DOWN_RULE]);
-  h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-  h.prisma.notification.create.mockResolvedValue({ id: "n1" });
-  h.prisma.setting.findUnique.mockResolvedValue(null);
-  h.prisma.event.findMany.mockResolvedValue([]);
-  h.prisma.assetMaintenanceWindow.findMany.mockResolvedValue([]);
+  stubbed(prisma.notificationRule.findMany).mockResolvedValue([DOWN_RULE]);
+  stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+  stubbed(prisma.notification.create).mockResolvedValue({ id: "n1" });
+  stubbed(prisma.setting.findUnique).mockResolvedValue(null);
+  stubbed(prisma.event.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetMaintenanceWindow.findMany).mockResolvedValue([]);
 });
 
 describe("isSuppressedForNotifications", () => {
@@ -95,34 +86,34 @@ describe("isSuppressedForNotifications", () => {
 
 describe("threshold-rule suppression", () => {
   it("a down asset in maintenance does not fire; a healthy-scope down asset does", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("maint", { status: "maintenance", monitorStatus: "down" }),
       scopeAsset("live", { monitorStatus: "down" }),
     ]);
     // fire() re-reads the per-key state row for the cooldown check.
-    h.prisma.notificationRuleState.findUnique.mockResolvedValue(null);
+    stubbed(prisma.notificationRuleState.findUnique).mockResolvedValue(null);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.create).toHaveBeenCalledTimes(1);
-    expect(h.prisma.notification.create.mock.calls[0][0].data.assetId).toBe("live");
+    expect(stubbed(prisma.notification.create)).toHaveBeenCalledTimes(1);
+    expect(stubbed(prisma.notification.create).mock.calls[0][0].data.assetId).toBe("live");
   });
 
   it("a dependency-suppressed down asset does not fire", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("child", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("resets a suppressed asset's pending row to clear and leaves firing rows to the sweep", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("maint", { status: "maintenance", monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([
       { id: "st-pending", ruleId: "r1", assetId: "maint", dimensionKey: "", state: "pending", conditionMetSince: new Date(), firedAt: null, notificationId: null },
       { id: "st-firing", ruleId: "r1", assetId: "maint", dimensionKey: "x", state: "firing", conditionMetSince: null, firedAt: new Date(), notificationId: "n-old" },
     ]);
@@ -130,18 +121,18 @@ describe("threshold-rule suppression", () => {
     await evaluateAllNotificationRules();
 
     // pending → clear, in one statement (CQ-B050)
-    expect(h.prisma.notificationRuleState.updateMany).toHaveBeenCalledWith(
+    expect(stubbed(prisma.notificationRuleState.updateMany)).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["st-pending"] } }, data: expect.objectContaining({ state: "clear" }) }),
     );
     // firing row untouched: a maintenance window freezes a live alert, it
     // never retires it (business rule 16).
     const touchedIds = [
-      ...h.prisma.notificationRuleState.update.mock.calls.map((c: any) => c[0].where.id),
-      ...h.prisma.notificationRuleState.updateMany.mock.calls.flatMap((c: any) => c[0].where.id.in),
+      ...stubbed(prisma.notificationRuleState.update).mock.calls.map((c: any) => c[0].where.id),
+      ...stubbed(prisma.notificationRuleState.updateMany).mock.calls.flatMap((c: any) => c[0].where.id.in),
     ];
     expect(touchedIds).not.toContain("st-firing");
-    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.updateMany)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 });
 
@@ -174,27 +165,27 @@ describe("a frozen alert recovers on evidence taken during the window", () => {
   };
 
   beforeEach(() => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([AUTO_RULE]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow]);
-    h.prisma.notificationRuleState.findUnique.mockResolvedValue(firingRow);
-    h.prisma.notification.updateMany.mockResolvedValue({ count: 1 });
-    h.prisma.assetMaintenanceWindow.findMany.mockResolvedValue([{ assetId: "nvr", startedAt: windowStart }]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([AUTO_RULE]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow]);
+    stubbed(prisma.notificationRuleState.findUnique).mockResolvedValue(firingRow);
+    stubbed(prisma.notification.updateMany).mockResolvedValue({ count: 1 });
+    stubbed(prisma.assetMaintenanceWindow.findMany).mockResolvedValue([{ assetId: "nvr", startedAt: windowStart }]);
   });
 
-  const clearedIds = () => h.prisma.notificationRuleState.update.mock.calls
+  const clearedIds = () => stubbed(prisma.notificationRuleState.update).mock.calls
     .filter((c) => c[0].data?.state === "clear").map((c) => c[0].where.id);
 
   it("an agent-pushed `up` after the window opened clears the Down alert", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("nvr", { status: "maintenance", monitorStatus: "up", lastMonitorAt: new Date() }),
     ]);
     await evaluateAllNotificationRules();
     expect(clearedIds()).toContain("st-firing");
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("an `up` left over from before the window does not", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("nvr", { status: "maintenance", monitorStatus: "up", lastMonitorAt: new Date(windowStart.getTime() - 120_000) }),
     ]);
     await evaluateAllNotificationRules();
@@ -202,8 +193,8 @@ describe("a frozen alert recovers on evidence taken during the window", () => {
   });
 
   it("a maintenance status with no open window row stays frozen", async () => {
-    h.prisma.assetMaintenanceWindow.findMany.mockResolvedValue([]);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.assetMaintenanceWindow.findMany).mockResolvedValue([]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("nvr", { status: "maintenance", monitorStatus: "up", lastMonitorAt: new Date() }),
     ]);
     await evaluateAllNotificationRules();
@@ -211,22 +202,22 @@ describe("a frozen alert recovers on evidence taken during the window", () => {
   });
 
   it("a fresh reading that is still down neither clears nor re-fires", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("nvr", { status: "maintenance", monitorStatus: "down", lastMonitorAt: new Date() }),
     ]);
     await evaluateAllNotificationRules();
     expect(clearedIds()).not.toContain("st-firing");
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("a suppressed asset with no firing row is not re-read into a fire", async () => {
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("nvr", { status: "maintenance", monitorStatus: "down", lastMonitorAt: new Date() }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
-    expect(h.prisma.assetMaintenanceWindow.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetMaintenanceWindow.findMany)).not.toHaveBeenCalled();
   });
 });
 
