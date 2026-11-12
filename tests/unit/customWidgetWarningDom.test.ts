@@ -52,7 +52,7 @@ function varSrc(lines: string[], name: string): string {
 beforeAll(() => {
   g.escapeHtml = (x: unknown) => String(x ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const src = [
-    ...["_customWidgetWarning", "_customWidgetWarnCaption", "_renderCustomWidgetGauge", "_renderCustomWidgetLine",
+    ...["_customWidgetWarning", "_customWidgetWarnCaption", "_renderCustomWidgetGauge", "_renderCustomWidgetLine", "_cwNiceScale", "_cwDurationScale",
       "_renderCustomWidgetScalarFallback", "_formatNumber",
       // The renderers draw through the widget display helper (°C/°F in the
       // install's unit, durations) — no PolarisTempUnit here, so plain numbers.
@@ -63,6 +63,10 @@ beforeAll(() => {
   ].join("\n");
   // Indirect eval: the declarations land on globalThis, where the tests call them.
   (0, eval)(src);
+  // The line widget draws its time axis through the shared helper and carries
+  // the shared tooltip box; both are pinned by their own tests.
+  g._chartXTicksSVG = () => '<g data-xticks="1"></g>';
+  g.CHART_TOOLTIP_HTML = '<div class="chart-tooltip"></div>';
 });
 
 const gauge = (value: number, displayOptions: Record<string, unknown> = {}) =>
@@ -119,8 +123,9 @@ describe("_renderCustomWidgetLine", () => {
     const html = g._renderCustomWidgetLine({ samples: samples([6000, 6400, 6100]), displayOptions: { unit: "s", warningAt: 1800, warningWhen: "below" } });
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
     const y = Number(doc.querySelector(".custom-widget-warn-line")!.getAttribute("y1"));
-    expect(y).toBeGreaterThanOrEqual(4);
-    expect(y).toBeLessThanOrEqual(86);
+    // Inside the plot area (padT 8 … padT + innerH 130 of the 150-high viewBox).
+    expect(y).toBeGreaterThanOrEqual(8);
+    expect(y).toBeLessThanOrEqual(130);
     // The labels report the data, not the stretched domain.
     expect(html).toContain("min 6000 s");
     expect(html).toContain("max 6400 s");
@@ -130,6 +135,67 @@ describe("_renderCustomWidgetLine", () => {
   it("flags the latest reading once it crosses", () => {
     const html = g._renderCustomWidgetLine({ samples: samples([2000, 1500]), displayOptions: { warningAt: 1800, warningWhen: "below" } });
     expect(html).toContain("Warning — at or below 1800");
+  });
+
+  const parse = (html: string) => new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const lineYs = (doc: Document) =>
+    doc.querySelector("polyline")!.getAttribute("points")!.split(" ").map((p) => Number(p.split(",")[1]));
+
+  it("starts a non-negative series at zero, so a 1 % wobble draws as one (APC PDU, 2026-11-11)", () => {
+    const doc = parse(g._renderCustomWidgetLine({ samples: samples([0.75, 0.74, 0.75, 0.75, 0.74, 0.75]), displayOptions: { unit: "kW" } }));
+    const ys = lineYs(doc);
+    // It used to stretch 0.74..0.75 over the full plot height (~120 units).
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(3);
+    const labels = Array.from(doc.querySelectorAll("text")).map((t) => t.textContent);
+    expect(labels[0]).toBe("0.0 kW");
+    expect(labels).toContain("0.8 kW");
+  });
+
+  it("labels the value axis with the unit, and draws the time axis and hover points", () => {
+    const doc = parse(g._renderCustomWidgetLine({ samples: samples([3.7, 4.2, 3.9]), displayOptions: { unit: "A" } }));
+    const labels = Array.from(doc.querySelectorAll("text")).map((t) => t.textContent!);
+    expect(labels.every((l) => l.endsWith(" A"))).toBe(true);
+    expect(doc.querySelector("[data-xticks]")).not.toBeNull();
+    const hits = doc.querySelectorAll("circle.chart-hit");
+    expect(hits.length).toBe(3);
+    expect(hits[1].getAttribute("data-v")).toBe("4.2 A");
+    expect(doc.querySelector(".cw-line .chart-tooltip")).not.toBeNull();
+  });
+
+  it("keeps the data's own floor when a reading is negative", () => {
+    const doc = parse(g._renderCustomWidgetLine({ samples: samples([-12, -3, 4]), displayOptions: {} }));
+    const labels = Array.from(doc.querySelectorAll("text")).map((t) => Number(t.textContent));
+    expect(Math.min(...labels)).toBeLessThanOrEqual(-12);
+    expect(Math.min(...labels)).toBeGreaterThan(-20);
+  });
+
+  it("labels a duration axis in whole time units", () => {
+    const doc = parse(g._renderCustomWidgetLine({ samples: samples([5400, 900, 5300]), displayOptions: { format: "duration_s" } }));
+    const labels = Array.from(doc.querySelectorAll("text")).map((t) => t.textContent!);
+    // 0 … 1 h 30 m in 30-minute steps, never "1 h 6 m" / "33 m 20 s".
+    expect(labels).toEqual(["0 s", "30 m 0 s", "1 h 0 m", "1 h 30 m"]);
+  });
+
+  it("steps a TimeTicks duration in whole units too", () => {
+    const doc = parse(g._renderCustomWidgetLine({ samples: samples([360000, 540000]), displayOptions: { format: "duration_ticks" } }));
+    const labels = Array.from(doc.querySelectorAll("text")).map((t) => t.textContent!);
+    expect(labels[labels.length - 1]).toBe("1 h 30 m");
+  });
+});
+
+describe("_cwNiceScale", () => {
+  it("rounds to 1 / 2 / 2.5 / 5 × 10ⁿ steps and covers the data", () => {
+    expect(g._cwNiceScale(0, 0.75)).toMatchObject({ lo: 0, hi: 0.8, step: 0.2 });
+    expect(g._cwNiceScale(0, 100)).toMatchObject({ lo: 0, hi: 100, step: 25 });
+    const s = g._cwNiceScale(-12, 4);
+    expect(s.lo).toBeLessThanOrEqual(-12);
+    expect(s.hi).toBeGreaterThanOrEqual(4);
+  });
+
+  it("never returns an empty range for a flat series", () => {
+    const s = g._cwNiceScale(5, 5);
+    expect(s.hi).toBeGreaterThan(s.lo);
+    expect(s.ticks.length).toBeGreaterThan(1);
   });
 });
 
