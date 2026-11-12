@@ -15,7 +15,7 @@ import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { type PrioritySeverity } from "../../utils/priorityTags.js";
 import { withRecoveryLookback, type DbRule, type ScopeAssetRow, type Reading, engineSustainPolls, type LeafRef, collectLeafRefs } from "./ruleModel.js";
 import { loadScopeAssets, isSuppressedForNotifications, suppressionOwedToMaintenance, frozenFreshnessFor, assetIsAnsweringProbes, triggerNeedsAnsweringDevice, triggerHandsOffWhenDeviceDown, assetIsDown, poeFaultCoversUnpinned, pinTestForTrigger } from "./scope.js";
-import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
+import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, deletedTargetGone, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
 import { type CompositeFireInfo, round2 } from "./templating.js";
 import { ruleHasBands, bandSeverityFor, tierLadderFor, readingRuns, tierRuns, CLEARED_RUNS, metSinceJson, metSinceOf, tierForSeverity } from "./severityBands.js";
 import { type GroupBuffer, type PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour } from "./alertLifecycle.js";
@@ -61,6 +61,8 @@ async function clearVanishedStates(
   const vanished: Array<{ st: SweepStateRow; reason: "scope" | "dimension" }> = [];
   const scopeChecks: SweepStateRow[] = [];
   const frozen: SweepStateRow[] = [];
+  /** The server's rows on a tick it reported nothing (rule 167(a), below). */
+  const serverParked: SweepStateRow[] = [];
   for (const st of states) {
     if (!st.assetId) {
       // host/global rows have no scope to leave — except the server's rows on
@@ -69,6 +71,7 @@ async function clearVanishedStates(
       if (seenKeys.has(`|${st.dimensionKey}`)) continue;
       if (!pathServer.included) vanished.push({ st, reason: "scope" });
       else if (pathServer.hasReadings) vanished.push({ st, reason: "dimension" });
+      else serverParked.push(st);
       continue;
     }
     if (st.state !== "firing" && st.state !== "pending") continue;
@@ -92,6 +95,14 @@ async function clearVanishedStates(
   if (frozen.length > 0) {
     const gone = await tagGateGone(rule, frozen, assetIndex);
     for (const st of frozen) if (gone.has(st.id)) vanished.push({ st, reason: "dimension" });
+  }
+  if (frozen.length > 0 || serverParked.length > 0) {
+    // Rule 167(a): a row parked because its subject reports nothing is still
+    // retired when the check, widget or probe it is about has been deleted.
+    const parked = [...frozen, ...serverParked];
+    const taken = new Set(vanished.map((v) => v.st.id));
+    const deleted = await deletedTargetGone(rule, parked);
+    for (const st of parked) if (deleted.has(st.id) && !taken.has(st.id)) vanished.push({ st, reason: "dimension" });
   }
   if (scopeChecks.length > 0) {
     const ids = Array.from(new Set(scopeChecks.map((s) => s.assetId as string)));

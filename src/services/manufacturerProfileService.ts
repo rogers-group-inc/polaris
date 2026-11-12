@@ -21,6 +21,7 @@ import {
   type CombinerKind,
 } from "../utils/symbolTransforms.js";
 import { AppError } from "../utils/errors.js";
+import { dimensionTargetReferrers, summarizeReferrers } from "./actionReferenceService.js";
 import { symbolReadiness, ensureRegistryLoaded, type SymbolReadiness } from "./oidRegistry.js";
 import { logEvent } from "./eventLogService.js";
 import { isKnownAssetType, normalizeAssetTypeName } from "../utils/assetTypes.js";
@@ -1597,12 +1598,38 @@ export async function updateWidget(
 export async function deleteWidget(widgetId: string): Promise<void> {
   const existing = await (prisma as any).manufacturerCustomWidget.findUnique({ where: { id: widgetId } });
   if (!existing) return;
+  await assertWidgetsUnreferenced([{ id: existing.id, name: existing.name }]);
   await (prisma as any).manufacturerCustomWidget.delete({ where: { id: widgetId } });
   await touchProfile(existing.profileId);
   await refreshProfileCache();
 }
 
+/**
+ * Business rule 167(a): a custom widget or state probe an automation is
+ * narrowed to (`dimensionFilter.widgetId` / `stateProbeId`) is not deleted out
+ * from under it — the automation would go on existing and never match again.
+ * Throws 409 naming the widget and the automations. One read of the
+ * automations table, only on a delete.
+ */
+export async function assertWidgetsUnreferenced(widgets: ReadonlyArray<{ id: string; name: string }>): Promise<void> {
+  for (const w of widgets) {
+    const namedBy = await dimensionTargetReferrers(["widgetId", "stateProbeId"], [w.id]);
+    if (namedBy.length > 0) {
+      throw new AppError(409, `Widget "${w.name}" is still named by ${summarizeReferrers(namedBy)}. Point ${namedBy.length === 1 ? "it" : "them"} at another widget, or remove the condition, first.`);
+    }
+  }
+}
+
 export async function deleteProfile(profileId: string): Promise<void> {
+  // Its widgets cascade, so each is checked the way a single delete is.
+  const widgets = await (prisma as any).manufacturerCustomWidget.findMany({
+    where: { profileId }, select: { id: true, name: true },
+  }) as Array<{ id: string; name: string }>;
+  if (widgets.length > 0) {
+    const namedBy = await dimensionTargetReferrers(["widgetId", "stateProbeId"], widgets.map((w) => w.id));
+    // Only when something is named at all is the per-widget pass worth its reads.
+    if (namedBy.length > 0) await assertWidgetsUnreferenced(widgets);
+  }
   // No usage-count refusal here yet — the resolver swap (Slice 6c) is the
   // commit that introduces dependency. Today deleting a profile is purely
   // additive removal since monitoring still consults the hardcoded constant.

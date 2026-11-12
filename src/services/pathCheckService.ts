@@ -49,6 +49,7 @@ import os from "node:os";
 import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
+import { dimensionTargetReferrers, summarizeReferrers } from "./actionReferenceService.js";
 import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { isValidIpAddress } from "../utils/cidr.js";
 import { parseStatusSpec, agentRegexProblem, resolveHttpAuthMode, type HttpAuthConfig } from "../utils/httpCheck.js";
@@ -834,6 +835,12 @@ export async function setCheckEnabled(id: string, enabled: boolean, actor?: stri
 export async function deleteCheck(id: string, actor?: string) {
   const existing = await prisma.pathCheck.findUnique({ where: { id } });
   if (!existing) throw new AppError(404, "Path check not found");
+  // Rule 167(a): an automation narrowed to this check would be left watching
+  // nothing, and never say so.
+  const namedBy = await dimensionTargetReferrers(["checkId"], [id]);
+  if (namedBy.length > 0) {
+    throw new AppError(409, `Path check "${existing.name}" is still named by ${summarizeReferrers(namedBy)}. Point ${namedBy.length === 1 ? "it" : "them"} at another check, or remove the condition, first.`);
+  }
   const members = await prisma.pathCheckSource.findMany({
     where: { checkId: id },
     select: { asset: { select: { managedAgent: { select: { id: true } } } } },

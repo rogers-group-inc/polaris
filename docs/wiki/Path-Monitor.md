@@ -327,6 +327,10 @@ the automation when the server is ticked.
 Response bodies can contain sensitive data. Leave *Keep a body excerpt* off
 unless you need it.
 
+A check that an automation is narrowed to cannot be deleted until the automation is
+pointed at another check ([rule 167](Business-Rules#rule-167)). An alert that was open
+about a deleted check is cleared automatically.
+
 Deleting a check stops the agents running it on their next config refresh
 (within a few minutes), and the Polaris server at once. Its past results are not deleted immediately; they age
 out on the retention schedule.
