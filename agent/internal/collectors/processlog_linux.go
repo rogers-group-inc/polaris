@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"os/exec"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -22,7 +21,7 @@ func readJournaldComm(name, afterCursor string, maxLines int, firstRun bool) ([]
 		return nil, "" // non-systemd host
 	}
 	if firstRun {
-		return nil, journaldCommTailCursor(name)
+		return nil, journalTailCursor("_COMM=" + name)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -35,30 +34,9 @@ func readJournaldComm(name, afterCursor string, maxLines int, firstRun bool) ([]
 	out, err := cmd.Output()
 	if err != nil {
 		// Cursor may have aged out (rotation) — reseed at tail so we resume.
-		return nil, journaldCommTailCursor(name)
+		return nil, journalTailCursor("_COMM=" + name)
 	}
 	return parseJournaldLogLines(out)
-}
-
-// journaldCommTailCursor returns the newest cursor for the program's journal
-// without emitting entries. Empty on failure.
-func journaldCommTailCursor(name string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "journalctl", "_COMM="+name, "-n", "0", "--show-cursor", "--no-pager", "-o", "cat")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	sc := bufio.NewScanner(bytes.NewReader(out))
-	cursor := ""
-	for sc.Scan() {
-		line := sc.Text()
-		if i := strings.Index(line, "cursor:"); i >= 0 {
-			cursor = trimSpace(line[i+len("cursor:"):])
-		}
-	}
-	return cursor
 }
 
 // readJournaldUnit reads journal entries for a systemd UNIT (journalctl -u
@@ -69,7 +47,7 @@ func readJournaldUnit(unit, afterCursor string, maxLines int, firstRun bool) ([]
 		return nil, "" // non-systemd host
 	}
 	if firstRun {
-		return nil, journaldUnitTailCursor(unit)
+		return nil, journalTailCursor("-u", unit)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -80,30 +58,9 @@ func readJournaldUnit(unit, afterCursor string, maxLines int, firstRun bool) ([]
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, journaldUnitTailCursor(unit) // cursor aged out — reseed at tail
+		return nil, journalTailCursor("-u", unit) // cursor aged out — reseed at tail
 	}
 	return parseJournaldLogLines(out)
-}
-
-// journaldUnitTailCursor returns the newest cursor for a unit's journal without
-// emitting entries. Empty on failure.
-func journaldUnitTailCursor(unit string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "journalctl", "-u", unit, "-n", "0", "--show-cursor", "--no-pager", "-o", "cat")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	sc := bufio.NewScanner(bytes.NewReader(out))
-	cursor := ""
-	for sc.Scan() {
-		line := sc.Text()
-		if i := strings.Index(line, "cursor:"); i >= 0 {
-			cursor = trimSpace(line[i+len("cursor:"):])
-		}
-	}
-	return cursor
 }
 
 // parseJournaldLogLines parses one-JSON-object-per-line output into rawLogLines
