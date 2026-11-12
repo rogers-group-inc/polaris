@@ -7,18 +7,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const counts = { asset: 0, subnet: 0, reservation: 0 };
 let pgSettingsRows: any[] = [];
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { count: vi.fn(async () => counts.asset) },
-    subnet: { count: vi.fn(async () => counts.subnet) },
-    reservation: { count: vi.fn(async () => counts.reservation) },
-    $queryRawUnsafe: vi.fn(async () => pgSettingsRows),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   PG_TUNING_THRESHOLDS,
@@ -30,6 +25,14 @@ import {
 } from "../../src/services/pgTuningService.js";
 
 const GB = 1024 * 1024 * 1024;
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.asset.count).mockImplementation(async () => counts.asset);
+  stubbed(prisma.subnet.count).mockImplementation(async () => counts.subnet);
+  stubbed(prisma.reservation.count).mockImplementation(async () => counts.reservation);
+  stubbed(prisma.$queryRawUnsafe).mockImplementation(async () => pgSettingsRows);
+});
 
 beforeEach(() => {
   counts.asset = 0;

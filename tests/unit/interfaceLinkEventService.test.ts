@@ -5,12 +5,14 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const { findMany, logEventsBatch } = vi.hoisted(() => ({
-  findMany: vi.fn(),
+const { logEventsBatch } = vi.hoisted(() => ({
   logEventsBatch: vi.fn(),
 }));
-vi.mock("../../src/db.js", () => ({ prisma: { asset: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
+const findMany = stubbed(prisma.asset.findMany);
 vi.mock("../../src/services/eventLogService.js", () => ({ logEventsBatch }));
 
 import {
@@ -37,6 +39,7 @@ function reading(over: Partial<InterfaceLinkReading> = {}): InterfaceLinkReading
 }
 
 beforeEach(() => {
+  resetDbStub();
   _resetInterfaceLinkState();
   findMany.mockReset();
   logEventsBatch.mockReset();

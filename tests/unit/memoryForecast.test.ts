@@ -7,9 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: { $queryRawUnsafe: vi.fn() },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   computeMemoryForecast,
@@ -23,11 +21,13 @@ import { ASSET_METRICS } from "../../src/services/notificationTypes/triggers.js"
 import { chartTokenForMetric, isResourceScopedAlert } from "../../src/services/alertChartService.js";
 import { processRankingForMetric } from "../../src/services/alertProcessService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const DAY = 86_400_000;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
 });
 

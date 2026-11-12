@@ -13,15 +13,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  prisma: {
-    managedAgent: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-  },
   getInventory: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/agentBuildService.js", () => ({
   getInventory: h.getInventory,
@@ -34,17 +33,19 @@ const row = (id: string, monitored: boolean, monitorStatus: string) => ({
   asset: { hostname: `HOST-${id}`, ipAddress: null, monitored, monitorStatus },
 });
 
+beforeEach(() => resetDbStub());
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.getInventory.mockResolvedValue({ manifest: { currentVersion: "0.19.0" } });
   // Every attempted row refuses at the first read — enough to tell an
   // attempted row (startUpgrade ran, agent.upgrade_skipped) from a deferred one.
-  h.prisma.managedAgent.findUnique.mockResolvedValue(null);
+  stubbed(prisma.managedAgent.findUnique).mockResolvedValue(null);
 });
 
 describe("upgradeAllOutdated — down hosts", () => {
   it("defers a monitored DOWN host without attempting it, and still attempts the rest", async () => {
-    h.prisma.managedAgent.findMany.mockResolvedValue([
+    stubbed(prisma.managedAgent.findMany).mockResolvedValue([
       row("down", true, "down"),
       row("up", true, "up"),
       row("stale", false, "down"),
@@ -54,7 +55,7 @@ describe("upgradeAllOutdated — down hosts", () => {
 
     expect(r.eligible).toBe(3);
     expect(r.deferredDown).toBe(1);
-    const attempted = h.prisma.managedAgent.findUnique.mock.calls.map((c: any[]) => c[0].where.id).sort();
+    const attempted = stubbed(prisma.managedAgent.findUnique).mock.calls.map((c: any[]) => c[0].where.id).sort();
     expect(attempted).toEqual(["stale", "up"]);
 
     const deferred = eventLog.logEventsBatch.mock.calls[0][0] as any[];
@@ -74,7 +75,7 @@ describe("upgradeAllOutdated — down hosts", () => {
   });
 
   it("writes no deferral when nothing is down", async () => {
-    h.prisma.managedAgent.findMany.mockResolvedValue([row("up", true, "up")]);
+    stubbed(prisma.managedAgent.findMany).mockResolvedValue([row("up", true, "up")]);
     const r = await upgradeAllOutdated("tester");
     expect(r.deferredDown).toBe(0);
     expect(eventLog.logEventsBatch).not.toHaveBeenCalled();

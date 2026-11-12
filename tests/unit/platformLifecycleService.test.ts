@@ -11,35 +11,23 @@
  * Windows path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 // vi.hoisted, because vi.mock factories are lifted above ordinary top-level
 // declarations and would otherwise read these before initialization.
-const {
-  queryRawUnsafe,
-  detectionState,
-  goAvailableMock,
-  containerMock,
-  pgbouncerMock,
-  settingFindUnique,
-  settingUpsert,
-  logEventMock,
-} = vi.hoisted(() => ({
-  queryRawUnsafe: vi.fn(),
+const { detectionState, goAvailableMock, containerMock, pgbouncerMock, logEventMock } = vi.hoisted(() => ({
   detectionState: vi.fn(),
   goAvailableMock: vi.fn(),
   containerMock: vi.fn(),
   pgbouncerMock: vi.fn(),
-  settingFindUnique: vi.fn(),
-  settingUpsert: vi.fn(),
   logEventMock: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    $queryRawUnsafe: queryRawUnsafe,
-    setting: { findUnique: settingFindUnique, upsert: settingUpsert },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
+const queryRawUnsafe = stubbed(prisma.$queryRawUnsafe);
+const settingFindUnique = stubbed(prisma.setting.findUnique);
+const settingUpsert = stubbed(prisma.setting.upsert);
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: logEventMock }));
 vi.mock("../../src/services/timescaleService.js", () => ({ getDetectionState: detectionState }));
 vi.mock("../../src/services/agentBuildService.js", () => ({ goAvailable: goAvailableMock }));
@@ -67,6 +55,7 @@ import {
 } from "../../src/services/platformLifecycleService.js";
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   _resetLifecycleMemo();
   _resetDatasetCache();

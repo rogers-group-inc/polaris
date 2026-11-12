@@ -9,16 +9,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    assetDependencyParent: { findMany: vi.fn() },
-    asset: { findMany: vi.fn() },
-    assetMaintenanceWindow: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { resolveDependencyBlameMany } = await import("../../src/services/dependencyTreeService.js");
 
@@ -27,21 +21,23 @@ const node = (id: string, over: Record<string, unknown> = {}) => ({
   status: "active", dependencyLayer: 1, dependencySuppressed: false, dependencyTestUntil: null, ...over,
 });
 
+beforeEach(() => resetDbStub());
+
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.assetMaintenanceWindow.findMany.mockResolvedValue([]);
+  stubbed(prisma.assetMaintenanceWindow.findMany).mockResolvedValue([]);
 });
 
 describe("resolveDependencyBlameMany", () => {
   it("names a maintained parent and a down parent in one batched walk", async () => {
     // c1 → sw (in a window);  c2 → gw (down, no parents of its own).
-    h.prisma.assetDependencyParent.findMany.mockImplementation(async ({ where }: any) => {
+    stubbed(prisma.assetDependencyParent.findMany).mockImplementation(async ({ where }: any) => {
       const edges: Record<string, string> = { c1: "sw", c2: "gw" };
       return (where.assetId.in as string[])
         .filter((id) => edges[id])
         .map((id) => ({ assetId: id, parentAssetId: edges[id], source: "computed" }));
     });
-    h.prisma.asset.findMany.mockImplementation(async ({ where }: any) => {
+    stubbed(prisma.asset.findMany).mockImplementation(async ({ where }: any) => {
       const all = [node("sw", { status: "maintenance" }), node("gw", { monitorStatus: "down", assetType: "firewall" })];
       if (where.fortinetTopology) return []; // HA-standby read — no standbys here
       return all.filter((a) => (where.id.in as string[]).includes(a.id));
@@ -52,11 +48,11 @@ describe("resolveDependencyBlameMany", () => {
     expect(out.get("c1")?.rootCause).toMatchObject({ id: "sw", reason: "maintenance" });
     expect(out.get("c2")?.rootCause).toMatchObject({ id: "gw", reason: "down" });
     // The first layer is ONE query for both children.
-    expect(h.prisma.assetDependencyParent.findMany.mock.calls[0][0].where.assetId.in).toEqual(["c1", "c2"]);
+    expect(stubbed(prisma.assetDependencyParent.findMany).mock.calls[0][0].where.assetId.in).toEqual(["c1", "c2"]);
   });
 
   it("maps every asset to null when a read fails", async () => {
-    h.prisma.assetDependencyParent.findMany.mockRejectedValue(new Error("db gone"));
+    stubbed(prisma.assetDependencyParent.findMany).mockRejectedValue(new Error("db gone"));
     const out = await resolveDependencyBlameMany(["c1", "c2"]);
     expect(out.get("c1")).toBeNull();
     expect(out.get("c2")).toBeNull();
@@ -65,6 +61,6 @@ describe("resolveDependencyBlameMany", () => {
   it("does no reads for an empty set", async () => {
     const out = await resolveDependencyBlameMany([]);
     expect(out.size).toBe(0);
-    expect(h.prisma.assetDependencyParent.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetDependencyParent.findMany)).not.toHaveBeenCalled();
   });
 });

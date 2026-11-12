@@ -8,17 +8,14 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    role: { findUnique: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   getReadonlyRoleIdentity,
   invalidateDashRoleSnapshotCache,
 } from "../../src/services/dashRoleSnapshotService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { AppError } from "../../src/utils/errors.js";
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -33,6 +30,7 @@ const READONLY_ROLE = {
 };
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   invalidateDashRoleSnapshotCache();
 });

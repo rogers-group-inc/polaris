@@ -17,14 +17,11 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    $executeRawUnsafe: vi.fn(async () => 0),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { persistProcessConnections } from "../../src/services/monitoringService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const execRaw = prisma.$executeRawUnsafe as unknown as Mock;
@@ -41,6 +38,11 @@ function lastCall(): { sql: string; params: unknown[] } {
 function tupleCount(params: unknown[]): number {
   return params.length / 12;
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.$executeRawUnsafe).mockImplementation(async () => 0);
+});
 
 beforeEach(() => {
   execRaw.mockClear();

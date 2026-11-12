@@ -10,9 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // sampleRetentionService imports prisma at module load; stub it so importing
 // the pure helpers doesn't open a DB connection.
-vi.mock("../../src/db.js", () => ({
-  prisma: { setting: { findUnique: vi.fn(), upsert: vi.fn() } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   defaultSampleRetention,
@@ -27,8 +25,11 @@ import {
 } from "../../src/services/sampleRetentionService.js";
 import { pickSampleTier } from "../../src/services/sampleQueryRouter.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const daysAgo = (d: number) => new Date(Date.now() - d * 24 * 3600 * 1000);
+
+beforeEach(() => resetDbStub());
 
 describe("sampleRetentionService — entity model + encoding", () => {
   it("exposes the nine entities, three of them selection-aware", () => {

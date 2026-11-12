@@ -11,15 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { findMany: vi.fn() },
-    assetInterface: { findMany: vi.fn() },
-    notification: { findMany: vi.fn() },
-    notificationRule: { findMany: vi.fn() },
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/monitoringService.js", () => ({
   resolveMonitorSettings: vi.fn(),
@@ -32,6 +24,7 @@ vi.mock("../../src/services/notificationService.js", () => ({
 
 import * as noc from "../../src/services/nocDashboardService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const assetFindMany = prisma.asset.findMany as unknown as ReturnType<typeof vi.fn>;
 const ifaceFindMany = (prisma as unknown as { assetInterface: { findMany: ReturnType<typeof vi.fn> } }).assetInterface.findMany;
@@ -43,6 +36,7 @@ function gate(id: string, hostname: string) {
 }
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   noc.clearSdwanHistoryCache();
   notifFindMany.mockResolvedValue([]);

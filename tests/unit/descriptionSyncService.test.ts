@@ -14,12 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AppError } from "../../src/utils/errors.js";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { findMany: vi.fn(), update: vi.fn() },
-    assetInterfaceOverride: { findMany: vi.fn(), update: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -34,6 +29,7 @@ vi.mock("../../src/services/reservationPushService.js", () => ({
 vi.mock("../../src/services/fortimanagerService.js", () => ({ proxyQuery: vi.fn() }));
 
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { proxyQuery } from "../../src/services/fortimanagerService.js";
 import { callFortiOs, buildTransportForIntegration } from "../../src/services/reservationPushService.js";
 import {
@@ -51,6 +47,7 @@ const integration = { id: "intg-1", type: "fortimanager", config: {} };
 const fakeTransport = { kind: "direct-fortigate", fgConfig: { host: "10.0.0.1", apiToken: "t" }, vdom: "root" } as any;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   transportMock.mockResolvedValue(fakeTransport);
 });

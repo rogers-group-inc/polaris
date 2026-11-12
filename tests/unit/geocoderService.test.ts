@@ -14,12 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    geocodeCache: { findUnique: vi.fn(), upsert: vi.fn() },
-    event: { findMany: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
@@ -35,6 +30,7 @@ import {
   type GeocodeFailureForAsset,
 } from "../../src/services/geocoderService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const findUnique = prisma.geocodeCache.findUnique as unknown as Mock;
@@ -73,6 +69,7 @@ function providersCalled(mock: Mock): string[] {
 }
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   __resetGeocoderStateForTests(); // rate-limit gates → 0ms
   // A real .env is loaded by tests/setup.ts; pin the chain so a host override

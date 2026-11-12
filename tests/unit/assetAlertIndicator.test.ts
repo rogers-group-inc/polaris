@@ -23,10 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: { notification: { findMany: vi.fn() } },
-}));
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -37,6 +34,8 @@ vi.mock("../../src/services/notificationRuleService.js", () => ({
 import { activeAlertSummaryByAsset } from "../../src/services/notificationService.js";
 import { ALERT_SEVERITY_RANK, alertSeverityRank, higherAlertSeverity } from "../../src/utils/alertSeverity.js";
 import { appSource } from "./_appSource.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const g = globalThis as Record<string, any>;
 
@@ -70,11 +69,13 @@ function dot(asset: unknown): HTMLElement | null {
 
 /* ─── Server: which alert is the row about ─────────────────────────────────── */
 
+beforeEach(() => resetDbStub());
+
 describe("activeAlertSummaryByAsset", () => {
-  beforeEach(() => { h.prisma.notification.findMany.mockReset(); });
+  beforeEach(() => { stubbed(prisma.notification.findMany).mockReset(); });
 
   it("takes the WORST severity per asset and counts what is still unhandled", async () => {
-    h.prisma.notification.findMany.mockResolvedValueOnce([
+    stubbed(prisma.notification.findMany).mockResolvedValueOnce([
       { assetId: "a", severity: "warning", acknowledged: true },
       { assetId: "a", severity: "critical", acknowledged: false },
       { assetId: "a", severity: "notice", acknowledged: false },
@@ -87,7 +88,7 @@ describe("activeAlertSummaryByAsset", () => {
   });
 
   it("leaves an asset with no active alert out of the map entirely", async () => {
-    h.prisma.notification.findMany.mockResolvedValueOnce([
+    stubbed(prisma.notification.findMany).mockResolvedValueOnce([
       { assetId: "a", severity: "warning", acknowledged: false },
     ]);
     const m = await activeAlertSummaryByAsset(["a", "quiet"]);
@@ -97,10 +98,10 @@ describe("activeAlertSummaryByAsset", () => {
   it("is ONE query for the whole page, never one per row", async () => {
     // The list ships up to 10 000 rows on the export path. A query per row is
     // the shape that makes a page of assets cost a page of queries.
-    h.prisma.notification.findMany.mockResolvedValueOnce([]);
+    stubbed(prisma.notification.findMany).mockResolvedValueOnce([]);
     await activeAlertSummaryByAsset(["a", "b", "c", "d"]);
-    expect(h.prisma.notification.findMany).toHaveBeenCalledTimes(1);
-    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(stubbed(prisma.notification.findMany)).toHaveBeenCalledTimes(1);
+    expect(stubbed(prisma.notification.findMany)).toHaveBeenCalledWith(expect.objectContaining({
       where: { assetId: { in: ["a", "b", "c", "d"] }, cleared: false },
     }));
   });
@@ -108,14 +109,14 @@ describe("activeAlertSummaryByAsset", () => {
   it("asks nothing at all for an empty page", async () => {
     const m = await activeAlertSummaryByAsset([]);
     expect(m.size).toBe(0);
-    expect(h.prisma.notification.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.findMany)).not.toHaveBeenCalled();
   });
 
   it("counts a CLEARED alert nowhere — the indicator is about live trouble", async () => {
-    h.prisma.notification.findMany.mockResolvedValueOnce([]);
+    stubbed(prisma.notification.findMany).mockResolvedValueOnce([]);
     const m = await activeAlertSummaryByAsset(["a"]);
     expect(m.size).toBe(0);
-    const where = h.prisma.notification.findMany.mock.calls[0][0].where;
+    const where = stubbed(prisma.notification.findMany).mock.calls[0][0].where;
     expect(where.cleared).toBe(false);
   });
 });

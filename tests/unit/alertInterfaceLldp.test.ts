@@ -12,12 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// vi.mock is hoisted above the module graph, so the spy has to be created in a
-// hoisted block too or the factory closes over an uninitialized binding.
-const { findMany, findUnique } = vi.hoisted(() => ({ findMany: vi.fn(), findUnique: vi.fn() }));
-vi.mock("../../src/db.js", () => ({
-  prisma: { assetLldpNeighbor: { findMany }, assetInterface: { findUnique } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   isPortScopedAlert,
@@ -37,6 +32,8 @@ import {
   type AlertLldpNeighbor,
 } from "../../src/services/alertInterfaceService.js";
 import { isDeferredToken, renderNotificationTemplate } from "../../src/utils/notificationTemplate.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 import {
   DEFAULT_ALERT_HTML,
   DEFAULT_ALERT_TEXT,
@@ -44,6 +41,9 @@ import {
   pruneEmptyRows,
   pruneEmptyChartSection,
 } from "../../src/utils/alertEmailTemplate.js";
+
+const findMany = stubbed(prisma.assetLldpNeighbor.findMany);
+const findUnique = stubbed(prisma.assetInterface.findUnique);
 
 const neighbor = (over: Partial<AlertLldpNeighbor> = {}): AlertLldpNeighbor => ({
   name: "WESTON-124F-2",
@@ -57,8 +57,7 @@ const neighbor = (over: Partial<AlertLldpNeighbor> = {}): AlertLldpNeighbor => (
 });
 
 beforeEach(() => {
-  findMany.mockReset();
-  findUnique.mockReset();
+  resetDbStub();
   findUnique.mockResolvedValue(null);
 });
 

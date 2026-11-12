@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { asset: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
+const findMany = stubbed(prisma.asset.findMany);
 
 import {
   isSuffixEligible,
@@ -16,6 +18,8 @@ const m = (over: Partial<FamilyMember>): FamilyMember => ({
 });
 
 // Business rule 91(i).
+beforeEach(() => resetDbStub());
+
 describe("isSuffixEligible", () => {
   it("takes a lease / detected-device name with a MAC", () => {
     expect(isSuffixEligible(m({}))).toBe(true);

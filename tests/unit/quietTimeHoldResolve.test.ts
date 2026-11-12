@@ -16,26 +16,27 @@ const db = {
   rules: [] as any[],
 };
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    quietTimeSchedule: { findMany: vi.fn(async () => db.schedules) },
-    notificationRule: { findMany: vi.fn(async () => db.rules) },
-    asset: {
-      findUnique: vi.fn(async () => null),
-      findMany: vi.fn(async () => []),
-    },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/scopeRelationIndex.js", () => ({
   decorateRelationLeafHits: vi.fn(async () => {}),
 }));
 
 import { resolveQuietHold, resolveQuietWindow, bumpQuietTimeCache } from "../../src/services/quietTimeHoldService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const NIGHTLY = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "22:00", endTime: "06:00" }] };
 const LUNCH = { version: 1, kind: "recurring", freq: "daily", hours: [{ startTime: "12:00", endTime: "13:00" }] };
 const NIGHT = new Date(2026, 9, 3, 23, 0, 0, 0);
 const NOON = new Date(2026, 9, 3, 12, 30, 0, 0);
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.quietTimeSchedule.findMany).mockImplementation(async () => db.schedules);
+  stubbed(prisma.notificationRule.findMany).mockImplementation(async () => db.rules);
+  stubbed(prisma.asset.findUnique).mockImplementation(async () => null);
+  stubbed(prisma.asset.findMany).mockImplementation(async () => []);
+});
 
 beforeEach(() => {
   bumpQuietTimeCache();
