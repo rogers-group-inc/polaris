@@ -3339,6 +3339,25 @@ FortiGate sightings older than the quarantine sighting window; and Discovery run
 than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
 a slice at a time over several nights. See [Events](Events#retention-and-archival).
 
+**(a) A backup file is a backup whether or not Polaris has a record of making it.** Backup
+History lists every backup file in `data/backups`, including one whose record was lost — by
+restoring an older backup, for instance. Such a file is marked **Found on disk** and can be
+downloaded and deleted like any other. See [Backup and restore](Backup-and-Restore).
+
+**(b) The firmware repository keeps no file without an image entry.** Once a day Polaris
+removes image files that no entry in the Repository points at, uploads that were abandoned
+part-way, and entries whose file never arrived. Files you placed in `data/firmware`
+yourself under their own names are not touched.
+
+**(c) A pinned process's log settings go with the pin.** Unpinning a process on an agent
+host removes the log source and path you set for it. Pinning it again starts from the
+default, so an old log path never comes back into force unnoticed.
+
+**(d) An archived network can be deleted, by you.** Archived networks are kept until
+someone removes them — there is no expiry. Deleting one is available through the API
+(`DELETE /subnets/archived/:id`, Full Read-Write on Networks) and is recorded in Events. It
+is refused while a pending chassis-replacement conflict still needs that archive.
+
 ### Rule 159
 
 **A fibre-channel connection is linked to the server that reports its WWN, or failing that to
@@ -3447,6 +3466,55 @@ When this option arrived, every type that ran under Directory discovery was swit
 firewall device inventory too, so existing behaviour carries over; untick it on a type to stop
 that. **Apply rules to existing "Other" assets** uses both Directory discovery and firewall
 device inventory rules. See [Server Settings](Server-Settings).
+
+### Rule 165
+
+**A quarantine release that cannot reach a FortiGate still releases, and Polaris keeps
+trying.** Releasing a quarantine lifts the block on every FortiGate that holds it. If one
+cannot be reached, the device is released everywhere else and its status and monitoring
+come back as usual — but it is still blocked at that one gate. Polaris now remembers that
+gate on the asset, shows it on the asset's **Quarantine** tab under **Still blocked on**,
+and retries in the background (15 minutes after the failure, backing off to every six
+hours) until it clears. **Retry** tries immediately. **Dismiss** stops the tracking without
+touching the FortiGate — use it once the entry has been removed there by hand, or the
+FortiGate is gone for good. See [Assets](Assets#still-blocked-on-a-fortigate).
+
+**(a) The record of a block is never lost with the asset.** An asset that is still blocked
+on a FortiGate cannot be deleted until the block clears or you dismiss it. When an asset is
+merged into another — by you, or by Polaris tidying up a duplicate — its quarantine and any
+FortiGates it is still blocked on move to the asset that remains. If the merged asset was
+quarantined, the remaining asset becomes quarantined, and releasing it restores the status
+and monitoring it had before the merge.
+
+### Rule 166
+
+**What SSH onboarding puts on a host, Polaris can also take off it.** The **SSH Deployment**
+card now offers an **Offboarding script** beside the onboarding and detection scripts. Run
+on a host that is leaving Polaris, it removes the Polaris key, the account if the
+onboarding script created it, on Linux the passwordless-sudo file, and the Polaris firewall
+rule. It leaves alone an account that existed before onboarding, the SSH server, and the
+Polaris Agent — uninstall the agent from Polaris first.
+
+**A regenerated key is removed from your hosts, not just replaced.** When you regenerate the
+deployment keypair, Polaris remembers the old public key. The next run of the onboarding
+script on each host removes it as it installs the new one, and the detection script reports
+a host that still trusts the old key as needing remediation. See
+[Polaris Agent](Polaris-Agent#removing-it-again).
+
+### Rule 167
+
+**Something that is still in use cannot be deleted, and Polaris tells you what is using it.**
+Deleting any of these now stops with a message naming what still depends on it:
+
+- a **delivery channel** that an automation, an alert group, or a booked firmware upgrade or
+  reboot still sends through;
+- an **automation script** that an automation or alert group still runs — anywhere in it,
+  including escalation steps, severity levels, the all-clear and reset actions;
+- a **MIB** that an asset or a class monitoring setting has selected for a stream;
+- a **credential** that a Discovery still tries (a private Discovery is counted, not named).
+
+Point those at something else, then delete. Before this, the delete went through and the
+automation, the poll or the Discovery quietly stopped working.
 
 ### Rule 168
 

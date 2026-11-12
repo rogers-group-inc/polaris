@@ -59,6 +59,39 @@ router.delete("/:id/quarantine", requirePermission("assetsQuarantine", "write"),
   }
 });
 
+// Business rule 165: the FortiGates that still hold the block after a release.
+// POST …/stranded/retry  — try again now (one gate with `fortigateDevice`, else all)
+// DELETE …/stranded      — stop tracking without touching the device (`?device=` for one)
+// Same gate as release: assetsQuarantine write + the asset in the caller's write
+// scope; a token scoped to some integrations may only touch their gates.
+router.post("/:id/quarantine/stranded/retry", requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "release devices"), async (req, res, next) => {
+  try {
+    const input = z.object({ fortigateDevice: z.string().min(1).max(200).optional() }).parse(req.body ?? {});
+    const { retryStrandedQuarantine } = await import("../../../services/quarantineStrandedService.js");
+    res.json(await retryStrandedQuarantine(req.params.id as string, {
+      actor: requestActor(req) || "unknown",
+      fortigateDevice: input.fortigateDevice,
+      tokenIntegrationIds: req.apiToken?.integrationIds,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/:id/quarantine/stranded", requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "release devices"), async (req, res, next) => {
+  try {
+    const device = typeof req.query.device === "string" && req.query.device.trim() ? req.query.device.trim().slice(0, 200) : undefined;
+    const { dismissStrandedQuarantine } = await import("../../../services/quarantineStrandedService.js");
+    res.json(await dismissStrandedQuarantine(req.params.id as string, {
+      actor: requestActor(req) || "unknown",
+      fortigateDevice: device,
+      tokenIntegrationIds: req.apiToken?.integrationIds,
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/v1/assets/:id/quarantine/verify — read-back drift check (admin, assets admin, or token)
 router.post("/:id/quarantine/verify", machineApiLimiter, requirePermission("assetsQuarantine", "write"), scopeAssetParam("assetsQuarantine", "quarantine devices"), async (req, res, next) => {
   try {

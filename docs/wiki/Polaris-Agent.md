@@ -169,12 +169,13 @@ Settings are **per platform**, and Polaris maintains one managed credential per
 platform — a credential holds one username, and a Windows `DOMAIN\user` is
 meaningless on Linux.
 
-### Two scripts per platform
+### The scripts
 
 | Script | Does |
 |---|---|
 | **Remediation** | installs and starts the SSH server, optionally creates the local admin account, installs the public key with the right ACL/ownership, optionally scopes inbound TCP/22, and on Windows settles the firewall profile (below) |
 | **Detection** | exit 0 = onboarded, 1 = remediate |
+| **Offboarding** | removes what remediation put there — see [Removing it again](#removing-it-again) |
 
 **Pairing them under an Intune Remediation or an SCCM Configuration Baseline is
 what makes rollout self-healing** — a plain platform script runs once per device
@@ -321,6 +322,36 @@ one-off remote invocation.
 
 Operator input (`username`, the Polaris server IP) is **rejected, not escaped**:
 it lands in a script an admin runs fleet-wide as SYSTEM.
+
+### Removing it again
+
+The **Offboarding script** is for a host that is leaving Polaris. Run it the way you ran
+the onboarding script (as root on Linux, as SYSTEM on Windows). It removes:
+
+| | Removed | Left alone |
+|---|---|---|
+| **Key** | the Polaris public key, and any earlier Polaris key from before a regenerate | every other key in the file |
+| **Account** | the account, when the onboarding script created it | an account that already existed (*Use an existing account*), or one whose description has been changed since |
+| **Sudo (Linux)** | `/etc/sudoers.d/polaris-agent` | a file at that path Polaris did not write |
+| **Firewall** | the Polaris rule for TCP/22 | on Windows, the built-in OpenSSH rule stays disabled, so port 22 is closed; the script prints the command to turn it back on |
+
+It does not stop or uninstall the SSH server, and it does not uninstall the Polaris Agent.
+**Uninstall the agent from Polaris first** — once the script has run, Polaris can no
+longer sign in to the host to do it. The script warns if the agent is still there.
+
+If the onboarding script is still being applied to the host — an assigned Intune
+Remediation, a config-management run — take the host out of that first, or the next run
+puts everything back. Polaris does not delete the Remediation it published to Intune or
+the Run Commands it created in Azure Arc; remove those in their own portals.
+
+The script reports each step and exits 1 if something could not be removed. It is safe to
+run again.
+
+**Regenerating the keypair** no longer leaves the old key behind. Polaris remembers the
+key it replaced, and the next run of the onboarding script on each host removes it while
+installing the new one. Until a host has re-run the script it still trusts the old key —
+and cannot be reached with the new one — so the detection script reports it as needing
+remediation.
 
 ### Publishing
 

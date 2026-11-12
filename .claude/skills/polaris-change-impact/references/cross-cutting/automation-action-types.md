@@ -26,6 +26,8 @@
 - **`reboot` BOOKS, never sends** (business rule 115(c)): `executeActions` → `notificationRecipientService.resolveRebootActionRecipients` (its To/Cc/Bcc against `exec.assetRegionTags` and the asset's contacts; an empty To → action error, nothing booked) → lazy `rebootScheduleService.bookRebootFromAutomation` for `exec.assetId` (no asset → action error); `executed++` only when booked (a skip is an info Event, not a failure). No per-action escalation key, not repeatable, skipped by every Test.
 - `addActionRow` sets `select.value` in JS rather than relying on the `selected` attribute written via innerHTML — the collector reads `.value`, and attribute reflection for a non-first option is environment-dependent.
 
+**Delete guards (business rule 167):** `actionReferenceService` answers "which automations and alert groups still name this channel / script" by walking `allRuleActionRefs`. A new action LOCATION therefore needs no guard change — and one added anywhere else would be missed, which is how the script delete came to check two locations of eight.
+
 **When changing this:** add the member to the catalog first (the builder picks it up for free), then let `npm run typecheck` enumerate the branch sites — every final-`else` narrowing failure is a place that would otherwise mis-handle it.
 
 ---

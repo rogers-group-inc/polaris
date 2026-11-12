@@ -20,6 +20,7 @@ import { floorCodeProblem } from "../utils/locationCodes.js";
 import { recordCredentialUse, assetCredentialUses, type AssetCredentialSlots, type CredentialUseVia, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { reconcileDuplicateIpForAddresses, type WriteTimeIpConflict } from "./duplicateIpConflictService.js";
 import { logEvent, buildChanges, buildFirmwareChangedEvent } from "./eventLogService.js";
+import { parseStranded } from "../utils/quarantineStranded.js";
 import { clampAcquiredToLastSeen, statusAllowsMonitoring, UNMONITORABLE_STATUSES, clampMonitoredState } from "../utils/assetInvariants.js";
 import { syncDescriptionsOnSave } from "./descriptionSyncService.js";
 import { isKnownAssetType } from "../utils/assetTypes.js";
@@ -764,6 +765,17 @@ async function applyAssetUpdateSideEffects(
     diffPins("mappedProcesses", "process", "map");
     diffPins("monitoredServices", "service", "monitor");
     diffPins("mappedServices", "service", "map");
+    // Rule 158(c): a process's log config goes with its pin. It used to stay,
+    // unseen, and re-pinning the process later revived the old log path — a
+    // path an agent reads as a privileged user — for whoever re-pinned it.
+    const unpinnedProcesses = pinChanges
+      .filter((c) => c.kind === "process" && c.surface === "monitor" && c.action === "removed")
+      .map((c) => c.name);
+    if (unpinnedProcesses.length > 0) {
+      await prisma.assetProcessConfig
+        .deleteMany({ where: { assetId: id, name: { in: unpinnedProcesses } } })
+        .catch((err) => logger.warn({ err, assetId: id }, "could not remove the log config of an unpinned process"));
+    }
     if (pinChanges.length > 0) {
       const hostLabel = asset.hostname || asset.ipAddress || id;
       recordOperatorPinChanges(pinChanges)
@@ -958,7 +970,7 @@ export async function bulkDeleteAssets(ids: string[], actor: string | undefined)
   // same ids.
   const targets = await prisma.asset.findMany({
     where: { id: { in: ids } },
-    select: { id: true, hostname: true, ipAddress: true, status: true, assetType: true },
+    select: { id: true, hostname: true, ipAddress: true, status: true, assetType: true, quarantineStranded: true },
   });
   // Refuse to bulk-delete any quarantined asset — the operator must release
   // the quarantine first so the device-side targets get cleaned up.
@@ -967,6 +979,14 @@ export async function bulkDeleteAssets(ids: string[], actor: string | undefined)
     const names = quarantined.map((a) => a.hostname || a.ipAddress || a.id).slice(0, 5);
     const more = quarantined.length > 5 ? ` (+${quarantined.length - 5} more)` : "";
     throw new AppError(409, `Cannot delete quarantined asset(s): ${names.join(", ")}${more}. Release the quarantine first.`);
+  }
+  // Rule 165(a): a released asset still blocked on a FortiGate is the only
+  // record that the block exists. Deleting it would lose the gate list.
+  const stranded = targets.filter((a) => parseStranded(a.quarantineStranded).length > 0);
+  if (stranded.length > 0) {
+    const names = stranded.map((a) => a.hostname || a.ipAddress || a.id).slice(0, 5);
+    const more = stranded.length > 5 ? ` (+${stranded.length - 5} more)` : "";
+    throw new AppError(409, `Cannot delete asset(s) still blocked on a FortiGate: ${names.join(", ")}${more}. Retry or dismiss the remaining FortiGates on the Quarantine tab first.`);
   }
   // Same as the single delete: release before the rows go away, and only for
   // the managed-infra types.
@@ -1005,6 +1025,11 @@ export async function deleteAsset(id: string, actor: string | undefined): Promis
   if (!existing) throw new AppError(404, "Asset not found");
   if (existing.status === "quarantined") {
     throw new AppError(409, `Cannot delete quarantined asset "${existing.hostname || existing.ipAddress || id}". Release the quarantine first.`);
+  }
+  // Rule 165(a) — as the bulk delete.
+  const strandedCount = parseStranded(existing.quarantineStranded).length;
+  if (strandedCount > 0) {
+    throw new AppError(409, `Cannot delete "${existing.hostname || existing.ipAddress || id}": it is still blocked on ${strandedCount} FortiGate${strandedCount === 1 ? "" : "s"}. Retry or dismiss ${strandedCount === 1 ? "it" : "them"} on the Quarantine tab first.`);
   }
   // Give the address back BEFORE the row goes away — the release resolves the
   // reservation from the asset's ipAddress, which is unreadable once deleted.

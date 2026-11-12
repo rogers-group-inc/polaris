@@ -25,6 +25,8 @@ vi.mock("../../src/db.js", () => ({
     firmwareCredentialBinding: { findMany: vi.fn(async () => []) },
     // Path checks that authenticate with a credential (business rule 85).
     pathCheck: { findMany: vi.fn(async () => []) },
+    // Discoveries that try a credential (business rule 167).
+    networkScan: { findMany: vi.fn(async () => []) },
   },
 }));
 

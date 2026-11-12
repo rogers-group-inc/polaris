@@ -281,6 +281,12 @@ Asset
   quarantinedAt          DateTime?
   quarantinedBy          String?
   quarantineTargets      Json?
+  -- Business rule 165: FortiGates that still hold this asset's quarantine block
+  -- AFTER it was released (unreachable at release time, or their integration is
+  -- gone): [{ fortigateDevice, integrationId, error, since, lastAttemptAt,
+  -- attempts }]. Independent of `status` — the asset is NOT quarantined while it
+  -- is non-empty. Retried by jobs/retryStrandedQuarantine; `[]` on almost every row.
+  quarantineStranded     Json     @default("[]")
   -- Dependency-aware monitoring suppression. dependencyLayer is the BFS
   -- shortest-path distance from any FortiGate root computed by
   -- dependencyTreeService.recomputeDependencyTree (1 = FortiGate, 2 = direct

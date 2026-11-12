@@ -27,7 +27,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
 | B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
-| D | Leftovers outside the database (hosts, devices, disk) | **D.1 and D.7 done** — this commit (rule 163); D.2–D.6, D.8 open |
+| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.5, D.6, D.7 done** (rules 163, 165, 158(a), 158(b)); D.3 done (rule 165(a)); D.4 host side done (rule 166); the Intune / Arc objects of D.4, D.8 and off-host backup copies open |
 | E | Removable by hand, but silent | open — no decisions needed |
 
 ## Decisions (operator, 2026-11-11)
@@ -37,6 +37,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | B-D1 | What happens to what a deleted integration discovered | **Keep the assets and networks and detach them cleanly** (remove that integration's source rows, tags and dependency edges; re-project from the remaining sources), **plus a tick-box in the delete dialog to decommission the assets no other source still reports.** The dialog shows the counts first |
 | B-D2 | DHCP reservations pushed to a FortiGate when its integration is deleted | **Leave them on the device, and write an Event listing every entry left behind** |
 | C-D1 | How long cleared alerts are kept | **A setting, default 365 days** (0 = keep forever) |
+| D-D2 | A quarantine release that cannot reach a FortiGate | **Release, remember, retry**: release as today (response unchanged), store the gates that still hold the block on the asset, show them with Retry / Dismiss, retry in the background |
 | D-D1 | Deleting an asset that has the Polaris Agent installed | **Warn about the agent and offer to attempt the uninstall first. If it succeeds, carry on. If it fails, say so and ask whether to continue with the delete** |
 
 Not asked; defaulted by the implementer and open to change:
@@ -45,7 +46,7 @@ Not asked; defaulted by the implementer and open to change:
 |---|---|
 | B-D3 | `azure:` tags are stripped when the Arc integration is deleted or a machine leaves Arc (it is part of the clean detach of B-D1) |
 | C-D2 | The subnet archive gains a Delete at Full Read-Write rather than a retention period — the operator has consistently preferred a visible, operator-decided removal over a silent automatic one |
-| D-D2 | A quarantine release that cannot reach a gate keeps that gate on the record as still blocked, with a retry, rather than dropping it |
+| D-D2 | A quarantine release that cannot reach a gate | (first defaulted to "stay quarantined until all clear"; put to the operator once the API and monitoring impact was clear) |
 | D-D3 | An offboarding script is generated beside the onboarding one; Intune / Arc objects Polaris created are listed for removal |
 
 ## Batch 0 — done (rules 155, 48(e), 140(a), 140(b))
@@ -115,27 +116,27 @@ Decisions needed:
 | C.3 | `Conflict` (resolved) | **kept on purpose**: a rejected conflict suppresses re-raising (rule 139). Open question: prune ACCEPTED ones only |
 | C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 158) |
 | C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 158) |
-| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` |
+| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` **→ fixed in the API (rule 158(d)): `DELETE /subnets/archived/:id`, refused while a pending chassis conflict reads it. OPEN: the archive has no UI at all — a list / review / delete surface is a design-first item** |
 | C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
 | C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
 | C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 158) |
 | C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 158) |
 | C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 158) |
-| C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob |
+| C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob **→ fixed (rule 158(c)): deleted on an operator's unpin; swept after 7 days when the unpin was automatic** |
 
-Still open in C: C.3 (accepted conflicts only?), C.6 (archive Delete, per the C-D2 default),
-C.7 (topology layouts), C.11 (process config on unpin).
+Still open in C: C.3 (accepted conflicts only?), C.6's UI (the archive has no page),
+C.7 (topology layouts).
 
 ## Batch D — leftovers outside the database (open)
 
 | # | Leftover | Consequence |
 |---|---|---|
 | D.1 | The agent stays installed and running when its asset is deleted or merged away | 401s forever; the Uninstall button went with the asset **→ fixed for the three UI delete paths and the operator merge (rule 163): warn, offer the uninstall, ask again if it fails, record `agent.left_on_host`. **Open:** the two automatic ghost merges and the conflict-resolution absorb do not record a dropped agent** |
-| D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry |
-| D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id |
-| D.4 | Onboarding artefacts: service account, authorized key, sudoers file, Intune remediation, Arc run-command | no removal path; key rotation appends, so old keys stay authorized |
-| D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI |
-| D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way |
+| D.2 | A quarantine release that cannot reach a gate clears the local record anyway | the MAC stays blocked on that gate with no record and no retry **→ fixed (rule 165): the gate is remembered in `Asset.quarantineStranded`, retried every 15 min on a backoff, with Retry / Dismiss on the Quarantine tab** |
+| D.3 | A quarantined ghost merged away (suspected) | unpush is keyed by asset id **→ fixed (rule 165(a)): confirmed — no merge path looked at quarantine. Every merge now carries the absorbed record's quarantine and stranded gates to the survivor (`carryQuarantineState`); deleting an asset with stranded entries is refused (409)** |
+| D.4 | Onboarding artefacts: service account, authorized key, sudoers file, Intune remediation, Arc run-command | no removal path; key rotation appends, so old keys stay authorized **→ fixed for the host side (rule 166): an offboarding script per platform; rotation retires the old key and the next onboarding run removes it. OPEN: the Intune Remediation and Arc Run Command objects Polaris created are still never deleted** |
+| D.5 | Backup files beyond the 50-entry history; off-host copies never pruned | unlisted, undeletable from the UI **→ fixed (rule 158(a)): every backup file is listed, downloadable and deletable, `untracked` when the history does not name it; the tab lists all of them; cap raised to 500. OPEN, needs a decision: off-host copies are still never pruned** |
+| D.6 | Firmware files with no row / rows with no file after an interrupted upload; `.incoming` leftovers | no reconcile either way **→ fixed (rule 158(b)): `sweepFirmwareFiles` in the daily retention pass. A row whose file is missing is left: the tab flags it and Delete works** |
 | D.7 | Agent WebSocket session survives a revoke or an asset delete | until the agent stops or the web role restarts **→ fixed — `revokeBearer` and `recordAgentsLeftOnHosts` detach the session (rule 163)** |
 | D.8 | Browser `localStorage` keys embedding site / integration ids | cosmetic |
 
@@ -153,10 +154,10 @@ Decisions needed:
 
 | # | Leftover | Today |
 |---|---|---|
-| E.1 | A deleted notification channel still named in automations, alert groups, escalation tiers, firmware / reboot bookings | delivery silently skipped |
-| E.2 | A deleted automation script named in per-action escalation, severity-band actions, reset actions, alert groups | the delete guard checks only two of the eight action locations |
-| E.3 | A deleted MIB still named in `Asset.*MibId` / `MonitorClassOverride.*MibId` | nothing cleared |
-| E.4 | A deleted credential in `NetworkScan.methods[].credentialIds` (suspected) | not checked on delete |
+| E.1 | A deleted notification channel still named in automations, alert groups, escalation tiers, firmware / reboot bookings | delivery silently skipped **→ fixed going forward (rule 167): the channel delete is refused, naming every automation, alert group and pending booking that still uses it. Open: references that already dangle** |
+| E.2 | A deleted automation script named in per-action escalation, severity-band actions, reset actions, alert groups | the delete guard checks only two of the eight action locations **→ fixed (rule 167): the guard walks `allRuleActionRefs`, on automations and alert groups** |
+| E.3 | A deleted MIB still named in `Asset.*MibId` / `MonitorClassOverride.*MibId` | nothing cleared **→ fixed going forward (rule 167): the MIB delete is refused while selected. Open: ids that already dangle** |
+| E.4 | A deleted credential in `NetworkScan.methods[].credentialIds` (suspected) | not checked on delete **→ confirmed and fixed (rule 167): the credential delete is refused while a Discovery tries it** |
 | E.5 | An automation's `dimensionFilter.checkId` / `widgetId` / `stateProbeId` naming a deleted object | the rule goes silently dead |
 | E.6 | A firing alert frozen forever when its path check, custom widget or state probe is deleted | only Alerts → Clear ends it |
 | E.7 | Tag rename / delete not carried into `User.otherTags`, `GroupMapping.otherTags`, condition trees | write scope and routing silently dropped |

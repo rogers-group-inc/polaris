@@ -225,6 +225,60 @@ export async function getArchivedSubnet(id: string) {
   return row;
 }
 
+/**
+ * Delete one archived subnet and the reservations archived with it (business
+ * rule 158(d)).
+ *
+ * The archive was append-only: nothing in Polaris could remove an entry, so a
+ * site that replaced hardware a few times, or archived a network by mistake,
+ * kept every copy for good. It is a record kept for REVIEW, so it is removed
+ * by an operator's decision and never by age.
+ *
+ * Refused (409) while a PENDING chassis-replacement conflict still points at
+ * the entry: that conflict's comparison and its Accept both read the archived
+ * reservations (rule 41), and deleting them would leave a conflict that can
+ * only be rejected. A resolved conflict is a frozen snapshot and needs nothing.
+ */
+export async function deleteArchivedSubnet(id: string, opts: { actor?: string | null } = {}): Promise<{ cidr: string; reservationCount: number }> {
+  const row = await prisma.archivedSubnet.findUnique({
+    where: { id },
+    select: { id: true, cidr: true, name: true, blockCidr: true, fortigateSerial: true, archivedAt: true, archiveReason: true, _count: { select: { reservations: true } } },
+  });
+  if (!row) throw new AppError(404, `Archived subnet ${id} not found`);
+
+  const pending = await prisma.conflict.findFirst({
+    where: { entityType: "subnet", status: "pending", proposedSubnetFields: { path: ["archivedSubnetId"], equals: id } },
+    select: { id: true },
+  });
+  if (pending) {
+    throw new AppError(409, `Archived network ${row.cidr} is still being compared by a pending chassis-replacement conflict. Accept or reject that conflict first.`);
+  }
+
+  // ArchivedReservation rows cascade.
+  await prisma.archivedSubnet.delete({ where: { id } });
+
+  void logEvent({
+    action: "subnet.archive_deleted",
+    resourceType: "subnet",
+    resourceId: id,
+    resourceName: row.cidr,
+    actor: opts.actor ?? undefined,
+    level: "warning",
+    message: `Archived network ${row.cidr} deleted with ${row._count.reservations} archived reservation(s)`,
+    details: {
+      archivedSubnetId: id,
+      cidr: row.cidr,
+      name: row.name,
+      blockCidr: row.blockCidr,
+      fortigateSerial: row.fortigateSerial,
+      archivedAt: row.archivedAt,
+      archiveReason: row.archiveReason,
+      reservationCount: row._count.reservations,
+    },
+  });
+  return { cidr: row.cidr, reservationCount: row._count.reservations };
+}
+
 export interface ListArchivedFilter {
   cidr?: string;
   blockId?: string;

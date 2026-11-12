@@ -73,6 +73,8 @@ import { clampAcquiredToLastSeen } from "../utils/assetInvariants.js";
 import { isGenericAssetType } from "../utils/assetTypes.js";
 import { recomputeMonitorOverrideForAssets } from "./monitorOverrideService.js";
 import { assertMergeMayRetargetIntegrationToken } from "../utils/integrationTokenTarget.js";
+import { parseStranded, unionStranded, unionQuarantineTargets } from "../utils/quarantineStranded.js";
+import { logEvent } from "./eventLogService.js";
 
 // Scalar fields the comparison UI diffs and the operator can pick a winner
 // for. Kept in sync with the COMPARE_FIELDS list in public/js/assets.js so the
@@ -382,12 +384,96 @@ export async function transferAssetSideTables(
     }
     return moved;
   };
-  return {
+  const counts = {
     movedMacs: await moveUnique(tx.assetMacAddress, ["mac"]),
     movedIps: await moveUnique(tx.assetAssociatedIp, ["ip"]),
     movedIpHistory: await moveUnique(tx.assetIpHistory, ["ip"]),
     movedSightings: await moveUnique(tx.assetFortigateSighting, ["fortigateDevice", "source"]),
   };
+  // Rule 165(a). Here, and not in each caller, because every path that merges
+  // one asset into another — the operator merge, the conflict absorb and both
+  // ghost merges — comes through this function before it deletes the absorbed row.
+  await carryQuarantineState(tx, fromAssetId, toAssetId);
+  return counts;
+}
+
+const QUARANTINE_CARRY_SELECT = {
+  id: true, hostname: true, ipAddress: true, status: true, monitored: true,
+  statusBeforeQuarantine: true, monitoredBeforeQuarantine: true,
+  quarantineReason: true, quarantinedAt: true, quarantinedBy: true,
+  quarantineTargets: true, quarantineStranded: true,
+} as const;
+
+/**
+ * Business rule 165(a): a MAC block Polaris pushed to a FortiGate is recorded
+ * on an asset row, and the block does not go away because that row is merged
+ * into another. Before this, the absorbed row's `quarantineTargets` and
+ * `quarantineStranded` were deleted with it: the device stayed blocked, the
+ * surviving record read as an ordinary active asset, and nothing in Polaris
+ * could release it.
+ *
+ *   - STRANDED entries (rule 165) are unioned onto the survivor, which keeps
+ *     retrying them and shows them on its Quarantine tab.
+ *   - An absorbed asset that IS quarantined hands the quarantine to the
+ *     survivor. A survivor already quarantined gains the gates it did not
+ *     have. One that is not becomes quarantined, parking its own status and
+ *     `monitored` exactly as `quarantineAsset` would have, so a release puts
+ *     it back where it was.
+ *
+ * It never un-quarantines anything and never calls a device. One read of two
+ * rows; a write only when the absorbed row carries quarantine state, which on
+ * a normal merge it does not.
+ */
+export async function carryQuarantineState(tx: any, fromAssetId: string, toAssetId: string): Promise<{ carried: boolean }> {
+  const rows: any[] = await tx.asset.findMany({ where: { id: { in: [fromAssetId, toAssetId] } }, select: QUARANTINE_CARRY_SELECT });
+  const from = rows.find((r) => r.id === fromAssetId);
+  const to = rows.find((r) => r.id === toAssetId);
+  if (!from || !to) return { carried: false };
+
+  const fromStranded = parseStranded(from.quarantineStranded);
+  const fromQuarantined = from.status === "quarantined";
+  if (fromStranded.length === 0 && !fromQuarantined) return { carried: false };
+
+  const survivorWasQuarantined = to.status === "quarantined";
+  const data: Record<string, unknown> = {};
+  if (fromStranded.length > 0) data.quarantineStranded = unionStranded(to.quarantineStranded, from.quarantineStranded);
+  if (fromQuarantined) {
+    data.quarantineTargets = unionQuarantineTargets(to.quarantineTargets, from.quarantineTargets);
+    if (!survivorWasQuarantined) {
+      const now = new Date();
+      data.status = "quarantined";
+      data.statusChangedAt = now;
+      data.statusChangedBy = "system:merge";
+      data.statusBeforeQuarantine = to.status;
+      data.monitoredBeforeQuarantine = to.monitored;
+      data.quarantineReason = from.quarantineReason;
+      data.quarantinedAt = from.quarantinedAt ?? now;
+      data.quarantinedBy = from.quarantinedBy;
+    }
+  }
+  await tx.asset.update({ where: { id: toAssetId }, data });
+
+  const name = (r: any) => r.hostname || r.ipAddress || r.id;
+  // Fire-and-forget like every Event; written here so no merge path can forget it.
+  void logEvent({
+    action: "asset.quarantine.carried",
+    resourceType: "asset",
+    resourceId: toAssetId,
+    resourceName: name(to),
+    actor: "system:merge",
+    level: "warning",
+    message: fromQuarantined
+      ? `${name(from)} was quarantined when it was merged into ${name(to)} — ${name(to)} now holds the quarantine`
+      : `${name(from)} was merged into ${name(to)} while still blocked on ${fromStranded.length} FortiGate(s) — ${name(to)} now tracks them`,
+    details: {
+      absorbedAssetId: fromAssetId,
+      quarantined: fromQuarantined,
+      survivorWasQuarantined,
+      targets: fromQuarantined ? from.quarantineTargets : [],
+      stranded: fromStranded,
+    },
+  });
+  return { carried: true };
 }
 
 export type DependencyParentWinner = "canonical" | "ghost";
@@ -711,6 +797,16 @@ export async function mergeAssets(opts: {
       update[field] = gVal;
       appliedFields.push(field);
     }
+  }
+
+  // Rule 165(a): quarantine owns `status` while either record is quarantined
+  // (carryQuarantineState settles it). A field winner must not write an
+  // ordinary status over a quarantine — the block would stay on the device
+  // with nothing recording it.
+  if (c.status === "quarantined" || g.status === "quarantined") {
+    delete update.status;
+    const i = appliedFields.indexOf("status");
+    if (i !== -1) appliedFields.splice(i, 1);
   }
 
   // Rule 111(c), before anything is written: the merged record's address must

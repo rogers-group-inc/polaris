@@ -65,6 +65,7 @@ import {
 } from "./reservationPushService.js";
 import { getQuarantineCandidates, type AssetSighting } from "./assetSightingService.js";
 import { expandMacRange } from "../utils/macAddresses.js";
+import { mergeStranded, withoutStrandedDevices } from "../utils/quarantineStranded.js";
 
 // ─── FortiOS user.quarantine shapes (subset) ────────────────────────────
 
@@ -853,6 +854,9 @@ export async function quarantineAsset(
       quarantinedAt: asset.quarantinedAt ?? now,
       quarantinedBy: params.actor,
       quarantineTargets: mergeQuarantineTargets(asset.quarantineTargets, targets, tokenScope) as any,
+      // Rule 165: a gate this quarantine has just pushed to holds the block on
+      // purpose again, so it is no longer a leftover to retry or dismiss.
+      quarantineStranded: withoutStrandedDevices(asset.quarantineStranded, targets.map((t) => t.fortigateDevice)) as any,
     },
   });
 
@@ -943,6 +947,9 @@ export async function releaseQuarantine(
 
   const unpushedFrom: string[] = [];
   const failedToUnpush: Array<{ fortigateDevice: string; error: string }> = [];
+  // Rule 165: the same failures, with the integration each gate was reached
+  // through — what a later retry needs to try again.
+  const stranded: Array<{ fortigateDevice: string; integrationId: string; error: string }> = [];
 
   for (const target of recordedTargets) {
     const integration = integrationById.get(target.integrationId);
@@ -952,6 +959,11 @@ export async function releaseQuarantine(
       failedToUnpush.push({
         fortigateDevice: target.fortigateDevice,
         error: "Integration no longer exists — possible orphan quarantine entry on device",
+      });
+      stranded.push({
+        fortigateDevice: target.fortigateDevice,
+        integrationId: target.integrationId,
+        error: "The integration that reached this FortiGate no longer exists",
       });
       continue;
     }
@@ -971,6 +983,11 @@ export async function releaseQuarantine(
     } catch (err: any) {
       failedToUnpush.push({
         fortigateDevice: target.fortigateDevice,
+        error: err?.message || "Unpush failed",
+      });
+      stranded.push({
+        fortigateDevice: target.fortigateDevice,
+        integrationId: target.integrationId,
         error: err?.message || "Unpush failed",
       });
     }
@@ -1001,12 +1018,16 @@ export async function releaseQuarantine(
       quarantinedAt: null,
       quarantinedBy: null,
       quarantineTargets: [] as any,
+      // Rule 165: the gates that still hold the block are remembered on the
+      // asset (not only in an Event that is pruned in a week), so they can be
+      // shown, retried in the background and dismissed.
+      quarantineStranded: mergeStranded(asset.quarantineStranded, stranded, now) as any,
     },
   });
 
   const message = failedToUnpush.length === 0
     ? `Quarantine released for ${asset.hostname || asset.id}: unpushed from ${unpushedFrom.length} FortiGate(s)`
-    : `Quarantine released for ${asset.hostname || asset.id}: unpushed from ${unpushedFrom.length}, ${failedToUnpush.length} failed (orphan entries may remain on those devices)`;
+    : `Quarantine released for ${asset.hostname || asset.id}: unpushed from ${unpushedFrom.length}, ${failedToUnpush.length} could not be reached and will be retried (orphan entries may remain on those devices)`;
 
   await logEvent({
     action: "asset.quarantine.released",
@@ -1129,6 +1150,7 @@ export async function getQuarantineStatus(assetId: string) {
       quarantinedAt: true,
       quarantinedBy: true,
       quarantineTargets: true,
+      quarantineStranded: true,
     },
   });
   if (!asset) throw new AppError(404, "Asset not found");

@@ -1296,6 +1296,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/expireReservations.js",
       "./jobs/pruneEvents.js",
       "./jobs/pruneHistory.js",
+      "./jobs/retryStrandedQuarantine.js",
       "./jobs/ouiRefresh.js",
       "./jobs/updateCheck.js",
       "./jobs/discoverySlowCheck.js",

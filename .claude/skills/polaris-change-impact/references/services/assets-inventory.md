@@ -472,6 +472,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - The survivor keeps its owner; an ownerless survivor takes the absorbed record's `createdBy` (business rule 141 (e), 2026-11-04) so a merge never turns an owned device into a Full Read-Write-only one. The merge itself is `assetMerge` (any two) — rule 141 (a).
 - Canonical and ghost must be distinct IDs; all transfers run in a single `$transaction`.
+- **Quarantine state follows the merge (rule 165(a)).** `transferAssetSideTables` ends by calling `carryQuarantineState(tx, from, to)` — so the operator merge, the conflict absorb and both ghost merges all carry it: stranded gates union onto the survivor; a quarantined absorbed row hands over its targets and, to a survivor not already quarantined, the quarantine (the survivor's own status / `monitored` parked). `mergeAssets` deletes a `status` field winner when either row is quarantined. A new merge path MUST go through `transferAssetSideTables` before deleting a row, and a test's mock `tx` needs `asset.findMany`.
 - Ghost `AssetSource` rows re-bind to canonical (global `(sourceKind, externalId)` uniqueness means no collision); `AssetMacAddress` / `AssetAssociatedIp` / `AssetIpHistory` / `AssetFortigateSighting` delete-on-conflict when duplicates exist.
 - `ManagedAgent` transfers only if the survivor has none; `lastSeen` keeps the more recent value; tags union; `acquiredAt` clamped to stay ≤ `lastSeen`.
 - **An empty value never overwrites a populated one, whatever `fieldWinners` says — and for `assetType` the `other` catch-all counts as empty** (`fieldIsEmpty`, built on `utils/assetTypes.isGenericAssetType`). Default: a survivor filed as `other` takes the ghost's specific type. Explicit: a `ghost` winner whose value is `other` is refused when the survivor holds a specific type; two specific types still go to whichever side the body names. Mirrored by `_mergeFieldIsEmpty` in `public/js/asset-merge-modal.js` (radio defaults + the review-step preview), and applied identically by `assetGhostMergeService.mergeDuplicateHostnameGhost` and `conflictResolutionService.acceptAssetConflict`.
@@ -527,6 +528,28 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Anything that renders a type NAME should tolerate one it doesn't know: `PolarisWidgets.assetTypeLabel(t)` is the one place that decides (static map → registry label once fetched → humanized snake_case), used by the Down Assets / Down Interfaces rows and CSV exports, which printed `network_camera` verbatim until 2026-09. The Assets-by-type widget iterates its rows and adds a name-derived hue, because it used to map over the label map's keys and drop unknown types from the drawing while still counting them in the total (a pie missing a wedge, with every other percentage reading low).
 
 ---
+
+## services/quarantineStrandedService.ts
+
+**What it owns:** Business rule 165 — the quarantine block that outlived its release: reading and shrinking `Asset.quarantineStranded`. (`assetQuarantineService.releaseQuarantine` WRITES the list, through `utils/quarantineStranded.ts`.)
+
+**Public API:** `retryStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds?, onlyDue? })` → `{ assetId, cleared, remaining }`; `dismissStrandedQuarantine(assetId, { actor, fortigateDevice?, tokenIntegrationIds? })`; `retryAllStrandedQuarantine(now?)` (the job's pass).
+
+**Cross-service deps:** `assetQuarantineService.unpushQuarantineFromFortigate`, `reservationPushService.buildTransportForIntegration`, `eventLogService.logEvent` (`asset.quarantine.stranded_cleared`, `asset.quarantine.stranded_dismissed`), `utils/quarantineStranded.ts`.
+
+**Used by:** `src/api/routes/assets/quarantine.ts` (`POST /:id/quarantine/stranded/retry`, `DELETE /:id/quarantine/stranded`); `src/jobs/retryStrandedQuarantine.ts`.
+
+**Invariants:**
+- **This module imports `assetQuarantineService`; that service must never import this one** (a cycle). Anything the quarantine service needs about the list is a pure helper in `utils/quarantineStranded.ts`.
+- The retry re-reads the row before it writes and folds its outcome into what is stored THEN — a dismiss or a second release that landed mid-attempt is not overwritten.
+- An entry whose integration no longer exists is kept and reported, never silently dropped: only a dismiss removes it.
+- Dismiss never calls a device and always writes a warning Event.
+- A scoped bearer token may only retry or dismiss gates reached through its own integrations (rule 114(d)).
+
+**When changing this:**
+- FortiManager and standalone FortiGate share this path through `buildTransportForIntegration` — never branch on the integration type here.
+- The job runs where schedulers run (web / all); it calls devices, so it must not be registered under another role.
+- `Asset.quarantineStranded` is NOT cleared when the asset is deleted or merged away (`docs/ORPHAN-AUDIT-LEDGER.md`, D.3) — a delete path that should record it reads `parseStranded` first.
 
 ## services/assetQuarantineService.ts
 
