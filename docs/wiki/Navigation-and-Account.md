@@ -228,7 +228,7 @@ about which data you can reach.
 The charts follow it too: their time axis, the dashed midnight lines, the hover
 readout and the "From … to …" caption all use this zone, so a midnight line
 falls on this zone's midnight. A few places keep their own clock on purpose:
-the **Current server time** on Server Settings → NTP is the server's clock; and
+the **Current server time** on Server Settings → Time is the server's clock; and
 dates and times you *type* — a chart's custom range, a maintenance window, a
 quiet time, a table's date filter — are wall-clock values in your browser's
 own zone.

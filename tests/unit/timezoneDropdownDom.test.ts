@@ -1,5 +1,5 @@
 /**
- * tests/unit/timezoneDropdownDom.test.ts — the Server Settings NTP card's
+ * tests/unit/timezoneDropdownDom.test.ts — the Server Settings Time card's
  * searchable timezone picker (public/js/server-settings.js →
  * initTimezoneDropdown) picks an option through ONE delegated mousedown on
  * #tz-dropdown, bound once (CQ-F042).

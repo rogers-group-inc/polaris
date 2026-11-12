@@ -3553,3 +3553,14 @@ those devices.
 Renaming a **map region** works the same way. As well as moving the region's tag on devices
 and networks and every user's region scope, Polaris updates the device filters that select
 by that region and the notify actions sent to that region's users.
+
+### Rule 170
+
+**Polaris keeps its own clock in the server timezone you give it, and leaves the host's
+clock alone.** Every "server-local" time in Polaris — maintenance windows, quiet times,
+scheduled reboots and firmware upgrades, and an alert email for a recipient with no
+timezone of their own — uses the timezone set on Server Settings → **Time**, or the host's
+timezone when none is set. A change reaches every Polaris process within about 30 seconds,
+with no restart. Polaris never changes the host's clock, its timezone or its time service;
+keeping the host's clock accurate is the host's job, which is why the NTP server settings
+that used to sit on that tab were removed. See [Server Settings](Server-Settings#time).
