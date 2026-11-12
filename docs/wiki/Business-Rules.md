@@ -87,6 +87,9 @@ non-deprecated network with no active reservation gets one auto-created. IPv4
 only, **never pushed to a gate**, and it **never raises a conflict** — it defers
 silently to anything authoritative. When two assets share one address, the
 reservation keeps describing the first and is not rewritten back and forth.
+The reservation is released when its device is decommissioned or disabled, or
+loses its address — including a device retired automatically by a discovery
+sweep, which the periodic clean-up picks up on its next pass.
 
 ---
 
