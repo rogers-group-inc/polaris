@@ -80,3 +80,11 @@ Images are up to 300 MiB each, and nothing in the Repository tab can reach the f
 **Not done: a screen for it.** The archive has no page in the UI at all — the two reads and now the delete are API-only. So this makes an archive entry removable, but not yet "through the Polaris UI" in the audit's sense. A list-and-review surface for archived networks is a new UI pattern and goes through the design-first rule; it is open in the ledger.
 
 Pinned by `tests/unit/historyRetentionService.test.ts` and `tests/integration/historyRetention.test.ts`; 158(a) by `tests/unit/backupUntracked.test.ts`, 158(b) by `tests/unit/firmwareFileSweep.test.ts`, 158(c) by the "158(c)" cases in `tests/integration/historyRetention.test.ts`, 158(d) by the delete cases in `tests/integration/subnetArchive.test.ts`.
+
+### Rule 158(e) — directory contacts whose integration is gone
+
+**How it was found.** Audit row B.11, listed as suspected and confirmed by reading the delete path. `DirectoryContactSource.integrationId` deliberately has no foreign key, so the integration delete purges the directory-synced contacts itself, before the row goes. That purge is wrapped in a catch that writes an error Event and lets the delete continue — rightly, since a contacts problem should not make an integration undeletable. But when it did fail, the provenance rows went on naming an integration that no longer existed, and the employee roster they had put into the address book stayed there with nothing that would ever refresh it or take it away.
+
+**What it does.** The daily history prune groups the provenance rows by integration, drops the ones whose integration still exists, and runs the ordinary purge for the rest. The purge keeps its own rules: a contact someone made by hand, or one another directory still vouches for, stays.
+
+Pinned by the "rule 158(e)" case in `tests/integration/historyRetention.test.ts`.

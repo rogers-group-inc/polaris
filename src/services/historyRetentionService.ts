@@ -331,6 +331,40 @@ export async function pruneUnpinnedProcessConfigs(now: Date = new Date()): Promi
   return (await prisma.assetProcessConfig.deleteMany({ where: { id: { in: dead }, updatedAt: { lt: cutoff } } })).count;
 }
 
+/**
+ * Business rule 158(e): directory-synced contacts whose integration is gone.
+ *
+ * `DirectoryContactSource.integrationId` has no foreign key on purpose (a
+ * cascade would strip the provenance and strand the contacts it justified),
+ * so deleting an integration purges them explicitly first
+ * (`directorySyncService.purgeDirectoryContacts`). That purge is best-effort:
+ * if it throws, the delete still goes through and writes an error Event — and
+ * the provenance rows, and the employee roster they put in the address book,
+ * were then left with nothing that could ever refresh or remove them.
+ *
+ * This finds provenance rows naming an integration that no longer exists and
+ * runs the same purge for each. Scale: one grouped read of a small table and
+ * one read of integration ids; normally nothing to do.
+ */
+export async function pruneDeadDirectoryContacts(): Promise<number> {
+  const owners = await prisma.directoryContactSource.groupBy({ by: ["integrationId"] });
+  if (owners.length === 0) return 0;
+  const live = new Set(
+    (await prisma.integration.findMany({
+      where: { id: { in: owners.map((o) => o.integrationId) } },
+      select: { id: true },
+    })).map((i) => i.id),
+  );
+  const dead = owners.map((o) => o.integrationId).filter((id) => !live.has(id));
+  if (dead.length === 0) return 0;
+  const { purgeDirectoryContacts } = await import("./directorySyncService.js");
+  let removed = 0;
+  for (const id of dead) {
+    removed += await purgeDirectoryContacts(id, "its integration no longer exists", "system");
+  }
+  return removed;
+}
+
 /** How long an SD-WAN rule row may sit unread before it is checked for removal. */
 export const SDWAN_RULE_STALE_DAYS = 7;
 
@@ -377,6 +411,8 @@ export interface HistoryPruneResult {
   firmwareLeftovers: number;
   /** SD-WAN rule rows of gates whose SD-WAN is no longer collected (rule 174). */
   sdwanRules: number;
+  /** Directory-synced contacts whose integration no longer exists (rule 158(e)). */
+  directoryContacts: number;
 }
 
 /**
@@ -384,7 +420,7 @@ export interface HistoryPruneResult {
  * reported in `errors` and the others still run.
  */
 export async function pruneHistory(now: Date = new Date()): Promise<{ result: HistoryPruneResult; errors: string[] }> {
-  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0, sdwanRules: 0 };
+  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0, sdwanRules: 0, directoryContacts: 0 };
   const errors: string[] = [];
   const attempt = async (name: string, run: () => Promise<void>) => {
     try { await run(); } catch (err) { errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`); }
@@ -398,6 +434,7 @@ export async function pruneHistory(now: Date = new Date()): Promise<{ result: Hi
   await attempt("tag provenance", async () => { result.tagAssignments = await pruneOrphanTagAssignments(); });
   await attempt("process log configs", async () => { result.processConfigs = await pruneUnpinnedProcessConfigs(now); });
   await attempt("stale SD-WAN rules", async () => { result.sdwanRules = await pruneStaleSdwanRules(now); });
+  await attempt("directory contacts of deleted integrations", async () => { result.directoryContacts = await pruneDeadDirectoryContacts(); });
   await attempt("firmware leftovers", async () => {
     const swept = await sweepFirmwareFiles(now);
     result.firmwareLeftovers = swept.files + swept.incoming + swept.rows;

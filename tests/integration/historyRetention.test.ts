@@ -43,6 +43,7 @@ import {
   pruneOrphanTagAssignments,
   pruneUnpinnedProcessConfigs,
   pruneStaleSdwanRules,
+  pruneDeadDirectoryContacts,
   SDWAN_RULE_STALE_DAYS,
   PROCESS_CONFIG_UNPINNED_DAYS,
   updateAlertHistorySettings,
@@ -318,7 +319,7 @@ d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
     const { result, errors } = await pruneHistory();
     expect(errors).toEqual([]);
     expect(result.alerts).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sdwanRules", "sightings", "summaries", "tagAssignments"]);
+    expect(Object.keys(result).sort()).toEqual(["alerts", "directoryContacts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sdwanRules", "sightings", "summaries", "tagAssignments"]);
     expect(sweepFirmwareFiles).toHaveBeenCalledTimes(1);
     expect(result.firmwareLeftovers).toBe(3);
   });
@@ -347,5 +348,35 @@ d("SD-WAN rule rows of a gate whose SD-WAN is no longer collected (rule 174)", (
 
     await prisma.assetSdwanRule.deleteMany({ where: { assetId: { in: [stopped.id, polled.id] } } });
     await prisma.asset.deleteMany({ where: { id: { in: [stopped.id, polled.id] } } });
+  });
+});
+
+d("directory-synced contacts whose integration is gone (rule 158(e))", () => {
+  it("purges the roster a failed delete-time purge left behind, and nothing of a live integration", async () => {
+    const live = await prisma.integration.create({ data: { type: "entraid", name: `${PFX} live directory`, config: {} } as never });
+    const dead = "00000000-dead-4000-8000-000000000000";
+    const contact = (email: string, origin: string) =>
+      prisma.contact.create({ data: { email: `${PFX}-${email}@example.invalid`, origin } as never });
+    const gone = await contact("gone", "entraid");
+    const kept = await contact("kept", "entraid");
+    const manual = await contact("manual", "manual");
+    const source = (integrationId: string, contactId: string, externalId: string) =>
+      prisma.directoryContactSource.create({ data: { integrationId, externalId, sourceKind: "entra-user", contactId, observed: {} } as never });
+    await source(dead, gone.id, "u1");
+    // A hand-made contact the dead directory also matched: the provenance goes, the contact stays.
+    await source(dead, manual.id, "u2");
+    await source(live.id, kept.id, "u3");
+
+    expect(await pruneDeadDirectoryContacts()).toBe(1);
+    expect(await prisma.contact.findUnique({ where: { id: gone.id } })).toBeNull();
+    expect(await prisma.contact.findUnique({ where: { id: manual.id } })).not.toBeNull();
+    expect(await prisma.contact.findUnique({ where: { id: kept.id } })).not.toBeNull();
+    expect(await prisma.directoryContactSource.count({ where: { integrationId: dead } })).toBe(0);
+    expect(await prisma.directoryContactSource.count({ where: { integrationId: live.id } })).toBe(1);
+    expect(await pruneDeadDirectoryContacts()).toBe(0);
+
+    await prisma.directoryContactSource.deleteMany({ where: { integrationId: live.id } });
+    await prisma.contact.deleteMany({ where: { id: { in: [kept.id, manual.id] } } });
+    await prisma.integration.delete({ where: { id: live.id } });
   });
 });

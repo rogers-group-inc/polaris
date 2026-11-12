@@ -3356,6 +3356,8 @@ cleared, with their delivery records — a period you set on the Events page's
 never deleted. Polaris also removes, without a setting because nothing reads them: the
 leftover state an automation kept for a device, port or check that stopped being
 evaluated a week ago; the last-run record of an integration that has been deleted;
+address-book contacts that were synced from a directory integration which has since been
+deleted;
 FortiGate sightings older than the quarantine sighting window; and Discovery runs older
 than 90 days, always keeping each Discovery's most recent run. A long backlog is removed
 a slice at a time over several nights. See [Events](Events#retention-and-archival).
