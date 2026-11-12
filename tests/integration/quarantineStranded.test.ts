@@ -190,6 +190,71 @@ d("retrying, dismissing and superseding a stranded entry (rule 164)", () => {
     expect(await strandedOf(a.id)).toHaveLength(1);
   });
 
+  // ── Rule 164(a): the record of a block survives a delete and a merge ──────
+
+  it("refuses to delete an asset still blocked on a FortiGate, single and bulk, until it is dismissed", async () => {
+    const { a, adm } = await releasedWithStranded("del", ["FG-HQ"]);
+    const one = await adm.agent.delete(`/api/v1/assets/${a.id}`).set("X-CSRF-Token", adm.csrf);
+    expect(one.status).toBe(409);
+    expect(one.body.error || one.body.message).toMatch(/still blocked on 1 FortiGate/);
+    const bulk = await adm.agent.delete(`/api/v1/assets`).set("X-CSRF-Token", adm.csrf).send({ ids: [a.id] });
+    expect(bulk.status).toBe(409);
+    expect(await prisma.asset.findUnique({ where: { id: a.id } })).not.toBeNull();
+
+    await adm.agent.delete(`/api/v1/assets/${a.id}/quarantine/stranded`).set("X-CSRF-Token", adm.csrf);
+    expect((await adm.agent.delete(`/api/v1/assets/${a.id}`).set("X-CSRF-Token", adm.csrf)).status).toBeLessThan(300);
+    expect(await prisma.asset.findUnique({ where: { id: a.id } })).toBeNull();
+  });
+
+  it("merging a released asset away hands its stranded gates to the survivor", async () => {
+    const { a, adm } = await releasedWithStranded("merge-src", ["FG-HQ", "FG-BRANCH"]);
+    const keep = await prisma.asset.create({ data: { hostname: `${PFX}-merge-keep`, assetType: "workstation", status: "active" } as never });
+    const res = await adm.agent.post(`/api/v1/assets/${keep.id}/merge`).set("X-CSRF-Token", adm.csrf).send({ otherAssetId: a.id, survivor: "this" });
+    expect(res.status).toBe(200);
+    expect(await prisma.asset.findUnique({ where: { id: a.id } })).toBeNull();
+    expect((await strandedOf(keep.id)).map((e) => e.fortigateDevice).sort()).toEqual(["FG-BRANCH", "FG-HQ"]);
+    expect((await prisma.asset.findUnique({ where: { id: keep.id } }))!.status).toBe("active");
+    await waitForEventCount("asset.quarantine.carried", 1, keep.id);
+
+    // The survivor's own background retry now clears them.
+    gates.reachable.add("FG-HQ");
+    gates.reachable.add("FG-BRANCH");
+    await retryAllStrandedQuarantine(new Date(Date.now() + 24 * 3600_000));
+    expect(await strandedOf(keep.id)).toEqual([]);
+  });
+
+  it("merging a QUARANTINED asset away quarantines the survivor, and releasing the survivor un-pushes the gates", async () => {
+    const q = await quarantined("merge-q", ["FG-HQ"]);
+    const keep = await prisma.asset.create({ data: { hostname: `${PFX}-merge-q-keep`, assetType: "workstation", status: "active", monitored: false } as never });
+    const adm = await authedAgent(app);
+    // Even with the absorbed record's field chosen for Status, quarantine owns it.
+    const res = await adm.agent.post(`/api/v1/assets/${keep.id}/merge`).set("X-CSRF-Token", adm.csrf)
+      .send({ otherAssetId: q.id, survivor: "this", fieldWinners: { status: "this" } });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.asset.findUnique({ where: { id: keep.id } });
+    expect(after).toMatchObject({ status: "quarantined", statusBeforeQuarantine: "active", monitoredBeforeQuarantine: false, quarantineReason: "test", monitored: false });
+    expect((after!.quarantineTargets as Array<{ fortigateDevice: string }>).map((t) => t.fortigateDevice)).toEqual(["FG-HQ"]);
+
+    // The survivor is now protected like any quarantined asset…
+    expect((await adm.agent.delete(`/api/v1/assets/${keep.id}`).set("X-CSRF-Token", adm.csrf)).status).toBe(409);
+    // …and a release with the gate unreachable leaves it stranded on the survivor.
+    const rel = await adm.agent.delete(`/api/v1/assets/${keep.id}/quarantine`).set("X-CSRF-Token", adm.csrf);
+    expect(rel.status).toBe(200);
+    expect(rel.body.newStatus).toBe("active");
+    expect((await strandedOf(keep.id)).map((e) => e.fortigateDevice)).toEqual(["FG-HQ"]);
+  });
+
+  it("merging INTO a quarantined asset with another status chosen leaves the quarantine in force", async () => {
+    const q = await quarantined("merge-into", ["FG-HQ"]);
+    const other = await prisma.asset.create({ data: { hostname: `${PFX}-merge-into-other`, assetType: "workstation", status: "storage" } as never });
+    const adm = await authedAgent(app);
+    const res = await adm.agent.post(`/api/v1/assets/${q.id}/merge`).set("X-CSRF-Token", adm.csrf)
+      .send({ otherAssetId: other.id, survivor: "this", fieldWinners: { status: "other" } });
+    expect(res.status).toBe(200);
+    expect((await prisma.asset.findUnique({ where: { id: q.id } }))!.status).toBe("quarantined");
+  });
+
   it("an asset with nothing stranded is untouched by the background pass", async () => {
     const plain = await prisma.asset.create({ data: { hostname: `${PFX}-plain`, assetType: "server", status: "active" } as never });
     await retryAllStrandedQuarantine(new Date(Date.now() + 24 * 3600_000));

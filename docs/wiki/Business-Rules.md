@@ -3434,3 +3434,10 @@ and retries in the background (15 minutes after the failure, backing off to ever
 hours) until it clears. **Retry** tries immediately. **Dismiss** stops the tracking without
 touching the FortiGate — use it once the entry has been removed there by hand, or the
 FortiGate is gone for good. See [Assets](Assets#still-blocked-on-a-fortigate).
+
+**(a) The record of a block is never lost with the asset.** An asset that is still blocked
+on a FortiGate cannot be deleted until the block clears or you dismiss it. When an asset is
+merged into another — by you, or by Polaris tidying up a duplicate — its quarantine and any
+FortiGates it is still blocked on move to the asset that remains. If the merged asset was
+quarantined, the remaining asset becomes quarantined, and releasing it restores the status
+and monitoring it had before the merge.

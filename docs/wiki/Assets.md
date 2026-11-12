@@ -2206,6 +2206,12 @@ the entry disappears when the block is gone.
 Both need `assetsQuarantine:write`. Quarantining the asset again clears the entry for any
 FortiGate the new quarantine reaches.
 
+An asset with anything under **Still blocked on** cannot be deleted — clear or dismiss the
+entries first. If it is merged into another asset, the entries move to the asset that
+remains. The same goes for a quarantine: merging a quarantined asset into another leaves
+the remaining asset quarantined (Events records it as *quarantine carried*), and choosing
+the other record's Status in the merge dialog does not lift a quarantine.
+
 ## Deleting an asset
 
 Three ways in, all `assets:write` and all the same act:

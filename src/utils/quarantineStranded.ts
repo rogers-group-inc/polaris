@@ -73,6 +73,38 @@ export function mergeStranded(
   return [...byKey.values()];
 }
 
+/**
+ * Two records' stranded lists as one (business rule 164(a) — a merge). An
+ * entry both hold keeps the first list's copy: its `since` and attempt count
+ * are the survivor's own history with that gate.
+ */
+export function unionStranded(survivor: unknown, absorbed: unknown): StrandedQuarantineEntry[] {
+  const byKey = new Map(parseStranded(survivor).map((e) => [strandedKey(e), e]));
+  for (const e of parseStranded(absorbed)) {
+    if (!byKey.has(strandedKey(e))) byKey.set(strandedKey(e), e);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * Two records' quarantine TARGET lists as one (rule 164(a)). Targets are
+ * opaque here — only `fortigateDevice` + `integrationId` are read — and a gate
+ * both hold keeps the survivor's record.
+ */
+export function unionQuarantineTargets(survivor: unknown, absorbed: unknown): unknown[] {
+  const list = (raw: unknown) => (Array.isArray(raw) ? raw.filter((t) => t && typeof t === "object" && typeof (t as { fortigateDevice?: unknown }).fortigateDevice === "string") : []);
+  const keyOf = (t: unknown) => {
+    const r = t as { fortigateDevice: string; integrationId?: unknown };
+    return strandedKey({ fortigateDevice: r.fortigateDevice, integrationId: typeof r.integrationId === "string" ? r.integrationId : "" });
+  };
+  const out = list(survivor);
+  const have = new Set(out.map(keyOf));
+  for (const t of list(absorbed)) {
+    if (!have.has(keyOf(t))) { out.push(t); have.add(keyOf(t)); }
+  }
+  return out;
+}
+
 /** The list without the given gates. */
 export function withoutStranded(
   existing: unknown,

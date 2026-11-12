@@ -28,7 +28,7 @@ vi.mock("../../src/services/agentOrphanService.js", () => ({
 }));
 vi.mock("../../src/db.js", () => {
   const tx = {
-    asset: { update: vi.fn(), delete: vi.fn() },
+    asset: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetMacAddress: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetAssociatedIp: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetIpHistory: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
