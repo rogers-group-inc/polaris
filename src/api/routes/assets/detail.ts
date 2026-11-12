@@ -190,7 +190,7 @@ router.post("/:id/rediscover", requirePermission("assets", "write"), scopeAssetP
 // credential, not necessarily the asset's monitor credential), capped at
 // `maxRows` (1..5000, default 500).
 const SnmpWalkSchema = z.object({
-  credentialId: z.string().uuid("credentialId must be a UUID"),
+  credentialId: z.string().guid("credentialId must be a UUID"),
   oid:          z.string().regex(/^\d+(\.\d+)*$/, "OID must be numeric (e.g. 1.3.6.1.2.1.1)").optional().default("1.3.6.1.2.1.1"),
   maxRows:      z.number().int().min(1).max(5000).optional().default(500),
 });

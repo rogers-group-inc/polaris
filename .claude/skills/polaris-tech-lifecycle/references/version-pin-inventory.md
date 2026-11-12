@@ -365,7 +365,7 @@ move is a project, not a dependency bump, so they are listed here and ignored in
 - **the Prisma family** — `prisma`, `@prisma/client` and `@prisma/adapter-pg` are **one
   version** and must move together. Driver-adapter setup, and the generated client is
   gitignored so every checkout regenerates via `postinstall`.
-- **zod 3**, **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 5** +
+- **zod 4** (every request array schema carries a `.max()` — `tests/unit/zodArrayCaps.test.ts`), **typescript 6**, **eslint 10** + `typescript-eslint 8`, **vitest 5** +
   `@vitest/coverage-v8` (versions must match), **pg 8**, **pg-boss 12**, **pino 10**,
   **undici 8**, **multer 2**, **happy-dom 21**, **@simplewebauthn/server 14**.
   - **@simplewebauthn/server has an unversioned counterpart**: the browser half of every

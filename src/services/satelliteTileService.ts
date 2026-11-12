@@ -25,7 +25,6 @@
  * a real deployment shape, and the setting is write-gated.
  */
 
-import { createHash } from "node:crypto";
 import { createSettingStore } from "./settingsStore.js";
 import { logEvent } from "./eventLogService.js";
 import { AppError } from "../utils/errors.js";
@@ -224,8 +223,22 @@ function evictFor(bytes: number): void {
   }
 }
 
-function fingerprint(s: SatelliteSettings): string {
-  return createHash("sha256").update(s.urlTemplate + "\n" + s.apiToken).digest("hex").slice(0, 16);
+// Tiles are keyed by a source GENERATION, not a hash of the settings: hashing
+// the API key with a fast digest reads as an insecure password hash (CodeQL
+// js/insufficient-password-hash), and nothing here needs a digest — the
+// current source is compared to the last one seen, in memory, and a change
+// (a save on another process included) moves the generation, so an old
+// source's tile and in-flight fetch can never answer for the new one.
+let tileSource: { urlTemplate: string; apiToken: string } | null = null;
+let tileGeneration = 0;
+
+function generationFor(s: SatelliteSettings): number {
+  if (!tileSource || tileSource.urlTemplate !== s.urlTemplate || tileSource.apiToken !== s.apiToken) {
+    if (tileSource) clearTileCache();
+    tileSource = { urlTemplate: s.urlTemplate, apiToken: s.apiToken };
+    tileGeneration++;
+  }
+  return tileGeneration;
 }
 
 async function fetchTile(s: SatelliteSettings, z: number, x: number, y: number): Promise<Tile> {
@@ -270,7 +283,7 @@ export async function getSatelliteTile(z: number, x: number, y: number): Promise
   const s = await read();
   if (!isUsable(s)) throw new AppError(404, "Satellite imagery is not configured");
   if (z > s.maxNativeZoom) throw new AppError(400, `The satellite source serves zoom 0-${s.maxNativeZoom}`);
-  const key = `${fingerprint(s)}/${z}/${x}/${y}`;
+  const key = `${generationFor(s)}/${z}/${x}/${y}`;
   const cached = tileCache.get(key);
   if (cached) return cached;
   const pending = tileInFlight.get(key);
@@ -303,4 +316,5 @@ export function _resetSatelliteForTests(): void {
   store.invalidate();
   clearTileCache();
   tileInFlight.clear();
+  tileSource = null;
 }

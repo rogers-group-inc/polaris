@@ -90,6 +90,16 @@ agent report sane values before shipping.
 - **Zod** — schemas are co-located at the top of every route file, so a major means a mechanical
   sweep. Watch error-shape changes: the API's 400 bodies are derived from Zod issues, so a
   changed issue shape is an API-contract change even though no route was touched.
+  The 3 → 4 move (2026-11-12) is the worked example: typecheck caught only the one-argument
+  `z.record`, `ZodError.errors` and `AnyZodObject`. The runtime-only changes it did NOT catch:
+  `.default()` on an object returns the default unparsed (nested defaults stop filling in —
+  `.prefault()` is the v3 behaviour), `.uuid()` became RFC-strict (`.guid()` is the v3 check), and —
+  the costly one — a `.default()` now applies even inside `.optional()` / `.partial()`, so an
+  update schema built as `Create.partial()` silently re-sent create's defaults on every PUT
+  (asset type reset to "other"; only the integration suite caught it). Re-declare defaulted
+  fields as plain `.optional()` in any `.partial()` update schema.
+  Zod's default message wording changed too; only custom messages are part of the 400 contract
+  (`tests/unit/errorHandlerZod.test.ts`).
 - **TypeScript** — expect new errors from stricter inference; that is the point. Do not widen
   types to silence them.
 - **Vitest** — `vitest` and `@vitest/coverage-v8` must match. `happy-dom` is effectively part of

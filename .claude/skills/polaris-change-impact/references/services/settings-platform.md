@@ -522,7 +522,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 **When changing this:**
 - `isWrapperAvailable()` lets route handlers short-circuit on dev boxes that lack the wrapper.
-- A new wrapper subcommand needs: a `case` in `deploy/scripts/polaris-nginx-apply.sh` (one argument — a unit instance carries one), an instance in the polkit regex (`deploy/polkit/49-polaris.rules`), and `instanceFor` here. `tests/unit/nginxApplyUnit.test.ts` evaluates the polkit rule and checks the web unit covers every `/run` path this module and `updateService` write.
+- A new wrapper subcommand needs: a `case` in `deploy/scripts/polaris-nginx-apply.sh` (one argument — a unit instance carries one), an instance in the polkit regex (`deploy/polkit/49-polaris.rules`), and `instanceFor` here — its result must match `^[a-z0-9-]+$`, which `runNginxApply` checks before the instance becomes a path under the stage dir (CodeQL js/path-injection #124/#125). `tests/unit/nginxApplyUnit.test.ts` evaluates the polkit rule and checks the web unit covers every `/run` path this module and `updateService` write.
 
 ---
 

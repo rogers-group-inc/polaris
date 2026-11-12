@@ -382,7 +382,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A settings read failure means "not offered"**, never a broken map. A satellite choice saved on a view (`background.layer`) falls back to the map while satellite is off.
 
 **When changing this:**
-- The cache (64 MB / 4000 tiles, per process, keyed by a hash of template + key) is cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL plus its own cache — acceptable for imagery.
+- The cache (64 MB / 4000 tiles, per process) is keyed by a source GENERATION: the template + key are compared in memory to the last ones seen, and a change moves the generation and clears the cache. It is never a digest of the key: a SHA-256 of the API key read as an insecure password hash (CodeQL js/insufficient-password-hash, #126, 2026-11-12). Cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL, then sees the change and misses — acceptable for imagery.
 - Scale: tiles are requested only by open Topology views on the satellite layer; one upstream fetch per tile per process (in-flight dedupe). At 2000 assets nothing here runs per asset.
 - Tests: `tests/unit/satelliteTileService.test.ts`.
 

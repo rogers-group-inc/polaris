@@ -41,7 +41,7 @@ const ProviderSchema = z.enum(GROUP_MAPPING_PROVIDERS as unknown as [string, ...
 const CreateSchema = z.object({
   provider: ProviderSchema,
   groupKey: z.string().min(1).max(512),
-  roleId: z.string().uuid().optional().nullable(),
+  roleId: z.string().guid().optional().nullable(),
   regionTags: TagsSchema.optional(),
   otherTags: TagsSchema.optional(),
   enabled: z.boolean().optional(),
@@ -50,7 +50,7 @@ const CreateSchema = z.object({
 
 const UpdateSchema = z.object({
   groupKey: z.string().min(1).max(512).optional(),
-  roleId: z.string().uuid().optional().nullable(),
+  roleId: z.string().guid().optional().nullable(),
   regionTags: TagsSchema.optional(),
   otherTags: TagsSchema.optional(),
   enabled: z.boolean().optional(),

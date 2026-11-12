@@ -194,7 +194,22 @@ const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"'
  * decoded after this, so nothing real is lost.
  */
 function stripTags(s: string): string {
-  return s.replace(/<[^>]+>/g, "").replace(/</g, "");
+  // A scan rather than `replace(/<[^>]+>/g, "")` + a second pass: CodeQL reads
+  // the regex form as incomplete multi-character sanitization (it cannot see
+  // the follow-up "<" strip), and this form cannot leave a "<" by construction.
+  // Same output as the regex pair: "<" … ">" with at least one character
+  // between is a tag and goes; any other "<" goes on its own.
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf("<", i);
+    if (lt === -1) { out += s.slice(i); break; }
+    out += s.slice(i, lt);
+    const gt = s.indexOf(">", lt + 1);
+    if (gt === -1) { out += s.slice(lt + 1).split("<").join(""); break; }
+    i = gt > lt + 1 ? gt + 1 : lt + 1;
+  }
+  return out;
 }
 
 /** HTML → readable Markdown-ish text: code kept as `code`, lists as "- ", tags dropped. */

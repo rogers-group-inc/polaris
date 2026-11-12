@@ -41,7 +41,7 @@ const MacAddressSchema = z
   .optional();
 
 const CreateReservationSchema = z.object({
-  subnetId: z.string().uuid(),
+  subnetId: z.string().guid(),
   ipAddress: z.string().optional(),
   hostname: z.string().trim().min(1, "Hostname is required"),
   owner: z.string().trim().optional(),
@@ -55,13 +55,13 @@ const CreateReservationSchema = z.object({
 // gated at `reservations:read` (the IP panel already shows every free address
 // to that level) rather than the ownership gate the create below carries.
 const NextAvailablePreviewSchema = z.object({
-  subnetId: z.string().uuid(),
+  subnetId: z.string().guid(),
   count: z.number().int().min(1).max(reservationService.MAX_BULK_ALLOCATE),
   contiguous: z.boolean().optional().default(false),
 });
 
 const NextAvailableSchema = z.object({
-  subnetId: z.string().uuid(),
+  subnetId: z.string().guid(),
   hostname: z.string().trim().min(1, "Hostname is required"),
   owner: z.string().trim().optional(),
   projectRef: z.string().trim().optional(),
