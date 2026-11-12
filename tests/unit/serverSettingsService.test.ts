@@ -1,92 +1,119 @@
 /**
- * tests/unit/serverSettingsService.test.ts — NTP settings and the uploaded
- * certificate list (CQ-T010).
+ * tests/unit/serverSettingsService.test.ts — the server timezone (business
+ * rule 170) and the uploaded certificate list (CQ-T010).
  *
- * `testNtpSync` used to answer "Synchronized" with an invented offset without
- * contacting anything (found 2026-11-11, pinned then fixed the same day). It
- * now queries every server for real (src/utils/sntp.ts, tested on loopback in
- * sntp.test.ts); here the query is injected through its `deps` seam.
+ * The timezone override is applied to the PROCESS (process.env.TZ), so every
+ * test that applies one restores the zone it found in afterEach.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
+vi.mock("../../src/services/eventLogService.js", (orig) =>
+  import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 
 import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 import {
-  getNtpSettings, updateNtpSettings, testNtpSync, listCertificates, addCertificate, deleteCertificate,
-  type CertificateRecord, type NtpTestDeps,
+  applyProcessTimezone, getServerTimezone, setServerTimezone, refreshProcessTimezone,
+  listCertificates, addCertificate, deleteCertificate,
+  type CertificateRecord,
 } from "../../src/services/serverSettingsService.js";
 
 const findUnique = stubbed(prisma.setting.findUnique);
 const upsert = stubbed(prisma.setting.upsert);
 const update = stubbed(prisma.setting.update);
 
-beforeEach(() => resetDbStub());
+const zoneNow = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+const START_ZONE = zoneNow();
+// A zone far from any CI runner's, so "it moved" cannot pass by accident.
+const OTHER = START_ZONE === "Asia/Tokyo" ? "America/Chicago" : "Asia/Tokyo";
 
-describe("NTP settings", () => {
-  it("no row reads as the disabled default", async () => {
-    findUnique.mockResolvedValue(null);
-    expect(await getNtpSettings()).toEqual({ enabled: false, mode: "ntp", servers: [], timezoneOverride: null });
-  });
-
-  it("a stored partial value is filled from the default", async () => {
-    findUnique.mockResolvedValue({ value: { enabled: true, servers: ["pool.ntp.org"] } });
-    expect(await getNtpSettings()).toEqual({ enabled: true, mode: "ntp", servers: ["pool.ntp.org"], timezoneOverride: null });
-  });
-
-  it("an update merges over the current value and stores the merge", async () => {
-    findUnique.mockResolvedValue({ value: { enabled: true, servers: ["a"] } });
-    const r = await updateNtpSettings({ mode: "nts" });
-    expect(r).toEqual({ enabled: true, mode: "nts", servers: ["a"], timezoneOverride: null });
-    expect(upsert.mock.calls[0][0].update.value).toEqual(r);
-  });
-
-  it("a test with no servers is refused", async () => {
-    expect(await testNtpSync({ mode: "ntp", servers: [" "] })).toEqual({ ok: false, message: "No NTP servers configured", results: [] });
-  });
+beforeEach(() => {
+  resetDbStub();
+  resetEventLogStub();
 });
 
-describe("testNtpSync — a real query per server (was an invented success until 2026-11-11)", () => {
-  const sample = (over: Record<string, unknown> = {}) => ({ offsetMs: 12, delayMs: 23.4, stratum: 2, refId: "10.0.0.1", address: "a", ...over });
-  const deps = (over: Partial<NtpTestDeps> = {}): NtpTestDeps => ({
-    querySntp: vi.fn(async () => sample()) as any,
-    checkNtsKe: vi.fn(async () => { throw new Error("not used"); }) as any,
-    ...over,
+describe("server timezone (business rule 170)", () => {
+  afterEach(() => { applyProcessTimezone(null); });
+
+  it("the override moves this process's clock — Intl and Date local getters both", () => {
+    expect(applyProcessTimezone(OTHER)).toBe(OTHER);
+    expect(zoneNow()).toBe(OTHER);
+    const d = new Date("2026-07-01T12:00:00Z");
+    const expectedHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: OTHER, hour: "numeric", hourCycle: "h23" }).format(d));
+    expect(d.getHours()).toBe(expectedHour);
   });
 
-  it("queries every distinct server and reports each one's stratum, offset and delay", async () => {
-    const d = deps();
-    const r = await testNtpSync({ mode: "ntp", servers: ["a.example", "b.example", "a.example"] }, d);
-    expect(d.querySntp).toHaveBeenCalledTimes(2);
-    expect(r.ok).toBe(true);
-    expect(r.message).toBe("a.example: stratum 2, offset +0.012 s, delay 23 ms; b.example: stratum 2, offset +0.012 s, delay 23 ms");
+  it("clearing the override puts the host's zone back (deleting TZ would not)", () => {
+    applyProcessTimezone(OTHER);
+    expect(applyProcessTimezone(null)).toBe(START_ZONE);
+    expect(zoneNow()).toBe(START_ZONE);
   });
 
-  it("a server that does not answer fails the test and says why; the others still report", async () => {
-    const d = deps({
-      querySntp: vi.fn(async (host: string) => { if (host === "192.0.2.1") throw new Error("no answer within 3 s"); return sample(); }) as any,
+  it("a zone this build cannot format in falls back to the host's zone, never Node's silent UTC", () => {
+    applyProcessTimezone(OTHER);
+    expect(applyProcessTimezone("Mars/Olympus")).toBe(START_ZONE);
+  });
+
+  it("no row reads as no override, running in the host's zone", async () => {
+    findUnique.mockResolvedValue(null);
+    expect(await getServerTimezone()).toEqual({ override: null, effective: START_ZONE, host: START_ZONE });
+  });
+
+  it("a stored zone this build cannot use reads as no override", async () => {
+    findUnique.mockResolvedValue({ value: { override: "Nowhere/Nothing" } });
+    expect((await getServerTimezone()).override).toBeNull();
+  });
+
+  it("a save stores the zone, applies it at once and audits the change", async () => {
+    findUnique.mockResolvedValue(null);
+    upsert.mockResolvedValue({});
+    const out = await setServerTimezone(` ${OTHER} `, "admin");
+    expect(out).toEqual({ override: OTHER, effective: OTHER, host: START_ZONE });
+    expect(upsert.mock.calls[0][0]).toMatchObject({ where: { key: "timezone" }, update: { value: { override: OTHER } } });
+    expect(zoneNow()).toBe(OTHER);
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({
+      action: "server.timezone.changed", actor: "admin", details: { before: null, after: OTHER },
     });
-    const r = await testNtpSync({ mode: "ntp", servers: ["192.0.2.1", "ok.example"] }, d);
-    expect(r.ok).toBe(false);
-    expect(r.results.map((x) => x.ok)).toEqual([false, true]);
-    expect(r.message).toContain("192.0.2.1: no answer within 3 s");
   });
 
-  it("says so when this server's clock is more than a second off", async () => {
-    const r = await testNtpSync({ mode: "sntp", servers: ["a"] }, deps({ querySntp: vi.fn(async () => sample({ offsetMs: 4200 })) as any }));
-    expect(r.ok).toBe(true);
-    expect(r.message).toContain("the Polaris server's clock is 4.2 s behind it");
+  it("re-saving the same zone writes no audit event", async () => {
+    findUnique.mockResolvedValue({ value: { override: OTHER } });
+    upsert.mockResolvedValue({});
+    await setServerTimezone(OTHER);
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
-  it("NTS runs the key exchange first, takes the time from the server it names, and says the sample was not NTS-authenticated", async () => {
-    const d = deps({ checkNtsKe: vi.fn(async () => ({ complete: true, protocols: [0], aead: [15], cookies: 8, server: "time.example", port: 1123, error: null })) as any });
-    const r = await testNtpSync({ mode: "nts", servers: ["nts.example"] }, d);
-    expect(d.querySntp).toHaveBeenCalledWith("time.example", { port: 1123 });
-    expect(r.message).toMatch(/^nts\.example: NTS key exchange OK \(8 cookies\); stratum 2.*not NTS-authenticated/);
-    const refused = await testNtpSync({ mode: "nts", servers: ["x"] }, deps({ checkNtsKe: vi.fn(async () => { throw new Error("NTS key exchange: no ntske/1 ALPN"); }) as any }));
-    expect(refused).toMatchObject({ ok: false, message: "x: NTS key exchange: no ntske/1 ALPN" });
+  it("an empty value clears the override", async () => {
+    findUnique.mockResolvedValue({ value: { override: OTHER } });
+    upsert.mockResolvedValue({});
+    applyProcessTimezone(OTHER);
+    const out = await setServerTimezone("  ");
+    expect(out.override).toBeNull();
+    expect(out.effective).toBe(START_ZONE);
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ details: { before: OTHER, after: null } });
+  });
+
+  it("an unknown zone is a 400 and changes nothing", async () => {
+    await expect(setServerTimezone("Mars/Olympus")).rejects.toMatchObject({ httpStatus: 400 });
+    expect(upsert).not.toHaveBeenCalled();
+    expect(zoneNow()).toBe(START_ZONE);
+  });
+
+  it("the refresh tick applies what another role saved", async () => {
+    findUnique.mockResolvedValue({ value: { override: OTHER } });
+    await refreshProcessTimezone();
+    expect(zoneNow()).toBe(OTHER);
+  });
+
+  it("a refresh that cannot read the setting keeps the zone in force and does not throw", async () => {
+    applyProcessTimezone(OTHER);
+    findUnique.mockRejectedValue(new Error("db down"));
+    await expect(refreshProcessTimezone()).resolves.toBeUndefined();
+    expect(zoneNow()).toBe(OTHER);
   });
 });
 

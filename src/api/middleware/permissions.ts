@@ -244,7 +244,7 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   { key: "authentication", section: "users", label: "Authentication", description: "How operators sign in: the SAML / OIDC / LDAP / App Proxy providers, passkey policy and password policy.", levels: UP_TO_WRITE },
 
   // ── Server Settings ───────────────────────────────────────────────────────
-  { key: "serverSettingsSystem", section: "serverSettings", label: "Server Settings — System", description: "HTTPS, branding, DNS, NTP, certificates, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
+  { key: "serverSettingsSystem", section: "serverSettings", label: "Server Settings — System", description: "HTTPS, branding, DNS, the server timezone, certificates, capacity, HA and the agent fleet.", levels: UP_TO_WRITE },
   { key: "serverSettingsData", section: "serverSettings", label: "Server Settings — Data", description: "Database backup, restore and download, queue mode, security tokens, restart, in-app updates.", levels: WRITE_ONLY },
   // Split out of `serverSettingsSystem` on 2026-11-03 (migration
   // 20261103170000_dangerous_act_keys), and deliberately an ADMIN-tier grant:
