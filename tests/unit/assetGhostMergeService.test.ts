@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../src/db.js", () => {
   const tx = {
-    asset: { findUniqueOrThrow: vi.fn(), update: vi.fn(), delete: vi.fn() },
+    asset: { findUniqueOrThrow: vi.fn(), findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetMacAddress: { findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     assetAssociatedIp: { findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
     assetIpHistory: { findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },

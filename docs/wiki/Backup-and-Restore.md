@@ -19,8 +19,15 @@ and restore.
   `polaris-pre-update-…` for the one an update takes, with `.enc` before `.gz`
   when encrypted.
 - Files live on the host under `data/backups` in the state directory.
-  **Backup History** shows the most recent 20 — date, filename (pre-update ones
-  badged), size, whether encrypted — each with a **Download** button.
+  **Backup History** lists every backup there — date, filename (pre-update ones
+  badged), size, whether encrypted — each with **Download** and **Delete**.
+- A backup marked **Found on disk** is a backup file Polaris has no record of
+  making: the record was lost when an older backup was restored (a restore
+  brings back the list as it was then), or was never written. Its original
+  filename and version are not known, so the name shown is made from its date.
+  It downloads, restores and deletes like any other. Polaris never deletes a
+  manual or pre-update backup on its own; scheduled backups are pruned to the
+  number you set to keep.
 - A dump that stops producing output for 10 minutes is treated as wedged; one
   that is still streaming may take as long as it needs.
 - **A failed pre-update backup aborts the update by default.**

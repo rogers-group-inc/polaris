@@ -914,6 +914,9 @@ const api = {
     quarantine:           (id, reason) => request("POST", `/assets/${id}/quarantine`, reason !== undefined ? { reason } : {}),
     unquarantine:         (id)  => request("DELETE", `/assets/${id}/quarantine`),
     verifyQuarantine:     (id)  => request("POST", `/assets/${id}/quarantine/verify`),
+    // Business rule 165: a FortiGate that still holds the block after a release.
+    retryStrandedQuarantine:   (id, device) => request("POST", `/assets/${id}/quarantine/stranded/retry`, device ? { fortigateDevice: device } : {}),
+    dismissStrandedQuarantine: (id, device) => request("DELETE", `/assets/${id}/quarantine/stranded` + (device ? "?device=" + encodeURIComponent(device) : "")),
     getSightings:         (id)  => request("GET", `/assets/${id}/sightings`),
     getSources:           (id)  => request("GET", `/assets/${id}/sources`),
     splitSource:          (id, sourceId) => request("POST", `/assets/${id}/sources/${sourceId}/split`),

@@ -2088,11 +2088,14 @@ async function loadBackupHistory() {
       body.innerHTML = toolingHtml + '<p class="empty-state" style="font-size:0.85rem">No backups have been created yet.</p>';
       return;
     }
+    // Every backup is listed (it stopped at the newest 20, so an older one
+    // could not be downloaded or deleted from here); the list scrolls instead.
     body.innerHTML = toolingHtml +
+      '<div style="max-height:420px;overflow-y:auto">' +
       '<table class="ip-table"><thead><tr>' +
         '<th>Date</th><th>Filename</th><th style="text-align:right">Size</th><th>Encrypted</th><th style="width:140px"></th>' +
       '</tr></thead><tbody>' +
-      history.slice(0, 20).map(function (b) {
+      history.map(function (b) {
         var dlBtn = b.downloadable !== false
           ? '<button class="btn btn-secondary btn-sm backup-dl-btn" data-id="' + escapeHtml(b.id) + '" data-filename="' + escapeHtml(b.filename) + '" style="font-size:0.75rem;padding:2px 8px">' +
               '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" style="vertical-align:-1px;margin-right:3px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
@@ -2101,12 +2104,17 @@ async function loadBackupHistory() {
         var preUpdateBadge = b.preUpdate
           ? ' <span class="badge" style="font-size:0.7rem;background:color-mix(in srgb, var(--color-warning) 15%, transparent);color:var(--color-warning);border:1px solid color-mix(in srgb, var(--color-warning) 40%, transparent)">Pre-update</span>'
           : '';
+        // Rule 158(a): a backup file found on disk that the history no longer
+        // lists. Its real name and version are unknown; it is still a backup.
+        var untrackedBadge = b.untracked
+          ? ' <span class="badge badge-info" style="font-size:0.7rem" title="Found on disk with no history entry — its original filename and version are not known">Found on disk</span>'
+          : '';
         var pathRow = b.path
           ? '<div class="mono" style="font-size:0.72rem;color:var(--color-text-tertiary);margin-top:2px;word-break:break-all" title="' + escapeHtml(b.path) + '">' + escapeHtml(b.path) + '</div>'
           : '';
         return '<tr>' +
           '<td style="font-size:0.82rem;white-space:nowrap;vertical-align:top">' + escapeHtml(formatDate(b.createdAt)) + '</td>' +
-          '<td class="mono" style="font-size:0.82rem">' + escapeHtml(b.filename) + preUpdateBadge + pathRow + '</td>' +
+          '<td class="mono" style="font-size:0.82rem">' + escapeHtml(b.filename) + preUpdateBadge + untrackedBadge + pathRow + '</td>' +
           '<td style="text-align:right;font-size:0.82rem;color:var(--color-text-secondary);vertical-align:top">' + formatFileSize(b.size || b.sizeBytes || 0) + '</td>' +
           '<td style="vertical-align:top">' + (b.encrypted
             ? '<span class="badge badge-warning" style="font-size:0.7rem">Encrypted</span>'
@@ -2119,7 +2127,8 @@ async function loadBackupHistory() {
           '</td>' +
           '</tr>';
       }).join("") +
-      '</tbody></table>';
+      '</tbody></table>' +
+      '</div>';
 
     // Wire up download buttons
     body.querySelectorAll(".backup-dl-btn").forEach(function (btn) {

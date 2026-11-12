@@ -279,6 +279,18 @@ router.get("/archived/:id", requirePermission("subnets", "read"), async (req, re
   }
 });
 
+// DELETE /subnets/archived/:id — remove one archive entry and the reservations
+// archived with it (business rule 158(d)). `fullwrite`, the level that creates
+// an archive entry. Refused while a pending chassis-replacement conflict still
+// reads it. MUST stay before `DELETE /:id`.
+router.delete("/archived/:id", requirePermission("subnets", "fullwrite"), async (req, res, next) => {
+  try {
+    res.json(await subnetArchiveService.deleteArchivedSubnet(req.params.id as string, { actor: requestActor(req) ?? null }));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /subnets/:id/archive — retire a subnet: snapshot it + its reservations
 // into the archive, then delete the live row so its CIDR is free again.
 //

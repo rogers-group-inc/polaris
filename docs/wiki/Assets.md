@@ -422,7 +422,9 @@ The rest are conditional:
   (firewall / switch / access point) or the `other` catch-all.
 - **Quarantine** — for an `assetsQuarantine` holder, on an asset with a MAC
   when quarantine push is turned on for some integration, and always on an
-  asset that is already quarantined, so **Release** stays reachable.
+  asset that is already quarantined, so **Release** stays reachable. See
+  [Still blocked on a FortiGate](#still-blocked-on-a-fortigate) for what the tab
+  shows when a release could not reach every gate.
 - **Events** — with `events:read`. **Alerts** — with `alerts:read`.
 - **Custom MIB** — when the asset's manufacturer profile defines custom widgets
   (Server Settings → Credentials → Manufacturer Profiles).
@@ -2226,6 +2228,32 @@ on one of the addresses it already has, use **Set as primary** in its
 
 Saving the form while the field is already empty changes nothing, so editing
 another field on an asset with no address never pins it blank.
+
+## Still blocked on a FortiGate
+
+Releasing a quarantine lifts the block on every FortiGate that holds it. If one of them
+cannot be reached at that moment, the release still goes ahead: the asset's status and
+monitoring come back, and the toast tells you which gate was missed. The device is then
+still blocked at that one site ([rule 165](Business-Rules#rule-165)).
+
+The asset's **Quarantine** tab shows this under **Still blocked on**, with the FortiGate,
+when the release failed there, when Polaris last tried, and why it failed. Polaris retries
+by itself — 15 minutes after the failure, then less often, up to every six hours — and
+the entry disappears when the block is gone.
+
+| | |
+|---|---|
+| **Retry** | try that FortiGate again now |
+| **Dismiss** | stop tracking it. This does **not** remove anything from the FortiGate; use it once you have removed the entry there yourself, or the FortiGate no longer exists. It is recorded in Events |
+
+Both need `assetsQuarantine:write`. Quarantining the asset again clears the entry for any
+FortiGate the new quarantine reaches.
+
+An asset with anything under **Still blocked on** cannot be deleted — clear or dismiss the
+entries first. If it is merged into another asset, the entries move to the asset that
+remains. The same goes for a quarantine: merging a quarantined asset into another leaves
+the remaining asset quarantined (Events records it as *quarantine carried*), and choosing
+the other record's Status in the merge dialog does not lift a quarantine.
 
 ## Deleting an asset
 

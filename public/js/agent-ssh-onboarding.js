@@ -467,7 +467,7 @@
             (hasKey ? "Regenerate keypair" : "Generate keypair") + '</button>' +
         '</div>' +
         (hasKey
-          ? '<p class="hint" style="color:var(--color-warning,#d98c00);margin-top:0.5rem">Regenerating invalidates the current key everywhere. Every endpoint must re-run the onboarding script before Polaris can reach it again.</p>'
+          ? '<p class="hint" style="color:var(--color-warning,#d98c00);margin-top:0.5rem">Regenerating invalidates the current key everywhere. Every endpoint must re-run the onboarding script before Polaris can reach it again; that run also removes the old key from the endpoint.</p>'
           : '') +
         '<p class="hint" style="margin-top:0.5rem">The private key is stored encrypted and is never shown or downloadable. There is no escrow copy: if it is lost, regenerate and re-run the script (which is safe to re-run).</p>' +
       '</div>'
@@ -547,11 +547,16 @@
             ? 'Plain bash with no machine-specific values, so the same file runs unchanged on every host. Run it as <strong>root</strong>; it is idempotent. '
             : 'Plain PowerShell with no machine-specific values, so the same file runs unchanged on every endpoint. Run it as SYSTEM with the 64-bit PowerShell host. ') +
           'The <strong>detection</strong> script is optional but recommended: pairing the two makes rollout self-healing, ' +
-          'because a one-shot script never retries on machines that were offline or have since been reimaged.' +
+          'because a one-shot script never retries on machines that were offline or have since been reimaged. ' +
+          'The <strong>offboarding</strong> script is the reverse: it removes the Polaris key' +
+          (_platform === "linux" ? ', the passwordless-sudo file' : '') +
+          ', the account when the onboarding script created it, and the Polaris firewall rule from a host that is leaving Polaris. ' +
+          'Uninstall the Polaris Agent from that host first &mdash; afterwards Polaris can no longer sign in to do it.' +
         '</p>' +
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:0.75rem">' +
           '<button class="btn btn-sm btn-secondary" id="wssh-show-remediation">Onboarding script</button>' +
           '<button class="btn btn-sm btn-secondary" id="wssh-show-detection">Detection script</button>' +
+          '<button class="btn btn-sm btn-secondary" id="wssh-show-offboarding">Offboarding script</button>' +
           '<span style="flex:1"></span>' +
           '<button class="btn btn-sm btn-secondary" id="wssh-copy">Copy</button>' +
           '<button class="btn btn-sm btn-primary" id="wssh-download">Download ' + (_platform === "linux" ? ".sh" : ".ps1") + '</button>' +
@@ -664,6 +669,8 @@
     if (showRem) showRem.addEventListener("click", function () { loadScript("remediation"); });
     var showDet = el("wssh-show-detection");
     if (showDet) showDet.addEventListener("click", function () { loadScript("detection"); });
+    var showOff = el("wssh-show-offboarding");
+    if (showOff) showOff.addEventListener("click", function () { loadScript("offboarding"); });
 
     var copy = el("wssh-copy");
     if (copy) copy.addEventListener("click", onCopy);
@@ -732,6 +739,8 @@
     var detBtn = el("wssh-show-detection");
     if (remBtn) remBtn.classList.toggle("btn-primary", kind === "remediation");
     if (detBtn) detBtn.classList.toggle("btn-primary", kind === "detection");
+    var offBtn = el("wssh-show-offboarding");
+    if (offBtn) offBtn.classList.toggle("btn-primary", kind === "offboarding");
 
     var ck = scriptCacheKey(_platform, kind);
     if (_scripts[ck]) {

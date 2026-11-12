@@ -63,6 +63,7 @@ vi.mock("../../src/db.js", () => ({
       deleteMany: vi.fn(async () => ({ count: 0 })),
     },
     notificationRule: { findMany: vi.fn(async () => db.rules) },
+    alertGroup: { findMany: vi.fn(async () => []) },
     managedAgent: {
       findUnique: vi.fn(async ({ where }: any) => {
         const a = db.agents.find((x) => x.assetId === where.assetId);
@@ -152,7 +153,7 @@ describe("automationScriptService CRUD", () => {
       actions: [{ type: "script", scriptId: s.id, runOn: "server" }],
       targets: [], escalation: null, emailComposition: null, clearBehavior: "manual", clearAfterSec: null,
     });
-    await expect(deleteScript(s.id)).rejects.toThrow(/used by 1 automation/);
+    await expect(deleteScript(s.id)).rejects.toThrow(/still used by automation "uses script"/);
     db.rules.length = 0;
     await expect(deleteScript(s.id)).resolves.toBeUndefined();
   });
