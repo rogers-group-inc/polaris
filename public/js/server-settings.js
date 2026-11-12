@@ -9,7 +9,7 @@
  * state the Identification / MIB / profile files share. Each tab's body lives
  * in its own plain browser script (CQ-F051), loaded right AFTER this one by
  * server-settings.html, in this order:
- *   server-settings-ntp-web.js         Time, Web Server
+ *   server-settings-ntp-web.js         Web Server (incl. the Server Timezone card)
  *   server-settings-maintenance.js     Maintenance, Retention, backups, updates
  *   server-settings-customization.js   Customization
  *   server-settings-identification.js  Identification (tags, DNS, OUI, icons, types)
@@ -75,7 +75,6 @@ document.addEventListener("DOMContentLoaded", function () {
         window.history.replaceState(null, "", u);
       } catch (e) { /* non-fatal: tab still switches */ }
       // Lazy-load tabs on first click
-      if (target === "time" && !_timeLoaded) loadTimeSettings();
       if (target === "certificates" && !_certsLoaded) loadCertificates();
       if (target === "maintenance" && !_dbLoaded) loadDatabaseInfo();
       if (target === "identification" && !_tagsLoaded) loadIdentificationTab();
@@ -100,8 +99,8 @@ document.addEventListener("DOMContentLoaded", function () {
   var requestedTab = urlParams.get("tab");
   // Back-compat: ?tab=database now maps to the renamed Maintenance tab.
   if (requestedTab === "database") requestedTab = "maintenance";
-  // …and ?tab=ntp to Time, the NTP cards having been retired (rule 170).
-  if (requestedTab === "ntp") requestedTab = "time";
+  // …and ?tab=ntp / ?tab=time to Web Server, where the Server Timezone card lives (rule 170).
+  if (requestedTab === "ntp" || requestedTab === "time") requestedTab = "certificates";
   if (requestedTab) {
     var tabBtn = document.querySelector('#settings-tabs .page-tab[data-tab="' + requestedTab + '"]');
     // A hidden button is a tab this role may not see: fall through to the

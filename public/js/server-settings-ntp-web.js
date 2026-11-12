@@ -1,23 +1,25 @@
 /**
- * public/js/server-settings-ntp-web.js — Server Settings → Time and Web Server
- * (internal key `certificates`): the server timezone (business rule 170) with
+ * public/js/server-settings-ntp-web.js — Server Settings → Web Server
+ * (internal key `certificates`): the Server Timezone card (business rule 170) with
  * its searchable picker and the server clock, the HTTPS certificate / trusted
  * CAs / proxy / Dash / IPv6 / login-access cards, and the rotate-certificate
- * workflow. (The file keeps its old name; the NTP cards were retired 2026-11-12.)
+ * workflow. (The file keeps its old name: the NTP cards were retired and the Time tab folded into Web Server, 2026-11-12.)
  *
  * Split out of server-settings.js (CQ-F051) as a byte-for-byte move. A plain
  * browser script: its functions and `var`s are page globals, called from the
- * core's tab dispatch (`loadTimeSettings`, `loadCertificates`). Loads AFTER
+ * core's tab dispatch (`loadCertificates`). Loads AFTER
  * server-settings.js — tests/unit/serverSettingsSplit.test.ts holds the order.
  */
 
-// ─── Time Tab (business rule 170) ───────────────────────────────────────────
+// ─── Server Timezone card (Web Server tab; business rule 170) ───────────────
 
-var _timeLoaded = false;
-// GET /server-settings/timezone: { override, effective, host }. Loaded by the
-// Time tab and by any tab that draws timestamps in the server's zone
-// (loadTzOverride below). null = not fetched yet.
+// GET /server-settings/timezone: { override, effective, host }. Fetched by the
+// Web Server tab (the card) and by any tab that draws timestamps in the
+// server's zone (loadTzOverride below). null = not fetched yet.
 var _serverTz = null;
+// One ticking "Current server time" for the page, however often the Web
+// Server tab re-renders its cards.
+var _tzClockTimer = null;
 
 async function fetchServerTimezone() {
   try {
@@ -28,41 +30,42 @@ async function fetchServerTimezone() {
   return _serverTz;
 }
 
-async function loadTimeSettings() {
-  _timeLoaded = true;
-  var container = document.getElementById("tab-time");
-  var tz = await fetchServerTimezone();
+// The card's markup — one card of the Web Server deck (renderCertsTab).
+function timezoneCardHtml() {
+  var tz = _serverTz || { override: null, host: "" };
   var override = tz.override || "";
-
-  container.innerHTML =
-    '<div class="settings-cards-row">' +
-    '<div class="settings-card">' +
+  var hostOffset = tz.host ? tzUtcOffset(tz.host) : "";
+  return '<div class="settings-card">' +
       '<h4>Server Timezone</h4>' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">' +
+        'The clock Polaris keeps its own times in: maintenance windows, quiet times, scheduled reboots and upgrades, ' +
+        'and alert emails for recipients with no timezone of their own. This changes Polaris only — the host\'s ' +
+        'clock and its time service are left as they are.' +
+      '</p>' +
       '<div class="form-group"><label>Timezone</label>' +
         '<div class="search-select" id="tz-select-wrap">' +
-          '<input type="text" class="search-select-input" id="f-ntp-timezone" autocomplete="off" placeholder="Search timezones... (blank = the host\'s timezone)">' +
+          '<input type="text" class="search-select-input" id="f-ntp-timezone" autocomplete="off" placeholder="Search a zone or an offset… (blank = the host\'s timezone)">' +
           '<input type="hidden" id="f-ntp-timezone-val" value="' + escapeHtml(override) + '">' +
           '<button type="button" class="search-select-clear" id="tz-clear" title="Clear" style="display:none">&times;</button>' +
           '<span class="search-select-arrow">&#9662;</span>' +
           '<div class="search-select-dropdown" id="tz-dropdown"></div>' +
         '</div>' +
-        '<p class="hint">The clock Polaris keeps its own times in: maintenance windows, quiet times, scheduled reboots and upgrades, and alert emails for recipients with no timezone of their own. ' +
-          'Leave blank to use the host\'s timezone' + (tz.host ? ' (' + escapeHtml(tz.host) + ')' : '') + '. ' +
-          'This changes Polaris only — the host\'s clock and its time service are left as they are.</p>' +
+        '<p class="hint">Leave blank to use the host\'s timezone' +
+          (tz.host ? ' (' + escapeHtml(tz.host) + (hostOffset ? ', ' + escapeHtml(hostOffset) : '') + ')' : '') + '.</p>' +
       '</div>' +
-      '<div id="ntp-current-time" style="font-size:0.82rem;color:var(--color-text-tertiary);margin-top:0.5rem"></div>' +
-    '</div>' +
-    '</div>' +
-    '<div style="display:flex;gap:8px;align-items:center">' +
-      '<button class="btn btn-primary" id="btn-time-save">Save</button>' +
+      '<div id="ntp-current-time" style="font-size:0.82rem;color:var(--color-text-tertiary);margin-bottom:0.75rem"></div>' +
+      '<button class="btn btn-primary btn-sm" id="btn-time-save">Save</button>' +
     '</div>';
+}
 
+// Wire the card after renderCertsTab has put it in the page.
+function wireTimezoneCard() {
+  var saveBtn = document.getElementById("btn-time-save");
+  if (!saveBtn) return;
+  saveBtn.addEventListener("click", saveServerTimezone);
+  initTimezoneDropdown((_serverTz && _serverTz.override) || "");
   updateCurrentTime();
-  setInterval(updateCurrentTime, 1000);
-
-  document.getElementById("btn-time-save").addEventListener("click", saveServerTimezone);
-
-  initTimezoneDropdown(override);
+  if (!_tzClockTimer) _tzClockTimer = setInterval(updateCurrentTime, 1000);
 }
 
 // "Current server time" in the zone the picker holds, or — blank — the host's.
@@ -87,7 +90,7 @@ async function loadTzOverride() {
   return (_serverTz && _serverTz.effective) || "";
 }
 
-// Render an ISO timestamp in the server's zone (Server Settings → Time), or
+// Render an ISO timestamp in the server's zone (the Server Timezone card), or
 // browser-local when that is not known.
 function formatLocalTime(iso) {
   if (!iso) return "";
@@ -124,6 +127,22 @@ async function saveServerTimezone() {
 
 // ─── Timezone Searchable Dropdown ──────────────────────────────────────────
 
+// "UTC+09:00" / "UTC-06:00" / "UTC+05:45" / "UTC+00:00" — a zone's offset at
+// `when`, so a zone in daylight-saving time shows its summer offset. "" when
+// this browser cannot say (no longOffset support, or an unknown zone).
+function tzUtcOffset(tz, when) {
+  try {
+    var parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" }).formatToParts(when || new Date());
+    var name = "";
+    for (var i = 0; i < parts.length; i++) if (parts[i].type === "timeZoneName") name = parts[i].value;
+    if (name === "GMT") return "UTC+00:00"; // some engines drop a zero offset
+    var m = /^GMT([+\-−])(\d{2}):(\d{2})$/.exec(name);
+    return m ? "UTC" + (m[1] === "+" ? "+" : "-") + m[2] + ":" + m[3] : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 function initTimezoneDropdown(currentValue) {
   var input = document.getElementById("f-ntp-timezone");
   var hidden = document.getElementById("f-ntp-timezone-val");
@@ -159,16 +178,24 @@ function initTimezoneDropdown(currentValue) {
     clearBtn.style.display = "";
   }
 
+  // Each zone's offset from UTC as of now (so DST shows), worked out once per
+  // picker rather than on every keystroke's repaint of ~400 options.
+  var now = new Date();
+  var offsets = {};
+  for (var z = 0; z < allZones.length; z++) offsets[allZones[z]] = tzUtcOffset(allZones[z], now);
+
   function renderOptions(filter) {
     var html = "";
     var count = 0;
     var currentGroup = "";
     var filterLower = (filter || "").toLowerCase();
 
-    // Group by region (part before /)
+    // Group by region (part before /). The filter also matches the offset,
+    // so "+09" or "utc-5" finds every zone at that offset.
     for (var i = 0; i < allZones.length; i++) {
       var tz = allZones[i];
-      if (filterLower && tz.toLowerCase().indexOf(filterLower) === -1) continue;
+      var off = offsets[tz] || "";
+      if (filterLower && tz.toLowerCase().indexOf(filterLower) === -1 && off.toLowerCase().indexOf(filterLower) === -1) continue;
 
       var slash = tz.indexOf("/");
       var group = slash > 0 ? tz.substring(0, slash) : "Other";
@@ -183,7 +210,9 @@ function initTimezoneDropdown(currentValue) {
       // append) is ignored by the parser, so the current zone was never
       // highlighted.
       html += '<div class="search-select-option' + (tz === hidden.value ? ' selected' : '') +
-        '" data-value="' + escapeHtml(tz) + '">' + escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
+        '" data-value="' + escapeHtml(tz) + '">' +
+        (off ? '<span class="tz-offset" style="display:inline-block;min-width:6.2em;font-variant-numeric:tabular-nums;color:var(--color-text-secondary);font-size:0.78rem">' + escapeHtml(off) + '</span>' : '') +
+        escapeHtml(label) + ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(tz) + '</span></div>';
       count++;
     }
 
@@ -620,9 +649,10 @@ function renderCertsTab(container) {
 
   container.innerHTML = bannerHtml +
     '<div class="settings-cards-flow">' +
-      certCardHtml + proxyCardHtml + dashCardHtml + ipv6CardHtml + loginCardHtml + caCardHtml + pinnedCardHtml +
+      certCardHtml + proxyCardHtml + dashCardHtml + ipv6CardHtml + timezoneCardHtml() + loginCardHtml + caCardHtml + pinnedCardHtml +
     '</div>';
   if (window.PolarisPinnedTlsCerts) window.PolarisPinnedTlsCerts.mount(document.getElementById("pinned-tls-body"));
+  wireTimezoneCard();
 
   var adoptBtn = document.getElementById("proxy-adopt-btn");
   if (adoptBtn) adoptBtn.addEventListener("click", handleProxyAdopt);
@@ -962,6 +992,8 @@ async function loadCertificates() {
       ? { settings: laResp.loginAccess, callerIp: laResp.callerIp || "" }
       : null;
   } catch (_) { _loginAccess = null; }
+
+  await fetchServerTimezone();
 
   renderCertsTab(container);
   wireUploadArea("ca-upload-area", "ca-file-input", uploadCA);

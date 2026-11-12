@@ -12,8 +12,7 @@ only to an administrator.
 | **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets, plus the MIB Database (`mibDatabase`) and Manufacturer Profiles (`manufacturerProfiles`) cards |
 | **Repository** | `firmware` | firmware images for switches, access points and FortiGates, and the device logins or API tokens that apply them |
 | **Customization** | `serverSettingsSystem` | application name and subtitle, logo, display units, reboots |
-| **Time** | `serverSettingsSystem` | the server timezone Polaris keeps its clock in |
-| **Web Server** | `serverSettingsSystem` | HTTPS certificate, nginx, Dash wallboard, trusted CAs |
+| **Web Server** | `serverSettingsSystem` | HTTPS certificate, nginx, Dash wallboard, IPv6, the server timezone, trusted CAs |
 | **Maintenance** | `serverSettingsSystem` to look; `serverSettingsData` for backup, restore, download, updates and restart | database and capacity, updates, lifecycle, backups |
 | **Retention** | `serverSettingsSystem` | sample retention and agent OS event-log collection |
 | **API Tokens** | `apiTokens` | bearer tokens + the API-docs IP scope |
@@ -396,36 +395,6 @@ vanish.
 
 ---
 
-## Time
-
-One card, **Server Timezone**: the timezone Polaris keeps its own clock in.
-Pick a zone from the searchable list and **Save**; leave it blank to use the
-host's timezone (the card names it). **Current server time** under the picker
-shows the clock in the zone you have picked.
-
-**This is the clock every maintenance window, every automation quiet-time
-window, every scheduled reboot and firmware upgrade is expressed in**, and the
-zone an alert email uses for a recipient who has not chosen a timezone of their
-own. All of them are **server-local wall clock with no offset** — see
-[Maintenance windows](Maintenance-Windows#everything-is-server-local-wall-clock).
-Changing the zone therefore moves them: a window saved as 22:00–06:00 means
-22:00–06:00 in the new zone.
-
-The change applies to every Polaris process within about 30 seconds — no
-restart. It changes **Polaris only**: the host's own clock, its timezone and
-its time service (chronyd, systemd-timesyncd, Windows Time) are left as they
-are, and keeping the host's clock accurate stays the host's job. Changing the
-timezone is recorded on the Events page.
-
-Individual users set their own **display** timezone from the
-[account menu](Navigation-and-Account#timezone); that changes rendering only.
-
-> Until 2026-11 this tab was **Time & NTP** and also held NTP servers, a mode
-> and a Test Sync button. Nothing ever applied those servers to the host, so
-> they were removed; a saved timezone override carried over.
-
----
-
 ## Web Server
 
 A reflowing three-column deck of cards.
@@ -506,6 +475,35 @@ are reloaded. See [Primary IPv6](Assets#primary-ipv6).
 Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris uses to verify
 remote servers — integrations, syslog and archive targets. With none uploaded
 it uses the system trust store.
+
+### Server Timezone
+
+The timezone Polaris keeps its own clock in. Pick a zone from the searchable
+list — each zone shows its current offset from UTC ("UTC+09:00"), and you can
+search by offset as well as by name — and **Save**; leave it blank to use the
+host's timezone (the card names it, with its offset). **Current server time** under the picker
+shows the clock in the zone you have picked.
+
+**This is the clock every maintenance window, every automation quiet-time
+window, every scheduled reboot and firmware upgrade is expressed in**, and the
+zone an alert email uses for a recipient who has not chosen a timezone of their
+own. All of them are **server-local wall clock with no offset** — see
+[Maintenance windows](Maintenance-Windows#everything-is-server-local-wall-clock).
+Changing the zone therefore moves them: a window saved as 22:00–06:00 means
+22:00–06:00 in the new zone.
+
+The change applies to every Polaris process within about 30 seconds — no
+restart. It changes **Polaris only**: the host's own clock, its timezone and
+its time service (chronyd, systemd-timesyncd, Windows Time) are left as they
+are, and keeping the host's clock accurate stays the host's job. Changing the
+timezone is recorded on the Events page.
+
+Individual users set their own **display** timezone from the
+[account menu](Navigation-and-Account#timezone); that changes rendering only.
+
+> Until 2026-11 this card had a tab of its own, **Time & NTP**, which also held
+> NTP servers, a mode and a Test Sync button. Nothing ever applied those servers
+> to the host, so they were removed; a saved timezone override carried over.
 
 ### Local Login Access
 
