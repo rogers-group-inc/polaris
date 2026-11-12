@@ -1605,12 +1605,156 @@ export async function expireStaleReservations(): Promise<number> {
         AND stale."subnetId" = expiring."subnetId"
         AND stale."ipAddress" = expiring."ipAddress"
     `;
+    // Rule 173, read before the flip: the networks a FULL-network
+    // reservation (no address) is about to stop holding.
+    const wholeNetwork = await tx.reservation.findMany({
+      where: { status: "active", expiresAt: { lt: now }, ipAddress: null },
+      select: { subnetId: true },
+    });
+    // A row whose device entry Polaris pushed starts its un-push count from
+    // zero (unpushExpiredReservations below); the push's own attempt history
+    // is about a different operation.
+    await tx.reservation.updateMany({
+      where: { status: "active", expiresAt: { lt: now }, pushedEntryId: { not: null } },
+      data: { pushAttempts: 0, pushLastAttemptAt: null, pushError: null },
+    });
     const result = await tx.reservation.updateMany({
       where: { status: "active", expiresAt: { lt: now } },
       data: { status: "expired" },
     });
+    // Rule 173: a network reserved as a whole goes back to "available" when
+    // that reservation lapses, exactly as it does on a release — unless
+    // another whole-network reservation still holds it. Left "reserved", the
+    // network stayed out of allocation until someone edited its status by hand.
+    const subnetIds = [...new Set(wholeNetwork.map((r) => r.subnetId))];
+    if (subnetIds.length > 0) {
+      await tx.subnet.updateMany({
+        where: {
+          id: { in: subnetIds },
+          status: "reserved",
+          reservations: { none: { status: "active", ipAddress: null } },
+        },
+        data: { status: "available" },
+      });
+    }
     return result.count;
   });
+}
+
+/** Un-push attempts for one expired reservation before Polaris stops trying. */
+export const EXPIRED_UNPUSH_MAX_ATTEMPTS = 12;
+/** Expired rows one tick works through; the rest wait for the next. */
+const EXPIRED_UNPUSH_PER_TICK = 50;
+/** Device calls in flight at once. */
+const EXPIRED_UNPUSH_CONCURRENCY = 5;
+
+/**
+ * Business rule 173: a reservation that EXPIRES takes its device entry with
+ * it. A release has always removed the reserved-address Polaris pushed to the
+ * FortiGate; an expiry only flipped the row, so the entry stayed on the gate,
+ * went on pinning the address to the MAC, and came back on the next discovery
+ * as a reservation nobody had made.
+ *
+ * Called by the expiry job after `expireStaleReservations`. It works from the
+ * rows themselves — `expired`, still carrying the pinned scope + entry ids —
+ * so a gate that was unreachable when the row lapsed is retried on later
+ * ticks, up to EXPIRED_UNPUSH_MAX_ATTEMPTS (about three hours at the job's 15
+ * minutes), after which one warning Event says the entry is still on the gate
+ * and the row is left carrying its pointers as the record.
+ *
+ * Only what Polaris pushed (pinned ids), the same line a release draws for
+ * "clean up what Polaris created" — it fires whatever the integration's DHCP
+ * Push toggle says now. The client's LEASE is not revoked: a lapsed
+ * reservation is not a reason to knock a live client off its address.
+ *
+ * Scale: at most EXPIRED_UNPUSH_PER_TICK rows a tick, EXPIRED_UNPUSH_CONCURRENCY
+ * device calls at a time. FortiManager and standalone FortiGate alike — the
+ * transport is `unpushReservation`'s. Never throws.
+ */
+export async function unpushExpiredReservations(): Promise<{ removed: number; failed: number }> {
+  const out = { removed: 0, failed: 0 };
+  let rows;
+  try {
+    rows = await prisma.reservation.findMany({
+      where: {
+        status: "expired",
+        pushedToId: { not: null },
+        pushedScopeId: { not: null },
+        pushedEntryId: { not: null },
+        pushAttempts: { lt: EXPIRED_UNPUSH_MAX_ATTEMPTS },
+      },
+      orderBy: { updatedAt: "asc" },
+      take: EXPIRED_UNPUSH_PER_TICK,
+      include: { pushedTo: true, subnet: { select: { cidr: true, fortigateDevice: true } } },
+    });
+  } catch (err) {
+    logger.warn({ err }, "expired reservations: reading rows to un-push failed");
+    return out;
+  }
+
+  const one = async (r: (typeof rows)[number]): Promise<void> => {
+    const deviceName = r.subnet.fortigateDevice || "";
+    const name = r.hostname || r.ipAddress || undefined;
+    const clear = {
+      pushedToId: null, pushedScopeId: null, pushedEntryId: null, pushStatus: null, pushedAt: null,
+      pushQueuedAt: null, pushAttempts: 0, pushLastAttemptAt: null, pushError: null,
+    };
+    try {
+      if (!r.pushedTo || !deviceName) {
+        // Nothing left to reach it through; the pointers describe nothing.
+        await prisma.reservation.update({ where: { id: r.id }, data: clear });
+        return;
+      }
+      const result = await unpushReservation({
+        reservationId: r.id,
+        scopeId: r.pushedScopeId,
+        entryId: r.pushedEntryId,
+        subnetCidr: r.subnet.cidr,
+        ip: r.ipAddress || undefined,
+        integration: r.pushedTo,
+        deviceName,
+      });
+      await prisma.reservation.update({ where: { id: r.id }, data: clear });
+      out.removed += 1;
+      void logEvent({
+        action: "reservation.unpush.succeeded",
+        level: "info",
+        resourceType: "reservation",
+        resourceId: r.id,
+        resourceName: name,
+        actor: "system",
+        message: result.alreadyAbsent
+          ? `Expired reservation — its entry was already absent on FortiGate "${deviceName}"`
+          : `Expired reservation unpushed from FortiGate "${deviceName}" (scope ${r.pushedScopeId}, entry ${r.pushedEntryId})`,
+        details: { deviceName, scopeId: r.pushedScopeId, entryId: r.pushedEntryId, expired: true, alreadyAbsent: result.alreadyAbsent },
+      });
+    } catch (err: any) {
+      out.failed += 1;
+      const attempts = r.pushAttempts + 1;
+      const error = err?.message || String(err);
+      await prisma.reservation.update({
+        where: { id: r.id },
+        data: { pushAttempts: attempts, pushLastAttemptAt: new Date(), pushError: error },
+      }).catch(() => {});
+      if (attempts >= EXPIRED_UNPUSH_MAX_ATTEMPTS) {
+        void logEvent({
+          action: "reservation.unpush.failed",
+          level: "warning",
+          resourceType: "reservation",
+          resourceId: r.id,
+          resourceName: name,
+          actor: "system",
+          message: `Expired reservation is still on FortiGate "${deviceName}" after ${attempts} attempts to remove it — delete the reserved address on the device (scope ${r.pushedScopeId}, entry ${r.pushedEntryId}): ${error}`,
+          details: { deviceName, scopeId: r.pushedScopeId, entryId: r.pushedEntryId, expired: true, attempts, error },
+        });
+      }
+    }
+  };
+
+  for (let i = 0; i < rows.length; i += EXPIRED_UNPUSH_CONCURRENCY) {
+    await Promise.all(rows.slice(i, i + EXPIRED_UNPUSH_CONCURRENCY).map(one));
+  }
+  return out;
 }
 
 // ─── Queued Push Queue View ──────────────────────────────────────────────────

@@ -3564,3 +3564,17 @@ timezone when none is set. A change reaches every Polaris process within about 3
 with no restart. Polaris never changes the host's clock, its timezone or its time service;
 keeping the host's clock accurate is the host's job, which is why the NTP server settings
 that used to sit on that tab were removed. See [Server Settings](Server-Settings#time).
+
+### Rule 173
+
+**A reservation that expires ends the way a released one does.** When a reservation's
+expiry date passes:
+
+- a network that was reserved as a whole goes back to *available*, unless another
+  reservation still holds it;
+- if Polaris pushed the reservation to a FortiGate, the reserved address is removed from the
+  gate. If the gate cannot be reached, Polaris keeps trying for about three hours, then writes
+  a warning to [Events](Events) naming the gate and the entry so it can be deleted by hand.
+
+An expiry does not disconnect a device that is using the address; releasing the reservation
+does.
