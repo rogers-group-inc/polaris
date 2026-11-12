@@ -65,3 +65,7 @@ pg-boss pools always hit Postgres directly). Each process emits
 `polaris_db_pool_role_capacity{role}`; the Capacity Advisor's max_connections
 model multiplies by `POLARIS_MONITOR_REPLICAS` (and `peakObserved` is already
 group-wide via `pg_stat_activity`).
+
+## In-memory caches across roles
+
+Each role is its own process, so a module-level cache written by the web role's save handler is NOT the cache the monitor or discovery role reads. An in-process invalidation call reaches one process. The monitoring-settings resolver's caches therefore expire after 30 seconds (business rule 176, `MONITOR_SETTINGS_CACHE_TTL_MS`), as the server timezone does (rule 170). Any new cache that a role other than the writer reads needs an expiry or a cross-process signal; "invalidate on write" alone is a single-process design.

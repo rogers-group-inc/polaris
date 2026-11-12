@@ -92,7 +92,7 @@ purges directory contacts and the `llm` role + token, and nothing else.
 | B.6 | Pushed DHCP reservations on the FortiGate after the integration is deleted | `pushedTo` nulled, so a later release is local-only; the device keeps binding MAC to IP **→ decided: left on the device, listed in `integration.dhcp_entries_left`** |
 | B.7 | Discovered assets, subnets and reservations of a deleted integration look live and manual | UI-removable, but nothing marks them **→ decided: kept; the delete dialog shows the counts and offers to decommission what nothing else reports** |
 | B.8 | In-memory state per integration (`fmgWorker.workers`, token caches, Proxmox pools, labelled Prometheus gauges) | until restart; small and bounded **→ open — bounded, clears on restart** |
-| B.9 | `monitorSettings` caches never invalidated across process roles | monitor role keeps a deleted / edited integration's cadences until restart (suspected runtime effect) **→ open** |
+| B.9 | `monitorSettings` caches never invalidated across process roles | monitor role keeps a deleted / edited integration's cadences until restart (suspected runtime effect) **→ confirmed and fixed (rule 176): the resolver's caches expire after 30 s and refresh in place. The larger effect was that a saved cadence / polling-method / credential change was not applied by the monitor role until it restarted** |
 | B.10 | `DiscoveryRun` rows — no delete anywhere | grows; invisible **→ fixed — deleted with the integration (and swept by rule 158)** |
 | B.11 | `DirectoryContactSource` rows if the purge fails during delete (suspected) | point at a dead id **→ open** |
 

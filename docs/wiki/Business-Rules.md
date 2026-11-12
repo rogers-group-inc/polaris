@@ -3621,3 +3621,13 @@ expiry date passes:
 
 An expiry does not disconnect a device that is using the address; releasing the reservation
 does.
+
+### Rule 176
+
+**A change to monitoring settings takes effect within about 30 seconds, with no restart.**
+When you change how often something is polled, which method a stream uses or which
+credential it signs in with — on an integration, on a device class or in the manual
+defaults — every Polaris process picks the change up within about 30 seconds.
+
+Before this, the change was saved and shown correctly but the monitoring processes went on
+using the old settings until Polaris was next restarted or updated.
