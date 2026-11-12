@@ -310,10 +310,9 @@ const h = vi.hoisted(() => {
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
 vi.mock("../../src/services/agentCommandWake.js", () => ({ publishConfigRefresh: vi.fn(async () => {}) }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-  logEventsBatch: vi.fn(async () => 0),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/tagAssignmentService.js", () => ({
   // Tests hand in pre-normalized criteria (or null); resolveMatchingAssetIds
   // is stubbed per-test. The real normalize/resolve pipeline has its own
@@ -341,7 +340,6 @@ import {
   dropPathCheckFromSchedules,
 } from "../../src/services/maintenanceScheduleService.js";
 import { publishConfigRefresh } from "../../src/services/agentCommandWake.js";
-import { logEvent, logEventsBatch } from "../../src/services/eventLogService.js";
 import { resolveMatchingAssetIds } from "../../src/services/tagAssignmentService.js";
 
 const NOW = new Date(2026, 6, 10, 12, 0, 0); // 2026-07-10 12:00 local
@@ -407,7 +405,7 @@ describe("reconcileMaintenance — enter", () => {
       maintenanceReturnStatus: "active",
       statusChangedBy: "system:maintenance",
     });
-    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ action: "maintenance.entered", resourceId: "a1" })]),
     );
   });
@@ -474,7 +472,7 @@ describe("reconcileMaintenance — exit", () => {
     expect(openWindows()).toHaveLength(0);
     expect(h.db.windows[0]).toMatchObject({ endReason: "schedule" });
     expect(assetById("a1")).toMatchObject({ status: "storage", maintenanceReturnStatus: null });
-    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ action: "maintenance.exited", resourceId: "a1" })]),
     );
   });
@@ -765,7 +763,7 @@ describe("releaseAssetsForDecommission", () => {
       maintenanceReturnStatus: null,
       statusChangedBy: "integration:FMG",
     });
-    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ action: "maintenance.exited", resourceId: "a1" }),
       ]),
@@ -925,7 +923,7 @@ describe("removeAssetFromSchedule", () => {
     expect(openWindows().map((w) => w.assetId)).toEqual(["a2"]);
     expect(assetById("a1")).toMatchObject({ status: "active", maintenanceReturnStatus: null });
     expect(assetById("a2").status).toBe("maintenance");
-    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "maintenance_schedule.updated", actor: "dana" }),
     );
   });
@@ -941,7 +939,7 @@ describe("removeAssetFromSchedule", () => {
     expect(h.db.schedules).toHaveLength(0);
     expect(openWindows()).toHaveLength(0);
     expect(assetById("a1")).toMatchObject({ status: "active", maintenanceReturnStatus: null });
-    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "maintenance_schedule.deleted",
         details: expect.objectContaining({ reason: "last-asset-removed" }),
@@ -1179,7 +1177,7 @@ describe("path-check maintenance (business rule 135)", () => {
     expect(openCheckWindows()).toEqual([expect.objectContaining({ pathCheckId: "c1", scheduleId: "s1", scheduleName: "Schedule s1" })]);
     expect(openWindows()).toHaveLength(0);
     expect(assetById("a1").status).toBe("active");
-    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_entered", resourceId: "c1", resourceType: "path-check" })]),
     );
     expect(vi.mocked(publishConfigRefresh)).toHaveBeenCalled();
@@ -1190,10 +1188,10 @@ describe("path-check maintenance (business rule 135)", () => {
     h.db.checks.push({ id: "c1", name: "Intranet" });
     h.db.schedules.push(pathSchedule("s1", DAILY, ["c1"]));
     await reconcileMaintenance();
-    vi.mocked(logEventsBatch).mockClear();
+    eventLog.logEventsBatch.mockClear();
     await reconcileMaintenance();
     expect(h.db.checkWindows).toHaveLength(1);
-    expect(vi.mocked(logEventsBatch)).not.toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).not.toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_entered" })]),
     );
   });
@@ -1209,7 +1207,7 @@ describe("path-check maintenance (business rule 135)", () => {
     expect(openCheckWindows()).toHaveLength(0);
     expect(h.db.checkWindows[0]).toMatchObject({ endReason: "schedule" });
     expect(h.db.schedules).toHaveLength(0);
-    expect(vi.mocked(logEventsBatch)).toHaveBeenCalledWith(
+    expect(eventLog.logEventsBatch).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_exited", resourceId: "c1" })]),
     );
   });
@@ -1237,7 +1235,7 @@ describe("path-check maintenance (business rule 135)", () => {
 
     expect(await operatorReleasePathCheck("c1", "alice")).toBe(true);
     expect(openCheckWindows()).toHaveLength(0);
-    expect(vi.mocked(logEvent)).toHaveBeenCalledWith(expect.objectContaining({ action: "path_check.maintenance_exited", actor: "alice" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "path_check.maintenance_exited", actor: "alice" }));
 
     // Same occurrence: stays out.
     vi.setSystemTime(new Date(2026, 6, 10, 12, 30, 0));

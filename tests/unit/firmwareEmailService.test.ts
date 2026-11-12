@@ -19,7 +19,7 @@ const h = vi.hoisted(() => {
     sent: [] as Array<{ to: string[]; subject: string; text: string; html: string }>,
     sendFails: new Set<string>(),
   };
-  return { state, logEvent: vi.fn(async () => {}) };
+  return { state };
 });
 
 vi.mock("../../src/db.js", () => ({
@@ -38,7 +38,9 @@ vi.mock("../../src/db.js", () => ({
     user: { findMany: vi.fn(async () => h.state.users) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/quietTimeSummaryService.js", () => ({ resolveSummaryChannel: vi.fn(async () => h.state.channel) }));
 vi.mock("../../src/services/notificationDeliveryService.js", () => ({
   applyBrandLetterhead: vi.fn(async (m: any) => m),
@@ -74,7 +76,7 @@ beforeEach(() => {
   h.state.channel = { id: "ch-1", type: "smtp", enabled: true, config: {} };
   h.state.sent = [];
   h.state.sendFails = new Set();
-  h.logEvent.mockClear();
+  eventLog.logEvent.mockClear();
 });
 
 describe("started", () => {
@@ -108,7 +110,7 @@ describe("started", () => {
     h.state.channel = null;
     run();
     await expect(notifyRunStarted("run-1")).resolves.toBeUndefined();
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "firmware.upgrade_email_failed", level: "warning", details: expect.objectContaining({ notice: "started", runId: "run-1" }),
     }));
   });
@@ -152,7 +154,7 @@ describe("finished (a flash started now)", () => {
     await notifyRunFinished("run-1");
     expect(h.state.sent.map((m) => m.to[0])).toEqual(["noc@example.com"]);
     expect(h.state.runs.get("run-1")!.notifyError).toMatch(/ops@example.com: SMTP 550/);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_email_failed" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_email_failed" }));
   });
 });
 

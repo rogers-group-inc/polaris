@@ -33,7 +33,6 @@ const h = vi.hoisted(() => {
   };
   return {
     state, FakeAppError, FakeConflict,
-    logEvent: vi.fn(async () => {}),
     checkSchedulableUpgrade: vi.fn(async (_assetId: string, imageId: string) => ({
       approved: { id: imageId, versionLabel: imageId === "img-backup" ? "7.6.5 build1105" : "7.6.8 build1164", role: imageId === "img-backup" ? "backup" : "primary" },
       fromVersion: "7.4.3 build0542",
@@ -90,7 +89,9 @@ vi.mock("../../src/db.js", () => ({
     },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/firmwareUpgradeService.js", () => ({
   checkSchedulableUpgrade: h.checkSchedulableUpgrade,
   startFirmwareUpgrade: h.startFirmwareUpgrade,
@@ -153,7 +154,7 @@ beforeEach(() => {
   h.state.channel = { id: "ch-1", type: "smtp", enabled: true, config: {} };
   h.state.sent = [];
   h.state.sendFails = new Set();
-  h.logEvent.mockClear();
+  eventLog.logEvent.mockClear();
   h.startFirmwareUpgrade.mockReset();
   h.startFirmwareUpgrade.mockImplementation(async () => ({ id: "run-1" }));
   h.checkSchedulableUpgrade.mockClear();
@@ -192,7 +193,7 @@ describe("booking", () => {
     expect(s.status).toBe("pending");
     expect(s.toVersion).toBe("7.6.5 build1105");
     expect(s.notifyEmails).toEqual(["ops@example.com"]);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_scheduled", actor: "alice" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_scheduled", actor: "alice" }));
   });
 
   it("refuses a second pending booking on the same device (409)", async () => {
@@ -247,7 +248,7 @@ describe("the booking notices (2026-11-09)", () => {
     const s = await createSchedule({ assetId: "asset-1", imageId: "img-primary", scheduledFor: LATER, notifyEmails: ["ops@example.com"], actor: "alice", now: NOW });
     await drain();
     expect(s.status).toBe("pending");
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "firmware.upgrade_schedule_email_failed", level: "warning", details: expect.objectContaining({ notice: "scheduled" }),
     }));
     expect(h.state.rows[0].notifyError).toBeNull();
@@ -262,7 +263,7 @@ describe("change and cancel touch only a PENDING booking", () => {
     const u = await updateSchedule({ assetId: "asset-1", scheduleId: s.id, scheduledFor: next, notifyEmails: ["noc@example.com"], actor: "bob", now: NOW });
     expect(u.scheduledFor).toEqual(next);
     expect(u.notifyEmails).toEqual(["noc@example.com"]);
-    expect(h.logEvent).toHaveBeenLastCalledWith(expect.objectContaining({ action: "firmware.upgrade_rescheduled", actor: "bob", message: expect.stringContaining("time") }));
+    expect(eventLog.logEvent).toHaveBeenLastCalledWith(expect.objectContaining({ action: "firmware.upgrade_rescheduled", actor: "bob", message: expect.stringContaining("time") }));
   });
 
   it("re-takes the image gates only when the image changes", async () => {
@@ -324,7 +325,7 @@ describe("firing (runDueSchedules)", () => {
     const res = await runDueSchedules(new Date(LATER.getTime() + 1000));
     expect(res.refused).toBe(1);
     expect(h.state.rows[0]).toMatchObject({ status: "refused", error: expect.stringContaining("device is down") });
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_schedule_refused", level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_schedule_refused", level: "warning" }));
     expect(h.state.sent.map((m) => m.to[0])).toEqual(["ops@example.com", "noc@example.com"]);
     expect(h.state.sent[0].subject).toMatch(/was not started: lab-sw1 → 7\.6\.8 build1164/);
     await runDueSchedules(new Date(LATER.getTime() + 120_000));
@@ -428,7 +429,7 @@ describe("the results email (notifyScheduledRunFinished)", () => {
     await notifyScheduledRunFinished("run-1");
     expect(h.state.sent).toHaveLength(0);
     expect(h.state.rows[0].notifyError).toMatch(/no enabled email channel/);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_schedule_email_failed", level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "firmware.upgrade_schedule_email_failed", level: "warning" }));
   });
 
   it("one recipient failing does not stop the others, and the failure is recorded", async () => {

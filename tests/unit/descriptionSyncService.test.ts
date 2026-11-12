@@ -20,7 +20,9 @@ vi.mock("../../src/db.js", () => ({
     assetInterfaceOverride: { findMany: vi.fn(), update: vi.fn() },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/reservationPushService.js", () => ({
   buildTransportForIntegration: vi.fn(),
   callFortiOs: vi.fn(),

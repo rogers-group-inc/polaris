@@ -17,14 +17,12 @@ const h = vi.hoisted(() => ({
     notificationRuleState: { updateMany: vi.fn(async () => ({ count: 1 })) },
     $transaction: vi.fn(),
   },
-  logEvent: vi.fn(async () => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: h.logEvent,
-  logEventsBatch: vi.fn(async () => 0),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { clearNotifications } from "../../src/services/notificationService.js";
 
@@ -85,7 +83,7 @@ describe("clearNotifications", () => {
     const n = await clearNotifications(["n1", "n2"], "dmoore");
 
     expect(n).toBe(2);
-    expect(h.logEvent).toHaveBeenCalledWith(
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: "notification.cleared", details: { ids: ["n1", "n2"], count: 2 } }),
     );
   });

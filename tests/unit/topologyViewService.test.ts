@@ -177,6 +177,9 @@ describe("sanitizeLocationCodeChanges", () => {
     expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" } }])[0].levels).toBeUndefined();
     expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" }, levels: ["shelf"] }]))).toBe(400);
     expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" }, levels: [] }]))).toBe(400);
+    // Rule 168: a placement that sets a floor sets a number.
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { floor: "Surface" }, levels: ["floor"] }]))).toBe(400);
+    expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { floor: "-1" }, levels: ["floor"] }])[0].codes.floor).toBe("-1");
   });
 });
 
@@ -218,12 +221,17 @@ describe("wall views (rule 151)", () => {
 });
 
 describe("floor layers and regions (rules 150, 152)", () => {
-  it("orders layers by level, needs a floor name, and never lists layer 0", () => {
-    const out = sanitizeLayers([{ level: 2, name: "2" }, { level: -1, name: "B1" }]);
+  it("orders layers by level, a name is an optional label (rule 168), and never lists layer 0", () => {
+    const out = sanitizeLayers([{ level: 2, name: "2" }, { level: -1, name: "Basement" }]);
     expect(out.map((l) => l.level)).toEqual([-1, 2]);
-    expect(out[0]).toMatchObject({ name: "B1", background: null });
+    expect(out[0]).toMatchObject({ name: "Basement", background: null });
     expect(status(() => sanitizeLayers([{ level: 0, name: "Ground" }]))).toBe(400);
-    expect(status(() => sanitizeLayers([{ level: 1, name: "" }]))).toBe(400);
+    expect(sanitizeLayers([{ level: 1, name: "" }])[0]).toMatchObject({ level: 1, name: "" });
+    // Rule 152(a): a floor plan's placement on the ground.
+    const placed = sanitizeLayers([{ level: 1, name: "", plan: { cx: 10, cy: -5, sx: 0.5, sy: 2, rot: 370 } }])[0];
+    expect(placed.plan).toEqual({ cx: 10, cy: -5, sx: 0.5, sy: 2, rot: 10 });
+    expect(status(() => sanitizeLayers([{ level: 1, name: "", plan: { cx: 0, cy: 0, sx: 0, sy: 1, rot: 0 } }]))).toBe(400);
+    expect(status(() => sanitizeLayers([{ level: 1, name: "", plan: { cx: "x", cy: 0, sx: 1, sy: 1 } }]))).toBe(400);
     expect(status(() => sanitizeLayers([{ level: 1, name: "1" }, { level: 1, name: "One" }]))).toBe(400);
     expect(status(() => sanitizeLayers([{ level: 1, name: "2 r:x" }]))).toBe(400);
   });

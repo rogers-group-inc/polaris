@@ -27,7 +27,6 @@ const db = {
 };
 
 const m = vi.hoisted(() => ({
-  logEvent: vi.fn(),
   callFortiOs: vi.fn(),
   listReservedAddresses: vi.fn(),
   findScopeIdForCidr: vi.fn(),
@@ -35,7 +34,9 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/reservationPushService.js", async () => {
   const mac = await import("../../src/utils/mac.js");
   return {
@@ -98,7 +99,7 @@ function created(): Row[] {
   return db.resCreateMany.mock.calls.flatMap(([a]) => (a as { data: Row[] }).data);
 }
 function eventsWith(action: string): Row[] {
-  return m.logEvent.mock.calls.map(([e]) => e as Row).filter((e) => e.action === action);
+  return eventLog.logEvent.mock.calls.map(([e]) => e as unknown as Row).filter((e) => e.action === action);
 }
 
 beforeEach(() => {

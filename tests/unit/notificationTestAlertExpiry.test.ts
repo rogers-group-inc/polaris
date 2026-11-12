@@ -14,14 +14,12 @@ const h = vi.hoisted(() => ({
   prisma: {
     notification: { updateMany: vi.fn() },
   },
-  logEvent: vi.fn(async (_event: unknown) => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: h.logEvent,
-  logEventsBatch: vi.fn(async () => 0),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRuleService.js", () => ({
   findRulesMatchingAsset: vi.fn(async () => []),
 }));
@@ -64,8 +62,8 @@ describe("clearExpiredTestAlerts", () => {
     h.prisma.notification.updateMany.mockResolvedValue({ count: 3 });
     await clearExpiredTestAlerts();
 
-    expect(h.logEvent).toHaveBeenCalledTimes(1);
-    const ev = h.logEvent.mock.calls[0]![0] as any;
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    const ev = eventLog.logEvent.mock.calls[0]![0] as any;
     expect(ev.action).toBe("notification.auto_cleared");
     expect(ev.details).toMatchObject({ count: 3, reason: "test_expired" });
   });
@@ -73,6 +71,6 @@ describe("clearExpiredTestAlerts", () => {
   it("writes no Event when nothing expired", async () => {
     h.prisma.notification.updateMany.mockResolvedValue({ count: 0 });
     expect(await clearExpiredTestAlerts()).toBe(0);
-    expect(h.logEvent).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });

@@ -7,18 +7,19 @@
  * throws closes that agent's socket, never the process.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
   prisma: {
     asset:        { findUnique: vi.fn(async () => ({ hostname: "app-01", ipAddress: null })) },
     managedAgent: { update: vi.fn(async () => ({})) },
   },
-  logEvent: vi.fn(async () => {}),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseMaintenanceHold: vi.fn(async () => true) }));
 vi.mock("../../src/utils/dbConnections.js", () => ({ getDirectDatabaseUrl: () => null }));
 

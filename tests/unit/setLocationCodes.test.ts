@@ -13,6 +13,8 @@ import {
   locationCodeValueProblem,
   MAX_LOCATION_CODE_VALUE_LEN,
   mergeLocationLevels,
+  isFloorNumber,
+  floorCodeProblem,
 } from "../../src/utils/locationCodes.js";
 
 describe("mergeLocationLevels (rule 148(a))", () => {
@@ -81,5 +83,19 @@ describe("locationCodeValueProblem", () => {
     expect(locationCodeValueProblem("x".repeat(MAX_LOCATION_CODE_VALUE_LEN + 1))).toMatch(/longer/);
     expect(locationCodeValueProblem("a\tb")).toMatch(/control/);
     expect(locationCodeValueProblem("x jb:1")).toMatch(/another location code/);
+  });
+});
+
+describe("floors are numbers (rule 168)", () => {
+  it("knows a floor number", () => {
+    for (const v of ["0", "-1", "-20", "2", "99", " 3 "]) expect(isFloorNumber(v)).toBe(true);
+    for (const v of ["Surface", "B1", "1.5", "-21", "100", "", null]) expect(isFloorNumber(v as string)).toBe(false);
+  });
+  it("refuses a NEW text floor, lets an old one stay, and ignores descriptions with no floor", () => {
+    expect(floorCodeProblem(null, "Core b:Hoist f:2")).toBeNull();
+    expect(floorCodeProblem(null, "Core b:Hoist f:Surface")).toMatch(/is a number/);
+    expect(floorCodeProblem("b:Hoist f:Surface", "Uplink b:Hoist f:surface")).toBeNull();
+    expect(floorCodeProblem("b:Hoist f:Surface", "b:Hoist f:Roof")).toMatch(/is a number/);
+    expect(floorCodeProblem("b:Hoist f:Surface", "b:Hoist r:MDF")).toBeNull();
   });
 });

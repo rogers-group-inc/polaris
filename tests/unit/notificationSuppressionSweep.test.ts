@@ -19,15 +19,13 @@ const h = vi.hoisted(() => ({
     asset: { findMany: vi.fn() },
     $transaction: vi.fn(async (ops: unknown[]) => ops),
   },
-  logEventsBatch: vi.fn(async (_events: unknown[]) => 0),
   resolveDependencyBlameMany: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-  logEventsBatch: h.logEventsBatch,
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/dependencyTreeService.js", () => ({
   resolveDependencyBlameMany: h.resolveDependencyBlameMany,
 }));
@@ -77,7 +75,7 @@ describe("clearSuppressedAlerts", () => {
         data: expect.objectContaining({ state: "clear", notificationId: null, metRun: 0, clearRun: 0, lastReadingAt: null }),
       }),
     );
-    const events = h.logEventsBatch.mock.calls[0][0] as any[];
+    const events = eventLog.logEventsBatch.mock.calls[0][0] as any[];
     expect(events).toHaveLength(1);
     expect(events[0].action).toBe("notification.suppressed");
     expect(events[0].message).toContain("AP-9");
@@ -123,7 +121,7 @@ describe("clearSuppressedAlerts", () => {
     expect(h.prisma.notificationRuleState.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { notificationId: { in: ["n9"] } } }),
     );
-    const events = h.logEventsBatch.mock.calls[0][0] as any[];
+    const events = eventLog.logEventsBatch.mock.calls[0][0] as any[];
     expect(events).toHaveLength(1);
     expect(events[0].details).toEqual({ assetId: "a9", reason: "maintenance" });
     expect(events[0].message).toContain("NVR-9");
@@ -180,7 +178,7 @@ describe("clearSuppressedAlerts", () => {
 
     expect(await clearSuppressedAlerts()).toBe(0);
     expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
-    expect(h.logEventsBatch).not.toHaveBeenCalled();
+    expect(eventLog.logEventsBatch).not.toHaveBeenCalled();
   });
 
   it("clears only the outage-owed child when both kinds are present", async () => {

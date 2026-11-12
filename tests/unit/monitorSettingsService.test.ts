@@ -31,13 +31,14 @@ const db = {
 
 const m = vi.hoisted(() => ({
   invalidate: vi.fn(),
-  logEvent: vi.fn(),
   warn: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/monitoringService.js", () => ({ invalidateMonitorSettingsCache: m.invalidate }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/utils/logger.js", () => ({
   logger: { warn: m.warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -77,7 +78,7 @@ describe("manual tier", () => {
     expect(up.update.value).toEqual({ intervalSeconds: 30 });
     expect(up.create.value).toEqual({ intervalSeconds: 30 });
     expect(m.invalidate).toHaveBeenCalledWith({ integrationId: null });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "monitor_settings.manual.updated", actor: "alice" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "monitor_settings.manual.updated", actor: "alice" }));
   });
 });
 
@@ -103,7 +104,7 @@ describe("integration tier", () => {
     const data = db.integrationUpdate.mock.calls[0][0].data;
     expect(data.config).toEqual({ host: "fmg", monitorSettings: { responseTimePolling: "snmp" } });
     expect(m.invalidate).toHaveBeenCalledWith({ integrationId: "int-fmg" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "monitor_settings.integration.updated", resourceId: "int-fmg",
     }));
   });
@@ -191,7 +192,7 @@ describe("class overrides", () => {
     expect(db.overrideCreate.mock.calls[0][0].data).toEqual({ integrationId: null, assetType: "printer", responseTimePolling: "snmp" });
     expect(created.id).toBe("ov-new");
     expect(m.invalidate).toHaveBeenCalledWith({ integrationId: null, assetType: "printer" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "monitor_settings.class_override.created", resourceName: "printer @ Manual",
     }));
   });
@@ -228,7 +229,7 @@ describe("class overrides", () => {
     await svc.deleteClassOverride("ov-1", "alice");
     expect(db.overrideDelete).toHaveBeenCalledWith({ where: { id: "ov-1" } });
     expect(m.invalidate).toHaveBeenCalledWith({ integrationId: null, assetType: "server" });
-    expect(m.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "monitor_settings.class_override.deleted", resourceId: "ov-1" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "monitor_settings.class_override.deleted", resourceId: "ov-1" }));
   });
 });
 

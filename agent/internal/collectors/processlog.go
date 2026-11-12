@@ -15,7 +15,6 @@ package collectors
 
 import (
 	"bufio"
-	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -42,26 +41,6 @@ func processLogCursorPath(stateDir string) string {
 	return filepath.Join(stateDir, "processlog-cursors.json")
 }
 
-func loadProcessLogCursors(stateDir string) map[string]string {
-	b, err := os.ReadFile(processLogCursorPath(stateDir))
-	if err != nil {
-		return map[string]string{}
-	}
-	return parseCursors(b) // reuse eventlog.go's tolerant codec (same shape)
-}
-
-func saveProcessLogCursors(stateDir string, cursors map[string]string) error {
-	b, err := marshalCursors(cursors)
-	if err != nil {
-		return err
-	}
-	tmp := processLogCursorPath(stateDir) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, processLogCursorPath(stateDir))
-}
-
 // ProcessLogOnce tails every pinned program's log since its cursor and returns
 // the new lines as wire samples. Mutates + persists the cursor map. Best-effort:
 // a per-program failure is skipped, not fatal.
@@ -72,12 +51,12 @@ func ProcessLogOnce(stateDir string, pinned []transport.PinnedProcess, maxPerPro
 	if maxPerProcess <= 0 {
 		maxPerProcess = defaultMaxLogLinesPerProcess
 	}
-	cursors := loadProcessLogCursors(stateDir)
+	cursors := loadCursorFile(processLogCursorPath(stateDir))
 	var out []*transport.ProcessLogSample
 	for _, p := range pinned {
 		out = append(out, collectOneProcessLog(p, cursors, maxPerProcess)...)
 	}
-	_ = saveProcessLogCursors(stateDir, cursors)
+	_ = saveCursorFile(processLogCursorPath(stateDir), cursors)
 	return out
 }
 
@@ -323,18 +302,4 @@ func toLogSamples(name string, lines []rawLogLine, source string) []*transport.P
 		out = append(out, sample)
 	}
 	return out
-}
-
-// jsonLineField pulls a string field from a journald -o json object, tolerating
-// the array-of-bytes form journald uses for non-UTF8 values (→ "").
-func jsonLineField(m map[string]json.RawMessage, key string) string {
-	raw, ok := m[key]
-	if !ok || len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
-	}
-	return ""
 }

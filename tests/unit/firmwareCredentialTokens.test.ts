@@ -25,7 +25,9 @@ vi.mock("../../src/db.js", () => ({
 vi.mock("../../src/services/credentialService.js", () => ({
   getCredential: vi.fn(async (id: string) => ({ id, ...h.credentials.get(id)! })),
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { resolveFirmwareCredential } from "../../src/services/firmwareRepositoryService.js";
 

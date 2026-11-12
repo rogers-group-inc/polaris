@@ -67,10 +67,9 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({
-  logEvent: vi.fn(async () => {}),
-  logEventsBatch: vi.fn(async () => 0),
-}));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/tagAssignmentService.js", () => ({
   normalizeCriteria: vi.fn((raw: unknown) => (raw == null ? null : raw)),
   resolveMatchingAssetIds: vi.fn(async () => new Set<string>()),

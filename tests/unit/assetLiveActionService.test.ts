@@ -8,13 +8,14 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const m = vi.hoisted(() => ({ logEvent: vi.fn(),
-  filter: vi.fn(), probeAsset: vi.fn(), collectSystemInfo: vi.fn(), snmpWalkRaw: vi.fn(),
+const m = vi.hoisted(() => ({ filter: vi.fn(), probeAsset: vi.fn(), collectSystemInfo: vi.fn(), snmpWalkRaw: vi.fn(),
   scope: vi.fn(), isRunActive: vi.fn(), triggerDiscovery: vi.fn(),
   assertCredScope: vi.fn(), getCredential: vi.fn(), recordUse: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: m.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/utils/integrationFilter.js", () => ({ assetMatchesIntegrationFilter: m.filter }));
 vi.mock("../../src/services/monitoringService.js", () => ({
   probeAsset: m.probeAsset, recordProbeResult: vi.fn(), collectTelemetry: vi.fn(), recordTelemetryResult: vi.fn(),
@@ -56,7 +57,7 @@ describe("the device-filter gate", () => {
     expect(r.status).toBe(409);
     expect(r.body).toMatchObject({ success: false, error: "Excluded by deviceExclude" });
     expect(m.probeAsset).not.toHaveBeenCalled();
-    expect(m.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.refresh", level: "warning", actor: "op" });
+    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "asset.refresh", level: "warning", actor: "op" });
   });
   it("Refresh on an excluded device answers 409 and collects nothing", async () => {
     db.assetFindUnique.mockResolvedValue(filtered);

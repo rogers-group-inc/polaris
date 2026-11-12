@@ -3255,10 +3255,12 @@ square inch.
 
 ### Rule 152
 
-**Floors are layers of a Topology view.** Layer 0 is the flat view every Topology view starts
-with; it ignores floors and writes no floor code. Layers above and below (basements) each have
-their own background, polygons and devices. A device placed on a layer gets that layer's floor
-code; it keeps its other codes unless you drop it inside a polygon.
+**Floors are layers of a Topology view.** Floor 0 is the ground: its background (the map,
+satellite imagery or a site plan) is always shown, and a device placed on it gets no floor code.
+Floors above and below (basements) each have their own plan, polygons and devices, all drawn on
+one map: the floor you're on at full strength, the floor above at 10 % and drawn a little larger,
+the one above that at 2 %, and floors below hidden. A device placed on a floor gets that floor's
+number as its `f:` code; it keeps its other codes unless you drop it inside a polygon.
 
 ### Rule 153
 
@@ -3519,6 +3521,15 @@ The same applies to what an automation's condition is narrowed to. A **path chec
 can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
 automation covers every check and one of them is deleted while its alert is firing, Polaris
 clears that alert on its next pass instead of leaving it open for good.
+
+### Rule 168
+
+**A floor is a number; its name is only a label.** A description's floor is a whole number:
+`f:0` is the ground, `f:1` and up are above it and `f:-1`, `f:-2` are basements. A floor can
+also have a name ("Basement", "Mezzanine") kept in **Location regions**. New descriptions must use
+the number; an existing text floor such as `f:Surface` keeps working, is matched to the floor of
+that name, and is listed under **Devices to check** with the number to use. Polaris never
+rewrites one without asking.
 
 ### Rule 169
 

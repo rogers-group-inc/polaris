@@ -38,7 +38,6 @@ const h = vi.hoisted(() => {
     state,
     openMaintenanceHold: vi.fn(async () => { state.order.push("hold"); return true; }),
     releaseMaintenanceHold: vi.fn(async () => { state.order.push("release"); return true; }),
-    logEvent: vi.fn(async (e: { action: string }) => { state.order.push(e.action); }),
     gate: null as unknown,
   };
 });
@@ -86,7 +85,12 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => {
+  resetEventLogStub();
+  eventLog.logEvent.mockImplementation(async (e) => { h.state.order.push(e.action); return undefined; });
+});
 const recordCredentialUse = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../../src/services/credentialUseAuditService.js", () => ({ recordCredentialUse }));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({
@@ -263,7 +267,7 @@ describe("the reboot note (rule 115(d))", () => {
     await startReboot({ assetId: "asset-1", actor: "alice", note: "  Memory leak in\nfirmware 7.4.3  ", ...FAST });
     await settled();
     expect(h.state.created).toMatchObject({ note: "Memory leak in firmware 7.4.3" });
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "asset.reboot_started",
       message: expect.stringContaining("reason: Memory leak in firmware 7.4.3"),
       details: expect.objectContaining({ note: "Memory leak in firmware 7.4.3" }),
@@ -330,7 +334,7 @@ describe("a reboot run", () => {
     const last = await settled();
     expect(last.status).toBe("failed");
     expect(String(last.error)).toMatch(/403/);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_failed", level: "warning" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_failed", level: "warning" }));
   });
 
   it("is unverified when the device accepted but never went down", async () => {
@@ -338,7 +342,7 @@ describe("a reboot run", () => {
     await startReboot({ assetId: "asset-1", actor: "alice", ...FAST });
     const last = await settled();
     expect(last.status).toBe("unverified");
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_unverified" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_unverified" }));
   });
 
   it("restarts a managed switch by the name its gate gives it, and proves it by the drop and rejoin", async () => {

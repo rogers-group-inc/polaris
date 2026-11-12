@@ -25,12 +25,13 @@ const h = vi.hoisted(() => ({
     setting: { findUnique: vi.fn(), upsert: vi.fn() },
     hostMetricsSample: { findMany: vi.fn() },
   },
-  logEvent: vi.fn(async (_event: unknown) => {}),
   blame: vi.fn(),
 }));
 
 vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRecipientService.js", () => ({
   expandDeliveries: vi.fn(async () => {}),
   scopeRegionTagsOf: vi.fn(() => []),
@@ -102,7 +103,7 @@ const firingRow = (assetId: string, notificationId: string) => ({
 
 const created = () => h.prisma.notification.create.mock.calls.map((c) => c[0].data);
 const clearedBy = () => h.prisma.notification.updateMany.mock.calls.map((c) => c[0].data?.clearedBy);
-const triggeredEvents = () => h.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.triggered");
+const triggeredEvents = () => eventLog.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.triggered");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -318,10 +319,10 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     expect(created()[0].dependencyDown).toBe(true);
     expect(created()[0].message).toContain("SW-PLANT-3");
     // Audited as a handoff, never as a recovery.
-    const handoff = h.logEvent.mock.calls.map((c) => c[0] as any).find((e) => e.action === "notification.superseded");
+    const handoff = eventLog.logEvent.mock.calls.map((c) => c[0] as any).find((e) => e.action === "notification.superseded");
     expect(handoff).toBeTruthy();
     expect(handoff.details).toMatchObject({ reason: "dependency-down", assetId: "plc" });
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.auto_cleared");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.auto_cleared");
   });
 
   it("a dependency-down alert whose upstream came back while the device stayed dark becomes its own outage", async () => {
@@ -337,7 +338,7 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     expect(created()).toHaveLength(1);
     expect(created()[0].dependencyDown).toBeUndefined();
     expect(created()[0].message).not.toContain("DEPENDENCY DOWN");
-    const handoff = h.logEvent.mock.calls.map((c) => c[0] as any).find((e) => e.action === "notification.superseded");
+    const handoff = eventLog.logEvent.mock.calls.map((c) => c[0] as any).find((e) => e.action === "notification.superseded");
     expect(handoff.details).toMatchObject({ reason: "dependency-released" });
   });
 
@@ -376,7 +377,7 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     );
     expect(clearedBy()).not.toContain("system:dependency-down");
     expect(h.prisma.notification.create).not.toHaveBeenCalled();
-    expect(h.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.superseded");
+    expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.superseded");
   });
 
   it("looks the flavour up only for an opted-in automation's firing rows", async () => {
@@ -414,7 +415,7 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
       acknowledgeNote: "ISP fibre cut, ticket 4411",
       acknowledgedVia: { notificationId: "n-root", assetId: "fg", hostname: "FG-PLANT" },
     });
-    const acks = h.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
+    const acks = eventLog.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
     expect(acks).toHaveLength(1);
     expect(acks[0].details).toMatchObject({ ids: ["n-new"], inheritedFrom: ["n-root"] });
   });
@@ -481,7 +482,7 @@ describe("a down alert keeps the outage's acknowledgement across automations (bu
       acknowledgeNote: "Power work in the server room",
       acknowledgedVia: { notificationId: "n-old", assetId: "srv", hostname: "SRV" },
     });
-    const acks = h.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
+    const acks = eventLog.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.acknowledged");
     expect(acks).toHaveLength(1);
     expect(acks[0].message).toContain("already acknowledged by jsmith");
     expect(acks[0].details).toMatchObject({ ids: ["n-new"], inheritedFrom: ["n-old"] });

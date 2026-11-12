@@ -676,17 +676,35 @@ code, so renaming one in **Location regions** renames it here too.
 A device's icon (Server Settings → Customization) is drawn on its shape in a
 junction box, and beside its name in a rack.
 
-**Floors are layers of a Topology view.** Every Topology view opens on **Layer
-0**, the flat view, which ignores floors and writes no floor code. The **Layer**
-control at the left edge steps up (**+**) and down (**−**) through the view's
-floors; **Layer 0** jumps back. While editing, pressing **+** or **−** past the
-last layer adds one and asks its floor name (the number, or B1, B2… below
-ground); right-click the layer number to rename or delete it. Each layer has its
-own background (usually that floor's plan, chosen with the map button), its own
-polygons and its own devices, and a device is on one layer at a time: the Device
-List says which, and clicking it takes you there. A device placed on a floor
-layer gets that floor's `f:` code when you save; it keeps its other codes unless
-you drop it inside a polygon on that layer ([rule 152](Business-Rules#rule-152)).
+**Floors are stacked on one map.** Every Topology view opens on **floor 0, the
+ground**: its background (the map, satellite imagery or an uploaded site plan) is
+always shown. The **Floor** control at the left edge steps up (**+**) and down
+(**−**) through the view's floors; **Ground** jumps back. While editing, pressing
+**+** or **−** past the last floor adds one (−1 and −2 are basements) and asks for
+an optional name such as Basement; right-click the floor number to rename or
+delete it.
+
+All floors are drawn together. The floor you're on is at full strength, the floor
+above it at 10 % and the one above that at 2 %; floors below are hidden. Floors
+above are drawn 25 % larger per floor and floors below 25 % smaller, scaled about
+the middle of the screen (the small crosshair), so as you pan, the floors above
+move a little faster than the ground. Changing floors fades and scales them
+smoothly. Only the floor you're on responds to clicks. A connection between two
+floors fades from one floor's strength to the other's.
+
+**Each floor can have its own plan.** On a floor, the map button offers **Upload
+floor plan** (PNG, JPEG or WebP), **Adjust floor plan** and **Remove floor plan**.
+**Adjust floor plan** shows the plan with corner handles: drag to move it, drag a
+corner to stretch it, hold **Ctrl** while dragging a corner to keep its shape, and
+hold **Alt** while dragging to rotate it; **Done** or Esc finishes and **Reset**
+puts it back. The floor's devices and polygons move with its plan, so they stay in
+the same rooms.
+
+A device is on one floor at a time: the Device List says which, and clicking it
+takes you there. A device placed on a floor gets that floor's number as its `f:`
+code when you save (and one placed on the ground loses any `f:`); it keeps its
+other codes unless you drop it inside a polygon on that floor
+([rules 152](Business-Rules#rule-152) and [168](Business-Rules#rule-168)).
 
 **A Room view stands for a room.** When you create the view, or in **View
 settings**, choose the room it is for: any room the site's descriptions already
@@ -706,6 +724,13 @@ the rack or box. Anything already in the view stays where it is, and a device
 that doesn't fit is counted in the message rather than squeezed in. It
 happens only when the region is set or changed, so a device you take out
 stays out.
+
+**Floors are numbers.** In **Location regions** a floor is a number plus an
+optional name (Add region → Floor asks for both; ⋯ → Rename changes them). A
+building has one floor per number. A description must give a floor as its number
+(`f:-1`, `f:2`); an older text floor like `f:Surface` still works, is drawn on the
+floor named Surface, and is listed under **Devices to check** with the number to
+use ([rule 168](Business-Rules#rule-168)).
 
 **Location regions: one name, one place.** **Location regions** in the view
 menu shows the site's areas, buildings, floors, rooms, racks and junction boxes

@@ -34,7 +34,9 @@ const findUnique = vi.fn(async () => roleRow);
 vi.mock("../../src/db.js", () => ({
   prisma: { role: { findUnique: (...a: unknown[]) => findUnique(...(a as [])), update: (...a: unknown[]) => update(...(a as [{ data: Record<string, unknown> }])) } },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 import { updateRole } from "../../src/services/roleService.js";
 

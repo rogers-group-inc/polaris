@@ -29,7 +29,9 @@ vi.mock("../../src/services/fortimanagerService.js", () => ({
   resolveDeviceMgmtIpViaFmg: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn() }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 
 const { releaseDhcpLease, DHCP_LEASE_REVOKE_PATH } = await import(
   "../../src/services/reservationPushService.js"

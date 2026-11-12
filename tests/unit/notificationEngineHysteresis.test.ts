@@ -86,7 +86,9 @@ vi.mock("../../src/db.js", () => ({
   },
 }));
 
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: vi.fn(async () => {}) }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/notificationRecipientService.js", () => ({
   expandDeliveries: vi.fn(async () => {}),
   scopeRegionTagsOf: () => [],
@@ -306,13 +308,12 @@ describe("firing state machine — band descent hold (business rule 19(a))", () 
   };
 
   it("a dip under the band and back holds the band — no de-escalation, no re-escalation", async () => {
-    const { logEvent } = await import("../../src/services/eventLogService.js");
     db.rules = [banded()];
     await tick(96);
     await step(96, 120);
     expect(theState().state).toBe("firing");
     expect(theState()).toMatchObject({ firingSeverity: "serious" });
-    vi.mocked(logEvent).mockClear();
+    eventLog.logEvent.mockClear();
 
     await step(94); // under the band for one reading
     expect(theState()).toMatchObject({ firingSeverity: "serious" });
@@ -320,7 +321,7 @@ describe("firing state machine — band descent hold (business rule 19(a))", () 
     await step(96);
     expect(theState()).toMatchObject({ firingSeverity: "serious" });
     expect(activeNotifs()).toHaveLength(1);
-    const moves = vi.mocked(logEvent).mock.calls.filter(([e]: any) => /escalated$/.test(e.action));
+    const moves = eventLog.logEvent.mock.calls.filter(([e]: any) => /escalated$/.test(e.action));
     expect(moves).toHaveLength(0);
   });
 

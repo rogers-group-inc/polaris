@@ -13,7 +13,6 @@ const h = vi.hoisted(() => ({
   runs: new Map<string, Record<string, any>>(),
   sent: [] as Array<{ to: string[]; cc?: string[]; subject: string; text: string }>,
   channel: { type: "smtp", config: {} } as Record<string, unknown> | null,
-  logEvent: vi.fn(async () => undefined),
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -48,7 +47,9 @@ vi.mock("../../src/db.js", () => ({
     user: { findMany: vi.fn(async () => []) },
   },
 }));
-vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
+vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
+import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
+beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/rebootService.js", () => ({
   checkSchedulableReboot: vi.fn(async () => ({ plan: { method: "fortigate-rest", authority: "Lab FG" }, warnings: ["the device is down"] })),
   startReboot: vi.fn(),
@@ -82,7 +83,7 @@ beforeEach(() => {
   h.runs = new Map();
   h.sent = [];
   h.channel = { type: "smtp", config: {} };
-  h.logEvent.mockClear();
+  eventLog.logEvent.mockClear();
 });
 
 describe("booking notices", () => {
@@ -121,7 +122,7 @@ describe("booking notices", () => {
     const s = await createRebootSchedule({ assetId: "a1", scheduledFor: LATER, notifyEmails: ["ops@example.com"], actor: "alice" });
     await drain();
     expect(s.status).toBe("pending");
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_schedule_email_failed", details: expect.objectContaining({ notice: "scheduled" }) }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_schedule_email_failed", details: expect.objectContaining({ notice: "scheduled" }) }));
   });
 });
 
@@ -177,6 +178,6 @@ describe("finished (a reboot started now)", () => {
     run({ status: "failed", error: "did not come back", finishedAt: new Date(), notifyEmails: ["ops@example.com"] });
     await notifyRebootRunFinished("run-1");
     expect(h.runs.get("run-1")!.notifyError).toMatch(/no enabled email channel/);
-    expect(h.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_email_failed" }));
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "asset.reboot_email_failed" }));
   });
 });
