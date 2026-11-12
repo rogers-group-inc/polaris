@@ -623,7 +623,7 @@ describe("list pages that open on double click and menu on right click", () => {
     ["public/js/users.js", 3],
     ["public/js/automations.js", 1],
     ["public/js/blocks.js", 1],
-    ["public/js/subnets.js", 1],
+    ["public/js/subnets.js", 2], // a live network + an archived one (read-only View / Delete menu)
     ["public/js/path-checks.js", 2],
     ["public/js/assets-discovery.js", 1],
   ];

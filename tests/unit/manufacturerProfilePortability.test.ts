@@ -19,7 +19,7 @@ const svc = {
   getProfile: vi.fn(), getProfileFor: vi.fn(), createProfile: vi.fn(), updateProfile: vi.fn(),
   updateMetricRow: vi.fn(), createOverride: vi.fn(), updateOverride: vi.fn(),
   createWidget: vi.fn(), updateWidget: vi.fn(), deleteWidget: vi.fn(), deleteOverride: vi.fn(),
-  setWidgetLayout: vi.fn(), refreshProfileCache: vi.fn(),
+  setWidgetLayout: vi.fn(), refreshProfileCache: vi.fn(), assertWidgetsUnreferenced: vi.fn(async (_w: unknown) => {}),
 };
 
 vi.mock("../../src/db.js", () => ({
@@ -141,6 +141,9 @@ describe("View Code (exportProfile withIds + saveProfileCode)", () => {
     expect(svc.updateWidget.mock.calls[0][1]).toMatchObject({ name: "UPS State" });
     expect(svc.createWidget).toHaveBeenCalledTimes(1);
     expect(svc.deleteWidget).toHaveBeenCalledWith("w-web");
+    // Rule 167(a): the widget the file drops is asked about before anything is written.
+    expect(svc.assertWidgetsUnreferenced).toHaveBeenCalledWith([{ id: "w-web", name: "Web UI" }]);
+    expect(svc.assertWidgetsUnreferenced.mock.invocationCallOrder[0]).toBeLessThan(svc.updateWidget.mock.invocationCallOrder[0]);
     expect(svc.updateMetricRow).toHaveBeenCalledWith("p1", "temperature", expect.objectContaining({ defaultSymbol: null }));
     expect(out.changes).toEqual(["cleared metric temperature", "added widget New one", "deleted widget Web UI"]);
   });

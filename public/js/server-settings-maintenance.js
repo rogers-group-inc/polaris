@@ -1120,7 +1120,7 @@ var SAMPLE_RETENTION_FLAT_ENTITIES = [
     key: "pathCheckTraceroutes",
     label: "Path traceroutes",
     hint: "Hop-by-hop paths the Polaris Agent traced for path checks (every Nth run " +
-          "and on each pass→fail). Sets how far back the Paths tab’s path history reaches.",
+          "and on each pass→fail and recovery). Sets how far back the Paths tab’s path history reaches.",
     def: 30,
   },
 ];
@@ -1329,7 +1329,7 @@ async function loadDatabaseInfo() {
   try {
     // Fetch capacity advisor in parallel with the database snapshot — if the
     // advisor fails (e.g. statfs not available) we still render the rest of
-    // the tab. Also pull the NTP timezone override so capacity timestamps
+    // the tab. Also pull the server timezone (rule 170) so capacity timestamps
     // render in server time; failures fall through to browser-local.
     var results = await Promise.allSettled([
       api.serverSettings.getDatabase(),

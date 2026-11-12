@@ -337,6 +337,9 @@ GET    /assets/:id/path-check-history?checkId=
 GET    /assets/:id/path-check-traceroutes?checkId=
 ```
 
+`DELETE /path-checks/:id` answers `409` while an automation's condition is narrowed to that
+check ([rule 167](Business-Rules#rule-167)).
+
 A [path check](Path-Monitor) is an HTTP / HTTPS request, a TCP connect or a
 ping that the Polaris Agent (0.21.0 or later) runs from each of its hosts, with
 an optional traceroute. The `/path-checks` endpoints gate on the `pathChecks`
@@ -642,6 +645,9 @@ Gated on `manufacturerProfiles`; the widget device list and switch also need
 - **A Hardware Sensors table row** names the table's value column as its symbol
   and the other columns in `defaultSensorColumns`
   ([rule 132](Business-Rules#rule-132)).
+- **Deleting a widget, or a profile that holds one,** answers `409` while an automation's
+  condition names that widget or state probe; so does `PUT …/code` for a widget the file
+  leaves out ([rule 167](Business-Rules#rule-167)).
 - **A new custom widget polls no device** until it is switched on with
   `PUT …/widgets/:widgetId/assets` ([rule 130](Business-Rules#rule-130)).
 - **Export and import carry no ids or secrets.** MIBs travel by module name and

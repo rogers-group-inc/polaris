@@ -52,7 +52,7 @@ export async function getEffectiveMonitorSettings(id: string) {
       id:                         true,
       assetType:                  true,
       // Which manufacturer profile covers it (rule 131), for the forms' "uses"
-      // line that replaced the per-stream MIB pickers (rule 170).
+      // line that replaced the per-stream MIB pickers (rule 173).
       manufacturer:               true,
       model:                      true,
       os:                         true,
@@ -172,7 +172,7 @@ export async function getEffectiveMonitorSettings(id: string) {
 /**
  * The manufacturer profile that covers an asset (business rule 131) and the
  * MIB modules uploaded under its name — what the monitoring forms show in
- * place of the retired per-stream MIB pickers (rule 170): "Uses the APC
+ * place of the retired per-stream MIB pickers (rule 173): "Uses the APC
  * manufacturer profile (PowerNet-MIB)". null when no profile covers it, which
  * the forms read as "standard MIBs". One indexed query, on the detail read
  * only.

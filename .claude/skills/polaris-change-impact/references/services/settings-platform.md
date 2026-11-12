@@ -554,25 +554,27 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/serverSettingsService.ts
 
-**What it owns:** Server-wide configuration: NTP (servers, timezone) and CA certificate management (upload, list, delete). Server-leaf certs are managed externally (nginx reads `POLARIS_PROXY_CERT_PATH`).
+**What it owns:** the server timezone (business rule 170 — the zone Polaris's server-local clock runs in, applied to every role's process) and CA certificate management (upload, list, delete). Server-leaf certs are managed externally (nginx reads `POLARIS_PROXY_CERT_PATH`).
 
-**Public API:** `getNtpSettings`, `updateNtpSettings`, `testNtpSync` (+ `NtpTestDeps`, `NtpServerTestResult`), `listCertificates`, `addCertificate`, `deleteCertificate`.
+**Public API:** `getServerTimezone`, `setServerTimezone(override, actor?)`, `applyProcessTimezone(override)`, `refreshProcessTimezone`, `TIMEZONE_REFRESH_MS` (+ `ServerTimezone`), `listCertificates`, `addCertificate`, `deleteCertificate`.
 
-**Cross-service deps:** none. Utils: `sntp.ts` (`querySntp`, `checkNtsKe`) for the NTP test.
+**Cross-service deps:** userTimezoneService (`isValidTimeZone`), eventLogService (`logEvent` — `server.timezone.changed`).
 
-**Used by:** `src/api/routes/serverSettings.ts — CA upload/list/delete + NTP settings`. Server-cert mutation routes (`POST /certificates` category=server, `DELETE` of a server cert) return 409 unconditionally — handled directly in the route handler, doesn't reach the service.
+**Used by:** `src/api/routes/serverSettings.ts — GET|PUT /timezone, CA upload/list/delete`; `src/app.ts → startBackgroundJobs` — `refreshProcessTimezone()` awaited before any job import in EVERY role, then re-run every `TIMEZONE_REFRESH_MS` (30 s, unref'd). Server-cert mutation routes (`POST /certificates` category=server, `DELETE` of a server cert) return 409 unconditionally — handled directly in the route handler, doesn't reach the service.
 
 **Invariants:**
-- NTP and certificate lists persist in Settings table under `key: "ntp"` and `"certificates"`.
+- The override persists as `{ override: string | null }` in the Settings table under `key: "timezone"` (migration `20261112130000_server_timezone_setting` carried `ntp.timezoneOverride` over and deleted the retired `key: "ntp"` row); certificates under `"certificates"`.
+- Rule 170: the override is applied by assigning `process.env.TZ` — Node re-reads it for `Date` local getters and `Intl`'s resolved zone, so `userTimezoneService.serverTimeZone()`, `maintenanceRecurrence`, `notificationTemplate` and every other server-local reader follow it with no change of their own. Clearing assigns the HOST zone captured at module load (`HOST_TIME_ZONE`) — deleting `TZ` does NOT revert Node's zone. A zone this build's ICU cannot format in is refused on save (400) and read back as no override — never assigned, since Node turns an unknown `TZ` into "Etc/Unknown" = UTC silently.
+- The host's clock, timezone and time service are never touched. The NTP servers / mode / enable flag and Test Sync were retired 2026-11-12 (nothing ever applied them; `utils/sntp.ts` deleted with them).
 - Certificate store is a single JSON array in the "certificates" Setting; each cert carries id, category (ca/server), type (cert/key), PEM, and metadata. The route surface only handles `category="ca"`; the cleanup migration `20260608000000_drop_legacy_server_certs` strips any legacy `category="server"` entries on upgrade.
 - Backup/restore flows NOT in this service (they live in updateService).
-- `testNtpSync` is a REAL query, never an assumed answer (until 2026-11-11 it returned "Synchronized" with an invented +0.003 s offset): every distinct server (max 10, route `NtpTestSchema`) in parallel, one SNTP sample each — offset of THIS host's clock, delay, stratum; a reply must echo our transmit timestamp, be from a synchronized server, and a Kiss-o'-Death is reported by its code. `ok` only when every server answered. NTS mode runs the RFC 8915 key exchange (TLS 1.3, ALPN `ntske/1`, NTPv4 + AES-SIV-CMAC-256, cookies) and then a PLAIN sample from the server it names — the message says the sample was not NTS-authenticated (Node ships no AES-SIV). No netGuard on purpose: a fixed NTP payload to 123 / 4460, and real time sources live on link-local (169.254.169.123) and loopback (chronyd).
-- The stored NTP settings are NOT applied to the host by anything in Polaris (no chrony / timedatectl writer reads `key: "ntp"`); the OS time daemon keeps the clock. Ledger CQ-T010 records this.
 
 **When changing this:**
-- The NTP test: extend tests/unit/sntp.test.ts (packets, a real loopback UDP server, a scripted NTS-KE socket) and the `deps`-injected cases in tests/unit/serverSettingsService.test.ts.
+- A new server-local consumer needs nothing: read the process zone (`serverTimeZone()` / `Intl`), never a stored setting. Never set `process.env.TZ` anywhere else.
+- The timezone: tests/unit/serverSettingsService.test.ts (process zone moved, restored, invalid fallback, refresh) + tests/integration/serverTimezoneRoute.test.ts; restore the zone in afterEach.
 - Test CA upload validation (PEM parsing, magic-byte checks if added).
 - Confirm cert list dedup handles UUID collisions.
+
 
 ---
 

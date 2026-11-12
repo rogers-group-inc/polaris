@@ -346,7 +346,7 @@ async function _updateStreamSourceBadgesFromEffective(assetId, asset, effP) {
       var stated = Number(span.getAttribute("data-interval-sec"));
       intervalSeconds = span.getAttribute("data-interval-sec") !== "" && isFinite(stated) ? stated : null;
     }
-    // No "MIB:" segment: per-stream MIB pins are retired (business rule 170).
+    // No "MIB:" segment: per-stream MIB pins are retired (business rule 173).
     span.textContent = _streamBadgeText(asset, stream, resolved, prov, intervalSeconds, eff.resolved);
     span.title = "Polling method · Where this setting comes from";
   });

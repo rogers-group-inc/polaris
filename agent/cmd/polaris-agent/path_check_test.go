@@ -47,8 +47,8 @@ func TestTracerouteModeFor(t *testing.T) {
 	if tracerouteModeFor(&checkState{runCount: 3, lastOk: true}, &d) != collectors.TraceOnFail {
 		t.Error("after a pass, trace only if this run fails")
 	}
-	if tracerouteModeFor(&checkState{runCount: 3, lastOk: false}, &d) != collectors.TraceNever {
-		t.Error("still failing: no extra trace (the transition already had one)")
+	if tracerouteModeFor(&checkState{runCount: 3, lastOk: false}, &d) != collectors.TraceOnPass {
+		t.Error("after a fail, trace only if this run passes (the recovery)")
 	}
 	d.Traceroute.Enabled = false
 	if tracerouteModeFor(nil, &d) != collectors.TraceNever {

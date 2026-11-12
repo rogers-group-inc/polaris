@@ -785,7 +785,7 @@
     { key: "temperature",  label: "Hardware Sensors", stream: "temperature",  poll: "temperaturePolling",  cred: "temperatureCredentialId",  mib: "temperatureMibId",  mibKey: "temperature" },
     { key: "interfaces",   label: "Interfaces",       stream: "interfaces",   poll: "interfacesPolling",   cred: "interfacesCredentialId",   mib: "interfacesMibId",   mibKey: "interfaces" },
     { key: "lldp",         label: "LLDP",             stream: "lldp",         poll: "lldpPolling",         cred: "lldpCredentialId",         mib: "lldpMibId",         mibKey: "lldp" },
-    // `mib` names the read-only MIB line (rule 170), not a column.
+    // `mib` names the read-only MIB line (rule 173), not a column.
     // Storage has no credential or MIB line of its own: the SNMP walk reuses
     // the interfaces stream's session, HOST-RESOURCES-MIB + the vendor fallback.
     { key: "storage",      label: "Storage",          stream: "storage",      poll: "storagePolling",      cred: null,                       mib: null,                mibKey: null },
@@ -819,7 +819,7 @@
     var source = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
     if (!_POLLING_COMPAT[source]) source = "manual";
     // The covering manufacturer profile names what CPU/Memory and Hardware
-    // Sensors read (business rule 170: no per-stream MIB pin).
+    // Sensors read (business rule 173: no per-stream MIB pin).
     var coveringProfile = eff ? (eff.manufacturerProfile || null) : undefined;
     var streams = STREAMS.filter(function (s) {
       // A container / App has no sensors, disks or LLDP of its own.

@@ -673,7 +673,7 @@ export async function findMibWalkAsset(assetId: string): Promise<{
 
 export async function deleteMib(id: string): Promise<void> {
   // No stream-pin guard: the per-stream MIB pins it counted (rule 167's MIB
-  // clause) are retired by business rule 170, so nothing polls "with" a MIB
+  // clause) are retired by business rule 173, so nothing polls "with" a MIB
   // any more — a profile row that names one reads `unresolved` once it is
   // gone and says which module to upload (rule 68).
   try {

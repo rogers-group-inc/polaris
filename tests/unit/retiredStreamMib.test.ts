@@ -1,6 +1,6 @@
 /**
  * tests/unit/retiredStreamMib.test.ts — the retired per-stream MIB pins
- * (business rule 170) are accepted by every write schema and never stored.
+ * (business rule 173) are accepted by every write schema and never stored.
  */
 
 import { describe, it, expect } from "vitest";

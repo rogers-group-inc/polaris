@@ -883,7 +883,9 @@ function _buildClient(base: PrismaClient) {
           const released = await releaseAddressForDecommission(base, args?.where, args?.data);
           // updateMany: skip shadow-write. Rare on identity fields, and the
           // backfill job sweeps any drift on next startup. Same logic for the
-          // dns_resolved reconcile — the periodic job catches drift.
+          // dns_resolved reconcile — the periodic job catches drift, through
+          // its reservation-side pass (rule 11(a)): the address this write
+          // clears is what its per-asset pass scans by.
           const result = await query(args);
           if (released.length) await recordDecommissionRelease(base, released, decommissionActorOf(args.data));
           return result;

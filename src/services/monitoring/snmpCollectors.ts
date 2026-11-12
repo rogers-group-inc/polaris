@@ -150,7 +150,7 @@ export async function snmpWalkRaw(
 
 /**
  * The identity `pickDbProfile` reads for one asset: its own manufacturer, OS,
- * model and type — nothing else (business rule 170).
+ * model and type — nothing else (business rule 173).
  *
  * A per-stream MIB pin used to override the manufacturer and model here, so
  * an uploaded MIB chosen on CPU/Memory or Hardware Sensors silently switched

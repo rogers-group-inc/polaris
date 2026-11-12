@@ -1,4 +1,4 @@
--- Per-stream MIB pins are retired (business rule 170). Which MIB a stream
+-- Per-stream MIB pins are retired (business rule 173). Which MIB a stream
 -- reads is decided by the asset's manufacturer profile; the per-stream "MIB"
 -- dropdown is gone from every monitoring form, the resolver no longer reads
 -- the columns and the write schemas drop them.

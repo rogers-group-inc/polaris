@@ -121,8 +121,10 @@ server, and you can run up to 10 tests a minute.
 ### Traceroute
 
 On by default. A traceroute runs on the first run, every *N* runs after that
-(default 5), and **immediately whenever a run fails after a passing one**, so a
-failure always has a fresh path to look at. *Max hops* (default 30) and *Probes
+(default 5), **immediately whenever a run fails after a passing one**, so a
+failure always has a fresh path to look at, and **immediately when a run passes
+after a failing one**, so the resolved alert email draws the restored route
+rather than the outage's. *Max hops* (default 30) and *Probes
 per hop* (default 3) set how far and how thoroughly it looks.
 
 The Polaris server traces with the system `traceroute` (or `tracepath`). If neither is
@@ -324,6 +326,10 @@ the automation when the server is ticked.
 
 Response bodies can contain sensitive data. Leave *Keep a body excerpt* off
 unless you need it.
+
+A check that an automation is narrowed to cannot be deleted until the automation is
+pointed at another check ([rule 167](Business-Rules#rule-167)). An alert that was open
+about a deleted check is cleared automatically.
 
 Deleting a check stops the agents running it on their next config refresh
 (within a few minutes), and the Polaris server at once. Its past results are not deleted immediately; they age

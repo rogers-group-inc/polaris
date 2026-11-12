@@ -10,6 +10,7 @@ import { loadPrimaryFirmwareImages, firmwareVsPrimary } from "../firmwareReposit
 import { pathCheckIdsInMaintenance } from "../maintenanceScheduleService.js";
 import { type Trigger, type ResetConfig, hwSensorFilterMatches, probeLossWindowSec, readingAtOrAboveCeiling, forecastDaysOf, forecastLevelsOf, type ForecastLevel, DEVICE_FILTER_DIMENSIONS, deviceFilterMatch, type DeviceFilterAsset, downRecoveryConsumesSustain, DOWN_ALERT_HOLDING_STATES, triggerHoldPolls, triggerWindowPolls, rollingAggregate, prepareResponseTimeWindow, parseMemberIpFilter, memberIpPasses, interfacePatternMatch, interfaceTagMatch, priorityTagSubjectOf } from "../notificationTypes.js";
 import { bareInterfaceIp } from "../../utils/cidr.js";
+import { isPathMetric } from "../notificationTypes.js";
 import { FC_RATE_METRICS, fcErrorsFrom, isFcRateMetric } from "../../utils/fibreChannel.js";
 import { sdwanDimensionTerms } from "../../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../../utils/priorityTags.js";
@@ -930,7 +931,7 @@ export async function resolveAssetMetricReadings(
       return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, valueFn, agg, winPolls);
     }
     case "pathHopCount": {
-      // Read off the traceroutes (every Nth run + each pass→fail), not the
+      // Read off the traceroutes (every Nth run + each pass→fail and fail→pass), not the
       // per-run samples, which carry no hop count.
       const rows = await prisma.assetPathCheckTraceroute.findMany({
         where: { assetId: { in: ids }, timestamp: { gte: since }, ...(await pathCheckIdWhere(df.checkId)) },
@@ -1628,4 +1629,36 @@ export interface SweepStateRow {
   dimensionKey: string;
   state: string;
   notificationId: string | null;
+}
+
+/**
+ * Business rule 167(a): which of these parked rows are about a path check, a
+ * custom widget or a state probe that no longer EXISTS. The vanished sweep
+ * leaves a row alone while its subject reports nothing for the rule — a
+ * collection gap is not recovery — but a subject whose only check (or widget)
+ * was deleted reports nothing for ever, so its alert stood until someone
+ * cleared it by hand. Deleting the object is a configuration edge, like an
+ * unpin. Asked of the database, not the profile cache: a cold cache on a role
+ * that never warmed it would read as "every probe is gone".
+ *
+ * Runs only over rows already parked, for the three metrics that key on such
+ * an id; one indexed read.
+ */
+export async function deletedTargetGone(rule: DbRule, rows: SweepStateRow[]): Promise<Set<string>> {
+  const gone = new Set<string>();
+  const keyed = rows.filter((st) => st.dimensionKey);
+  if (keyed.length === 0) return gone;
+  const t = rule.trigger as { type?: string; metric?: string };
+  if (t.type !== "asset_metric" || !t.metric) return gone;
+  const kind = isPathMetric(t.metric) ? "check" : t.metric === "customWidgetValue" ? "widget" : t.metric === "customStateValue" ? "probe" : null;
+  if (!kind) return gone;
+  // A state probe's key is `<probeId>|<rowKey>`; the others are the id itself.
+  const idOf = (st: SweepStateRow) => (kind === "probe" ? st.dimensionKey.split("|")[0]! : st.dimensionKey);
+  const ids = [...new Set(keyed.map(idOf))];
+  const found = kind === "check"
+    ? await prisma.pathCheck.findMany({ where: { id: { in: ids } }, select: { id: true } })
+    : await prisma.manufacturerCustomWidget.findMany({ where: { id: { in: ids } }, select: { id: true } });
+  const live = new Set(found.map((r) => r.id));
+  for (const st of keyed) if (!live.has(idOf(st))) gone.add(st.id);
+  return gone;
 }

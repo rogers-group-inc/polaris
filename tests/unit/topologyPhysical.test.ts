@@ -108,3 +108,20 @@ describe("stacked floors (rule 152(a))", () => {
     expect(steps[3]).toBeGreaterThan(0.1);
   });
 });
+
+describe("room outlines", () => {
+  it("convexHull keeps only the outer points", () => {
+    const h = P._convexHull([[0, 0], [10, 0], [10, 10], [0, 10], [5, 5], [3, 7]]);
+    expect(h.length).toBe(4);
+    expect(h).not.toContainEqual([5, 5]);
+  });
+  it("roundedHull rings one device and wraps every point with the pad", () => {
+    const one = P._roundedHull([[100, 100]], 30, 16);
+    expect(one.length).toBe(16);
+    one.forEach((q: number[]) => expect(Math.hypot(q[0] - 100, q[1] - 100)).toBeCloseTo(30, 6));
+    const two = P._roundedHull([[0, 0], [200, 0]], 30, 16);
+    const xs = two.map((q: number[]) => q[0]);
+    expect(Math.min(...xs)).toBeCloseTo(-30, 6);
+    expect(Math.max(...xs)).toBeCloseTo(230, 6);
+  });
+});

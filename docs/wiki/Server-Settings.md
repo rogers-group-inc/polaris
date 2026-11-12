@@ -12,7 +12,7 @@ only to an administrator.
 | **Credentials** | `credentials` | stored SNMP / SSH / WinRM / REST / HTTP secrets, plus the MIB Database (`mibDatabase`) and Manufacturer Profiles (`manufacturerProfiles`) cards |
 | **Repository** | `firmware` | firmware images for switches, access points and FortiGates, and the device logins or API tokens that apply them |
 | **Customization** | `serverSettingsSystem` | application name and subtitle, logo, display units, reboots |
-| **Time & NTP** | `serverSettingsSystem` | NTP servers and the timezone override |
+| **Time** | `serverSettingsSystem` | the server timezone Polaris keeps its clock in |
 | **Web Server** | `serverSettingsSystem` | HTTPS certificate, nginx, Dash wallboard, trusted CAs |
 | **Maintenance** | `serverSettingsSystem` to look; `serverSettingsData` for backup, restore, download, updates and restart | database and capacity, updates, lifecycle, backups |
 | **Retention** | `serverSettingsSystem` | sample retention and agent OS event-log collection |
@@ -396,33 +396,33 @@ vanish.
 
 ---
 
-## Time & NTP
+## Time
 
-Two cards: **Time Synchronization** (the server's NTP servers) and **Timezone
-Override**.
+One card, **Server Timezone**: the timezone Polaris keeps its own clock in.
+Pick a zone from the searchable list and **Save**; leave it blank to use the
+host's timezone (the card names it). **Current server time** under the picker
+shows the clock in the zone you have picked.
 
-**Test Sync** queries every listed server from the Polaris server, once each,
-and shows one line per server: its stratum, how far the Polaris server's clock
-is from it (the offset), and the round-trip delay — or why it did not answer
-(no answer within 3 seconds, a name that does not resolve, a server that is not
-synchronized itself, a server that refused the query). It turns red unless
-every server answered, and says so when the Polaris server's clock is more than
-a second off. With the **NTS** mode it first runs the NTS key exchange (TCP
-4460, TLS 1.3), then takes one time sample from the server the exchange names;
-that sample is plain NTP, and the line says so. The test needs UDP 123 (and TCP
-4460 for NTS) outbound from the Polaris server.
+**This is the clock every maintenance window, every automation quiet-time
+window, every scheduled reboot and firmware upgrade is expressed in**, and the
+zone an alert email uses for a recipient who has not chosen a timezone of their
+own. All of them are **server-local wall clock with no offset** — see
+[Maintenance windows](Maintenance-Windows#everything-is-server-local-wall-clock).
+Changing the zone therefore moves them: a window saved as 22:00–06:00 means
+22:00–06:00 in the new zone.
 
-Polaris does not configure the host's time service from these settings — the
-operating system's NTP client (chronyd on RHEL) keeps the clock. Use Test Sync
-to check that the servers you intend to use are reachable and agree with the
-host.
-
-**This is the clock every maintenance window and every automation quiet-time
-window is expressed in.** Both are **server-local wall clock with no offset** —
-see [Maintenance windows](Maintenance-Windows#everything-is-server-local-wall-clock).
+The change applies to every Polaris process within about 30 seconds — no
+restart. It changes **Polaris only**: the host's own clock, its timezone and
+its time service (chronyd, systemd-timesyncd, Windows Time) are left as they
+are, and keeping the host's clock accurate stays the host's job. Changing the
+timezone is recorded on the Events page.
 
 Individual users set their own **display** timezone from the
 [account menu](Navigation-and-Account#timezone); that changes rendering only.
+
+> Until 2026-11 this tab was **Time & NTP** and also held NTP servers, a mode
+> and a Test Sync button. Nothing ever applied those servers to the host, so
+> they were removed; a saved timezone override carried over.
 
 ---
 

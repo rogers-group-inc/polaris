@@ -110,6 +110,47 @@ export async function channelReferrers(channelId: string): Promise<ActionReferre
   return out;
 }
 
+/** The `dimensionFilter` keys that hold the id of a deletable object. */
+export type DimensionTargetField = "checkId" | "widgetId" | "stateProbeId";
+
+function namesTarget(node: unknown, fields: readonly DimensionTargetField[], ids: ReadonlySet<string>, depth = 0): boolean {
+  if (!node || typeof node !== "object" || depth > 16) return false;
+  if (Array.isArray(node)) return node.some((n) => namesTarget(n, fields, ids, depth + 1));
+  const o = node as Record<string, unknown>;
+  const df = o.dimensionFilter;
+  if (df && typeof df === "object") {
+    for (const f of fields) {
+      const v = (df as Record<string, unknown>)[f];
+      if (typeof v === "string" && ids.has(v)) return true;
+    }
+  }
+  return Object.values(o).some((v) => namesTarget(v, fields, ids, depth + 1));
+}
+
+/**
+ * Automations with a condition narrowed to one of these objects (business
+ * rule 167(a)): a path check (`checkId`), a numeric custom widget (`widgetId`)
+ * or a state probe (`stateProbeId`). The stored trigger and reset are walked
+ * as plain JSON, to any depth, rather than through a schema: a condition can
+ * sit at the top, inside a composite tree or under a reset condition, and a
+ * row that no longer parses still names what it names.
+ */
+export async function dimensionTargetReferrers(
+  fields: readonly DimensionTargetField[],
+  ids: readonly string[],
+): Promise<ActionReferrer[]> {
+  // A blank filter means "every check"; it names nothing.
+  const want = new Set(ids.filter(Boolean));
+  if (want.size === 0) return [];
+  const rules = await prisma.notificationRule.findMany({
+    select: { name: true, trigger: true, reset: true },
+    orderBy: { name: "asc" },
+  });
+  return rules
+    .filter((r) => namesTarget(r.trigger, fields, want) || namesTarget(r.reset, fields, want))
+    .map((r) => `automation "${r.name}"`);
+}
+
 /** "a, b, c, … (+N more)" — the list an error message can carry. */
 export function summarizeReferrers(refs: readonly ActionReferrer[], max = 5): string {
   const shown = refs.slice(0, max).join(", ");

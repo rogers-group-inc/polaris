@@ -76,7 +76,9 @@ func pathCheckDue(st *checkState, def *transport.PathCheckDef, now time.Time) bo
 
 // tracerouteModeFor: the first run of a definition always traces (the
 // baseline path), then every Nth run; a run following a PASS traces only if
-// it fails — the pass→fail transition always has a fresh path.
+// it fails and a run following a FAIL traces only if it passes — both
+// transitions always have a fresh path, so a recovery is never drawn from the
+// outage's trace.
 func tracerouteModeFor(st *checkState, def *transport.PathCheckDef) collectors.TraceMode {
 	if !def.Traceroute.Enabled {
 		return collectors.TraceNever
@@ -91,7 +93,7 @@ func tracerouteModeFor(st *checkState, def *transport.PathCheckDef) collectors.T
 	if st.lastOk {
 		return collectors.TraceOnFail
 	}
-	return collectors.TraceNever
+	return collectors.TraceOnPass
 }
 
 // prunePathCheckState drops checks no longer shipped and resets any whose

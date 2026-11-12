@@ -143,7 +143,7 @@ export const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   temperatureCredentialId:      z.string().uuid().nullable().optional(),
   interfacesCredentialId:       z.string().uuid().nullable().optional(),
   lldpCredentialId:             z.string().uuid().nullable().optional(),
-  // Retired per-stream MIB pins (business rule 170): accepted, never stored.
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
   responseTimeMibId:            retiredStreamMibField(),
   cpuMemoryMibId:               retiredStreamMibField(),
   temperatureMibId:             retiredStreamMibField(),

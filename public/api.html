@@ -1055,7 +1055,8 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /path-checks/:id
             <span class="gate">pathChecks:write</span></div>
-          <p><code>204</code>. Removes the check and its host list.</p>
+          <p><code>204</code>. Removes the check and its host list. <code>409</code> while an automation's
+            condition is narrowed to this check; the message names the automations.</p>
         </div>
 
         <div class="endpoint">
@@ -2036,7 +2037,8 @@
             <span class="method m-put" style="font-size:0.65rem">PUT</span> and
             <span class="method m-delete" style="font-size:0.65rem">DELETE</span>
             <code>…/widgets/:widgetId</code> edit and remove one; an edit keeps the widget's id,
-            so automations on a state probe keep working.</p>
+            so automations on a state probe keep working. Removing one answers <code>409</code> while an
+            automation's condition names it.</p>
         </div>
 
         <div class="endpoint">
@@ -2082,7 +2084,8 @@
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /server-settings/manufacturer-profiles/:id
             <span class="gate">manufacturerProfiles:write</span></div>
-          <p><code>204</code>. Its devices fall back to the standard MIBs for every metric.</p>
+          <p><code>204</code>. Its devices fall back to the standard MIBs for every metric. <code>409</code>
+            while an automation's condition names one of its widgets or state probes.</p>
         </div>
 
         <div class="endpoint">

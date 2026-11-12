@@ -453,7 +453,7 @@ function _classStreamSubtabHTML(idPrefix, sourceKind, klass, stream, settings, c
     '</div>';
   }
 
-  // What the stream reads over SNMP — said, not chosen (business rule 170).
+  // What the stream reads over SNMP — said, not chosen (business rule 173).
   // A tier form covers many assets, so it cannot name one profile.
   var mibHtml = "";
   if (mibId && mibWrapId && showMib) {

@@ -122,7 +122,7 @@ const TierSettingsSchema = z.object({
   storagePolling:             PollingMethodEnum.nullable().optional(),
   processesPolling:           PollingMethodEnum.nullable().optional(),
   eventLogPolling:            PollingMethodEnum.nullable().optional(),
-  // Retired per-stream MIB pins (business rule 170): accepted, never stored.
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
   responseTimeMibId:          retiredStreamMibField(),
   cpuMemoryMibId:             retiredStreamMibField(),
   temperatureMibId:           retiredStreamMibField(),
@@ -184,7 +184,7 @@ const OverrideSettingsSchema = z.object({
   lldpCredentialId:           z.string().uuid().nullable().optional(),
   processesCredentialId:      z.string().uuid().nullable().optional(),
   eventLogCredentialId:       z.string().uuid().nullable().optional(),
-  // Retired per-stream MIB pins (business rule 170): accepted, never stored.
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
   responseTimeMibId:          retiredStreamMibField(),
   cpuMemoryMibId:             retiredStreamMibField(),
   temperatureMibId:           retiredStreamMibField(),

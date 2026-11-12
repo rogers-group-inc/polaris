@@ -1,5 +1,6 @@
 /**
- * src/api/routes/serverSettings.ts — NTP and certificate management endpoints
+ * src/api/routes/serverSettings.ts — Server Settings endpoints (the server
+ * timezone, certificates, database, backups, DNS, OUI, and the rest below)
  */
 
 import { intQuery } from "../../utils/queryParams.js";
@@ -13,9 +14,8 @@ import { existsSync, unlinkSync, writeFileSync, mkdirSync, createReadStream, sta
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
-  getNtpSettings,
-  updateNtpSettings,
-  testNtpSync,
+  getServerTimezone,
+  setServerTimezone,
   listCertificates,
   addCertificate,
   deleteCertificate,
@@ -466,35 +466,28 @@ router.get("/database/backups/:id/download", maintenanceLimiter, requirePermissi
   }
 });
 
-// ─── NTP ────────────────────────────────────────────────────────────────────
+// ─── Server timezone (business rule 170) ────────────────────────────────────
+// The zone Polaris's server-local clock runs in. Applied inside Polaris only;
+// the host's clock and its time service are not Polaris's to configure.
 
-router.get("/ntp", async (_req, res, next) => {
+router.get("/timezone", async (_req, res, next) => {
   try {
-    res.json(await getNtpSettings());
+    res.json(await getServerTimezone());
   } catch (err) {
     next(err);
   }
 });
 
-router.put("/ntp", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
-  try {
-    res.json(await updateNtpSettings(req.body));
-  } catch (err) {
-    next(err);
-  }
+const ServerTimezoneSchema = z.object({
+  // null or "" clears the override. The service checks the zone is one this
+  // server's ICU can format in (a 400 otherwise).
+  override: z.string().trim().max(64).nullable(),
 });
 
-// The test opens a socket per server, so the list is bounded and each entry is
-// a host name or address (no scheme, path or port — the ports are NTP's own).
-const NtpTestSchema = z.object({
-  mode: z.enum(["ntp", "sntp", "nts"]).default("ntp"),
-  servers: z.array(z.string().trim().min(1).max(253).regex(/^[A-Za-z0-9.:\-[\]]+$/, "a host name or IP address")).max(10),
-});
-
-// Test probes an operator-supplied host from the server — gate like the write.
-router.post("/ntp/test", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
+router.put("/timezone", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
   try {
-    res.json(await testNtpSync(NtpTestSchema.parse(req.body)));
+    const { override } = ServerTimezoneSchema.parse(req.body);
+    res.json(await setServerTimezone(override || null, requestActor(req)));
   } catch (err) {
     next(err);
   }

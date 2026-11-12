@@ -1,6 +1,6 @@
 /**
  * The per-stream MIB pins (`responseTimeMibId`, `cpuMemoryMibId`, …) are
- * retired (business rule 170): which MIB a stream reads is decided by the
+ * retired (business rule 173): which MIB a stream reads is decided by the
  * asset's manufacturer profile, never pinned per stream.
  *
  * API clients written against the old contract still send them, and a write

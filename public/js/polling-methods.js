@@ -344,7 +344,7 @@ function _polarisReadPollingDropdown(id) {
   return el.value || null;
 }
 
-// What MIB a stream reads over SNMP — said, never chosen (business rule 170).
+// What MIB a stream reads over SNMP — said, never chosen (business rule 173).
 // The per-stream MIB picker is retired: it changed nothing on Response Time,
 // Interfaces and LLDP, and on CPU/Memory and Hardware Sensors an uploaded MIB
 // silently switched the asset into that MIB's manufacturer profile. Which MIB

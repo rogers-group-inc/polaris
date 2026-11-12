@@ -1496,7 +1496,7 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
   if (asset.processesTimeoutMs   != null) { merged.processesTimeoutMs       = asset.processesTimeoutMs;   provenance.processesTimeoutMs       = "asset"; }
   if (asset.eventLogTimeoutMs    != null) { merged.eventLogTimeoutMs        = asset.eventLogTimeoutMs;    provenance.eventLogTimeoutMs        = "asset"; }
 
-  // Per-stream MIB pins are retired (business rule 170): no tier's value is
+  // Per-stream MIB pins are retired (business rule 173): no tier's value is
   // resolved, so every `*MibId` reads null whatever an old row or an API
   // client still holds. The fields stay on the shape (and the columns in the
   // schema) for one release so a rollback finds them; nothing consumes them.

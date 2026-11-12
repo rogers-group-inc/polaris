@@ -41,6 +41,8 @@ import {
   reconcileDnsResolvedForAsset,
   releaseDnsResolvedForAsset,
   releaseDnsResolvedAt,
+  reconcileDnsResolvedForAllAssets,
+  rowsOfIneligibleOwners,
 } from "../../src/services/dnsResolvedReservationService.js";
 
 const d = dbDescribe;
@@ -446,5 +448,62 @@ d("reconcileDnsResolvedForAsset: IP change releases the stale row", () => {
     rows = await dnsRows();
     expect(rows.length).toBe(1);
     expect(rows[0].ipAddress).toBe("10.77.2.50");
+  });
+});
+
+// ─── Rule 11(a): a device a SWEEP decommissioned ─────────────────────────────
+
+d("the periodic sweep releases rows whose owner a bulk decommission retired (rule 11(a))", () => {
+  it("a sweep's updateMany clears the address and leaves the row; the next sweep releases it", async () => {
+    await makeBlockAndSubnet();
+    const asset = await makeAsset({ hostname: "swept", macAddress: "AA:BB:CC:DD:EE:30" });
+    expect(await reconcileAndCountDnsRows(asset.id)).toBe(1);
+
+    // What a discovery absence sweep does: no per-asset reconcile fires.
+    await prisma.asset.updateMany({ where: { id: asset.id }, data: { status: "decommissioned" } });
+    await settle();
+    const after = await prisma.asset.findUniqueOrThrow({ where: { id: asset.id } });
+    expect(after.ipAddress).toBeNull(); // rule 40(k) — and why the per-asset pass never sees it again
+    expect((await dnsRows()).length).toBe(1);
+
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect(out.released).toBeGreaterThanOrEqual(1);
+    expect((await dnsRows()).length).toBe(0);
+  });
+
+  it("keeps the row of a live device that shares a retired device's hostname", async () => {
+    await makeBlockAndSubnet();
+    const live = await makeAsset({ hostname: "reused-name", macAddress: "AA:BB:CC:DD:EE:31" });
+    expect(await reconcileAndCountDnsRows(live.id)).toBe(1);
+    await makeAsset({ hostname: "reused-name", macAddress: "AA:BB:CC:DD:EE:32", ipAddress: null, status: "decommissioned" });
+    await settle();
+
+    await reconcileDnsResolvedForAllAssets();
+    const rows = await dnsRows();
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.macAddress).toBe("AA:BB:CC:DD:EE:31");
+  });
+
+  it("rowsOfIneligibleOwners: released only when every owner is ineligible; an unowned row is left", () => {
+    const asset = (id: string, o: Record<string, unknown>) =>
+      ({ id, ipAddress: "10.77.1.9", hostname: null, dnsName: null, macAddress: null, status: "active", ...o }) as never;
+    const rows = [
+      { id: "r-retired", hostname: "old", macAddress: "M1" },
+      { id: "r-live", hostname: "new", macAddress: "M2" },
+      { id: "r-shared", hostname: "both", macAddress: null },
+      { id: "r-unowned", hostname: "nobody", macAddress: "M9" },
+      { id: "r-dnsname", hostname: "by-dns", macAddress: null },
+    ];
+    const assets = [
+      asset("a1", { hostname: "old", macAddress: "M1", ipAddress: null, status: "decommissioned" }),
+      asset("a2", { hostname: "new", macAddress: "M2" }),
+      asset("a3", { hostname: "both", ipAddress: null, status: "decommissioned" }),
+      asset("a4", { hostname: "both" }),
+      asset("a5", { dnsName: "by-dns", status: "disabled" }),
+    ];
+    expect(rowsOfIneligibleOwners(rows, assets)).toEqual([
+      { rowId: "r-retired", assetId: "a1" },
+      { rowId: "r-dnsname", assetId: "a5" },
+    ]);
   });
 });

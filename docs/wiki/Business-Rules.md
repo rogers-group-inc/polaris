@@ -87,6 +87,9 @@ non-deprecated network with no active reservation gets one auto-created. IPv4
 only, **never pushed to a gate**, and it **never raises a conflict** — it defers
 silently to anything authoritative. When two assets share one address, the
 reservation keeps describing the first and is not rewritten back and forth.
+The reservation is released when its device is decommissioned or disabled, or
+loses its address — including a device retired automatically by a discovery
+sweep, which the periodic clean-up picks up on its next pass.
 
 ---
 
@@ -3515,6 +3518,12 @@ Deleting any of these now stops with a message naming what still depends on it:
 Point those at something else, then delete. Before this, the delete went through and the
 automation, the poll or the Discovery quietly stopped working.
 
+The same applies to what an automation's condition is narrowed to. A **path check**, a
+**custom widget** or a **state probe** that an automation names cannot be deleted, and neither
+can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
+automation covers every check and one of them is deleted while its alert is firing, Polaris
+clears that alert on its next pass instead of leaving it open for good.
+
 ### Rule 168
 
 **A floor is a number; its name is only a label.** A description's floor is a whole number:
@@ -3524,17 +3533,36 @@ the number; an existing text floor such as `f:Surface` keeps working, is matched
 that name, and is listed under **Devices to check** with the number to use. Polaris never
 rewrites one without asking.
 
+### Rule 169
+
+**Renaming a tag changes it everywhere, not only on the devices that carry it.** When you
+rename a tag in the registry, Polaris also updates:
+
+- the tag scope of every user and SSO group mapping that lists it, so people keep the devices
+  they could change;
+- every device filter that uses it — in automations, alert groups, quiet times, path checks,
+  contacts, Application Map rules and other tags' auto-assign filters;
+- automations that are narrowed to ports with that tag, and notify actions sent to the users
+  of that tag.
+
+The Events page entry for the rename says what was updated. Deleting a tag changes none of
+these: the tag stays on any device that carries it by hand, and the filters keep selecting
+those devices.
+
+Renaming a **map region** works the same way. As well as moving the region's tag on devices
+and networks and every user's region scope, Polaris updates the device filters that select
+by that region and the notify actions sent to that region's users.
+
 ### Rule 170
 
-**Which MIB a stream reads is decided by the asset's manufacturer profile; it is not chosen
-per stream.** An SNMP stream on an asset's Monitoring tab (and on an integration's or a class
-setting's) shows a read-only **MIB** line instead of a dropdown. Response Time always reads
-SNMPv2-MIB, Interfaces IF-MIB and LLDP LLDP-MIB. CPU/Memory and Hardware Sensors read the
-manufacturer profile that covers the asset, then the standard MIB (HOST-RESOURCES-MIB,
-ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufacturer**. The old
-MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
-another manufacturer's profile; on upgrade, every asset where it could have done that gets a
-warning in its Events naming the MIB, and every pin is cleared.
+**Polaris keeps its own clock in the server timezone you give it, and leaves the host's
+clock alone.** Every "server-local" time in Polaris — maintenance windows, quiet times,
+scheduled reboots and firmware upgrades, and an alert email for a recipient with no
+timezone of their own — uses the timezone set on Server Settings → **Time**, or the host's
+timezone when none is set. A change reaches every Polaris process within about 30 seconds,
+with no restart. Polaris never changes the host's clock, its timezone or its time service;
+keeping the host's clock accurate is the host's job, which is why the NTP server settings
+that used to sit on that tab were removed. See [Server Settings](Server-Settings#time).
 
 ### Rule 171
 
@@ -3555,3 +3583,15 @@ standard MIBs only, with a device count and a **Create profile** button. If anot
 take those devices from that profile. In a profile, a row with nothing set shows the standard
 reading it uses (for example *Standard: HOST-RESOURCES-MIB hrProcessorLoad*). Set the row only
 to change it; a row left empty keeps getting improvements to the standard readings.
+
+### Rule 173
+
+**Which MIB a stream reads is decided by the asset's manufacturer profile; it is not chosen
+per stream.** An SNMP stream on an asset's Monitoring tab (and on an integration's or a class
+setting's) shows a read-only **MIB** line instead of a dropdown. Response Time always reads
+SNMPv2-MIB, Interfaces IF-MIB and LLDP LLDP-MIB. CPU/Memory and Hardware Sensors read the
+manufacturer profile that covers the asset, then the standard MIB (HOST-RESOURCES-MIB,
+ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufacturer**. The old
+MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
+another manufacturer's profile; on upgrade, every asset where it could have done that gets a
+warning in its Events naming the MIB, and every pin is cleared.

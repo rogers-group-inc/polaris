@@ -280,6 +280,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/tagRenameCarryService.ts
+
+**What it owns:** Business rule 169 — carrying a renamed tag's new name into everything that SELECTS by the name (the registry service itself rewrites what CARRIES it).
+
+**Public API:** `carryTagRename(from, to)` → `TagRenameCarry` counts per holder; `rewriteTagRefs(node, from, to)` (pure; same reference back when nothing matched); `summarizeTagCarry(counts)`.
+
+**Cross-service deps:** `prisma` (`User`, `GroupMapping`, `NotificationRule`, `AlertGroup`, `QuietTimeSchedule`, `PathCheck`, `Tag`, `Contact`); `appMapDiscoveryService` (`getConfig` / `saveConfig`); `utils/jsonEqual`.
+
+Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `region:<name>` tag in conditions and `ifTag`, the bare name in `recipientRegions`; both renames share `carryFilterHolders`.
+
+**Used by:** `tagRegistryService.updateTag` — on a rename only, after its own rewrites; `src/api/routes/mapRegions.ts` (the region rename, beside `renameRegionInPrincipalScopes`).
+
+**Invariants:**
+- **Three shapes, wherever they sit:** `{ field: "tag", value }`, `recipientTags: string[]`, `dimensionFilter.ifTag` ("|" list). Whole-name, case-insensitive — the readers' own comparison.
+- Only rows that name the tag are written; an untouched row keeps its `updatedAt`.
+- Post-commit and best-effort per holder: a failure is logged, never thrown — the rename already happened.
+- A delete does not call this (the string stays on hand-tagged devices).
+
+**When changing this:**
+- A new table or Setting that stores a device filter or recipient lists is added to `carryFilterHolders` (both renames then cover it); a new tag-SCOPE list goes in `carryTagRename`. Add a row to the integration test.
+- A new SHAPE that stores a tag name (a fourth) is added to `rewriteTagRefs`, with a unit case.
+- A new condition FIELD whose value is a tag name must be handled beside `field === "tag"`.
+
 ## services/tagRegistryService.ts
 
 **What it owns:** The tag registry (`Tag` rows) and the `tagSettings` Setting, extracted from `src/api/routes/tags.ts` (CQ-B044, 2026-11-06). Create / rename / recolour / move / re-filter / delete a tag, with every guard and audit Event that used to live in the route.

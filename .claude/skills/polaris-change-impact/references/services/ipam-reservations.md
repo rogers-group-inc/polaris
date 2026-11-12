@@ -395,6 +395,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/db.ts` Prisma extension (per-asset reconcile on create/update/upsert; release on delete); `src/jobs/reconcileDnsResolvedReservations.ts` (periodic sweep); `src/services/discovery/discoveryEngine.ts` `syncDhcpSubnets` + `src/api/routes/integrations.ts` `registerFortinetHost` (inline `releaseDnsResolvedAt` before each authoritative create); `src/services/reservationService.ts:createReservation` (same inline release for manual creates).
 
 **Invariants:**
+- **The periodic sweep is two passes** (rule 11(a)): per asset WITH an address, then `releaseRowsOfIneligibleOwners` from the reservation side, for owners a bulk decommission retired (their address is gone, so pass one never scans them). `rowsOfIneligibleOwners` is the pure decision and is exported for its test.
 - `sourceType="dns_resolved"` + `createdBy="system:dns-resolved"` is the system-actor signature — both are required to identify a row as system-owned.
 - Identity match for "is this asset's existing row?" = `createdBy=SYSTEM_ACTOR AND sourceType=dns_resolved AND status=active AND (macAddress=asset.macAddress OR hostname=asset.hostname)`. Reservation has no `assetId` FK so this is the proxy.
 - Eligible asset statuses: `active | maintenance | storage | quarantined`. `decommissioned | disabled` always release-without-creating.

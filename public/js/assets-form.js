@@ -555,7 +555,7 @@ function getAssetFormData() {
     data.temperatureCredentialId  = credVal(tempCredEl);
     data.interfacesCredentialId   = credVal(ifCredEl);
     data.lldpCredentialId         = credVal(lldpCredEl);
-    // No per-stream MIB: the pins are retired (business rule 170).
+    // No per-stream MIB: the pins are retired (business rule 173).
   }
   return data;
 }
@@ -628,7 +628,7 @@ function assetMonitoringFormHTML(asset, managedAgent) {
     var needsCred = currentPoll && currentPoll !== "icmp" && currentPoll !== "disabled" && currentPoll !== "agent" && currentPoll !== "genericapi";
     var isSnmp    = currentPoll === "snmp";
     var credDisplay = needsCred ? "flex" : "none";
-    // What the stream reads over SNMP, said not chosen (business rule 170):
+    // What the stream reads over SNMP, said not chosen (business rule 173):
     // filled in by _populateAssetMonitorTierBadges once the effective-settings
     // read names the covering manufacturer profile. Storage has no line —
     // HOST-RESOURCES-MIB + the profile's disk fallback, nothing to say per row.

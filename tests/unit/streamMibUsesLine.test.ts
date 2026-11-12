@@ -1,6 +1,6 @@
 /**
  * tests/unit/streamMibUsesLine.test.ts — the read-only "MIB" line that replaced
- * the per-stream MIB picker (business rule 170; `_streamMibUsesText`,
+ * the per-stream MIB picker (business rule 173; `_streamMibUsesText`,
  * `_streamMibUsesRowHTML`, `_paintStreamMibUses` in public/js/polling-methods.js).
  *
  * The picker offered every MIB on every SNMP stream, but on Response Time,

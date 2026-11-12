@@ -174,7 +174,7 @@ Asset
   -- resolveHttpTarget (utils/httpCheck.ts) is the single place that decides it.
   -- Only read when responseTimePolling resolves to "http".
   httpCheckPath             String?
-  -- RETIRED per-stream MIB pins (business rule 170, 2026-11-12): nothing
+  -- RETIRED per-stream MIB pins (business rule 173, 2026-11-12): nothing
   -- reads them (the resolver yields null, the collectors build the profile
   -- subject from the asset alone), the write schemas drop them, and
   -- migration 20261112180000_retire_stream_mib_pins cleared them after

@@ -2,12 +2,12 @@
   "_comment": "Every top-level function and var declared by public/js/server-settings.js before the CQ-F051 split (git show main, 2026-11-09). tests/unit/serverSettingsSplit.test.ts requires each to be declared exactly once across the split files. A deliberate removal or rename edits this list in the same commit.",
   "functions": [
     "_settingsTabVisible",
-    "loadNtpSettings",
+    "fetchServerTimezone",
+    "loadTimeSettings",
     "updateCurrentTime",
     "loadTzOverride",
     "formatLocalTime",
-    "saveNtpSettings",
-    "testNtpSync",
+    "saveServerTimezone",
     "initTimezoneDropdown",
     "dnsCardsHTML",
     "wireDnsControls",
@@ -344,8 +344,8 @@
     "_mfgStandardReadingHTML"
   ],
   "vars": [
-    "_ntpLoaded",
-    "_tzOverride",
+    "_timeLoaded",
+    "_serverTz",
     "_dnsDefaults",
     "_certsLoaded",
     "_certData",
