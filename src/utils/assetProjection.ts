@@ -106,6 +106,10 @@ export type AssetSourceKind =
   // model / serial / manufacturer / firmware (utils/snmpEntityIdentity.ts,
   // business rule 154). ENRICHMENT, like snmp-sysdescr.
   | "snmp-identity"
+  // What the covering manufacturer profile's `model` / `serial` rows read off
+  // the device over SNMP (business rule 171) — an APC Smart-UPS's serial.
+  // ENRICHMENT, like snmp-sysdescr.
+  | "snmp-profile"
   // The firmware a FortiGate / FortiSwitch / FortiAP reports about itself on
   // the monitor path (services/fortinetLiveVersionService.ts) — osVersion
   // only. ENRICHMENT, like snmp-sysdescr.
@@ -128,7 +132,7 @@ export type AssetSourceKind =
  * would leave a deleted VM active forever. Callers asking about EXISTENCE
  * filter these out; callers asking about IDENTITY (projection) do not.
  */
-export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "snmp-identity", "fortinet-live"];
+export const ENRICHMENT_SOURCE_KINDS: readonly AssetSourceKind[] = ["snmp-sysdescr", "snmp-identity", "snmp-profile", "fortinet-live"];
 
 export interface AssetSourceForProjection {
   sourceKind: AssetSourceKind | string;
@@ -367,6 +371,11 @@ const SERIAL_RULES: FieldRule[] = [
   // Above ENTITY-MIB for the same reason as the model ladder: a parsed vendor
   // format is the narrower claim.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsSerial(o, "serialNumber") },
+  // The serial the manufacturer profile's `serial` row reads off the device
+  // (business rule 171) — an APC Smart-UPS's upsAdvIdentSerialNumber. The
+  // operator's statement of where this vendor keeps it, so it outranks the
+  // generic ENTITY-MIB chassis row (a profile is an override, rule 68).
+  { sourceKind: "snmp-profile", pick: (o) => obsSerial(o, "serialNumber") },
   // The ENTITY-MIB chassis serial the device reports itself (business rule
   // 154) — only ever from a single chassis row, never a stack member's.
   // Through obsSerial like every serial rule (rule 84).
@@ -492,6 +501,9 @@ const MODEL_RULES: FieldRule[] = [
   // Software: Windows Version 6.3" never gets one, and cannot displace
   // Intune's model with it.
   { sourceKind: "snmp-sysdescr", pick: (o) => obsString(o, "model") },
+  // The model the manufacturer profile's `model` row reads (business rule
+  // 171): above ENTITY-MIB for the reason the serial ladder gives.
+  { sourceKind: "snmp-profile", pick: (o) => obsString(o, "model") },
   // The ENTITY-MIB chassis entPhysicalModelName (business rule 154): the
   // device's own part number ("DS-C9148S-K9", "WS-C3850-48P"), on any vendor
   // that implements RFC 4133.

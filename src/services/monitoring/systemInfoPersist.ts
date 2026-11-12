@@ -17,7 +17,8 @@ import { type FortiswitchMclagPeer } from "../../utils/fortiswitchCmdb.js";
 import { logEvent, buildFirmwareChangedEvent } from "../eventLogService.js";
 import { projectAssetFromSources } from "../../utils/assetProjection.js";
 import { lookupOuiOverride } from "../ouiService.js";
-import { reconcileSnmpSelfIdentity } from "../snmpSelfIdentityService.js";
+import { reconcileSnmpSelfIdentity, reconcileSnmpProfileIdentity } from "../snmpSelfIdentityService.js";
+import { detectedModelMayReplace } from "../../utils/modelParse.js";
 import { persistFibreChannel } from "../fibreChannelService.js";
 import { resolveAssetTypeCached } from "../../utils/assetTypeMatch.js";
 import { sameDescrObserved, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
@@ -328,8 +329,7 @@ async function adoptDetectedModel(
 ): Promise<void> {
   if (typeof detectedModel !== "string" || !detectedModel || !pinned) return;
   const currentModel = (pinned.model ?? "").trim();
-  const overwritable = !currentModel || /^fortiswitch\b/i.test(currentModel);
-  if (!overwritable || currentModel === detectedModel) return;
+  if (!detectedModelMayReplace(currentModel) || currentModel === detectedModel) return;
   await prisma.asset.update({ where: { id: assetId }, data: { model: detectedModel } });
   logEvent({
     action: "asset.model_detected",
@@ -779,6 +779,10 @@ export async function recordSystemInfoResult(assetId: string, result: Collection
   // sysName + the ENTITY-MIB chassis row (business rule 154). Edge-triggered
   // in memory, so an unchanged device costs no query.
   await reconcileSnmpSelfIdentity(assetId, d.selfIdentity);
+  // The manufacturer profile's model + serial rows (business rule 171), as the
+  // `snmp-profile` source — the same reading the probe's identity read takes
+  // for an asset with no system-info stream. Edge-triggered in memory.
+  await reconcileSnmpProfileIdentity(assetId, { model: d.detectedModel, serialNumber: d.detectedSerial });
 
   // Only bump lastSystemInfoAt when the scrape returned interfaces. The
   // /system-info GET endpoint anchors its interface query to this

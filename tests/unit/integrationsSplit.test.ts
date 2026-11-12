@@ -111,7 +111,7 @@ describe("integrations split — declarations", () => {
 
   it("every function the original integrations.js declared is declared exactly once", () => {
     const all = perFile.flatMap((p) => p.fns);
-    expect(INVENTORY.functions.length).toBe(203);
+    expect(INVENTORY.functions.length).toBe(202);
     for (const n of INVENTORY.functions) expect(all.filter((x) => x === n).length, n).toBe(1);
   });
 

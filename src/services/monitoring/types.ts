@@ -388,6 +388,12 @@ export interface SystemInfoSample {
    */
   detectedModel?: string | null;
   /**
+   * The device's serial as the manufacturer profile's `serial` row read it
+   * (business rule 171) — an APC Smart-UPS's upsAdvIdentSerialNumber.
+   * Recorded with `detectedModel` as the `snmp-profile` enrichment source.
+   */
+  detectedSerial?: string | null;
+  /**
    * What the vendor's OWN sysDescr format stated, when the vendor publishes
    * one Polaris can read (utils/snmpDescrIdentity.ts). `undefined` for every
    * other device, which is most of them — and the reason this is safe to

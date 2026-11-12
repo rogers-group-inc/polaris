@@ -4,7 +4,6 @@
     "_fmgFortiosRestUnavailable",
     "_polarisPollingFourStreamHTML",
     "_polarisReadPollingFourStream",
-    "_polarisReadMibFourStream",
     "_runFortigateSampleProbe",
     "_warnIfNoBlocksForIntegrationType",
     "_fmgToggleDirectMode",

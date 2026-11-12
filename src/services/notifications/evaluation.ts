@@ -15,7 +15,7 @@ import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { type PrioritySeverity } from "../../utils/priorityTags.js";
 import { withRecoveryLookback, type DbRule, type ScopeAssetRow, type Reading, engineSustainPolls, type LeafRef, collectLeafRefs } from "./ruleModel.js";
 import { loadScopeAssets, isSuppressedForNotifications, suppressionOwedToMaintenance, frozenFreshnessFor, assetIsAnsweringProbes, triggerNeedsAnsweringDevice, triggerHandsOffWhenDeviceDown, assetIsDown, poeFaultCoversUnpinned, pinTestForTrigger } from "./scope.js";
-import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, deletedTargetGone, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
+import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, deletedTargetGone, sdwanCollectionStopped, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
 import { type CompositeFireInfo, round2 } from "./templating.js";
 import { ruleHasBands, bandSeverityFor, tierLadderFor, readingRuns, tierRuns, CLEARED_RUNS, metSinceJson, metSinceOf, tierForSeverity } from "./severityBands.js";
 import { type GroupBuffer, type PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour } from "./alertLifecycle.js";
@@ -103,6 +103,15 @@ async function clearVanishedStates(
     const taken = new Set(vanished.map((v) => v.st.id));
     const deleted = await deletedTargetGone(rule, parked);
     for (const st of parked) if (deleted.has(st.id) && !taken.has(st.id)) vanished.push({ st, reason: "dimension" });
+  }
+  if (frozen.length > 0) {
+    // Rule 174: an SD-WAN alert on a gate whose SD-WAN is no longer collected.
+    // Loaded lazily: the monitoring service is heavy and imports this engine's
+    // neighbours, and almost no tick reaches here.
+    const taken = new Set(vanished.map((v) => v.st.id));
+    const stopped = await sdwanCollectionStopped(rule, frozen, async (assetId) =>
+      (await import("../monitoringService.js")).resolveSdwanPollIntervalForAsset(assetId));
+    for (const st of frozen) if (stopped.has(st.id) && !taken.has(st.id)) vanished.push({ st, reason: "dimension" });
   }
   if (scopeChecks.length > 0) {
     const ids = Array.from(new Set(scopeChecks.map((s) => s.assetId as string)));

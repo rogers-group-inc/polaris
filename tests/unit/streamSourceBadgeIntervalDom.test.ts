@@ -62,7 +62,6 @@ beforeEach(() => {
   g._streamIntervalEffectiveField = () => "interfacesIntervalSec";
   g._streamTransportLabel = () => "Direct";
   g._streamCredential = () => null;
-  g._resolveStreamMibLabel = () => null;
   g._credentialCache = { loaded: true };
   g._ensureCredentials = async () => {};
   g._effectiveResolvedByAssetId = new Map();

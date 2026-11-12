@@ -91,3 +91,17 @@ export function validateModelParse(pattern: string | null, template: string | nu
   if (template && template.length > 200) return "parseTemplate is too long (max 200 characters)";
   return null;
 }
+
+/**
+ * Whether a model a manufacturer profile's `model` row detected may replace
+ * the asset's stored model: only while that is empty or still the generic
+ * discovery literal ("FortiSwitch", or an earlier "FortiSwitch <token>" — a
+ * hardware swap behind the same address). Anything else is operator-typed or
+ * owned by a richer source, and is never overwritten. One rule for both
+ * writers: the system-info pass's direct adoption and the `snmp-profile`
+ * projection apply (business rule 171).
+ */
+export function detectedModelMayReplace(current: string | null | undefined): boolean {
+  const c = (current ?? "").trim();
+  return !c || /^fortiswitch\b/i.test(c);
+}

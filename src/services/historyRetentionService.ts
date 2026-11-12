@@ -331,6 +331,37 @@ export async function pruneUnpinnedProcessConfigs(now: Date = new Date()): Promi
   return (await prisma.assetProcessConfig.deleteMany({ where: { id: { in: dead }, updatedAt: { lt: cutoff } } })).count;
 }
 
+/** How long an SD-WAN rule row may sit unread before it is checked for removal. */
+export const SDWAN_RULE_STALE_DAYS = 7;
+
+/**
+ * Business rule 174: `AssetSdwanRule` is current-state, replaced on every
+ * successful SD-WAN read and by nothing else. When collection STOPS for a
+ * gate — the integration's SD-WAN pull switched off, its interfaces moved off
+ * FortiOS REST, its integration removed — the last rows stay for good, and
+ * the SD-WAN tab goes on showing rules as they stood that day.
+ *
+ * A row untouched for SDWAN_RULE_STALE_DAYS is removed when nothing polls its
+ * gate any more (the scheduler's own test, null = not polled). A gate that is
+ * still polled keeps its rows however old: a read that keeps failing is a
+ * fault to show, not a leftover to tidy.
+ *
+ * Scale: one grouped read of stale rows by gate (normally empty), then one
+ * resolve and one delete per such gate.
+ */
+export async function pruneStaleSdwanRules(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - SDWAN_RULE_STALE_DAYS * 24 * 60 * 60 * 1000);
+  const gates = await prisma.assetSdwanRule.groupBy({ by: ["assetId"], where: { updatedAt: { lt: cutoff } } });
+  if (gates.length === 0) return 0;
+  const { resolveSdwanPollIntervalForAsset } = await import("./monitoringService.js");
+  let removed = 0;
+  for (const { assetId } of gates) {
+    if ((await resolveSdwanPollIntervalForAsset(assetId)) !== null) continue;
+    removed += (await prisma.assetSdwanRule.deleteMany({ where: { assetId, updatedAt: { lt: cutoff } } })).count;
+  }
+  return removed;
+}
+
 export interface HistoryPruneResult {
   alerts: number;
   summaries: number;
@@ -344,6 +375,8 @@ export interface HistoryPruneResult {
   processConfigs: number;
   /** Firmware repository leftovers (rule 158(b)): unreferenced image files + abandoned uploads + rows whose bytes never landed. */
   firmwareLeftovers: number;
+  /** SD-WAN rule rows of gates whose SD-WAN is no longer collected (rule 174). */
+  sdwanRules: number;
 }
 
 /**
@@ -351,7 +384,7 @@ export interface HistoryPruneResult {
  * reported in `errors` and the others still run.
  */
 export async function pruneHistory(now: Date = new Date()): Promise<{ result: HistoryPruneResult; errors: string[] }> {
-  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0 };
+  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0, sdwanRules: 0 };
   const errors: string[] = [];
   const attempt = async (name: string, run: () => Promise<void>) => {
     try { await run(); } catch (err) { errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`); }
@@ -364,6 +397,7 @@ export async function pruneHistory(now: Date = new Date()): Promise<{ result: Hi
   await attempt("hidden regions", async () => { result.hiddenRegionIds = await pruneHiddenRegionIds(); });
   await attempt("tag provenance", async () => { result.tagAssignments = await pruneOrphanTagAssignments(); });
   await attempt("process log configs", async () => { result.processConfigs = await pruneUnpinnedProcessConfigs(now); });
+  await attempt("stale SD-WAN rules", async () => { result.sdwanRules = await pruneStaleSdwanRules(now); });
   await attempt("firmware leftovers", async () => {
     const swept = await sweepFirmwareFiles(now);
     result.firmwareLeftovers = swept.files + swept.incoming + swept.rows;

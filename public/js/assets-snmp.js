@@ -83,6 +83,10 @@ function _cmibShown(w) {
   return t ? Object.assign({}, w, { widgetType: t }) : w;
 }
 
+// opts.arrange: the layout editor's tools (grip, display type, height) — a
+// profile write. The polling switch is drawn either way; a switched-off card
+// only reaches here in edit mode (_cmibLayoutHTML / _customMibTabHTML hide it
+// otherwise), so edit mode is where a widget is switched back on.
 function _cmibCardHTML(w, opts) {
   opts = opts || {};
   var hasSwitch = _cmibIsMfr(w);
@@ -91,7 +95,7 @@ function _cmibCardHTML(w, opts) {
     '<label class="toggle-switch" style="flex-shrink:0" title="' +
       (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
       '<input type="checkbox" class="custom-widget-toggle" data-widget-id="' + escapeHtml(w.id) + '"' +
-        (w.enabled ? " checked" : "") + (canManageAssets() && !opts.editing ? "" : " disabled") + '>' +
+        (w.enabled ? " checked" : "") + (canManageAssets() ? "" : " disabled") + '>' +
       '<span class="toggle-slider"></span>' +
     '</label>';
   var height = opts.height
@@ -103,12 +107,13 @@ function _cmibCardHTML(w, opts) {
   return '<div class="custom-mib-card" data-widget-id="' + escapeHtml(w.id) + '" data-shot-section="mib:' + escapeHtml(w.symbol) + '" data-shot-label="' + escapeHtml(w.name) + '"' + (height ? ' data-shot-expand' : '') + ' style="border:1px solid var(--color-border);border-radius:6px;padding:10px;background:var(--color-bg-secondary,rgba(0,0,0,0.03))' + height + '">' +
     '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">' +
       '<span style="display:flex;align-items:center;gap:4px;min-width:0">' +
-        (opts.editing ? '<span class="cmib-grip" draggable="true" data-widget-id="' + escapeHtml(w.id) + '" title="Drag to move (to any column)">⠿</span>' : '') +
+        (opts.arrange ? '<span class="cmib-grip" draggable="true" data-widget-id="' + escapeHtml(w.id) + '" title="Drag to move (to any column)">⠿</span>' : '') +
         '<span style="font-weight:600">' + escapeHtml(w.name) + '</span>' +
       '</span>' +
       '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
         '<span style="font-size:0.72rem;color:var(--color-text-tertiary);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis">' + escapeHtml(w.symbol) + '</span>' +
-        (opts.editing ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
+        (opts.arrange ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : '') +
+        toggle +
       '</span>' +
     '</div>' +
     // Switched off for this asset: the notice alone. The last reading used to
@@ -121,11 +126,24 @@ function _cmibCardHTML(w, opts) {
   '</div>';
 }
 
-function _cmibLayoutHTML(layout, byId, editing) {
-  var html = '<div class="cmib-layout' + (editing ? ' editing' : '') + '">';
+/** A manufacturer widget switched off for this asset: hidden outside edit mode. */
+function _cmibHiddenOff(w) { return _cmibIsMfr(w) && !w.enabled; }
+
+// `editing`: edit mode — switched-off widgets are shown (with their switch).
+// `arrange`: the layout tools too (column bars, grips, the new-column target);
+// a role that may switch widgets but not write the profile edits without them.
+// Outside edit mode a switched-off widget is left out, and so is a column it
+// alone filled.
+function _cmibLayoutHTML(layout, byId, editing, arrange) {
+  var html = '<div class="cmib-layout' + (arrange ? ' editing' : '') + '">';
   layout.columns.forEach(function (c, ci) {
+    var shown = c.widgets.filter(function (x) {
+      var w = byId[x.id];
+      return w && (editing || !_cmibHiddenOff(w));
+    });
+    if (!shown.length && !arrange) return;
     html += '<div class="cmib-col" data-col-id="' + escapeHtml(c.id) + '" style="grid-column:span ' + c.width + '">';
-    if (editing) {
+    if (arrange) {
       html += '<div class="cmib-col-bar">' +
         '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="-1" title="Move column left"' + (ci === 0 ? ' disabled' : '') + '>‹</button>' +
         '<button type="button" class="cmib-tool cmib-col-move" data-col-id="' + escapeHtml(c.id) + '" data-dir="1" title="Move column right"' + (ci === layout.columns.length - 1 ? ' disabled' : '') + '>›</button>' +
@@ -133,13 +151,13 @@ function _cmibLayoutHTML(layout, byId, editing) {
         '<button type="button" class="cmib-tool cmib-width" data-col-id="' + escapeHtml(c.id) + '" title="Column width (click to cycle 3/4/6/12 of 12)">' + c.width + '/12</button>' +
       '</div>';
     }
-    c.widgets.forEach(function (x) {
+    shown.forEach(function (x) {
       var w = byId[x.id];
-      if (w) html += _cmibCardHTML(editing ? _cmibShown(w) : w, { editing: editing, height: x.height });
+      html += _cmibCardHTML(arrange ? _cmibShown(w) : w, { arrange: arrange, height: x.height });
     });
     html += '</div>';
   });
-  if (editing) html += '<div class="cmib-newcol" data-newcol="1">Drop here for a new column</div>';
+  if (arrange) html += '<div class="cmib-newcol" data-newcol="1">Drop here for a new column</div>';
   return html + '</div>';
 }
 
@@ -175,24 +193,40 @@ function _customMibTabHTML(payload) {
   var mfrWidgets = payload.widgets.filter(_cmibIsMfr);
   var genericWidgets = payload.widgets.filter(function (w) { return !_cmibIsMfr(w); });
   var anyOn = mfrWidgets.some(function (w) { return w.enabled; });
+  var offCount = mfrWidgets.filter(_cmibHiddenOff).length;
+  // The pencil opens edit mode. Arranging the layout is a profile write;
+  // switching a widget on or off is an asset write — either one earns the
+  // pencil, and edit mode is the only place a switched-off widget is shown.
+  var canLayout = mfrWidgets.length > 0 && !!payload.profileId && permAtLeast("manufacturerProfiles", "write");
+  var canSwitch = mfrWidgets.length > 0 && canManageAssets();
+  _cmib.canLayout = canLayout;
+  var switchNote = canSwitch ? ' Each card\'s switch turns polling on or off for this asset, saved at once.' : '';
   if (_cmib.editing) {
-    hint = '<b>Editing the layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset.</b> ' +
-      'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, and switch a single-value widget between Gauge, Line and Value, then click ✓ to save. Display changes are saved to the widget on the profile.';
+    hint = canLayout
+      ? '<b>Editing the layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset.</b> ' +
+        'Drag a card by ⠿ into any column, set each column\'s width and each card\'s height, and switch a single-value widget between Gauge, Line and Value, then click ✓ to save. Display changes are saved to the widget on the profile.' + switchNote
+      : '<b>Showing every widget, including those switched off for this asset.</b>' + switchNote + ' Click ✓ when done.';
   } else if (mfrWidgets.length && !anyOn) {
     hint += ' <span style="color:var(--color-warning)">Polling is off for every widget — ' +
-      (canManageAssets() ? 'switch a card on to start collecting.' : 'an asset editor can switch one on.') + '</span>';
+      (canSwitch ? 'click the pencil to switch one on.' : 'an asset editor can switch one on.') + '</span>';
+  } else if (offCount && (canSwitch || canLayout)) {
+    hint += ' <span style="color:var(--color-text-tertiary)">' + offCount + ' widget' + (offCount === 1 ? ' is' : 's are') +
+      ' switched off for this asset and hidden — click the pencil to show ' + (offCount === 1 ? 'it' : 'them') + '.</span>';
   } else if (payload.polling === "disabled") {
     hint += ' <span style="color:var(--color-warning)">Polling is disabled for this asset; data may be stale.</span>';
   } else if (!payload.lastCustomWidgetAt) {
     hint += ' <span style="color:var(--color-text-tertiary)">No sample collected yet — waiting for the next probe cycle.</span>';
   }
-  // The pencil: a profile write, so only for a role that can save one.
-  var canLayout = mfrWidgets.length > 0 && !!payload.profileId && permAtLeast("manufacturerProfiles", "write");
-  var tools = !canLayout ? "" : (_cmib.editing
-    ? '<button type="button" class="btn btn-sm btn-secondary cmib-reset" title="Return to the default grid when saved">Reset</button>' +
-      '<button type="button" class="btn btn-sm btn-secondary cmib-cancel">Cancel</button>' +
-      '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Done editing — save this layout for every ' + escapeHtml(payload.manufacturer || "") + ' asset">' + CMIB_CHECK_SVG + '</button>'
-    : '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Customize this layout (shared by every ' + escapeHtml(payload.manufacturer || "") + ' asset)">' + CMIB_PENCIL_SVG + '</button>');
+  var mfrName = escapeHtml(payload.manufacturer || "");
+  var tools = !(canLayout || canSwitch) ? "" : (_cmib.editing
+    ? (canLayout
+      ? '<button type="button" class="btn btn-sm btn-secondary cmib-reset" title="Return to the default grid when saved">Reset</button>' +
+        '<button type="button" class="btn btn-sm btn-secondary cmib-cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Done editing — save this layout for every ' + mfrName + ' asset">' + CMIB_CHECK_SVG + '</button>'
+      : '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="Done — hide the widgets switched off for this asset">' + CMIB_CHECK_SVG + '</button>')
+    : '<button type="button" class="btn btn-primary btn-icon-only cmib-edit-btn" title="' +
+        (canLayout ? 'Customize this layout (shared by every ' + mfrName + ' asset) and show the widgets switched off here'
+          : 'Show the widgets switched off for this asset, to switch them on') + '">' + CMIB_PENCIL_SVG + '</button>');
 
   var html = '<div class="custom-mib-tab" data-asset-id="' + escapeHtml(payload.assetId || "") + '">' +
     '<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:0.75rem">' +
@@ -203,12 +237,13 @@ function _customMibTabHTML(payload) {
   var byId = {};
   payload.widgets.forEach(function (w) { byId[w.id] = w; });
   if (_cmib.editing) {
-    html += _cmibLayoutHTML(_cmib.working, byId, true);
+    html += _cmibLayoutHTML(_cmib.working, byId, true, canLayout);
   } else if (payload.widgetLayout && mfrWidgets.length) {
-    html += _cmibLayoutHTML(_cmibCompleteLayout(payload.widgetLayout, payload.widgets), byId, false);
+    html += _cmibLayoutHTML(_cmibCompleteLayout(payload.widgetLayout, payload.widgets), byId, false, false);
   } else {
     html += '<div class="custom-mib-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">' +
-      mfrWidgets.map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
+      mfrWidgets.filter(function (w) { return !_cmibHiddenOff(w); })
+        .map(function (w) { return _cmibCardHTML(w); }).join("") + '</div>';
   }
   // Generic API widgets are an integration's, not the profile's: never part of
   // the profile layout, always after it.
@@ -281,6 +316,14 @@ document.addEventListener("click", async function (e) {
       _cmib.reset = false;
       _cmib.typeChanges = {};
       _cmib.editing = true;
+      _cmibRerender();
+      return;
+    }
+    // Edit mode without the layout right only showed the switched-off widgets:
+    // nothing to save.
+    if (!_cmib.canLayout) {
+      _cmib.editing = false;
+      _cmib.working = null;
       _cmibRerender();
       return;
     }
@@ -1032,18 +1075,18 @@ var _snmpMibStructureCache = {};    // keyed by mibId; structure payload from GE
 // upload them via Server Settings → Identification → MIB Database, which
 // also unlocks the MIB-aware walk (symbol resolution + value decoding).
 var _SNMP_STANDARD_MIBS = [
-  { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"          },
-  { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"          },
-  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"         },
-  { id: "std:host-resources", label: "HOST-RESOURCES-MIB (RFC 2790)",  oid: "1.3.6.1.2.1.25"         },
-  { id: "std:entity",         label: "ENTITY-MIB (RFC 4133)",          oid: "1.3.6.1.2.1.47"         },
-  { id: "std:entity-sensor",  label: "ENTITY-SENSOR-MIB (RFC 3433)",   oid: "1.3.6.1.2.1.99"         },
-  { id: "std:lldp",           label: "LLDP-MIB (IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"         },
-  { id: "std:poe",            label: "PoE — POWER-ETHERNET-MIB (RFC 3621)", oid: "1.3.6.1.2.1.105"   },
-  { id: "std:bridge",         label: "Bridge — MAC forwarding + STP (RFC 4188)", oid: "1.3.6.1.2.1.17" },
-  { id: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (RFC 4363)", oid: "1.3.6.1.2.1.17.7" },
-  { id: "std:rstp",           label: "Rapid Spanning Tree (RFC 4318)", oid: "1.3.6.1.2.1.134"        },
-  { id: "std:ip",             label: "IP — addresses + neighbour cache (RFC 4293)", oid: "1.3.6.1.2.1.4" },
+  { id: "std:system",         label: "System (SNMPv2-MIB, RFC 3418)",              oid: "1.3.6.1.2.1.1"          },
+  { id: "std:interfaces",     label: "Interfaces — ifTable (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.2"          },
+  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.31"         },
+  { id: "std:host-resources", label: "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",  oid: "1.3.6.1.2.1.25"         },
+  { id: "std:entity",         label: "Entity (ENTITY-MIB, RFC 4133)",          oid: "1.3.6.1.2.1.47"         },
+  { id: "std:entity-sensor",  label: "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",   oid: "1.3.6.1.2.1.99"         },
+  { id: "std:lldp",           label: "LLDP (LLDP-MIB, IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"         },
+  { id: "std:poe",            label: "PoE (POWER-ETHERNET-MIB, RFC 3621)", oid: "1.3.6.1.2.1.105"   },
+  { id: "std:bridge",         label: "Bridge — MAC forwarding + STP (BRIDGE-MIB, RFC 4188)", oid: "1.3.6.1.2.1.17" },
+  { id: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (Q-BRIDGE-MIB, RFC 4363)", oid: "1.3.6.1.2.1.17.7" },
+  { id: "std:rstp",           label: "Rapid Spanning Tree (RSTP-MIB, RFC 4318)", oid: "1.3.6.1.2.1.134"        },
+  { id: "std:ip",             label: "IP — addresses + neighbour cache (IP-MIB, RFC 4293)", oid: "1.3.6.1.2.1.4" },
 ];
 
 function _snmpCredentialOptions(selectedId, onlyIds) {

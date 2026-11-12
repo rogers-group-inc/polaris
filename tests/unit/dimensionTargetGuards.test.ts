@@ -36,7 +36,7 @@ vi.mock("../../src/db.js", () => ({
 }));
 
 import { dimensionTargetReferrers } from "../../src/services/actionReferenceService.js";
-import { deletedTargetGone, type SweepStateRow } from "../../src/services/notifications/readings.js";
+import { deletedTargetGone, sdwanCollectionStopped, type SweepStateRow } from "../../src/services/notifications/readings.js";
 
 const leaf = (df: Record<string, unknown>, metric = "pathOk") => ({ type: "asset_metric", metric, operator: "==", threshold: 0, dimensionFilter: df });
 const rule = (name: string, trigger: unknown, reset: unknown = null) => ({ name, trigger, reset });
@@ -122,5 +122,37 @@ describe("rule 167(a): deletedTargetGone", () => {
     expect((await deletedTargetGone(dbRule(leaf({})), [st("s1", "")])).size).toBe(0);
     expect((await deletedTargetGone(dbRule(leaf({})), [])).size).toBe(0);
     expect(h.calls).toEqual([]);
+  });
+});
+
+describe("rule 174: sdwanCollectionStopped", () => {
+  const state = (field: string) => ({ type: "asset_state", field, operator: "==", value: "down" });
+  const polled = (table: Record<string, number | null>) => async (id: string) => {
+    h.calls.push(`resolve:${id}`);
+    return table[id] ?? null;
+  };
+
+  it("retires every parked row of a gate nothing polls, and keeps a gate that is still polled", async () => {
+    const rows = [st("s1", "to-internet", "gate-off"), st("s2", "to-dc", "gate-off"), st("s3", "to-internet", "gate-on")];
+    const gone = await sdwanCollectionStopped(dbRule(state("sdwanRuleStatus")), rows, polled({ "gate-off": null, "gate-on": 60 }));
+    expect([...gone].sort()).toEqual(["s1", "s2"]);
+    // One resolve per gate, not per row.
+    expect(h.calls.sort()).toEqual(["resolve:gate-off", "resolve:gate-on"]);
+  });
+
+  it("covers the SLA metrics too", async () => {
+    const gone = await sdwanCollectionStopped(dbRule(leaf({}, "sdwanPacketLoss")), [st("s1", "hc|wan1", "gate-off")], polled({ "gate-off": null }));
+    expect([...gone]).toEqual(["s1"]);
+  });
+
+  it("asks nothing for a condition that is not SD-WAN", async () => {
+    const gone = await sdwanCollectionStopped(dbRule(state("ifOperStatus")), [st("s1", "port1", "gate-off")], polled({ "gate-off": null }));
+    expect(gone.size).toBe(0);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("a resolve that throws proves nothing: the row stays parked", async () => {
+    const gone = await sdwanCollectionStopped(dbRule(state("sdwanSelectedMember")), [st("s1", "r", "gate-x")], async () => { throw new Error("db down"); });
+    expect(gone.size).toBe(0);
   });
 });

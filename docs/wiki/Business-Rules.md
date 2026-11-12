@@ -2915,7 +2915,8 @@ asset its manufacturer profile and model pattern match, but it polls an asset
 only after you switch it on, either with the switch at the top right of its
 card on the asset's Custom MIB tab, or in the device list Polaris opens when
 you create a widget (and from the widget's **Devices…** button). A new widget
-starts switched off everywhere. Switched-on widgets poll as often as the
+starts switched off everywhere. The Custom MIB tab hides a switched-off widget
+until you click its pencil, which is where you switch one back on. Switched-on widgets poll as often as the
 asset's hardware-sensor interval, whatever its CPU/memory polling is set to,
 using the first SNMP credential on the asset (custom widget, then hardware
 sensors, then CPU/memory, then the general monitor credential). Every switch
@@ -3513,7 +3514,6 @@ Deleting any of these now stops with a message naming what still depends on it:
   reboot still sends through;
 - an **automation script** that an automation or alert group still runs — anywhere in it,
   including escalation steps, severity levels, the all-clear and reset actions;
-- a **MIB** that an asset or a class monitoring setting has selected for a stream;
 - a **credential** that a Discovery still tries (a private Discovery is counted, not named).
 
 Point those at something else, then delete. Before this, the delete went through and the
@@ -3564,3 +3564,60 @@ timezone when none is set. A change reaches every Polaris process within about 3
 with no restart. Polaris never changes the host's clock, its timezone or its time service;
 keeping the host's clock accurate is the host's job, which is why the NTP server settings
 that used to sit on the old Time tab were removed. See [Server Settings](Server-Settings#server-timezone).
+
+### Rule 171
+
+**A device whose model or serial is in no standard MIB gets them from its manufacturer
+profile.** A profile has a **Serial number** row beside **Model identity**. Point it at the
+object that holds the device's own serial (an APC Smart-UPS: `upsAdvIdentSerialNumber`). Polaris
+reads both rows every 10 minutes, even on a device whose only SNMP stream is Response Time, and
+shows them on the asset's General tab. They rank below what a device's own built-in card states
+(an APC rack PDU) and above the generic ENTITY-MIB chassis reading. Reading them never makes a
+probe slower or fail.
+
+### Rule 172
+
+**Polaris never creates a manufacturer profile on its own.** The Manufacturer Profiles card lists
+**Manufacturers without a profile**: vendors of devices that answer SNMP and are read with the
+standard MIBs only, with a device count and a **Create profile** button. If another profile's
+**Also applies when** already covers a name, the list says so: creating a profile for it would
+take those devices from that profile. In a profile, a row with nothing set shows the standard
+reading it uses (for example *Standard: HOST-RESOURCES-MIB hrProcessorLoad*). Set the row only
+to change it; a row left empty keeps getting improvements to the standard readings.
+
+### Rule 173
+
+**Which MIB a stream reads is decided by the asset's manufacturer profile; it is not chosen
+per stream.** An SNMP stream on an asset's Monitoring tab (and on an integration's or a class
+setting's) shows a read-only **MIB** line instead of a dropdown. Response Time always reads
+SNMPv2-MIB, Interfaces IF-MIB and LLDP LLDP-MIB. CPU/Memory and Hardware Sensors read the
+manufacturer profile that covers the asset, then the standard MIB (HOST-RESOURCES-MIB,
+ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufacturer**. The old
+MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
+another manufacturer's profile; on upgrade, every asset where it could have done that gets a
+warning in its Events naming the MIB, and every pin is cleared.
+
+### Rule 174
+
+**SD-WAN alerts and rules are let go when SD-WAN is no longer collected for a FortiGate.**
+If you switch off SD-WAN monitoring on an integration, move a gate's interfaces off the
+FortiOS REST API, or remove its integration, Polaris stops reading that gate's SD-WAN. An
+SD-WAN alert that was open on the gate is then cleared, because nothing could ever see it
+recover, and the gate's SD-WAN rules are removed from its SD-WAN tab after seven days.
+
+A gate that is still being read but is not answering is different: its alert stays open and
+the tab shows the readings as stale, because that is a fault, not a setting.
+
+### Rule 175
+
+**A reservation that expires ends the way a released one does.** When a reservation's
+expiry date passes:
+
+- a network that was reserved as a whole goes back to *available*, unless another
+  reservation still holds it;
+- if Polaris pushed the reservation to a FortiGate, the reserved address is removed from the
+  gate. If the gate cannot be reached, Polaris keeps trying for about three hours, then writes
+  a warning to [Events](Events) naming the gate and the entry so it can be deleted by hand.
+
+An expiry does not disconnect a device that is using the address; releasing the reservation
+does.

@@ -590,6 +590,13 @@ because each member has its own. A manufacturer profile's model setting
 *Device self-report (SNMP sysName + ENTITY-MIB)*
 ([rule 154](Business-Rules#rule-154)).
 
+**A device whose model or serial is in no standard MIB** (an APC Smart-UPS)
+gets them from its manufacturer profile's **Model identity** and **Serial
+number** rows. Polaris reads them every 10 minutes, even when Response Time is
+the device's only SNMP stream, and they rank above the ENTITY-MIB reading. The
+**Sources** tab shows them as *Device self-report (manufacturer profile over
+SNMP)* ([rule 171](Business-Rules#rule-171)).
+
 The tag picker in the edit form shows every tag the asset carries except its
 `azure:` tags, which it leaves out. Tags with no
 entry in the tag list (Server Settings → Identification), such as the ones
@@ -800,6 +807,12 @@ access point **Simulate Down** for `assetMonitorSettings:fullwrite`
 pill — then
 the **Last 30 min** strip, one cell per probe coloured by the state it left
 the device in, and **Uptime** where the transport reports it.
+
+**A section whose stream is off is not shown.** When the CPU/Memory polling
+method resolves to *not delivered* (switched off, or Inherit with nothing to
+inherit), the CPU & Memory chart is hidden, even if it collected data before.
+Storage and LLDP are hidden the same way while their stream is off and they
+hold nothing. Turn the stream on (Edit → Monitoring) to bring the section back.
 
 **Each section header says how fresh its data is.** Beside the polling-method
 badge, **updated X ago** is the last poll that returned data — a failed poll
@@ -1655,8 +1668,13 @@ the number the device reports.
 
 **A widget polls this asset only when its switch is on.** Each manufacturer
 widget's card has a switch at its top right. Off (the default for a new
-widget) means Polaris never asks the device for that widget. The card says
-so, and dims the last reading if one was collected earlier. On means Polaris
+widget) means Polaris never asks the device for that widget, and the card is
+hidden: the tab shows only the widgets switched on for this asset, and its
+hint says how many are hidden. Click the pencil at the tab's top right to show
+every widget, switched-off ones included (each says *Polling is off for this
+asset*), and switch them on or off. Each switch is saved at once; click ✓ to
+hide the off ones again. Without the Manufacturer Profiles permission the
+pencil only does this, with no layout tools. On means Polaris
 polls it as often as the asset's **hardware-sensor** interval (60 seconds by
 default), whatever the asset's CPU/memory polling is set to. A UPS can
 poll its battery widgets without a CPU/memory stream. Turning a switch on or
