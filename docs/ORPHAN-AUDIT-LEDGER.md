@@ -116,7 +116,7 @@ Decisions needed:
 | C.3 | `Conflict` (resolved) | **kept on purpose**: a rejected conflict suppresses re-raising (rule 139). Open question: prune ACCEPTED ones only |
 | C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 158) |
 | C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 158) |
-| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` **→ fixed in the API (rule 158(d)): `DELETE /subnets/archived/:id`, refused while a pending chassis conflict reads it. OPEN: the archive has no UI at all — a list / review / delete surface is a design-first item** |
+| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` **→ fixed in the API (rule 158(d)): `DELETE /subnets/archived/:id`, refused while a pending chassis conflict reads it. UI (operator decision 2026-11-12): archived networks are decommissioned networks, listed in the Networks table while the Status filter shows deprecated — an `archived` pill, a read-only View, and Delete** |
 | C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
 | C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
 | C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 158) |
