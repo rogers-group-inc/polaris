@@ -2,6 +2,25 @@
 
 Per-service touches (What it owns / Public API / Cross-service deps / Used by / Invariants / When changing this), verbatim from TOUCHES.md. Code references are `path/file.ts → symbolName()` — grep the symbol.
 
+## services/actionReferenceService.ts
+
+**What it owns:** Business rule 167 — "what still names this channel / script?" across every place an action can live, on automations and alert groups.
+
+**Public API:** `findActionReferrers(match)` (labels `automation "X"` / `alert group "Y"`), `scriptReferrers(scriptId)`, `channelReferrers(channelId)` (also counts pending firmware-upgrade and reboot bookings whose `notifyChannelIds` hold it), `summarizeReferrers(refs, max?)`.
+
+**Cross-service deps:** `notificationTypes` (`allRuleActionRefs`, `normalizeRuleToV2`, `notifyChannelIds`, the action schemas); `prisma` (`NotificationRule`, `AlertGroup`, `FirmwareUpgradeSchedule`, `RebootSchedule`). Read-only.
+
+**Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import).
+
+**Invariants:**
+- **It never walks action locations itself.** Everything goes through `allRuleActionRefs`; a location that walker does not visit is invisible here, and the unit test has one case per location so that fails by name.
+- A stored action that no longer parses is skipped, never thrown on — a delete must not 500 on someone else's bad row.
+- Only called on a delete: two unpaged reads of small tables.
+
+**When changing this:**
+- A new thing an action names by id (a third registry) gets a predicate here and a 409 in that registry's delete, not a hand-rolled scan.
+- A new carrier of actions (something besides automations and alert groups) is added to `findActionReferrers`.
+
 ## services/automationScriptService.ts
 
 **What it owns:** The AutomationScript registry (operator-authored scripts referenced by Automation `script` actions) + the AutomationScriptRun lifecycle entry points. **RCE-equivalent surface:** every route sits behind the `automationScripts` key; server scripts run as the polaris service user, agent scripts as root/LocalSystem on the triggering asset.

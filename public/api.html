@@ -1891,7 +1891,12 @@
           <div class="endpoint-head"><span class="method m-delete">DELETE</span> /server-settings/mibs/:id
             <span class="gate">mibDatabase:write</span></div>
           <p><code>204</code>. Profile rows that resolved through it read unresolved until it is
-            uploaded again.</p>
+            uploaded again. <code>409</code> while an asset or a class monitoring setting has
+            it selected for a stream — the message names them; choose another MIB there first.
+            The same holds for the other registries a configuration names by id: deleting a
+            delivery channel or an automation script that an automation, alert group or pending
+            booking still uses, or a credential a Discovery still tries, answers
+            <code>409</code> with what uses it.</p>
         </div>
       </section>
 

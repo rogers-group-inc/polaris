@@ -1008,6 +1008,26 @@ export async function deleteCredential(id: string): Promise<void> {
   if (checks.length) {
     throw new AppError(409, `Credential is used by path check${checks.length === 1 ? "" : "s"} ${checks.map((c) => `"${c.name}"`).join(", ")}${checks.length === 5 ? " and possibly more" : ""}; change their authentication first`);
   }
+  // Rule 167: a Discovery that tries this credential. `NetworkScan.methods` is
+  // JSON with no foreign key, so nothing stopped the delete and the Discovery
+  // went on running with a method that could no longer authenticate. A private
+  // Discovery is counted, never named: its name is its owner's.
+  const scans = await prisma.networkScan.findMany({ select: { name: true, visibility: true, methods: true } });
+  const using = scans.filter((s) =>
+    Array.isArray(s.methods) &&
+    (s.methods as unknown[]).some((m) => {
+      const ids = (m as { credentialIds?: unknown } | null)?.credentialIds;
+      return Array.isArray(ids) && ids.includes(id);
+    }),
+  );
+  if (using.length > 0) {
+    const named = using.filter((s) => s.visibility === "public").map((s) => `"${s.name}"`).slice(0, 5);
+    const unnamed = using.length - named.length;
+    const bits: string[] = [];
+    if (named.length) bits.push(`${named.length === 1 ? "Discovery" : "Discoveries"} ${named.join(", ")}`);
+    if (unnamed > 0) bits.push(`${unnamed} ${named.length ? "other " : ""}${unnamed === 1 ? "Discovery" : "Discoveries"}`);
+    throw new AppError(409, `Credential is used by ${bits.join(" and ")}; remove it from ${using.length === 1 ? "that Discovery" : "those"} first`);
+  }
   // Firmware bindings and agent install credentials don't block a delete:
   // both FKs are SET NULL, and an agent falls back to the managed credential.
   if (usage.monitoringTotal > 0) {

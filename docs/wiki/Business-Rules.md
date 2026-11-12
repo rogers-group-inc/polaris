@@ -3465,3 +3465,18 @@ deployment keypair, Polaris remembers the old public key. The next run of the on
 script on each host removes it as it installs the new one, and the detection script reports
 a host that still trusts the old key as needing remediation. See
 [Polaris Agent](Polaris-Agent#removing-it-again).
+
+### Rule 167
+
+**Something that is still in use cannot be deleted, and Polaris tells you what is using it.**
+Deleting any of these now stops with a message naming what still depends on it:
+
+- a **delivery channel** that an automation, an alert group, or a booked firmware upgrade or
+  reboot still sends through;
+- an **automation script** that an automation or alert group still runs — anywhere in it,
+  including escalation steps, severity levels, the all-clear and reset actions;
+- a **MIB** that an asset or a class monitoring setting has selected for a stream;
+- a **credential** that a Discovery still tries (a private Discovery is counted, not named).
+
+Point those at something else, then delete. Before this, the delete went through and the
+automation, the poll or the Discovery quietly stopped working.
