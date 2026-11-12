@@ -53,7 +53,8 @@ export const MONITOR_STATUS_LABELS: Record<MonitorStatus, string> = {
 /** Label for a raw status string; unrecognized values pass through unchanged. */
 export function monitorStatusLabel(status: string | null | undefined): string {
   if (!status) return MONITOR_STATUS_LABELS.unknown;
-  return (MONITOR_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  // Own keys only: "toString" is passed through, not answered with a function.
+  return Object.hasOwn(MONITOR_STATUS_LABELS, status) ? (MONITOR_STATUS_LABELS as Record<string, string>)[status]! : status;
 }
 
 /**

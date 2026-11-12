@@ -25,7 +25,7 @@ export function setEnvVar(key: string, value: string): void {
   const existing = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, "utf-8") : "";
   const lineRe = new RegExp(`^${key}=.*$`, "m");
   const next = lineRe.test(existing)
-    ? existing.replace(lineRe, newLine)
+    ? existing.replace(lineRe, () => newLine) // a function: a string replacement would expand $& / $` / $' / $$ in the value
     : (existing === "" || existing.endsWith("\n") ? existing + newLine + "\n" : existing + "\n" + newLine + "\n");
   writeFileSync(ENV_FILE, next, "utf-8");
 }

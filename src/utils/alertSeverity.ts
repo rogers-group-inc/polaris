@@ -22,7 +22,9 @@ export const ALERT_SEVERITY_RANK: Record<string, number> = {
 
 /** Rank of one severity; 0 for absent or unrecognized. */
 export function alertSeverityRank(severity: string | null | undefined): number {
-  return ALERT_SEVERITY_RANK[String(severity ?? "")] ?? 0;
+  const key = String(severity ?? "");
+  // Own keys only: "toString" / "constructor" are not severities.
+  return Object.hasOwn(ALERT_SEVERITY_RANK, key) ? ALERT_SEVERITY_RANK[key]! : 0;
 }
 
 /**
