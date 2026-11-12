@@ -116,6 +116,24 @@ redrawn per frame during a floor change (`tickCross`). The basemap switch is `se
 second `setLayer` in the same scope once shadowed it. Layer 2 must skip the new
 `topo|L<n>` layout keys (`_layoutKeyBelongsToCurrentView`), or a floor layer's placements
 read as a Layer 2 layout.
+**Room outlines and draw order** (`topology-physical.js → roomHulls / drawRoomHull`): the devices on
+a floor whose codes share area|building|floor|room get a rounded convex hull (`roundedHull`, a
+`HULL_PAD_PX` circle round each device), derived on every `drawFloor` (never stored, never
+interactive, never a code write) and padded in screen pixels, so `zoomend` redraws the floors.
+`drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
+is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
+its floor rather than one marker so the outlines follow.
+**Links on the Topology canvas** reuse Layer 2's pieces: the hover card is
+`PolarisTopologyRender.edgeTooltipHtml` through a two-method Cytoscape stand-in (`tipCy`, an
+edge `{data(k)}`), shown with map.js's `#topology-edge-tooltip` via `ctx.linkTip`; bends and end
+points are Layer 2's `edgepath:<pathKey>:b<n>` / `:s` / `:t` keys (`PolarisTopologyEdgeEditor`
+`assignPathKeys` / `parsePaths` / `serializePaths` / `insertIndex`) stored in the FLOOR's
+placement blob: bends in plan units (so they follow `PlanOverlay` adjustments), ends as a unit
+screen direction on a 17 px ring (`END_PX`; none stored = facing the next point). Every reader
+of that blob must skip the keys: `placedIds` filters `edgepath:`, `setPlan` never converts
+`:s`/`:t` (a direction, not a place). A line press disables map dragging and listens on
+`window` pointer events; the click the browser fires after a drag is swallowed, and a line
+click stops propagation, or the map's background click clears the selection.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.

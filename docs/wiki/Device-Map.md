@@ -700,6 +700,27 @@ hold **Alt** while dragging to rotate it; **Done** or Esc finishes and **Reset**
 puts it back. The floor's devices and polygons move with its plan, so they stay in
 the same rooms.
 
+**Rooms are outlined.** Devices on the same floor whose descriptions name the
+same room (`r:`) get a dashed outline around them with the room's name at the
+top. The outline follows the devices as you place and move them; you don't draw
+it, and it never changes a description. Where shapes overlap — a room outline
+inside a building polygon, or one polygon inside another — the smaller one is
+drawn on top.
+
+**Connections work as they do on Layer 2.** Hovering over a connection shows
+the same card as Layer 2: the two devices, their ports, how the link was found,
+its speed and the interface details. In edit mode:
+
+- **Drag a connection** to add a bend there and move it.
+- **Click a connection** to show its points: square handles for bends, round
+  ones where it meets each device. Drag a bend to move it; drag an end point
+  around its device to choose where the line attaches.
+- **Select a point and press Delete** to remove a bend. A deleted end point goes
+  back to facing the next point automatically.
+
+Bends are saved with the floor, on Save or the tick like everything else, and
+move with the floor's plan when you adjust it.
+
 A device is on one floor at a time: the Device List says which, and clicking it
 takes you there. A device placed on a floor gets that floor's number as its `f:`
 code when you save (and one placed on the ground loses any `f:`); it keeps its
