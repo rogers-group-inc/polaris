@@ -11,24 +11,18 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findUnique, executeRaw, passkeyFindFirst } = vi.hoisted(() => ({
-  findUnique: vi.fn(),
-  executeRaw: vi.fn(),
-  passkeyFindFirst: vi.fn(),
-}));
-
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    user: { findUnique },
-    $executeRaw: executeRaw,
-    userPasskey: { findFirst: passkeyFindFirst, findMany: vi.fn(), update: vi.fn(), delete: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { revalidateSessionUser, SESSION_RECHECK_MS } from "../../src/api/middleware/sessionRevalidate.js";
 import { revokeUserSessions } from "../../src/services/sessionRevocationService.js";
 import { requireSessionUser } from "../../src/api/middleware/auth.js";
 import { deletePasskey, listPasskeys, renamePasskey } from "../../src/services/passkeyService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findUnique = stubbed(prisma.user.findUnique);
+const executeRaw = stubbed(prisma.$executeRaw);
+const passkeyFindFirst = stubbed(prisma.userPasskey.findFirst);
 
 function fakeReq(session: Record<string, unknown> | undefined) {
   const s: any = session
@@ -37,11 +31,7 @@ function fakeReq(session: Record<string, unknown> | undefined) {
   return { session: s } as any;
 }
 
-beforeEach(() => {
-  findUnique.mockReset();
-  executeRaw.mockReset();
-  passkeyFindFirst.mockReset();
-});
+beforeEach(() => resetDbStub());
 
 describe("revalidateSessionUser", () => {
   it("does nothing for a request with no session user, and never touches the database", async () => {

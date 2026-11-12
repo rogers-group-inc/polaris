@@ -10,19 +10,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const groupBy = vi.fn();
-const findMany = vi.fn();
+const groupBy = stubbed(prisma.assetInterface.groupBy);
+const findMany = stubbed(prisma.assetInterface.findMany);
 
-const vapGroupBy = vi.fn();
-const vapFindMany = vi.fn();
+const vapGroupBy = stubbed(prisma.assetApVap.groupBy);
+const vapFindMany = stubbed(prisma.assetApVap.findMany);
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetInterface: { groupBy, findMany },
-    assetApVap: { groupBy: vapGroupBy, findMany: vapFindMany },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { decorateRelationLeafHits } = await import("../../src/services/scopeRelationIndex.js");
 const { evaluateScopeCondition, relationLeafKey } = await import("../../src/services/notificationTypes.js");
@@ -34,12 +31,7 @@ const and = (...children: unknown[]) => ({ op: "and", children }) as Tree;
 const leaf = (operator: string, value: string) => ({ field: "interfaceName", operator, value });
 const one = (operator: string, value: string) => and(leaf(operator, value));
 
-beforeEach(() => {
-  groupBy.mockReset();
-  findMany.mockReset();
-  vapGroupBy.mockReset();
-  vapFindMany.mockReset();
-});
+beforeEach(() => resetDbStub());
 
 describe("decorateRelationLeafHits", () => {
   it("asks nothing when no leaf mentions an interface", async () => {

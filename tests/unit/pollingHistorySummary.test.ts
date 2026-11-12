@@ -7,18 +7,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { readPollingHistorySummary } from "../../src/services/sampleHistoryService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
 });
 

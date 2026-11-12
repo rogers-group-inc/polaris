@@ -21,6 +21,11 @@
  * `$transaction` runs what it is given: an array of promises is awaited in
  * order, a callback gets the stub as its transaction client. `resetDbStub()`
  * resets every spy and restores that default.
+ *
+ * Models exist only once touched, so `Object.keys(prisma)` (or a for…in over a
+ * model) is EMPTY — a test that sets defaults by iterating the client sets
+ * none. Name the models: `for (const m of ["assetMonitorSample", …])
+ * stubbed((prisma as any)[m].findMany).mockResolvedValue([])`.
  */
 
 import { vi, type Mock } from "vitest";

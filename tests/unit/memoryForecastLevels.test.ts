@@ -10,9 +10,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
 import vm from "node:vm";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: { $queryRawUnsafe: vi.fn() },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { computeMemoryProjection, projectMemoryPct } from "../../src/services/memoryForecastService.js";
 import { METRIC_META, FORECAST_HORIZON_METRICS, forecastDaysOf, severityForValue } from "../../src/services/notificationTypes.js";
@@ -23,11 +21,13 @@ import { processRankingForMetric } from "../../src/services/alertProcessService.
 import { METRIC_STREAM } from "../../src/services/notificationCadenceService.js";
 import { triggerSummary, triggerSubject } from "../../src/utils/triggerSummary.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { wizardSource } from "./_automationsWizardSource.js";
 
 const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
 });
 

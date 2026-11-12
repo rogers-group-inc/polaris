@@ -18,16 +18,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetMonitorSample: { findMany: vi.fn(), findFirst: vi.fn() },
-    assetTelemetrySample: { findMany: vi.fn() },
-    assetHardwareSensorSample: { findMany: vi.fn() },
-    assetStorageSample: { findMany: vi.fn() },
-    assetInterfaceSample: { findMany: vi.fn() },
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   readInterfaceHistory, readStorageHistory, readHardwareSensorHistory,
@@ -35,6 +26,7 @@ import {
   DETAIL_ANCHOR_CAP_MS, ANCHOR_ROWS_RATE, ANCHOR_ROWS_GAUGE,
 } from "../../src/services/sampleHistoryService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const p = prisma as unknown as Record<string, { findMany: Mock }>;
@@ -46,8 +38,11 @@ const until = min(60);
 const fetchSince = min(-5);
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
-  for (const k of Object.keys(p)) p[k]?.findMany?.mockResolvedValue?.([]);
+  for (const k of ["assetMonitorSample", "assetTelemetrySample", "assetHardwareSensorSample", "assetStorageSample", "assetInterfaceSample"]) {
+    p[k]!.findMany.mockResolvedValue([]);
+  }
 });
 
 /** Route each findMany call to the main or the anchor result by its shape. */

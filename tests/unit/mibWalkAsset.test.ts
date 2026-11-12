@@ -3,12 +3,16 @@
  * target lookup lifted out of routes/mibs.ts by CQ-B044.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const findUnique = vi.hoisted(() => vi.fn());
-vi.mock("../../src/db.js", () => ({ prisma: { asset: { findUnique } } }));
+const findUnique = stubbed(prisma.asset.findUnique);
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { findMibWalkAsset } = await import("../../src/services/mibService.js");
+
+beforeEach(() => resetDbStub());
 
 describe("findMibWalkAsset", () => {
   it("loads only the fields the walk dials and labels with", async () => {

@@ -20,9 +20,7 @@ import { fileURLToPath } from "node:url";
 
 // timescaleService / sampleRetentionService import prisma at module load;
 // stub it so importing the constants doesn't open a DB connection.
-vi.mock("../../src/db.js", () => ({
-  prisma: { setting: { findUnique: vi.fn(), upsert: vi.fn() } },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   SAMPLE_TABLES,

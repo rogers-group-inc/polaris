@@ -47,23 +47,7 @@ const { rows, pushes, hooks, bullets } = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    notificationDelivery: {
-      findMany: vi.fn(async () => rows.list),
-      updateMany: vi.fn(async () => ({ count: 1 })),
-      update: vi.fn(async () => ({})),
-    },
-    notificationChannel: {
-      findMany: vi.fn(async () => [
-        { id: "c-push", type: "web_push", enabled: true, config: { publicKey: "p", privateKey: "q", subject: "mailto:a@b.c" } },
-        { id: "c-slack", type: "slack", enabled: true, config: { webhookUrl: "https://hooks.example/x" } },
-        { id: "c-bullet", type: "pushbullet", enabled: true, config: { accessToken: "t" } },
-      ]),
-    },
-    pushSubscription: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/notificationChannels/webPushChannel.js", () => ({
   sendWebPush: vi.fn(async (_v: unknown, _t: unknown, p: unknown) => { pushes.push(p as never); }),
@@ -79,6 +63,21 @@ import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
 
 import { drainPendingDeliveries } from "../../src/services/notificationDeliveryService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.notificationDelivery.findMany).mockImplementation(async () => rows.list);
+  stubbed(prisma.notificationDelivery.updateMany).mockImplementation(async () => ({ count: 1 }));
+  stubbed(prisma.notificationDelivery.update).mockImplementation(async () => ({}));
+  stubbed(prisma.notificationChannel.findMany).mockImplementation(async () => [
+    { id: "c-push", type: "web_push", enabled: true, config: { publicKey: "p", privateKey: "q", subject: "mailto:a@b.c" } },
+    { id: "c-slack", type: "slack", enabled: true, config: { webhookUrl: "https://hooks.example/x" } },
+    { id: "c-bullet", type: "pushbullet", enabled: true, config: { accessToken: "t" } },
+  ]);
+  stubbed(prisma.pushSubscription.deleteMany).mockImplementation(async () => ({ count: 0 }));
+});
 
 beforeEach(() => {
   pushes.length = 0;

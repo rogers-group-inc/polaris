@@ -13,21 +13,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findInterfaces, findAssets } = vi.hoisted(() => ({
-  findInterfaces: vi.fn(),
-  findAssets: vi.fn(),
-}));
-
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetInterface: { findMany: findInterfaces },
-    asset: { findMany: findAssets },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { inferInterfaceTopology, INTERFACE_LAST_KNOWN_MS } from "../../src/services/interfaceTopologyService.js";
 import { lldpOnlySwitchLinks } from "../../src/services/topologyGraphService.js";
 import { keepsLastKnownLinks } from "../../src/utils/monitorStatus.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findInterfaces = stubbed(prisma.assetInterface.findMany);
+const findAssets = stubbed(prisma.asset.findMany);
 
 const HOUR = 60 * 60 * 1000;
 const ago = (ms: number) => new Date(Date.now() - ms);
@@ -46,10 +41,7 @@ const trunk = (assetId: string, peerSerial: string, lastSeen: Date) => ({
   assetId, ifName: peerSerial.slice(-14), ifType: "aggregate", ifParent: null, lastSeen,
 });
 
-beforeEach(() => {
-  findInterfaces.mockReset();
-  findAssets.mockReset();
-});
+beforeEach(() => resetDbStub());
 
 describe("keepsLastKnownLinks", () => {
   const a = (over: Record<string, unknown>) => ({ monitored: true, monitorStatus: "up", consecutiveFailures: 0, dependencySuppressed: false, ...over });
