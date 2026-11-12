@@ -15,11 +15,9 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_STATE_MAP,
   STATE_MAP_MODES,
-  describeStateMap,
   evaluateStateMap,
   joinStateRows,
   normalizeStateMap,
-  stateIsProblem,
   stateLabel,
   validateStateMap,
   type StateMap,
@@ -172,32 +170,18 @@ describe("evaluateStateMap", () => {
   });
 });
 
-describe("stateLabel / stateIsProblem", () => {
+describe("stateLabel", () => {
   it("names each side with the operator's own words", () => {
     const m = map({ trueLabel: "Failed", falseLabel: "Present" });
     expect(stateLabel(1, m)).toBe("Failed");
     expect(stateLabel(0, m)).toBe("Present");
     expect(stateLabel(null, m)).toBe("—");
   });
-
-  it("follows the declared polarity, so a probe whose FALSE side is the problem works", () => {
-    const inverted = map({ trueIsProblem: false, trueLabel: "Present", falseLabel: "Missing" });
-    expect(stateIsProblem(0, inverted)).toBe(true);
-    expect(stateIsProblem(1, inverted)).toBe(false);
-    expect(stateIsProblem(1, map())).toBe(true);
-    expect(stateIsProblem(null, map())).toBe(false);
-  });
 });
 
-describe("describeStateMap", () => {
-  it("spells each mode out in the operator's labels", () => {
-    expect(describeStateMap(map())).toBe("Alarm when the value is not 0, OK when it is 0");
-    expect(describeStateMap(map({ mode: "notEquals", values: ["1"] })))
-      .toBe("OK when the value is 1, Alarm otherwise");
-    expect(describeStateMap(map({ mode: "gte", values: ["75"] })))
-      .toBe("Alarm when the value is 75 or more, OK below that");
-  });
-});
+// The pill polarity and the plain-English summary are browser code, tested
+// there: assetsSnmp.stateProbe.test.ts (_stateProbeIsProblem) and
+// serverSettingsProfiles.stateMapSummary.test.ts (_stateMapSummary).
 
 describe("joinStateRows", () => {
   const values = new Map<string, unknown>([["1", 0], ["2", 1], ["3", 0]]);

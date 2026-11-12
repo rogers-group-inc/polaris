@@ -9,7 +9,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { streamForMetric, summarizeIntervals, METRIC_STREAM, HOST_METRIC_INTERVAL_SEC } from "../../src/services/notificationCadenceService.js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { streamForMetric, summarizeIntervals, METRIC_STREAM } from "../../src/services/notificationCadenceService.js";
 
 describe("streamForMetric", () => {
   it("maps each metric to the collector that produces it", () => {
@@ -53,8 +55,17 @@ describe("streamForMetric", () => {
     }
   });
 
-  it("states the Polaris host's own fixed sampling tick", () => {
-    expect(HOST_METRIC_INTERVAL_SEC).toBe(30);
+  // The wizard states the Polaris host's own sampling tick (no hierarchy, no
+  // scope, no range) from a constant of its own; the tick itself is
+  // hostMetricsCollector's INTERVAL_MS. Neither is exported, so hold the two
+  // source texts to one figure — a retuned job must move the wizard's caption.
+  it("the wizard's host-metric interval is hostMetricsCollector's real tick", () => {
+    const job = readFileSync(resolve(__dirname, "../../src/jobs/hostMetricsCollector.ts"), "utf8");
+    const wizard = readFileSync(resolve(__dirname, "../../public/js/automations-wizard.js"), "utf8");
+    const jobSec = Number(/const INTERVAL_MS = (\d+) \* 1000;/.exec(job)?.[1]);
+    const wizardSec = Number(/var HOST_METRIC_INTERVAL_SEC = (\d+);/.exec(wizard)?.[1]);
+    expect(jobSec).toBeGreaterThan(0);
+    expect(wizardSec).toBe(jobSec);
   });
 });
 

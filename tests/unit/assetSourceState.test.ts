@@ -1,12 +1,12 @@
 /**
  * tests/unit/assetSourceState.test.ts
+ *
+ * The account-disagreement call-out is the Sources tab's
+ * _assetSourceAccountStatesDisagree — tested in assetsSources.accountDisagreement.test.ts.
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  deriveAssetSourceState,
-  hasAccountStateDisagreement,
-} from "../../src/utils/assetSourceState.js";
+import { deriveAssetSourceState } from "../../src/utils/assetSourceState.js";
 
 describe("deriveAssetSourceState — directory sources", () => {
   it("reads Entra's accountEnabled straight", () => {
@@ -111,26 +111,6 @@ describe("deriveAssetSourceState — malformed input", () => {
 
   it("returns not-reported for an unknown source kind", () => {
     expect(deriveAssetSourceState("some-future-source", { accountEnabled: false }).state).toBe("unknown");
-  });
-});
-
-describe("hasAccountStateDisagreement", () => {
-  const entraEnabled  = deriveAssetSourceState("entra", { accountEnabled: true });
-  const adDisabled    = deriveAssetSourceState("ad", { accountDisabled: true });
-  const adEnabled     = deriveAssetSourceState("ad", { accountDisabled: false });
-  const vmPoweredOff  = deriveAssetSourceState("vcenter-vm", { powerState: "POWERED_OFF" });
-
-  it("flags two directories that disagree", () => {
-    expect(hasAccountStateDisagreement([entraEnabled, adDisabled])).toBe(true);
-  });
-
-  it("does not flag agreeing directories", () => {
-    expect(hasAccountStateDisagreement([entraEnabled, adEnabled])).toBe(false);
-    expect(hasAccountStateDisagreement([])).toBe(false);
-  });
-
-  it("ignores runtime readings — a powered-off VM with a live account is not a conflict", () => {
-    expect(hasAccountStateDisagreement([entraEnabled, vmPoweredOff])).toBe(false);
   });
 });
 
