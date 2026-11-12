@@ -72,4 +72,14 @@ describe("dimensionNounOf", () => {
     expect(dimensionNounOf({ type: "event" })).toBe("");
     expect(dimensionNounOf(null)).toBe("");
   });
+
+  // Until 2026-11-12 the SD-WAN rule pair was keyed "healthCheck", so an alert
+  // about rule "to-hq" told its email it was an "SD-WAN health check".
+  it("an SD-WAN rule alert names its component an SD-WAN rule, keyed by the rule-name dimension", () => {
+    for (const field of ["sdwanRuleStatus", "sdwanSelectedMember"]) {
+      expect(dimensionNounOf({ type: "asset_state", field })).toBe("SD-WAN rule");
+      expect(dimensionSpaceOf({ type: "asset_state", field })).toBe("sdwanRulePattern");
+    }
+    expect(dimensionNounOf({ type: "asset_state", field: "sdwanMemberState" })).toBe("SD-WAN health check");
+  });
 });

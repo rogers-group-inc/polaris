@@ -40,8 +40,8 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
 // state trio and tunnelName on ipsecStatus since the pin-gate work, but the
 // builder never rendered an input for them, so "Interface oper status is down
 // on interfaces matching wan" was expressible only through the raw API. The
-// SD-WAN rule pair carries no name filter because the engine has none for it
-// (rules alert per ruleName dimension already), while sdwanMemberState takes
+// SD-WAN rule pair is narrowed by rule name (sdwanRulePattern — readings.ts
+// filters the rule rows by it; each rule is its own dimension), while sdwanMemberState takes
 // the same health-check + member pair the SD-WAN METRICS take, from the same
 // sample table. Device-identifier dimensions are NOT
 // listed per metric/field — DEVICE_FILTER_DIMENSIONS below applies to every
@@ -103,8 +103,11 @@ export const STATE_FIELD_DIMENSIONS: Record<string, string[]> = {
   ifIpAddress: ["ifNamePattern"],
   poeStatus: ["ifNamePattern"],
   ipsecStatus: ["tunnelName"],
-  sdwanRuleStatus: ["healthCheck"],
-  sdwanSelectedMember: ["healthCheck"],
+  // Keyed by the RULE name (readings.ts mk(a, ruleName, …)) — which the filter
+  // input of the same name narrows. Until 2026-11-12 this said "healthCheck",
+  // so a rule alert called its component an "SD-WAN health check".
+  sdwanRuleStatus: ["sdwanRulePattern"],
+  sdwanSelectedMember: ["sdwanRulePattern"],
   // One reading per (health check, WAN member) — so a reset condition on this
   // field clears the one member's alert, not every member on the gate.
   sdwanMemberState: ["healthCheck", "link"],
