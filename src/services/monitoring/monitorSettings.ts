@@ -140,24 +140,6 @@ export interface MonitorTierSettings {
    */
   storagePolling:            PollingMethod | null;
   /**
-   * Per-stream MIB identifier hint. Either `"std:<key>"` referencing a
-   * built-in standard MIB (used by the asset-detail SNMP Walk tab UI for
-   * symbol resolution; ignored by the telemetry collector), or the UUID of
-   * an uploaded MibFile row. null at any tier = inherit from below.
-   *
-   * Consumed by `collectCpuMemorySnmp` / `collectTemperatureSnmp` to override
-   * vendor-profile selection when an uploaded MIB is set — useful for assets
-   * whose `manufacturer + model` would otherwise fall into the wrong profile
-   * (the canonical case being FortiSwitches that pre-Phase-4d landed under
-   * the generic Fortinet profile and queried FortiGate-only OIDs).
-   */
-  responseTimeMibId:         string | null;
-  cpuMemoryMibId:            string | null;
-  temperatureMibId:          string | null;
-  interfacesMibId:           string | null;
-  lldpMibId:                 string | null;
-  processesMibId:            string | null;
-  /**
    * Per-stream Credential FK ids. Only the class-override tier (tier-2) stores
    * these — tier-3 (integration / manual) keeps its credential out-of-band on
    * `Integration.config.monitorCredentialId`, and tier-1 (per-asset) goes
@@ -225,14 +207,6 @@ export const HARDCODED_FLOOR: MonitorTierSettings = {
   storagePolling:            null,
   processesPolling:          null,
   eventLogPolling:           null,
-  // MIB ID hints default to null at the floor — vendor profile selection
-  // uses the asset's own manufacturer/model when no tier supplies a MIB.
-  responseTimeMibId:         null,
-  cpuMemoryMibId:            null,
-  temperatureMibId:          null,
-  interfacesMibId:           null,
-  lldpMibId:                 null,
-  processesMibId:            null,
   // Per-stream credential IDs only exist on the class-override tier; tier-3
   // and the floor always carry null and dispatchers fall through.
   responseTimeCredentialId:  null,
@@ -459,7 +433,7 @@ function tierFromJson(v: Record<string, unknown> | null | undefined): MonitorTie
   const flat = o as Record<string, unknown>;
   // Stream-split migration compatibility: tier-3 JSON written before the
   // split carried `telemetryIntervalSeconds` / `telemetryTimeoutMs` /
-  // `telemetryPolling` / `telemetryMibId`. The migration SQL rewrites those
+  // `telemetryPolling`. The migration SQL rewrites those
   // keys in-place, but a fresh install booting against an older row (e.g.
   // recovery / replay) needs the fallback so existing operator selections
   // carry forward identically.
@@ -500,12 +474,6 @@ function tierFromJson(v: Record<string, unknown> | null | undefined): MonitorTie
     storagePolling:             readPollingFromJson(pollingBlock, "storage")      ?? readPollingFromJson(flat, "storagePolling"),
     processesPolling:           readPollingFromJson(pollingBlock, "processes")    ?? readPollingFromJson(flat, "processesPolling"),
     eventLogPolling:            readPollingFromJson(pollingBlock, "eventLog")     ?? readPollingFromJson(flat, "eventLogPolling"),
-    responseTimeMibId:          readMibIdFromJson(flat.responseTimeMibId),
-    cpuMemoryMibId:             readMibIdFromJson(flat.cpuMemoryMibId)   ?? readMibIdFromJson(flat.telemetryMibId),
-    temperatureMibId:           readMibIdFromJson(flat.temperatureMibId) ?? readMibIdFromJson(flat.telemetryMibId),
-    interfacesMibId:            readMibIdFromJson(flat.interfacesMibId),
-    lldpMibId:                  readMibIdFromJson(flat.lldpMibId),
-    processesMibId:             readMibIdFromJson(flat.processesMibId),
     // Tier-3 storage doesn't carry per-stream credentials — they only live
     // on the class-override row (tier-2). Always null here; loadClassOverride
     // surfaces the real values, and resolveMonitorSettings merges them onto
@@ -528,11 +496,6 @@ function toPositiveIntOr(v: unknown, fallback: number | null): number | null {
   return fallback;
 }
 
-function readMibIdFromJson(v: unknown): string | null {
-  if (typeof v !== "string") return null;
-  const t = v.trim();
-  return t.length === 0 ? null : t;
-}
 
 /**
  * Source-default polling method per stream. Used when no tier (integration,
@@ -742,7 +705,7 @@ function pickClassStreamsBlock(
 /**
  * Overlay a per-class streams block onto a tier-3 baseline. Each stream
  * carries up to 6 fields (polling / credentialId / intervalSeconds /
- * timeoutMs / failureThreshold / mibId); non-null values win over the
+ * timeoutMs / failureThreshold / fastConfirmIntervalSec); non-null values win over the
  * baseline, null/undefined leaves the baseline in place. Mutates `base`
  * in place and returns it for chaining convenience.
  */
@@ -750,8 +713,8 @@ function pickClassStreamsBlock(
 // by both the value applier (applyClassStreamsOverlay) and the provenance
 // detector (detectPerClassFieldOrigins) so the two can never disagree on
 // which cell a stream field lands in. `failureThreshold` exists only on
-// responseTime (the only stream with a failure counter); `mibId` is absent
-// where the stream has no MIB selector.
+// responseTime (the only stream with a failure counter). A per-class `mibId`
+// is accepted on write and dropped (business rule 173): there is no pin.
 type ClassStreamKey = "responseTime" | "cpuMemory" | "temperature" | "interfaces" | "lldp" | "storage" | "processes" | "eventLog";
 
 type ClassStreamCells = {
@@ -759,19 +722,18 @@ type ClassStreamCells = {
   credentialId:      keyof MonitorTierSettings;
   intervalSeconds:   keyof MonitorTierSettings;
   timeoutMs:         keyof MonitorTierSettings;
-  mibId?:            keyof MonitorTierSettings;
   failureThreshold?: keyof MonitorTierSettings;
   fastConfirmIntervalSec?: keyof MonitorTierSettings;
 };
 
 const CLASS_STREAM_FIELD_MAP: Record<ClassStreamKey, ClassStreamCells> = {
-  responseTime: { polling: "responseTimePolling", credentialId: "responseTimeCredentialId", intervalSeconds: "intervalSeconds",            timeoutMs: "probeTimeoutMs",        mibId: "responseTimeMibId", failureThreshold: "failureThreshold", fastConfirmIntervalSec: "fastConfirmIntervalSec" },
-  cpuMemory:    { polling: "cpuMemoryPolling",    credentialId: "cpuMemoryCredentialId",    intervalSeconds: "cpuMemoryIntervalSeconds",   timeoutMs: "cpuMemoryTimeoutMs",    mibId: "cpuMemoryMibId" },
-  temperature:  { polling: "temperaturePolling",  credentialId: "temperatureCredentialId",  intervalSeconds: "temperatureIntervalSeconds", timeoutMs: "temperatureTimeoutMs",  mibId: "temperatureMibId" },
-  interfaces:   { polling: "interfacesPolling",   credentialId: "interfacesCredentialId",   intervalSeconds: "systemInfoIntervalSeconds",  timeoutMs: "systemInfoTimeoutMs",   mibId: "interfacesMibId" },
-  lldp:         { polling: "lldpPolling",         credentialId: "lldpCredentialId",         intervalSeconds: "lldpIntervalSeconds",        timeoutMs: "lldpTimeoutMs",         mibId: "lldpMibId" },
+  responseTime: { polling: "responseTimePolling", credentialId: "responseTimeCredentialId", intervalSeconds: "intervalSeconds",            timeoutMs: "probeTimeoutMs", failureThreshold: "failureThreshold", fastConfirmIntervalSec: "fastConfirmIntervalSec" },
+  cpuMemory:    { polling: "cpuMemoryPolling",    credentialId: "cpuMemoryCredentialId",    intervalSeconds: "cpuMemoryIntervalSeconds",   timeoutMs: "cpuMemoryTimeoutMs" },
+  temperature:  { polling: "temperaturePolling",  credentialId: "temperatureCredentialId",  intervalSeconds: "temperatureIntervalSeconds", timeoutMs: "temperatureTimeoutMs" },
+  interfaces:   { polling: "interfacesPolling",   credentialId: "interfacesCredentialId",   intervalSeconds: "systemInfoIntervalSeconds",  timeoutMs: "systemInfoTimeoutMs" },
+  lldp:         { polling: "lldpPolling",         credentialId: "lldpCredentialId",         intervalSeconds: "lldpIntervalSeconds",        timeoutMs: "lldpTimeoutMs" },
   storage:      { polling: "storagePolling",      credentialId: "interfacesCredentialId",   intervalSeconds: "storageIntervalSeconds",     timeoutMs: "storageTimeoutMs" },
-  processes:    { polling: "processesPolling",    credentialId: "processesCredentialId",    intervalSeconds: "processesIntervalSeconds",   timeoutMs: "processesTimeoutMs",    mibId: "processesMibId" },
+  processes:    { polling: "processesPolling",    credentialId: "processesCredentialId",    intervalSeconds: "processesIntervalSeconds",   timeoutMs: "processesTimeoutMs" },
   eventLog:     { polling: "eventLogPolling",     credentialId: "eventLogCredentialId",     intervalSeconds: "eventLogIntervalSeconds",    timeoutMs: "eventLogTimeoutMs" },
 };
 
@@ -792,7 +754,6 @@ function walkClassStreams(
     if ("credentialId" in stream && typeof stream.credentialId === "string" && stream.credentialId.length > 0) visit(cells.credentialId, stream.credentialId);
     if ("intervalSeconds" in stream && typeof stream.intervalSeconds === "number" && stream.intervalSeconds > 0) visit(cells.intervalSeconds, stream.intervalSeconds);
     if ("timeoutMs" in stream && typeof stream.timeoutMs === "number" && stream.timeoutMs > 0) visit(cells.timeoutMs, stream.timeoutMs);
-    if (cells.mibId && "mibId" in stream && typeof stream.mibId === "string" && stream.mibId.length > 0) visit(cells.mibId, stream.mibId);
     if (cells.failureThreshold && "failureThreshold" in stream && typeof stream.failureThreshold === "number" && stream.failureThreshold > 0) visit(cells.failureThreshold, stream.failureThreshold);
     if (cells.fastConfirmIntervalSec && "fastConfirmIntervalSec" in stream && typeof stream.fastConfirmIntervalSec === "number" && stream.fastConfirmIntervalSec > 0) visit(cells.fastConfirmIntervalSec, stream.fastConfirmIntervalSec);
   }
@@ -950,12 +911,6 @@ async function loadClassOverride(
       storagePolling:             true,
       processesPolling:           true,
       eventLogPolling:            true,
-      responseTimeMibId:          true,
-      cpuMemoryMibId:             true,
-      temperatureMibId:           true,
-      interfacesMibId:            true,
-      lldpMibId:                  true,
-      processesMibId:             true,
       responseTimeCredentialId:   true,
       cpuMemoryCredentialId:      true,
       temperatureCredentialId:    true,
@@ -997,12 +952,6 @@ async function loadClassOverride(
     if (isPollingMethod(row.storagePolling))      result.storagePolling      = row.storagePolling;
     if (isPollingMethod(row.processesPolling))    result.processesPolling    = row.processesPolling;
     if (isPollingMethod(row.eventLogPolling))     result.eventLogPolling     = row.eventLogPolling;
-    if (row.responseTimeMibId)                    result.responseTimeMibId   = row.responseTimeMibId;
-    if (row.cpuMemoryMibId)                       result.cpuMemoryMibId      = row.cpuMemoryMibId;
-    if (row.temperatureMibId)                     result.temperatureMibId    = row.temperatureMibId;
-    if (row.interfacesMibId)                      result.interfacesMibId     = row.interfacesMibId;
-    if (row.lldpMibId)                            result.lldpMibId           = row.lldpMibId;
-    if (row.processesMibId)                       result.processesMibId      = row.processesMibId;
     if (row.responseTimeCredentialId)             result.responseTimeCredentialId  = row.responseTimeCredentialId;
     if (row.cpuMemoryCredentialId)                result.cpuMemoryCredentialId     = row.cpuMemoryCredentialId;
     if (row.temperatureCredentialId)              result.temperatureCredentialId   = row.temperatureCredentialId;
@@ -1092,16 +1041,6 @@ export interface AssetMonitorContext {
   storagePolling?:           string | null;
   processesPolling?:         string | null;
   eventLogPolling?:          string | null;
-  // Per-stream MIB id overrides on the asset itself. null = inherit.
-  // Either `"std:<key>"` (UI hint only) or an uploaded MibFile UUID
-  // (consumed by `collectCpuMemorySnmp` / `collectTemperatureSnmp` to override
-  // vendor-profile selection).
-  responseTimeMibId?:        string | null;
-  cpuMemoryMibId?:           string | null;
-  temperatureMibId?:         string | null;
-  interfacesMibId?:          string | null;
-  lldpMibId?:                string | null;
-  processesMibId?:           string | null;
   // Per-stream credential ids on the asset itself. The resolver reads these
   // for ONE decision: whether a `rest_api` it would otherwise discard as
   // unreachable has its own token to authenticate with. Which credential the
@@ -1366,12 +1305,6 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
     storagePolling:             tier3Source,
     processesPolling:           tier3Source,
     eventLogPolling:            tier3Source,
-    responseTimeMibId:          tier3Source,
-    cpuMemoryMibId:             tier3Source,
-    temperatureMibId:           tier3Source,
-    interfacesMibId:            tier3Source,
-    lldpMibId:                  tier3Source,
-    processesMibId:             tier3Source,
     // Credential IDs are class-override only at runtime; the label flips to
     // "class" when one is set and the tier-3 label on a null value is inert.
     responseTimeCredentialId:   tier3Source,
@@ -1495,15 +1428,6 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
   if (asset.eventLogIntervalSec  != null) { merged.eventLogIntervalSeconds  = asset.eventLogIntervalSec;  provenance.eventLogIntervalSeconds  = "asset"; }
   if (asset.processesTimeoutMs   != null) { merged.processesTimeoutMs       = asset.processesTimeoutMs;   provenance.processesTimeoutMs       = "asset"; }
   if (asset.eventLogTimeoutMs    != null) { merged.eventLogTimeoutMs        = asset.eventLogTimeoutMs;    provenance.eventLogTimeoutMs        = "asset"; }
-
-  // Per-stream MIB pins are retired (business rule 173): no tier's value is
-  // resolved, so every `*MibId` reads null whatever an old row or an API
-  // client still holds. The fields stay on the shape (and the columns in the
-  // schema) for one release so a rollback finds them; nothing consumes them.
-  for (const field of ["responseTimeMibId", "cpuMemoryMibId", "temperatureMibId", "interfacesMibId", "lldpMibId", "processesMibId"] as const) {
-    merged[field] = null;
-    provenance[field] = tier3Source;
-  }
 
   // Per-stream credential IDs from the class override. Per-asset overrides
   // come from the Prisma `include` on each dispatcher, not the resolver.

@@ -141,12 +141,6 @@ const MONITOR_CONFIG_FIELDS = [
   "processesCredentialId",
   "eventLogCredentialId",
   // Per-stream MIB pins.
-  "responseTimeMibId",
-  "cpuMemoryMibId",
-  "temperatureMibId",
-  "interfacesMibId",
-  "lldpMibId",
-  "processesMibId",
   // Cadence + timeout overrides.
   "monitorIntervalSec",
   "cpuMemoryIntervalSec",

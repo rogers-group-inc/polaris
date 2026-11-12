@@ -63,12 +63,12 @@ function _polarisPollingFourStreamHTML(idPrefix, source, current, opts) {
   var credValues   = opts.credValues  || {};
 
   var streams = [
-    { key: "responseTime",  label: "Response time",  pollField: "responseTimePolling",  credField: "responseTimeCredentialId",  mibField: "responseTimeMibId"  },
-    { key: "telemetry",     label: "CPU/Memory",     pollField: "cpuMemoryPolling",     credField: "cpuMemoryCredentialId",     mibField: "cpuMemoryMibId"     },
-    { key: "temperature",   label: "Hardware Sensors", pollField: "temperaturePolling",   credField: "temperatureCredentialId",   mibField: "temperatureMibId"  },
-    { key: "interfaces",    label: "Interfaces",     pollField: "interfacesPolling",    credField: "interfacesCredentialId",    mibField: "interfacesMibId"    },
-    { key: "storage",       label: "Storage",        pollField: "storagePolling",       credField: "storageCredentialId",       mibField: null,                  noMib: true },
-    { key: "lldp",          label: "LLDP neighbors", pollField: "lldpPolling",          credField: "lldpCredentialId",          mibField: "lldpMibId"          },
+    { key: "responseTime",  label: "Response time",  pollField: "responseTimePolling",  credField: "responseTimeCredentialId" },
+    { key: "telemetry",     label: "CPU/Memory",     pollField: "cpuMemoryPolling",     credField: "cpuMemoryCredentialId" },
+    { key: "temperature",   label: "Hardware Sensors", pollField: "temperaturePolling",   credField: "temperatureCredentialId" },
+    { key: "interfaces",    label: "Interfaces",     pollField: "interfacesPolling",    credField: "interfacesCredentialId" },
+    { key: "storage",       label: "Storage",        pollField: "storagePolling",       credField: "storageCredentialId" ,                  noMib: true },
+    { key: "lldp",          label: "LLDP neighbors", pollField: "lldpPolling",          credField: "lldpCredentialId" },
   ];
 
   var rows = "";
