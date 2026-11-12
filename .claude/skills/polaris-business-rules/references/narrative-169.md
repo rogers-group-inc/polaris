@@ -44,3 +44,13 @@ Pinned by `tests/unit/tagRenameCarry.test.ts` (the three shapes, whole-name matc
 **What it does not do.** A region DELETE carries nothing, for rule 58's reason: there is no new name to move to, and stripping the reference would destroy the operator's statement of intent. A `region:` tag typed by hand onto an IP BLOCK is not rotated by a rename (the rotation covers assets and networks, which is where the map puts it); that half of E.8 stays open. `Notification.regionTags` on alerts already raised is history and is not rewritten.
 
 Pinned by the "169(a)" cases in `tests/unit/tagRenameCarry.test.ts` and `tests/integration/tagRenameCarry.test.ts`.
+
+### Rule 169(b) — a region's tag typed onto an IP block
+
+**How it was found.** The half of E.8 that 169(a) left open. The map tags assets, and the networks their gates serve, with `region:<name>`, and keeps provenance so it can take the tag back. An IP block is never a member of a region, so nothing ever writes that tag to a block — but an operator can type it there. Nothing reconciled a tag the map did not put there: after a rename the block went on naming a region that no longer existed, and after a delete it named nothing. Assets and networks were handled on both paths; blocks were simply not in the list.
+
+**What it does.** `applyRename` replaces the old tag with the new one on every block that carries it (a block that already has the new name just loses the old), and `applyDelete` removes it. Both report the count as `blocksRetagged`.
+
+**Why a delete removes it here, when rule 58 keeps a deleted region in a user's scope.** A user's region scope is an operator's statement of who is answerable for an area, and a region redrawn under the same name should find it still there. A tag on a block is the same kind of thing as the tag on the assets and networks beside it, which a delete has always stripped; leaving only the block's would be the inconsistency.
+
+Pinned by the "rule 169(b)" case in `tests/integration/mapRegionSubnetTags.test.ts`.

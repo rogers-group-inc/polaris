@@ -3569,7 +3569,8 @@ those devices.
 
 Renaming a **map region** works the same way. As well as moving the region's tag on devices
 and networks and every user's region scope, Polaris updates the device filters that select
-by that region and the notify actions sent to that region's users.
+by that region and the notify actions sent to that region's users. A region tag you typed
+onto an IP block is renamed with the region, and removed when the region is deleted.
 
 ### Rule 170
 

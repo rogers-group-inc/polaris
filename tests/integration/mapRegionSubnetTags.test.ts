@@ -207,6 +207,24 @@ d("mapRegionService — subnet region tags", { timeout: 30_000 }, () => {
     expect(tags).toContain("operator-set");
   });
 
+  it("carries a hand-applied region tag on an IP block through a rename, and removes it on delete (rule 169(b))", async () => {
+    const blockTags = async () => (await prisma.ipBlock.findFirstOrThrow({ where: { cidr: BLOCK_CIDR }, select: { tags: true } })).tags;
+    await prisma.ipBlock.updateMany({ where: { cidr: BLOCK_CIDR }, data: { tags: ["operator-set", `region:${REGION_NAME}`] } });
+    await applyOneRegion(region);
+    // A block is never a member: reconciling the region leaves its tags alone.
+    expect(await blockTags()).toEqual(["operator-set", `region:${REGION_NAME}`]);
+
+    const updated = await updateRegion(region.id, { name: RENAMED });
+    const renameSummary = await applyRename(updated.region, updated.previousName);
+    expect(renameSummary.blocksRetagged).toBe(1);
+    expect(await blockTags()).toEqual(["operator-set", `region:${RENAMED}`]);
+
+    const removed = await deleteRegion(updated.region.id);
+    const deleteSummary = await applyDelete(removed);
+    expect(deleteSummary.blocksRetagged).toBe(1);
+    expect(await blockTags()).toEqual(["operator-set"]);
+  });
+
   it("counts subnets separately from assets in the reconcile summary", async () => {
     const summary = await reconcileMapRegions();
     // The in-polygon gate itself is the asset; the subnet it serves is the network.

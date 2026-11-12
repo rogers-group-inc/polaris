@@ -19,6 +19,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `public/js/region-pills.js` (browser) — the ONLY browser-side reader of `GET /map/regions` for DISPLAY: it caches the name→color index behind `window.PolarisRegionPills`, and the Users page pickers (`users.js`) plus the Device Map’s "My regions" strip (`map.js`) go through it rather than fetching or re-deriving a pill color themselves. A 403 (the GET is gated `mapRegions:read`, which a `deviceMap:read`-only viewer need not hold) degrades to neutral-hued pills, never an error. The Device Map’s region EDIT mode still fetches the list itself — it needs the polygons, not the colors.
 
 **Invariants:**
+- **Blocks are retagged on rename / delete only (rule 169(b)).** `retagAllBlocks` handles a `region:` tag an operator typed onto an IP block; a block is never a member, so `applyOneRegion` and the periodic reconcile never touch block tags.
 - Region name unique case-insensitively, 1..64 chars, no control characters.
 - Polygon ≥3 vertices and ≤1000; lat in [-90,90]; lng in [-180,180]; finite numbers only.
 - `color` is a 7-char hex string (`/^#[0-9a-fA-F]{6}$/`). On create it defaults to a random pick from the shared `TAG_COLOR_PALETTE`; on read, legacy rows missing the field are filled in with a random pick (not persisted until the next update).
