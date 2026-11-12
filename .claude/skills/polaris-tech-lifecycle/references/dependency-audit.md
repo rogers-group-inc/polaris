@@ -123,8 +123,8 @@ happily take a major downgrade to clear a dev-only advisory.
 
 ## The overrides block
 
-`package.json` carries eight `overrides`, each a hand-placed floor patching a transitive
-advisory. The first five are runtime-reachable; the last three are not, and are floored anyway
+`package.json` carries nine `overrides`, each a hand-placed floor patching a transitive
+advisory. The first five are runtime-reachable; the last four are not, and are floored anyway
 for the reasons in the second and third tables:
 
 | Override | Why |
@@ -148,6 +148,7 @@ Lint-only, through `eslint` → `minimatch`:
 | Override | Why |
 |---|---|
 | `brace-expansion` | quadratic-time `{a},b}` expansion (CPU DoS). The only consumer is `minimatch` under eslint / typescript-eslint, matching our own lint globs, so nothing attacker-supplied reaches it. Floored (2026-10-05) when the lockfile still held 5.0.9 under an open Dependabot alert, so a lock regeneration cannot drop back below the fix |
+| `minimatch` | globParts amplification in `firstPhasePreProcess` (GHSA-g3hv-75wg-m249, Dependabot #94, 2026-11-12). eslint 10 and typescript-estree ask for `^10`, so the override **forces a major**: 11 is ESM-only and loads through `require(esm)` on the Node floor. The positive test is a clean `npm run lint` — an install that succeeds proves nothing, since the CJS consumers only load it when eslint runs. Same reachability as `brace-expansion`: our own lint globs, devDependency-only |
 
 **Forcing a major on a Prisma-CLI transitive needs a positive test, not a green install.**
 `npm install` succeeding proves nothing — `@prisma/config` is what consumes `deepmerge-ts`, and
