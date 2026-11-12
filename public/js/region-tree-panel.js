@@ -20,6 +20,13 @@
   var KINDS = ["area", "building", "floor", "room", "rack", "junctionBox"];
   var WORD = { area: "Area", building: "Building", floor: "Floor", room: "Room", rack: "Rack", junctionBox: "Junction box" };
   var CODE = { area: "a", building: "b", floor: "f", room: "r", rack: "ra", junctionBox: "jb" };
+  // Rule 168: a floor's code is its number; its name is a label.
+  function hasLevel(n) { return n && n.kind === "floor" && typeof n.level === "number"; }
+  function nodeCode(n) { return hasLevel(n) ? String(n.level) : n.name; }
+  function nodeLabel(n) {
+    if (!hasLevel(n)) return n.kind === "floor" ? n.name + " (no number yet)" : n.name;
+    return n.name && n.name !== String(n.level) ? n.level + " · " + n.name : "Floor " + n.level;
+  }
   var RANK = { area: 0, building: 1, floor: 2, room: 3, rack: 4, junctionBox: 5 };
 
   function esc(s) {
@@ -99,8 +106,8 @@
               var n = r.node;
               return '<li class="region-tree-row" data-rt-node="' + esc(n.id) + '" style="padding-left:' + (8 + r.depth * 18) + 'px">' +
                 '<span class="region-tree-kind">' + esc(WORD[n.kind] || n.kind) + '</span>' +
-                '<strong class="region-tree-name">' + esc(n.name) + '</strong>' +
-                '<code class="region-tree-code">' + esc(CODE[n.kind] + ":" + n.name) + '</code>' +
+                '<strong class="region-tree-name">' + esc(nodeLabel(n)) + '</strong>' +
+                '<code class="region-tree-code">' + esc(CODE[n.kind] + ":" + nodeCode(n)) + '</code>' +
                 (canEdit ? '<button type="button" class="btn-icon region-tree-more" data-rt-menu="' + esc(n.id) + '" aria-label="Actions for ' + esc(n.name) + '">⋯</button>' : '') +
               '</li>';
             }).join("") + '</ul>'
@@ -108,7 +115,10 @@
         (conflicts.length
           ? '<h5 class="region-tree-h">Devices to check (' + conflicts.length + ')</h5><ul class="region-tree-conflicts">' + conflicts.map(function (c) {
               return '<li><strong>' + esc(c.hostname || c.id) + '</strong> <code>' + esc(codesText(c.written)) + '</code> <span class="hint" style="margin:0">' +
-                (c.status === "ambiguous" ? "names a floor without its building"
+                (c.status === "textFloor" ? (c.floorNumber
+                    ? "floor “" + esc(c.written && c.written.floor) + "” is floor " + esc(c.floorNumber) + " — use f:" + esc(c.floorNumber)
+                    : "floor “" + esc(c.written && c.written.floor) + "” has no number yet — give it one here (⋯ → Rename)")
+                  : c.status === "ambiguous" ? "names a floor without its building"
                   : c.status === "unknown" ? "names a region the tree doesn’t have — Build from descriptions adds it, or fix the description"
                   : "disagrees with the tree — shown as written") + '</span></li>';
             }).join("") + '</ul>'
@@ -152,7 +162,11 @@
       var bodyHtml =
         (isNew ? '<div class="form-group"><label for="rt-kind">Kind</label><select id="rt-kind">' +
           KINDS.map(function (k) { return '<option value="' + k + '"' + (k === kind ? " selected" : "") + '>' + WORD[k] + '</option>'; }).join("") + '</select></div>' : '') +
-        (isNew || what === "rename" ? '<div class="form-group"><label for="rt-name">Name</label><input id="rt-name" type="text" maxlength="64" value="' + esc(node ? node.name : "") + '"></div>' : '') +
+        ((isNew || what === "rename") ? '<div class="form-group" data-rt-level' + (kind === "floor" ? "" : " hidden") + '><label for="rt-level">Floor number</label>' +
+          '<input id="rt-level" type="number" min="-20" max="99" step="1" style="width:7rem" value="' + esc(hasLevel(node) ? node.level : "") + '">' +
+          '<div class="hint">What devices carry as <code>f:</code> — 0 is the ground floor, −1 and −2 below it.</div></div>' : '') +
+        (isNew || what === "rename" ? '<div class="form-group"><label for="rt-name">Name</label><input id="rt-name" type="text" maxlength="64" value="' + esc(node && !(hasLevel(node) && node.name === String(node.level)) ? node.name : "") + '">' +
+          '<div class="hint" data-rt-floor-hint' + (kind === "floor" ? "" : " hidden") + '>Optional for a floor, e.g. Basement or Surface.</div></div>' : '') +
         (isNew || what === "move" ? '<div class="form-group"><label for="rt-parent">Inside</label><select id="rt-parent">' + parentOptions(kind, node && node.id, node && node.parentId) + '</select>' +
           '<div class="hint">A floor must be inside a building (or an area).</div></div>' : '');
       var footer = '<button type="button" class="btn btn-secondary" data-rte="cancel">Cancel</button>' +
@@ -161,13 +175,23 @@
       var kindSel = d.overlay.querySelector("#rt-kind");
       if (kindSel) kindSel.addEventListener("change", function () {
         d.overlay.querySelector("#rt-parent").innerHTML = parentOptions(kindSel.value, null, null);
+        var fl = kindSel.value === "floor";
+        d.overlay.querySelector("[data-rt-level]").hidden = !fl;
+        d.overlay.querySelector("[data-rt-floor-hint]").hidden = !fl;
       });
+      function levelValue() {
+        var el = d.overlay.querySelector("#rt-level");
+        if (!el || el.closest("[data-rt-level]").hidden || el.value.trim() === "") return null;
+        return Number(el.value);
+      }
       d.overlay.querySelector('[data-rte="cancel"]').addEventListener("click", d.close);
       d.overlay.querySelector('[data-rte="ok"]').addEventListener("click", async function () {
         var nameEl = d.overlay.querySelector("#rt-name"), parEl = d.overlay.querySelector("#rt-parent");
         try {
           if (isNew) {
-            await api.map.createRegion(siteId, { kind: kindSel.value, name: nameEl.value.trim(), parentId: parEl.value || null });
+            var body = { kind: kindSel.value, name: nameEl.value.trim(), parentId: parEl.value || null };
+            if (kindSel.value === "floor") body.level = levelValue();
+            await api.map.createRegion(siteId, body);
             d.close();
             toast("Region added");
             changed();
@@ -175,6 +199,7 @@
           }
           var patch = {};
           if (nameEl) patch.name = nameEl.value.trim();
+          if (node.kind === "floor" && d.overlay.querySelector("#rt-level")) patch.level = levelValue();
           if (parEl) patch.parentId = parEl.value || null;
           var res = await api.map.updateRegion(siteId, node.id, patch);
           d.close();

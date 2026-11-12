@@ -432,7 +432,10 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- wallId, points:[[x,y]…] whole inches, units null, linkedViewId null}]
                                 -- — never a rack; no two share a 1-inch cell (rule 151); an asset is
                                 -- never in both wallPlacements and rackPlacements (rule 156)
-  layers        Json            -- [{level (non-zero, −20..99), name (the floor code value), background}]
+  layers        Json            -- [{level (non-zero, −20..99) = the floor NUMBER, f:<level> (rule 168),
+                                -- name (optional label), background (the floor's plan image),
+                                -- plan? {cx, cy, sx, sy, rot}: where the plan sits on the ground,
+                                -- rule 152(a) — devices / polygons on it are stored in plan units}]
                                 -- (see RegionNode below for the site's region tree, rule 153)
                                 -- floor layers of a topology view (rule 152); layer 0 is the view
                                 -- itself. Polygons carry `layer`; placements per layer live in
@@ -906,5 +909,5 @@ The poll handle is a credential — it alone claims the bundle — so only its S
 ---
 ### RegionNode (rule 153)
 
-- **RegionNode** — one place in a Device Map site's region tree: `kind` (area | building | floor | room | rack | junctionBox), `name`, `parentId` (an OUTER level, self-relation, delete RESTRICT), `uniqueKey` ("<kind>|<lower name>", or "floor|<parentId>|<lower name>": unique per site, a floor per parent), `createdBy`, timestamps; cascades with the site. Written only by `regionTreeService` (build-from-descriptions only adds; create / rename / move / merge / delete). A pointer structure over description codes: no row changes a description, and an empty tree resolves every location as written.
+- **RegionNode** — one place in a Device Map site's region tree: `kind` (area | building | floor | room | rack | junctionBox), `name`, `level` (a floor's NUMBER, its `f:` code — rule 168, migration `20261112120000_region_floor_level`; one per building; null on other kinds and on a text-named floor not yet numbered), `parentId` (an OUTER level, self-relation, delete RESTRICT), `uniqueKey` ("<kind>|<lower name>", or "floor|<parentId>|<lower name>": unique per site, a floor per parent), `createdBy`, timestamps; cascades with the site. Written only by `regionTreeService` (build-from-descriptions only adds; create / rename / move / merge / delete). A pointer structure over description codes: no row changes a description, and an empty tree resolves every location as written.
 

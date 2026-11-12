@@ -75,3 +75,36 @@ describe("groupsFromData", () => {
     expect(P._codesEqual(codes({ building: "A" }), codes({ building: "A", floor: "1" }))).toBe(false);
   });
 });
+
+describe("stacked floors (rule 152(a))", () => {
+  const ext = { w: 1000, h: 500 };
+  it("places a plan on the ground and back: move, stretch, rotate", () => {
+    const plan = { cx: 100, cy: 200, sx: 2, sy: 0.5, rot: 30 };
+    for (const [x, y] of [[0, 0], [1000, 500], [250, 400]]) {
+      const g = P._planToGround(plan, ext, x, y);
+      const back = P._groundToPlan(plan, ext, g[0], g[1]);
+      expect(back[0]).toBeCloseTo(x, 6);
+      expect(back[1]).toBeCloseTo(y, 6);
+    }
+    // The plan's centre is its placement's centre; 90° turns +x into +y.
+    expect(P._planToGround(plan, ext, 500, 250)).toEqual([100, 200]);
+    const turned = P._planToGround({ cx: 0, cy: 0, sx: 1, sy: 1, rot: 90 }, ext, 600, 250);
+    expect(turned[0]).toBeCloseTo(0, 6);
+    expect(turned[1]).toBeCloseTo(100, 6);
+  });
+  it("fades floors above, hides floors below, and scales by 25 % a floor", () => {
+    expect(P._floorLook(0)).toEqual({ opacity: 1, scale: 1 });
+    expect(P._floorLook(1)).toEqual({ opacity: 0.1, scale: 1.25 });
+    expect(P._floorLook(2).opacity).toBe(0.02);
+    expect(P._floorLook(2).scale).toBeCloseTo(1.5625, 6);
+    expect(P._floorLook(3).opacity).toBe(0);
+    expect(P._floorLook(-1)).toEqual({ opacity: 0, scale: 0.75 });
+  });
+  it("fades a link between floors from one end's opacity to the other's", () => {
+    const steps = P._fadeSteps(1, 0.1, 4);
+    expect(steps).toHaveLength(4);
+    expect(steps[0]).toBeGreaterThan(steps[3]);
+    expect(steps[0]).toBeLessThan(1);
+    expect(steps[3]).toBeGreaterThan(0.1);
+  });
+});

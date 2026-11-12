@@ -11,6 +11,7 @@ import {
   remapLocationCodes, remapLocationKey, remapLayoutViewKey, remapPositionKeys, rewritesFor, renameRoomContainers,
   type RegionNodeDto,
 } from "../../src/services/regionTreeService.js";
+import { findFloor } from "../../src/services/regionTreeService.js";
 import type { LocationCodes } from "../../src/utils/locationCodes.js";
 
 const codes = (o: Partial<LocationCodes>): LocationCodes => ({ area: null, building: null, floor: null, room: null, rack: null, junctionBox: null, ...o });
@@ -153,5 +154,30 @@ describe("a Room view's racks and junction boxes follow a tree rename (rule 156)
     const b = C({ room: "MDF", junctionBox: "JB-7" }), a = C({ room: "MDF", junctionBox: "JB-8" });
     expect(renameRoomContainers(C({ room: "MDF" }), [{ id: "w", name: "JB-7", width: 96 }], "junctionBox", b, a))
       .toEqual([{ id: "w", name: "JB-8", width: 96 }]);
+  });
+});
+
+describe("numbered floors with names (rule 168)", () => {
+  const fl = buildRegionIndex([
+    { id: "b", kind: "building", name: "Hoist", parentId: null },
+    { id: "s", kind: "floor", name: "Surface", parentId: "b", level: 1 },
+    { id: "u", kind: "floor", name: "-1", parentId: "b", level: -1 },
+    { id: "t", kind: "floor", name: "Tower", parentId: "b", level: null },
+    { id: "m", kind: "room", name: "MCC", parentId: "s" },
+  ]);
+  it("finds a floor by its number or, for an old text floor, by its name", () => {
+    expect(findFloor(fl, "b", "1")?.id).toBe("s");
+    expect(findFloor(fl, "b", "surface")?.id).toBe("s");
+    expect(findFloor(fl, "b", "-1")?.id).toBe("u");
+    expect(findFloor(fl, "b", "Tower")?.id).toBe("t");
+    expect(findFloor(fl, "b", "7")).toBeNull();
+  });
+  it("resolves a text floor to its number, and a room's chain carries the number", () => {
+    expect(resolveLocation(fl, codes({ building: "Hoist", floor: "Surface" }))).toMatchObject({ status: "resolved", location: { floor: "1" } });
+    expect(resolveLocation(fl, codes({ room: "MCC" }))).toMatchObject({ status: "resolved", location: { building: "Hoist", floor: "1", room: "MCC" } });
+    expect(resolveLocation(fl, codes({ floor: "surface", room: "MCC" })).status).toBe("resolved");
+    expect(resolveLocation(fl, codes({ floor: "2", room: "MCC" })).status).toBe("conflict");
+    // A floor with no number yet keeps its name as the code.
+    expect(resolveLocation(fl, codes({ building: "Hoist", floor: "Tower" })).location?.floor).toBe("Tower");
   });
 });

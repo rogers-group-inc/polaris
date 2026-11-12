@@ -85,6 +85,32 @@ export function parseLocationCodes(raw: string | null | undefined): LocationCode
  * device copy lagged a sync/discovery cycle. Notes are deliberately not a
  * source.
  */
+/** Floor numbers run from the lowest basement to the top floor (rule 168). */
+export const MIN_FLOOR = -20;
+export const MAX_FLOOR = 99;
+
+/** True when `v` is a floor number: a whole number in MIN_FLOOR..MAX_FLOOR (rule 168). */
+export function isFloorNumber(v: string | null | undefined): boolean {
+  if (typeof v !== "string") return false;
+  const t = v.trim();
+  if (!/^-?\d{1,3}$/.test(t)) return false;
+  const n = Number(t);
+  return n >= MIN_FLOOR && n <= MAX_FLOOR;
+}
+
+/**
+ * Rule 168: a NEW floor in a description must be a number. A description
+ * whose floor is unchanged (an old `f:Surface` kept as it was) passes, so
+ * editing anything else on such a device still saves. Null when allowed.
+ */
+export function floorCodeProblem(before: string | null | undefined, after: string | null | undefined): string | null {
+  const a = parseLocationCodes(after).floor;
+  if (!a || isFloorNumber(a)) return null;
+  const b = parseLocationCodes(before).floor;
+  if (b && b.trim().toLowerCase() === a.trim().toLowerCase()) return null;
+  return `A floor is a number (f:${MIN_FLOOR} to f:${MAX_FLOOR}); "f:${a}" isn't. Give the floor a name in Location regions and use its number here`;
+}
+
 /** The six location levels, outermost first. */
 export const LOCATION_LEVELS = ["area", "building", "floor", "room", "rack", "junctionBox"] as const;
 export type LocationLevel = (typeof LOCATION_LEVELS)[number];
