@@ -135,7 +135,9 @@ a pool of 4, and pushes one batch per stream. The probes are in
   `IcmpSendEcho2` (what `ping` / `tracert` use). macOS: ICMP echo yes,
   traceroute not in v1.
 - **Traceroute cadence**: the first run of a definition (baseline), every Nth
-  run (default 5), and immediately when a run fails after a pass. Up to 8 TTLs
+  run (default 5), immediately when a run fails after a pass, and immediately
+  when a run passes after a fail (the recovery — the resolved email's path
+  graph is drawn from it; agent 0.29.2). Up to 8 TTLs
   in flight, stops at the destination, a hard ICMP error, 8 silent TTLs or
   `maxHops`; reverse DNS per hop (1 s each, 3 s total).
 - **Budget**: the loop has its own 55 s tick budget rather than the shared 30 s

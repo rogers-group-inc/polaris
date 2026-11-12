@@ -931,7 +931,7 @@ export async function resolveAssetMetricReadings(
       return reduceReadings(rows, index, (r) => r.checkId, (r) => names.get(r.checkId) ?? r.checkId, valueFn, agg, winPolls);
     }
     case "pathHopCount": {
-      // Read off the traceroutes (every Nth run + each pass→fail), not the
+      // Read off the traceroutes (every Nth run + each pass→fail and fail→pass), not the
       // per-run samples, which carry no hop count.
       const rows = await prisma.assetPathCheckTraceroute.findMany({
         where: { assetId: { in: ids }, timestamp: { gte: since }, ...(await pathCheckIdWhere(df.checkId)) },

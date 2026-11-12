@@ -51,7 +51,7 @@ import { getAppVersion } from "../utils/version.js";
 import type { AgentCheckDef } from "./pathCheckService.js";
 import type { PathCheckSampleInput, PathCheckTracerouteInput } from "./pathCheckIngestService.js";
 
-export type TraceMode = "never" | "always" | "onFail";
+export type TraceMode = "never" | "always" | "onFail" | "onPass";
 
 /**
  * What a TEST run (POST /path-checks/test — the wizard's Expectations step)
@@ -489,7 +489,7 @@ export function serverTraceMode(st: ServerCheckState | undefined, def: AgentChec
   if (!def.traceroute.enabled) return "never";
   const every = def.traceroute.everyNRuns > 0 ? def.traceroute.everyNRuns : 5;
   if (!st || st.runCount % every === 0) return "always";
-  return st.lastOk ? "onFail" : "never";
+  return st.lastOk ? "onFail" : "onPass";
 }
 
 /**
@@ -555,7 +555,7 @@ export async function runServerCheck(
   }
   if (s.latencyMs == null && s.ok) s.latencyMs = msSince(started);
 
-  const want = trace === "always" || (trace === "onFail" && !s.ok);
+  const want = trace === "always" || (trace === "onFail" && !s.ok) || (trace === "onPass" && s.ok);
   if (!want || !def.traceroute.enabled || !dst) return { sample: s, trace: null };
   const tr = await traceFromServer(dst, {
     maxHops: def.traceroute.maxHops,
@@ -571,7 +571,7 @@ export async function runServerCheck(
       timestamp: now().toISOString(),
       destinationIp: dst,
       complete: tr.complete,
-      reason: trace === "onFail" ? "transition" : "scheduled",
+      reason: trace === "always" ? "scheduled" : "transition",
       note: tr.note,
       hops: tr.hops.map((h) => ({ ttl: h.ttl, ip: h.ip, rdns: h.rdns ?? null, rttMs: h.rttMs })),
     },
