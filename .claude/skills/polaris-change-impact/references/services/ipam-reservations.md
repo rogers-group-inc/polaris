@@ -451,7 +451,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Public API:** `snapshotSubnet(subnetId, {reason, actor}, tx?)` (COPY only — live rows untouched; accepts a transaction client so the chassis-replacement path archives and re-points in one commit), `archiveSubnet(subnetId, {actor, reason?})` (snapshot + DELETE the live subnet), `getArchivedSubnet(id)`, `listArchivedSubnets(filter)`, `ArchiveReason`, `SnapshotResult`.
 
-**Cross-service deps:** eventLogService (`subnet.archived`), utils/chunk (`chunkArray`).
+**Delete (rule 158(d)):** `deleteArchivedSubnet(id, {actor})` removes one entry (its `ArchivedReservation` rows cascade), writes `subnet.archive_deleted`, and answers 409 while a pending subnet `Conflict` has `proposedSubnetFields.archivedSubnetId` equal to it — `buildChassisDiff` and `acceptChassisReplacement` read the entry. Never add an age-based prune here: the archive has no natural expiry.
+
+**Cross-service deps:** eventLogService (`subnet.archived`, `subnet.archive_deleted`), utils/chunk (`chunkArray`).
 
 **Used by:** `src/api/routes/subnets.ts` (`GET /subnets/archived`, `GET /subnets/archived/:id`, `POST /subnets/:id/archive` — surfaced as **Archive** in the Networks row menu, `public/js/subnets.js:confirmArchiveSubnet`), `src/services/discovery/dhcp/subnetSync.ts` (syncDhcpSubnets Phase 1) (BOTH entry points: `snapshotSubnet` from the Phase 1 chassis-replacement pass, and `archiveSubnet` from the create path when a live gate re-reports a DEPRECATED row's range), `src/services/subnetChassisConflictService.ts` (`getArchivedSubnet` for the diff's old side).
 

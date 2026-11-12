@@ -24,6 +24,7 @@ import {
   archiveSubnet,
   getArchivedSubnet,
   listArchivedSubnets,
+  deleteArchivedSubnet,
 } from "../../src/services/subnetArchiveService.js";
 import {
   raiseChassisReplacedConflict,
@@ -177,6 +178,60 @@ d("subnet archive — retire", () => {
     const listed = await listArchivedSubnets({ limit: 10 });
     expect(listed.total).toBe(1);
     expect(listed.archivedSubnets[0]!.cidr).toBe("10.77.1.0/24");
+  });
+});
+
+d("subnet archive — delete (rule 158(d))", () => {
+  it("removes the entry and the reservations archived with it, and says so in Events", async () => {
+    const { subnet } = await seed();
+    const snap = await archiveSubnet(subnet.id, { actor: "tester" });
+    await prisma.event.deleteMany({ where: { action: "subnet.archive_deleted" } });
+
+    const res = await deleteArchivedSubnet(snap.archivedSubnetId, { actor: "tester" });
+    expect(res).toEqual({ cidr: "10.77.1.0/24", reservationCount: 3 });
+    expect(await prisma.archivedSubnet.count()).toBe(0);
+    expect(await prisma.archivedReservation.count()).toBe(0);
+
+    let ev = null;
+    for (let i = 0; i < 40 && !ev; i++) {
+      ev = await prisma.event.findFirst({ where: { action: "subnet.archive_deleted", resourceId: snap.archivedSubnetId } });
+      if (!ev) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(ev).toMatchObject({ level: "warning", actor: "tester", resourceName: "10.77.1.0/24" });
+  });
+
+  it("is a 404 for an entry that is not there", async () => {
+    await expect(deleteArchivedSubnet("00000000-0000-4000-8000-000000000000")).rejects.toMatchObject({ httpStatus: 404 });
+  });
+
+  it("is refused while a PENDING chassis-replacement conflict still reads the entry, and allowed once it is resolved", async () => {
+    const { block, subnet } = await seed();
+    const snap = await snapshotSubnet(subnet.id, { reason: "chassis-replaced" });
+    const conflict = await prisma.conflict.create({
+      data: {
+        entityType: "subnet",
+        subnetId: subnet.id,
+        status: "pending",
+        proposedSubnetFields: { collisionReason: "chassis-replaced", cidr: subnet.cidr, blockId: block.id, oldSerial: OLD_SN, newSerial: NEW_SN, archivedSubnetId: snap.archivedSubnetId },
+      } as never,
+    });
+    await expect(deleteArchivedSubnet(snap.archivedSubnetId)).rejects.toMatchObject({ httpStatus: 409 });
+    expect(await prisma.archivedSubnet.count()).toBe(1);
+
+    await prisma.conflict.update({ where: { id: conflict.id }, data: { status: "rejected" } });
+    await deleteArchivedSubnet(snap.archivedSubnetId);
+    expect(await prisma.archivedSubnet.count()).toBe(0);
+  });
+
+  it("another entry's pending conflict does not hold this one", async () => {
+    const { subnet } = await seed();
+    const a = await snapshotSubnet(subnet.id, { reason: "operator" });
+    const b = await snapshotSubnet(subnet.id, { reason: "operator" });
+    await prisma.conflict.create({
+      data: { entityType: "subnet", subnetId: subnet.id, status: "pending", proposedSubnetFields: { collisionReason: "chassis-replaced", archivedSubnetId: a.archivedSubnetId } } as never,
+    });
+    await deleteArchivedSubnet(b.archivedSubnetId);
+    expect((await prisma.archivedSubnet.findMany()).map((r) => r.id)).toEqual([a.archivedSubnetId]);
   });
 });
 

@@ -3347,6 +3347,15 @@ removes image files that no entry in the Repository points at, uploads that were
 part-way, and entries whose file never arrived. Files you placed in `data/firmware`
 yourself under their own names are not touched.
 
+**(c) A pinned process's log settings go with the pin.** Unpinning a process on an agent
+host removes the log source and path you set for it. Pinning it again starts from the
+default, so an old log path never comes back into force unnoticed.
+
+**(d) An archived network can be deleted, by you.** Archived networks are kept until
+someone removes them — there is no expiry. Deleting one is available through the API
+(`DELETE /subnets/archived/:id`, Full Read-Write on Networks) and is recorded in Events. It
+is refused while a pending chassis-replacement conflict still needs that archive.
+
 ### Rule 159
 
 **A fibre-channel connection is linked to the server that reports its WWN, or failing that to

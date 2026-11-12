@@ -1506,8 +1506,17 @@
           <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/archived/:id
             <span class="gate">subnets:read</span></div>
           <p>One retirement with every reservation it held, ordered by address.
-            Archived entries are read-only — they exist for review, and no write
-            path can reach them.</p>
+            Archived entries exist for review: nothing edits one, and nothing
+            removes one except the delete below.</p>
+        </div>
+        <div class="endpoint">
+          <div class="endpoint-head"><span class="method m-delete">DELETE</span> /subnets/archived/:id
+            <span class="gate">subnets:fullwrite</span></div>
+          <p>Delete one archive entry and the reservations archived with it:
+            <code>{ cidr, reservationCount }</code>. Recorded in Events as
+            <code>subnet.archive_deleted</code>. <code>409</code> while a pending
+            chassis-replacement conflict still compares against it — accept or
+            reject that conflict first. Archive entries never expire on their own.</p>
         </div>
         <div class="endpoint">
           <div class="endpoint-head"><span class="method m-get">GET</span> /subnets/exclusions

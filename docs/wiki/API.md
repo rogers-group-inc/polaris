@@ -487,6 +487,7 @@ GET    /subnets/:id/move-targets   blocks that can hold it, overlaps flagged
 POST   /subnets/:id/move           { blockId } — re-parent onto another block
 POST   /subnets/:id/archive        fullwrite
 GET    /subnets/archived           GET /subnets/archived/:id
+DELETE /subnets/archived/:id       fullwrite — 409 while a pending chassis conflict reads it
 GET    /subnets/exclusions
 POST   /subnets/exclusions         fullwrite
 PUT    /subnets/exclusions/:id     fullwrite — name and notes only

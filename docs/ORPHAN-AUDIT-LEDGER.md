@@ -116,16 +116,16 @@ Decisions needed:
 | C.3 | `Conflict` (resolved) | **kept on purpose**: a rejected conflict suppresses re-raising (rule 139). Open question: prune ACCEPTED ones only |
 | C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 158) |
 | C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 158) |
-| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` |
+| C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` **→ fixed in the API (rule 158(d)): `DELETE /subnets/archived/:id`, refused while a pending chassis conflict reads it. OPEN: the archive has no UI at all — a list / review / delete surface is a design-first item** |
 | C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
 | C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
 | C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 158) |
 | C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 158) |
 | C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 158) |
-| C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob |
+| C.11 | `AssetProcessConfig` after a process is UNPINNED (asset still exists) | upsert-only; re-pinning revives the old log glob **→ fixed (rule 158(c)): deleted on an operator's unpin; swept after 7 days when the unpin was automatic** |
 
-Still open in C: C.3 (accepted conflicts only?), C.6 (archive Delete, per the C-D2 default),
-C.7 (topology layouts), C.11 (process config on unpin).
+Still open in C: C.3 (accepted conflicts only?), C.6's UI (the archive has no page),
+C.7 (topology layouts).
 
 ## Batch D — leftovers outside the database (open)
 

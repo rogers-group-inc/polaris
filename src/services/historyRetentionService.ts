@@ -292,6 +292,45 @@ export async function pruneOrphanTagAssignments(): Promise<number> {
   return (await prisma.tagAutoAssignment.deleteMany({ where: { tagId: { notIn: tagIds } } })).count;
 }
 
+/** A config left by an automatic unpin is kept this long, in case the pin comes back. */
+export const PROCESS_CONFIG_UNPINNED_DAYS = 7;
+
+/**
+ * Per-process log configs whose process is no longer pinned on the asset
+ * (business rule 158(c)).
+ *
+ * An operator's own unpin deletes the config at once (assetWriteService). This
+ * catches the unpins that do not come through that path — a discovery rule
+ * that stopped matching, a mass-pin run, a merge. Those can flap, and a
+ * re-pin a few minutes later should find the operator's log path still there,
+ * so only a config untouched for PROCESS_CONFIG_UNPINNED_DAYS is removed.
+ * A config whose asset is gone goes too (the table has no foreign key).
+ *
+ * Through Prisma, not raw SQL: `updatedAt` is a naive-UTC column, and a raw
+ * comparison against a parameter reads it in the session's time zone. The
+ * table holds one row per configured process, so two reads and one delete
+ * cover it at any fleet size; a run is capped and the rest waits a day.
+ */
+export async function pruneUnpinnedProcessConfigs(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - PROCESS_CONFIG_UNPINNED_DAYS * DAY_MS);
+  const configs = await prisma.assetProcessConfig.findMany({
+    where: { updatedAt: { lt: cutoff } },
+    select: { id: true, assetId: true, name: true },
+    orderBy: { updatedAt: "asc" },
+    take: BATCH * 5,
+  });
+  if (configs.length === 0) return 0;
+  const assets = await prisma.asset.findMany({
+    where: { id: { in: [...new Set(configs.map((c) => c.assetId))] } },
+    select: { id: true, monitoredProcesses: true },
+  });
+  const pinned = new Map(assets.map((a) => [a.id, new Set(a.monitoredProcesses)]));
+  const dead = configs.filter((c) => !pinned.get(c.assetId)?.has(c.name)).map((c) => c.id);
+  if (dead.length === 0) return 0;
+  // Re-assert the age on the delete: a config edited since the read is kept.
+  return (await prisma.assetProcessConfig.deleteMany({ where: { id: { in: dead }, updatedAt: { lt: cutoff } } })).count;
+}
+
 export interface HistoryPruneResult {
   alerts: number;
   summaries: number;
@@ -301,6 +340,8 @@ export interface HistoryPruneResult {
   scanRuns: number;
   hiddenRegionIds: number;
   tagAssignments: number;
+  /** Log configs of processes no longer pinned (rule 158(c)). */
+  processConfigs: number;
   /** Firmware repository leftovers (rule 158(b)): unreferenced image files + abandoned uploads + rows whose bytes never landed. */
   firmwareLeftovers: number;
 }
@@ -310,7 +351,7 @@ export interface HistoryPruneResult {
  * reported in `errors` and the others still run.
  */
 export async function pruneHistory(now: Date = new Date()): Promise<{ result: HistoryPruneResult; errors: string[] }> {
-  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, firmwareLeftovers: 0 };
+  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0 };
   const errors: string[] = [];
   const attempt = async (name: string, run: () => Promise<void>) => {
     try { await run(); } catch (err) { errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`); }
@@ -322,6 +363,7 @@ export async function pruneHistory(now: Date = new Date()): Promise<{ result: Hi
   await attempt("discovery scans", async () => { result.scanRuns = await pruneNetworkScanRuns(now); });
   await attempt("hidden regions", async () => { result.hiddenRegionIds = await pruneHiddenRegionIds(); });
   await attempt("tag provenance", async () => { result.tagAssignments = await pruneOrphanTagAssignments(); });
+  await attempt("process log configs", async () => { result.processConfigs = await pruneUnpinnedProcessConfigs(now); });
   await attempt("firmware leftovers", async () => {
     const swept = await sweepFirmwareFiles(now);
     result.firmwareLeftovers = swept.files + swept.incoming + swept.rows;

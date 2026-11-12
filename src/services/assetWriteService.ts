@@ -754,6 +754,17 @@ async function applyAssetUpdateSideEffects(
     diffPins("mappedProcesses", "process", "map");
     diffPins("monitoredServices", "service", "monitor");
     diffPins("mappedServices", "service", "map");
+    // Rule 158(c): a process's log config goes with its pin. It used to stay,
+    // unseen, and re-pinning the process later revived the old log path — a
+    // path an agent reads as a privileged user — for whoever re-pinned it.
+    const unpinnedProcesses = pinChanges
+      .filter((c) => c.kind === "process" && c.surface === "monitor" && c.action === "removed")
+      .map((c) => c.name);
+    if (unpinnedProcesses.length > 0) {
+      await prisma.assetProcessConfig
+        .deleteMany({ where: { assetId: id, name: { in: unpinnedProcesses } } })
+        .catch((err) => logger.warn({ err, assetId: id }, "could not remove the log config of an unpinned process"));
+    }
     if (pinChanges.length > 0) {
       const hostLabel = asset.hostname || asset.ipAddress || id;
       recordOperatorPinChanges(pinChanges)
