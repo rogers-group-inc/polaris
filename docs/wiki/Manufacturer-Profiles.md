@@ -94,6 +94,12 @@ too, uploaded as a generic module). A **state probe** maps a status value to
 two named states ("Fault" / "Normal"), one per row of a table if you give it a
 name column, and an automation can alert on it by name.
 
+A gauge, line or value widget on a table column shows the column's **first**
+row. To show another row, add its index to the symbol: `rPDU2PhaseStatusPower.2`
+is phase 2 of an APC PDU's phase table, and `rPDU2BankStatusCurrent.3` is bank 3.
+Polaris reads exactly that row. Use **SNMP Walk** on the column to see which
+indexes the device has.
+
 A new widget polls **no** device until you switch it on, either from the device
 list Polaris opens when you save it or from the switch on each card of the
 asset's Custom MIB tab ([rule 130](Business-Rules#rule-130)). A switched-on widget

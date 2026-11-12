@@ -60,7 +60,7 @@ export { parseFortiosMemberList, buildFortiswitchTrunkMembers, findFortiswitchUp
 import { logEvent, type LogEventInput } from "./eventLogService.js";
 import { logger } from "../utils/logger.js";
 import { adBindFallbackAllowed, adBindFallbackIntegration } from "../utils/adBindFallback.js";
-import { resolveOidSync, ensureRegistryLoaded, type ResolveScope } from "./oidRegistry.js";
+import { resolveOidSync, ensureRegistryLoaded, hasRowSuffix, type ResolveScope } from "./oidRegistry.js";
 import { pickDbProfile } from "./profileResolver.js";
 import {
   startPassTimer,
@@ -106,7 +106,7 @@ import { type ProbeResult, type TelemetrySample, type StorageSample, type Hardwa
 import { monitorPhaseStorage, startPhase } from "./monitoring/common.js";
 
 // CQ-B061 — the SNMP session layer (monitoring/snmpCore.ts).
-import { OID, snmpWalk, snmpVbToString, snmpVbToNumber, withSnmpSession } from "./monitoring/snmpCore.js";
+import { OID, snmpWalk, snmpMultiGet, snmpVbToString, snmpVbToNumber, withSnmpSession } from "./monitoring/snmpCore.js";
 
 // CQ-B061 — the SNMP collectors (monitoring/snmpCollectors.ts).
 import { collectVendorDiskFallback, collectLldpOnlySnmp } from "./monitoring/snmpCollectors.js";
@@ -922,6 +922,20 @@ export async function runTelemetryFor(assetId: string, labels: WorkItemLabels): 
 /** Per-probe row cap — see the truncation warning in the state branch below. */
 const MAX_STATE_ROWS_PER_PROBE = 500;
 
+/**
+ * Read a custom widget's OID. A symbol naming ONE table row
+ * (`rPDU2PhaseStatusPower.2`, resolved by oidRegistry to the column OID plus
+ * the row index) is an exact instance: a GETNEXT walk below it returns
+ * nothing, so it is read with a GET and comes back as a single row keyed "".
+ * Every other symbol is walked as before.
+ */
+export async function readWidgetOid(session: unknown, oid: string, symbol: string): Promise<Map<string, unknown>> {
+  if (!hasRowSuffix(symbol)) return snmpWalk(session, oid);
+  const got = await snmpMultiGet(session, [oid]);
+  const v = got.get(oid);
+  return v == null ? new Map() : new Map([["", v]]);
+}
+
 async function collectManufacturerWidgetSamples(
   assetId: string,
   asset: NonNullable<TelemetryAssetRow>,
@@ -1024,7 +1038,7 @@ async function collectManufacturerWidgetSamples(
             // a threshold later. Storing the boolean means the engine never has
             // to know a vendor's polarity — and an operator editing the mapping
             // fixes every future reading in one place.
-            const values = await snmpWalk(session, oid);
+            const values = await readWidgetOid(session, oid, w.symbol);
             // Row names come from a sibling column of the same table, joined on
             // the shared OID index. Without it the rows are only nameable by
             // bare index, which differs per model.
@@ -1072,7 +1086,7 @@ async function collectManufacturerWidgetSamples(
           }
           if (w.type === "scalar") {
             // Scalar: walk one OID, take first/only value as a number.
-            const rows = await snmpWalk(session, oid);
+            const rows = await readWidgetOid(session, oid, w.symbol);
             let val: number | null = null;
             for (const v of rows.values()) {
               const n = snmpVbToNumber(v);
@@ -1086,7 +1100,7 @@ async function collectManufacturerWidgetSamples(
             // Table: walk the whole subtree and serialize as one row per
             // OID-suffix with the raw value (operators decode further via
             // the widget's displayOptions at render time).
-            const rows = await snmpWalk(session, oid);
+            const rows = await readWidgetOid(session, oid, w.symbol);
             const arr: any[] = [];
             for (const [suffix, v] of rows.entries()) {
               const numeric = snmpVbToNumber(v);

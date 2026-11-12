@@ -1284,7 +1284,7 @@ function renderSymbolPicker(currentSymbol, mibId, cls, type) {
   // list (a table symbol after flipping Type to scalar) still round-trips
   // while the operator decides — what the old "(not a scalar)" option did.
   var side = type === "table" ? "table" : "scalar";
-  var unknown = currentSymbol && names.indexOf(currentSymbol) === -1;
+  var unknown = currentSymbol && names.indexOf(currentSymbol) === -1 && !_symRowInMib(mibId, currentSymbol);
   return '<span class="aw-combo aw-combo-dim">' +
     '<input type="text" class="' + cls + ' mib-sym-combo" autocomplete="off" spellcheck="false"' +
       ' data-mib-id="' + escapeHtml(mibId) + '" data-sym-side="' + side + '"' +
@@ -1317,13 +1317,28 @@ function _symComboAccepts(input, value) {
   if (!value) return true;
   if (value === input.getAttribute("data-initial")) return true;
   var names = _symComboNames(input);
-  return !!names && names.indexOf(value) !== -1;
+  return !!names && (names.indexOf(value) !== -1 || _symComboRowOk(input, value));
+}
+
+/** `<column>.<row…>` — one row of a table (`rPDU2PhaseStatusPower.2`), read
+ *  by the server as that exact instance — is fine when the column itself is
+ *  in this MIB, on either side of the scalar / table split. */
+function _symComboRowOk(input, value) {
+  return _symRowInMib(input.getAttribute("data-mib-id"), value);
+}
+
+function _symRowInMib(mibId, value) {
+  var m = /^([A-Za-z][\w-]*)((?:\.\d+)+)$/.exec(value || "");
+  if (!m) return false;
+  var entry = _mfgMibSymbolsCache[mibId];
+  if (!entry || entry.loading) return false;
+  return (entry.scalars || []).indexOf(m[1]) !== -1 || (entry.tables || []).indexOf(m[1]) !== -1;
 }
 
 function _symComboMarkUnknown(input) {
   var v = (input.value || "").trim();
   var names = _symComboNames(input);
-  var bad = !!(v && names && names.indexOf(v) === -1);
+  var bad = !!(v && names && names.indexOf(v) === -1 && !_symComboRowOk(input, v));
   input.style.borderColor = bad ? "var(--color-danger)" : "";
   input.title = bad ? "Not a " + input.getAttribute("data-sym-side") + " in this MIB" : "";
 }
