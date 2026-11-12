@@ -198,7 +198,7 @@ tab in the asset panel, says **Also used on** in both places.
 
 | Key | Top rung | |
 |---|---|---|
-| `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, NTP, certificates, capacity, HA, the agent fleet |
+| `serverSettingsSystem` | Read-Write | HTTPS, branding, DNS, the server timezone, certificates, capacity, HA, the agent fleet |
 | `tags` | Read-Write | the **tag registry** and **assigning tags to any record** — see [Tags are an administrator's grant](#tags-are-an-administrators-grant). *Also used on: Assets, IP Management, Users.* |
 | `serverSettingsData` | **Read-Write** (no Read) | backup, restore, **download**, queue mode, security tokens, restart, in-app updates |
 | `credentials` | Full RW | stored SNMP / WinRM / SSH / REST / HTTP credentials — **ownership**. *Also used on: Assets, Integrations, Path Monitor.* |
@@ -232,7 +232,7 @@ Identity-provider configuration repoints every login in the install at an
 identity provider of your choosing. That is not a lesser grant than changing
 the logo, and an admin delegating "some server settings" is almost never
 delegating the install's login path. Keeping the two apart lets you hand out
-TLS, HA, tags, DNS, NTP, branding, capacity and the agent fleet
+TLS, HA, tags, DNS, the server timezone, branding, capacity and the agent fleet
 (`serverSettingsSystem`, which tops out at Read-Write like most keys) without
 handing out the login path. A role can see the sign-in configuration with
 `authentication` Read-Only; repointing it takes `authentication` Read-Write,

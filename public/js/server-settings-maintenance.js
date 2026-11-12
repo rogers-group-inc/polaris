@@ -1329,7 +1329,7 @@ async function loadDatabaseInfo() {
   try {
     // Fetch capacity advisor in parallel with the database snapshot — if the
     // advisor fails (e.g. statfs not available) we still render the rest of
-    // the tab. Also pull the NTP timezone override so capacity timestamps
+    // the tab. Also pull the server timezone (rule 168) so capacity timestamps
     // render in server time; failures fall through to browser-local.
     var results = await Promise.allSettled([
       api.serverSettings.getDatabase(),

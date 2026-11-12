@@ -3445,3 +3445,14 @@ When this option arrived, every type that ran under Directory discovery was swit
 firewall device inventory too, so existing behaviour carries over; untick it on a type to stop
 that. **Apply rules to existing "Other" assets** uses both Directory discovery and firewall
 device inventory rules. See [Server Settings](Server-Settings).
+
+### Rule 168
+
+**Polaris keeps its own clock in the server timezone you give it, and leaves the host's
+clock alone.** Every "server-local" time in Polaris — maintenance windows, quiet times,
+scheduled reboots and firmware upgrades, and an alert email for a recipient with no
+timezone of their own — uses the timezone set on Server Settings → **Time**, or the host's
+timezone when none is set. A change reaches every Polaris process within about 30 seconds,
+with no restart. Polaris never changes the host's clock, its timezone or its time service;
+keeping the host's clock accurate is the host's job, which is why the NTP server settings
+that used to sit on that tab were removed. See [Server Settings](Server-Settings#time).

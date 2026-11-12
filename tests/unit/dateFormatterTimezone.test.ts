@@ -63,10 +63,10 @@ const ZONE_EXEMPT: Record<string, string> = {
   // A calendar date, not an instant: the filter value is "YYYY-MM-DD" parsed
   // as LOCAL midnight; a zone shift would show the previous or next day.
   "table-sf.js#fmt#toLocaleDateString": "date-filter button label — a typed calendar date, zone-less (CQ-F014)",
-  // The SERVER's clock: the NTP card renders in the server's configured zone
+  // The SERVER's clock: the Time card renders in the server's configured zone
   // (its timezone override), which is the point of the card.
-  "server-settings-ntp-web.js#updateCurrentTime#toLocaleString": "'Current server time' — server zone from the NTP override",
-  "server-settings-ntp-web.js#formatLocalTime#toLocaleString": "NTP card timestamps — server zone from the NTP override",
+  "server-settings-ntp-web.js#updateCurrentTime#toLocaleString": "'Current server time' — the server's zone (rule 168)",
+  "server-settings-ntp-web.js#formatLocalTime#toLocaleString": "Maintenance-tab timestamps — the server's zone (rule 168)",
 };
 
 const OWN_SHAPE = new Set(["toLocaleDateString", "toLocaleTimeString"]);

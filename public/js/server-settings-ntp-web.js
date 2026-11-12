@@ -1,99 +1,76 @@
 /**
- * public/js/server-settings-ntp-web.js — Server Settings → Time & NTP and
- * Web Server (internal key `certificates`): NTP servers + the server clock,
- * the searchable timezone picker, the HTTPS certificate / trusted CAs / proxy
- * / Dash / IPv6 / login-access cards, and the rotate-certificate workflow.
+ * public/js/server-settings-ntp-web.js — Server Settings → Time and Web Server
+ * (internal key `certificates`): the server timezone (business rule 168) with
+ * its searchable picker and the server clock, the HTTPS certificate / trusted
+ * CAs / proxy / Dash / IPv6 / login-access cards, and the rotate-certificate
+ * workflow. (The file keeps its old name; the NTP cards were retired 2026-11-12.)
  *
  * Split out of server-settings.js (CQ-F051) as a byte-for-byte move. A plain
  * browser script: its functions and `var`s are page globals, called from the
- * core's tab dispatch (`loadNtpSettings`, `loadCertificates`). Loads AFTER
+ * core's tab dispatch (`loadTimeSettings`, `loadCertificates`). Loads AFTER
  * server-settings.js — tests/unit/serverSettingsSplit.test.ts holds the order.
  */
 
-// ─── NTP Tab ────────────────────────────────────────────────────────────────
+// ─── Time Tab (business rule 168) ───────────────────────────────────────────
 
-var _ntpLoaded = false;
+var _timeLoaded = false;
+// GET /server-settings/timezone: { override, effective, host }. Loaded by the
+// Time tab and by any tab that draws timestamps in the server's zone
+// (loadTzOverride below). null = not fetched yet.
+var _serverTz = null;
 
-async function loadNtpSettings() {
-  _ntpLoaded = true;
-  var container = document.getElementById("tab-ntp");
-  var defaults = {
-    enabled: false,
-    mode: "ntp",
-    servers: "",
-    timezoneOverride: "",
-  };
-
+async function fetchServerTimezone() {
   try {
-    var saved = await api.serverSettings.getNtp();
-    if (saved) {
-      defaults.enabled = saved.enabled || false;
-      defaults.mode = saved.mode || "ntp";
-      defaults.servers = (saved.servers || []).join("\n");
-      defaults.timezoneOverride = saved.timezoneOverride || "";
-    }
-  } catch (_) {}
+    _serverTz = await api.serverSettings.getTimezone();
+  } catch (_) {
+    _serverTz = { override: null, effective: "", host: "" };
+  }
+  return _serverTz;
+}
+
+async function loadTimeSettings() {
+  _timeLoaded = true;
+  var container = document.getElementById("tab-time");
+  var tz = await fetchServerTimezone();
+  var override = tz.override || "";
 
   container.innerHTML =
     '<div class="settings-cards-row">' +
     '<div class="settings-card">' +
-      '<h4>Time Synchronization</h4>' +
-      '<div class="form-group">' +
-        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
-          '<input type="checkbox" id="f-ntp-enabled"' + (defaults.enabled ? ' checked' : '') + '>' +
-          '<span>Enable NTP synchronization</span>' +
-        '</label>' +
-        '<p class="hint">Synchronize the server clock with external NTP servers.</p>' +
-      '</div>' +
-      '<div class="form-group"><label>Mode</label>' +
-        '<select id="f-ntp-mode">' +
-          '<option value="ntp"' + (defaults.mode === "ntp" ? ' selected' : '') + '>NTP (UDP 123)</option>' +
-          '<option value="sntp"' + (defaults.mode === "sntp" ? ' selected' : '') + '>SNTP (Simple NTP)</option>' +
-          '<option value="nts"' + (defaults.mode === "nts" ? ' selected' : '') + '>NTS (Network Time Security)</option>' +
-        '</select>' +
-        '<p class="hint">NTS encrypts and authenticates time queries using TLS. Requires NTS-capable servers.</p>' +
-      '</div>' +
-      '<div class="form-group"><label>NTP Servers</label>' +
-        '<textarea id="f-ntp-servers" rows="4" placeholder="One server per line, e.g.:\npool.ntp.org\ntime.google.com\ntime.cloudflare.com">' + escapeHtml(defaults.servers) + '</textarea>' +
-        '<p class="hint">Enter one server per line. IP addresses or hostnames are accepted.</p>' +
-      '</div>' +
-    '</div>' +
-    '<div class="settings-card">' +
-      '<h4>Timezone Override</h4>' +
+      '<h4>Server Timezone</h4>' +
       '<div class="form-group"><label>Timezone</label>' +
         '<div class="search-select" id="tz-select-wrap">' +
-          '<input type="text" class="search-select-input" id="f-ntp-timezone" autocomplete="off" placeholder="Search timezones... (blank = system timezone)">' +
-          '<input type="hidden" id="f-ntp-timezone-val" value="' + escapeHtml(defaults.timezoneOverride) + '">' +
+          '<input type="text" class="search-select-input" id="f-ntp-timezone" autocomplete="off" placeholder="Search timezones... (blank = the host\'s timezone)">' +
+          '<input type="hidden" id="f-ntp-timezone-val" value="' + escapeHtml(override) + '">' +
           '<button type="button" class="search-select-clear" id="tz-clear" title="Clear" style="display:none">&times;</button>' +
           '<span class="search-select-arrow">&#9662;</span>' +
           '<div class="search-select-dropdown" id="tz-dropdown"></div>' +
         '</div>' +
-        '<p class="hint">IANA timezone identifier (e.g. America/Chicago, UTC, Europe/London). Leave blank to use the server\'s OS timezone.</p>' +
+        '<p class="hint">The clock Polaris keeps its own times in: maintenance windows, quiet times, scheduled reboots and upgrades, and alert emails for recipients with no timezone of their own. ' +
+          'Leave blank to use the host\'s timezone' + (tz.host ? ' (' + escapeHtml(tz.host) + ')' : '') + '. ' +
+          'This changes Polaris only — the host\'s clock and its time service are left as they are.</p>' +
       '</div>' +
       '<div id="ntp-current-time" style="font-size:0.82rem;color:var(--color-text-tertiary);margin-top:0.5rem"></div>' +
     '</div>' +
     '</div>' +
     '<div style="display:flex;gap:8px;align-items:center">' +
-      '<button class="btn btn-primary" id="btn-ntp-save">Save NTP Settings</button>' +
-      '<button class="btn btn-secondary" id="btn-ntp-test">Test Sync</button>' +
-      '<span id="ntp-status" style="font-size:0.82rem;margin-left:8px"></span>' +
+      '<button class="btn btn-primary" id="btn-time-save">Save</button>' +
     '</div>';
 
-  // Show current time
   updateCurrentTime();
   setInterval(updateCurrentTime, 1000);
 
-  document.getElementById("btn-ntp-save").addEventListener("click", saveNtpSettings);
-  document.getElementById("btn-ntp-test").addEventListener("click", testNtpSync);
+  document.getElementById("btn-time-save").addEventListener("click", saveServerTimezone);
 
-  initTimezoneDropdown(defaults.timezoneOverride);
+  initTimezoneDropdown(override);
 }
 
+// "Current server time" in the zone the picker holds, or — blank — the host's.
 function updateCurrentTime() {
   var el = document.getElementById("ntp-current-time");
   if (!el) return;
   var tz = document.getElementById("f-ntp-timezone-val");
-  var tzVal = tz ? tz.value.trim() : "";
+  var tzVal = (tz ? tz.value.trim() : "") || (_serverTz && _serverTz.host) || "";
   try {
     var opts = { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short" };
     if (tzVal) opts.timeZone = tzVal;
@@ -103,25 +80,15 @@ function updateCurrentTime() {
   }
 }
 
-// Page-scoped cache for the NTP timezone override. Fetched once when any
-// tab that needs to format timestamps loads (currently Maintenance), reused
-// by formatLocalTime() below. Empty string = "no override; use browser-local."
-var _tzOverride = null; // null = unloaded, "" = loaded but empty, "America/Chicago" = explicit
+// The zone the Maintenance tab's timestamps are drawn in: the one the server
+// is running in. Fetched once per page; "" when unknown (browser-local).
 async function loadTzOverride() {
-  if (_tzOverride !== null) return _tzOverride;
-  try {
-    var ntp = await api.serverSettings.getNtp();
-    _tzOverride = (ntp && ntp.timezoneOverride) ? ntp.timezoneOverride : "";
-  } catch (_) {
-    _tzOverride = "";
-  }
-  return _tzOverride;
+  if (_serverTz === null) await fetchServerTimezone();
+  return (_serverTz && _serverTz.effective) || "";
 }
 
-// Render an ISO timestamp using the configured server timezone override (set
-// in Server Settings → Time & NTP → Timezone Override). When no override is
-// set, falls back to the browser's local timezone — for an admin operating
-// from the same site as the server, those usually match.
+// Render an ISO timestamp in the server's zone (Server Settings → Time), or
+// browser-local when that is not known.
 function formatLocalTime(iso) {
   if (!iso) return "";
   try {
@@ -132,55 +99,24 @@ function formatLocalTime(iso) {
       hour: "numeric", minute: "2-digit", second: "2-digit",
       timeZoneName: "short",
     };
-    if (_tzOverride) opts.timeZone = _tzOverride;
+    var zone = _serverTz && _serverTz.effective;
+    if (zone) opts.timeZone = zone;
     return d.toLocaleString(undefined, opts);
   } catch (_) {
     return iso;
   }
 }
 
-async function saveNtpSettings() {
-  var btn = document.getElementById("btn-ntp-save");
+async function saveServerTimezone() {
+  var btn = document.getElementById("btn-time-save");
   btn.disabled = true;
   try {
-    var servers = document.getElementById("f-ntp-servers").value
-      .split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-    await api.serverSettings.updateNtp({
-      enabled: document.getElementById("f-ntp-enabled").checked,
-      mode: document.getElementById("f-ntp-mode").value,
-      servers: servers,
-      timezoneOverride: document.getElementById("f-ntp-timezone-val").value.trim() || null,
+    _serverTz = await api.serverSettings.updateTimezone({
+      override: document.getElementById("f-ntp-timezone-val").value.trim() || null,
     });
-    // Invalidate the formatLocalTime cache so the next Maintenance render
-    // picks up the new override without a full page refresh.
-    _tzOverride = null;
-    showToast("NTP settings saved");
+    showToast("Server timezone saved — now " + (_serverTz.effective || "the host's timezone"));
   } catch (err) {
     showToast(err.message, "error");
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function testNtpSync() {
-  var btn = document.getElementById("btn-ntp-test");
-  var statusEl = document.getElementById("ntp-status");
-  btn.disabled = true;
-  statusEl.innerHTML = '<span style="color:var(--color-text-tertiary)">Testing...</span>';
-  try {
-    var servers = document.getElementById("f-ntp-servers").value
-      .split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-    var result = await api.serverSettings.testNtp({
-      mode: document.getElementById("f-ntp-mode").value,
-      servers: servers,
-    });
-    // One line per server: each was queried for real, and each answers on its own.
-    var rows = (result.results && result.results.length) ? result.results : [{ ok: result.ok, message: result.message }];
-    statusEl.innerHTML = rows.map(function (r) {
-      return '<div style="color:var(' + (r.ok ? '--color-success' : '--color-danger') + ')">' + escapeHtml(r.message) + '</div>';
-    }).join("");
-  } catch (err) {
-    statusEl.innerHTML = '<span style="color:var(--color-danger)">' + escapeHtml(err.message) + '</span>';
   } finally {
     btn.disabled = false;
   }

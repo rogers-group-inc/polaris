@@ -1589,9 +1589,8 @@ const api = {
     agentSigningUploadKeystore: (file, password) =>
       uploadFileFields("/server-settings/agents/signing/keystore", file, { password: password }),
     agentSigningDeleteKeystore: () => request("DELETE", "/server-settings/agents/signing/keystore"),
-    getNtp:      ()       => request("GET", "/server-settings/ntp"),
-    updateNtp:   (body)   => request("PUT", "/server-settings/ntp", body),
-    testNtp:     (body)   => trackedRequest("Testing NTP sync", "POST", "/server-settings/ntp/test", body),
+    getTimezone:    ()     => request("GET", "/server-settings/timezone"),
+    updateTimezone: (body) => request("PUT", "/server-settings/timezone", body),
     listCerts:   ()       => request("GET", "/server-settings/certificates"),
     uploadCert:  (category, file) => uploadFile("/server-settings/certificates", category, file),
     deleteCert:  (id)     => request("DELETE", `/server-settings/certificates/${id}`),

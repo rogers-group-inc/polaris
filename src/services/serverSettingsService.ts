@@ -1,117 +1,127 @@
 /**
- * src/services/serverSettingsService.ts — NTP and certificate management
+ * src/services/serverSettingsService.ts — the server timezone (business rule
+ * 168) and certificate management.
  */
 
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
-import { querySntp, checkNtsKe } from "../utils/sntp.js";
+import { AppError } from "../utils/errors.js";
+import { logEvent } from "./eventLogService.js";
+import { isValidTimeZone } from "./userTimezoneService.js";
 
-// ─── NTP Settings ───────────────────────────────────────────────────────────
+// ─── Server timezone (business rule 168) ───────────────────────────────────
+//
+// Polaris's "server-local wall clock" — the clock maintenance windows,
+// quiet-time windows, scheduled reboots and firmware upgrades are written in,
+// and the zone an alert email falls back to — is the PROCESS timezone of each
+// role (Intl's resolved zone, read by userTimezoneService.serverTimeZone()).
+// The override replaces it inside Polaris only, by setting process.env.TZ in
+// every role; the host's own clock and time service are never touched.
 
-export interface NtpSettings {
-  enabled: boolean;
-  mode: "ntp" | "sntp" | "nts";
-  servers: string[];
-  timezoneOverride: string | null;
-}
+const TIMEZONE_KEY = "timezone";
 
-const NTP_KEY = "ntp";
-
-const DEFAULT_NTP: NtpSettings = {
-  enabled: false,
-  mode: "ntp",
-  servers: [],
-  timezoneOverride: null,
-};
-
-export async function getNtpSettings(): Promise<NtpSettings> {
-  const row = await prisma.setting.findUnique({ where: { key: NTP_KEY } });
-  if (!row) return { ...DEFAULT_NTP };
-  return { ...DEFAULT_NTP, ...(row.value as Record<string, unknown>) } as NtpSettings;
-}
-
-export async function updateNtpSettings(
-  settings: Partial<NtpSettings>,
-): Promise<NtpSettings> {
-  const current = await getNtpSettings();
-  const merged: NtpSettings = { ...current, ...settings };
-
-  await prisma.setting.upsert({
-    where: { key: NTP_KEY },
-    create: { key: NTP_KEY, value: merged as any },
-    update: { value: merged as any },
-  });
-
-  return merged;
-}
-
-export interface NtpServerTestResult {
-  server: string;
-  ok: boolean;
-  message: string;
-}
-
-/** Above this the server answered, but this host's clock disagrees with it enough to say so. */
-const NTP_OFFSET_WARN_MS = 1000;
-
-function formatOffset(ms: number): string {
-  const s = ms / 1000;
-  return `${s >= 0 ? "+" : "−"}${Math.abs(s).toFixed(3)} s`;
-}
-
-async function testOneNtpServer(server: string, mode: string, deps: NtpTestDeps): Promise<NtpServerTestResult> {
+/**
+ * The zone the process started in — the host's zone, or an operator's TZ
+ * in .env / the unit / the container. Captured at module load, before any
+ * override can be applied: Node does not fall back to it when TZ is deleted
+ * (the zone stays whatever was last assigned), so clearing the override
+ * must assign it back explicitly.
+ */
+const HOST_TIME_ZONE: string = (() => {
   try {
-    let nts = "";
-    let timeHost = server;
-    let timePort = 123;
-    if (mode === "nts") {
-      const ke = await deps.checkNtsKe(server);
-      nts = `NTS key exchange OK (${ke.cookies} cookie${ke.cookies === 1 ? "" : "s"}); `;
-      if (ke.server) timeHost = ke.server;
-      if (ke.port) timePort = ke.port;
-    }
-    const r = await deps.querySntp(timeHost, { port: timePort });
-    const skew = Math.abs(r.offsetMs) > NTP_OFFSET_WARN_MS
-      ? ` — the Polaris server's clock is ${Math.abs(r.offsetMs / 1000).toFixed(1)} s ${r.offsetMs > 0 ? "behind" : "ahead of"} it`
-      : "";
-    const sample = mode === "nts" ? " (time sample not NTS-authenticated by this test)" : "";
-    return {
-      server,
-      ok: true,
-      message: `${server}: ${nts}stratum ${r.stratum}, offset ${formatOffset(r.offsetMs)}, delay ${Math.round(r.delayMs)} ms${sample}${skew}`,
-    };
-  } catch (err: any) {
-    return { server, ok: false, message: `${server}: ${err?.message || "query failed"}` };
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
+
+export interface ServerTimezone {
+  /** The operator's override, or null for "use the host's zone". */
+  override: string | null;
+  /** The zone this process is running in now. */
+  effective: string;
+  /** The zone the process started in (the host's, unless TZ was set in its environment). */
+  host: string;
+}
+
+function parseOverride(raw: unknown): string | null {
+  const v = (raw as { override?: unknown } | null | undefined)?.override;
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  // A stored zone this build cannot format in (a small-ICU image, a zone
+  // later removed from tzdata) degrades to the host's zone rather than
+  // to Node's silent "Etc/Unknown" = UTC.
+  return t && isValidTimeZone(t) ? t : null;
+}
+
+function currentZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
   }
 }
 
-export interface NtpTestDeps {
-  querySntp: typeof querySntp;
-  checkNtsKe: typeof checkNtsKe;
+/** Point this process's clock at `override`, or back at the host's zone. Returns the zone now in force. */
+export function applyProcessTimezone(override: string | null): string {
+  const zone = override && isValidTimeZone(override) ? override : HOST_TIME_ZONE;
+  if (process.env.TZ !== zone) process.env.TZ = zone;
+  return currentZone();
+}
+
+async function readOverride(): Promise<string | null> {
+  const row = await prisma.setting.findUnique({ where: { key: TIMEZONE_KEY } });
+  return parseOverride(row?.value);
+}
+
+export async function getServerTimezone(): Promise<ServerTimezone> {
+  const override = await readOverride();
+  return { override, effective: currentZone(), host: HOST_TIME_ZONE };
 }
 
 /**
- * Query every listed server once, in parallel, and report each: stratum,
- * offset of THIS server's clock against it, round-trip delay; NTS runs the
- * key exchange first. `ok` only when every server answered. NTP and SNTP are
- * the same query here — a test is one sample, and both modes speak NTPv4.
- *
- * No outbound-host guard (netGuard): the payload is a fixed 48-byte NTP
- * request to port 123 (or an NTS-KE request to 4460) and nothing of the reply
- * is echoed except the time; the cloud time services operators point at live
- * on link-local (169.254.169.123) and a host's own chronyd on loopback, both
- * of which the guard refuses. Gated serverSettingsSystem:write at the route.
+ * Save the override (null clears it), apply it to THIS process at once, and
+ * audit the change. The other roles pick it up on their next refresh tick
+ * (refreshProcessTimezone, every TIMEZONE_REFRESH_MS).
  */
-export async function testNtpSync(
-  settings: { mode: string; servers: string[] },
-  deps: NtpTestDeps = { querySntp, checkNtsKe },
-): Promise<{ ok: boolean; message: string; results: NtpServerTestResult[] }> {
-  const servers = [...new Set((settings.servers ?? []).map((s) => s.trim()).filter(Boolean))];
-  if (servers.length === 0) {
-    return { ok: false, message: "No NTP servers configured", results: [] };
+export async function setServerTimezone(override: string | null, actor?: string): Promise<ServerTimezone> {
+  const next = override?.trim() || null;
+  if (next !== null && !isValidTimeZone(next)) {
+    throw new AppError(400, `"${next}" is not a timezone this server can use`);
   }
-  const results = await Promise.all(servers.map((s) => testOneNtpServer(s, settings.mode, deps)));
-  return { ok: results.every((r) => r.ok), message: results.map((r) => r.message).join("; "), results };
+  const before = await readOverride();
+  await prisma.setting.upsert({
+    where:  { key: TIMEZONE_KEY },
+    create: { key: TIMEZONE_KEY, value: { override: next } },
+    update: { value: { override: next } },
+  });
+  const effective = applyProcessTimezone(next);
+  if (before !== next) {
+    await logEvent({
+      action: "server.timezone.changed",
+      resourceType: "setting",
+      resourceId: TIMEZONE_KEY,
+      resourceName: "Server timezone",
+      actor,
+      message: next
+        ? `Server timezone set to ${next} (was ${before ?? `the host's ${HOST_TIME_ZONE}`})`
+        : `Server timezone override cleared — back to the host's ${HOST_TIME_ZONE} (was ${before})`,
+      details: { before, after: next, effective },
+    });
+  }
+  return { override: next, effective, host: HOST_TIME_ZONE };
+}
+
+/** How often every role re-reads the override, so a change made on the web role reaches monitor / discovery / dash. */
+export const TIMEZONE_REFRESH_MS = 30_000;
+
+/** Read the stored override and apply it to this process. Never throws: a settings outage keeps the zone in force. */
+export async function refreshProcessTimezone(): Promise<void> {
+  try {
+    applyProcessTimezone(await readOverride());
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, "server timezone refresh failed; keeping the zone in force");
+  }
 }
 
 // ─── Certificate Management ─────────────────────────────────────────────────

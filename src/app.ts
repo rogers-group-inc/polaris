@@ -1160,6 +1160,18 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     catch (err: any) { logger.warn({ err: err?.message, job: path }, "background job import failed"); }
   };
 
+  // Business rule 168: the server timezone override, applied to THIS process
+  // before any job starts — every role, since monitor / discovery / dash each
+  // draw server-local times of their own (quiet time, maintenance windows,
+  // alert emails). Awaited so the first job tick already runs in the right
+  // zone; re-read on a timer so a change saved on the web role reaches the
+  // others without a restart. Never throws.
+  {
+    const { refreshProcessTimezone, TIMEZONE_REFRESH_MS } = await import("./services/serverSettingsService.js");
+    await refreshProcessTimezone();
+    setInterval(() => { void refreshProcessTimezone(); }, TIMEZONE_REFRESH_MS).unref();
+  }
+
   // Install the operator's Sources-column (learned-location) priority into this
   // process's projection before anything projects. Every role does this: the
   // web role projects on the asset-detail + agent-enroll paths, the discovery
