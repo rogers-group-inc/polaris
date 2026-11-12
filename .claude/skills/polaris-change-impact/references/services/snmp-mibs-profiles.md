@@ -242,7 +242,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - Run `npx tsx scripts/smoke-std-mibs.ts` to verify all 27 spot-checks still pass.
 - Run `npx vitest run tests/unit/stdMibLibrary.test.ts` for the formal 17 cases (includes a guard that every declared std MIB `.txt` exists on disk).
-- If adding a new std MIB: extend `STD_MIBS`, drop the text file in `stdMibs/`, add it to `MIBS` in `scripts/fetch-std-mibs.mjs`, add 2-4 spot-checks to `EXPECTED` in the smoke script, add at least one resolved-OID assertion to the unit test, and add the matching `{ id, label, oid }` entry to `_SNMP_STANDARD_MIBS` in `public/js/assets.js`.
+- If adding a new std MIB: extend `STD_MIBS`, drop the text file in `stdMibs/`, add it to `MIBS` in `scripts/fetch-std-mibs.mjs`, add 2-4 spot-checks to `EXPECTED` in the smoke script, add at least one resolved-OID assertion to the unit test, and add the matching `{ id, label, oid }` entry to `_SNMP_STANDARD_MIBS` in `public/js/assets-snmp.js` AND `STD_MIB_LABELS` / `STD_MIB_ORDER` in `public/js/server-settings-profiles.js`.
+- **A label names its module before the RFC** — `Entity (ENTITY-MIB, RFC 4133)` — so it reads as the same MIB the polling-method box calls "Automatic (ENTITY-MIB)" (2026-11-12). The three copies of each label must be identical: `tests/unit/stdMibLabelParity.test.ts` pins the format and the parity.
 - The IEEE LLDP-MIB carries an IEEE copyright header (preserved verbatim in the file). Re-read the header text on every refresh per the operator's "legal/compliance language requires human review" policy.
 
 ---

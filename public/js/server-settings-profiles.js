@@ -863,18 +863,18 @@ function renderOverrideRow(profileId, metricKey, o, manufacturer) {
 // `std:fortinet` deliberately omitted — vendor MIBs belong in the Uploaded
 // MIBs section, not the Standard MIBs optgroup.
 var STD_MIB_LABELS = {
-  "std:system":         "System (RFC 1213)",
-  "std:interfaces":     "Interfaces — ifTable (RFC 2863)",
-  "std:if-ext":         "Interfaces — ifXTable, 64-bit counters (RFC 2863)",
-  "std:host-resources": "HOST-RESOURCES-MIB (RFC 2790)",
-  "std:entity":         "ENTITY-MIB (RFC 4133)",
-  "std:entity-sensor":  "ENTITY-SENSOR-MIB (RFC 3433)",
-  "std:lldp":           "LLDP-MIB (IEEE 802.1AB)",
-  "std:poe":            "PoE — POWER-ETHERNET-MIB (RFC 3621)",
-  "std:bridge":         "Bridge — MAC forwarding + STP (RFC 4188)",
-  "std:q-bridge":       "Bridge — VLAN-aware forwarding (RFC 4363)",
-  "std:rstp":           "Rapid Spanning Tree (RFC 4318)",
-  "std:ip":             "IP — addresses + neighbour cache (RFC 4293)",
+  "std:system":         "System (SNMPv2-MIB, RFC 3418)",
+  "std:interfaces":     "Interfaces — ifTable (IF-MIB, RFC 2863)",
+  "std:if-ext":         "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)",
+  "std:host-resources": "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",
+  "std:entity":         "Entity (ENTITY-MIB, RFC 4133)",
+  "std:entity-sensor":  "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",
+  "std:lldp":           "LLDP (LLDP-MIB, IEEE 802.1AB)",
+  "std:poe":            "PoE (POWER-ETHERNET-MIB, RFC 3621)",
+  "std:bridge":         "Bridge — MAC forwarding + STP (BRIDGE-MIB, RFC 4188)",
+  "std:q-bridge":       "Bridge — VLAN-aware forwarding (Q-BRIDGE-MIB, RFC 4363)",
+  "std:rstp":           "Rapid Spanning Tree (RSTP-MIB, RFC 4318)",
+  "std:ip":             "IP — addresses + neighbour cache (IP-MIB, RFC 4293)",
 };
 var STD_MIB_ORDER = ["std:system", "std:interfaces", "std:if-ext", "std:host-resources", "std:entity", "std:entity-sensor", "std:lldp", "std:poe", "std:bridge", "std:q-bridge", "std:rstp", "std:ip"];
 
