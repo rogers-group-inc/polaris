@@ -1032,18 +1032,18 @@ var _snmpMibStructureCache = {};    // keyed by mibId; structure payload from GE
 // upload them via Server Settings → Identification → MIB Database, which
 // also unlocks the MIB-aware walk (symbol resolution + value decoding).
 var _SNMP_STANDARD_MIBS = [
-  { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"          },
-  { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"          },
-  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"         },
-  { id: "std:host-resources", label: "HOST-RESOURCES-MIB (RFC 2790)",  oid: "1.3.6.1.2.1.25"         },
-  { id: "std:entity",         label: "ENTITY-MIB (RFC 4133)",          oid: "1.3.6.1.2.1.47"         },
-  { id: "std:entity-sensor",  label: "ENTITY-SENSOR-MIB (RFC 3433)",   oid: "1.3.6.1.2.1.99"         },
-  { id: "std:lldp",           label: "LLDP-MIB (IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"         },
-  { id: "std:poe",            label: "PoE — POWER-ETHERNET-MIB (RFC 3621)", oid: "1.3.6.1.2.1.105"   },
-  { id: "std:bridge",         label: "Bridge — MAC forwarding + STP (RFC 4188)", oid: "1.3.6.1.2.1.17" },
-  { id: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (RFC 4363)", oid: "1.3.6.1.2.1.17.7" },
-  { id: "std:rstp",           label: "Rapid Spanning Tree (RFC 4318)", oid: "1.3.6.1.2.1.134"        },
-  { id: "std:ip",             label: "IP — addresses + neighbour cache (RFC 4293)", oid: "1.3.6.1.2.1.4" },
+  { id: "std:system",         label: "System (SNMPv2-MIB, RFC 3418)",              oid: "1.3.6.1.2.1.1"          },
+  { id: "std:interfaces",     label: "Interfaces — ifTable (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.2"          },
+  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.31"         },
+  { id: "std:host-resources", label: "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",  oid: "1.3.6.1.2.1.25"         },
+  { id: "std:entity",         label: "Entity (ENTITY-MIB, RFC 4133)",          oid: "1.3.6.1.2.1.47"         },
+  { id: "std:entity-sensor",  label: "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",   oid: "1.3.6.1.2.1.99"         },
+  { id: "std:lldp",           label: "LLDP (LLDP-MIB, IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"         },
+  { id: "std:poe",            label: "PoE (POWER-ETHERNET-MIB, RFC 3621)", oid: "1.3.6.1.2.1.105"   },
+  { id: "std:bridge",         label: "Bridge — MAC forwarding + STP (BRIDGE-MIB, RFC 4188)", oid: "1.3.6.1.2.1.17" },
+  { id: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (Q-BRIDGE-MIB, RFC 4363)", oid: "1.3.6.1.2.1.17.7" },
+  { id: "std:rstp",           label: "Rapid Spanning Tree (RSTP-MIB, RFC 4318)", oid: "1.3.6.1.2.1.134"        },
+  { id: "std:ip",             label: "IP — addresses + neighbour cache (IP-MIB, RFC 4293)", oid: "1.3.6.1.2.1.4" },
 ];
 
 function _snmpCredentialOptions(selectedId, onlyIds) {

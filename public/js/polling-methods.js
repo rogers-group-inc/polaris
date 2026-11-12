@@ -352,14 +352,14 @@ function _polarisReadPollingDropdown(id) {
 // entries and all. Same reason for openIntegrationCreateModal /
 // openIntegrationEditModal / confirmDeleteIntegration below.
 var _INTEGRATION_SNMP_MIBS = [
-  { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"         },
-  { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"         },
-  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"        },
-  { id: "std:host-resources", label: "HOST-RESOURCES-MIB (RFC 2790)",  oid: "1.3.6.1.2.1.25"        },
-  { id: "std:entity",         label: "ENTITY-MIB (RFC 4133)",          oid: "1.3.6.1.2.1.47"        },
-  { id: "std:entity-sensor",  label: "ENTITY-SENSOR-MIB (RFC 3433)",   oid: "1.3.6.1.2.1.99"        },
-  { id: "std:lldp",           label: "LLDP-MIB (IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"        },
-  { id: "std:fortinet-fg",    label: "Fortinet FORTIGATE-MIB",         oid: "1.3.6.1.4.1.12356.101" },
+  { id: "std:system",         label: "System (SNMPv2-MIB, RFC 3418)",              oid: "1.3.6.1.2.1.1"         },
+  { id: "std:interfaces",     label: "Interfaces — ifTable (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.2"         },
+  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)", oid: "1.3.6.1.2.1.31"        },
+  { id: "std:host-resources", label: "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",  oid: "1.3.6.1.2.1.25"        },
+  { id: "std:entity",         label: "Entity (ENTITY-MIB, RFC 4133)",          oid: "1.3.6.1.2.1.47"        },
+  { id: "std:entity-sensor",  label: "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",   oid: "1.3.6.1.2.1.99"        },
+  { id: "std:lldp",           label: "LLDP (LLDP-MIB, IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"        },
+  { id: "std:fortinet-fg",    label: "Fortinet FortiGate (FORTINET-FORTIGATE-MIB)",         oid: "1.3.6.1.4.1.12356.101" },
 ];
 
 // Cache of uploaded MIBs for per-stream MIB pickers. null = not yet loaded.
