@@ -17,7 +17,8 @@
  * pathCheckServerRunner (serverCheckDue / serverTraceMode / pruneServerStates): a
  * check runs when its interval has elapsed (5 s slack), the first run under a
  * definition traces (the baseline), then every Nth, and a run after a PASS
- * traces if it fails (the pass→fail transition). State is in memory; a restart
+ * traces if it fails (the pass→fail transition), a run after a FAIL if it
+ * passes (the recovery, so a resolved email draws the restored route). State is in memory; a restart
  * re-baselines, as an agent restart does.
  *
  * Runs are launched without awaiting the tick, at most MAX_IN_FLIGHT at once,
