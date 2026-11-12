@@ -24,6 +24,7 @@
 
 import { spawn } from "node:child_process";
 import { writeFileSync, mkdirSync, existsSync, chmodSync, readFileSync, rmSync } from "node:fs";
+import { posix } from "node:path";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 
@@ -88,13 +89,18 @@ export async function runNginxApply(
   const instance = instanceFor(cmd);
   // The instance becomes a path under STAGE_DIR and a unit name. instanceFor
   // already bounds it, but an anchored allow-list here is what keeps a future
-  // subcommand from carrying "/" or ".." into the path (and what CodeQL's
-  // js/path-injection recognises as the sanitizer).
+  // subcommand from carrying "/" or ".." into either.
   if (!/^[a-z0-9-]+$/.test(instance)) throw new AppError(500, `nginx apply: invalid instance ${instance}`);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   if (existsSync(APPLY_UNIT_FILE)) {
-    const outFile = `${STAGE_DIR}/${instance}.out`;
+    // Resolve, then confirm it is still inside the stage dir: the path
+    // containment idiom CodeQL's js/path-injection recognises (it does not
+    // count the regex above — #124/#125 stayed open with only that). POSIX
+    // resolve on purpose: the stage dir is a Linux path on every install, and
+    // the unit tests run on Windows.
+    const outFile = posix.resolve(`${STAGE_DIR}/${instance}.out`);
+    if (!outFile.startsWith(`${STAGE_DIR}/`)) throw new AppError(500, `nginx apply: ${instance} resolves outside ${STAGE_DIR}`);
     // A stale result must never be read as this run's: remove it first (the
     // directory is polaris's, so the root-written file can be unlinked).
     try { rmSync(outFile, { force: true }); } catch { /* unreadable stage: the read below reports it */ }
