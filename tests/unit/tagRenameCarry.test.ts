@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../../src/db.js", () => ({ prisma: {} }));
 vi.mock("../../src/services/appMapDiscoveryService.js", () => ({ getConfig: vi.fn(), saveConfig: vi.fn() }));
 
-import { rewriteTagRefs, summarizeTagCarry } from "../../src/services/tagRenameCarryService.js";
+import { rewriteTagRefs, rewriteRegionRefs, summarizeTagCarry } from "../../src/services/tagRenameCarryService.js";
 
 const cond = (value: string, operator = "has") => ({ field: "tag", operator, value });
 
@@ -71,5 +71,28 @@ describe("rule 169: summarizeTagCarry", () => {
   it("lists only what followed, singular and plural", () => {
     expect(summarizeTagCarry(none)).toBe("");
     expect(summarizeTagCarry({ ...none, users: 1, automations: 3, appMapRules: 1 })).toBe("1 user, 3 automations, 1 Application Map rule");
+  });
+});
+
+describe("rule 169(a): rewriteRegionRefs", () => {
+  it("renames the region's tag in a condition and the bare name in recipientRegions", () => {
+    const rule = {
+      scope: { conditions: { op: "and", children: [cond("region:East"), cond("east"), cond("region:Eastern")] } },
+      actions: [{ type: "notify", channelId: "c", recipientRegions: ["east", "West"], recipientTags: ["East"] }],
+    };
+    expect(rewriteRegionRefs(rule, "East", "Coast")).toEqual({
+      scope: { conditions: { op: "and", children: [cond("region:Coast"), cond("east"), cond("region:Eastern")] } },
+      actions: [{ type: "notify", channelId: "c", recipientRegions: ["Coast", "West"], recipientTags: ["East"] }],
+    });
+  });
+
+  it("a plain tag rename leaves recipientRegions and region: conditions alone", () => {
+    const rule = { scope: { children: [cond("region:East")] }, actions: [{ recipientRegions: ["East"] }] };
+    expect(rewriteTagRefs(rule, "East", "Coast")).toBe(rule);
+  });
+
+  it("returns the same object when nothing names the region", () => {
+    const rule = { scope: { children: [cond("region:West")] }, actions: [{ recipientRegions: ["West"] }] };
+    expect(rewriteRegionRefs(rule, "East", "Coast")).toBe(rule);
   });
 });

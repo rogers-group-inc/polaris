@@ -96,7 +96,7 @@ row; the rest live inside their rule's invariant and are cited as `rule 40(i)`.
 | touch a surface that restarts Polaris itself — the Capacity Advisor's Restart button, `POST /server-settings/restart`, `restartService()` — or anything that behaves differently in a container | 99 (never self-restart a container; ask the operator) |
 | touch a column a rule calls dormant (`cooldownSec`, `failureThreshold`, `awaitingRecoveryConfirm`, `recoveryStartedAt`, `consecutiveSuccesses`) | `polaris-domain-model` → references/dormant-columns.md, then the rule it names |
 | delete a notification channel, an automation script, a MIB or a credential; delete a path check, a custom widget, a state probe or a manufacturer profile; an alert that stays firing after its check or widget was deleted; add a place an action can live; add anything that names one of those by id without a foreign key | 167 and 167(a) (and `polaris-change-impact` → cross-cutting/automation-action-types.md for the action locations) |
-| rename a tag; store a tag's NAME anywhere new (a filter, a scope list, a recipient list); a user who lost their devices or an automation that stopped matching after a tag was renamed | 169, then 136 (the built-in tags nobody renames) and 54 / 58 (region tags, which this does not touch) |
+| rename a tag or a map region; store a tag's or region's NAME anywhere new (a filter, a scope list, a recipient list); a user who lost their devices or an automation that stopped matching after a tag was renamed | 169, then 136 (the built-in tags nobody renames) and 54 / 58 (region tags, which this does not touch) |
 | add or retire a rule | the section below |
 
 ## Add or retire a rule

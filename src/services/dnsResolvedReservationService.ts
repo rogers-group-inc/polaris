@@ -351,7 +351,95 @@ export async function reconcileDnsResolvedForAllAssets(): Promise<{
       out.scanned += 1;
     }
   }
+  out.released += await releaseRowsOfIneligibleOwners();
   return out;
+}
+
+/** Rows-per-statement when matching reservations back to their owners. */
+const OWNER_CHUNK = 500;
+
+/**
+ * Which of these system rows should go: a row is released when at least one
+ * asset owns it (same MAC, or same resolved hostname — `findOwnedSystemRows`'
+ * test, read the other way) and NO owner is eligible. A row with an eligible
+ * owner stays, even beside a retired namesake: a replacement device that kept
+ * its predecessor's hostname must not lose its row on every sweep. A row with
+ * no owner at all is not this pass's business. Pure.
+ */
+export function rowsOfIneligibleOwners(
+  rows: ReadonlyArray<{ id: string; hostname: string | null; macAddress: string | null }>,
+  assets: ReadonlyArray<AssetIdentity>,
+): Array<{ rowId: string; assetId: string }> {
+  const byMac = new Map<string, AssetIdentity[]>();
+  const byHost = new Map<string, AssetIdentity[]>();
+  const push = (m: Map<string, AssetIdentity[]>, k: string | null, a: AssetIdentity) => {
+    if (!k) return;
+    const list = m.get(k);
+    if (list) list.push(a); else m.set(k, [a]);
+  };
+  for (const a of assets) {
+    push(byMac, a.macAddress, a);
+    push(byHost, resolvedHostname(a), a);
+  }
+  const out: Array<{ rowId: string; assetId: string }> = [];
+  for (const r of rows) {
+    const owners = [
+      ...(r.macAddress ? byMac.get(r.macAddress) ?? [] : []),
+      ...(r.hostname ? byHost.get(r.hostname) ?? [] : []),
+    ];
+    if (owners.length === 0 || owners.some(assetEligible)) continue;
+    out.push({ rowId: r.id, assetId: owners[0]!.id });
+  }
+  return out;
+}
+
+/**
+ * Business rule 11(a): the owners the per-asset sweep above cannot see.
+ *
+ * That sweep scans assets that HAVE an address. A decommission clears the
+ * address in the same write (rule 40(k)), and the sweeps that decommission in
+ * bulk go through `updateMany`, which runs no per-asset reconcile — so a
+ * device retired by a sweep kept its system reservation for ever: nothing
+ * scanned it again. This pass starts from the reservations instead, finds who
+ * owns each, and releases the ones whose every owner is ineligible.
+ *
+ * Scale: one read of the active system rows (tight select), then their
+ * candidate owners in chunks of OWNER_CHUNK — identity columns only. Deletes
+ * are batched per chunk. Runs on the periodic job, never on a write path.
+ * Never throws.
+ */
+async function releaseRowsOfIneligibleOwners(): Promise<number> {
+  let released = 0;
+  try {
+    const rows = await prisma.reservation.findMany({
+      where: { createdBy: SYSTEM_ACTOR, sourceType: "dns_resolved" as any, status: "active" },
+      select: { id: true, hostname: true, macAddress: true },
+    });
+    for (const chunk of chunkArray(rows, OWNER_CHUNK)) {
+      const macs = [...new Set(chunk.map((r) => r.macAddress).filter((m): m is string => !!m))];
+      const hosts = [...new Set(chunk.map((r) => r.hostname).filter((h): h is string => !!h))];
+      if (macs.length === 0 && hosts.length === 0) continue;
+      const assets = await prisma.asset.findMany({
+        where: {
+          OR: [
+            ...(macs.length ? [{ macAddress: { in: macs } }] : []),
+            ...(hosts.length ? [{ hostname: { in: hosts } }, { dnsName: { in: hosts } }] : []),
+          ],
+        },
+        select: { id: true, ipAddress: true, hostname: true, dnsName: true, macAddress: true, status: true },
+      });
+      const gone = rowsOfIneligibleOwners(chunk, assets);
+      if (gone.length === 0) continue;
+      released += await releaseRows(
+        gone.map((g) => g.rowId),
+        "the device that held it is decommissioned, disabled or has no address",
+        gone[0]!.assetId,
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "dns_resolved.sweep: releasing rows of ineligible owners failed");
+  }
+  return released;
 }
 
 /**

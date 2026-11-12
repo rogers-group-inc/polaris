@@ -87,6 +87,9 @@ non-deprecated network with no active reservation gets one auto-created. IPv4
 only, **never pushed to a gate**, and it **never raises a conflict** — it defers
 silently to anything authoritative. When two assets share one address, the
 reservation keeps describing the first and is not rewritten back and forth.
+The reservation is released when its device is decommissioned or disabled, or
+loses its address — including a device retired automatically by a discovery
+sweep, which the periodic clean-up picks up on its next pass.
 
 ---
 
@@ -3546,6 +3549,10 @@ rename a tag in the registry, Polaris also updates:
 The Events page entry for the rename says what was updated. Deleting a tag changes none of
 these: the tag stays on any device that carries it by hand, and the filters keep selecting
 those devices.
+
+Renaming a **map region** works the same way. As well as moving the region's tag on devices
+and networks and every user's region scope, Polaris updates the device filters that select
+by that region and the notify actions sent to that region's users.
 
 ### Rule 170
 

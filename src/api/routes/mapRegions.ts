@@ -22,6 +22,7 @@ import { Router } from "express";
 import { z } from "zod";
 import * as service from "../../services/mapRegionService.js";
 import { logEvent } from "./events.js";
+import { carryRegionRename, summarizeTagCarry } from "../../services/tagRenameCarryService.js";
 import {
   renameRegionInPrincipalScopes,
   principalsScopedToRegion,
@@ -270,6 +271,7 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
     // name, matches no region, and silently stops scoping anything — see
     // `renameRegionInPrincipalScopes`.
     let scopeMoves: PrincipalScopeMoves | null = null;
+    let filterCarry = "";
     if (result.renamed) {
       // `updateRegion` has ALREADY committed the renamed blob inside its own
       // locked transaction, so everything from here down runs past the point of
@@ -297,6 +299,10 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
         // Saved folders / filters / dashboards a region OWNS follow it too
         // (business rule 140) — the same access consequence, one level down.
         await renameRegionOwner(result.previousName, result.region.name);
+        // …and so does every stored device filter and region-routed recipient
+        // list that names it (business rule 169(a)). Best-effort per holder
+        // inside; it never throws for one of them.
+        filterCarry = summarizeTagCarry(await carryRegionRename(result.previousName, result.region.name));
       } catch (err) {
         scopeErr = err;
       }
@@ -345,7 +351,7 @@ router.put("/:id", requirePermission("mapRegions", "write"), async (req, res, ne
       resourceName: result.region.name,
       actor: req.session?.username,
       message: result.renamed
-        ? `Map region renamed "${result.previousName}" → "${result.region.name}"`
+        ? `Map region renamed "${result.previousName}" → "${result.region.name}"${filterCarry ? ` (followed in ${filterCarry})` : ""}`
         : `Map region "${result.region.name}" updated${result.polygonChanged ? " (polygon edited)" : ""}`,
       details: {
         previousName: result.previousName,

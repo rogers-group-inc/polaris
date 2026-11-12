@@ -9,6 +9,7 @@ import { it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import { updateTag } from "../../src/services/tagRegistryService.js";
+import { carryRegionRename } from "../../src/services/tagRenameCarryService.js";
 
 const d = dbDescribe;
 const PFX = "tag-carry-test";
@@ -106,5 +107,33 @@ d("renaming a tag follows its name (rule 169)", () => {
     const user = await prisma.user.create({ data: { username: `${PFX}-user`, passwordHash: "x", roleId: (await prisma.role.findFirstOrThrow()).id, otherTags: [OLD] } as never });
     await updateTag(tag.id, { color: "#336699" }, "tester");
     expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).otherTags).toEqual([OLD]);
+  });
+});
+
+d("renaming a region follows its name into device filters (rule 169(a))", () => {
+  it("rewrites region: conditions and recipientRegions, and leaves principals' scopes to their own service", async () => {
+    const from = `${PFX}-East`;
+    const to = `${PFX}-Coast`;
+    const role = await prisma.role.findFirstOrThrow();
+    const user = await prisma.user.create({ data: { username: `${PFX}-user`, passwordHash: "x", roleId: role.id, regionTags: [from], otherTags: [`region:${from}`] } as never });
+    const rule = await prisma.notificationRule.create({ data: {
+      name: `${PFX} region rule`,
+      trigger: { type: "asset_state", field: "status", operator: "==", value: "down" },
+      scope: { conditions: { op: "and", children: [cond(`region:${from.toUpperCase()}`), cond(from)] } },
+      actions: [{ type: "notify", channelId: "ch", recipientRegions: [from, "elsewhere"] }],
+    } as never });
+    const quiet = await prisma.quietTimeSchedule.create({ data: { name: `${PFX} quiet`, scope: { conditions: { op: "and", children: [cond(`region:${from}`)] } }, quiet: {} } as never });
+
+    const out = await carryRegionRename(from, to);
+    expect(out).toMatchObject({ automations: 1, quietTimes: 1, users: 0, groupMappings: 0 });
+
+    const r = await prisma.notificationRule.findUniqueOrThrow({ where: { id: rule.id } });
+    // The region's tag follows; a plain tag that happens to share the name does not.
+    expect(r.scope).toEqual({ conditions: { op: "and", children: [cond(`region:${to}`), cond(from)] } });
+    expect(r.actions).toEqual([{ type: "notify", channelId: "ch", recipientRegions: [to, "elsewhere"] }]);
+    expect((await prisma.quietTimeSchedule.findUniqueOrThrow({ where: { id: quiet.id } })).scope).toEqual({ conditions: { op: "and", children: [cond(`region:${to}`)] } });
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(u.regionTags).toEqual([from]);
+    expect(u.otherTags).toEqual([`region:${from}`]);
   });
 });
