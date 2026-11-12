@@ -59,6 +59,24 @@ describe("htmlToText", () => {
     expect(htmlToText("<code>x <script</code>")).toBe("`x script`");
     expect(htmlToText("<p>&lt;tag&gt;</p>")).toBe("<tag>");
   });
+
+  // The tag strip was rewritten from a regex pair into a scan (CodeQL
+  // js/incomplete-multi-character-sanitization). It must be byte-identical to
+  // the old pair, so compare them over a generated corpus of "<", ">" and text.
+  it("strips tags exactly as the old regex pair did", () => {
+    const old = (s: string) => s.replace(/<[^>]+>/g, "").replace(/</g, "");
+    const alphabet = ["<", ">", "a", " ", "\n", "/", "<<", ">>", "<>"];
+    let seed = 12345;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let i = 0; i < 5000; i++) {
+      let s = "";
+      const len = rnd(14);
+      for (let j = 0; j < len; j++) s += alphabet[rnd(alphabet.length)];
+      // No entities in the corpus, so htmlToText's later passes only touch whitespace.
+      const norm = (t: string) => t.replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
+      expect(htmlToText(s), JSON.stringify(s)).toBe(norm(old(s)));
+    }
+  });
 });
 
 describe("asksAboutApi", () => {
