@@ -288,7 +288,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `prisma` (`User`, `GroupMapping`, `NotificationRule`, `AlertGroup`, `QuietTimeSchedule`, `PathCheck`, `Tag`, `Contact`); `appMapDiscoveryService` (`getConfig` / `saveConfig`); `utils/jsonEqual`.
 
-**Used by:** `tagRegistryService.updateTag` — on a rename only, after its own rewrites.
+Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `region:<name>` tag in conditions and `ifTag`, the bare name in `recipientRegions`; both renames share `carryFilterHolders`.
+
+**Used by:** `tagRegistryService.updateTag` — on a rename only, after its own rewrites; `src/api/routes/mapRegions.ts` (the region rename, beside `renameRegionInPrincipalScopes`).
 
 **Invariants:**
 - **Three shapes, wherever they sit:** `{ field: "tag", value }`, `recipientTags: string[]`, `dimensionFilter.ifTag` ("|" list). Whole-name, case-insensitive — the readers' own comparison.
@@ -297,7 +299,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - A delete does not call this (the string stays on hand-tagged devices).
 
 **When changing this:**
-- A new table or Setting that stores a device filter, a tag scope or tag-routed recipients is added to `carryTagRename`, with a row in the integration test.
+- A new table or Setting that stores a device filter or recipient lists is added to `carryFilterHolders` (both renames then cover it); a new tag-SCOPE list goes in `carryTagRename`. Add a row to the integration test.
 - A new SHAPE that stores a tag name (a fourth) is added to `rewriteTagRefs`, with a unit case.
 - A new condition FIELD whose value is a tag name must be handled beside `field === "tag"`.
 

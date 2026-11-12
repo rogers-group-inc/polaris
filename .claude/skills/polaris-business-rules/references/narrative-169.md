@@ -34,3 +34,13 @@ It runs after the rename has committed and is best-effort per holder: a holder t
 **Scale.** A rename is rare and operator-driven. The carry reads eight small configuration tables once each (users and group mappings only where a tag scope is set) and writes only the rows that name the tag. Nothing here runs on a tick.
 
 Pinned by `tests/unit/tagRenameCarry.test.ts` (the three shapes, whole-name matching, no mutation) and `tests/integration/tagRenameCarry.test.ts` (every holder, through `updateTag`).
+
+### Rule 169(a) — a region rename is carried the same way
+
+**How it was found.** The same audit row's neighbour (E.8). A map region reaches the rest of Polaris as the tag `region:<name>`. Renaming a region already rotated that tag on assets and networks, rewrote the `Tag` registry row, moved every user's and group mapping's region scope (`regionScopeService.renameRegionInPrincipalScopes`) and the saved folders a region owns (rule 140). It did not touch the device filters that say "devices in region East" — a `tag` condition whose value is `region:East` — nor a notify action routed to "the users of region East" (`recipientRegions`, which holds the BARE name). After the rename those automations matched no device and paged nobody, with the region itself looking perfectly healthy on the map.
+
+**What it does.** The rename route calls `tagRenameCarryService.carryRegionRename(old, new)` in the same block as the principal-scope move. `rewriteRegionRefs` is `rewriteTagRefs`' sibling over one shared walker: it renames `region:<old>` wherever a tag is named (conditions, `ifTag`) and `<old>` inside `recipientRegions`, and leaves `recipientTags` and a plain tag that merely shares the region's name alone. The holders are the same list, now in one function (`carryFilterHolders`) so the two renames cannot drift apart. The `region.updated` Event says what followed.
+
+**What it does not do.** A region DELETE carries nothing, for rule 58's reason: there is no new name to move to, and stripping the reference would destroy the operator's statement of intent. A `region:` tag typed by hand onto an IP BLOCK is not rotated by a rename (the rotation covers assets and networks, which is where the map puts it); that half of E.8 stays open. `Notification.regionTags` on alerts already raised is history and is not rewritten.
+
+Pinned by the "169(a)" cases in `tests/unit/tagRenameCarry.test.ts` and `tests/integration/tagRenameCarry.test.ts`.

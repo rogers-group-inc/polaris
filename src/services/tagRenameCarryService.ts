@@ -34,6 +34,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { jsonEqual } from "../utils/jsonEqual.js";
+import { REGION_TAG_PREFIX } from "../utils/tagNormalize.js";
 import { getConfig as getAppMapConfig, saveConfig as saveAppMapConfig } from "./appMapDiscoveryService.js";
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -47,11 +48,41 @@ const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLow
  *   - `dimensionFilter.ifTag`, a "|"-joined list of tag names.
  */
 export function rewriteTagRefs<T>(node: T, from: string, to: string, depth = 0): T {
+  return rewriteRefs(node, { tag: from, tagTo: to, listKey: "recipientTags", name: from, nameTo: to }, depth);
+}
+
+/**
+ * A REGION rename (business rule 169(a)). A region reaches a device filter as
+ * the tag `region:<name>`, so that is renamed like any tag — and a notify
+ * action routed to the users of a region lists the BARE name in
+ * `recipientRegions`, which is renamed too. Pure; same reference back when
+ * nothing names the region.
+ */
+export function rewriteRegionRefs<T>(node: T, from: string, to: string): T {
+  return rewriteRefs(node, {
+    tag: `${REGION_TAG_PREFIX}${from}`, tagTo: `${REGION_TAG_PREFIX}${to}`,
+    listKey: "recipientRegions", name: from, nameTo: to,
+  }, 0);
+}
+
+interface RefRename {
+  /** The tag as conditions and `ifTag` hold it, and its new name. */
+  tag: string;
+  tagTo: string;
+  /** The recipient list this rename owns, and the name as that list holds it. */
+  listKey: "recipientTags" | "recipientRegions";
+  name: string;
+  nameTo: string;
+}
+
+function rewriteRefs<T>(node: T, r0: RefRename, depth: number): T {
+  const from = r0.tag;
+  const to = r0.tagTo;
   if (node === null || typeof node !== "object" || depth > 24) return node;
   if (Array.isArray(node)) {
     let changed = false;
     const out = node.map((n) => {
-      const r = rewriteTagRefs(n, from, to, depth + 1);
+      const r = rewriteRefs(n, r0, depth + 1);
       if (r !== n) changed = true;
       return r;
     });
@@ -63,12 +94,12 @@ export function rewriteTagRefs<T>(node: T, from: string, to: string, depth = 0):
 
   if (o.field === "tag" && typeof o.value === "string" && same(o.value, from)) set("value", to);
   for (const [k, v] of Object.entries(o)) {
-    if (k === "recipientTags" && Array.isArray(v)) {
-      if (v.some((t) => typeof t === "string" && same(t, from))) {
+    if (k === r0.listKey && Array.isArray(v)) {
+      if (v.some((t) => typeof t === "string" && same(t, r0.name))) {
         // Renaming onto a name already in the list must not list it twice.
         const next: unknown[] = [];
         for (const t of v) {
-          const name = typeof t === "string" && same(t, from) ? to : t;
+          const name = typeof t === "string" && same(t, r0.name) ? r0.nameTo : t;
           if (!next.some((x) => typeof x === "string" && typeof name === "string" && same(x, name))) next.push(name);
         }
         set(k, next);
@@ -81,7 +112,7 @@ export function rewriteTagRefs<T>(node: T, from: string, to: string, depth = 0):
       continue;
     }
     if (k === "value" && o.field === "tag") continue;
-    const r = rewriteTagRefs(v, from, to, depth + 1);
+    const r = rewriteRefs(v, r0, depth + 1);
     if (r !== v) set(k, r);
   }
   return (out ?? node) as T;
@@ -106,14 +137,15 @@ const CHECK_COLUMNS = ["scope", "sourceFilter"] as const;
 const CONDITION_COLUMN = ["assetCondition"] as const;
 
 type Row = { id: string } & Record<string, unknown>;
+type Rewrite = <T>(node: T) => T;
 
 /** The columns of `row` that name the tag, rewritten — or null when none does. */
-function changedColumns(row: Row, columns: readonly string[], from: string, to: string): Record<string, unknown> | null {
+function changedColumns(row: Row, columns: readonly string[], rewrite: Rewrite): Record<string, unknown> | null {
   const data: Record<string, unknown> = {};
   for (const c of columns) {
     const before = row[c];
     if (before === null || before === undefined) continue;
-    const after = rewriteTagRefs(before, from, to);
+    const after = rewrite(before);
     if (after !== before && !jsonEqual(after, before)) data[c] = after;
   }
   return Object.keys(data).length > 0 ? data : null;
@@ -125,20 +157,20 @@ async function carryTable(
   columns: readonly string[],
   load: () => Promise<Row[]>,
   save: (id: string, data: Record<string, unknown>) => Promise<unknown>,
-  from: string,
-  to: string,
+  rewrite: Rewrite,
+  what: string,
 ): Promise<number> {
   try {
     const rows = await load();
     const writes: Promise<unknown>[] = [];
     for (const row of rows) {
-      const data = changedColumns(row, columns, from, to);
+      const data = changedColumns(row, columns, rewrite);
       if (data) writes.push(save(row.id, data));
     }
     await Promise.all(writes);
     return writes.length;
   } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err), holder: label, from, to }, "tag rename: carrying the new name failed for one holder");
+    logger.warn({ err: err instanceof Error ? err.message : String(err), holder: label, rename: what }, "rename: carrying the new name failed for one holder");
     return 0;
   }
 }
@@ -178,49 +210,75 @@ export async function carryTagRename(from: string, to: string): Promise<TagRenam
   // `isEmpty: false` keeps the read to rows that have a tag scope at all.
   const hasScope = { otherTags: { isEmpty: false } };
 
-  [out.users, out.groupMappings, out.automations, out.alertGroups, out.quietTimes, out.pathChecks, out.tagFilters, out.contacts] = await Promise.all([
+  const what = `tag ${from} -> ${to}`;
+  const rewrite: Rewrite = (node) => rewriteTagRefs(node, from, to);
+  const [users, groupMappings, filters] = await Promise.all([
     scopeLists("users",
       () => prisma.user.findMany({ where: hasScope, select: { id: true, otherTags: true } }),
       (id, otherTags) => prisma.user.update({ where: { id }, data: { otherTags } })),
     scopeLists("group mappings",
       () => prisma.groupMapping.findMany({ where: hasScope, select: { id: true, otherTags: true } }),
       (id, otherTags) => prisma.groupMapping.update({ where: { id }, data: { otherTags } })),
+    carryFilterHolders(rewrite, what),
+  ]);
+  return { ...out, ...filters, users, groupMappings };
+}
+
+/**
+ * Carry a REGION rename into every stored device filter and region-routed
+ * recipient list (business rule 169(a)). The principals' own region scopes are
+ * `regionScopeService.renameRegionInPrincipalScopes`' job and are not touched
+ * here; `users` and `groupMappings` stay 0.
+ */
+export async function carryRegionRename(from: string, to: string): Promise<TagRenameCarry> {
+  const out: TagRenameCarry = {
+    users: 0, groupMappings: 0, automations: 0, alertGroups: 0, quietTimes: 0, pathChecks: 0, tagFilters: 0, contacts: 0, appMapRules: 0,
+  };
+  if (!from.trim() || !to.trim() || same(from, to)) return out;
+  return { ...out, ...(await carryFilterHolders((node) => rewriteRegionRefs(node, from, to), `region ${from} -> ${to}`)) };
+}
+
+type FilterCarry = Pick<TagRenameCarry, "automations" | "alertGroups" | "quietTimes" | "pathChecks" | "tagFilters" | "contacts" | "appMapRules">;
+
+/** Every holder of device filters and recipient lists, passed through `rewrite`. */
+async function carryFilterHolders(rewrite: Rewrite, what: string): Promise<FilterCarry> {
+  const [automations, alertGroups, quietTimes, pathChecks, tagFilters, contacts] = await Promise.all([
     carryTable("automations", RULE_COLUMNS,
       () => prisma.notificationRule.findMany({ select: selectOf(RULE_COLUMNS) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.notificationRule.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.notificationRule.update({ where: { id }, data: data as never }), rewrite, what),
     carryTable("alert groups", GROUP_COLUMNS,
       () => prisma.alertGroup.findMany({ select: selectOf(GROUP_COLUMNS) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.alertGroup.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.alertGroup.update({ where: { id }, data: data as never }), rewrite, what),
     carryTable("quiet times", QUIET_COLUMNS,
       () => prisma.quietTimeSchedule.findMany({ select: selectOf(QUIET_COLUMNS) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.quietTimeSchedule.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.quietTimeSchedule.update({ where: { id }, data: data as never }), rewrite, what),
     carryTable("path checks", CHECK_COLUMNS,
       () => prisma.pathCheck.findMany({ select: selectOf(CHECK_COLUMNS) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.pathCheck.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.pathCheck.update({ where: { id }, data: data as never }), rewrite, what),
     carryTable("tag filters", CONDITION_COLUMN,
       () => prisma.tag.findMany({ select: selectOf(CONDITION_COLUMN) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.tag.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.tag.update({ where: { id }, data: data as never }), rewrite, what),
     carryTable("contacts", CONDITION_COLUMN,
       () => prisma.contact.findMany({ select: selectOf(CONDITION_COLUMN) as never }) as unknown as Promise<Row[]>,
-      (id, data) => prisma.contact.update({ where: { id }, data: data as never }), from, to),
+      (id, data) => prisma.contact.update({ where: { id }, data: data as never }), rewrite, what),
   ]);
 
   // The Application Map's rules live in one Setting blob.
+  let appMapRules = 0;
   try {
     const cfg = await getAppMapConfig();
-    let touched = 0;
     const rules = cfg.rules.map((rule) => {
-      const scope = rewriteTagRefs(rule.scope, from, to);
+      const scope = rewrite(rule.scope);
       if (scope === rule.scope) return rule;
-      touched += 1;
+      appMapRules += 1;
       return { ...rule, scope };
     });
-    if (touched > 0) await saveAppMapConfig({ ...cfg, rules });
-    out.appMapRules = touched;
+    if (appMapRules > 0) await saveAppMapConfig({ ...cfg, rules });
   } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err), holder: "application map rules", from, to }, "tag rename: carrying the new name failed for one holder");
+    appMapRules = 0;
+    logger.warn({ err: err instanceof Error ? err.message : String(err), holder: "application map rules", rename: what }, "rename: carrying the new name failed for one holder");
   }
-  return out;
+  return { automations, alertGroups, quietTimes, pathChecks, tagFilters, contacts, appMapRules };
 }
 
 /** "3 automations, 1 user" — for the rename's Event; "" when nothing followed. */
