@@ -27,7 +27,7 @@ a batch that adds an invariant takes a business-rule number from `npm run rules:
 | A | Asset delete / merge leftovers; ownerless private Discoveries | **done** — pushed `6054e6587` (rule 157) |
 | B | Integration delete / disable / re-scope | **delete done** — this commit (rule 160); B.3, B.8, B.9, B.11 and the Fortinet / directory leftovers open |
 | C | Tables that only grow | **retention done** — pushed `6054e6587` (rule 158); C.3, C.6, C.7, C.11 open |
-| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.5, D.6, D.7 done** (rules 163, 165, 158(a), 158(b)); D.3 done (rule 165(a)); D.4 host side done (rule 166); the Intune / Arc objects of D.4, D.8 and off-host backup copies open |
+| D | Leftovers outside the database (hosts, devices, disk) | **D.1, D.2, D.5, D.6, D.7 done** (rules 163, 165, 158(a), 158(b)); D.3 done (rule 165(a)); D.4 host side done (rule 166); the Intune / Arc objects of D.4 and off-host backup copies are LEFT ALONE by operator decision (2026-11-12); D.8 open |
 | E | Removable by hand, but silent | open — no decisions needed |
 
 ## Decisions (operator, 2026-11-11)
@@ -149,6 +149,10 @@ Decisions needed:
   visible list of stranded entries.
 - **D-D3** — onboarding: generate an offboarding script (and delete the Intune / Arc objects
   Polaris created), or document the manual removal only.
+- **D-D4** (operator, 2026-11-12) — the Intune Remediation and Arc Run Command objects Polaris
+  published are left alone: no remove button; removing them stays a manual step in those portals.
+- **D-D5** (operator, 2026-11-12) — off-host backup copies are left alone: Polaris never deletes
+  on the SFTP / SCP target; its retention is the target's own.
 
 ## Batch E — removable by hand, but silent (open; no decisions needed)
 
@@ -158,8 +162,8 @@ Decisions needed:
 | E.2 | A deleted automation script named in per-action escalation, severity-band actions, reset actions, alert groups | the delete guard checks only two of the eight action locations **→ fixed (rule 167): the guard walks `allRuleActionRefs`, on automations and alert groups** |
 | E.3 | A deleted MIB still named in `Asset.*MibId` / `MonitorClassOverride.*MibId` | nothing cleared **→ fixed going forward (rule 167): the MIB delete is refused while selected. Open: ids that already dangle** |
 | E.4 | A deleted credential in `NetworkScan.methods[].credentialIds` (suspected) | not checked on delete **→ confirmed and fixed (rule 167): the credential delete is refused while a Discovery tries it** |
-| E.5 | An automation's `dimensionFilter.checkId` / `widgetId` / `stateProbeId` naming a deleted object | the rule goes silently dead |
-| E.6 | A firing alert frozen forever when its path check, custom widget or state probe is deleted | only Alerts → Clear ends it |
+| E.5 | An automation's `dimensionFilter.checkId` / `widgetId` / `stateProbeId` naming a deleted object | the rule goes silently dead **→ fixed going forward (rule 167(a)): deleting the check, widget, probe or its profile is refused while an automation names it. Open: filters that already dangle** |
+| E.6 | A firing alert frozen forever when its path check, custom widget or state probe is deleted | only Alerts → Clear ends it **→ fixed (rule 167(a)): the vanished sweep retires a parked state whose check / widget / probe no longer exists (`deletedTargetGone`); this also clears alerts already frozen on an existing install** |
 | E.7 | Tag rename / delete not carried into `User.otherTags`, `GroupMapping.otherTags`, condition trees | write scope and routing silently dropped |
 | E.8 | Region rename not carried into condition trees; a hand-applied `region:` tag on a block | rule stops matching |
 | E.9 | `dns_resolved` reservation surviving a SWEEP decommission (`updateMany` skips the reconcile; rule 40(k) nulls the address the periodic job scans by) | active system reservation on an address a retired device holds |

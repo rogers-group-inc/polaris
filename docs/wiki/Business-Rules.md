@@ -3513,3 +3513,9 @@ Deleting any of these now stops with a message naming what still depends on it:
 
 Point those at something else, then delete. Before this, the delete went through and the
 automation, the poll or the Discovery quietly stopped working.
+
+The same applies to what an automation's condition is narrowed to. A **path check**, a
+**custom widget** or a **state probe** that an automation names cannot be deleted, and neither
+can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
+automation covers every check and one of them is deleted while its alert is firing, Polaris
+clears that alert on its next pass instead of leaving it open for good.
