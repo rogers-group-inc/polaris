@@ -900,6 +900,9 @@ const AzureArcConfigSchema = z.object({
   // row per machine. azureTagKeys narrows by key wildcard; empty = every key.
   importAzureTags: z.boolean().optional().default(false),
   azureTagKeys: z.array(z.string()).optional().default([]),
+  // Rule 70(a)'s opt-in: off, a machine that leaves Azure Arc keeps its asset
+  // AND its source row.
+  decommissionMissing: z.boolean().optional().default(false),
   // Installed software from Change Tracking & Inventory, read from these Log
   // Analytics workspaces (needs Log Analytics Reader on each).
   pullSoftware: z.boolean().optional().default(false),

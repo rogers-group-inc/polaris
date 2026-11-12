@@ -23,6 +23,7 @@
   - `src/services/capacityAdvisorService.ts:readApplicableCounts` — same two columns, used to compute per-cadence worker recommendations.
 
 **Invariants:**
+- **The resolver's caches expire (rule 176).** Tier and class-override entries are re-read after `MONITOR_SETTINGS_CACHE_TTL_MS` (30 s), refreshed in place by one caller (`claimReloadIfStale`) while the others are served the cached value. `invalidateMonitorSettingsCache` is immediate only in the process that calls it — the web role — so the expiry is what carries a saved change to the monitor and discovery roles. Never clear the sidecars on expiry: they are read synchronously after a resolve and an absent SD-WAN interval reads as "not collected" (rule 174).
 - Resolver applies the four-tier cascade strictly in order: per-asset → class-override → integration → manual, first non-null wins.
 - Resolved method must be compatible with the asset's source kind (checked by isPollingMethodCompatible against COMPATIBILITY matrix in pollingCompatibility.ts).
 - If a higher tier specifies an incompatible method, it silently falls through to the next tier (never error; don't break monitoring).
