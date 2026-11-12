@@ -111,10 +111,12 @@ function _cmibCardHTML(w, opts) {
         (opts.editing ? _cmibTypePickerHTML(w) + '<button type="button" class="cmib-tool cmib-height" data-widget-id="' + escapeHtml(w.id) + '" title="Height (click to cycle 1×/2×/3×)">' + opts.height + '×</button>' : toggle) +
       '</span>' +
     '</div>' +
+    // Switched off for this asset: the notice alone. The last reading used to
+    // be drawn dimmed beneath it, which on a widget switched off because it
+    // reads nothing useful here (a PDU with no temperature probe) kept
+    // showing the bad value.
     (off
-      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.' +
-          (w.latest || (w.stateRows && w.stateRows.length) ? ' Showing the last reading collected.' : '') + '</p>' +
-        (w.latest || (w.stateRows && w.stateRows.length) ? '<div style="opacity:0.55">' + _renderCustomWidgetBody(w) + '</div>' : '')
+      ? '<p class="empty-state" style="padding:0.5rem 0;margin:0">Polling is off for this asset.</p>'
       : _renderCustomWidgetBody(w)) +
   '</div>';
 }
