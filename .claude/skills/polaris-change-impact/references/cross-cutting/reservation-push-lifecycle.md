@@ -32,6 +32,7 @@
 - `src/services/fortigateService.ts` — Same `scopeId`/`entryId` population at the standalone-FortiGate dhcp reservation read site.
 
 **Invariants:**
+- **An EXPIRY un-pushes too (rule 173).** `reservationService.unpushExpiredReservations`, run by the `expireReservations` job, removes the reserved-address of every `expired` row still carrying pinned push ids and clears them. It reuses `pushAttempts` / `pushLastAttemptAt` / `pushError` as its retry state — reset at the moment of expiry — so on an `expired` row those columns describe the UN-push. Twelve failed ticks, then one `reservation.unpush.failed` Event and the pointers stay as the record. No lease revoke on this path.
 - DHCP reservations are MAC→IP pairs; only per-IP (not full-subnet) manual reservations are push-eligible.
 - pushedScopeId + pushedEntryId are resolved AT PUSH TIME and pinned for Polaris-pushed rows; used at unpush without re-querying the FortiGate. DISCOVERED (never-pushed) dhcp_reservation rows carry no pointers — on release `unpushReservation` resolves scope-by-CIDR + entry-by-IP at release time (same pattern as `updatePushedReservation`'s discovered path).
 - sourceType flip to "dhcp_reservation" is ONLY set on successful push. While `pushStatus="pending"` the row stays `sourceType="manual"` because nothing's on the device yet.
@@ -45,6 +46,7 @@
 - The `monitor.status_changed → up` hook fires `triggerRetryAfterStatusChange` only on the up edge; down / warning / recovering transitions don't kick the retry job.
 
 **When changing this:**
+- Anything that reads `pushAttempts` / `pushError` must filter on `status: "active"` (the push queue does), or it will read an expired row's un-push retries as push failures.
 - Verify pushedScopeId/pushedEntryId survive across restarts: create a reservation, restart the app, release it; confirm unpush hits the exact device-side entry.
 - Test sourceType flip: create a manual reservation, push succeeds; verify sourceType is now "dhcp_reservation" and pushedToId is set to the integration.
 - Verify the queued-flow round-trip: take the FortiGate offline, create a reservation on a push-eligible subnet, confirm the row persists with `pushStatus="pending"` + `reservation.push.queued` Event. Bring the gate back, verify within one cadence tick the row flips to `pushStatus="synced"` + `reservation.push.queued.succeeded` Event.
