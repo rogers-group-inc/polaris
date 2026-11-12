@@ -3564,3 +3564,14 @@ timezone when none is set. A change reaches every Polaris process within about 3
 with no restart. Polaris never changes the host's clock, its timezone or its time service;
 keeping the host's clock accurate is the host's job, which is why the NTP server settings
 that used to sit on that tab were removed. See [Server Settings](Server-Settings#time).
+
+### Rule 174
+
+**SD-WAN alerts and rules are let go when SD-WAN is no longer collected for a FortiGate.**
+If you switch off SD-WAN monitoring on an integration, move a gate's interfaces off the
+FortiOS REST API, or remove its integration, Polaris stops reading that gate's SD-WAN. An
+SD-WAN alert that was open on the gate is then cleared, because nothing could ever see it
+recover, and the gate's SD-WAN rules are removed from its SD-WAN tab after seven days.
+
+A gate that is still being read but is not answering is different: its alert stays open and
+the tab shows the readings as stale, because that is a fault, not a setting.

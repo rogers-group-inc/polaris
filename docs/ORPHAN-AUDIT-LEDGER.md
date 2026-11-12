@@ -170,7 +170,7 @@ Decisions needed:
 | E.10 | A pushed reservation that EXPIRES (`expireStaleReservations`) is not un-pushed | the device entry stays; rediscovered later |
 | E.11 | A full-subnet reservation that expires leaves `Subnet.status = reserved` | manual edit |
 | E.12 | An automation's `scope.assetIds` naming a deleted asset (left on purpose by rule 157(a)) | matches nothing; shown in the wizard |
-| E.13 | Stale SD-WAN rule rows when collection stops on a monitored gate | alert readings have no age gate, so a rule frozen at "down" may never recover (suspected) |
+| E.13 | Stale SD-WAN rule rows when collection stops on a monitored gate | alert readings have no age gate, so a rule frozen at "down" may never recover (suspected) **→ confirmed and fixed (rule 174): an SD-WAN alert on a gate nothing polls is retired by the vanished sweep; its rule rows are removed after 7 days. A polled gate that is failing keeps both** |
 | E.14 | A role granted through a group mapping survives the mapping's deletion | documented choice in `ssoProvisioning`; listed for review |
 
 ## Checked and found clean
