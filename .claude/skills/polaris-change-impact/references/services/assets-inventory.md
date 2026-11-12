@@ -178,6 +178,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/assets/write.ts` (POST /, PUT /:id, POST /:id/monitor-override/reset).
 
 **Invariants:**
+- `UpdateAssetSchema` is `CreateAssetSchema.partial()` with every field create DEFAULTS re-declared as plain `.optional()` (`assetType`, `status`). Zod 4 applies a `.default()` inside `.partial()`, so a defaulted field left inherited is re-sent on every PUT that omits it — that reset assets to type "other" / status "active" until 2026-11-12. A new defaulted create field gets the same line; `tests/unit/assetUpdateSchemaDefaults.test.ts` pins it.
 - The PUT phases keep their order: validate (the only guard that queries is `assertCredentialAssignments`, last) → build the patch → one `asset.update` → side effects → credential record → the duplicate-ip re-check of BOTH ends of a moved address.
 - The reset lives here and not in monitorOverrideService: db.ts imports that module, which must not import prisma back.
 

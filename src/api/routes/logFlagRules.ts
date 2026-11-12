@@ -25,7 +25,7 @@ const RuleObject = z.object({
   name:          z.string().min(1).max(128),
   enabled:       z.boolean().optional(),
   scope:         z.enum(["global", "asset", "process"]),
-  assetId:       z.string().uuid().nullable().optional(),
+  assetId:       z.string().guid().nullable().optional(),
   processName:   z.string().max(255).nullable().optional(),
   matchType:     z.enum(["substring", "regex", "glob"]),
   pattern:       z.string().min(1).max(1024),

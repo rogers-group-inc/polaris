@@ -37,7 +37,7 @@ import {
 const router = Router();
 
 const DashboardSchema = z.object({
-  id:      z.string().uuid("dashboard id must be a uuid"),
+  id:      z.string().guid("dashboard id must be a uuid"),
   name:    z.string().min(1).max(MAX_DASHBOARD_NAME_LEN),
   columns: ColumnsSchema,
 });
@@ -46,7 +46,7 @@ const LayoutSchema = z
   .object({
     version:    z.literal(3),
     dashboards: z.array(DashboardSchema).min(1).max(MAX_DASHBOARDS),
-    activeId:   z.string().uuid(),
+    activeId:   z.string().guid(),
   })
   .superRefine((layout, ctx) => {
     if (!layout.dashboards.some((d) => d.id === layout.activeId)) {

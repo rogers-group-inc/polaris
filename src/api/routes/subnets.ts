@@ -27,21 +27,21 @@ const router = Router();
 const CreateSubnetSchema = z.object({
   // Optional: omitted, the network lands in the most specific block containing
   // its CIDR (subnetService.resolveBlockForCidr). The Add Network dialog omits it.
-  blockId:     z.string().uuid().optional(),
+  blockId:     z.string().guid().optional(),
   cidr:        z.string().min(1, "CIDR is required"),
   name:        z.string().min(1, "Subnet name is required"),
   purpose:     z.string().optional(),          // description / what it's for
   vlan:        z.number().int().min(1).max(4094).optional(),
-  tags:        z.array(z.string()).optional(),
+  tags:        z.array(z.string()).max(500).optional(),
 });
 
 const AllocateNextSchema = z.object({
-  blockId:      z.string().uuid(),
+  blockId:      z.string().guid(),
   prefixLength: z.number().int().min(8).max(32),
   name:         z.string().min(1, "Subnet name is required"),
   purpose:      z.string().optional(),
   vlan:         z.number().int().min(1).max(4094).optional(),
-  tags:         z.array(z.string()).optional(),
+  tags:         z.array(z.string()).max(500).optional(),
 });
 
 const BulkEntrySchema = z.object({
@@ -54,10 +54,10 @@ const BulkEntrySchema = z.object({
 });
 
 const BulkAllocateSchema = z.object({
-  blockId: z.string().uuid(),
+  blockId: z.string().guid(),
   prefix:  z.string().min(1, "Site/prefix name is required"),
-  entries: z.array(BulkEntrySchema).min(1, "At least one entry is required"),
-  tags:         z.array(z.string()).optional(),
+  entries: z.array(BulkEntrySchema).max(10_000).min(1, "At least one entry is required"),
+  tags:         z.array(z.string()).max(500).optional(),
   anchorPrefix: z.number().int().min(8).max(32).optional(),
 });
 
@@ -81,13 +81,13 @@ const UpdateSubnetSchema = z.object({
   purpose: z.string().optional(),
   status:  z.enum(["available", "reserved", "deprecated"]).optional(),
   vlan:    z.number().int().min(1).max(4094).nullable().optional(),
-  tags:    z.array(z.string()).optional(),
+  tags:    z.array(z.string()).max(500).optional(),
   convertToManual: z.boolean().optional(),
   mergeIntegration: z.boolean().optional(),
 });
 
 const MoveSubnetSchema = z.object({
-  blockId: z.string().uuid(),
+  blockId: z.string().guid(),
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -137,8 +137,8 @@ const PreviewEntrySchema = z.object({
 router.post("/bulk-allocate/preview", requireOwnership("subnets"), async (req, res, next) => {
   try {
     const schema = z.object({
-      blockId:      z.string().uuid(),
-      entries:      z.array(PreviewEntrySchema),
+      blockId:      z.string().guid(),
+      entries:      z.array(PreviewEntrySchema).max(10_000),
       anchorPrefix: z.number().int().min(8).max(32).optional(),
     });
     const input = schema.parse(req.body);

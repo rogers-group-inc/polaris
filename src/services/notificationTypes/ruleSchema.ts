@@ -46,7 +46,7 @@ const ruleInputBaseSchema = z.object({
   // status is down); an untagged device / port does not alert. Refused by
   // validatePrioritySeverity on any other trigger or beside severity bands.
   severityFromPriorityTag: z.boolean().optional(),
-  channels: z.array(z.string().max(50)).default(["in_app"]),
+  channels: z.array(z.string().max(50)).max(50).default(["in_app"]),
   emailComposition: emailCompositionSchema.optional().nullable(),
   // Accepts BOTH shapes: legacy email tiers (pre-wizard UI) and v2 tiers of
   // actions. Stored as given; every reader normalizes via

@@ -83,7 +83,7 @@ const RenameSchema = z.object({
 // "Message is empty" is judged in the handler, once the images are known.
 const AskSchema = z.object({
   content: z.string().max(8000).optional(),
-  integrationId: z.string().uuid().optional(),
+  integrationId: z.string().guid().optional(),
   regenerate: z.preprocess((v) => (v === "true" ? true : v === "false" ? false : v), z.boolean().optional()),
 });
 
@@ -121,7 +121,7 @@ const MemoryAddSchema = z.object({
   text: z.string().min(1).max(MEMORY_LIMITS.entryChars),
 });
 
-const IdParam = z.string().uuid();
+const IdParam = z.string().guid();
 
 // A local model answers slowly and each turn may run several lookups, so
 // this bounds a runaway client rather than normal use: 30 questions a minute.

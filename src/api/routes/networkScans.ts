@@ -101,7 +101,7 @@ const targetSchema = z.object({
 
 const methodSchema = z.object({
   type: z.enum(SCAN_METHODS),
-  credentialIds: z.array(z.string().uuid()).max(MAX_CREDENTIALS_PER_METHOD).optional().default([]),
+  credentialIds: z.array(z.string().guid()).max(MAX_CREDENTIALS_PER_METHOD).optional().default([]),
 });
 
 /**

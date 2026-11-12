@@ -86,6 +86,11 @@ export async function runNginxApply(
   opts: { timeoutMs?: number } = {},
 ): Promise<WrapperResult> {
   const instance = instanceFor(cmd);
+  // The instance becomes a path under STAGE_DIR and a unit name. instanceFor
+  // already bounds it, but an anchored allow-list here is what keeps a future
+  // subcommand from carrying "/" or ".." into the path (and what CodeQL's
+  // js/path-injection recognises as the sanitizer).
+  if (!/^[a-z0-9-]+$/.test(instance)) throw new AppError(500, `nginx apply: invalid instance ${instance}`);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   if (existsSync(APPLY_UNIT_FILE)) {

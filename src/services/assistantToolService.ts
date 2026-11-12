@@ -96,7 +96,7 @@ interface ToolDef {
 interface ListToolDef extends ToolDef {
   columns: ReportColumn[];
   /** Every argument it accepts — Zod drops the rest silently (ignoredArgKeys). */
-  argSchema: z.AnyZodObject;
+  argSchema: z.ZodObject<z.ZodRawShape>;
   rows(args: unknown, ctx: ToolContext, cap: number): Promise<ListRows | ToolResult>;
 }
 
@@ -105,7 +105,7 @@ interface ListToolDef extends ToolDef {
  * word, so a made-up filter (`hostnames`) read as applied: a "15-firewall"
  * report came back with 1,964 devices (seen live 2026-10-28). Exported for tests.
  */
-function ignoredArgKeys(schema: z.AnyZodObject, args: unknown): string[] {
+function ignoredArgKeys(schema: z.ZodObject<z.ZodRawShape>, args: unknown): string[] {
   if (!args || typeof args !== "object" || Array.isArray(args)) return [];
   const known = new Set(Object.keys(schema.shape));
   return Object.keys(args).filter((k) => !known.has(k));
@@ -2292,7 +2292,7 @@ export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events",
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
   source: z.enum(REPORT_SOURCE_NAMES),
-  args: z.record(z.unknown()).optional(),
+  args: z.record(z.string(), z.unknown()).optional(),
   columns: z.array(z.string().max(60)).max(30).optional(),
   formats: z.preprocess((v) => {
     if (v == null || v === "") return undefined;

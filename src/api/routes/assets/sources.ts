@@ -131,7 +131,7 @@ router.get("/:id/polling-history", requirePermission("assets", "read"), async (r
 const mergeBodySchema = z.object({
   otherAssetId: z.string().min(1),
   survivor: z.enum(["this", "other"]).default("this"),
-  fieldWinners: z.record(z.enum(["this", "other"])).optional(),
+  fieldWinners: z.record(z.string(), z.enum(["this", "other"])).optional(),
   dependencyWinner: z.enum(["this", "other"]).optional(),
 });
 
