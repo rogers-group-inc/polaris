@@ -944,6 +944,28 @@
 /* Topology mode (topology-physical.js, rule 147): a Leaflet map over OSM or
    an uploaded floor plan, with location-group polygons and placed devices. */
 .topo-phys-map { position: absolute; inset: 0; background: var(--color-bg-secondary); }
+/* Stacked floors (rule 152(a)): one Leaflet pane per floor, faded and scaled
+   about the middle of the screen (topology-physical.js → applyFloorLook). A
+   faint floor is for reference only: nothing in it takes the pointer. */
+.topo-floor-pane { will-change: opacity, transform; }
+.topo-floor-pane.is-faint, .topo-floor-pane.is-faint * { pointer-events: none !important; }
+.topo-floor-plan { pointer-events: none; user-select: none; max-width: none !important; }
+.topo-floor-center {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+  z-index: 700; pointer-events: none;
+  background:
+    linear-gradient(var(--color-accent), var(--color-accent)) center / 2px 100% no-repeat,
+    linear-gradient(var(--color-accent), var(--color-accent)) center / 100% 2px no-repeat;
+  border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); opacity: 0.85;
+}
+.topo-floor-center[hidden] { display: none; }
+.topo-plan-bar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 800;
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; max-width: calc(100% - 24px); flex-wrap: wrap;
+  background: var(--map-glass-bg, var(--color-surface)); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md); font-size: 0.86rem;
+}
+.is-adjusting .topo-phys-map { cursor: move; }
 /* The Regions panel (region-tree-panel.js, rule 153). */
 .region-tree, .region-tree-conflicts { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
 .region-tree-row { display: flex; align-items: center; gap: 8px; min-height: 30px; border-radius: var(--radius-sm); }

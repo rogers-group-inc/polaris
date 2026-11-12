@@ -1,6 +1,6 @@
 /**
  * tests/unit/serverSettingsService.test.ts — the server timezone (business
- * rule 168) and the uploaded certificate list (CQ-T010).
+ * rule 170) and the uploaded certificate list (CQ-T010).
  *
  * The timezone override is applied to the PROCESS (process.env.TZ), so every
  * test that applies one restores the zone it found in afterEach.
@@ -35,7 +35,7 @@ beforeEach(() => {
   resetEventLogStub();
 });
 
-describe("server timezone (business rule 168)", () => {
+describe("server timezone (business rule 170)", () => {
   afterEach(() => { applyProcessTimezone(null); });
 
   it("the override moves this process's clock — Intl and Date local getters both", () => {

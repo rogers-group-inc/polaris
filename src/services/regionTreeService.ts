@@ -19,7 +19,7 @@
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { locationCodeValueProblem, type LocationCodes } from "../utils/locationCodes.js";
+import { isFloorNumber, locationCodeValueProblem, MAX_FLOOR, MIN_FLOOR, type LocationCodes } from "../utils/locationCodes.js";
 import { buildInfraParentIndex, parentAssetWhereOr, readControllerStamp, resolveInfraParentAsset } from "../utils/fortinetParentKey.js";
 
 const REGION_KINDS = ["area", "building", "floor", "room", "rack", "junctionBox"] as const;
@@ -32,6 +32,13 @@ export interface RegionNodeDto {
   kind: RegionKind;
   name: string;
   parentId: string | null;
+  /** A floor's number (rule 168) — its f: code; null when it has none yet. */
+  level?: number | null;
+}
+
+/** The code a node stands for: a numbered floor's number, else its name (rule 168). */
+function nodeCode(n: RegionNodeDto): string {
+  return n.kind === "floor" && typeof n.level === "number" ? String(n.level) : n.name;
 }
 
 /** How a device's written codes relate to the tree. */
@@ -58,13 +65,32 @@ function isKind(v: unknown): v is RegionKind {
 export interface RegionIndex {
   byId: Map<string, RegionNodeDto>;
   byKey: Map<string, RegionNodeDto>;
+  /** Numbered floors by `<parent id>|<number>` (rule 168). */
+  byFloorLevel: Map<string, RegionNodeDto>;
   size: number;
 }
 
 export function buildRegionIndex(nodes: RegionNodeDto[]): RegionIndex {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const byKey = new Map(nodes.map((n) => [uniqueKeyFor(n.kind, n.name, n.parentId), n]));
-  return { byId, byKey, size: nodes.length };
+  const byFloorLevel = new Map<string, RegionNodeDto>();
+  for (const n of nodes) if (n.kind === "floor" && typeof n.level === "number") byFloorLevel.set(`${n.parentId ?? ""}|${n.level}`, n);
+  return { byId, byKey, byFloorLevel, size: nodes.length };
+}
+
+/** A building's floor named by `value`: its number, or (an old text floor) its name (rule 168). */
+export function findFloor(index: RegionIndex, holderId: string, value: string): RegionNodeDto | null {
+  if (isFloorNumber(value)) {
+    const byLevel = index.byFloorLevel.get(`${holderId}|${Number(value.trim())}`);
+    if (byLevel) return byLevel;
+  }
+  return index.byKey.get(uniqueKeyFor("floor", value, holderId)) ?? null;
+}
+
+/** True when a written floor value names this floor node, by number or by name. */
+function floorNames(node: RegionNodeDto, value: string): boolean {
+  if (typeof node.level === "number" && isFloorNumber(value) && Number(value.trim()) === node.level) return true;
+  return norm(value) === norm(node.name);
 }
 
 /** A node's chain, outermost first, as codes. */
@@ -74,7 +100,7 @@ export function chainOf(index: RegionIndex, node: RegionNodeDto): LocationCodes 
   const seen = new Set<string>();
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
-    out[cur.kind] = cur.name;
+    out[cur.kind] = nodeCode(cur);
     cur = cur.parentId ? index.byId.get(cur.parentId) : undefined;
   }
   return out;
@@ -101,7 +127,7 @@ export function resolveLocation(index: RegionIndex, written: LocationCodes | nul
       // A floor is placed by the building it names (or, with no building, the area).
       const holder = written.building ? index.byKey.get(uniqueKeyFor("building", written.building, null))
         : written.area ? index.byKey.get(uniqueKeyFor("area", written.area, null)) : null;
-      if (holder) anchor = index.byKey.get(uniqueKeyFor("floor", value, holder.id)) ?? null;
+      if (holder) anchor = findFloor(index, holder.id, value);
       continue;
     }
     anchor = index.byKey.get(uniqueKeyFor(kind, value, null)) ?? null;
@@ -114,8 +140,16 @@ export function resolveLocation(index: RegionIndex, written: LocationCodes | nul
     return { location: written, status: named ? "unknown" : "asWritten" };
   }
   const chain = chainOf(index, anchor);
+  // The anchor's floor node, if its chain has one: a written floor matches it
+  // by number or by name (an old text floor, rule 168).
+  let floorNode: RegionNodeDto | undefined = anchor;
+  while (floorNode && floorNode.kind !== "floor") floorNode = floorNode.parentId ? index.byId.get(floorNode.parentId) : undefined;
   for (const k of REGION_KINDS) {
     if (RANK[k] > RANK[anchor.kind]) continue;
+    if (k === "floor" && written.floor && floorNode) {
+      if (!floorNames(floorNode, written.floor)) return { location: written, status: "conflict" };
+      continue;
+    }
     if (written[k] && chain[k] && norm(written[k]) !== norm(chain[k])) return { location: written, status: "conflict" };
     if (written[k] && !chain[k]) return { location: written, status: "conflict" };
   }
@@ -255,8 +289,8 @@ export function rewritesFor(
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
 export async function listRegionNodes(siteId: string): Promise<RegionNodeDto[]> {
-  const rows = await prisma.regionNode.findMany({ where: { siteId }, select: { id: true, kind: true, name: true, parentId: true }, orderBy: [{ name: "asc" }] });
-  return rows.filter((r) => isKind(r.kind)).map((r) => ({ id: r.id, kind: r.kind as RegionKind, name: r.name, parentId: r.parentId }));
+  const rows = await prisma.regionNode.findMany({ where: { siteId }, select: { id: true, kind: true, name: true, parentId: true, level: true }, orderBy: [{ name: "asc" }] });
+  return rows.filter((r) => isKind(r.kind)).map((r) => ({ id: r.id, kind: r.kind as RegionKind, name: r.name, parentId: r.parentId, level: r.level }));
 }
 
 export async function loadRegionIndex(siteId: string): Promise<RegionIndex> {
@@ -295,20 +329,39 @@ async function checkParent(siteId: string, kind: RegionKind, parentId: string | 
   }
 }
 
+/** A floor's number from input: a whole number in range, or null for "none" (rule 168). */
+function cleanLevel(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(n) || n < MIN_FLOOR || n > MAX_FLOOR) throw new AppError(400, `A floor number is a whole number from ${MIN_FLOOR} to ${MAX_FLOOR}`);
+  return n;
+}
+
+/** A building has one floor per number (rule 168). */
+async function checkFloorLevel(siteId: string, parentId: string | null, level: number | null, selfId?: string): Promise<void> {
+  if (level === null) return;
+  const twin = await prisma.regionNode.findFirst({ where: { siteId, kind: "floor", parentId, level, ...(selfId ? { NOT: { id: selfId } } : {}) }, select: { name: true } });
+  if (twin) throw new AppError(409, `That building already has floor ${level}${twin.name !== String(level) ? ` ("${twin.name}")` : ""}`);
+}
+
 function clash(err: unknown): boolean {
   return (err as { code?: string }).code === "P2002";
 }
 
-export async function createRegionNode(siteId: string, input: { kind: unknown; name: unknown; parentId?: unknown }, actor: string | null): Promise<RegionNodeDto> {
+export async function createRegionNode(siteId: string, input: { kind: unknown; name?: unknown; parentId?: unknown; level?: unknown }, actor: string | null): Promise<RegionNodeDto> {
   if (!isKind(input.kind)) throw new AppError(400, `kind must be one of ${REGION_KINDS.join(", ")}`);
   const kind = input.kind;
-  const name = cleanName(input.name);
+  // Rule 168: a floor is a number; its name is an optional label (the number when none).
+  const level = kind === "floor" ? cleanLevel(input.level) : null;
+  if (kind === "floor" && level === null) throw new AppError(400, "A floor needs its number (e.g. -1, 0, 2)");
+  const name = kind === "floor" && (input.name === undefined || input.name === null || String(input.name).trim() === "") ? String(level) : cleanName(input.name);
   const parentId = typeof input.parentId === "string" && input.parentId ? input.parentId : null;
   await checkParent(siteId, kind, parentId);
+  if (kind === "floor") await checkFloorLevel(siteId, parentId, level);
   if ((await prisma.regionNode.count({ where: { siteId } })) >= MAX_NODES_PER_SITE) throw new AppError(400, `A site may have at most ${MAX_NODES_PER_SITE} regions`);
   try {
-    const row = await prisma.regionNode.create({ data: { siteId, kind, name, parentId, uniqueKey: uniqueKeyFor(kind, name, parentId), createdBy: actor } });
-    return { id: row.id, kind, name: row.name, parentId: row.parentId };
+    const row = await prisma.regionNode.create({ data: { siteId, kind, name, parentId, level, uniqueKey: uniqueKeyFor(kind, name, parentId), createdBy: actor } });
+    return { id: row.id, kind, name: row.name, parentId: row.parentId, level: row.level };
   } catch (err) {
     if (clash(err)) throw new AppError(409, kind === "floor" ? `That building already has a floor "${name}"` : `This site already has a ${kind} called "${name}"`);
     throw err;
@@ -324,7 +377,7 @@ export async function createRegionNode(siteId: string, input: { kind: unknown; n
 export async function buildFromDescriptions(siteId: string, locations: Array<LocationCodes | null>, actor: string | null): Promise<{ added: number }> {
   const nodes = await listRegionNodes(siteId);
   const index = buildRegionIndex(nodes);
-  const toCreate: Array<{ id: string; kind: RegionKind; name: string; parentId: string | null; uniqueKey: string }> = [];
+  const toCreate: Array<{ id: string; kind: RegionKind; name: string; parentId: string | null; level: number | null; uniqueKey: string }> = [];
   const { randomUUID } = await import("node:crypto");
   for (const loc of locations) {
     if (!loc) continue;
@@ -334,12 +387,16 @@ export async function buildFromDescriptions(siteId: string, locations: Array<Loc
       if (!value || locationCodeValueProblem(value)) continue;
       if (kind === "floor" && !parent) continue; // a floor with nothing above it can't be placed
       const key = uniqueKeyFor(kind, value, kind === "floor" ? parent!.id : null);
-      let node = index.byKey.get(key) ?? null;
+      let node: RegionNodeDto | null = kind === "floor" ? findFloor(index, parent!.id, value) : index.byKey.get(key) ?? null;
       if (!node) {
-        node = { id: randomUUID(), kind, name: value.trim().replace(/\s+/g, " "), parentId: parent ? parent.id : null };
+        // Rule 168: a numeric floor becomes that numbered floor; a text one a
+        // floor of that name, waiting for its number.
+        const level = kind === "floor" && isFloorNumber(value) ? Number(value.trim()) : null;
+        node = { id: randomUUID(), kind, name: value.trim().replace(/\s+/g, " "), parentId: parent ? parent.id : null, level };
         index.byKey.set(key, node);
         index.byId.set(node.id, node);
-        toCreate.push({ ...node, uniqueKey: key });
+        if (level !== null) index.byFloorLevel.set(`${parent!.id}|${level}`, node);
+        toCreate.push({ id: node.id, kind, name: node.name, parentId: node.parentId, level, uniqueKey: key });
       }
       parent = node;
     }
@@ -447,10 +504,10 @@ export function renameRoomContainers(
 }
 
 /** A region's chain after a rename / move, read from the index as it stands before it. */
-function chainAfterEdit(index: RegionIndex, kind: RegionKind, name: string, parentId: string | null): LocationCodes {
+function chainAfterEdit(index: RegionIndex, kind: RegionKind, name: string, parentId: string | null, level: number | null = null): LocationCodes {
   const parent = parentId ? index.byId.get(parentId) : undefined;
   const out = parent ? chainOf(index, parent) : { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
-  out[kind] = name;
+  out[kind] = kind === "floor" && level !== null ? String(level) : name;
   return out;
 }
 
@@ -463,28 +520,33 @@ function chainAfterEdit(index: RegionIndex, kind: RegionKind, name: string, pare
 export async function updateRegionNode(
   siteId: string,
   id: string,
-  patch: { name?: unknown; parentId?: unknown },
+  patch: { name?: unknown; parentId?: unknown; level?: unknown },
   devices: Array<{ assetId: string; name: string; written: LocationCodes | null }>,
 ): Promise<{ node: RegionNodeDto; rewrites: RegionRewrite[]; carried: { views: number; layouts: number } }> {
   const node = await loadNode(siteId, id);
   const index = await loadRegionIndex(siteId);
-  const before = chainOf(index, { id: node.id, kind: node.kind, name: node.name, parentId: node.parentId });
-  const name = patch.name !== undefined ? cleanName(patch.name) : node.name;
+  const before = chainOf(index, { id: node.id, kind: node.kind, name: node.name, parentId: node.parentId, level: node.level });
+  const level = node.kind === "floor" && patch.level !== undefined ? cleanLevel(patch.level) : node.level;
+  if (node.kind !== "floor" && patch.level !== undefined && patch.level !== null) throw new AppError(400, "Only a floor has a number");
+  const name = patch.name !== undefined
+    ? (node.kind === "floor" && String(patch.name ?? "").trim() === "" && level !== null ? String(level) : cleanName(patch.name))
+    : node.name;
   const parentId = patch.parentId !== undefined ? (typeof patch.parentId === "string" && patch.parentId ? patch.parentId : null) : node.parentId;
   if (parentId !== node.parentId) await checkParent(siteId, node.kind, parentId, node.id);
-  const after = chainAfterEdit(index, node.kind, name, parentId);
+  if (node.kind === "floor" && (level !== node.level || parentId !== node.parentId)) await checkFloorLevel(siteId, parentId, level, node.id);
+  const after = chainAfterEdit(index, node.kind, name, parentId, level);
   let carried = { views: 0, layouts: 0 };
   try {
     await prisma.$transaction(async (tx) => {
       // A building's floors key on their parent id, which did not change; nothing to re-key.
-      await tx.regionNode.update({ where: { id }, data: { name, parentId, uniqueKey: uniqueKeyFor(node.kind, name, parentId) } });
+      await tx.regionNode.update({ where: { id }, data: { name, parentId, level, uniqueKey: uniqueKeyFor(node.kind, name, parentId) } });
       carried = await carryStoredChains(tx, siteId, node.kind, before, after);
     });
   } catch (err) {
     if (clash(err)) throw new AppError(409, node.kind === "floor" ? `That building already has a floor "${name}"` : `This site already has a ${node.kind} called "${name}"`);
     throw err;
   }
-  return { node: { id, kind: node.kind, name, parentId }, rewrites: rewritesFor(node.kind, before, after, devices), carried };
+  return { node: { id, kind: node.kind, name, parentId, level }, rewrites: rewritesFor(node.kind, before, after, devices), carried };
 }
 
 /**
@@ -503,8 +565,8 @@ export async function mergeRegionNodes(
   const into = await loadNode(siteId, intoId);
   if (from.kind !== into.kind) throw new AppError(400, "Only regions of the same kind can be merged");
   const index = await loadRegionIndex(siteId);
-  const before = chainOf(index, { id: from.id, kind: from.kind, name: from.name, parentId: from.parentId });
-  const after = chainOf(index, { id: into.id, kind: into.kind, name: into.name, parentId: into.parentId });
+  const before = chainOf(index, { id: from.id, kind: from.kind, name: from.name, parentId: from.parentId, level: from.level });
+  const after = chainOf(index, { id: into.id, kind: into.kind, name: into.name, parentId: into.parentId, level: into.level });
   let carried = { views: 0, layouts: 0 };
   await prisma.$transaction(async (tx) => {
     const kids = await tx.regionNode.findMany({ where: { parentId: fromId } });

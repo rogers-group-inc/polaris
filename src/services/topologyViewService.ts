@@ -23,7 +23,7 @@ import { AppError } from "../utils/errors.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { detectImageMagic } from "../utils/imageMagic.js";
 import { readImageSize } from "../utils/imageDimensions.js";
-import { locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
+import { isFloorNumber, locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type RegionIndex } from "./regionTreeService.js";
 import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
@@ -113,10 +113,42 @@ export interface TopologyWallPlacement {
 
 /** A floor layer of a Topology view (rule 152). Layer 0 is the view itself. */
 export interface TopologyLayer {
+  /** The floor NUMBER: what f: becomes for a device placed on it (rule 168). */
   level: number;
-  /** The floor's code value — what f: becomes for a device placed on it. */
+  /** An optional label ("Basement"); empty when the floor has none. */
   name: string;
+  /** The floor's plan image (rule 152(a)); null shows only the ground. */
   background: TopologyBackground | null;
+  /** Where the plan sits on the ground: centre, ground units per plan unit, degrees. */
+  plan?: TopologyPlan;
+}
+
+/** A floor plan's placement on the ground (rule 152(a)). */
+interface TopologyPlan {
+  cx: number;
+  cy: number;
+  sx: number;
+  sy: number;
+  rot: number;
+}
+
+/** A plan placement, or undefined when absent; 400 when malformed. */
+function sanitizePlan(raw: unknown, what: string): TopologyPlan | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isObj(raw)) bad(`${what} plan must be an object`);
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, k: string, lo: number, hi: number): number => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < lo || v > hi) bad(`${what} plan ${k} must be a number from ${lo} to ${hi}`);
+    return v as number;
+  };
+  const rot = num(r.rot ?? 0, "rot", -1e6, 1e6) % 360;
+  return {
+    cx: num(r.cx, "cx", -1e8, 1e8),
+    cy: num(r.cy, "cy", -1e8, 1e8),
+    sx: num(r.sx, "sx", 1e-7, 1e6),
+    sy: num(r.sy, "sy", 1e-7, 1e6),
+    rot,
+  };
 }
 
 export interface TopologyRack {
@@ -304,7 +336,7 @@ export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number
 const CODE_FIELDS: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "rack", "junctionBox"];
 
 /** Location codes of a polygon's group: at least one value, each writable. */
-function sanitizeLocationCodesObject(raw: unknown, what: string): LocationCodes {
+function sanitizeLocationCodesObject(raw: unknown, what: string, allowEmpty = false): LocationCodes {
   if (!isObj(raw)) bad(`${what} codes must be an object`);
   const r = raw as Record<string, unknown>;
   const out: LocationCodes = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
@@ -316,7 +348,7 @@ function sanitizeLocationCodesObject(raw: unknown, what: string): LocationCodes 
     if (problem) bad(`${what} ${f} ${problem}`);
     out[f] = (v as string).trim().replace(/\s+/g, " ");
   }
-  if (CODE_FIELDS.every((f) => out[f] === null)) bad(`${what} needs at least one location code`);
+  if (!allowEmpty && CODE_FIELDS.every((f) => out[f] === null)) bad(`${what} needs at least one location code`);
   return out;
 }
 
@@ -476,13 +508,17 @@ export function sanitizeLayers(raw: unknown): TopologyLayer[] {
     if (level === 0) bad("layer 0 is the view itself and is not listed");
     if (levels.has(level)) bad(`layer ${level} is listed twice`);
     levels.add(level);
+    // Rule 168: the level IS the floor (f:<level>); the name is an optional label.
     const name = typeof lr.name === "string" ? lr.name.trim().replace(/\s+/g, " ") : "";
-    if (!name) bad(`layer ${level} needs a floor name`);
-    const problem = locationCodeValueProblem(name);
-    if (problem) bad(`layer ${level}'s floor name ${problem}`);
-    if (names.has(name.toLowerCase())) bad(`two layers are both called "${name}"`);
-    names.add(name.toLowerCase());
-    return { level, name, background: lr.background === undefined ? null : sanitizeBackground(lr.background) } as TopologyLayer;
+    if (name) {
+      const problem = locationCodeValueProblem(name);
+      if (problem) bad(`layer ${level}'s name ${problem}`);
+      if (name.length > 64) bad(`layer ${level}'s name may be at most 64 characters`);
+      if (names.has(name.toLowerCase())) bad(`two layers are both called "${name}"`);
+      names.add(name.toLowerCase());
+    }
+    const plan = sanitizePlan(lr.plan, `layer ${level}`);
+    return { level, name, background: lr.background === undefined ? null : sanitizeBackground(lr.background), ...(plan ? { plan } : {}) } as TopologyLayer;
   });
   out.sort((a, b) => a.level - b.level);
   return out;
@@ -1106,7 +1142,12 @@ export function sanitizeLocationCodeChanges(raw: unknown): LocationCodeChange[] 
       }
       levels = [...new Set(cr.levels as LocationLevel[])];
     }
-    return { assetId: cr.assetId as string, codes: sanitizeLocationCodesObject(cr.codes, `change ${i + 1}`), ...(levels ? { levels } : {}) };
+    // A placement's levels may all be CLEARS (a device dropped on floor 0
+    // loses its f:, rule 168), so with levels an empty codes object is fine.
+    const codes = sanitizeLocationCodesObject(cr.codes, `change ${i + 1}`, !!levels);
+    // Rule 168: a placement that sets a floor sets a number.
+    if (levels && levels.includes("floor") && codes.floor && !isFloorNumber(codes.floor)) bad(`change ${i + 1}: a floor is a number (f:-1, f:2), not "${codes.floor}"`);
+    return { assetId: cr.assetId as string, codes, ...(levels ? { levels } : {}) };
   });
 }
 

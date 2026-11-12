@@ -462,12 +462,15 @@ async function siteDevicesPlaceable(siteId: string): Promise<PlaceableDevice[]> 
 
 const RegionCreateSchema = z.object({
   kind: z.enum(["area", "building", "floor", "room", "rack", "junctionBox"]),
-  name: z.string().min(1).max(64),
+  // A floor's name is optional (its number when blank, rule 168); every other kind needs one.
+  name: z.string().max(64).optional(),
   parentId: z.string().uuid().nullable().optional(),
+  level: z.number().int().nullable().optional(),
 });
 const RegionUpdateSchema = z.object({
-  name: z.string().min(1).max(64).optional(),
+  name: z.string().max(64).optional(),
   parentId: z.string().uuid().nullable().optional(),
+  level: z.number().int().nullable().optional(),
 }).refine((b) => Object.keys(b).length > 0, "Nothing to update");
 const RegionMergeSchema = z.object({ into: z.string().uuid() });
 

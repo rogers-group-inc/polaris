@@ -1,4 +1,4 @@
--- Business rule 168: the NTP settings are retired. Nothing ever applied the
+-- Business rule 170: the NTP settings are retired. Nothing ever applied the
 -- server list, mode or enable flag to the host (its own time service keeps the
 -- clock), so they are dropped. The one field kept is the timezone override,
 -- which moves to its own "timezone" setting and is now applied to Polaris's

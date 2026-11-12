@@ -1,6 +1,6 @@
 /**
  * src/services/serverSettingsService.ts — the server timezone (business rule
- * 168) and certificate management.
+ * 170) and certificate management.
  */
 
 import { prisma } from "../db.js";
@@ -9,7 +9,7 @@ import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { isValidTimeZone } from "./userTimezoneService.js";
 
-// ─── Server timezone (business rule 168) ───────────────────────────────────
+// ─── Server timezone (business rule 170) ───────────────────────────────────
 //
 // Polaris's "server-local wall clock" — the clock maintenance windows,
 // quiet-time windows, scheduled reboots and firmware upgrades are written in,

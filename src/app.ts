@@ -1160,7 +1160,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     catch (err: any) { logger.warn({ err: err?.message, job: path }, "background job import failed"); }
   };
 
-  // Business rule 168: the server timezone override, applied to THIS process
+  // Business rule 170: the server timezone override, applied to THIS process
   // before any job starts — every role, since monitor / discovery / dash each
   // draw server-local times of their own (quiet time, maintenance windows,
   // alert emails). Awaited so the first job tick already runs in the right

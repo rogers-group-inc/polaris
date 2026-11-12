@@ -1,7 +1,7 @@
 /**
  * tests/integration/serverTimezoneRoute.test.ts
  *
- * GET / PUT /api/v1/server-settings/timezone end to end (business rule 168):
+ * GET / PUT /api/v1/server-settings/timezone end to end (business rule 170):
  * a saved zone is stored, applied to this process at once and audited; an
  * unknown zone is a 400; null puts the host's zone back. Restores the host
  * zone afterwards so no other suite runs in Tokyo.

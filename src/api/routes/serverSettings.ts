@@ -466,7 +466,7 @@ router.get("/database/backups/:id/download", maintenanceLimiter, requirePermissi
   }
 });
 
-// ─── Server timezone (business rule 168) ────────────────────────────────────
+// ─── Server timezone (business rule 170) ────────────────────────────────────
 // The zone Polaris's server-local clock runs in. Applied inside Polaris only;
 // the host's clock and its time service are not Polaris's to configure.
 

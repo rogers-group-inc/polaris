@@ -554,7 +554,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/serverSettingsService.ts
 
-**What it owns:** the server timezone (business rule 168 — the zone Polaris's server-local clock runs in, applied to every role's process) and CA certificate management (upload, list, delete). Server-leaf certs are managed externally (nginx reads `POLARIS_PROXY_CERT_PATH`).
+**What it owns:** the server timezone (business rule 170 — the zone Polaris's server-local clock runs in, applied to every role's process) and CA certificate management (upload, list, delete). Server-leaf certs are managed externally (nginx reads `POLARIS_PROXY_CERT_PATH`).
 
 **Public API:** `getServerTimezone`, `setServerTimezone(override, actor?)`, `applyProcessTimezone(override)`, `refreshProcessTimezone`, `TIMEZONE_REFRESH_MS` (+ `ServerTimezone`), `listCertificates`, `addCertificate`, `deleteCertificate`.
 
@@ -563,8 +563,8 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 **Used by:** `src/api/routes/serverSettings.ts — GET|PUT /timezone, CA upload/list/delete`; `src/app.ts → startBackgroundJobs` — `refreshProcessTimezone()` awaited before any job import in EVERY role, then re-run every `TIMEZONE_REFRESH_MS` (30 s, unref'd). Server-cert mutation routes (`POST /certificates` category=server, `DELETE` of a server cert) return 409 unconditionally — handled directly in the route handler, doesn't reach the service.
 
 **Invariants:**
-- The override persists as `{ override: string | null }` in the Settings table under `key: "timezone"` (migration `20261112000200_server_timezone_setting` carried `ntp.timezoneOverride` over and deleted the retired `key: "ntp"` row); certificates under `"certificates"`.
-- Rule 168: the override is applied by assigning `process.env.TZ` — Node re-reads it for `Date` local getters and `Intl`'s resolved zone, so `userTimezoneService.serverTimeZone()`, `maintenanceRecurrence`, `notificationTemplate` and every other server-local reader follow it with no change of their own. Clearing assigns the HOST zone captured at module load (`HOST_TIME_ZONE`) — deleting `TZ` does NOT revert Node's zone. A zone this build's ICU cannot format in is refused on save (400) and read back as no override — never assigned, since Node turns an unknown `TZ` into "Etc/Unknown" = UTC silently.
+- The override persists as `{ override: string | null }` in the Settings table under `key: "timezone"` (migration `20261112130000_server_timezone_setting` carried `ntp.timezoneOverride` over and deleted the retired `key: "ntp"` row); certificates under `"certificates"`.
+- Rule 170: the override is applied by assigning `process.env.TZ` — Node re-reads it for `Date` local getters and `Intl`'s resolved zone, so `userTimezoneService.serverTimeZone()`, `maintenanceRecurrence`, `notificationTemplate` and every other server-local reader follow it with no change of their own. Clearing assigns the HOST zone captured at module load (`HOST_TIME_ZONE`) — deleting `TZ` does NOT revert Node's zone. A zone this build's ICU cannot format in is refused on save (400) and read back as no override — never assigned, since Node turns an unknown `TZ` into "Etc/Unknown" = UTC silently.
 - The host's clock, timezone and time service are never touched. The NTP servers / mode / enable flag and Test Sync were retired 2026-11-12 (nothing ever applied them; `utils/sntp.ts` deleted with them).
 - Certificate store is a single JSON array in the "certificates" Setting; each cert carries id, category (ca/server), type (cert/key), PEM, and metadata. The route surface only handles `category="ca"`; the cleanup migration `20260608000000_drop_legacy_server_certs` strips any legacy `category="server"` entries on upgrade.
 - Backup/restore flows NOT in this service (they live in updateService).

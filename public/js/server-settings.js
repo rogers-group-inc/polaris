@@ -100,7 +100,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var requestedTab = urlParams.get("tab");
   // Back-compat: ?tab=database now maps to the renamed Maintenance tab.
   if (requestedTab === "database") requestedTab = "maintenance";
-  // …and ?tab=ntp to Time, the NTP cards having been retired (rule 168).
+  // …and ?tab=ntp to Time, the NTP cards having been retired (rule 170).
   if (requestedTab === "ntp") requestedTab = "time";
   if (requestedTab) {
     var tabBtn = document.querySelector('#settings-tabs .page-tab[data-tab="' + requestedTab + '"]');

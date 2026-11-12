@@ -101,8 +101,19 @@ a detached one measures 0 × 0, so every inch became Infinity), and every mode c
 canvases). A Room view's parts stage the room's codes plus the rack's `ra:` or the box's `jb:`
 through `ctx.stageLocationCode` (with `levels`, rule 148(a)), the rule-148 Save summary.
 **Floor layers** (`topology-physical.js`, rule 152) keep the canvas's code shape by making
-`state.background` and `state.placements` property accessors onto the CURRENT layer, and
-`layerPolys()` the only polygon list drawing and hit-testing read. Layer 2 must skip the new
+`state.placements` a property accessor onto the CURRENT floor and `layerPolys()` the only
+polygon list hit-testing reads; `state.background` is the GROUND (floor 0's background) only.
+**Stacked floors (rule 152(a))**: every floor is drawn at once, each in its own Leaflet pane
+(`floorPane`: an SVG renderer and a layer group per floor, z by level) so `applyFloorLook` fades
+and scales a whole floor with one CSS opacity + `scale()` about the SCREEN centre (`screenOrigin`,
+re-set on every `move` — that is the parallax). Changing floors never rebuilds the map
+(`setLayer` eases the panes; `buildMap` runs only when the ground changes). A floor's plan is a
+`PlanOverlay` (an `<img>` positioned by a CSS `matrix()` from three corners) and its devices /
+polygons convert through `localToLatLng` / `latLngToLocal` (plan units ↔ ground: EPSG:3857 metres
+on the map, map units on an image ground). Links between floors are drawn in the unscaled
+`floor_links` pane from each end's scaled screen position (`visualLatLng`) as 12 fading segments,
+redrawn per frame during a floor change (`tickCross`). The basemap switch is `setBaseMap` — a
+second `setLayer` in the same scope once shadowed it. Layer 2 must skip the new
 `topo|L<n>` layout keys (`_layoutKeyBelongsToCurrentView`), or a floor layer's placements
 read as a Layer 2 layout.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing

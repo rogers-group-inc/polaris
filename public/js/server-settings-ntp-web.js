@@ -1,6 +1,6 @@
 /**
  * public/js/server-settings-ntp-web.js — Server Settings → Time and Web Server
- * (internal key `certificates`): the server timezone (business rule 168) with
+ * (internal key `certificates`): the server timezone (business rule 170) with
  * its searchable picker and the server clock, the HTTPS certificate / trusted
  * CAs / proxy / Dash / IPv6 / login-access cards, and the rotate-certificate
  * workflow. (The file keeps its old name; the NTP cards were retired 2026-11-12.)
@@ -11,7 +11,7 @@
  * server-settings.js — tests/unit/serverSettingsSplit.test.ts holds the order.
  */
 
-// ─── Time Tab (business rule 168) ───────────────────────────────────────────
+// ─── Time Tab (business rule 170) ───────────────────────────────────────────
 
 var _timeLoaded = false;
 // GET /server-settings/timezone: { override, effective, host }. Loaded by the
