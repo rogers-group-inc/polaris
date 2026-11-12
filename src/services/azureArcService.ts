@@ -98,6 +98,9 @@ export interface AzureArcConfig {
   tagInclude?: string[];           // "key=value" / "key=*" against the Azure resource tags
   tagExclude?: string[];
   includeDisconnected?: boolean;   // Default true — a Disconnected agent is still an asset
+  // Business rule 70(a): decommission an asset this integration manages once
+  // its machine (or cluster) resource is gone from Azure. Default off.
+  decommissionMissing?: boolean;
   fetchNetworkProfile?: boolean;   // Default false — one extra GET per machine
   // Phase 2/3 enrichment. Each costs ONE additional Resource Graph query for
   // the whole tenant (not per machine), and neither creates assets — both fold
@@ -228,6 +231,59 @@ export interface ArcDiscoveryResult {
   subscriptionsQueried: number;
   /** True when the ARG path failed and the per-subscription list ran instead. */
   usedFallback: boolean;
+  /**
+   * What the disappearance sweep needs to tell "gone from Azure" from "not
+   * read" (business rule 70(a)). Absent on a result built by hand; the sweep
+   * then refuses.
+   */
+  absence?: ArcAbsenceEvidence;
+}
+
+/** How much of the tenant this run actually read. */
+export interface ArcAbsenceEvidence {
+  /**
+   * ARM id of EVERY machine Azure returned — before the resource-group, name
+   * and tag filters and before `includeDisconnected`. A machine an operator
+   * filtered out, or one whose agent is merely disconnected, is still here.
+   */
+  machineIds: string[];
+  /** ARM id of every connected cluster returned; null when clusters were not read. */
+  clusterIds: string[] | null;
+  /** Lower-cased ids of the subscriptions whose machine roster was read in full. */
+  subscriptionsRead: string[];
+  /** False when the run was cancelled or the machine cap was reached. */
+  complete: boolean;
+  /** True when the run was narrowed to one machine. */
+  scoped: boolean;
+}
+
+/**
+ * Why the disappearance sweep must not run on this result, or null when it
+ * may (business rule 70(a)). The sweep leaves every Arc source row untouched
+ * when this is non-null.
+ */
+export function arcSweepBlockedReason(result: Pick<ArcDiscoveryResult, "absence">): string | null {
+  const a = result.absence;
+  if (!a) return "the run carries no record of what it read";
+  if (a.scoped) return "the run was scoped to a single machine";
+  if (!a.complete) return `the tenant read was incomplete (cancelled, or the ${MACHINES_HARD_CAP}-machine cap was reached)`;
+  if (a.subscriptionsRead.length === 0) return "no subscription could be read";
+  // Zero machines where there used to be some is a lost role assignment far
+  // more often than an emptied tenant (rule 35's shrunken-read reasoning).
+  if (a.machineIds.length === 0) return "the tenant read came back empty";
+  return null;
+}
+
+/**
+ * Was the subscription this resource lives in read this run? A machine in a
+ * subscription the app registration can no longer see is NOT gone — and
+ * unlike a lost tenant, one lost subscription can be a few machines, far
+ * under the share `absenceExceedsGuard` refuses. An id that does not parse is
+ * treated as not read.
+ */
+export function arcResourceWasRead(armId: string, subscriptionsRead: readonly string[]): boolean {
+  const parsed = parseArmResourceId(armId);
+  return !!parsed && subscriptionsRead.includes(parsed.subscriptionId);
 }
 
 export type ArcDiscoveryProgressCallback = (
@@ -1249,6 +1305,8 @@ async function fetchMachinesViaSubscriptionList(
   subscriptions: SubscriptionInfo[],
   signal?: AbortSignal,
   onProgress?: ArcDiscoveryProgressCallback,
+  /** Filled with the id of each subscription whose roster was read in full. */
+  readOut?: string[],
 ): Promise<any[]> {
   const rows: any[] = [];
   for (const sub of subscriptions) {
@@ -1259,6 +1317,7 @@ async function fetchMachinesViaSubscriptionList(
     try {
       const page = await armPage(config, url, MACHINES_HARD_CAP - rows.length, signal);
       rows.push(...page);
+      if (!signal?.aborted) readOut?.push(sub.subscriptionId.toLowerCase());
     } catch (err: any) {
       // One unreadable subscription (no Reader, provider not registered) must
       // not abort the whole roster — record it and keep going.
@@ -1490,7 +1549,10 @@ export async function discoverMachines(
   if (subscriptions.length === 0) {
     log("discover.arc.subscriptions", "error",
       "Azure Arc: the app registration can't see any subscriptions — check its Reader role assignment");
-    return { machines: [], clusters: [], subscriptionsQueried: 0, usedFallback: false };
+    return {
+      machines: [], clusters: [], subscriptionsQueried: 0, usedFallback: false,
+      absence: { machineIds: [], clusterIds: null, subscriptionsRead: [], complete: false, scoped: !!scope },
+    };
   }
   log("discover.arc.subscriptions", "info",
     `Azure Arc: ${subscriptions.length} subscription(s) in scope`);
@@ -1503,10 +1565,15 @@ export async function discoverMachines(
   let rawRows: any[] = [];
   let usedFallback = false;
   const wantsArg = config.useResourceGraph !== false;
+  // Which subscriptions' rosters were read in full (rule 70(a)). Resource
+  // Graph answers for all of them in one query or fails as a whole; the
+  // per-subscription list can lose them one at a time.
+  let subscriptionsRead: string[] = [];
 
   if (wantsArg) {
     try {
       rawRows = await fetchMachinesViaResourceGraph(config, subIds, signal);
+      subscriptionsRead = subIds.map((id) => id.toLowerCase());
       log("discover.arc.machines", "info",
         `Azure Arc: Resource Graph returned ${rawRows.length} machine(s)`);
     } catch (err: any) {
@@ -1518,7 +1585,8 @@ export async function discoverMachines(
   }
 
   if (!wantsArg || usedFallback) {
-    rawRows = await fetchMachinesViaSubscriptionList(config, subscriptions, signal, onProgress);
+    subscriptionsRead = [];
+    rawRows = await fetchMachinesViaSubscriptionList(config, subscriptions, signal, onProgress, subscriptionsRead);
     log("discover.arc.machines", "info",
       `Azure Arc: retrieved ${rawRows.length} machine(s) across ${subscriptions.length} subscription(s)`);
   }
@@ -1540,6 +1608,10 @@ export async function discoverMachines(
     log("discover.arc.filter.unusable", "info",
       `Azure Arc: skipping ${unusable} row(s) with no usable resource id`);
   }
+
+  // Everything Azure returned, before any filter narrows it (rule 70(a)).
+  const presentMachineIds = normalized.map((m) => m.armId);
+  const capped = rawRows.length >= MACHINES_HARD_CAP;
 
   // 4. Filter (resource group / display name / tags — all client-side).
   let machines = filterArcMachines(normalized, config);
@@ -1595,6 +1667,8 @@ export async function discoverMachines(
   //    machine being refreshed, so a "refresh this server" click has no business
   //    creating or updating them.
   const clusters: DiscoveredArcCluster[] = [];
+  // null = clusters were not read this run, so no cluster row may be judged.
+  let presentClusterIds: string[] | null = null;
   if (config.enableKubernetes && !scope && !signal?.aborted) {
     if (usedFallback || !wantsArg) {
       log("discover.arc.clusters_skipped", "info",
@@ -1609,6 +1683,7 @@ export async function discoverMachines(
           const c = normalizeArcCluster(row);
           if (c) clusters.push(c);
         }
+        if (!signal?.aborted && rows.length < MACHINES_HARD_CAP) presentClusterIds = clusters.map((c) => c.armId);
         log("discover.arc.clusters", "info",
           `Azure Arc: retrieved ${clusters.length} connected Kubernetes cluster(s)`);
       } catch (err: any) {
@@ -1618,7 +1693,16 @@ export async function discoverMachines(
     }
   }
 
-  return { machines, clusters, subscriptionsQueried: subscriptions.length, usedFallback };
+  return {
+    machines, clusters, subscriptionsQueried: subscriptions.length, usedFallback,
+    absence: {
+      machineIds: presentMachineIds,
+      clusterIds: presentClusterIds,
+      subscriptionsRead,
+      complete: !signal?.aborted && !capped,
+      scoped: !!scope,
+    },
+  };
 }
 
 // ─── Installed software (Change Tracking → Log Analytics) ───────────────────

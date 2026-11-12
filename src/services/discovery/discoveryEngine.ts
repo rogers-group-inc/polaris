@@ -980,11 +980,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     } else if (collectorType === "azurearc") {
       // Azure Arc discovery produces assets only — Arc-enabled machines. No
       // subnets, reservations, or VIPs.
-      // Arc's sync needs no scoped mode: it has NO fleet-absence passes — it
-      // deliberately never writes `status` (a Disconnected agent is a
-      // reachability fact, not a lifecycle one, so aging-out stays with
-      // decommissionStaleAssets) and issues no bulk delete/update. Audited
-      // 2026-09-08; re-check if you add a pass that reads absence.
+      // The machine sync itself never writes `status`: a Disconnected agent
+      // is a reachability fact, not a lifecycle one. The ONE fleet-absence
+      // pass is sweepArcAbsence below (rule 70(a)) — opt-in, and it refuses a
+      // scoped run itself (arcSweepBlockedReason), so a single-machine
+      // "Discover Now" can never read the rest of the fleet as gone.
       const result = await azureArc.discoverMachines(config as any, ac.signal, onProgress, scope?.kind === "arc-machine" ? { resourceId: scope.resourceId } : undefined);
       if (!ac.signal.aborted) {
         const r = await syncArcDevices(integrationId, integrationName, config, result, actor);
@@ -997,6 +997,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.created.push(...rc.created);
         syncTotals.updated.push(...rc.updated);
         syncTotals.skipped.push(...rc.skipped);
+        // Last pass, before the azure: tag registry is reconciled so tags it
+        // strips are forgotten by that reconcile.
+        syncTotals.decommissionedAssets.push(
+          ...(await sweepArcAbsence(integrationId, integrationName, config, result, actor)),
+        );
         await syncAzureTagRegistry();
         // Change Tracking software → the Software tab (tenant-wide; skipped
         // on a scoped run).
@@ -4295,7 +4300,7 @@ function buildArcProposedFields(
 // Postgres round trip can prove that (tests/integration/entraSyncSourceMirror).
 /** One source kind this directory owns, paired with what the run read for it. */
 interface DirectorySweepKind {
-  sourceKind: "entra" | "intune" | "ad";
+  sourceKind: "entra" | "intune" | "ad" | "arc" | "arc-k8s";
   /**
    * Every identifier the directory returned for this kind — RAW, before the
    * operator's filters. `null` means the endpoint was not read this cycle
@@ -4305,6 +4310,12 @@ interface DirectorySweepKind {
   present: string[] | null;
   /** Identifiers the directory returned AS DISABLED. */
   disabled: string[];
+  /**
+   * Was the place this row lives in read at all? A row for which this answers
+   * false is left alive, exactly like a kind that was not read. Azure Arc
+   * uses it per subscription (rule 70(a)); omitted, every row is in scope.
+   */
+  inScope?: (externalId: string) => boolean;
 }
 
 interface DirectorySweepInput {
@@ -4323,6 +4334,12 @@ interface DirectorySweepInput {
   directoryLabel: string;
   /** `asset.ad.decommissioned` / `asset.entra.decommissioned`. */
   eventAction: string;
+  /**
+   * Called with the assets whose source row(s) this sweep just deleted,
+   * whoever manages them — for what else that row put on the asset (Azure
+   * Arc's `azure:` tags). Best-effort: a throw is logged, not propagated.
+   */
+  onRowsGone?: (assetIds: string[]) => Promise<void>;
   now: Date;
   actor?: string;
   syncLog: (level: "info" | "error" | "warning", message: string) => void;
@@ -4412,7 +4429,13 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
         for (const r of kindRows) bump(r.assetId, "alive");
         continue;
       }
-      const fates = classifyDirectoryRows(kindRows, kind.present, kind.disabled);
+      // Rows whose home was not read this cycle are alive, not absent.
+      const judged = kind.inScope ? kindRows.filter((r) => kind.inScope!(r.externalId)) : kindRows;
+      if (judged.length !== kindRows.length) {
+        const unread = new Set(judged.map((r) => r.id));
+        for (const r of kindRows) if (!unread.has(r.id)) bump(r.assetId, "alive");
+      }
+      const fates = classifyDirectoryRows(judged, kind.present, kind.disabled);
       for (const r of fates.alive) bump(r.assetId, "alive");
       for (const r of fates.disabled) bump(r.assetId, "disabled");
       for (const r of fates.gone) { bump(r.assetId, "gone"); gone.push(r); }
@@ -4434,6 +4457,10 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
         await prisma.assetSource.deleteMany({ where: { id: { in: batch } } });
       }
       syncLog("info", `Swept ${gone.length} stale ${directoryLabel} source row(s) for device(s) no longer in the directory.`);
+      if (input.onRowsGone) {
+        await input.onRowsGone([...new Set(gone.map((r) => r.assetId))]).catch((err: any) =>
+          syncLog("warning", `${directoryLabel}: clean-up after the swept source rows failed — ${err?.message || "unknown error"}`));
+      }
     }
 
     const candidateIds = [...tally.entries()]
@@ -4499,6 +4526,71 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
   }
 
   return decommissioned;
+}
+
+/**
+ * The Azure Arc disappearance sweep (business rule 70(a)) — rule 70's shared
+ * sweep, with Arc's own completeness evidence.
+ *
+ * A machine or connected cluster whose resource is gone from Azure loses its
+ * `arc` / `arc-k8s` source row, and the asset this integration MANAGES is
+ * decommissioned. A DISCONNECTED agent is never a reason: it is still in the
+ * read, so it is alive here whatever `includeDisconnected` says. Nothing is
+ * "disabled" in Arc's vocabulary, so that list is always empty.
+ *
+ * On top of rule 70's guards (opt-in, a whole read, the scale guard), a row is
+ * judged only when ITS subscription was read: an app registration that lost
+ * Reader on one subscription makes that subscription's machines vanish from a
+ * read that is otherwise complete and non-empty, and one subscription can be
+ * far too few machines for the scale guard to notice.
+ *
+ * An asset whose Arc row went also loses its `azure:` tags when no Arc row
+ * remains on it — they mirrored a resource that no longer exists, and
+ * operators cannot remove them by hand.
+ */
+export async function sweepArcAbsence(
+  integrationId: string,
+  integrationName: string,
+  integrationConfig: Record<string, unknown> | null,
+  result: azureArc.ArcDiscoveryResult,
+  actor?: string,
+): Promise<string[]> {
+  const evidence = result.absence;
+  const read = evidence?.subscriptionsRead ?? [];
+  const inScope = (externalId: string) => azureArc.arcResourceWasRead(externalId, read);
+  return sweepDirectoryAbsence({
+    integrationId,
+    integrationName,
+    enabled: (integrationConfig as any)?.decommissionMissing === true,
+    blockedReason: () => azureArc.arcSweepBlockedReason(result),
+    kinds: [
+      { sourceKind: "arc", present: evidence?.machineIds ?? null, disabled: [], inScope },
+      { sourceKind: "arc-k8s", present: evidence?.clusterIds ?? null, disabled: [], inScope },
+    ],
+    directoryLabel: "Azure Arc",
+    eventAction: "asset.arc.decommissioned",
+    now: new Date(),
+    actor,
+    syncLog: makeSyncLog(integrationId, integrationName, actor),
+    onRowsGone: async (assetIds) => {
+      for (const chunk of chunkArray(assetIds, 500)) {
+        const rows = await prisma.asset.findMany({
+          where: {
+            id: { in: chunk },
+            // Still described by another Arc row (a second integration, or its
+            // cluster row): the tags are still true.
+            sources: { none: { sourceKind: { in: ["arc", "arc-k8s"] } } },
+          },
+          select: { id: true, tags: true },
+        });
+        const tagged = rows.filter((a) => a.tags.some(isAzureTag));
+        for (const batch of chunkArray(tagged, 100)) {
+          await prisma.$transaction(batch.map((a) =>
+            prisma.asset.update({ where: { id: a.id }, data: { tags: a.tags.filter((t) => !isAzureTag(t)) } })));
+        }
+      }
+    },
+  });
 }
 
 export async function syncEntraDevices(

@@ -704,6 +704,23 @@ See [Integration-Directory](Integration-Directory) for the operator view.
 
 ---
 
+### Rule 70a
+
+**A machine deleted from Azure Arc can decommission its asset — when you switch that on.**
+With **Decommission machines that leave Azure Arc** ticked on an Azure Arc integration, an
+asset that integration manages is set to *decommissioned* once its machine (or connected
+cluster) is deleted from Azure, and its `azure:` tags are removed. It follows the same
+safeguards as [rule 70](#rule-70), plus one of its own:
+
+- A **disconnected** Arc agent is never a reason. The machine is still in Azure.
+- A machine that a filter excludes is not treated as deleted.
+- A machine is only judged when **its own subscription** was read. If the app registration
+  loses access to a subscription, that subscription's machines are left alone.
+- A partial, cancelled or empty read, a single-machine **Discover Now**, and any run that
+  would decommission an implausibly large share of the fleet are refused and logged.
+
+It is off by default. Off, nothing changes when a machine leaves Arc.
+
 ## Reading a rule correctly
 
 Three habits make these easier to apply:

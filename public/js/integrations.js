@@ -380,6 +380,7 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Subscriptions</span><span class="detail-value">' + arcSubsValue + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Query Mode</span><span class="detail-value">' + (config.useResourceGraph === false ? "Per-subscription list" : "Resource Graph") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Include Disconnected</span><span class="detail-value">' + (config.includeDisconnected === false ? "No (skipped)" : "Yes") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Decommission Missing</span><span class="detail-value">' + (config.decommissionMissing === true ? "Yes" : "No") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Extra Resources</span><span class="detail-value">' + escapeHtml(arcExtras) + '</span></div>' +
           filterRow("Resource Groups", config.resourceGroupInclude, config.resourceGroupExclude) +
           filterRow("Machines", config.deviceInclude, config.deviceExclude) +
