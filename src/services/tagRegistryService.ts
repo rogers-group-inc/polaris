@@ -12,6 +12,7 @@
 import { prisma } from "../db.js";
 import { Prisma, type Tag } from "../generated/prisma/client.js";
 import { AppError } from "../utils/errors.js";
+import { carryTagRename, summarizeTagCarry } from "./tagRenameCarryService.js";
 import { logger } from "../utils/logger.js";
 import { logEvent } from "./eventLogService.js";
 import {
@@ -326,6 +327,7 @@ export async function updateTag(id: string, body: Record<string, unknown>, actor
     },
   });
 
+  let carried = "";
   if (renamed) {
     const oldName = existing.name;
     await Promise.all([
@@ -348,6 +350,10 @@ export async function updateTag(id: string, body: Record<string, unknown>, actor
         prisma.$executeRaw`UPDATE network_tag_assignments SET tag = ${name} WHERE tag = ${oldName}`,
       ]),
     ]);
+    // Rule 169: and everywhere the name is stored to SELECT by — tag scopes,
+    // device filters, tag-routed recipients. After the writes above, so a
+    // filter never names a tag no device carries yet.
+    carried = summarizeTagCarry(await carryTagRename(oldName, name));
   }
 
   await logEvent({
@@ -358,7 +364,7 @@ export async function updateTag(id: string, body: Record<string, unknown>, actor
     resourceName: tag.name,
     actor,
     message: renamed
-      ? `Tag renamed: "${existing.name}" → "${tag.name}" (rewritten across blocks/subnets/assets/interfaces)`
+      ? `Tag renamed: "${existing.name}" → "${tag.name}" (rewritten across blocks/subnets/assets/interfaces${carried ? `; followed in ${carried}` : ""})`
       : `Tag updated: "${tag.name}"`,
   });
 

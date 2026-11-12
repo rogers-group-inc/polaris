@@ -3519,3 +3519,19 @@ The same applies to what an automation's condition is narrowed to. A **path chec
 can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
 automation covers every check and one of them is deleted while its alert is firing, Polaris
 clears that alert on its next pass instead of leaving it open for good.
+
+### Rule 169
+
+**Renaming a tag changes it everywhere, not only on the devices that carry it.** When you
+rename a tag in the registry, Polaris also updates:
+
+- the tag scope of every user and SSO group mapping that lists it, so people keep the devices
+  they could change;
+- every device filter that uses it — in automations, alert groups, quiet times, path checks,
+  contacts, Application Map rules and other tags' auto-assign filters;
+- automations that are narrowed to ports with that tag, and notify actions sent to the users
+  of that tag.
+
+The Events page entry for the rename says what was updated. Deleting a tag changes none of
+these: the tag stays on any device that carries it by hand, and the filters keep selecting
+those devices.
