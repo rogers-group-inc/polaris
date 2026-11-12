@@ -159,6 +159,33 @@
     for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
     return Math.abs(a / 2);
   }
+  // Convex hull (monotone chain) of [x, y] points, counter-clockwise.
+  function convexHull(points) {
+    var pts = points.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    if (pts.length < 3) return pts;
+    function cross(o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); }
+    var lower = [], upper = [];
+    pts.forEach(function (p) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop(); lower.push(p); });
+    for (var i = pts.length - 1; i >= 0; i--) {
+      var p = pts[i];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+      upper.push(p);
+    }
+    upper.pop(); lower.pop();
+    return lower.concat(upper);
+  }
+  // A rounded outline around points: the hull of a circle of radius r around
+  // each one, so one device still gets a ring and two get a capsule.
+  function roundedHull(points, r, steps) {
+    var n = steps || 16, ring = [];
+    points.forEach(function (p) {
+      for (var i = 0; i < n; i++) {
+        var a = 2 * Math.PI * i / n;
+        ring.push([p[0] + r * Math.cos(a), p[1] + r * Math.sin(a)]);
+      }
+    });
+    return convexHull(ring);
+  }
   // The smallest polygon containing the point — the group a drop lands in.
   function innermostPolygon(polygons, pt) {
     var best = null, bestArea = Infinity;
@@ -512,7 +539,10 @@
           ctx.toast("This site has no coordinates — pan and zoom to it, then Done editing to keep that view");
         }
       }
-      map.on("click", function () { if (!drawHandler && !adjust && selectedId) select(null); });
+      map.on("click", function () {
+        if (linkSel) { linkSel = null; clearHandles(); }
+        if (!drawHandler && !adjust && selectedId) select(null);
+      });
       var cp = map.createPane("floor_links");
       cp.style.zIndex = "650";
       cp.style.pointerEvents = "none";
@@ -521,6 +551,8 @@
       // Parallax: the floors scale about the middle of the screen, so a pan
       // moves the bigger floors above faster than the ground.
       map.on("move zoomend", function () { applyOrigins(); drawCrossLinks(); });
+      // Room outlines are padded in pixels: redraw them for the new zoom.
+      map.on("zoomend", function () { if (!adjust) { allLevels().forEach(drawFloor); paintSelected(); } });
       drawAll();
       wireDrop();
     }
@@ -546,11 +578,62 @@
       f.group.clearLayers();
       var fp = floorPlan(level);
       if (fp) f.group.addLayer(new PlanOverlay(ctx.backgroundUrl(fp.bg.imageId), fp, f.name));
-      state.polygons.filter(function (p) { return (p.layer || 0) === level; }).forEach(function (p) { drawPolygon(p, level, f); });
+      // Drawn polygons and room outlines, largest first, so a smaller one
+      // (a room inside a building, a polygon inside another) is on top.
+      var shapes = [];
+      state.polygons.filter(function (p) { return (p.layer || 0) === level; }).forEach(function (p) {
+        var lls = p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); });
+        shapes.push({ area: screenArea(lls), draw: function () { drawPolygon(p, level, f); } });
+      });
+      roomHulls(level).forEach(function (h) {
+        shapes.push({ area: screenArea(h.latlngs), draw: function () { drawRoomHull(h, f); } });
+      });
+      shapes.sort(function (a, b) { return b.area - a.area; }).forEach(function (sh) { sh.draw(); });
       Object.keys(placementsOf(level)).forEach(function (id) { if (nodeById[id]) addMarker(id, level); });
       edges.forEach(function (e) {
         if (layerOfDevice(e.source) === level && layerOfDevice(e.target) === level) addLine(e, level);
       });
+    }
+
+    function screenArea(lls) {
+      if (!map || !lls.length) return 0;
+      return ringArea(lls.map(function (ll) { var c = map.latLngToContainerPoint(ll); return [c.x, c.y]; }));
+    }
+    // Room outlines: the devices placed on a floor whose codes name the same
+    // room (area / building / floor / room) get one outline around them,
+    // derived on every draw: never stored, never a click target, never a
+    // code write (rule 148 is the drawn polygons' job). Padded in screen
+    // pixels, so the map redraws them on zoom.
+    var HULL_PAD_PX = 30;
+    function roomHulls(level) {
+      if (!map) return [];
+      var groups = {};
+      Object.keys(placementsOf(level)).forEach(function (id) {
+        var c = currentCodes[id], m = nodeById[id], p = placementsOf(level)[id];
+        if (!m || !p || !c || !c.room) return;
+        var key = ["area", "building", "floor", "room"].map(function (k) { return String(c[k] || "").toLowerCase(); }).join("|");
+        var g = groups[key] || (groups[key] = { key: key, name: c.room, pts: [] });
+        var cp = map.latLngToContainerPoint(localToLatLng(level, p.x, p.y));
+        g.pts.push([cp.x, cp.y]);
+      });
+      return Object.keys(groups).map(function (k) {
+        var g = groups[k];
+        var ring = roundedHull(g.pts, HULL_PAD_PX);
+        return { key: g.key, name: g.name, latlngs: ring.map(function (q) { return map.containerPointToLatLng(L.point(q[0], q[1])); }) };
+      });
+    }
+    function drawRoomHull(h, f) {
+      var color = R.locGroupColor("room", family());
+      f.group.addLayer(L.polygon(h.latlngs, {
+        color: color, weight: 1.5, dashArray: "4 4", fillColor: color, fillOpacity: 0.07,
+        interactive: false, pane: f.name, renderer: f.renderer, className: "topo-room-hull",
+      }));
+      // The room's name at its top edge.
+      var top = h.latlngs.reduce(function (a, b) { return map.latLngToContainerPoint(b).y < map.latLngToContainerPoint(a).y ? b : a; });
+      f.group.addLayer(L.marker(top, {
+        pane: f.name, interactive: false, keyboard: false,
+        icon: L.divIcon({ className: "topo-room-hull-label", html: '<span style="border-color:' + esc(color) + '">' + esc(h.name) + "</span>", iconSize: null, iconAnchor: [0, 0] }),
+      }));
     }
 
     // Each floor's opacity and scale (floorLook), eased when the floor
@@ -609,10 +692,11 @@
         var N = 12, ops = fadeSteps(oa, ob, N);
         for (var i = 0; i < N; i++) {
           var p0 = A.add(B.subtract(A).multiplyBy(i / N)), p1 = A.add(B.subtract(A).multiplyBy((i + 1) / N));
-          L.polyline([map.containerPointToLatLng(p0), map.containerPointToLatLng(p1)], {
-            color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: false,
-            pane: "floor_links", renderer: crossRenderer, lineCap: "butt",
+          var seg = L.polyline([map.containerPointToLatLng(p0), map.containerPointToLatLng(p1)], {
+            color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: ops[i] > 0.05,
+            pane: "floor_links", renderer: crossRenderer, lineCap: "butt", baseWeight: st.width,
           }).addTo(crossGroup);
+          if (ops[i] > 0.05) wireLinkTip(seg, e);
         }
       });
     }
@@ -803,7 +887,8 @@
         placementsOf(level)[id] = latLngToLocal(level, m.getLatLng());
         changed("placements");
         stageCodesFor(id);
-        drawLinksFor(id);
+        // The room outlines follow (this redraws the floor, the marker included).
+        setTimeout(function () { drawFloor(level); drawCrossLinks(); paintSelected(); }, 0);
       });
       m.on("click", function () { select(id); });
       m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
@@ -831,7 +916,8 @@
       });
       state.placements[id] = latLngToLocal(state.layer, latlng);
       if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
-      addMarker(id, state.layer);
+      Object.keys(floorPanes).forEach(function (k) { if (Number(k) !== state.layer) drawFloor(Number(k)); });
+      drawFloor(state.layer);
       changed("placements");
       stageCodesFor(id);
       drawLinksFor(id);
@@ -858,6 +944,7 @@
       if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
       ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null);
       changed("placements");
+      drawFloor(state.layer);
       drawLinksFor(id);
       ctx.refreshSidebar();
     }
@@ -887,18 +974,180 @@
     function restageAllCodes() { Object.keys(state.placements).forEach(stageCodesFor); }
 
     // ── Links ───────────────────────────────────────────────────────────
+    // ── Links: Layer 2's hover tooltip, and its bends and end points ────
+    // A link's hover card is Layer 2's (topology-render.js → edgeTooltipHtml),
+    // fed through a two-method adapter so it reads the same element data.
+    var EE = window.PolarisTopologyEdgeEditor || null;
+    var pathKeyById = {};
+    if (EE) EE.assignPathKeys(edges).forEach(function (k, i) { pathKeyById[edges[i].id] = k; });
+    var tipCy = { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
+    function linkTipHtml(e) {
+      return R.edgeTooltipHtml ? R.edgeTooltipHtml(tipCy, { data: function (k) { return e[k]; } }) : null;
+    }
+    function wireLinkTip(line, e) {
+      line.on("mouseover", function (ev) {
+        var html = linkTipHtml(e);
+        if (!html || !ctx.linkTip) return;
+        line.setStyle({ weight: (line.options.baseWeight || 2) + 2 });
+        ctx.linkTip.show(html, ev.originalEvent.clientX, ev.originalEvent.clientY);
+      });
+      line.on("mousemove", function (ev) { if (ctx.linkTip) ctx.linkTip.move(ev.originalEvent.clientX, ev.originalEvent.clientY); });
+      line.on("mouseout", function () { line.setStyle({ weight: line.options.baseWeight || 2 }); if (ctx.linkTip) ctx.linkTip.hide(); });
+    }
+    // A floor's hand-drawn paths live in that floor's placement blob under
+    // Layer 2's own keys (edgepath:<pathKey>:b<n> / :s / :t): bends in the
+    // floor's plan units, end points as a unit direction on screen.
+    var END_PX = 17;
+    function pathsOf(level) { return EE ? EE.parsePaths(placementsOf(level)) : {}; }
+    function savePaths(level, paths) {
+      var pl = placementsOf(level);
+      Object.keys(pl).forEach(function (k) { if (k.indexOf("edgepath:") === 0) delete pl[k]; });
+      Object.assign(pl, EE.serializePaths(paths));
+      changed("placements");
+    }
+    // An end point sits on a ring round its device: along the stored
+    // direction, or (automatic) facing the next point of the line.
+    function endLatLng(center, dir, toward) {
+      var c = map.latLngToContainerPoint(center);
+      if (!dir) {
+        var t = map.latLngToContainerPoint(toward);
+        var dx = t.x - c.x, dy = t.y - c.y, len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1e-6) return center;
+        dir = { x: dx / len, y: dy / len };
+      }
+      return map.containerPointToLatLng(L.point(c.x + dir.x * END_PX, c.y + dir.y * END_PX));
+    }
+    function linePoints(e, level, path) {
+      var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
+      var S = localToLatLng(level, a.x, a.y), T = localToLatLng(level, b.x, b.y);
+      var mid = ((path && path.bends) || []).map(function (q) { return localToLatLng(level, q.x, q.y); });
+      return [endLatLng(S, path && path.s, mid.length ? mid[0] : T)].concat(mid, [endLatLng(T, path && path.t, mid.length ? mid[mid.length - 1] : S)]);
+    }
+    var linkSel = null;      // { id, level, handle: "b<n>" | "s" | "t" | null }
+    var handleLayers = [];
     function addLine(e, level) {
       var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
       if (!a || !b || !nodeById[e.source] || !nodeById[e.target]) return;
       var f = floorPane(level);
       var st = R.edgeLineStyle(e, family());
-      var line = L.polyline([localToLatLng(level, a.x, a.y), localToLatLng(level, b.x, b.y)], {
+      var pk = pathKeyById[e.id];
+      var line = L.polyline(linePoints(e, level, pk ? pathsOf(level)[pk] : null), {
         color: st.color, weight: st.width, dashArray: st.dash, interactive: true, pane: f.name, renderer: f.renderer,
+        baseWeight: st.width,
       });
-      var tip = (e.label ? esc(e.label) : "") + (e.reason ? '<div class="topo-phys-tip">' + esc(e.reason) + '</div>' : "");
-      if (tip) line.bindTooltip(tip, { sticky: true });
+      wireLinkTip(line, e);
+      line.on("mousedown", function (ev) { onLinePress(ev, e, level); });
+      line.on("click", function (ev) {
+        if (!state.editing || level !== state.layer || adjust || !pk) return;
+        L.DomEvent.stopPropagation(ev); // not a background click
+        linkSel = { id: e.id, level: level, handle: null };
+        drawHandles();
+      });
       f.group.addLayer(line);
       linkLines[e.id] = line;
+      if (linkSel && linkSel.id === e.id) drawHandles();
+    }
+    // Press a line in edit mode: a drag past a few pixels drops a new bend
+    // under the pointer and moves it; a plain click selects the line and
+    // shows its handles (Layer 2's gestures).
+    function onLinePress(ev, e, level) {
+      if (!state.editing || level !== state.layer || adjust || !EE || ev.originalEvent.button !== 0) return;
+      var pk = pathKeyById[e.id];
+      if (!pk) return;
+      L.DomEvent.stop(ev.originalEvent);
+      map.dragging.disable();
+      var start = map.mouseEventToContainerPoint(ev.originalEvent);
+      var bendAt = null;
+      var paths = pathsOf(level);
+      function onMove(mv) {
+        var cp = map.mouseEventToContainerPoint(mv);
+        if (bendAt === null) {
+          if (cp.distanceTo(start) < 4) return;
+          var path = paths[pk] || (paths[pk] = { bends: [] });
+          path.bends = path.bends || [];
+          if (path.bends.length >= EE.MAX_BENDS) return;
+          var pts = linePoints(e, level, path).map(function (ll) { var c = map.latLngToContainerPoint(ll); return { x: c.x, y: c.y }; });
+          bendAt = EE.insertIndex(pts[0], pts[pts.length - 1], pts.slice(1, -1), { x: start.x, y: start.y });
+          path.bends.splice(bendAt, 0, latLngToLocal(level, map.containerPointToLatLng(start)));
+          linkSel = { id: e.id, level: level, handle: "b" + bendAt };
+        }
+        paths[pk].bends[bendAt] = latLngToLocal(level, map.containerPointToLatLng(cp));
+        linkLines[e.id].setLatLngs(linePoints(e, level, paths[pk]));
+      }
+      function onUp() {
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+        map.dragging.enable();
+        if (bendAt === null) return; // a plain click: the line's click handler selects it
+        // The click the browser fires after this release would reach the
+        // map's background click and drop the selection: swallow it.
+        var eat = function (ce) { ce.stopPropagation(); ce.preventDefault(); };
+        window.addEventListener("click", eat, true);
+        setTimeout(function () { window.removeEventListener("click", eat, true); }, 0);
+        savePaths(level, paths);
+        drawHandles();
+      }
+      window.addEventListener("pointermove", onMove, true);
+      window.addEventListener("pointerup", onUp, true);
+    }
+    // The selected line's handles: every bend (drag to move) and one end
+    // point on each device (drag round the device to attach the line there).
+    function clearHandles() { handleLayers.forEach(function (x) { x.remove(); }); handleLayers = []; }
+    function drawHandles() {
+      clearHandles();
+      if (!linkSel || !state.editing || linkSel.level !== state.layer || !map) return;
+      var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
+      var pk = e && pathKeyById[e.id];
+      if (!e || !pk || !linkLines[e.id]) { linkSel = null; return; }
+      var level = linkSel.level, paths = pathsOf(level), path = paths[pk] || { bends: [] };
+      var pts = linePoints(e, level, path);
+      function handle(ll, part, round) {
+        var on = linkSel.handle === part;
+        var m = L.marker(ll, {
+          draggable: true, keyboard: false, pane: "floor_links",
+          icon: L.divIcon({ className: "topo-link-handle" + (round ? " is-end" : "") + (on ? " is-selected" : ""), iconSize: [12, 12], iconAnchor: [6, 6] }),
+        });
+        m.on("click", function (ev) { L.DomEvent.stop(ev); linkSel.handle = part; drawHandles(); });
+        m.on("dragstart", function () { linkSel.handle = part; });
+        m.on("drag", function () {
+          var p = paths[pk] || (paths[pk] = { bends: [] });
+          if (round) {
+            var who = part === "s" ? e.source : e.target;
+            var q = placementsOf(level)[who];
+            var c = map.latLngToContainerPoint(localToLatLng(level, q.x, q.y));
+            var at = map.latLngToContainerPoint(m.getLatLng());
+            var dx = at.x - c.x, dy = at.y - c.y, len = Math.sqrt(dx * dx + dy * dy);
+            if (len < 1e-6) return;
+            p[part] = { x: dx / len, y: dy / len };
+            m.setLatLng(endLatLng(localToLatLng(level, q.x, q.y), p[part]));
+          } else {
+            p.bends[Number(part.slice(1))] = latLngToLocal(level, m.getLatLng());
+          }
+          linkLines[e.id].setLatLngs(linePoints(e, level, p));
+        });
+        m.on("dragend", function () { savePaths(level, paths); drawHandles(); });
+        m.addTo(map);
+        handleLayers.push(m);
+      }
+      handle(pts[0], "s", true);
+      (path.bends || []).forEach(function (b, i) { handle(pts[i + 1], "b" + i, false); });
+      handle(pts[pts.length - 1], "t", true);
+    }
+    // Delete on a selected handle: a bend goes; an end point returns to automatic.
+    function deleteSelectedHandle() {
+      if (!linkSel || !linkSel.handle || !state.editing) return false;
+      var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
+      var pk = e && pathKeyById[e.id];
+      if (!pk) return false;
+      var paths = pathsOf(linkSel.level), path = paths[pk];
+      if (!path) return false;
+      if (linkSel.handle === "s" || linkSel.handle === "t") delete path[linkSel.handle];
+      else path.bends.splice(Number(linkSel.handle.slice(1)), 1);
+      linkSel.handle = null;
+      savePaths(linkSel.level, paths);
+      drawLinksFor(e.source);
+      drawHandles();
+      return true;
     }
     function drawLinks() { drawAll(); }
     function drawLinksFor(id) {
@@ -989,7 +1238,10 @@
       if (!l) return;
       var pl = placementsOf(level);
       var spots = {};
-      Object.keys(pl).forEach(function (id) { spots[id] = localToLatLng(level, pl[id].x, pl[id].y); });
+      Object.keys(pl).forEach(function (id) {
+        if (/^edgepath:.*:[st]$/.test(id)) return; // an end point is a direction, not a place
+        spots[id] = localToLatLng(level, pl[id].x, pl[id].y);
+      });
       var rings = {};
       state.polygons.forEach(function (p) {
         if ((p.layer || 0) === level) rings[p.id] = p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); });
@@ -1232,7 +1484,7 @@
       if (viewLayer) { viewLayer = null; applyBaseLayer(); }
       paintDragging();
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
-      if (!on) endAdjust();
+      if (!on) { endAdjust(); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
       if (on) resetHistory();
       paintLayerCtl();
@@ -1268,6 +1520,8 @@
     function setLayer(level) {
       if (level === state.layer) return;
       endAdjust();
+      linkSel = null;
+      clearHandles();
       var from = state.layer;
       state.layer = level;
       selectedId = null;
@@ -1421,12 +1675,13 @@
       // The devices on the map — map.js lists only these under the info card.
       placedIds: function () {
         var o = {};
-        Object.keys(byLayer).forEach(function (k) { Object.keys(byLayer[k]).forEach(function (id) { o[id] = true; }); });
+        Object.keys(byLayer).forEach(function (k) { Object.keys(byLayer[k]).forEach(function (id) { if (id.indexOf("edgepath:") !== 0) o[id] = true; }); });
         return o;
       },
       setSelected: function (id) { selectedId = id || null; paintSelected(); },
       // The Delete key (map.js): the selected placed device comes off the map.
       deleteSelected: function () {
+        if (deleteSelectedHandle()) return true;
         if (!state.editing || !selectedId || !state.placements[selectedId]) return false;
         var id = selectedId;
         select(null);
@@ -1470,6 +1725,8 @@
     _groundToPlan: groundToPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
+    _convexHull: convexHull,
+    _roundedHull: roundedHull,
     _groupsFromData: groupsFromData,
     _codesLabel: codesLabel,
     _codesEqual: codesEqual,

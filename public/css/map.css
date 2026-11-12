@@ -950,6 +950,20 @@
 .topo-floor-pane { will-change: opacity, transform; }
 .topo-floor-pane.is-faint, .topo-floor-pane.is-faint * { pointer-events: none !important; }
 .topo-floor-plan { pointer-events: none; user-select: none; max-width: none !important; }
+/* Room outlines (topology-physical.js → roomHulls): derived from codes, never a target. */
+.topo-room-hull-label { pointer-events: none; }
+/* A selected connection's handles on the Topology map (bends square, ends round). */
+.topo-link-handle {
+  box-sizing: border-box; border: 2px solid var(--color-accent); background: var(--color-surface);
+  border-radius: 2px; cursor: grab;
+}
+.topo-link-handle.is-end { border-radius: 50%; }
+.topo-link-handle.is-selected { background: var(--color-accent); }
+.topo-room-hull-label span {
+  display: inline-block; transform: translate(-50%, -110%); white-space: nowrap;
+  padding: 1px 8px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--color-surface); color: var(--color-text-primary);
+}
 .topo-floor-center {
   position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
   z-index: 700; pointer-events: none;

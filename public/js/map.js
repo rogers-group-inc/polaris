@@ -1760,6 +1760,8 @@
       backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(topoState.siteId, imageId); },
       refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
       selectAsset: function (id) { _selectTopologyAsset(id); },
+      // Layer 2's link hover card, for the Topology canvas's lines.
+      linkTip: { show: showEdgeTooltip, move: moveEdgeTooltip, hide: hideEdgeTooltip },
       selectedId: function () { return topoState.selectedAssetId || null; },
       // The site's views, and making / opening one (a wall rack links a Rack view).
       listViews: function () { return _siteViews(); },
@@ -2956,6 +2958,9 @@
         ["Floor + / − (left)", "Change floor: the floor above shows faint and larger, the one above that fainter still; floors below are hidden"],
         ["Map button on a floor → Upload floor plan", "Put that floor's plan image on the ground"],
         ["Map button → Adjust floor plan", "Drag to move, drag a corner to stretch, Ctrl + corner keeps the shape, Alt + drag rotates; Done or Esc finishes"],
+        ["Drag a connection line", "Add a bend point there and move it"],
+        ["Click a connection line", "Show its points — drag a bend to move it, drag an end point around its device to attach the line there"],
+        ["Select a point, then Delete", "Remove the bend (an end point goes back to automatic)"],
         ["Drag / scroll", "Pan and zoom — on OpenStreetMap the view you leave is saved with the view"],
         ["Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"],
       ],
