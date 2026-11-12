@@ -742,7 +742,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **It refuses the server's OWN addresses after resolution**, beyond the agent's ranges — a name resolving to this host is a loopback probe of Polaris itself. The save path refuses the literal (`assertTargetHostAllowed`); this catches the DNS name.
 - **ICMP rides the system `ping` and the traceroute the system tracer** — the service holds no CAP_NET_RAW. A `ping` that could not run reads `icmp unsupported on this server …`, never as the target failing (rule 71); a missing tracer is a trace with no hops and a note.
 - **Never throws**; every problem is the sample's `error`.
-- **Scheduling mirrors `cmd/polaris-agent/path_check.go`:** due when the interval (less `DUE_SLACK_MS`) has elapsed, always on the first run under a revision; traceroute on the baseline, every Nth run, and on the run after a PASS if it fails; a changed revision re-baselines.
+- **Scheduling mirrors `cmd/polaris-agent/path_check.go`:** due when the interval (less `DUE_SLACK_MS`) has elapsed, always on the first run under a revision; traceroute on the baseline, every Nth run, on the run after a PASS if it fails, and on the run after a FAIL if it passes (the recovery — the resolved email's path graph); a changed revision re-baselines.
 
 **When changing this:** a probe rule changed on the agent → change it here in the same commit (and the reverse). Authentication is the one deliberate asymmetry: it exists ONLY here. A new sample field → fill it here as well as in the Go collector.
 

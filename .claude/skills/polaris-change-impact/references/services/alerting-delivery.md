@@ -10,7 +10,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** `notificationTypes` (`allRuleActionRefs`, `normalizeRuleToV2`, `notifyChannelIds`, the action schemas); `prisma` (`NotificationRule`, `AlertGroup`, `FirmwareUpgradeSchedule`, `RebootSchedule`). Read-only.
 
-**Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import).
+Also `dimensionTargetReferrers(fields, ids)` (rule 167(a)): automations whose stored trigger or reset holds one of `ids` in `dimensionFilter.checkId` / `widgetId` / `stateProbeId`, walked as raw JSON to any depth.
+
+**Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import); `pathCheckService.deleteCheck`, `manufacturerProfileService.assertWidgetsUnreferenced` (→ `deleteWidget`, `deleteProfile`, `manufacturerProfilePortabilityService.saveProfileCode`).
 
 **Invariants:**
 - **It never walks action locations itself.** Everything goes through `allRuleActionRefs`; a location that walker does not visit is invisible here, and the unit test has one case per location so that fails by name.
@@ -20,6 +22,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **When changing this:**
 - A new thing an action names by id (a third registry) gets a predicate here and a 409 in that registry's delete, not a hand-rolled scan.
 - A new carrier of actions (something besides automations and alert groups) is added to `findActionReferrers`.
+- A new `dimensionFilter` key that holds the id of something deletable is added to `DimensionTargetField`, gets a 409 in that thing's delete, and — if a state row is keyed by it — a branch in `notifications/readings.ts → deletedTargetGone`.
 
 ## services/automationScriptService.ts
 

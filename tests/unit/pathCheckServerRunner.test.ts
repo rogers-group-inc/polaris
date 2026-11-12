@@ -83,7 +83,7 @@ describe("scheduling — the agent's rules", () => {
     expect(serverTraceMode(undefined, d)).toBe("always");
     expect(serverTraceMode({ revision: "r1", lastRunAt: 0, runCount: 3, lastOk: true }, d)).toBe("always");
     expect(serverTraceMode({ revision: "r1", lastRunAt: 0, runCount: 1, lastOk: true }, d)).toBe("onFail");
-    expect(serverTraceMode({ revision: "r1", lastRunAt: 0, runCount: 1, lastOk: false }, d)).toBe("never");
+    expect(serverTraceMode({ revision: "r1", lastRunAt: 0, runCount: 1, lastOk: false }, d)).toBe("onPass");
     expect(serverTraceMode(undefined, def())).toBe("never"); // traceroute off
   });
   it("a changed definition re-baselines; a dropped check is forgotten", () => {

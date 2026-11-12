@@ -41,6 +41,7 @@ import {
   createWidget,
   updateWidget,
   deleteWidget,
+  assertWidgetsUnreferenced,
   setWidgetLayout,
   refreshProfileCache,
   type ProfileFull,
@@ -554,6 +555,10 @@ export async function saveProfileCode(profileId: string, raw: unknown, actor?: s
   const credId = (name: string) => creds.find((c) => c.name.toLowerCase() === name.toLowerCase())?.id;
   const badCred = file.widgets.find((w) => w.credential && !credId(w.credential.name));
   if (badCred) throw new AppError(400, `No credential named "${badCred.credential!.name}" (widget "${badCred.name}")`);
+  // Rule 167(a), before the first write: a widget this file drops is deleted
+  // further down, and a refusal there would leave the profile half-applied.
+  const keptIds = new Set(file.widgets.map((w) => w.id).filter(Boolean));
+  await assertWidgetsUnreferenced(profile.widgets.filter((w) => !keptIds.has(w.id)).map((w) => ({ id: w.id, name: w.name })));
 
   const changes: string[] = [];
   try {

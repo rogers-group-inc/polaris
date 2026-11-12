@@ -1120,7 +1120,7 @@ var SAMPLE_RETENTION_FLAT_ENTITIES = [
     key: "pathCheckTraceroutes",
     label: "Path traceroutes",
     hint: "Hop-by-hop paths the Polaris Agent traced for path checks (every Nth run " +
-          "and on each pass→fail). Sets how far back the Paths tab’s path history reaches.",
+          "and on each pass→fail and recovery). Sets how far back the Paths tab’s path history reaches.",
     def: 30,
   },
 ];

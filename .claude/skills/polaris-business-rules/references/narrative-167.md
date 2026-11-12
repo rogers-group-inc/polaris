@@ -30,3 +30,18 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 **Scale.** Each check runs only on a delete. The automation walk is two unpaged reads of small tables (automations, alert groups); the MIB check is two indexed-or-small counts and a five-row read; the Discovery check reads the Discovery table once.
 
 Pinned by `tests/unit/actionReferenceService.test.ts` (one case per action location, for a channel and for a script), `tests/unit/automationScripts.test.ts`, `tests/unit/credentialUsage.test.ts` and `tests/integration/deleteGuards.test.ts`.
+
+### Rule 167(a) — what a condition is narrowed to
+
+**How it was found.** The same audit batch (E.5, E.6). A condition can be narrowed to ONE path check, one numeric custom widget or one state probe, by id, in `dimensionFilter` — again a bare id in JSON. Two things followed from deleting the object:
+
+- **The automation went dead** (E.5). It stayed on the Automations page, enabled, and matched nothing ever again. Nothing said so.
+- **A firing alert froze** (E.6). The engine retires a state whose dimension is no longer reported, but only when its subject reported SOMETHING for the rule that tick; a subject that reports nothing is left alone, because a collection gap is not recovery. A host whose only path check was deleted reports nothing for a path automation for ever, and the Polaris server's rows had the same hole. The alert stood until an operator found Alerts → Clear.
+
+**The decision.** The first is rule 167's own shape, so it takes the same answer: the delete is refused, naming the automations. A profile delete cascades its widgets and so asks about all of them. The profile code save (`saveProfileCode`) deletes the widgets a pasted file leaves out; it asks BEFORE its first write, because a refusal half way would leave the profile half applied.
+
+The second cannot be closed by the guard alone: an automation that covers every check (a blank filter) names nothing, so the delete goes through, and an alert about that check may be firing. For those the engine's vanished sweep gains a second question about a parked row: does the thing it is about still exist? `deletedTargetGone` asks the database (one indexed read of ids, only for rows already parked, only for a single-condition path / custom-widget / state-probe automation) and a row whose object is gone is retired through the ordinary out-of-scope path, with its Event. It asks the database and not the in-memory profile cache on purpose: a role that never warmed that cache would read every probe as deleted and clear real alerts.
+
+**What it does not do.** A widget whose TYPE is edited (a state probe turned into a gauge) keeps its id and is not caught. A composite automation's states are not keyed by a check or widget id, so the sweep does not look at them. The path-change trigger is left out for the same reason of caution: only the three metrics whose key is known to be the object's id are read.
+
+Pinned by `tests/unit/dimensionTargetGuards.test.ts` and the "167(a)" cases in `tests/integration/deleteGuards.test.ts`.

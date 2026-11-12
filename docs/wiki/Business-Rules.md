@@ -3516,6 +3516,12 @@ Deleting any of these now stops with a message naming what still depends on it:
 Point those at something else, then delete. Before this, the delete went through and the
 automation, the poll or the Discovery quietly stopped working.
 
+The same applies to what an automation's condition is narrowed to. A **path check**, a
+**custom widget** or a **state probe** that an automation names cannot be deleted, and neither
+can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
+automation covers every check and one of them is deleted while its alert is firing, Polaris
+clears that alert on its next pass instead of leaving it open for good.
+
 ### Rule 168
 
 **A floor is a number; its name is only a label.** A description's floor is a whole number:
@@ -3524,6 +3530,22 @@ also have a name ("Basement", "Mezzanine") kept in **Location regions**. New des
 the number; an existing text floor such as `f:Surface` keeps working, is matched to the floor of
 that name, and is listed under **Devices to check** with the number to use. Polaris never
 rewrites one without asking.
+
+### Rule 169
+
+**Renaming a tag changes it everywhere, not only on the devices that carry it.** When you
+rename a tag in the registry, Polaris also updates:
+
+- the tag scope of every user and SSO group mapping that lists it, so people keep the devices
+  they could change;
+- every device filter that uses it — in automations, alert groups, quiet times, path checks,
+  contacts, Application Map rules and other tags' auto-assign filters;
+- automations that are narrowed to ports with that tag, and notify actions sent to the users
+  of that tag.
+
+The Events page entry for the rename says what was updated. Deleting a tag changes none of
+these: the tag stays on any device that carries it by hand, and the filters keep selecting
+those devices.
 
 ### Rule 170
 

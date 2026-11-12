@@ -144,7 +144,9 @@ test "offers the saturation ceiling on packet loss but not on a path check's fai
   rather than reading as "down" (rule 71).
 - **Traceroute on every run.** ~90 probes a minute per agent for a 30-hop path. It runs
   every Nth run (default 5) and immediately on a pass→fail transition, so a failure always
-  has a fresh path and a baseline to compare it with.
+  has a fresh path and a baseline to compare it with — and on the fail→pass transition
+  (2026-11-12), so a recovery has one too: the resolved alert email's `{path.graph}` is
+  drawn from the newest traces, and without it showed the outage's route.
 
 <a id="rule-85-server-source"></a>
 
