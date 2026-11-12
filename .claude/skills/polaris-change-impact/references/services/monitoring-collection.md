@@ -203,7 +203,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Monitor-override semantics — `Asset.monitorOverride` is an **explicit operator-intent bit** (true when an operator deliberately set `monitored` away from the owning integration's per-class `addAsMonitored` default), so discovery sweeps don't clobber operator intent. Crucially it is WRITTEN only at operator-action time and never re-derived from incidental divergence.
 
-**Public API:** `AddAsMonitoredAssetType`, `getAddAsMonitoredFromConfig`, `computeMonitorOverride`, `resolveMonitorOverride`, `classBlockKeyForAssetType`, `snapshotAddAsMonitoredByAssetType`, `recomputeMonitorOverrideForAssets`, `sweepMonitoredForIntegration`, `buildMonitoredSweep`, `AUTO_MONITOR_ASSET_TYPES`, `integrationAlwaysMonitorsGates`, `applyFixedMonitorDefaults`
+**Public API:** `AddAsMonitoredAssetType`, `getAddAsMonitoredFromConfig`, `computeMonitorOverride`, `classBlockKeyForAssetType`, `snapshotAddAsMonitoredByAssetType`, `recomputeMonitorOverrideForAssets`, `sweepMonitoredForIntegration`, `buildMonitoredSweep`, `integrationAlwaysMonitorsGates`, `applyFixedMonitorDefaults`
 
 **Cross-service deps:** none (pure helpers + raw SQL via the caller's prisma).
 

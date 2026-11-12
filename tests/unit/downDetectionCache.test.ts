@@ -41,7 +41,6 @@ import {
   resolveDownThreshold,
   previewDownDetectionRemoval,
   describeDownDetectionFor,
-  countPassiveAssets,
   invalidateDownDetectionCache,
   resetDownDetectionStateForTests,
   DOWN_DETECTION_TTL_MS,
@@ -156,7 +155,7 @@ describe("coverage", () => {
     ruleRows = [{ id: "cpu", name: "cpu", createdAt: new Date(), trigger: { type: "asset_metric", metric: "cpuPct", operator: ">", threshold: 90, aggregation: "avg", windowSec: 300, forDurationSec: 0 }, scope: { allAssets: true } }];
     assetRows = [asset("a1"), asset("a2")];
     expect(await resolveDownThreshold("a1")).toBeNull();
-    expect(await countPassiveAssets()).toBe(2);
+    expect(await resolveDownThreshold("a2")).toBeNull();
   });
 
   it("ignores DISABLED rules — the query filters them, so an empty result is passive", async () => {

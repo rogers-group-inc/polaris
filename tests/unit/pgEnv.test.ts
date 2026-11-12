@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { pgEnvFromDatabaseUrl, pgChildEnv, redactDatabaseUrl, libpqSslMode } from "../../src/utils/pgEnv.js";
+import { pgEnvFromDatabaseUrl, pgChildEnv, libpqSslMode } from "../../src/utils/pgEnv.js";
 import { AppError } from "../../src/utils/errors.js";
 
 describe("pgEnvFromDatabaseUrl", () => {
@@ -106,19 +106,6 @@ describe("pgChildEnv", () => {
   it("preserves the rest of the parent environment", () => {
     const env = pgChildEnv("postgresql://u:p@h/polaris");
     expect(env.PATH).toBe(process.env.PATH);
-  });
-});
-
-describe("redactDatabaseUrl", () => {
-  it("removes the password so a URL can appear in a log line", () => {
-    const out = redactDatabaseUrl("postgresql://polaris:sup3rs3cret@h:5432/polaris");
-    expect(out).not.toContain("sup3rs3cret");
-    expect(out).toContain("polaris");
-    expect(out).toContain("***");
-  });
-
-  it("does not throw on an unparseable URL", () => {
-    expect(redactDatabaseUrl("garbage")).toBe("<unparseable database URL>");
   });
 });
 

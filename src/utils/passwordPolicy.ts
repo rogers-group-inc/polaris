@@ -122,11 +122,6 @@ export function evaluatePassword(password: string, policy: PasswordPolicy): Pass
   return passwordRules(policy).filter((r) => !r.test(password));
 }
 
-/** True when the password satisfies every active rule. */
-export function passwordMeetsPolicy(password: string, policy: PasswordPolicy): boolean {
-  return evaluatePassword(password, policy).length === 0;
-}
-
 /**
  * The 400 message for a rejected password: every unmet rule, not just the
  * first. A user retrying one rule at a time against an 8-character minimum

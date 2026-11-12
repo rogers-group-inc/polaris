@@ -136,8 +136,6 @@ export const SCOPE_FIELD_OPS: Record<string, readonly string[]> = {
   assetId: ["equals", "notEquals"],
 };
 
-const SCOPE_FIELDS = Object.keys(SCOPE_FIELD_OPS);
-
 /**
  * Fields whose VALUE is a CIDR (or a bare IP, read as a host route) rather than
  * a string to compare. They validate together and match together — the set
@@ -202,11 +200,6 @@ export const DEVICE_FILTER_FIELD_OPS: Record<string, readonly string[]> = {
   // Device-filter only — the automations scope never asked for it.
   nativeVlan: ["equals", "notEquals"],
 };
-
-const DEVICE_FILTER_FIELDS = Object.keys(DEVICE_FILTER_FIELD_OPS);
-
-/** Fields the extended vocabulary adds — the ones automations can't produce. */
-export const DEVICE_FILTER_ONLY_FIELDS = DEVICE_FILTER_FIELDS.filter((f) => !SCOPE_FIELDS.includes(f));
 
 export interface ScopeConditionRule {
   field: string;

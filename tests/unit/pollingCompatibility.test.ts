@@ -11,28 +11,40 @@
 import { describe, it, expect } from "vitest";
 import {
   isPollingMethodCompatible,
-  compatibleMethodsFor,
-  allPollingMethods,
   isPollingMethod,
   pollingMethodLabel,
   assetSourceKindFromIntegrationType,
   isMethodValidForStream,
-  methodsForStream,
   responseTimeProbeShouldQueue,
   credentialTypeForPollingMethod,
+  type AssetSourceKind,
+  type PollingMethod,
+  type Stream,
 } from "../../src/utils/pollingCompatibility.js";
+
+// Every polling method, in display order. Test-local: production asks the
+// per-pair predicates (isPollingMethodCompatible / isMethodValidForStream), so
+// the matrix rows below are rebuilt from those predicates over this list.
+const ALL: ReadonlyArray<PollingMethod> = ["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox", "genericapi"];
+const methodsFor = (src: AssetSourceKind) => ALL.filter((m) => isPollingMethodCompatible(src, m));
+const streamMethods = (s: Stream) => ALL.filter((m) => isMethodValidForStream(s, m));
+
+it("the test-local method list is exactly the set isPollingMethod accepts", () => {
+  ALL.forEach((m) => expect(isPollingMethod(m), m).toBe(true));
+  expect(new Set(ALL).size).toBe(ALL.length);
+});
 
 describe("compatibility matrix — locked values per asset source", () => {
   it("FortiManager: REST API + SNMP + SSH + ICMP + Disabled, no WinRM or Agent", () => {
     // "fortimanager" (ask FMG's own device roster) belongs to this source and
     // no other — nothing else has a FortiManager to ask.
-    expect(compatibleMethodsFor("fortimanager")).toEqual(["rest_api", "snmp", "ssh", "icmp", "disabled", "fortimanager"]);
+    expect(methodsFor("fortimanager")).toEqual(["rest_api", "snmp", "ssh", "icmp", "disabled", "fortimanager"]);
     expect(isPollingMethodCompatible("fortimanager", "winrm")).toBe(false);
     expect(isPollingMethodCompatible("fortimanager", "agent")).toBe(false);
     expect(isPollingMethodCompatible("fortimanager", "disabled")).toBe(true);
   });
   it("FortiGate: same as FortiManager", () => {
-    expect(compatibleMethodsFor("fortigate")).toEqual(["rest_api", "snmp", "ssh", "icmp", "disabled"]);
+    expect(methodsFor("fortigate")).toEqual(["rest_api", "snmp", "ssh", "icmp", "disabled"]);
     expect(isPollingMethodCompatible("fortigate", "winrm")).toBe(false);
     expect(isPollingMethodCompatible("fortigate", "agent")).toBe(false);
     expect(isPollingMethodCompatible("fortigate", "disabled")).toBe(true);
@@ -41,7 +53,7 @@ describe("compatibility matrix — locked values per asset source", () => {
     // "vcenter" is allowed on the directory sources because a VM those
     // integrations discovered FIRST can be vCenter-merged; the vcenter-vm
     // AssetSource requirement is enforced at save/collect time.
-    expect(compatibleMethodsFor("activedirectory")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
+    expect(methodsFor("activedirectory")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
     expect(isPollingMethodCompatible("activedirectory", "rest_api")).toBe(false);
     expect(isPollingMethodCompatible("activedirectory", "snmp")).toBe(false);
     expect(isPollingMethodCompatible("activedirectory", "winrm")).toBe(true);
@@ -73,7 +85,7 @@ describe("compatibility matrix — locked values per asset source", () => {
     // Locked as an exact ordered array: a source kind missing from
     // COMPATIBILITY silently resolves to "manual" (the most permissive
     // matrix), which would offer REST API and SNMP on a Windows host.
-    expect(compatibleMethodsFor("azurearc")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
+    expect(methodsFor("azurearc")).toEqual(["winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
     expect(isPollingMethodCompatible("azurearc", "rest_api")).toBe(false);
     expect(isPollingMethodCompatible("azurearc", "snmp")).toBe(false);
     expect(isPollingMethodCompatible("azurearc", "winrm")).toBe(true);
@@ -83,13 +95,13 @@ describe("compatibility matrix — locked values per asset source", () => {
     expect(isPollingMethodCompatible("azurearc", "vcenter")).toBe(true);
   });
   it("vCenter: ICMP + SNMP + WinRM + SSH + Agent + vCenter (VMs are guest OSes; ESXi answers SNMP/SSH)", () => {
-    expect(compatibleMethodsFor("vcenter")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter"]);
+    expect(methodsFor("vcenter")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter"]);
     expect(isPollingMethodCompatible("vcenter", "rest_api")).toBe(false);
     expect(isPollingMethodCompatible("vcenter", "vcenter")).toBe(true);
   });
   it("Unraid / TrueNAS: vCenter's shape with their own method, never each other's", () => {
-    expect(compatibleMethodsFor("unraid")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "unraid"]);
-    expect(compatibleMethodsFor("truenas")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "truenas"]);
+    expect(methodsFor("unraid")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "unraid"]);
+    expect(methodsFor("truenas")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "truenas"]);
     expect(isPollingMethodCompatible("unraid", "truenas")).toBe(false);
     expect(isPollingMethodCompatible("truenas", "unraid")).toBe(false);
     expect(isPollingMethodCompatible("unraid", "vcenter")).toBe(false);
@@ -99,7 +111,7 @@ describe("compatibility matrix — locked values per asset source", () => {
     expect(assetSourceKindFromIntegrationType("truenas")).toBe("truenas");
   });
   it("Proxmox VE: the same shape with its own method, never another platform's", () => {
-    expect(compatibleMethodsFor("proxmox")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "proxmox"]);
+    expect(methodsFor("proxmox")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "proxmox"]);
     expect(isPollingMethodCompatible("proxmox", "truenas")).toBe(false);
     expect(isPollingMethodCompatible("unraid", "proxmox")).toBe(false);
     expect(isPollingMethodCompatible("vcenter", "proxmox")).toBe(false);
@@ -110,7 +122,7 @@ describe("compatibility matrix — locked values per asset source", () => {
   // hold a credential for, plus its own monitor queries ("genericapi", rule
   // 100(i)) — and nothing that reads ANOTHER specific integration.
   it("Generic API: the credential-backed transports and its own method, no other integration's, no FortiOS REST", () => {
-    expect(compatibleMethodsFor("genericapi")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "genericapi"]);
+    expect(methodsFor("genericapi")).toEqual(["snmp", "winrm", "ssh", "icmp", "disabled", "agent", "genericapi"]);
     for (const m of ["rest_api", "vcenter", "fortimanager", "unraid", "truenas", "proxmox"] as const) {
       expect(isPollingMethodCompatible("genericapi", m), m).toBe(false);
     }
@@ -142,8 +154,8 @@ describe("compatibility matrix — locked values per asset source", () => {
   // one integration's device roster, and an orphan asset has no integration to
   // read, so it is the one method manual does NOT get.
   it("Manual: every method except the ones that need a specific integration", () => {
-    expect(compatibleMethodsFor("manual")).toEqual(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
-    allPollingMethods().forEach((m) => {
+    expect(methodsFor("manual")).toEqual(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "unraid", "truenas", "proxmox", "genericapi"]);
+    ALL.forEach((m) => {
       expect(isPollingMethodCompatible("manual", m), m).toBe(m !== "fortimanager");
     });
   });
@@ -196,7 +208,7 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
     const fortimanagerStreams = ["responseTime"];
     const workloadStreams = ["responseTime", "cpuMemory", "interfaces", "storage", "temperature"];
     (["responseTime", "cpuMemory", "temperature", "interfaces", "lldp", "storage"] as const).forEach((s) => {
-      allPollingMethods().forEach((m) => {
+      ALL.forEach((m) => {
         const expected =
           m === "vcenter"      ? vcenterStreams.includes(s) :
           m === "proxmox"      ? vcenterStreams.includes(s) :
@@ -208,12 +220,12 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
     });
     // Response time is the only stream that admits every method — it is the one
     // question every transport can answer.
-    expect(methodsForStream("responseTime")).toEqual(allPollingMethods());
-    expect(methodsForStream("lldp")).not.toContain("unraid");
-    expect(methodsForStream("lldp")).not.toContain("truenas");
-    expect(methodsForStream("cpuMemory")).toEqual(allPollingMethods().filter((m) => m !== "fortimanager"));
-    expect(methodsForStream("temperature")).toEqual(
-      allPollingMethods().filter((m) => m !== "vcenter" && m !== "fortimanager" && m !== "proxmox"),
+    expect(streamMethods("responseTime")).toEqual(ALL);
+    expect(streamMethods("lldp")).not.toContain("unraid");
+    expect(streamMethods("lldp")).not.toContain("truenas");
+    expect(streamMethods("cpuMemory")).toEqual(ALL.filter((m) => m !== "fortimanager"));
+    expect(streamMethods("temperature")).toEqual(
+      ALL.filter((m) => m !== "vcenter" && m !== "fortimanager" && m !== "proxmox"),
     );
   });
 
@@ -237,10 +249,9 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
   // is the axis a check actually varies on.
   it("http is no longer a polling method anywhere", () => {
     expect(isPollingMethod("http")).toBe(false);
-    expect(allPollingMethods()).not.toContain("http");
     (["fortimanager", "fortigate", "activedirectory", "entraid", "windowsserver", "azurearc", "vcenter", "unraid", "truenas", "proxmox", "genericapi", "manual"] as const)
       .forEach((src) => {
-        expect(compatibleMethodsFor(src), src).not.toContain("http");
+        expect(isPollingMethodCompatible(src, "http" as PollingMethod), src).toBe(false);
       });
   });
 
@@ -260,7 +271,7 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
     });
   });
   it("processes: agent/SNMP/SSH/WinRM only — no REST or ICMP", () => {
-    expect(methodsForStream("processes")).toEqual(["snmp", "winrm", "ssh", "disabled", "agent"]);
+    expect(streamMethods("processes")).toEqual(["snmp", "winrm", "ssh", "disabled", "agent"]);
     expect(isMethodValidForStream("processes", "agent")).toBe(true);
     expect(isMethodValidForStream("processes", "snmp")).toBe(true);
     expect(isMethodValidForStream("processes", "ssh")).toBe(true);
@@ -269,7 +280,7 @@ describe("per-stream method restrictions (cross-transport streams)", () => {
     expect(isMethodValidForStream("processes", "icmp")).toBe(false);
   });
   it("eventLog: agent/SSH/WinRM/REST only — no SNMP or ICMP", () => {
-    expect(methodsForStream("eventLog")).toEqual(["rest_api", "winrm", "ssh", "disabled", "agent"]);
+    expect(streamMethods("eventLog")).toEqual(["rest_api", "winrm", "ssh", "disabled", "agent"]);
     expect(isMethodValidForStream("eventLog", "agent")).toBe(true);
     expect(isMethodValidForStream("eventLog", "ssh")).toBe(true);
     expect(isMethodValidForStream("eventLog", "winrm")).toBe(true);
@@ -352,7 +363,7 @@ describe("credentialTypeForPollingMethod — which credential type a transport n
   // return undefined, which reads as "needs no credential" and silently
   // disables the type check for it.
   it("answers for every method in the union — no undefined fall-through", () => {
-    allPollingMethods().forEach((m) => {
+    ALL.forEach((m) => {
       const t = credentialTypeForPollingMethod(m);
       expect(t === null || typeof t === "string", m).toBe(true);
       expect(t, m).not.toBeUndefined();

@@ -39,7 +39,7 @@ export interface FirmwareVersion {
   build?: number;
 }
 
-export type FirmwareFamily = "switch" | "ap" | "firewall";
+type FirmwareFamily = "switch" | "ap" | "firewall";
 
 export interface FirmwareImageIdentity {
   /** Serial-prefix platform token (`S108FF`, `FP231K`), or null when only a filename was readable. */
@@ -199,12 +199,4 @@ export function isFortiApSerial(serial: string | null | undefined): boolean {
 export function isFortiGateSerial(serial: string | null | undefined): boolean {
   const s = usableSerialOrNull(serial);
   return !!s && FORTIGATE_SERIAL_RE.test(s.toUpperCase());
-}
-
-/** Which Fortinet product line a serial belongs to, or null. */
-export function firmwareFamilyForSerial(serial: string | null | undefined): FirmwareFamily | null {
-  if (isFortiGateSerial(serial)) return "firewall";
-  if (isFortiSwitchSerial(serial)) return "switch";
-  if (isFortiApSerial(serial)) return "ap";
-  return null;
 }

@@ -103,7 +103,7 @@ export const platformEolDatasetSchema = z.object({
 
 export type PlatformEolDataset = z.infer<typeof platformEolDatasetSchema>;
 export type PlatformTechnology = z.infer<typeof technologySchema>;
-export type PlatformTrack = z.infer<typeof trackSchema>;
+type PlatformTrack = z.infer<typeof trackSchema>;
 type PlatformSecurityFloor = NonNullable<PlatformTrack["securityFloor"]>;
 type PlatformAdvisory = z.infer<typeof advisorySchema>;
 export type PlatformPlaybook = z.infer<typeof playbookSchema>;
@@ -228,14 +228,6 @@ function unpatchedSeverity(
 function daysBetween(nowMs: number, toIso: string): number {
   const midnight = Math.floor(nowMs / DAY_MS) * DAY_MS;
   return Math.round((Date.parse(`${toIso}T00:00:00Z`) - midnight) / DAY_MS);
-}
-
-/** Find the dataset track matching an observed version. */
-export function findTrack(tech: PlatformTechnology, observedVersion: string | null): PlatformTrack | null {
-  if (!observedVersion) return null;
-  const t = deriveTrack(observedVersion, tech.trackGranularity as TrackGranularity);
-  if (!t) return null;
-  return tech.tracks.find((x) => x.track === t) ?? null;
 }
 
 /**

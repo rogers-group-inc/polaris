@@ -48,7 +48,7 @@
 - Exactly one code path may change a PUSHED reservation's MAC. Phase 6 is excluded by design — if a second push-less writer is ever added, the divergence it caused before this change comes straight back.
 
 **Change checklist:**
-- [ ] Adding a source type that discovery auto-creates for a device? Decide whether it needs a binding fact too, and whether `INFRA_SOURCE_TYPES` should grow.
+- [ ] Adding a source type that discovery auto-creates for a device? Decide whether it needs a binding fact too, and whether `isInfraSourceType` should grow.
 - [ ] Adding a path that decommissions or deletes a switch/AP? Call `releaseInfraReservationsForAssets` from it — the reconcile will converge it eventually, but only after up to 6 hours.
 - [ ] Touching the auto-push? Re-read the SAFETY block at the top of `infraReservationPushService.ts` first; every clause there is load-bearing.
 - [ ] Touching adoption? Re-read the SAFETY block at the top of `placeholderMacAdoptionService.ts` first — same posture, every clause load-bearing.

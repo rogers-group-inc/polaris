@@ -174,23 +174,6 @@ export interface FdbEntry {
   status: string;
 }
 
-/**
- * Per-port MAC counts — the single number that separates an access port (one
- * endpoint) from an uplink or trunk (many), and the basis of any topology
- * inference drawn from this table.
- *
- * Counts `learned` entries only: a port's own `self` address says nothing about
- * what is reachable through it.
- */
-export function macCountsByPort(entries: readonly FdbEntry[]): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const e of entries) {
-    if (e.status !== "learned" || !e.ifName) continue;
-    out.set(e.ifName, (out.get(e.ifName) ?? 0) + 1);
-  }
-  return out;
-}
-
 /** A port's VLAN config as the interface row stores it. */
 export interface PortVlanState {
   nativeVlan: number | null;

@@ -23,7 +23,7 @@ import {
   platformFromSerial,
   isFortiSwitchSerial,
   isFortiApSerial,
-  firmwareFamilyForSerial,
+  isFortiGateSerial,
   IMAGE_HEADER_BYTES,
 } from "../../src/utils/firmwareVersion.js";
 
@@ -160,12 +160,11 @@ describe("device platform from the serial", () => {
     expect(isFortiApSerial("PU431FTF24000001")).toBe(true);
     expect(isFortiApSerial("PS231FTF24000001")).toBe(true);
     expect(isFortiApSerial("S108FFTF23001234")).toBe(false);
-    expect(firmwareFamilyForSerial("S108FFTF23001234")).toBe("switch");
-    expect(firmwareFamilyForSerial("FP231KTF24005678")).toBe("ap");
     // FortiGates joined the repository (rule 87); a FortiGate-VM never matches an image.
-    expect(firmwareFamilyForSerial("FGT60FTK20001234")).toBe("firewall");
-    expect(firmwareFamilyForSerial("FG100FTK20001234")).toBe("firewall");
-    expect(firmwareFamilyForSerial("FGVM04TM20001234")).toBeNull();
-    expect(firmwareFamilyForSerial(null)).toBeNull();
+    expect(isFortiGateSerial("FGT60FTK20001234")).toBe(true);
+    expect(isFortiGateSerial("FG100FTK20001234")).toBe(true);
+    expect(isFortiGateSerial("FGVM04TM20001234")).toBe(false);
+    expect(isFortiGateSerial(null)).toBe(false);
+    expect(isFortiGateSerial("S108FFTF23001234")).toBe(false);
   });
 });

@@ -358,12 +358,6 @@ export function isIgnoreGlobalQuietTime(q: unknown): q is { ignoreGlobal: true }
   return !!q && typeof q === "object" && (q as { ignoreGlobal?: unknown }).ignoreGlobal === true;
 }
 
-/** The policy inside a rule-level value, or null for the exemption marker / nothing. */
-export function ruleQuietConfig(q: RuleQuietTime | null | undefined): QuietTimeConfig | null {
-  if (!q || isIgnoreGlobalQuietTime(q)) return null;
-  return q as QuietTimeConfig;
-}
-
 /** Server-local midnight of `d`'s day. */
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
@@ -568,17 +562,6 @@ export function quietHoldsSendAny(cfg: RecipientPolicy, severity: string, send: 
 export function quietRecipientFullyExempt(cfg: RecipientPolicy, address: string | null | undefined): boolean {
   const r = quietRecipientFor(cfg, address);
   return !!r && !Object.values(r.held).some(anyKind);
-}
-
-/** Is `severity` one the policy holds anything of? */
-export function quietHoldsSeverity(cfg: HoldPolicy, severity: string): boolean {
-  return heldKindsFor(cfg, severity) !== null;
-}
-
-/** The severities the policy holds anything of; null = every severity. */
-export function quietHeldSeverities(cfg: HoldPolicy): string[] | null {
-  if (cfg.held) return Object.keys(cfg.held).filter((s) => anyKind(cfg.held![s]!));
-  return cfg.severities ?? null;
 }
 
 /** Is an alert of `metric` one the policy holds? A null list holds every kind;

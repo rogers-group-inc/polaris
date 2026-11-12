@@ -186,7 +186,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Per-asset scoped OID symbol resolution from MIBs (device → vendor → generic → **standard** → seed), layered SCOPED symbol caching with per-symbol provenance, the process-wide **standard layer** (the IETF/IEEE modules bundled under `src/services/stdMibs/`, read from disk once and resolved together), and lazy cache warmup at app startup. Also exports the low-level building blocks (`BUILT_IN_OIDS`, `parseObjectAssignments`, `tryResolveParts`) and the resolved standard table (`resolveStandardSymbols`) that `stdMibLibrary.ts` stamps `fullOid` from — so Browse/Walk and the probe path read one answer for a standard OID.
 
-**Public API:** `resolveOid`, `resolveOidSync`, `ensureRegistryLoaded`, `refreshRegistry`, `resolveStandardSymbols`, `scopeCacheStats`, `resolveSymbolAtVendorScope`, `symbolReadiness`, `missingRootsForMib`, `definingModulesFor`, `resolveSymbolsForMib`, `findUnresolvedRootSymbols`, `parseObjectAssignments`, `tryResolveParts`, `BUILT_IN_OIDS`, `ResolveScope`, `ResolvedSymbol`, `SymbolStatus`, `SymbolReadiness`, `MissingRoot`.
+**Public API:** `resolveOid`, `resolveOidSync`, `ensureRegistryLoaded`, `refreshRegistry`, `resolveStandardSymbols`, `scopeCacheStats`, `symbolReadiness`, `missingRootsForMib`, `definingModulesFor`, `resolveSymbolsForMib`, `findUnresolvedRootSymbols`, `parseObjectAssignments`, `tryResolveParts`, `BUILT_IN_OIDS`, `ResolveScope`, `ResolvedSymbol`, `SymbolReadiness`, `MissingRoot`.
 
 **Dependency naming (2026-09):** every loaded module — uploads and the standard layer — contributes its IMPORTS bindings (`parseImportMap`), so `definingModulesFor(symbol)` answers "which module defines `fortinet`?" from the operator's own files, and `missingRootsForMib(id)` returns each unresolved anchor of an upload paired with the module its own IMPORTS names. `symbolReadiness(manufacturer, symbol, pinnedMibId?)` is the synchronous per-row answer the profile page renders: resolved (module + layer) or unresolved with a hint — `imports` (the pinned MIB is missing `roots`) or `no-module` (nothing loaded defines it). Polaris ships no table of vendor module names; this is read off what the operator uploaded.
 
@@ -212,7 +212,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Add coverage to BUILT_IN_OIDS if new standard SMI roots or vendor enterprise prefixes are needed.
 - Test scope layering with overlapping (manufacturer, model) MIBs to verify override order.
 - Verify cache key normalization (case-insensitive) handles mixed-case manufacturer input correctly.
-- Run `resolveSymbolAtVendorScope()` after updates to confirm vendor-floor symbol availability.
+- Run `symbolReadiness()` after updates to confirm vendor-floor symbol availability.
 - Profile performance: cache rebuild is O(mibs × entries × resolution-passes); log timings on large uploads.
 - Any change to `tryResolveParts` token-handling must keep `tests/unit/stdMibLibrary.test.ts` "resolves LLDP-MIB through ASN.1 named-number syntax" green AND not regress the 102 cases in `tests/unit/mibParseStructured.test.ts`.
 

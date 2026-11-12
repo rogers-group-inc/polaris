@@ -17,8 +17,6 @@ import {
   desktopAssetPath,
   mobileAssetPath,
   resolveAssetOpenTarget,
-  networkOpenPath,
-  blockOpenPath,
   desktopNetworkPath,
   mobileNetworkPath,
   desktopBlockPath,
@@ -110,12 +108,10 @@ describe("resolveAssetOpenTarget", () => {
 // view and always resolves to the desktop drill-in.
 describe("network and block links", () => {
   it("embed the id, encoded, in the shape each front end routes on", () => {
-    expect(networkOpenPath(ID)).toBe(`/networks/${ID}`);
-    expect(blockOpenPath(ID)).toBe(`/blocks/${ID}`);
     expect(desktopNetworkPath(ID)).toBe(`/ipam.html#tab=networks&subnet=${ID}`);
     expect(mobileNetworkPath(ID)).toBe(`/mobile.html#subnet/${ID}`);
     expect(desktopBlockPath(ID)).toBe(`/ipam.html#tab=blocks&view=block:${ID}`);
-    expect(networkOpenPath("a b/c")).toBe("/networks/a%20b%2Fc");
+    expect(desktopNetworkPath("a b/c")).toBe("/ipam.html#tab=networks&subnet=a%20b%2Fc");
   });
 
   it("sends a network to the phone's sheet on a phone and the desktop panel elsewhere", () => {

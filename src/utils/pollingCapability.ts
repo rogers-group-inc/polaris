@@ -189,13 +189,3 @@ export function collectorCapability(
 
   return OK;
 }
-
-/** Convenience predicate for call sites that don't need the reason. */
-export function collectorExists(
-  source: AssetSourceKind,
-  stream: Stream,
-  method: PollingMethod,
-  opts?: { assetType?: string | null },
-): boolean {
-  return collectorCapability(source, stream, method, opts).implemented;
-}

@@ -434,19 +434,6 @@ export function normalizeMatchRules(raw: unknown): MatchRules | null {
   return prune(root);
 }
 
-/** Every leaf in a tree, in walk order. */
-export function matchClauses(rules: MatchRules | null | undefined): MatchClause[] {
-  const out: MatchClause[] = [];
-  const walk = (group: MatchGroup): void => {
-    for (const child of group.children) {
-      if (isMatchGroup(child)) walk(child);
-      else out.push(child);
-    }
-  };
-  if (rules) walk(rules);
-  return out;
-}
-
 // ─── Evaluation ────────────────────────────────────────────────────────────
 
 /**
@@ -704,10 +691,6 @@ function activeRegistry(): readonly MatchableType[] {
       matchPriority: m.priority,
     })),
   );
-}
-
-export function getAssetTypeMatchRegistry(): readonly MatchableType[] {
-  return activeRegistry();
 }
 
 /** Resolve against the live cache. */

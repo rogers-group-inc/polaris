@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   gradeComponent,
   maxSeverity,
-  findTrack,
   platformEolDatasetSchema,
   LIFECYCLE_WATCH_DAYS,
   LIFECYCLE_WARNING_DAYS,
@@ -285,22 +284,29 @@ describe("gradeComponent — ungradeable inputs never carry a severity", () => {
   });
 });
 
-describe("findTrack", () => {
+describe("gradeComponent — track lookup", () => {
   it("resolves an observed version to its dataset row", () => {
-    expect(findTrack(tech(), "20.19.0")?.track).toBe("20");
+    const g = gradeComponent(tech(), "20.19.0", NOW);
+    expect(g.track).toBe("20");
+    expect(g.eolAt).toBe(isoIn(-131));
   });
 
   it("resolves at major.minor granularity", () => {
     const t = tech({
       trackGranularity: "major.minor",
-      tracks: [{ track: "1.22", eol: isoIn(-1) }, { track: "1.26", eol: null }],
+      polarisMinimum: null,
+      polarisMaximumTested: null,
+      tracks: [{ track: "1.22", eol: isoIn(-1) }, { track: "1.26", eol: isoIn(400) }],
     });
-    expect(findTrack(t, "1.26.3")?.track).toBe("1.26");
+    const g = gradeComponent(t, "1.26.3", NOW);
+    expect(g.track).toBe("1.26");
+    expect(g.eolAt).toBe(isoIn(400));
   });
 
-  it("returns null for an unknown track or missing version", () => {
-    expect(findTrack(tech(), "99.0.0")).toBeNull();
-    expect(findTrack(tech(), null)).toBeNull();
+  it("finds no row for an unknown track or missing version", () => {
+    const t = tech({ polarisMaximumTested: null });
+    expect(gradeComponent(t, "99.0.0", NOW)).toMatchObject({ track: "99", state: "unknown", eolAt: null });
+    expect(gradeComponent(t, null, NOW)).toMatchObject({ track: null, state: "unknown", eolAt: null });
   });
 });
 

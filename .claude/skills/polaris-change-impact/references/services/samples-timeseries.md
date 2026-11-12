@@ -175,7 +175,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Global per-entity sample-retention policy (Server Settings → Retention), stored in `Setting("sampleRetention")`. Axis is per-entity (assets / cpuMem / hardware / interfaces / storage / ipsec / perfSla — 7 entities), not per-asset-class; selection-aware entities apply configured retention only to selected/monitored rows. (SD-WAN rules are current-state and NOT a retention entity.)
 
-**Public API:** `getSampleRetention`, `updateSampleRetention`, `invalidateSampleRetentionCache`, `getRetentionDays`, `defaultSampleRetention`, `unselectedSlowPruneWindow`, `tieredPruneWindow`, `SETTING_KEY`, `FOREVER`, `UNSELECTED_DETAIL_HOURS`, `RetentionEntity`, `RETENTION_ENTITIES`, `SELECTION_AWARE_ENTITIES`
+**Public API:** `getSampleRetention`, `updateSampleRetention`, `invalidateSampleRetentionCache`, `defaultSampleRetention`, `unselectedSlowPruneWindow`, `tieredPruneWindow`, `SETTING_KEY`, `FOREVER`, `UNSELECTED_DETAIL_HOURS`, `RetentionEntity`, `RETENTION_ENTITIES`, `SELECTION_AWARE_ENTITIES`
 
 **Cross-service deps:** `prisma`.
 

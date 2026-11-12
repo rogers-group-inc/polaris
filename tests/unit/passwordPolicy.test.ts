@@ -19,7 +19,6 @@ import {
   defaultPasswordPolicy,
   passwordRules,
   evaluatePassword,
-  passwordMeetsPolicy,
   passwordPolicyError,
   describePasswordPolicy,
   parsePasswordPolicy,
@@ -72,7 +71,7 @@ describe("passwordRules", () => {
 describe("evaluatePassword", () => {
   it("returns nothing for a conforming password", () => {
     expect(evaluatePassword("Replacement-2!", defaults)).toEqual([]);
-    expect(passwordMeetsPolicy("Replacement-2!", defaults)).toBe(true);
+    expect(passwordPolicyError("Replacement-2!", defaults) === null).toBe(true);
   });
 
   it.each([
@@ -94,20 +93,20 @@ describe("evaluatePassword", () => {
 
   it("accepts a password that only fails a rule the policy switched off", () => {
     const noSpecial: PasswordPolicy = { ...defaults, requireSpecial: false };
-    expect(passwordMeetsPolicy("NoSpecialChar1", defaults)).toBe(false);
-    expect(passwordMeetsPolicy("NoSpecialChar1", noSpecial)).toBe(true);
+    expect(passwordPolicyError("NoSpecialChar1", defaults) === null).toBe(false);
+    expect(passwordPolicyError("NoSpecialChar1", noSpecial) === null).toBe(true);
   });
 
   it("honours a raised minimum length", () => {
     const long: PasswordPolicy = { ...defaults, minLength: 20 };
-    expect(passwordMeetsPolicy("Replacement-2!", defaults)).toBe(true);
-    expect(passwordMeetsPolicy("Replacement-2!", long)).toBe(false);
+    expect(passwordPolicyError("Replacement-2!", defaults) === null).toBe(true);
+    expect(passwordPolicyError("Replacement-2!", long) === null).toBe(false);
   });
 
   it("treats a space as a special character", () => {
     // Passphrases are the posture NIST actually recommends; a space failing
     // "special character" would push users back toward P@ssw0rd1.
-    expect(passwordMeetsPolicy("Correct Horse 9B", defaults)).toBe(true);
+    expect(passwordPolicyError("Correct Horse 9B", defaults) === null).toBe(true);
   });
 });
 

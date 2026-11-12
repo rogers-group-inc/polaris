@@ -343,22 +343,6 @@ export function isMethodValidForStream(stream: Stream, method: PollingMethod): b
   return allowed ? allowed.has(method) : true;
 }
 
-/** Methods valid for `stream`, in display order. Empty restriction → all methods. */
-export function methodsForStream(stream: Stream): ReadonlyArray<PollingMethod> {
-  return ALL_METHODS.filter((m) => isMethodValidForStream(stream, m));
-}
-
-/** Returns the methods valid for `source`, in display order (matches ALL_METHODS). */
-export function compatibleMethodsFor(source: AssetSourceKind): ReadonlyArray<PollingMethod> {
-  const allowed = COMPATIBILITY[source];
-  return ALL_METHODS.filter((m) => allowed.has(m));
-}
-
-/** All polling-method values, in display order. Useful for UI dropdowns. */
-export function allPollingMethods(): ReadonlyArray<PollingMethod> {
-  return ALL_METHODS;
-}
-
 /** Type guard — narrows arbitrary input to PollingMethod when valid. */
 export function isPollingMethod(v: unknown): v is PollingMethod {
   return typeof v === "string" && (ALL_METHODS as ReadonlyArray<string>).includes(v);
