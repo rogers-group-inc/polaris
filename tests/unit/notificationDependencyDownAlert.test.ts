@@ -16,19 +16,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  prisma: {
-    notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
-    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    event: { findMany: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    hostMetricsSample: { findMany: vi.fn() },
-  },
   blame: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -43,6 +34,8 @@ vi.mock("../../src/services/dependencyTreeService.js", () => ({
 }));
 
 import { evaluateAllNotificationRules } from "../../src/services/notificationEngine.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function scopeAsset(id: string, over: Partial<Record<string, unknown>> = {}) {
   return {
@@ -101,31 +94,33 @@ const firingRow = (assetId: string, notificationId: string) => ({
   firingSeverity: "critical", bandMetSince: null, metRun: 0, clearRun: 0, lastReadingAt: null, lastValue: null,
 });
 
-const created = () => h.prisma.notification.create.mock.calls.map((c) => c[0].data);
-const clearedBy = () => h.prisma.notification.updateMany.mock.calls.map((c) => c[0].data?.clearedBy);
+const created = () => stubbed(prisma.notification.create).mock.calls.map((c) => c[0].data);
+const clearedBy = () => stubbed(prisma.notification.updateMany).mock.calls.map((c) => c[0].data?.clearedBy);
 const triggeredEvents = () => eventLog.logEvent.mock.calls.map((c) => c[0] as any).filter((e) => e.action === "notification.triggered");
+
+beforeEach(() => resetDbStub());
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.prisma.notificationRule.findMany.mockResolvedValue([OPTED_IN]);
-  h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-  h.prisma.notificationRuleState.findUnique.mockResolvedValue(null);
-  h.prisma.notification.create.mockResolvedValue({ id: "n-new" });
-  h.prisma.notification.findMany.mockResolvedValue([]);
-  h.prisma.notification.findFirst.mockResolvedValue(null);
-  h.prisma.setting.findUnique.mockResolvedValue(null);
-  h.prisma.event.findMany.mockResolvedValue([]);
+  stubbed(prisma.notificationRule.findMany).mockResolvedValue([OPTED_IN]);
+  stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+  stubbed(prisma.notificationRuleState.findUnique).mockResolvedValue(null);
+  stubbed(prisma.notification.create).mockResolvedValue({ id: "n-new" });
+  stubbed(prisma.notification.findMany).mockResolvedValue([]);
+  stubbed(prisma.notification.findFirst).mockResolvedValue(null);
+  stubbed(prisma.setting.findUnique).mockResolvedValue(null);
+  stubbed(prisma.event.findMany).mockResolvedValue([]);
   h.blame.mockResolvedValue(ONE_HOP);
 });
 
 describe("an automation WITHOUT the toggle keeps rule 37", () => {
   it("drops a dependency-suppressed device, whatever its own probe says", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([downRule()]);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([downRule()]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
     expect(h.blame).not.toHaveBeenCalled();
   });
 });
@@ -134,7 +129,7 @@ describe("an opted-in automation speaks for its silenced devices", () => {
   it("fires the moment the device is Dep. Down — before its own probe has judged it", async () => {
     // Own status is still `warning`: the count has not been reached, and the
     // upstream's verdict is the evidence the operator asked to hear about.
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "warning" }),
     ]);
     await evaluateAllNotificationRules();
@@ -164,10 +159,10 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     // messageTemplate "{asset} is down", and push / Slack / Teams send nothing
     // but Notification.message — so the plant would have been paged with the
     // one fact they already knew and none of the reason.
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       downRule({ messageTemplate: "{asset} is down" }, { alertWhenDependencyDown: true }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
@@ -178,10 +173,10 @@ describe("an opted-in automation speaks for its silenced devices", () => {
   });
 
   it("does not double up when the operator's template already renders the notice", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       downRule({ messageTemplate: "{dependency.summary}" }, { alertWhenDependencyDown: true }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
@@ -190,17 +185,17 @@ describe("an opted-in automation speaks for its silenced devices", () => {
   });
 
   it("leaves a custom template alone on a plain Down alert", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       downRule({ messageTemplate: "{asset} is down" }, { alertWhenDependencyDown: true }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
     await evaluateAllNotificationRules();
     expect(created()[0].message).toBe("SRV is down");
   });
 
   it("names the root cause when the upstream device is itself dependency-down", async () => {
     h.blame.mockResolvedValue(TWO_HOPS);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
@@ -215,7 +210,7 @@ describe("an opted-in automation speaks for its silenced devices", () => {
 
   it("still fires, unnamed, when the walk cannot say who", async () => {
     h.blame.mockResolvedValue(null);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
@@ -226,11 +221,11 @@ describe("an opted-in automation speaks for its silenced devices", () => {
   });
 
   it("a MAINTENANCE window still silences it — rule 16 wins", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, status: "maintenance", monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("an upstream maintenance window silences it too — the bypass is for an outage, not planned work", async () => {
@@ -238,11 +233,11 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     // wins exactly as it does for the PLC's own window.
     const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
     h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("…however far up the window is: a switch dark behind a maintained gate", async () => {
@@ -251,11 +246,11 @@ describe("an opted-in automation speaks for its silenced devices", () => {
       rootCause: { id: "fg", hostname: "FG-PLANT", reason: "maintenance" },
       chain: [TWO_HOPS.chain[0], { id: "fg", hostname: "FG-PLANT", reason: "maintenance" }],
     });
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
   });
 
   it("a live dependency-down alert is frozen, not handed off, once its upstream enters a window", async () => {
@@ -263,18 +258,18 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     // Down alert in its place on the way.
     const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
     h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-dep")]);
-    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "n-dep")]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
     expect(clearedBy()).not.toContain("system:dependency-released");
   });
 
   it("an un-suppressed device on the same automation fires as plain Down, with no dependency flavour", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("srv", { monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
@@ -288,31 +283,31 @@ describe("an opted-in automation speaks for its silenced devices", () => {
 
   it("an up device that is merely suppressed-and-recovering does not fire twice", async () => {
     // Already firing as dependency-down and still Dep. Down: nothing to do.
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-dep")]);
-    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "n-dep")]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
-    expect(h.prisma.notification.updateMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.updateMany)).not.toHaveBeenCalled();
   });
 });
 
 describe("the alert's flavour follows the asset's suppression flag", () => {
   it("a live plain Down alert on a device that turned Dep. Down is ended and raised again naming the switch", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-plain")]);
-    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-plain", dependencyDown: false }]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "n-plain")]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([{ id: "n-plain", dependencyDown: false }]);
 
     await evaluateAllNotificationRules();
 
     expect(clearedBy()).toEqual(["system:dependency-down"]);
-    expect(h.prisma.notification.updateMany.mock.calls[0][0].where).toMatchObject({ id: "n-plain", cleared: false });
+    expect(stubbed(prisma.notification.updateMany).mock.calls[0][0].where).toMatchObject({ id: "n-plain", cleared: false });
     // The state row let go before the new fire took it back.
-    expect(h.prisma.notificationRuleState.update).toHaveBeenCalledWith(
+    expect(stubbed(prisma.notificationRuleState.update)).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "st-plc" }, data: expect.objectContaining({ state: "clear", notificationId: null }) }),
     );
     expect(created()).toHaveLength(1);
@@ -326,11 +321,11 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
   });
 
   it("a dependency-down alert whose upstream came back while the device stayed dark becomes its own outage", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: false, monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-dep")]);
-    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "n-dep")]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
 
     await evaluateAllNotificationRules();
 
@@ -343,15 +338,15 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
   });
 
   it("a dependency-down alert whose device came back UP simply recovers — no handoff, no second alert", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: false, monitorStatus: "up" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "n-dep")]);
-    h.prisma.notification.findMany.mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "n-dep")]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([{ id: "n-dep", dependencyDown: true }]);
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
     expect(clearedBy()).not.toContain("system:dependency-released");
     expect(clearedBy()).not.toContain("system:dependency-down");
   });
@@ -362,30 +357,30 @@ describe("the alert's flavour follows the asset's suppression flag", () => {
     // was handed off and fired straight back in — "in fault again after
     // recovering for 0m" on every paced update. The lookup now asks only for
     // ungrouped rows; the mock honours that filter like the database would.
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("plc", "g-plant")]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("plc", "g-plant")]);
     const rows = [{ id: "g-plant", dependencyDown: false, groupKey: "rule:r1:subnet:s1" }];
-    h.prisma.notification.findMany.mockImplementation(async (args: any) =>
+    stubbed(prisma.notification.findMany).mockImplementation(async (args: any) =>
       rows.filter((r) => !(args?.where && "groupKey" in args.where && args.where.groupKey === null && r.groupKey !== null)));
 
     await evaluateAllNotificationRules();
 
-    expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
+    expect(stubbed(prisma.notification.findMany)).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ id: { in: ["g-plant"] }, groupKey: null }) }),
     );
     expect(clearedBy()).not.toContain("system:dependency-down");
-    expect(h.prisma.notification.create).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
     expect(eventLog.logEvent.mock.calls.map((c) => (c[0] as any).action)).not.toContain("notification.superseded");
   });
 
   it("looks the flavour up only for an opted-in automation's firing rows", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([downRule()]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
-    h.prisma.notificationRuleState.findMany.mockResolvedValue([firingRow("srv", "n-x")]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([downRule()]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([firingRow("srv", "n-x")]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.findMany)).not.toHaveBeenCalled();
   });
 });
 
@@ -397,14 +392,14 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
 
   it("is born acknowledged, with the root cause's note, when that alert was already acknowledged", async () => {
     h.blame.mockResolvedValue(TWO_HOPS);
-    h.prisma.notification.findFirst.mockResolvedValue(ROOT_ACK);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.notification.findFirst).mockResolvedValue(ROOT_ACK);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
 
     // It asks about the ROOT CAUSE (the gate), not the suppressed switch above the PLC.
-    const where = h.prisma.notification.findFirst.mock.calls[0][0].where;
+    const where = stubbed(prisma.notification.findFirst).mock.calls[0][0].where;
     expect(where).toMatchObject({ assetId: "fg", acknowledged: true, dependencyDown: false, metric: "monitorStatus", cleared: false });
 
     const data = created()[0];
@@ -421,11 +416,11 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
   });
 
   it("is raised unacknowledged when the root cause's alert is not acknowledged", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.findFirst).toHaveBeenCalledTimes(1);
+    expect(stubbed(prisma.notification.findFirst)).toHaveBeenCalledTimes(1);
     expect(created()[0].acknowledged).toBeUndefined();
   });
 
@@ -434,19 +429,19 @@ describe("a dependency-down alert inherits its root cause's acknowledgement (bus
     // see "an upstream maintenance window silences it too" above.)
     const testNode = { id: "sw", hostname: "SW-PLANT-3", reason: "dependency_test" };
     h.blame.mockResolvedValue({ ...ONE_HOP, upstream: testNode, rootCause: testNode, chain: [testNode] });
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.findFirst).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.findFirst)).not.toHaveBeenCalled();
     expect(created()[0].acknowledged).toBeUndefined();
   });
 
   it("never touches a plain Down alert", async () => {
-    h.prisma.notification.findFirst.mockResolvedValue(ROOT_ACK);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    stubbed(prisma.notification.findFirst).mockResolvedValue(ROOT_ACK);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
     await evaluateAllNotificationRules();
-    expect(h.prisma.notification.findFirst).not.toHaveBeenCalled();
+    expect(stubbed(prisma.notification.findFirst)).not.toHaveBeenCalled();
     expect(created()[0].acknowledged).toBeUndefined();
   });
 });
@@ -459,15 +454,15 @@ describe("a down alert keeps the outage's acknowledgement across automations (bu
     rule: { trigger: DOWN_TRIGGER },
   };
   const newRule = downRule({ id: "r-new", name: "Server down (new)" });
-  const lookups = () => h.prisma.notification.findMany.mock.calls.map((c) => c[0]).filter((a) => a?.where?.acknowledged === true);
+  const lookups = () => stubbed(prisma.notification.findMany).mock.calls.map((c) => c[0]).filter((a) => a?.where?.acknowledged === true);
 
   beforeEach(() => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([newRule]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([newRule]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("srv", { monitorStatus: "down" })]);
   });
 
   it("a down automation created mid-outage raises its alert already acknowledged", async () => {
-    h.prisma.notification.findMany.mockResolvedValue([SIBLING_ACK]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([SIBLING_ACK]);
     await evaluateAllNotificationRules();
 
     // The lookup is the device's OWN live down alert from any OTHER automation.
@@ -497,7 +492,7 @@ describe("a down alert keeps the outage's acknowledgement across automations (bu
   });
 
   it("ignores an acknowledged monitorStatus alert that is not a DOWN automation's (e.g. warning)", async () => {
-    h.prisma.notification.findMany.mockResolvedValue([
+    stubbed(prisma.notification.findMany).mockResolvedValue([
       { ...SIBLING_ACK, rule: { trigger: { ...DOWN_TRIGGER, value: "warning" } } },
     ]);
     await evaluateAllNotificationRules();
@@ -505,11 +500,11 @@ describe("a down alert keeps the outage's acknowledgement across automations (bu
   });
 
   it("is not asked by an automation that is not down detection", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       downRule({ id: "r-warn" }, { value: "warning" }),
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([scopeAsset("srv", { monitorStatus: "warning" })]);
-    h.prisma.notification.findMany.mockResolvedValue([SIBLING_ACK]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("srv", { monitorStatus: "warning" })]);
+    stubbed(prisma.notification.findMany).mockResolvedValue([SIBLING_ACK]);
     await evaluateAllNotificationRules();
     expect(lookups()).toHaveLength(0);
     expect(created()[0].acknowledged).toBeUndefined();

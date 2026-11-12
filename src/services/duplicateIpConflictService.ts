@@ -1224,6 +1224,10 @@ async function settleAfterMemberLeft(
         collisionReason: DUPLICATE_IP_COLLISION_REASON,
         ipAddress: ip,
         hostname: group.members[0]?.hostname ?? null,
+        // The card picks its explainer from this; dropping it here made a
+        // cross-source / operator-addressed collision read as the asset-type
+        // case until the next sweep (found by its unit test 2026-11-12).
+        qualifiedBy: group.qualifiedBy,
         members: survivors,
       } as any,
       existingAssetSnapshot: { ipAddress: ip, members: survivors } as any,
@@ -1376,6 +1380,10 @@ export async function mergeDuplicateIpAssets(
         collisionReason: DUPLICATE_IP_COLLISION_REASON,
         ipAddress: ip,
         hostname: group.members[0]?.hostname ?? null,
+        // The card picks its explainer from this; dropping it here made a
+        // cross-source / operator-addressed collision read as the asset-type
+        // case until the next sweep (found by its unit test 2026-11-12).
+        qualifiedBy: group.qualifiedBy,
         members: survivors,
       } as any,
       existingAssetSnapshot: { ipAddress: ip, members: survivors } as any,

@@ -17,15 +17,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    $queryRawUnsafe: vi.fn(),
-    assetInterface: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const { readSdwanMembers, sdwanMemberLinkState, SDWAN_STATUS_STRIP_MINUTES, SDWAN_TUNNEL_LINK_MAX_AGE_HOURS } =
   await import("../../src/services/sampleHistoryService.js");
@@ -39,17 +34,19 @@ const NEWER = new Date("2026-09-18T12:10:00.000Z");
  * 30-minute status strip.
  */
 function mockSamples(rows: Array<Record<string, unknown>>) {
-  h.prisma.$queryRawUnsafe.mockReset();
-  h.prisma.$queryRawUnsafe
+  stubbed(prisma.$queryRawUnsafe).mockReset();
+  stubbed(prisma.$queryRawUnsafe)
     .mockResolvedValueOnce(rows)   // A: latest per (link, healthCheck)
     .mockResolvedValueOnce([])     // B: recent strip
     .mockResolvedValueOnce([]);    // D: IPsec status of tunnel members
-  h.prisma.assetInterface.findMany.mockResolvedValue([]);
+  stubbed(prisma.assetInterface.findMany).mockResolvedValue([]);
 }
 
+beforeEach(() => resetDbStub());
+
 beforeEach(() => {
-  h.prisma.$queryRawUnsafe.mockReset();
-  h.prisma.assetInterface.findMany.mockReset();
+  stubbed(prisma.$queryRawUnsafe).mockReset();
+  stubbed(prisma.assetInterface.findMany).mockReset();
 });
 
 describe("readSdwanMembers collectedAt", () => {
@@ -66,7 +63,7 @@ describe("readSdwanMembers collectedAt", () => {
   it("builds the table from the newest scrape only, so a removed member drops off", async () => {
     mockSamples([]);
     await readSdwanMembers("asset-1");
-    const sql = String(h.prisma.$queryRawUnsafe.mock.calls[0]![0]);
+    const sql = String(stubbed(prisma.$queryRawUnsafe).mock.calls[0]![0]);
     expect(sql).toContain(`"timestamp" = (SELECT max("timestamp") FROM "asset_perf_sla_samples" WHERE "assetId" = $1)`);
   });
 
@@ -88,7 +85,7 @@ describe("readSdwanMembers status strip", () => {
     mockSamples([latestRow]);
     await readSdwanMembers("asset-1");
     expect(SDWAN_STATUS_STRIP_MINUTES).toBe(30);
-    const [sql, assetId, minutes] = h.prisma.$queryRawUnsafe.mock.calls[1]!;
+    const [sql, assetId, minutes] = stubbed(prisma.$queryRawUnsafe).mock.calls[1]!;
     expect(String(sql)).toContain("make_interval(mins => $2::int)");
     expect(assetId).toBe("asset-1");
     expect(minutes).toBe(30);
@@ -100,7 +97,7 @@ describe("readSdwanMembers status strip", () => {
     // healthy wan1 (and the overlays riding it) solid red.
     mockSamples([latestRow]);
     await readSdwanMembers("asset-1");
-    const sql = String(h.prisma.$queryRawUnsafe.mock.calls[1]![0]);
+    const sql = String(stubbed(prisma.$queryRawUnsafe).mock.calls[1]![0]);
     expect(sql).toContain(`(now() AT TIME ZONE 'UTC') - make_interval`);
     expect(sql).not.toMatch(/[^)]now\(\) -/);
   });
@@ -110,9 +107,9 @@ describe("readSdwanMembers status strip", () => {
     const strip = Array.from({ length: 60 }, (_, i) => ({
       link: "wan1", timestamp: new Date(NEWER.getTime() - (60 - i) * 30_000), up: i % 7 !== 0,
     }));
-    h.prisma.$queryRawUnsafe.mockReset();
-    h.prisma.$queryRawUnsafe.mockResolvedValueOnce([latestRow]).mockResolvedValueOnce(strip);
-    h.prisma.assetInterface.findMany.mockResolvedValue([]);
+    stubbed(prisma.$queryRawUnsafe).mockReset();
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValueOnce([latestRow]).mockResolvedValueOnce(strip);
+    stubbed(prisma.assetInterface.findMany).mockResolvedValue([]);
     const res = await readSdwanMembers("asset-1");
     expect(res.members[0]!.recent).toHaveLength(60);
     expect(res.members[0]!.recent[0]!.up).toBe(false);
@@ -153,15 +150,15 @@ describe("sdwanMemberLinkState", () => {
 
 describe("readSdwanMembers Link column", () => {
   it("shows an SLA-green overlay as up when SNMP called its tunnel interface down", async () => {
-    h.prisma.$queryRawUnsafe.mockReset();
-    h.prisma.$queryRawUnsafe
+    stubbed(prisma.$queryRawUnsafe).mockReset();
+    stubbed(prisma.$queryRawUnsafe)
       .mockResolvedValueOnce([
         { link: "wan1",     healthCheck: "HUB", zone: "underlay", state: "up", latencyMs: 10, jitterMs: 0, packetLoss: 0, timestamp: NEWER },
         { link: "HUB1-VPN1", healthCheck: "HUB", zone: "overlay",  state: "up", latencyMs: 12, jitterMs: 0, packetLoss: 0, timestamp: NEWER },
       ])
       .mockResolvedValueOnce([])                                              // B: strip
       .mockResolvedValueOnce([{ tunnelName: "HUB1-VPN1", status: "up" }]);    // D: IPsec
-    h.prisma.assetInterface.findMany.mockResolvedValue([
+    stubbed(prisma.assetInterface.findMany).mockResolvedValue([
       { ifName: "wan1",      ipAddress: "203.0.113.2", speedBps: 1_000_000_000n, ifType: "physical", operStatus: "up",   inOctets: null, outOctets: null },
       { ifName: "HUB1-VPN1", ipAddress: "10.255.0.2",  speedBps: null,           ifType: "tunnel",   operStatus: "down", inOctets: null, outOctets: null },
     ]);
@@ -170,7 +167,7 @@ describe("readSdwanMembers Link column", () => {
     expect(byLink.get("HUB1-VPN1")).toMatchObject({ linkState: "up", linkSource: "ipsec", linkUp: true });
     expect(byLink.get("wan1")).toMatchObject({ linkState: "up", linkSource: "interface", linkUp: true });
 
-    const [sql, assetId, names, hours] = h.prisma.$queryRawUnsafe.mock.calls[2]!;
+    const [sql, assetId, names, hours] = stubbed(prisma.$queryRawUnsafe).mock.calls[2]!;
     expect(String(sql)).toContain("asset_ipsec_tunnel_samples");
     expect(String(sql)).toContain(`(now() AT TIME ZONE 'UTC') - make_interval(hours => $3::int)`);
     expect(assetId).toBe("asset-1");

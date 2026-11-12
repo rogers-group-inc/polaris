@@ -12,11 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import {
   getApiDocsSettings,
@@ -30,6 +26,7 @@ import {
   type ApiDocsSettings,
 } from "../../src/services/apiDocsAccessService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { AppError } from "../../src/utils/errors.js";
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -37,6 +34,7 @@ const findUnique = prisma.setting.findUnique as unknown as Mock;
 const upsert = prisma.setting.upsert as unknown as Mock;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   invalidateApiDocsSettingsCache();
   // saveApiDocsSettings reads current settings first; default to "no row".

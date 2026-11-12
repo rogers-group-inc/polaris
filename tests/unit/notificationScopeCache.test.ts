@@ -16,19 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const h = vi.hoisted(() => ({
-  prisma: {
-    notificationRule: { findMany: vi.fn() },
-    notificationRuleState: { findMany: vi.fn(), update: vi.fn(), upsert: vi.fn(), findUnique: vi.fn() },
-    notification: { create: vi.fn(), createMany: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
-    asset: { findMany: vi.fn(), findUnique: vi.fn() },
-    event: { findMany: vi.fn() },
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    hostMetricsSample: { findMany: vi.fn() },
-  },
-}));
-
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
@@ -39,6 +27,8 @@ vi.mock("../../src/services/notificationRecipientService.js", () => ({
 
 import { evaluateAllNotificationRules, loadScopeRegionSnapshots, previewRule } from "../../src/services/notificationEngine.js";
 import { clearAssetDetailCache } from "../../src/services/notifications/assetDetail.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function scopeAsset(id: string, over: Record<string, unknown> = {}) {
   return {
@@ -80,23 +70,25 @@ const RULE = {
   escalation: null,
 };
 
-const assetReads = () => h.prisma.asset.findMany.mock.calls.length;
+const assetReads = () => stubbed(prisma.asset.findMany).mock.calls.length;
+
+beforeEach(() => resetDbStub());
 
 beforeEach(() => {
   vi.clearAllMocks();
   clearAssetDetailCache();
-  h.prisma.notificationRuleState.findMany.mockResolvedValue([]);
-  h.prisma.notification.create.mockResolvedValue({ id: "n1" });
-  h.prisma.notification.findMany.mockResolvedValue([]);
-  h.prisma.notificationRuleState.findUnique.mockResolvedValue(null);
-  h.prisma.setting.findUnique.mockResolvedValue(null);
-  h.prisma.event.findMany.mockResolvedValue([]);
-  h.prisma.asset.findMany.mockResolvedValue([scopeAsset("a1")]);
+  stubbed(prisma.notificationRuleState.findMany).mockResolvedValue([]);
+  stubbed(prisma.notification.create).mockResolvedValue({ id: "n1" });
+  stubbed(prisma.notification.findMany).mockResolvedValue([]);
+  stubbed(prisma.notificationRuleState.findUnique).mockResolvedValue(null);
+  stubbed(prisma.setting.findUnique).mockResolvedValue(null);
+  stubbed(prisma.event.findMany).mockResolvedValue([]);
+  stubbed(prisma.asset.findMany).mockResolvedValue([scopeAsset("a1")]);
 });
 
 describe("per-tick scope memo", () => {
   it("resolves one shared fleet read for many rules on the same scope", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       RULE,
       { ...RULE, id: "r2", name: "Second" },
       { ...RULE, id: "r3", name: "Third" },
@@ -106,7 +98,7 @@ describe("per-tick scope memo", () => {
   });
 
   it("still reads separately for scopes that differ", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([
       RULE,
       { ...RULE, id: "r2", scope: { assetTypes: ["firewall"] } },
       { ...RULE, id: "r3", scope: { assetTypes: ["switch"] } },
@@ -118,7 +110,7 @@ describe("per-tick scope memo", () => {
   });
 
   it("does not carry a snapshot across tick boundaries", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([RULE]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([RULE]);
     await evaluateAllNotificationRules();
     await evaluateAllNotificationRules();
     // One per pass — a device that changed between ticks must be seen.
@@ -126,7 +118,7 @@ describe("per-tick scope memo", () => {
   });
 
   it("leaves the operator-triggered preview reading live", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([RULE]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([RULE]);
     await evaluateAllNotificationRules();
     const before = assetReads();
     // Same scope the tick just resolved: the preview must NOT be served from
@@ -136,9 +128,9 @@ describe("per-tick scope memo", () => {
   });
 
   it("disarms even when the pass throws, so the next preview is live", async () => {
-    h.prisma.notificationRule.findMany.mockResolvedValue([RULE]);
+    stubbed(prisma.notificationRule.findMany).mockResolvedValue([RULE]);
     // Fail the pass after the memo is armed.
-    h.prisma.notificationRuleState.findMany.mockRejectedValueOnce(new Error("boom"));
+    stubbed(prisma.notificationRuleState.findMany).mockRejectedValueOnce(new Error("boom"));
     await evaluateAllNotificationRules().catch(() => {});
     const before = assetReads();
     await previewRule({ scope: { allAssets: true } } as any);
@@ -148,7 +140,7 @@ describe("per-tick scope memo", () => {
 
 describe("loadScopeRegionSnapshots", () => {
   it("returns each distinct region set of the scope's devices once, stripped, skipping untagged ones", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("a1", { tags: ["region:Atlanta", "core"] }),
       scopeAsset("a2", { tags: ["region:atlanta"] }),
       scopeAsset("a3", { tags: ["region:Nashville", "region:Central"] }),

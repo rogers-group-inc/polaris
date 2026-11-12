@@ -228,10 +228,13 @@ about which data you can reach.
 The charts follow it too: their time axis, the dashed midnight lines, the hover
 readout and the "From … to …" caption all use this zone, so a midnight line
 falls on this zone's midnight. A few places keep their own clock on purpose:
-the **Current server time** on Server Settings → Web Server (the Server Timezone card) is the server's clock; and
-dates and times you *type* — a chart's custom range, a maintenance window, a
-quiet time, a table's date filter — are wall-clock values in your browser's
-own zone.
+the **Current server time** on Server Settings → Web Server (the Server Timezone card) is the server's clock;
+a **maintenance window** and a **quiet time** are typed in the *server's* wall clock
+(the editors show it — the zone set on that card, or the host's), because the server is
+what enters and leaves them ([rule 170](Business-Rules#rule-170),
+[Maintenance windows](Maintenance-Windows#everything-is-server-local-wall-clock)); and
+the dates you type into a chart's custom range or a table's date filter are wall-clock
+values in your browser's own zone.
 
 **Alert emails are not affected.** An alert is one message to everyone the
 automation names ([rule 25](Business-Rules#rule-25)), so it is written on the

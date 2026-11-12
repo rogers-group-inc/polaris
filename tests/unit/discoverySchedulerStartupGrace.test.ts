@@ -8,21 +8,26 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { findMany, triggerDiscovery, isDiscoveryRunning } = vi.hoisted(() => ({
-  findMany: vi.fn(),
+const { triggerDiscovery, isDiscoveryRunning } = vi.hoisted(() => ({
   triggerDiscovery: vi.fn(),
   isDiscoveryRunning: vi.fn(),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: { integration: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/discovery/discoveryEngine.js", () => ({ triggerDiscovery, isDiscoveryRunning }));
 vi.mock("../../src/jobs/_metrics.js", () => ({
   runInstrumentedJob: (_name: string, fn: () => Promise<void>) => fn(),
 }));
 
 import { startDiscoveryScheduler, STARTUP_GRACE_MS } from "../../src/jobs/discoveryScheduler.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findMany = stubbed(prisma.integration.findMany);
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
+beforeEach(() => resetDbStub());
 
 describe("discoveryScheduler startup grace", () => {
   beforeEach(() => {

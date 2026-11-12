@@ -12,14 +12,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// vi.mock is hoisted above the module graph, so the spy has to be created in a
-// hoisted block too or the factory closes over an uninitialized binding.
-const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
-vi.mock("../../src/db.js", () => ({ prisma: { integration: { findMany } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { getQuarantinePushAvailability } from "../../src/services/assetQuarantineService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
-beforeEach(() => { findMany.mockReset(); });
+const findMany = stubbed(prisma.integration.findMany);
+
+beforeEach(() => resetDbStub());
 
 describe("getQuarantinePushAvailability", () => {
   it("reports unavailable when no Fortinet integration carries the toggle", async () => {

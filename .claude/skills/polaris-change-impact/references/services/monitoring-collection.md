@@ -203,7 +203,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Monitor-override semantics — `Asset.monitorOverride` is an **explicit operator-intent bit** (true when an operator deliberately set `monitored` away from the owning integration's per-class `addAsMonitored` default), so discovery sweeps don't clobber operator intent. Crucially it is WRITTEN only at operator-action time and never re-derived from incidental divergence.
 
-**Public API:** `AddAsMonitoredAssetType`, `getAddAsMonitoredFromConfig`, `computeMonitorOverride`, `classBlockKeyForAssetType`, `snapshotAddAsMonitoredByAssetType`, `recomputeMonitorOverrideForAssets`, `sweepMonitoredForIntegration`, `buildMonitoredSweep`, `integrationAlwaysMonitorsGates`, `applyFixedMonitorDefaults`
+**Public API:** `AddAsMonitoredAssetType`, `getAddAsMonitoredFromConfig`, `classBlockKeyForAssetType`, `snapshotAddAsMonitoredByAssetType`, `recomputeMonitorOverrideForAssets`, `sweepMonitoredForIntegration`, `buildMonitoredSweep`, `integrationAlwaysMonitorsGates`, `applyFixedMonitorDefaults`
 
 **Cross-service deps:** none (pure helpers + raw SQL via the caller's prisma).
 
@@ -221,6 +221,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - The raw-SQL JSON-path block keys must stay in sync with `classBlockKeyForAssetType` and the cutover migration.
 - The HA-standby `haRole='secondary'` CASE must stay in sync across all four sites (two SQL statements × SET/WHERE, the reset endpoint, the preflight) AND with `buildFortigateMonitorStamp`'s standby branch.
 - Do NOT re-introduce a job/handler that recomputes `monitorOverride` across all assets — that is the bug the explicit-intent model fixed.
+- The divergence rule is the SQL in `recomputeMonitorOverrideForAssets`, and only there (its JS twin `computeMonitorOverride` was never called and was deleted 2026-11-12). Change it with `tests/integration/monitorOverrideRecompute.test.ts`, which runs the real UPDATE (needs a database).
 
 ---
 

@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({ fetchImageBuildInfo: vi.fn() }));
 
-vi.mock("../../src/db.js", () => ({ prisma: { setting: { findUnique: vi.fn(), upsert: vi.fn() } } }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/utils/imageRegistry.js", () => ({ fetchImageBuildInfo: h.fetchImageBuildInfo }));
 
 import { checkImageForUpdates, updateCheckIntervalMs, DEFAULT_UPDATE_IMAGE } from "../../src/services/updateService.js";

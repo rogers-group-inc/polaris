@@ -11,20 +11,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetMonitorSample: { findMany: vi.fn(), findFirst: vi.fn() },
-    $queryRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { readMonitorHistory, rollupLossSeries, monitorLossBucketMs } from "../../src/services/sampleHistoryService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 
 const findMany = prisma.assetMonitorSample.findMany as unknown as ReturnType<typeof vi.fn>;
 const queryRaw = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   // A read with a `fetchSince` also runs the row-anchored lookback query
   // (readDetailWithAnchor); the tests here queue only the main read.

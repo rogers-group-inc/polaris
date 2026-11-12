@@ -8,28 +8,23 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// vi.mock is hoisted above the module graph, so the spies have to be created in
-// a hoisted block too.
-const { sourceFindMany, executeRaw } = vi.hoisted(() => ({
-  sourceFindMany: vi.fn(),
-  executeRaw:     vi.fn(),
-}));
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetSource:      { findMany: sourceFindMany },
-    $executeRawUnsafe: executeRaw,
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/utils/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { persistFortigateArpTables } from "../../src/services/arpTableService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const sourceFindMany = stubbed(prisma.assetSource.findMany);
+const executeRaw = stubbed(prisma.$executeRawUnsafe);
 
 const row = (device: string, ip: string, mac: string, iface = "internal1", age?: number) =>
   ({ fortigateDevice: device, ip, mac, interface: iface, age });
 
 function resetPrisma() {
+  resetDbStub();
   sourceFindMany.mockReset().mockResolvedValue([{ assetId: "asset-gate-a", externalId: "FG100F0001" }]);
   executeRaw.mockReset().mockResolvedValue(1);
 }

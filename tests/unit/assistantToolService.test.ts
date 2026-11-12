@@ -14,21 +14,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const h = vi.hoisted(() => ({
-  prisma: {
-    asset: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), groupBy: vi.fn() },
-    reservation: { findMany: vi.fn(), count: vi.fn() },
-    subnet: { findMany: vi.fn(), count: vi.fn() },
-    tag: { findMany: vi.fn(async (_args: any) => [] as Array<{ name: string }>) },
-    assetIpHistory: { findMany: vi.fn(async (_args: any) => [] as Array<Record<string, unknown>>) },
-    $queryRawUnsafe: vi.fn(async (..._args: unknown[]) => [] as Array<Record<string, unknown>>),
-  },
   tier: vi.fn(async (..._args: unknown[]) => ({ tier: "detail", bucketSeconds: 0 })),
   listNotifications: vi.fn(),
   searchAll: vi.fn(),
   tagScopes: vi.fn(async () => ({ regions: [] as string[], tags: [] as string[] })),
 }));
 
-vi.mock("../../src/db.js", () => ({ prisma: h.prisma }));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/notificationService.js", () => ({ listNotifications: h.listNotifications }));
 vi.mock("../../src/services/searchService.js", () => ({ searchAll: h.searchAll }));
 vi.mock("../../src/services/regionScopeService.js", () => ({ getEffectiveRegionTags: async () => [], getEffectiveTagScopes: h.tagScopes }));
@@ -38,10 +30,19 @@ vi.mock("../../src/services/sampleQueryRouter.js", () => ({ pickSampleTierForAss
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
 import { runAssistantTool, assistantToolDefs, REPORT_ROW_CAP, REPORT_COLUMN_HINT_SOURCES } from "../../src/services/assistantToolService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 function reqWith(perms: Record<string, string>) {
   return { session: { userId: "u1", roleSnapshot: { permissions: perms } } } as any;
 }
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.tag.findMany).mockImplementation(async (_args: any) => [] as Array<{ name: string }>);
+  stubbed(prisma.assetIpHistory.findMany).mockImplementation(async (_args: any) => [] as Array<Record<string, unknown>>);
+  stubbed(prisma.$queryRawUnsafe).mockImplementation(async (..._args: unknown[]) => [] as Array<Record<string, unknown>>);
+});
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -67,12 +68,12 @@ describe("permission gate", () => {
     const r = await runAssistantTool(name, args, { req: none, maxRows: 50 });
     expect(r.ok).toBe(false);
     expect(JSON.stringify(r.data)).toMatch(/Not permitted/);
-    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
-    expect(h.prisma.asset.findFirst).not.toHaveBeenCalled();
+    expect(stubbed(prisma.asset.findMany)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.asset.findFirst)).not.toHaveBeenCalled();
     expect(h.listNotifications).not.toHaveBeenCalled();
-    expect(h.prisma.reservation.findMany).not.toHaveBeenCalled();
-    expect(h.prisma.subnet.findMany).not.toHaveBeenCalled();
-    expect(h.prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(stubbed(prisma.reservation.findMany)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.subnet.findMany)).not.toHaveBeenCalled();
+    expect(stubbed(prisma.$queryRawUnsafe)).not.toHaveBeenCalled();
   });
 
   it("search asks searchAll only for the groups the role can read", async () => {
@@ -91,31 +92,31 @@ describe("argument handling", () => {
   });
 
   it("caps an ordinary lookup at maxRows and reports truncation", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "a", lastSeen: new Date("2026-10-01T00:00:00Z"), tags: ["x", "y"] }]);
-    h.prisma.asset.count.mockResolvedValue(300);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "a", lastSeen: new Date("2026-10-01T00:00:00Z"), tags: ["x", "y"] }]);
+    stubbed(prisma.asset.count).mockResolvedValue(300);
     const r = await runAssistantTool("list_assets", '{"monitorStatus":"down"}', { req, maxRows: 25 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].take).toBe(25);
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].take).toBe(25);
     expect(r.data).toMatchObject({ total: 300, returned: 1, truncated: true, rows: [{ hostname: "a", lastSeen: "2026-10-01T00:00:00.000Z", tags: "x, y" }] });
   });
 
   it("takes one type, a list, or a comma-separated string (\"every switch and firewall\")", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([]);
-    h.prisma.asset.count.mockResolvedValue(0);
+    stubbed(prisma.asset.findMany).mockResolvedValue([]);
+    stubbed(prisma.asset.count).mockResolvedValue(0);
     for (const assetType of [["switch", "firewall"], "switch, firewall"]) {
-      h.prisma.asset.findMany.mockClear();
+      stubbed(prisma.asset.findMany).mockClear();
       await runAssistantTool("list_assets", JSON.stringify({ assetType }), { req, maxRows: 50 });
-      const where = h.prisma.asset.findMany.mock.calls[0][0].where;
+      const where = stubbed(prisma.asset.findMany).mock.calls[0][0].where;
       expect(where.AND).toContainEqual({ assetType: { in: ["switch", "firewall"] } });
     }
-    h.prisma.asset.findMany.mockClear();
+    stubbed(prisma.asset.findMany).mockClear();
     await runAssistantTool("list_assets", '{"assetType":"switch","monitorStatus":"down"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toEqual(
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toEqual(
       expect.arrayContaining([{ assetType: { in: ["switch"] } }, { monitorStatus: { in: ["down"] }, monitored: true }]),
     );
   });
 
   it("a subnet filter matches by CIDR containment, not by string", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       { hostname: "in", ipAddress: "10.20.3.4" },
       { hostname: "out", ipAddress: "10.21.0.1" },
       { hostname: "lookalike", ipAddress: "110.20.3.4" },
@@ -127,20 +128,20 @@ describe("argument handling", () => {
 
 describe("list_assets — acquired date and warranty", () => {
   const req = reqWith({ assets: "read" });
-  beforeEach(() => { h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0); });
+  beforeEach(() => { stubbed(prisma.asset.findMany).mockResolvedValue([]); stubbed(prisma.asset.count).mockResolvedValue(0); });
 
   it("returns the Acquired date, warranty expiry and PO on every row", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1", acquiredAt: new Date("2019-03-01T00:00:00Z"), warrantyExpiry: null, purchaseOrder: "PO-7" }]);
-    h.prisma.asset.count.mockResolvedValue(1);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1", acquiredAt: new Date("2019-03-01T00:00:00Z"), warrantyExpiry: null, purchaseOrder: "PO-7" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
     const r = await runAssistantTool("list_assets", "{}", { req, maxRows: 10 });
-    const select = h.prisma.asset.findMany.mock.calls[0][0].select;
+    const select = stubbed(prisma.asset.findMany).mock.calls[0][0].select;
     expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
     expect((r.data as any).rows[0]).toMatchObject({ acquiredAt: "2019-03-01T00:00:00.000Z", purchaseOrder: "PO-7" });
   });
 
   it("filters on the Acquired date the page shows (entered, else first seen) and on warranty", async () => {
     await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "2022-01-01", warrantyExpiresAfter: "2026-01-01" }), { req, maxRows: 10 });
-    const call = h.prisma.asset.findMany.mock.calls[0][0];
+    const call = stubbed(prisma.asset.findMany).mock.calls[0][0];
     expect(call.where.AND).toEqual(expect.arrayContaining([
       { OR: [{ acquiredAt: { lt: new Date("2022-01-01") } }, { acquiredAt: null, createdAt: { lt: new Date("2022-01-01") } }] },
       { warrantyExpiry: { gte: new Date("2026-01-01") } },
@@ -148,7 +149,7 @@ describe("list_assets — acquired date and warranty", () => {
   });
 
   it("sorts by that Acquired date, an entered date and a first-seen one interleaved", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       { hostname: "c", acquiredAt: null, createdAt: new Date("2024-06-01T00:00:00Z") },
       { hostname: "a", acquiredAt: new Date("2019-01-01T00:00:00Z"), createdAt: new Date("2025-01-01T00:00:00Z") },
       { hostname: "b", acquiredAt: null, createdAt: new Date("2021-01-01T00:00:00Z") },
@@ -163,13 +164,13 @@ describe("list_assets — acquired date and warranty", () => {
   it("carries uptime as the System tab shows it and ranks by it, unreported last", async () => {
     // A recent poll, so the carried-forward figure stays in the same order.
     const polled = new Date(Date.now() - 60_000);
-    h.prisma.asset.findMany.mockResolvedValue([
+    stubbed(prisma.asset.findMany).mockResolvedValue([
       { hostname: "icmp-only", lastUptimeSec: null, lastMonitorAt: polled },
       { hostname: "fgt-short", lastUptimeSec: 3_600, lastMonitorAt: polled, monitorStatus: "up" },
       { hostname: "fgt-long", lastUptimeSec: 90 * 86_400, lastMonitorAt: polled, monitorStatus: "up" },
     ]);
     const r = await runAssistantTool("list_assets", JSON.stringify({ assetType: "firewall", sortBy: "uptime" }), { req, maxRows: 10 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true });
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true });
     const rows = (r.data as any).rows;
     expect(rows.map((x: any) => x.hostname)).toEqual(["fgt-long", "fgt-short", "icmp-only"]);
     expect(rows[0].uptime).toBe("90d");
@@ -184,21 +185,21 @@ describe("list_assets — acquired date and warranty", () => {
   it("refuses a date it cannot read", async () => {
     const r = await runAssistantTool("list_assets", JSON.stringify({ acquiredBefore: "last spring" }), { req, maxRows: 10 });
     expect(r.ok).toBe(false);
-    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.asset.findMany)).not.toHaveBeenCalled();
   });
 });
 
 describe("create_report", () => {
   it("re-runs the source tool with the report cap and projects the chosen columns", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1", ipAddress: "10.0.0.2", model: "FS-148", serialNumber: "S1" }]);
-    h.prisma.asset.count.mockResolvedValue(1);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1", ipAddress: "10.0.0.2", model: "FS-148", serialNumber: "S1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
     const onReport = vi.fn();
     const r = await runAssistantTool(
       "create_report",
       JSON.stringify({ title: "Switches", source: "list_assets", args: { assetType: "switch" }, columns: ["hostname", "model"] }),
       { req: reqWith({ assets: "read" }), maxRows: 10, onReport },
     );
-    expect(h.prisma.asset.findMany.mock.calls[0][0].take).toBe(REPORT_ROW_CAP);
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].take).toBe(REPORT_ROW_CAP);
     expect(onReport).toHaveBeenCalledWith({
       title: "Switches",
       columns: [{ key: "hostname", label: "Hostname" }, { key: "model", label: "Model" }],
@@ -210,8 +211,8 @@ describe("create_report", () => {
   });
 
   it("offers only the formats asked for — the user's own words over the model's argument", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
-    h.prisma.asset.count.mockResolvedValue(1);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
     const req = reqWith({ assets: "read" });
     const onReport = vi.fn();
     const r = await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets", formats: ["Markdown", "pdf"] }), { req, maxRows: 10, onReport });
@@ -250,14 +251,14 @@ describe("telemetry_summary — CPU / memory figures come from the database (see
   ];
 
   it("filters devices like list_assets, aggregates once for all of them, and ranks by average memory", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const r = await runAssistantTool("telemetry_summary", '{"model":"61F","assetType":"firewall"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toEqual(
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toEqual(
       expect.arrayContaining([{ model: { contains: "61F", mode: "insensitive" } }, { assetType: { in: ["firewall"] } }]),
     );
-    expect(h.prisma.$queryRawUnsafe).toHaveBeenCalledTimes(1);
-    const [sql, ids, from, to] = h.prisma.$queryRawUnsafe.mock.calls[0];
+    expect(stubbed(prisma.$queryRawUnsafe)).toHaveBeenCalledTimes(1);
+    const [sql, ids, from, to] = stubbed(prisma.$queryRawUnsafe).mock.calls[0];
     expect(sql).toMatch(/FROM "asset_telemetry_samples"/);
     expect(ids).toEqual(["a1", "a2", "a3"]);
     expect((to as Date).getTime() - (from as Date).getTime()).toBe(24 * 3_600_000);
@@ -270,33 +271,33 @@ describe("telemetry_summary — CPU / memory figures come from the database (see
   });
 
   it("ranks by peak CPU, lowest first, when asked", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const r = await runAssistantTool("telemetry_summary", '{"metric":"cpu","sortBy":"max","order":"lowest"}', { req, maxRows: 50 });
     expect((r.data as any).rows.map((x: any) => x.hostname)).toEqual(["fw-a", "fw-b"]);
   });
 
   it("reads the rollup the chart would read for an older window, weighting each bucket by its samples", async () => {
     h.tier.mockResolvedValueOnce({ tier: "hourly", bucketSeconds: 3600 });
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue([]);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue([]);
     await runAssistantTool("telemetry_summary", '{"hours":720}', { req, maxRows: 50 });
     expect(h.tier.mock.calls[0][1]).toBe("cpuMem");
-    const sql = h.prisma.$queryRawUnsafe.mock.calls[0][0] as string;
+    const sql = stubbed(prisma.$queryRawUnsafe).mock.calls[0][0] as string;
     expect(sql).toMatch(/FROM "asset_telemetry_samples_hourly"/);
     expect(sql).toMatch(/sum\(am \* n\)/);
   });
 
   it("queries no samples when no device matches", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([]);
     const r = await runAssistantTool("telemetry_summary", '{"model":"nothing"}', { req, maxRows: 50 });
-    expect(h.prisma.$queryRawUnsafe).not.toHaveBeenCalled();
+    expect(stubbed(prisma.$queryRawUnsafe)).not.toHaveBeenCalled();
     expect(r.data).toMatchObject({ total: 0, matchedDevices: 0, noData: 0 });
   });
 
   it("is a create_report source, and the report carries the window on every row", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const onReport = vi.fn();
     await runAssistantTool(
       "create_report",
@@ -330,10 +331,10 @@ describe("telemetry_summary — uptime beside memory", () => {
   ];
 
   it("carries uptime and upSince on every row of a memory ranking", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const data = (await runAssistantTool("telemetry_summary", "{}", { req, maxRows: 50 })).data as any;
-    expect(h.prisma.asset.findMany.mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true, monitorStatus: true });
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].select).toMatchObject({ lastUptimeSec: true, lastMonitorAt: true, lastRebootAt: true, monitorStatus: true });
     expect(data.rows.map((r: any) => r.hostname)).toEqual(["fw-a", "fw-b"]);
     expect(data.rows[0]).toMatchObject({ uptime: "10d", avgMemPct: 80 });
     expect(data.rows[0].upSince).toMatch(/^\d{4}-\d\d-\d\dT/);
@@ -341,8 +342,8 @@ describe("telemetry_summary — uptime beside memory", () => {
   });
 
   it("sortBy uptime ranks longest-up first, keeps a device with no reading, and leaves out one with neither", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const data = (await runAssistantTool("telemetry_summary", '{"sortBy":"uptime"}', { req, maxRows: 50 })).data as any;
     expect(data.rows.map((r: any) => r.hostname)).toEqual(["fw-b", "fw-c", "fw-a"]);
     expect(data.rows[1]).toMatchObject({ uptime: "50d", avgMemPct: null, samples: 0 });
@@ -353,8 +354,8 @@ describe("telemetry_summary — uptime beside memory", () => {
   });
 
   it("builds one report holding uptime and memory", async () => {
-    h.prisma.asset.findMany.mockResolvedValue(fleet);
-    h.prisma.$queryRawUnsafe.mockResolvedValue(aggs);
+    stubbed(prisma.asset.findMany).mockResolvedValue(fleet);
+    stubbed(prisma.$queryRawUnsafe).mockResolvedValue(aggs);
     const onReport = vi.fn();
     const r = await runAssistantTool(
       "create_report",
@@ -373,29 +374,29 @@ describe("hostname filter and dropped arguments (seen live 2026-10-28: a 15-fire
   const req = reqWith({ assets: "read" });
 
   it("narrows to exact hostnames, any case, in list_assets and telemetry_summary", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([]);
-    h.prisma.asset.count.mockResolvedValue(0);
+    stubbed(prisma.asset.findMany).mockResolvedValue([]);
+    stubbed(prisma.asset.count).mockResolvedValue(0);
     await runAssistantTool("list_assets", '{"hostname":["CKYSMA-91G-1","decatur-61f-1"]}', { req, maxRows: 50 });
     const want = { OR: [
       { hostname: { equals: "CKYSMA-91G-1", mode: "insensitive" } },
       { hostname: { equals: "decatur-61f-1", mode: "insensitive" } },
     ] };
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual(want);
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toContainEqual(want);
     await runAssistantTool("telemetry_summary", '{"hostname":"CKYSMA-91G-1, decatur-61f-1"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[1][0].where.AND).toContainEqual(want);
+    expect(stubbed(prisma.asset.findMany).mock.calls[1][0].where.AND).toContainEqual(want);
   });
 
   it("takes up to 200 names — enough for a fleet-sized earlier answer", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([]);
-    h.prisma.asset.count.mockResolvedValue(0);
+    stubbed(prisma.asset.findMany).mockResolvedValue([]);
+    stubbed(prisma.asset.count).mockResolvedValue(0);
     const names = Array.from({ length: 200 }, (_, i) => `fw-${i}`);
     expect((await runAssistantTool("list_assets", JSON.stringify({ hostname: names }), { req, maxRows: 50 })).ok).toBe(true);
     expect((await runAssistantTool("list_assets", JSON.stringify({ hostname: [...names, "one-more"] }), { req, maxRows: 50 })).ok).toBe(false);
   });
 
   it("says which arguments a lookup ignored instead of dropping them silently", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
-    h.prisma.asset.count.mockResolvedValue(1);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
     const r = await runAssistantTool("list_assets", '{"hostnames":["fw-a"],"assetType":"firewall"}', { req, maxRows: 50 });
     expect(r.ok).toBe(true);
     expect(r.data).toMatchObject({ ignoredArgs: ["hostnames"], total: 1 });
@@ -406,8 +407,8 @@ describe("hostname filter and dropped arguments (seen live 2026-10-28: a 15-fire
   });
 
   it("a report says which filters and columns it could not apply", async () => {
-    h.prisma.asset.findMany.mockResolvedValue([{ hostname: "sw1" }]);
-    h.prisma.asset.count.mockResolvedValue(1);
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
     const r = await runAssistantTool(
       "create_report",
       JSON.stringify({ title: "x", source: "list_assets", args: { hostnames: ["fw-a"] }, columns: ["hostname", "memory"] }),
@@ -432,10 +433,10 @@ describe("create_report's column hint is read from the sources (seen live 2026-1
 
 describe("list_reservations", () => {
   it("never selects the subnet's integration (which carries secrets)", async () => {
-    h.prisma.reservation.findMany.mockResolvedValue([]);
-    h.prisma.reservation.count.mockResolvedValue(0);
+    stubbed(prisma.reservation.findMany).mockResolvedValue([]);
+    stubbed(prisma.reservation.count).mockResolvedValue(0);
     await runAssistantTool("list_reservations", "{}", { req: reqWith({ reservations: "read" }), maxRows: 10 });
-    const sel = JSON.stringify(h.prisma.reservation.findMany.mock.calls[0][0].select);
+    const sel = JSON.stringify(stubbed(prisma.reservation.findMany).mock.calls[0][0].select);
     expect(sel).not.toMatch(/integration|config/);
   });
 });
@@ -451,66 +452,66 @@ describe("assistantToolDefs", () => {
 
 describe("list_assets — regions (the person's own, or named)", () => {
   const req = reqWith({ assets: "read" });
-  beforeEach(() => { h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0); });
+  beforeEach(() => { stubbed(prisma.asset.findMany).mockResolvedValue([]); stubbed(prisma.asset.count).mockResolvedValue(0); });
 
   it("myRegions narrows to the region tags assigned to the person asking", async () => {
     h.tagScopes.mockResolvedValueOnce({ regions: ["Middle Tennessee", "Alabama"], tags: [] });
     await runAssistantTool("list_assets", '{"monitorStatus":"down","myRegions":true}', { req, maxRows: 50 });
     expect(h.tagScopes).toHaveBeenCalledWith("u1");
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Middle Tennessee", "Middle Tennessee", "region:Alabama", "Alabama"] } });
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Middle Tennessee", "Middle Tennessee", "region:Alabama", "Alabama"] } });
   });
 
   it("a named region matches its region: tag and its bare form", async () => {
     await runAssistantTool("list_assets", '{"region":"Southern Division"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Southern Division", "Southern Division"] } });
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toContainEqual({ tags: { hasSome: ["region:Southern Division", "Southern Division"] } });
   });
 
   it("a region typed in another case, or with the prefix, resolves to the registered tag (seen live: Middle Tennessee reported absent)", async () => {
-    h.prisma.tag.findMany.mockResolvedValueOnce([{ name: "region:Middle Tennessee" }]);
+    stubbed(prisma.tag.findMany).mockResolvedValueOnce([{ name: "region:Middle Tennessee" }]);
     await runAssistantTool("list_assets", '{"region":["REGION:middle tennessee"]}', { req, maxRows: 50 });
-    const tags = h.prisma.asset.findMany.mock.calls[0][0].where.AND.find((c: any) => c.tags)?.tags.hasSome;
+    const tags = stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND.find((c: any) => c.tags)?.tags.hasSome;
     expect(tags).toContain("region:Middle Tennessee");
     expect(tags).toContain("region:middle tennessee");
-    expect(h.prisma.tag.findMany.mock.calls[0][0].where.OR).toContainEqual({ name: { equals: "region:middle tennessee", mode: "insensitive" } });
+    expect(stubbed(prisma.tag.findMany).mock.calls[0][0].where.OR).toContainEqual({ name: { equals: "region:middle tennessee", mode: "insensitive" } });
   });
 
   it("myRegions with no region assigned asks instead of returning the whole install", async () => {
     const r = await runAssistantTool("list_assets", '{"myRegions":true}', { req, maxRows: 50 });
     expect(r.ok).toBe(false);
     expect(JSON.stringify(r.data)).toMatch(/No region is assigned/);
-    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.asset.findMany)).not.toHaveBeenCalled();
   });
 });
 
 describe("decommissioned assets and retired networks stay out unless asked for", () => {
   const req = reqWith({ assets: "read", subnets: "read" });
   beforeEach(() => {
-    h.prisma.asset.findMany.mockResolvedValue([]); h.prisma.asset.count.mockResolvedValue(0);
-    h.prisma.subnet.findMany.mockResolvedValue([]); h.prisma.subnet.count.mockResolvedValue(0);
-    h.prisma.asset.groupBy.mockResolvedValue([]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([]); stubbed(prisma.asset.count).mockResolvedValue(0);
+    stubbed(prisma.subnet.findMany).mockResolvedValue([]); stubbed(prisma.subnet.count).mockResolvedValue(0);
+    stubbed(prisma.asset.groupBy).mockResolvedValue([]);
   });
 
   it("list_assets leaves decommissioned out by default, and includes it when the status asks", async () => {
     await runAssistantTool("list_assets", '{"monitorStatus":"down"}', { req, maxRows: 50 });
-    expect(h.prisma.asset.findMany.mock.calls[0][0].where.AND).toContainEqual({ status: { not: "decommissioned" } });
-    h.prisma.asset.findMany.mockClear();
+    expect(stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND).toContainEqual({ status: { not: "decommissioned" } });
+    stubbed(prisma.asset.findMany).mockClear();
     await runAssistantTool("list_assets", '{"status":["decommissioned"]}', { req, maxRows: 50 });
-    const and = h.prisma.asset.findMany.mock.calls[0][0].where.AND;
+    const and = stubbed(prisma.asset.findMany).mock.calls[0][0].where.AND;
     expect(and).toContainEqual({ status: { in: ["decommissioned"] } });
     expect(and).not.toContainEqual({ status: { not: "decommissioned" } });
   });
 
   it("list_networks leaves deprecated networks out by default, and lists them when asked", async () => {
     await runAssistantTool("list_networks", "{}", { req, maxRows: 50 });
-    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toEqual({ not: "deprecated" });
-    h.prisma.subnet.findMany.mockClear();
+    expect(stubbed(prisma.subnet.findMany).mock.calls[0][0].where.status).toEqual({ not: "deprecated" });
+    stubbed(prisma.subnet.findMany).mockClear();
     await runAssistantTool("list_networks", '{"status":"deprecated"}', { req, maxRows: 50 });
-    expect(h.prisma.subnet.findMany.mock.calls[0][0].where.status).toBe("deprecated");
+    expect(stubbed(prisma.subnet.findMany).mock.calls[0][0].where.status).toBe("deprecated");
   });
 
   it("fleet_summary counts no decommissioned assets", async () => {
     await runAssistantTool("fleet_summary", "{}", { req, maxRows: 50 });
-    for (const call of h.prisma.asset.groupBy.mock.calls.filter((c: any[]) => c[0].by[0] !== "monitorStatus")) {
+    for (const call of stubbed(prisma.asset.groupBy).mock.calls.filter((c: any[]) => c[0].by[0] !== "monitorStatus")) {
       expect(call[0].where).toEqual({ status: { not: "decommissioned" } });
     }
   });
@@ -524,25 +525,25 @@ describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)"
       { id: "a1", hostname: "DAYTONCON-61F-1", ipAddress: "10.255.250.178" },
       { id: "a2", hostname: "other", ipAddress: "153.66.102.165" },
     ], subnets: [] });
-    h.prisma.assetIpHistory.findMany.mockResolvedValueOnce([
+    stubbed(prisma.assetIpHistory.findMany).mockResolvedValueOnce([
       { assetId: "a1", ip: "153.66.102.165", source: "monitor-system-info", firstSeen: new Date("2026-06-10T00:00:00Z"), lastSeen: new Date("2026-09-04T00:00:00Z") },
     ]);
     const r = await runAssistantTool("search", '{"query":"153.66.102.165"}', { req, maxRows: 25 });
     const assets = (r.data as any).assets;
     expect(assets[0]).toMatchObject({ hostname: "DAYTONCON-61F-1", matchedOn: "ipHistory", heldThisAddress: { ip: "153.66.102.165", source: "monitor-system-info", lastSeen: "2026-09-04T00:00:00.000Z" } });
     expect(assets[1]).toMatchObject({ hostname: "other", matchedOn: "ipAddress" });
-    expect(h.prisma.assetIpHistory.findMany.mock.calls[0][0].where).toEqual({ ip: "153.66.102.165", assetId: { in: ["a1", "a2"] } });
+    expect(stubbed(prisma.assetIpHistory.findMany).mock.calls[0][0].where).toEqual({ ip: "153.66.102.165", assetId: { in: ["a1", "a2"] } });
   });
 
   it("a non-address query is left alone", async () => {
     h.searchAll.mockResolvedValue({ assets: [{ id: "a1", hostname: "sw-1", ipAddress: "10.0.0.1" }] });
     const r = await runAssistantTool("search", '{"query":"sw-1"}', { req, maxRows: 25 });
     expect((r.data as any).assets[0]).not.toHaveProperty("matchedOn");
-    expect(h.prisma.assetIpHistory.findMany).not.toHaveBeenCalled();
+    expect(stubbed(prisma.assetIpHistory.findMany)).not.toHaveBeenCalled();
   });
 
   it("get_asset returns the device's IP history, newest last-seen first", async () => {
-    h.prisma.asset.findFirst.mockResolvedValueOnce({
+    stubbed(prisma.asset.findFirst).mockResolvedValueOnce({
       id: "a1", hostname: "DAYTONCON-61F-1", ipAddress: "10.255.250.178", tags: [],
       discoveredByIntegration: null,
       ipHistory: [{ ip: "153.66.102.165", source: "monitor-system-info", firstSeen: new Date("2026-06-10T00:00:00Z"), lastSeen: new Date("2026-09-04T00:00:00Z") }],
@@ -550,24 +551,24 @@ describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)"
     h.listNotifications.mockResolvedValueOnce({ notifications: [], total: 0 });
     const r = await runAssistantTool("get_asset", '{"hostname":"DAYTONCON-61F-1"}', { req, maxRows: 25 });
     expect((r.data as any).ipHistory).toEqual([{ ip: "153.66.102.165", source: "monitor-system-info", firstSeen: "2026-06-10T00:00:00.000Z", lastSeen: "2026-09-04T00:00:00.000Z" }]);
-    expect(h.prisma.asset.findFirst.mock.calls[0][0].select.ipHistory).toMatchObject({ orderBy: { lastSeen: "desc" }, take: 30 });
+    expect(stubbed(prisma.asset.findFirst).mock.calls[0][0].select.ipHistory).toMatchObject({ orderBy: { lastSeen: "desc" }, take: 30 });
   });
 
   it("get_asset returns the acquired date, warranty expiry and purchase order", async () => {
-    h.prisma.asset.findFirst.mockResolvedValueOnce({
+    stubbed(prisma.asset.findFirst).mockResolvedValueOnce({
       id: "a1", hostname: "GRAYCOURT-61F-1", tags: [], discoveredByIntegration: null, ipHistory: [],
       acquiredAt: new Date("2022-11-15T00:00:00Z"), warrantyExpiry: null, purchaseOrder: null,
     });
     h.listNotifications.mockResolvedValueOnce({ notifications: [], total: 0 });
     const r = await runAssistantTool("get_asset", '{"hostname":"GRAYCOURT-61F-1"}', { req, maxRows: 25 });
-    const select = h.prisma.asset.findFirst.mock.calls[0][0].select;
+    const select = stubbed(prisma.asset.findFirst).mock.calls[0][0].select;
     expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
     expect((r.data as any).acquiredAt).toBe("2022-11-15T00:00:00.000Z");
     expect((r.data as any).acquiredFrom).toBe("entered");
   });
 
   it("get_asset with no entered date reports the Acquired the page shows — first seen — and says so (seen live 2026-10-27)", async () => {
-    h.prisma.asset.findFirst.mockResolvedValueOnce({
+    stubbed(prisma.asset.findFirst).mockResolvedValueOnce({
       id: "a1", hostname: "ONEIDA-61F-1", tags: [], discoveredByIntegration: null, ipHistory: [],
       acquiredAt: null, createdAt: new Date("2025-01-22T15:00:00Z"), warrantyExpiry: null, purchaseOrder: null,
     });

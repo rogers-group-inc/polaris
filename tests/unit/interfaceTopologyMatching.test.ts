@@ -8,19 +8,14 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { findInterfaces, findAssets } = vi.hoisted(() => ({
-  findInterfaces: vi.fn(),
-  findAssets: vi.fn(),
-}));
-
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    assetInterface: { findMany: findInterfaces },
-    asset: { findMany: findAssets },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { inferInterfaceTopology } from "../../src/services/interfaceTopologyService.js";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
+
+const findInterfaces = stubbed(prisma.assetInterface.findMany);
+const findAssets = stubbed(prisma.asset.findMany);
 
 const asset = (id: string, hostname: string) => ({
   id, hostname, serialNumber: `SN-${id}`, ipAddress: null,
@@ -28,8 +23,7 @@ const asset = (id: string, hostname: string) => ({
 });
 
 beforeEach(() => {
-  findInterfaces.mockReset();
-  findAssets.mockReset();
+  resetDbStub();
   findInterfaces.mockResolvedValue([
     { assetId: "core2", ifName: "JEFFERSON-222E-1", ifType: "aggregate", ifParent: null },
   ]);

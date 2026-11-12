@@ -9,20 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    asset: { groupBy: vi.fn(), count: vi.fn(), findMany: vi.fn() },
-    assetTypeDef: { findMany: vi.fn() },
-    event: { findMany: vi.fn() },
-    notification: { findMany: vi.fn() },
-    notificationRule: { findMany: vi.fn() },
-    // The maintenanceSchedules feed reaches maintenanceScheduleService, which
-    // reads this table and the open-window GROUP BY through $queryRawUnsafe.
-    maintenanceSchedule: { findMany: vi.fn() },
-    $queryRawUnsafe: vi.fn(),
-    $queryRaw: vi.fn(),
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 vi.mock("../../src/services/monitoringService.js", () => ({
   resolveMonitorSettings: vi.fn(),
@@ -39,6 +26,7 @@ vi.mock("../../src/services/notificationService.js", () => ({
 
 import * as noc from "../../src/services/nocDashboardService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { resolveMonitorSettings } from "../../src/services/monitoringService.js";
 import { BUILT_IN_ASSET_TYPES } from "../../src/utils/assetTypes.js";
 
@@ -55,6 +43,7 @@ const typeDefFindMany = (prisma as unknown as { assetTypeDef: { findMany: Return
 const maintFindMany = (prisma as unknown as { maintenanceSchedule: { findMany: ReturnType<typeof vi.fn> } }).maintenanceSchedule.findMany;
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   // Default: no active alerts — feeds keep their base ordering.
   notifFindMany.mockResolvedValue([]);

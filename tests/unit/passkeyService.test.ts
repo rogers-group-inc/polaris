@@ -20,22 +20,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    setting: { findUnique: vi.fn(), upsert: vi.fn() },
-    userPasskey: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      deleteMany: vi.fn(),
-      count: vi.fn(),
-      groupBy: vi.fn(),
-    },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const webauthn = vi.hoisted(() => ({
   generateRegistrationOptions: vi.fn(),
@@ -70,6 +55,7 @@ import {
   PASSKEY_SETTING_KEY,
 } from "../../src/services/passkeyService.js";
 import { prisma } from "../../src/db.js";
+import { resetDbStub } from "./_dbStub.js";
 import { AppError } from "../../src/utils/errors.js";
 import * as challenge from "../../src/utils/webauthnChallenge.js";
 
@@ -84,6 +70,7 @@ const req = { protocol: "https", headers: { host: "polaris.example.com" } };
 const localUser = { id: "user-1", username: "jsmith", displayName: "J Smith", authProvider: "local" };
 
 beforeEach(() => {
+  resetDbStub();
   vi.clearAllMocks();
   invalidatePasskeyCache();
   challenge._reset();

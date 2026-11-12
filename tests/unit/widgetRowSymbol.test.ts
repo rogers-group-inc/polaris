@@ -19,17 +19,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { prisma } from "../../src/db.js";
+import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const h = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
 
-vi.mock("../../src/db.js", () => ({
-  prisma: {
-    mibFile: {
-      findMany: vi.fn(async () => h.rows),
-      findFirst: vi.fn(async () => null),
-    },
-  },
-}));
+vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 const registry = await import("../../src/services/oidRegistry.js");
 
@@ -47,6 +42,12 @@ acmePhasePower OBJECT-TYPE
 END
 `;
 const BASE = "1.3.6.1.4.1.99999.4.1.7";
+
+beforeEach(() => {
+  resetDbStub();
+  stubbed(prisma.mibFile.findMany).mockImplementation(async () => h.rows);
+  stubbed(prisma.mibFile.findFirst).mockImplementation(async () => null);
+});
 
 beforeEach(async () => {
   h.rows = [{ id: "pdu", moduleName: "ACME-PDU-MIB", manufacturer: "Acme", model: null, contents: PDU_MIB }];
