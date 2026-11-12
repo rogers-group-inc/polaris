@@ -555,7 +555,6 @@
     "_rerenderFirmwarePanel",
     "_rerenderStorageSectionFromState",
     "_resolveStaleStreamSec",
-    "_resolveStreamMibLabel",
     "_resolvedStreamPolling",
     "_responseTimeHostFor",
     "_restoreAssetEventsPrefs",

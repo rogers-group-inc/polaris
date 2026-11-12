@@ -174,17 +174,13 @@ Asset
   -- resolveHttpTarget (utils/httpCheck.ts) is the single place that decides it.
   -- Only read when responseTimePolling resolves to "http".
   httpCheckPath             String?
-  -- Per-stream MIB id hints. Either `"std:<key>"` (built-in MIB; UI-only,
-  -- ignored by the collector) or an uploaded MibFile UUID. null = inherit
-  -- from the resolved tier. Consumed by `collectCpuMemorySnmp` /
-  -- `collectTemperatureSnmp`: when `cpuMemoryMibId` resolves to an uploaded
-  -- MibFile, its `manufacturer + moduleName + model` are fed into
-  -- `pickVendorProfile` instead of the asset's own identity — lets operators
-  -- redirect a misclassified asset (e.g. a FortiSwitch whose discovery
-  -- sources stamped manufacturer=Fortinet with no model hint) into the right
-  -- profile without renaming. Symbol resolution scope (oidRegistry) still
-  -- uses the asset's own manufacturer/model so per-device MIB uploads
-  -- continue to win.
+  -- RETIRED per-stream MIB pins (business rule 170, 2026-11-12): nothing
+  -- reads them (the resolver yields null, the collectors build the profile
+  -- subject from the asset alone), the write schemas drop them, and
+  -- migration 20261112180000_retire_stream_mib_pins cleared them after
+  -- logging each one that had switched the asset's manufacturer profile.
+  -- Kept one release for rollback; drop them after. Same on
+  -- MonitorClassOverride, plus processesMibId on both.
   responseTimeMibId         String?
   cpuMemoryMibId            String?
   temperatureMibId          String?

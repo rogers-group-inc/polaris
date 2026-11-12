@@ -352,7 +352,7 @@ asset fresh and saves only its own fields:
 | Entry | What you can change | Needs |
 |---|---|---|
 | **General** | hostname, IP address (or **Revert to discovered IP**), serial, asset tag, manufacturer, model, type, status, location, department, assigned-to, OS, coordinates, purchase dates and order, description, notes, tags | Read-Write on Assets |
-| **Monitoring** | monitoring on or off, and per stream (Response Time, CPU/Memory, Hardware Sensors, Interfaces, LLDP, Storage) the [polling method](Polling-Methods), its credential and MIB, the poll interval and the timeouts. Each inherited value names the tier it comes from, and Response Time says which automation declares the device Down and after how many missed polls | Read-Write on Assets |
+| **Monitoring** | monitoring on or off, and per stream (Response Time, CPU/Memory, Hardware Sensors, Interfaces, LLDP, Storage) the [polling method](Polling-Methods), its credential, the MIB it reads (shown, not chosen; [rule 170](Business-Rules#rule-170)), the poll interval and the timeouts. Each inherited value names the tier it comes from, and Response Time says which automation declares the device Down and after how many missed polls | Read-Write on Assets |
 | **Maintenance** | the windows open now and the schedules covering the asset, with **Remove this asset** and **Delete schedule**, and **Enter maintenance** until a date and time in the server's time zone | Read on Assets to look; Read-Write on Maintenance to act |
 
 An entry you can't use is shown greyed with the reason. As on the desktop, the

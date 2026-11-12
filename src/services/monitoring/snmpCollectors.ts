@@ -149,51 +149,28 @@ export async function snmpWalkRaw(
 // constant is no longer consulted on this path.
 
 /**
- * The identity `pickDbProfile` reads for one asset on one stream, with the
- * operator's per-stream MIB pin applied.
+ * The identity `pickDbProfile` reads for one asset: its own manufacturer, OS,
+ * model and type — nothing else (business rule 170).
  *
- * When a MIB is pinned on this asset's stream (Asset / class-override /
- * integration tier), its own manufacturer + model override the asset's, and
- * its MODULE NAME is carried alongside them. That is how an operator
- * redirects a misclassified asset — a FortiSwitch whose discovery sources
- * stamped `manufacturer=Fortinet` with no model hint — into the right profile
- * without renaming the asset. `"std:<key>"` ids are display hints only and
- * never bias selection.
- *
- * The module name used to be stuffed into the `os` slot, because the only
- * matcher was a single haystack and that was the one place it would be seen.
- * `ProfileSubject.mibModule` is its own field now, so the asset's real OS
- * survives the redirect and the module name reaches BOTH the profile match
- * and the model match — a pinned FORTINET-FORTISWITCH-MIB now selects the
- * FortiSwitch rows as well as the Fortinet profile.
+ * A per-stream MIB pin used to override the manufacturer and model here, so
+ * an uploaded MIB chosen on CPU/Memory or Hardware Sensors silently switched
+ * the asset into that MIB's manufacturer profile, while the same dropdown on
+ * every other stream did nothing at all. The asset's Manufacturer field (and
+ * a profile's "Also applies when", rule 131) is the one way to choose a
+ * profile now; the pins are retired.
  */
-export async function profileSubjectFor(args: {
+export function profileSubjectFor(args: {
   manufacturer?: string | null;
   model?:        string | null;
   os?:           string | null;
   assetType?:    string | null;
-  pinnedMibId?:  string | null;
-}): Promise<ProfileSubject> {
-  const subject: ProfileSubject = {
+}): ProfileSubject {
+  return {
     manufacturer: args.manufacturer ?? null,
     os:           args.os ?? null,
     model:        args.model ?? null,
     assetType:    args.assetType ?? null,
     mibModule:    null,
-  };
-  if (!args.pinnedMibId || args.pinnedMibId.startsWith("std:")) return subject;
-
-  const mib = await prisma.mibFile.findUnique({
-    where:  { id: args.pinnedMibId },
-    select: { moduleName: true, manufacturer: true, model: true },
-  }).catch(() => null);
-  if (!mib) return subject;
-
-  return {
-    ...subject,
-    manufacturer: mib.manufacturer ?? subject.manufacturer,
-    model:        mib.model        ?? subject.model,
-    mibModule:    mib.moduleName ?? null,
   };
 }
 
@@ -204,24 +181,18 @@ export async function collectTelemetrySnmp(
   model?: string | null,
   os?: string | null,
   timeoutMs?: number,
-  telemetryMibId?: string | null,
   assetType?: string | null,
 ): Promise<TelemetrySample> {
   // Make sure the symbol table is populated before we try to resolve any
   // vendor symbols. ensureRegistryLoaded short-circuits after the first call.
   await ensureRegistryLoaded();
 
-  // The operator's per-stream MIB pin can redirect this asset into a
-  // different profile; see profileSubjectFor.
-  const profile = pickDbProfile(
-    await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: telemetryMibId }),
-  );
-  // Scope still uses the *asset's* manufacturer/model first so symbol
-  // resolution through oidRegistry continues to pick up device-specific MIB
-  // overrides for the actual asset, not the MIB pointed at by telemetryMibId.
-  // The governing profile's manufacturer is the second scope (business rule
-  // 131): a profile reached through `matchPattern` or a pin has its MIBs
-  // uploaded under its own name, not the asset's.
+  const profile = pickDbProfile(profileSubjectFor({ manufacturer, model, os, assetType }));
+  // Scope uses the asset's manufacturer/model first so symbol resolution
+  // through oidRegistry picks up device-specific MIB overrides. The governing
+  // profile's manufacturer is the second scope (business rule 131): a profile
+  // reached through `matchPattern` has its MIBs uploaded under its own name,
+  // not the asset's.
   const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
 
   return await withSnmpSession(host, config, async (session) => {

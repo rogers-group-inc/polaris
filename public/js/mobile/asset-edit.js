@@ -785,7 +785,8 @@
     { key: "temperature",  label: "Hardware Sensors", stream: "temperature",  poll: "temperaturePolling",  cred: "temperatureCredentialId",  mib: "temperatureMibId",  mibKey: "temperature" },
     { key: "interfaces",   label: "Interfaces",       stream: "interfaces",   poll: "interfacesPolling",   cred: "interfacesCredentialId",   mib: "interfacesMibId",   mibKey: "interfaces" },
     { key: "lldp",         label: "LLDP",             stream: "lldp",         poll: "lldpPolling",         cred: "lldpCredentialId",         mib: "lldpMibId",         mibKey: "lldp" },
-    // Storage has no credential or MIB column of its own: the SNMP walk reuses
+    // `mib` names the read-only MIB line (rule 170), not a column.
+    // Storage has no credential or MIB line of its own: the SNMP walk reuses
     // the interfaces stream's session, HOST-RESOURCES-MIB + the vendor fallback.
     { key: "storage",      label: "Storage",          stream: "storage",      poll: "storagePolling",      cred: null,                       mib: null,                mibKey: null },
   ];
@@ -817,7 +818,9 @@
     if (!body) return;
     var source = (a.discoveredByIntegration && a.discoveredByIntegration.type) || "manual";
     if (!_POLLING_COMPAT[source]) source = "manual";
-    var autoMib = _autoMibNamesForAsset(a);
+    // The covering manufacturer profile names what CPU/Memory and Hardware
+    // Sensors read (business rule 170: no per-stream MIB pin).
+    var coveringProfile = eff ? (eff.manufacturerProfile || null) : undefined;
     var streams = STREAMS.filter(function (s) {
       // A container / App has no sensors, disks or LLDP of its own.
       return a.assetType !== "container" || (s.key !== "temperature" && s.key !== "lldp" && s.key !== "storage");
@@ -836,9 +839,9 @@
           ' id="ae-' + s.cred + '-wrap" hidden');
       }
       if (s.mib) {
-        html += tf("MIB", '<select class="field" id="ae-' + s.mib + '" data-mib-picker="1" data-current-id="' + esc(a[s.mib] || "") +
-            '" data-auto-mib-name="' + esc(autoMib[s.mibKey] || "") + '">' + _mibOptionsHTML(a[s.mib] || "", autoMib[s.mibKey]) + '</select>',
-          "", ' id="ae-' + s.mib + '-wrap" hidden');
+        html += tf("MIB", '<div class="field" id="ae-' + s.mib + '" data-mib-uses="' + esc(s.mibKey) + '" style="opacity:0.85">' +
+            esc(_streamMibUsesText(s.mibKey, coveringProfile, true)) + '</div>',
+          "Chosen by the asset’s manufacturer profile. Set its Manufacturer to change which applies.", ' id="ae-' + s.mib + '-wrap" hidden');
       }
       if (s.key === "responseTime") {
         html += tf("HTTP check path override", input("ae-httpCheckPath", a.httpCheckPath || "", ' maxlength="1024" placeholder="/"'),
@@ -939,13 +942,8 @@
       if (s.cred) $("ae-" + s.cred).addEventListener("change", function () {
         this.setAttribute("data-current-id", this.value);
       });
-      if (s.mib) $("ae-" + s.mib).addEventListener("change", function () {
-        // Keep the pick when the uploaded-MIB group lands and repaints the list.
-        this.setAttribute("data-current-id", this.value);
-      });
       refreshStream(s);
     });
-    if (transportShown) _populateUploadedMibsInDropdowns();
 
     // Rule 10: a status that is never polled can't be monitored. Status lives
     // on the General sheet here, so the note points there.
@@ -1061,7 +1059,6 @@
           ? (credEl.getAttribute("data-current-id") || null)
           : (credEl.value || null);
       }
-      if (s.mib) data[s.mib] = $("ae-" + s.mib).value || null;
     });
     var path = $("ae-httpCheckPath");
     if (path) data.httpCheckPath = path.value.trim() || null;

@@ -1496,29 +1496,14 @@ async function resolveMonitorSettingsCore(asset: AssetMonitorContext): Promise<R
   if (asset.processesTimeoutMs   != null) { merged.processesTimeoutMs       = asset.processesTimeoutMs;   provenance.processesTimeoutMs       = "asset"; }
   if (asset.eventLogTimeoutMs    != null) { merged.eventLogTimeoutMs        = asset.eventLogTimeoutMs;    provenance.eventLogTimeoutMs        = "asset"; }
 
-  // Per-stream MIB id resolution. Same tier order as polling, but no
-  // compatibility check — the MIB id is a hint that gets consumed downstream
-  // (collectCpuMemorySnmp / collectTemperatureSnmp look up the MibFile to
-  // override profile selection).
-  function resolveMibId(
-    field: keyof Pick<MonitorTierSettings, "responseTimeMibId" | "cpuMemoryMibId" | "temperatureMibId" | "interfacesMibId" | "lldpMibId" | "processesMibId">,
-    tier3Val: string | null,
-    classVal: string | null | undefined,
-    assetVal: string | null | undefined,
-  ): void {
-    let resolved: string | null = tier3Val ?? null;
-    let tier: ProvenanceTier = tier3Source;
-    if (classVal) { resolved = classVal; tier = "class"; }
-    if (assetVal) { resolved = assetVal; tier = "asset"; }
-    merged[field] = resolved;
-    provenance[field] = tier;
+  // Per-stream MIB pins are retired (business rule 170): no tier's value is
+  // resolved, so every `*MibId` reads null whatever an old row or an API
+  // client still holds. The fields stay on the shape (and the columns in the
+  // schema) for one release so a rollback finds them; nothing consumes them.
+  for (const field of ["responseTimeMibId", "cpuMemoryMibId", "temperatureMibId", "interfacesMibId", "lldpMibId", "processesMibId"] as const) {
+    merged[field] = null;
+    provenance[field] = tier3Source;
   }
-  resolveMibId("responseTimeMibId", tier3.responseTimeMibId, classOverride?.responseTimeMibId, asset.responseTimeMibId);
-  resolveMibId("cpuMemoryMibId",    tier3.cpuMemoryMibId,    classOverride?.cpuMemoryMibId,    asset.cpuMemoryMibId);
-  resolveMibId("temperatureMibId",  tier3.temperatureMibId,  classOverride?.temperatureMibId,  asset.temperatureMibId);
-  resolveMibId("interfacesMibId",   tier3.interfacesMibId,   classOverride?.interfacesMibId,   asset.interfacesMibId);
-  resolveMibId("lldpMibId",         tier3.lldpMibId,         classOverride?.lldpMibId,         asset.lldpMibId);
-  resolveMibId("processesMibId",    tier3.processesMibId,    classOverride?.processesMibId,    asset.processesMibId);
 
   // Per-stream credential IDs from the class override. Per-asset overrides
   // come from the Prisma `include` on each dispatcher, not the resolver.

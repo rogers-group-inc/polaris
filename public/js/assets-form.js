@@ -555,17 +555,7 @@ function getAssetFormData() {
     data.temperatureCredentialId  = credVal(tempCredEl);
     data.interfacesCredentialId   = credVal(ifCredEl);
     data.lldpCredentialId         = credVal(lldpCredEl);
-    // Per-stream MIB overrides. Empty string → null (Automatic).
-    var rtMibEl   = document.getElementById("f-responseTimeMib");
-    var telMibEl  = document.getElementById("f-telemetryMib");
-    var tempMibEl = document.getElementById("f-temperatureMib");
-    var ifMibEl   = document.getElementById("f-interfacesMib");
-    var lldpMibEl = document.getElementById("f-lldpMib");
-    data.responseTimeMibId = rtMibEl   ? (rtMibEl.value   || null) : undefined;
-    data.cpuMemoryMibId    = telMibEl  ? (telMibEl.value  || null) : undefined;
-    data.temperatureMibId  = tempMibEl ? (tempMibEl.value || null) : undefined;
-    data.interfacesMibId   = ifMibEl   ? (ifMibEl.value   || null) : undefined;
-    data.lldpMibId         = lldpMibEl ? (lldpMibEl.value || null) : undefined;
+    // No per-stream MIB: the pins are retired (business rule 170).
   }
   return data;
 }
@@ -619,17 +609,6 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   // fallback rather than a value copied from the wrong place.
   var httpCredPathHint = "";
 
-  // Per-stream MIB IDs (null = Automatic).
-  var rtMibId   = (asset && asset.responseTimeMibId)  || "";
-  var telMibId  = (asset && asset.cpuMemoryMibId)     || "";
-  var tempMibId = (asset && asset.temperatureMibId)   || "";
-  var ifMibId   = (asset && asset.interfacesMibId)    || "";
-  var lldpMibId = (asset && asset.lldpMibId)          || "";
-
-  // Auto MIB names for the "Automatic" option label — vendor-aware for
-  // CPU/memory and temperature (polling-methods.js, shared with the phone).
-  var _autoMibNames = _autoMibNamesForAsset(asset);
-
   // Per-stream subtab body: polling-method dropdown (with credential + MIB
   // sub-rows beneath that show/hide based on selected method), then a per-
   // stream cadence + timeout block, then on Response Time only the failure
@@ -645,21 +624,16 @@ function assetMonitoringFormHTML(asset, managedAgent) {
   // "icmp" and "disabled" never need a credential; "agent" doesn't either —
   // the Polaris Agent's own per-asset bearer (issued at install time) is
   // implicit and never picked from the credential store.
-  function streamPollingBlock(streamName, pollingId, credSelectId, mibSelectId, currentPoll, currentCredId, currentMibId, autoMibName) {
+  function streamPollingBlock(streamName, pollingId, credSelectId, mibSelectId, currentPoll, currentCredId) {
     var needsCred = currentPoll && currentPoll !== "icmp" && currentPoll !== "disabled" && currentPoll !== "agent" && currentPoll !== "genericapi";
     var isSnmp    = currentPoll === "snmp";
     var credDisplay = needsCred ? "flex" : "none";
-    var mibDisplay  = isSnmp   ? "flex" : "none";
-    // Storage has no per-stream MIB column on Asset — HOST-RESOURCES-MIB +
-    // the vendor disk fallback in pickVendorProfileMerged covers it without
-    // operator input. Skip the MIB sub-row when no mibSelectId was passed.
+    // What the stream reads over SNMP, said not chosen (business rule 170):
+    // filled in by _populateAssetMonitorTierBadges once the effective-settings
+    // read names the covering manufacturer profile. Storage has no line —
+    // HOST-RESOURCES-MIB + the profile's disk fallback, nothing to say per row.
     var mibSubRow = mibSelectId
-      ? '<div class="form-group" id="' + pollingId + '-mib-wrap" style="display:' + mibDisplay + ';align-items:center;gap:0.5rem;margin-top:0.5rem">' +
-          '<label style="margin:0;font-size:0.85rem;color:var(--color-text-secondary);min-width:90px">MIB</label>' +
-          '<select id="' + mibSelectId + '" data-current-id="' + escapeHtml(currentMibId) + '" data-auto-mib-name="' + escapeHtml(autoMibName || "") + '" data-mib-picker="1" style="flex:1">' +
-            _mibOptionsHTML(currentMibId, autoMibName) +
-          '</select>' +
-        '</div>'
+      ? _streamMibUsesRowHTML(pollingId + "-mib-wrap", mibSelectId, streamName, undefined, true, isSnmp)
       : '';
     return '<div class="form-group"><label>Polling method</label>' +
         _polarisPollingDropdownHTML(pollingId, assetSourceKind, streamName, currentPoll) +
@@ -726,30 +700,30 @@ function assetMonitoringFormHTML(asset, managedAgent) {
     '</div>';
   }
   function bodyResponseTime() {
-    return streamPollingBlock("responseTime", "f-responseTimePolling", "f-responseTimeCredential", "f-responseTimeMib", pollingCurrent.responseTimePolling, rtCredId, rtMibId, _autoMibNames.responseTime) +
+    return streamPollingBlock("responseTime", "f-responseTimePolling", "f-responseTimeCredential", "f-responseTimeMib", pollingCurrent.responseTimePolling, rtCredId) +
       httpPathInput() +
       intervalInput("f-monitorInterval", "Poll Interval Override (seconds)", interval, 5, 86400, "Minimum 5 seconds. Inherits from the resolved tier when blank.") +
       probeTimeoutInput() +
       declaringDownHint();
   }
   function bodyCpuMemory() {
-    return streamPollingBlock("telemetry", "f-cpuMemoryPolling", "f-cpuMemoryCredential", "f-telemetryMib", pollingCurrent.cpuMemoryPolling, telCredId, telMibId, _autoMibNames.telemetry) +
+    return streamPollingBlock("telemetry", "f-cpuMemoryPolling", "f-cpuMemoryCredential", "f-telemetryMib", pollingCurrent.cpuMemoryPolling, telCredId) +
       intervalInput("f-cpuMemoryTimeoutMs", "CPU/Memory Timeout Override (ms)", telemetryTimeout, 1000, 120000, "Per-request timeout for the CPU/memory collector (FortiOS REST + SNMP). Range 1000..120000 ms; default 10000 ms. Inherits when blank.");
   }
   function bodyTemperature() {
-    return streamPollingBlock("temperature", "f-temperaturePolling", "f-temperatureCredential", "f-temperatureMib", pollingCurrent.temperaturePolling, tempCredId, tempMibId, _autoMibNames.temperature) +
+    return streamPollingBlock("temperature", "f-temperaturePolling", "f-temperatureCredential", "f-temperatureMib", pollingCurrent.temperaturePolling, tempCredId) +
       intervalInput("f-temperatureTimeoutMs", "Hardware Sensor Timeout Override (ms)", temperatureTimeout, 1000, 120000, "Per-request timeout for the hardware-sensor collector (FortiOS sensor-info / SNMP fgHwSensorTable / ENTITY-SENSOR-MIB). Range 1000..120000 ms; default 10000 ms. Inherits when blank.");
   }
   function bodyInterfaces() {
-    return streamPollingBlock("interfaces", "f-interfacesPolling", "f-interfacesCredential", "f-interfacesMib", pollingCurrent.interfacesPolling, ifCredId, ifMibId, _autoMibNames.interfaces) +
+    return streamPollingBlock("interfaces", "f-interfacesPolling", "f-interfacesCredential", "f-interfacesMib", pollingCurrent.interfacesPolling, ifCredId) +
       intervalInput("f-systemInfoTimeoutMs", "System Info Timeout Override (ms)", systemInfoTimeout, 1000, 120000, "Per-request timeout for the interface / storage / LLDP collector. Range 1000..120000 ms; default 10000 ms. Inherits when blank.");
   }
   function bodyStorage() {
-    return streamPollingBlock("storage", "f-storagePolling", "f-storageCredential", null, pollingCurrent.storagePolling, "", "", null) +
+    return streamPollingBlock("storage", "f-storagePolling", "f-storageCredential", null, pollingCurrent.storagePolling, "") +
       '<p class="hint" style="margin:0.5rem 0 0;padding:0.5rem 0.65rem;background:var(--color-bg-tertiary);border-radius:var(--radius-sm);color:var(--color-text-secondary)">Cadence + timeout for this stream are shared with the <strong>Interfaces</strong> subtab at the per-asset tier — edit them there.</p>';
   }
   function bodyLldp() {
-    return streamPollingBlock("lldp", "f-lldpPolling", "f-lldpCredential", "f-lldpMib", pollingCurrent.lldpPolling, lldpCredId, lldpMibId, _autoMibNames.lldp) +
+    return streamPollingBlock("lldp", "f-lldpPolling", "f-lldpCredential", "f-lldpMib", pollingCurrent.lldpPolling, lldpCredId) +
       '<p class="hint" style="margin:0.5rem 0 0;padding:0.5rem 0.65rem;background:var(--color-bg-tertiary);border-radius:var(--radius-sm);color:var(--color-text-secondary)">Cadence + timeout for this stream are shared with the <strong>Interfaces</strong> subtab at the per-asset tier — edit them there.</p>';
   }
 
@@ -1375,6 +1349,7 @@ async function _populateAssetMonitorTierBadges(asset) {
   _updateStaleBannersFromEffective(asset.id, asset);
 
   _paintDownDetectionHint(eff, asset);
+  _paintStreamMibUses(document, eff.manufacturerProfile || null);
 
   function tierLabel(tier) {
     if (tier === "asset")       return null; // own override — no badge needed; the input itself IS the value
@@ -1591,7 +1566,6 @@ async function openCreateModal() {
   wireDescriptionCapWarning("f-description", "f-description-cap-warn");
   wireTagPicker();
   _wireMonitorEditTab({});
-  _populateUploadedMibsInDropdowns();
   _wireIpContextPanel();
   document.getElementById("btn-save").addEventListener("click", async function () {
     var btn = this;
@@ -1687,7 +1661,6 @@ async function openEditModal(id, opts) {
     wireTagPicker();
     _wireIpRevertLink();
     _wireMonitorEditTab(asset);
-    _populateUploadedMibsInDropdowns();
 
     // Wire the "Install Polaris Agent…" button when present (no agent
     // installed + source supports agent). Reuses the same install modal
@@ -2406,7 +2379,6 @@ function _monsetOpenOverrideEditor(existing) {
   var footer = '<button class="btn btn-secondary" id="btn-monset-ov-cancel">Cancel</button>' +
     '<button class="btn btn-primary" id="btn-monset-ov-save">' + (isEdit ? "Save Changes" : "Create Override") + '</button>';
   openModal(isEdit ? "Edit Class Override" : "Add Class Override", body, footer);
-  _populateUploadedMibsInDropdowns();
   if (typeof wireModalTabs === "function") wireModalTabs("monset-ov-streams");
   document.getElementById("btn-monset-ov-cancel").addEventListener("click", _monsetRender);
   document.getElementById("btn-monset-ov-save").addEventListener("click", function () {
@@ -2516,10 +2488,9 @@ async function _monsetSaveOverride(existing) {
     temperatureIntervalSeconds: readOptional("monset-ov-temperatureIntervalSeconds"),
     systemInfoIntervalSeconds: readOptional("monset-ov-systemInfoIntervalSeconds"),
   };
-  // Polling-method + MIB selects use the `monset-ov-tier-` prefix (matches
+  // Polling-method selects use the `monset-ov-tier-` prefix (matches
   // the Manual Monitoring section's `f-manual-mon-tier-` convention).
   Object.assign(fields, _polarisReadPollingFourStream("monset-ov-tier-"));
-  Object.assign(fields, _polarisReadMibFourStream("monset-ov-tier-"));
   // Per-stream credentials: _classStreamSubtabHTML renders one select per
   // (stream × credtype) at `<pollId>-cred-<credtype>`. Pick the credential
   // matching the stream's chosen polling method; "Inherit / none" (empty)

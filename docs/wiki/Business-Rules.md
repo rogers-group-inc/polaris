@@ -3510,7 +3510,6 @@ Deleting any of these now stops with a message naming what still depends on it:
   reboot still sends through;
 - an **automation script** that an automation or alert group still runs — anywhere in it,
   including escalation steps, severity levels, the all-clear and reset actions;
-- a **MIB** that an asset or a class monitoring setting has selected for a stream;
 - a **credential** that a Discovery still tries (a private Discovery is counted, not named).
 
 Point those at something else, then delete. Before this, the delete went through and the
@@ -3524,3 +3523,15 @@ also have a name ("Basement", "Mezzanine") kept in **Location regions**. New des
 the number; an existing text floor such as `f:Surface` keeps working, is matched to the floor of
 that name, and is listed under **Devices to check** with the number to use. Polaris never
 rewrites one without asking.
+
+### Rule 170
+
+**Which MIB a stream reads is decided by the asset's manufacturer profile; it is not chosen
+per stream.** An SNMP stream on an asset's Monitoring tab (and on an integration's or a class
+setting's) shows a read-only **MIB** line instead of a dropdown. Response Time always reads
+SNMPv2-MIB, Interfaces IF-MIB and LLDP LLDP-MIB. CPU/Memory and Hardware Sensors read the
+manufacturer profile that covers the asset, then the standard MIB (HOST-RESOURCES-MIB,
+ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufacturer**. The old
+MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
+another manufacturer's profile; on upgrade, every asset where it could have done that gets a
+warning in its Events naming the MIB, and every pin is cleared.

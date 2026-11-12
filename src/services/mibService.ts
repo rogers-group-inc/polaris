@@ -671,39 +671,11 @@ export async function findMibWalkAsset(assetId: string): Promise<{
   return asset;
 }
 
-/** The six per-stream MIB pickers, on an asset and on a class override. */
-const STREAM_MIB_COLUMNS = ["responseTimeMibId", "cpuMemoryMibId", "temperatureMibId", "interfacesMibId", "lldpMibId", "processesMibId"] as const;
-
-/**
- * Who has picked this MIB for a stream (business rule 167). The pickers hold a
- * bare id with no foreign key, so a deleted MIB stayed selected: the stream
- * silently fell back to whatever the resolver does with an id it cannot find,
- * and the picker showed a blank. Two counts and at most five names.
- */
-export async function mibSelections(id: string): Promise<{ assets: number; assetNames: string[]; classSettings: number }> {
-  const anyColumn = { OR: STREAM_MIB_COLUMNS.map((c) => ({ [c]: id })) };
-  const [assets, sample, classSettings] = await Promise.all([
-    prisma.asset.count({ where: anyColumn }),
-    prisma.asset.findMany({ where: anyColumn, select: { hostname: true, ipAddress: true, id: true }, orderBy: { hostname: "asc" }, take: 5 }),
-    prisma.monitorClassOverride.count({ where: anyColumn }),
-  ]);
-  return { assets, assetNames: sample.map((a) => a.hostname || a.ipAddress || a.id), classSettings };
-}
-
 export async function deleteMib(id: string): Promise<void> {
-  // Rule 167: a MIB something is still polling with is not deleted.
-  const used = await mibSelections(id);
-  if (used.assets > 0 || used.classSettings > 0) {
-    const row = await prisma.mibFile.findUnique({ where: { id }, select: { moduleName: true } });
-    if (!row) throw new AppError(404, "MIB not found");
-    const parts: string[] = [];
-    if (used.assets > 0) {
-      const more = used.assets > used.assetNames.length ? ` (+${used.assets - used.assetNames.length} more)` : "";
-      parts.push(`${used.assets} asset${used.assets === 1 ? "" : "s"}: ${used.assetNames.join(", ")}${more}`);
-    }
-    if (used.classSettings > 0) parts.push(`${used.classSettings} class monitoring setting${used.classSettings === 1 ? "" : "s"}`);
-    throw new AppError(409, `MIB ${row.moduleName} is still selected for a monitoring stream on ${parts.join(", and ")}. Choose another MIB there first.`);
-  }
+  // No stream-pin guard: the per-stream MIB pins it counted (rule 167's MIB
+  // clause) are retired by business rule 170, so nothing polls "with" a MIB
+  // any more — a profile row that names one reads `unresolved` once it is
+  // gone and says which module to upload (rule 68).
   try {
     await prisma.mibFile.delete({ where: { id } });
   } catch {

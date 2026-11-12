@@ -52,19 +52,15 @@ function _fmgFortiosRestUnavailable(integrationType) {
 // lldp) for a given source kind. Used by the integration Monitoring tab, the
 // class override editor, and the asset edit modal.
 //
-// opts.showMibRows  — emit a per-stream MIB sub-row (shown when SNMP selected)
 // opts.showCredRows — emit a per-stream credential sub-row (class override tier)
 // opts.credentials  — array of {id,name,type} for the credential sub-row
 // opts.credValues   — object with {responseTimeCredentialId, ...} current values
-// opts.mibValues    — object with {responseTimeMibId, ...} current values
 function _polarisPollingFourStreamHTML(idPrefix, source, current, opts) {
   current = current || {};
   opts    = opts    || {};
-  var showMibRows  = !!opts.showMibRows;
   var showCredRows = !!opts.showCredRows;
   var credentials  = opts.credentials || [];
   var credValues   = opts.credValues  || {};
-  var mibValues    = opts.mibValues   || {};
 
   var streams = [
     { key: "responseTime",  label: "Response time",  pollField: "responseTimePolling",  credField: "responseTimeCredentialId",  mibField: "responseTimeMibId"  },
@@ -97,29 +93,12 @@ function _polarisPollingFourStreamHTML(idPrefix, source, current, opts) {
       '</div>';
     }
 
-    // Optional per-stream MIB sub-row. Storage has no per-stream MIB column —
-    // the SNMP storage walk hits HOST-RESOURCES-MIB hrStorageTable with a
-    // vendor fallback through pickVendorProfileMerged; there's nothing the
-    // operator can usefully pick from a MIB list, so skip the row entirely.
-    var mibSubRow = "";
-    if (showMibRows && !s.noMib && s.mibField) {
-      var currentMibId = mibValues[s.mibField] || "";
-      var autoMibName  = (opts.autoMibNames || _autoMibNamesForSource(source))[s.key] || "";
-      mibSubRow = '<div id="' + idPrefix + s.key + '-mib-wrap" style="display:' + (pollIsSnmp ? "flex" : "none") + ';grid-column:2;align-items:center;gap:0.5rem;margin-top:0.25rem">' +
-        '<label style="margin:0;font-size:0.85rem;color:var(--color-text-secondary)">MIB</label>' +
-        '<select id="' + idPrefix + s.key + 'Mib" data-current-id="' + escapeHtml(currentMibId) + '" data-auto-mib-name="' + escapeHtml(autoMibName) + '" data-mib-picker="1" style="flex:1">' +
-          _mibOptionsHTML(currentMibId, autoMibName) +
-        '</select>' +
-      '</div>';
-    }
-
     var labelHtml = '<label style="margin:0">' + escapeHtml(s.label) +
       (s.note ? '<div style="font-size:0.72rem;font-weight:normal;color:var(--color-text-tertiary);margin-top:2px">' + escapeHtml(s.note) + '</div>' : '') +
       '</label>';
     rows += labelHtml +
       _polarisPollingDropdownHTML(idPrefix + s.pollField, source, s.key, current[s.pollField]) +
-      credSubRow +
-      mibSubRow;
+      credSubRow;
   });
 
   return '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin:0.5rem 0 0.5rem 0">Polling Methods</p>' +
@@ -138,24 +117,6 @@ function _polarisReadPollingFourStream(idPrefix) {
     storagePolling:      _polarisReadPollingDropdown(idPrefix + "storagePolling"),
     processesPolling:    _polarisReadPollingDropdown(idPrefix + "processesPolling"),
     eventLogPolling:     _polarisReadPollingDropdown(idPrefix + "eventLogPolling"),
-  };
-}
-
-// Read per-stream MIB IDs from selects rendered by _polarisPollingFourStreamHTML.
-// Returns {responseTimeMibId, cpuMemoryMibId, interfacesMibId, lldpMibId} with
-// null for streams whose select is absent or set to "Automatic".
-function _polarisReadMibFourStream(idPrefix) {
-  function mibVal(stream) {
-    var el = document.getElementById(idPrefix + stream + "Mib");
-    return el ? (el.value || null) : undefined;
-  }
-  return {
-    responseTimeMibId: mibVal("responseTime"),
-    cpuMemoryMibId:    mibVal("telemetry"),
-    temperatureMibId:  mibVal("temperature"),
-    interfacesMibId:   mibVal("interfaces"),
-    lldpMibId:         mibVal("lldp"),
-    processesMibId:    mibVal("processes"),
   };
 }
 
@@ -953,7 +914,6 @@ function _wireIntegrationModal(type, id) {
     wireAutoMonitorCards(id || null);
     _wireProbeTimeoutWarning();
     _wireCredentialPickerVisibility();
-    _populateUploadedMibsInDropdowns();
     return;
   }
   if (_NON_FORTINET_TABBED.indexOf(type) === -1) return;   // flat form, nothing to wire

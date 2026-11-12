@@ -62,6 +62,13 @@ resolution time**; the route layer rejects it at write time with a clear 400.
 > An **HTTP check** is configured as a **manufacturer custom widget**
 > ([rule 33](Business-Rules#rule-33)); see [below](#the-http-check).
 
+**Which MIB `snmp` reads is shown, not chosen** ([rule 170](Business-Rules#rule-170)). Under
+a stream set to SNMP, the **MIB** line says what is read: Response Time reads SNMPv2-MIB
+(`sysUpTime`), Interfaces IF-MIB and LLDP LLDP-MIB. CPU/Memory and Hardware Sensors read the
+manufacturer profile that covers the asset (the line names it and its MIBs), then the standard
+HOST-RESOURCES-MIB or ENTITY-SENSOR-MIB. To change which profile applies, set the asset's
+**Manufacturer**.
+
 ### Which source takes which method
 
 The dropdowns offer only what the asset's source kind accepts (plus `disabled`
