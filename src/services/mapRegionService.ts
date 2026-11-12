@@ -150,6 +150,11 @@ export interface ReconcileSummary extends Record<string, unknown> {
   /** Subnets that lost it — drifted-out members, plus rename / delete strips. */
   subnetsRemoved: number;
   /**
+   * IP blocks whose hand-applied copy of the tag was renamed or removed
+   * (business rule 169(b)). Rename / delete only; a block is never a member.
+   */
+  blocksRetagged?: number;
+  /**
    * The fleet-wide retired-name sweep (business rule 54). Present ONLY on
    * `reconcileMapRegions`, which is the only caller that runs it — the
    * per-region helpers return a summary about one region and have nothing to
@@ -564,6 +569,39 @@ async function removeTagFromAllSubnets(tag: string): Promise<number> {
           where: { id: row.id },
           data: { tags: tags.filter((t) => t !== tag) },
         });
+      }),
+    );
+  }
+  return rows.length;
+}
+
+/**
+ * A region's tag on IP BLOCKS (business rule 169(b)). A block is never a
+ * member of a region — the map tags assets and the networks their gates
+ * serve — so the only way a block carries `region:<name>` is that someone
+ * typed it. Nothing reconciled it: after a rename the block went on naming a
+ * region that no longer existed, and after a delete it named nothing at all.
+ *
+ * `to` set = a rename: the tag is replaced, and a block that already carries
+ * the new name just loses the old one. `to` null = a delete: it is removed.
+ * Blocks are a small table; chunked like the subnet strip.
+ */
+async function retagAllBlocks(from: string, to: string | null): Promise<number> {
+  const rows = await prisma.ipBlock.findMany({
+    where: { tags: { has: from } },
+    select: { id: true, tags: true },
+  });
+  if (rows.length === 0) return 0;
+  for (const c of chunkArray(rows, 50)) {
+    await prisma.$transaction(
+      c.map((row) => {
+        const tags = Array.isArray(row.tags) ? row.tags : [];
+        const next: string[] = [];
+        for (const t of tags) {
+          const name = t === from ? to : t;
+          if (name !== null && !next.includes(name)) next.push(name);
+        }
+        return prisma.ipBlock.update({ where: { id: row.id }, data: { tags: next } });
       }),
     );
   }
@@ -1012,6 +1050,8 @@ export async function applyRename(
   const oldTag = regionTag(previousName);
   const removed = await removeTagFromAllAssets(oldTag);
   const subnetsRemoved = await removeTagFromAllSubnets(oldTag);
+  // Rule 169(b): a hand-applied copy on an IP block follows the rename.
+  const blocksRetagged = await retagAllBlocks(oldTag, regionTag(region.name));
   // Provenance is keyed by region id, not by tag name, so it survives the
   // rename untouched -- and the sync's add pass is idempotent against the
   // tags[] array rather than against provenance, so every current member picks
@@ -1025,6 +1065,7 @@ export async function applyRename(
     subnetsAdded: synced.subnetsAdded,
     subnetsRemoved: subnetsRemoved + synced.subnetsRemoved,
     subnetsTouched: subnetsRemoved + synced.subnetsTouched,
+    blocksRetagged,
   };
 }
 
@@ -1036,6 +1077,8 @@ export async function applyDelete(region: MapRegion): Promise<ReconcileSummary> 
   const tag = regionTag(region.name);
   const removed = await removeTagFromAllAssets(tag);
   const subnetsRemoved = await removeTagFromAllSubnets(tag);
+  // Rule 169(b): and off any IP block someone typed it onto.
+  const blocksRetagged = await retagAllBlocks(tag, null);
   // The region is gone, so every pair we recorded for it is meaningless -- drop
   // them rather than leaving rows no future region id could ever match.
   await dropAllProvenance(region.id);
@@ -1047,6 +1090,7 @@ export async function applyDelete(region: MapRegion): Promise<ReconcileSummary> 
     subnetsAdded: 0,
     subnetsRemoved,
     subnetsTouched: subnetsRemoved,
+    blocksRetagged,
   };
 }
 
