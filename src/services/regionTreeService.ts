@@ -575,6 +575,13 @@ export async function mergeRegionNodes(
       const key = uniqueKeyFor(k.kind, k.name, intoId);
       const twin = await tx.regionNode.findFirst({ where: { siteId, uniqueKey: key, NOT: { id: k.id } } });
       if (twin) throw new AppError(409, `Both have a ${k.kind} called "${k.name}" — merge those first`);
+      // Rule 168: a building has one floor per NUMBER, and the name is only a
+      // label — "Ground" (level 1) and "1" (level 1) are different names but
+      // the same floor, so the name check above lets them both through.
+      if (k.kind === "floor" && k.level !== null) {
+        const levelTwin = await tx.regionNode.findFirst({ where: { siteId, kind: "floor", parentId: intoId, level: k.level, NOT: { id: k.id } }, select: { name: true } });
+        if (levelTwin) throw new AppError(409, `Both have floor ${k.level} ("${k.name}" and "${levelTwin.name}") — merge those first`);
+      }
       await tx.regionNode.update({ where: { id: k.id }, data: { parentId: intoId, uniqueKey: key } });
     }
     await tx.regionNode.delete({ where: { id: fromId } });
