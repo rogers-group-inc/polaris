@@ -58,7 +58,7 @@ const RegionTagsSchema = z.array(z.string().max(64)).max(64);
 const CreateUserSchema = z.object({
   username: z.string().min(1).max(64),
   password: passwordSchema,
-  roleId:   z.string().uuid("roleId must be a UUID"),
+  roleId:   z.string().guid("roleId must be a UUID"),
   regionTags: RegionTagsSchema.optional(),
   otherTags: RegionTagsSchema.optional(),
 });
@@ -68,7 +68,7 @@ const ResetPasswordSchema = z.object({
 });
 
 const UpdateRoleSchema = z.object({
-  roleId: z.string().uuid("roleId must be a UUID"),
+  roleId: z.string().guid("roleId must be a UUID"),
 });
 
 const UpdateRegionsSchema = z.object({

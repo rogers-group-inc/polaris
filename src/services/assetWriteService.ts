@@ -116,7 +116,7 @@ export const CreateAssetSchema = z.object({
   // device (Polaris-primary; see descriptionSyncService). Device-side caps
   // are tighter for some targets (FortiGate alias ~35) — the push truncates.
   description:   z.string().max(255).optional(),
-  tags:          z.array(z.string()).optional(),
+  tags:          z.array(z.string()).max(500).optional(),
 });
 
 // Mirrors PollingMethod in src/utils/pollingCompatibility.ts. Source-kind
@@ -128,6 +128,12 @@ export const CreateAssetSchema = z.object({
 const PollingMethodEnum = z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled", "agent", "vcenter", "fortimanager", "unraid", "truenas", "proxmox", "genericapi"]);
 
 export const UpdateAssetSchema = CreateAssetSchema.partial().extend({
+  // Create's defaults must not survive into an update. Zod 4 applies a
+  // .default() even inside .partial()/.optional(), so without these two lines
+  // every PUT that omitted them reset the asset to type "other" / status
+  // "active" (caught by the integration suite on the 3 → 4 move, 2026-11-12).
+  assetType:     AssetTypeEnum.optional(),
+  status:        AssetStatusEnum.optional(),
   // Unlike create (min(1)), update accepts "" — blanking the IP Address field
   // of an asset that HAS an address pins it to no address (Asset.ipBlankPinned):
   // discovery can no longer fill it. `ipRevertToDiscovered: true` is the
@@ -136,12 +142,12 @@ export const UpdateAssetSchema = CreateAssetSchema.partial().extend({
   ipAddress:             AssetAddressSchema.or(z.literal("")).optional(),
   ipRevertToDiscovered:  z.literal(true).optional(),
   monitored:             z.boolean().optional(),
-  monitorCredentialId:          z.string().uuid().nullable().optional(),
-  responseTimeCredentialId:     z.string().uuid().nullable().optional(),
-  cpuMemoryCredentialId:        z.string().uuid().nullable().optional(),
-  temperatureCredentialId:      z.string().uuid().nullable().optional(),
-  interfacesCredentialId:       z.string().uuid().nullable().optional(),
-  lldpCredentialId:             z.string().uuid().nullable().optional(),
+  monitorCredentialId:          z.string().guid().nullable().optional(),
+  responseTimeCredentialId:     z.string().guid().nullable().optional(),
+  cpuMemoryCredentialId:        z.string().guid().nullable().optional(),
+  temperatureCredentialId:      z.string().guid().nullable().optional(),
+  interfacesCredentialId:       z.string().guid().nullable().optional(),
+  lldpCredentialId:             z.string().guid().nullable().optional(),
   // Per-stream MIB overrides ("std:<key>" | uploaded MIB UUID | null = inherit)
   responseTimeMibId:            z.string().nullable().optional(),
   cpuMemoryMibId:               z.string().nullable().optional(),

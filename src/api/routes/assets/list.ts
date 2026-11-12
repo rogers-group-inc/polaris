@@ -136,7 +136,7 @@ router.get("/source-priority", requirePermission("assets", "read"), async (_req,
 router.put("/source-priority", requirePermission("assets", "write"), requireFleetWide("assets", "the source priority"), async (req, res, next) => {
   try {
     const body = z.object({
-      order: z.array(z.string()).optional(),
+      order: z.array(z.string()).max(500).optional(),
       integrationPrefix: z.boolean().optional(),
     }).parse(req.body);
     const { saveSourceLocationPriority, getSourcePrioritySettings } =
@@ -209,9 +209,9 @@ router.put("/ip-history-settings", requirePermission("assets", "write"), require
 router.post("/bulk-monitor", requirePermission("assets", "write"), scopeAssetIds("assets", "change monitoring on devices", idsFromBody), async (req, res, next) => {
   try {
     const body = z.object({
-      ids:                 z.array(z.string().uuid()).min(1),
+      ids:                 z.array(z.string().guid()).max(50_000).min(1),
       monitored:           z.boolean(),
-      monitorCredentialId: z.string().uuid().nullable().optional(),
+      monitorCredentialId: z.string().guid().nullable().optional(),
       monitorIntervalSec:  z.number().int().min(5).max(86400).nullable().optional(),
       probeTimeoutMs:      z.number().int().min(100).max(60000).nullable().optional(),
     }).parse(req.body);
@@ -225,7 +225,7 @@ router.post("/bulk-monitor", requirePermission("assets", "write"), scopeAssetIds
 // as PUT /:id, which is the single-asset tag write. Semantics — including the
 // managed prefixes a replace keeps — live in assetBulkTagService.
 const BulkTagsSchema = z.object({
-  ids:  z.array(z.string().uuid()).min(1).max(10000),
+  ids:  z.array(z.string().guid()).min(1).max(10000),
   mode: z.enum(["add", "remove", "replace"]),
   tags: z.array(z.string().max(128)).max(200),
 });
@@ -334,7 +334,7 @@ router.post("/pin-inventory", requirePermission("assets", "read"), async (req, r
 router.post("/mass-pins", requirePermission("assets", "write"), scopeAssetIds("assets", "pin interfaces on devices", (r) => [...((r.body && r.body.pin) || []), ...((r.body && r.body.unpin) || [])].map((d: { assetId?: unknown }) => (d && typeof d.assetId === "string" ? d.assetId : ""))), async (req, res, next) => {
   try {
     const DeltaSchema = z.object({
-      assetId: z.string().uuid(),
+      assetId: z.string().guid(),
       name:    z.string().min(1).max(256),
       field:   z.enum(["interfaces", "ipsecTunnels", "storage"]),
     });

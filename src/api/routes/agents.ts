@@ -222,7 +222,7 @@ const TelemetrySampleSchema = z.object({
   temperatures:  z.array(z.object({
     sensorName: z.string().max(128),
     celsius:    z.number().nullable(),
-  })).optional(),
+  })).max(1_000).optional(),
 });
 
 const InterfaceSampleSchema = z.object({
@@ -1161,7 +1161,7 @@ agentsRouter.get("/commands", async (req, res, next) => {
 });
 
 const CommandResultSchema = z.object({
-  commandId:   z.string().uuid(),
+  commandId:   z.string().guid(),
   success:     z.boolean(),
   error:       z.string().max(2048).nullable().optional(),
   resultState: z.string().max(128).nullable().optional(),

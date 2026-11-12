@@ -30,14 +30,14 @@ export const MAX_DASHBOARDS = 24;
 export const MAX_DASHBOARD_NAME_LEN = 60;
 
 const WidgetInstanceSchema = z.object({
-  id:     z.string().uuid("widget id must be a uuid"),
+  id:     z.string().guid("widget id must be a uuid"),
   type:   z.string().min(1).max(64),
   height: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
 });
 
 const ColumnSchema = z.object({
-  id:      z.string().uuid("column id must be a uuid"),
+  id:      z.string().guid("column id must be a uuid"),
   width:   z.union([z.literal(3), z.literal(4), z.literal(6), z.literal(12)]),
   widgets: z.array(WidgetInstanceSchema).max(MAX_WIDGETS),
 });

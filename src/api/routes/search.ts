@@ -15,7 +15,7 @@ const router = Router();
 const csvOf = <T extends readonly [string, ...string[]]>(values: T) =>
   z.string()
     .transform((s) => s.split(",").map((v) => v.trim()).filter(Boolean))
-    .pipe(z.array(z.enum(values)));
+    .pipe(z.array(z.enum(values)).max(50));
 
 const SearchQuerySchema = z.object({
   q: z.string().optional(),

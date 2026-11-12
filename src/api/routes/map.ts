@@ -464,15 +464,15 @@ const RegionCreateSchema = z.object({
   kind: z.enum(["area", "building", "floor", "room", "rack", "junctionBox"]),
   // A floor's name is optional (its number when blank, rule 168); every other kind needs one.
   name: z.string().max(64).optional(),
-  parentId: z.string().uuid().nullable().optional(),
+  parentId: z.string().guid().nullable().optional(),
   level: z.number().int().nullable().optional(),
 });
 const RegionUpdateSchema = z.object({
   name: z.string().max(64).optional(),
-  parentId: z.string().uuid().nullable().optional(),
+  parentId: z.string().guid().nullable().optional(),
   level: z.number().int().nullable().optional(),
 }).refine((b) => Object.keys(b).length > 0, "Nothing to update");
-const RegionMergeSchema = z.object({ into: z.string().uuid() });
+const RegionMergeSchema = z.object({ into: z.string().guid() });
 
 router.get("/sites/:id/regions", async (req, res, next) => {
   try {

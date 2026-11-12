@@ -278,14 +278,14 @@ const ByPatternsSchema = z.object({
   onlyUp:   z.boolean().optional().default(false),
 }).strict();
 const ByTypesSchema = z.object({
-  types:  z.array(z.enum(["physical", "aggregate", "vlan", "loopback", "tunnel"])).min(1),
+  types:  z.array(z.enum(["physical", "aggregate", "vlan", "loopback", "tunnel"])).max(50).min(1),
   onlyUp: z.boolean().optional().default(true),
   // Tunnel-only exception to onlyUp: pin fully-down IPsec tunnels too. No-op
   // unless "tunnel" is among `types` AND onlyUp is true.
   includeDownTunnels: z.boolean().optional().default(false),
 }).strict();
 const ByLldpSchema = z.object({
-  neighborTypes: z.array(z.enum(["firewall", "switch", "access_point", "server", "workstation", "router", "printer", "other"])).min(1),
+  neighborTypes: z.array(z.enum(["firewall", "switch", "access_point", "server", "workstation", "router", "printer", "other"])).max(50).min(1),
 }).strict();
 
 const AutoMonitorInterfacesSchema = z.preprocess(
@@ -344,7 +344,7 @@ const AutoMonitorStorageSchema = z.object({
 // resolver ignores it on the other streams.
 const ClassStreamSchema = z.object({
   polling:          z.enum(["rest_api", "snmp", "winrm", "ssh", "icmp", "disabled"]).nullable().optional(),
-  credentialId:     z.string().uuid().nullable().optional(),
+  credentialId:     z.string().guid().nullable().optional(),
   intervalSeconds:  z.number().int().min(1).max(86400).nullable().optional(),
   timeoutMs:        z.number().int().min(100).max(120000).nullable().optional(),
   failureThreshold: z.number().int().min(1).max(100).nullable().optional(),
@@ -382,14 +382,14 @@ const ClassStreamsSchema = z.object({
 // resolver dispatches into this block by Asset.assetType.
 const FortinetClassMonitorSchema = z.object({
   enabled:               z.boolean().optional().default(false),
-  snmpCredentialId:      z.string().uuid().nullable().optional(),
+  snmpCredentialId:      z.string().guid().nullable().optional(),
   // Stored SSH credential used when the integration tier resolves any stream
   // for this asset class to "ssh". Type-aware sibling to snmpCredentialId.
-  sshCredentialId:       z.string().uuid().nullable().optional(),
+  sshCredentialId:       z.string().guid().nullable().optional(),
   addAsMonitored:        z.boolean().optional().default(false),
   autoMonitorInterfaces: AutoMonitorInterfacesSchema,
   streams:               ClassStreamsSchema.optional(),
-}).optional().default({ enabled: false, snmpCredentialId: null, sshCredentialId: null, addAsMonitored: false, autoMonitorInterfaces: null });
+}).optional().prefault({ enabled: false, snmpCredentialId: null, sshCredentialId: null, addAsMonitored: false, autoMonitorInterfaces: null });
 
 // FortiGate-class equivalent. FortiGates always get a monitorType stamped
 // at discovery (the integration's native type), so this block only carries
@@ -441,7 +441,7 @@ const FortiGateClassMonitorSchema = z.object({
   longitudeMetavar:      MetavarName("Longitude"),
   addressMetavar:        z.string().optional().default("").transform((v) => v.trim()),
   streams:               ClassStreamsSchema.optional(),
-}).optional().default({
+}).optional().prefault({
   addAsMonitored: false,
   autoMonitorInterfaces: null,
   pullSnmpLocation: false,
@@ -484,14 +484,14 @@ const FortiManagerConfigSchema = z.object({
   // out per-integration via the Monitoring tab (with a UI warning).
   verifySsl: z.boolean().optional().default(true),
   mgmtInterface: z.string().optional().default(""),
-  interfaceInclude: z.array(z.string()).optional().default([]),
-  interfaceExclude: z.array(z.string()).optional().default([]),
-  dhcpInclude:   z.array(z.string()).optional().default([]),
-  dhcpExclude:   z.array(z.string()).optional().default([]),
-  inventoryExcludeInterfaces: z.array(z.string()).optional().default([]),
-  inventoryIncludeInterfaces: z.array(z.string()).optional().default([]),
-  deviceInclude: z.array(z.string()).optional().default([]),
-  deviceExclude: z.array(z.string()).optional().default([]),
+  interfaceInclude: z.array(z.string()).max(10_000).optional().default([]),
+  interfaceExclude: z.array(z.string()).max(10_000).optional().default([]),
+  dhcpInclude:   z.array(z.string()).max(10_000).optional().default([]),
+  dhcpExclude:   z.array(z.string()).max(10_000).optional().default([]),
+  inventoryExcludeInterfaces: z.array(z.string()).max(10_000).optional().default([]),
+  inventoryIncludeInterfaces: z.array(z.string()).max(10_000).optional().default([]),
+  deviceInclude: z.array(z.string()).max(10_000).optional().default([]),
+  deviceExclude: z.array(z.string()).max(10_000).optional().default([]),
   discoveryParallelism: z.number().int().min(1).max(20).optional().default(5),
   useProxy: z.boolean().optional().default(true),
   fortigateApiUser:  z.string().optional().default(""),
@@ -507,11 +507,11 @@ const FortiManagerConfigSchema = z.object({
   // when the operator picks SNMP for a stream. Without a credential, the
   // resolver falls back to the source default and SNMP-keyed streams surface
   // a configuration error in the System tab refresh toast.
-  monitorCredentialId: z.string().uuid().nullable().optional(),
+  monitorCredentialId: z.string().guid().nullable().optional(),
   // Stored SSH credential used by the integration's per-stream polling-method
   // tier-3 setting when the operator picks SSH for a stream. Type-aware
   // sibling to monitorCredentialId (which carries the SNMP credential).
-  sshCredentialId: z.string().uuid().nullable().optional(),
+  sshCredentialId: z.string().guid().nullable().optional(),
   // Per-class auto-monitor settings for assets discovered through this
   // integration. fortigateMonitor only carries `addAsMonitored` since
   // FortiGates always get a discoveredByIntegrationId stamp at discovery;
@@ -637,12 +637,12 @@ const FortiGateConfigSchema = z.object({
   // out per-integration via the Monitoring tab (with a UI warning).
   verifySsl: z.boolean().optional().default(true),
   mgmtInterface: z.string().optional().default(""),
-  dhcpInclude:   z.array(z.string()).optional().default([]),
-  dhcpExclude:   z.array(z.string()).optional().default([]),
-  inventoryExcludeInterfaces: z.array(z.string()).optional().default([]),
-  inventoryIncludeInterfaces: z.array(z.string()).optional().default([]),
-  monitorCredentialId: z.string().uuid().nullable().optional(),
-  sshCredentialId:    z.string().uuid().nullable().optional(),
+  dhcpInclude:   z.array(z.string()).max(10_000).optional().default([]),
+  dhcpExclude:   z.array(z.string()).max(10_000).optional().default([]),
+  inventoryExcludeInterfaces: z.array(z.string()).max(10_000).optional().default([]),
+  inventoryIncludeInterfaces: z.array(z.string()).max(10_000).optional().default([]),
+  monitorCredentialId: z.string().guid().nullable().optional(),
+  sshCredentialId:    z.string().guid().nullable().optional(),
   fortigateMonitor:   FortiGateClassMonitorSchema,
   fortiswitchMonitor: FortinetClassMonitorSchema,
   fortiapMonitor:     FortinetClassMonitorSchema,
@@ -724,8 +724,8 @@ const FortiGateConfigSchema = z.object({
 // src/services/agentAutoDeployService.ts.
 const AgentDeploySchema = z.object({
   enabled:           z.boolean().optional().default(false),
-  sshCredentialId:   z.string().uuid().nullable().optional(),
-  winrmCredentialId: z.string().uuid().nullable().optional(),
+  sshCredentialId:   z.string().guid().nullable().optional(),
+  winrmCredentialId: z.string().guid().nullable().optional(),
   maxConcurrent:     z.number().int().min(1).max(20).optional().default(4),
 }).strict().nullable().optional().default(null);
 
@@ -736,7 +736,7 @@ const WorkstationServerClassMonitorSchema = z.object({
   autoMonitorStorage:    AutoMonitorStorageSchema,
   agentDeploy:           AgentDeploySchema,
   streams:               ClassStreamsSchema.optional(),
-}).optional().default({ enabled: true, addAsMonitored: false, autoMonitorInterfaces: null, autoMonitorStorage: null, agentDeploy: null });
+}).optional().prefault({ enabled: true, addAsMonitored: false, autoMonitorInterfaces: null, autoMonitorStorage: null, agentDeploy: null });
 
 // Re-scan F81: WinRM over HTTP sends the account password as Basic auth in
 // clear text, so a NEW integration defaults to HTTPS on 5986. An existing one
@@ -748,8 +748,8 @@ const WindowsServerConfigSchema = z.object({
   password:  z.string().optional().default(""),
   useSsl:    z.boolean().optional().default(true),
   domain:    z.string().optional().default(""),
-  dhcpInclude: z.array(z.string()).optional().default([]),
-  dhcpExclude: z.array(z.string()).optional().default([]),
+  dhcpInclude: z.array(z.string()).max(10_000).optional().default([]),
+  dhcpExclude: z.array(z.string()).max(10_000).optional().default([]),
   // Per-class per-stream config for assets this integration discovers.
   workstationMonitor: WorkstationServerClassMonitorSchema,
   serverMonitor:      WorkstationServerClassMonitorSchema,
@@ -789,8 +789,8 @@ const EntraIdConfigSchema = z.object({
   // Read each Intune device's detected apps into its Software tab. Needs
   // enableIntune; no extra Graph permission.
   pullSoftware:  z.boolean().optional().default(false),
-  deviceInclude: z.array(z.string()).optional().default([]),
-  deviceExclude: z.array(z.string()).optional().default([]),
+  deviceInclude: z.array(z.string()).max(10_000).optional().default([]),
+  deviceExclude: z.array(z.string()).max(10_000).optional().default([]),
   // The modal has posted this since the integration shipped and
   // entraIdService reads it, but it was never declared here — so z.object's
   // strip dropped it on every save and the checkbox did nothing (disabled
@@ -845,7 +845,7 @@ const VcenterHostClassMonitorSchema = z.object({
   enabled:        z.boolean().optional().default(true),
   addAsMonitored: z.boolean().optional().default(false),
   streams:        ClassStreamsSchema.optional(),
-}).optional().default({ enabled: true, addAsMonitored: false });
+}).optional().prefault({ enabled: true, addAsMonitored: false });
 
 // Azure Arc. Like Entra it has no host/port/verifySsl (the endpoint is fixed
 // to management.azure.com) and therefore no .superRefine(refineConfigHost) —
@@ -861,17 +861,17 @@ const AzureArcConfigSchema = z.object({
   // to a per-subscription list automatically when ARG is unavailable.
   useResourceGraph: z.boolean().optional().default(true),
   // Explicit subscription ids; empty = every subscription the app can see.
-  subscriptionInclude: z.array(z.string()).optional().default([]),
+  subscriptionInclude: z.array(z.string()).max(10_000).optional().default([]),
   // Wildcard filters. Resource group and tags are two INDEPENDENT axes, so
   // they get their own fields (and their own DOM ids in the modal) rather
   // than sharing the single deviceInclude/deviceExclude pair.
-  resourceGroupInclude: z.array(z.string()).optional().default([]),
-  resourceGroupExclude: z.array(z.string()).optional().default([]),
-  deviceInclude: z.array(z.string()).optional().default([]),
-  deviceExclude: z.array(z.string()).optional().default([]),
+  resourceGroupInclude: z.array(z.string()).max(10_000).optional().default([]),
+  resourceGroupExclude: z.array(z.string()).max(10_000).optional().default([]),
+  deviceInclude: z.array(z.string()).max(10_000).optional().default([]),
+  deviceExclude: z.array(z.string()).max(10_000).optional().default([]),
   // "key=value" / "key=*" lines matched against the Azure resource tags.
-  tagInclude: z.array(z.string()).optional().default([]),
-  tagExclude: z.array(z.string()).optional().default([]),
+  tagInclude: z.array(z.string()).max(10_000).optional().default([]),
+  tagExclude: z.array(z.string()).max(10_000).optional().default([]),
   // Opt-in WRITE capability: lets Polaris dispatch the SSH onboarding script
   // to Arc machines via Run Command (arcPublishService). Off by default —
   // discovery needs only the Reader role, while this needs one carrying
@@ -899,11 +899,11 @@ const AzureArcConfigSchema = z.object({
   // default — a per-resource-unique tag (CreatedDate) would mint one registry
   // row per machine. azureTagKeys narrows by key wildcard; empty = every key.
   importAzureTags: z.boolean().optional().default(false),
-  azureTagKeys: z.array(z.string()).optional().default([]),
+  azureTagKeys: z.array(z.string()).max(10_000).optional().default([]),
   // Installed software from Change Tracking & Inventory, read from these Log
   // Analytics workspaces (needs Log Analytics Reader on each).
   pullSoftware: z.boolean().optional().default(false),
-  logAnalyticsWorkspaceIds: z.array(z.string().trim().uuid("Each Log Analytics workspace ID is a GUID")).max(20).optional().default([]),
+  logAnalyticsWorkspaceIds: z.array(z.string().trim().guid("Each Log Analytics workspace ID is a GUID")).max(20).optional().default([]),
   // Post-sync network-presence verification — see EntraIdConfigSchema note.
   verifyPresence: z.boolean().optional().default(true),
   workstationMonitor: WorkstationServerClassMonitorSchema,
@@ -927,8 +927,8 @@ const ActiveDirectoryConfigSchema = z.object({
   bindPassword:    z.string().optional().default(""),
   baseDn:          z.string().optional().default(""),
   searchScope:     z.enum(["sub", "one"]).optional().default("sub"),
-  ouInclude:       z.array(z.string()).optional().default([]),
-  ouExclude:       z.array(z.string()).optional().default([]),
+  ouInclude:       z.array(z.string()).max(10_000).optional().default([]),
+  ouExclude:       z.array(z.string()).max(10_000).optional().default([]),
   includeDisabled: z.boolean().optional().default(true),
   // Business rule 70, default OFF: decommission assets this integration
   // manages once their computer object leaves the directory or is disabled.
@@ -963,8 +963,8 @@ const VcenterConfigSchema = z.object({
   password:  z.string().optional().default(""),
   // Wildcard filters matched against the VM name (e.g. "prod-*"). Include
   // wins when both are set (AD OU-filter semantics).
-  vmInclude: z.array(z.string()).optional().default([]),
-  vmExclude: z.array(z.string()).optional().default([]),
+  vmInclude: z.array(z.string()).max(10_000).optional().default([]),
+  vmExclude: z.array(z.string()).max(10_000).optional().default([]),
   // Post-sync network-presence verification — see EntraIdConfigSchema note.
   verifyPresence: z.boolean().optional().default(true),
   // Per-class per-stream config: VMs get the full workstation/server-style
@@ -987,7 +987,7 @@ const WorkloadHostClassMonitorSchema = z.object({
   enabled:        z.boolean().optional().default(true),
   addAsMonitored: z.boolean().optional().default(true),
   streams:        ClassStreamsSchema.optional(),
-}).optional().default({ enabled: true, addAsMonitored: true });
+}).optional().prefault({ enabled: true, addAsMonitored: true });
 
 const WorkloadConfigSchema = z.object({
   host:      z.string().optional().default(""),
@@ -1000,10 +1000,10 @@ const WorkloadConfigSchema = z.object({
   // (utils/configSecretFields.ts) — never `apiKey`, which is not sealed.
   apiToken:  z.string().optional().default(""),
   // Wildcard name filters (include wins), per class.
-  vmInclude:        z.array(z.string()).optional().default([]),
-  vmExclude:        z.array(z.string()).optional().default([]),
-  containerInclude: z.array(z.string()).optional().default([]),
-  containerExclude: z.array(z.string()).optional().default([]),
+  vmInclude:        z.array(z.string()).max(10_000).optional().default([]),
+  vmExclude:        z.array(z.string()).max(10_000).optional().default([]),
+  containerInclude: z.array(z.string()).max(10_000).optional().default([]),
+  containerExclude: z.array(z.string()).max(10_000).optional().default([]),
   // Unraid only: how long a snapshot listens to dockerContainerStats.
   statsWindowMs: z.number().int().min(1000).max(15000).optional(),
   hostMonitor:      WorkloadHostClassMonitorSchema,
@@ -1028,10 +1028,10 @@ const ProxmoxConfigSchema = z.object({
     .refine((v) => v === "" || PROXMOX_TOKEN_ID_RE.test(v), "Token ID must look like user@realm!tokenname (e.g. polaris@pve!monitor)"),
   // The token's secret, stored under the sealed `apiToken` key.
   apiToken:      z.string().optional().default(""),
-  vmInclude:        z.array(z.string()).optional().default([]),
-  vmExclude:        z.array(z.string()).optional().default([]),
-  containerInclude: z.array(z.string()).optional().default([]),
-  containerExclude: z.array(z.string()).optional().default([]),
+  vmInclude:        z.array(z.string()).max(10_000).optional().default([]),
+  vmExclude:        z.array(z.string()).max(10_000).optional().default([]),
+  containerInclude: z.array(z.string()).max(10_000).optional().default([]),
+  containerExclude: z.array(z.string()).max(10_000).optional().default([]),
   hostMonitor:      WorkloadHostClassMonitorSchema,
   vmMonitor:        VcenterHostClassMonitorSchema,
   containerMonitor: VcenterHostClassMonitorSchema,
@@ -1193,7 +1193,7 @@ const GenericApiWidgetSchema = z.object({
   warningAt: z.number().finite().optional(),
   // Which side of warningAt is the warning; absent = "above".
   warningWhen: z.enum(["above", "below"]).optional(),
-  stateMap:  z.record(z.unknown()).optional(),
+  stateMap:  z.record(z.string(), z.unknown()).optional(),
 });
 
 const GenericApiMonitorQuerySchema = z.object({
@@ -1208,10 +1208,10 @@ const GenericApiMonitorQuerySchema = z.object({
   matchPath:   z.string().trim().max(512).optional().default(""),
   paginate:    z.boolean().optional().default(false),
   itemsPath:   z.string().trim().max(512).optional().default(""),
-  map:         z.record(z.string().trim().max(512)).optional().default({}),
+  map:         z.record(z.string(), z.string().trim().max(512)).optional().default({}),
   upValues:    z.array(z.string().trim().min(1).max(64)).max(20).optional().default([]),
   byteUnit:    z.enum(["B", "KB", "MB", "GB", "TB"]).optional().default("B"),
-  widgets:     z.array(GenericApiWidgetSchema).optional().default([]),
+  widgets:     z.array(GenericApiWidgetSchema).max(200).optional().default([]),
   useByDefault: z.boolean().optional().default(true),
 });
 
@@ -1224,7 +1224,7 @@ const GenericApiNetworkQuerySchema = z.object({
   body:        z.string().max(20_000).optional().default(""),
   recordsPath: z.string().trim().max(512).optional().default(""),
   paginate:    z.boolean().optional().default(false),
-  map:         z.record(z.string().trim().max(512)).optional().default({}),
+  map:         z.record(z.string(), z.string().trim().max(512)).optional().default({}),
 });
 
 const GenericApiConfigSchema = z.object({
@@ -1257,7 +1257,7 @@ const GenericApiConfigSchema = z.object({
     cursorPath:  GenericApiPathSchema,
     cursorParam: z.string().trim().max(100).optional().default(""),
     maxPages:    z.number().int().min(1).max(1000).optional().default(100),
-  }).optional().default({ mode: "none" }),
+  }).optional().prefault({ mode: "none" }),
   recordsPath: z.string().trim().max(512).optional().default(""),
   fieldMap: GenericApiFieldMapSchema.optional().default({}),
   // Per-record follow-up requests. Each path is a template whose {{…}}
@@ -1282,7 +1282,7 @@ const GenericApiConfigSchema = z.object({
   // The integration-tier monitor settings (written by PUT /monitor-settings/
   // integration/:id and by syncGenericApiMonitorDefaults). Carried through
   // unchanged — without it every save of the dialog would delete the tier.
-  monitorSettings: z.record(z.unknown()).optional(),
+  monitorSettings: z.record(z.string(), z.unknown()).optional(),
   // Address space read into IPAM (rule 100(j)). No `pushReservations` key, on
   // purpose: a feed never writes to a device, and releaseReservation reads
   // that key without checking the integration type.
@@ -1296,11 +1296,11 @@ const GenericApiConfigSchema = z.object({
   readDevices: z.boolean().optional().default(true),
   identityField:       z.enum(["id", "serialNumber", "macAddress", "hostname"]).optional().default("id"),
   assetTypeDefault:    z.string().trim().max(32).optional().default("other"),
-  assetTypeMap:        z.record(z.string().trim().max(32))
+  assetTypeMap:        z.record(z.string(), z.string().trim().max(32))
     .refine((m) => Object.keys(m).length <= 100, "At most 100 type mappings").optional().default({}),
   manufacturerDefault: z.string().trim().max(100).optional().default(""),
-  deviceInclude: z.array(z.string()).optional().default([]),
-  deviceExclude: z.array(z.string()).optional().default([]),
+  deviceInclude: z.array(z.string()).max(10_000).optional().default([]),
+  deviceExclude: z.array(z.string()).max(10_000).optional().default([]),
   // Rule 70's opt-in: off, a record that leaves the feed keeps its asset AND
   // its source row.
   decommissionMissing: z.boolean().optional().default(false),
@@ -1463,7 +1463,7 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
 
 const UpdateIntegrationSchema = z.object({
   name:         z.string().min(1).optional(),
-  config:       z.record(z.unknown()).optional(),
+  config:       z.record(z.string(), z.unknown()).optional(),
   enabled:      z.boolean().optional(),
   autoDiscover: z.boolean().optional(),
   pollInterval: z.number().int().min(1).max(24).optional(),
@@ -2244,7 +2244,7 @@ const FmgGateQuerySchema = z.object({
   deviceName: z.string().min(1),
   method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
   path: z.string().min(1),
-  query: z.record(z.string()).optional(),
+  query: z.record(z.string(), z.string()).optional(),
   // JSON request body for POST/PUT (e.g. CMDB writes when testing the
   // description-sync surfaces). Ignored for GET/DELETE — fetch rejects
   // GET bodies outright.
@@ -2261,7 +2261,7 @@ const FmgRpcQuerySchema = z.object({
 const FortiGateQuerySchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
   path: z.string().min(1),
-  query: z.record(z.string()).optional(),
+  query: z.record(z.string(), z.string()).optional(),
   // JSON request body for POST/PUT — same semantics as the FMG
   // direct-to-FortiGate mode above.
   body: z.unknown().optional(),
@@ -2271,29 +2271,29 @@ const FortiGateQuerySchema = z.object({
 });
 const EntraQuerySchema = z.object({
   path: z.string().min(1),
-  query: z.record(z.string()).optional(),
+  query: z.record(z.string(), z.string()).optional(),
 });
 const ActiveDirectoryQuerySchema = z.object({
   filter:     z.string().optional(),
   baseDn:     z.string().optional(),
   scope:      z.enum(["sub", "one", "base"]).optional(),
-  attributes: z.array(z.string()).optional(),
+  attributes: z.array(z.string()).max(10_000).optional(),
   sizeLimit:  z.number().int().min(1).max(500).optional(),
 });
 const VcenterQuerySchema = z.object({
   method: z.enum(["GET", "POST"]).optional().default("GET"),
   path:   z.string().min(1),
-  query:  z.record(z.string()).optional(),
+  query:  z.record(z.string(), z.string()).optional(),
 });
 const AzureArcQuerySchema = z.object({
   method: z.enum(["GET", "POST"]).optional().default("GET"),
   path:   z.string().min(1),
-  query:  z.record(z.string()).optional(),
+  query:  z.record(z.string(), z.string()).optional(),
   body:   z.unknown().optional(),
 });
 const UnraidQuerySchema = z.object({
   query:     z.string().min(1).max(20000),
-  variables: z.record(z.unknown()).optional(),
+  variables: z.record(z.string(), z.unknown()).optional(),
 });
 const TrueNasQuerySchema = z.object({
   method: z.string().min(1).max(200),
@@ -2797,9 +2797,9 @@ router.post("/:id/register", async (req, res, next) => {
 // validated through LlmConfigSchema so the loopback-aware host guard applies;
 // `id` lets a blank API key fall back to the stored one, as on POST /test.
 const ProbeToolsSchema = z.object({
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
   model:  z.string().trim().min(1).max(200),
-  id:     z.string().uuid().optional(),
+  id:     z.string().guid().optional(),
 });
 router.post("/llm/probe-tools", async (req, res, next) => {
   try {

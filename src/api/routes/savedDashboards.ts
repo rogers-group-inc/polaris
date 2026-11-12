@@ -73,7 +73,7 @@ const BodySchema = z.object({
   visibility: z.enum(["private", "public"]),
   // Shape-validated by sanitizeDashboardLayout (the unit-tested contract);
   // Zod only guarantees it's an object here.
-  layout:     z.record(z.unknown()),
+  layout:     z.record(z.string(), z.unknown()),
   // Omitted = leave it where it is (PUT) / top level (POST).
   folderId:   z.string().min(1).max(64).nullable().optional(),
 });
