@@ -7,6 +7,12 @@ var _subnetsPageSize = 15;
 var _subnetsPage = 1;
 var _subnetsData = [];
 var _allSubnetsData = [];
+// Archived networks (business rules 41 and 158(d)), shaped as table rows. They
+// are decommissioned networks that no longer hold their range, so they join
+// the list only while the Status filter is showing deprecated networks —
+// never the unfiltered list, where each would sit beside the live network
+// that replaced it on the same CIDR.
+var _archivedSubnets = [];
 var _subnetsSF = null;
 var _subnetsLayout = null;
 
@@ -59,8 +65,19 @@ async function _initSubnetsPage() {
     if (!trigger) return;
     e.preventDefault();
     var id = trigger.getAttribute("data-subnet-id");
-    var s = (_subnetsData || []).find(function (x) { return x.id === id; });
+    var s = _subnetTableRows().find(function (x) { return x.id === id; });
     if (!s) return;
+    if (s._archived) {
+      // An archived network is a record, not a network: it can be read and it
+      // can be removed (subnets:fullwrite, the level that archives).
+      var archivedItems = [{ label: "View", primary: true, onSelect: function () { openArchivedSubnetModal(s); } }];
+      if (permAtLeast("subnets", "fullwrite")) {
+        archivedItems.push({ separator: true });
+        archivedItems.push({ label: "Delete", danger: true, onSelect: function () { confirmDeleteArchivedSubnet(s); } });
+      }
+      showRowMenu(trigger, archivedItems, { label: "Actions for archived network " + s.name });
+      return;
+    }
     var items = [{ label: "Open", primary: true, onSelect: function () { openSubnetFromRow(trigger, id); } }];
     if (canEditSubnet(s)) {
       items.push({ label: "Edit", onSelect: function () { openSubnetEditModal(id); } });
@@ -173,7 +190,11 @@ async function loadSubnets() {
     // Block and Creator filtering now live in their column header filters
     // (TableSF), so the full network list loads and filtering happens
     // client-side alongside every other column filter.
-    var result = await api.subnets.list({ limit: 10000 });
+    // The archive rides the same load, and never fails it: a caller who cannot
+    // read it, or an error there, just means no archived rows.
+    var loaded = await Promise.all([api.subnets.list({ limit: 10000 }), _loadArchivedSubnets()]);
+    var result = loaded[0];
+    _archivedSubnets = loaded[1];
     _allSubnetsData = (result.subnets || result).map(function (s) {
       s._integration = s.integration ? s.integration.name : "Manual";
       return s;
@@ -186,6 +207,70 @@ async function loadSubnets() {
   } catch (err) {
     tbody.innerHTML = '<tr><td colspan="13" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
+}
+
+// Every archive entry, as rows the table can sort and filter like any other.
+// The endpoint pages at 200; the cap keeps a pathological archive from
+// stalling the page (the rest stays reachable through the API).
+var ARCHIVED_PAGE = 200;
+var ARCHIVED_CAP = 5000;
+async function _loadArchivedSubnets() {
+  var rows = [];
+  try {
+    for (var offset = 0; offset < ARCHIVED_CAP; offset += ARCHIVED_PAGE) {
+      var page = await api.subnets.archivedList({ limit: ARCHIVED_PAGE, offset: offset });
+      var got = page.archivedSubnets || [];
+      rows = rows.concat(got);
+      if (got.length < ARCHIVED_PAGE || rows.length >= (page.total || 0)) break;
+    }
+  } catch (_) {
+    return [];
+  }
+  return rows.map(archivedSubnetRow);
+}
+
+// An ArchivedSubnet in the shape the table's columns read. `status` is
+// "deprecated" so the Status filter selects it with the networks it belongs
+// beside; `_archived` is what the row, its menu and its pill key on.
+function archivedSubnetRow(a) {
+  return {
+    id: "archived:" + a.id,
+    _archived: true,
+    _archiveId: a.id,
+    name: a.name,
+    cidr: a.cidr,
+    purpose: a.purpose,
+    vlan: a.vlan,
+    status: "deprecated",
+    tags: a.tags || [],
+    block: { name: a.blockName },
+    fortigateDevice: a.fortigateDevice,
+    integration: a.integrationName ? { name: a.integrationName } : null,
+    _integration: a.integrationName || "Manual",
+    createdBy: a.createdBy,
+    _count: { reservations: a._count ? a._count.reservations : 0 },
+    archivedAt: a.archivedAt,
+    archivedBy: a.archivedBy,
+    archiveReason: a.archiveReason,
+  };
+}
+
+function archiveReasonText(reason) {
+  return reason === "chassis-replaced" ? "its FortiGate was replaced" : "retired by an operator";
+}
+
+// Is the Status column filter showing deprecated networks? A multi-select
+// filter is stored as the list of ticked options, and only while it narrows.
+function _statusFilterShowsDeprecated() {
+  if (!_subnetsSF) return false;
+  var f = (_subnetsSF.getPrefs().sfFilters || {}).status;
+  return Array.isArray(f) && f.some(function (v) { return String(v).toLowerCase() === "deprecated"; });
+}
+
+// The rows the table is built from: the live networks, plus the archive while
+// deprecated networks are being shown.
+function _subnetTableRows() {
+  return _statusFilterShowsDeprecated() ? _subnetsData.concat(_archivedSubnets) : _subnetsData;
 }
 
 function _rebuildIntegrationColumnOptions() {
@@ -223,12 +308,13 @@ function _rebuildCreatorColumnOptions() {
 
 function renderSubnetsPage() {
   var tbody = document.getElementById("subnets-tbody");
-  if (_subnetsData.length === 0) {
+  var rows = _subnetTableRows();
+  if (rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="13" class="empty-state">No networks found. Create one to get started.</td></tr>';
     clearPageControls("pagination");
     return;
   }
-  var sfData = _subnetsSF ? _subnetsSF.apply(_subnetsData) : _subnetsData;
+  var sfData = _subnetsSF ? _subnetsSF.apply(rows) : rows;
   if (sfData.length === 0) {
     tbody.innerHTML = '<tr><td colspan="13" class="empty-state">No results match the current filters.</td></tr>';
     // Keep the controls row: Clear Filters is the way back from exactly this
@@ -252,6 +338,30 @@ function renderSubnetsPage() {
     // `_count.reservations`. Released and expired rows are deliberately not in
     // it; the delete confirmation uses `totalReservations` for those.
     var resvCount = s._count ? s._count.reservations : 0;
+    if (s._archived) {
+      // Read-only: no star (nothing to pin — it is not a network any more),
+      // no utilization (it holds no range), and an "archived" pill that says
+      // when and why on hover.
+      var why = "Archived " + formatDate(s.archivedAt) + " — " + archiveReasonText(s.archiveReason) +
+        (s.archivedBy ? " (" + s.archivedBy + ")" : "");
+      return '<tr data-row-menu-row>' +
+        '<td class="fav-col"></td>' +
+        '<td><button type="button" class="row-menu-trigger subnet-menu" data-subnet-id="' + escapeHtml(s.id) + '" ' +
+          'aria-haspopup="menu" aria-expanded="false" title="Actions for this archived network">' +
+          '<strong>' + escapeHtml(s.name) + '</strong></button></td>' +
+        '<td class="mono">' + escapeHtml(s.cidr) + '</td>' +
+        '<td>' + blockName + '</td>' +
+        '<td>' + escapeHtml(s.purpose || "-") + '</td>' +
+        '<td>' + (s.vlan ? '<span class="badge badge-vlan">VLAN ' + s.vlan + '</span>' : '-') + '</td>' +
+        '<td><span class="badge badge-deprecated" title="' + escapeHtml(why) + '">archived</span></td>' +
+        '<td>' + (tags || '<span style="color:var(--color-text-tertiary)">-</span>') + '</td>' +
+        '<td>' + fgtDevice + '</td>' +
+        '<td>' + source + '</td>' +
+        '<td>' + (s.createdBy ? escapeHtml(s.createdBy) : '<span style="color:var(--color-text-tertiary)">-</span>') + '</td>' +
+        '<td>' + resvCount + '</td>' +
+        '<td><span style="color:var(--color-text-tertiary)">-</span></td>' +
+        '</tr>';
+    }
     return '<tr data-row-menu-row>' +
       starCellHTML("subnets", s.id) +
       '<td><button type="button" class="row-menu-trigger subnet-menu" data-subnet-id="' + s.id + '" ' +
@@ -1317,6 +1427,63 @@ async function openSubnetMoveModal(id, s) {
   });
 }
 
+// One archived network, read-only: what it was, when and why it was retired,
+// and every reservation it held as it stood.
+async function openArchivedSubnetModal(row) {
+  var a;
+  try {
+    a = await api.subnets.archivedGet(row._archiveId);
+  } catch (err) {
+    showToast(err.message, "error");
+    return;
+  }
+  var dash = '<span style="color:var(--color-text-tertiary)">-</span>';
+  var cell = function (v) { return v ? escapeHtml(String(v)) : dash; };
+  var fact = function (label, html) {
+    return '<div class="form-group"><label>' + label + '</label><div>' + html + '</div></div>';
+  };
+  var resv = a.reservations || [];
+  var body =
+    '<p class="hint" style="margin-bottom:12px">Archived ' + escapeHtml(formatDate(a.archivedAt)) + ' — ' +
+      escapeHtml(archiveReasonText(a.archiveReason)) + (a.archivedBy ? ' (' + escapeHtml(a.archivedBy) + ')' : '') +
+      '. This is a record of the network as it stood; it holds no address space and cannot be edited.</p>' +
+    fact("Network", '<span class="mono">' + escapeHtml(a.cidr) + '</span>') +
+    fact("Block", cell(a.blockName) + (a.blockCidr ? ' <span class="mono">(' + escapeHtml(a.blockCidr) + ')</span>' : '')) +
+    fact("Purpose", cell(a.purpose)) +
+    fact("VLAN", a.vlan ? '<span class="badge badge-vlan">VLAN ' + a.vlan + '</span>' : dash) +
+    fact("Tags", (a.tags || []).length ? escapeHtml(a.tags.join(", ")) : dash) +
+    fact("Source", cell(a.integrationName || "Manual") + (a.fortigateDevice ? ' — ' + escapeHtml(a.fortigateDevice) : '')) +
+    fact("Reservations", resv.length
+      ? '<div class="table-wrapper" style="max-height:320px;overflow:auto"><table><thead><tr>' +
+          '<th>Address</th><th>Hostname</th><th>MAC</th><th>Owner</th><th>Status</th></tr></thead><tbody>' +
+          resv.map(function (r) {
+            return '<tr><td class="mono">' + cell(r.ipAddress) + '</td><td>' + cell(r.hostname) + '</td>' +
+              '<td class="mono">' + cell(r.macAddress) + '</td><td>' + cell(r.owner) + '</td>' +
+              '<td>' + statusBadge(r.status) + '</td></tr>';
+          }).join("") +
+        '</tbody></table></div>'
+      : 'None');
+  openModal("Archived network: " + a.name, body, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+}
+
+// Remove one archive entry for good (business rule 158(d)). The server
+// refuses while an unresolved FortiGate-replacement conflict still reads it.
+async function confirmDeleteArchivedSubnet(row) {
+  var n = row._count ? row._count.reservations : 0;
+  var msg = 'Delete the archived network "' + row.cidr + '"?';
+  if (n > 0) msg += ' The record of its ' + n + ' reservation' + (n !== 1 ? 's' : '') + ' is deleted with it.';
+  msg += ' This cannot be undone.';
+  var ok = await showConfirm(msg);
+  if (!ok) return;
+  try {
+    await api.subnets.archivedDelete(row._archiveId);
+    showToast("Archived network deleted");
+    loadSubnets();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
 // Retire a network (business rule 41). Deliberately worded against Delete
 // sitting right below it: this one PRESERVES, and the distinction is the whole
 // reason both verbs exist. Archiving is also what frees a CIDR that a
@@ -1328,9 +1495,9 @@ async function confirmArchiveSubnet(id, cidr, reservationCount) {
     msg += ' Its ' + reservationCount + ' reservation' + (reservationCount !== 1 ? 's' : '') +
       ' will be archived with it.';
   }
-  msg += ' Nothing is deleted — the network and everything it held stay readable under' +
-    ' Archived networks — and its address space is released, so a replacement FortiGate' +
-    ' can record the same range.';
+  msg += ' Nothing is deleted — the network and everything it held stay readable in this' +
+    ' list, with the deprecated networks (set the Status filter to deprecated) — and its' +
+    ' address space is released, so a replacement FortiGate can record the same range.';
   var ok = await showConfirm(msg);
   if (!ok) return;
   try {

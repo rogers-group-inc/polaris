@@ -193,6 +193,26 @@ retired rows locked by construction. See [rule 41](Business-Rules#rule-41).
 Archiving is deliberately **exempt** from the active-reservation protection
 that guards deletion: that rule guards against destruction, and this preserves.
 
+### Seeing and deleting archived networks
+
+An archived network is a decommissioned network that no longer holds its address
+range. Polaris also archives a network by itself when a FortiGate is replaced and
+the new one serves the same range.
+
+To see them, set the **Status** column filter on **Networks** to *deprecated*.
+Archived networks are listed with the deprecated ones and carry an **archived**
+pill; hover it for when and why it was archived. They are left out of the
+unfiltered list, because each would sit beside the live network that took over
+its range.
+
+An archived network is a record and cannot be edited. Its row menu has:
+
+- **View** — the network as it stood, and every reservation it held.
+- **Delete** (`subnets:fullwrite`) — removes the record and its reservations for
+  good. Polaris refuses while an unresolved FortiGate-replacement conflict still
+  refers to it; resolve the conflict first. See
+  [rule 158](Business-Rules#rule-158).
+
 ### Exclusions
 
 **Networks → Exclusions.** An exclusion is a CIDR you have declared out of
