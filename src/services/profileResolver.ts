@@ -503,6 +503,7 @@ export function pickDbProfile(
   const tempPick  = pick("temperature" as MetricKey);
   const diskPick  = pick("storage" as MetricKey);
   const modelPick = pick("model" as MetricKey);
+  const serialPick = pick("serial" as MetricKey);
 
   const out: VendorTelemetryProfile = {
     vendor: profile.manufacturer,
@@ -562,9 +563,12 @@ export function pickDbProfile(
     out.model = { symbol: modelPick.symbol, rowParse, parse: (raw: string) => applyModelParse(raw, rowParse) };
   }
 
+  // The device's own serial (business rule 171): a plain scalar, no parse.
+  if (serialPick?.symbol) out.serial = { symbol: serialPick.symbol };
+
   // A profile row exists but says nothing the collectors can use. Reporting
   // null rather than an empty shell keeps "no opinion" a single condition for
   // every caller.
-  if (!out.cpu && !out.memory && !out.temperature && !out.disk && !out.model) return null;
+  if (!out.cpu && !out.memory && !out.temperature && !out.disk && !out.model && !out.serial) return null;
   return out;
 }

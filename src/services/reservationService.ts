@@ -1605,7 +1605,7 @@ export async function expireStaleReservations(): Promise<number> {
         AND stale."subnetId" = expiring."subnetId"
         AND stale."ipAddress" = expiring."ipAddress"
     `;
-    // Rule 173, read before the flip: the networks a FULL-network
+    // Rule 175, read before the flip: the networks a FULL-network
     // reservation (no address) is about to stop holding.
     const wholeNetwork = await tx.reservation.findMany({
       where: { status: "active", expiresAt: { lt: now }, ipAddress: null },
@@ -1622,7 +1622,7 @@ export async function expireStaleReservations(): Promise<number> {
       where: { status: "active", expiresAt: { lt: now } },
       data: { status: "expired" },
     });
-    // Rule 173: a network reserved as a whole goes back to "available" when
+    // Rule 175: a network reserved as a whole goes back to "available" when
     // that reservation lapses, exactly as it does on a release — unless
     // another whole-network reservation still holds it. Left "reserved", the
     // network stayed out of allocation until someone edited its status by hand.
@@ -1649,7 +1649,7 @@ const EXPIRED_UNPUSH_PER_TICK = 50;
 const EXPIRED_UNPUSH_CONCURRENCY = 5;
 
 /**
- * Business rule 173: a reservation that EXPIRES takes its device entry with
+ * Business rule 175: a reservation that EXPIRES takes its device entry with
  * it. A release has always removed the reserved-address Polaris pushed to the
  * FortiGate; an expiry only flipped the row, so the entry stayed on the gate,
  * went on pinning the address to the MAC, and came back on the next discovery

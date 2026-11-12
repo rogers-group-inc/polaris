@@ -5,24 +5,55 @@
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 173](#rule-173) — A reservation that expires ends the way a released one does
+- [Rule 173](#rule-173) — Which MIB a stream reads is the manufacturer profile's to say, never a per-stream pin
 
-## Rule 173 — A reservation that expires ends the way a released one does
+## Rule 173 — Which MIB a stream reads is the manufacturer profile's to say, never a per-stream pin
 
-**How it was found.** The 2026-11-11 orphan audit (E.10, E.11). A reservation can end two ways: an operator releases it, or its `expiresAt` passes and the 15-minute `expireReservations` job flips it to `expired`. `releaseReservation` does a good deal on the way out. The expiry was one `updateMany`. Two things a release does were therefore never done for a reservation that simply ran out:
+**How it was found.** 2026-11-12, an operator getting an APC UPS's model and serial onto its
+General tab looked at the asset's Monitoring tab and asked which MIB Response Time polling used.
+The stream's MIB box said "Automatic (SNMPv2-MIB)"; the SNMP Walk list called the same subtree
+"System (RFC 1213)". Tracing what the box DID gave a worse answer than the naming:
 
-- **The network stayed reserved** (E.11). Reserving a whole network (a reservation with no address) sets `Subnet.status = "reserved"`; releasing it sets the network back to `available`. When the reservation lapsed instead, the network stayed `reserved` with nothing holding it — out of allocation until someone noticed and edited its status by hand.
-- **The device entry stayed on the gate** (E.10). A reservation pushed to a FortiGate is a reserved-address in that gate's DHCP scope. A release deletes it. An expiry left it: the gate went on pinning the address to the MAC, and the next discovery read the entry back as a `dhcp_reservation` — a reservation nobody had made, standing where the operator's expired one had been.
+| Stream | What a pinned MIB changed |
+|---|---|
+| Response Time | nothing — the probe GETs `sysUpTime` (+ `sysDescr` / `sysObjectID`) whatever is picked |
+| Interfaces, LLDP | nothing — they always walk IF-MIB / LLDP-MIB |
+| CPU/Memory, Hardware Sensors | a standard MIB: nothing. An UPLOADED MIB: `profileSubjectFor` replaced the asset's manufacturer and model with the MIB's, so the asset silently switched into that MIB's manufacturer profile |
 
-**The decision.** An expiry is the reservation ending; the operator who set an expiry date asked, in advance, for exactly what a release does. So the expiry does those two things too.
+Elsewhere the pin only decorated the monitoring chip ("· MIB: <module>"). So on most streams the
+control was a placebo, and on two it was a hidden second way to choose a manufacturer profile,
+one that nothing else in the product (the Custom MIB tab, the widget switch, the System tab) knew
+about: rule 131 says one answer decides which profile covers a device, and the pin made a second.
 
-**What it does.**
+The operator's decision: no MIB dropdown under an SNMP stream; say what is used instead, "either
+that default MIBs are being used or that a manufacturer profile is in use".
 
-- In `expireStaleReservations`' transaction, the networks held by lapsing whole-network reservations are read before the flip and set back to `available` after it, guarded twice: only where the status is still `reserved`, and only where no other active whole-network reservation remains.
-- `unpushExpiredReservations`, called by the job after the flip, works from the rows themselves rather than from the batch that just lapsed: every `expired` row that still carries pinned push ids. That is what makes it retryable with no extra state — a gate that was down when the row lapsed is tried again on the next tick. A success clears the pointers; a failure counts on `pushAttempts` (reset to zero at the moment of expiry, because the push's own history is about a different operation). After `EXPIRED_UNPUSH_MAX_ATTEMPTS` (12, about three hours) Polaris stops, writes one warning Event naming the gate, scope and entry, and leaves the pointers on the row as the record of what is still there.
+**What changed.**
 
-**What it does not do.** It removes only what Polaris pushed (pinned ids) — the line a release draws for "clean up what Polaris created", which holds whatever the DHCP Push toggle says now. A discovered `dhcp_reservation` does not expire through this path at all. It does not revoke the client's lease, which a release does: an operator releasing an address means "free it now", a date passing does not, and knocking a live client off its address on a timer is not something an expiry date asked for. A row whose integration has since been deleted (`pushedToId` set null) drops out of the retry by itself.
+- The resolver stops resolving the six `*MibId` fields; every one reads null. The collectors build
+  the profile subject from the asset alone.
+- Every write path keeps the key (an API client written against the old contract would otherwise
+  start getting 400s) but parses it to `undefined`, so it is never stored.
+- The asset modal, the phone's Monitoring sheet, the integration and class-override stream tabs
+  show a read-only MIB line. On an asset it names the covering profile and the MIB modules uploaded
+  under its name, from the effective-settings read; a tier form covers many assets and says "each
+  asset's manufacturer profile". The chip loses its MIB segment.
+- `deleteMib`'s guard (rule 167's MIB clause) counted only these pins; with nothing able to hold a
+  MIB any more it is removed, and a stale pin cannot block a delete.
+- The migration records, before clearing, each pin that could have changed the profile: an uploaded
+  MIB on CPU/Memory or Hardware Sensors whose manufacturer differs from the asset's (or has none,
+  which fed the module name into `matchPattern`). Each event names the MIB and says to set the
+  asset's Manufacturer instead.
 
-**Scale.** The transaction gains one small read and at most two set-based writes. The un-push is bounded per tick (50 rows, five device calls in flight) and reads through the `status` index; on an install that pushes nothing it is one query returning no rows.
+**Alternatives rejected.**
 
-Pinned by `tests/integration/reservationExpiry.test.ts`.
+- *Keep the picker on CPU/Memory and Hardware Sensors only.* It would keep the second way of
+  choosing a profile that rule 131 forbids, on the two streams where it is most surprising.
+- *Keep the pins, relabel the dropdown.* The truthful label for most of its options would have
+  been "does nothing".
+- *Reject the keys with a 400.* Accepting and ignoring costs nothing and breaks no client; the
+  columns go in a later release once no rollback can need them.
+
+### Rule 173 — the invariant as stated in full until 2026-11-12
+
+(new rule; the invariant above is its first statement)

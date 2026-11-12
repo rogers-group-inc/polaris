@@ -1768,6 +1768,8 @@ const api = {
     // Typeahead for the add box — asset manufacturers + alias/OUI-override
     // canonicals, minus the ones that already have a profile.
     listManufacturerSuggestions: ()      => request("GET",    "/server-settings/manufacturer-profiles/suggestions"),
+    // Manufacturers of SNMP-answering assets with no profile (business rule 172).
+    listUnprofiledManufacturers: ()      => request("GET",    "/server-settings/manufacturer-profiles/unprofiled"),
     getManufacturerProfile:      (id)    => request("GET",    `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`),
     createManufacturerProfile:   (body)  => request("POST",   "/server-settings/manufacturer-profiles", body),
     updateManufacturerProfile:   (id, body) => request("PUT", `/server-settings/manufacturer-profiles/${encodeURIComponent(id)}`, body),

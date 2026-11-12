@@ -344,120 +344,60 @@ function _polarisReadPollingDropdown(id) {
   return el.value || null;
 }
 
-// Standard MIBs selectable without uploading anything. Kept in lockstep with
-// the _SNMP_STANDARD_MIBS array in assets.js (SNMP Walk tab). Named apart from
-// it because both files share the page's global scope, and assets.js can now
-// be loaded onto the Integrations page on demand (PolarisPanels, app.js) —
-// under the same name the later file silently replaced this list, vendor
-// entries and all. Same reason for openIntegrationCreateModal /
-// openIntegrationEditModal / confirmDeleteIntegration below.
-var _INTEGRATION_SNMP_MIBS = [
-  { id: "std:system",         label: "System (RFC 1213)",              oid: "1.3.6.1.2.1.1"         },
-  { id: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)", oid: "1.3.6.1.2.1.2"         },
-  { id: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (RFC 2863)", oid: "1.3.6.1.2.1.31"        },
-  { id: "std:host-resources", label: "HOST-RESOURCES-MIB (RFC 2790)",  oid: "1.3.6.1.2.1.25"        },
-  { id: "std:entity",         label: "ENTITY-MIB (RFC 4133)",          oid: "1.3.6.1.2.1.47"        },
-  { id: "std:entity-sensor",  label: "ENTITY-SENSOR-MIB (RFC 3433)",   oid: "1.3.6.1.2.1.99"        },
-  { id: "std:lldp",           label: "LLDP-MIB (IEEE 802.1AB)",        oid: "1.0.8802.1.1.2"        },
-  { id: "std:fortinet-fg",    label: "Fortinet FORTIGATE-MIB",         oid: "1.3.6.1.4.1.12356.101" },
-];
-
-// Cache of uploaded MIBs for per-stream MIB pickers. null = not yet loaded.
-var _uploadedMibsCache = null;
-
-// Build <option> HTML for a MIB <select>. selectedId: null/"" = Automatic,
-// "std:..." = standard built-in, UUID = uploaded MIB from the MIB database.
-// Derive per-stream auto MIB names from the source kind (integration / class override tiers).
-// CPU/memory + temperature both vary by vendor; the other three streams always use standard MIBs.
-var _SOURCE_TELEMETRY_MIB = {
-  fortimanager: "FORTINET-FORTIGATE-MIB",
-  fortigate:    "FORTINET-FORTIGATE-MIB",
+// What MIB a stream reads over SNMP — said, never chosen (business rule 173).
+// The per-stream MIB picker is retired: it changed nothing on Response Time,
+// Interfaces and LLDP, and on CPU/Memory and Hardware Sensors an uploaded MIB
+// silently switched the asset into that MIB's manufacturer profile. Which MIB
+// a stream reads is decided by the asset's manufacturer profile (rule 131),
+// so each SNMP stream now shows one read-only line saying what is used.
+//
+// The standard module each stream falls back to. CPU/Memory and Hardware
+// Sensors read the covering manufacturer profile's rows first; the other
+// streams always read the standard module.
+var _STREAM_STANDARD_MIB = {
+  responseTime: "SNMPv2-MIB",
+  telemetry:    "HOST-RESOURCES-MIB",
+  temperature:  "ENTITY-SENSOR-MIB",
+  interfaces:   "IF-MIB",
+  lldp:         "LLDP-MIB",
+  processes:    "HOST-RESOURCES-MIB",
 };
-// Temperature: ENTITY-SENSOR-MIB is the standard fallback; Fortinet exposes its
-// own sensor table under FORTINET-FORTIGATE-MIB (fgHwSensorTable) which the
-// collector tries before falling back to ENTITY-SENSOR-MIB.
-var _SOURCE_TEMPERATURE_MIB = {
-  fortimanager: "FORTINET-FORTIGATE-MIB",
-  fortigate:    "FORTINET-FORTIGATE-MIB",
-};
-function _autoMibNamesForSource(sourceKind) {
-  return {
-    responseTime: "SNMPv2-MIB",
-    telemetry:    _SOURCE_TELEMETRY_MIB[sourceKind]   || "HOST-RESOURCES-MIB",
-    temperature:  _SOURCE_TEMPERATURE_MIB[sourceKind] || "ENTITY-SENSOR-MIB",
-    interfaces:   "IF-MIB",
-    lldp:         "LLDP-MIB",
-  };
+var _PROFILE_STREAMS = ["telemetry", "temperature"];
+
+/**
+ * The text of a stream's "MIB" line.
+ *   profile  — {manufacturer, mibs[]} covering this asset, null for none,
+ *              undefined while the effective-settings read is in flight.
+ *   forAsset — false on a tier form (integration / class / manual), which
+ *              covers many assets and so cannot name one profile.
+ */
+function _streamMibUsesText(stream, profile, forAsset) {
+  var std = _STREAM_STANDARD_MIB[stream] || "standard MIBs";
+  if (_PROFILE_STREAMS.indexOf(stream) === -1) return std;
+  if (!forAsset) return "Each asset's manufacturer profile, else " + std;
+  if (profile === undefined) return "…";
+  if (!profile) return std + " (no manufacturer profile covers this asset)";
+  var mibs = profile.mibs && profile.mibs.length ? " (" + profile.mibs.join(", ") + ")" : "";
+  return profile.manufacturer + " manufacturer profile" + mibs + ", else " + std;
 }
 
-// autoName is optional — when provided, replaces "let Polaris choose" with the resolved name.
-function _mibOptionsHTML(selectedId, autoName) {
-  var sel = selectedId || "";
-  var autoLabel = "Automatic" + (autoName ? " (" + autoName + ")" : " (let Polaris choose)");
-  var html = '<option value=""' + (sel === "" ? " selected" : "") + ">" + escapeHtml(autoLabel) + "</option>";
-  html += '<optgroup label="Standard MIBs">';
-  _INTEGRATION_SNMP_MIBS.forEach(function (m) {
-    html += '<option value="' + escapeHtml(m.id) + '"' + (sel === m.id ? " selected" : "") + '>' + escapeHtml(m.label) + '</option>';
-  });
-  html += '</optgroup>';
-  if (_uploadedMibsCache && _uploadedMibsCache.length > 0) {
-    html += '<optgroup label="Uploaded MIBs">';
-    _uploadedMibsCache.forEach(function (m) {
-      var lbl = m.moduleName + (m.manufacturer ? " (" + m.manufacturer + (m.model ? "/" + m.model : "") + ")" : " (generic)");
-      html += '<option value="' + escapeHtml(m.id) + '"' + (sel === m.id ? " selected" : "") + '>' + escapeHtml(lbl) + '</option>';
-    });
-    html += '</optgroup>';
-  }
-  return html;
+/** The read-only "MIB" row; `id` is the text span, `wrapId` the row (shown for SNMP only). */
+function _streamMibUsesRowHTML(wrapId, id, stream, profile, forAsset, shown) {
+  return '<div class="form-group" id="' + wrapId + '" style="display:' + (shown ? "flex" : "none") + ';align-items:baseline;gap:0.5rem;margin-top:0.5rem">' +
+      '<label style="margin:0;font-size:0.85rem;color:var(--color-text-secondary);min-width:90px">MIB</label>' +
+      '<span id="' + id + '" data-mib-uses="' + escapeHtml(stream) + '" data-mib-for-asset="' + (forAsset ? "1" : "0") + '" style="flex:1;font-size:0.85rem;color:var(--color-text-secondary)" ' +
+        'title="Chosen by the asset\'s manufacturer profile (Server Settings → Manufacturer Profiles). Set the asset\'s Manufacturer to change which profile applies.">' +
+        escapeHtml(_streamMibUsesText(stream, profile, forAsset)) +
+      '</span>' +
+    '</div>';
 }
 
-// Populate every MIB <select> on the page (identified by data-mib-picker="1")
-// with the current uploaded-MIB list. Lazy-loads from the API on first call.
-function _populateUploadedMibsInDropdowns() {
-  function repopulate() {
-    var sels = document.querySelectorAll("[data-mib-picker='1']");
-    for (var i = 0; i < sels.length; i++) {
-      var el = sels[i];
-      var current = el.getAttribute("data-current-id") || "";
-      var autoName = el.getAttribute("data-auto-mib-name") || "";
-      el.innerHTML = _mibOptionsHTML(current, autoName);
-    }
+/** Fill every asset-scoped "MIB" line under `root` once the covering profile is known. */
+function _paintStreamMibUses(root, profile) {
+  var els = (root || document).querySelectorAll('[data-mib-uses][data-mib-for-asset="1"]');
+  for (var i = 0; i < els.length; i++) {
+    els[i].textContent = _streamMibUsesText(els[i].getAttribute("data-mib-uses"), profile || null, true);
   }
-  if (_uploadedMibsCache !== null) {
-    repopulate();
-  } else {
-    repopulate(); // render standard MIBs immediately; uploaded group appears once loaded
-    api.serverSettings.listMibs({}).then(function (mibs) {
-      _uploadedMibsCache = Array.isArray(mibs) ? mibs : [];
-      repopulate();
-    }).catch(function () {
-      _uploadedMibsCache = [];
-    });
-  }
-}
-
-// Per-ASSET auto MIB names for the "Automatic" option label: the per-source
-// table above, refined by the asset's manufacturer — CPU/memory and the
-// temperature table are vendor MIBs. The asset edit surfaces (desktop modal,
-// phone Monitoring sheet) both label their MIB pickers through this.
-function _autoMibNamesForAsset(asset) {
-  var mfr = ((asset && asset.manufacturer) || "").toLowerCase();
-  var tel = "HOST-RESOURCES-MIB";
-  if (/fortinet/.test(mfr))               tel = "FORTINET-FORTIGATE-MIB";
-  else if (/cisco/.test(mfr))             tel = "CISCO-PROCESS-MIB";
-  else if (/juniper/.test(mfr))           tel = "JUNIPER-MIB";
-  else if (/mikrotik/.test(mfr))          tel = "MIKROTIK-MIB";
-  else if (/hp|aruba|hewlett/.test(mfr))  tel = "HP-ICF-OID-MIB";
-  else if (/dell/.test(mfr))              tel = "DELL-MIB";
-  return {
-    responseTime: "SNMPv2-MIB",
-    telemetry:    tel,
-    // ENTITY-SENSOR-MIB across the board; Fortinet's fgHwSensorTable lives in
-    // FORTINET-FORTIGATE-MIB (the collector tries it before falling back).
-    temperature:  /fortinet/.test(mfr) ? "FORTINET-FORTIGATE-MIB" : "ENTITY-SENSOR-MIB",
-    interfaces:   "IF-MIB",
-    lldp:         "LLDP-MIB",
-  };
 }
 
 // Map polling method → which credential type it needs (null = no credential).

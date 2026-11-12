@@ -338,7 +338,10 @@
     "deleteWidget",
     "appendWidgetToDetail",
     "replaceWidgetInDetail",
-    "removeWidgetFromDetail"
+    "removeWidgetFromDetail",
+    "_mfgUnprofiledHTML",
+    "_loadUnprofiledManufacturers",
+    "_mfgStandardReadingHTML"
   ],
   "vars": [
     "_timeLoaded",
@@ -439,6 +442,8 @@
     "_SYM_COMBO_LIMIT",
     "_MFG_SUGGEST_SOURCE_LABELS",
     "PROFILE_IMPORT_MAX_BYTES",
-    "PROFILE_IMPORT_GROUPS"
+    "PROFILE_IMPORT_GROUPS",
+    "_mfgUnprofiled",
+    "_MFG_STANDARD_READING"
   ]
 }

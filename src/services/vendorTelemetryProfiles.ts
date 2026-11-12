@@ -163,6 +163,13 @@ export interface VendorTelemetryProfile {
    * hardcoded profile is its only source.
    */
   model?: ModelQuery;
+  /**
+   * Vendor serial-number scalar (business rule 171): the profile's `serial`
+   * row, for a device whose serial is in no standard MIB. Read with the model
+   * by the system-info pass and by the probe's identity read; recorded as the
+   * `snmp-profile` enrichment source. No parse — the scalar is the serial.
+   */
+  serial?: { symbol: string };
 }
 
 /**

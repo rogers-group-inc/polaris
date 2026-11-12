@@ -55,6 +55,11 @@ function installStubs(telemetryPolling: string) {
   g._SYSTEM_TAB_IFACE_METHODS = ["rest_api", "snmp", "vcenter", "agent"];
   g._resolvedStreamPolling = (_a: unknown, stream: string) =>
     (stream === "telemetry" ? telemetryPolling : "snmp");
+  // The real helper's rule (assets-system.js): off when nothing resolves or it resolves to disabled.
+  g._streamSwitchedOff = (a: unknown, stream: string) => {
+    const m = g._resolvedStreamPolling(a, stream);
+    return !m || m === "disabled";
+  };
 }
 
 function render(telemetryPolling: string, asset: Record<string, unknown> = {}): string {
@@ -133,6 +138,17 @@ describe("CPU & Memory section shape", () => {
     const combined = render("snmp");
     expect(combined).not.toContain(">CPU</div>");
     expect(combined).not.toContain(">Memory</div>");
+  });
+
+  it("renders the section hidden when CPU/Memory polling is switched off (not delivered)", () => {
+    for (const method of ["disabled", ""]) {
+      document.body.innerHTML = render(method);
+      const sec = document.querySelector('[data-shot-section="cpuMemory"]') as HTMLElement;
+      expect(sec, method).not.toBeNull();
+      expect(sec.style.display, method).toBe("none");
+    }
+    document.body.innerHTML = render("snmp");
+    expect((document.querySelector('[data-shot-section="cpuMemory"]') as HTMLElement).style.display).toBe("");
   });
 
   it("reads the resolved method, so a class-tier override still decides", () => {

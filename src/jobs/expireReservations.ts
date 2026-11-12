@@ -24,7 +24,7 @@ defineJob({
     if (count > 0) {
       logger.info({ count }, "Expired stale reservations");
     }
-    // Rule 173: the device entries those rows pushed, and any an earlier
+    // Rule 175: the device entries those rows pushed, and any an earlier
     // tick could not reach.
     const unpushed = await unpushExpiredReservations();
     if (unpushed.removed > 0 || unpushed.failed > 0) {

@@ -1,7 +1,7 @@
 /**
  * tests/integration/reservationExpiry.test.ts
  *
- * Business rule 173: a reservation that EXPIRES ends the way a released one
+ * Business rule 175: a reservation that EXPIRES ends the way a released one
  * does. A network reserved as a whole goes back to "available", and the
  * reserved-address Polaris pushed to the FortiGate is removed — retried while
  * the gate cannot be reached, then reported once.
@@ -73,7 +73,7 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-d("an expired whole-network reservation frees the network (rule 173)", () => {
+d("an expired whole-network reservation frees the network (rule 175)", () => {
   it("returns the network to available, and leaves one another reservation still holds", async () => {
     const lapsed = await network("10.91.1.0/24", "reserved");
     const held = await network("10.91.2.0/24", "reserved");
@@ -93,7 +93,7 @@ d("an expired whole-network reservation frees the network (rule 173)", () => {
   });
 });
 
-d("an expired reservation's device entry is removed (rule 173)", () => {
+d("an expired reservation's device entry is removed (rule 175)", () => {
   async function pushed(ip: string, extra: Record<string, unknown> = {}) {
     const integration = await prisma.integration.create({ data: { type: "fortigate", name: `${PFX} gate ${ip}`, config: {} } as never });
     const subnet = await network("10.91.9.0/24", "available", "gate-a").catch(async () =>

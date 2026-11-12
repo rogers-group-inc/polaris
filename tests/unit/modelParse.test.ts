@@ -13,7 +13,7 @@
 
 import { FORTISWITCH_MODEL_PARSE, LEGACY_FORTISWITCH_MODEL_PATTERN } from "../../src/utils/fortiswitchModel.js";
 import { describe, it, expect } from "vitest";
-import { applyModelParse, validateModelParse, templatePrefix } from "../../src/utils/modelParse.js";
+import { applyModelParse, validateModelParse, templatePrefix, detectedModelMayReplace } from "../../src/utils/modelParse.js";
 import { MAX_REGEX_SUBJECT } from "../../src/utils/regexSafety.js";
 
 // The FortiSwitch seed, exactly as the seed job stamps it.
@@ -144,5 +144,16 @@ describe("templatePrefix", () => {
     expect(templatePrefix("FortiSwitch $1")).toBe("FortiSwitch");
     expect(templatePrefix("$1")).toBe("");
     expect(templatePrefix(null)).toBe("");
+  });
+});
+
+describe("detectedModelMayReplace", () => {
+  it("replaces an empty model and the generic FortiSwitch literal, never an operator's", () => {
+    expect(detectedModelMayReplace(null)).toBe(true);
+    expect(detectedModelMayReplace("  ")).toBe(true);
+    expect(detectedModelMayReplace("FortiSwitch")).toBe(true);
+    expect(detectedModelMayReplace("FortiSwitch 448E-FPOE")).toBe(true);
+    expect(detectedModelMayReplace("Catalyst 9300")).toBe(false);
+    expect(detectedModelMayReplace("Smart-UPS 3000")).toBe(false);
   });
 });

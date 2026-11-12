@@ -40,6 +40,8 @@ import { isFortinetIntegrationType } from "../utils/pollingCompatibility.js";
 import { logger } from "../utils/logger.js";
 import { reconcileAddressesWithIpam, shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "./assetAddressService.js";
 import { buildAddressConfidence, confidenceToJson } from "./addressConfidenceService.js";
+import { refreshProfileCacheIfStale } from "./manufacturerProfileService.js";
+import { findDbProfile } from "./profileResolver.js";
 
 // ─── Effective monitor settings ──────────────────────────────────────────────
 
@@ -49,6 +51,11 @@ export async function getEffectiveMonitorSettings(id: string) {
     select: {
       id:                         true,
       assetType:                  true,
+      // Which manufacturer profile covers it (rule 131), for the forms' "uses"
+      // line that replaced the per-stream MIB pickers (rule 173).
+      manufacturer:               true,
+      model:                      true,
+      os:                         true,
       // The workload sources' response-time default depends on it (ICMP
       // when there is an address, the platform's state check when not) —
       // without it this endpoint reported the state check for every
@@ -72,11 +79,6 @@ export async function getEffectiveMonitorSettings(id: string) {
       interfacesPolling:          true,
       lldpPolling:                true,
       storagePolling:             true,
-      responseTimeMibId:          true,
-      cpuMemoryMibId:             true,
-      temperatureMibId:           true,
-      interfacesMibId:            true,
-      lldpMibId:                  true,
       responseTimeCredentialId:   true,
       cpuMemoryCredentialId:      true,
       temperatureCredentialId:    true,
@@ -95,29 +97,7 @@ export async function getEffectiveMonitorSettings(id: string) {
     ...asset,
     discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
   });
-  // mibLookup: every non-null MIB UUID across the five streams, mapped to
-  // its moduleName so the frontend's monitoring chips can append a "MIB:
-  // <module>" segment without a second round-trip. Standard MIB ids (the
-  // `std:<key>` namespace, owned entirely by the frontend) are skipped —
-  // those resolve through `_SNMP_STANDARD_MIBS` in assets.js.
-  const mibIds = new Set<string>();
-  for (const mibId of [
-    result.resolved.responseTimeMibId,
-    result.resolved.cpuMemoryMibId,
-    result.resolved.temperatureMibId,
-    result.resolved.interfacesMibId,
-    result.resolved.lldpMibId,
-  ]) {
-    if (typeof mibId === "string" && mibId && !mibId.startsWith("std:")) mibIds.add(mibId);
-  }
-  const mibLookup: Record<string, { moduleName: string }> = {};
-  if (mibIds.size > 0) {
-    const rows = await prisma.mibFile.findMany({
-      where:  { id: { in: [...mibIds] } },
-      select: { id: true, moduleName: true },
-    });
-    for (const r of rows) mibLookup[r.id] = { moduleName: r.moduleName };
-  }
+  const manufacturerProfile = await coveringProfileSummary(asset);
   // Surface the integration's name + pollInterval alongside the resolved
   // settings so the frontend can render the "integrationPollInterval"
   // provenance badge as `Inherit: 14400s (4h, from <integration> discovery
@@ -186,7 +166,31 @@ export async function getEffectiveMonitorSettings(id: string) {
       ? { type: asset.discoveredByIntegration.type, config: asset.discoveredByIntegration.config }
       : null,
   });
-  return { ...result, mibLookup, integration: integrationInfo, downDetection, snmpCredentialId };
+  return { ...result, manufacturerProfile, integration: integrationInfo, downDetection, snmpCredentialId };
+}
+
+/**
+ * The manufacturer profile that covers an asset (business rule 131) and the
+ * MIB modules uploaded under its name — what the monitoring forms show in
+ * place of the retired per-stream MIB pickers (rule 173): "Uses the APC
+ * manufacturer profile (PowerNet-MIB)". null when no profile covers it, which
+ * the forms read as "standard MIBs". One indexed query, on the detail read
+ * only.
+ */
+async function coveringProfileSummary(asset: {
+  manufacturer: string | null; model: string | null; os: string | null; assetType: string | null;
+}): Promise<{ id: string; manufacturer: string; mibs: string[] } | null> {
+  await refreshProfileCacheIfStale();
+  const profile = findDbProfile({
+    manufacturer: asset.manufacturer, os: asset.os, model: asset.model, assetType: asset.assetType, mibModule: null,
+  });
+  if (!profile) return null;
+  const mibs = await prisma.mibFile.findMany({
+    where:   { manufacturer: { equals: profile.manufacturer, mode: "insensitive" } },
+    select:  { moduleName: true },
+    orderBy: { moduleName: "asc" },
+  });
+  return { id: profile.id, manufacturer: profile.manufacturer, mibs: [...new Set(mibs.map((m) => m.moduleName))] };
 }
 
 // ─── Assistant sections ──────────────────────────────────────────────────────

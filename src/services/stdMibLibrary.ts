@@ -50,22 +50,22 @@ export interface StdMibDef {
 }
 
 export const STD_MIBS: readonly StdMibDef[] = [
-  { key: "std:system",         label: "System (RFC 3418)",                      moduleName: "SNMPv2-MIB",       rootOid: "1.3.6.1.2.1.1",  filename: "SNMPv2-MIB.txt" },
-  { key: "std:interfaces",     label: "Interfaces — ifTable (RFC 2863)",        moduleName: "IF-MIB",           rootOid: "1.3.6.1.2.1.2",  filename: "IF-MIB.txt" },
-  { key: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit (RFC 2863)", moduleName: "IF-MIB",         rootOid: "1.3.6.1.2.1.31", filename: "IF-MIB.txt" },
-  { key: "std:host-resources", label: "HOST-RESOURCES-MIB (RFC 2790)",          moduleName: "HOST-RESOURCES-MIB", rootOid: "1.3.6.1.2.1.25", filename: "HOST-RESOURCES-MIB.txt" },
-  { key: "std:entity",         label: "ENTITY-MIB (RFC 4133)",                  moduleName: "ENTITY-MIB",       rootOid: "1.3.6.1.2.1.47", filename: "ENTITY-MIB.txt" },
-  { key: "std:entity-sensor",  label: "ENTITY-SENSOR-MIB (RFC 3433)",           moduleName: "ENTITY-SENSOR-MIB", rootOid: "1.3.6.1.2.1.99", filename: "ENTITY-SENSOR-MIB.txt" },
-  { key: "std:lldp",           label: "LLDP-MIB (IEEE 802.1AB)",                moduleName: "LLDP-MIB",         rootOid: "1.0.8802.1.1.2", filename: "LLDP-MIB.txt" },
-  { key: "std:poe",            label: "PoE — POWER-ETHERNET-MIB (RFC 3621)",    moduleName: "POWER-ETHERNET-MIB", rootOid: "1.3.6.1.2.1.105", filename: "POWER-ETHERNET-MIB.txt" },
-  { key: "std:bridge",         label: "Bridge — MAC forwarding + STP (RFC 4188)", moduleName: "BRIDGE-MIB",     rootOid: "1.3.6.1.2.1.17", filename: "BRIDGE-MIB.txt" },
-  { key: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (RFC 4363)", moduleName: "Q-BRIDGE-MIB",  rootOid: "1.3.6.1.2.1.17.7", filename: "Q-BRIDGE-MIB.txt" },
-  { key: "std:rstp",           label: "Rapid Spanning Tree (RFC 4318)",         moduleName: "RSTP-MIB",         rootOid: "1.3.6.1.2.1.134", filename: "RSTP-MIB.txt" },
+  { key: "std:system",         label: "System (SNMPv2-MIB, RFC 3418)",                      moduleName: "SNMPv2-MIB",       rootOid: "1.3.6.1.2.1.1",  filename: "SNMPv2-MIB.txt" },
+  { key: "std:interfaces",     label: "Interfaces — ifTable (IF-MIB, RFC 2863)",        moduleName: "IF-MIB",           rootOid: "1.3.6.1.2.1.2",  filename: "IF-MIB.txt" },
+  { key: "std:if-ext",         label: "Interfaces — ifXTable, 64-bit counters (IF-MIB, RFC 2863)", moduleName: "IF-MIB",         rootOid: "1.3.6.1.2.1.31", filename: "IF-MIB.txt" },
+  { key: "std:host-resources", label: "Host Resources (HOST-RESOURCES-MIB, RFC 2790)",          moduleName: "HOST-RESOURCES-MIB", rootOid: "1.3.6.1.2.1.25", filename: "HOST-RESOURCES-MIB.txt" },
+  { key: "std:entity",         label: "Entity (ENTITY-MIB, RFC 4133)",                  moduleName: "ENTITY-MIB",       rootOid: "1.3.6.1.2.1.47", filename: "ENTITY-MIB.txt" },
+  { key: "std:entity-sensor",  label: "Entity Sensors (ENTITY-SENSOR-MIB, RFC 3433)",           moduleName: "ENTITY-SENSOR-MIB", rootOid: "1.3.6.1.2.1.99", filename: "ENTITY-SENSOR-MIB.txt" },
+  { key: "std:lldp",           label: "LLDP (LLDP-MIB, IEEE 802.1AB)",                moduleName: "LLDP-MIB",         rootOid: "1.0.8802.1.1.2", filename: "LLDP-MIB.txt" },
+  { key: "std:poe",            label: "PoE (POWER-ETHERNET-MIB, RFC 3621)",    moduleName: "POWER-ETHERNET-MIB", rootOid: "1.3.6.1.2.1.105", filename: "POWER-ETHERNET-MIB.txt" },
+  { key: "std:bridge",         label: "Bridge — MAC forwarding + STP (BRIDGE-MIB, RFC 4188)", moduleName: "BRIDGE-MIB",     rootOid: "1.3.6.1.2.1.17", filename: "BRIDGE-MIB.txt" },
+  { key: "std:q-bridge",       label: "Bridge — VLAN-aware forwarding (Q-BRIDGE-MIB, RFC 4363)", moduleName: "Q-BRIDGE-MIB",  rootOid: "1.3.6.1.2.1.17.7", filename: "Q-BRIDGE-MIB.txt" },
+  { key: "std:rstp",           label: "Rapid Spanning Tree (RSTP-MIB, RFC 4318)",         moduleName: "RSTP-MIB",         rootOid: "1.3.6.1.2.1.134", filename: "RSTP-MIB.txt" },
   // The ip group. Carries ipNetToPhysicalTable (the neighbour cache -- ARP for
   // IPv4, NDP for IPv6) and its deprecated RFC 1213 predecessor
   // ipNetToMediaTable: the layer-3 counterpart to BRIDGE-MIB's forwarding
   // database, and the SNMP route to a FortiGate's ARP table.
-  { key: "std:ip",             label: "IP — addresses + neighbour cache (RFC 4293)", moduleName: "IP-MIB",   rootOid: "1.3.6.1.2.1.4",  filename: "IP-MIB.txt" },
+  { key: "std:ip",             label: "IP — addresses + neighbour cache (IP-MIB, RFC 4293)", moduleName: "IP-MIB",   rootOid: "1.3.6.1.2.1.4",  filename: "IP-MIB.txt" },
 ];
 
 const STD_MIBS_DIR = join(dirname(fileURLToPath(import.meta.url)), "stdMibs");
