@@ -1927,7 +1927,12 @@
             <code>partial</code>, <code>unresolvedCount</code>,
             <code>unresolvedSymbols</code>. <code>GET …/suggestions</code> lists the manufacturer
             names already in use (with device counts) and not yet profiled — create profiles
-            under one of these, or the profile matches no device.</p>
+            under one of these, or the profile matches no device. <code>GET …/unprofiled</code>
+            narrows that to devices that answer SNMP:
+            <code>{ manufacturers: [{ manufacturer, assetCount, coveredBy }] }</code>, where
+            <code>coveredBy</code> (<code>{ id, manufacturer }</code> or null) names a profile whose
+            "Also applies when" pattern already matches the name — creating a profile for it would
+            take those devices from that profile. Polaris never creates a profile on its own.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/server-settings/manufacturer-profiles"</code></pre>
         </div>

@@ -3545,3 +3545,13 @@ reads both rows every 10 minutes, even on a device whose only SNMP stream is Res
 shows them on the asset's General tab. They rank below what a device's own built-in card states
 (an APC rack PDU) and above the generic ENTITY-MIB chassis reading. Reading them never makes a
 probe slower or fail.
+
+### Rule 172
+
+**Polaris never creates a manufacturer profile on its own.** The Manufacturer Profiles card lists
+**Manufacturers without a profile**: vendors of devices that answer SNMP and are read with the
+standard MIBs only, with a device count and a **Create profile** button. If another profile's
+**Also applies when** already covers a name, the list says so: creating a profile for it would
+take those devices from that profile. In a profile, a row with nothing set shows the standard
+reading it uses (for example *Standard: HOST-RESOURCES-MIB hrProcessorLoad*). Set the row only
+to change it; a row left empty keeps getting improvements to the standard readings.

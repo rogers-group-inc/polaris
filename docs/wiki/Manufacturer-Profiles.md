@@ -26,6 +26,13 @@ in your inventory, with device counts. "Aruba Networks" and "Aruba" are two
 different names: fold the spelling with a **Manufacturer Alias** (MAC & Vendor
 Identification), or give the profile an **Also applies when** pattern.
 
+**Manufacturers without a profile** are listed under the profiles: the vendors of devices that
+answer SNMP and are read with the standard MIBs only, each with a device count and a **Create
+profile** button. Polaris never creates one for you ([rule 172](Business-Rules#rule-172)): a profile
+named after a manufacturer takes its devices from any other profile whose **Also applies when**
+matches it, and the list warns when that would happen. In a new profile every row shows the
+standard reading it uses until you set it, so change only what the vendor's MIB does better.
+
 **Upload the vendor's MIBs under that same name**, every module the objects need.
 A vendor's main module usually imports a core module (FORTINET-FORTIGATE-MIB
 imports FORTINET-CORE-MIB). Upload the core module first; the upload result names

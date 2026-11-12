@@ -20,7 +20,7 @@ import { scopeAssetIds } from "../middleware/writeScope.js";
 import {
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   updateMetricRow, createOverride, updateOverride, deleteOverride,
-  createWidget, updateWidget, deleteWidget, listManufacturerSuggestions,
+  createWidget, updateWidget, deleteWidget, listManufacturerSuggestions, listUnprofiledManufacturers,
   symbolWarningsForProfile, setWidgetLayout, sensorColumnSymbols,
 } from "../../services/manufacturerProfileService.js";
 import {
@@ -109,6 +109,13 @@ router.get("/", requirePermission("manufacturerProfiles", "read"), handle(async 
 // have a profile. Declared BEFORE /:id so the literal path isn't captured.
 router.get("/suggestions", requirePermission("manufacturerProfiles", "read"), handle(async (_req, res) => {
   send(res, { suggestions: await listManufacturerSuggestions() });
+}));
+
+// GET /unprofiled — manufacturers of SNMP-answering assets with no profile of
+// their own, and the profile whose "Also applies when" already covers each
+// (business rule 172). Declared BEFORE /:id so the literal path isn't captured.
+router.get("/unprofiled", requirePermission("manufacturerProfiles", "read"), handle(async (_req, res) => {
+  send(res, { manufacturers: await listUnprofiledManufacturers() });
 }));
 
 // GET /:id — full profile (metrics + overrides + custom widgets).
