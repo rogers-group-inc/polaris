@@ -171,19 +171,6 @@ export function getAddAsMonitoredFromConfig(
 }
 
 /**
- * Pure compute: does the operator's `monitored` choice diverge from the
- * integration's `addAsMonitored`? Pass `null` for `addAsMonitored` when
- * the asset has no per-class block (returns false — no override possible).
- */
-export function computeMonitorOverride(
-  monitored: boolean,
-  addAsMonitored: boolean | null,
-): boolean {
-  if (addAsMonitored === null) return false;
-  return monitored !== addAsMonitored;
-}
-
-/**
  * Maps Asset.assetType to its per-class config block key, when one applies.
  * `server` is integration-type-dependent (vCenter VMs are servers whose class
  * block kept the vmMonitor name) — pass the discovering integration's type;
