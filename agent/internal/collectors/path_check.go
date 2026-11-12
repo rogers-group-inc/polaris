@@ -44,6 +44,9 @@ const (
 	TraceAlways
 	// TraceOnFail runs one only if THIS run fails — the pass→fail transition.
 	TraceOnFail
+	// TraceOnPass runs one only if THIS run passes — the fail→pass transition,
+	// so a recovery has a fresh path too (the resolved alert email draws it).
+	TraceOnPass
 )
 
 // PathCheckOpts carries what RunOnce needs from outside the definition.
@@ -334,13 +337,15 @@ func RunOnce(ctx context.Context, def *transport.PathCheckDef, opts PathCheckOpt
 		s.LatencyMs = fptr(msSince(started))
 	}
 
-	want := opts.Trace == TraceAlways || (opts.Trace == TraceOnFail && !s.OK)
+	want := opts.Trace == TraceAlways ||
+		(opts.Trace == TraceOnFail && !s.OK) ||
+		(opts.Trace == TraceOnPass && s.OK)
 	tr := normalizeTracerouteDef(def.Traceroute)
 	if !want || !tr.Enabled || dst == nil {
 		return s, nil
 	}
 	reason := "scheduled"
-	if opts.Trace == TraceOnFail {
+	if opts.Trace == TraceOnFail || opts.Trace == TraceOnPass {
 		reason = "transition"
 	}
 	trCtx, trCancel := context.WithTimeout(ctx, TracerouteBudget)

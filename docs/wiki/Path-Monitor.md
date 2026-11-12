@@ -121,8 +121,10 @@ server, and you can run up to 10 tests a minute.
 ### Traceroute
 
 On by default. A traceroute runs on the first run, every *N* runs after that
-(default 5), and **immediately whenever a run fails after a passing one**, so a
-failure always has a fresh path to look at. *Max hops* (default 30) and *Probes
+(default 5), **immediately whenever a run fails after a passing one**, so a
+failure always has a fresh path to look at, and **immediately when a run passes
+after a failing one**, so the resolved alert email draws the restored route
+rather than the outage's. *Max hops* (default 30) and *Probes
 per hop* (default 3) set how far and how thoroughly it looks.
 
 The Polaris server traces with the system `traceroute` (or `tracepath`). If neither is
