@@ -229,6 +229,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** src/api/routes/reservations.ts (all CRUD + next-available), src/jobs/expireReservations.ts (expireStaleReservations every 15 min), src/services/duplicateReservationConflictService.ts (`keepOneReservation` releases through `releaseReservation`, rule 139).
 
 **Invariants:**
+- **Expiry mirrors release (rule 175).** `expireStaleReservations` frees a network held by a lapsed whole-network reservation inside its transaction; `unpushExpiredReservations` (exported for the job) removes pushed device entries afterwards, bounded and retried. A new thing `releaseReservation` learns to clean up must be considered for the expiry path as well.
 - MAC address required when push eligible (subnet discovered by FMG/FortiGate with pushReservations=true)
 - The all-zero MAC is refused with a 400 (business rule 97): `createReservationFlow` checks before loading the subnet; `updateReservation` refuses it only when it CHANGES the stored MAC, so a row already holding zero (pre-rule, or mirrored from the gate) stays editable when the form echoes it. Discovery's reservation mirror is not gated.
 - Full-subnet reservation (ipAddress=null) → subnet.status = "reserved"; per-IP → remains available

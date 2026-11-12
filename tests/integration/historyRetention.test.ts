@@ -21,6 +21,13 @@ vi.mock("../../src/services/firmwareRepositoryService.js", async (importOriginal
   sweepFirmwareFiles,
 }));
 
+// Rule 174: which gates the SD-WAN cadence still polls is the scheduler's
+// decision; here it is a table the test fills.
+const sdwanPoll = vi.hoisted(() => ({ byAsset: new Map<string, number | null>() }));
+vi.mock("../../src/services/monitoringService.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  resolveSdwanPollIntervalForAsset: vi.fn(async (id: string) => (sdwanPoll.byAsset.has(id) ? sdwanPoll.byAsset.get(id)! : 60)),
+}));
 import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
@@ -35,6 +42,8 @@ import {
   pruneHiddenRegionIds,
   pruneOrphanTagAssignments,
   pruneUnpinnedProcessConfigs,
+  pruneStaleSdwanRules,
+  SDWAN_RULE_STALE_DAYS,
   PROCESS_CONFIG_UNPINNED_DAYS,
   updateAlertHistorySettings,
   getAlertHistorySettings,
@@ -309,8 +318,34 @@ d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
     const { result, errors } = await pruneHistory();
     expect(errors).toEqual([]);
     expect(result.alerts).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sightings", "summaries", "tagAssignments"]);
+    expect(Object.keys(result).sort()).toEqual(["alerts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sdwanRules", "sightings", "summaries", "tagAssignments"]);
     expect(sweepFirmwareFiles).toHaveBeenCalledTimes(1);
     expect(result.firmwareLeftovers).toBe(3);
+  });
+});
+
+d("SD-WAN rule rows of a gate whose SD-WAN is no longer collected (rule 174)", () => {
+  const rule = (assetId: string, ruleName: string, updatedAt: Date) =>
+    prisma.assetSdwanRule.create({ data: { assetId, ruleName, status: "down", updatedAt } as never });
+
+  it("removes stale rows only where nothing polls the gate, and never a fresh row", async () => {
+    const stopped = await prisma.asset.create({ data: { hostname: `${PFX}-sdwan-stopped`, assetType: "firewall" } as never });
+    const polled = await prisma.asset.create({ data: { hostname: `${PFX}-sdwan-polled`, assetType: "firewall" } as never });
+    sdwanPoll.byAsset.set(stopped.id, null);
+    sdwanPoll.byAsset.set(polled.id, 60);
+    const old = ago(SDWAN_RULE_STALE_DAYS + 1);
+    await rule(stopped.id, "to-internet", old);
+    await rule(stopped.id, "to-dc", old);
+    await rule(stopped.id, "recent", ago(1));
+    // Still polled and failing to answer: a fault to show, not a leftover.
+    await rule(polled.id, "to-internet", old);
+
+    expect(await pruneStaleSdwanRules()).toBe(2);
+    expect((await prisma.assetSdwanRule.findMany({ where: { assetId: stopped.id } })).map((r) => r.ruleName)).toEqual(["recent"]);
+    expect(await prisma.assetSdwanRule.count({ where: { assetId: polled.id } })).toBe(1);
+    expect(await pruneStaleSdwanRules()).toBe(0);
+
+    await prisma.assetSdwanRule.deleteMany({ where: { assetId: { in: [stopped.id, polled.id] } } });
+    await prisma.asset.deleteMany({ where: { id: { in: [stopped.id, polled.id] } } });
   });
 });

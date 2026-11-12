@@ -3596,3 +3596,28 @@ ENTITY-SENSOR-MIB). To change which profile applies, set the asset's **Manufactu
 MIB dropdown changed nothing on most streams and, on those two, silently switched the asset to
 another manufacturer's profile; on upgrade, every asset where it could have done that gets a
 warning in its Events naming the MIB, and every pin is cleared.
+
+### Rule 174
+
+**SD-WAN alerts and rules are let go when SD-WAN is no longer collected for a FortiGate.**
+If you switch off SD-WAN monitoring on an integration, move a gate's interfaces off the
+FortiOS REST API, or remove its integration, Polaris stops reading that gate's SD-WAN. An
+SD-WAN alert that was open on the gate is then cleared, because nothing could ever see it
+recover, and the gate's SD-WAN rules are removed from its SD-WAN tab after seven days.
+
+A gate that is still being read but is not answering is different: its alert stays open and
+the tab shows the readings as stale, because that is a fault, not a setting.
+
+### Rule 175
+
+**A reservation that expires ends the way a released one does.** When a reservation's
+expiry date passes:
+
+- a network that was reserved as a whole goes back to *available*, unless another
+  reservation still holds it;
+- if Polaris pushed the reservation to a FortiGate, the reserved address is removed from the
+  gate. If the gate cannot be reached, Polaris keeps trying for about three hours, then writes
+  a warning to [Events](Events) naming the gate and the entry so it can be deleted by hand.
+
+An expiry does not disconnect a device that is using the address; releasing the reservation
+does.
