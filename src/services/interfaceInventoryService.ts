@@ -83,6 +83,8 @@ function toRow(i: InterfaceSample): InterfaceInventoryRow {
     ipAddress:   addr.ipAddress,
     ipv6Address: addr.ipv6Address,
     macAddress:  i.macAddress ?? null,
+    // An FC port's own WWN (rule 159a); its counters live on AssetFcPort.
+    wwn:         i.wwn ?? null,
     inOctets:    i.inOctets  != null ? BigInt(Math.round(i.inOctets))  : null,
     outOctets:   i.outOctets != null ? BigInt(Math.round(i.outOctets)) : null,
     inErrors:    i.inErrors  != null ? BigInt(Math.round(i.inErrors))  : null,

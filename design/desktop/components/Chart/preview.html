@@ -162,6 +162,38 @@
   </div>
 
   <div class="card" style="margin-top:16px">
+    <div class="card-title">Error-rate bars with severity bands</div>
+    <div style="font-size:0.85rem;color:var(--color-text-secondary);margin-bottom:0.5rem"><strong>60</strong> samples · <strong>Peak CRC:</strong> 22 /min · <strong>Peak invalid words:</strong> 31 /min · <strong>Intervals with a link event:</strong> 3</div>
+    <div class="chart-box" style="padding:8px">
+      <svg width="100%" height="210" viewBox="0 0 720 210" preserveAspectRatio="none" style="display:block" role="img" aria-label="FC errors per minute, stacked bars with Warning and Critical bands">
+        <g font-size="10" fill="currentColor">
+          <rect x="58" y="2" width="10" height="10" fill="var(--color-accent)"></rect><text x="72" y="11">CRC errors /min</text>
+          <rect x="178" y="2" width="10" height="10" fill="#2a9d8f"></rect><text x="192" y="11">Invalid words /min</text>
+          <rect x="311.5" y="3.5" width="7" height="7" fill="var(--color-text-secondary)" transform="rotate(45 315 7)"></rect><text x="324" y="11">Link failure, loss of sync or signal</text>
+        </g>
+        <line x1="48" y1="178" x2="710" y2="178" stroke="rgba(127,127,127,0.15)"></line>
+        <line x1="48" y1="34" x2="710" y2="34" stroke="rgba(127,127,127,0.15)"></line>
+        <text x="44" y="181" text-anchor="end" font-size="10" fill="currentColor">0</text>
+        <text x="44" y="37" text-anchor="end" font-size="10" fill="currentColor">30</text>
+        <!-- bars: CRC (bottom) takes the band colour inside a band; invalid words keep their own -->
+        <rect x="120" y="170" width="8" height="8" fill="var(--color-accent)"></rect><rect x="120" y="150" width="8" height="20" fill="#2a9d8f"></rect>
+        <rect x="300" y="150" width="8" height="28" fill="var(--color-sev-warning)"></rect><rect x="300" y="110" width="8" height="40" fill="#2a9d8f"></rect>
+        <rect x="320" y="72" width="8" height="106" fill="var(--color-sev-critical)"></rect><rect x="320" y="40" width="8" height="32" fill="#2a9d8f"></rect>
+        <rect x="340" y="160" width="8" height="18" fill="var(--color-sev-warning)"></rect>
+        <rect x="560" y="172" width="8" height="6" fill="var(--color-accent)"></rect>
+        <!-- link-event diamonds above the plot -->
+        <rect x="316.5" y="23" width="7" height="7" fill="var(--color-text-secondary)" transform="rotate(45 320 26.5)"></rect>
+        <!-- band lines + captions -->
+        <line x1="48" y1="154" x2="710" y2="154" stroke="var(--color-sev-warning)" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.8"></line>
+        <text x="708" y="151" text-anchor="end" font-size="9" font-weight="600" fill="var(--color-sev-warning)">warning &gt; 5 /min (CRC)</text>
+        <line x1="48" y1="82" x2="710" y2="82" stroke="var(--color-sev-critical)" stroke-width="1.2" stroke-dasharray="4,4" opacity="0.8"></line>
+        <text x="708" y="79" text-anchor="end" font-size="9" font-weight="600" fill="var(--color-sev-critical)">critical &gt; 20 /min (CRC)</text>
+      </svg>
+    </div>
+    <p class="hint" style="margin-top:8px">The interface page's Errors (per second, in / out) and FC errors (per minute) charts. Each band of an automation that reads the port is a dashed line; the series it reads turns the band's colour inside it.</p>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <div class="card-title">Colour vocabulary</div>
     <div class="demo-swatches">
       <div class="demo-swatch"><i style="background:var(--color-success)"></i>Up (response time only)</div>

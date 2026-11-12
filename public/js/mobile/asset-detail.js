@@ -1924,6 +1924,44 @@
   // the header's title row. `monitored`: the interface is in the asset's
   // monitoredInterfaces — those get the throughput + error charts (the
   // desktop interface panel's pair).
+  // "CRC 54 · words 1,207 · link 1" — the FC counters an operator acts on,
+  // non-zero ones only ("none" when all are zero); null on a port with none.
+  function fcCounterSummary(fc) {
+    var c = fc && fc.errorCounters;
+    if (!c) return null;
+    var parts = [], warn = false;
+    [["invalidCrcs", "CRC", true], ["invalidTxWords", "words", true], ["syncLosses", "sync", true],
+     ["sigLosses", "signal", false], ["linkFailures", "link", false]].forEach(function (f) {
+      var v = c[f[0]];
+      if (typeof v !== "number" || v <= 0) return;
+      parts.push(f[1] + " " + Number(v).toLocaleString());
+      if (f[2]) warn = true;
+    });
+    return { text: parts.length ? parts.join(" · ") : "none", warn: warn };
+  }
+
+  // What is logged into an FC port (rule 159a) — the desktop's Logged in
+  // column, as the cards the LLDP neighbours use.
+  function fcLoginCardsHtml(fc) {
+    var logins = (fc && fc.logins) || [];
+    return logins.map(function (l) {
+      var name = (l.matchedAsset && l.matchedAsset.hostname) || l.hostName || l.portWwn;
+      var bits = ['<span class="mono">' + escapeHtml(l.portWwn) + '</span>'];
+      if (l.matchMethod) bits.push(l.matchMethod === "wwn" ? "matched by WWN" : "matched by host name");
+      return ''
+        + '<div class="card-filled" style="padding:12px;margin-bottom:8px;">'
+        + '  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+        + '    <div style="min-width:0;font-weight:500;">' + linkHtml(l.matchedAsset && l.matchedAsset.id, name) + '</div>'
+        + '    <div style="font-size:12px;">VSAN ' + escapeHtml(String(l.vsan)) + '</div>'
+        + '  </div>'
+        + '  <div class="muted" style="font-size:12px;margin-top:4px;">' + bits.join(" · ") + '</div>'
+        + (l.matchedAsset && l.matchedAsset.id
+          ? '<button class="btn btn-tonal iface-neighbor-pivot" data-asset-id="' + escapeHtml(l.matchedAsset.id) + '" style="margin-top:8px;"><svg viewBox="0 0 24 24"><use href="#i-server"/></svg>View asset</button>'
+          : '')
+        + '</div>';
+    }).join("");
+  }
+
   function renderInterfacePage(el, iface, info, assetId, monitored) {
     // Rows: status, speed, ip, mac, errors. Keep it tight.
     var rows = [];
@@ -1943,6 +1981,17 @@
       row("Addressing", amLabel);
     }
     row("MAC", iface.macAddress, true);
+    // A fibre-channel port's own WWN and its counters (rule 159a), as the
+    // desktop Interfaces table's WWN / FC errors columns. Amber when a
+    // corruption counter (CRC, invalid words, sync loss) is non-zero.
+    row("WWN", iface.wwn, true);
+    var fcSum = fcCounterSummary(iface.fc);
+    if (fcSum) {
+      rows.push({
+        k: "FC errors",
+        html: '<span' + (fcSum.warn ? ' style="color:var(--md-warning);font-weight:500;"' : '') + '>' + escapeHtml(fcSum.text) + '</span>',
+      });
+    }
     if (iface.poeStatus) {
       // Status and class read together, as on the desktop: the class is a
       // budget bracket, meaningless without knowing power is flowing.
@@ -2017,6 +2066,9 @@
       }).join("");
     }
 
+    // A fibre-channel port (rule 159a): its own WWN, counters or logins say so.
+    var isFc = !!(iface.wwn || iface.fc);
+    var fcLogins = fcLoginCardsHtml(iface.fc);
     el.innerHTML = ''
       + detailRowsHtml
       + (monitored
@@ -2025,9 +2077,15 @@
           + rangeSegHtml("iface-range-seg", RANGES, "1h")
           + '<div id="iface-tput-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-tput-sub" style="font-size:12px;margin-top:4px;"></div>'
-          + '<div style="font-weight:500;margin:16px 0 8px;">Errors</div>'
-          + '<div id="iface-err-chart" style="min-height:120px;"></div>'
+          + '<div style="font-weight:500;margin:16px 0 8px;">Errors per second</div>'
+          + '<div id="iface-err-chart" style="min-height:140px;"></div>'
           + '<div class="muted" id="iface-err-sub" style="font-size:12px;margin-top:4px;"></div>'
+          + (isFc
+            ? ''
+              + '<div style="font-weight:500;margin:16px 0 8px;">FC errors per minute</div>'
+              + '<div id="iface-fc-chart" style="min-height:150px;"></div>'
+              + '<div class="muted" id="iface-fc-sub" style="font-size:12px;margin-top:4px;"></div>'
+            : '')
         : '')
       // Transceiver history (business rule 143) — recorded on the hardware-
       // sensor stream, so it shows whether or not the port is monitored, with
@@ -2039,8 +2097,11 @@
           + '<div id="iface-optics-chart" style="min-height:120px;"></div>'
           + '<div class="muted" id="iface-optics-sub" style="font-size:12px;margin-top:4px;"></div>'
         : '')
-      + '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>'
-      + neighborHtml;
+      // An FC port has no LLDP: what is logged into it is its neighbour.
+      + (isFc && fcLogins
+        ? '<div style="font-weight:500;margin:16px 0 8px;">Logged in</div>' + fcLogins
+          + (neighbors.length ? '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>' + neighborHtml : '')
+        : '<div style="font-weight:500;margin:16px 0 8px;">Neighbor</div>' + neighborHtml);
 
     el.querySelectorAll(".iface-neighbor-pivot").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -2049,8 +2110,8 @@
       });
     });
     if (monitored && iface.ifName) {
-      wireRangeSeg("iface-range-seg", function (r) { loadInterfaceCharts(assetId, iface.ifName, r); });
-      loadInterfaceCharts(assetId, iface.ifName, "1h");
+      wireRangeSeg("iface-range-seg", function (r) { loadInterfaceCharts(assetId, iface, r); });
+      loadInterfaceCharts(assetId, iface, "1h");
     }
     if (iface.optics && iface.ifName) {
       wireRangeSeg("iface-optics-seg", function (r) { loadOpticsChart(assetId, iface.ifName, r); });
@@ -2123,7 +2184,46 @@
     return (n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " " + sc.unit;
   }
 
-  function loadInterfaceCharts(assetId, ifName, range) {
+  // The bands of every automation that reads THIS port (rule 159a): one
+  // metric-thresholds call per metric, filtered server-side by the port's name
+  // and tags, cached a minute per (asset, port) so a range change does not ask
+  // again. A failure is no bands, never no chart.
+  var IFACE_ERR_METRICS = ["ifInErrorRate", "ifOutErrorRate"];
+  var FC_BAR_METRICS = [["invalidCrcs", "fcCrcErrorRate"], ["invalidTxWords", "fcInvalidTxWordRate"]];
+  var FC_EVENT_METRICS = [["linkFailures", "fcLinkFailureRate"], ["syncLosses", "fcSyncLossRate"], ["sigLosses", "fcSignalLossRate"]];
+  var _ifaceTierCache = {};
+  function ifaceTiersFor(assetId, iface, isFc) {
+    var metrics = IFACE_ERR_METRICS.concat(isFc ? FC_BAR_METRICS.concat(FC_EVENT_METRICS).map(function (m) { return m[1]; }) : []);
+    var key = assetId + "|" + iface.ifName + "|" + metrics.length;
+    var hit = _ifaceTierCache[key];
+    if (hit && Date.now() - hit.at < 60000) return Promise.resolve(hit.tiers);
+    return Promise.all(metrics.map(function (m) {
+      return Promise.resolve()
+        .then(function () { return api.assets.metricThresholds(assetId, { metric: m, ifName: iface.ifName, alias: iface.alias || "" }); })
+        .then(function (r) { return (r && r.tiers) || []; })
+        .catch(function () { return []; });
+    })).then(function (lists) {
+      var tiers = {};
+      metrics.forEach(function (m, i) { tiers[m] = lists[i]; });
+      _ifaceTierCache[key] = { at: Date.now(), tiers: tiers };
+      return tiers;
+    });
+  }
+
+  /** "bands: Port errors, FC CRC" — the automations whose bands a chart drew. */
+  function bandNames(tierLists) {
+    var names = [];
+    tierLists.forEach(function (list) {
+      (list || []).forEach(function (t) { if (t.ruleName && names.indexOf(t.ruleName) < 0) names.push(t.ruleName); });
+    });
+    return names.length ? " · bands: " + names.join(", ") : "";
+  }
+
+  function loadInterfaceCharts(assetId, iface, range) {
+    var ifName = iface.ifName;
+    var isFc = !!(iface.wwn || iface.fc);
+    var fcEl = document.getElementById("iface-fc-chart");
+    var fcSub = document.getElementById("iface-fc-sub");
     var tputEl = document.getElementById("iface-tput-chart");
     var errEl = document.getElementById("iface-err-chart");
     var tputSub = document.getElementById("iface-tput-sub");
@@ -2131,8 +2231,10 @@
     if (!tputEl || !errEl) return;
     var spinner = '<div class="loading-screen" style="padding:24px 0;"><div class="spinner"></div></div>';
     tputEl.innerHTML = errEl.innerHTML = spinner;
+    if (fcEl) fcEl.innerHTML = spinner;
     if (tputSub) tputSub.textContent = "";
     if (errSub) errSub.textContent = "";
+    if (fcSub) fcSub.textContent = "";
     // The sheet belongs to one (asset, interface, range): a reply for any
     // other — a closed sheet, a different port, a range tapped since — drops.
     var current = function () {
@@ -2141,9 +2243,13 @@
       return _openId === assetId && document.getElementById("iface-tput-chart") === tputEl
         && on && on.dataset.range === range;
     };
-    Promise.all([api.assets.interfaceHistory(assetId, ifName, { range: range }), maintWindowsFor(assetId)]).then(function (got) {
+    Promise.all([
+      api.assets.interfaceHistory(assetId, ifName, { range: range }),
+      maintWindowsFor(assetId),
+      ifaceTiersFor(assetId, iface, isFc).catch(function () { return {}; }),
+    ]).then(function (got) {
       if (!current()) return;
-      var data = got[0] || {}, maint = got[1];
+      var data = got[0] || {}, maint = got[1], tiers = got[2] || {};
       var d = deriveInterfaceSeries(data.samples, data);
       var bounds = rangeBounds(range);
       var common = { maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to, outages: data.outages, height: 120 };
@@ -2200,34 +2306,88 @@
           + ' · peak ' + escapeHtml(fmtBps(Math.max(peak, maxPeak)));
       }
 
-      var inE = [], outE = [], inTot = 0, outTot = 0;
+      // Errors per second, stacked bars, the bands of any automation reading
+      // the port (rule 159a). In and out take the throughput chart's two
+      // colours; red stays a missed poll and amber a Warning band.
+      var errPts = [], inPeak = 0, outPeak = 0, anyErr = false;
       d.forEach(function (p) {
         var counted = !(+new Date(p.timestamp) < t0);
-        if (p.inErr != null)  { inE.push({ ts: p.timestamp, v: p.inErr });  if (counted) inTot += p.inErr; }
-        if (p.outErr != null) { outE.push({ ts: p.timestamp, v: p.outErr }); if (counted) outTot += p.outErr; }
+        if (p.inErrRate == null && p.outErrRate == null) return;
+        anyErr = true;
+        errPts.push({ ts: p.timestamp, values: [p.inErrRate, p.outErrRate] });
+        if (counted && p.inErrRate != null && p.inErrRate > inPeak) inPeak = p.inErrRate;
+        if (counted && p.outErrRate != null && p.outErrRate > outPeak) outPeak = p.outErrRate;
       });
-      if (!inE.length && !outE.length) {
+      if (!anyErr) {
         errEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">' + escapeHtml(emptyStatsLabel(maint, range)) + '</div>';
       } else {
-        errEl.innerHTML = PolarisCharts.lineChart(Object.assign({}, common, {
+        var errTiers = [tiers.ifInErrorRate || [], tiers.ifOutErrorRate || []];
+        errEl.innerHTML = PolarisCharts.barChart({
+          points: errPts, unit: "/s", floorMax: 0.05, height: 140,
           series: [
-            { values: inE,  color: "var(--md-error)",   gapFade: true },
-            { values: outE, color: "var(--md-warning)", gapFade: true },
+            { color: "var(--md-primary)",  tiers: errTiers[0], short: "in" },
+            { color: "var(--md-tertiary)", tiers: errTiers[1], short: "out" },
           ],
-          // A clean port (the usual case) is all zeros: same 0–1 axis.
-          yMin: 0, yMax: (inTot + outTot) > 0 ? undefined : 1,
-          ariaLabel: ifName + " errors over " + range,
-        }));
+          maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to,
+          ariaLabel: ifName + " errors per second over " + range,
+        });
+        var fr = PolarisCharts.formatRate;
         if (errSub) errSub.innerHTML = ''
-          + '<span style="color:var(--md-error);">in ' + inTot + '</span>'
-          + ' · <span style="color:var(--md-warning);">out ' + outTot + '</span>'
-          + ' · total ' + (inTot + outTot);
+          + '<span style="color:var(--md-primary);">in peak ' + escapeHtml(fr(inPeak)) + '/s</span>'
+          + ' · <span style="color:var(--md-tertiary);">out peak ' + escapeHtml(fr(outPeak)) + '/s</span>'
+          + escapeHtml(bandNames(errTiers));
+      }
+
+      // A fibre-channel port's counters per minute: CRC and invalid words as
+      // bars, link failure / loss of sync or signal as a diamond above.
+      if (fcEl) {
+        var CSv = window.PolarisChartSeverity;
+        var fcPts = [], crcPeak = 0, wordsPeak = 0, linkN = 0;
+        d.forEach(function (p) {
+          if (!p.fc) return;
+          var counted = !(+new Date(p.timestamp) < t0);
+          var evCount = 0, evSev = null;
+          FC_EVENT_METRICS.forEach(function (m) {
+            var v = p.fc[m[0]];
+            if (typeof v !== "number" || v <= 0) return;
+            evCount += v;
+            var s = CSv ? CSv.severityAt(tiers[m[1]] || [], v) : null;
+            if (s && (!evSev || CSv.SEV_ORDER.indexOf(s) > CSv.SEV_ORDER.indexOf(evSev))) evSev = s;
+          });
+          fcPts.push({ ts: p.timestamp, values: [p.fc.invalidCrcs, p.fc.invalidTxWords], event: evCount > 0 ? { count: evCount, severity: evSev } : null });
+          if (counted) {
+            if (typeof p.fc.invalidCrcs === "number" && p.fc.invalidCrcs > crcPeak) crcPeak = p.fc.invalidCrcs;
+            if (typeof p.fc.invalidTxWords === "number" && p.fc.invalidTxWords > wordsPeak) wordsPeak = p.fc.invalidTxWords;
+            if (evCount > 0) linkN++;
+          }
+        });
+        if (!fcPts.length) {
+          fcEl.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0;">No fibre-channel counters recorded for this range yet.</div>';
+        } else {
+          var fcTiers = FC_BAR_METRICS.map(function (m) { return tiers[m[1]] || []; });
+          fcEl.innerHTML = PolarisCharts.barChart({
+            points: fcPts, unit: "/min", floorMax: 5, height: 150,
+            series: [
+              { color: "var(--md-primary)",  tiers: fcTiers[0], short: "CRC" },
+              { color: "var(--md-tertiary)", tiers: fcTiers[1], short: "words" },
+            ],
+            maintenance: maint, from: bounds && bounds.from, to: bounds && bounds.to,
+            ariaLabel: ifName + " fibre-channel errors per minute over " + range,
+          });
+          var fr2 = PolarisCharts.formatRate;
+          if (fcSub) fcSub.innerHTML = ''
+            + '<span style="color:var(--md-primary);">CRC peak ' + escapeHtml(fr2(crcPeak)) + '/min</span>'
+            + ' · <span style="color:var(--md-tertiary);">words peak ' + escapeHtml(fr2(wordsPeak)) + '/min</span>'
+            + (linkN ? ' · ◆ link events in ' + linkN + ' interval' + (linkN === 1 ? '' : 's') : '')
+            + escapeHtml(bandNames(fcTiers.concat(FC_EVENT_METRICS.map(function (m) { return tiers[m[1]] || []; }))));
+        }
       }
     }).catch(function (err) {
       if (!current()) return;
       var msg = '<div class="muted" style="font-size:13px;padding:8px 0;">Couldn’t load interface history: ' + escapeHtml(err && err.message ? err.message : "error") + '</div>';
       tputEl.innerHTML = msg;
       errEl.innerHTML = "";
+      if (fcEl) fcEl.innerHTML = "";
     });
   }
 

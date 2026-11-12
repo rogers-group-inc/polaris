@@ -44,6 +44,12 @@ const FN_NAMES = [
   "_getCollapsedIfaces",
   "_setCollapsedIfaces",
   "_lldpNeighborInlineCell",
+  // The FC columns' helpers (rule 159a). Their counter labels (_FC_ERROR_COLS)
+  // are read only for a port that carries FC counters, which no fixture here
+  // does — fcPortCounters.test.ts covers the cells.
+  "_fcErrorTotal",
+  "_fcLoginText",
+  "_fcIfaceCellsHTML",
   "_treeElbow",
   "_distinctSorted",
   "_ifaceMonToggleHTML",

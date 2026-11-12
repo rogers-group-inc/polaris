@@ -1,0 +1,47 @@
+<!-- @dsCard group="Assets" page height=560 width=390 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Interface error charts</title>
+<style>
+  /* Preview frame only, not part of the component. */
+  html, body { height: auto !important; overflow: visible !important; }
+  body { padding: 16px; background: var(--md-surface); color: var(--md-on-surface); }
+</style>
+</head>
+<body>
+<div class="kv-row"><span class="k">WWN</span><span class="v"><span class="mono">20:05:00:3a:9c:12:34:56</span></span></div>
+<div class="kv-row"><span class="k">FC errors</span><span class="v"><span style="color:var(--md-warning);font-weight:500;">CRC 54 · words 1,207 · link 1</span></span></div>
+
+<div style="font-weight:500;margin:16px 0 8px;">Errors per second</div>
+<div class="chart-wrap" style="height:140px;padding:4px 8px 18px 36px;">
+  <div class="chart-y-labels"><span class="chart-y-tick" style="top:0;">2</span><span class="chart-y-tick" style="top:50%;transform:translateY(-50%);">1</span><span class="chart-y-tick" style="bottom:0;">0</span></div>
+  <svg class="chart-svg" viewBox="0 0 600 118" preserveAspectRatio="none" role="img" aria-label="Errors per second, with a Warning and a Critical band">
+    <rect x="100" y="110" width="8" height="8" fill="var(--md-primary)"></rect>
+    <rect x="200" y="58" width="8" height="60" fill="var(--md-sev-warning)"></rect>
+    <rect x="200" y="52" width="8" height="6" fill="var(--md-tertiary)"></rect>
+    <rect x="220" y="20" width="8" height="98" fill="var(--md-sev-critical)"></rect>
+    <rect x="420" y="96" width="8" height="22" fill="var(--md-primary)"></rect>
+    <line x1="0" x2="600" y1="88.5" y2="88.5" stroke="var(--md-sev-warning)" stroke-width="1.5" stroke-dasharray="4,4" vector-effect="non-scaling-stroke"></line>
+    <line x1="0" x2="600" y1="47.2" y2="47.2" stroke="var(--md-sev-critical)" stroke-width="1.5" stroke-dasharray="4,4" vector-effect="non-scaling-stroke"></line>
+  </svg>
+  <div class="chart-maint-labels" style="overflow:visible;">
+    <span style="position:absolute;right:2px;bottom:calc(25% + 1px);font-size:10px;font-weight:500;line-height:1;color:var(--md-sev-warning);">warning &gt; 0.5 (in)</span>
+    <span style="position:absolute;right:2px;bottom:calc(60% + 1px);font-size:10px;font-weight:500;line-height:1;color:var(--md-sev-critical);">critical &gt; 1.2 (in)</span>
+  </div>
+  <div class="chart-x-labels"><span>14:00</span><span>15:00</span></div>
+</div>
+<div class="muted" style="font-size:12px;margin-top:4px;"><span style="color:var(--md-primary);">in peak 1.4/s</span> · <span style="color:var(--md-tertiary);">out peak 0.12/s</span> · bands: Port errors</div>
+
+<div style="font-weight:500;margin:16px 0 8px;">Logged in</div>
+<div class="card-filled" style="padding:12px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    <div style="min-width:0;font-weight:500;">esx01</div>
+    <div style="font-size:12px;">VSAN 101</div>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:4px;"><span class="mono">10:00:00:90:fa:00:00:01</span> · matched by WWN</div>
+  <button class="btn btn-tonal" type="button" style="margin-top:8px;">View asset</button>
+</div>
+</body>
+</html>

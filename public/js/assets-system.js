@@ -113,12 +113,15 @@ function assetSystemViewHTML(a) {
   // can run CPU/mem over REST while temperature scrapes over SNMP (the
   // branch-class FortiGate workaround). Each section gets its own badge so
   // the per-stream polling method, credential, MIB, and cadence are visible
-  // at a glance. Interfaces and Storage share the Interfaces stream. LLDP is
-  // its own stream (per-integration/class/asset REST or SNMP) so it also
-  // gets its own badge.
+  // at a glance. Storage and LLDP are streams of their own (own method,
+  // own queue and cadence; Storage borrows the Interfaces credential), so
+  // each gets its own badge and its own "updated" stamp — they used to show
+  // the Interfaces stream's, which named a method and tier the operator had
+  // not set for them.
   var telemetryBadge   = _streamSourceBadgeHTML(a, "telemetry");
   var temperatureBadge = _streamSourceBadgeHTML(a, "temperature");
   var interfacesBadge  = _streamSourceBadgeHTML(a, "interfaces");
+  var storageBadge     = _streamSourceBadgeHTML(a, "storage");
   var lldpBadge        = _streamSourceBadgeHTML(a, "lldp");
   var telUpdatedAt = a.lastTelemetryAt
     ? ('<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(a.lastTelemetryAt)) + '">updated ' + timeAgo(a.lastTelemetryAt) + '</span>')
@@ -130,7 +133,17 @@ function assetSystemViewHTML(a) {
   var sysInfoPollStamp = _streamPollStampHTML(a.lastSystemInfoAt, a.lastSystemInfoAttemptAt, a.systemInfoFailingSince, a.systemInfoLastError);
   var telemetryBadgeFull  = telemetryBadge  + (telemetryBadge  && telPollStamp     ? " " : "") + telPollStamp;
   var interfacesBadgeFull = interfacesBadge + (interfacesBadge && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
-  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && sysInfoPollStamp ? " " : "") + sysInfoPollStamp;
+  // runStorageFor / runLldpFor stamp lastStorageAt / lastLldpAt on their own
+  // passes; they track no attempt or failure, so a plain stamp.
+  function plainStamp(at) {
+    return at
+      ? '<span style="font-size:0.72rem;color:var(--color-text-tertiary)" title="' + escapeHtml(formatDateTime(at)) + '">updated ' + timeAgo(at) + '</span>'
+      : '';
+  }
+  var storageStamp = plainStamp(a.lastStorageAt);
+  var lldpStamp    = plainStamp(a.lastLldpAt);
+  var storageBadgeFull    = storageBadge    + (storageBadge    && storageStamp     ? " " : "") + storageStamp;
+  var lldpBadgeFull       = lldpBadge       + (lldpBadge       && lldpStamp        ? " " : "") + lldpStamp;
   // Temperatures uses its own table-specific timestamp (si.lastTemperatureAt)
   // which can diverge from lastTelemetryAt when the CPU/memory pull succeeds
   // but the sensor pull fails. The header's updated stamp lives in an id'd
@@ -254,9 +267,13 @@ function assetSystemViewHTML(a) {
     // documented way to enable direct switch polling) still read as REST and
     // hid the section, and switching the Storage stream itself to SNMP
     // collected samples into a table with nowhere to render.
+    // Emitted is not SHOWN: _renderStorageTable / _renderLldpNeighborsCard hide
+    // the section (display:none, still in the DOM for the post-pass) when its
+    // own stream RESOLVES to disabled and nothing was collected — a switched-
+    // off stream is the Monitoring tab's business, not a card on every PDU.
     (isWorkloadContainer ? '' :
     '<div data-shot-section="storage" data-shot-label="Storage">' +
-    sectionHeader("Storage", interfacesBadgeFull, false) +
+    sectionHeader("Storage", storageBadgeFull, false) +
     '<div id="asset-system-storage"><span class="empty-state">Loading…</span></div>' +
     '</div>' +
     '<div data-shot-section="lldp" data-shot-label="LLDP Neighbors">' +
@@ -648,6 +665,23 @@ function _storageStreamDelivers(asset) {
   return _STORAGE_DELIVERING_METHODS.indexOf(_resolvedStreamPolling(asset, "storage")) !== -1;
 }
 
+// A stream that resolves to "disabled" (or to nothing at all) is switched off
+// for this device. Read from the RESOLVED method — class / integration tiers
+// included once the effective-settings walk lands — never the per-asset
+// column alone, which is the guess that once hid Storage on SNMP switches.
+function _streamSwitchedOff(asset, stream) {
+  var m = _resolvedStreamPolling(asset, stream);
+  return !m || m === "disabled";
+}
+
+// Show or hide the System-tab section a card's container sits in. Hidden, not
+// removed: the effective-settings post-pass re-renders into the same element
+// and must be able to bring it back.
+function _showSystemSection(container, shown) {
+  var sec = container && container.closest ? container.closest("[data-shot-section]") : null;
+  if (sec) sec.style.display = shown ? "" : "none";
+}
+
 function _isRestApiManagedNetworkDevice(asset, stream) {
   if (!asset) return false;
   var t = asset.assetType;
@@ -807,6 +841,12 @@ function _updateStaleBannersFromEffective(assetId, asset) {
   var storageEl = document.getElementById("asset-system-storage");
   if (storageEl && asset && asset.id === assetId && _assetSystemSiCache) {
     _renderStorageTable(storageEl, _assetSystemSiCache, asset);
+  }
+  // LLDP hides itself when its stream resolves to disabled; a class- or
+  // integration-tier method only becomes visible here, so re-decide it too.
+  var lldpEl = document.getElementById("asset-system-lldp");
+  if (lldpEl && asset && asset.id === assetId && _assetSystemSiCache) {
+    _renderLldpNeighborsCard(lldpEl, _assetSystemSiCache, asset);
   }
 }
 
@@ -1051,7 +1091,10 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
   // appear once any port carries them. Rx / Tx show by default; temperature,
   // voltage and bias start hidden and are one tick away in the column gear.
   var showOpticsCols = rows.some(function (r) { return r.optics != null; });
-  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0);
+  // And for a fibre-channel switch (business rule 159a): the port's own WWN,
+  // what is logged into it, and its FC error counters — once any port is FC.
+  var showFcCols = rows.some(function (r) { return !!r.wwn || r.fc != null; });
+  var COLS = 11 + (showVlanCols ? 2 : 0) + (showPoeCol ? 1 : 0) + (showIpv6Col ? 1 : 0) + (showTagsCol ? 1 : 0) + (showOpticsCols ? 5 : 0) + (showFcCols ? 3 : 0);
   // Per-user, per-asset collapsed parents. Read HERE rather than in the wiring
   // phase because every row build has to bake the current state into its own
   // markup: a sort/filter re-render replaces the whole tbody, so a post-hoc
@@ -1282,6 +1325,7 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       (showIpv6Col ? '<td class="mono">' + escapeHtml(iface.ipv6Address || "—") + "</td>" : "") +
       addressingCell(iface) +
       '<td class="mono">' + escapeHtml(iface.macAddress || "—") + "</td>" +
+      (showFcCols ? _fcIfaceCellsHTML(iface) : "") +
       vlanCellsHTML(iface) +
       poeCellHTML(iface) +
       opticsCellsHTML(iface) +
@@ -1425,6 +1469,9 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       ipv6: iface.ipv6Address || "",
       addressing: iface.addressingMode ? String(iface.addressingMode).toLowerCase() : "",
       mac: iface.macAddress || "",
+      wwn: iface.wwn || "",
+      "fc-login": _fcLoginText(iface.fc),
+      "fc-errors": _fcErrorTotal(iface.fc),
       "native-vlan": iface.nativeVlan != null ? Number(iface.nativeVlan) : null,
       "tagged-vlans": taggedVlanList(iface),
       poe: iface.poeStatus || "",
@@ -1595,6 +1642,11 @@ function _buildInterfacesTableDOM(container, si, asset, rows, ipsecCount) {
       (showIpv6Col ? '<th data-col-id="ipv6" data-sf-key="ipv6" data-sf-type="ip" title="The interface\'s IPv6 address — the first one that is not link-local (fe80::) or loopback">IPv6</th>' : "") +
       '<th data-col-id="addressing" data-sf-key="addressing" data-sf-options="dhcp=DHCP|static=Static|pppoe=PPPoE" title="L3 addressing mode — FortiOS only (CMDB system/interface mode). DHCP, Static, or PPPoE; other sources show —">Addressing</th>' +
       '<th data-col-id="mac" data-sf-key="mac" data-sf-type="string">MAC</th>' +
+      (showFcCols
+        ? '<th data-col-id="wwn" data-sf-key="wwn" data-sf-type="string" title="The fibre-channel port\'s own port WWN">WWN</th>' +
+          '<th data-col-id="fc-login" data-sf-key="fc-login" data-sf-type="string" title="What is logged into this fibre-channel port: the asset it was matched to (by its HBA WWN, else its registered host name) and the port WWN it logged in with">Logged in</th>' +
+          '<th data-col-id="fc-errors" data-sf-key="fc-errors" data-sf-type="number" data-sf-nofilter title="Fibre-channel error counters since the switch last cleared them: CRC errors, link failures, loss of sync, loss of signal and invalid transmission words. Hover a cell for each one. Monitor the port to alert on them as a rate.">FC errors</th>'
+        : "") +
       vlanHeader +
       poeHeader +
       opticsHeader +
@@ -2109,6 +2161,86 @@ function _openInterfaceOrNetwork(asset, ifName, row, anchor) {
 // alert carries the same strobing severity dot as the Assets list
 // (alertSummaryDotHTML, from matchedAsset.alert stamped by GET
 // /assets/:id/system-info).
+// The fibre-channel counters an operator acts on, in the order they read: a
+// link that dropped, then words / frames the optic mangled. Zero is shown as a
+// dash so a non-zero cell stands out; a non-zero corruption counter is amber.
+// Shared with the Fibre Channel tab (assets-network.js, which loads after this
+// file) so the two surfaces name the counters the same way.
+var _FC_ERROR_COLS = [
+  ["linkFailures",   "Link failures",  "Times the link went down (fcIfLinkFailures)", false],
+  ["syncLosses",     "Sync losses",    "Losses of synchronisation (fcIfSyncLosses)", true],
+  ["sigLosses",      "Signal losses",  "Losses of signal (fcIfSigLosses)", false],
+  ["invalidTxWords", "Invalid words",  "Invalid transmission words received — usually an optic, cable or connector (fcIfInvalidTxWords)", true],
+  ["invalidCrcs",    "CRC errors",     "Frames received with a bad CRC (fcIfInvalidCrcs)", true],
+];
+
+// Sum of an FC port's error counters, or null when it carries none (business
+// rule 159a) — the FC errors column's value and sort key.
+function _fcErrorTotal(fc) {
+  var c = fc && fc.errorCounters;
+  if (!c) return null;
+  var total = null;
+  _FC_ERROR_COLS.forEach(function (col) {
+    var v = c[col[0]];
+    if (typeof v === "number" && isFinite(v)) total = (total || 0) + v;
+  });
+  return total;
+}
+
+// "host / WWN" of what is logged into an FC port — the Logged in column's text
+// for its sort and filter.
+function _fcLoginText(fc) {
+  var logins = (fc && fc.logins) || [];
+  return logins.map(function (l) {
+    var name = (l.matchedAsset && l.matchedAsset.hostname) || l.hostName || "";
+    return (name ? name + " " : "") + l.portWwn;
+  }).join(", ");
+}
+
+// The three FC cells of an Interfaces row (business rule 159a): the port's
+// own WWN, what is logged into it, and its error counters summed with each one
+// in the tooltip — amber when a corruption counter is non-zero, like the Fibre
+// Channel tab.
+function _fcIfaceCellsHTML(iface) {
+  var fc = iface.fc || null;
+  var wwnCell = '<td class="mono">' + escapeHtml(iface.wwn || "—") + '</td>';
+
+  var logins = (fc && fc.logins) || [];
+  var loginCell;
+  if (logins.length === 0) {
+    loginCell = "<td>—</td>";
+  } else {
+    var first = logins[0];
+    var name = (first.matchedAsset && first.matchedAsset.hostname) || first.hostName || "";
+    var nameHtml = first.matchedAsset && first.matchedAsset.id
+      ? '<a href="#" class="asset-lldp-link" data-asset-id="' + escapeHtml(first.matchedAsset.id) + '"' +
+        ' title="Matched by ' + (first.matchMethod === "wwn" ? "the WWN the host reports for its HBA" : "the host name the HBA registered") + '"' +
+        ' style="color:var(--color-accent);text-decoration:none">' + escapeHtml(name || first.portWwn) + '</a>'
+      : (name ? escapeHtml(name) : "");
+    var wwnHtml = '<span class="mono" style="opacity:0.7">' + (nameHtml ? " / " : "") + escapeHtml(first.portWwn) + '</span>';
+    var more = logins.length > 1
+      ? ' <span class="badge hue-pill" style="--hue:#6b7280" title="' + escapeHtml(_fcLoginText(fc)) + '">+' + (logins.length - 1) + '</span>'
+      : "";
+    loginCell = "<td>" + nameHtml + wwnHtml + more + "</td>";
+  }
+
+  var total = _fcErrorTotal(fc);
+  var errCell;
+  if (total == null) {
+    errCell = '<td class="mono" style="color:var(--color-text-tertiary)">—</td>';
+  } else {
+    var c = fc.errorCounters;
+    var warn = _FC_ERROR_COLS.some(function (col) { return col[3] && typeof c[col[0]] === "number" && c[col[0]] > 0; });
+    var tip = _FC_ERROR_COLS.map(function (col) {
+      var v = c[col[0]];
+      return col[1] + ": " + (typeof v === "number" ? Number(v).toLocaleString() : "—");
+    }).join("\n");
+    errCell = '<td class="mono"' + (warn ? ' style="color:var(--color-warning);font-weight:600"' : "") +
+      ' title="' + escapeHtml(tip) + '">' + escapeHtml(Number(total).toLocaleString()) + '</td>';
+  }
+  return wwnCell + loginCell + errCell;
+}
+
 function _lldpNeighborInlineCell(neighbors) {
   if (!neighbors || neighbors.length === 0) return "—";
   var first = neighbors[0];
@@ -2247,21 +2379,23 @@ function _poolLayoutsHTML(rows, details) {
 function _renderStorageTable(container, si, asset) {
   if (!container) return;
   var rows = (si && si.storage) || [];
+  if (rows.length === 0 && _streamSwitchedOff(asset, "storage")) {
+    // Switched off and nothing collected: no section. An "is switched off"
+    // card on every device that has no disks to report (a PDU, a UPS) was
+    // noise; turning the stream on is the Monitoring tab's job.
+    _showSystemSection(container, false);
+    container.innerHTML = "";
+    return;
+  }
+  _showSystemSection(container, true);
   if (rows.length === 0) {
-    // Distinguish "nothing collected this yet" from "nothing ever will".
-    // The second case used to render as the first — or, before 2026-08, as no
-    // Storage section at all — which read as a device with no disks rather
-    // than as a stream that is switched off.
+    // Distinguish "nothing collected this yet" from "nothing ever will" — a
+    // method that is set but carries no storage (REST API on a FortiSwitch).
+    // Rendering both as "No storage data yet" read as a device with no disks.
     if (!_storageStreamDelivers(asset)) {
       var storageMethod = _resolvedStreamPolling(asset, "storage");
-      var storageOff = !storageMethod || storageMethod === "disabled";
-      // "not available via Disabled" isn't a sentence; when the stream is
-      // simply off, the description carries the specifics instead.
-      var methodLabel = storageOff
-        ? "the current polling method"
-        : (_POLLING_LABELS[storageMethod] || storageMethod);
+      var methodLabel = _POLLING_LABELS[storageMethod] || storageMethod;
       var storageDesc =
-        (storageOff ? "The <strong>Storage</strong> stream is switched off for this device. " : "") +
         "Set it to <strong>SNMP</strong> on this asset's Monitoring tab, or on the integration's Monitoring tab to cover the whole class. " +
         "It has to be the <strong>Storage</strong> stream specifically — the Interfaces stream's SNMP walk collects the same rows but they are dropped unless Storage asked for them. " +
         "FortiOS REST API publishes no mountable storage, so a Fortinet device reports its system flash over SNMP only.";
@@ -2553,6 +2687,14 @@ function _renderTemperatures(container, si, asset) {
 function _renderLldpNeighborsCard(container, si, asset) {
   if (!container) return;
   var neighbors = (si && si.lldpNeighbors) || [];
+  if (neighbors.length === 0 && _streamSwitchedOff(asset, "lldp")) {
+    // Same rule as Storage: a switched-off stream with nothing collected
+    // draws no section (it used to say "no neighbors" with a FortiOS hint).
+    _showSystemSection(container, false);
+    container.innerHTML = "";
+    return;
+  }
+  _showSystemSection(container, true);
   if (neighbors.length === 0) {
     if (_isRestApiManagedNetworkDevice(asset, "lldp")) {
       var lldpPolling = _assetMonitorStreamSource(asset, "lldp").polling || "REST API";

@@ -61,7 +61,7 @@ function varSrc(name: string): string {
 }
 
 const FN_NAMES = [
-  "_storageStreamDelivers", "_renderStorageTable", "_storageDetailsFor", "_storageHealthCell", "_setStorageDetailsFromVirtualization",
+  "_storageStreamDelivers", "_streamSwitchedOff", "_showSystemSection", "_renderStorageTable", "_storageDetailsFor", "_storageHealthCell", "_setStorageDetailsFromVirtualization",
   "_poolLayoutsHTML", "_poolMemberUnhealthy", "_poolScanText", "_isWorkloadPlatform",
 ];
 const SRC = varSrc("_STORAGE_DELIVERING_METHODS") + "\n" +
@@ -76,7 +76,7 @@ function withStreams(streams: Record<string, string | null>) {
 }
 
 function render(storage: any[] | undefined, asset?: any) {
-  document.body.innerHTML = '<div id="storage"></div>';
+  document.body.innerHTML = '<div data-shot-section="storage" id="sec"><div id="storage"></div></div>';
   const el = document.getElementById("storage")!;
   g._renderStorageTable(el, { storage, monitoredStorage: [] }, asset || { id: "A1", assetType: "switch" });
   return el;
@@ -123,29 +123,46 @@ describe("_storageStreamDelivers", () => {
   });
 });
 
+const sectionShown = () => document.getElementById("sec")!.style.display !== "none";
+
 describe("_renderStorageTable empty states", () => {
-  it("a FortiSwitch with Storage off gets the actionable state, naming the Storage stream", () => {
-    withStreams({ storage: "disabled", interfaces: "rest_api" });
+  it("hides the section when the Storage stream is switched off and nothing was collected", () => {
+    // A PDU with Interfaces on SNMP and Storage off drew an "is switched off"
+    // card under a chip naming the Interfaces stream's method (2026-11-11).
+    withStreams({ storage: "disabled", interfaces: "snmp" });
     const el = render([]);
-    const box = el.querySelector("[data-na]");
-    expect(box).not.toBeNull();
-    expect(box!.getAttribute("data-label")).toBe("Storage");
-    // The description must point at Storage and must NOT tell the operator that
-    // setting Interfaces to SNMP is enough — that is the bug this replaced.
-    expect(box!.innerHTML).toContain("<strong>Storage</strong>");
-    expect(box!.innerHTML).toContain("<strong>SNMP</strong>");
-    expect(box!.innerHTML).toContain("switched off");
+    expect(sectionShown()).toBe(false);
+    expect(el.innerHTML).toBe("");
   });
 
-  it("says 'the current polling method' rather than 'via Disabled' when the stream is off", () => {
+  it("hides it when no method resolves for Storage at all", () => {
+    withStreams({ storage: null });
+    render([]);
+    expect(sectionShown()).toBe(false);
+  });
+
+  it("brings the section back when the effective-settings re-render resolves a method", () => {
+    // The sync render sees only the per-asset column; a class- or
+    // integration-tier SNMP arrives with the post-pass, into the same element.
     withStreams({ storage: "disabled" });
-    expect(render([]).querySelector("[data-na]")!.getAttribute("data-method"))
-      .toBe("the current polling method");
+    const el = render([]);
+    expect(sectionShown()).toBe(false);
+    withStreams({ storage: "snmp" });
+    g._renderStorageTable(el, { storage: [], monitoredStorage: [] }, { id: "A1", assetType: "switch" });
+    expect(sectionShown()).toBe(true);
+    expect(el.textContent).toContain("No storage data yet");
   });
 
-  it("names a real-but-non-delivering method when one is set", () => {
-    withStreams({ storage: "rest_api" });
-    expect(render([]).querySelector("[data-na]")!.getAttribute("data-method")).toBe("REST API");
+  it("names a real-but-non-delivering method, pointing at the Storage stream", () => {
+    // The description must point at Storage and must NOT tell the operator that
+    // setting Interfaces to SNMP is enough — the bug the 2026-08 state replaced.
+    withStreams({ storage: "rest_api", interfaces: "rest_api" });
+    const box = render([]).querySelector("[data-na]")!;
+    expect(sectionShown()).toBe(true);
+    expect(box.getAttribute("data-label")).toBe("Storage");
+    expect(box.getAttribute("data-method")).toBe("REST API");
+    expect(box.innerHTML).toContain("<strong>Storage</strong>");
+    expect(box.innerHTML).toContain("<strong>SNMP</strong>");
   });
 
   it("a delivering stream with no rows yet is pending, not unavailable", () => {
@@ -158,6 +175,7 @@ describe("_renderStorageTable empty states", () => {
   it("renders the table once rows arrive, whatever the resolved method says", () => {
     withStreams({ storage: "disabled", interfaces: "rest_api" });
     const el = render([{ mountPath: "flash", usedBytes: 400, totalBytes: 1000 }]);
+    expect(sectionShown()).toBe(true);
     expect(el.querySelector("[data-na]")).toBeNull();
     expect(el.querySelector("table")).not.toBeNull();
     expect(el.textContent).toContain("flash");

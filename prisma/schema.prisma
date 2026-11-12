@@ -1665,6 +1665,12 @@ model AssetInterfaceSample {
   // MSFT_NetAdapter from the Polaris Agent, the pNIC link on vCenter hosts.
   // Read by interfaceLinkEventService for the interface up event.
   duplex         String?
+  // A fibre-channel port's cumulative CISCO-FC-FE-MIB fcIfErrorTable counters
+  // (business rule 159a): { linkFailures, syncLosses, sigLosses,
+  // invalidTxWords, invalidCrcs, linkResetIns, linkResetOuts }, each a number
+  // or null. NULL on every non-FC interface. Subtract consecutive samples for
+  // a rate, like inErrors; read by the fc*Rate automation metrics.
+  fcErrors       Json?
   // Cadence discriminator for selection-aware retention. "fast" = this row came
   // from the response-time re-walk of an operator-pinned interface
   // (monitoredInterfaces); "slow" = the full system-info scrape. NULL = legacy
@@ -1719,6 +1725,10 @@ model AssetInterface {
   // ipAddress stays IPv4. Business rule 126.
   ipv6Address String?
   macAddress  String?
+  // A fibre-channel port's own port WWN, lower-case colon hex — IF-MIB
+  // ifPhysAddress on an ifType fibreChannel interface, which is 8 bytes where
+  // a MAC is 6 (business rule 159a). NULL on every other interface.
+  wwn         String?
 
   // Cumulative counters as of the last full scrape. Current values only -- rate
   // math still comes from AssetInterfaceSample, which is why these are a snapshot
@@ -3421,6 +3431,10 @@ model AssetInterfaceSampleHourly {
   lastInErrors       BigInt?
   firstOutErrors     BigInt?
   lastOutErrors      BigInt?
+  // A fibre-channel port's fcErrors counters at the bucket's first and last
+  // sample (business rule 159a); the rate is (last - first) per counter.
+  firstFcErrors      Json?
+  lastFcErrors       Json?
   maxSpeedBps        BigInt?
   // last-seen descriptors (most-recent value within the bucket wins; these
   // are stable enough across one bucket that avg doesn't add value).
@@ -3471,6 +3485,10 @@ model AssetInterfaceSampleDaily {
   lastInErrors       BigInt?
   firstOutErrors     BigInt?
   lastOutErrors      BigInt?
+  // A fibre-channel port's fcErrors counters at the bucket's first and last
+  // sample (business rule 159a); the rate is (last - first) per counter.
+  firstFcErrors      Json?
+  lastFcErrors       Json?
   maxSpeedBps        BigInt?
   lastAdminStatus    String?
   lastOperStatus     String?

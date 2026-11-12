@@ -47,6 +47,7 @@ import { escapeHtml, formatLocalTime } from "../utils/notificationTemplate.js";
 import { factRow } from "../utils/alertEmailTemplate.js";
 import { fortiapInterfaceAliases } from "../utils/fortiapInterfaceAlias.js";
 import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../utils/cidr.js";
+import { isFcRateMetric } from "../utils/fibreChannel.js";
 
 /** The interface-facts tokens, resolved at delivery like `{chart.*}`. */
 const INTERFACE_TOKENS = ["interface.lldp", "interface.ip"] as const;
@@ -70,6 +71,11 @@ export const INTERFACE_DIMENSION_METRICS: ReadonlySet<string> = new Set([
   "ifOutBps",
   "ifInErrorRate",
   "ifOutErrorRate",
+  "fcCrcErrorRate",
+  "fcLinkFailureRate",
+  "fcSyncLossRate",
+  "fcSignalLossRate",
+  "fcInvalidTxWordRate",
 ]);
 
 export function isInterfaceDimensionMetric(metric: string | null | undefined): boolean {
@@ -352,15 +358,24 @@ export async function buildInterfaceLldpBlocks(
   // delivery drain into 48 round trips. The Interface IP row describes ONE
   // port — the alert's primary — so a grouped alert reads it once, not per member.
   const primary = dimension || ports[0]!;
-  const [byPort, ip] = await Promise.all([loadInterfacesLldp(assetId, ports), loadInterfaceIp(assetId, primary)]);
+  // A fibre-channel port has no LLDP: what is logged into it is its neighbour
+  // (rule 159a), read only for an FC counter alert.
+  const [byPort, ip, fcByPort] = await Promise.all([
+    loadInterfacesLldp(assetId, ports),
+    loadInterfaceIp(assetId, primary),
+    isFcRateMetric(metric) ? loadFcLoginsForPorts(assetId, ports) : Promise.resolve(new Map<string, AlertFcLogin[]>()),
+  ]);
   const ipHtml = renderInterfaceIp(ip, { html: true });
   const ipText = renderInterfaceIp(ip, { html: false });
-  const shown = ports.filter((p) => (byPort.get(p) ?? []).length > 0);
+  const shown = ports.filter((p) => (byPort.get(p) ?? []).length > 0 || (fcByPort.get(p) ?? []).length > 0);
   // No neighbours anywhere still keeps the IP row: the two blocks are independent.
   if (!shown.length) return { html: "", text: "", ipHtml, ipText };
 
   const render = (html: boolean) => {
-    const blocks = shown.map((p) => renderInterfaceLldp(p, byPort.get(p) ?? [], { html, timeZone }));
+    const blocks = shown.map((p) =>
+      renderInterfaceLldp(p, byPort.get(p) ?? [], { html, timeZone }) +
+      (html ? "" : (byPort.get(p) ?? []).length && (fcByPort.get(p) ?? []).length ? "\n" : "") +
+      renderInterfaceFcLogins(p, fcByPort.get(p) ?? [], { html, timeZone }));
     if (extraPorts <= 0) return blocks.join("");
     const more = `and ${extraPorts} more port${extraPorts === 1 ? "" : "s"} on this alert`;
     return blocks.join("") + (html
@@ -368,6 +383,100 @@ export async function buildInterfaceLldpBlocks(
       : `  ${more}\n`);
   };
   return { html: render(true), text: render(false), ipHtml, ipText };
+}
+
+/** One device logged into a fibre-channel switch port, as an alert names it. */
+export interface AlertFcLogin {
+  name: string;
+  matchedType: string | null;
+  matchMethod: string | null;
+  portWwn: string;
+  vsan: number;
+  hba: string | null;
+  lastSeen: Date;
+}
+
+/** The logins on several FC ports, one query, grouped by port (rule 159a). */
+async function loadFcLoginsForPorts(assetId: string, ifNames: string[]): Promise<Map<string, AlertFcLogin[]>> {
+  const out = new Map<string, AlertFcLogin[]>();
+  try {
+    const rows = await prisma.assetFcLogin.findMany({
+      where: { assetId, ifName: { in: ifNames } },
+      orderBy: [{ ifIndex: "asc" }, { vsan: "asc" }, { portWwn: "asc" }],
+      select: {
+        ifName: true, vsan: true, portWwn: true, hostName: true, hbaModel: true, matchMethod: true, lastSeen: true,
+        matchedAsset: { select: { hostname: true, assetType: true, status: true } },
+      },
+    });
+    for (const r of rows) {
+      if (!r.ifName) continue;
+      const live = r.matchedAsset && r.matchedAsset.status !== "decommissioned" ? r.matchedAsset : null;
+      const list = out.get(r.ifName) ?? [];
+      list.push({
+        name: live?.hostname || r.hostName || r.portWwn,
+        matchedType: live?.assetType ?? null,
+        matchMethod: live ? r.matchMethod : null,
+        portWwn: r.portWwn,
+        vsan: r.vsan,
+        hba: r.hbaModel,
+        lastSeen: r.lastSeen,
+      });
+      out.set(r.ifName, list);
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, assetId }, "alert FC login lookup failed — sending without it");
+  }
+  return out;
+}
+
+/**
+ * What is logged into an FC port, as the email carries it — the LLDP block's
+ * shape and rules (complete `<tr>`, no colons in the text heading), headed
+ * "Logged in to fc1/5".
+ */
+export function renderInterfaceFcLogins(
+  ifName: string,
+  logins: AlertFcLogin[],
+  opts: { html: boolean; timeZone?: string | null },
+): string {
+  if (logins.length === 0) return "";
+  const shown = logins.slice(0, MAX_NEIGHBORS);
+  const extra = logins.length - shown.length;
+  const title = `Logged in to ${ifName}`;
+  const facts = (l: AlertFcLogin): Array<[string, string]> => {
+    const f: Array<[string, string]> = [["Device", l.matchedType ? `${l.name} (${l.matchedType})` : l.name]];
+    f.push(["Port WWN", l.portWwn]);
+    f.push(["VSAN", String(l.vsan)]);
+    if (l.hba) f.push(["HBA", l.hba]);
+    if (l.matchMethod) f.push(["Matched by", l.matchMethod === "wwn" ? "the WWN the host reports" : "the host name the HBA registered"]);
+    f.push(["Last seen", formatLocalTime(l.lastSeen, opts.timeZone ?? null)]);
+    return f;
+  };
+  if (!opts.html) {
+    const lines: string[] = [title];
+    shown.forEach((l, i) => {
+      if (i > 0) lines.push("");
+      for (const [label, value] of facts(l)) lines.push(`  ${label.padEnd(16)}${value}`);
+    });
+    if (extra > 0) lines.push(`  and ${extra} more on this port`);
+    return lines.join("\n");
+  }
+  const blocks = shown.map((l, i) => {
+    const rows = facts(l).map(([label, value]) => factRow(escapeHtml(label), escapeHtml(value))).join("\n");
+    const sep = i > 0
+      ? '<tr><td colspan="2" style="border-top:1px solid #e5e7eb;height:1px;line-height:1px;font-size:0;padding-top:8px">&nbsp;</td></tr>'
+      : "";
+    return sep + rows;
+  }).join("\n");
+  return [
+    '<tr><td style="padding:14px 22px 0">',
+    `<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;font-weight:700;margin-bottom:2px">${escapeHtml(title)}</div>`,
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:13px;color:#374151;border-collapse:collapse">',
+    blocks,
+    "</table>",
+    extra > 0 ? `<div style="font-size:12px;color:#6b7280;margin-top:6px">and ${extra} more on this port</div>` : "",
+    "</td></tr>",
+  ].filter((s) => s.length > 0).join("\n");
 }
 
 /** How many ports one email explains before it stops being an email. The

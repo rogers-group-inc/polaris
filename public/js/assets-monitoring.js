@@ -145,7 +145,9 @@ function _streamTransportLabel(asset, resolvedPolling) {
 // authenticate.
 function _streamCredential(asset, stream, resolvedPolling, effectiveResolved) {
   if (!asset || resolvedPolling === "icmp" || resolvedPolling === "disabled") return null;
-  var prefix = _streamFieldPrefix(stream);
+  // Storage has no credential of its own: the server resolves it from the
+  // Interfaces stream's (CLASS_STREAM_FIELD_MAP.storage in monitorSettings.ts).
+  var prefix = stream === "storage" ? "interfaces" : _streamFieldPrefix(stream);
   var perStream = asset[prefix + "Credential"];
   if (perStream && perStream.name) return perStream;
   if (asset.monitorCredential && asset.monitorCredential.name) return asset.monitorCredential;
@@ -177,9 +179,13 @@ function _streamIntervalAssetField(stream) {
   // shows the telemetry interval as the true poll rate. (If an independent
   // hardware-sensor cadence ever lands, switch this to temperatureIntervalSec.)
   if (stream === "telemetry" || stream === "temperature") return "cpuMemoryIntervalSec";
-  // "systemInfo" is the stale banner's name for the same pass interfaces and
-  // LLDP ride — it asks for the cadence by stream, not by section.
-  if (stream === "interfaces" || stream === "lldp" || stream === "systemInfo") return "systemInfoIntervalSec";
+  // "systemInfo" is the stale banner's name for the interfaces pass — it asks
+  // for the cadence by stream, not by section.
+  if (stream === "interfaces" || stream === "systemInfo") return "systemInfoIntervalSec";
+  // LLDP and Storage run on their own queues (polaris-monitor-lldp /
+  // polaris-monitor-storage) and cadences; they no longer ride system info.
+  if (stream === "lldp") return "lldpIntervalSec";
+  if (stream === "storage") return "storageIntervalSec";
   return null;
 }
 
@@ -191,7 +197,9 @@ function _streamIntervalEffectiveField(stream) {
   // Hardware sensors ride the telemetry cadence (see _streamIntervalAssetField).
   if (stream === "telemetry" || stream === "temperature") return "cpuMemoryIntervalSeconds";
   // "systemInfo" — see _streamIntervalAssetField.
-  if (stream === "interfaces" || stream === "lldp" || stream === "systemInfo") return "systemInfoIntervalSeconds";
+  if (stream === "interfaces" || stream === "systemInfo") return "systemInfoIntervalSeconds";
+  if (stream === "lldp") return "lldpIntervalSeconds";
+  if (stream === "storage") return "storageIntervalSeconds";
   return null;
 }
 

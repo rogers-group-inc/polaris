@@ -14,7 +14,7 @@ import { applyTransform } from "../../utils/symbolTransforms.js";
 import { makeOidMonotonicGuard } from "../../utils/oidCompare.js";
 import { SYS_OIDS, scalarInstanceOid, pickScalar } from "../../utils/snmpIdentity.js";
 import { parseVendorSysDescr, type SysDescrDetail } from "../../utils/snmpDescrIdentity.js";
-import { buildFcInventory, FC_ERROR_COLUMNS, FC_SYMBOLS, type FcErrorCounters, type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
+import { buildFcInventory, FC_ERROR_COLUMNS, FC_SYMBOLS, IFTYPE_FIBRE_CHANNEL, wwnFromBytes, type FcErrorCounters, type FcLoginRow, type FcPortRow } from "../../utils/fibreChannel.js";
 import { snmpSelfIdentity, hasSelfIdentity, type EntityIdentityRow, type SnmpSelfIdentity } from "../../utils/snmpEntityIdentity.js";
 import { logger } from "../../utils/logger.js";
 import type { ApRadioSample, ApVapSample } from "../../utils/fortiapMonitorRow.js";
@@ -876,6 +876,65 @@ async function collectFibreChannelSnmp(
 }
 
 /**
+ * An FC interface's own port WWN from IF-MIB (business rule 159a): an MDS
+ * reports it as the interface's ifPhysAddress, 8 bytes where a MAC is 6. Only
+ * for ifType fibreChannel(56), so an 8-byte address on anything else (an
+ * EUI-64 on a FireWire / IPoIB port) is never called a WWN.
+ */
+export function snmpWwnFromPhysAddress(ifTypeVb: unknown, physVb: unknown): string | null {
+  if (snmpVbToNumber(ifTypeVb) !== IFTYPE_FIBRE_CHANNEL || !Buffer.isBuffer(physVb)) return null;
+  return wwnFromBytes([...physVb]);
+}
+
+/** Copy each FC port's counters onto the interface row of the same name. */
+export function attachFcErrors(interfaces: InterfaceSample[], ports: readonly FcPortRow[]): void {
+  const byName = new Map<string, FcErrorCounters>();
+  for (const p of ports) if (p.ifName) byName.set(p.ifName, p.errorCounters);
+  if (byName.size === 0) return;
+  for (const iface of interfaces) {
+    const c = byName.get(iface.ifName);
+    if (c) iface.fcErrors = c;
+  }
+}
+
+/**
+ * The fast pinned pass's FC counters (business rule 159a): one GET of the
+ * fcIfErrorTable columns at each pinned FC port's ifIndex. Only ports whose
+ * ifType is fibreChannel are asked, so a device with no FC port — and an MDS's
+ * Ethernet mgmt port — costs nothing. Its own PDU, like duplex: an SNMPv1 agent
+ * answers a GET naming one missing instance with noSuchName for the whole PDU,
+ * which must cost the FC counters, never the IF-MIB ones already read.
+ * Empty when CISCO-FC-FE-MIB does not resolve at this scope.
+ */
+async function collectFcErrorsByIndex(
+  session: any,
+  fcIndexes: readonly string[],
+  scope: ResolveScope,
+): Promise<Map<string, FcErrorCounters>> {
+  const out = new Map<string, FcErrorCounters>();
+  if (fcIndexes.length === 0) return out;
+  await ensureRegistryLoaded();
+  const cols = FC_ERROR_COLUMNS
+    .map(([field, symbol]) => [field, resolveOidSync(symbol, scope)] as const)
+    .filter((c): c is readonly [keyof FcErrorCounters, string] => !!c[1]);
+  if (cols.length === 0) return out;
+  const oids = fcIndexes.flatMap((idx) => cols.map(([, o]) => `${o}.${idx}`));
+  const vbs = await snmpMultiGet(session, oids).catch(() => new Map<string, unknown>());
+  for (const idx of fcIndexes) {
+    const counters = {} as FcErrorCounters;
+    let any = false;
+    for (const [field] of FC_ERROR_COLUMNS) counters[field] = null;
+    for (const [field, o] of cols) {
+      const v = snmpVbToNumber(vbs.get(`${o}.${idx}`));
+      counters[field] = v;
+      if (v != null) any = true;
+    }
+    if (any) out.set(idx, counters);
+  }
+  return out;
+}
+
+/**
  * Full-replace an asset's hardware inventory. Same delete-replace shape as
  * persistLldpNeighbors / persistMclagPeers: current state, no history.
  *
@@ -1331,6 +1390,24 @@ async function walkInterfaceAddressesSnmp(session: any, host: string, probe: boo
   return addressesByIfIndexFromIpAddrTable(toNums(legacy));
 }
 
+/**
+ * The MIB scope a vendor object resolves at for this asset: its own
+ * manufacturer / model, then its governing profile's (business rule 131).
+ * The same scope the full system-info pass reads the FC tables at, so the fast
+ * pass cannot resolve them differently.
+ */
+export function snmpVendorScope(asset: {
+  manufacturer?: string | null; model?: string | null; os?: string | null; assetType?: string | null;
+}): ResolveScope {
+  const profile = pickDbProfile({
+    manufacturer: asset.manufacturer ?? null,
+    os:           asset.os ?? null,
+    model:        asset.model ?? null,
+    assetType:    asset.assetType ?? null,
+  });
+  return { manufacturer: asset.manufacturer, model: asset.model, profileManufacturer: profile?.profileManufacturer };
+}
+
 export async function collectSystemInfoSnmp(
   host: string,
   config: Record<string, unknown>,
@@ -1527,6 +1604,8 @@ export async function collectSystemInfoSnmp(
           // First reportable IPv4 and IPv6 on the ifIndex (business rule 126).
           ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
           macAddress:  snmpMacFromBuffer(mac.get(idx)),
+          // An FC port's ifPhysAddress is its 8-byte port WWN (rule 159a).
+          wwn:         snmpWwnFromPhysAddress(ifTypes.get(idx), mac.get(idx)),
           inOctets:    inHi != null  ? inHi  : snmpVbToNumber(in32.get(idx)),
           outOctets:   outHi != null ? outHi : snmpVbToNumber(out32.get(idx)),
           inErrors:    snmpVbToNumber(inErr.get(idx)),
@@ -1562,6 +1641,9 @@ export async function collectSystemInfoSnmp(
       // Fibre-channel ports and logins (business rule 159). One GETNEXT for a
       // device that is not an FC switch; port names from the IF-MIB walk above.
       fibreChannel = await collectFibreChannelSnmp(session, poeIfNames, vendorScope).catch(() => undefined);
+      // Each port's counters ride its interface row too (rule 159a): that is
+      // what a pinned port's sample carries, and what the interface table shows.
+      if (fibreChannel) attachFcErrors(interfaces, fibreChannel.ports);
 
       // IP neighbour cache — firewall-class only, mirroring where the MAC
       // table is gated. A switch's neighbour table holds its own management
@@ -1761,6 +1843,8 @@ export async function collectFastFilteredSnmp(
     wantedIfaces:   string[];
     wantedStorage:  string[];
     timeoutMs?:     number;
+    /** The asset's MIB scope, for a pinned FC port's fcIfErrorTable counters (rule 159a). Omitted = none read. */
+    fcScope?:       ResolveScope;
   },
 ): Promise<SystemInfoSample> {
   const wantedIfaceSet  = new Set(opts.wantedIfaces);
@@ -1890,6 +1974,15 @@ export async function collectFastFilteredSnmp(
           .catch(() => new Map<string, unknown>())
       : new Map<string, unknown>();
 
+    // Pinned FC ports' error counters (rule 159a) — the samples an FC
+    // error-rate automation reads.
+    const fcIndexes = opts.fcScope
+      ? [...ifIndexByName.values()].filter((idx) => snmpVbToNumber(vbByOid.get(`${OID.ifType}.${idx}`)) === IFTYPE_FIBRE_CHANNEL)
+      : [];
+    const fcByIdx = opts.fcScope && fcIndexes.length > 0
+      ? await collectFcErrorsByIndex(session, fcIndexes, opts.fcScope)
+      : new Map<string, FcErrorCounters>();
+
     const interfaces: InterfaceSample[] = [];
     for (const [pinnedName, idx] of ifIndexByName.entries()) {
       const name = snmpVbToString(vbByOid.get(`${OID.ifName}.${idx}`)) || pinnedName;
@@ -1911,6 +2004,8 @@ export async function collectFastFilteredSnmp(
         duplex:      operStatus === "up" ? dot3DuplexLabel(snmpVbToNumber(duplexByIdx.get(`${OID.dot3StatsDuplexStatus}.${idx}`))) : null,
         ...pickInterfaceAddresses(addrsByIfIndex.get(idx) ?? []),
         macAddress:  snmpMacFromBuffer(vbByOid.get(`${OID.ifPhysAddress}.${idx}`)),
+        wwn:         snmpWwnFromPhysAddress(vbByOid.get(`${OID.ifType}.${idx}`), vbByOid.get(`${OID.ifPhysAddress}.${idx}`)),
+        fcErrors:    fcByIdx.get(idx) ?? null,
         inOctets:    inHi != null  ? inHi  : snmpVbToNumber(vbByOid.get(`${OID.ifInOctets}.${idx}`)),
         outOctets:   outHi != null ? outHi : snmpVbToNumber(vbByOid.get(`${OID.ifOutOctets}.${idx}`)),
         inErrors:    snmpVbToNumber(vbByOid.get(`${OID.ifInErrors}.${idx}`)),

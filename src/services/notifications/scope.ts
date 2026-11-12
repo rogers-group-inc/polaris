@@ -14,6 +14,7 @@ import { type Trigger, type RuleScope, scopeCidrOf, evaluateScopeCondition } fro
 import { resolveDependencyBlame } from "../dependencyTreeService.js";
 import { decorateRelationLeafHits } from "../scopeRelationIndex.js";
 import { ipInCidr } from "../../utils/cidr.js";
+import { isFcRateMetric } from "../../utils/fibreChannel.js";
 import { type ScopeAssetRow, collectLeafRefs } from "./ruleModel.js";
 import { _blameCache } from "./assetDetail.js";
 
@@ -553,6 +554,7 @@ export function pinTestForTrigger(trigger: Trigger): ((asset: ScopeAssetRow, dim
   if (poeFaultCoversUnpinned(trigger)) return null;
   if (trigger.type === "asset_metric") {
     if (trigger.metric === "ifInBps" || trigger.metric === "ifOutBps" || trigger.metric === "ifInErrorRate" || trigger.metric === "ifOutErrorRate") return interfaceIsPinned;
+    if (isFcRateMetric(trigger.metric)) return interfaceIsPinned;
     if (trigger.metric === "ipsecThroughputBps") return tunnelIsPinned;
     if (trigger.metric === "storageUsedBytes" || trigger.metric === "storageUsedPct" || trigger.metric === "storageDaysUntilFull") return storageIsPinned;
   } else if (trigger.type === "asset_state") {

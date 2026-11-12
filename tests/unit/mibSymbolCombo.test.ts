@@ -83,6 +83,23 @@ describe("renderSymbolPicker", () => {
     expect(input.value).toBe("upsPhaseInputTable");
     expect(input.getAttribute("title")).toBe("Not a scalar in this MIB");
   });
+
+  it("accepts one row of a column in this MIB (symbol.2), from either side, unflagged", () => {
+    // A widget reads phase 2 of a PDU as rPDU2PhaseStatusPower.2 (2026-11-11).
+    for (const sym of ["upsAdvBatteryCapacity.2", "upsPhaseInputTable.1.3"]) {
+      const input = mount(sb.renderSymbolPicker(sym, "mib-ups", "mfg-widget-symbol", "scalar"));
+      expect(input.getAttribute("title"), sym).toBeNull();
+      expect(sb._symComboAccepts(input, sym), sym).toBe(true);
+    }
+  });
+
+  it("still flags a row of a column the MIB does not have, or a non-numeric tail", () => {
+    for (const sym of ["noSuchColumn.2", "upsAdvBatteryCapacity.x"]) {
+      const input = mount(sb.renderSymbolPicker(sym, "mib-ups", "mfg-widget-symbol", "scalar"));
+      expect(input.getAttribute("title"), sym).toBe("Not a scalar in this MIB");
+      expect(sb._symComboAccepts(input, "otherRow.2"), sym).toBe(false);
+    }
+  });
 });
 
 describe("filtering", () => {

@@ -66,6 +66,7 @@ AssetInterfaceSample            -- PINNED-ONLY per-interface time-series (2026-0
   outOctets     BigInt?
   inErrors      BigInt?         -- Cumulative IF-MIB ifInErrors / FortiOS errors_in
   outErrors     BigInt?         -- Cumulative IF-MIB ifOutErrors / FortiOS errors_out
+  fcErrors      Json?           -- A fibre-channel port's cumulative CISCO-FC-FE-MIB fcIfErrorTable counters { linkFailures, syncLosses, sigLosses, invalidTxWords, invalidCrcs, linkResetIns, linkResetOuts } (business rule 159a) — omitted on every non-FC port; read by the five FC rate metrics; rolled up as firstFcErrors / lastFcErrors (JSON) on both tiers
   ifType        String?         -- "physical" | "aggregate" | "vlan" | "loopback" | "tunnel". FortiOS REST via `type` field; SNMP via ifType OID (1.3.6.1.2.1.2.2.1.3).
   ifParent      String?         -- Aggregate name for member ports; parent interface name for VLAN sub-interfaces. Back-filled from the FortiOS REST aggregate `member` array + VLAN `interface` field, AND — for managed FortiSwitches scraped via SNMP — from the parent FortiGate's switch-controller CMDB by `overlayFortiswitchTrunkMembers`: operator LACP `members` plus FortiLink auto-ISL trunks (each physical port's `isl-local-trunk-name`, since the ISL trunk itself carries no members). A single-member parent lets the topology renderer's `preferPhysical` swap the opaque trunk label for the real physical port.
   vlanId        Int?            -- 802.1Q VLAN ID for vlan-type interfaces. FortiOS REST only (from `vlanid` field).
