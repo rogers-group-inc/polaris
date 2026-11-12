@@ -32,7 +32,7 @@ function fnSrc(name: string): string {
 }
 
 const FN_NAMES = [
-  "_streamSwitchedOff", "_showSystemSection", "_renderLldpNeighborsCard",
+  "_streamSwitchedOff", "_showSystemSection", "_renderLldpNeighborsCard", "_applyCpuMemoryVisibility",
   "_streamIntervalAssetField", "_streamIntervalEffectiveField", "_streamCredential", "_streamFieldPrefix",
 ];
 const SRC = FN_NAMES.map(fnSrc).join("\n") + "\n" + FN_NAMES.map((n) => `globalThis.${n} = ${n};`).join("\n");
@@ -121,5 +121,36 @@ describe("Storage and LLDP chips read their own stream", () => {
 
   it("names no credential for a switched-off stream", () => {
     expect(g._streamCredential({ id: "P1", interfacesCredential: { name: "Datacenter Power" } }, "storage", "disabled", null)).toBeNull();
+  });
+});
+
+// A UPS polled for response time and sensors only (2026-11-12): CPU/Memory on
+// Inherit resolves to "not delivered", and the tab still drew an empty chart.
+describe("the CPU & Memory section", () => {
+  const render = () => {
+    document.body.innerHTML = '<div data-shot-section="cpuMemory" id="cpu"></div>';
+    return document.getElementById("cpu")!;
+  };
+
+  it("is hidden when the telemetry stream is switched off", () => {
+    withStreams({ telemetry: "disabled" });
+    const sec = render();
+    g._applyCpuMemoryVisibility({ id: "U1" });
+    expect(sec.style.display).toBe("none");
+  });
+
+  it("is hidden when no method resolves (Inherit, not delivered)", () => {
+    withStreams({ telemetry: null });
+    const sec = render();
+    g._applyCpuMemoryVisibility({ id: "U1" });
+    expect(sec.style.display).toBe("none");
+  });
+
+  it("comes back when the effective walk resolves a method", () => {
+    const sec = render();
+    sec.style.display = "none";
+    withStreams({ telemetry: "snmp" });
+    g._applyCpuMemoryVisibility({ id: "U1" });
+    expect(sec.style.display).toBe("");
   });
 });

@@ -180,6 +180,7 @@
     "fortigate-endpoint": "FortiGate / FortiManager (endpoint)",
     "snmp-sysdescr":      "Device self-report (SNMP sysDescr)",
     "snmp-identity":      "Device self-report (SNMP sysName + ENTITY-MIB)",
+    "snmp-profile":       "Device self-report (manufacturer profile over SNMP)",
     "fortinet-live":      "Device self-report (FortiOS firmware)",
     "vcenter-vm":         "VMware vCenter (VM)",
     "vcenter-host":       "VMware vCenter (ESXi host)",

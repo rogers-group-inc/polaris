@@ -175,7 +175,8 @@ function assetSystemViewHTML(a) {
       ], "assetSessions", "1h")
     : "";
   return (
-    '<div data-shot-section="cpuMemory" data-shot-label="CPU &amp; Memory" data-shot-chart="assetSystem">' +
+    '<div data-shot-section="cpuMemory" data-shot-label="CPU &amp; Memory" data-shot-chart="assetSystem"' +
+      (_streamSwitchedOff(a, "telemetry") ? ' style="display:none"' : '') + '>' +
     sectionHeader("CPU &amp; Memory", telemetryBadgeFull, rangeBtns) +
     '<div id="asset-system-custom-panel" style="display:none;align-items:center;gap:6px;margin:0.5rem 0;padding:0.5rem;background:var(--color-bg-primary);border:1px solid var(--color-border);border-radius:6px;font-size:0.85rem">' +
       '<label style="display:flex;align-items:center;gap:4px">From <input type="datetime-local" id="asset-system-from" class="form-input" style="padding:2px 6px"></label>' +
@@ -848,6 +849,18 @@ function _updateStaleBannersFromEffective(assetId, asset) {
   if (lldpEl && asset && asset.id === assetId && _assetSystemSiCache) {
     _renderLldpNeighborsCard(lldpEl, _assetSystemSiCache, asset);
   }
+  if (asset && asset.id === assetId) _applyCpuMemoryVisibility(asset);
+}
+
+// CPU & Memory hides while its stream (telemetry) resolves to disabled — "not
+// delivered" — exactly as Storage and LLDP do: a UPS or PDU polled only for
+// response time and sensors otherwise carries an empty chart (2026-11-12).
+// Unlike those two it hides whatever was collected before: the operator
+// switched the stream off, and an old line under a live-looking range picker
+// reads as current. Hidden, not removed, so this post-pass can bring it back.
+function _applyCpuMemoryVisibility(asset) {
+  var sec = document.querySelector('[data-shot-section="cpuMemory"]');
+  if (sec) sec.style.display = _streamSwitchedOff(asset, "telemetry") ? "none" : "";
 }
 
 // ─── Current-state tab strip: cadence · freshness · Refresh ────────────────

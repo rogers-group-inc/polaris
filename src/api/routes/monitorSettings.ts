@@ -35,6 +35,7 @@ import {
   listAssetOverrides,
 } from "../../services/monitorSettingsService.js";
 import { isKnownAssetType } from "../../utils/assetTypes.js";
+import { retiredStreamMibField } from "../../utils/retiredStreamMib.js";
 
 const router = Router();
 
@@ -121,13 +122,13 @@ const TierSettingsSchema = z.object({
   storagePolling:             PollingMethodEnum.nullable().optional(),
   processesPolling:           PollingMethodEnum.nullable().optional(),
   eventLogPolling:            PollingMethodEnum.nullable().optional(),
-  // Per-stream MIB IDs stored in the JSON blob ("std:<key>" | uploaded UUID | null)
-  responseTimeMibId:          z.string().nullable().optional(),
-  cpuMemoryMibId:             z.string().nullable().optional(),
-  temperatureMibId:           z.string().nullable().optional(),
-  interfacesMibId:            z.string().nullable().optional(),
-  lldpMibId:                  z.string().nullable().optional(),
-  processesMibId:             z.string().nullable().optional(),
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
+  responseTimeMibId:          retiredStreamMibField(),
+  cpuMemoryMibId:             retiredStreamMibField(),
+  temperatureMibId:           retiredStreamMibField(),
+  interfacesMibId:            retiredStreamMibField(),
+  lldpMibId:                  retiredStreamMibField(),
+  processesMibId:             retiredStreamMibField(),
 });
 
 // Integration-tier variant: systemInfoIntervalSeconds becomes nullable.
@@ -183,13 +184,13 @@ const OverrideSettingsSchema = z.object({
   lldpCredentialId:           z.string().uuid().nullable().optional(),
   processesCredentialId:      z.string().uuid().nullable().optional(),
   eventLogCredentialId:       z.string().uuid().nullable().optional(),
-  // Per-stream MIB IDs ("std:<key>" | uploaded UUID | null = inherit)
-  responseTimeMibId:          z.string().nullable().optional(),
-  cpuMemoryMibId:             z.string().nullable().optional(),
-  temperatureMibId:           z.string().nullable().optional(),
-  interfacesMibId:            z.string().nullable().optional(),
-  lldpMibId:                  z.string().nullable().optional(),
-  processesMibId:             z.string().nullable().optional(),
+  // Retired per-stream MIB pins (business rule 173): accepted, never stored.
+  responseTimeMibId:          retiredStreamMibField(),
+  cpuMemoryMibId:             retiredStreamMibField(),
+  temperatureMibId:           retiredStreamMibField(),
+  interfacesMibId:            retiredStreamMibField(),
+  lldpMibId:                  retiredStreamMibField(),
+  processesMibId:             retiredStreamMibField(),
 });
 
 // ─── Manual tier ────────────────────────────────────────────────────────────

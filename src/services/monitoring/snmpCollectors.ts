@@ -149,51 +149,28 @@ export async function snmpWalkRaw(
 // constant is no longer consulted on this path.
 
 /**
- * The identity `pickDbProfile` reads for one asset on one stream, with the
- * operator's per-stream MIB pin applied.
+ * The identity `pickDbProfile` reads for one asset: its own manufacturer, OS,
+ * model and type — nothing else (business rule 173).
  *
- * When a MIB is pinned on this asset's stream (Asset / class-override /
- * integration tier), its own manufacturer + model override the asset's, and
- * its MODULE NAME is carried alongside them. That is how an operator
- * redirects a misclassified asset — a FortiSwitch whose discovery sources
- * stamped `manufacturer=Fortinet` with no model hint — into the right profile
- * without renaming the asset. `"std:<key>"` ids are display hints only and
- * never bias selection.
- *
- * The module name used to be stuffed into the `os` slot, because the only
- * matcher was a single haystack and that was the one place it would be seen.
- * `ProfileSubject.mibModule` is its own field now, so the asset's real OS
- * survives the redirect and the module name reaches BOTH the profile match
- * and the model match — a pinned FORTINET-FORTISWITCH-MIB now selects the
- * FortiSwitch rows as well as the Fortinet profile.
+ * A per-stream MIB pin used to override the manufacturer and model here, so
+ * an uploaded MIB chosen on CPU/Memory or Hardware Sensors silently switched
+ * the asset into that MIB's manufacturer profile, while the same dropdown on
+ * every other stream did nothing at all. The asset's Manufacturer field (and
+ * a profile's "Also applies when", rule 131) is the one way to choose a
+ * profile now; the pins are retired.
  */
-export async function profileSubjectFor(args: {
+export function profileSubjectFor(args: {
   manufacturer?: string | null;
   model?:        string | null;
   os?:           string | null;
   assetType?:    string | null;
-  pinnedMibId?:  string | null;
-}): Promise<ProfileSubject> {
-  const subject: ProfileSubject = {
+}): ProfileSubject {
+  return {
     manufacturer: args.manufacturer ?? null,
     os:           args.os ?? null,
     model:        args.model ?? null,
     assetType:    args.assetType ?? null,
     mibModule:    null,
-  };
-  if (!args.pinnedMibId || args.pinnedMibId.startsWith("std:")) return subject;
-
-  const mib = await prisma.mibFile.findUnique({
-    where:  { id: args.pinnedMibId },
-    select: { moduleName: true, manufacturer: true, model: true },
-  }).catch(() => null);
-  if (!mib) return subject;
-
-  return {
-    ...subject,
-    manufacturer: mib.manufacturer ?? subject.manufacturer,
-    model:        mib.model        ?? subject.model,
-    mibModule:    mib.moduleName ?? null,
   };
 }
 
@@ -204,24 +181,18 @@ export async function collectTelemetrySnmp(
   model?: string | null,
   os?: string | null,
   timeoutMs?: number,
-  telemetryMibId?: string | null,
   assetType?: string | null,
 ): Promise<TelemetrySample> {
   // Make sure the symbol table is populated before we try to resolve any
   // vendor symbols. ensureRegistryLoaded short-circuits after the first call.
   await ensureRegistryLoaded();
 
-  // The operator's per-stream MIB pin can redirect this asset into a
-  // different profile; see profileSubjectFor.
-  const profile = pickDbProfile(
-    await profileSubjectFor({ manufacturer, model, os, assetType, pinnedMibId: telemetryMibId }),
-  );
-  // Scope still uses the *asset's* manufacturer/model first so symbol
-  // resolution through oidRegistry continues to pick up device-specific MIB
-  // overrides for the actual asset, not the MIB pointed at by telemetryMibId.
-  // The governing profile's manufacturer is the second scope (business rule
-  // 131): a profile reached through `matchPattern` or a pin has its MIBs
-  // uploaded under its own name, not the asset's.
+  const profile = pickDbProfile(profileSubjectFor({ manufacturer, model, os, assetType }));
+  // Scope uses the asset's manufacturer/model first so symbol resolution
+  // through oidRegistry picks up device-specific MIB overrides. The governing
+  // profile's manufacturer is the second scope (business rule 131): a profile
+  // reached through `matchPattern` has its MIBs uploaded under its own name,
+  // not the asset's.
   const scope: ResolveScope = { manufacturer, model, profileManufacturer: profile?.profileManufacturer };
 
   return await withSnmpSession(host, config, async (session) => {
@@ -1408,6 +1379,53 @@ export function snmpVendorScope(asset: {
   return { manufacturer: asset.manufacturer, model: asset.model, profileManufacturer: profile?.profileManufacturer };
 }
 
+/**
+ * Read the covering manufacturer profile's identity rows — `model` and
+ * `serial` (business rule 171) — off a device, for the probe path: an SNMP
+ * asset whose only stream is Response Time (a UPS polled for power alone)
+ * never runs the system-info pass that reads them otherwise.
+ *
+ * Its own session, and ONE OID PER GET: on SNMPv1 a single missing varbind
+ * fails the whole PDU, and a profile row can name an object this model does
+ * not publish (an APC PDU asked for `upsAdvIdentSerialNumber`). Each scalar
+ * is asked for at its `.0` instance, then — only if that came back empty — at
+ * the bare definition oid (the `pickScalar` rule; a row-suffixed symbol is
+ * already an instance). Nothing to read → no session at all. Never throws.
+ */
+export async function readProfileIdentity(
+  host: string,
+  config: Record<string, unknown>,
+  subject: ProfileSubject,
+  timeoutMs?: number,
+): Promise<{ model: string | null; serial: string | null }> {
+  const none = { model: null, serial: null };
+  try {
+    await ensureRegistryLoaded();
+    const profile = pickDbProfile(subject);
+    if (!profile?.model && !profile?.serial) return none;
+    const scope: ResolveScope = { manufacturer: subject.manufacturer, model: subject.model, profileManufacturer: profile.profileManufacturer };
+    const modelOid  = profile.model  ? resolveOidSync(profile.model.symbol, scope)  : null;
+    const serialOid = profile.serial ? resolveOidSync(profile.serial.symbol, scope) : null;
+    if (!modelOid && !serialOid) return none;
+    return await withSnmpSession(host, config, async (session) => {
+      const getOne = async (oid: string): Promise<string> => {
+        const vbs = await snmpMultiGet(session, [oid]).catch(() => new Map<string, unknown>());
+        return snmpVbToString(vbs.get(oid)).trim();
+      };
+      const readScalar = async (oid: string | null): Promise<string> =>
+        !oid ? "" : (await getOne(scalarInstanceOid(oid))) || (await getOne(oid));
+      const rawModel  = await readScalar(modelOid);
+      const rawSerial = await readScalar(serialOid);
+      return {
+        model:  rawModel && profile.model ? profile.model.parse(rawModel) : null,
+        serial: rawSerial || null,
+      };
+    }, timeoutMs);
+  } catch {
+    return none;
+  }
+}
+
 export async function collectSystemInfoSnmp(
   host: string,
   config: Record<string, unknown>,
@@ -1494,6 +1512,8 @@ export async function collectSystemInfoSnmp(
     // second across the fleet, inside the session and the per-host gate this
     // pass already holds.
     let detectedModel: string | null = null;
+    // The profile's `serial` row (business rule 171), read on its own GET below.
+    let detectedSerial: string | null = null;
     let descrIdentity: SysDescrDetail | undefined;
     let sysDescrText: string | null = null;
     // sysName rides the same multi-GET (business rule 154): the device's own
@@ -1504,8 +1524,8 @@ export async function collectSystemInfoSnmp(
       // Registry load stays behind the model profile that needs it — sysDescr
       // is a fixed OID and every device without a profile is the common case.
       let modelOid: string | null = null;
+      if (vendorProfile?.model || vendorProfile?.serial) await ensureRegistryLoaded();
       if (vendorProfile?.model) {
-        await ensureRegistryLoaded();
         modelOid = resolveOidSync(vendorProfile.model.symbol, vendorScope);
       }
       // The registry holds the symbol's DEFINITION oid: its `.0` instance
@@ -1528,6 +1548,16 @@ export async function collectSystemInfoSnmp(
           snmpVbToString,
         );
         if (raw) detectedModel = vendorProfile.model.parse(raw);
+      }
+
+      // Not in the batch above: on SNMPv1 one missing varbind fails the whole
+      // PDU, and a profile's serial row can name an object this model lacks
+      // (an APC PDU asked for upsAdvIdentSerialNumber). Instance, then bare.
+      const serialOid = vendorProfile?.serial ? resolveOidSync(vendorProfile.serial.symbol, vendorScope) : null;
+      if (serialOid) {
+        const getText = async (oid: string): Promise<string> =>
+          snmpVbToString((await snmpMultiGet(session, [oid]).catch(() => new Map<string, unknown>())).get(oid)).trim();
+        detectedSerial = (await getText(scalarInstanceOid(serialOid))) || (await getText(serialOid)) || null;
       }
     } catch { /* best-effort — identity stays undetected */ }
 
@@ -1782,6 +1812,7 @@ export async function collectSystemInfoSnmp(
       wirelessStations,
       apRadios,
       detectedModel,
+      detectedSerial,
       descrIdentity,
       sysDescr: sysDescrText,
       sysObjectId: sysObjectIdText,

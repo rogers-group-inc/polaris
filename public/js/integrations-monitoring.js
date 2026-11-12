@@ -453,20 +453,11 @@ function _classStreamSubtabHTML(idPrefix, sourceKind, klass, stream, settings, c
     '</div>';
   }
 
-  // Optional per-stream MIB picker (only shown when SNMP is the chosen
-  // polling method). The select id matches what _polarisReadMibFourStream
-  // already reads (`f-mon-tier-<streamKey>Mib`).
+  // What the stream reads over SNMP — said, not chosen (business rule 173).
+  // A tier form covers many assets, so it cannot name one profile.
   var mibHtml = "";
   if (mibId && mibWrapId && showMib) {
-    var autoName = (_autoMibNamesForSource(sourceKind) || {})[pollStreamKeyForDefaults] || "";
-    var mibCurrent = settings[stream.mibStreamKey + "MibId"] || "";
-    mibHtml = '<div class="form-group" id="' + mibWrapId + '" style="display:none">' +
-        '<label>MIB</label>' +
-        '<select id="' + mibId + '" data-current-id="' + escapeHtml(mibCurrent) + '" data-auto-mib-name="' + escapeHtml(autoName) + '" data-mib-picker="1">' +
-          _mibOptionsHTML(mibCurrent, autoName) +
-        '</select>' +
-        "<p class=\"hint\">Defaults to Automatic — Polaris picks the right MIB from the asset's Manufacturer Profile (Server Settings → Credentials → Manufacturer Profiles). Pin a specific module here only when a particular device needs to override its profile.</p>" +
-      '</div>';
+    mibHtml = _streamMibUsesRowHTML(mibWrapId, mibId, pollStreamKeyForDefaults, undefined, false, false);
   }
 
   // FortiLink LLDP exclusion — an integration-level toggle surfaced directly
@@ -2760,7 +2751,6 @@ function _readIntegrationCadenceForm() {
     out.temperatureTimeoutMs = out.cpuMemoryTimeoutMs;
   }
   Object.assign(out, _polarisReadPollingFourStream("f-mon-tier-"));
-  Object.assign(out, _polarisReadMibFourStream("f-mon-tier-"));
   return out;
 }
 

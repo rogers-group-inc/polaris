@@ -176,8 +176,7 @@ building one, row by row, is [Manufacturer Profiles](Manufacturer-Profiles).
 **Also applies when** (on a profile's header) lets one profile cover devices
 that report a different manufacturer name: for example `aruba|procurve` on an
 HP profile, for switches that say "Aruba Networks". It is a pattern, matched
-without regard to case against the device's manufacturer, its OS, and the name
-of a MIB pinned on it. It is used only for a device that has no profile under
+without regard to case against the device's manufacturer and its OS. It is used only for a device that has no profile under
 its own manufacturer name, so it never takes a device from another profile. A
 device it covers gets everything the profile defines: its metric rows, its
 custom widgets, and its MIBs. Upload the profile's MIBs under the profile's
