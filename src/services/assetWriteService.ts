@@ -16,6 +16,7 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { chunkArray } from "../utils/chunk.js";
 import { AppError } from "../utils/errors.js";
+import { floorCodeProblem } from "../utils/locationCodes.js";
 import { recordCredentialUse, assetCredentialUses, type AssetCredentialSlots, type CredentialUseVia, type CredentialUseActor } from "./credentialUseAuditService.js";
 import { reconcileDuplicateIpForAddresses, type WriteTimeIpConflict } from "./duplicateIpConflictService.js";
 import { logEvent, buildChanges, buildFirmwareChangedEvent } from "./eventLogService.js";
@@ -270,6 +271,11 @@ export async function createAsset(
   credentialActor: CredentialUseActor,
 ): Promise<Record<string, unknown> & { ipConflict: WriteTimeIpConflict | null }> {
   if (input.tags) await assertAddedRegionTagsNameARegion([], input.tags);
+  // Rule 168: a floor in a description is a number.
+  if (typeof input.description === "string") {
+    const fp = floorCodeProblem(null, input.description);
+    if (fp) throw new AppError(400, fp);
+  }
   const data: Record<string, unknown> = { ...input };
   // `azure:` tags are the Arc sync's alone; an operator cannot mint one.
   if (input.tags) data.tags = withArcOwnedTags([], input.tags);
@@ -339,6 +345,11 @@ async function validateAssetUpdate(id: string, existing: ExistingAssetForUpdate,
   // whole array back — and hand-applying a live region's tag to a device its
   // polygon misses stays legal. Costs no query unless a region tag was added.
   if (input.tags) await assertAddedRegionTagsNameARegion(existing.tags ?? [], input.tags);
+  // Rule 168: a NEW floor in a description is a number; one kept as it was passes.
+  if (typeof input.description === "string") {
+    const fp = floorCodeProblem((existing as { description?: string | null }).description ?? null, input.description);
+    if (fp) throw new AppError(400, fp);
+  }
 
   // Per-asset polling overrides must be valid for the asset's source kind.
   // Falling through silently at the resolver would leave the operator

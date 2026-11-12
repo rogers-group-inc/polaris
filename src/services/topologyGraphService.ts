@@ -29,7 +29,7 @@ import { pairCableMembers, type CableMember } from "../utils/cableMembers.js";
 import { controllerStampWhereOr, readFirewallDeviceName } from "../utils/fortinetParentKey.js";
 import { loadIconResolutionCache, resolveIconUrl } from "./deviceIconService.js";
 import { INTERFACE_LAST_KNOWN_MS, inferInterfaceTopology } from "./interfaceTopologyService.js";
-import { resolveEffectiveLocation, hasLocationCodes, type LocationCodes } from "../utils/locationCodes.js";
+import { resolveEffectiveLocation, hasLocationCodes, isFloorNumber, type LocationCodes } from "../utils/locationCodes.js";
 import { getLayoutsForSite } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type LocationStatus } from "./regionTreeService.js";
 import { splitOpticsSamples, type InterfaceOptics } from "../utils/sfpOptics.js";
@@ -479,13 +479,18 @@ export async function fetchRecentSampleStats(
 export async function buildSiteTopology(siteId: string) {
   const payload = await buildSiteTopologyAsWritten(siteId);
   const index = await loadRegionIndex(siteId);
-  const conflicts: Array<{ id: string; hostname: string | null; status: LocationStatus; written: LocationCodes | null }> = [];
+  const conflicts: Array<{ id: string; hostname: string | null; status: LocationStatus | "textFloor"; written: LocationCodes | null; floorNumber?: string | null }> = [];
   const resolve = (n: { id?: string; hostname?: string | null; location?: LocationCodes | null } | null | undefined): void => {
     if (!n) return;
     const written = n.location ?? null;
     const r = resolveLocation(index, written);
     Object.assign(n, { location: r.location, locationWritten: written, locationStatus: r.status });
     if ((r.status === "conflict" || r.status === "ambiguous" || r.status === "unknown") && n.id) conflicts.push({ id: n.id, hostname: n.hostname ?? null, status: r.status, written });
+    // Rule 168: an old text floor still resolves, but is listed with the number to use.
+    else if (n.id && written?.floor && !isFloorNumber(written.floor)) {
+      const num = r.location?.floor && isFloorNumber(r.location.floor) ? r.location.floor : null;
+      conflicts.push({ id: n.id, hostname: n.hostname ?? null, status: "textFloor", written, floorNumber: num });
+    }
   };
   resolve(payload.fortigate);
   (payload.switches as Array<{ id: string; hostname: string | null; location: LocationCodes | null }>).forEach(resolve);

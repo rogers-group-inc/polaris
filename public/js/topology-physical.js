@@ -67,6 +67,44 @@
     return out;
   }
   function polyHasCodes(c) { var n = polyCodes(c); return POLY_FIELDS.some(function (f) { return n[f.field] !== null; }); }
+  // ── Stacked floors (rules 152, 168) ─────────────────────────────────
+  // A floor's plan image sits on the ground (floor 0's background) by
+  // {cx, cy, sx, sy, rot}: its centre in GROUND units, ground units per plan
+  // unit on each axis, and a rotation in degrees. Ground units are map units
+  // on an image ground and EPSG:3857 metres on OpenStreetMap — both planar,
+  // y up. A floor's devices and polygons are stored in its PLAN's units, so
+  // moving, stretching or rotating the plan carries them with it.
+  function planExtent(bg) {
+    var m = Math.max(bg.width || 1, bg.height || 1);
+    return { w: IMAGE_EXTENT * (bg.width || 1) / m, h: IMAGE_EXTENT * (bg.height || 1) / m };
+  }
+  function planToGround(plan, ext, x, y) {
+    var dx = (x - ext.w / 2) * plan.sx, dy = (y - ext.h / 2) * plan.sy;
+    var a = plan.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    return [plan.cx + dx * c - dy * sn, plan.cy + dx * sn + dy * c];
+  }
+  function groundToPlan(plan, ext, gx, gy) {
+    var a = -plan.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    var dx = gx - plan.cx, dy = gy - plan.cy;
+    return [(dx * c - dy * sn) / plan.sx + ext.w / 2, (dx * sn + dy * c) / plan.sy + ext.h / 2];
+  }
+  // How a floor looks from the floor being viewed (d = its level − the
+  // viewed one): itself at 100 %, one up 10 %, two up 2 %, anything higher or
+  // lower hidden; floors above drawn 25 % bigger per floor, below 25 % smaller.
+  var FLOOR_OPACITY = { 0: 1, 1: 0.10, 2: 0.02 };
+  function floorLook(d) {
+    return {
+      opacity: d >= 0 && FLOOR_OPACITY[d] !== undefined ? FLOOR_OPACITY[d] : 0,
+      scale: d > 0 ? Math.pow(1.25, d) : d < 0 ? Math.pow(0.75, -d) : 1,
+    };
+  }
+  // A link between floors fades from one end's opacity to the other's.
+  function fadeSteps(a, b, n) {
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(a + (b - a) * (i + 0.5) / n);
+    return out;
+  }
+  var FADE_MS = 300;
   var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
 
   function esc(s) {
@@ -191,21 +229,14 @@
       layer: 0,
       history: { entries: [], index: -1 },
     };
-    // Layer 0's background is the view's; a floor layer's is its own, and a
-    // layer without one shows layer 0's until it gets one.
+    // Floor 0's background is the GROUND (map, satellite or a site plan),
+    // always drawn at 100 % under every floor; a floor's own background is a
+    // plan image placed on it (layer.background + layer.plan).
     var background0 = staged.background !== undefined ? staged.background : (view.background || null);
     function layerObj(level) { return state.layers.filter(function (l) { return l.level === level; })[0] || null; }
     Object.defineProperty(state, "background", {
-      get: function () {
-        if (state.layer === 0) return background0;
-        var l = layerObj(state.layer);
-        return (l && l.background) || background0;
-      },
-      set: function (v) {
-        if (state.layer === 0) { background0 = v; return; }
-        var l = layerObj(state.layer);
-        if (l) l.background = v;
-      },
+      get: function () { return background0; },
+      set: function (v) { background0 = v; },
     });
     // Placements per layer, loaded the first time a layer is shown.
     var byLayer = {};
@@ -254,7 +285,6 @@
     host.innerHTML = '<div class="topo-phys-map"></div>';
     var mapEl = host.firstChild;
     var map = null;
-    var polygonLayer = null, linkLayer = null, markerLayer = null;
     var markers = {};       // nodeId → L.marker
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
@@ -323,7 +353,7 @@
           L.DomEvent.disableScrollPropagation(el);
           el.addEventListener("click", function (e) {
             var b = e.target.closest("[data-layer]");
-            if (b) setLayer(b.getAttribute("data-layer"));
+            if (b) setBaseMap(b.getAttribute("data-layer"));
           });
           return el;
         },
@@ -342,7 +372,9 @@
         b.setAttribute("aria-pressed", is ? "true" : "false");
       });
     }
-    function setLayer(layer) {
+    // Map | Satellite. Named apart from the floor switcher: when both were
+    // `setLayer`, the floor one replaced this and the switch did nothing.
+    function setBaseMap(layer) {
       if (layer !== "map" && layer !== "satellite") return;
       if (state.editing) {
         // Staged with the framing the operator sees, like Done editing does.
@@ -356,20 +388,116 @@
       applyBaseLayer();
     }
 
+    function imageGround() { return !!(background0 && background0.kind === "image"); }
+    function toGround(ll) {
+      if (imageGround()) return [ll.lng, ll.lat];
+      var p = L.CRS.EPSG3857.project(ll);
+      return [p.x, p.y];
+    }
+    function fromGround(g) {
+      if (imageGround()) return L.latLng(g[1], g[0]);
+      return L.CRS.EPSG3857.unproject(L.point(g[0], g[1]));
+    }
+    // A plan with no saved placement: on an image ground it lands where the
+    // old per-floor image drew (same units); on the map, centred on the site.
+    function defaultPlan(ext) {
+      if (imageGround()) return { cx: ext.w / 2, cy: ext.h / 2, sx: 1, sy: 1, rot: 0 };
+      var fg = data.fortigate || {};
+      var b = background0 && background0.kind === "osm" && Array.isArray(background0.center) ? background0.center : null;
+      var c = fg.latitude != null && fg.longitude != null ? [fg.latitude, fg.longitude] : b || (map ? [map.getCenter().lat, map.getCenter().lng] : [0, 0]);
+      var g = toGround(L.latLng(c[0], c[1]));
+      return { cx: g[0], cy: g[1], sx: 0.1, sy: 0.1, rot: 0 };
+    }
+    // A plan sized to most of what is on screen, centred there (a new upload).
+    function framedPlan(ext) {
+      if (!map) return defaultPlan(ext);
+      var b = map.getBounds();
+      var w = Math.abs(toGround(b.getNorthEast())[0] - toGround(b.getSouthWest())[0]) * 0.6;
+      var c = toGround(map.getCenter());
+      var k = w / ext.w;
+      return { cx: c[0], cy: c[1], sx: k, sy: k, rot: 0 };
+    }
+    function floorPlan(level) {
+      if (level === 0) return null;
+      var l = layerObj(level);
+      var bg = l && l.background;
+      if (!bg || bg.kind !== "image") return null;
+      var ext = planExtent(bg);
+      return { layer: l, bg: bg, ext: ext, plan: l.plan || defaultPlan(ext) };
+    }
+    function localToLatLng(level, x, y) {
+      var fp = floorPlan(level);
+      if (!fp) return L.latLng(y, x);
+      return fromGround(planToGround(fp.plan, fp.ext, x, y));
+    }
+    function latLngToLocal(level, ll) {
+      var fp = floorPlan(level);
+      if (!fp) return { x: ll.lng, y: ll.lat };
+      var g = toGround(ll);
+      var q = groundToPlan(fp.plan, fp.ext, g[0], g[1]);
+      return { x: q[0], y: q[1] };
+    }
+
+    // One Leaflet pane per floor: its plan, polygons, devices and links, so
+    // the floor fades and scales as one (applyFloorLook). Higher floors on top.
+    var floorPanes = {};
+    var crossGroup = null, crossRenderer = null;
+    var dropWired = false;
+    function paneName(level) { return "floor_" + (level < 0 ? "m" + (-level) : level); }
+    function floorPane(level) {
+      if (floorPanes[level]) return floorPanes[level];
+      var name = paneName(level);
+      var pane = map.getPane(name) || map.createPane(name);
+      pane.style.zIndex = String(410 + level + 20);
+      pane.classList.add("topo-floor-pane");
+      floorPanes[level] = { name: name, pane: pane, renderer: L.svg({ pane: name, padding: 1 }), group: L.layerGroup().addTo(map) };
+      return floorPanes[level];
+    }
+    function dropLayer(layer) {
+      if (!layer) return;
+      Object.keys(floorPanes).forEach(function (k) { if (floorPanes[k].group.hasLayer(layer)) floorPanes[k].group.removeLayer(layer); });
+    }
+    // A floor's plan image, drawn with a CSS matrix from three of its corners
+    // so it can be moved, stretched and rotated on the ground.
+    var PlanOverlay = L.Layer.extend({
+      initialize: function (url, fp, pane) { this._url = url; this._fp = fp; L.setOptions(this, { pane: pane }); },
+      onAdd: function (m) {
+        var img = this._img = L.DomUtil.create("img", "topo-floor-plan leaflet-zoom-hide");
+        img.alt = "";
+        img.draggable = false;
+        img.src = this._url;
+        this.getPane().appendChild(img);
+        m.on("zoomend viewreset", this._update, this);
+        this._update();
+      },
+      onRemove: function (m) { L.DomUtil.remove(this._img); m.off("zoomend viewreset", this._update, this); },
+      _update: function () {
+        var fp = this._fp, e = fp.ext;
+        var iw = fp.bg.width || 1, ih = fp.bg.height || 1;
+        var A = map.latLngToLayerPoint(fromGround(planToGround(fp.plan, e, 0, e.h)));
+        var B = map.latLngToLayerPoint(fromGround(planToGround(fp.plan, e, e.w, e.h)));
+        var C = map.latLngToLayerPoint(fromGround(planToGround(fp.plan, e, 0, 0)));
+        var st = this._img.style;
+        st.position = "absolute"; st.left = "0"; st.top = "0";
+        st.width = iw + "px"; st.height = ih + "px";
+        st.transformOrigin = "0 0";
+        st.transform = "matrix(" + [(B.x - A.x) / iw, (B.y - A.y) / iw, (C.x - A.x) / ih, (C.y - A.y) / ih, A.x, A.y].join(",") + ")";
+      },
+    });
+
     function buildMap() {
       if (map) { map.remove(); map = null; }
       baseLayer = null; layerSwitch = null;
+      floorPanes = {}; crossGroup = null;
       markers = {}; linkLines = {}; polygonShapes = {};
-      var bg = state.background;
+      var bg = background0;
       if (bg && bg.kind === "image") {
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
-        var m = Math.max(bg.width || 1, bg.height || 1);
-        var w = IMAGE_EXTENT * (bg.width || 1) / m;
-        var h = IMAGE_EXTENT * (bg.height || 1) / m;
-        var bounds = [[0, 0], [h, w]];
+        var ext = planExtent(bg);
+        var bounds = [[0, 0], [ext.h, ext.w]];
         L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds).addTo(map);
         map.fitBounds(bounds, { padding: [20, 20] });
-        map.setMaxBounds(L.latLngBounds([[-h, -w], [2 * h, 2 * w]]));
+        map.setMaxBounds(L.latLngBounds([[-ext.h, -ext.w], [2 * ext.h, 2 * ext.w]]));
       } else {
         map = L.map(mapEl, { maxZoom: OSM_MAX_ZOOM, zoomSnap: 0.5 });
         applyBaseLayer();
@@ -384,40 +512,144 @@
           ctx.toast("This site has no coordinates — pan and zoom to it, then Done editing to keep that view");
         }
       }
-      map.on("click", function () { if (!drawHandler && selectedId) select(null); });
-      polygonLayer = L.featureGroup().addTo(map);
-      linkLayer = L.layerGroup().addTo(map);
-      markerLayer = L.layerGroup().addTo(map);
-      drawPolygons();
-      drawMarkers();
-      drawLinks();
+      map.on("click", function () { if (!drawHandler && !adjust && selectedId) select(null); });
+      var cp = map.createPane("floor_links");
+      cp.style.zIndex = "650";
+      cp.style.pointerEvents = "none";
+      crossRenderer = L.svg({ pane: "floor_links", padding: 1 });
+      crossGroup = L.layerGroup().addTo(map);
+      // Parallax: the floors scale about the middle of the screen, so a pan
+      // moves the bigger floors above faster than the ground.
+      map.on("move zoomend", function () { applyOrigins(); drawCrossLinks(); });
+      drawAll();
       wireDrop();
     }
+
+    function allLevels() {
+      var seen = {};
+      levels().forEach(function (l) { seen[l] = true; });
+      Object.keys(byLayer).forEach(function (k) { seen[Number(k)] = true; });
+      return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+    }
+    function drawAll() {
+      if (!map) return;
+      Object.keys(floorPanes).forEach(function (k) { floorPanes[k].group.clearLayers(); });
+      markers = {}; linkLines = {}; polygonShapes = {};
+      allLevels().forEach(drawFloor);
+      applyFloorLook(false);
+      drawCrossLinks();
+      paintSelected();
+      paintCenter();
+    }
+    function drawFloor(level) {
+      var f = floorPane(level);
+      f.group.clearLayers();
+      var fp = floorPlan(level);
+      if (fp) f.group.addLayer(new PlanOverlay(ctx.backgroundUrl(fp.bg.imageId), fp, f.name));
+      state.polygons.filter(function (p) { return (p.layer || 0) === level; }).forEach(function (p) { drawPolygon(p, level, f); });
+      Object.keys(placementsOf(level)).forEach(function (id) { if (nodeById[id]) addMarker(id, level); });
+      edges.forEach(function (e) {
+        if (layerOfDevice(e.source) === level && layerOfDevice(e.target) === level) addLine(e, level);
+      });
+    }
+
+    // Each floor's opacity and scale (floorLook), eased when the floor
+    // changes; only the floor being viewed takes clicks.
+    var trans = null;
+    function easeInOut(k) { return k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; }
+    function lookNow(level) {
+      var to = floorLook(level - state.layer);
+      if (!trans) return to;
+      var k = easeInOut(Math.min(1, (performance.now() - trans.t0) / FADE_MS));
+      var fr = floorLook(level - trans.from);
+      return { opacity: fr.opacity + (to.opacity - fr.opacity) * k, scale: fr.scale + (to.scale - fr.scale) * k };
+    }
+    function screenOrigin() {
+      var size = map.getSize();
+      return map.containerPointToLayerPoint(L.point(size.x / 2, size.y / 2));
+    }
+    function applyOrigins() {
+      if (!map) return;
+      var o = screenOrigin();
+      Object.keys(floorPanes).forEach(function (k) { floorPanes[k].pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
+    }
+    function applyFloorLook(animate) {
+      if (!map) return;
+      var o = screenOrigin();
+      Object.keys(floorPanes).forEach(function (k) {
+        var level = Number(k), f = floorPanes[k], look = floorLook(level - state.layer), st = f.pane.style;
+        st.transition = animate ? "opacity " + FADE_MS + "ms ease-in-out, transform " + FADE_MS + "ms ease-in-out" : "none";
+        st.transformOrigin = o.x + "px " + o.y + "px";
+        st.transform = "scale(" + look.scale + ")";
+        st.opacity = String(look.opacity);
+        f.pane.classList.toggle("is-faint", level !== state.layer);
+      });
+    }
+    function visualLatLng(level, ll) {
+      var sc = lookNow(level).scale;
+      if (sc === 1) return ll;
+      var size = map.getSize(), c = L.point(size.x / 2, size.y / 2);
+      var cp = map.latLngToContainerPoint(ll);
+      return map.containerPointToLatLng(c.add(cp.subtract(c).multiplyBy(sc)));
+    }
+    // Links between floors: from each end's drawn position, fading from one
+    // end's opacity to the other's (operator request 2026-11-12).
+    function drawCrossLinks() {
+      if (!crossGroup || !map) return;
+      crossGroup.clearLayers();
+      edges.forEach(function (e) {
+        var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
+        if (la === null || lb === null || la === lb || !nodeById[e.source] || !nodeById[e.target]) return;
+        var oa = lookNow(la).opacity, ob = lookNow(lb).opacity;
+        if (oa < 0.005 && ob < 0.005) return;
+        var pa = placementsOf(la)[e.source], pb = placementsOf(lb)[e.target];
+        var A = map.latLngToContainerPoint(visualLatLng(la, localToLatLng(la, pa.x, pa.y)));
+        var B = map.latLngToContainerPoint(visualLatLng(lb, localToLatLng(lb, pb.x, pb.y)));
+        var st = R.edgeLineStyle(e, family());
+        var N = 12, ops = fadeSteps(oa, ob, N);
+        for (var i = 0; i < N; i++) {
+          var p0 = A.add(B.subtract(A).multiplyBy(i / N)), p1 = A.add(B.subtract(A).multiplyBy((i + 1) / N));
+          L.polyline([map.containerPointToLatLng(p0), map.containerPointToLatLng(p1)], {
+            color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: false,
+            pane: "floor_links", renderer: crossRenderer, lineCap: "butt",
+          }).addTo(crossGroup);
+        }
+      });
+    }
+    function tickCross() {
+      drawCrossLinks();
+      if (trans && performance.now() - trans.t0 < FADE_MS + 20) { requestAnimationFrame(tickCross); return; }
+      trans = null;
+      drawCrossLinks();
+    }
+    // The centre the floors scale about, marked while the view has floors.
+    var centerMark = document.createElement("div");
+    centerMark.className = "topo-floor-center";
+    centerMark.setAttribute("aria-hidden", "true");
+    function paintCenter() { centerMark.hidden = !state.layers.length; }
 
     // ── Polygons ────────────────────────────────────────────────────────
     function polygonColor(p) {
       var f = deepestField(p.codes);
       return R.locGroupColor(f ? f.kind : "building", family());
     }
-    function drawPolygons() {
-      polygonLayer.clearLayers();
-      polygonShapes = {};
-      layerPolys().forEach(function (p) {
-        var color = polygonColor(p);
-        var dashed = (deepestField(p.codes) || {}).kind === "floor" || (deepestField(p.codes) || {}).kind === "jb";
-        var shape = L.polygon(p.points.map(function (q) { return [q[1], q[0]]; }), {
-          color: color, weight: 2, fillColor: color, fillOpacity: 0.12, dashArray: dashed ? "6 4" : null,
-        });
-        shape.bindTooltip(esc(groupName(p.codes)) + ' <span class="topo-phys-codes">' + esc(codesLabel(p.codes)) + '</span>',
-          { permanent: true, direction: "center", className: "topo-phys-polygon-label" });
-        shape.on("click", function (e) {
-          if (!state.editing) return;
-          L.DomEvent.stopPropagation(e);
-          openPolygonMenu(p, e.originalEvent, shape.getElement());
-        });
-        shape.addTo(polygonLayer);
-        polygonShapes[p.id] = shape;
+    function drawPolygons() { drawAll(); }
+    function drawPolygon(p, level, f) {
+      var color = polygonColor(p);
+      var dashed = (deepestField(p.codes) || {}).kind === "floor" || (deepestField(p.codes) || {}).kind === "jb";
+      var shape = L.polygon(p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); }), {
+        color: color, weight: 2, fillColor: color, fillOpacity: 0.12, dashArray: dashed ? "6 4" : null,
+        pane: f.name, renderer: f.renderer,
       });
+      shape.bindTooltip(esc(groupName(p.codes)) + ' <span class="topo-phys-codes">' + esc(codesLabel(p.codes)) + '</span>',
+        { permanent: true, direction: "center", className: "topo-phys-polygon-label", pane: f.name });
+      shape.on("click", function (e) {
+        if (!state.editing || level !== state.layer || adjust) return;
+        L.DomEvent.stopPropagation(e);
+        openPolygonMenu(p, e.originalEvent, shape.getElement());
+      });
+      f.group.addLayer(shape);
+      polygonShapes[p.id] = shape;
     }
     // The menu is anchored to the shape / marker element, never to mapEl:
     // showRowMenu ignores a pointerdown INSIDE its anchor, so a mapEl anchor
@@ -443,7 +675,7 @@
         map.off("click", finish);
         shape.editing.disable();
         var ring = shape.getLatLngs()[0] || [];
-        p.points = ring.map(function (ll) { return [ll.lng, ll.lat]; });
+        p.points = ring.map(function (ll) { var q = latLngToLocal(state.layer, ll); return [q.x, q.y]; });
         changed("polygons");
         drawPolygons();
         restageAllCodes();
@@ -458,7 +690,7 @@
         var color = polygonColor({ codes: codes });
         drawHandler = new L.Draw.Polygon(map, { shapeOptions: { color: color, weight: 2, fillOpacity: 0.12 }, showArea: false, allowIntersection: false });
         map.once(L.Draw.Event.CREATED, function (e) {
-          var ring = (e.layer.getLatLngs()[0] || []).map(function (ll) { return [ll.lng, ll.lat]; });
+          var ring = (e.layer.getLatLngs()[0] || []).map(function (ll) { var q = latLngToLocal(state.layer, ll); return [q.x, q.y]; });
           drawHandler = null;
           if (ring.length < 3) return;
           state.polygons.push({ id: newId("poly"), codes: codes, points: ring, layer: state.layer });
@@ -526,6 +758,7 @@
           var name = dlg.overlay.querySelector("#topo-pg-name").value.trim().replace(/\s+/g, " ");
           var parentIdx = Number(dlg.overlay.querySelector("#topo-pg-parent").value);
           if (!name) { ctx.toast("Give the new group a name", "error"); return; }
+          if (field === "floor" && !/^-?\d{1,2}$/.test(name)) { ctx.toast("A floor is a number: 0 is the ground, -1 below it, 1 above", "error"); return; }
           if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
           var parent = parentIdx >= 0 ? normCodes(groups[parentIdx]) : emptyCodes();
           var fieldIdx = CODE_FIELDS.findIndex(function (f) { return f.field === field; });
@@ -552,28 +785,22 @@
       return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '">' + inner + '</div>' +
         '<div class="topo-phys-name">' + esc(d.label || d.id) + '</div>';
     }
-    function drawMarkers() {
-      markerLayer.clearLayers();
-      markers = {};
-      Object.keys(state.placements).forEach(function (id) {
-        if (!nodeById[id]) return;
-        addMarker(id);
-      });
-    }
-    function addMarker(id) {
+    function drawMarkers() { drawAll(); }
+    function addMarker(id, level) {
       var d = nodeById[id];
-      var p = state.placements[id];
+      var p = placementsOf(level)[id];
       if (!d || !p) return;
-      var m = L.marker([p.y, p.x], {
+      var f = floorPane(level);
+      var m = L.marker(localToLatLng(level, p.x, p.y), {
         icon: L.divIcon({ className: "topo-phys-marker", html: iconHtml(d), iconSize: [34, 34], iconAnchor: [17, 17] }),
-        draggable: state.editing,
+        draggable: state.editing && level === state.layer,
         keyboard: false,
         title: d.label || "",
+        pane: f.name,
       });
-      m.on("drag", function () { var ll = m.getLatLng(); state.placements[id] = { x: ll.lng, y: ll.lat }; drawLinksFor(id); });
+      m.on("drag", function () { placementsOf(level)[id] = latLngToLocal(level, m.getLatLng()); drawLinksFor(id); });
       m.on("dragend", function () {
-        var ll = m.getLatLng();
-        state.placements[id] = { x: ll.lng, y: ll.lat };
+        placementsOf(level)[id] = latLngToLocal(level, m.getLatLng());
         changed("placements");
         stageCodesFor(id);
         drawLinksFor(id);
@@ -581,14 +808,14 @@
       m.on("click", function () { select(id); });
       m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
       m.on("contextmenu", function (e) {
-        if (!state.editing || typeof showRowMenu !== "function") return;
+        if (!state.editing || level !== state.layer || typeof showRowMenu !== "function") return;
         showRowMenu(m.getElement() || e.originalEvent.target, [
           { heading: d.label || "Device" },
           { label: "Open", onSelect: function () { ctx.openAsset(d.assetId || id); } },
           { label: "Remove from map", danger: true, onSelect: function () { removePlacement(id); } },
         ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
       });
-      m.addTo(markerLayer);
+      f.group.addLayer(m);
       markers[id] = m;
       paintSelected();
     }
@@ -602,8 +829,9 @@
           ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k));
         }
       });
-      state.placements[id] = { x: latlng.lng, y: latlng.lat };
-      if (markers[id]) markers[id].setLatLng(latlng); else addMarker(id);
+      state.placements[id] = latLngToLocal(state.layer, latlng);
+      if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
+      addMarker(id, state.layer);
       changed("placements");
       stageCodesFor(id);
       drawLinksFor(id);
@@ -627,7 +855,7 @@
 
     function removePlacement(id) {
       delete state.placements[id];
-      if (markers[id]) { markerLayer.removeLayer(markers[id]); delete markers[id]; }
+      if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
       ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null);
       changed("placements");
       drawLinksFor(id);
@@ -643,14 +871,12 @@
       var assetId = d.assetId || id;
       var poly = innermostPolygon(layerPolys(), [p.x, p.y]);
       var want = poly ? polyCodes(poly.codes) : emptyCodes();
-      // Rule 152: a floor layer gives its floor, inside a polygon or not.
-      if (state.layer !== 0) {
-        var l = layerObj(state.layer);
-        want.floor = l ? l.name : String(state.layer);
-      }
-      var levels = POLY_FIELDS.map(function (f) { return f.field; }).filter(function (k) { return want[k] !== null; });
+      // Rule 152 / 168: a floor layer gives its floor NUMBER; floor 0 (the
+      // ground) gives none and clears an old one.
+      want.floor = state.layer !== 0 ? String(state.layer) : null;
+      var levels = POLY_FIELDS.map(function (f) { return f.field; }).filter(function (k) { return want[k] !== null || k === "floor"; });
       var cur = normCodes(currentCodes[id]);
-      var same = levels.every(function (k) { return String(want[k]).toLowerCase() === String(cur[k] || "").toLowerCase(); });
+      var same = levels.every(function (k) { return String(want[k] || "").toLowerCase() === String(cur[k] || "").toLowerCase(); });
       if (!levels.length || same) { ctx.stageLocationCode(assetId, null); return; }
       ctx.stageLocationCode(assetId, want, {
         name: d.label || assetId,
@@ -661,33 +887,33 @@
     function restageAllCodes() { Object.keys(state.placements).forEach(stageCodesFor); }
 
     // ── Links ───────────────────────────────────────────────────────────
-    function lineFor(e) {
-      var a = state.placements[e.source], b = state.placements[e.target];
-      if (!a || !b || !nodeById[e.source] || !nodeById[e.target]) return null;
+    function addLine(e, level) {
+      var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
+      if (!a || !b || !nodeById[e.source] || !nodeById[e.target]) return;
+      var f = floorPane(level);
       var st = R.edgeLineStyle(e, family());
-      var line = L.polyline([[a.y, a.x], [b.y, b.x]], { color: st.color, weight: st.width, dashArray: st.dash, interactive: true });
+      var line = L.polyline([localToLatLng(level, a.x, a.y), localToLatLng(level, b.x, b.y)], {
+        color: st.color, weight: st.width, dashArray: st.dash, interactive: true, pane: f.name, renderer: f.renderer,
+      });
       var tip = (e.label ? esc(e.label) : "") + (e.reason ? '<div class="topo-phys-tip">' + esc(e.reason) + '</div>' : "");
       if (tip) line.bindTooltip(tip, { sticky: true });
-      return line;
+      f.group.addLayer(line);
+      linkLines[e.id] = line;
     }
-    function drawLinks() {
-      linkLayer.clearLayers();
-      linkLines = {};
-      edges.forEach(function (e) {
-        var line = lineFor(e);
-        if (line) { line.addTo(linkLayer); linkLines[e.id] = line; }
-      });
-    }
+    function drawLinks() { drawAll(); }
     function drawLinksFor(id) {
       (edgesByNode[id] || []).forEach(function (e) {
-        if (linkLines[e.id]) { linkLayer.removeLayer(linkLines[e.id]); delete linkLines[e.id]; }
-        var line = lineFor(e);
-        if (line) { line.addTo(linkLayer); linkLines[e.id] = line; }
+        if (linkLines[e.id]) { dropLayer(linkLines[e.id]); delete linkLines[e.id]; }
+        var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
+        if (la !== null && la === lb) addLine(e, la);
       });
+      drawCrossLinks();
     }
 
     // ── Drag in from the details pane ───────────────────────────────────
     function wireDrop() {
+      if (dropWired) return;
+      dropWired = true;
       mapEl.addEventListener("dragover", function (e) {
         if (!state.editing) return;
         var types = e.dataTransfer && e.dataTransfer.types;
@@ -723,21 +949,191 @@
       // One corner popover at a time: the menu drawn over the open Mouse
       // controls panel read as two-tone glass.
       if (typeof ctx.closePopovers === "function") ctx.closePopovers();
+      if (state.layer !== 0) { openPlanMenu(anchor); return; }
       var bg = state.background;
       var isImage = bg && bg.kind === "image";
       showRowMenu(anchor, [
-        { heading: "Background" },
+        { heading: "Ground (floor 0)" },
         { label: (isImage ? "" : "✓ ") + "OpenStreetMap", onSelect: async function () {
           if (!isImage) return;
           if (!(await confirmClear("the map"))) return;
           clearDrawing();
           state.background = null;
-          changed("background", "polygons", "placements");
+          dropPlans();
+          changed("background", "polygons", "placements", "layers");
           buildMap();
           ctx.refreshSidebar();
         } },
-        { label: isImage ? "Replace image" : "Upload image", onSelect: function () { chooseImage(); } },
+        { label: isImage ? "Replace site plan" : "Upload site plan", onSelect: function () { chooseImage(); } },
       ], { label: "Background", align: "end", overMap: true });
+    }
+    // The floors' plans sit in ground units; a new ground starts them again
+    // at their default place (their devices follow, staying on their plans).
+    function dropPlans() { state.layers.forEach(function (l) { delete l.plan; }); }
+    // A floor's plan: upload / replace, adjust (move, stretch, rotate), remove.
+    function openPlanMenu(anchor) {
+      var level = state.layer;
+      var fp = floorPlan(level);
+      var items = [{ heading: layerName(level) + " plan" },
+        { label: fp ? "Replace floor plan" : "Upload floor plan", onSelect: function () { choosePlan(level); } }];
+      if (fp) {
+        items.push({ label: "Adjust floor plan", onSelect: startAdjust });
+        items.push({ label: "Remove floor plan", danger: true, onSelect: function () { setPlan(level, null, null); } });
+      }
+      showRowMenu(anchor, items, { label: "Floor plan", align: "end", overMap: true });
+    }
+    // Changing a floor's plan keeps every device and polygon on it where it
+    // is on the map: their plan coordinates are re-expressed in the new plan.
+    function setPlan(level, background, plan) {
+      var l = layerObj(level);
+      if (!l) return;
+      var pl = placementsOf(level);
+      var spots = {};
+      Object.keys(pl).forEach(function (id) { spots[id] = localToLatLng(level, pl[id].x, pl[id].y); });
+      var rings = {};
+      state.polygons.forEach(function (p) {
+        if ((p.layer || 0) === level) rings[p.id] = p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); });
+      });
+      l.background = background;
+      if (plan) l.plan = plan; else delete l.plan;
+      Object.keys(spots).forEach(function (id) { pl[id] = latLngToLocal(level, spots[id]); });
+      state.polygons.forEach(function (p) {
+        if (rings[p.id]) p.points = rings[p.id].map(function (ll) { var q = latLngToLocal(level, ll); return [q.x, q.y]; });
+      });
+      changed("layers", "polygons", "placements");
+      drawAll();
+    }
+    function choosePlan(level) {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/webp";
+      input.addEventListener("change", async function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        ctx.toast("Uploading the floor plan…");
+        try {
+          var img = await ctx.uploadBackground(file);
+          if (!img || !img.id) throw new Error("no image returned");
+          var bg = { kind: "image", imageId: img.id, width: img.width, height: img.height };
+          var old = floorPlan(level);
+          // A replacement keeps the old plan's place and size; a first plan
+          // is framed to the screen.
+          var plan = old ? Object.assign({}, old.plan) : framedPlan(planExtent(bg));
+          if (old) { var oe = old.ext, ne = planExtent(bg); plan.sx = plan.sx * oe.w / ne.w; plan.sy = plan.sy * oe.h / ne.h; }
+          setPlan(level, bg, plan);
+          ctx.toast("Floor plan uploaded — Adjust floor plan to line it up; it is saved with the view when you save");
+        } catch (err) {
+          ctx.toast("Floor plan not uploaded — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      });
+      input.click();
+    }
+
+    // ── Adjusting a floor's plan ────────────────────────────────────────
+    // Drag = move; drag a corner = stretch freely; Ctrl + corner = keep its
+    // shape; Alt + drag = rotate. Done or Esc finishes.
+    var adjust = null;
+    function planCorners(fp) {
+      return [[0, 0], [fp.ext.w, 0], [fp.ext.w, fp.ext.h], [0, fp.ext.h]].map(function (q) {
+        return fromGround(planToGround(fp.plan, fp.ext, q[0], q[1]));
+      });
+    }
+    function startAdjust() {
+      var fp = floorPlan(state.layer);
+      if (!fp || !state.editing || !map) return;
+      if (!fp.layer.plan) fp.layer.plan = Object.assign({}, fp.plan);
+      adjust = { level: state.layer, bar: document.createElement("div"), shapes: [] };
+      adjust.bar.className = "topo-plan-bar";
+      adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
+        '<span class="hint" style="margin:0">Drag to move · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates</span>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
+      host.appendChild(adjust.bar);
+      adjust.bar.addEventListener("click", function (e) {
+        if (e.target.closest('[data-plan="done"]')) endAdjust();
+        else if (e.target.closest('[data-plan="reset"]')) {
+          var l = layerObj(adjust.level);
+          if (!l) return;
+          l.plan = framedPlan(planExtent(l.background));
+          changed("layers");
+          drawFloor(adjust.level); drawCrossLinks(); drawAdjustShapes();
+        }
+      });
+      map.dragging.disable();
+      map.doubleClickZoom.disable();
+      mapEl.addEventListener("pointerdown", onAdjustDown, true);
+      host.classList.add("is-adjusting");
+      drawAdjustShapes();
+    }
+    function endAdjust() {
+      if (!adjust) return;
+      mapEl.removeEventListener("pointerdown", onAdjustDown, true);
+      adjust.shapes.forEach(function (x) { x.remove(); });
+      if (adjust.bar.parentNode) adjust.bar.parentNode.removeChild(adjust.bar);
+      host.classList.remove("is-adjusting");
+      adjust = null;
+      if (map) { map.dragging.enable(); map.doubleClickZoom.enable(); }
+    }
+    function drawAdjustShapes() {
+      if (!adjust) return;
+      adjust.shapes.forEach(function (x) { x.remove(); });
+      var fp = floorPlan(adjust.level);
+      if (!fp) { endAdjust(); return; }
+      var corners = planCorners(fp);
+      var accent = "#38bdf8";
+      adjust.shapes = [L.polygon(corners, { color: accent, weight: 2, dashArray: "6 4", fill: false, interactive: false, pane: "floor_links", renderer: crossRenderer }).addTo(map)]
+        .concat(corners.map(function (ll) {
+          return L.circleMarker(ll, { radius: 6, color: accent, weight: 2, fillColor: "#ffffff", fillOpacity: 1, interactive: false, pane: "floor_links", renderer: crossRenderer }).addTo(map);
+        }));
+    }
+    function onAdjustDown(e) {
+      if (!adjust || e.button !== 0 || e.target.closest(".topo-plan-bar, .leaflet-control")) return;
+      var fp = floorPlan(adjust.level);
+      if (!fp) return;
+      var l = fp.layer;
+      var cp = map.mouseEventToContainerPoint(e);
+      var corners = planCorners(fp).map(function (ll) { return map.latLngToContainerPoint(ll); });
+      var ci = -1;
+      corners.forEach(function (c, i) { if (ci < 0 && c.distanceTo(cp) < 12) ci = i; });
+      var ring = corners.map(function (c) { return [c.x, c.y]; });
+      var mode = e.altKey ? "rotate" : ci >= 0 ? "scale" : pointInRing([cp.x, cp.y], ring) ? "move" : null;
+      if (!mode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var g0 = toGround(map.containerPointToLatLng(cp));
+      var start = Object.assign({}, l.plan);
+      var pending = false;
+      function redraw() { pending = false; if (!adjust) return; drawFloor(adjust.level); drawCrossLinks(); drawAdjustShapes(); }
+      function onMove(ev) {
+        var g = toGround(map.containerPointToLatLng(map.mouseEventToContainerPoint(ev)));
+        var p = l.plan;
+        if (mode === "move") {
+          p.cx = start.cx + g[0] - g0[0];
+          p.cy = start.cy + g[1] - g0[1];
+        } else if (mode === "rotate") {
+          var a0 = Math.atan2(g0[1] - start.cy, g0[0] - start.cx), a1 = Math.atan2(g[1] - start.cy, g[0] - start.cx);
+          p.rot = start.rot + (a1 - a0) * 180 / Math.PI;
+        } else {
+          // Stretch about the centre, in the plan's own (rotated) axes.
+          var a = -start.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+          var dx = g[0] - start.cx, dy = g[1] - start.cy;
+          var nsx = Math.max(Math.abs(dx * c - dy * sn) / (fp.ext.w / 2), 1e-6);
+          var nsy = Math.max(Math.abs(dx * sn + dy * c) / (fp.ext.h / 2), 1e-6);
+          if (ev.ctrlKey || ev.metaKey) {
+            var r = (nsx / start.sx + nsy / start.sy) / 2;
+            nsx = start.sx * r; nsy = start.sy * r;
+          }
+          p.sx = nsx; p.sy = nsy;
+        }
+        if (!pending) { pending = true; requestAnimationFrame(redraw); }
+      }
+      function onUp() {
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+        changed("layers");
+      }
+      window.addEventListener("pointermove", onMove, true);
+      window.addEventListener("pointerup", onUp, true);
     }
     function chooseImage() {
       var input = document.createElement("input");
@@ -753,7 +1149,8 @@
           if (!img || !img.id) throw new Error("no image returned");
           clearDrawing();
           state.background = { kind: "image", imageId: img.id, width: img.width, height: img.height };
-          changed("background", "polygons", "placements");
+          dropPlans();
+          changed("background", "polygons", "placements", "layers");
           buildMap();
           ctx.refreshSidebar();
           ctx.toast("Background uploaded — it is saved with the view when you save");
@@ -784,10 +1181,7 @@
     function stageAll(fields) {
       fields.forEach(function (f) {
         if (f === "polygons") ctx.stageViewPatch({ polygons: state.polygons });
-        if (f === "background") {
-          if (state.layer === 0) ctx.stageViewPatch({ background: background0 });
-          else ctx.stageViewPatch({ layers: state.layers });
-        }
+        if (f === "background") ctx.stageViewPatch({ background: background0 });
         if (f === "layers") ctx.stageViewPatch({ layers: state.layers });
         if (f === "placements") ctx.stagePlacements(Object.assign({}, state.placements), state.layer);
         if (f === "allPlacements") Object.keys(byLayer).forEach(function (k) { ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k)); });
@@ -815,7 +1209,8 @@
       ctx.stageViewPatch({ background: background0, layers: state.layers, polygons: state.polygons });
       stageAll(["allPlacements"]);
       paintLayerCtl();
-      if (JSON.stringify(state.background) !== before) buildMap(); else { drawPolygons(); drawMarkers(); drawLinks(); }
+      if (adjust) endAdjust();
+      if (JSON.stringify(state.background) !== before) buildMap(); else drawAll();
       restageAllCodes();
       ctx.refreshSidebar();
       ctx.historyChanged();
@@ -825,14 +1220,19 @@
       ctx.historyChanged();
     }
 
+    function paintDragging() {
+      Object.keys(markers).forEach(function (id) {
+        var m = markers[id];
+        if (!m.dragging) return;
+        if (state.editing && layerOfDevice(id) === state.layer) m.dragging.enable(); else m.dragging.disable();
+      });
+    }
     function setEditing(on) {
       state.editing = !!on;
       if (viewLayer) { viewLayer = null; applyBaseLayer(); }
-      Object.keys(markers).forEach(function (id) {
-        var m = markers[id];
-        if (m.dragging) { if (on) m.dragging.enable(); else m.dragging.disable(); }
-      });
+      paintDragging();
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
+      if (!on) endAdjust();
       host.classList.toggle("is-editing", !!on);
       if (on) resetHistory();
       paintLayerCtl();
@@ -848,7 +1248,8 @@
     layerCtl.setAttribute("aria-label", "Floor layer");
     host.appendChild(layerCtl);
     function levels() { return [0].concat(state.layers.map(function (l) { return l.level; })).sort(function (a, b) { return a - b; }); }
-    function layerName(level) { var l = layerObj(level); return level === 0 ? "Flat view" : "Floor " + (l ? l.name : level); }
+    // Rule 168: a floor is its number; its name is a label ("-1 Basement").
+    function layerName(level) { var l = layerObj(level); return level === 0 ? "Ground" : (l && l.name ? l.name : "Floor " + level); }
     function countOn(level) { return Object.keys(placementsOf(level)).filter(function (id) { return nodeById[id]; }).length; }
     function paintLayerCtl() {
       var lv = levels();
@@ -857,19 +1258,28 @@
       var canDown = i > 0 || state.editing;
       var n = countOn(state.layer);
       layerCtl.innerHTML =
-        '<span class="topo-layer-cap">Layer</span>' +
+        '<span class="topo-layer-cap">Floor</span>' +
         '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="1"' + (canUp ? "" : " disabled") + ' aria-label="Up a layer">+</button>' +
         '<span class="topo-layer-now" aria-live="polite"' + (state.editing && state.layer !== 0 ? ' title="Right-click to rename or delete this layer"' : "") + '>' +
           '<strong>' + state.layer + '</strong><span>' + esc(layerName(state.layer)) + '</span><span class="topo-layer-n">' + n + ' device' + (n === 1 ? "" : "s") + '</span></span>' +
         '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="-1"' + (canDown ? "" : " disabled") + ' aria-label="Down a layer">−</button>' +
-        (state.layer !== 0 ? '<button type="button" class="btn btn-secondary btn-sm topo-layer-zero" data-layer-zero>Layer 0</button>' : "");
+        (state.layer !== 0 ? '<button type="button" class="btn btn-secondary btn-sm topo-layer-zero" data-layer-zero>Ground</button>' : "");
     }
     function setLayer(level) {
       if (level === state.layer) return;
+      endAdjust();
+      var from = state.layer;
       state.layer = level;
       selectedId = null;
-      buildMap();
+      if (map) {
+        if (!floorPanes[level]) drawFloor(level);
+        paintDragging();
+        trans = { from: from, t0: performance.now() };
+        applyFloorLook(true);
+        requestAnimationFrame(tickCross);
+      }
       paintLayerCtl();
+      paintCenter();
       ctx.refreshSidebar();
     }
     layerCtl.addEventListener("click", function (e) {
@@ -893,24 +1303,21 @@
         { label: "Delete layer", danger: true, onSelect: function () { deleteLayer(level); } },
       ], { menuAt: { x: e.clientX, y: e.clientY }, label: "Layer", overMap: true });
     });
-    function defaultFloorName(level) { return level > 0 ? String(level) : "B" + (-level); }
     function addLayer(level) { nameLayer(level, true); }
     function nameLayer(level, isNew) {
       if (typeof buildOverlay !== "function") return;
       var l = layerObj(level);
-      var body = '<div class="form-group"><label for="tl-name">Floor name</label>' +
-        '<input id="tl-name" type="text" maxlength="64" value="' + esc(isNew ? defaultFloorName(level) : (l ? l.name : "")) + '">' +
-        '<div class="hint">Layer ' + level + '. A device placed on it gets <code>f:</code> this name when you save' +
-        (level < 0 ? ' (below ground: B1, B2…)' : '') + '.</div></div>';
+      var body = '<div class="form-group"><label for="tl-name">Name (optional)</label>' +
+        '<input id="tl-name" type="text" maxlength="64" placeholder="e.g. ' + (level < 0 ? "Basement" : "Mezzanine") + '" value="' + esc(isNew ? "" : (l ? l.name : "")) + '">' +
+        '<div class="hint">Floor ' + level + '. A device placed on it gets <code>f:' + level + '</code> when you save; the name is only a label.</div></div>';
       var footer = '<button type="button" class="btn btn-secondary" data-tl="cancel">Cancel</button>' +
         '<button type="button" class="btn btn-primary" data-tl="ok">' + (isNew ? "Add layer" : "Apply") + '</button>';
       var dlg = buildOverlay(1100, isNew ? "Add layer " + level : "Rename layer " + level, body, footer);
       var input = dlg.overlay.querySelector("#tl-name");
       function apply() {
         var name = input.value.trim().replace(/\s+/g, " ");
-        if (!name) { ctx.toast("Give the floor a name", "error"); return; }
         if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A floor name can't contain another location code", "error"); return; }
-        var clash = state.layers.some(function (x) { return x.level !== level && x.name.toLowerCase() === name.toLowerCase(); });
+        var clash = name && state.layers.some(function (x) { return x.level !== level && (x.name || "").toLowerCase() === name.toLowerCase(); });
         if (clash) { ctx.toast("Another layer is already called " + name, "error"); return; }
         if (isNew) state.layers.push({ level: level, name: name, background: null });
         else if (l) l.name = name;
@@ -938,7 +1345,7 @@
       state.layers = state.layers.filter(function (x) { return x.level !== level; });
       state.layer = 0;
       changed("layers", "polygons");
-      buildMap();
+      drawAll();
       paintLayerCtl();
       ctx.refreshSidebar();
     }
@@ -957,10 +1364,10 @@
           id: id,
           label: d.label || id,
           // A device on ANOTHER layer says which; selecting it goes there.
-          meta: on !== null && on !== state.layer ? (on === 0 ? "layer 0 · flat view" : "layer " + on + " · floor " + (layerObj(on) ? layerObj(on).name : on))
+          meta: on !== null && on !== state.layer ? (on === 0 ? "floor 0 · ground" : "floor " + on + (layerObj(on) && layerObj(on).name ? " · " + layerObj(on).name : ""))
             : hasCodes(codes) ? codesLabel(codes) : String(t).replace(/_/g, " "),
           inUse: on === state.layer,
-          title: on !== null && on !== state.layer ? "Placed on layer " + on : "",
+          title: on !== null && on !== state.layer ? "Placed on floor " + on : "",
         };
       }).sort(function (a, b) {
         return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
@@ -995,9 +1402,11 @@
 
     function onKey(e) {
       if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
+      if (e.key === "Escape" && adjust) endAdjust();
     }
     document.addEventListener("keydown", onKey);
 
+    host.appendChild(centerMark);
     buildMap();
     setEditing(state.editing);
     // Leaflet measures its container on creation; the modal may still be
@@ -1043,6 +1452,7 @@
       resize: function () { if (map) map.invalidateSize(); },
       captureElement: function () { return mapEl; },
       destroy: function () {
+        endAdjust();
         document.removeEventListener("keydown", onKey);
         if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
         if (map) { map.remove(); map = null; }
@@ -1056,6 +1466,10 @@
     _pointInRing: pointInRing,
     _innermostPolygon: innermostPolygon,
     _polyCodes: polyCodes,
+    _planToGround: planToGround,
+    _groundToPlan: groundToPlan,
+    _floorLook: floorLook,
+    _fadeSteps: fadeSteps,
     _groupsFromData: groupsFromData,
     _codesLabel: codesLabel,
     _codesEqual: codesEqual,
