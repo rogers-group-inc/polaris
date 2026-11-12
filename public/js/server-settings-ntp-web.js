@@ -292,10 +292,14 @@ function initTimezoneDropdown(currentValue) {
     }
   });
 
+  // Clearing is a complete choice ("use the host's timezone"), so it leaves
+  // the list closed. It used to re-focus the field, which opened all ~400
+  // zones over the Save button below: the operator's next click, meant for
+  // Save, landed on an option (Africa/Algiers) and picked it instead
+  // (found in a real-Chrome check 2026-11-12, business rule 170).
   clearBtn.addEventListener("click", function (e) {
     e.stopPropagation();
     clearTz();
-    input.focus();
   });
 }
 
