@@ -22,7 +22,7 @@ import { alarmStatusToFlag } from "../../utils/hardwareSensors.js";
 import { median } from "../../utils/stats.js";
 import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreList } from "../../utils/cpuCores.js";
 import { sdwanDimensionMatch, sdwanChildrenYielding } from "../../utils/sdwanDimensions.js";
-import { SERIES_CAP, lookbackMsFor, aggregateSinceMs, type DbRule, type ScopeAssetRow, type Reading, compareNum, compareValue } from "./ruleModel.js";
+import { SERIES_CAP, lookbackMsFor, aggregateSinceMs, aggregateFallbackSinceMs, type DbRule, type ScopeAssetRow, type Reading, compareNum, compareValue } from "./ruleModel.js";
 import { assetIsAnsweringProbes, interfaceIsPinned, poeFaultCoversUnpinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned } from "./scope.js";
 
 // ─── Reading resolvers ──────────────────────────────────────────────────────
@@ -66,7 +66,12 @@ export function applyDeviceFilters<T extends DeviceFilterAsset>(
  * poll-counted hold or clear needs its N readings in the series), so the
  * window is stated here rather than inferred from what was fetched.
  */
-interface AggregationWindow { kind: string; sinceMs: number }
+interface AggregationWindow {
+  kind: string;
+  sinceMs: number;
+  /** Rule 178: the newest reading at or after this stands in for an empty window. -Infinity = no stand-in. */
+  fallbackSinceMs?: number;
+}
 
 function reduceReadings(
   rows: Array<{ assetId: string; timestamp: Date }>,
@@ -85,7 +90,7 @@ function reduceReadings(
 ): Reading[] {
   const aggregation = agg.kind;
   // group by assetId|dimKey
-  const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null; row: any }>; latest: { ts: number; v: number | null } }>();
+  const groups = new Map<string, { asset: ScopeAssetRow; dimKey: string; dimLabel: string; values: number[]; series: Array<{ ts: number; v: number | null; row: any }>; latest: { ts: number; v: number | null }; latestValued: { ts: number; v: number | null } }>();
   for (const row of rows) {
     const asset = assetIndex.get(row.assetId);
     if (!asset) continue;
@@ -94,7 +99,7 @@ function reduceReadings(
     const v = valueFn(row);
     let g = groups.get(key);
     if (!g) {
-      g = { asset, dimKey, dimLabel: dimLabelFn(row), values: [], series: [], latest: { ts: -1, v: null } };
+      g = { asset, dimKey, dimLabel: dimLabelFn(row), values: [], series: [], latest: { ts: -1, v: null }, latestValued: { ts: -1, v: null } };
       groups.set(key, g);
     }
     const ts = row.timestamp.getTime();
@@ -107,6 +112,7 @@ function reduceReadings(
     // the query returned them.
     g.series.push({ ts, v, row });
     if (ts > g.latest.ts) g.latest = { ts, v };
+    if (v !== null && ts > g.latestValued.ts) g.latestValued = { ts, v };
   }
   const out: Reading[] = [];
   for (const g of groups.values()) {
@@ -128,6 +134,12 @@ function reduceReadings(
         readingAt: g.latest.ts >= 0 ? new Date(g.latest.ts) : null,
       });
       continue;
+    }
+    // Rule 178: a stated window shorter than the polling interval can hold no
+    // reading; the newest one (if recent enough) stands in for it.
+    if (aggregation !== "latest" && g.values.length === 0 && g.latestValued.v !== null
+      && agg.fallbackSinceMs !== undefined && agg.fallbackSinceMs !== -Infinity && g.latestValued.ts >= agg.fallbackSinceMs) {
+      g.values.push(g.latestValued.v);
     }
     let value: number | null;
     if (aggregation === "avg") value = g.values.length ? g.values.reduce((a, b) => a + b, 0) / g.values.length : null;
@@ -590,7 +602,7 @@ export async function resolveAssetMetricReadings(
   // fetch for the reset's sake never changes the value the trigger compares.
   const nowMs = Date.now();
   const since = new Date(nowMs - lookbackMsFor(trigger));
-  const agg: AggregationWindow = { kind: trigger.aggregation, sinceMs: aggregateSinceMs(trigger, nowMs) };
+  const agg: AggregationWindow = { kind: trigger.aggregation, sinceMs: aggregateSinceMs(trigger, nowMs), fallbackSinceMs: aggregateFallbackSinceMs(trigger, nowMs) };
   // 0 unless this trigger states a COUNT window (business rule 66). Passed to
   // every reducer below rather than to the response-time one alone: an
   // operator smoothing interface errors or a temperature sensor is asking the
@@ -1548,8 +1560,15 @@ export async function resolveHostMetricReading(trigger: Extract<Trigger, { type:
     };
   }
   // Nothing inside the window is no reading, exactly as an empty fetch was
-  // before the fetch could reach past it.
-  const inWindow = aggSinceMs === -Infinity ? rows : rows.filter((r: any) => r.timestamp.getTime() >= aggSinceMs);
+  // before the fetch could reach past it — unless the rule states a window
+  // shorter than the 30 s host sample, when the newest sample stands in
+  // (rule 178), provided it is inside the old lookback.
+  let inWindow = aggSinceMs === -Infinity ? rows : rows.filter((r: any) => r.timestamp.getTime() >= aggSinceMs);
+  if (inWindow.length === 0) {
+    const fallbackSince = aggregateFallbackSinceMs(trigger, nowMs);
+    const newest: any = rows[0];
+    if (fallbackSince !== -Infinity && newest && newest.timestamp.getTime() >= fallbackSince) inWindow = [newest];
+  }
   if (inWindow.length === 0) return null;
   let value: number;
   if (trigger.aggregation === "avg") value = inWindow.reduce((a, r) => a + valueOf(r), 0) / inWindow.length;

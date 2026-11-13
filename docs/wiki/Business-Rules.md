@@ -3675,3 +3675,13 @@ triangle before its name; hover the triangle to see what is wrong. Open it and t
 explanation is shown above the steps. Polaris does not change the automation; point it at
 something that exists and save. (Deleting one of those things while an automation uses it is
 refused — see [rule 167](#rule-167).)
+
+### Rule 178
+
+**An averaged condition covers the time it says.** A condition such as *average CPU over 5
+minutes* (also minimum, maximum and median) uses the readings of the last 5 minutes — before
+this it used the last 15, whatever the window said, so alerts fired and cleared later than
+expected. If a device is polled less often than the window (say every 10 minutes for a
+5-minute window), the newest reading is used instead. Expect averaged alerts, including the
+built-in High CPU, High memory, Slow response and temperature automations, to fire and clear
+sooner than before.
