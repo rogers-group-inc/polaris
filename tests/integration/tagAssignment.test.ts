@@ -27,6 +27,7 @@ import { prisma } from "../../src/db.js";
 import { dbDescribe, dbReachable } from "./_helpers.js";
 import {
   reconcileTag,
+  reconcileAllTags,
   reconcileTagsForAsset,
   previewTagFilter,
   stripTagAssignments,
@@ -293,5 +294,71 @@ d("tagAssignmentService — assetCondition (device filter tree)", () => {
     expect(preview.matchCount).toBe(2);
     expect(preview.diff).toEqual({ add: 2, remove: 0 });
     expect(await prisma.tagAutoAssignment.count({ where: { tagId: tag.id } })).toBe(0);
+  });
+});
+
+// Efficiency audit group 3: reconcileAllTags resolves every tree-shaped filter
+// over ONE fleet read. It must land exactly what reconciling each tag on its own
+// does — eligibility (decommissioned only when the tree names status), legacy
+// shape, drift out of a match, and a hand-applied copy all included.
+d("tagAssignmentService.reconcileAllTags", () => {
+  const NAMES = [TAG_NAME + "-cisco", TAG_NAME + "-retired", TAG_NAME + "-legacy", TAG_NAME + "-host"];
+
+  async function provenance() {
+    const rows = await prisma.tagAutoAssignment.findMany({ select: { tagId: true, assetId: true } });
+    return rows.map((r) => r.tagId + ":" + r.assetId).sort();
+  }
+  async function tagsOf(ids: string[]) {
+    const rows = await prisma.asset.findMany({ where: { id: { in: ids } }, select: { id: true, tags: true } });
+    return Object.fromEntries(rows.map((r) => [r.id, [...r.tags].sort()]));
+  }
+
+  it("lands the same tags and provenance as reconciling each tag alone", async () => {
+    try {
+      const mk = (name: string, data: Record<string, unknown>) =>
+        prisma.tag.create({ data: { name, category: "Test", color: "#4fc3f7", ...data } as any });
+      const cisco = await mk(NAMES[0]!, { assetCondition: { op: "and", children: [{ field: "manufacturer", operator: "equals", value: "Cisco" }] } });
+      const retired = await mk(NAMES[1]!, { assetCondition: { op: "and", children: [{ field: "status", operator: "equals", value: "decommissioned" }] } });
+      const legacy = await mk(NAMES[2]!, { criteria: { version: 1, match: "all", rules: [{ field: "manufacturer", op: "exact", values: ["Juniper"] }] } });
+      const host = await mk(NAMES[3]!, { assetCondition: { op: "and", children: [{ field: "hostname", operator: "startsWith", value: "allt-" }] } });
+
+      const live = await makeAsset({ hostname: "allt-1", manufacturer: "Cisco" });
+      const dead = await makeAsset({ hostname: "allt-2", manufacturer: "Cisco", status: "decommissioned" });
+      const jun = await makeAsset({ hostname: "other-3", manufacturer: "Juniper" });
+      const drift = await makeAsset({ hostname: "allt-4", manufacturer: "Cisco" });
+      const manual = await makeAsset({ hostname: "other-5", manufacturer: "HP", tags: [NAMES[0]!] });
+      const ids = [live.id, dead.id, jun.id, drift.id, manual.id];
+
+      // A first pass, then drift one asset out of the Cisco tag.
+      await reconcileAllTags();
+      await prisma.asset.update({ where: { id: drift.id }, data: { manufacturer: "Arista" } });
+
+      const sharedSummary = await reconcileAllTags();
+      const sharedProv = await provenance();
+      const sharedTags = await tagsOf(ids);
+
+      // Reset to the same pre-second-pass state and reconcile tag by tag.
+      await prisma.tagAutoAssignment.deleteMany({});
+      for (const id of ids) {
+        await prisma.asset.update({ where: { id }, data: { tags: id === manual.id ? [NAMES[0]!] : [] } });
+      }
+      await prisma.asset.update({ where: { id: drift.id }, data: { manufacturer: "Cisco" } });
+      for (const t of [cisco, retired, legacy, host]) await reconcileTag(t.id);
+      await prisma.asset.update({ where: { id: drift.id }, data: { manufacturer: "Arista" } });
+      for (const t of [cisco, retired, legacy, host]) await reconcileTag(t.id);
+
+      expect(sharedProv).toEqual(await provenance());
+      expect(sharedTags).toEqual(await tagsOf(ids));
+      // And the outcome is the intended one.
+      expect(sharedTags[live.id]).toEqual([NAMES[0]!, NAMES[3]!].sort());
+      expect(sharedTags[dead.id]).toEqual([NAMES[1]!]); // only the status-naming filter reaches a decommissioned asset
+      expect(sharedTags[jun.id]).toEqual([NAMES[2]!]);
+      expect(sharedTags[drift.id]).toEqual([NAMES[3]!]);
+      expect(sharedTags[manual.id]).toEqual([NAMES[0]!]); // hand-applied, preserved
+      expect(sharedSummary.removed).toBe(1);
+    } finally {
+      await prisma.tagAutoAssignment.deleteMany({});
+      await prisma.tag.deleteMany({ where: { name: { in: NAMES } } });
+    }
   });
 });

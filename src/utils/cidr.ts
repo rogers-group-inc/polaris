@@ -407,9 +407,76 @@ export function mostSpecificContaining<T extends { cidr: string }>(
  * versions (netmask 2.x parses IPv6); an address of one version is never
  * inside a range of the other.
  */
+// Parsed CIDRs reused across ipInCidr calls. Discovery asks "is this IP in this
+// subnet?" for every address against every subnet in order (findSubnetForIp,
+// pickSubnetForIp — first / most specific match, so the scan order matters and
+// is kept), and parsing a fresh Netmask per test made that tens of millions of
+// parses on a big install (efficiency audit group 3). A Netmask is never
+// mutated by contains(), so sharing one is safe. Bounded: cleared when full.
+const IP_IN_CIDR_CACHE_MAX = 20_000;
+const parsedCidrs = new Map<string, Netmask | null>();
+
+function parsedCidr(cidr: string): Netmask | null {
+  let block = parsedCidrs.get(cidr);
+  if (block === undefined) {
+    try {
+      block = new Netmask(cidr);
+    } catch {
+      block = null;
+    }
+    if (parsedCidrs.size >= IP_IN_CIDR_CACHE_MAX) parsedCidrs.clear();
+    parsedCidrs.set(cidr, block);
+  }
+  return block;
+}
+
+// Canonical dotted quad, no leading zeros — the only form the integer fast path
+// below takes, so it can never disagree with Netmask's own parse of an odd form.
+const CANONICAL_IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const v4Ranges = new Map<string, { net: number; mask: number } | null>();
+
+function v4RangeOf(cidr: string): { net: number; mask: number } | null {
+  let r = v4Ranges.get(cidr);
+  if (r === undefined) {
+    const block = parsedCidr(cidr);
+    r = null;
+    if (block && CANONICAL_IPV4.test(block.base) && block.bitmask >= 0 && block.bitmask <= 32) {
+      const mask = block.bitmask === 0 ? 0 : (0xffffffff << (32 - block.bitmask)) >>> 0;
+      r = { net: (ipToInt(block.base) & mask) >>> 0, mask };
+    }
+    if (v4Ranges.size >= IP_IN_CIDR_CACHE_MAX) v4Ranges.clear();
+    v4Ranges.set(cidr, r);
+  }
+  return r;
+}
+
+/**
+ * The FIRST item, in the order given, whose CIDR contains `ip` and that `skip`
+ * does not exclude — exactly `items.find((s) => !skip?.(s) && ipInCidr(ip, s.cidr))`,
+ * for the discovery loops that ask it per address over every subnet. A canonical
+ * IPv4 address is parsed once and compared as integers against each CIDR's
+ * cached range; anything else (IPv6, an odd form) takes `ipInCidr` per item.
+ */
+export function firstCidrContaining<T extends { cidr: string }>(
+  ip: string,
+  items: readonly T[],
+  skip?: (item: T) => boolean,
+): T | undefined {
+  if (!ip) return undefined;
+  if (!CANONICAL_IPV4.test(ip)) return items.find((s) => !skip?.(s) && ipInCidr(ip, s.cidr));
+  const addr = ipToInt(ip);
+  for (const s of items) {
+    if (skip?.(s)) continue;
+    const r = v4RangeOf(s.cidr);
+    if (r ? ((addr & r.mask) >>> 0) === r.net : ipInCidr(ip, s.cidr)) return s;
+  }
+  return undefined;
+}
+
 export function ipInCidr(ip: string, cidr: string): boolean {
+  const block = parsedCidr(cidr);
+  if (!block) return false;
   try {
-    const block = new Netmask(cidr);
     return block.contains(ip);
   } catch {
     return false;

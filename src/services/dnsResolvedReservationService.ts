@@ -334,13 +334,26 @@ export async function reconcileDnsResolvedForAllAssets(): Promise<{
   // We deliberately ALSO scan ineligible assets so a now-decommissioned asset
   // that still has a stale dns_resolved row gets cleaned up. The eligibility
   // gate inside reconcileDnsResolvedForAsset releases-without-creating.
-  const assets = await prisma.asset.findMany({
+  const assets: AssetIdentity[] = await prisma.asset.findMany({
     where: { ipAddress: { not: null } },
-    select: { id: true },
+    select: { id: true, ipAddress: true, hostname: true, dnsName: true, macAddress: true, status: true },
   });
+  out.scanned = assets.length;
+
+  // Only the assets the per-asset reconcile would CHANGE something for are
+  // handed to it (efficiency audit group 3): the rest are settled in memory
+  // from three shared reads instead of five queries each. The test is
+  // conservative — anything not provably a no-op goes through the per-asset
+  // path, which re-reads live and makes every decision as before.
+  let pending: AssetIdentity[] = assets;
+  try {
+    pending = await assetsNeedingReconcile(assets);
+  } catch (err) {
+    logger.warn({ err }, "dns_resolved.reconcile: shared pre-read failed; reconciling every asset");
+  }
 
   const BATCH = 25;
-  for (const batch of chunkArray(assets, BATCH)) {
+  for (const batch of chunkArray(pending, BATCH)) {
     const results = await Promise.all(
       batch.map((a) => reconcileDnsResolvedForAsset(a.id).catch(() => ({ created: 0, updated: 0, released: 0, skipped: true } as ReconcileResult)))
     );
@@ -348,10 +361,87 @@ export async function reconcileDnsResolvedForAllAssets(): Promise<{
       out.created += r.created;
       out.updated += r.updated;
       out.released += r.released;
-      out.scanned += 1;
     }
   }
   out.released += await releaseRowsOfIneligibleOwners();
+  return out;
+}
+
+/**
+ * The assets whose per-asset reconcile would do something. An asset is settled
+ * — skipped — only when, read against the same snapshot, reconcileDnsResolvedForAsset
+ * would neither create, update nor release:
+ *   - ineligible, no containing subnet, or an authoritative row at its target:
+ *     it owns no system row (nothing to release);
+ *   - otherwise: a system row at its target already records its hostname and
+ *     MAC, and it owns no system row anywhere else.
+ * Ownership is findOwnedSystemRows' test (same MAC or same resolved hostname).
+ * Three reads for the whole fleet: the active system rows, every containing
+ * subnet (buildIpContexts, one query), and the active rows at the assets' IPs.
+ */
+async function assetsNeedingReconcile(assets: AssetIdentity[]): Promise<AssetIdentity[]> {
+  const ips = assets.filter(assetEligible).map((a) => a.ipAddress as string);
+  const [systemRows, contexts, atIps] = await Promise.all([
+    prisma.reservation.findMany({
+      where: { createdBy: SYSTEM_ACTOR, sourceType: "dns_resolved" as any, status: "active" },
+      select: { id: true, subnetId: true, ipAddress: true, hostname: true, macAddress: true },
+    }),
+    buildIpContexts(ips),
+    (async () => {
+      const rows: Array<{ subnetId: string; ipAddress: string | null; sourceType: string; createdBy: string | null; hostname: string | null; macAddress: string | null }> = [];
+      for (const chunk of chunkArray(Array.from(new Set(ips)), OWNER_CHUNK)) {
+        rows.push(...await prisma.reservation.findMany({
+          where: { status: "active", ipAddress: { in: chunk } },
+          select: { subnetId: true, ipAddress: true, sourceType: true, createdBy: true, hostname: true, macAddress: true },
+        }));
+      }
+      return rows;
+    })(),
+  ]);
+
+  const byMac = new Map<string, typeof systemRows>();
+  const byHost = new Map<string, typeof systemRows>();
+  for (const r of systemRows) {
+    if (r.macAddress) (byMac.get(r.macAddress) ?? byMac.set(r.macAddress, []).get(r.macAddress)!).push(r);
+    if (r.hostname) (byHost.get(r.hostname) ?? byHost.set(r.hostname, []).get(r.hostname)!).push(r);
+  }
+  const atTarget = new Map<string, typeof atIps>();
+  for (const r of atIps) {
+    const k = `${r.subnetId}|${r.ipAddress}`;
+    (atTarget.get(k) ?? atTarget.set(k, []).get(k)!).push(r);
+  }
+
+  const out: AssetIdentity[] = [];
+  for (const a of assets) {
+    const host = resolvedHostname(a);
+    const ownedIds = new Set<string>();
+    const owned: typeof systemRows = [];
+    for (const r of [...(a.macAddress ? byMac.get(a.macAddress) ?? [] : []), ...(host ? byHost.get(host) ?? [] : [])]) {
+      if (!ownedIds.has(r.id)) { ownedIds.add(r.id); owned.push(r); }
+    }
+    if (!assetEligible(a)) {
+      if (owned.length > 0) out.push(a);
+      continue;
+    }
+    const ip = a.ipAddress as string;
+    const ctx = contexts.get(ip);
+    if (!ctx) {
+      if (owned.length > 0) out.push(a);
+      continue;
+    }
+    const here = atTarget.get(`${ctx.subnetId}|${ip}`) ?? [];
+    if (here.some((r) => r.sourceType !== "dns_resolved")) {
+      if (owned.length > 0) out.push(a);
+      continue;
+    }
+    const target = here.find((r) => r.sourceType === "dns_resolved" && r.createdBy === SYSTEM_ACTOR);
+    const settled =
+      !!target &&
+      (target.hostname ?? null) === host &&
+      (target.macAddress ?? null) === (a.macAddress ?? null) &&
+      owned.every((r) => r.subnetId === ctx.subnetId && r.ipAddress === ip);
+    if (!settled) out.push(a);
+  }
   return out;
 }
 

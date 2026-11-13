@@ -10,6 +10,7 @@ import {
   cidrOverlaps,
   mostSpecificContaining,
   ipInCidr,
+  firstCidrContaining,
   compareIpv4,
   usableHostCount,
   cidrAllocationPercent,
@@ -231,6 +232,47 @@ describe("ipInCidr", () => {
 
   it("returns false for an IP outside the range", () => {
     expect(ipInCidr("192.168.1.1", "10.0.0.0/8")).toBe(false);
+  });
+
+  // The parsed-CIDR cache (efficiency audit group 3) must give the same answer
+  // on every call — a hit, a miss, and a CIDR that does not parse.
+  it("answers the same from its parsed-CIDR cache, and false for a CIDR that does not parse, every time", () => {
+    for (let i = 0; i < 3; i++) {
+      expect(ipInCidr("10.0.1.50", "10.0.0.0/16")).toBe(true);
+      expect(ipInCidr("10.1.0.1", "10.0.0.0/16")).toBe(false);
+      expect(ipInCidr("10.0.0.1", "not-a-cidr")).toBe(false);
+      expect(ipInCidr("not-an-ip", "10.0.0.0/16")).toBe(false);
+    }
+  });
+
+  it("firstCidrContaining is exactly the first-match find over ipInCidr — order, skip, IPv6, odd forms", () => {
+    const subnets = [
+      { id: "wide", cidr: "10.0.0.0/8", status: "available" },
+      { id: "narrow", cidr: "10.1.2.0/24", status: "available" },
+      { id: "dep", cidr: "192.168.0.0/16", status: "deprecated" },
+      { id: "late", cidr: "192.168.1.0/24", status: "available" },
+      { id: "v6", cidr: "2001:db8::/32", status: "available" },
+      { id: "bad", cidr: "nonsense", status: "available" },
+      { id: "short", cidr: "172.16/12", status: "available" },
+      { id: "all", cidr: "0.0.0.0/0", status: "available" },
+      { id: "host", cidr: "203.0.113.7/32", status: "available" },
+    ];
+    const skip = (s: { status: string }) => s.status === "deprecated";
+    const ips = ["10.1.2.3", "192.168.1.5", "192.168.9.9", "2001:db8::1", "172.20.0.1", "203.0.113.7",
+      "203.0.113.8", "8.8.8.8", "010.1.2.3", "", "not-an-ip", "255.255.255.255", "0.0.0.0"];
+    for (const ip of ips) {
+      const want = subnets.find((s) => !skip(s) && ipInCidr(ip, s.cidr));
+      expect(firstCidrContaining(ip, subnets, skip)?.id, ip).toBe(want?.id);
+    }
+    // First match, not most specific: "wide" precedes "narrow".
+    expect(firstCidrContaining("10.1.2.3", subnets, skip)?.id).toBe("wide");
+    expect(firstCidrContaining("192.168.1.5", subnets, skip)?.id).toBe("late");
+  });
+
+  it("stays correct past the cache's bound", () => {
+    for (let i = 0; i < 20_100; i++) ipInCidr("10.0.0.1", `10.${(i >> 8) & 255}.${i & 255}.0/24`);
+    expect(ipInCidr("10.0.1.50", "10.0.0.0/16")).toBe(true);
+    expect(ipInCidr("10.78.130.9", "10.78.130.0/24")).toBe(true);
   });
 });
 
