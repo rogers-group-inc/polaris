@@ -1361,6 +1361,13 @@ describes whether that source can reach the target, so:
   `path_check.path_changed` to Events (at most once every 10 minutes per host
   and check). You can alert on it with a Path Monitor automation set to fire
   when the route changes.
+- **A changed certificate is an Event too (85(c)).** When the TLS
+  certificate an HTTPS check sees from a host has a different expiry date
+  from the last one, Polaris writes `path_check.tls_cert_changed`, saying
+  whether the expiry moved later (renewed) or earlier. The first certificate
+  is a starting point, a run that could not connect is ignored, and there is
+  at most one such event every 10 minutes per host and check. Alert on it with
+  a Path Monitor automation set to fire when the certificate changes.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works
@@ -3727,6 +3734,17 @@ and says "Bank 2 Current is in critical state". Set it to *at or above 1* for wa
 a severity band at 2 for critical. A widget with no levels is never read. A custom-widget
 alert's email leads with that widget's own chart (its levels or the threshold that fired, or a
 state probe's status lane), with response time underneath.
+
+### Rule 182
+
+**A floor plan can be a CAD drawing.** On a Topology view's floor you can import a DXF
+saved from AutoCAD. Polaris reads it, lets you choose its units and which layers to keep
+(leave out the title block and border), and draws those layers as a sharp vector plan. The
+DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF first. The
+drawing is placed by the location it carries, by lining it up with another floor drawn in
+the same coordinates (as levels of one survey are), or by clicking two places on the
+drawing and the same two on the map.
+
 ### Rule 183
 
 **An ArcGIS integration's satellite imagery wins over the Customization setting, and only one supplies it.**

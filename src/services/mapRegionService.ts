@@ -409,15 +409,64 @@ interface RegionMembership {
  * subnet those firewalls serve, and every asset addressed out of one of those
  * subnets.
  */
-async function computeMembership(region: MapRegion): Promise<RegionMembership> {
-  const firewalls = await prisma.asset.findMany({
-    where: {
-      assetType: "firewall",
-      latitude: { not: null },
-      longitude: { not: null },
-    },
-    select: { id: true, hostname: true, serialNumber: true, fortinetTopology: true, latitude: true, longitude: true },
-  });
+/**
+ * The fleet reads computeMembership needs, each loaded at most once per
+ * snapshot. reconcileMapRegions shares one across every region in a pass
+ * (efficiency audit group 3: each region used to re-read every firewall, every
+ * switch / AP's topology and every IP-carrying asset); a lone applyOneRegion
+ * gets a fresh one. Membership reads coordinates, topology stamps, IPs and
+ * Subnet.fortigateDevice — none of which a reconcile pass writes — so a
+ * snapshot stays valid across the pass. A read that FAILS is not kept: the
+ * next region retries it, so one region's failure stays that region's.
+ */
+class RegionMembershipSnapshot {
+  /** Cache a read, but drop it if it rejects. */
+  private static keep<T>(p: Promise<T>, clear: () => void): Promise<T> {
+    p.catch(() => clear());
+    return p;
+  }
+
+  private firewallsP?: Promise<Array<{ id: string; hostname: string | null; serialNumber: string | null; fortinetTopology: unknown; latitude: unknown; longitude: unknown }>>;
+  private infraP?: Promise<Array<{ id: string; fortinetTopology: unknown }>>;
+  private subnetsP?: Promise<Array<{ id: string; cidr: string; fortigateDevice: string | null }>>;
+  private ipAssetsP?: Promise<Array<{ id: string; ipAddress: string | null }>>;
+
+  firewalls() {
+    return (this.firewallsP ??= RegionMembershipSnapshot.keep(prisma.asset.findMany({
+      where: {
+        assetType: "firewall",
+        latitude: { not: null },
+        longitude: { not: null },
+      },
+      select: { id: true, hostname: true, serialNumber: true, fortinetTopology: true, latitude: true, longitude: true },
+    }), () => { this.firewallsP = undefined; }));
+  }
+
+  infra() {
+    return (this.infraP ??= RegionMembershipSnapshot.keep(prisma.asset.findMany({
+      where: { assetType: { in: ["switch", "access_point"] } },
+      select: { id: true, fortinetTopology: true },
+    }), () => { this.infraP = undefined; }));
+  }
+
+  /** Every subnet a gate serves; filtered per region by exact device-name match, as the `in` query did. */
+  gateSubnets() {
+    return (this.subnetsP ??= RegionMembershipSnapshot.keep(prisma.subnet.findMany({
+      where: { fortigateDevice: { not: null } },
+      select: { id: true, cidr: true, fortigateDevice: true },
+    }), () => { this.subnetsP = undefined; }));
+  }
+
+  ipAssets() {
+    return (this.ipAssetsP ??= RegionMembershipSnapshot.keep(prisma.asset.findMany({
+      where: { ipAddress: { not: null } },
+      select: { id: true, ipAddress: true },
+    }), () => { this.ipAssetsP = undefined; }));
+  }
+}
+
+async function computeMembership(region: MapRegion, snap: RegionMembershipSnapshot = new RegionMembershipSnapshot()): Promise<RegionMembership> {
+  const firewalls = await snap.firewalls();
 
   const enclosedFirewalls: Array<{ id: string; keys: string[]; serial: string | null }> = [];
   for (const fw of firewalls) {
@@ -450,12 +499,7 @@ async function computeMembership(region: MapRegion): Promise<RegionMembership> {
   );
   if (enclosedKeys.size === 0) return { assetIds: memberIds, subnetIds: new Set<string>() };
 
-  const infra = await prisma.asset.findMany({
-    where: {
-      assetType: { in: ["switch", "access_point"] },
-    },
-    select: { id: true, fortinetTopology: true },
-  });
+  const infra = await snap.infra();
   for (const a of infra) {
     const topo = readTopology(a.fortinetTopology);
     const ctrlSerial = (topo.controllerSerial || "").trim();
@@ -475,16 +519,10 @@ async function computeMembership(region: MapRegion): Promise<RegionMembership> {
   // pre-2026-08 `in: enclosedHostnames` comparison matched nothing on installs
   // where the two differ, and no non-Fortinet asset ever inherited a region.
   // `enclosedKeys` includes the device name.
-  const regionSubnets = await prisma.subnet.findMany({
-    where: { fortigateDevice: { in: Array.from(enclosedKeys) } },
-    select: { id: true, cidr: true },
-  });
+  const regionSubnets = (await snap.gateSubnets()).filter((s) => s.fortigateDevice != null && enclosedKeys.has(s.fortigateDevice));
   const subnetIds = new Set<string>(regionSubnets.map((s) => s.id));
   if (regionSubnets.length > 0) {
-    const ipAssets = await prisma.asset.findMany({
-      where: { ipAddress: { not: null } },
-      select: { id: true, ipAddress: true },
-    });
+    const ipAssets = await snap.ipAssets();
     // Parse each subnet once, not once per asset: this loop is every
     // IP-carrying asset in the fleet, per region. IPv4 only (Netmask) — IPv6
     // assets simply match nothing.
@@ -1109,9 +1147,9 @@ export async function applyDelete(region: MapRegion): Promise<ReconcileSummary> 
  * of the region for that pass and back in on the next one, which surfaces as
  * tag churn rather than as a wrong steady state.
  */
-export async function applyOneRegion(region: MapRegion): Promise<ReconcileSummary> {
+export async function applyOneRegion(region: MapRegion, snap?: RegionMembershipSnapshot): Promise<ReconcileSummary> {
   const tag = regionTag(region.name);
-  const members = await computeMembership(region);
+  const members = await computeMembership(region, snap);
   const prov = await loadProvenance(region.id);
 
   const assets = diffRegionMembership(members.assetIds, prov.assetIds);
@@ -1120,10 +1158,13 @@ export async function applyOneRegion(region: MapRegion): Promise<ReconcileSummar
   // Add the tag first, then record provenance -- a crash between the two leaves
   // a tagged target with no provenance row, which reads as operator-owned. The
   // reverse order would record a tag we never wrote and strip it next pass.
+  // The tag is (re)applied to EVERY member — a hand-removed tag comes back —
+  // but provenance is written only for members it does not already cover; the
+  // insert skipped duplicates anyway, so this only drops the no-op writes.
   const added = await addTagToAssets(Array.from(members.assetIds), tag);
-  await recordProvenance(region.id, "asset", Array.from(members.assetIds));
+  await recordProvenance(region.id, "asset", assets.toAdd);
   const subnetsAdded = await addTagToSubnets(Array.from(members.subnetIds), tag);
-  await recordProvenance(region.id, "subnet", Array.from(members.subnetIds));
+  await recordProvenance(region.id, "subnet", subnets.toAdd);
 
   const removed = await removeTagFromAssets(assets.toRemove, tag);
   await dropProvenance(region.id, "asset", assets.toRemove);
@@ -1290,9 +1331,11 @@ export async function reconcileMapRegions(): Promise<ReconcileSummary> {
   let subnetsAdded = 0;
   let subnetsRemoved = 0;
   let subnetsTouched = 0;
+  // One fleet snapshot for the whole pass (see RegionMembershipSnapshot).
+  const snap = new RegionMembershipSnapshot();
   for (const region of regions) {
     try {
-      const summary = await applyOneRegion(region);
+      const summary = await applyOneRegion(region, snap);
       added += summary.added;
       removed += summary.removed;
       touched += summary.assetsTouched;

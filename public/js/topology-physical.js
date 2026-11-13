@@ -89,6 +89,46 @@
     var dx = gx - plan.cx, dy = gy - plan.cy;
     return [(dx * c - dy * sn) / plan.sx + ext.w / 2, (dx * sn + dy * c) / plan.sy + ext.h / 2];
   }
+  // ── CAD drawings (rule 182) — pure ─────────────────────────────────────
+  // A CAD floor plan's image covers its drawing's extents exactly, so a
+  // drawing coordinate maps onto plan units by one factor (both y-up).
+  function cadToPlan(bg, ext, d) {
+    var c = bg.cad.ext;
+    var f = ext.w / (c.maxX - c.minX);
+    return [(d[0] - c.minX) * f, (d[1] - c.minY) * f];
+  }
+  // The plan (centre, uniform scale, rotation) that puts plan points p1 and
+  // p2 on ground points g1 and g2. Null when either pair is one point.
+  function fitTwoPoints(p1, p2, g1, g2, ext) {
+    var vpx = p2[0] - p1[0], vpy = p2[1] - p1[1], vgx = g2[0] - g1[0], vgy = g2[1] - g1[1];
+    var lp = Math.sqrt(vpx * vpx + vpy * vpy), lg = Math.sqrt(vgx * vgx + vgy * vgy);
+    if (!(lp > 1e-9) || !(lg > 1e-9)) return null;
+    var k = lg / lp;
+    var a = Math.atan2(vgy, vgx) - Math.atan2(vpy, vpx);
+    var c = Math.cos(a), sn = Math.sin(a);
+    var dx = (p1[0] - ext.w / 2) * k, dy = (p1[1] - ext.h / 2) * k;
+    var rot = a * 180 / Math.PI;
+    rot = ((rot % 360) + 540) % 360 - 180;
+    return { cx: g1[0] - (dx * c - dy * sn), cy: g1[1] - (dx * sn + dy * c), sx: k, sy: k, rot: rot };
+  }
+  // How much two drawings' extents overlap, as a share of the smaller one.
+  function overlapShare(a, b) {
+    var w = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX);
+    var h = Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY);
+    if (w <= 0 || h <= 0) return 0;
+    var area = function (e) { return (e.maxX - e.minX) * (e.maxY - e.minY); };
+    return (w * h) / Math.min(area(a), area(b));
+  }
+  // 12345 -> "12,345" (a count, not a date: no locale call).
+  function fmtCount(n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  var CAD_UNITS = [
+    [0, "Unitless", ""], [1, "Inches", "in"], [2, "Feet", "ft"], [21, "US survey feet", "US ft"], [10, "Yards", "yd"],
+    [3, "Miles", "mi"], [4, "Millimeters", "mm"], [5, "Centimeters", "cm"], [14, "Decimeters", "dm"], [6, "Meters", "m"], [7, "Kilometers", "km"],
+  ];
+  var CAD_UNIT_METRES = { 1: 0.0254, 2: 0.3048, 3: 1609.344, 4: 0.001, 5: 0.01, 6: 1, 7: 1000, 10: 0.9144, 14: 0.1, 21: 1200 / 3937 };
+  // Layers that are usually sheet furniture, left unticked on import.
+  var CAD_SHEET_LAYER = /title|border|frame|viewport|defpoints|sheet|legend/i;
+
   // How a floor looks from the floor being viewed (d = its level − the
   // viewed one): itself at 100 %, one up 10 %, two up 2 %, anything higher or
   // lower hidden; floors above drawn 25 % bigger per floor, below 25 % smaller.
@@ -526,7 +566,9 @@
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
         var ext = planExtent(bg);
         var bounds = [[0, 0], [ext.h, ext.w]];
-        L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds).addTo(map);
+        // The site plan in a pane of its own, so it fades and scales with floor 0.
+        map.createPane("ground_plan").style.zIndex = "200";
+        L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds, { pane: "ground_plan" }).addTo(map);
         map.fitBounds(bounds, { padding: [20, 20] });
         map.setMaxBounds(L.latLngBounds([[-ext.h, -ext.w], [2 * ext.h, 2 * ext.w]]));
       } else {
@@ -543,7 +585,8 @@
           ctx.toast("This site has no coordinates — pan and zoom to it, then Done editing to keep that view");
         }
       }
-      map.on("click", function () {
+      map.on("click", function (ev) {
+        if (placing) { onPlaceClick(ev.latlng); return; }
         if (linkSel) { linkSel = null; clearHandles(); }
         if (!drawHandler && !adjust && selectedId) select(null);
       });
@@ -656,10 +699,17 @@
       var size = map.getSize();
       return map.containerPointToLayerPoint(L.point(size.x / 2, size.y / 2));
     }
+    // The ground itself — the map / satellite tiles or the site plan — is
+    // floor 0: it fades and scales with floor 0's devices and links.
+    function groundPanes() {
+      if (!map) return [];
+      return [map.getPane("tilePane"), map.getPane("ground_plan")].filter(Boolean);
+    }
     function applyOrigins() {
       if (!map) return;
       var o = screenOrigin();
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
+      groundPanes().forEach(function (pane) { pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
     }
     function applyFloorLook(animate) {
       if (!map) return;
@@ -671,6 +721,14 @@
         st.transform = "scale(" + look.scale + ")";
         st.opacity = String(look.opacity);
         f.pane.classList.toggle("is-faint", level !== state.layer);
+      });
+      var g = floorLook(0 - state.layer);
+      groundPanes().forEach(function (pane) {
+        var st = pane.style;
+        st.transition = animate ? "opacity " + FADE_MS + "ms ease-in-out, transform " + FADE_MS + "ms ease-in-out" : "none";
+        st.transformOrigin = o.x + "px " + o.y + "px";
+        st.transform = g.scale === 1 ? "" : "scale(" + g.scale + ")";
+        st.opacity = String(g.opacity);
       });
     }
     function visualLatLng(level, ll) {
@@ -1229,7 +1287,9 @@
       var level = state.layer;
       var fp = floorPlan(level);
       var items = [{ heading: layerName(level) + " plan" },
-        { label: fp ? "Replace floor plan" : "Upload floor plan", onSelect: function () { choosePlan(level); } }];
+        { label: fp ? "Replace floor plan" : "Upload floor plan", onSelect: function () { choosePlan(level); } },
+        { label: fp && fp.bg.cad ? "Replace CAD drawing (DXF)" : "Import CAD drawing (DXF)", onSelect: function () { chooseCad(level); } }];
+      if (fp && fp.bg.cad) items.push({ label: "Place with two points", onSelect: function () { startPlacing(level); } });
       if (fp) {
         items.push({ label: "Adjust floor plan", onSelect: startAdjust });
         items.push({ label: "Remove floor plan", danger: true, onSelect: function () { setPlan(level, null, null); } });
@@ -1284,6 +1344,286 @@
         }
       });
       input.click();
+    }
+
+    // ── CAD drawings (rule 182) ─────────────────────────────────────────
+    function cadFloors(exceptLevel) {
+      return state.layers.filter(function (l) { return l.level !== exceptLevel && l.background && l.background.cad; });
+    }
+    // Where a drawing with a geographic location (longitude / latitude) goes:
+    // its design point on that spot, its north up, at its own scale.
+    function geoPlan(bg) {
+      var geo = bg.cad && bg.cad.geo;
+      if (!geo || imageGround() || !geo.metresPerUnit) return null;
+      var ext = planExtent(bg);
+      var L1 = Math.max(bg.cad.ext.maxX - bg.cad.ext.minX, bg.cad.ext.maxY - bg.cad.ext.minY);
+      var d1 = geo.design, d2 = [geo.design[0] + geo.north[0] * L1, geo.design[1] + geo.north[1] * L1];
+      var g1 = toGround(L.latLng(geo.lat, geo.lng));
+      // Web Mercator metres stretch by 1 / cos(latitude).
+      var g2 = [g1[0], g1[1] + L1 * geo.metresPerUnit / Math.cos(geo.lat * Math.PI / 180)];
+      return fitTwoPoints(cadToPlan(bg, ext, d1), cadToPlan(bg, ext, d2), g1, g2, ext);
+    }
+    // A drawing in the same coordinates as another floor's: the same drawing
+    // point lands on the same spot (two corners of the new drawing, carried
+    // through the other floor's placement).
+    function lineUpPlan(bg, refLevel) {
+      var ref = floorPlan(refLevel);
+      if (!ref || !ref.bg.cad) return null;
+      var ext = planExtent(bg), c = bg.cad.ext;
+      var d1 = [c.minX, c.minY], d2 = [c.maxX, c.maxY];
+      var g = [d1, d2].map(function (d) { var q = cadToPlan(ref.bg, ref.ext, d); return planToGround(ref.plan, ref.ext, q[0], q[1]); });
+      return fitTwoPoints(cadToPlan(bg, ext, d1), cadToPlan(bg, ext, d2), g[0], g[1], ext);
+    }
+    function chooseCad(level) {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".dxf";
+      input.addEventListener("change", async function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        ctx.toast("Reading the drawing…");
+        try {
+          var a = await ctx.analyzeCad(file);
+          if (!a || !a.layers) throw new Error("the drawing could not be read");
+          openCadDialog(level, file, a);
+        } catch (err) {
+          ctx.toast("Drawing not read — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      });
+      input.click();
+    }
+    function openCadDialog(level, file, a) {
+      if (typeof buildOverlay !== "function") return;
+      var old = floorPlan(level);
+      var unitOpts = CAD_UNITS.map(function (u) {
+        var mine = u[0] === a.units.code && u[0];
+        return '<option value="' + u[0] + '"' + (u[0] === a.units.code ? " selected" : "") + ">" + esc(u[1]) +
+          (mine ? (a.unitsGuessed ? " (guessed)" : " (from the drawing)") : "") + "</option>";
+      }).join("");
+      var layerRows = a.layers.map(function (l) {
+        var on = !CAD_SHEET_LAYER.test(l.name);
+        return '<li><label><input type="checkbox" data-cad-layer="' + esc(l.name) + '"' + (on ? " checked" : "") + '>' +
+          '<span class="topo-cad-layer-name">' + esc(l.name) + '</span><span class="topo-cad-layer-count">' + fmtCount(l.count) + "</span></label></li>";
+      }).join("");
+      // Placement: the drawing's own location, another CAD floor's coordinates, this floor's last drawing, or two points.
+      var places = [];
+      if (a.geo && !imageGround()) places.push({ v: "geo", t: "Use the drawing's location", d: "It carries a geographic location: it lands in place, north up, at its own scale." });
+      if (old && old.bg.cad) places.push({ v: "lineup:" + level, t: "Keep this floor's placement", d: "Same coordinates as the drawing it replaces (" + esc(old.bg.cad.file) + ")." });
+      cadFloors(level).forEach(function (l) {
+        var share = Math.round(overlapShare(a.ext, l.background.cad.ext) * 100);
+        places.push({ v: "lineup:" + l.level, t: "Line up with " + esc(layerName(l.level)), d: "Uses its placement: right when both drawings share coordinates, as levels from one survey do. They overlap " + share + " %." });
+      });
+      places.push({ v: "two", t: "Place with two points", d: "Click two places on the drawing, then the same two on the map." });
+      var placeHtml = places.map(function (p, i) {
+        return '<label class="topo-cad-place-opt"><input type="radio" name="topo-cad-place" value="' + esc(p.v) + '"' + (i === 0 ? " checked" : "") + '>' +
+          '<span><strong>' + p.t + '</strong><span class="hint" style="display:block;margin:2px 0 0">' + p.d + "</span></span></label>";
+      }).join("");
+      var skipped = Object.keys(a.skipped || {}).filter(function (k) { return a.skipped[k]; });
+      var body =
+        '<div class="topo-cad">' +
+          '<div class="topo-cad-main">' +
+            '<div class="topo-cad-file"><strong>' + esc(file.name) + '</strong><span class="hint" style="margin:0">' +
+              (file.size >= 1048576 ? (file.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(file.size / 1024)) + " KB") + " · " + fmtCount(a.shapes) + " shapes" + (a.version ? " · " + esc(a.version) : "") + "</span></div>" +
+            '<div class="topo-cad-preview" data-cad-preview></div>' +
+            (skipped.length ? '<div class="hint" style="margin:0">Not drawn: ' + esc(skipped.map(function (k) { return a.skipped[k] + " " + k; }).join(", ")) + ".</div>" : "") +
+            (a.truncated ? '<div class="hint" style="margin:0;color:var(--color-warning)">The drawing is very large: only the first part is shown and kept.</div>' : "") +
+          "</div>" +
+          '<div class="topo-cad-side">' +
+            '<div class="form-group" style="margin:0"><label for="topo-cad-units">Drawing units</label><select id="topo-cad-units">' + unitOpts + "</select>" +
+              '<div class="hint">' + (a.unitsGuessed
+                ? "The drawing doesn’t say its units; this is a guess from its " + (a.units.code === 6 ? "metric" : "imperial") + " setting. State plane drawings are usually US survey feet."
+                : "How long one drawing unit is. Read from the file; change it only if the drawing says otherwise.") + "</div></div>" +
+            '<div><div class="card-title" style="margin:0 0 6px">Layers</div><ul class="topo-cad-layers">' + layerRows + "</ul>" +
+              '<div class="hint">Untick the title block, border and anything you don’t want on the map. Only ticked layers are kept.</div></div>' +
+            '<div><div class="card-title" style="margin:0 0 6px">Placement</div>' + placeHtml + "</div>" +
+          "</div>" +
+        "</div>";
+      var footer =
+        '<span class="topo-cad-note" style="margin:0 auto 0 0">Polaris keeps the drawing of the ticked layers, not the DXF file.</span>' +
+        '<button type="button" class="btn btn-secondary" data-cad="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" data-cad="ok">Import</button>';
+      var dlg = buildOverlay(1100, "Import CAD drawing — " + layerName(level), body, footer, null, true);
+      drawCadPreview(dlg.overlay.querySelector("[data-cad-preview]"), a);
+      var box = dlg.overlay;
+      function ticked() {
+        return Array.prototype.filter.call(box.querySelectorAll("[data-cad-layer]"), function (c) { return c.checked; })
+          .map(function (c) { return c.getAttribute("data-cad-layer"); });
+      }
+      box.addEventListener("change", function (e) {
+        var cb = e.target.closest && e.target.closest("[data-cad-layer]");
+        if (cb) {
+          var name = cb.getAttribute("data-cad-layer");
+          box.querySelectorAll("[data-cad-preview] g[data-cad-l]").forEach(function (g) {
+            if (g.getAttribute("data-cad-l") === name) g.style.display = cb.checked ? "" : "none";
+          });
+        }
+      });
+      box.querySelector('[data-cad="cancel"]').addEventListener("click", dlg.close);
+      box.querySelector('[data-cad="ok"]').addEventListener("click", async function () {
+        var layers = ticked();
+        if (!layers.length) { ctx.toast("Tick at least one layer", "error"); return; }
+        var units = Number(box.querySelector("#topo-cad-units").value);
+        var pick = (box.querySelector('input[name="topo-cad-place"]:checked') || {}).value || "two";
+        var btn = this;
+        btn.disabled = true;
+        try {
+          var img = await ctx.importCad(file, layers, units);
+          if (!img || !img.id || !img.cad) throw new Error("no drawing returned");
+          var bg = { kind: "image", imageId: img.id, width: img.width, height: img.height, cad: img.cad };
+          var plan = null;
+          if (pick === "geo") plan = geoPlan(bg);
+          else if (pick.indexOf("lineup:") === 0) plan = lineUpPlan(bg, Number(pick.slice(7)));
+          var two = !plan;
+          if (!plan) plan = framedPlan(planExtent(bg));
+          dlg.close();
+          setPlan(level, bg, plan);
+          if (two) {
+            startPlacing(level);
+            ctx.toast("Drawing imported — now place it: click a place on the drawing, then the same place on the map");
+          } else {
+            ctx.toast("Drawing imported and placed — it is saved with the view when you save");
+          }
+        } catch (err) {
+          btn.disabled = false;
+          ctx.toast("Drawing not imported — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      });
+    }
+    // The dialog's preview: the server's thinned paths, one group per layer
+    // (so a layer's tick shows or hides it), drawn with DOM calls only.
+    function drawCadPreview(holder, a) {
+      if (!holder || !a.preview) return;
+      var NS = "http://www.w3.org/2000/svg";
+      var W = a.ext.maxX - a.ext.minX, H = a.ext.maxY - a.ext.minY;
+      var k = 1000 / Math.max(W, H);
+      var vw = W * k, vh = H * k;
+      var svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "-10 -10 " + (vw + 20) + " " + (vh + 20));
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.setAttribute("aria-hidden", "true");
+      var flip = document.createElementNS(NS, "g");
+      flip.setAttribute("transform", "matrix(1 0 0 -1 0 " + vh + ")");
+      svg.appendChild(flip);
+      var groups = {};
+      function group(i) {
+        if (groups[i]) return groups[i];
+        var g = document.createElementNS(NS, "g");
+        g.setAttribute("data-cad-l", a.preview.layerIndex[i]);
+        if (CAD_SHEET_LAYER.test(a.preview.layerIndex[i])) g.style.display = "none";
+        flip.appendChild(g);
+        return (groups[i] = g);
+      }
+      a.preview.paths.forEach(function (p) {
+        var pts = [];
+        for (var i = 0; i + 1 < p.p.length; i += 2) pts.push(p.p[i] + "," + p.p[i + 1]);
+        var el = document.createElementNS(NS, "polyline");
+        el.setAttribute("points", pts.join(" "));
+        group(p.l).appendChild(el);
+      });
+      a.preview.texts.forEach(function (t) {
+        var el = document.createElementNS(NS, "text");
+        el.setAttribute("transform", "translate(" + t.x + " " + t.y + ") scale(1 -1) rotate(" + (-t.r) + ")");
+        el.setAttribute("font-size", String(Math.max(2, t.h)));
+        el.textContent = t.t;
+        group(t.l).appendChild(el);
+      });
+      holder.appendChild(svg);
+    }
+
+    // Two-point placing: a place on the drawing, the same place on the map,
+    // twice. The plan follows live; Done keeps it, Cancel / Esc puts it back.
+    var placing = null;
+    function startPlacing(level) {
+      var fp = floorPlan(level);
+      if (!fp || !state.editing || !map) return;
+      endAdjust();
+      endPlacing(false);
+      placing = { level: level, saved: fp.layer.plan ? Object.assign({}, fp.layer.plan) : null, pts: [], pins: [], bar: document.createElement("div") };
+      placing.bar.className = "topo-plan-bar topo-cad-place";
+      placing.bar.addEventListener("click", function (e) {
+        if (e.target.closest('[data-place="done"]')) { changed("layers"); endPlacing(true); }
+        else if (e.target.closest('[data-place="cancel"]')) endPlacing(false);
+        else if (e.target.closest('[data-place="over"]')) { restorePlaced(); placing.pts = []; clearPins(); renderPlacing(); }
+      });
+      host.appendChild(placing.bar);
+      host.classList.add("is-placing");
+      renderPlacing();
+    }
+    function clearPins() { placing.pins.forEach(function (m) { m.remove(); }); placing.pins = []; }
+    function restorePlaced() {
+      var l = layerObj(placing.level);
+      if (!l) return;
+      if (placing.saved) l.plan = Object.assign({}, placing.saved); else delete l.plan;
+      drawAll();
+    }
+    function endPlacing(keep) {
+      if (!placing) return;
+      if (!keep) restorePlaced();
+      clearPins();
+      if (placing.bar.parentNode) placing.bar.parentNode.removeChild(placing.bar);
+      host.classList.remove("is-placing");
+      placing = null;
+    }
+    function onPlaceClick(ll) {
+      if (!placing) return;
+      var n = placing.pts.length; // 0..3: drawing, map, drawing, map
+      if (n >= 4) return;
+      var pair = Math.floor(n / 2) + 1;
+      var onMap = n % 2 === 1;
+      if (onMap) placing.pts.push(toGround(ll));
+      else { var q = latLngToLocal(placing.level, ll); placing.pts.push([q.x, q.y]); }
+      placing.pins.push(L.marker(ll, {
+        interactive: false, keyboard: false, pane: "floor_links",
+        icon: L.divIcon({ className: "topo-cad-pin" + (onMap ? " is-map" : "") + (pair === 2 ? " is-second" : ""), html: "<span>" + pair + "</span>", iconSize: [24, 24], iconAnchor: [12, 12] }),
+      }).addTo(map));
+      if (placing.pts.length === 4) {
+        var fp = floorPlan(placing.level);
+        var plan = fp && fitTwoPoints(placing.pts[0], placing.pts[2], placing.pts[1], placing.pts[3], fp.ext);
+        if (!plan) {
+          ctx.toast("Pick two places further apart", "error");
+          placing.pts.length = 2;
+          placing.pins.splice(2).forEach(function (m) { m.remove(); });
+        } else {
+          fp.layer.plan = plan;
+          drawAll();
+        }
+      }
+      renderPlacing();
+    }
+    // The scale the two points imply against the drawing's own units — a
+    // large difference is usually a point clicked in the wrong place.
+    function scaleCheck(level) {
+      var fp = floorPlan(level);
+      var cad = fp && fp.bg.cad;
+      if (!cad || imageGround() || !cad.units || !cad.units.metres) return null;
+      var lat = fromGround([fp.plan.cx, fp.plan.cy]).lat;
+      var W = cad.ext.maxX - cad.ext.minX;
+      var metres = fp.plan.sx * Math.cos(lat * Math.PI / 180) * fp.ext.w / W;
+      var ratio = metres / cad.units.metres;
+      var short = (CAD_UNITS.filter(function (u) { return u[0] === cad.units.code; })[0] || [0, "", ""])[2];
+      return { ratio: ratio, text: "The drawing is in " + cad.units.name.toLowerCase() + "; your points make one unit " + ratio.toFixed(3) + " " + short +
+        " (" + (Math.abs(ratio - 1) * 100).toFixed(1) + " % off)." };
+    }
+    function renderPlacing() {
+      if (!placing) return;
+      var fp = floorPlan(placing.level);
+      var n = placing.pts.length;
+      var status = function (pair) {
+        var d = n > (pair - 1) * 2, g = n > (pair - 1) * 2 + 1;
+        return "drawing " + (d ? "✓" : "…") + " · map " + (g ? "✓" : "…");
+      };
+      var next = n >= 4 ? "Done keeps this placement." : n % 2 === 0 ? "Click a place you can find on both — on the drawing." : "Now click the same place on the map.";
+      var chk = n >= 4 ? scaleCheck(placing.level) : null;
+      placing.bar.innerHTML =
+        "<strong>Place " + esc(layerName(placing.level)) + "</strong>" +
+        '<span class="hint" style="margin:0">' + esc(fp && fp.bg.cad ? fp.bg.cad.file : "") + "</span>" +
+        '<span class="topo-cad-step"><span class="topo-cad-dot">1</span>' + status(1) + "</span>" +
+        '<span class="topo-cad-step"><span class="topo-cad-dot is-second">2</span>' + status(2) + "</span>" +
+        "<span>" + esc(next) + "</span>" +
+        (chk ? '<span class="topo-cad-scale' + (Math.abs(chk.ratio - 1) > 0.05 ? " is-off" : "") + '">' + esc(chk.text) + "</span>" : "") +
+        '<button type="button" class="btn btn-secondary btn-sm" data-place="over">Start over</button>' +
+        '<button type="button" class="btn btn-secondary btn-sm" data-place="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary btn-sm" data-place="done"' + (n >= 4 ? "" : " disabled") + ">Done</button>";
     }
 
     // ── Adjusting a floor's plan ────────────────────────────────────────
@@ -1492,7 +1832,7 @@
       if (viewLayer) { viewLayer = null; applyBaseLayer(); }
       paintDragging();
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
-      if (!on) { endAdjust(); linkSel = null; clearHandles(); }
+      if (!on) { endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
       if (cableRuns) {
         cableRuns.setEditing(!!on);
@@ -1534,6 +1874,7 @@
     function setLayer(level) {
       if (level === state.layer) return;
       endAdjust();
+      endPlacing(false);
       linkSel = null;
       clearHandles();
       var from = state.layer;
@@ -1672,6 +2013,7 @@
       if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
       if (e.key === "Escape" && adjust) endAdjust();
       if (e.key === "Escape" && cableRuns) cableRuns.cancelDraw();
+      if (e.key === "Escape" && placing) endPlacing(false);
     }
     document.addEventListener("keydown", onKey);
 
@@ -1773,6 +2115,10 @@
     _groundToPlan: groundToPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
+    _cadToPlan: cadToPlan,
+    _fitTwoPoints: fitTwoPoints,
+    _overlapShare: overlapShare,
+    _planToGround: planToGround,
     _convexHull: convexHull,
     _roundedHull: roundedHull,
     _groupsFromData: groupsFromData,

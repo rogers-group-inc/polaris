@@ -1911,6 +1911,23 @@ const api = {
         return _readResponseBody(res, "Background upload failed");
       });
     },
+    // Rule 182: a DXF as a floor plan — read it (no layers) or import it.
+    topologyCad: (id, viewId, file, layers, units) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (layers) {
+        formData.append("layers", JSON.stringify(layers));
+        if (units !== undefined && units !== null) formData.append("units", String(units));
+      }
+      return fetch(`${API_BASE}/map/sites/${id}/topology/views/${viewId}/cad`, {
+        method: "POST",
+        headers: _csrfHeaders(),
+        body: formData,
+      }).then(function (res) {
+        if (res.status === 401) { window.location.href = "/login.html"; return; }
+        return _readResponseBody(res, layers ? "CAD import failed" : "The drawing could not be read");
+      });
+    },
     // Rule 148: assets=write — rewrites descriptions from polygon placements.
     commitTopologyLocationCodes: (id, changes) => request("POST", `/map/sites/${id}/topology/location-codes`, { changes }),
   },

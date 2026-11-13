@@ -217,3 +217,27 @@ d("Phase 7 device-inventory deferred flush", () => {
     expect(await assetsForMac(MAC_B)).toHaveLength(1);
   });
 });
+
+// Unchanged keys are dropped before the write (utils/assetWritePrune.ts), so a
+// device that reports what Polaris already holds costs one UPDATE. What that
+// must not cost: presence still advances, and a real change still lands.
+d("Phase 7 skips unchanged fields", () => {
+  it("a re-run with nothing new keeps every field and still advances lastSeen", async () => {
+    await run([inv({ switchName: "SW-1" })]);
+    const first = await prisma.asset.findFirstOrThrow({ where: { macAddress: MAC_A } });
+    await new Promise((r) => setTimeout(r, 20));
+    await run([inv({ switchName: "SW-1" })]);
+    const second = await prisma.asset.findFirstOrThrow({ where: { macAddress: MAC_A } });
+    for (const k of ["hostname", "ipAddress", "ipSource", "macAddress", "os", "osVersion", "manufacturer", "assetType", "status", "learnedLocation", "lastSeenSwitch"] as const) {
+      expect(second[k], k).toEqual(first[k]);
+    }
+    expect(second.lastSeen!.getTime()).toBeGreaterThanOrEqual(first.lastSeen!.getTime());
+  });
+
+  it("a real change in an otherwise unchanged sighting still lands", async () => {
+    await run([inv({ switchName: "SW-1", osVersion: "10.0.19045" })]);
+    await run([inv({ switchName: "SW-1", osVersion: "10.0.22631" })]);
+    const row = await prisma.asset.findFirstOrThrow({ where: { macAddress: MAC_A } });
+    expect(row.osVersion).toContain("10.0.22631"); // rule 28 formats a Windows build as "23H2 (10.0.22631)"
+  });
+});

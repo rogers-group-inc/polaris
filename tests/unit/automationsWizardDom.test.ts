@@ -3345,6 +3345,49 @@ describe("automation wizard DOM render", () => {
     expect(saved.trigger.operator).toBe(">=");
   });
 
+  it("fills the path-check picker while the server box is ticked (fetch and lookup share one key)", async () => {
+    // Regression: the fetch added includeServer to the cache key, the painter
+    // did not, so the picker stayed on "(any)" / "Checking…" with the box
+    // ticked — the default for a Path Monitor automation.
+    const automations = (g.api as { automations: Record<string, any> }).automations;
+    const orig = automations.dimensionValues;
+    const asked: Array<Record<string, any>> = [];
+    automations.dimensionValues = async (body: Record<string, any>) => {
+      asked.push(body);
+      if (body.dimension !== "checkId") return orig(body);
+      return {
+        values: [{ value: "chk-intranet", label: "Intranet (HTTPS)", assetCount: 1 }],
+        noun: "path checks", narrowLabel: "", strict: true,
+        scopedAssets: 0, sampledAssets: 0, assetsWithData: 1, windowHours: 24,
+      };
+    };
+    try {
+      doc.body.innerHTML = "";
+      savedPayloads.length = 0;
+      toastErrors.length = 0;
+      await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+        ...LOSS_BASE, id: "r-path-picker", name: "Intranet cert expiring",
+        trigger: { type: "asset_metric", metric: "pathTlsDaysLeft", aggregation: "latest", windowSec: 0, operator: "<", threshold: 7,
+          forDurationSec: 0, includeServer: true, dimensionFilter: { checkId: "chk-intranet" } },
+        reset: { mode: "auto" }, severityBands: null, bandNotify: null,
+      });
+      for (let i = 0; i < 2; i++) {
+        (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 30));
+      expect((doc.querySelector("#tf-path-server") as unknown as { checked: boolean }).checked).toBe(true);
+      expect(asked.some((b) => b.dimension === "checkId" && b.narrow && b.narrow.includeServer === true)).toBe(true);
+      const sel = doc.querySelector('.tgl-dim[data-dim="checkId"]') as unknown as { value: string; innerHTML: string };
+      expect(sel.innerHTML).toContain("Intranet (HTTPS)");
+      expect(sel.value).toBe("chk-intranet");
+      const note = doc.querySelector("#aw-trig-root .tgl-dim-note") as unknown as { textContent: string };
+      expect(note.textContent).not.toMatch(/Checking/);
+    } finally {
+      automations.dimensionValues = orig;
+    }
+  });
+
   it("opens a stored path automation under Path Monitor, keeping its server choice", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
@@ -3367,6 +3410,42 @@ describe("automation wizard DOM render", () => {
     const saved = savedPayloads[0]! as Record<string, any>;
     expect(saved.trigger.metric).toBe("pathOk");
     expect(saved.trigger.includeServer).toBe(false);
+  });
+
+  it("opens a stored certificate-change automation in its own mode and saves each change mode's type (rule 85(c))", async () => {
+    const open = async () => {
+      doc.body.innerHTML = "";
+      savedPayloads.length = 0;
+      toastErrors.length = 0;
+      await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+        ...LOSS_BASE, id: "r-path-cert", name: "Cert renewed",
+        trigger: { type: "change", changeType: "path_check_tls_cert_changed", includeServer: true },
+        reset: null, severityBands: null, bandNotify: null,
+      });
+      for (let i = 0; i < 2; i++) {
+        (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    const save = async () => {
+      (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(toastErrors).toEqual([]);
+      return savedPayloads[0]! as Record<string, any>;
+    };
+    await open();
+    expect((doc.querySelector("#aw-trigger-type") as unknown as { value: string }).value).toBe("path");
+    expect((doc.querySelector("#tf-path-mode") as unknown as { value: string }).value).toBe("cert");
+    expect(doc.querySelector("#tf-path-cert-note")!.hasAttribute("hidden")).toBe(false);
+    expect(doc.querySelector("#aw-trig-root")).toBeNull();
+    expect((await save()).trigger).toMatchObject({ type: "change", changeType: "path_check_tls_cert_changed", includeServer: true });
+
+    await open();
+    const mode = doc.querySelector("#tf-path-mode") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    mode.value = "route";
+    mode.dispatchEvent(new (g.window as any).Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await save()).trigger.changeType).toBe("path_check_path_changed");
   });
 });
 

@@ -59,7 +59,10 @@ function index(assets: Array<Record<string, any>>) {
 
 const asset = (over: Record<string, unknown> = {}) => ({
   id: "a1", macAddress: MAC, macAddresses: [], hostname: "pc-1", ipAddress: "10.1.0.4", status: "active", assetType: "workstation",
-  lastSeen: null, fortinetTopology: null, ...over,
+  lastSeen: null, fortinetTopology: null,
+  // The pin columns every preloaded row carries (assetWritePrune treats a missing one as pinned).
+  ipOverride: null, ipBlankPinned: false, primaryAddressIp: null, hostnameOverride: null,
+  ...over,
 });
 const lease = (over: Record<string, unknown> = {}) => ({
   macAddress: MAC.toLowerCase(), ipAddress: "10.1.0.5", type: "dhcp-lease", device: "FGT-A", seenLeased: true,
@@ -88,7 +91,11 @@ describe("Phase 6 — a held lease on an endpoint", () => {
     const { state, done } = run([lease()], [a]);
     await done;
     const data = db.assetUpdate.mock.calls[0][0].data;
-    expect(data).toMatchObject({ macAddress: MAC, ipAddress: "10.1.0.5", ipSource: "FGT-A", learnedLocation: "FGT-A", lastSeenSource: "dhcp-lease" });
+    expect(data).toMatchObject({ ipAddress: "10.1.0.5", ipSource: "FGT-A", learnedLocation: "FGT-A", lastSeenSource: "dhcp-lease" });
+    // The primary MAC and status are what the row already holds: not re-sent
+    // (utils/assetWritePrune.ts — each would have fired the db.ts hook chain).
+    expect(data).not.toHaveProperty("macAddress");
+    expect(data).not.toHaveProperty("status");
     expect(data.lastSeen).toEqual(new Date(NOW));
     expect(m.reconcileMacs).toHaveBeenCalledWith("a1", [expect.objectContaining({ mac: MAC, source: "dhcp-lease", subnetCidr: "10.1.0.0/24", subnetName: "LAN" })]);
     expect(a.ipAddress).toBe("10.1.0.5"); // the run index follows
@@ -122,14 +129,35 @@ describe("Phase 6 — a held lease on an endpoint", () => {
   });
 });
 
+describe("Phase 6 — unchanged rows (utils/assetWritePrune.ts)", () => {
+  it("a lease for an asset already at that address with that MAC writes only presence", async () => {
+    const a = asset({ ipAddress: "10.1.0.5", ipSource: "FGT-A", learnedLocation: "FGT-A" });
+    await run([lease()], [a]).done;
+    const data = db.assetUpdate.mock.calls[0][0].data;
+    expect(Object.keys(data).sort()).toEqual(["lastSeen", "lastSeenSource"].sort());
+  });
+
+  it("a later entry equal to the STORED value still wins over an earlier one (pruned against the pre-phase row)", async () => {
+    // Stored: 10.1.0.4 from FGT-A. A lease moves it, then a reservation on the
+    // same card brings it back — the merged write must say 10.1.0.4, so it is
+    // dropped as unchanged rather than leaving the lease's address.
+    const a = asset({ ipAddress: "10.1.0.4", ipSource: "FGT-A", learnedLocation: "FGT-A" });
+    await run([lease(), lease({ ipAddress: "10.1.0.4", type: "dhcp-reservation" })], [a]).done;
+    const data = db.assetUpdate.mock.calls[0]?.[0]?.data ?? {};
+    expect(data.ipAddress).toBeUndefined();
+    expect(a.ipAddress).toBe("10.1.0.4");
+  });
+});
+
 describe("Phase 6 — infrastructure and reservations", () => {
   it("never re-addresses a switch / FortiGate, nor bumps a Fortinet-owned device's Last Seen", async () => {
     const sw = asset({ assetType: "switch", fortinetTopology: { role: "fortiswitch" } });
     const { state, done } = run([lease()], [sw]);
     await done;
-    const data = db.assetUpdate.mock.calls[0][0].data;
-    expect(data.ipAddress).toBeUndefined();
-    expect(data.lastSeen).toBeUndefined();
+    // Nothing the switch row does not already hold, so no asset write at all —
+    // the MAC side table is still reconciled.
+    expect(db.assetUpdate).not.toHaveBeenCalled();
+    expect(m.reconcileMacs).toHaveBeenCalledWith("a1", expect.any(Array));
     expect(state.fortigateEndpointAssetIds.size).toBe(0);
     expect(state.addressSightings).toEqual([]);
   });

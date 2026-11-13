@@ -22,7 +22,10 @@ beforeEach(async () => {
   listRuns().mockResolvedValue([] as never);
   vi.resetModules();
   engine = await import("../../src/services/discovery/discoveryEngine.js");
-});
+  // A fresh import of discoveryEngine (the throttle's state is module-level)
+  // pulls in most of the discovery tree: well past the 10 s default hook
+  // timeout under a loaded full-suite run, though ~1 s alone.
+}, 60_000);
 
 afterEach(() => vi.useRealTimers());
 

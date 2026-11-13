@@ -291,3 +291,35 @@ d("syncGenericApiDevices — the directly-written columns", () => {
     expect(a?.discoveredByIntegrationId).toBe(other.id);
   });
 });
+
+// Efficiency audit: an unchanged record is not re-upserted (its source row is
+// bumped in one statement) and its asset write drops the unchanged keys; the
+// writes are flushed after the loop. The source must still look fresh, and a
+// real change must still land.
+d("syncGenericApiDevices: unchanged records", () => {
+  it("a re-run refreshes the source row's freshness (and syncedAt in its blob) and changes nothing else", async () => {
+    const records = [rec("same1", { ipAddress: "10.250.9.7", model: "M1", macs: ["AC:CC:8E:00:00:07"] })];
+    await syncGenericApiDevices(integrationId, NAME, {}, result(records));
+    const src1 = await prisma.assetSource.findFirstOrThrow({ where: { integrationId, sourceKind: "generic-api" } });
+    const a1 = await prisma.asset.findFirstOrThrow({ where: { hostname: `${PREFIX}same1` } });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const r2 = await syncGenericApiDevices(integrationId, NAME, {}, result(records));
+    expect(r2.updated).toEqual([`${PREFIX}same1`]);
+    const src2 = await prisma.assetSource.findFirstOrThrow({ where: { integrationId, sourceKind: "generic-api" } });
+    const a2 = await prisma.asset.findFirstOrThrow({ where: { hostname: `${PREFIX}same1` } });
+    expect(src2.lastSeen.getTime()).toBeGreaterThan(src1.lastSeen.getTime());
+    expect(src2.syncedAt!.getTime()).toBeGreaterThan(src1.syncedAt!.getTime());
+    expect((src2.observed as any).syncedAt).not.toBe((src1.observed as any).syncedAt);
+    expect({ ...(src2.observed as any), syncedAt: null }).toEqual({ ...(src1.observed as any), syncedAt: null });
+    for (const k of ["hostname", "ipAddress", "macAddress", "model", "tags", "assetType"] as const) expect(a2[k], k).toEqual(a1[k]);
+  });
+
+  it("a changed record still lands, on the asset and its source row", async () => {
+    await syncGenericApiDevices(integrationId, NAME, {}, result([rec("chg1", { model: "M1" })]));
+    await syncGenericApiDevices(integrationId, NAME, {}, result([rec("chg1", { model: "M2" })]));
+    expect((await byName("chg1"))?.model).toBe("M2");
+    const src = await prisma.assetSource.findFirstOrThrow({ where: { integrationId, sourceKind: "generic-api" } });
+    expect((src.observed as any).model).toBe("M2");
+  });
+});

@@ -350,6 +350,38 @@ so `definitionSha256` and the config ETags are untouched, no baseline moves, and
 gate is needed: an older agent keeps running the check exactly as before, without cookies,
 until it is upgraded.
 
+### Rule 85(c) — a changed certificate is an Event (2026-11-13)
+
+**The ask.** The operator wanted a Path Monitor automation for two things: a certificate about
+to expire, and a certificate whose expiry has moved because it was replaced. The first
+already existed (`pathTlsDaysLeft`, a threshold on days remaining). The second had no reading
+to alert on: every sample stored `tlsNotAfter`, but nothing compared one run's certificate
+with the last.
+
+**The decision.** A certificate change is news, not a state, the same as a route change, so it
+is an Event plus a change trigger (`path_check_tls_cert_changed`), not a metric. The baseline
+lives on the source row (`lastTlsNotAfter` / `lastTlsIssuer`), so the comparison costs no
+sample-table read on the hot ingest path, and the host name is read only when an Event is
+about to be written.
+- **Keyed on the expiry, per source.** Each host sees the certificate its own path reaches;
+  two hosts behind different load-balancer pools can legitimately differ. The issuer is
+  carried in the details but is not the key: a re-issue with the same expiry is not what the
+  operator asked about.
+- **Direction is in the Event.** "Later" is the renewal everyone expects (info); "earlier" is
+  a replacement that expires sooner, the case that deserves attention (warning). Both fire the
+  trigger; an operator who only wants one can use an audit-event trigger on
+  `path_check.tls_cert_changed` with `detailsMatch: { direction: "later" }`.
+- **No false changes.** The first certificate is a baseline. A run that saw no certificate (a
+  failed connect, a non-HTTPS check) never moves it, so an outage and its recovery are not a
+  "change". A late push older than the source's latest result is skipped, so a delayed batch
+  carrying the old certificate cannot read as a change back.
+- **A 10-minute floor**, as for path changes: a pool whose backends serve two certificates
+  would otherwise write an Event every run. The baseline still follows each run.
+
+**Rejected:** a `pathTlsExpiryShiftDays` metric. A threshold metric would have to hold a
+non-zero value for some window to be alerted on and then decay, which is a change event
+dressed as a gauge.
+
 ### Rule 85 — the invariant as stated in full
 
 See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (the

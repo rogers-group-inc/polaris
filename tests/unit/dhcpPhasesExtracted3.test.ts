@@ -9,6 +9,7 @@ import { resetDbStub, stubbed } from "./_dbStub.js";
 
 const db = {
   create: stubbed(prisma.reservation.create),
+  createManyAndReturn: stubbed(prisma.reservation.createManyAndReturn),
   update: stubbed(prisma.reservation.update),
   updateMany: stubbed(prisma.reservation.updateMany),
 };
@@ -78,10 +79,7 @@ describe("Phase 4 — interface IP reservations", () => {
 });
 
 describe("Phase 7c — observed IPv6 (rule 125)", () => {
-  it("records a seen IPv6 client address as an observed row, and never over another source", async () => {
-    db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "o1", ...data }));
-    const activeResMap = new Map<string, any>([["net6|2001:db8::99", { id: "dhcp", sourceType: "dhcp_lease" }]]);
-    await recordObservedIpv6({
+  const run = (activeResMap: Map<string, any>) => recordObservedIpv6({
       result: {
         deviceInventory: [
           { ipv6Address: "2001:db8::10", macAddress: "aa:bb:cc:00:00:10", device: "FGT-A", isOnline: true },
@@ -94,10 +92,28 @@ describe("Phase 7c — observed IPv6 (rule 125)", () => {
       assetIdx: { findByMac: () => ({ hostname: "laptop-10" }) } as never,
       projectRefLabel: "FortiGate Integration", syncLog: log,
     });
-    const created = db.create.mock.calls.map((c) => c[0].data);
+
+  it("records a seen IPv6 client address as an observed row in ONE batch insert, and never over another source", async () => {
+    db.createManyAndReturn.mockImplementation(async ({ data }: { data: Array<Record<string, unknown>> }) =>
+      data.map((d, i) => ({ id: `o${i + 1}`, ...d })));
+    const activeResMap = new Map<string, any>([["net6|2001:db8::99", { id: "dhcp", sourceType: "dhcp_lease" }]]);
+    await run(activeResMap);
+    expect(db.createManyAndReturn).toHaveBeenCalledTimes(1);
+    const args = db.createManyAndReturn.mock.calls[0][0];
+    expect(args.skipDuplicates).toBe(true); // a row something else claimed mid-run is skipped
     // Exactly the one free address — the DHCP-held one is left to its source.
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({ ipAddress: "2001:db8::10", sourceType: "observed", subnetId: "net6" });
+    expect(args.data).toHaveLength(1);
+    expect(args.data[0]).toMatchObject({ ipAddress: "2001:db8::10", sourceType: "observed", subnetId: "net6" });
+    expect(activeResMap.get("net6|2001:db8::10")).toMatchObject({ id: "o1" });
+    expect(db.create).not.toHaveBeenCalled();
+  });
+
+  it("retries row by row when the batch insert fails, so one bad row costs only itself", async () => {
+    db.createManyAndReturn.mockRejectedValue(new Error("batch broke"));
+    db.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "o1", ...data }));
+    const activeResMap = new Map<string, any>();
+    await run(activeResMap);
+    expect(db.create).toHaveBeenCalledTimes(2);
     expect(activeResMap.get("net6|2001:db8::10")).toMatchObject({ id: "o1" });
   });
 });

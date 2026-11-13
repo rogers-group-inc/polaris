@@ -43,6 +43,8 @@ import { logDiscoveryAssetCreated, logDiscoveryAssetUpdated } from "../../eventL
 import { reconcileMacAddresses } from "../../macAddressService.js";
 import { planHostnameMacSuffixes } from "../../hostnameMacSuffixService.js";
 import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
+import { pruneUnchangedAssetFields } from "../../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../../assetIpHistoryService.js";
 
 export async function syncDeviceInventory(input: {
   result: DiscoveryResult;
@@ -132,6 +134,9 @@ export async function syncDeviceInventory(input: {
     // asset instead of one per sighting.
     const pendingInvUpdates = new Map<string, { data: Record<string, unknown>; label: string }>();
     const pendingInvMacs = new Map<string, MacJsonEntry[]>();
+    // Addresses a write no longer stages because they equal the row's: their
+    // IP history is refreshed in one batch after the flush (assetWritePrune).
+    const invIpHistoryRefresh: Array<{ assetId: string; ip: string; source: string }> = [];
     // Hostnames of the assets this pass creates — rule 91(i) names their families apart by MAC after the flush.
     const invCreated: Array<{ id: string; hostname: string }> = [];
 
@@ -381,6 +386,12 @@ export async function syncDeviceInventory(input: {
         if (Object.keys(updateData).length > 0 || macListForReconcile) {
           try {
             clampAcquiredToLastSeen(updateData, existingAsset);
+            // Drop what the row already holds, so an unchanged device's write
+            // is one UPDATE (lastSeen) rather than the full db.ts hook chain.
+            // Compared against this in-memory object, which already carries
+            // any earlier sighting's pending change, so merging stays correct.
+            const { ipHistoryRefresh } = pruneUnchangedAssetFields(existingAsset as Record<string, unknown>, updateData);
+            if (ipHistoryRefresh) invIpHistoryRefresh.push({ assetId: existingAsset.id, ...ipHistoryRefresh });
             if (Object.keys(updateData).length > 0) {
               // The WRITE is deferred to the flush below; every in-memory
               // effect stays right here, in order. That split is the whole
@@ -536,6 +547,7 @@ export async function syncDeviceInventory(input: {
     if (pendingInvMacs.size > 0) {
       await mapSettledWithConcurrency([...pendingInvMacs], 50, ([assetId, macs]) => reconcileMacAddresses(assetId, macs));
     }
+    if (invIpHistoryRefresh.length > 0) await refreshIpHistoryLastSeen(invIpHistoryRefresh);
 
     // Business rule 91(i): a created asset whose name another live asset
     // already carries — every bare-named member of that family whose name

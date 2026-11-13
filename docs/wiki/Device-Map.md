@@ -589,7 +589,7 @@ in one view never moves them in another.
 the column under the tick:
 
 - **Background** (the map icon): **OpenStreetMap** or **Upload image** (PNG,
-  JPEG or WebP, up to 15 MB). On OpenStreetMap the map opens zoomed in on the
+  JPEG or WebP, up to 20 MB). On OpenStreetMap the map opens zoomed in on the
   site; pan and zoom to frame it, and the view you leave edit mode on is saved
   with the view. An image is shown at any resolution, scaled to fit. Switching
   between the two clears the polygons and placements drawn on the old one.
@@ -717,7 +717,9 @@ an optional name such as Basement; right-click the floor number to rename or
 delete it.
 
 All floors are drawn together. The floor you're on is at full strength, the floor
-above it at 10 % and the one above that at 2 %; floors below are hidden. Floors
+above it at 10 % and the one above that at 2 %; floors below are hidden. The ground
+map (or satellite, or site plan) is part of floor 0, so on floor −1 it fades to 10 % and
+grows with floor 0's devices. Floors
 above are drawn 25 % larger per floor and floors below 25 % smaller, scaled about
 the middle of the screen (the small crosshair), so as you pan, the floors above
 move a little faster than the ground. Changing floors fades and scales them
@@ -752,6 +754,35 @@ its speed and the interface details. In edit mode:
 
 Bends are saved with the floor, on Save or the tick like everything else, and
 move with the floor's plan when you adjust it.
+
+**A floor plan can be a CAD drawing.** On a floor, the map button also offers **Import CAD
+drawing (DXF)**. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
+level); DWG files are not read. The import dialog shows:
+
+- a preview of the drawing;
+- its **units**, read from the file (change them only if the drawing says otherwise);
+- its **layers** with how many shapes each holds. Untick the title block, border and
+  anything else you don't want on the map; layers that look like sheet furniture start
+  unticked. Only the ticked layers are kept, and the DXF file itself is not stored.
+
+Hatching, dimensions and 3D objects are not drawn; the dialog lists what was skipped.
+
+Then choose how to place it:
+
+- **Use the drawing's location** — offered when the drawing carries its geographic location
+  in longitude and latitude. It lands in place, north up, at its own scale.
+- **Line up with** another floor — offered for every floor that already has a CAD drawing.
+  It uses that floor's placement, which is right when both drawings share coordinates, as
+  the levels of one mine survey do; the dialog shows how much the two drawings overlap.
+- **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
+- **Place with two points** — click a place you can find on both the drawing and the map
+  (a portal, a shaft), then the same place on the map, and repeat for a second place as far
+  away as you can. Satellite makes the map side easier. Polaris works out where the drawing
+  goes and checks its scale against the drawing's own units ("your points make one unit
+  1.003 ft, 0.3 % off"); a big difference usually means a point was clicked in the wrong
+  place. **Done** keeps it, **Start over** or **Cancel** (or Esc) don't. The map button's
+  **Place with two points** does it again later, and **Adjust floor plan** still works for
+  fine-tuning.
 
 A device is on one floor at a time: the Device List says which, and clicking it
 takes you there. A device placed on a floor gets that floor's number as its `f:`

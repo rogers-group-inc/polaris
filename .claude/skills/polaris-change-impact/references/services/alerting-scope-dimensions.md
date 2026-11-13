@@ -263,6 +263,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **An empty tree resolves to the whole (eligible) fleet** and that is deliberate: `and([])` is true for every asset. Whether that is the right meaning is the CALLER's decision — `Contact` means it, `Tag` must never store it (`normalizeTagCondition`).
 - Cost is one `findMany` of scalar columns, operator- or reconcile-triggered — never a per-tick path. Scale-checked at 2000 assets: fine here, which is exactly why the engine does NOT use it.
 
+- `resolveDeviceFilterAssetIdsMany(conds, eligible?)` resolves several trees over ONE fleet read and one relation-leaf pass, each tree evaluated in memory under the caller's eligibility rule (the in-memory twin of the single-tree `where`). `tagAssignmentService.reconcileAllTags` uses it for every tree-shaped tag (efficiency audit group 3). A new relation-backed field must work through `decorateRelationLeafHits` with several trees at once, which it already does per distinct leaf.
+
 **When changing this:**
 - Adding a condition field backed by a RELATION: decide join-vs-prefetch here, and follow `interfaceName`'s precedent (prefetch to per-asset verdicts) for anything whose row count exceeds the fleet's.
 - Adding a scalar field to `DEVICE_FILTER_FIELD_OPS`: add the column to `DEVICE_FILTER_SCALAR_SELECT` in the same change, or the field validates, stores, and matches nothing.

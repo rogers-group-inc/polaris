@@ -3792,6 +3792,12 @@ model PathCheckSource {
   lastPathHash          String?
   lastTracerouteAt      DateTime?
   lastPathChangeEventAt DateTime?
+  // Business rule 85(c): the certificate this source last saw on an HTTPS run
+  // (its notAfter + issuer), the baseline a `path_check.tls_cert_changed` Event
+  // is judged against. A run that saw no certificate leaves them alone.
+  lastTlsNotAfter       DateTime?
+  lastTlsIssuer         String?
+  lastTlsChangeEventAt  DateTime?
   createdAt             DateTime          @default(now())
 
   @@unique([checkId, assetId])
@@ -4480,6 +4486,9 @@ model TopologyBackgroundImage {
   height     Int
   size       Int
   data       Bytes
+  // Rule 182: set when this image is Polaris's drawing of an imported DXF —
+  // { file, units {code, name, metres}, ext {minX, minY, maxX, maxY}, layers, geo }.
+  cad        Json?
   uploadedBy String?      @map("uploaded_by")
   uploadedAt DateTime     @default(now()) @map("uploaded_at")
 

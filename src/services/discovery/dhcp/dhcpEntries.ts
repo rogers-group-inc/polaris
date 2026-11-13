@@ -17,6 +17,7 @@ import type { DiscoveryResult } from "../../fortimanagerService.js";
 import type { AssetIndex, upsertConflict as UpsertConflict } from "../discoveryEngine.js";
 import type { SyncLog } from "../syncLog.js";
 import { prisma } from "../../../db.js";
+import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
 import { logEvent } from "../../eventLogService.js";
 import { releaseDnsResolvedAt } from "../../dnsResolvedReservationService.js";
 import { isInfraSourceType, decideInfraDhcpBinding } from "../../../utils/infraDhcpBinding.js";
@@ -26,6 +27,9 @@ export async function syncDhcpEntries(input: {
   result: DiscoveryResult;
   /** syncDhcpSubnets' active-reservation index, keyed by reservationKey; updated in place. */
   activeResMap: Map<string, any>;
+  /** Keys (reservationKey) holding an active dns_resolved row at the run's load.
+   *  Absent = unknown: release before every create, as before. */
+  dnsResolvedKeys?: ReadonlySet<string>;
   assetIdx: AssetIndex;
   /** Phase 3c's VIP address keys, and the gates whose VIP table read this cycle. */
   currentVipKeys: Set<string>;
@@ -43,7 +47,7 @@ export async function syncDhcpEntries(input: {
   syncLog: SyncLog;
 }): Promise<void> {
   const {
-    result, activeResMap, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
+    result, activeResMap, dnsResolvedKeys, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
     findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
     integrationId, integrationName, actor, syncLog,
   } = input;
@@ -103,6 +107,11 @@ export async function syncDhcpEntries(input: {
   // Collected ids whose only Phase 5 write is the lastSeenLeased=now bump.
   // Flushed as one updateMany after the loop.
   const dhcpFlipBumpOnlyIds: string[] = [];
+  // Per-row renewals / type flips (each row's lease end differs, so no single
+  // statement covers them): queued here, merged per row, and written
+  // concurrently after the loop instead of one awaited update per entry. The
+  // loop keeps `existingRes` current in memory, as it did after each write.
+  const dhcpMixedUpdates = new Map<string, Record<string, unknown>>();
 
   if (result.dhcpEntries && result.dhcpEntries.length > 0) {
     for (const entry of result.dhcpEntries) {
@@ -427,11 +436,7 @@ export async function syncDhcpEntries(input: {
               update.staleSnoozedUntil = null;
             }
             phase5Stats.pathExistingDhcpFlipMixed++;
-            await prisma.reservation.update({
-              where: { id: existingRes.id },
-              data: update,
-            });
-            phase5Stats.writesReservationUpdate++;
+            dhcpMixedUpdates.set(existingRes.id, { ...(dhcpMixedUpdates.get(existingRes.id) ?? {}), ...update });
             if (expiryPatch) existingRes.expiresAt = expiryPatch.expiresAt;
           } else if (needsStalenessBump) {
             // Pure staleness bump — defer to one bulk updateMany at end of
@@ -532,8 +537,13 @@ export async function syncDhcpEntries(input: {
         lastSeenLeased: entry.seenLeased && isDhcpReservation ? new Date() : null,
       };
       try {
-        await releaseDnsResolvedAt(matchingSubnet.id, entry.ipAddress);
-        phase5Stats.writesDnsRelease++;
+        // Only where the run's load saw a dns_resolved row (efficiency audit
+        // group 3: this was a delete per new lease). One that appears mid-run
+        // collides below and is released and retried there.
+        if (!dnsResolvedKeys || dnsResolvedKeys.has(key)) {
+          await releaseDnsResolvedAt(matchingSubnet.id, entry.ipAddress);
+          phase5Stats.writesDnsRelease++;
+        }
         let newRes;
         let createdAfterRetry = false;
         try {
@@ -597,6 +607,19 @@ export async function syncDhcpEntries(input: {
   // Every row in dhcpFlipBumpOnlyIds gets the same data shape, so this is
   // exactly the shape updateMany was designed for. One statement regardless
   // of row count — the dominant per-cycle write savings on big FortiGates.
+  if (dhcpMixedUpdates.size > 0) {
+    const flush = [...dhcpMixedUpdates];
+    const results = await mapSettledWithConcurrency(flush, 25, ([id, data]) =>
+      prisma.reservation.update({ where: { id }, data }),
+    );
+    phase5Stats.writesReservationUpdate += flush.length;
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        syncLog("error", `Failed to update DHCP reservation ${flush[i]![0]}: ${(r.reason as Error)?.message || "Unknown error"}`);
+      }
+    });
+  }
+
   if (dhcpFlipBumpOnlyIds.length > 0) {
     const bumpAt = new Date();
     await prisma.reservation.updateMany({
