@@ -943,7 +943,9 @@
             <code>okCount</code> / <code>failCount</code> (hosts whose latest run passed / failed
             — a host with no result yet is in neither), <code>unexpectedCount</code> (of the
             failing, those whose run still got an HTTP answer, just not the expected status or
-            body) and <code>lastRunAt</code>. <code>maintenance: { inMaintenance, windows[] }</code>
+            body), <code>staleCount</code> (sources whose latest result is stale — the agent host
+            is offline, or no run has landed for three intervals plus two minutes; they are in
+            none of the other three counts) and <code>lastRunAt</code>. <code>maintenance: { inMaintenance, windows[] }</code>
             says whether it is paused by a <a href="#maintenance">maintenance schedule</a> right
             now; each window carries <code>scheduleId, scheduleName, startedAt</code> and the
             current occurrence's end as <code>until</code> (the server's wall clock,
@@ -967,9 +969,14 @@
             server"</code>; every host row has <code>server: false</code>): <code>assetId, hostname, ipAddress, os, explicit</code> (pinned
             rather than matched), <code>lastOk, lastSampleAt, lastLatencyMs, lastHttpStatus,
             lastError, lastResolvedIp, lastFailAt, lastHopCount, lastTracerouteComplete,
-            lastTracerouteAt</code>, and the agent's <code>agentVersion, online,
+            lastTracerouteAt</code>, the agent's <code>agentVersion, online,
             supported</code> (<code>false</code> below 0.21.0 — the host is a member but cannot run
-            it).</p>
+            it), and <code>staleReason</code>: <code>null</code> while the latest result is current
+            (or there is none yet), <code>"offline"</code> when the agent host is offline,
+            <code>"late"</code> when no run has landed for three intervals plus two minutes. A stale
+            <code>lastOk</code> is the last verdict, not a current one. The
+            <code>latest</code> object of <code>GET /assets/:id/path-checks</code> and
+            <code>GET /path-checks/:id/server</code> carries the same field.</p>
         </div>
 
         <div class="endpoint">

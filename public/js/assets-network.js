@@ -2523,6 +2523,16 @@ function _pathResultPill(latest) {
   if (!latest || !latest.lastSampleAt || latest.lastOk === null || latest.lastOk === undefined) {
     return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
   }
+  // Business rule 85(a): the host is offline or no run has landed for three
+  // intervals — the stored verdict is history, so it reads Stale (grey), the
+  // same word and colour as the Path Monitor page (path-checks.js resultState).
+  if (latest.staleReason) {
+    var why = latest.staleReason === "offline"
+      ? "The agent host is offline, so this check is not running there."
+      : "No run has landed for over three intervals.";
+    var was = latest.lastOk ? "OK" : (latest.lastHttpStatus != null ? "Unexpected response" : "Fail");
+    return '<span class="badge" title="' + escapeHtml(why + " Last result: " + was + ".") + '" style="background:#9e9e9e;color:#fff">Stale</span>';
+  }
   // A failed run that still got an HTTP answer reads "Unexpected response",
   // the same three words as the Path Monitor page (path-checks.js resultState).
   if (!latest.lastOk && latest.lastHttpStatus != null) {
