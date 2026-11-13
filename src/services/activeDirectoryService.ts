@@ -270,7 +270,10 @@ const GAL_ATTRIBUTES = [
 ];
 
 function mailboxKindOf(raw: unknown): "user" | "shared" | "room" | "equipment" | "unknown" {
-  const n = Number(firstStr(raw));
+  // Absent → firstStr null, and Number(null) is 0 (finite): check before
+  // converting, or every non-Exchange directory reads as "user".
+  const s = firstStr(raw);
+  const n = s == null ? NaN : Number(s);
   if (!Number.isFinite(n)) return "unknown"; // no Exchange schema: not a claim either way
   if (n === EXCH_SHARED) return "shared";
   if (n === EXCH_ROOM) return "room";
