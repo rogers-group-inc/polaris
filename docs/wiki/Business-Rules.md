@@ -1350,6 +1350,12 @@ describes whether that source can reach the target, so:
   Fail, and the list counts it apart. The tooltip says why and what the last
   result was. This changes only what is shown; alerts follow the automation
   as before.
+- **A run keeps the cookies a site sets, for that run only (85(b)).** When a
+  check follows redirects, a cookie the site sets on one hop is sent back on
+  the next hops, but only to the exact host that set it. Nothing is stored,
+  and the next run starts with no cookies. This is what lets a check pass a
+  load balancer that redirects to itself until it sees its cookie (agent
+  0.29.3 or later; the Polaris server always).
 - **A route change is an Event, not an alert state.** When an agent's
   traceroute takes a different set of hops from last time, Polaris writes
   `path_check.path_changed` to Events (at most once every 10 minutes per host

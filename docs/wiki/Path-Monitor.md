@@ -72,7 +72,7 @@ For HTTP and HTTPS, the **Request** section sets how the request is sent:
 |---|---|
 | **Method** | **GET** (default) or **HEAD**, which fetches the headers only, so there is no body to check. A check never sends anything that changes data (no PUT, POST or DELETE). |
 | **Host header** | Sent instead of the URL's host name, and used for the TLS certificate check. Point the URL at one server's address and still ask for the site by name, for example to test each server behind a load balancer. |
-| **Follow redirects** | Off by default, so a 302 is judged as a 302. On follows up to 5 redirects and judges the final page. Each new address is checked like the first. |
+| **Follow redirects** | Off by default, so a 302 is judged as a 302. On follows up to 5 redirects and judges the final page. Each new address is checked like the first. Like a browser, a run sends back the cookies the site set on earlier hops, but only to the host that set them. They are forgotten when the run ends, so every run is a first visit ([rule 85(b)](Business-Rules#rule-85)). |
 | **Authentication** | *None*, or an HTTP credential (Bearer token, Basic or Digest) from Server Settings → Credentials. See below. |
 
 A check using Method HEAD, a Host header, Follow redirects or a *NOT* body
@@ -351,6 +351,7 @@ out on the retention schedule.
 | An agent host on Linux never reaches the destination, but the Windows hosts do | Linux agents trace with UDP probes and learn they arrived from the destination's *port unreachable* reply; a target whose firewall drops UDP never sends it. The hops up to it are still correct |
 | An HTTPS check fails with a certificate error | the host does not trust the target's certificate. Fix the certificate or its chain, or turn off *Verify the TLS certificate* |
 | A 302 fails the check | redirects are not followed unless you tick *Follow redirects* (General step). Or point the check at the final URL, or accept `300-399` |
+| *more than 5 redirects* on a site that works in a browser | the site (often a load balancer such as a NetScaler) sets a cookie and redirects back to itself until it sees it. The Polaris server and agent 0.29.3 or later return those cookies within a run. On an older agent, upgrade it. If it still loops, the redirects really do go round in a circle: look at the `Location` headers in **Test from this Polaris server** |
 | An authenticating check shows no agent hosts | by design: a check with a credential runs only from the Polaris server, so the credential never reaches an agent |
 | A check says *upgrade agent* on every host | it uses HEAD, a Host header, Follow redirects or a *NOT* body check, which need agent 0.23.0 |
 

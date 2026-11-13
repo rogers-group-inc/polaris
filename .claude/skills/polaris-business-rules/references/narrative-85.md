@@ -318,6 +318,38 @@ agent) and one more `groupBy` whose `OR` has one arm per distinct check interval
 never the whole fleet. The per-check reads add nothing per row; the slide-over adds one
 `findUnique`.
 
+### Rule 85(b) — a run keeps the cookies its target sets (2026-11-13)
+
+**The incident.** The operator changed the SSL profiles on their NetScalers. Several HTTPS
+checks with *Follow redirects* on started failing "more than 5 redirects", every hop a 302.
+Browsers reached the sites normally, and SolarWinds NetPath did not notice anything: it
+traces the path and opens the port, and never asks for a page. Both runners sent every hop
+without cookies. A NetScaler cookie check answers a cookieless client with `302` +
+`Set-Cookie` back to the same URL; a browser returns the cookie and gets through, Polaris
+got the same 302 on every hop until it gave up.
+
+**The decision.** A run behaves like one browser visit: it keeps what the target sets and
+sends it back on its later hops. Three limits make that safe.
+- **Host-only.** The Domain attribute is ignored, so a redirect to another host, sibling
+  sub-domains included, gets nothing. The same instinct as the credentials and Host override,
+  which go only to the target's own origin.
+- **One run.** The jar is created at the start of the run and dropped at the end. Nothing is
+  stored or logged (the Test panel already redacts `Set-Cookie`). Every run is a first visit,
+  which is what a new user experiences and what a monitor should measure.
+- **Standard matching.** Path, Secure and expiry follow RFC 6265, so a Secure cookie never
+  goes over plain HTTP. On the server, `RunCookieJar` caps 50 cookies per host and 4 KB per
+  value.
+
+**Rejected:** a per-check option. A client that drops cookies is not a stricter test, only a
+broken client; no operator wants a check to fail on a site that works. Also rejected: a jar
+that persists between runs. It would measure a returning visitor, hide a broken first-visit
+flow, and make the server and agent hold session state for every target.
+
+**Agents.** The agent ships the same behaviour from 0.29.3. The definition does not change,
+so `definitionSha256` and the config ETags are untouched, no baseline moves, and no version
+gate is needed: an older agent keeps running the check exactly as before, without cookies,
+until it is upgraded.
+
 ### Rule 85 — the invariant as stated in full
 
 See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (the

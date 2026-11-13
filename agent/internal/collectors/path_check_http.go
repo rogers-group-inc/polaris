@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptrace"
 	"net/url"
 	"regexp"
@@ -182,6 +183,29 @@ func sameOrigin(a, b *url.URL) bool {
 	return a.Scheme == b.Scheme && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
 }
 
+// hostOnlyJar is the cookies ONE run keeps across its own redirect hops
+// (business rule 85(b)) — net/http/cookiejar with every cookie's Domain
+// stripped, so a cookie goes back only to the exact host that set it; Path,
+// Secure and expiry are the stdlib's. A load balancer's cookie check (302 +
+// Set-Cookie back to the same URL) loops forever for a client that drops
+// cookies. One jar per runHTTP call: nothing is kept between runs. MIRRORED
+// by src/utils/runCookieJar.ts on the server.
+type hostOnlyJar struct{ inner *cookiejar.Jar }
+
+func (j hostOnlyJar) SetCookies(u *url.URL, cs []*http.Cookie) {
+	for _, c := range cs {
+		c.Domain = ""
+	}
+	j.inner.SetCookies(u, cs)
+}
+
+func (j hostOnlyJar) Cookies(u *url.URL) []*http.Cookie { return j.inner.Cookies(u) }
+
+func newRunCookieJar() http.CookieJar {
+	j, _ := cookiejar.New(nil) // never errors with nil options
+	return hostOnlyJar{inner: j}
+}
+
 // httpOnce is one request of a run: its response (body read and closed) or
 // an error. Timings and TLS facts land on s — the last hop's win.
 type httpOnce struct {
@@ -191,7 +215,7 @@ type httpOnce struct {
 	loc    string
 }
 
-func doHTTPOnce(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, method, hostHeader, ua string, s *transport.PathCheckSample) (*httpOnce, error) {
+func doHTTPOnce(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip net.IP, method, hostHeader, ua string, jar http.CookieJar, s *transport.PathCheckSample) (*httpOnce, error) {
 	port := u.Port()
 	if port == "" {
 		if u.Scheme == "https" {
@@ -234,6 +258,7 @@ func doHTTPOnce(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip
 	client := &http.Client{
 		Transport:     tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Jar:           jar,
 	}
 
 	var connStart, tlsStart, wrote time.Time
@@ -297,12 +322,13 @@ func runHTTP(ctx context.Context, def *transport.PathCheckDef, u *url.URL, ip ne
 	}
 	u0 := u
 	var res *httpOnce
+	jar := newRunCookieJar()
 	for hop := 0; ; hop++ {
 		hostHeader := ""
 		if sameOrigin(u, u0) {
 			hostHeader = def.HostHeader
 		}
-		r, err := doHTTPOnce(ctx, def, u, ip, method, hostHeader, ua, s)
+		r, err := doHTTPOnce(ctx, def, u, ip, method, hostHeader, ua, jar, s)
 		if err != nil {
 			s.Error = truncateError(err)
 			return
