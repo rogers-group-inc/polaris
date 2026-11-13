@@ -151,6 +151,132 @@ export async function dimensionTargetReferrers(
     .map((r) => `automation "${r.name}"`);
 }
 
+/** One thing an automation names that no longer exists (business rule 177). */
+export interface BrokenReference {
+  kind: "channel" | "script" | "pathCheck" | "widget" | "stateProbe";
+  /** A sentence for the operator: where it is and what it means. */
+  message: string;
+}
+
+type BrokenRuleRow = {
+  id: string;
+  trigger: unknown;
+  reset: unknown;
+  actions: unknown;
+  escalation?: unknown;
+  severityBands?: unknown;
+  bandNotify?: unknown;
+  resetActions?: unknown;
+  targets?: unknown;
+  emailComposition?: unknown;
+  clearBehavior?: unknown;
+  clearAfterSec?: unknown;
+  repeat?: unknown;
+};
+
+const DIM_KINDS: Record<DimensionTargetField, "pathCheck" | "widget" | "stateProbe"> = {
+  checkId: "pathCheck", widgetId: "widget", stateProbeId: "stateProbe",
+};
+
+/** Every id a condition is narrowed to, by field, anywhere in a stored tree. */
+function collectDimensionIds(node: unknown, out: Map<DimensionTargetField, Set<string>>, depth = 0): void {
+  if (!node || typeof node !== "object" || depth > 16) return;
+  if (Array.isArray(node)) { for (const n of node) collectDimensionIds(n, out, depth + 1); return; }
+  const o = node as Record<string, unknown>;
+  const df = o.dimensionFilter;
+  if (df && typeof df === "object") {
+    for (const f of Object.keys(DIM_KINDS) as DimensionTargetField[]) {
+      const v = (df as Record<string, unknown>)[f];
+      if (typeof v === "string" && v) out.get(f)!.add(v);
+    }
+  }
+  for (const v of Object.values(o)) collectDimensionIds(v, out, depth + 1);
+}
+
+/** "Action 1" / "Rule escalation tier 2" / "critical band action 1" → sentence case. */
+function sentenceStart(label: string): string {
+  return label ? label.charAt(0).toUpperCase() + label.slice(1) : "An action";
+}
+
+/**
+ * Business rule 177: for each automation, what it names that no longer exists —
+ * a delivery channel or automation script in ANY action location, or a path
+ * check, custom widget or state probe a condition is narrowed to. The delete
+ * guards (rule 167, 167(a)) stop new ones; this is how the ones made before
+ * them, or in a way the guards cannot see (a restore, a SQL edit, an import),
+ * are pointed out instead of doing nothing silently.
+ *
+ * Read-only, and only what the rows reference is looked up: one `IN` read per
+ * kind of object, never per automation. Rows whose stored actions no longer
+ * parse are walked as far as they parse.
+ */
+export async function brokenReferencesByRule(rules: readonly BrokenRuleRow[]): Promise<Map<string, BrokenReference[]>> {
+  const out = new Map<string, BrokenReference[]>();
+  if (rules.length === 0) return out;
+
+  type Found = { label: string; id: string };
+  const perRule = rules.map((r) => {
+    const channels: Found[] = [];
+    const scripts: Found[] = [];
+    try {
+      const v2 = normalizeRuleToV2(r as never);
+      const refs = allRuleActionRefs({
+        actions: v2.actions,
+        escalation: v2.escalation ?? (r.escalation as never),
+        severityBands: v2.severityBands,
+        bandNotify: v2.bandNotify,
+        resetActions: v2.resetActions,
+      });
+      for (const ref of refs) {
+        const a = ref.action as AutomationAction;
+        if (a.type === "notify") for (const id of notifyChannelIds(a)) channels.push({ label: ref.label, id });
+        if (a.type === "script" && a.scriptId) scripts.push({ label: ref.label, id: a.scriptId });
+      }
+    } catch { /* a row that no longer normalizes: nothing to point at here */ }
+    const dims = new Map<DimensionTargetField, Set<string>>(
+      (Object.keys(DIM_KINDS) as DimensionTargetField[]).map((f) => [f, new Set<string>()]),
+    );
+    collectDimensionIds(r.trigger, dims);
+    collectDimensionIds(r.reset, dims);
+    return { id: r.id, channels, scripts, dims };
+  });
+
+  const all = <T>(pick: (p: (typeof perRule)[number]) => T[]) => [...new Set(perRule.flatMap(pick))];
+  const channelIds = all((p) => p.channels.map((c) => c.id));
+  const scriptIds = all((p) => p.scripts.map((c) => c.id));
+  const checkIds = all((p) => [...p.dims.get("checkId")!]);
+  const widgetIds = all((p) => [...p.dims.get("widgetId")!, ...p.dims.get("stateProbeId")!]);
+  const ids = (rows: Array<{ id: string }>) => new Set(rows.map((r) => r.id));
+  const [liveChannels, liveScripts, liveChecks, liveWidgets] = await Promise.all([
+    channelIds.length ? prisma.notificationChannel.findMany({ where: { id: { in: channelIds } }, select: { id: true } }).then(ids) : new Set<string>(),
+    scriptIds.length ? prisma.automationScript.findMany({ where: { id: { in: scriptIds } }, select: { id: true } }).then(ids) : new Set<string>(),
+    checkIds.length ? prisma.pathCheck.findMany({ where: { id: { in: checkIds } }, select: { id: true } }).then(ids) : new Set<string>(),
+    widgetIds.length ? prisma.manufacturerCustomWidget.findMany({ where: { id: { in: widgetIds } }, select: { id: true } }).then(ids) : new Set<string>(),
+  ]);
+
+  for (const p of perRule) {
+    const found: BrokenReference[] = [];
+    const seen = new Set<string>();
+    const add = (b: BrokenReference) => { if (!seen.has(b.message)) { seen.add(b.message); found.push(b); } };
+    for (const c of p.channels) if (!liveChannels.has(c.id)) add({ kind: "channel", message: `${sentenceStart(c.label)} sends to a delivery channel that was deleted, so it sends nothing through it.` });
+    for (const c of p.scripts) if (!liveScripts.has(c.id)) add({ kind: "script", message: `${sentenceStart(c.label)} runs an automation script that was deleted, so it runs nothing.` });
+    for (const id of p.dims.get("checkId")!) if (!liveChecks.has(id)) add({ kind: "pathCheck", message: "A condition watches a path check that was deleted, so it matches nothing." });
+    for (const id of p.dims.get("widgetId")!) if (!liveWidgets.has(id)) add({ kind: "widget", message: "A condition reads a custom widget that was deleted, so it matches nothing." });
+    for (const id of p.dims.get("stateProbeId")!) if (!liveWidgets.has(id)) add({ kind: "stateProbe", message: "A condition reads a state probe that was deleted, so it matches nothing." });
+    if (found.length) out.set(p.id, found);
+  }
+  return out;
+}
+
+/**
+ * The automations list's rows, each carrying `brokenReferences` (empty when
+ * nothing is broken). The list route's one call.
+ */
+export async function withBrokenReferences<T extends BrokenRuleRow>(rules: T[]): Promise<Array<T & { brokenReferences: BrokenReference[] }>> {
+  const broken = await brokenReferencesByRule(rules);
+  return rules.map((r) => ({ ...r, brokenReferences: broken.get(r.id) ?? [] }));
+}
+
 /** "a, b, c, … (+N more)" — the list an error message can carry. */
 export function summarizeReferrers(refs: readonly ActionReferrer[], max = 5): string {
   const shown = refs.slice(0, max).join(", ");

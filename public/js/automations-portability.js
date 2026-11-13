@@ -622,6 +622,7 @@
     "targets", "clearBehavior", "clearAfterSec", // legacy mirror — see above
     "id", "createdAt", "updatedAt", "createdBy", // server-owned
     "devicesSummary", "triggerSummary", "resetSummary", "actionsSummary", "triggerType", // list-render extras
+    "brokenReferences", // server-computed (business rule 177), never stored
   ];
 
   function forCodeView(body) {

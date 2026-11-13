@@ -1063,6 +1063,19 @@ async function openAutomationWizard(existing, opts) {
     // below stays valid and the step keys find no visible submit to press.
     '<button class="btn btn-primary" id="aw-save" style="display:none">' + (editing ? "Save changes" : cloning && !importing ? "Create clone" : "Create automation") + '</button>';
 
+  // Business rule 177: what this automation names that no longer exists, from
+  // the list row (GET /automations carries brokenReferences). Shown above the
+  // steps on edit, view and clone, so the parts that do nothing are named
+  // before anyone steps through them.
+  var broken = existing && !importing && Array.isArray(existing.brokenReferences) ? existing.brokenReferences : [];
+  if (broken.length && typeof calloutHTML === "function") {
+    body = '<div style="margin:-0.75rem 0 0.75rem">' +
+      calloutHTML("warning", "This automation uses something that was deleted",
+        broken.map(function (b) { return escapeHtml(b.message); }).join("<br>") +
+        "<br>Until it is fixed, those parts do nothing. The rest of the automation still runs.") +
+      '</div>' + body;
+  }
+
   if (readOnly) {
     var roText = "Your role can see how this automation is configured but not change it. " +
       "Step through it with Next, or click any step.";
@@ -6771,6 +6784,9 @@ async function openAutomationWizard(existing, opts) {
       // to edit rather than an empty page.
       var customEmail = !!(comp && (comp.subjectTemplate || comp.bodyTextTemplate || comp.bodyHtmlTemplate));
       var selIds = actionChannelIds(action);
+      // Rule 177: a stored action naming a channel that no longer exists says
+      // so here, beside the boxes, rather than showing nothing ticked.
+      var deletedChans = selIds.filter(function (id) { return !chanById(id); }).length;
       if (!selIds.length && channels.length) selIds = [channels[0].id];
       var html =
         // CHANNELS, plural. One action may deliver through several — which is
@@ -6782,6 +6798,11 @@ async function openAutomationWizard(existing, opts) {
         '<div class="form-group" style="margin-bottom:6px">' +
           '<label style="font-size:0.8rem;display:block;margin-bottom:2px">Channels</label>' +
           '<div class="na-chan-list" style="display:flex;flex-wrap:wrap;gap:4px 14px">' + channelChecklist(selIds) + '</div>' +
+          (deletedChans
+            ? '<p class="hint na-chan-deleted" style="margin:4px 0 0;color:var(--color-warning)">' +
+                (deletedChans === 1 ? "A channel this action sent to was deleted." : deletedChans + " channels this action sent to were deleted.") +
+                " Tick another channel before saving.</p>"
+            : "") +
         '</div>' +
         '<div class="na-fields"></div>' +
         // Cc/Bcc were promoted OUT of this disclosure into first-class token
