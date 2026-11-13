@@ -48,7 +48,11 @@ vi.mock("../../src/services/pathCheckServerRunner.js", () => ({ runServerCheck }
 function matchWhere(row: any, where: any): boolean {
   if (!where) return true;
   for (const [k, v] of Object.entries(where)) {
-    if (v && typeof v === "object" && "in" in (v as any)) {
+    if (k === "OR") {
+      if (!(v as any[]).some((w) => matchWhere(row, w))) return false;
+    } else if (v && typeof v === "object" && "lt" in (v as any)) {
+      if (!(row[k] instanceof Date) || !(row[k] < (v as any).lt)) return false;
+    } else if (v && typeof v === "object" && "in" in (v as any)) {
       if (!(v as any).in.includes(row[k])) return false;
     } else if (v && typeof v === "object" && "not" in (v as any)) {
       if (row[k] === (v as any).not) return false;
@@ -108,8 +112,9 @@ vi.mock("../../src/db.js", () => ({
         const groups = new Map<string, any>();
         for (const s of db.sources.filter((r) => matchWhere(r, where))) {
           const key = by.map((k: string) => String(s[k])).join("|");
-          const g = groups.get(key) ?? { ...Object.fromEntries(by.map((k: string) => [k, s[k]])), _count: { _all: 0 }, _max: { lastSampleAt: null } };
+          const g = groups.get(key) ?? { ...Object.fromEntries(by.map((k: string) => [k, s[k]])), _count: { _all: 0, lastHttpStatus: 0 }, _max: { lastSampleAt: null } };
           g._count._all++;
+          if (s.lastHttpStatus != null) g._count.lastHttpStatus++;
           if (s.lastSampleAt && (!g._max.lastSampleAt || s.lastSampleAt > g._max.lastSampleAt)) g._max.lastSampleAt = s.lastSampleAt;
           groups.set(key, g);
         }
@@ -130,7 +135,7 @@ vi.mock("../../src/db.js", () => ({
       }),
     },
     managedAgent: {
-      findMany: vi.fn(async ({ where }: any) => db.agents.filter((a) => a.installStatus === where.installStatus)),
+      findMany: vi.fn(async ({ where }: any = {}) => db.agents.filter((a) => !where || a.installStatus === where.installStatus)),
     },
     credential: { findUnique: vi.fn(async ({ where }: any) => db.credentials.find((c) => c.id === where.id) ?? null) },
     asset: {
@@ -607,19 +612,41 @@ describe("sourceFilter — the wizard's finder, never membership", () => {
 });
 
 describe("check summaries — the Result column's inputs", () => {
+  const live = () => ({ wsConnectedAt: new Date(), wsDisconnectedAt: null, lastSeenAt: new Date() });
   it("counts a failing source that still got an HTTP answer as unexpected, apart from one that got none", async () => {
-    db.checks.push({ id: "k1", name: "k1" });
-    const at = new Date(1000);
+    db.checks.push({ id: "k1", name: "k1", intervalSec: 60 });
+    const at = new Date(Date.now() - 1000);
+    const later = new Date(Date.now() - 500);
+    db.agents = ["a1", "a2", "a3", "a4"].map((assetId) => ({ assetId, ...live() }));
     db.sources.push(
       { id: "s1", checkId: "k1", assetId: "a1", lastOk: true, lastHttpStatus: 200, lastSampleAt: at },
       { id: "s2", checkId: "k1", assetId: "a2", lastOk: false, lastHttpStatus: 503, lastSampleAt: at },
-      { id: "s3", checkId: "k1", assetId: "a3", lastOk: false, lastHttpStatus: null, lastSampleAt: new Date(2000) },
+      { id: "s3", checkId: "k1", assetId: "a3", lastOk: false, lastHttpStatus: null, lastSampleAt: later },
       { id: "s4", checkId: "k1", assetId: "a4", lastOk: null, lastHttpStatus: null, lastSampleAt: null },
     );
-    expect(await getCheck("k1")).toMatchObject({ sourceCount: 4, okCount: 1, failCount: 2, unexpectedCount: 1, lastRunAt: new Date(2000) });
+    expect(await getCheck("k1")).toMatchObject({ sourceCount: 4, okCount: 1, failCount: 2, unexpectedCount: 1, staleCount: 0, lastRunAt: later });
   });
   it("reports zeros for a check with no sources", async () => {
-    db.checks.push({ id: "k2", name: "k2" });
-    expect(await getCheck("k2")).toMatchObject({ sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, lastRunAt: null });
+    db.checks.push({ id: "k2", name: "k2", intervalSec: 60 });
+    expect(await getCheck("k2")).toMatchObject({ sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, staleCount: 0, lastRunAt: null });
+  });
+  it("rule 85(a): an offline host's or a late result is counted stale, never OK / Fail / Unexpected", async () => {
+    db.checks.push({ id: "k3", name: "k3", intervalSec: 60 });
+    const recent = new Date(Date.now() - 30_000);
+    const old = new Date(Date.now() - 10 * 60_000); // > 3 × 60 s + 2 min
+    db.agents = [
+      { assetId: "on1", ...live() },
+      { assetId: "on2", ...live() },
+      { assetId: "off", wsConnectedAt: new Date(1000), wsDisconnectedAt: new Date(2000), lastSeenAt: new Date(2000) },
+      { assetId: "on3", ...live() },
+    ];
+    db.sources.push(
+      { id: "t1", checkId: "k3", assetId: "on1", lastOk: true, lastHttpStatus: 200, lastSampleAt: recent },     // current OK
+      { id: "t2", checkId: "k3", assetId: "off", lastOk: true, lastHttpStatus: 200, lastSampleAt: recent },     // offline → stale
+      { id: "t3", checkId: "k3", assetId: "on2", lastOk: false, lastHttpStatus: 503, lastSampleAt: old },       // late → stale
+      { id: "t4", checkId: "k3", assetId: null, lastOk: true, lastHttpStatus: 200, lastSampleAt: old },         // server, late → stale
+      { id: "t5", checkId: "k3", assetId: "on3", lastOk: null, lastHttpStatus: null, lastSampleAt: null },      // no result yet
+    );
+    expect(await getCheck("k3")).toMatchObject({ sourceCount: 5, okCount: 1, failCount: 0, unexpectedCount: 0, staleCount: 3 });
   });
 });

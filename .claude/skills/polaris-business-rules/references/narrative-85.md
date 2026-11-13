@@ -284,6 +284,40 @@ event tail keeps its old answer — an unfiltered automation matched it, a filte
 Monitor pool" block of `pathFailureRateCeiling.test.ts`, and the wizard DOM tests on the path
 category.
 
+### Rule 85(a) — a stopped source's result is Stale (2026-11-13)
+
+**The incident.** An agent host (BCS-S1116) went offline. Path Monitor → Results still showed
+its row as a green **OK** with 199 ms and HTTP 200. `PathCheckSource.lastOk` is written by
+ingest and nothing else, so it keeps the last verdict for as long as the row exists. The dot
+beside the hostname turned grey, but the pill, the list's "1 OK" count and the slide-over's
+Paths tab all still said the path was working, though nobody had measured it since the host
+went dark.
+
+**The decision.** The verdict is history once the source has stopped running, and every
+surface says so with one word, **Stale**, in the grey the app already uses for unknown
+states. There are two ways to tell a source has stopped. The agent is offline (`agentOnline`,
+the same test the Results dot uses), which catches a dead host as soon as its WebSocket
+drops. Or no run has landed for three intervals plus a two-minute grace, which catches
+everything else: an online agent that stopped running the check (over the per-host cap, an
+upgrade that broke it, a definition it no longer accepts), a check in maintenance or
+disabled, and the server source when its job is not running. Agents push their batch every
+60 s tick, so a source that is running is never more than one interval behind. Three
+intervals absorb a skipped tick (the loop leaves starved checks due for the next one) and a
+slow push.
+
+**Rejected:** rewriting `lastOk` to null when a host goes offline. That would lose the last
+verdict, which the tooltip still shows, and it would race ingest when the host comes back.
+Also rejected: hiding stale rows, because an operator looking at a check needs to see that a
+source has gone quiet. And rejected: tying it to alerting. An alert's lifecycle belongs to
+the automation (rule 85 itself, and rule 86 for a host that went silent). This clause only
+stops the display from claiming a reading that was never taken.
+
+**Scale.** The list summary adds one `managedAgent.findMany` (four columns, one row per
+agent) and one more `groupBy` whose `OR` has one arm per distinct check interval plus one
+`assetId IN (offline agents)` arm. The IN list holds the offline agents, usually a handful,
+never the whole fleet. The per-check reads add nothing per row; the slide-over adds one
+`findUnique`.
+
 ### Rule 85 — the invariant as stated in full
 
 See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (the

@@ -84,30 +84,42 @@
   var OK_COLOR = "#2a9d8f";
   var FAIL_COLOR = "#d32f2f";
   var UNEXPECTED_COLOR = "#e07b00";
+  var STALE_COLOR = "#9e9e9e";
 
   /**
    * Pure (tested): a source's latest run as one word. A failed run that still
    * got an HTTP answer is "Unexpected response" — the target answered, just
-   * not with what the check expects (status code or body match).
+   * not with what the check expects (status code or body match). A result
+   * the server marked stale (business rule 85(a): the agent host is offline,
+   * or no run has landed for three intervals) is "Stale", whatever it was.
    */
-  function resultState(lastOk, lastHttpStatus) {
+  function resultState(lastOk, lastHttpStatus, staleReason) {
+    if (lastOk !== true && lastOk !== false) return null;
+    if (staleReason) return "stale";
     if (lastOk === true) return "ok";
-    if (lastOk === false) return lastHttpStatus != null ? "unexpected" : "fail";
-    return null;
+    return lastHttpStatus != null ? "unexpected" : "fail";
   }
-  var RESULT_LABELS = { ok: "OK", fail: "Fail", unexpected: "Unexpected response" };
-  var RESULT_COLORS = { ok: OK_COLOR, fail: FAIL_COLOR, unexpected: UNEXPECTED_COLOR };
+  var RESULT_LABELS = { ok: "OK", fail: "Fail", unexpected: "Unexpected response", stale: "Stale" };
+  var RESULT_COLORS = { ok: OK_COLOR, fail: FAIL_COLOR, unexpected: UNEXPECTED_COLOR, stale: STALE_COLOR };
+  var STALE_TITLES = {
+    offline: "The agent host is offline, so this check is not running there. The last result is history.",
+    late: "No run has landed for over three intervals. The last result is history.",
+  };
 
-  function resultPill(lastOk, hasSample, lastHttpStatus) {
-    var st = hasSample ? resultState(lastOk, lastHttpStatus) : null;
+  function resultPill(lastOk, hasSample, lastHttpStatus, staleReason) {
+    var st = hasSample ? resultState(lastOk, lastHttpStatus, staleReason) : null;
     if (!st) return '<span style="color:var(--color-text-tertiary)">no result yet</span>';
-    return '<span class="badge" style="background:' + RESULT_COLORS[st] + ';color:#fff">' + RESULT_LABELS[st] + "</span>";
+    var title = st === "stale"
+      ? ' title="' + esc((STALE_TITLES[staleReason] || STALE_TITLES.late) + " Last result: " + RESULT_LABELS[resultState(lastOk, lastHttpStatus, null)] + ".") + '"'
+      : "";
+    return '<span class="badge"' + title + ' style="background:' + RESULT_COLORS[st] + ';color:#fff">' + RESULT_LABELS[st] + "</span>";
   }
 
   /**
    * Pure (tested): a check's Result cell — how many sources' latest run is in
-   * each state, in the three words the Results view uses, zeros left out.
-   * unexpectedCount is a subset of failCount (failed WITH an HTTP answer).
+   * each state, in the words the Results view uses, zeros left out.
+   * unexpectedCount is a subset of failCount (failed WITH an HTTP answer);
+   * staleCount is apart from all three (rule 85(a)).
    */
   function checkResultCounts(c) {
     var fail = c.failCount || 0;
@@ -116,6 +128,7 @@
       { state: "ok", count: c.okCount || 0 },
       { state: "unexpected", count: unexpected },
       { state: "fail", count: fail - unexpected },
+      { state: "stale", count: c.staleCount || 0 },
     ].filter(function (p) { return p.count > 0; });
   }
 
@@ -261,7 +274,7 @@
         var parts = checkResultCounts(c);
         result = parts.length
           ? parts.map(function (p) {
-              var tag = p.state === "ok" ? "span" : "strong";
+              var tag = p.state === "ok" || p.state === "stale" ? "span" : "strong";
               return "<" + tag + ' style="color:' + RESULT_COLORS[p.state] + '">' + p.count + " " + RESULT_LABELS[p.state] + "</" + tag + ">";
             }).join(" · ")
           : '<span style="color:var(--color-text-tertiary)">no results yet</span>';
@@ -1174,7 +1187,7 @@
       '<div class="table-wrapper table-wrapper-modal-sticky" style="max-height:60vh">' +
         '<table><thead><tr>' +
           '<th data-sf-key="hostname" data-sf-type="string">Host</th>' +
-          '<th data-sf-key="lastOk" data-sf-type="string" style="width:110px">Result</th>' +
+          '<th data-sf-key="resultLabel" data-sf-type="string" style="width:110px">Result</th>' +
           '<th data-sf-key="lastLatencyMs" data-sf-type="number" data-sf-nofilter="true" style="width:100px">Latency</th>' +
           '<th data-sf-key="lastHttpStatus" data-sf-type="number" style="width:80px">Status</th>' +
           '<th data-sf-key="lastResolvedIp" data-sf-type="string" style="width:130px">Resolved IP</th>' +
@@ -1214,7 +1227,7 @@
             esc(r.hostname || r.ipAddress || r.assetId) + "</button>" +
             (r.server ? ' <span class="badge" title="The Polaris server runs this check itself">server</span>' : "") +
             (r.supported ? "" : ' <span class="hint" title="Needs agent 0.21.0+">upgrade agent</span>') + "</td>" +
-          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt, r.lastHttpStatus) + "</td>" +
+          "<td>" + resultPill(r.lastOk, !!r.lastSampleAt, r.lastHttpStatus, r.staleReason) + "</td>" +
           "<td>" + (r.lastLatencyMs != null ? Math.round(r.lastLatencyMs) + " ms" : "—") + "</td>" +
           "<td>" + (r.lastHttpStatus != null ? r.lastHttpStatus : "—") + "</td>" +
           "<td>" + esc(r.lastResolvedIp || "—") + "</td>" +
@@ -1264,10 +1277,19 @@
       try {
         var res = await api.pathChecks.results(check.id);
         if (tbody.dataset.checkId !== check.id || !document.body.contains(tbody)) return;
-        rows = (res.results || []).map(function (r) { return Object.assign({}, r, { lastOk: r.lastOk === null ? null : r.lastOk }); });
-        var passing = rows.filter(function (r) { return r.lastOk === true; }).length;
+        rows = (res.results || []).map(function (r) {
+          var st = r.lastSampleAt ? resultState(r.lastOk, r.lastHttpStatus, r.staleReason) : null;
+          // resultLabel is the Result column's sort / filter key: the word the pill shows.
+          return Object.assign({}, r, { lastOk: r.lastOk === null ? null : r.lastOk, resultLabel: st ? RESULT_LABELS[st] : "" });
+        });
+        // A stale OK (rule 85(a)) is not passing now.
+        var passing = rows.filter(function (r) { return r.lastOk === true && !r.staleReason; }).length;
+        var stale = rows.filter(function (r) { return r.lastSampleAt && r.staleReason; }).length;
         var summary = document.getElementById("path-res-summary");
-        if (summary) summary.innerHTML = "<strong>" + passing + "</strong> of " + rows.length + " source" + (rows.length === 1 ? "" : "s") + " passing";
+        if (summary) {
+          summary.innerHTML = "<strong>" + passing + "</strong> of " + rows.length + " source" + (rows.length === 1 ? "" : "s") + " passing" +
+            (stale ? ' · <span style="color:var(--color-text-tertiary)">' + stale + " stale</span>" : "");
+        }
         draw();
       } catch (err) {
         tbody.innerHTML = '<tr><td colspan="8" class="empty-state">' + esc(err.message || "Failed to load results") + "</td></tr>";

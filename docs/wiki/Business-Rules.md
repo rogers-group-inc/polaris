@@ -1344,6 +1344,12 @@ describes whether that source can reach the target, so:
   metadata addresses), multicast, IPv6 addresses, URLs with a user name or
   password in them, and the Polaris server itself cannot be a check target.
   Private (RFC 1918) addresses are allowed.
+- **A result from a source that stopped running reads Stale (85(a)).** Once
+  a host's agent is offline, or no run has arrived for three intervals plus
+  two minutes, its last result is shown as a grey **Stale** instead of OK or
+  Fail, and the list counts it apart. The tooltip says why and what the last
+  result was. This changes only what is shown; alerts follow the automation
+  as before.
 - **A route change is an Event, not an alert state.** When an agent's
   traceroute takes a different set of hops from last time, Polaris writes
   `path_check.path_changed` to Events (at most once every 10 minutes per host

@@ -391,6 +391,15 @@ describe("pure helpers", () => {
     expect(PC.checkResultCounts({ okCount: 0, failCount: 1, unexpectedCount: 5 })).toEqual([{ state: "unexpected", count: 1 }]);
     expect(PC.checkResultCounts({ okCount: 0, failCount: 0 })).toEqual([]);
   });
+  it("rule 85(a): a stale result reads Stale whatever it was, and is counted on its own", () => {
+    const PC = load();
+    expect(PC.resultState(true, 200, "offline")).toBe("stale");
+    expect(PC.resultState(false, 503, "late")).toBe("stale");
+    expect(PC.resultState(null, null, "offline")).toBeNull(); // no result yet stays "no result yet"
+    expect(PC.checkResultCounts({ okCount: 1, failCount: 0, staleCount: 2 })).toEqual([
+      { state: "ok", count: 1 }, { state: "stale", count: 2 },
+    ]);
+  });
   it("renders the counts in the list's Result cell", async () => {
     const PC = load();
     const tb = doc.createElement("table");

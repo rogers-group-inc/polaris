@@ -54,6 +54,7 @@ import { isBlockedOutboundHost } from "../utils/netGuard.js";
 import { isValidIpAddress } from "../utils/cidr.js";
 import { parseStatusSpec, agentRegexProblem, resolveHttpAuthMode, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { versionAtLeast } from "../utils/version.js";
+import { agentOnline, pathResultStaleCutoff, pathResultStaleReason } from "../utils/pathCheckStale.js";
 import { logEvent } from "./eventLogService.js";
 import { recordCredentialUse, type CredentialUseActor, type CredentialUseVia } from "./credentialUseAuditService.js";
 import { publishConfigRefresh } from "./agentCommandWake.js";
@@ -554,15 +555,41 @@ export interface CheckSummary {
   /** Of failCount: sources whose failing run still got an HTTP answer (wrong
    *  status or body) — the list shows those as "Unexpected response". */
   unexpectedCount: number;
+  /** Sources whose latest result is stale (business rule 85(a)): the agent
+   *  host is offline or no run has landed lately. Counted HERE only — never
+   *  in okCount / failCount / unexpectedCount. */
+  staleCount: number;
   lastRunAt: Date | null;
 }
 
-const EMPTY_SUMMARY: CheckSummary = { sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, lastRunAt: null };
+const EMPTY_SUMMARY: CheckSummary = { sourceCount: 0, okCount: 0, failCount: 0, unexpectedCount: 0, staleCount: 0, lastRunAt: null };
 
-async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummary>> {
+/** Asset ids whose Polaris Agent is offline right now (agentOnline false). */
+async function offlineAgentAssetIds(now: number): Promise<string[]> {
+  const agents = await prisma.managedAgent.findMany({
+    select: { assetId: true, wsConnectedAt: true, wsDisconnectedAt: true, lastSeenAt: true },
+  });
+  return agents.filter((a) => !agentOnline(a, now)).map((a) => a.assetId);
+}
+
+/**
+ * The Result column's counts per check. Stale sources (rule 85(a)) are found
+ * by one more groupBy — offline agents OR a lastSampleAt older than the
+ * check's cutoff, one OR arm per distinct interval — and moved out of the
+ * ok / fail / unexpected counts, so a dead host never reads "1 OK".
+ */
+async function summariesFor(checks: Array<{ id: string; intervalSec: number }>, now = Date.now()): Promise<Map<string, CheckSummary>> {
   const out = new Map<string, CheckSummary>();
-  if (checkIds.length === 0) return out;
-  const [rows, unexpected] = await Promise.all([
+  if (checks.length === 0) return out;
+  const checkIds = checks.map((c) => c.id);
+  const byInterval = new Map<number, string[]>();
+  for (const c of checks) byInterval.set(c.intervalSec, [...(byInterval.get(c.intervalSec) ?? []), c.id]);
+  const offline = await offlineAgentAssetIds(now);
+  const staleArms: Prisma.PathCheckSourceWhereInput[] = [...byInterval].map(([sec, ids]) => ({
+    checkId: { in: ids }, lastSampleAt: { lt: pathResultStaleCutoff(sec, now) },
+  }));
+  if (offline.length) staleArms.push({ assetId: { in: offline } });
+  const [rows, unexpected, stale] = await Promise.all([
     prisma.pathCheckSource.groupBy({
       by: ["checkId", "lastOk"],
       where: { checkId: { in: checkIds } },
@@ -573,6 +600,13 @@ async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummar
       by: ["checkId"],
       where: { checkId: { in: checkIds }, lastOk: false, lastHttpStatus: { not: null } },
       _count: { _all: true },
+    }),
+    // _count.lastHttpStatus counts the non-null ones: a stale failing source
+    // that got an HTTP answer comes off unexpectedCount too.
+    prisma.pathCheckSource.groupBy({
+      by: ["checkId", "lastOk"],
+      where: { checkId: { in: checkIds }, lastSampleAt: { not: null }, OR: staleArms },
+      _count: { _all: true, lastHttpStatus: true },
     }),
   ]);
   for (const r of rows) {
@@ -588,6 +622,17 @@ async function summariesFor(checkIds: string[]): Promise<Map<string, CheckSummar
     const s = out.get(r.checkId);
     if (s) s.unexpectedCount = r._count._all;
   }
+  for (const r of stale) {
+    const s = out.get(r.checkId);
+    if (!s) continue;
+    const n = r._count._all;
+    s.staleCount += n;
+    if (r.lastOk === true) s.okCount = Math.max(0, s.okCount - n);
+    if (r.lastOk === false) {
+      s.failCount = Math.max(0, s.failCount - n);
+      s.unexpectedCount = Math.max(0, s.unexpectedCount - r._count.lastHttpStatus);
+    }
+  }
   return out;
 }
 
@@ -597,7 +642,7 @@ const NO_MAINTENANCE = { inMaintenance: false, windows: [] };
 export async function listChecks() {
   const checks = await prisma.pathCheck.findMany({ orderBy: { name: "asc" } });
   const [sums, maint] = await Promise.all([
-    summariesFor(checks.map((c) => c.id)),
+    summariesFor(checks),
     getPathCheckMaintenanceStates(),
   ]);
   return checks.map((c) => ({
@@ -620,7 +665,7 @@ export async function listCheckCatalog() {
 export async function getCheck(id: string) {
   const check = await prisma.pathCheck.findUnique({ where: { id } });
   if (!check) throw new AppError(404, "Path check not found");
-  const [sums, maint] = await Promise.all([summariesFor([id]), getPathCheckMaintenanceStates([id])]);
+  const [sums, maint] = await Promise.all([summariesFor([check]), getPathCheckMaintenanceStates([id])]);
   return { ...check, ...(sums.get(id) ?? EMPTY_SUMMARY), maintenance: maint.get(id) ?? NO_MAINTENANCE };
 }
 
@@ -1037,12 +1082,9 @@ async function reportOverCap(fullPass: boolean): Promise<void> {
 
 // ─── Read surfaces ──────────────────────────────────────────────────────────
 
-/** Is the agent live right now? A WS session is the strong signal; a recent
- *  bearer call is the fallback when the WS is blocked by a proxy. */
-export function agentOnline(a: { wsConnectedAt: Date | null; wsDisconnectedAt: Date | null; lastSeenAt: Date | null }, now = Date.now()): boolean {
-  if (a.wsConnectedAt && (!a.wsDisconnectedAt || a.wsConnectedAt > a.wsDisconnectedAt)) return true;
-  return !!a.lastSeenAt && now - a.lastSeenAt.getTime() < 10 * 60_000;
-}
+// agentOnline lives in utils/pathCheckStale.ts (pure, so the assistant can
+// read it without importing this service); re-exported for existing callers.
+export { agentOnline };
 
 // ─── Test run (the wizard's Expectations step) ──────────────────────────────
 
@@ -1192,19 +1234,25 @@ export async function listCheckResults(checkId: string) {
       },
     },
   });
+  const now = Date.now();
   const hosts = rows
     .filter((r) => r.asset !== null)
-    .map(({ asset, ...s }) => ({
-      ...s,
-      server: false,
-      hostname: asset!.hostname,
-      ipAddress: asset!.ipAddress,
-      os: asset!.os,
-      agentVersion: asset!.managedAgent?.agentVersion ?? null,
-      online: asset!.managedAgent ? agentOnline(asset!.managedAgent) : false,
-      supported: versionAtLeast(asset!.managedAgent?.agentVersion, needs),
-      requiredAgentVersion: needs,
-    }))
+    .map(({ asset, ...s }) => {
+      const online = asset!.managedAgent ? agentOnline(asset!.managedAgent, now) : false;
+      return {
+        ...s,
+        server: false,
+        hostname: asset!.hostname,
+        ipAddress: asset!.ipAddress,
+        os: asset!.os,
+        agentVersion: asset!.managedAgent?.agentVersion ?? null,
+        online,
+        // Rule 85(a): an offline host's or a late result is history, not "OK".
+        staleReason: pathResultStaleReason({ lastSampleAt: s.lastSampleAt, online }, check.intervalSec, now),
+        supported: versionAtLeast(asset!.managedAgent?.agentVersion, needs),
+        requiredAgentVersion: needs,
+      };
+    })
     .sort((a, b) => (a.hostname ?? "").localeCompare(b.hostname ?? ""));
   // The server's own row leads: it is the one source every operator has.
   const server = rows
@@ -1217,6 +1265,7 @@ export async function listCheckResults(checkId: string) {
       os: null,
       agentVersion: null,
       online: true,
+      staleReason: pathResultStaleReason({ lastSampleAt: s.lastSampleAt, online: true }, check.intervalSec, now),
       supported: true,
     }));
   return [...server, ...hosts];
@@ -1254,7 +1303,8 @@ export async function getServerCheck(checkId: string) {
       error: true, resolvedIp: true, tlsNotAfter: true, tlsIssuer: true,
     },
   });
-  const { check, ...latest } = row;
+  const { check, ...src } = row;
+  const latest = { ...src, staleReason: pathResultStaleReason({ lastSampleAt: src.lastSampleAt, online: true }, check.intervalSec) };
   return { checks: [{ ...check, latest, latestSample }] };
 }
 
@@ -1334,7 +1384,12 @@ export async function getAssetChecks(assetId: string) {
   // failed run, or a check that keeps them) the excerpt live there, not on the
   // source row. One indexed findFirst per check; a host runs at most
   // MAX_CHECKS_PER_AGENT, and this serves one slide-over open.
-  const newest = await Promise.all(rows.map((r) => prisma.assetPathCheckSample.findFirst({
+  const [agent, newest] = await Promise.all([
+    prisma.managedAgent.findUnique({
+      where: { assetId },
+      select: { wsConnectedAt: true, wsDisconnectedAt: true, lastSeenAt: true },
+    }),
+    Promise.all(rows.map((r) => prisma.assetPathCheckSample.findFirst({
     where: { assetId, checkId: r.checkId },
     orderBy: { timestamp: "desc" },
     select: {
@@ -1342,10 +1397,18 @@ export async function getAssetChecks(assetId: string) {
       httpStatus: true, bodyMatched: true, bodySha256: true, bodyBytes: true, bodyExcerpt: true,
       error: true, resolvedIp: true, tlsNotAfter: true, tlsIssuer: true,
     },
-  })));
+    }))),
+  ]);
+  const now = Date.now();
+  const online = agent ? agentOnline(agent, now) : false;
   return {
     checks: rows
-      .map(({ check, ...latest }, i) => ({ ...check, latest, latestSample: newest[i] }))
+      .map(({ check, ...src }, i) => ({
+        ...check,
+        // Rule 85(a): an offline host's or a late result is history, not "OK".
+        latest: { ...src, staleReason: pathResultStaleReason({ lastSampleAt: src.lastSampleAt, online }, check.intervalSec, now) },
+        latestSample: newest[i],
+      }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }
