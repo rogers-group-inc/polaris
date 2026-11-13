@@ -343,6 +343,9 @@ Two consequences that are easy to get wrong, and were:
   governance, and an alert whose recipients and escalation chain swapped under a reader is
   worse than a brief retire-and-raise. Compared as JSON, not by identity — the editor posts
   a rebuilt tree on every save, so a reference check would retire everything on every save.
+  An OMITTED scope (a PUT that does not resend it) is left unchanged by the write and is no
+  change here either; until 2026-11-13 it was compared as null and a rename through the API
+  retired every live alert of a scoped group.
 
 **Resolved through `loadScopeAssetIds`, not by matching rows in memory.** That is the
 documented path, and the reason is `interfaceName`: it is relation-backed, resolved in SQL
