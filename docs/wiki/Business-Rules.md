@@ -3657,3 +3657,13 @@ defaults — every Polaris process picks the change up within about 30 seconds.
 
 Before this, the change was saved and shown correctly but the monitoring processes went on
 using the old settings until Polaris was next restarted or updated.
+
+### Rule 178
+
+**An averaged condition covers the time it says.** A condition such as *average CPU over 5
+minutes* (also minimum, maximum and median) uses the readings of the last 5 minutes — before
+this it used the last 15, whatever the window said, so alerts fired and cleared later than
+expected. If a device is polled less often than the window (say every 10 minutes for a
+5-minute window), the newest reading is used instead. Expect averaged alerts, including the
+built-in High CPU, High memory, Slow response and temperature automations, to fire and clear
+sooner than before.

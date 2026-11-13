@@ -109,13 +109,42 @@ export function withRecoveryLookback<T extends Trigger>(trigger: T, reset: Reset
 }
 
 /**
- * The oldest sample a time-windowed aggregate may include: the fire side's
- * window, or no bound at all when the reset did not widen the fetch past it —
- * then everything fetched IS the window, exactly as before the widening existed.
+ * Business rule 178: the span a TIME-windowed aggregate covers — the window
+ * the rule states. 0 when the rule has none: `latest`, a window counted in
+ * readings (rule 66), or no `windowSec`.
+ *
+ * Until 2026-11-13 the aggregate covered the whole FETCH, which is floored at
+ * DEFAULT_LOOKBACK_MS (15 min): "average CPU over 5 minutes" — the High CPU,
+ * High memory, Slow response and temperature baselines — averaged 15.
+ */
+export function timeWindowMs(trigger: LookbackTrigger): number {
+  if (!trigger.windowSec || trigger.windowSec <= 0) return 0;
+  if (!trigger.aggregation || trigger.aggregation === "latest") return 0;
+  if (triggerWindowPolls(trigger)) return 0;
+  return trigger.windowSec * 1000;
+}
+
+/**
+ * The oldest sample a time-windowed aggregate may include: the window the
+ * rule states (rule 178); else the fire side's window when a reset widened
+ * the fetch past it; else no bound — everything fetched IS the window.
  */
 export function aggregateSinceMs(trigger: LookbackTrigger, nowMs: number): number {
+  const stated = timeWindowMs(trigger);
+  if (stated > 0) return nowMs - stated;
   const fire = fireLookbackMsFor(trigger);
   return lookbackMsFor(trigger) > fire ? nowMs - fire : -Infinity;
+}
+
+/**
+ * Rule 178: when the stated window holds no reading — a window shorter than
+ * the device's polling interval — the newest reading stands in for it, if it
+ * is no older than the fire side's lookback (the span the aggregate used to
+ * cover, so nothing older than before is ever read). -Infinity when the rule
+ * has no stated window, meaning "no stand-in": the old behaviour.
+ */
+export function aggregateFallbackSinceMs(trigger: LookbackTrigger, nowMs: number): number {
+  return timeWindowMs(trigger) > 0 ? nowMs - fireLookbackMsFor(trigger) : -Infinity;
 }
 
 // probeLossPct is a windowed RATIO, so its window is the measurement rather than
