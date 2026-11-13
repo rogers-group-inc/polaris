@@ -20,7 +20,7 @@ DATABASE_POOL_SIZE=25
 #   POLARIS_MONITOR_PROBE_WORKERS     (default 24)
 #   POLARIS_MONITOR_FAST_WORKERS      (default 24)
 #   POLARIS_MONITOR_HEAVY_WORKERS     (default 24) — telemetry + systemInfo
-#   POLARIS_MONITOR_FLOATING_WORKERS  (default 32) — cross-queue absorber
+#   POLARIS_MONITOR_FLOATING_WORKERS  (default 32) — cross-queue absorber; 0 turns the floating pool off
 #   POLARIS_MONITOR_LLDP_WORKERS      (default 12)
 #   POLARIS_MONITOR_STORAGE_WORKERS   (default 12)
 #   POLARIS_MONITOR_PROCESSES_WORKERS (default 12) — agentless ssh/winrm processes

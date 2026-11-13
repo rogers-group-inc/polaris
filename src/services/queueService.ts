@@ -305,6 +305,11 @@ let monitorWorkersStarted = false;
 let discoveryWorkerStarted = false;
 let scanWorkerStarted = false;
 let queuesEnsured = false;
+// The executors the boot path injected, kept so a stall recovery — which stops
+// the one boss every worker in this process rides on — can bring back exactly
+// the consumers this process had, not only the monitor ones.
+let discoveryHandler: DiscoveryJobHandler | null = null;
+let scanHandler: ScanJobHandler | null = null;
 
 // Per-cadence worker slot pools, populated at boot inside startPgbossWorkers().
 // Acquire on handler entry, release on exit so the slot id rotates through
@@ -422,6 +427,12 @@ let recovering       = false;
 
 async function attemptWorkerRecovery(): Promise<void> {
   if (recovering) return;
+  // Only the process that runs the monitor consumers can recover them. The
+  // watchdog reads queue depth from the shared pgboss.job table, so a web
+  // (producer) or discovery process sees the same stall — and restarting there
+  // would stop ITS boss and, before 2026-11-12, start monitor workers in the
+  // wrong role. refreshPgbossMetrics already gates on this; kept here too.
+  if (!monitorWorkersStarted) return;
   recovering = true;
   try {
     logger.warn("pg-boss workers stalled; attempting auto-recovery (stop → start)");
@@ -432,11 +443,26 @@ async function attemptWorkerRecovery(): Promise<void> {
       clearInterval(metricsRefreshInterval);
       metricsRefreshInterval = null;
     }
+    // Every consumer in this process rides on the one boss being stopped.
+    const restartDiscovery = discoveryWorkerStarted ? discoveryHandler : null;
+    const restartScan = scanWorkerStarted ? scanHandler : null;
     if (bossInstance) {
       try { await bossInstance.stop({ graceful: false, timeout: 10_000 }); } catch { /* best-effort */ }
       bossInstance = null;
     }
+    // Clear the idempotency flags the start* functions return early on —
+    // without this, startPgbossWorkers() returned at once (monitorWorkersStarted
+    // was still true) and the "recovery" left NO boss: no monitor publishing or
+    // consuming, no discovery or scan dispatch, until a restart (found by
+    // queueService.test.ts 2026-11-12; the flags arrived with a3036c26a).
+    monitorWorkersStarted = false;
+    discoveryWorkerStarted = false;
+    scanWorkerStarted = false;
+    queuesEnsured = false;
     await startPgbossWorkers();
+    if (restartDiscovery) await startDiscoveryWorker(restartDiscovery);
+    if (restartScan) await startScanWorker(restartScan);
+    if (!bossInstance) throw new Error("pg-boss did not come back after the stall recovery");
     logger.info("pg-boss worker auto-recovery completed");
   } catch (err) {
     logger.error({ err }, "pg-boss worker auto-recovery failed — restart polaris to recover monitoring");
@@ -516,7 +542,10 @@ async function refreshPgbossMetrics(): Promise<void> {
     (totalCreated > STALL_CREATED_THRESHOLD && totalActive === 0) ||
     (heavyCreated > STALL_CREATED_THRESHOLD && heavyActive === 0);
 
-  if (isStalled) {
+  // Only the process running the monitor consumers watches for their stall
+  // (see attemptWorkerRecovery): elsewhere the reading is the same shared
+  // queue, and neither recovering nor logging "restart polaris" fits there.
+  if (isStalled && monitorWorkersStarted) {
     stalledReadings++;
     if (stalledReadings >= STALL_CONSECUTIVE_LIMIT) {
       const now = Date.now();
@@ -538,11 +567,12 @@ async function refreshPgbossMetrics(): Promise<void> {
   }
 }
 
-function resolveEnvInt(envName: string, fallback: number): number {
+function resolveEnvInt(envName: string, fallback: number, opts: { allowZero?: boolean } = {}): number {
   const raw = process.env[envName];
   if (!raw) return fallback;
   const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  if (!Number.isFinite(n)) return fallback;
+  return n > 0 || (opts.allowZero && n === 0) ? n : fallback;
 }
 
 /**
@@ -812,6 +842,7 @@ export async function startDiscoveryWorker(handler: DiscoveryJobHandler): Promis
     await handler(integrationId, actor, scope);
   });
   discoveryWorkerStarted = true;
+  discoveryHandler = handler;
   ensureMetricsRefresh();
   logger.info({ discoveryWorkers }, "pg-boss discovery worker started");
 }
@@ -839,6 +870,7 @@ export async function startScanWorker(handler: ScanJobHandler): Promise<void> {
     await handler(runId, actor);
   });
   scanWorkerStarted = true;
+  scanHandler = handler;
   ensureMetricsRefresh();
   logger.info("pg-boss network-scan worker started");
 }
@@ -881,7 +913,8 @@ export async function startPgbossWorkers(): Promise<void> {
   // switched on produce work, so sized like eventLog; the floating pool absorbs
   // a burst (e.g. the first tick after a bulk enable).
   const customWidgetWorkers = resolveEnvInt("POLARIS_MONITOR_CUSTOMWIDGET_WORKERS", 8);
-  const floatingWorkers = resolveEnvInt("POLARIS_MONITOR_FLOATING_WORKERS", 32);
+  // 0 is meaningful here — it switches the floating pool off (startFloatingWorkers).
+  const floatingWorkers = resolveEnvInt("POLARIS_MONITOR_FLOATING_WORKERS", 32, { allowZero: true });
   setMonitorWorkers({
     probe:        probeWorkers,
     fastFiltered: fastWorkers,
