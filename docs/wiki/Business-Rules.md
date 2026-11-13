@@ -3648,6 +3648,11 @@ expiry date passes:
 An expiry does not disconnect a device that is using the address; releasing the reservation
 does.
 
+Networks that were left marked *reserved* by an expiry before this was fixed are not changed,
+because a network can also be marked reserved on purpose. Instead, each network marked
+reserved that no reservation holds is named once in [Events](Events) as a warning, so you can
+set it back to *available* if it should be.
+
 ### Rule 176
 
 **A change to monitoring settings takes effect within about 30 seconds, with no restart.**

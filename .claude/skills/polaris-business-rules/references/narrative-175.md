@@ -26,3 +26,11 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 **Scale.** The transaction gains one small read and at most two set-based writes. The un-push is bounded per tick (50 rows, five device calls in flight) and reads through the `status` index; on an install that pushes nothing it is one query returning no rows.
 
 Pinned by `tests/integration/reservationExpiry.test.ts`.
+
+### Rule 175(a) — the networks already stranded are listed, not changed
+
+**Operator decision, 2026-11-13.** Rule 175 stops a lapsed whole-network reservation from leaving its network `reserved`. Networks it had already stranded before that shipped could not simply be set back to `available`, because the same state — `reserved`, with no whole-network reservation — is also what an operator gets by marking a network reserved by hand on purpose. Asked whether to list them, the operator said to list them.
+
+**What it does.** The daily history prune finds every network marked `reserved` that no active whole-network reservation holds and writes one warning Event per network, worded so that "reserved on purpose" needs no action. It keeps the ids it has named in a Setting, so the list is not repeated every day; a network that stops qualifying (a reservation holds it again, or its status changed) is dropped from that memory, and is named again if it is ever stranded again.
+
+Pinned by the "rule 175(a)" case in `tests/integration/historyRetention.test.ts`.

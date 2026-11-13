@@ -331,6 +331,59 @@ export async function pruneUnpinnedProcessConfigs(now: Date = new Date()): Promi
   return (await prisma.assetProcessConfig.deleteMany({ where: { id: { in: dead }, updatedAt: { lt: cutoff } } })).count;
 }
 
+/** The networks already reported by reportUnheldReservedNetworks. */
+const UNHELD_RESERVED_SETTING_KEY = "unheldReservedNetworksReported";
+
+/**
+ * Business rule 175(a): name each network marked `reserved` that no
+ * whole-network reservation holds — once.
+ *
+ * Rule 175 sets a network back to `available` when the whole-network
+ * reservation that reserved it expires. Networks stranded `reserved` before
+ * that shipped cannot be repaired automatically, because an operator can also
+ * mark a network reserved by hand, on purpose, with no reservation at all. So
+ * Polaris does not change them; it lists them, one warning Event per network,
+ * and remembers it has, so a network an operator means to keep reserved is
+ * named once and then left alone. A network that stops qualifying (a
+ * reservation now holds it, or its status changed) is forgotten, so if it is
+ * stranded again later it is named again.
+ *
+ * Scale: one read of reserved networks with an anti-join, one Setting row.
+ * Returns how many networks were newly reported.
+ */
+export async function reportUnheldReservedNetworks(): Promise<number> {
+  const unheld = await prisma.subnet.findMany({
+    where: { status: "reserved", reservations: { none: { status: "active", ipAddress: null } } },
+    select: { id: true, name: true, cidr: true },
+    orderBy: { cidr: "asc" },
+  });
+  const row = await prisma.setting.findUnique({ where: { key: UNHELD_RESERVED_SETTING_KEY } });
+  const reported = new Set(Array.isArray(row?.value) ? (row!.value as unknown[]).filter((v): v is string => typeof v === "string") : []);
+  const fresh = unheld.filter((n) => !reported.has(n.id));
+  for (const n of fresh) {
+    await logEvent({
+      action: "subnet.reserved_unheld",
+      level: "warning",
+      resourceType: "subnet",
+      resourceId: n.id,
+      resourceName: n.name,
+      actor: "system",
+      message: `Network "${n.name}" (${n.cidr}) is marked Reserved, but no reservation holds it. If it should be available for allocation, change its status; if it is reserved on purpose, there is nothing to do — this is reported once.`,
+      details: { cidr: n.cidr },
+    });
+  }
+  const next = unheld.map((n) => n.id);
+  const changed = next.length !== reported.size || fresh.length > 0;
+  if (changed) {
+    await prisma.setting.upsert({
+      where: { key: UNHELD_RESERVED_SETTING_KEY },
+      create: { key: UNHELD_RESERVED_SETTING_KEY, value: next },
+      update: { value: next },
+    });
+  }
+  return fresh.length;
+}
+
 /**
  * Business rule 158(e): directory-synced contacts whose integration is gone.
  *
@@ -413,6 +466,8 @@ export interface HistoryPruneResult {
   sdwanRules: number;
   /** Directory-synced contacts whose integration no longer exists (rule 158(e)). */
   directoryContacts: number;
+  /** Networks newly reported as reserved with no reservation holding them (rule 175(a)). */
+  unheldReservedNetworks: number;
 }
 
 /**
@@ -420,7 +475,7 @@ export interface HistoryPruneResult {
  * reported in `errors` and the others still run.
  */
 export async function pruneHistory(now: Date = new Date()): Promise<{ result: HistoryPruneResult; errors: string[] }> {
-  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0, sdwanRules: 0, directoryContacts: 0 };
+  const result: HistoryPruneResult = { alerts: 0, summaries: 0, ruleStates: 0, discoveryRuns: 0, sightings: 0, scanRuns: 0, hiddenRegionIds: 0, tagAssignments: 0, processConfigs: 0, firmwareLeftovers: 0, sdwanRules: 0, directoryContacts: 0, unheldReservedNetworks: 0 };
   const errors: string[] = [];
   const attempt = async (name: string, run: () => Promise<void>) => {
     try { await run(); } catch (err) { errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`); }
@@ -435,6 +490,7 @@ export async function pruneHistory(now: Date = new Date()): Promise<{ result: Hi
   await attempt("process log configs", async () => { result.processConfigs = await pruneUnpinnedProcessConfigs(now); });
   await attempt("stale SD-WAN rules", async () => { result.sdwanRules = await pruneStaleSdwanRules(now); });
   await attempt("directory contacts of deleted integrations", async () => { result.directoryContacts = await pruneDeadDirectoryContacts(); });
+  await attempt("reserved networks nothing holds", async () => { result.unheldReservedNetworks = await reportUnheldReservedNetworks(); });
   await attempt("firmware leftovers", async () => {
     const swept = await sweepFirmwareFiles(now);
     result.firmwareLeftovers = swept.files + swept.incoming + swept.rows;
