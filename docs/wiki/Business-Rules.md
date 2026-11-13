@@ -1361,6 +1361,13 @@ describes whether that source can reach the target, so:
   `path_check.path_changed` to Events (at most once every 10 minutes per host
   and check). You can alert on it with a Path Monitor automation set to fire
   when the route changes.
+- **A changed certificate is an Event too (85(c)).** When the TLS
+  certificate an HTTPS check sees from a host has a different expiry date
+  from the last one, Polaris writes `path_check.tls_cert_changed`, saying
+  whether the expiry moved later (renewed) or earlier. The first certificate
+  is a starting point, a run that could not connect is ignored, and there is
+  at most one such event every 10 minutes per host and check. Alert on it with
+  a Path Monitor automation set to fire when the certificate changes.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works

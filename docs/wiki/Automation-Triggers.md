@@ -162,6 +162,14 @@ type, then choose what fires it:
 - **A check's route changes (traceroute).** Fires each time a source's
   traceroute takes a different set of hops (at most once per 10 minutes per
   source and check).
+- **A check's TLS certificate changes (renewed or replaced).** HTTPS checks
+  only. Fires each time the certificate a source sees has a different expiry
+  date from the last one it saw (at most once per 10 minutes per source and
+  check). The alert says whether the expiry moved later (a renewal) or
+  earlier (a replacement that expires sooner). The first certificate a source
+  sees, and a run that could not connect, never fire it. To be warned
+  *before* a certificate expires, use the `pathTlsDaysLeft` condition above
+  instead, for example *TLS certificate days remaining < 30*.
 
 **Which sources it watches.** Only devices with an active **Polaris Agent** —
 the Devices step's conditions narrow those, and its preview counts only agent

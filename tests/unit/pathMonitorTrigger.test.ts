@@ -25,6 +25,8 @@ describe("isPathTrigger", () => {
   it("is a path metric, the path change, or a composite of path metrics only", () => {
     for (const m of PATH_METRICS) expect(isPathTrigger(pathLeaf(m))).toBe(true);
     expect(isPathTrigger({ type: "change", changeType: "path_check_path_changed" })).toBe(true);
+    // Business rule 85(c): the certificate change is a Path Monitor trigger too.
+    expect(isPathTrigger({ type: "change", changeType: "path_check_tls_cert_changed" })).toBe(true);
     expect(isPathTrigger({ type: "composite", kind: "asset", op: "and", children: [pathLeaf("pathOk"), pathLeaf("pathLatencyMs")] })).toBe(true);
   });
   it("is not a device metric, another change, or a mixed tree", () => {
@@ -96,6 +98,8 @@ describe("eventMatchesPathServer — a server-side route change", () => {
   it("follows includeServer when it is set", () => {
     expect(eventMatchesPathServer(change(true), true, "path-check")).toBe(true);
     expect(eventMatchesPathServer(change(false), false, "path-check")).toBe(false);
+    const cert = { type: "change", changeType: "path_check_tls_cert_changed", includeServer: true };
+    expect(eventMatchesPathServer(cert, true, "path-check")).toBe(true);
   });
   it("keeps the pre-flag behaviour when absent: unfiltered matches, filtered does not", () => {
     expect(eventMatchesPathServer(change(), false, "path-check")).toBe(true);
@@ -111,7 +115,7 @@ describe("schema catalog", () => {
   it("serves the Path Monitor vocabulary the wizard files its category from", () => {
     const cat = buildSchemaCatalog() as unknown as { pathMonitor: { metrics: string[]; changeTypes: string[]; agentRule: unknown } };
     expect(cat.pathMonitor.metrics).toEqual([...PATH_METRICS]);
-    expect(cat.pathMonitor.changeTypes).toEqual(["path_check_path_changed"]);
+    expect(cat.pathMonitor.changeTypes).toEqual(["path_check_path_changed", "path_check_tls_cert_changed"]);
     expect(cat.pathMonitor.agentRule).toEqual(AGENT_INSTALLED_RULE);
   });
 });

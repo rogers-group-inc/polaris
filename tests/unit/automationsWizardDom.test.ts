@@ -3368,6 +3368,42 @@ describe("automation wizard DOM render", () => {
     expect(saved.trigger.metric).toBe("pathOk");
     expect(saved.trigger.includeServer).toBe(false);
   });
+
+  it("opens a stored certificate-change automation in its own mode and saves each change mode's type (rule 85(c))", async () => {
+    const open = async () => {
+      doc.body.innerHTML = "";
+      savedPayloads.length = 0;
+      toastErrors.length = 0;
+      await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+        ...LOSS_BASE, id: "r-path-cert", name: "Cert renewed",
+        trigger: { type: "change", changeType: "path_check_tls_cert_changed", includeServer: true },
+        reset: null, severityBands: null, bandNotify: null,
+      });
+      for (let i = 0; i < 2; i++) {
+        (doc.querySelector("#aw-next") as unknown as { click: () => void }).click();
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+    const save = async () => {
+      (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(toastErrors).toEqual([]);
+      return savedPayloads[0]! as Record<string, any>;
+    };
+    await open();
+    expect((doc.querySelector("#aw-trigger-type") as unknown as { value: string }).value).toBe("path");
+    expect((doc.querySelector("#tf-path-mode") as unknown as { value: string }).value).toBe("cert");
+    expect(doc.querySelector("#tf-path-cert-note")!.hasAttribute("hidden")).toBe(false);
+    expect(doc.querySelector("#aw-trig-root")).toBeNull();
+    expect((await save()).trigger).toMatchObject({ type: "change", changeType: "path_check_tls_cert_changed", includeServer: true });
+
+    await open();
+    const mode = doc.querySelector("#tf-path-mode") as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    mode.value = "route";
+    mode.dispatchEvent(new (g.window as any).Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await save()).trigger.changeType).toBe("path_check_path_changed");
+  });
 });
 
 // ── Trigger filter rows (device identifiers / component names), 2026-08 ─────

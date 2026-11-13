@@ -87,6 +87,10 @@ describe("path-change change type", () => {
     expect(CHANGE_TYPE_ACTIONS.path_check_path_changed).toBe("path_check.path_changed");
     expect(CHANGE_TYPE_META.path_check_path_changed).toMatch(/path/i);
   });
+  it("maps the certificate change to its Event (business rule 85(c))", () => {
+    expect(CHANGE_TYPE_ACTIONS.path_check_tls_cert_changed).toBe("path_check.tls_cert_changed");
+    expect(CHANGE_TYPE_META.path_check_tls_cert_changed).toMatch(/certificate/i);
+  });
 });
 
 describe("alert email + specimen", () => {
