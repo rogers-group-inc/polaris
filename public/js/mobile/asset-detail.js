@@ -1411,6 +1411,7 @@
     row("Location", asset.location || asset.learnedLocation);
     row("Department", asset.department);
     row("Assigned to", asset.assignedTo);
+    row("Last logged on", lastLoggedOnRowValue(asset.associatedUsers));
     row("Last seen", timeAgo(asset.lastSeen));
     row("Last seen port", asset.lastSeenSwitch
       ? '<span class="mono">' + escapeHtml(asset.lastSeenSwitch) + '</span>'
@@ -4465,6 +4466,23 @@
   // Flashing and rebooting are assets:write on THIS device (rule 141 (e)):
   // the open asset's `canEdit`, read through scopedVerb above.
   function canFlashFirmware() { return scopedVerb("assets", "canEdit", null); }
+
+  /**
+   * The newest user sighting from any source (business rule 180), as plain
+   * text — the row escapes it. Null when nothing has reported a user.
+   */
+  function lastLoggedOnRowValue(users) {
+    if (!Array.isArray(users)) return null;
+    var best = null, bestMs = -1;
+    users.forEach(function (u) {
+      if (!u || !u.user) return;
+      var t = Date.parse(u.lastSeen);
+      var ms = isFinite(t) ? t : 0;
+      if (ms > bestMs) { best = u; bestMs = ms; }
+    });
+    if (!best) return null;
+    return (best.domain ? best.domain + "\\" + best.user : best.user) + (bestMs > 0 ? " · " + timeAgo(best.lastSeen) : "");
+  }
 
   /** The OS row's value: the version text, plus a slot the firmware loader fills. */
   function osRowValue(asset) {

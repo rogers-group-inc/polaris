@@ -89,6 +89,10 @@ export interface DiscoveredEntraDevice {
   manufacturer?: string;
   model?: string;
   userPrincipalName?: string;
+  // Intune `userId` — the primary user's directory object id, paired with
+  // `userPrincipalName` above. Names a logged-on user's GUID with no extra
+  // permission (business rule 180, fetchIntuneLoggedOnUsers).
+  intuneUserId?: string;
   chassisType?: string;        // "desktop" | "laptop" | "tablet" | "phone" | ...
   complianceState?: string;    // "compliant" | "noncompliant" | "unknown" | ...
   lastSyncDateTime?: string;
@@ -952,6 +956,92 @@ export async function fetchIntuneDetectedApps(
   return { apps, failedBatches, batchCount, lastError };
 }
 
+// ─── Intune logged-on users (business rule 180) ─────────────────────────────
+//
+// `usersLoggedOn` — each account that logged on to the device and when — is a
+// Graph BETA property of managedDevice (absent from v1.0, so it must never go
+// into the v1.0 list's $select: an unknown property fails the whole read).
+// Like `ethernetMacAddress` it is filled reliably only on a per-device GET, so
+// it is read through the same $batch helper, and the caller skips devices that
+// have not synced since their last read (fetching is the caller's plan).
+// It carries user object ids; naming them is resolveUserPrincipalNames.
+// Same permission as the device read (DeviceManagementManagedDevices.Read.All).
+
+export interface IntuneLogon {
+  userId: string;
+  lastLogOnDateTime: string;
+}
+
+/**
+ * Read `usersLoggedOn` for each managed device id. A device present in the
+ * result was read (an empty list is a real answer); a missing one failed and
+ * keeps what it had. Non-GUID ids are skipped — nothing unchecked reaches a URL.
+ */
+export async function fetchIntuneLoggedOnUsers(
+  config: EntraIdConfig,
+  managedDeviceIds: string[],
+  signal?: AbortSignal,
+): Promise<{ logons: Map<string, IntuneLogon[]>; failedBatches: number; batchCount: number; lastError: string }> {
+  const ids = managedDeviceIds.filter((id) => GUID_RE.test(id));
+  const { bodies, failedBatches, batchCount, lastError } = await graphBatchGet(
+    config, "beta", ids, (id) => `/deviceManagement/managedDevices/${id}?$select=id,usersLoggedOn`, signal,
+  );
+  const logons = new Map<string, IntuneLogon[]>();
+  for (const [id, body] of bodies) {
+    const rows: IntuneLogon[] = [];
+    for (const u of Array.isArray(body?.usersLoggedOn) ? body.usersLoggedOn : []) {
+      const userId = typeof u?.userId === "string" ? u.userId.toLowerCase() : "";
+      const at = typeof u?.lastLogOnDateTime === "string" ? u.lastLogOnDateTime : "";
+      if (GUID_RE.test(userId) && at && Number.isFinite(Date.parse(at))) rows.push({ userId, lastLogOnDateTime: at });
+    }
+    logons.set(id, rows);
+  }
+  return { logons, failedBatches, batchCount, lastError };
+}
+
+/** UPNs already resolved, per tenant + app, for a day — names rarely change. */
+const UPN_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const upnCache = new Map<string, Map<string, { upn: string; at: number }>>();
+
+/**
+ * Name user object ids. `known` seeds the answer at no cost (each Intune
+ * device's primary user pairs `userId` with `userPrincipalName`); the rest are
+ * read from `/users/{id}`, which needs User.Read.All — the grant directory
+ * search and the GAL sync already ask for. An id that cannot be read (no
+ * grant, or a deleted account) is left out and counted.
+ */
+export async function resolveUserPrincipalNames(
+  config: EntraIdConfig,
+  userIds: Iterable<string>,
+  known: ReadonlyMap<string, string>,
+  signal?: AbortSignal,
+): Promise<{ upns: Map<string, string>; unresolved: number; lastError: string }> {
+  const cacheKeyStr = cacheKey(config);
+  let cache = upnCache.get(cacheKeyStr);
+  if (!cache) { cache = new Map(); upnCache.set(cacheKeyStr, cache); }
+  const nowMs = Date.now();
+  for (const [id, upn] of known) cache.set(id.toLowerCase(), { upn, at: nowMs });
+
+  const upns = new Map<string, string>();
+  const toRead: string[] = [];
+  for (const raw of new Set([...userIds].map((u) => u.toLowerCase()))) {
+    const hit = cache.get(raw);
+    if (hit && nowMs - hit.at < UPN_CACHE_TTL_MS) upns.set(raw, hit.upn);
+    else if (GUID_RE.test(raw)) toRead.push(raw);
+  }
+  if (toRead.length === 0 || signal?.aborted) return { upns, unresolved: toRead.length, lastError: "" };
+  const { bodies, lastError } = await graphBatchGet(
+    config, "v1.0", toRead, (id) => `/users/${id}?$select=id,userPrincipalName`, signal,
+  );
+  for (const [id, body] of bodies) {
+    const upn = typeof body?.userPrincipalName === "string" ? body.userPrincipalName : "";
+    if (!upn) continue;
+    upns.set(id, upn);
+    cache.set(id, { upn, at: nowMs });
+  }
+  return { upns, unresolved: toRead.filter((id) => !upns.has(id)).length, lastError };
+}
+
 /**
  * The Ethernet MAC for every Intune device, keyed by azureADDeviceId: from the
  * list row when Graph filled it, the stored value when the device has not
@@ -1066,6 +1156,7 @@ export async function discoverDevices(
       "manufacturer",
       "model",
       "userPrincipalName",
+      "userId",
       "complianceState",
       "lastSyncDateTime",
     ].join(",");
@@ -1146,6 +1237,7 @@ export async function discoverDevices(
       manufacturer: intune?.manufacturer || undefined,
       model: intune?.model || undefined,
       userPrincipalName: intune?.userPrincipalName || undefined,
+      intuneUserId: intune?.userId || undefined,
       chassisType: intune?.chassisType || undefined,
       complianceState: intune?.complianceState || undefined,
       lastSyncDateTime: intune?.lastSyncDateTime || undefined,
@@ -1180,6 +1272,7 @@ export async function discoverDevices(
       manufacturer: intune.manufacturer || undefined,
       model: intune.model || undefined,
       userPrincipalName: intune.userPrincipalName || undefined,
+      intuneUserId: intune.userId || undefined,
       chassisType: intune.chassisType || undefined,
       complianceState: intune.complianceState || undefined,
       lastSyncDateTime: intune.lastSyncDateTime || undefined,

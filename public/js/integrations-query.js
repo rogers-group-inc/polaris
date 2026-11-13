@@ -103,6 +103,7 @@ var _FMG_PROXY_PRESET_QUERIES = [
   // Discovery adds "&ipv6=true" when IPv6 is on for the install.
   _fmgProxyPreset("DHCP leases on device", "/api/v2/monitor/system/dhcp?format=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci|type"),
   _fmgProxyPreset("Endpoint devices on device", "/api/v2/monitor/user/device/query?format=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address"),
+  _fmgProxyPreset("Authenticated users on device", "/api/v2/monitor/user/firewall"),
   _fmgProxyPreset("ARP table on device", "/api/v2/monitor/network/arp"),
   _fmgProxyPreset("Managed FortiSwitches on device", "/api/v2/monitor/switch-controller/managed-switch/status?format=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status"),
   _fmgProxyPreset("FortiSwitch config (descriptions, uplink ports) on device", "/api/v2/cmdb/switch-controller/managed-switch?format=sn|switch-id|name|description|ports"),
@@ -129,6 +130,7 @@ var _FGT_PRESET_QUERIES = [
   { name: "DHCP leases", method: "GET", path: "/api/v2/monitor/system/dhcp", query: "vdom=root\nformat=ip|mac|hostname|interface|reserved|expire_time|access_point|ssid|vci|type" },
   { name: "Firewall VIPs", method: "GET", path: "/api/v2/cmdb/firewall/vip", query: "vdom=root\nformat=name|extip|mappedip|extintf|type|realservers" },
   { name: "Endpoint devices", method: "GET", path: "/api/v2/monitor/user/device/query", query: "vdom=root\nformat=mac|ipv4_address|ip|hostname|host|os_name|os|type|os_version|hardware_vendor|hardware_family|detected_interface|interface|switch_fortilink|fortiswitch|fortiswitch_id|switch_port|fortiswitch_port_id|fortiswitch_port_name|ap_name|fortiap|user|detected_user|unauth_user|is_online|last_seen|ipv6_address" },
+  { name: "Authenticated users", method: "GET", path: "/api/v2/monitor/user/firewall", query: "vdom=root" },
   { name: "ARP table", method: "GET", path: "/api/v2/monitor/network/arp", query: "vdom=root" },
   { name: "Managed FortiSwitches", method: "GET", path: "/api/v2/monitor/switch-controller/managed-switch/status", query: "vdom=root\nformat=connecting_from|fgt_peer_intf_name|join_time|os_version|serial|switch-id|state|status" },
   { name: "FortiSwitch config (descriptions, uplink ports)", method: "GET", path: "/api/v2/cmdb/switch-controller/managed-switch", query: "vdom=root\nformat=sn|switch-id|name|description|ports" },
@@ -170,13 +172,16 @@ var _FMG_PRESET_QUERIES = _FMG_PROXY_PRESET_QUERIES.concat(_FMG_DIRECT_PRESET_QU
 //    carries discovery's format= and no datasource=1.
 // 7: management access moved into discovery — allowaccess on the interface
 //    read, wtp-profile on the AP read, the AP profile + switch local-access reads.
-var _FMG_QUERIES_VERSION = 7;
+// 8: the authenticated-user table discovery reads for the last logged-on user
+//    (business rule 180).
+var _FMG_QUERIES_VERSION = 8;
 // 2: every standalone FortiGate discovery query; ARP moved to network/arp.
 // 3: interface, DHCP server, VIP, switch and AP config reads carry discovery's
 //    format= lists (datasource=1 dropped).
 // 4: management access moved into discovery (allowaccess, wtp-profile, the AP
 //    profile and switch local-access reads).
-var _FGT_QUERIES_VERSION = 4;
+// 5: the authenticated-user table (business rule 180).
+var _FGT_QUERIES_VERSION = 5;
 
 function _substituteFmgAdom(paramsStr, adom) {
   return String(paramsStr).replace(/<adom>/g, adom || "root");
@@ -945,6 +950,11 @@ var _ENTRA_PRESET_QUERIES = [
     query: "$filter=trustType eq 'ServerAd'\n$top=25\n$select=id,deviceId,displayName,operatingSystem,operatingSystemVersion,onPremisesSecurityIdentifier,approximateLastSignInDateTime",
   },
   {
+    name: "Logged-on users of one device (Intune, beta — paste its managed device id)",
+    path: "/beta/deviceManagement/managedDevices/<managed-device-id>",
+    query: "$select=id,deviceName,userId,userPrincipalName,usersLoggedOn",
+  },
+  {
     name: "Users (summary)",
     path: "/v1.0/users",
     query: "$top=25\n$select=id,displayName,userPrincipalName,accountEnabled,jobTitle,department",
@@ -956,7 +966,8 @@ var _ENTRA_PRESET_QUERIES = [
   },
 ];
 
-var _ENTRA_QUERIES_VERSION = 1;
+// 2: the logged-on-users read (business rule 180).
+var _ENTRA_QUERIES_VERSION = 2;
 
 var _entraQueryStore = _makeSavedQueryStore("polaris-entra-queries", _ENTRA_QUERIES_VERSION, _ENTRA_PRESET_QUERIES);
 

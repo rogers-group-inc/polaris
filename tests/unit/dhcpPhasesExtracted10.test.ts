@@ -104,6 +104,24 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     expect(m.logCreated).toHaveBeenCalledWith("a1", "pc-40", expect.objectContaining({ sourceKind: "fortigate-endpoint" }));
   });
 
+  it("records the gate's auth-session user at run time beside the row's own user (rule 180)", async () => {
+    const { done } = run({ deviceInventory: [inv({ user: "CORP\\jdoe", authUser: "CORP\\asmith" })] });
+    await done;
+    expect(db.create.mock.calls[0][0].data.associatedUsers).toEqual([
+      { user: "jdoe", domain: "CORP", lastSeen: NOW, source: "device-inventory" },
+      { user: "asmith", domain: "CORP", lastSeen: NOW, source: "fortigate-auth" },
+    ]);
+  });
+
+  it("stamps an offline row's user with when the gate last saw the client, not the run (rule 180)", async () => {
+    const seen = "2026-11-08T09:15:00.000Z";
+    const { done } = run({ deviceInventory: [inv({ user: "jdoe", authUser: "ignored", isOnline: false, lastSeen: seen })] });
+    await done;
+    expect(db.create.mock.calls[0][0].data.associatedUsers).toEqual([
+      { user: "jdoe", lastSeen: seen, source: "device-inventory" },
+    ]);
+  });
+
   it("types a new device from every fact, not the OS alone (rule 164)", async () => {
     const { state, done } = run({ deviceInventory: [inv({ os: "APC AOS", osVersion: "", hardwareVendor: "APC", hostname: "pdu-a3" })] });
     await done;

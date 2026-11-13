@@ -3703,3 +3703,16 @@ shown in the racks are drawn as cables: each leaves its device into the nearer c
 manager, runs up to the trough, along it and down into the other device. You can re-route a
 cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
 its automatic route.
+
+### Rule 180
+
+**The last logged-on user is whoever a source saw most recently, at the time that source saw them.**
+An asset lists the users its integrations have seen on it, each with when and who reported
+it, and the newest is shown as the **Last Logged-On User**. Intune reports each account that
+logged on to a device and when (naming accounts that are nobody’s primary user needs the
+`User.Read.All` permission). A FortiGate reports the users it has authenticated (FSSO, RSSO,
+captive portal, firewall policy logins), matched to a device only when the same gate is
+seeing that device online at the user’s address. The gate’s device list reports a user too,
+dated by when the gate last saw the device. The time shown is always when the source saw the
+user, never when Polaris last read it. Each asset keeps its 25 most recent users. **Assigned
+To** is unchanged: it is still the device’s primary user in Intune.

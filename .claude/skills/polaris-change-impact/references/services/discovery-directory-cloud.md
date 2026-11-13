@@ -342,13 +342,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Microsoft Entra ID (Azure AD) + Intune device discovery via OAuth2 Graph API client (device registration, Intune enrollment, compliance, user assignment).
 
-**Public API:** testConnection, proxyQuery, discoverDevices, entraSweepBlockedReason, planEthernetMacFetch, KnownEthernetMac, fetchIntuneDetectedApps, IntuneDetectedApp, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
+**Public API:** testConnection, proxyQuery, discoverDevices, entraSweepBlockedReason, planEthernetMacFetch, KnownEthernetMac, fetchIntuneDetectedApps, IntuneDetectedApp, fetchIntuneLoggedOnUsers, IntuneLogon, resolveUserPrincipalNames, EntraIdConfig, DiscoveredEntraDevice, EntraDiscoveryResult, EntraDiscoveryProgressCallback.
 
 **Scoped (single-device) discovery:** `discoverDevices` takes a 4th arg `scope?: { deviceId }` — the asset slide-in's Discover Now (see `discovery/discoveryScope.ts` for the scope union and `assetDiscoveryScope.ts` for how an asset resolves to one). It swaps `$top=999` for `$filter=deviceId eq '<guid>'` on `/devices` and `$filter=azureADDeviceId eq '<guid>'` on `/deviceManagement/managedDevices`; the deviceId is GUID-validated before interpolation and a malformed one throws 400 rather than reaching an OData string. Everything downstream is untouched — the Intune merge, deviceInclude/deviceExclude and includeDisabled all still apply, so a scoped run on an excluded device correctly returns zero devices instead of smuggling one past the filter.
 
 **Cross-service deps:** None (pure Graph API client; no service-to-service calls).
 
-**Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices. src/services/softwareInventoryService.ts — `syncIntuneSoftware` calls `fetchIntuneDetectedApps` for the Software tab's Intune list.
+**Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices. src/services/softwareInventoryService.ts — `syncIntuneSoftware` calls `fetchIntuneDetectedApps` for the Software tab's Intune list. src/services/loggedOnUserService.ts — `syncIntuneLoggedOnUsers` calls `fetchIntuneLoggedOnUsers` + `resolveUserPrincipalNames` for the last logged-on user (business rule 180).
 
 **Invariants:**
 - OAuth2 client-credentials flow; tokens cached in-memory by tenantId:clientId until expiry ≥60s buffer.
@@ -359,8 +359,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Disabled devices (accountEnabled=false) → `decommissioned` status when `includeDisabled=true` (default). `includeDisabled` reached `EntraIdConfigSchema` only in 2026-09; before that `z.object`'s strip dropped what the modal posted and the checkbox did nothing.
 - `EntraDiscoveryResult` carries the disappearance sweep's inputs alongside `devices`: `presentDeviceIds` + `disabledDeviceIds` are the RAW `/devices` read (before `deviceInclude`/`deviceExclude` and before the `includeDisabled=false` skip), `presentIntuneDeviceIds` + `intuneRead` are the Intune half (the two source kinds are swept against their OWN endpoint — an Intune-only device is absent from `/devices` without having gone anywhere, and a failed or switched-off Intune read must leave every intune row alone), `inventoryComplete` is `graphPage`'s `meta.complete` (false on cancellation or the 10,000-device cap — a page FAILURE throws, so only those two produce a silently short list), `scoped` when the run was narrowed. `entraSweepBlockedReason` is pure and lives here for the same reason vCenter's does: it is the only unit-testable part of that pass (business rule 70).
 - **`ethernetMacAddress` never comes from the list call** — Graph returns it null on every managedDevices LIST row. `discoverDevices` takes a 5th arg `knownEthernetMacs?` (azureADDeviceId → stored `{ethernetMacAddress, ethernetMacSyncedAt}`, built by `discoveryEngine.knownEthernetMacsFromIntuneRows`) and `resolveEthernetMacs` reads the rest per device through `POST /v1.0/$batch` (20 per call, 4 in flight), skipping devices whose `lastSyncDateTime` equals the stored stamp (`planEthernetMacFetch`, pure, exported). Results surface as `DiscoveredEntraDevice.ethernetMacAddress` + `ethernetMacSyncedAt`; the latter is persisted on the intune observed blob and is the next run's skip key. A failed read keeps the stored MAC and OLD stamp (retried next run); a `$batch` outage never fails the run. Managed-device ids are GUID-checked before they reach a URL. Pinned by `tests/unit/entraEthernetMac.test.ts`.
-- **One `$batch` runner for every per-device read**: the private `graphBatchGet(config, "v1.0" | "beta", ids, pathFor, signal)` (20 sub-requests per call, 4 calls in flight, per-sub-response 429 retry) was factored out of `fetchEthernetMacs` and serves both it and `fetchIntuneDetectedApps`. A third per-device read goes through it too — never a fresh loop.
+- **One `$batch` runner for every per-device read**: the private `graphBatchGet(config, "v1.0" | "beta", ids, pathFor, signal)` (20 sub-requests per call, 4 calls in flight, per-sub-response 429 retry) was factored out of `fetchEthernetMacs` and serves it, `fetchIntuneDetectedApps`, `fetchIntuneLoggedOnUsers` and `resolveUserPrincipalNames` (`/users/{id}`). A further per-device read goes through it too — never a fresh loop.
 - **`fetchIntuneDetectedApps(config, managedDeviceIds, signal)` is GRAPH BETA** — the `detectedApps` navigation on `managedDevice` exists only on `/beta`. It takes Intune's OWN managedDevice id (`DiscoveredEntraDevice.intuneManagedDeviceId`, carried from the list row's `id`, which is not the Entra `deviceId` and is deliberately NOT written to the observed blob), skips non-GUID ids, follows `@odata.nextLink` per device (cap 5000 apps), and returns a map in which **a device ABSENT from the result FAILED** — the caller keeps its stored list rather than wiping it. Same permission as the device list (`DeviceManagementManagedDevices.Read.All`). Gated by `EntraIdConfig.pullSoftware` (default false) on top of `enableIntune`. Intune lists unmanaged (discovered) apps only on CORPORATE-owned devices; a personal device reports managed apps alone.
+- **`fetchIntuneLoggedOnUsers(config, managedDeviceIds, signal)` is GRAPH BETA too** (business rule 180) — `usersLoggedOn` (`[{userId, lastLogOnDateTime}]`) does not exist on v1.0, so it is NEVER added to the v1.0 list's `$select` (an unknown property fails the whole Intune read); it is a per-device `$select=id,usersLoggedOn` GET through `graphBatchGet`. Absent from the result = failed. `resolveUserPrincipalNames(config, ids, known, signal)` names user object ids: `known` (each device's `intuneUserId` + `userPrincipalName` — `userId` was added to the v1.0 `$select` for this) costs nothing, the rest are `/v1.0/users/{id}` reads that need `User.Read.All`; an unreadable id is counted in `unresolved`, never raised. Names are cached per tenant+app for 24 h (module-level `upnCache`).
 - Asset type is MEANT to come from Intune `chassisType` (desktop/laptop → workstation; other → other), but `chassisType` is beta-only and absent from the v1.0 `$select`, so it is always undefined and inference sees only the OS; Entra-only defaults to workstation.
 - `deviceInclude`/`deviceExclude` filters match against displayName with wildcard support.
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
@@ -374,10 +375,33 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Confirm syncEntraDevices in integrations.ts creates AssetSource rows with correct sourceKind ("entra"/"intune") based on sources array.
 - A change to the `$batch` runner (`graphBatchGet`) moves both the Ethernet MAC read and the detected-apps read; `tests/unit/entraEthernetMac.test.ts` and `tests/unit/softwareReaders.test.ts` together cover it.
 - Adding a config field that NARROWS what Graph returns (a new filter, a `$filter` clause, a skip) → decide whether the disappearance sweep must treat it as innocent absence, and if so snapshot the raw set BEFORE it, the way `deviceInclude`/`includeDisabled` are handled. Getting this wrong decommissions whatever the new knob excludes.
+- A change to the `usersLoggedOn` read or the UPN resolution is pinned by `tests/unit/intuneLoggedOnReaders.test.ts`; the pass that uses them by `tests/unit/loggedOnUserService.test.ts`.
 - `syncEntraDevices` still does NOT stamp `Asset.discoveredByIntegrationId` (the AD, Windows-Server and Arc paths do). Every Entra-discovered asset is therefore unowned, which is why business rule 70's ownership test counts "managed by nothing" as this directory's. Stamping it would also let Entra assets inherit the integration's per-class monitoring block — worth doing, but it is a monitoring-config change with its own blast radius.
 
 ---
 
+## services/loggedOnUserService.ts
+
+**What it owns:** The Intune half of the last logged-on user (business rule 180): the post-sync pass of an Entra/Intune discovery run that reads each device's `usersLoggedOn`, names the accounts and merges them into `Asset.associatedUsers` as `intune` sightings at Intune's `lastLogOnDateTime`.
+
+**Public API:** syncIntuneLoggedOnUsers, planIntuneLogonFetch, intuneLogonSightings, IntuneLogonCandidate, INTUNE_LOGONS_SCRAPE_KIND, INTUNE_LOGONS_MAX_AGE_MS.
+
+**Cross-service deps:** entraIdService (fetchIntuneLoggedOnUsers, resolveUserPrincipalNames); utils/associatedUsers (mergeUserSightings).
+
+**Used by:** src/services/discovery/discoveryEngine.ts — the `entraid` collector branch, right after `syncIntuneSoftware`.
+
+**Invariants:**
+- Runs only when `enableIntune` is on and `intuneRead === "ok"`; never throws (a failure is a `discover.intune.logons` progress-log error and the device sync stands). No config toggle: it needs no permission the device read lacks.
+- Re-reads a device only when its `lastSyncDateTime` moved since the last read or `INTUNE_LOGONS_MAX_AGE_MS` (7 days) passed — `AssetInventoryScrape` kind `logons:intune`, stamp = that lastSync; a scoped Discover Now forces the read. The stamp is written even when an account could not be named (re-reading an unchanged device would not name it either).
+- Writes `associatedUsers` only through `mergeUserSightings` and only when it `changed`; never writes `assignedTo` (that stays Intune's primary user). Writes go in `$transaction` chunks of 100 per 200-device fetch round.
+- Scale: first run at 2000 devices ≈ 100 `$batch` calls + one tight `findMany` per round; afterwards only devices that synced. UPN reads are cached for a day.
+- `associatedUsers` is read-modify-write JSON shared with Phase 7 of DHCP discovery (`discovery/dhcp/deviceInventory.ts`); simultaneous Entra and FortiGate runs on one asset can drop one side's sighting until its next run.
+
+**When changing this:**
+- A new user source merges through `mergeUserSightings` with its own `source` label, and the label goes in `_USER_SOURCE_LABELS` (`public/js/assets-panel.js`).
+- Keep the source's own time on every sighting — never the run time (rule 180).
+
+---
 ## services/azureArcService.ts
 
 **What it owns:** Azure Arc (Arc-enabled servers) discovery via Azure Resource Manager — `Microsoft.HybridCompute/machines`. The Connected Machine agent runs in the guest, so this source carries host truth (running OS SKU, real FQDN, live SMBIOS data, heartbeat status) rather than a directory record.

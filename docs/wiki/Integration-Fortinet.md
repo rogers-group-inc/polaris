@@ -383,6 +383,17 @@ address, and folds the client-list entry into the AP. It never pairs by address
 alone across gates, because 192.168.1.2, the FortiAP factory default, is used
 at many sites at once. See [Rule 91](Business-Rules#rule-91).
 
+**Who is logged on is read from the gate.** Each discovery run reads the gate's
+authenticated users (FSSO, RSSO, captive portal and firewall-policy logins)
+alongside its device list, on FortiManager and standalone FortiGate alike. A
+logged-in user is added to a device only when the same gate is seeing that
+device online at the user's address. An address alone never names a device,
+so a session at an address two devices share, or with no device the gate sees
+there, is skipped and counted in the run's log. The device list's own user
+field is kept too, dated by when the gate last saw the device. The newest of
+all of these is the device's **Last Logged-On User** ([Assets](Assets),
+[Rule 180](Business-Rules#rule-180)).
+
 **Resolving a managed switch's or AP's parent never matches against a
 hostname.** `controllerFortigate` holds FortiManager's *device name*, which
 diverges from the gate's configured hostname on real fleets. Because "no parent"

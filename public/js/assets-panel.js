@@ -2931,20 +2931,42 @@ function macDeleteButtonHTML(assetId, m) {
     '>&times;</button>';
 }
 
+// Who reported a user sighting (business rule 180). An unknown source shows
+// as stored, so an older row's label still reads.
+var _USER_SOURCE_LABELS = {
+  "intune": "Intune",
+  "fortigate-auth": "FortiGate authentication",
+  "device-inventory": "FortiGate device inventory",
+};
+
+function _associatedUserLineHTML(u) {
+  var display = u.domain ? escapeHtml(u.domain) + '\\' + escapeHtml(u.user) : escapeHtml(u.user);
+  var source = u.source ? (_USER_SOURCE_LABELS[u.source] || u.source) : '';
+  return '<div style="display:flex;gap:12px;align-items:center;padding:3px 0">' +
+    '<span style="font-size:0.85rem">' + display + '</span>' +
+    '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' +
+      escapeHtml(source) +
+      (u.lastSeen ? (source ? ' &middot; ' : '') + formatDate(u.lastSeen) : '') +
+    '</span>' +
+  '</div>';
+}
+
+function _userSeenMs(u) {
+  var t = u && u.lastSeen ? Date.parse(u.lastSeen) : NaN;
+  return isFinite(t) ? t : 0;
+}
+
+// The last logged-on user is the NEWEST sighting from any source (business
+// rule 180) — Intune's last logon, a FortiGate auth session, or the gate's
+// device inventory — so the row reads the same whichever integration saw it.
 function associatedUsersViewHTML(users) {
   if (!users || users.length === 0) return '';
-  var rows = users.map(function (u) {
-    var display = u.domain ? escapeHtml(u.domain) + '\\' + escapeHtml(u.user) : escapeHtml(u.user);
-    return '<div style="display:flex;gap:12px;align-items:center;padding:3px 0">' +
-      '<span style="font-size:0.85rem">' + display + '</span>' +
-      '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">' +
-        (u.source ? escapeHtml(u.source) : '') +
-        (u.lastSeen ? ' &middot; ' + formatDate(u.lastSeen) : '') +
-      '</span>' +
-    '</div>';
-  }).join("");
-  return '<div class="detail-row"><span class="detail-label">Associated Users (' + users.length + ')</span>' +
-    '<span class="detail-value">' + rows + '</span></div>';
+  var sorted = users.filter(function (u) { return u && u.user; }).slice().sort(function (a, b) { return _userSeenMs(b) - _userSeenMs(a); });
+  if (sorted.length === 0) return '';
+  return '<div class="detail-row"><span class="detail-label">Last Logged-On User</span>' +
+      '<span class="detail-value">' + _associatedUserLineHTML(sorted[0]) + '</span></div>' +
+    '<div class="detail-row"><span class="detail-label">Associated Users (' + sorted.length + ')</span>' +
+      '<span class="detail-value">' + sorted.map(_associatedUserLineHTML).join("") + '</span></div>';
 }
 
 // ─── Deleting an asset that has the Polaris Agent (business rule 163) ────────

@@ -24,6 +24,7 @@ import {
 import { fortiosSecondaryIpStrings } from "../utils/fortiosSecondaryIp.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
+import { parseFortiosAuthSessions, attachAuthUsers } from "../utils/fortiosAuthUsers.js";
 import type { ApLldpNeighborSample } from "../utils/fortiapLldp.js";
 import { findFortiswitchUplinkPorts, readManagedSwitchCmdbSerial, fortiswitchDiscoveryRow, FORTISWITCH_DISCOVERY_CMDB_FORMAT } from "../utils/fortiswitchCmdb.js";
 import { processDetectedDeviceRows, processArpRows } from "../utils/fortinetDetectedDevice.js";
@@ -1064,6 +1065,10 @@ export interface DiscoveredInventoryDevice {
   switchPort: string;       // FortiSwitch port (if behind a managed switch)
   apName: string;           // FortiAP name (if connected wirelessly)
   user: string;             // Logged-in / registered user (if available)
+  // The user the same gate's live auth table (user/firewall — FSSO, RSSO,
+  // captive portal, firewall auth) has at this row's address; online rows
+  // only, joined by attachAuthUsers (business rule 180).
+  authUser?: string;
   isOnline: boolean;
   lastSeen: string;         // ISO timestamp
   // The client's IPv6 address as the gate sees it (`ipv6_address`),
@@ -2082,7 +2087,7 @@ async function fmgStepInventory(ctx: FmgDeviceCtx): Promise<void> {
         ? inventoryData[0]?.response?.results
         : (inventoryData as any)?.response?.results;
       const inventoryCutoffMs = Date.now() - inventoryMaxAgeHours * 60 * 60 * 1000;
-      let inventoryCount = 0;
+      const gateRows: DiscoveredInventoryDevice[] = [];
       if (Array.isArray(results)) {
         for (const client of results) {
           // Shared parse (utils/inventoryLocality) — identical to the
@@ -2090,12 +2095,33 @@ async function fmgStepInventory(ctx: FmgDeviceCtx): Promise<void> {
           const parsed = parseInventoryClient(client, deviceName);
           if (!parsed) continue;
           if (client.last_seen * 1000 < inventoryCutoffMs) continue;
-          localInventory.push(parsed);
-          inventoryCount++;
+          gateRows.push(parsed);
         }
       }
+      // Business rule 180 — parity with the standalone path: the gate's live
+      // authenticated users, joined to its own online rows by address. Its own
+      // try, so a refused read never costs the inventory.
+      try {
+        const authRes = await rpc(baseUrl, {
+          id: 6,
+          method: "exec",
+          params: [{
+            url: `/sys/proxy/json`,
+            data: { target: [`/adom/${adom}/device/${deviceName}`], action: "get", resource: "/api/v2/monitor/user/firewall" },
+          }],
+        }, apiUser, apiToken, verifySsl, signal, integrationId);
+        const authData = authRes.result?.[0]?.data;
+        const authResults = Array.isArray(authData) ? authData[0]?.response?.results : (authData as any)?.response?.results;
+        const { matched, unmatched } = attachAuthUsers(gateRows, parseFortiosAuthSessions(authResults));
+        if (matched + unmatched > 0) {
+          log("discover.inventory.auth_users", "info", `${deviceName}: ${matched} logged-on user(s) from the authenticated-user table${unmatched > 0 ? ` (${unmatched} session(s) with no single online client at their address)` : ""}`, deviceName);
+        }
+      } catch (err: any) {
+        log("discover.inventory.auth_users", "error", `${deviceName}: Failed to read authenticated users — ${err.message || "Unknown error"}`, deviceName);
+      }
+      localInventory.push(...gateRows);
       flags.didInventory = true;
-      log("discover.inventory", "info", `${deviceName}: Found ${inventoryCount} device inventory client(s)`, deviceName);
+      log("discover.inventory", "info", `${deviceName}: Found ${gateRows.length} device inventory client(s)`, deviceName);
     } catch (err: any) {
       log("discover.inventory", "error", `${deviceName}: Failed to query device inventory — ${err.message || "Unknown error"}`, deviceName);
     }

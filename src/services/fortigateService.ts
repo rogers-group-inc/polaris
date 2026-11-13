@@ -30,6 +30,7 @@ import { parseRangeFirstIp, isValidIpv4, urlHost } from "../utils/cidr.js";
 import { readSystemStatus, readHaPeers } from "../utils/fortiosEnvelope.js";
 import { parseFortiapMonitorRow, FORTIAP_MONITOR_FORMAT } from "../utils/fortiapMonitorRow.js";
 import { parseInventoryClient, INVENTORY_QUERY_FORMAT } from "../utils/inventoryLocality.js";
+import { parseFortiosAuthSessions, attachAuthUsers } from "../utils/fortiosAuthUsers.js";
 import { ipv6Enabled } from "./ipv6GateService.js";
 import {
   advertisedPrefixSubnets,
@@ -835,19 +836,31 @@ async function fgtChainInventory(ctx: FgtChainCtx): Promise<void> {
       signal,
     });
 
-    let inventoryCount = 0;
+    const gateRows: DiscoveredInventoryDevice[] = [];
     if (Array.isArray(results)) {
       for (const client of results) {
         // Shared parse (utils/inventoryLocality) — identical to the
         // FMG-proxied path, field-name fallbacks included.
         const parsed = parseInventoryClient(client, deviceName);
         if (!parsed) continue;
-        deviceInventory.push(parsed);
-        inventoryCount++;
+        gateRows.push(parsed);
       }
     }
+    // Business rule 180: the gate's live authenticated users (FSSO / RSSO /
+    // captive portal / firewall auth), joined to its own online rows by
+    // address. Its own try: a gate that refuses the read keeps its inventory.
+    try {
+      const authResults = await fgRequest<any[]>(config, "GET", "/api/v2/monitor/user/firewall", { query: { ...queryBase }, signal });
+      const { matched, unmatched } = attachAuthUsers(gateRows, parseFortiosAuthSessions(authResults));
+      if (matched + unmatched > 0) {
+        log("discover.inventory.auth_users", "info", `${deviceHostname}: ${matched} logged-on user(s) from the authenticated-user table${unmatched > 0 ? ` (${unmatched} session(s) with no single online client at their address)` : ""}`, deviceHostname);
+      }
+    } catch (err: any) {
+      log("discover.inventory.auth_users", "error", `${deviceHostname}: Failed to read authenticated users — ${err.message || "Unknown error"}`, deviceHostname);
+    }
+    deviceInventory.push(...gateRows);
     inventoryDevices.add(deviceName);
-    log("discover.inventory", "info", `${deviceHostname}: Found ${inventoryCount} device inventory client(s)`, deviceHostname);
+    log("discover.inventory", "info", `${deviceHostname}: Found ${gateRows.length} device inventory client(s)`, deviceHostname);
   } catch (err: any) {
     log("discover.inventory", "error", `${deviceHostname}: Failed to query device inventory — ${err.message || "Unknown error"}`, deviceHostname);
   }

@@ -43,6 +43,25 @@ import { logDiscoveryAssetCreated, logDiscoveryAssetUpdated } from "../../eventL
 import { reconcileMacAddresses } from "../../macAddressService.js";
 import { planHostnameMacSuffixes } from "../../hostnameMacSuffixService.js";
 import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
+import { mergeUserSightings, type UserSighting } from "../../../utils/associatedUsers.js";
+import type { Prisma } from "../../../generated/prisma/client.js";
+
+/**
+ * The user sightings one inventory row carries (business rule 180): the
+ * row's own `user` at the time the gate saw the client, and the user the
+ * gate's live auth table has at the row's address — an online row only, so
+ * that one is current.
+ */
+function inventoryUserSightings(
+  inv: { user?: string; authUser?: string; isOnline?: boolean },
+  seenAt: Date,
+  now: Date,
+): UserSighting[] {
+  const out: UserSighting[] = [];
+  if (inv.user) out.push({ account: inv.user, seenAt, source: "device-inventory" });
+  if (inv.authUser && inv.isOnline) out.push({ account: inv.authUser, seenAt: now, source: "fortigate-auth" });
+  return out;
+}
 
 export async function syncDeviceInventory(input: {
   result: DiscoveryResult;
@@ -323,20 +342,12 @@ export async function syncDeviceInventory(input: {
           if (touched.length) noteChangeBaseline(existingAsset, touched);
         }
 
-        if (inv.user && !invAdoptRefused) {
-          const userList: Array<{user: string; domain?: string; lastSeen: string; source: string}> = Array.isArray(existingAsset.associatedUsers) ? [...(existingAsset.associatedUsers as any)] : [];
-          const parts = inv.user.includes("\\") ? inv.user.split("\\") : [null, inv.user];
-          const domain = parts[0] || undefined;
-          const username = parts[1] || inv.user;
-          const existingUser = userList.find((u) => u.user === username && u.domain === domain);
-          if (existingUser) {
-            existingUser.lastSeen = now;
-            existingUser.source = "device-inventory";
-          } else {
-            userList.push({ user: username, domain, lastSeen: now, source: "device-inventory" });
-          }
-          sortNewestFirst(userList, (e) => e.lastSeen);
-          updateData.associatedUsers = userList;
+        // Business rule 180: a user sighting is stamped with when the GATE saw
+        // the client (an online row is now), never the run time — a
+        // remembered-but-offline row must not read as a fresh logon.
+        if (!invAdoptRefused && invSeenValid) {
+          const { list, changed } = mergeUserSightings(existingAsset.associatedUsers, inventoryUserSightings(inv, invSeenAt, new Date(now)));
+          if (changed) updateData.associatedUsers = list;
         }
 
         let macListForReconcile: MacJsonEntry[] | null = null;
@@ -445,11 +456,9 @@ export async function syncDeviceInventory(input: {
         if (!resolvedIp) continue;
 
         try {
-          const userList: Array<{user: string; domain?: string; lastSeen: string; source: string}> = [];
-          if (inv.user) {
-            const parts = inv.user.includes("\\") ? inv.user.split("\\") : [null, inv.user];
-            userList.push({ user: parts[1] || inv.user, domain: parts[0] || undefined, lastSeen: now, source: "device-inventory" });
-          }
+          const userList = invSeenValid
+            ? mergeUserSightings([], inventoryUserSightings(inv, invSeenAt, new Date(now))).list as unknown as Prisma.InputJsonArray
+            : [];
           const newAsset = await prisma.asset.create({
             data: {
               ipAddress: resolvedIp,

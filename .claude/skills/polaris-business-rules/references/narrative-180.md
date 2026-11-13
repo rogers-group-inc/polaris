@@ -1,0 +1,28 @@
+# Business rule 180 — full narrative
+
+> Written 2026-11-13 as its own file (one file per rule from 78 on). Rule numbers are a
+> stable citation key — never renumber. 81 is a deliberate gap.
+
+Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
+
+- [Rule 180](#rule-180) — The last logged-on user is the newest user sighting, stamped with when its source saw the user
+
+## Rule 180 — The last logged-on user is the newest user sighting, stamped with when its source saw the user — never when Polaris read it
+
+**The question (2026-11-13).** The operator asked how Polaris knows the last logged-in user for an asset. The honest answer was that it did not, quite. `Asset.assignedTo` is Intune's `userPrincipalName` — the device's PRIMARY user, the person it is enrolled or assigned to, which on a shared PC or a reassigned laptop can be someone who has not touched it in months. `Asset.associatedUsers` existed, but only one path wrote it: Phase 7 of DHCP discovery copied the FortiGate detected-device inventory's `user` field — and stamped every entry with the discovery run's time, so a remembered-but-offline inventory row (FortiOS keeps those for days) made a user read as "seen now" every run. The operator chose two sources to add: Intune's `usersLoggedOn`, and the FortiGate's authenticated-user table.
+
+**Decisions.**
+
+- **One list, three sources, the newest wins.** The last logged-on user is not a new column: it is the newest entry of `associatedUsers`, whichever integration saw it. A new column would need its own precedence between Intune and the gate, and "newest by the source's own clock" is that precedence. Every writer goes through `mergeUserSightings`, so the rules below cannot drift between paths.
+- **The source's time, never the run's.** Intune's entry carries `lastLogOnDateTime`; an inventory row's carries the row's `last_seen` (now only for an online row — the same evidence-time rule the MAC list adopted in 2026-08 for the same reason); an auth session is live, so it is the run time, and only an online row can carry one. Only-advance per account, so an older report arriving later never moves a newer one back.
+- **Case-blind accounts.** FSSO reports `CORP\JDOE` where Intune reports `jdoe@corp.example` mixed-case; within a spelling, case must not mint a second entry. A UPN and a `DOMAIN\user` for the same person stay two entries — Polaris has no directory join between them, and inventing one would be a guess.
+- **Bounded.** A kiosk or a shared lab PC sees a new account every shift; the list keeps the 25 newest (business rule 158 — nothing grows without a limit).
+- **`assignedTo` is left alone.** Primary user and last logon are different facts; both are shown.
+
+**The Intune half.** `usersLoggedOn` is a Graph **beta** property of `managedDevice` — it does not exist on v1.0, and an unknown property in the v1.0 list's `$select` fails the whole Intune read, so it is read separately and never added there. Microsoft's beta reference says such properties are filled reliably only by a per-device GET, so it goes through the same `$batch` helper as the Ethernet MAC and detected apps, and is re-read only when the device's `lastSyncDateTime` moved (logons can only change when a device syncs) or a week passed — `AssetInventoryScrape` kind `logons:intune`. It returns user object ids. Each Intune device's own `userId` + `userPrincipalName` names every account that is somebody's primary user at no cost; the rest are read from `/users/{id}`, which needs `User.Read.All` — the grant directory search and the GAL sync already ask for. Without it those accounts are left out and the run log says how many and why; a GUID shown as a user name was rejected as noise. Names are cached for a day per tenant.
+
+**The FortiGate half.** `GET /api/v2/monitor/user/firewall` lists the gate's authenticated users — FSSO, RSSO, captive portal and firewall-policy logins — by ADDRESS. An address is not an identity (business rule 91, rule 101's caution about recycled leases), so a session is matched only to a client the same gate is seeing online at that address in the same pass: its detected-device inventory row, which carries the MAC the asset is matched on. An address with two online rows, or sessions for two different users, decides nothing. The join happens in each collector (standalone, FMG-direct through it, and the FMG proxy step), so the session rides the row as `authUser` and no new array has to survive the FMG chunking, filtering and device-name remapping. Probed on the lab 2026-11-13: both `/user/firewall` and `/user/firewall/select` answer on 7.6.8 and 8.0.1 with the standard envelope; the lab has no authenticated users, so the row's field names (`username`, `ipaddr`) are taken from FortiOS's documented shape with fallbacks, unverified on a gate with live sessions.
+
+**Rejected.** An ARP-table fallback for sessions with no inventory row (an interface without device detection) — it would add a cross-phase array for a case device detection already covers on most installs; the unmatched count in the run log says when it matters. Resolving users via `directoryObjects/getByIds` — it needs `Directory.Read.All`, a wider grant than `User.Read.All`. A toggle on the Entra integration — the pass needs no permission the device read lacks and degrades to leaving names out, so there was nothing to opt into.
+
+**Known limit.** `associatedUsers` is one JSON column written read-modify-write by two integrations; an Entra run and a FortiGate run that write the same asset at the same moment can lose one side's sighting until its next run.
