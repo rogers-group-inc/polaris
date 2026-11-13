@@ -94,7 +94,7 @@ purges directory contacts and the `llm` role + token, and nothing else.
 | B.8 | In-memory state per integration (`fmgWorker.workers`, token caches, Proxmox pools, labelled Prometheus gauges) | until restart; small and bounded **→ open — bounded, clears on restart** |
 | B.9 | `monitorSettings` caches never invalidated across process roles | monitor role keeps a deleted / edited integration's cadences until restart (suspected runtime effect) **→ confirmed and fixed (rule 176): the resolver's caches expire after 30 s and refresh in place. The larger effect was that a saved cadence / polling-method / credential change was not applied by the monitor role until it restarted** |
 | B.10 | `DiscoveryRun` rows — no delete anywhere | grows; invisible **→ fixed — deleted with the integration (and swept by rule 158)** |
-| B.11 | `DirectoryContactSource` rows if the purge fails during delete (suspected) | point at a dead id **→ open** |
+| B.11 | `DirectoryContactSource` rows if the purge fails during delete (suspected) | point at a dead id **→ confirmed and fixed (rule 158(e)): the daily prune purges directory contacts whose integration no longer exists** |
 
 Decisions needed:
 
@@ -117,8 +117,8 @@ Decisions needed:
 | C.4 | `DiscoveryRun` | fixed — it is one row per integration, so the leftover was a deleted integration's row; pruned (rule 158) |
 | C.5 | `AssetFortigateSighting` | fixed — pruned past `quarantine.sightingMaxAgeDays` (rule 158) |
 | C.6 | `ArchivedSubnet` / `ArchivedReservation` | append-only, no purge, dead `blockId` **→ fixed in the API (rule 158(d)): `DELETE /subnets/archived/:id`, refused while a pending chassis conflict reads it. UI (operator decision 2026-11-12): archived networks are decommissioned networks, listed in the Networks table while the Status filter shows deprecated — an `archived` pill, a read-only View, and Delete** |
-| C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable |
-| C.7 | (note) | left for the topology work in flight — do not collide with `worktree-topology-views*` |
+| C.7 | `TopologyLayout` rows for location views that no longer exist | unreachable **→ resolved by the topology-views work: `topologyViewService.deleteView` clears a saved view's layouts in the same transaction. Layouts for a floor that currently has no devices are KEPT on purpose (the floor can come back; they cascade with the site asset)** |
+| C.7 | (note) | the topology work has shipped; nothing further planned here |
 | C.8 | `User.hiddenMapRegionIds` ids of deleted regions | fixed — swept daily (rule 158) |
 | C.9 | `TagAutoAssignment` rows for a deleted tag (edge case) | fixed — swept daily (rule 158) |
 | C.10 | `NetworkScanRun` | fixed — 90 days, newest run of each Discovery kept (rule 158) |
