@@ -11,8 +11,11 @@
  *   - resolve each row's channel + config (secrets live on the channel),
  *   - dispatch with bounded concurrency,
  *   - mark sent / failed (failed rows retry until MAX_ATTEMPTS),
- *   - a NULL channel (deleted/disabled) → permanent fail, EXCEPT api_call
- *     rows whose NULL channel is legitimate (normal retry path),
+ *   - a NULL (deleted) channel → permanent fail, EXCEPT api_call rows whose
+ *     NULL channel is legitimate (normal retry path); a DISABLED channel is
+ *     an ordinary failure that retries until MAX_ATTEMPTS, so re-enabling it
+ *     within those ticks still delivers (pinned in
+ *     notificationDeliveryService.test.ts),
  *   - prune dead push subscriptions (HTTP 410/404),
  *   - write ONE summary audit Event per non-empty drain.
  */
