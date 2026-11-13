@@ -507,10 +507,14 @@ async function actionsCarryBothMethods(actions: AutomationAction[]): Promise<boo
 async function heldFireAudience(
   notificationId: string,
 ): Promise<{ addresses: Set<string>; userIds: Set<string>; chat: boolean } | null> {
-  const rows = await prisma.notificationDelivery.findMany({
+  // An `api_call` row (the fire's webhook) is never held and reaches no
+  // reader: counting it as "told" would cancel the rule 92 drop and mark the
+  // chat side as told, so a held Slack send would get a "resolved" for a fire
+  // it never saw.
+  const rows = (await prisma.notificationDelivery.findMany({
     where: { notificationId, status: { in: ["held", "pending", "sent"] } },
     select: { transport: true, target: true, status: true, meta: true },
-  });
+  })).filter((r) => r.transport !== "api_call");
   const live = rows.filter((r) => r.status !== "held");
   if (live.length === 0) return null;
   const metaOf = (m: unknown) => (m && typeof m === "object" ? m : {}) as Record<string, unknown>;

@@ -551,16 +551,13 @@ describe("executeActions — quiet all-clear", () => {
     expect(events()[0].action).toBe("notification.quiet_allclear_dropped");
   });
 
-  // BUG: heldFireAudience treats every non-held delivery row as "someone was
-  // told", including the fire's own api_call row (transport "api_call", which
-  // collect() files under `chat`). Scenario: an automation with a notify + an
-  // api_call action fires inside a quiet window — the notify rows are written
-  // `held`, the api_call row `pending`/`sent`. On the all-clear, live.length is
-  // 1 (the webhook call), so the drop is cancelled, told.chat is true, and the
-  // held Slack row is NOT excluded: Slack is sent "resolved" for a fire it was
-  // never told about, and no notification.quiet_allclear_dropped Event is
-  // written. An api_call reaches no reader, so rule 92's drop should stand.
-  it.fails("an api_call row is not a reader: the all-clear of an otherwise fully held fire is still dropped", async () => {
+  // Was a bug until 2026-11-13: heldFireAudience counted the fire's own
+  // api_call row (never held, filed under `chat`) as "someone was told". An
+  // automation with a notify + an api_call action firing inside a quiet window
+  // then had its all-clear sent — Slack got "resolved" for a fire it never saw
+  // and no notification.quiet_allclear_dropped Event was written. An api_call
+  // reaches no reader, so rule 92's drop stands.
+  it("an api_call row is not a reader: the all-clear of an otherwise fully held fire is still dropped", async () => {
     stubbed(prisma.notification.findUnique).mockResolvedValue(heldRow);
     stubbed(prisma.notificationDelivery.findMany).mockResolvedValue([
       { transport: "email", target: "a@x.com", status: "held", meta: null },
