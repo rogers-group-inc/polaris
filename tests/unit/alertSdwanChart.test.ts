@@ -467,12 +467,12 @@ describe("an interface alert on a WAN member", () => {
     expect(calls).toEqual(["perfSlaLink:wan1"]);
   });
 
-  it("leaves the rate metrics on the device graphs, WAN member or not", async () => {
-    // Error rate and throughput plausibly correlate with the device's load,
-    // so they keep CPU / memory / response time / loss and get no SD-WAN swap.
+  it("leaves throughput on the device graphs, WAN member or not", async () => {
+    // Throughput has no port chart yet, so it keeps CPU / memory / response
+    // time / loss and gets no SD-WAN swap.
     const charts = await buildAlertCharts("a1", ALL_TOKENS, {
       now: new Date(T0 + 10 * 60_000),
-      metric: "ifInErrorRate",
+      metric: "ifInBps",
       dimension: "wan1",
     });
     const keys = [...charts.keys()];
@@ -480,6 +480,22 @@ describe("an interface alert on a WAN member", () => {
     expect(keys).not.toContain("chart.sdwanLatency");
     expect(calls).not.toContain("perfSlaLink:wan1");
     expect(calls).toContain("telemetry");
+  });
+
+  it("charts an error-rate alert's port instead of the device, WAN member or not", async () => {
+    // Rule 159a: the port's errors and traffic replace the device graphs, and
+    // no SD-WAN swap either — the device telemetry is never even read.
+    const charts = await buildAlertCharts("a1", ALL_TOKENS, {
+      now: new Date(T0 + 10 * 60_000),
+      metric: "ifInErrorRate",
+      dimension: "wan1",
+    });
+    const keys = [...charts.keys()];
+    for (const k of ["chart.cpu", "chart.memory", "chart.responseTime", "chart.probeLoss", "chart.sdwanLatency"]) {
+      expect(keys).not.toContain(k);
+    }
+    expect(calls).not.toContain("perfSlaLink:wan1");
+    expect(calls).not.toContain("telemetry");
   });
 
   it("draws nothing for a port no health check probes through", async () => {
