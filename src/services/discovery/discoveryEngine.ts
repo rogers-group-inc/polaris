@@ -43,7 +43,7 @@ import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 import * as azureArc from "../azureArcService.js";
-import { ipInCidr, cidrContains } from "../../utils/cidr.js";
+import { cidrContains, firstCidrContaining } from "../../utils/cidr.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
 import { ipv6Enabled } from "../ipv6GateService.js";
 import { macHexKeyOrNull, normalizeMacOrNull } from "../../utils/mac.js";
@@ -2530,8 +2530,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   }
 
   // Helper: find which subnet contains an IP
+  // First match in allSubnets order, deprecated skipped — read live, since
+  // subnets are pushed and deprecated as the run goes. firstCidrContaining keeps
+  // that exact contract and parses each CIDR once (efficiency audit group 3).
   function findSubnetForIp(ip: string) {
-    return allSubnets.find((s) => s.status !== "deprecated" && ipInCidr(ip, s.cidr));
+    return firstCidrContaining(ip, allSubnets, (s) => s.status === "deprecated");
   }
 
   // Roster of FortiGates currently configured in the upstream (FortiManager or
