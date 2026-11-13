@@ -121,6 +121,7 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ipsecThroughputBps: "systemInfo",
   ipsecStatus: "systemInfo",
   customWidgetValue: "systemInfo",
+  customWidgetLevel: "systemInfo",
   customStateValue: "systemInfo",
   // Agent-run path checks — each check's own intervalSec. Without
   // these entries a `forPolls` hold would be converted at the probe cadence.

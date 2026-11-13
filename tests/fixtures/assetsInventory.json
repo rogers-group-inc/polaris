@@ -846,7 +846,9 @@
     "statusAllowsMonitoring",
     "viewAssetLease",
     "viewRow",
-    "wireDescriptionCapWarning"
+    "wireDescriptionCapWarning",
+    "_customWidgetLevelColor",
+    "_customWidgetGaugeTick"
   ],
   "vars": [
     "ASSET_HISTORY_MAX",

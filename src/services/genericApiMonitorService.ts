@@ -592,8 +592,9 @@ export async function genericApiWidgetDefsForAsset(assetId: string): Promise<Gen
         if (w.unit) displayOptions.unit = w.unit;
         if (typeof w.min === "number") displayOptions.min = w.min;
         if (typeof w.max === "number") displayOptions.max = w.max;
-        if (typeof w.warningAt === "number") {
-          displayOptions.warningAt = w.warningAt;
+        if (typeof w.criticalAt === "number") displayOptions.criticalAt = w.criticalAt;
+        if (typeof w.warningAt === "number" || typeof w.criticalAt === "number") {
+          if (typeof w.warningAt === "number") displayOptions.warningAt = w.warningAt;
           if (w.warningWhen === "below") displayOptions.warningWhen = "below";
         }
         out.push({

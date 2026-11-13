@@ -664,12 +664,16 @@ function _widgetTypeSelectHTML(cls, current) {
 
 // Per-widgetType displayOptions sub-form. Fields match what the asset
 // Custom MIB tab consumes today:
-//   gauge → min, max, unit, warningAt + warningWhen
-//   line  → unit, warningAt + warningWhen
+//   gauge → min, max, unit, warningAt + criticalAt + warningWhen
+//   line  → unit, warningAt + criticalAt + warningWhen
+//   value → unit, warningAt + criticalAt + warningWhen
 //   table → no operator-tunable options; the renderer derives columns
 //           from the latest sample.
-// warningAt / warningWhen only paint the card (_customWidgetWarning in
-// assets.js); alerting on the value is an automation's job.
+// warningAt / criticalAt / warningWhen are the widget's own LEVELS (business
+// rule 181): they colour the card (_customWidgetWarning in assets-snmp.js) and
+// are what a "Custom widget level" automation alerts on, so one automation
+// covers every widget at that widget's own thresholds. warningWhen gives the
+// direction of both.
 //
 // How a single-value widget's number reads (the asset tab's _cwDisplay):
 // "" = a plain number with its unit; a duration format reads it as seconds or
@@ -697,6 +701,7 @@ function _widgetDisplayOptionsForm(widgetType, opts) {
   function warnFields() {
     var below = o.warningWhen === "below";
     return _widgetFormField("Warning at", '<input type="number" class="mfg-widget-opt-warning" value="' + escapeHtml(num(o.warningAt)) + '" step="any" placeholder="none" style="width:100%;font-size:0.82rem">') +
+      _widgetFormField("Critical at", '<input type="number" class="mfg-widget-opt-critical" value="' + escapeHtml(num(o.criticalAt)) + '" step="any" placeholder="none" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Warn when", '<select class="mfg-widget-opt-warning-when" style="width:100%;font-size:0.82rem">' +
         '<option value="above"' + (below ? "" : " selected") + '>at or above</option>' +
         '<option value="below"' + (below ? " selected" : "") + '>at or below</option>' +
@@ -720,11 +725,13 @@ function _widgetDisplayOptionsForm(widgetType, opts) {
       WIDGET_UNIT_HINT +
     '</div>';
   }
-  // A Value widget is the reading as text — no threshold is drawn on it.
+  // A Value widget is the reading as text; its levels colour that text and
+  // are what a "Custom widget level" automation alerts on (rule 181).
   if (widgetType === "value") {
     return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
       _widgetFormField("Show as", _widgetFormatSelectHTML(o.format)) +
+      warnFields() +
       WIDGET_UNIT_HINT +
     '</div>';
   }
@@ -740,16 +747,23 @@ function _widgetOptionsSummary(w) {
     if (o.min != null) parts.push("min " + o.min);
     if (o.max != null) parts.push("max " + o.max);
     if (o.unit)        parts.push("unit " + o.unit);
-    if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
+    _widgetLevelSummary(o, parts);
   } else if (w.widgetType === "line" || w.widgetType === "value") {
     if (o.unit) parts.push("unit " + o.unit);
-    if (o.warningAt != null) parts.push("warn " + (o.warningWhen === "below" ? "≤ " : "≥ ") + o.warningAt);
+    _widgetLevelSummary(o, parts);
   }
   if (o.format) {
     var f = WIDGET_VALUE_FORMATS.find(function (x) { return x[0] === o.format; });
     if (f) parts.push(f[1].toLowerCase());
   }
   return parts.length ? escapeHtml(parts.join(" · ")) : "";
+}
+
+/** "warn ≥ 16 · critical ≥ 18" for the view card (rule 181). */
+function _widgetLevelSummary(o, parts) {
+  var cmp = o.warningWhen === "below" ? "≤ " : "≥ ";
+  if (o.warningAt != null) parts.push("warn " + cmp + o.warningAt);
+  if (o.criticalAt != null) parts.push("critical " + cmp + o.criticalAt);
 }
 
 // Read displayOptions back from a form scope (an edit card or add card).
@@ -772,8 +786,10 @@ function _readWidgetDisplayOptions(scope, widgetType) {
   // non-default "below" — absent means "above".
   function readWarn() {
     var warn = numOrNull(scope.querySelector(".mfg-widget-opt-warning"));
-    if (warn == null) return;
-    out.warningAt = warn;
+    var crit = numOrNull(scope.querySelector(".mfg-widget-opt-critical"));
+    if (warn == null && crit == null) return;
+    if (warn != null) out.warningAt = warn;
+    if (crit != null) out.criticalAt = crit;
     var when = scope.querySelector(".mfg-widget-opt-warning-when");
     if (when && when.value === "below") out.warningWhen = "below";
   }
@@ -2895,6 +2911,13 @@ function _readWidgetFormPayload(scope) {
   }
 
   var displayOptions = _readWidgetDisplayOptions(scope, widgetType);
+  // Critical must lie beyond warning on the problem side (rule 181), or the
+  // card would read critical before warning.
+  if (displayOptions.warningAt != null && displayOptions.criticalAt != null &&
+      (displayOptions.warningWhen === "below" ? displayOptions.criticalAt > displayOptions.warningAt : displayOptions.criticalAt < displayOptions.warningAt)) {
+    showToast(displayOptions.warningWhen === "below" ? "Critical at must be at or below Warning at" : "Critical at must be at or above Warning at", "error");
+    return null;
+  }
   var payload = {
     name:           name.trim(),
     symbol:         isHttp ? null : symbol.trim(),

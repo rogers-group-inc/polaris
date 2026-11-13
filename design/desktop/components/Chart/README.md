@@ -39,6 +39,23 @@ An interface's **Errors** chart and a fibre-channel port's **FC errors** chart a
 
 Every severity band of an automation that reads the port is a dashed line in the band's `color-sev-*` token with a right-aligned caption ("warning > 5 /min (CRC)"), and the series that automation reads turns the band's colour while it is inside it. The diamonds take the colour of the band their own counter's automation puts them in. The axis always reaches the lowest band, so a quiet port still shows how far it is from alerting. This is the convention the CPU, memory, sensor and path-latency charts already follow with a gradient line; bars apply it per interval.
 
+## Custom widget levels and the widget's email chart
+
+A custom widget can set a warning and a critical level (business rule 181). On the card each one is a mark in its severity colour, `color-sev-warning` and `color-sev-critical`: a tick across the gauge's arc, or a dashed line across the line widget. The arc, the value text and the line widget's "latest" take the colour of the level reached. The caption under the card names both levels ("Warning state at or above 16.0 A · Critical at or above 18.0 A"). Once a level is reached, the caption leads with it in that colour ("Critical state — at or above 18.0 A").
+
+In an alert email a custom-widget alert leads with that widget. The widget's chart comes first, then the response-time chart:
+
+- **Value or level alert.** The chart is a line in the widget's own name and unit, in the email orange `#ea580c`.
+  - A value alert draws the threshold that fired in its severity colour. The legend calls it "Critical threshold".
+  - A level alert draws both of the widget's levels. Warning is amber `#d97706` ("Warning level") and critical is red `#dc2626` ("Critical level").
+- **State probe alert.** The chart is one status lane.
+  - The OK label is green `#2e7d32` at 22 % opacity. The problem label is red `#dc2626` at 85 %.
+  - The caption reads "On battery / bypass 12 min of the last hour · now On battery / bypass".
+  - The time axis runs from -60 min to now. A legend names both labels.
+  - A table probe's chart names its row.
+
+If the widget reported nothing in the hour, no chart is drawn.
+
 ## Many series
 
 Per-core CPU and SD-WAN members draw one line per dimension. Their legend is HTML toggle chips above the plot, never `<text>` inside the SVG; a hidden series' chip stays readable, and "Show all" appears once anything is hidden.
