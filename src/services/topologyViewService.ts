@@ -63,7 +63,7 @@ const MAX_POLYGON_POINTS = 1000;
 const MAX_VIEWS_PER_SITE = 100;
 export const MAX_VIEW_NAME_LEN = 80;
 const MAX_SHOWN_TYPES = 100;
-export const MAX_BACKGROUND_IMAGE_BYTES = 15 * 1024 * 1024;
+export const MAX_BACKGROUND_IMAGE_BYTES = 20 * 1024 * 1024;
 /** Largest image side accepted (pixels) — well above any real floor-plan scan. */
 const MAX_BACKGROUND_IMAGE_SIDE = 30000;
 const MAX_ID_LEN = 64;
@@ -1431,9 +1431,13 @@ export async function analyzeCadDrawing(siteId: string, viewId: string, buf: Buf
   const d = readDxfOrRefuse(buf);
   const ext = extentsOf(d.primitives);
   if (!ext) throw new AppError(400, "The drawing has nothing Polaris can draw (no lines, arcs, circles or text)");
+  // A drawing that names no units ($INSUNITS 0) is offered feet when it is set
+  // to imperial and metres when metric — a guess the dialog says is a guess.
+  const guess = d.insUnits === 0 && d.measurement !== null ? (d.measurement === 1 ? 6 : 2) : null;
   return {
     version: d.version,
-    units: unitsFor(d.insUnits),
+    units: unitsFor(guess ?? d.insUnits),
+    unitsGuessed: guess !== null,
     layers: d.layers,
     skipped: d.skipped,
     truncated: d.truncated,

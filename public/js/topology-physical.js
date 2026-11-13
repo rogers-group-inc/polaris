@@ -1391,7 +1391,9 @@
       if (typeof buildOverlay !== "function") return;
       var old = floorPlan(level);
       var unitOpts = CAD_UNITS.map(function (u) {
-        return '<option value="' + u[0] + '"' + (u[0] === a.units.code ? " selected" : "") + ">" + esc(u[1]) + (u[0] === a.units.code && u[0] ? " (from the drawing)" : "") + "</option>";
+        var mine = u[0] === a.units.code && u[0];
+        return '<option value="' + u[0] + '"' + (u[0] === a.units.code ? " selected" : "") + ">" + esc(u[1]) +
+          (mine ? (a.unitsGuessed ? " (guessed)" : " (from the drawing)") : "") + "</option>";
       }).join("");
       var layerRows = a.layers.map(function (l) {
         var on = !CAD_SHEET_LAYER.test(l.name);
@@ -1423,7 +1425,9 @@
           "</div>" +
           '<div class="topo-cad-side">' +
             '<div class="form-group" style="margin:0"><label for="topo-cad-units">Drawing units</label><select id="topo-cad-units">' + unitOpts + "</select>" +
-              '<div class="hint">How long one drawing unit is. Read from the file; change it only if the drawing says otherwise.</div></div>' +
+              '<div class="hint">' + (a.unitsGuessed
+                ? "The drawing doesn’t say its units; this is a guess from its " + (a.units.code === 6 ? "metric" : "imperial") + " setting. State plane drawings are usually US survey feet."
+                : "How long one drawing unit is. Read from the file; change it only if the drawing says otherwise.") + "</div></div>" +
             '<div><div class="card-title" style="margin:0 0 6px">Layers</div><ul class="topo-cad-layers">' + layerRows + "</ul>" +
               '<div class="hint">Untick the title block, border and anything you don’t want on the map. Only ticked layers are kept.</div></div>' +
             '<div><div class="card-title" style="margin:0 0 6px">Placement</div>' + placeHtml + "</div>" +

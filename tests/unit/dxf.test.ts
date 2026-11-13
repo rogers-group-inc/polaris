@@ -80,6 +80,25 @@ describe("parseDxf", () => {
   });
 });
 
+describe("parseDxf — model space only, and the units it says", () => {
+  it("skips the sheet layout (paper space, code 67 = 1), so the extents are the drawing's", () => {
+    const d = parseDxf(dxf({ entities: [
+      [0, "LINE"], [8, "MINE"], [10, 1280000], [20, 280000], [11, 1281000], [21, 281000],
+      [0, "LWPOLYLINE"], [67, 1], [8, "Title Block"], [90, 4], [70, 1], [10, 0], [20, 0], [10, 17], [20, 0], [10, 17], [20, 11], [10, 0], [20, 11],
+    ] }));
+    expect(d.layers.map((l) => l.name)).toEqual(["MINE"]);
+    expect(d.skipped["on the sheet layout"]).toBe(1);
+    expect(extentsOf(d.primitives)).toEqual({ minX: 1280000, minY: 280000, maxX: 1281000, maxY: 281000 });
+  });
+
+  it("reads $MEASUREMENT so a drawing with no units can be offered feet or metres", () => {
+    const imperial = parseDxf(dxf({ header: [[9, "$INSUNITS"], [70, 0], [9, "$MEASUREMENT"], [70, 0]], entities: [[0, "LINE"], [10, 0], [20, 0], [11, 1], [21, 1]] }));
+    expect(imperial).toMatchObject({ insUnits: 0, measurement: 0 });
+    const metric = parseDxf(dxf({ header: [[9, "$MEASUREMENT"], [70, 1]], entities: [[0, "LINE"], [10, 0], [20, 0], [11, 1], [21, 1]] }));
+    expect(metric.measurement).toBe(1);
+  });
+});
+
 describe("plainMText", () => {
   it("strips formatting and keeps line breaks", () => {
     expect(plainMText("{\\fArial|b1;MAIN}\\PENTRY \\A1;1")).toBe("MAIN\nENTRY 1");

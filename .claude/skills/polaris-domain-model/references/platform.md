@@ -454,7 +454,7 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- the view's TopologyLayout rows + images (rule 149). Single writer:
                                 -- topologyViewService.
 
-TopologyBackgroundImage         -- an uploaded Topology-view background (PNG / JPEG / WebP, ≤15 MB, bytea),
+TopologyBackgroundImage         -- an uploaded Topology-view background (PNG / JPEG / WebP, ≤20 MB, bytea),
                                 -- or Polaris's SVG of an imported DXF (rule 182): mimeType image/svg+xml,
                                 -- cad Json? {file, units {code, name, metres}, ext {minX,minY,maxX,maxY},
                                 -- layers, geo} — migration 20261113180000_topology_cad_drawings
