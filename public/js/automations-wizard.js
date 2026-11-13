@@ -1779,7 +1779,7 @@ async function openAutomationWizard(existing, opts) {
     if (!meta) {
       return '<input type="text" class="tgl-dim" data-dim="' + escapeHtml(d) + '" placeholder="' + placeholder + '" value="' + escapeHtml(value) + '" style="flex:1;min-width:120px">';
     }
-    var res = dimResult(metric, d, awDimNarrow(d, df, state));
+    var res = dimResult(metric, d, dimNarrowFor(d, df, state));
     if (meta.strict) {
       return '<select class="tgl-dim" data-dim="' + escapeHtml(d) + '" style="flex:1;min-width:150px;font-size:0.8rem" title="' + placeholder + '">' +
         awDimOptionsHtml(res, value) + '</select>';
@@ -1832,13 +1832,29 @@ async function openAutomationWizard(existing, opts) {
     if (!op) return {};
     return { stateOperator: op.value || "", stateValue: (val && val.value) || "" };
   }
+  /** The narrowing a dim control's list is fetched AND looked up under — one
+   *  helper, so the two can never disagree. Path Monitor with the server
+   *  ticked offers the checks the server runs too, so `includeServer` is part
+   *  of the check picker's key. (Computing it only on the fetch side left the
+   *  painter looking under a key nothing filled: the picker stayed on "(any)"
+   *  and "Checking…" whenever the box was ticked — the default.) */
+  function dimNarrowFor(d, df, state) {
+    var narrow = awDimNarrow(d, df, state);
+    if (d !== "checkId") return narrow;
+    var serverCb = document.getElementById("tf-path-server");
+    return serverCb && serverCb.checked ? Object.assign({}, narrow, { includeServer: true }) : narrow;
+  }
+  function dimNarrowOfEl(el) {
+    var row = el.closest(".scr-row");
+    return dimNarrowFor(el.getAttribute("data-dim"), dimFilterOfRow(row), dimStateOfRow(row));
+  }
   /** The dimension-value result for a control, read live off its row (metric +
    *  sibling narrowing), or null before it's been asked for. */
   function dimResultOf(el) {
     var d = el.getAttribute("data-dim");
     var metric = dimMetricOf(el);
     if (!metric) return null;
-    return _dimValues[dimKeyFor(metric, d, awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row"))))] || null;
+    return _dimValues[dimKeyFor(metric, d, dimNarrowOfEl(el))] || null;
   }
   function dimSuggestOf(el) {
     var combo = el.closest && el.closest(".aw-combo");
@@ -1858,7 +1874,7 @@ async function openAutomationWizard(existing, opts) {
     var d = el.getAttribute("data-dim");
     if (!DIM_PICKERS[d]) return;
     var metric = dimMetricOf(el);
-    var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
+    var narrow = dimNarrowOfEl(el);
     var res = metric ? _dimValues[dimKeyFor(metric, d, narrow)] : null;
     // Cue + any open suggestion list track the LATEST result and value, so the
     // loading→loaded transition fills them in without the operator re-clicking.
@@ -2003,10 +2019,7 @@ async function openAutomationWizard(existing, opts) {
       if (!DIM_PICKERS[d]) return;
       var metric = dimMetricOf(el);
       if (!metric) return;
-      var narrow = awDimNarrow(d, dimFilterOfRow(el.closest(".scr-row")), dimStateOfRow(el.closest(".scr-row")));
-      // Path Monitor with the server ticked: offer the checks it runs too.
-      var serverCb = d === "checkId" ? panel.querySelector("#tf-path-server") : null;
-      if (serverCb && serverCb.checked) narrow = Object.assign({}, narrow, { includeServer: true });
+      var narrow = dimNarrowOfEl(el);
       var key = dimKeyFor(metric, d, narrow);
       if (!_dimValues[key]) need[key] = { metric: metric, dimension: d, narrow: narrow };
     });
