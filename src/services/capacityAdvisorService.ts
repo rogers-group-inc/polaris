@@ -505,7 +505,7 @@ export function buildAdvisorState(inputs: AdvisorInputs): AdvisorState {
   const effectivePrismaPool = Math.max(prismaTarget, currentEnv.DATABASE_POOL_SIZE);
   const effectivePgbossPool = Math.max(pgbossTarget, currentEnv.POLARIS_PGBOSS_POOL_SIZE);
   // + 1: the pg-boss LISTEN connection each consuming process holds outside
-  // its pool (business rule 179).
+  // its pool (business rule 180).
   const perProcessPool = effectivePrismaPool + effectivePgbossPool + 1;
   const polarisNeeded = perProcessPool * processCount;
   const polarisFloor = Math.max(polarisNeeded, peakObserved);

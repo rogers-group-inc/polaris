@@ -150,7 +150,7 @@ if (cfg.role === "web") {
   const prismaPool = envInt("DATABASE_POOL_SIZE", 25);
   const pgbossPool = envInt("POLARIS_PGBOSS_POOL_SIZE", 20);
   // + the pg-boss LISTEN connection a consuming process holds outside its pool
-  // (business rule 179).
+  // (business rule 180).
   const listener = listenNotifyEnabled() && (cfg.runsMonitorConsumers || cfg.runsDiscoveryConsumers) ? 1 : 0;
   setDbPoolRoleCapacity(cfg.role, prismaPool + pgbossPool + listener);
 }

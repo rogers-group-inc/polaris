@@ -3694,6 +3694,18 @@ sooner than before.
 
 ### Rule 179
 
+**Racks have cable managers and a trough, things can stand beside them, and connections are drawn as cables.**
+In a Room view every rack has a vertical cable manager on each side and a trough across the
+top; right-click a rack's header to turn any of them off. A device (or a Third party box,
+such as a vertical PDU) dragged beside a rack stands there full height, outside the cable
+manager, using no rack U — two per side. The connections Layer 2 knows between devices
+shown in the racks are drawn as cables: each leaves its device into the nearer cable
+manager, runs up to the trough, along it and down into the other device. You can re-route a
+cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
+its automatic route.
+
+### Rule 180
+
 **Monitoring work starts as soon as it is queued, and an idle server stays quiet.** In the
 pg-boss queue mode, the processes that run monitoring and discovery jobs are told by the
 database the moment a job is queued, instead of each of their workers asking every one to five

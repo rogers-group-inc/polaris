@@ -166,10 +166,13 @@ describe("chartTokensForAlert — the scope matrix", () => {
     expect(sorted(chartTokensForAlert(["chart.cpu", "chart.responseTime"], "memPct", none))).toEqual(["chart.cpu"]);
   });
 
-  it("the interface rate chart rides only on a rate alert that names its port", () => {
+  it("an interface rate alert charts its port, not the device, and only when it names the port", () => {
     const got = chartTokensForAlert(ALL, "fcLinkFailureRate", { ...none, ratePort: true });
-    expect(sorted(got)).toEqual(["chart.cpu", "chart.interface", "chart.memory", "chart.probeLoss", "chart.responseTime"]);
-    expect(chartTokensForAlert(ALL, "fcLinkFailureRate", none).has("chart.interface")).toBe(false);
+    expect(sorted(got)).toEqual(["chart.interface", "chart.interfaceIn", "chart.interfaceOut"]);
+    const noPort = chartTokensForAlert(ALL, "fcLinkFailureRate", none);
+    expect(noPort.has("chart.interface")).toBe(false);
+    expect(noPort.has("chart.interfaceIn")).toBe(false);
+    expect(noPort.has("chart.cpu")).toBe(true);
   });
 
   it("does not mutate the token list it was given", () => {

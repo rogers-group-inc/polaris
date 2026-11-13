@@ -338,7 +338,7 @@ describe("workers", () => {
     const handler = vi.fn(async () => undefined);
     await q.startDiscoveryWorker(handler);
     await q.startDiscoveryWorker(handler);
-    // Two single-concurrency workers, each re-arming itself (rule 179).
+    // Two single-concurrency workers, each re-arming itself (rule 180).
     expect(boss().work).toHaveBeenCalledTimes(2);
     const reg = boss().handlers.get(q.DISCOVERY_QUEUE_NAME);
     expect(reg.opts).toEqual({ localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 5, notifyPollingIntervalSeconds: 30 });
@@ -382,7 +382,7 @@ describe("workers", () => {
     expect(h.run.runSdwanFor).toHaveBeenCalledWith("fg1", expect.any(Object));
   });
 
-  // Business rule 179: pg-boss waits the 30 s NOTIFY backstop after every
+  // Business rule 180: pg-boss waits the 30 s NOTIFY backstop after every
   // fetch, so each worker must re-arm itself after a job or a backlog stalls.
   it("a worker re-arms ITSELF after a job (a failed one too), never after an empty fetch", async () => {
     process.env.POLARIS_MONITOR_PROBE_WORKERS = "3";

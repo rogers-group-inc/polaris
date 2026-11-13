@@ -396,7 +396,7 @@ async function runDedicatedWorker(
 let floatingInFlight = 0;
 let floatingLoopRunning = false;
 
-// ─── Idle polling (business rule 179) ─────────────────────────────────────────
+// ─── Idle polling (business rule 180) ─────────────────────────────────────────
 //
 // Every monitor queue is notify-enabled and every consuming process LISTENs, so
 // a worker is woken the moment a job lands on its queue. Polling is only the
@@ -724,7 +724,7 @@ async function ensureBoss(): Promise<PgBossType | null> {
   // web + N×monitor + discovery; size against max_connections. See the
   // Capacity Advisor's group-aware budget.
   const pgbossPoolSize = resolveEnvInt("POLARIS_PGBOSS_POOL_SIZE", 20);
-  // LISTEN/NOTIFY (business rule 179): only a process that CONSUMES needs the
+  // LISTEN/NOTIFY (business rule 180): only a process that CONSUMES needs the
   // listener — it holds one extra dedicated connection outside the pool. A
   // producer's insert sends its NOTIFY either way (that follows the queue's
   // `notify` option). POLARIS_PGBOSS_LISTEN_NOTIFY=false turns it off, for a
@@ -832,7 +832,7 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
       retentionSeconds: 3_600,
       expireInSeconds: EXPIRE_BY_QUEUE[cadence],
       // Every insert sends a NOTIFY that wakes the queue's idle workers
-      // (business rule 179). Converged onto existing queues by updateQueue.
+      // (business rule 180). Converged onto existing queues by updateQueue.
       notify: true,
     };
     await boss.createQueue(name, { policy: "stately", ...queueOptions });
@@ -1151,7 +1151,7 @@ export async function startPgbossWorkers(): Promise<void> {
  * tuned for "common case is empty": 500 ms after the first empty round,
  * doubling to 10 s, and cut short the moment a dedicated pool is full —
  * the dedicated workers are woken by NOTIFY, so the floating pool only has
- * work of its own once they are all busy (business rule 179).
+ * work of its own once they are all busy (business rule 180).
  *
  * Singleton-key dedup at the publish layer means a floating worker can
  * never collide with a dedicated worker on the same (assetId, cadence) —
@@ -1190,7 +1190,7 @@ async function startFloatingWorkers(boss: PgBossType, maxFloat: number): Promise
 
     if (!job || !pickedCadence) {
       // Every queue came back empty: one round is ten fetches, so back off
-      // (business rule 179) until a dedicated pool fills up and wakes us.
+      // (business rule 180) until a dedicated pool fills up and wakes us.
       await floatingIdleWait(idleMs);
       idleMs = Math.min(idleMs * 2, FLOATING_IDLE_MAX_MS);
       continue;
