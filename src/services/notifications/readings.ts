@@ -577,6 +577,44 @@ async function yieldToSdwanParents(
   return readings.filter((r) => !out.has(`${r.assetId}|${r.dimKey}`));
 }
 
+// ─── Per-tick telemetry rows ─────────────────────────────────────────────────
+//
+// Armed for one engine pass by clearTickSampleCache(true) (beside the scope
+// memo, and disarmed in the same finally), so an operator's preview between
+// ticks reads live. Keyed on the asset id list; a later rule whose window
+// starts at or after the cached one filters the cached rows in memory, one
+// reaching further back re-reads and replaces the entry.
+type TelemetryRow = { assetId: string; timestamp: Date; cpuPct: number | null; memPct: number | null; memUsedBytes: bigint | null; sessionCount: number | null };
+const _tickTelemetry = new Map<string, { sinceMs: number; rows: Promise<TelemetryRow[]> }>();
+let _tickSampleCacheActive = false;
+
+export function clearTickSampleCache(active: boolean): void {
+  _tickTelemetry.clear();
+  _tickSampleCacheActive = active;
+}
+
+function fetchTelemetryRows(ids: string[], since: Date): Promise<TelemetryRow[]> {
+  return prisma.assetTelemetrySample.findMany({
+    where: { assetId: { in: ids }, timestamp: { gte: since } },
+    select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true },
+  });
+}
+
+async function tickTelemetryRows(ids: string[], since: Date): Promise<TelemetryRow[]> {
+  if (!_tickSampleCacheActive) return fetchTelemetryRows(ids, since);
+  const key = ids.join(",");
+  const sinceMs = since.getTime();
+  const hit = _tickTelemetry.get(key);
+  if (hit && hit.sinceMs <= sinceMs) {
+    const rows = await hit.rows;
+    return hit.sinceMs === sinceMs ? rows : rows.filter((r) => r.timestamp.getTime() >= sinceMs);
+  }
+  const rows = fetchTelemetryRows(ids, since);
+  _tickTelemetry.set(key, { sinceMs, rows });
+  rows.catch(() => { if (_tickTelemetry.get(key)?.rows === rows) _tickTelemetry.delete(key); });
+  return rows;
+}
+
 export async function resolveAssetMetricReadings(
   trigger: Extract<Trigger, { type: "asset_metric" }>,
   assets: ScopeAssetRow[],
@@ -612,7 +650,10 @@ export async function resolveAssetMetricReadings(
 
   switch (trigger.metric) {
     case "cpuPct": case "memPct": case "memUsedBytes": case "sessionCount": {
-      const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
+      // One read per tick per asset set: the High CPU and High memory rules
+      // (and any memory-bytes / session rule) over the same scope ask for the
+      // same rows, so the second is served from the first (tickTelemetryRows).
+      const rows = await tickTelemetryRows(ids, since);
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
       return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
     }
