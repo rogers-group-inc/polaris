@@ -12,7 +12,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 Also `dimensionTargetReferrers(fields, ids)` (rule 167(a)): automations whose stored trigger or reset holds one of `ids` in `dimensionFilter.checkId` / `widgetId` / `stateProbeId`, walked as raw JSON to any depth.
 
-**Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import); `pathCheckService.deleteCheck`, `manufacturerProfileService.assertWidgetsUnreferenced` (→ `deleteWidget`, `deleteProfile`, `manufacturerProfilePortabilityService.saveProfileCode`).
+Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177): the reverse walk — per automation, the channels / scripts (any action location, labelled) and path checks / widgets / state probes (conditions) that no longer exist; one `IN` read per kind for the whole list.
+
+**Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import); `src/api/routes/notificationRules.ts` (`GET /automations`, rule 177); `pathCheckService.deleteCheck`, `manufacturerProfileService.assertWidgetsUnreferenced` (→ `deleteWidget`, `deleteProfile`, `manufacturerProfilePortabilityService.saveProfileCode`).
 
 **Invariants:**
 - **It never walks action locations itself.** Everything goes through `allRuleActionRefs`; a location that walker does not visit is invisible here, and the unit test has one case per location so that fails by name.

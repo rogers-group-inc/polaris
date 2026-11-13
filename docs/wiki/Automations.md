@@ -50,6 +50,11 @@ needs `automationManagement:read`; creating, editing, toggling and deleting need
 Columns: **Name · Type · Severity · Enabled · Quiet time · Devices · Trigger ·
 Reset · Actions · Addresses · Created by**.
 
+A **warning triangle** before a name means the automation uses something that was
+deleted — a delivery channel, a script, a path check, a custom widget or a state probe — so
+that part of it does nothing. Hover the triangle for what is wrong; open the automation to
+fix it. See [rule 177](Business-Rules#rule-177).
+
 **Quiet time** shows what the automation's Quiet time step says: *Global*
 (the global quiet times apply), **IGNORES GLOBAL** (no quiet time at all — it
 sends whatever the hour) or **OVERRIDES GLOBAL** (its own quiet time; hover for

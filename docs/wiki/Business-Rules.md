@@ -3662,3 +3662,13 @@ defaults — every Polaris process picks the change up within about 30 seconds.
 
 Before this, the change was saved and shown correctly but the monitoring processes went on
 using the old settings until Polaris was next restarted or updated.
+
+### Rule 177
+
+**An automation that uses something that was deleted is marked.** If an automation sends to
+a delivery channel, runs a script, or watches a path check, custom widget or state probe that
+no longer exists, those parts of it do nothing. On the Automations page it gets a warning
+triangle before its name; hover the triangle to see what is wrong. Open it and the same
+explanation is shown above the steps. Polaris does not change the automation; point it at
+something that exists and save. (Deleting one of those things while an automation uses it is
+refused — see [rule 167](#rule-167).)

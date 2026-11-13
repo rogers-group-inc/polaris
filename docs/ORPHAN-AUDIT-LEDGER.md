@@ -158,7 +158,7 @@ Decisions needed:
 
 | # | Leftover | Today |
 |---|---|---|
-| E.1 | A deleted notification channel still named in automations, alert groups, escalation tiers, firmware / reboot bookings | delivery silently skipped **→ fixed going forward (rule 167): the channel delete is refused, naming every automation, alert group and pending booking that still uses it. Open: references that already dangle** |
+| E.1 | A deleted notification channel still named in automations, alert groups, escalation tiers, firmware / reboot bookings | delivery silently skipped **→ fixed going forward (rule 167): the channel delete is refused, naming every automation, alert group and pending booking that still uses it. References that already dangle: MARKED (rule 177, operator decision 2026-11-13) — a warning triangle on the Automations list with the issue as hover text, and a warning in the editor; alert groups not marked** |
 | E.2 | A deleted automation script named in per-action escalation, severity-band actions, reset actions, alert groups | the delete guard checks only two of the eight action locations **→ fixed (rule 167): the guard walks `allRuleActionRefs`, on automations and alert groups** |
 | E.3 | A deleted MIB still named in `Asset.*MibId` / `MonitorClassOverride.*MibId` | nothing cleared **→ closed 2026-11-12 (rule 173): the per-stream MIB pins are retired; migration `20261112180000_retire_stream_mib_pins` cleared every one, dangling ids included, and the rule-167 delete guard went with them** |
 | E.4 | A deleted credential in `NetworkScan.methods[].credentialIds` (suspected) | not checked on delete **→ confirmed and fixed (rule 167): the credential delete is refused while a Discovery tries it** |

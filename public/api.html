@@ -1687,7 +1687,11 @@
           <p><code>{ rules: [...] }</code>. Each rule is the stored, normalized (v2) body below
             plus its <code>id</code>, <code>createdAt</code>, <code>updatedAt</code>. An
             <code>api_call</code> action's custom header values are secrets and come back
-            <strong>masked</strong> (<code>"••••••••"</code>).</p>
+            <strong>masked</strong> (<code>"••••••••"</code>). Each rule also carries
+            <code>brokenReferences</code>: <code>[{ kind, message }]</code>, one per thing it names that no
+            longer exists (<code>kind</code> is <code>channel</code>, <code>script</code>, <code>pathCheck</code>,
+            <code>widget</code> or <code>stateProbe</code>); empty when nothing is broken. Computed, never stored —
+            leave it out of a <code>PUT</code>.</p>
           <pre class="curl"><code>curl -H "Authorization: Bearer $POLARIS_TOKEN" \
   "<span class="js-base-url">/api/v1</span>/automations"</code></pre>
         </div>
