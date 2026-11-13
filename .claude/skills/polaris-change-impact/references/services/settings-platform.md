@@ -144,6 +144,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Directory contacts of a deleted integration (rule 158(e)):** `pruneDeadDirectoryContacts()` — provenance rows naming an integration that no longer exists, purged through `directorySyncService.purgeDirectoryContacts` (lazy import); `HistoryPruneResult.directoryContacts`.
 
+**Unheld reserved networks (rule 175(a)):** `reportUnheldReservedNetworks()` — names, once each, networks marked `reserved` that no active whole-network reservation holds (`subnet.reserved_unheld` warning Event; the `unheldReservedNetworksReported` Setting remembers who was named); `HistoryPruneResult.unheldReservedNetworks`. Reports only, never changes a status.
+
 **Cross-service deps:** `assetSightingService.getSightingSettings` (the sighting window is the quarantine window), `mapRegionService.listRegions`, `firmwareRepositoryService.sweepFirmwareFiles` (`result.firmwareLeftovers`), `eventLogService.logEvent`; `prisma` for `Notification`, `QuietTimeSummary`, `NotificationRuleState`, `DiscoveryRun`, `Integration`, `AssetFortigateSighting`, `NetworkScanRun`, `User`, `Tag`, `TagAutoAssignment`, `Setting`.
 
 **Used by:** `src/jobs/pruneHistory.ts` (daily); `src/api/routes/events.ts` (`GET` / `PUT /events/retention-settings` merge the alert-history setting into the Event retention payload).

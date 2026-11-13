@@ -44,6 +44,7 @@ import {
   pruneUnpinnedProcessConfigs,
   pruneStaleSdwanRules,
   pruneDeadDirectoryContacts,
+  reportUnheldReservedNetworks,
   SDWAN_RULE_STALE_DAYS,
   PROCESS_CONFIG_UNPINNED_DAYS,
   updateAlertHistorySettings,
@@ -319,7 +320,7 @@ d("finished discovery runs, sightings, Discovery scan runs (rule 158)", () => {
     const { result, errors } = await pruneHistory();
     expect(errors).toEqual([]);
     expect(result.alerts).toBeGreaterThanOrEqual(1);
-    expect(Object.keys(result).sort()).toEqual(["alerts", "directoryContacts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sdwanRules", "sightings", "summaries", "tagAssignments"]);
+    expect(Object.keys(result).sort()).toEqual(["alerts", "directoryContacts", "discoveryRuns", "firmwareLeftovers", "hiddenRegionIds", "processConfigs", "ruleStates", "scanRuns", "sdwanRules", "sightings", "summaries", "tagAssignments", "unheldReservedNetworks"]);
     expect(sweepFirmwareFiles).toHaveBeenCalledTimes(1);
     expect(result.firmwareLeftovers).toBe(3);
   });
@@ -378,5 +379,50 @@ d("directory-synced contacts whose integration is gone (rule 158(e))", () => {
     await prisma.directoryContactSource.deleteMany({ where: { integrationId: live.id } });
     await prisma.contact.deleteMany({ where: { id: { in: [kept.id, manual.id] } } });
     await prisma.integration.delete({ where: { id: live.id } });
+  });
+});
+
+d("networks marked reserved that no reservation holds (rule 175(a))", () => {
+  const BLOCK = "10.93.0.0/16";
+  const cleanupNets = async () => {
+    await prisma.ipBlock.deleteMany({ where: { cidr: BLOCK } });
+    await prisma.event.deleteMany({ where: { action: "subnet.reserved_unheld" } });
+    await prisma.setting.deleteMany({ where: { key: "unheldReservedNetworksReported" } });
+  };
+  beforeEach(cleanupNets);
+  afterAll(cleanupNets);
+
+  it("names each unheld reserved network once, forgets one that is held again, and names it if stranded again", async () => {
+    const block = await prisma.ipBlock.create({ data: { name: `${PFX} block`, cidr: BLOCK, ipVersion: "v4" } as never });
+    const net = (cidr: string, status: string) =>
+      prisma.subnet.create({ data: { blockId: block.id, cidr, name: `${PFX} ${cidr}`, status } as never });
+    const stranded = await net("10.93.1.0/24", "reserved");
+    const held = await net("10.93.2.0/24", "reserved");
+    await net("10.93.3.0/24", "available");
+    const holding = await prisma.reservation.create({ data: { subnetId: held.id, status: "active" } as never });
+    // An address reservation does not hold the network as a whole.
+    await prisma.reservation.create({ data: { subnetId: stranded.id, status: "active", ipAddress: "10.93.1.5" } as never });
+
+    const events = () => prisma.event.findMany({ where: { action: "subnet.reserved_unheld" }, select: { resourceId: true } });
+    const settle = async (n: number) => {
+      for (let i = 0; i < 40 && (await events()).length < n; i++) await new Promise((r) => setTimeout(r, 50));
+      return (await events()).map((e) => e.resourceId).sort();
+    };
+
+    expect(await reportUnheldReservedNetworks()).toBe(1);
+    expect(await settle(1)).toEqual([stranded.id]);
+    // Reported once: the next day says nothing new.
+    expect(await reportUnheldReservedNetworks()).toBe(0);
+
+    // The holding reservation goes: that network is now unheld and is named.
+    await prisma.reservation.delete({ where: { id: holding.id } });
+    expect(await reportUnheldReservedNetworks()).toBe(1);
+    expect(await settle(2)).toEqual([stranded.id, held.id].sort());
+
+    // Fixed (made available), then stranded again later: named again.
+    await prisma.subnet.update({ where: { id: stranded.id }, data: { status: "available" } });
+    expect(await reportUnheldReservedNetworks()).toBe(0);
+    await prisma.subnet.update({ where: { id: stranded.id }, data: { status: "reserved" } });
+    expect(await reportUnheldReservedNetworks()).toBe(1);
   });
 });
