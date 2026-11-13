@@ -589,7 +589,7 @@ in one view never moves them in another.
 the column under the tick:
 
 - **Background** (the map icon): **OpenStreetMap** or **Upload image** (PNG,
-  JPEG or WebP, up to 15 MB). On OpenStreetMap the map opens zoomed in on the
+  JPEG or WebP, up to 20 MB). On OpenStreetMap the map opens zoomed in on the
   site; pan and zoom to frame it, and the view you leave edit mode on is saved
   with the view. An image is shown at any resolution, scaled to fit. Switching
   between the two clears the polygons and placements drawn on the old one.
