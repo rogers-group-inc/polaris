@@ -6,6 +6,7 @@
  */
 
 import { prisma } from "../../db.js";
+import { createTtlCache } from "../../utils/ttlCache.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import { logEvent } from "../eventLogService.js";
 import { POLARIS_SERVER_SUBJECT } from "../pathCheckIngestService.js";
@@ -43,6 +44,15 @@ type ShadowIndex = ShadowIndexOf<DbRule>;
  * queries on the steady-state tick — the scope re-check only runs when
  * orphans exist.
  */
+/**
+ * Rule 174's "is this gate still polled for SD-WAN?", shared across rules and
+ * ticks for 30 s. While gates are dark every SD-WAN rule asks it every tick,
+ * and each ask is a wide asset read plus a settings resolve (efficiency audit
+ * 2026-11-13). A changed setting reaches it within the TTL, as it reaches the
+ * monitor role itself (rule 176).
+ */
+const sdwanPollIntervalMemo = createTtlCache<number | null>({ ttlMs: 30_000, maxEntries: 2048 });
+
 async function clearVanishedStates(
   rule: DbRule,
   states: SweepStateRow[],
@@ -107,10 +117,12 @@ async function clearVanishedStates(
   if (frozen.length > 0) {
     // Rule 174: an SD-WAN alert on a gate whose SD-WAN is no longer collected.
     // Loaded lazily: the monitoring service is heavy and imports this engine's
-    // neighbours, and almost no tick reaches here.
+    // neighbours. Every tick reaches here while SD-WAN gates are dark, so the
+    // answer is memoized per gate (sdwanPollIntervalMemo).
     const taken = new Set(vanished.map((v) => v.st.id));
-    const stopped = await sdwanCollectionStopped(rule, frozen, async (assetId) =>
-      (await import("../monitoringService.js")).resolveSdwanPollIntervalForAsset(assetId));
+    const stopped = await sdwanCollectionStopped(rule, frozen, (assetId) =>
+      sdwanPollIntervalMemo.getOrCompute(assetId, async () =>
+        (await import("../monitoringService.js")).resolveSdwanPollIntervalForAsset(assetId)));
     for (const st of frozen) if (stopped.has(st.id) && !taken.has(st.id)) vanished.push({ st, reason: "dimension" });
   }
   if (scopeChecks.length > 0) {

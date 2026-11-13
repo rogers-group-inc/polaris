@@ -11,8 +11,11 @@ var _allSubnetsData = [];
 // are decommissioned networks that no longer hold their range, so they join
 // the list only while the Status filter is showing deprecated networks —
 // never the unfiltered list, where each would sit beside the live network
-// that replaced it on the same CIDR.
-var _archivedSubnets = [];
+// that replaced it on the same CIDR. Loaded only when they are asked for —
+// null until then, and again after a refresh (efficiency audit 2026-11-13:
+// every Networks page load used to fetch the whole archive, page by page).
+var _archivedSubnets = null;
+var _archivedLoading = false;
 var _subnetsSF = null;
 var _subnetsLayout = null;
 
@@ -190,11 +193,9 @@ async function loadSubnets() {
     // Block and Creator filtering now live in their column header filters
     // (TableSF), so the full network list loads and filtering happens
     // client-side alongside every other column filter.
-    // The archive rides the same load, and never fails it: a caller who cannot
-    // read it, or an error there, just means no archived rows.
-    var loaded = await Promise.all([api.subnets.list({ limit: 10000 }), _loadArchivedSubnets()]);
-    var result = loaded[0];
-    _archivedSubnets = loaded[1];
+    var result = await api.subnets.list({ limit: 10000 });
+    // A refresh also re-reads the archive, the next time it is shown.
+    _archivedSubnets = null;
     _allSubnetsData = (result.subnets || result).map(function (s) {
       s._integration = s.integration ? s.integration.name : "Manual";
       return s;
@@ -270,7 +271,27 @@ function _statusFilterShowsDeprecated() {
 // The rows the table is built from: the live networks, plus the archive while
 // deprecated networks are being shown.
 function _subnetTableRows() {
-  return _statusFilterShowsDeprecated() ? _subnetsData.concat(_archivedSubnets) : _subnetsData;
+  if (!_statusFilterShowsDeprecated()) return _subnetsData;
+  if (_archivedSubnets === null) {
+    _ensureArchivedSubnets();
+    return _subnetsData;
+  }
+  return _subnetsData.concat(_archivedSubnets);
+}
+
+// Fetch the archive the first time deprecated networks are shown, then
+// repaint. Never fails the page: a caller who cannot read it, or an error,
+// just means no archived rows.
+function _ensureArchivedSubnets() {
+  if (_archivedLoading || _archivedSubnets !== null) return;
+  _archivedLoading = true;
+  _loadArchivedSubnets().then(function (rows) {
+    _archivedSubnets = rows;
+  }).finally(function () {
+    _archivedLoading = false;
+    if (_archivedSubnets === null) _archivedSubnets = [];
+    renderSubnetsPage();
+  });
 }
 
 function _rebuildIntegrationColumnOptions() {

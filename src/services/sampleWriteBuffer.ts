@@ -334,6 +334,21 @@ const TABLE_LABEL: Record<BufferKey, string> = {
 // few thousand probe results inside one 2 s window).
 const SIZE_THRESHOLD = 5000;
 
+/** Rows per createMany: keeps every statement well under Postgres's 65,535 bound parameters. */
+const WRITE_CHUNK = 2000;
+
+/**
+ * Most rows one table may hold while its writes are failing (a database
+ * outage). Past it the OLDEST are dropped, with a warning: losing the start
+ * of an outage's samples beats the process running out of memory, or — as it
+ * did before this cap — a re-queue large enough to throw and lose them all.
+ */
+const MAX_BUFFERED_ROWS = 200_000;
+
+/** Wait after a failed flush before the next try, doubling to a cap. */
+const RETRY_BACKOFF_MIN_MS = 2_000;
+const RETRY_BACKOFF_MAX_MS = 60_000;
+
 // Buffer hold window. 2 s = the maximum delay a sample waits before
 // landing in Postgres. UI charts hosted off the sample tables will lag
 // by at most this long.
@@ -433,8 +448,16 @@ const flushing: Record<BufferKey, boolean> = {
   perfSla: false, pathCheck: false, process: false, processLog: false, serviceLog: false,
 };
 
-async function flushTable(key: BufferKey): Promise<void> {
+/** Per table: no flush before this time (ms), after a failure; and the current backoff. */
+const retryAfter: Partial<Record<BufferKey, number>> = {};
+const backoffMs: Partial<Record<BufferKey, number>> = {};
+
+async function flushTable(key: BufferKey, force = false): Promise<void> {
   if (flushing[key]) return; // another caller already draining this table
+  // While the database is failing, every new sample past the size threshold
+  // used to trigger another write attempt. Wait out the backoff instead —
+  // except the shutdown drain, which is the last chance to write them.
+  if (!force && (retryAfter[key] ?? 0) > Date.now()) return;
   // Widen to `unknown[]` so the snapshot/retry path can swap rows around
   // without TypeScript collapsing the buffers' six-way union into an
   // unsatisfiable intersection. The concrete row type is enforced at the
@@ -448,16 +471,37 @@ async function flushTable(key: BufferKey): Promise<void> {
   const batch = buf.splice(0, buf.length);
   setSampleBufferDepth(TABLE_LABEL[key], 0);
   const stopTimer = startSampleWriteTimer(TABLE_LABEL[key]);
+  let written = 0;
   try {
-    await retryOnDeadlock(() => writeBatch(key, batch));
+    for (; written < batch.length; written += WRITE_CHUNK) {
+      const chunk = batch.slice(written, written + WRITE_CHUNK);
+      await retryOnDeadlock(() => writeBatch(key, chunk));
+    }
+    retryAfter[key] = 0;
+    backoffMs[key] = 0;
   } catch (err: unknown) {
-    // Re-prepend so the next tick retries the same rows. Logged at warn so
-    // operators see the failure but the process keeps running.
+    // Put back what was not written, ahead of anything enqueued meanwhile, so
+    // the next try writes them in order. Never `unshift(...rows)`: spreading a
+    // large array as arguments throws RangeError, which lost every row and
+    // surfaced as an unhandled rejection.
+    const unwritten = batch.slice(written);
+    const fresh = buf.splice(0, buf.length);
+    let merged = unwritten.concat(fresh);
+    let dropped = 0;
+    if (merged.length > MAX_BUFFERED_ROWS) {
+      dropped = merged.length - MAX_BUFFERED_ROWS;
+      merged = merged.slice(dropped);
+    }
+    for (const row of merged) buf.push(row);
+    const wait = Math.min(Math.max((backoffMs[key] ?? 0) * 2, RETRY_BACKOFF_MIN_MS), RETRY_BACKOFF_MAX_MS);
+    backoffMs[key] = wait;
+    retryAfter[key] = Date.now() + wait;
     logger.warn(
-      { err: (err as Error)?.message, table: TABLE_LABEL[key], rowCount: batch.length },
-      "sampleWriteBuffer: flush failed; rows will be retried on next tick",
+      { err: (err as Error)?.message, table: TABLE_LABEL[key], rowCount: unwritten.length, buffered: buf.length, dropped, retryInMs: wait },
+      dropped > 0
+        ? "sampleWriteBuffer: flush failed and the buffer is full; the oldest rows were dropped"
+        : "sampleWriteBuffer: flush failed; rows will be retried",
     );
-    buf.unshift(...batch);
     setSampleBufferDepth(TABLE_LABEL[key], buf.length);
   } finally {
     stopTimer();
@@ -518,9 +562,9 @@ async function writeBatch(key: BufferKey, batch: unknown[]): Promise<void> {
 }
 
 /** Drain every table. Used by the periodic tick and the shutdown hook. */
-export async function flushAllSampleBuffers(): Promise<void> {
+export async function flushAllSampleBuffers(force = false): Promise<void> {
   await Promise.all(
-    (Object.keys(buffers) as BufferKey[]).map((k) => flushTable(k)),
+    (Object.keys(buffers) as BufferKey[]).map((k) => flushTable(k, force)),
   );
 }
 
@@ -551,7 +595,7 @@ export async function shutdownFlushSampleBuffers(): Promise<void> {
     clearInterval(flushTimer);
     flushTimer = null;
   }
-  await flushAllSampleBuffers();
+  await flushAllSampleBuffers(true);
 }
 
 // ─── Test hooks ───────────────────────────────────────────────────────────
@@ -567,6 +611,8 @@ export const __test__ = {
     for (const k of Object.keys(buffers) as BufferKey[]) {
       buffers[k].length = 0;
       flushing[k] = false;
+      retryAfter[k] = 0;
+      backoffMs[k] = 0;
       setSampleBufferDepth(TABLE_LABEL[k], 0);
     }
     if (flushTimer) {

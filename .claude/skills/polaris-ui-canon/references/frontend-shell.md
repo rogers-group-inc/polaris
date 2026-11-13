@@ -74,3 +74,7 @@ Vanilla JavaScript SPA served from `/public/`. No build step — plain ES module
 
 Everything below moved out of CLAUDE.md's Frontend section — CLAUDE.md keeps the page
 inventory, the shared-module list and the conventions; the per-surface detail lives here.
+
+## Sidebar pollers and repeated `renderNav()` (efficiency audit 2026-11-13)
+
+`renderNav()` runs more than once on some pages (map.js paints from cache then re-renders; a role change re-renders). Every poller it starts — `pollVisible` intervals, the self-paced firmware and update loops, and their `visibilitychange` listeners — checks the module-level `_navGeneration` through `navCurrent()` and stops itself once a newer render owns the sidebar. A new sidebar poller MUST go through `pollVisible` or `onNavVisible` (or check `navCurrent()` in its own scheduler); a bare `setInterval` / `addEventListener` inside `renderNav` doubles on those pages.

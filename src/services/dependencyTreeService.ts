@@ -1950,10 +1950,39 @@ async function loadEffectiveParents(): Promise<Map<string, string[]>> {
  * `monitor.dependency_suppressed` / `monitor.dependency_resumed` events
  * for transitions.
  */
-export async function reconcileDependencySuppression(): Promise<{
-  evaluated: number;
-  changed:   number;
-}> {
+type DependencyReconcileResult = { evaluated: number; changed: number };
+
+// Serialized and coalesced, the reconcileMaintenance pattern. Every up/down
+// change calls this (propagateAfterStatusChange) without waiting for it, so a
+// site outage that flips 250 assets in one probe batch used to start 250
+// full-fleet reconciles at once: ~1,250 queries against a pool of 25,
+// starving the probe and sample flushes during the outage, and — because each
+// read the state before any had written — duplicate
+// `monitor.dependency_suppressed` Events. Now one run is in flight at a time,
+// and calls made during it share ONE follow-up run that starts after it, so
+// every change is still reflected by a run that began after it.
+let reconcileInFlight: Promise<DependencyReconcileResult> | null = null;
+let reconcileFollowUp: Promise<DependencyReconcileResult> | null = null;
+
+export function reconcileDependencySuppression(): Promise<DependencyReconcileResult> {
+  if (reconcileInFlight) {
+    if (!reconcileFollowUp) {
+      reconcileFollowUp = reconcileInFlight
+        .catch(() => undefined)
+        .then(() => {
+          reconcileFollowUp = null;
+          return reconcileDependencySuppression();
+        });
+    }
+    return reconcileFollowUp;
+  }
+  reconcileInFlight = runDependencyReconcile().finally(() => {
+    reconcileInFlight = null;
+  });
+  return reconcileInFlight;
+}
+
+async function runDependencyReconcile(): Promise<DependencyReconcileResult> {
   // Auto-expire any "Dependency Test" overlays whose deadline has passed
   // BEFORE we read the suppression state — this way the read sees the
   // freshly-cleared rows and the reconciler ends the test session in the
@@ -2141,9 +2170,14 @@ export async function reconcileDependencySuppression(): Promise<{
 
 /**
  * Latency-optimization hook fired from `recordProbeResult` after a
- * `monitor.status_changed` Event lands. Cheaper than a full reconciler
- * tick since we only re-evaluate the changed asset's transitive
- * descendants — the rest of the fleet's effective state hasn't moved.
+ * `monitor.status_changed` Event lands, so a dependency-down state shows
+ * within seconds instead of at the next 60s tick.
+ *
+ * It runs the WHOLE-fleet reconcile (the asset id is not used — an earlier
+ * comment here claimed only the changed asset's descendants were re-checked,
+ * which was never true). That is affordable per change only because
+ * `reconcileDependencySuppression` is single-flight: a burst of changes costs
+ * at most the run in flight plus one follow-up.
  *
  * Best-effort. The 60s reconciler is the source of truth and will catch
  * anything this hook misses (server restart mid-transition, race, etc.).

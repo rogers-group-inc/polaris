@@ -109,7 +109,7 @@ describe("app split — declarations", () => {
 
   it("every top-level var / const / let the original declared is declared exactly once", () => {
     const all = perFile.flatMap((p) => p.vars);
-    expect(INVENTORY.vars.length).toBe(80);
+    expect(INVENTORY.vars.length).toBe(81);
     for (const n of INVENTORY.vars) expect(all.filter((x) => x === n).length, n).toBe(1);
     expect(all.length).toBe(INVENTORY.vars.length);
   });

@@ -121,6 +121,9 @@ const buffer = new Map<string, ProbePatch>();
 // the fleet) hit the threshold and flush early instead of waiting.
 const SIZE_THRESHOLD = 5000;
 
+/** Rows per UPDATE: 16 bound parameters each, under Postgres's 65,535 limit. */
+const WRITE_CHUNK = 3000;
+
 // Buffer hold window. Matches sampleWriteBuffer's 2 s — the two buffers
 // flush on the same cadence by design so the UI status pill + sample chart
 // lag together rather than diverging.
@@ -203,17 +206,25 @@ export async function flushProbePatchBuffer(): Promise<void> {
   buffer.clear();
   setProbePatchBufferDepth(TABLE_LABEL, 0);
   const stopTimer = startProbePatchWriteTimer();
+  // One statement per WRITE_CHUNK rows: each row binds 16 parameters and
+  // Postgres refuses a statement over 65,535, so a single statement failed
+  // for good above ~4,095 assets — and, re-queued, failed again every tick.
+  let written = 0;
   try {
-    await retryOnDeadlock(() => writeBatch(snapshot));
+    for (; written < snapshot.length; written += WRITE_CHUNK) {
+      const chunk = snapshot.slice(written, written + WRITE_CHUNK);
+      await retryOnDeadlock(() => writeBatch(chunk));
+    }
   } catch (err: unknown) {
-    // Re-prepend on retry-exhausted failure, but only for entries the buffer
+    // Re-prepend what was not written, but only for entries the buffer
     // doesn't already hold — concurrent enqueues during the awaited write
     // represent fresher state and should win.
+    const unwritten = snapshot.slice(written);
     logger.warn(
-      { err: (err as Error)?.message, rowCount: snapshot.length },
+      { err: (err as Error)?.message, rowCount: unwritten.length },
       "probePatchBuffer: flush failed; restoring rows missing from current buffer",
     );
-    for (const [id, patch] of snapshot) {
+    for (const [id, patch] of unwritten) {
       if (!buffer.has(id)) buffer.set(id, patch);
     }
     setProbePatchBufferDepth(TABLE_LABEL, buffer.size);
