@@ -394,6 +394,31 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/arcgisService.ts
+
+**What it owns:** the client of the `arcgis` integration type — a sign-in to an ArcGIS portal (ArcGIS Online, Location Platform or ArcGIS Enterprise) and the REST transport every later ArcGIS use goes through (the integration's basemap and cable-run write-back are being built on it). Four sign-in methods (`authMode`): `none`, `apiKey` (stored as `apiToken`, sent as `token`), `appCredentials` (`clientId` + `clientSecret` → `<portal>/sharing/rest/oauth2/token`, client-credentials grant) and `userPassword` (`username` + `password` → `<portal>/sharing/rest/generateToken`, referer = the portal). The integration discovers nothing (`integrationAdapters` → `discovery: null`).
+
+**Public API:** `ARCGIS_ONLINE_PORTAL`, `ARCGIS_AUTH_MODES`, types ArcgisConfig / ArcgisHttpRequest, class ArcgisError (`code`, `details`); `portalUrlProblem(url)`, `portalBase(config)`, `arcgisRequest(config, url, {method, params, token})`, `getArcgisToken(config)`, `clearArcgisTokenCache()`, `testConnection(config)`; `_setRequestImplForTests(impl | null)`.
+
+**Cross-service deps:** `utils/tlsDispatcher.tlsFetch` (verifySsl false = certificate pinning, rule 113(e)), `utils/netGuard.isBlockedOutboundHost`, `utils/logger`. Secrets are sealed at rest by the `src/db.ts` hook (`apiToken`, `clientSecret`, `password` are all in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS`) — no sealing code here.
+
+**Used by:**
+- `src/services/integrationAdapters.ts` → `INTEGRATION_ADAPTERS.arcgis.testConnection` (both Test Connection paths).
+- `src/api/routes/integrations.ts` → `ArcgisConfigSchema` (`portalUrlProblem`, the auth-mode enum; derives `config.host` from `portalUrl`), `PUT /:id` (re-parses the merged config, then `clearArcgisTokenCache`).
+
+**Invariants:**
+- **A token never follows a redirect**: `redirect: "error"` on every request, plus a 20 s timeout and a 10 MB response cap.
+- **The ArcGIS REST error envelope is an error**: most failures answer HTTP 200 with `{ error: { code, message, details } }`; `arcgisRequest` throws an ArcgisError carrying the portal's own message, so Test Connection shows what ArcGIS said.
+- **The portal is https and outside the blocked ranges**, checked by the schema on create and on the PUT re-parse; `portalUrl` is a rule-111 destination key (`utils/secretDestination.ts → DESTINATION_KEYS`), so a moved portal needs the secret typed again.
+- **Token cache** (per process, keyed portal | method | client ID or user name): a short-lived token is reused until a minute before it expires, and never for a different secret (the secret is compared in memory, never hashed — the CodeQL #126 lesson from satelliteTileService).
+
+**When changing this:**
+- A new ArcGIS feature (imagery, write-back) calls `getArcgisToken` + `arcgisRequest` rather than its own fetch, so sign-in and errors stay in one place.
+- Scale: nothing here runs per asset; the token is fetched at most once per two hours per process.
+- Tests: `tests/unit/arcgisService.test.ts` (transport replaced through the seam), `tests/integration/arcgisIntegration.test.ts` (create / PUT / Discover against a real DB).
+
+---
+
 ## services/appMapDiscoveryService.ts
 
 **What it owns:** The service & process **DISCOVERY RULES** (formerly the Application Map's "Discovery" surface; the list now renders inline on **Integrations → Polaris Agent**) — named rules in `Setting("appMapAutoMap")` (`{version:2, rules:[…]}`), the scope-driven process/service aggregate behind the wizard's item step, the additive apply that pins them, and the AUTO-RULE machinery that mirrors per-asset Services-tab pin toggles into consolidatable rules. Structurally a sibling of `autoMonitorStorageService` (aggregate → preview → additive apply → re-apply later), with the periodic-reconciler entry point of `tagAssignmentService`.

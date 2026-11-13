@@ -38,12 +38,13 @@ import * as truenas from "./truenasService.js";
 import * as proxmox from "./proxmoxService.js";
 import * as llm from "./llmService.js";
 import * as genericApi from "./genericApiService.js";
+import * as arcgis from "./arcgisService.js";
 import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 /** Every integration type Polaris knows. Integration.type holds exactly one of these. */
 export const INTEGRATION_TYPES = [
   "fortimanager", "fortigate", "windowsserver", "entraid", "activedirectory",
-  "vcenter", "azurearc", "unraid", "truenas", "proxmox", "llm", GENERIC_API_TYPE,
+  "vcenter", "azurearc", "unraid", "truenas", "proxmox", "llm", GENERIC_API_TYPE, "arcgis",
 ] as const;
 export type IntegrationType = (typeof INTEGRATION_TYPES)[number];
 
@@ -58,7 +59,7 @@ export interface IntegrationAdapter {
    * concurrency gate is per integration).
    */
   testConnection(config: any, integrationId?: string): Promise<ConnectionTestResult>;
-  /** null: nothing to discover (the AI assistant, rule 95). */
+  /** null: nothing to discover (the AI assistant, rule 95; ArcGIS). */
   discovery: null | {
     /**
      * "dhcp": a gate / DHCP server — the run reads networks and leases and
@@ -158,9 +159,27 @@ export const INTEGRATION_ADAPTERS: { readonly [K in IntegrationType]: Integratio
       },
     },
   },
+  // A map / GIS service: satellite imagery and cable-run write-back, no inventory.
+  arcgis: {
+    label: "ArcGIS",
+    testConnection: (config) => arcgis.testConnection(config),
+    discovery: null,
+  },
 };
 
 /** The adapter for a stored type string, or undefined for one Polaris does not know. */
 export function integrationAdapter(type: string): IntegrationAdapter | undefined {
   return (INTEGRATION_ADAPTERS as Record<string, IntegrationAdapter | undefined>)[type];
+}
+
+/**
+ * The types with nothing to discover (`discovery: null`). The scheduler skips
+ * them and create / update force their `autoDiscover` off.
+ */
+export const NON_DISCOVERY_TYPES: readonly IntegrationType[] =
+  INTEGRATION_TYPES.filter((t) => INTEGRATION_ADAPTERS[t].discovery === null);
+
+/** True for a type with nothing to discover. */
+export function isNonDiscoveryType(type: string): boolean {
+  return (NON_DISCOVERY_TYPES as readonly string[]).includes(type);
 }

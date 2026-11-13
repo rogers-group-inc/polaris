@@ -309,18 +309,18 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/integrationAdapters.ts
 
-**What it owns:** the per-type facts the backend's integration DISPATCH needs, one entry per type (CQ-B064, 2026-11-09): the product label, the connection test, and the discovery facts (none for the AI assistant; otherwise `kind` "dhcp" — a gate / DHCP server going through `syncDhcpSubnets` — or "assets" — an inventory source with the asset-only post-sync passes — and `missingConfig`, the first field a run cannot start without).
+**What it owns:** the per-type facts the backend's integration DISPATCH needs, one entry per type (CQ-B064, 2026-11-09): the product label, the connection test, and the discovery facts (none for the AI assistant and ArcGIS — `discovery: null`; otherwise `kind` "dhcp" — a gate / DHCP server going through `syncDhcpSubnets` — or "assets" — an inventory source with the asset-only post-sync passes — and `missingConfig`, the first field a run cannot start without).
 
-**Public API:** `INTEGRATION_TYPES`, `IntegrationType`, `INTEGRATION_ADAPTERS`, `IntegrationAdapter`, `integrationAdapter(type)`.
+**Public API:** `INTEGRATION_TYPES`, `IntegrationType`, `INTEGRATION_ADAPTERS`, `IntegrationAdapter`, `integrationAdapter(type)`, `NON_DISCOVERY_TYPES` / `isNonDiscoveryType(type)` (the types whose adapter has `discovery: null`).
 
 **Cross-service deps:** each integration's service (`testConnection` only) and `utils/genericApiSource.GENERIC_API_TYPE`. Imports no discovery code, so the services it imports may not import it back (none do).
 
-**Used by:** `src/services/discovery/discoveryEngine.ts` → `runPreflightTest` (stored test), `triggerDiscovery` (unknown-type and non-discoverable refusals, `missingConfig`), `runDiscovery` (`discoveryKind` → the "device / DHCP discovery" label and `assetsOnly`), `syncDhcpSubnets` (`integrationLabel`); `src/api/routes/integrations.ts` → `POST /test` (the unsaved-form test, indexed by the Zod-parsed type).
+**Used by:** `src/services/discovery/discoveryEngine.ts` → `runPreflightTest` (stored test), `triggerDiscovery` (unknown-type and non-discoverable refusals, `missingConfig`), `runDiscovery` (`discoveryKind` → the "device / DHCP discovery" label and `assetsOnly`), `syncDhcpSubnets` (`integrationLabel`); `src/api/routes/integrations.ts` → `POST /test` (the unsaved-form test, indexed by the Zod-parsed type), `POST /` and `PUT /:id` (`isNonDiscoveryType` forces `autoDiscover` off); `src/jobs/discoveryScheduler.ts` → `runScheduledDiscoveries` (`type: { notIn: NON_DISCOVERY_TYPES }`).
 
 **Invariants:**
 - **Typed per type, both ways.** `INTEGRATION_ADAPTERS` is `{ [K in IntegrationType]: … }`, so a type in `INTEGRATION_TYPES` without an entry does not compile; `POST /test` indexes it with `CreateIntegrationSchema`'s parsed `input.type`, so a schema literal without an entry does not compile either. `tests/unit/integrationAdapters.test.ts` pins the two lists equal at runtime and every label equal to `public/js/integrations.js → _INTEGRATION_PRODUCTS`.
 - **Only FortiManager receives the integration id** in `testConnection` (its proxy-mode concurrency gate is per integration); the draft test passes none.
-- **An unknown stored type is refused by `triggerDiscovery`** (400), and `runDiscovery`'s collector dispatch is EXHAUSTIVE over `IntegrationType`: each type has its own branch (FortiManager included — it used to be the bare `else`), `llm` throws, and the last arm is `unhandledCollector(never)`, so a type added to `INTEGRATION_TYPES` without a collector does not compile, and an unknown stored type fails the run instead of running FortiManager discovery. `tests/integration/triggerDiscoveryRefusals.test.ts` pins the refusals.
+- **An unknown stored type is refused by `triggerDiscovery`** (400), and `runDiscovery`'s collector dispatch is EXHAUSTIVE over `IntegrationType`: each type has its own branch (FortiManager included — it used to be the bare `else`), `llm` and `arcgis` throw, and the last arm is `unhandledCollector(never)`, so a type added to `INTEGRATION_TYPES` without a collector does not compile, and an unknown stored type fails the run instead of running FortiManager discovery. `tests/integration/triggerDiscoveryRefusals.test.ts` pins the refusals.
 - `missingConfig` messages are operator-facing and pinned word for word in the test.
 
 **When changing this:**

@@ -13,6 +13,7 @@
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { triggerDiscovery, isDiscoveryRunning } from "../services/discovery/discoveryEngine.js";
+import { NON_DISCOVERY_TYPES } from "../services/integrationAdapters.js";
 import { defineJob } from "./_defineJob.js";
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -28,10 +29,10 @@ async function runScheduledDiscoveries(): Promise<void> {
   let integrations: { id: string; name: string; pollInterval: number; lastDiscoveryAt: Date | null }[];
   try {
     integrations = await prisma.integration.findMany({
-      // `type: not llm` — the AI assistant's LLM server has nothing to
-      // discover (rule 95); its create path forces autoDiscover off too,
-      // this keeps a hand-edited row from reaching triggerDiscovery.
-      where: { enabled: true, autoDiscover: true, lastTestOk: true, type: { not: "llm" } },
+      // Types with nothing to discover (the AI assistant, rule 95; ArcGIS)
+      // are skipped; their create path forces autoDiscover off too, this
+      // keeps a hand-edited row from reaching triggerDiscovery.
+      where: { enabled: true, autoDiscover: true, lastTestOk: true, type: { notIn: [...NON_DISCOVERY_TYPES] } },
       select: { id: true, name: true, pollInterval: true, lastDiscoveryAt: true },
     });
   } catch (err) {
