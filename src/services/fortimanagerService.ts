@@ -745,11 +745,24 @@ export async function fmgProxyRest<T = unknown>(
   const entry = Array.isArray(proxyData) ? proxyData[0] : proxyData;
   if (!entry) throw new AppError(502, "FortiManager proxy returned no response payload");
 
-  // FortiOS HTTP status (separate from the FMG envelope status above)
+  // Each target carries FMG's OWN per-target status (`status.code`, 0 = the
+  // relay to this gate worked) and, separately, the FortiOS reply with its HTTP
+  // status at `response.http_status` — the shape every other proxy reader in
+  // this file (switch / AP / detected-device / ARP, the controller probes)
+  // reads. Until 2026-11-13 this read `status.code` AS the HTTP status, so a
+  // successful target's 0 was "HTTP 0" and every proxied write (reservation
+  // push, lease release, quarantine, reboot) failed in proxy mode (found by
+  // fortimanagerService.test.ts). A per-target code in the HTTP range is still
+  // read as one, in case an FMG build reports it that way.
+  const targetCode = entry?.status?.code;
+  if (typeof targetCode === "number" && targetCode !== 0 && !(targetCode >= 100 && targetCode < 600)) {
+    const msg = entry?.status?.message || `FortiManager could not reach the device (code ${targetCode})`;
+    throw new AppError(502, `FortiGate (via FMG proxy) error: ${msg}`);
+  }
   const httpStatus =
-    entry?.status?.code ??
-    entry?.http_status ??
     entry?.response?.http_status ??
+    entry?.http_status ??
+    (typeof targetCode === "number" && targetCode >= 100 && targetCode < 600 ? targetCode : undefined) ??
     200;
   if (httpStatus < 200 || httpStatus >= 300) {
     const msg =
