@@ -137,6 +137,17 @@ click stops propagation, or the map's background click clears the selection.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.
+**Rack cabling (rule 179)**: a rack is a frame — `.topo-rack-side` (two slots a side), `.topo-rack-core`
+(`.topo-rack-trough` over `.topo-rack-mid`: manager, body, manager) — and its cables are ONE SVG
+(`.topo-cable-layer`) appended to the rack strip, drawn from measured element boxes (`rel()` against
+the strip, so the strip must be the layer's containing block: `.topo-room-strip .topo-rack-strip
+{ position: relative }` must come AFTER the room rule that sets it static — the first build had it
+before and every hit line sat 32px off). Only the transparent `.topo-cable-hit` lines take the
+pointer; handles are `.topo-link-handle.topo-cable-handle` divs in the strip. Saved routes are strip
+pixels checked by a `sig` of their ends' boxes, so the frame must never move with state: a manager or
+trough turned off renders as an `.is-off` spacer, and both side slots are always laid out (blank when
+viewing, dashed drop places when editing). `changed()` draws BEFORE staging so a route whose ends
+moved is found stale and dropped in the same change.
 **Selection and the info card** are shared by all three modes: `map.js → _selectTopologyAsset(id)`
 repaints only `#topology-asset-card` (never the whole pane, so the Device List keeps its filter and
 scroll) and mirrors the choice onto the canvas (`instance.setSelected`, or the Cytoscape

@@ -1167,7 +1167,7 @@
   overflow: auto;
   background: var(--color-bg-secondary);
 }
-.topo-rack { flex: none; width: 375px; display: flex; flex-direction: column; }
+.topo-rack { flex: none; display: flex; flex-direction: column; }
 
 /* ── Wall mode (topology-wall.js; rule 151) ───────────────────────────────
    Walls side by side like racks; each board is an SVG in inch units, a
@@ -1208,6 +1208,8 @@
   overflow: visible;
   background: none;
 }
+/* The rack strip holds the cable layer (rule 179): a positioning box in a room too. */
+.topo-room-strip .topo-rack-strip { position: relative; }
 .topo-room-empty { align-self: center; }
 .topo-wall-head {
   display: flex;
@@ -1278,7 +1280,45 @@
 .is-editing .topo-rack-name[data-rack-rename]:hover,
 .is-editing .topo-rack-units[data-rack-resize]:hover { background: var(--color-hover-tint); }
 .topo-rack-delete { font-size: 18px; line-height: 1; padding: 0 4px; }
-.topo-rack-body { display: flex; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-bg-primary); }
+.topo-rack-body { display: flex; width: 375px; flex: none; border: 1px solid var(--color-border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); background: var(--color-bg-primary); }
+/* Rule 179: a rack's frame — what stands beside it, its vertical cable
+   managers and its top trough around the elevation. Sides bottom-align with
+   the bay. */
+.topo-rack-frame { display: flex; align-items: flex-end; gap: 4px; }
+.topo-rack-core { display: flex; flex-direction: column; }
+.topo-rack-mid { display: flex; }
+.topo-rack-vcm {
+  width: 30px; flex: none; box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  background: repeating-linear-gradient(0deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px);
+}
+.topo-rack-trough {
+  height: 22px; box-sizing: border-box;
+  border: 1px solid var(--color-border); border-bottom: none;
+  background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px);
+}
+.topo-rack-side { display: flex; gap: 4px; }
+.topo-rack-side-item, .topo-rack-side-slot { width: 24px; flex: none; box-sizing: border-box; border-radius: var(--radius-sm); }
+.topo-rack-side-item {
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  border: 1.5px solid var(--color-success); background: var(--color-surface);
+  font-size: 11px; font-weight: 600; color: var(--color-text-primary);
+}
+.topo-rack-side-item span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-height: 100%; }
+.topo-rack-side-item.is-third-party { border-color: var(--color-text-tertiary); background: var(--color-bg-tertiary); }
+.topo-rack-side-item.is-selected { box-shadow: 0 0 0 2px var(--color-accent); }
+.topo-rack-side-slot { border: 1.5px dashed var(--color-border); opacity: 0.8; }
+.topo-rack-side-slot.is-drop { border-color: var(--color-accent); background: var(--color-hover-tint); opacity: 1; }
+.topo-rack-side-slot.is-empty { border-color: transparent; }
+.topo-rack-vcm.is-off, .topo-rack-trough.is-off { background: none; border-color: transparent; }
+/* The cables (topology-rack.js → drawCables): one SVG over the strip; only
+   the wide transparent hit lines take the pointer. */
+.topo-cable-layer { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 2; }
+.topo-cable { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.topo-cable-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: pointer; }
+.is-editing .topo-cable-hit { cursor: copy; }
+.topo-cable-bridge { fill: none; stroke: var(--color-border); stroke-dasharray: 3 3; }
+.topo-cable-handle { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; z-index: 3; }
 .topo-rack-rail { width: 38px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
 .topo-rack-rail span {
   height: 20px;

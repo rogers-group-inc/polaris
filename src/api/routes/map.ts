@@ -338,6 +338,8 @@ const UpdateViewSchema = z.object({
   walls: z.array(z.unknown()).optional(),
   wallPlacements: z.array(z.unknown()).optional(),
   layers: z.array(z.unknown()).optional(),
+  // Rule 179: a Room view's hand-routed cables.
+  cableRoutes: z.record(z.string(), z.unknown()).optional(),
 }).refine((b) => Object.keys(b).length > 0, "Nothing to update");
 
 const LocationCodesSchema = z.object({ changes: z.array(z.unknown()).min(1).max(500) });

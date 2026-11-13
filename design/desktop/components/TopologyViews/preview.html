@@ -28,6 +28,14 @@
   .demo-blk.cable { border: 1px solid var(--color-border); font-weight: 500; color: var(--color-text-secondary); background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px); }
   .demo-blk.third { border-color: var(--color-text-tertiary); background: var(--color-bg-tertiary); }
   .demo-blk.ghost { background: transparent; border-style: dashed; border-color: var(--color-border); color: var(--color-text-tertiary); }
+  .demo-frame { position: relative; display: flex; align-items: flex-end; gap: 4px; }
+  .demo-core { display: flex; flex-direction: column; }
+  .demo-mid { display: flex; }
+  .demo-vcm { width: 30px; box-sizing: border-box; border: 1px solid var(--color-border); background: repeating-linear-gradient(0deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px); }
+  .demo-trough { height: 22px; box-sizing: border-box; border: 1px solid var(--color-border); border-bottom: 0; background: repeating-linear-gradient(90deg, var(--color-bg-tertiary) 0 6px, var(--color-bg-elevated) 6px 8px); }
+  .demo-side { width: 24px; height: 242px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; border: 1.5px solid var(--color-success); border-radius: var(--radius-sm); background: var(--color-surface); font-size: 11px; font-weight: 600; }
+  .demo-side span { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .demo-cables { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -62,10 +70,16 @@
       </div>
     </div>
     <div>
-      <p class="demo-cap">Room view — a rack, 12U shown, front face</p>
-      <div class="demo-rack">
+      <p class="demo-cap">Room view — a rack, 12U shown, front face, with its cable managers, trough and a PDU beside it</p>
+      <div class="demo-rack" style="width:auto">
         <div class="demo-rack-head"><strong>Rack A</strong><span class="hint" style="margin:0">42U</span><button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto" title="Show the back of the rack">Front</button></div>
-        <div class="demo-rack-body">
+        <div class="demo-frame">
+        <div class="demo-side"><span>PDU-A1</span></div>
+        <div class="demo-core">
+        <div class="demo-trough"></div>
+        <div class="demo-mid">
+        <div class="demo-vcm"></div>
+        <div class="demo-rack-body" style="width:325px">
           <div class="demo-rail"><span>42</span><span>41</span><span>40</span><span>39</span><span>38</span><span>37</span><span>36</span><span>35</span><span>34</span><span>33</span><span>32</span><span>31</span></div>
           <div class="demo-bay">
             <div class="demo-blk" style="top:20px;height:20px">HQ-FGT01<span class="m">firewall · 1U</span></div>
@@ -74,6 +88,15 @@
             <div class="demo-blk third" style="top:100px;height:20px">ISP router<span class="m">third party · 1U</span></div>
             <div class="demo-blk ghost" style="top:120px;height:20px">PDU-2 (back)</div>
           </div>
+        </div>
+        <div class="demo-vcm"></div>
+        </div>
+        </div>
+        </div>
+        <svg class="demo-cables" width="440" height="270" aria-hidden="true">
+          <polyline points="381,52 395,52 395,94 381,94" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linejoin="round"></polyline>
+          <polyline points="381,98 399,98 399,30 420,30" fill="none" stroke="var(--color-success)" stroke-width="2.5" stroke-linejoin="round"></polyline>
+        </svg>
         </div>
       </div>
     </div>

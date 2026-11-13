@@ -4385,6 +4385,9 @@ model TopologyView {
   wallPlacements Json     @default("[]") @map("wall_placements")
   // A Topology view's floor layers beyond layer 0 (rule 152).
   layers         Json     @default("[]")
+  // A Room view's hand-routed cables between racked devices (rule 179):
+  // { <pathKey>: { bends, s?, t?, sig } }; a cable not listed is routed automatically.
+  cableRoutes    Json     @default("{}") @map("cable_routes")
   createdBy      String?  @map("created_by")
   updatedBy      String?  @map("updated_by")
   createdAt      DateTime @default(now()) @map("created_at")

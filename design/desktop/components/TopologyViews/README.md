@@ -34,6 +34,13 @@ and may have more; views are shared, and creating or changing one needs Device M
   health colour; Cable management is a striped placeholder; a Third party box (equipment Polaris does not monitor, named by the operator) is solid with a neutral border; a full-depth item seen from its other
   face is a dashed outline. **Junction boxes** are pegboard in inches, items whole-inch polygons that
   never overlap.
+- **Rack cabling** (rule 179): every rack has a hatched vertical cable manager down each side and a
+  hatched trough across the top (the header's right-click menu turns each off; its space stays).
+  A device or Third party box beside the rack stands full height outside the manager (24px wide,
+  name written vertically), two places a side, shown as dashed drop places in edit mode. Layer 2's
+  links between shown devices are drawn as cables in Layer 2's colours: sideways into the nearer
+  manager, up to the trough (neighbouring troughs are joined by a dashed bridge), along it and
+  down. Hover shows Layer 2's link card; a selected cable shows round ends and square corners.
 
 The live implementation is `public/js/map.js` (picker, toggles, dialogs), `public/js/topology-physical.js`
 (Topology) and `public/js/topology-room.js` (Room, joining `topology-rack.js` and `topology-wall.js`);
