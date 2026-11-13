@@ -103,7 +103,7 @@ through `ctx.stageLocationCode` (with `levels`, rule 148(a)), the rule-148 Save 
 **Floor layers** (`topology-physical.js`, rule 152) keep the canvas's code shape by making
 `state.placements` a property accessor onto the CURRENT floor and `layerPolys()` the only
 polygon list hit-testing reads; `state.background` is the GROUND (floor 0's background) only.
-**Stacked floors (rule 152(a))**: every floor is drawn at once, each in its own Leaflet pane
+**Stacked floors (rule 152(a))**: the ground is floor 0 too — `groundPanes()` (Leaflet's `tilePane`, plus the `ground_plan` pane the site-plan overlay is created in) get floor 0's look in `applyFloorLook` / `applyOrigins`; a new ground layer must go in one of those panes or it stays at 100 % on every floor. Every floor is drawn at once, each in its own Leaflet pane
 (`floorPane`: an SVG renderer and a layer group per floor, z by level) so `applyFloorLook` fades
 and scales a whole floor with one CSS opacity + `scale()` about the SCREEN centre (`screenOrigin`,
 re-set on every `move` — that is the parallax). Changing floors never rebuilds the map

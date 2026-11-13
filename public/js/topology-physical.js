@@ -562,7 +562,9 @@
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
         var ext = planExtent(bg);
         var bounds = [[0, 0], [ext.h, ext.w]];
-        L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds).addTo(map);
+        // The site plan in a pane of its own, so it fades and scales with floor 0.
+        map.createPane("ground_plan").style.zIndex = "200";
+        L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds, { pane: "ground_plan" }).addTo(map);
         map.fitBounds(bounds, { padding: [20, 20] });
         map.setMaxBounds(L.latLngBounds([[-ext.h, -ext.w], [2 * ext.h, 2 * ext.w]]));
       } else {
@@ -692,10 +694,17 @@
       var size = map.getSize();
       return map.containerPointToLayerPoint(L.point(size.x / 2, size.y / 2));
     }
+    // The ground itself — the map / satellite tiles or the site plan — is
+    // floor 0: it fades and scales with floor 0's devices and links.
+    function groundPanes() {
+      if (!map) return [];
+      return [map.getPane("tilePane"), map.getPane("ground_plan")].filter(Boolean);
+    }
     function applyOrigins() {
       if (!map) return;
       var o = screenOrigin();
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
+      groundPanes().forEach(function (pane) { pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
     }
     function applyFloorLook(animate) {
       if (!map) return;
@@ -707,6 +716,14 @@
         st.transform = "scale(" + look.scale + ")";
         st.opacity = String(look.opacity);
         f.pane.classList.toggle("is-faint", level !== state.layer);
+      });
+      var g = floorLook(0 - state.layer);
+      groundPanes().forEach(function (pane) {
+        var st = pane.style;
+        st.transition = animate ? "opacity " + FADE_MS + "ms ease-in-out, transform " + FADE_MS + "ms ease-in-out" : "none";
+        st.transformOrigin = o.x + "px " + o.y + "px";
+        st.transform = g.scale === 1 ? "" : "scale(" + g.scale + ")";
+        st.opacity = String(g.opacity);
       });
     }
     function visualLatLng(level, ll) {
