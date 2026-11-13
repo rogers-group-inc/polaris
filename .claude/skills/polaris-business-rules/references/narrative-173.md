@@ -51,8 +51,15 @@ that default MIBs are being used or that a manufacturer profile is in use".
   choosing a profile that rule 131 forbids, on the two streams where it is most surprising.
 - *Keep the pins, relabel the dropdown.* The truthful label for most of its options would have
   been "does nothing".
-- *Reject the keys with a 400.* Accepting and ignoring costs nothing and breaks no client; the
-  columns go in a later release once no rollback can need them.
+- *Reject the keys with a 400.* Accepting and ignoring costs nothing and breaks no client.
+
+**The columns (same day).** The plan was to keep the six `*MibId` columns for one release so a
+rollback to a build that still selected them would work. The operator asked for them gone at once:
+`20261112200000_drop_stream_mib_pins` drops them from `assets` and `monitor_class_overrides`, and
+`MonitorTierSettings`, the class-override read, the per-class stream map and the asset merge list
+no longer name them. The consequence accepted: a rollback past these migrations to a build that
+selects the columns fails until the columns are re-added (empty, since the earlier migration
+cleared them).
 
 ### Rule 173 — the invariant as stated in full until 2026-11-12
 

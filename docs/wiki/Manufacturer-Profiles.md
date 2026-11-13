@@ -97,7 +97,8 @@ pattern: each family has a device-type default (for devices with no model yet)
 ## Custom widgets and state probes
 
 Widgets carry what the five rows can't: battery runtime, client counts, an HTTP
-health page, an alarm bit. Each needs its symbol's MIB uploaded (a standard MIB
+health page, an alarm bit. **+ Add Widget** opens its form at the top of the
+list, and the list shows the newest widgets first (after any **Order** you set). Each needs its symbol's MIB uploaded (a standard MIB
 too, uploaded as a generic module). A **state probe** maps a status value to
 two named states ("Fault" / "Normal"), one per row of a table if you give it a
 name column, and an automation can alert on it by name. A row the device sent

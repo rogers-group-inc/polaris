@@ -2296,8 +2296,6 @@ const MONITOR_PASS_CANDIDATE_SELECT = {
       processesIntervalSec: true, eventLogIntervalSec: true,
       cpuMemoryTimeoutMs: true, temperatureTimeoutMs: true, systemInfoTimeoutMs: true,
       processesTimeoutMs: true, eventLogTimeoutMs: true,
-      responseTimeMibId: true, cpuMemoryMibId: true, temperatureMibId: true,
-      interfacesMibId: true, lldpMibId: true, processesMibId: true,
       responseTimeCredentialId: true, cpuMemoryCredentialId: true, temperatureCredentialId: true,
       interfacesCredentialId: true, lldpCredentialId: true,
 } satisfies Prisma.AssetSelect & Record<Exclude<keyof AssetMonitorContext, "discoveredByIntegrationType">, true>;

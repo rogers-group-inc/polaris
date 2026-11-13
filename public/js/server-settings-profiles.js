@@ -319,11 +319,20 @@ var STATE_MODE_LABELS = {
 var STATE_MODE_ORDER = ["nonzero", "zero", "equals", "notEquals", "gte", "lte"];
 var STATE_MODES_WITH_VALUES = ["equals", "notEquals", "gte", "lte"];
 
-function renderWidgetSection(detail) {
-  var widgets = (detail.widgets || []).slice().sort(function (a, b) {
+// The widget list: by Order, then NEWEST FIRST, so a widget just added lands
+// at the top where the operator is looking rather than wherever its name
+// sorts (2026-11-13). Name breaks a tie between rows with no creation time.
+function _mfgWidgetListOrder(widgets) {
+  return (widgets || []).slice().sort(function (a, b) {
     if ((a.order || 0) !== (b.order || 0)) return (a.order || 0) - (b.order || 0);
+    var ta = a.createdAt || "", tb = b.createdAt || "";
+    if (ta !== tb) return ta < tb ? 1 : -1;
     return (a.name || "").localeCompare(b.name || "");
   });
+}
+
+function renderWidgetSection(detail) {
+  var widgets = _mfgWidgetListOrder(detail.widgets);
   var html = '<div style="margin-top:18px">' +
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
       '<h5 style="margin:0;font-size:0.9rem;font-weight:600">Custom widgets</h5>' +
@@ -338,12 +347,12 @@ function renderWidgetSection(detail) {
   if (widgets.length === 0 && !_mfgAddingWidget[detail.id]) {
     html += '<p class="empty-state" style="padding:0.5rem 0;margin:0;font-size:0.82rem">No widgets defined yet.</p>';
   }
-  widgets.forEach(function (w) {
-    html += renderWidgetCard(detail.id, w, detail.manufacturer);
-  });
   if (_mfgAddingWidget[detail.id]) {
     html += renderAddWidgetCard(detail.id, detail.manufacturer);
   }
+  widgets.forEach(function (w) {
+    html += renderWidgetCard(detail.id, w, detail.manufacturer);
+  });
   html += '</div>';
   return html;
 }

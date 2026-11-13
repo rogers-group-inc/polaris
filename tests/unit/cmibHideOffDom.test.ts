@@ -91,6 +91,17 @@ describe.each([
   });
 });
 
+// 2026-11-13: the polling switch belongs to edit mode only.
+describe("outside edit mode, the polling switch", () => {
+  it.each([["the default grid", null], ["a saved layout", { version: 1, columns: [{ id: "c1", width: 6, widgets: [{ id: "on", height: 1 }] }] }]])(
+    "is not drawn on any card (%s)", (_l, layout) => {
+      const m = build({ assets: true, profiles: true });
+      render(m.tab(payload(layout)));
+      expect(document.querySelectorAll(".custom-mib-card").length).toBeGreaterThan(0);
+      expect(document.querySelector(".custom-widget-toggle")).toBeNull();
+    });
+});
+
 describe("outside edit mode, the column a hidden widget alone filled", () => {
   it("is not drawn", () => {
     const m = build({ assets: true, profiles: true });
@@ -122,6 +133,7 @@ describe("in edit mode", () => {
     const m = build({ assets: true, profiles: false });
     const { ids } = enterEdit(m, payload());
     expect(ids).toContain("off");
+    expect(document.querySelectorAll(".custom-widget-toggle")).toHaveLength(2);
     expect(document.querySelector(".cmib-grip")).toBeNull();
     expect(document.querySelector(".cmib-col-bar")).toBeNull();
     expect(document.querySelector(".cmib-reset")).toBeNull();

@@ -99,14 +99,14 @@ describe("_renderCustomWidgetGauge", () => {
   it("turns the arc and value amber past the threshold and says so", () => {
     const html = gauge(95, { unit: "%", warningAt: 90 });
     expect(html).toContain('stroke="var(--color-sev-warning)"');
-    expect(html).toContain("Warning — at or above 90.0 %");
+    expect(html).toContain("Warning state — at or above 90.0 %");
     expect(html).toContain("custom-widget-warn-tick");
   });
 
   it("stays the normal colour short of the threshold, naming the rule muted", () => {
     const html = gauge(100, { unit: "%", warningAt: 50, warningWhen: "below" });
     expect(html).toContain('stroke="#22d3ee"');
-    expect(html).toContain("Warns at or below 50.0 %");
+    expect(html).toContain("Warning state at or below 50.0 %");
     expect(html).not.toContain("is-breached");
   });
 
@@ -129,12 +129,12 @@ describe("_renderCustomWidgetLine", () => {
     // The labels report the data, not the stretched domain.
     expect(html).toContain("min 6000 s");
     expect(html).toContain("max 6400 s");
-    expect(html).toContain("Warns at or below 1800 s");
+    expect(html).toContain("Warning state at or below 1800 s");
   });
 
   it("flags the latest reading once it crosses", () => {
     const html = g._renderCustomWidgetLine({ samples: samples([2000, 1500]), displayOptions: { warningAt: 1800, warningWhen: "below" } });
-    expect(html).toContain("Warning — at or below 1800");
+    expect(html).toContain("Warning state — at or below 1800");
   });
 
   const parse = (html: string) => new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
@@ -230,5 +230,19 @@ describe("the profile editor's warning fields", () => {
   it("summarises the side on the widget card", () => {
     expect(g._widgetOptionsSummary({ widgetType: "gauge", displayOptions: { warningAt: 20, warningWhen: "below" } })).toBe("warn ≤ 20");
     expect(g._widgetOptionsSummary({ widgetType: "line", displayOptions: { unit: "%", warningAt: 90 } })).toBe("unit % · warn ≥ 90");
+  });
+});
+
+// The threshold only colours the card. "Warns at or above 16.0 A" read as a
+// promise of a notification (2026-11-13), so the caption names a state and the
+// tooltip says an automation is what alerts.
+describe("_customWidgetWarnCaption wording", () => {
+  it("names a state, never an action, and points at automations", () => {
+    const quiet = g._customWidgetWarnCaption({ at: 16, below: false, breached: false }, (v: number) => v.toFixed(1) + " A");
+    expect(quiet).toContain("Warning state at or above 16.0 A");
+    expect(quiet).not.toContain("Warns");
+    expect(quiet).toContain("An automation on this widget");
+    const hit = g._customWidgetWarnCaption({ at: 16, below: false, breached: true }, (v: number) => v.toFixed(1) + " A");
+    expect(hit).toContain("Warning state — at or above 16.0 A");
   });
 });

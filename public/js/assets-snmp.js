@@ -83,14 +83,15 @@ function _cmibShown(w) {
   return t ? Object.assign({}, w, { widgetType: t }) : w;
 }
 
-// opts.arrange: the layout editor's tools (grip, display type, height) — a
-// profile write. The polling switch is drawn either way; a switched-off card
-// only reaches here in edit mode (_cmibLayoutHTML / _customMibTabHTML hide it
-// otherwise), so edit mode is where a widget is switched back on.
+// opts.editing: edit mode — the polling switch is drawn ONLY then (2026-11-13:
+// the switch on every card outside edit mode was clutter, and a slip switched a
+// widget off and hid its card). opts.arrange: the layout editor's tools (grip,
+// display type, height) — a profile write. A switched-off card only reaches
+// here in edit mode (_cmibLayoutHTML / _customMibTabHTML hide it otherwise).
 function _cmibCardHTML(w, opts) {
   opts = opts || {};
-  var hasSwitch = _cmibIsMfr(w);
-  var off = hasSwitch && !w.enabled;
+  var hasSwitch = _cmibIsMfr(w) && !!opts.editing;
+  var off = _cmibIsMfr(w) && !w.enabled;
   var toggle = !hasSwitch ? "" :
     '<label class="toggle-switch" style="flex-shrink:0" title="' +
       (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
@@ -153,7 +154,7 @@ function _cmibLayoutHTML(layout, byId, editing, arrange) {
     }
     shown.forEach(function (x) {
       var w = byId[x.id];
-      html += _cmibCardHTML(arrange ? _cmibShown(w) : w, { arrange: arrange, height: x.height });
+      html += _cmibCardHTML(arrange ? _cmibShown(w) : w, { editing: editing, arrange: arrange, height: x.height });
     });
     html += '</div>';
   });
@@ -635,13 +636,18 @@ function _customWidgetWarningShown(displayValue, opts, fmt) {
 }
 
 /** The line under a gauge / line widget naming its threshold — amber once breached.
- *  `text` formats one number with its unit (the widget's _cwDisplay text). */
+ *  `text` formats one number with its unit (the widget's _cwDisplay text).
+ *  The threshold only colours the card, so the caption names a STATE ("Warning
+ *  state at or above 16.0 A"), never an action: it read "Warns at or above",
+ *  which an operator took to mean a notification is sent (2026-11-13). An
+ *  automation on the widget's value is what alerts; the tooltip says so. */
 function _customWidgetWarnCaption(warn, text) {
   if (!warn) return "";
   var rule = (warn.below ? "at or below " : "at or above ") + text(warn.at);
+  var tip = ' title="Display only: the card turns amber here. An automation on this widget&#39;s value (Custom widget value) is what sends an alert."';
   return warn.breached
-    ? '<div class="custom-widget-warn is-breached" style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning — ' + escapeHtml(rule) + '</div>'
-    : '<div class="custom-widget-warn" style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warns ' + escapeHtml(rule) + '</div>';
+    ? '<div class="custom-widget-warn is-breached"' + tip + ' style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning state — ' + escapeHtml(rule) + '</div>'
+    : '<div class="custom-widget-warn"' + tip + ' style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warning state ' + escapeHtml(rule) + '</div>';
 }
 
 function _renderCustomWidgetGauge(w) {

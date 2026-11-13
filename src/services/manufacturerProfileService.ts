@@ -204,6 +204,8 @@ export interface CustomWidgetRow {
   httpCheck:      Record<string, unknown> | null;
   /** `http`-typed Credential supplying auth; null = unauthenticated check. */
   credentialId:   string | null;
+  /** ISO time the widget was created — the profile page lists the newest first. */
+  createdAt?:     string;
 }
 
 export interface ProfileSummary {
@@ -1741,6 +1743,7 @@ function shapeWidget(w: any): CustomWidgetRow {
     displayOptions: (w.displayOptions ?? {}) as Record<string, unknown>,
     order:          w.order,
     modelPattern:   w.modelPattern ?? null,
+    ...(w.createdAt instanceof Date ? { createdAt: w.createdAt.toISOString() } : {}),
     // Read through normalizeStateMap rather than trusted verbatim: a probe row
     // written before a mode was added (or hand-edited in SQL) still yields a
     // usable mapping instead of throwing on the telemetry hot path.

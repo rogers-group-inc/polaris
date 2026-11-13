@@ -1653,8 +1653,8 @@ drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, the latest value as text, a table, or a pass/fail state.
 
 A gauge or line with a **Warning at** value marks it (a tick on the gauge, a
-dashed line on the chart) and turns amber, with a *Warning* caption, once the
-reading reaches it. **Warn when** says which side is the warning: *at or
+dashed line on the chart) with the caption *Warning state at or above …* (or
+*below*), and turns amber once the reading reaches it. **Warn when** says which side is the warning: *at or
 above* (load, temperature) or *at or below* (battery capacity, runtime). The
 warning only colours the card; an automation on the widget's value — the
 *Custom widget value* metric, which offers the widget by name — is what alerts.
@@ -1666,14 +1666,14 @@ min, max and warning threshold convert with it. A widget set to show a
 ("1 h 23 m"). Both are display only: automations on a widget still compare
 the number the device reports.
 
-**A widget polls this asset only when its switch is on.** Each manufacturer
-widget's card has a switch at its top right. Off (the default for a new
-widget) means Polaris never asks the device for that widget, and the card is
-hidden: the tab shows only the widgets switched on for this asset, and its
-hint says how many are hidden. Click the pencil at the tab's top right to show
-every widget, switched-off ones included (each says *Polling is off for this
-asset*), and switch them on or off. Each switch is saved at once; click ✓ to
-hide the off ones again. Without the Manufacturer Profiles permission the
+**A widget polls this asset only when its switch is on.** The switches are in
+edit mode: click the pencil at the tab's top right and every manufacturer
+widget's card shows a switch at its top right. Off (the default for a new
+widget) means Polaris never asks the device for that widget, and outside edit
+mode the card is hidden: the tab shows only the widgets switched on for this
+asset, with no switches, and its hint says how many are hidden. In edit mode
+every widget is shown, switched-off ones included (each says *Polling is off
+for this asset*). Each switch is saved at once; click ✓ to leave edit mode. Without the Manufacturer Profiles permission the
 pencil only does this, with no layout tools. On means Polaris
 polls it as often as the asset's **hardware-sensor** interval (60 seconds by
 default), whatever the asset's CPU/memory polling is set to. A UPS can
