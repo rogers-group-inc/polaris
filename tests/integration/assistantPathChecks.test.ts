@@ -42,6 +42,14 @@ d("path_check_summary", () => {
     await wipe();
     const host = await prisma.asset.create({ data: { hostname: `${NAME}-branch`, status: "active", assetType: "server" } as never });
     hostId = host.id;
+    // A live agent: without one the host is offline and its result stale (rule 85(a)).
+    await prisma.managedAgent.create({
+      data: {
+        assetId: hostId, osPlatform: "linux", arch: "amd64", installStatus: "active", installedBy: "test",
+        serverCertFingerprint: "sha256:" + "e".repeat(64), additionalServerCertFingerprints: [],
+        wsConnectedAt: new Date(), lastSeenAt: new Date(),
+      } as never,
+    });
     const check = await prisma.pathCheck.create({
       data: { name: `${NAME} erp`, kind: "https", target: "erp.example.test", traceroute: {}, scope: {}, definitionSha256: "x" } as never,
     });
@@ -73,8 +81,27 @@ d("path_check_summary", () => {
       [`${NAME}-branch`, 75, 200, 300, 4],
       ["Polaris server", 100, 30, 40, 2],
     ]);
-    expect(r.rows[0]).toMatchObject({ lastOk: false, lastError: "timeout", kind: "https" });
+    expect(r.rows[0]).toMatchObject({ lastOk: false, lastError: "timeout", kind: "https", stale: false });
     expect(r).toMatchObject({ matchedChecks: 1, failingNow: 1 });
+  });
+
+  it("rule 85(a): an offline host's failure is stale, not failing now", async () => {
+    const hourAgo = ago(60);
+    await prisma.managedAgent.update({
+      where: { assetId: hostId },
+      data: { wsConnectedAt: ago(120), wsDisconnectedAt: hourAgo, lastSeenAt: hourAgo },
+    });
+    try {
+      const r = (await runAssistantTool("path_check_summary", JSON.stringify({ check: NAME }), { req, maxRows: 50 })).data as any;
+      expect(r.rows.find((x: any) => x.source === `${NAME}-branch`)).toMatchObject({ lastOk: false, stale: true });
+      expect(r.rows.find((x: any) => x.source === "Polaris server")).toMatchObject({ stale: false });
+      expect(r).toMatchObject({ failingNow: 0 });
+    } finally {
+      await prisma.managedAgent.update({
+        where: { assetId: hostId },
+        data: { wsConnectedAt: new Date(), wsDisconnectedAt: null, lastSeenAt: new Date() },
+      });
+    }
   });
 
   it("failingOnly and source narrow the rows", async () => {

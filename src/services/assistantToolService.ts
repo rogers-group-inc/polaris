@@ -37,6 +37,7 @@ import { pickSampleTierForAsset, type SampleTier } from "./sampleQueryRouter.js"
 import { resolveDependencyBlame, BLAME_MAX_HOPS } from "./dependencyTreeService.js";
 import { lookupOui } from "./ouiService.js";
 import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestService.js";
+import { agentOnline, pathResultStaleReason } from "../utils/pathCheckStale.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
 import { deviceUptime } from "../utils/uptime.js";
@@ -1161,7 +1162,8 @@ const pathCheckSummaryTool: ListToolDef = {
     "for each check and each place it runs from, availability % and average / peak latency over a window, the " +
     "last result and error, and when it last failed. check matches the check name or target (\"m365\", " +
     "\"erp.example.com\"); source matches the hostname it runs from (\"server\" for the Polaris server). " +
-    "failingOnly: only check/source pairs whose latest result failed. Worst availability first, or sortBy " +
+    "failingOnly: only check/source pairs whose latest result failed. stale: true means that latest result is " +
+    "history — the agent host is offline or no run has landed for three intervals — so it says nothing about now. Worst availability first, or sortBy " +
     `latency. The window defaults to the last ${PATH_DEFAULT_HOURS} hours.`,
   parameters: {
     type: "object",
@@ -1178,7 +1180,7 @@ const pathCheckSummaryTool: ListToolDef = {
     { key: "check", label: "Check" }, { key: "kind", label: "Kind" }, { key: "target", label: "Target" },
     { key: "source", label: "Runs from" }, { key: "availabilityPct", label: "Availability %" },
     { key: "avgLatencyMs", label: "Avg latency ms" }, { key: "maxLatencyMs", label: "Peak latency ms" },
-    { key: "samples", label: "Runs" }, { key: "lastOk", label: "Last OK" }, { key: "lastError", label: "Last error" },
+    { key: "samples", label: "Runs" }, { key: "lastOk", label: "Last OK" }, { key: "stale", label: "Stale" }, { key: "lastError", label: "Last error" },
     { key: "lastFailAt", label: "Last failed" }, { key: "lastSampleAt", label: "Last run" }, { key: "window", label: "Window" },
   ],
   async rows(args, ctx, cap) {
@@ -1195,7 +1197,7 @@ const pathCheckSummaryTool: ListToolDef = {
       where: a.check
         ? { OR: [{ name: { contains: a.check, mode: "insensitive" } }, { target: { contains: a.check, mode: "insensitive" } }] }
         : {},
-      select: { id: true, name: true, kind: true, target: true, enabled: true },
+      select: { id: true, name: true, kind: true, target: true, enabled: true, intervalSec: true },
     });
     if (!checks.length) return { rows: [], total: 0, extra: { matchedChecks: 0 } };
 
@@ -1208,7 +1210,7 @@ const pathCheckSummaryTool: ListToolDef = {
       where: sourceWhere,
       select: {
         checkId: true, assetId: true, lastOk: true, lastError: true, lastSampleAt: true, lastFailAt: true, lastLatencyMs: true,
-        asset: { select: { hostname: true } },
+        asset: { select: { hostname: true, managedAgent: { select: { wsConnectedAt: true, wsDisconnectedAt: true, lastSeenAt: true } } } },
       },
     });
 
@@ -1219,8 +1221,12 @@ const pathCheckSummaryTool: ListToolDef = {
     const checkBy = new Map(checks.map((c) => [c.id, c]));
     const window = `${from.toISOString()} – ${to.toISOString()}${tier === "detail" ? "" : ` (${tier} averages)`}`;
 
+    const now = Date.now();
     const rows = sources.map((s) => {
       const c = checkBy.get(s.checkId)!;
+      // Rule 85(a): the server source is always "online"; an agent host per agentOnline.
+      const online = !s.assetId || (!!s.asset?.managedAgent && agentOnline(s.asset.managedAgent, now));
+      const stale = pathResultStaleReason({ lastSampleAt: s.lastSampleAt, online }, c.intervalSec, now) !== null;
       const g = aggBy.get(`${s.assetId ?? POLARIS_SERVER_SUBJECT}\u0000${s.checkId}`);
       return {
         checkId: c.id, check: c.name, kind: c.kind, target: c.target, enabled: c.enabled,
@@ -1228,7 +1234,7 @@ const pathCheckSummaryTool: ListToolDef = {
         samples: g?.samples ?? 0,
         availabilityPct: g && g.samples ? round1((g.okCount / g.samples) * 100) : null,
         avgLatencyMs: round1(g?.avgLatency), maxLatencyMs: round1(g?.maxLatency),
-        lastOk: s.lastOk, lastError: s.lastError, lastFailAt: s.lastFailAt, lastSampleAt: s.lastSampleAt, window,
+        lastOk: s.lastOk, stale, lastError: s.lastError, lastFailAt: s.lastFailAt, lastSampleAt: s.lastSampleAt, window,
       };
     });
     const byLatency = a.sortBy === "latency";
@@ -1239,7 +1245,7 @@ const pathCheckSummaryTool: ListToolDef = {
     return {
       rows: rows.slice(0, take).map(plain),
       total: rows.length,
-      extra: { window, matchedChecks: checks.length, failingNow: sources.filter((s) => s.lastOk === false).length },
+      extra: { window, matchedChecks: checks.length, failingNow: rows.filter((r) => r.lastOk === false && !r.stale).length },
     };
   },
   async run(args, ctx) {

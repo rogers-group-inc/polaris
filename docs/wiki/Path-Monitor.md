@@ -167,9 +167,11 @@ The list's **Result** column counts how many sources' latest run is in each stat
 | **OK** | the source's latest run passed |
 | **Unexpected response** | a source got an answer from the target, just not the expected one: a status code outside *Accepted status codes*, or a body that failed its check |
 | **Fail** | a source got no answer at all (timeout, refused connection, DNS or TLS failure) |
+| **Stale** | the source has stopped running the check: its host's agent is offline, or no run has arrived for three of the check's intervals plus two minutes. Its last result is history, so it is not counted as OK or Fail. Hover the pill to see why and what the last result was ([rule 85(a)](Business-Rules#rule-85)) |
 
-The Results view and a host's Paths tab use the same three words for each
-source.
+The Results view and a host's Paths tab use the same words for each
+source. A check that is disabled or in maintenance stops running too, so its
+results turn Stale after the same wait.
 
 **Results** (from a check's row menu) lists every source that runs it, with
 the latest result, latency, HTTP status, resolved address, hop count and the
