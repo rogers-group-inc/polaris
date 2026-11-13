@@ -55,7 +55,7 @@ import {
   sweepMonitoredForIntegration,
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
-import { checkForSlowRuns, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
+import { checkForSlowRunsThrottled, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
 import { INTEGRATION_ADAPTERS } from "../../services/integrationAdapters.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
@@ -1512,7 +1512,7 @@ router.get("/", async (req, res, next) => {
 // Also runs slow-detection inline so the UI sees amber within one poll cycle
 // of a run exceeding its baseline, without waiting for the 30s background job.
 router.get("/discoveries", async (req, res) => {
-  await checkForSlowRuns().catch(() => {});
+  await checkForSlowRunsThrottled().catch(() => {});
   const now = Date.now();
   const rows = await listActiveRuns();
   const running = rows.map((row) => {

@@ -504,7 +504,9 @@ export function buildAdvisorState(inputs: AdvisorInputs): AdvisorState {
   // connections the moment it hit 301.
   const effectivePrismaPool = Math.max(prismaTarget, currentEnv.DATABASE_POOL_SIZE);
   const effectivePgbossPool = Math.max(pgbossTarget, currentEnv.POLARIS_PGBOSS_POOL_SIZE);
-  const perProcessPool = effectivePrismaPool + effectivePgbossPool;
+  // + 1: the pg-boss LISTEN connection each consuming process holds outside
+  // its pool (business rule 180).
+  const perProcessPool = effectivePrismaPool + effectivePgbossPool + 1;
   const polarisNeeded = perProcessPool * processCount;
   const polarisFloor = Math.max(polarisNeeded, peakObserved);
   const recommendedMax = roundUpToNearest(

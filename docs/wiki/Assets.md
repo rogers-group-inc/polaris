@@ -1808,6 +1808,15 @@ Polaris has matched to one of its ports. It needs three things:
 - **The switch's interfaces, LLDP or storage stream** turned on.
 - **One system-info poll** after both of the above, which fills the tab in.
 
+The heading says when the tab's rows were last read, and a badge beside it
+says how they are read, in the same words as the badges on the CPU and memory
+charts: the polling method, how often, and where that setting comes from. On a
+switch that is one badge, for the switch's own polls. On a server there is one
+badge per switch it is logged into, named, because those rows come from the
+switch's polls, plus one for the server's own HBA ports: vCenter (its
+discovery interval and the vCenter integration) or the Polaris Agent. The
+"last read" time turns amber once it is older than the most frequent of them.
+
 **On the switch:** one row per port in use. Each row shows:
 
 - **Device**: the device logged into the port. This is a link when it matched an

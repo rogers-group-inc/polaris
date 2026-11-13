@@ -1619,7 +1619,9 @@ POLARIS_HEAVY_CONCURRENCY=8    # cursor mode only
 
 For headless installs (no UI access) the same env vars can be set by hand. The defaults above cover up to ~500 monitored assets in cursor mode; past that, flip to pg-boss (`Setting.monitor.queueMode = "pgboss"`) and let the advisor scale worker counts as the fleet grows.
 
-`max_connections` on the PostgreSQL side should sit at roughly `(prismaPool + pgbossPool) / 0.65` rounded up to a multiple of 50, leaving ~35% headroom for non-Polaris consumers (psql sessions, backups, replication, monitoring agents). The advisor surfaces the exact recommendation alongside the pool sizes.
+Each process that runs queue workers also holds one LISTEN connection outside its pg-boss pool, so its workers wake the moment a job is queued instead of polling the database every second or two. Set `POLARIS_PGBOSS_LISTEN_NOTIFY=false` only when the direct URL pg-boss uses is in fact a transaction pooler.
+
+`max_connections` on the PostgreSQL side should sit at roughly `(prismaPool + pgbossPool + 1) / 0.65` rounded up to a multiple of 50, leaving ~35% headroom for non-Polaris consumers (psql sessions, backups, replication, monitoring agents). The advisor surfaces the exact recommendation alongside the pool sizes.
 
 ---
 

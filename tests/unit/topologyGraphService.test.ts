@@ -58,6 +58,8 @@ let siblings: any[];
 let endpoints: any[];
 let standbys: any[];
 let uniqueHosts: string[];
+// Rows the one-query fetchRecentSampleStats returns ({ assetId, success }, newest first per asset).
+let sampleRows: Array<{ assetId: string; success: boolean }>;
 
 beforeEach(() => {
   resetDbStub();
@@ -65,6 +67,7 @@ beforeEach(() => {
   endpoints = [];
   standbys = [];
   uniqueHosts = [];
+  sampleRows = [];
   for (const m of [
     "assetApRadio", "assetHardwareSensorSample", "assetInterface", "assetLldpNeighbor",
     "assetMclagPeer", "assetMonitorSample", "assetWirelessStation", "subnet",
@@ -75,8 +78,12 @@ beforeEach(() => {
     if (where?.assetType === "firewall") return standbys;
     return [];
   });
-  stubbed(prisma.$queryRaw).mockImplementation(async (strings: TemplateStringsArray) =>
-    strings.join("?").includes("HAVING COUNT(*) = 1") ? uniqueHosts.map((host) => ({ host })) : []);
+  stubbed(prisma.$queryRaw).mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = strings.join("?");
+    if (sql.includes("HAVING COUNT(*) = 1")) return uniqueHosts.map((host) => ({ host }));
+    if (sql.includes("asset_monitor_samples")) return sampleRows;
+    return [];
+  });
 });
 
 // ─── pure-ish exports ───────────────────────────────────────────────────────
@@ -96,24 +103,30 @@ describe("monitorStatusToHealth", () => {
 describe("fetchRecentSampleStats", () => {
   const samples = (ok: boolean[]) => ok.map((success) => ({ success }));
 
-  it("reads the last 10 response-time samples only — never the loss sweep's rows", async () => {
-    stubbed(prisma.assetMonitorSample.findMany).mockResolvedValue([]);
-    await fetchRecentSampleStats(["a1"]);
-    expect(stubbed(prisma.assetMonitorSample.findMany).mock.calls[0][0]).toMatchObject({
-      where: { assetId: "a1", OR: [{ probeKind: null }, { probeKind: "primary" }] },
-      orderBy: { timestamp: "desc" },
-      take: 10,
-    });
+  const sampleCalls = () => stubbed(prisma.$queryRaw).mock.calls.filter((c: any[]) => c[0].join("?").includes("asset_monitor_samples"));
+
+  it("reads the last 10 response-time samples only — never the loss sweep's rows — in ONE query for every asset", async () => {
+    await fetchRecentSampleStats(["a1", "a2", "a1"]);
+    const calls = sampleCalls();
+    expect(calls).toHaveLength(1);
+    const sql = calls[0][0].join("?");
+    expect(sql).toMatch(/"probeKind" IS NULL OR m\."probeKind" = 'primary'/);
+    expect(sql).toMatch(/ORDER BY m\."timestamp" DESC\s+LIMIT 10/);
+    expect(calls[0][1]).toEqual(["a1", "a2"]);
+    stubbed(prisma.$queryRaw).mockClear();
+    await expect(fetchRecentSampleStats([])).resolves.toEqual(new Map());
+    expect(sampleCalls()).toHaveLength(0);
   });
 
   it("grades the window: all failed of 10 is down, any failure degraded, none up, nothing unknown", async () => {
-    stubbed(prisma.assetMonitorSample.findMany).mockImplementation(async ({ where }: any) => ({
+    const byAsset: Record<string, Array<{ success: boolean }>> = {
       down: samples(Array(10).fill(false)),
       short: samples([false, false, false]), // < 10 all failed — not enough to say down
       lossy: samples([true, false, true, true]),
       up: samples([true, true]),
       none: [],
-    } as Record<string, unknown>)[where.assetId]);
+    };
+    sampleRows = Object.entries(byAsset).flatMap(([assetId, rows]) => rows.map((r) => ({ assetId, ...r })));
     const out = await fetchRecentSampleStats(["down", "short", "lossy", "up", "none"]);
     expect(out.get("down")).toEqual({ samples: 10, failures: 10, health: "down" });
     expect(out.get("short")!.health).toBe("degraded");
@@ -272,7 +285,7 @@ describe("buildSiteTopology", () => {
 
   it("asks the monitor samples for the gate only when it is monitored", async () => {
     stubbed(prisma.asset.findFirst).mockResolvedValue({ ...FG, monitored: true });
-    stubbed(prisma.assetMonitorSample.findMany).mockResolvedValue(Array(10).fill({ success: false }));
+    sampleRows = Array.from({ length: 10 }, () => ({ assetId: FG.id, success: false }));
     const t = await buildSiteTopology("fg");
     expect(t.fortigate).toMatchObject({ monitorHealth: "down", monitorRecentSamples: 10, monitorRecentFailures: 10 });
   });

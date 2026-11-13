@@ -255,6 +255,25 @@ export async function isDiscoveryRunning(integrationId: string): Promise<boolean
  * Called by the 30s background job and inline on the /discoveries poll, so
  * the UI flips to amber promptly without waiting on the slower timer.
  */
+let slowCheckInFlight: Promise<void> | null = null;
+let slowCheckLastAt = 0;
+
+/**
+ * checkForSlowRuns, at most once per `minIntervalMs` per process and never two
+ * at once. The Integrations page polls /discoveries every 4 s from every open
+ * tab, and each poll ran the check: N tabs = N checks per 4 s, and two that
+ * overlapped both read `slowAlerted = false` and both logged the slow Event.
+ * The 30 s job passes 0 — single-flight, no throttle.
+ */
+export function checkForSlowRunsThrottled(minIntervalMs = 5_000): Promise<void> {
+  if (slowCheckInFlight) return slowCheckInFlight;
+  if (minIntervalMs > 0 && Date.now() - slowCheckLastAt < minIntervalMs) return Promise.resolve();
+  slowCheckLastAt = Date.now();
+  const run = checkForSlowRuns().finally(() => { slowCheckInFlight = null; });
+  slowCheckInFlight = run;
+  return run;
+}
+
 export async function checkForSlowRuns(): Promise<void> {
   const rows = await listActiveRuns();
   if (rows.length === 0) return;

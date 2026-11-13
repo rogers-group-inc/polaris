@@ -87,6 +87,7 @@ export async function updateStaleSettings(
     message: `Reservation stale-detection threshold set to ${merged.staleAfterDays} day(s)${merged.staleAfterDays === 0 ? " — alerts disabled" : ""}`,
     details: { staleAfterDays: merged.staleAfterDays },
   });
+  invalidateStaleReservationCount();
   return merged;
 }
 
@@ -332,6 +333,7 @@ export async function snoozeReservation(reservationId: string, actor?: string): 
     message: `Stale-reservation alert snoozed for ${settings.staleAfterDays} day(s); next alert eligibility ${snoozedUntil.toISOString()}`,
     details: { snoozedUntil: snoozedUntil.toISOString(), daysAdded: settings.staleAfterDays },
   });
+  invalidateStaleReservationCount();
   return { reservationId, snoozedUntil, daysAdded: settings.staleAfterDays };
 }
 
@@ -490,6 +492,32 @@ export async function listStaleReservations(
   return result;
 }
 
+// ─── Badge count ─────────────────────────────────────────────────────────────
+//
+// The sidebar badge, the Events page and the Stale Reservations widget each
+// poll GET /reservations/alerts/count every 30 s from every open tab, and the
+// count is the same for every caller (it is not write-scoped). One evaluation
+// per STALE_COUNT_TTL_MS serves them all; concurrent callers share the one in
+// flight. The operator's own changes (snooze, ignore, the threshold) drop the
+// memo so the badge moves at once; discovery-driven changes show within the TTL.
+const STALE_COUNT_TTL_MS = 30_000;
+let staleCountMemo: { at: number; value: Promise<number> } | null = null;
+
+export function countStaleReservations(): Promise<number> {
+  const now = Date.now();
+  if (staleCountMemo && now - staleCountMemo.at < STALE_COUNT_TTL_MS) return staleCountMemo.value;
+  const value = listStaleReservations("active").then((rows) => rows.length);
+  const memo = { at: now, value };
+  staleCountMemo = memo;
+  // A failure is not remembered: the next caller tries again.
+  value.catch(() => { if (staleCountMemo === memo) staleCountMemo = null; });
+  return value;
+}
+
+export function invalidateStaleReservationCount(): void {
+  staleCountMemo = null;
+}
+
 export interface IgnoreReservationResult {
   reservationId: string;
   staleIgnored: boolean;
@@ -537,6 +565,7 @@ export async function setStaleIgnored(
       ? `Stale-reservation alert permanently ignored — operator opted out of future notifications for this row`
       : `Stale-reservation alert un-ignored — row will alert again on the next stale crossing`,
   });
+  invalidateStaleReservationCount();
   return { reservationId, staleIgnored };
 }
 

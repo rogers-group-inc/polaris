@@ -9,13 +9,15 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const m = vi.hoisted(() => ({ retention: vi.fn(), interval: vi.fn(),
+const m = vi.hoisted(() => ({ retention: vi.fn(), interval: vi.fn(), fc: vi.fn(), eff: vi.fn(),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/sampleRetentionService.js", () => ({ getArpEntryRetentionDays: m.retention }));
 vi.mock("../../src/services/monitoring/monitorSettings.js", () => ({ resolveCurrentStateIntervalSec: m.interval }));
+vi.mock("../../src/services/fibreChannelService.js", () => ({ getFibreChannelForAsset: m.fc, getFcByInterface: vi.fn() }));
+vi.mock("../../src/services/assetDetailReadService.js", () => ({ getEffectiveMonitorSettings: m.eff }));
 
-import { getAssetArpTable, getAssetServices, getAssetProcesses } from "../../src/services/assetSystemTabService.js";
+import { getAssetArpTable, getAssetServices, getAssetProcesses, getAssetFibreChannel } from "../../src/services/assetSystemTabService.js";
 import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
 
@@ -23,6 +25,8 @@ const db = {
   arpAggregate: stubbed(prisma.assetArpEntry.aggregate),
   arpFindMany: stubbed(prisma.assetArpEntry.findMany),
   assetFindUnique: stubbed(prisma.asset.findUnique),
+  assetFindMany: stubbed(prisma.asset.findMany),
+  sourceFindFirst: stubbed(prisma.assetSource.findFirst),
 };
 
 beforeEach(() => {
@@ -66,5 +70,51 @@ describe("per-asset reads", () => {
     db.assetFindUnique.mockResolvedValue(null);
     await expect(getAssetServices("x")).rejects.toMatchObject({ httpStatus: 404 });
     await expect(getAssetProcesses("x")).rejects.toMatchObject({ httpStatus: 404 });
+  });
+});
+
+describe("getAssetFibreChannel — how the tab's rows are read", () => {
+  const snmp = { resolved: { interfacesPolling: "snmp" }, provenance: { interfacesPolling: "default" } };
+
+  it("a switch's own tab names its polling method and system-info cadence, and nothing else", async () => {
+    m.fc.mockResolvedValue({ collectedAt: null, switch: { ports: [], logins: [] }, host: null });
+    db.assetFindMany.mockResolvedValue([{ id: "sw", hostname: "mds-a", monitored: true }]);
+    m.eff.mockResolvedValue(snmp);
+    m.interval.mockResolvedValue(600);
+    const r = await getAssetFibreChannel("sw");
+    expect(r.readBy).toEqual([{ source: "switch", method: "snmp", intervalSec: 600, tier: "default", monitored: true, via: null }]);
+    expect(r.pollIntervalSec).toBe(600);
+  });
+
+  it("a host names each switch it is logged into and the vCenter that reads its HBAs", async () => {
+    m.fc.mockResolvedValue({
+      collectedAt: null, switch: null,
+      host: { fabrics: [{ switch: { id: "a" } }, { switch: { id: "b" } }], hbas: [{ source: "vcenter" }, { source: "vcenter" }] },
+    });
+    db.assetFindMany.mockResolvedValue([
+      { id: "a", hostname: "mds-a", monitored: true },
+      { id: "b", hostname: "mds-b", monitored: false },
+    ]);
+    m.eff.mockResolvedValue(snmp);
+    m.interval.mockResolvedValue(600);
+    db.sourceFindFirst.mockResolvedValue({ integration: { id: "vc", name: "vCenter Prod", pollInterval: 4 } });
+    const r = await getAssetFibreChannel("esx");
+    expect(r.readBy).toEqual([
+      { source: "switch", method: "snmp", intervalSec: 600, tier: "default", monitored: true, via: { kind: "asset", id: "a", name: "mds-a" } },
+      // An unmonitored switch is not refreshed on any cadence.
+      { source: "switch", method: "snmp", intervalSec: null, tier: "default", monitored: false, via: { kind: "asset", id: "b", name: "mds-b" } },
+      { source: "vcenter", method: "vcenter", intervalSec: 14400, tier: null, monitored: true, via: { kind: "integration", id: "vc", name: "vCenter Prod" } },
+    ]);
+    // The freshness stamp is judged against the fastest source.
+    expect(r.pollIntervalSec).toBe(600);
+  });
+
+  it("an agent-reported host reads on its own system-info cadence", async () => {
+    m.fc.mockResolvedValue({ collectedAt: null, switch: null, host: { fabrics: [], hbas: [{ source: "agent" }] } });
+    m.interval.mockResolvedValue(300);
+    const r = await getAssetFibreChannel("lnx");
+    expect(r.readBy).toEqual([{ source: "agent", method: "agent", intervalSec: 300, tier: null, monitored: true, via: null }]);
+    expect(db.assetFindMany).not.toHaveBeenCalled();
+    expect(r.pollIntervalSec).toBe(300);
   });
 });

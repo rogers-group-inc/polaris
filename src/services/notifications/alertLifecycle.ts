@@ -945,11 +945,16 @@ export async function fire(
   bandMetSince?: Record<string, number> | null,
 ): Promise<void> {
   // Respect cooldown: if this (rule,asset,dim) fired within cooldownSec, skip.
-  const existing = await prisma.notificationRuleState.findUnique({
-    where: { ruleId_assetId_dimensionKey: { ruleId: rule.id, assetId: reading.assetId, dimensionKey: reading.dimKey } },
-  });
-  if (rule.cooldownSec && existing?.firedAt && now.getTime() - existing.firedAt.getTime() < rule.cooldownSec * 1000) {
-    return;
+  // Read only for a rule that has one (the column is dormant on every seeded
+  // automation): a down-detection storm otherwise paid one state read per fire.
+  if (rule.cooldownSec) {
+    const existing = await prisma.notificationRuleState.findUnique({
+      where: { ruleId_assetId_dimensionKey: { ruleId: rule.id, assetId: reading.assetId, dimensionKey: reading.dimKey } },
+      select: { firedAt: true },
+    });
+    if (existing?.firedAt && now.getTime() - existing.firedAt.getTime() < rule.cooldownSec * 1000) {
+      return;
+    }
   }
   // GROUPED (business rule 75): buffer the contribution and let
   // flushGroupFires do every write once it can see all of this tick's.
