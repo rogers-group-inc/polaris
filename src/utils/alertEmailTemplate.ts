@@ -169,7 +169,8 @@ export const DEFAULT_ALERT_TEXT = [
   // costs a non-interface alert nothing. Above the charts because on an
   // interface STATUS alert the device charts never render (alertChartService's
   // isPortScopedAlert) — only the SD-WAN trio, when the port is a WAN member;
-  // error-rate and throughput alerts keep the device charts.
+  // an error-rate alert charts the port instead, and a throughput alert keeps
+  // the device charts.
   // The device facts above (IP, switch, AP, location, description) are blanked
   // for an interface alert too (notificationRecipientService's
   // defaultBodyContext) and prune away.
@@ -194,8 +195,11 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.storage}",
   // The port an error-rate or fibre-channel counter alert fired on (rule
   // 159a) — usually already drawn by {chart.trigger}, which it then does not
-  // repeat; renders away on every other alert.
+  // repeat — then the same port's traffic in and out. The three replace the
+  // device charts below on such an alert and render away on every other one.
   "{chart.interface}",
+  "{chart.interfaceIn}",
+  "{chart.interfaceOut}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -429,8 +433,11 @@ export const DEFAULT_ALERT_HTML = [
   // See the text body: the storage chart replaces the device charts on a
   // storage alert.
   "{chart.storage}",
-  // See the text body: an interface rate alert's port chart.
+  // See the text body: an interface rate alert's port charts (errors, then
+  // traffic in and out), which replace the device charts on such an alert.
   "{chart.interface}",
+  "{chart.interfaceIn}",
+  "{chart.interfaceOut}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
