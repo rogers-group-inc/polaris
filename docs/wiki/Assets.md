@@ -1653,8 +1653,8 @@ drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, the latest value as text, a table, or a pass/fail state.
 
 A gauge or line with a **Warning at** value marks it (a tick on the gauge, a
-dashed line on the chart) and turns amber, with a *Warning* caption, once the
-reading reaches it. **Warn when** says which side is the warning: *at or
+dashed line on the chart) with the caption *Warning state at or above …* (or
+*below*), and turns amber once the reading reaches it. **Warn when** says which side is the warning: *at or
 above* (load, temperature) or *at or below* (battery capacity, runtime). The
 warning only colours the card; an automation on the widget's value — the
 *Custom widget value* metric, which offers the widget by name — is what alerts.

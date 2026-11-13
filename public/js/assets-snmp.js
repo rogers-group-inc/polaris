@@ -635,13 +635,18 @@ function _customWidgetWarningShown(displayValue, opts, fmt) {
 }
 
 /** The line under a gauge / line widget naming its threshold — amber once breached.
- *  `text` formats one number with its unit (the widget's _cwDisplay text). */
+ *  `text` formats one number with its unit (the widget's _cwDisplay text).
+ *  The threshold only colours the card, so the caption names a STATE ("Warning
+ *  state at or above 16.0 A"), never an action: it read "Warns at or above",
+ *  which an operator took to mean a notification is sent (2026-11-13). An
+ *  automation on the widget's value is what alerts; the tooltip says so. */
 function _customWidgetWarnCaption(warn, text) {
   if (!warn) return "";
   var rule = (warn.below ? "at or below " : "at or above ") + text(warn.at);
+  var tip = ' title="Display only: the card turns amber here. An automation on this widget&#39;s value (Custom widget value) is what sends an alert."';
   return warn.breached
-    ? '<div class="custom-widget-warn is-breached" style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning — ' + escapeHtml(rule) + '</div>'
-    : '<div class="custom-widget-warn" style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warns ' + escapeHtml(rule) + '</div>';
+    ? '<div class="custom-widget-warn is-breached"' + tip + ' style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning state — ' + escapeHtml(rule) + '</div>'
+    : '<div class="custom-widget-warn"' + tip + ' style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warning state ' + escapeHtml(rule) + '</div>';
 }
 
 function _renderCustomWidgetGauge(w) {
