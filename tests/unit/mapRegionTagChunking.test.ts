@@ -94,6 +94,8 @@ vi.mock("../../src/db.js", () => ({
   prisma: {
     asset: table(() => store.assets),
     subnet: table(() => store.subnets),
+    // Rule 169(b): a rename / delete also looks for the tag on IP blocks.
+    ipBlock: { findMany: async () => [], update: async () => ({}) },
     setting: {
       findUnique: vi.fn(async () => null),
       upsert: vi.fn(async () => ({})),
