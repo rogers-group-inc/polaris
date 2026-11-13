@@ -242,13 +242,15 @@ describe("clearSuppressedAlerts", () => {
       // Same automation, ungrouped: the ordinary rule-78 contract still applies.
       { id: "n21", assetId: "a21", groupKey: null, rule: { name: "Plant down", trigger: OPTED_IN } },
     ]);
-    h.prisma.asset.findMany.mockResolvedValue([{ id: "a21", hostname: "PLC-21", status: "active" }]);
-    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a21", blame("down")]]));
+    h.prisma.asset.findMany.mockResolvedValue([
+      { id: "a20", hostname: "PLC-20", status: "active" },
+      { id: "a21", hostname: "PLC-21", status: "active" },
+    ]);
+    h.resolveDependencyBlameMany.mockResolvedValue(new Map([["a20", blame("down")], ["a21", blame("down")]]));
 
     expect(await clearSuppressedAlerts()).toBe(1);
-    expect(h.prisma.asset.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ id: { in: ["a21"] } }) }),
-    );
+    // Only the ungrouped alert's device is walked.
+    expect(h.resolveDependencyBlameMany).toHaveBeenCalledWith(["a21"]);
     expect(h.prisma.notification.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["n21"] }, cleared: false } }),
     );
@@ -264,12 +266,20 @@ describe("clearSuppressedAlerts", () => {
     expect(await clearSuppressedAlerts()).toBe(1);
   });
 
-  it("only ever considers alerts that have an asset", async () => {
+  // Efficiency audit group 2: the silenced devices are asked for first, so a
+  // tick with none ends after one indexed query.
+  it("with no silenced device it reads no alerts at all", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([]);
+    expect(await clearSuppressedAlerts()).toBe(0);
+    expect(h.prisma.notification.findMany).not.toHaveBeenCalled();
+  });
+
+  it("only reads the open alerts of the silenced devices", async () => {
+    h.prisma.asset.findMany.mockResolvedValue([{ id: "a30", hostname: "SW-30", status: "maintenance" }]);
     h.prisma.notification.findMany.mockResolvedValue([]);
-    await clearSuppressedAlerts();
+    expect(await clearSuppressedAlerts()).toBe(0);
     expect(h.prisma.notification.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ assetId: { not: null } }) }),
+      expect.objectContaining({ where: expect.objectContaining({ cleared: false, assetId: { in: ["a30"] } }) }),
     );
-    expect(h.prisma.asset.findMany).not.toHaveBeenCalled();
   });
 });
