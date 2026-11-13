@@ -83,14 +83,15 @@ function _cmibShown(w) {
   return t ? Object.assign({}, w, { widgetType: t }) : w;
 }
 
-// opts.arrange: the layout editor's tools (grip, display type, height) — a
-// profile write. The polling switch is drawn either way; a switched-off card
-// only reaches here in edit mode (_cmibLayoutHTML / _customMibTabHTML hide it
-// otherwise), so edit mode is where a widget is switched back on.
+// opts.editing: edit mode — the polling switch is drawn ONLY then (2026-11-13:
+// the switch on every card outside edit mode was clutter, and a slip switched a
+// widget off and hid its card). opts.arrange: the layout editor's tools (grip,
+// display type, height) — a profile write. A switched-off card only reaches
+// here in edit mode (_cmibLayoutHTML / _customMibTabHTML hide it otherwise).
 function _cmibCardHTML(w, opts) {
   opts = opts || {};
-  var hasSwitch = _cmibIsMfr(w);
-  var off = hasSwitch && !w.enabled;
+  var hasSwitch = _cmibIsMfr(w) && !!opts.editing;
+  var off = _cmibIsMfr(w) && !w.enabled;
   var toggle = !hasSwitch ? "" :
     '<label class="toggle-switch" style="flex-shrink:0" title="' +
       (w.enabled ? "Polling on — click to stop polling this widget on this asset" : "Polling off — click to start polling this widget on this asset") + '">' +
@@ -153,7 +154,7 @@ function _cmibLayoutHTML(layout, byId, editing, arrange) {
     }
     shown.forEach(function (x) {
       var w = byId[x.id];
-      html += _cmibCardHTML(arrange ? _cmibShown(w) : w, { arrange: arrange, height: x.height });
+      html += _cmibCardHTML(arrange ? _cmibShown(w) : w, { editing: editing, arrange: arrange, height: x.height });
     });
     html += '</div>';
   });

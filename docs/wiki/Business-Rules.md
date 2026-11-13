@@ -2936,7 +2936,7 @@ group upgrade, are not supported yet.
 on its own schedule at the hardware-sensor interval.** A widget shows on every
 asset its manufacturer profile and model pattern match, but it polls an asset
 only after you switch it on, either with the switch at the top right of its
-card on the asset's Custom MIB tab, or in the device list Polaris opens when
+card on the asset's Custom MIB tab (in edit mode: click the pencil), or in the device list Polaris opens when
 you create a widget (and from the widget's **Devices…** button). A new widget
 starts switched off everywhere. The Custom MIB tab hides a switched-off widget
 until you click its pencil, which is where you switch one back on. Switched-on widgets poll as often as the
