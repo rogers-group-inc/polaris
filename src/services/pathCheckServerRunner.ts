@@ -48,6 +48,7 @@ import { burstPingHost } from "../utils/icmpPing.js";
 import { traceFromServer } from "../utils/serverTraceroute.js";
 import { withTimeout } from "../utils/timeout.js";
 import { getAppVersion } from "../utils/version.js";
+import { RunCookieJar } from "../utils/runCookieJar.js";
 import type { AgentCheckDef } from "./pathCheckService.js";
 import type { PathCheckSampleInput, PathCheckTracerouteInput } from "./pathCheckIngestService.js";
 
@@ -227,7 +228,7 @@ function staticAuthorization(auth: HttpAuthConfig | null | undefined): string | 
  */
 function requestOnce(
   def: AgentCheckDef, u: URL, ip: string, s: PathCheckSampleInput, deadlineMs: number,
-  opts: { method: string; hostHeader: string | null; authorization: string | null },
+  opts: { method: string; hostHeader: string | null; authorization: string | null; cookie?: string | null },
 ): Promise<Exchange | null> {
   return new Promise((resolve) => {
     const isHttps = u.protocol === "https:";
@@ -244,6 +245,7 @@ function requestOnce(
     const headers: Record<string, string> = { "User-Agent": `polaris-server/${getAppVersion()}`, Accept: "*/*" };
     if (opts.hostHeader) headers.Host = opts.hostHeader;
     if (opts.authorization) headers.Authorization = opts.authorization;
+    if (opts.cookie) headers.Cookie = opts.cookie;
 
     const req = lib.request({
       method: opts.method,
@@ -352,12 +354,15 @@ async function runHttp(
   let u = u0;
   let ip = ip0;
   let x: Exchange | null = null;
+  // Rule 85(b): cookies the target sets ride this run's later hops, host-only.
+  const jar = new RunCookieJar();
   for (let hop = 0; ; hop++) {
     const home = sameOrigin(u, u0);
     const hostHeader = home ? def.hostHeader ?? null : null;
     let authorization = home ? staticAuthorization(auth) : null;
-    x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization });
+    x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization, cookie: jar.header(u) });
     if (!x) return;
+    jar.store(u, x.headers["set-cookie"]);
     if (home && x.status === 401 && auth?.authMode === "digest" && auth.username) {
       const challenge = parseDigestChallenge(headerValue(x.headers["www-authenticate"]));
       if (challenge) {
@@ -370,8 +375,9 @@ async function runHttp(
           s.error = truncateError(`digest: ${(err as Error).message}`);
           return;
         }
-        x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization });
+        x = await requestOnce(def, u, ip, s, remaining(), { method, hostHeader, authorization, cookie: jar.header(u) });
         if (!x) return;
+        jar.store(u, x.headers["set-cookie"]);
       }
     }
     const loc = headerValue(x.headers.location);
