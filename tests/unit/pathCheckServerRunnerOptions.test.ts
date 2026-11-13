@@ -16,7 +16,7 @@ import type { AgentCheckDef } from "../../src/services/pathCheckService.js";
 
 let server: http.Server;
 let port = 0;
-const seen: { path: string; method: string; host?: string; auth?: string }[] = [];
+const seen: { path: string; method: string; host?: string; auth?: string; cookie?: string }[] = [];
 
 function def(path: string, over: Partial<AgentCheckDef> = {}): AgentCheckDef {
   return {
@@ -34,7 +34,16 @@ const realRefused = _deps.refusedAddress;
 beforeAll(async () => {
   server = http.createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
-    seen.push({ path, method: req.method ?? "", host: req.headers.host, auth: req.headers.authorization });
+    seen.push({ path, method: req.method ?? "", host: req.headers.host, auth: req.headers.authorization, cookie: req.headers.cookie });
+    // A load balancer's cookie check: no cookie → set one and 302 back to itself.
+    if (path === "/cookie-check") {
+      if (/(^|; )NSC_chk=ok(;|$)/.test(req.headers.cookie ?? "")) { res.writeHead(200); res.end("behind the cookie check"); return; }
+      res.writeHead(302, { location: "/cookie-check", "set-cookie": "NSC_chk=ok; Path=/; HttpOnly" }); res.end(); return;
+    }
+    // Sets a cookie, then sends the client to another host.
+    if (path === "/cookie-away") {
+      res.writeHead(302, { location: `http://elsewhere.test:${port}/secret-sink`, "set-cookie": "sess=abc; Domain=test; Path=/" }); res.end(); return;
+    }
     if (path === "/page") { res.writeHead(200); res.end(req.method === "HEAD" ? undefined : "Welcome — all systems normal"); return; }
     if (path === "/maint") { res.writeHead(200); res.end("Down for maintenance"); return; }
     if (path === "/start") { res.writeHead(302, { location: "/mid" }); res.end(); return; }
@@ -103,6 +112,24 @@ describe("request options", () => {
     expect(cap.finalUrl).toBe(`http://site.test:${port}/end`);
     const loop = await runServerCheck(def("/loop", { followRedirects: true }), "never");
     expect(loop.sample.error).toBe("more than 5 redirects");
+  });
+  it("rule 85(b): carries a cookie the target set to the next hop, so a cookie-check 302 passes", async () => {
+    const before = seen.length;
+    const r = await runServerCheck(def("/cookie-check", { followRedirects: true, expectBody: { mode: "contains", value: "behind", caseSensitive: false } }), "never");
+    expect(r.sample).toMatchObject({ ok: true, httpStatus: 200 });
+    const hops = seen.slice(before);
+    expect(hops.map((h) => h.cookie)).toEqual([undefined, "NSC_chk=ok"]);
+  });
+  it("rule 85(b): starts every run with no cookies — nothing carries over from the last run", async () => {
+    await runServerCheck(def("/cookie-check", { followRedirects: true }), "never");
+    const before = seen.length;
+    await runServerCheck(def("/cookie-check", { followRedirects: true }), "never");
+    expect(seen[before].cookie).toBeUndefined();
+  });
+  it("rule 85(b): never sends a cookie to another host, whatever its Domain says", async () => {
+    await runServerCheck(def("/cookie-away", { followRedirects: true }), "never");
+    expect(last()).toMatchObject({ path: "/secret-sink", host: `elsewhere.test:${port}` });
+    expect(last().cookie).toBeUndefined();
   });
   it("refuses a redirect into a refused address, re-checking every hop", async () => {
     _deps.refusedAddress = (ip: string) => (ip === "10.9.9.9" ? "refused: 10.9.9.9 is this Polaris server" : null);

@@ -1000,7 +1000,9 @@
               <code>verifyTls?</code> (default <code>true</code>), <code>method?</code>
               (<code>"GET"</code> | <code>"HEAD"</code> — nothing that writes is ever sent),
               <code>hostHeader?</code> (sent as Host and used for TLS),
-              <code>followRedirects?</code> (≤5 hops, default off) <code>}</code>;
+              <code>followRedirects?</code> (≤5 hops, default off; cookies the target sets
+              are sent back on later hops to the same host only, and forgotten when the run
+              ends — agent 0.29.3+) <code>}</code>;
               <code>bodyMatch.negate?</code> makes it "must NOT". A regex must be
               RE2-compatible (no look-around or back-references) — the agent runs it. A check
               using <code>method</code> HEAD, <code>hostHeader</code>,

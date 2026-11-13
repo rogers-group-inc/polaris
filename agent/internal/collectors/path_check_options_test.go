@@ -112,6 +112,54 @@ func TestRunHTTPFollowsRedirectsOnlyWhenAsked(t *testing.T) {
 	}
 }
 
+// Rule 85(b): a load balancer's cookie check (302 + Set-Cookie back to the
+// same URL) passes because the run carries the cookie to its next hop — and
+// the next run starts with none.
+func TestRunHTTPCarriesCookiesAcrossRedirects(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Cookie"))
+		if c, err := r.Cookie("NSC_chk"); err == nil && c.Value == "ok" {
+			_, _ = w.Write([]byte("behind the cookie check"))
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: "NSC_chk", Value: "ok", Path: "/", HttpOnly: true})
+		http.Redirect(w, r, "/cookie-check", http.StatusFound)
+	}))
+	defer srv.Close()
+	orig := refuseAddrHook
+	refuseAddrHook = func(net.IP) error { return nil }
+	defer func() { refuseAddrHook = orig }()
+
+	def := transport.PathCheckDef{Kind: "http", FollowRedirects: true, ExpectBody: &transport.PathCheckBodyExpect{Mode: "contains", Value: "behind"}}
+	s := runHTTPAgainstPath(t, srv, "/cookie-check", def)
+	if !s.OK || s.HTTPStatus == nil || *s.HTTPStatus != 200 {
+		t.Fatalf("cookie check: ok=%v status=%v err=%q", s.OK, s.HTTPStatus, s.Error)
+	}
+	if len(seen) != 2 || seen[0] != "" || seen[1] != "NSC_chk=ok" {
+		t.Fatalf("hop cookies = %q, want [\"\" \"NSC_chk=ok\"]", seen)
+	}
+	seen = nil
+	_ = runHTTPAgainstPath(t, srv, "/cookie-check", def)
+	if len(seen) == 0 || seen[0] != "" {
+		t.Fatalf("a new run must start with no cookies, first hop sent %q", seen)
+	}
+}
+
+// Rule 85(b): Domain is ignored — a cookie goes back only to the host that set it.
+func TestHostOnlyJarIgnoresDomain(t *testing.T) {
+	j := newRunCookieJar()
+	a, _ := url.Parse("https://a.example.test/login")
+	j.SetCookies(a, []*http.Cookie{{Name: "s", Value: "1", Domain: "example.test", Path: "/"}})
+	if got := j.Cookies(a); len(got) != 1 || got[0].Value != "1" {
+		t.Fatalf("same host: got %v", got)
+	}
+	b, _ := url.Parse("https://b.example.test/")
+	if got := j.Cookies(b); len(got) != 0 {
+		t.Fatalf("another host must get nothing, got %v", got)
+	}
+}
+
 func TestRunHTTPRefusesARedirectIntoLoopback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://127.0.0.1:1/admin", http.StatusFound)
