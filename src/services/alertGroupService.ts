@@ -219,8 +219,10 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   // on every save, so a reference check would retire every alert on every
   // save of an unrelated field. And key-order-blind (jsonEqual): the stored
   // scope comes back from jsonb with its keys reordered, so a plain string
-  // compare retired them anyway (CQ-B054).
-  if (!jsonEqual(existing.scope ?? null, input.scope ?? null)) {
+  // compare retired them anyway (CQ-B054). An OMITTED scope is left unchanged
+  // by the update above (jsonOrClear → undefined), so it is no change here
+  // either — a rename that does not resend the scope must not retire alerts.
+  if (input.scope !== undefined && !jsonEqual(existing.scope ?? null, input.scope ?? null)) {
     await retireGroupAlerts(id, "system:group-rescoped");
   } else if (existing.foldBy !== foldBy) {
     // A new fold changes what ONE alert is: a live alert per device

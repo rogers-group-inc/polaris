@@ -338,12 +338,11 @@ describe("buildInterfaceLldpBlocks — the grouped LLDP read (rule 75)", () => {
     warn.mockRestore();
   });
 
-  // BUG: the text body joins each port's stanza with "" — a stanza ends on its
-  // "Last advertised" line with no newline, so on a grouped alert with two
-  // ports that both have a neighbour the next port's heading is glued onto the
-  // previous port's timestamp: "…  Last advertised Aug 18, 2026, 12:36 PM UTCLLDP
-  // neighbor on port2". The HTML body is fine (each block is a whole <tr>).
-  it.fails("starts each port's text stanza on its own line", async () => {
+  // Was a bug until 2026-11-13: the text body joined each port's stanza with ""
+  // — a stanza ends on its "Last advertised" line with no newline, so on a
+  // grouped alert the next port's heading was glued onto the previous port's
+  // timestamp ("…12:36 PM UTCLLDP neighbor on port2"). HTML was always fine.
+  it("starts each port's text stanza on its own line", async () => {
     lldp.mockResolvedValue([
       { ...row({ systemName: "SW-A" }), localIfName: "port1" },
       { ...row({ systemName: "SW-B" }), localIfName: "port2" },
@@ -352,10 +351,9 @@ describe("buildInterfaceLldpBlocks — the grouped LLDP read (rule 75)", () => {
     expect(out.text.split("\n")).toContain("LLDP neighbor on port2");
   });
 
-  // BUG: same join on the trailer — `blocks.join("") + "  and N more ports…"`
-  // appends the count to the last stanza's "Last advertised" line rather than
-  // on a line of its own, so the 7th-port count reads as part of a timestamp.
-  it.fails("puts the more-ports trailer on its own text line", async () => {
+  // Was a bug until 2026-11-13: same join on the trailer — the "and N more
+  // ports" count was appended to the last stanza's "Last advertised" line.
+  it("puts the more-ports trailer on its own text line", async () => {
     lldp.mockImplementation(async (q: any) => q.where.localIfName.in.map((n: string) => ({ ...row({ systemName: `SW-${n}` }), localIfName: n })));
     const ports = Array.from({ length: 7 }, (_, i) => `port${i + 1}`);
     const out = await buildInterfaceLldpBlocks("a1", "ifOperStatus", "port1", "UTC", ports);

@@ -500,14 +500,12 @@ describe("updateGroup", () => {
     expect(retiredWith()).toEqual([]);
   });
 
-  // BUG: an omitted `scope` is left untouched in the database (jsonOrClear →
-  // undefined), and the route treats it as "unchanged" (alertGroups.ts only
-  // re-checks the script grant when `input.scope !== undefined`) — but the
-  // retire check compares the STORED scope against `input.scope ?? null`. So a
-  // PUT that renames a scoped group without re-sending its scope (any API
-  // client; the scope is optional in groupInputSchema) retires every live alert
-  // as "system:group-rescoped" though the scope did not change.
-  it.fails("does not retire when the request omits a stored scope", async () => {
+  // Was a bug until 2026-11-13: an omitted `scope` is left untouched in the
+  // database (jsonOrClear → undefined), but the retire check compared the
+  // STORED scope against `input.scope ?? null`, so a PUT that renamed a scoped
+  // group without re-sending its scope retired every live alert as
+  // "system:group-rescoped" though the scope did not change.
+  it("does not retire when the request omits a stored scope", async () => {
     groupRow = group({ scope: { tags: ["core"] } });
     liveAlerts = [{ id: "n1" }];
     await updateGroup("g1", { name: "Renamed" });

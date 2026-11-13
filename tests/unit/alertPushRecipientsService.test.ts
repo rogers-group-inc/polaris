@@ -93,20 +93,19 @@ describe("token substitution", () => {
     expect(substituteEmailRecipientTokens("{push.recipients}", "X")).toBe("{push.recipients}");
   });
 
-  // BUG: the block is passed to String.replace as a REPLACEMENT STRING, so `$&`,
-  // `$'` and `` $` `` in it are expanded as patterns. The block carries account
-  // display names (operator- or IdP-supplied) — a user named "Cash $& Co" makes
-  // the footer read "Web push sent to Cash {push.recipients} Co". The sibling
-  // alertInterfaceService.substituteInterfaceTokens uses `() => block` for
-  // exactly this reason.
-  it.fails("inserts a name carrying `$&` literally into the push footer", () => {
+  // Was a bug until 2026-11-13: the block went to String.replace as a
+  // REPLACEMENT STRING, so `$&`, `$'` and `` $` `` in it were expanded as
+  // patterns. The block carries account display names (operator- or
+  // IdP-supplied) — a user named "Cash $& Co" made the footer read "Web push
+  // sent to Cash {push.recipients} Co".
+  it("inserts a name carrying `$&` literally into the push footer", () => {
     const block = renderPushRecipients(["Cash $& Co"], { html: false });
     expect(substitutePushRecipientTokens("[{push.recipients}]", block)).toBe("[Web push sent to Cash $& Co]");
   });
 
-  // BUG: same replacement-string expansion on the email half — an account
-  // display name containing `$'` pulls the rest of the body into the footer.
-  it.fails("inserts a name carrying `$'` literally into the email footer", () => {
+  // Was a bug until 2026-11-13: same expansion on the email half — a display
+  // name containing `$'` pulled the rest of the body into the footer.
+  it("inserts a name carrying `$'` literally into the email footer", () => {
     const block = renderEmailRecipients(["A $' B"], { html: false });
     expect(substituteEmailRecipientTokens("[{email.recipients}]tail", block)).toBe("[Email sent to A $' B]tail");
   });
