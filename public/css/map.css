@@ -1038,6 +1038,37 @@
 .topo-phys-layer-switch button + button { border-left: 1px solid var(--color-border); }
 .topo-phys-layer-switch button:hover { background: var(--color-surface); color: var(--color-text-primary); }
 .topo-phys-layer-switch button.is-on { background: var(--color-accent); color: #fff; }
+/* Cable runs (business rule 184, topology-cable-runs.js). Placement is the
+   colour, medium the dash (set per line); the legend names both, so colour is
+   never the only cue. Classes, not inline strokes: an SVG presentation
+   attribute cannot read a CSS variable. */
+path.topo-run, .topo-run-legend line { fill: none; stroke-width: 4; stroke-linecap: round; }
+path.topo-run-trench,         .topo-run-legend .topo-run-trench         { stroke: var(--color-accent); }
+path.topo-run-electric_pole,  .topo-run-legend .topo-run-electric_pole  { stroke: var(--color-sev-serious); }
+path.topo-run-telephone_pole, .topo-run-legend .topo-run-telephone_pole { stroke: var(--color-success); }
+.topo-run-legend .topo-run-medium { stroke: var(--color-text-secondary); stroke-width: 3; }
+path.topo-run-selected { filter: drop-shadow(0 0 3px var(--color-text-primary)); }
+path.topo-run-pole { fill: var(--color-bg-secondary); stroke: var(--color-text-primary); }
+.topo-run-panel, .topo-run-legend {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: var(--shadow-md) !important;
+  font: 0.8rem var(--font-sans);
+}
+.topo-run-panel { width: 280px; padding: 10px 12px; max-height: 70vh; overflow: auto; }
+.topo-run-panel .form-group { margin-bottom: 8px; }
+.topo-run-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.topo-run-panel-head h4 { margin: 0; font-size: 0.9rem; }
+.topo-run-seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.topo-run-facts { display: flex; gap: 18px; margin-bottom: 8px; }
+.topo-run-facts > div { display: flex; flex-direction: column; gap: 2px; }
+.topo-run-sync { margin-bottom: 8px; }
+.topo-run-legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.topo-run-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
+.topo-run-legend-row { display: flex; align-items: center; gap: 8px; }
+.topo-run-legend-rule { height: 1px; background: var(--color-border-light); margin: 2px 0; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

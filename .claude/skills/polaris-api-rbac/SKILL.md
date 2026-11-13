@@ -17,7 +17,7 @@ dimension for `subnets` / `reservations` / `contacts` / `credentials` / `network
 | You need… | Read |
 |---|---|
 | the route-group overview as CLAUDE.md summarized it (which mount, which gate, the load-bearing quirks per group) | [references/routes-overview.md](references/routes-overview.md) |
-| the RBAC model: dynamic roles, the 39-key catalogue, level ladders, ownership, session snapshot + cache invalidation, region/other tags, SSO/LDAP/App Proxy login, bearer tokens, last-admin guard, rate limits, the stale-Secure-cookie trap | [references/auth-rbac.md](references/auth-rbac.md) |
+| the RBAC model: dynamic roles, the 40-key catalogue, level ladders, ownership, session snapshot + cache invalidation, region/other tags, SSO/LDAP/App Proxy login, bearer tokens, last-admin guard, rate limits, the stale-Secure-cookie trap | [references/auth-rbac.md](references/auth-rbac.md) |
 | per-endpoint bodies/shapes/gates — auth, TOTP, blocks, subnets, reservations, utilization, dashboard, user dashboard, table tabs, saved dashboards/filters, users, roles, group mappings, API tokens, credentials | [references/endpoints-ipam-identity.md](references/endpoints-ipam-identity.md) |
 | `/assets` (~95 routes: CRUD, monitor history, quarantine, system-info, ARP, ip-context, upstream, agent install, pins, SNMP walk) | [references/endpoints-assets.md](references/endpoints-assets.md) |
 | asset types + matching, monitor settings, conflicts, search, events, manufacturer aliases | [references/endpoints-assets-adjacent.md](references/endpoints-assets-adjacent.md) |

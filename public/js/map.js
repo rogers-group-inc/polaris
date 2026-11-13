@@ -1753,6 +1753,17 @@
         if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from, levels: (info && info.levels) || null };
         else delete _editStaged.locationCodes[assetId];
       },
+      // Cable runs (rule 184): their own key, never deviceMap. Null without
+      // cableRuns read, so the canvas draws no run layer at all.
+      fetchCableRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "read")
+        ? function () { return api.map.cableRuns(topoState.siteId); }
+        : null,
+      canDrawRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "write"),
+      stageCableRuns: function (edits) {
+        if (!_editSessionActive()) return false;
+        _editStaged.cableRuns = edits;
+        return true;
+      },
       uploadBackground: function (file) {
         var v = _currentView();
         return api.map.uploadTopologyBackground(topoState.siteId, v && v.id, file);
@@ -3174,12 +3185,16 @@
     if (!session) return false;
     var had = Object.keys(session.views).length > 0 ||
       !!(session.viewPatch && Object.keys(session.viewPatch).length) ||
-      !!(session.locationCodes && Object.keys(session.locationCodes).length);
+      !!(session.locationCodes && Object.keys(session.locationCodes).length) ||
+      _cableRunEditsPending(session.cableRuns);
     var prefix = session.siteId + "|";
     Object.keys(_layoutDirty).forEach(function (k) {
       if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
     });
     return had;
+  }
+  function _cableRunEditsPending(edits) {
+    return !!(edits && ((edits.upserts && edits.upserts.length) || (edits.deletes && edits.deletes.length)));
   }
   // Land every staged view through the normal pipeline (localStorage + the
   // debounced PUT, flushed now) and start an empty session. Returns a promise
@@ -3192,8 +3207,21 @@
     if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
     var views = session.views;
     var viewPatch = session.viewPatch || {};
+    var runEdits = session.cableRuns;
     _editStaged = { siteId: siteId, views: {}, viewPatch: {}, locationCodes: {} };
     var pending = [];
+    // Cable runs (rule 184) land as one PUT of their own, on their own key.
+    if (_cableRunEditsPending(runEdits) && typeof permAtLeast === "function" && permAtLeast("cableRuns", "write")) {
+      pending.push(api.map.saveCableRuns(siteId, runEdits).then(function (res) {
+        var inst = _modeInstance();
+        if (inst && typeof inst.reloadCableRuns === "function" && topoState.siteId === siteId) inst.reloadCableRuns();
+        return res;
+      }).catch(function (err) {
+        if (typeof showToast === "function") {
+          showToast("Cable runs not saved — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      }));
+    }
     // The view's own staged fields (rule 147: its shown device types; the
     // Topology / Rack canvases stage theirs here too) land as one PUT.
     var editedView = _currentView();

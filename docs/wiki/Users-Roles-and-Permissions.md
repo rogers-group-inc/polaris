@@ -127,6 +127,8 @@ tab in the asset panel, says **Also used on** in both places.
 |---|---|---|
 | `deviceMap` | Read-Write | the geographic map and topology graphs; Read-Write saves a site's layout |
 | `mapRegions` | Read-Write | draw / edit / delete region polygons |
+| `cableRuns` | Read | see the cable runs on a site's Topology views ([rule 184](Business-Rules#rule-184)) |
+| `cableRuns` | Read-Write | draw, edit and delete cable runs at sites you added or that carry your tags — they are written to ArcGIS. Full Read-Write: any site. Only administrators have it by default |
 
 ### Application Map
 

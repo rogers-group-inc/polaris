@@ -3737,3 +3737,15 @@ off and they apply again. Only one ArcGIS integration can supply imagery at a ti
 refused. Views saved on the satellite layer work whichever one is in use. Moving a portal imagery service to a
 new address needs the integration's secret typed again ([rule 111](#rule-111)).
 
+### Rule 184
+
+**A cable run belongs to its site, has its own permission, and a trench is never drawn by hand.**
+Cable runs are fiber or ethernet routes drawn on a site's Topology views, over the map or satellite
+imagery. Every Topology view of the site shows them, and changing a view's mode never removes them.
+A run along **electric** or **telephone poles** is drawn by hand — each bend is a pole. A **trench**
+comes only from a survey file, and its points cannot be moved on the map. Drawing and editing runs
+needs the **Cable Runs** permission, not Device Map, because runs are written to your ArcGIS
+organization: Read shows them, Read-Write edits them at sites you added or that carry your tags,
+Full Read-Write at any site. Only administrators have it by default. Runs are saved with the view
+(the tick or Save) and every change is recorded as an Event.
+

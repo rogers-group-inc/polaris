@@ -396,6 +396,31 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/cableRunService.ts
+
+**What it owns:** the `CableRun` table (single writer) — fiber / ethernet routes at a Device Map site, business rule 184. Pole runs are drawn on a Topology view; trenches come only from a survey import (`source: "crd"`).
+
+**Public API:** `CABLE_MEDIA`, `CABLE_PLACEMENTS`, `MAX_DRAWN_POINTS`, types CablePoint / CableRunView / CableRunEdits; pure `normalizePoints(raw, max)`, `runLengthM(points)`, `syncStatusAfterEdit(status)`; `listRuns(siteId)`, `applyRunEdits(siteId, {upserts, deletes}, actor)`.
+
+**Cross-service deps:** `eventLogService` (`buildChanges`, `logEventsBatch`); prisma `asset` (the site must be a firewall) and `cableRun`.
+
+**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-runs` (`cableRuns=read`) and `PUT /sites/:id/cable-runs` (`cableRuns=write` + the site's write scope); `public/js/topology-cable-runs.js` through those routes (staged by map.js's edit session).
+
+**Invariants:**
+- **The site owns a run**, never a view: every Topology view shows it, rule 149's mode reset never touches it; `site_id` cascades with the FortiGate.
+- **WGS84 only**: `[[lng, lat, z?], ...]`, rounded to ~1 cm / 1 mm, 2..1000 points drawn; a value outside latitude / longitude range is a 400 — which is what keeps a survey-grid file out.
+- **A trench is surveyed, never drawn**: a hand-drawn `trench` is refused, and a `crd` run's points and placement cannot change through this path.
+- **All or nothing**: one `$transaction` per edit session; ids naming another site's run or a deleted one are 404 before any write.
+- **Sync state**: `off` until write-back is configured; a sent run is edited to `pending` and deleted to a tombstone (`deletedAt`), a never-sent one is deleted outright.
+
+**When changing this:**
+- The `cableRuns` key is its own (tag-scoped, full ladder) — never gate a run route on `deviceMap`.
+- The survey importer (a later batch) creates `source: "crd"` rows with z; the write-back (a later batch) reads `syncStatus` / `deletedAt` / `version`.
+- Scale: per site, typically tens to hundreds of runs; one `findMany` per read, one transaction per save. Nothing here runs per asset or on a tick.
+- Tests: `tests/unit/cableRunService.test.ts`, `tests/integration/cableRuns.test.ts`.
+
+---
+
 ## services/arcgisService.ts
 
 **What it owns:** the client of the `arcgis` integration type — a sign-in to an ArcGIS portal (ArcGIS Online, Location Platform or ArcGIS Enterprise) and the REST transport every later ArcGIS use goes through (the integration's basemap and cable-run write-back are being built on it). Four sign-in methods (`authMode`): `none`, `apiKey` (stored as `apiToken`, sent as `token`), `appCredentials` (`clientId` + `clientSecret` → `<portal>/sharing/rest/oauth2/token`, client-credentials grant) and `userPassword` (`username` + `password` → `<portal>/sharing/rest/generateToken`, referer = the portal). The integration discovers nothing (`integrationAdapters` → `discovery: null`).

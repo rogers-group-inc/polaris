@@ -152,6 +152,10 @@ export const FUNCTION_KEYS: readonly FunctionKeyDef[] = [
   // ── Device Map ────────────────────────────────────────────────────────────
   { key: "deviceMap", section: "deviceMap", label: "Device Map", description: "The geographic device map and its topology graphs. Read-Write saves the topology layout of a site whose FortiGate you added or that carries one of your tags; Full Read-Write = any site.", hasOwnershipDimension: true, tagScoped: true },
   { key: "mapRegions", section: "deviceMap", label: "Map Regions", description: "Region polygons that auto-tag the devices they enclose.", levels: UP_TO_WRITE },
+  // Business rule 184: its own key, never a rung of deviceMap — a cable run is
+  // written one way to another system (an ArcGIS layer). Seeded admin
+  // fullwrite, readonly read, everyone else none (migration 20261113200000).
+  { key: "cableRuns", section: "deviceMap", label: "Cable Runs", description: "Fiber and ethernet runs on the Device Map's Topology views — pole lines and trenches — which are written to your ArcGIS organization when an ArcGIS integration's write-back is on. Read shows them; Read-Write draws, edits and deletes them at sites you added or that carry one of your tags; Full Read-Write = any site.", hasOwnershipDimension: true, tagScoped: true },
 
   // ── Application Map ───────────────────────────────────────────────────────
   { key: "applicationMap", section: "applicationMap", label: "Application Map", description: "Application connectivity graph from mapped process connections. Read-Write saves the shared layout.", levels: UP_TO_WRITE },

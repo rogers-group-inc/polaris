@@ -1893,6 +1893,9 @@ const api = {
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),
+    // Cable runs (rule 184): { runs, canEditRuns } / one edit session's { upserts, deletes }.
+    cableRuns:          (id)               => request("GET",    `/map/sites/${id}/cable-runs`),
+    saveCableRuns:      (id, edits)        => request("PUT",    `/map/sites/${id}/cable-runs`, edits),
     deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
     topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
     topologyBackgroundUrl:  (id, imageId)  => `${API_BASE}/map/sites/${id}/topology/background/${imageId}`,
