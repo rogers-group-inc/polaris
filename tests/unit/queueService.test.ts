@@ -43,10 +43,16 @@ const h = vi.hoisted(() => {
     getQueue = vi.fn(async (name: string) => this.queues.get(name) ?? null);
     deleteQueue = vi.fn(async (name: string) => { this.queues.delete(name); });
     updateQueue = vi.fn(async () => undefined);
+    // Each registration gets its own id (`<queue>#<n>`); `handlers` keeps the
+    // latest per queue, `registrations` every one.
+    registrations: Array<{ name: string; id: string; opts: Record<string, unknown>; fn: (jobs: unknown[]) => Promise<void> }> = [];
     work = vi.fn(async (name: string, opts: Record<string, unknown>, fn: (jobs: unknown[]) => Promise<void>) => {
       this.handlers.set(name, { opts, fn });
-      return "worker-id";
+      const id = `${name}#${this.registrations.filter((r) => r.name === name).length}`;
+      this.registrations.push({ name, id, opts, fn });
+      return id;
     });
+    notifyWorker = vi.fn();
     insert = vi.fn(async () => undefined);
     send = vi.fn(async () => "job-id");
     findJobs = vi.fn(async (): Promise<Array<{ id: string; state: string }>> => []);
@@ -111,7 +117,7 @@ async function loadPgboss(): Promise<Q> {
 }
 const boss = (i = 0) => h.instances[i];
 
-const ENV_KEYS = ["POLARIS_PGBOSS_POOL_SIZE", "POLARIS_DISCOVERY_WORKERS", "POLARIS_MONITOR_FLOATING_WORKERS", "POLARIS_MONITOR_PROBE_WORKERS"];
+const ENV_KEYS = ["POLARIS_PGBOSS_POOL_SIZE", "POLARIS_PGBOSS_LISTEN_NOTIFY", "POLARIS_DISCOVERY_WORKERS", "POLARIS_MONITOR_FLOATING_WORKERS", "POLARIS_MONITOR_PROBE_WORKERS"];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
 
 beforeEach(() => {
@@ -211,7 +217,7 @@ describe("ensureBoss + ensureQueues (via startQueueProducer)", () => {
     await q.startQueueProducer();
     await q.startQueueProducer();
     expect(h.instances).toHaveLength(1);
-    expect(boss().opts).toEqual({ connectionString: "postgres://direct/polaris", max: 35 });
+    expect(boss().opts).toEqual({ connectionString: "postgres://direct/polaris", max: 35, useListenNotify: true });
     expect(boss().start).toHaveBeenCalledTimes(1);
     expect(boss().on).toHaveBeenCalledWith("error", expect.any(Function));
     expect(q.isPgbossRunning()).toBe(true);
@@ -235,7 +241,8 @@ describe("ensureBoss + ensureQueues (via startQueueProducer)", () => {
     expect(created.get(q.QUEUE_NAMES.lossSample).expireInSeconds).toBe(15);
     expect(created.get(q.QUEUE_NAMES.systemInfo).expireInSeconds).toBe(300);
     const updated = new Map<string, any>(boss().updateQueue.mock.calls.map((c: any[]) => [c[0], c[1]]));
-    expect(updated.get(q.QUEUE_NAMES.telemetry)).toEqual({ retryLimit: 0, deleteAfterSeconds: 86_400, retentionSeconds: 3_600, expireInSeconds: 180 });
+    expect(updated.get(q.QUEUE_NAMES.telemetry)).toEqual({ retryLimit: 0, deleteAfterSeconds: 86_400, retentionSeconds: 3_600, expireInSeconds: 180, notify: true });
+    expect(updated.get(q.DISCOVERY_QUEUE_NAME).notify).toBe(true);
     expect(boss().deleteQueue).not.toHaveBeenCalled();
   });
 
@@ -331,9 +338,10 @@ describe("workers", () => {
     const handler = vi.fn(async () => undefined);
     await q.startDiscoveryWorker(handler);
     await q.startDiscoveryWorker(handler);
-    expect(boss().work).toHaveBeenCalledTimes(1);
+    // Two single-concurrency workers, each re-arming itself (rule 179).
+    expect(boss().work).toHaveBeenCalledTimes(2);
     const reg = boss().handlers.get(q.DISCOVERY_QUEUE_NAME);
-    expect(reg.opts).toEqual({ localConcurrency: 2, batchSize: 1, pollingIntervalSeconds: 5 });
+    expect(reg.opts).toEqual({ localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 5, notifyPollingIntervalSeconds: 30 });
     await reg.fn([{ data: { integrationId: "i9", actor: "sched", scope: { kind: "x" } } }]);
     expect(handler).toHaveBeenCalledWith("i9", "sched", { kind: "x" });
   });
@@ -353,7 +361,8 @@ describe("workers", () => {
     await loadPgboss();
     await q.startPgbossWorkers();
     for (const name of Object.values(q.QUEUE_NAMES)) expect(boss().handlers.has(name)).toBe(true);
-    expect(boss().handlers.get("polaris-monitor-probe").opts).toEqual({ localConcurrency: 6, batchSize: 1, pollingIntervalSeconds: 1 });
+    expect(boss().handlers.get("polaris-monitor-probe").opts).toEqual({ localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 1, notifyPollingIntervalSeconds: 30 });
+    expect(boss().registrations.filter((r: any) => r.name === "polaris-monitor-probe")).toHaveLength(6);
     expect(h.metrics.setMonitorWorkers).toHaveBeenCalledWith(expect.objectContaining({ probe: 6, telemetry: 24, lldp: 12, sdwan: 8, floating: 32 }));
 
     const probe = boss().handlers.get("polaris-monitor-probe").fn;
@@ -371,6 +380,38 @@ describe("workers", () => {
 
     await boss().handlers.get("polaris-monitor-sdwan").fn([{ id: "j", data: { assetId: "fg1" } }]);
     expect(h.run.runSdwanFor).toHaveBeenCalledWith("fg1", expect.any(Object));
+  });
+
+  // Business rule 179: pg-boss waits the 30 s NOTIFY backstop after every
+  // fetch, so each worker must re-arm itself after a job or a backlog stalls.
+  it("a worker re-arms ITSELF after a job (a failed one too), never after an empty fetch", async () => {
+    process.env.POLARIS_MONITOR_PROBE_WORKERS = "3";
+    await loadPgboss();
+    await q.startPgbossWorkers();
+    const probes = boss().registrations.filter((r: any) => r.name === "polaris-monitor-probe");
+    await probes[1].fn([{ id: "j", data: { assetId: "a1" } }]);
+    expect(boss().notifyWorker).toHaveBeenCalledTimes(1);
+    expect(boss().notifyWorker).toHaveBeenCalledWith("polaris-monitor-probe#1");
+    await probes[0].fn([]);
+    expect(boss().notifyWorker).toHaveBeenCalledTimes(1);
+    h.run.runTelemetryFor.mockRejectedValueOnce(new Error("snmp timeout"));
+    const tele = boss().registrations.find((r: any) => r.name === "polaris-monitor-telemetry");
+    await expect(tele.fn([{ id: "j", data: { assetId: "a1" } }])).rejects.toThrow("snmp timeout");
+    expect(boss().notifyWorker).toHaveBeenLastCalledWith("polaris-monitor-telemetry#0");
+  });
+
+  it("only a consuming process LISTENs, and POLARIS_PGBOSS_LISTEN_NOTIFY=false turns it off", async () => {
+    await loadPgboss();
+    await q.startQueueProducer();
+    expect(boss().opts.useListenNotify).toBe(true); // role "all" consumes
+    await q.stopPgbossWorkers();
+    process.env.POLARIS_PGBOSS_LISTEN_NOTIFY = "false";
+    await loadPgboss();
+    await q.startQueueProducer();
+    expect(h.instances.at(-1).opts.useListenNotify).toBe(false);
+    expect(q.listenNotifyEnabled()).toBe(false);
+    process.env.POLARIS_PGBOSS_LISTEN_NOTIFY = "true";
+    expect(q.listenNotifyEnabled()).toBe(true);
   });
 
   it("a runner failure fails the job (rethrows to pg-boss)", async () => {

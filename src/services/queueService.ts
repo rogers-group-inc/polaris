@@ -33,6 +33,7 @@ import type { PgBoss as PgBossType, Job as PgBossJob } from "pg-boss";
 
 import { prisma } from "../db.js";
 import { sleep } from "../utils/sleep.js";
+import { roleConfig } from "../utils/role.js";
 import { logger } from "../utils/logger.js";
 import { getDirectDatabaseUrl } from "../utils/dbConnections.js";
 import {
@@ -344,6 +345,10 @@ async function runDedicatedWorker(
 ): Promise<void> {
   const pool = slotPools![cadence];
   const workerSlot = acquireWorkerSlot(pool);
+  // This cadence's dedicated workers are all busy: the floating pool is what
+  // absorbs the rest of the backlog, so wake it from its idle wait now rather
+  // than when its backstop next comes round.
+  if (pool.busy.every(Boolean)) wakeFloatingLoop();
   const { assetId, transport, assetType, verboseDebug } = job.data;
   // `verbose` is read by monitoringService's AsyncLocalStorage phase context
   // and is intentionally NOT included in the Prometheus work labels — those
@@ -390,6 +395,71 @@ async function runDedicatedWorker(
 
 let floatingInFlight = 0;
 let floatingLoopRunning = false;
+
+// ─── Idle polling (business rule 179) ─────────────────────────────────────────
+//
+// Every monitor queue is notify-enabled and every consuming process LISTENs, so
+// a worker is woken the moment a job lands on its queue. Polling is only the
+// backstop for a lost notification: an idle worker fetches once per
+// NOTIFY_BACKSTOP_SECONDS instead of once per 1–5 s (≈ 80–90 empty fetches a
+// second per monitor process at the default sizes, before this).
+//
+// pg-boss waits out that backstop after EVERY fetch, a full one included, so a
+// worker that just ran a job would otherwise sleep 30 s with a backlog behind
+// it. registerDrainingWorkers therefore registers each worker on its own and has
+// its handler re-arm it (notifyWorker) when a job completes: a worker drains
+// back to back while there is work and sleeps only after an empty fetch.
+export const NOTIFY_BACKSTOP_SECONDS = 30;
+// The floating loop's idle wait grows from FLOATING_IDLE_MIN_MS to
+// FLOATING_IDLE_MAX_MS while every queue is empty, and is cut short when a
+// dedicated pool fills up (runDedicatedWorker) — the only time it has work the
+// dedicated workers are not already taking.
+const FLOATING_IDLE_MIN_MS = 500;
+const FLOATING_IDLE_MAX_MS = 10_000;
+let floatingWake: (() => void) | null = null;
+
+function wakeFloatingLoop(): void {
+  const wake = floatingWake;
+  floatingWake = null;
+  wake?.();
+}
+
+function floatingIdleWait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { floatingWake = null; resolve(); }, ms);
+    floatingWake = () => { clearTimeout(timer); resolve(); };
+  });
+}
+
+/**
+ * Register `count` single-concurrency workers on one monitor queue, each of
+ * which re-arms itself after a job (see the block above). `offWork(name)` still
+ * stops them all — it matches on the queue name.
+ */
+async function registerDrainingWorkers<T extends object>(
+  boss: PgBossType,
+  queue: string,
+  count: number,
+  pollingIntervalSeconds: number,
+  handler: (jobs: PgBossJob<T>[]) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    let workerId: string | null = null;
+    workerId = await boss.work<T>(queue, {
+      localConcurrency: 1,
+      batchSize: 1,
+      pollingIntervalSeconds,
+      notifyPollingIntervalSeconds: Math.max(NOTIFY_BACKSTOP_SECONDS, pollingIntervalSeconds),
+    }, async (jobs: PgBossJob<T>[]) => {
+      try {
+        await handler(jobs);
+      } finally {
+        // A job came back, so the queue may hold more: fetch again at once.
+        if (jobs.length > 0 && workerId) boss.notifyWorker(workerId);
+      }
+    });
+  }
+}
 
 // Floating worker priority order (Phase 2):
 //   probe > fastFiltered > lldp > storage > telemetry > systemInfo
@@ -438,6 +508,7 @@ async function attemptWorkerRecovery(): Promise<void> {
     logger.warn("pg-boss workers stalled; attempting auto-recovery (stop → start)");
     // Stop the floating loop so the next startPgbossWorkers can re-start it.
     floatingLoopRunning = false;
+    wakeFloatingLoop();
     // Clear the metrics interval so startPgbossWorkers won't create a duplicate.
     if (metricsRefreshInterval !== null) {
       clearInterval(metricsRefreshInterval);
@@ -567,6 +638,12 @@ async function refreshPgbossMetrics(): Promise<void> {
   }
 }
 
+/** POLARIS_PGBOSS_LISTEN_NOTIFY — on unless set to false / 0 / off / no. */
+export function listenNotifyEnabled(): boolean {
+  const raw = (process.env.POLARIS_PGBOSS_LISTEN_NOTIFY ?? "").trim().toLowerCase();
+  return !["false", "0", "off", "no"].includes(raw);
+}
+
 function resolveEnvInt(envName: string, fallback: number, opts: { allowZero?: boolean } = {}): number {
   const raw = process.env[envName];
   if (!raw) return fallback;
@@ -647,9 +724,18 @@ async function ensureBoss(): Promise<PgBossType | null> {
   // web + N×monitor + discovery; size against max_connections. See the
   // Capacity Advisor's group-aware budget.
   const pgbossPoolSize = resolveEnvInt("POLARIS_PGBOSS_POOL_SIZE", 20);
+  // LISTEN/NOTIFY (business rule 179): only a process that CONSUMES needs the
+  // listener — it holds one extra dedicated connection outside the pool. A
+  // producer's insert sends its NOTIFY either way (that follows the queue's
+  // `notify` option). POLARIS_PGBOSS_LISTEN_NOTIFY=false turns it off, for a
+  // direct URL that is in fact a transaction pooler; workers then poll at
+  // their base interval as before.
+  const roles = roleConfig();
+  const useListenNotify = listenNotifyEnabled() && (roles.runsMonitorConsumers || roles.runsDiscoveryConsumers);
   const boss: PgBossType = new PgBoss({
     connectionString: directUrl,
     max: pgbossPoolSize,
+    useListenNotify,
   });
 
   boss.on("error", (err: Error) => {
@@ -745,6 +831,9 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
       deleteAfterSeconds: 86_400,
       retentionSeconds: 3_600,
       expireInSeconds: EXPIRE_BY_QUEUE[cadence],
+      // Every insert sends a NOTIFY that wakes the queue's idle workers
+      // (business rule 179). Converged onto existing queues by updateQueue.
+      notify: true,
     };
     await boss.createQueue(name, { policy: "stately", ...queueOptions });
     // Policy convergence: createQueue is a no-op on an existing queue and
@@ -786,6 +875,8 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
       retentionSeconds: 7_200,
       expireInSeconds: resolveEnvInt("POLARIS_DISCOVERY_EXPIRE_SECONDS", 3_600),
       heartbeatSeconds: DISCOVERY_JOB_HEARTBEAT_SECONDS,
+      // A run an operator starts begins at once, not on the next 5 s poll.
+      notify: true,
     };
     await boss.createQueue(DISCOVERY_QUEUE_NAME, { policy: "singleton", ...discoveryOptions });
     await boss.updateQueue(DISCOVERY_QUEUE_NAME, discoveryOptions);
@@ -835,9 +926,7 @@ export async function startDiscoveryWorker(handler: DiscoveryJobHandler): Promis
   if (!boss) return;
   await ensureQueues(boss);
   const discoveryWorkers = resolveEnvInt("POLARIS_DISCOVERY_WORKERS", 2);
-  await boss.work<DiscoveryJobPayload>(DISCOVERY_QUEUE_NAME, {
-    localConcurrency: discoveryWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<DiscoveryJobPayload>[]) => {
+  await registerDrainingWorkers<DiscoveryJobPayload>(boss, DISCOVERY_QUEUE_NAME, discoveryWorkers, 5, async (jobs: PgBossJob<DiscoveryJobPayload>[]) => {
     const { integrationId, actor, scope } = jobs[0].data;
     await handler(integrationId, actor, scope);
   });
@@ -863,9 +952,7 @@ export async function startScanWorker(handler: ScanJobHandler): Promise<void> {
   const boss = await ensureBoss();
   if (!boss) return;
   await ensureQueues(boss);
-  await boss.work<ScanJobPayload>(SCAN_QUEUE_NAME, {
-    localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<ScanJobPayload>[]) => {
+  await registerDrainingWorkers<ScanJobPayload>(boss, SCAN_QUEUE_NAME, 1, 5, async (jobs: PgBossJob<ScanJobPayload>[]) => {
     const { runId, actor } = jobs[0].data;
     await handler(runId, actor);
   });
@@ -955,9 +1042,7 @@ export async function startPgbossWorkers(): Promise<void> {
     floating:     createWorkerSlotPool("floating",  floatingWorkers),
   };
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.probe, {
-    localConcurrency: probeWorkers, batchSize: 1, pollingIntervalSeconds: 1,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.probe, probeWorkers, 1, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     const job = jobs[0];
     if (!job) return;
     // ICMP arrives as a CHUNK (one fping per timeout bucket serves the lot);
@@ -971,73 +1056,55 @@ export async function startPgbossWorkers(): Promise<void> {
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.fastFiltered, {
-    localConcurrency: fastWorkers, batchSize: 1, pollingIntervalSeconds: 2,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.fastFiltered, fastWorkers, 2, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("fastFiltered", jobs[0], (assetId, labels) =>
       runFastFilteredFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.telemetry, {
-    localConcurrency: heavyWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.telemetry, heavyWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("telemetry", jobs[0], (assetId, labels) =>
       runTelemetryFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.systemInfo, {
-    localConcurrency: heavyWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.systemInfo, heavyWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("systemInfo", jobs[0], (assetId, labels) =>
       runSystemInfoFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.lldp, {
-    localConcurrency: lldpWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.lldp, lldpWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("lldp", jobs[0], (assetId, labels) =>
       runLldpFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.storage, {
-    localConcurrency: storageWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.storage, storageWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("storage", jobs[0], (assetId, labels) =>
       runStorageFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.processes, {
-    localConcurrency: processesWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.processes, processesWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("processes", jobs[0], (assetId, labels) =>
       runProcessesFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.eventLog, {
-    localConcurrency: eventLogWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.eventLog, eventLogWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("eventLog", jobs[0], (assetId, labels) =>
       runEventLogFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.customWidget, {
-    localConcurrency: customWidgetWorkers, batchSize: 1, pollingIntervalSeconds: 5,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.customWidget, customWidgetWorkers, 5, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("customWidget", jobs[0], (assetId, labels) =>
       runCustomWidgetsFor(assetId, labels),
     );
   });
 
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.sdwan, {
-    localConcurrency: sdwanWorkers, batchSize: 1, pollingIntervalSeconds: 2,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.sdwan, sdwanWorkers, 2, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     await runDedicatedWorker("sdwan", jobs[0], (assetId, labels) =>
       runSdwanFor(assetId, labels),
     );
@@ -1049,9 +1116,7 @@ export async function startPgbossWorkers(): Promise<void> {
   // The queue name, worker pool and env var deliberately keep their
   // "losssample" spelling: renaming them would orphan the persisted pg-boss
   // queue and an operator-set POLARIS_MONITOR_LOSS_SAMPLE_WORKERS for nothing.
-  await boss.work<MonitorJobPayload>(QUEUE_NAMES.lossSample, {
-    localConcurrency: lossSampleWorkers, batchSize: 1, pollingIntervalSeconds: 2,
-  }, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
+  await registerDrainingWorkers<MonitorJobPayload>(boss, QUEUE_NAMES.lossSample, lossSampleWorkers, 2, async (jobs: PgBossJob<MonitorJobPayload>[]) => {
     const job = jobs[0];
     if (!job) return;
     const ids = job.data.assetIds ?? (job.data.assetId ? [job.data.assetId] : []);
@@ -1082,10 +1147,11 @@ export async function startPgbossWorkers(): Promise<void> {
  *
  * Priority order matters because `boss.fetch()` is per-queue: the loop
  * always tries probe first, then fastFiltered, then telemetry, then
- * systemInfo. Whichever queue has work first wins the slot. Sleep
- * intervals are tuned for "common case is empty" — 500 ms idle wait keeps
- * the polling load on Postgres modest while still picking up bursts within
- * a single probe cadence.
+ * systemInfo. Whichever queue has work first wins the slot. Idle waits are
+ * tuned for "common case is empty": 500 ms after the first empty round,
+ * doubling to 10 s, and cut short the moment a dedicated pool is full —
+ * the dedicated workers are woken by NOTIFY, so the floating pool only has
+ * work of its own once they are all busy (business rule 179).
  *
  * Singleton-key dedup at the publish layer means a floating worker can
  * never collide with a dedicated worker on the same (assetId, cadence) —
@@ -1098,6 +1164,7 @@ async function startFloatingWorkers(boss: PgBossType, maxFloat: number): Promise
   }
   floatingLoopRunning = true;
   logger.info({ maxFloat }, "floating worker loop started");
+  let idleMs = FLOATING_IDLE_MIN_MS;
   while (floatingLoopRunning) {
     if (floatingInFlight >= maxFloat) {
       await sleep(100);
@@ -1122,10 +1189,14 @@ async function startFloatingWorkers(boss: PgBossType, maxFloat: number): Promise
     }
 
     if (!job || !pickedCadence) {
-      await sleep(500);
+      // Every queue came back empty: one round is ten fetches, so back off
+      // (business rule 179) until a dedicated pool fills up and wakes us.
+      await floatingIdleWait(idleMs);
+      idleMs = Math.min(idleMs * 2, FLOATING_IDLE_MAX_MS);
       continue;
     }
 
+    idleMs = FLOATING_IDLE_MIN_MS;
     floatingInFlight++;
     void dispatchFloatingJob(boss, job, pickedCadence).finally(() => { floatingInFlight--; });
   }
@@ -1367,6 +1438,7 @@ export async function stopPgbossWorkers(): Promise<void> {
   // Signal the floating loop to exit on its next iteration. Any in-flight
   // dispatched jobs continue under boss.stop's graceful drain below.
   floatingLoopRunning = false;
+  wakeFloatingLoop();
   if (metricsRefreshInterval !== null) {
     clearInterval(metricsRefreshInterval);
     metricsRefreshInterval = null;
