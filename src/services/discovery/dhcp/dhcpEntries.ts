@@ -26,6 +26,9 @@ export async function syncDhcpEntries(input: {
   result: DiscoveryResult;
   /** syncDhcpSubnets' active-reservation index, keyed by reservationKey; updated in place. */
   activeResMap: Map<string, any>;
+  /** Keys (reservationKey) holding an active dns_resolved row at the run's load.
+   *  Absent = unknown: release before every create, as before. */
+  dnsResolvedKeys?: ReadonlySet<string>;
   assetIdx: AssetIndex;
   /** Phase 3c's VIP address keys, and the gates whose VIP table read this cycle. */
   currentVipKeys: Set<string>;
@@ -43,7 +46,7 @@ export async function syncDhcpEntries(input: {
   syncLog: SyncLog;
 }): Promise<void> {
   const {
-    result, activeResMap, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
+    result, activeResMap, dnsResolvedKeys, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
     findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
     integrationId, integrationName, actor, syncLog,
   } = input;
@@ -532,8 +535,13 @@ export async function syncDhcpEntries(input: {
         lastSeenLeased: entry.seenLeased && isDhcpReservation ? new Date() : null,
       };
       try {
-        await releaseDnsResolvedAt(matchingSubnet.id, entry.ipAddress);
-        phase5Stats.writesDnsRelease++;
+        // Only where the run's load saw a dns_resolved row (efficiency audit
+        // group 3: this was a delete per new lease). One that appears mid-run
+        // collides below and is released and retried there.
+        if (!dnsResolvedKeys || dnsResolvedKeys.has(key)) {
+          await releaseDnsResolvedAt(matchingSubnet.id, entry.ipAddress);
+          phase5Stats.writesDnsRelease++;
+        }
         let newRes;
         let createdAfterRetry = false;
         try {

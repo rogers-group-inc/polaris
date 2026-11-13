@@ -2445,8 +2445,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // any IP that ends up bare again later.
   const reservationKey = (subnetId: string, ip: string) => `${subnetId}|${ip}`;
   const activeResMap = new Map<string, any>();
+  // The (subnet, ip) keys that DO hold a dns_resolved row at load: Phase 5
+  // releases one before a create only where the preload saw it (a row created
+  // mid-run is caught by its collide-release-retry).
+  const dnsResolvedKeys = new Set<string>();
   for (const r of allReservationsRaw) {
-    if (r.sourceType === "dns_resolved") continue;
+    if (r.sourceType === "dns_resolved") {
+      if (r.ipAddress) dnsResolvedKeys.add(reservationKey(r.subnetId, r.ipAddress));
+      continue;
+    }
     if (r.ipAddress) activeResMap.set(reservationKey(r.subnetId, r.ipAddress), r);
     else activeResMap.set(`${r.subnetId}|__full__`, r);
   }
@@ -2835,7 +2842,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // ══════════════════════════════════════════════════════════════════════════════
 
   await syncDhcpEntries({
-    result, activeResMap, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
+    result, activeResMap, dnsResolvedKeys, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
     findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
     integrationId, integrationName, actor, syncLog,
   });
