@@ -80,7 +80,7 @@ describe("_customWidgetWarning", () => {
     expect(g._customWidgetWarning(51, { warningAt: 50, warningWhen: "below" }).breached).toBe(false);
   });
 
-  // Business rule 180: the card's level is the one a "Custom widget level"
+  // Business rule 181: the card's level is the one a "Custom widget level"
   // automation reads — critical first, then warning, either side.
   it("reads 0 / 1 / 2 against both levels, either side", () => {
     const up = { warningAt: 16, criticalAt: 18 };
@@ -120,7 +120,7 @@ describe("_renderCustomWidgetGauge", () => {
     expect(html).not.toContain("is-breached");
   });
 
-  it("draws a red tick at the critical level and turns the arc red past it (rule 180)", () => {
+  it("draws a red tick at the critical level and turns the arc red past it (rule 181)", () => {
     const opts = { unit: "A", max: 20, warningAt: 16, criticalAt: 18 };
     const amber = gauge(17, opts);
     expect(amber).toContain("custom-widget-warn-tick");
@@ -153,7 +153,7 @@ describe("_renderCustomWidgetLine", () => {
     expect(html).toContain("Warning state at or below 1800 s");
   });
 
-  it("draws the critical level as a second dashed line inside the chart (rule 180)", () => {
+  it("draws the critical level as a second dashed line inside the chart (rule 181)", () => {
     const html = g._renderCustomWidgetLine({ samples: samples([7, 8, 7.5]), displayOptions: { unit: "A", warningAt: 16, criticalAt: 18 } });
     const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
     const yc = Number(doc.querySelector(".custom-widget-critical-line")!.getAttribute("y1"));
@@ -213,7 +213,7 @@ describe("_renderCustomWidgetLine", () => {
   });
 });
 
-// Business rule 180: a Value widget has levels too; they colour its text.
+// Business rule 181: a Value widget has levels too; they colour its text.
 describe("a Value widget's levels", () => {
   const value = (v: unknown, displayOptions: Record<string, unknown> = {}) =>
     g._renderCustomWidgetScalarFallback({ latest: { value: v }, displayOptions }) as string;
@@ -282,7 +282,7 @@ describe("the profile editor's warning fields", () => {
     expect(g._widgetOptionsSummary({ widgetType: "gauge", displayOptions: { warningAt: 16, criticalAt: 18 } })).toBe("warn ≥ 16 · critical ≥ 18");
   });
 
-  // Business rule 180: a critical level beside the warning one, on every
+  // Business rule 181: a critical level beside the warning one, on every
   // numeric widget type — a Value widget too, whose text the levels colour.
   it("offers Critical at on gauge, line and value, and stores it", () => {
     for (const t of ["gauge", "line", "value"]) {
@@ -309,7 +309,7 @@ describe("_customWidgetWarnCaption wording", () => {
     expect(hit).toContain("Warning state — at or above 16.0 A");
   });
 
-  // Business rule 180: both levels are named; the caption turns red at critical.
+  // Business rule 181: both levels are named; the caption turns red at critical.
   it("names both levels, and the reached one in its colour", () => {
     const opts = { warningAt: 16, criticalAt: 18 };
     expect(g._customWidgetWarnCaption(g._customWidgetWarning(10, opts), amps))

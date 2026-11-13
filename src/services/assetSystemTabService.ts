@@ -14,7 +14,8 @@ import { getApRadioInventory } from "./apRadioService.js";
 import { getArpEntryRetentionDays } from "./sampleRetentionService.js";
 import { fillMacTableVlans, getVlanNamesForAsset, portVlansFor, readPortVlans } from "./vlanNameService.js";
 import { listInterfaceTags } from "./interfaceTagService.js";
-import { getFcByInterface } from "./fibreChannelService.js";
+import { getFcByInterface, getFibreChannelForAsset } from "./fibreChannelService.js";
+import { getEffectiveMonitorSettings } from "./assetDetailReadService.js";
 import { activeAlertSummaryByAsset } from "./notificationService.js";
 import { buildInferredNeighborsForAsset, dedupeInferredNeighbors, aggregateMembershipMap } from "./peerInferredLldpService.js";
 import { resolveCurrentStateIntervalSec } from "./monitoring/monitorSettings.js";
@@ -487,6 +488,91 @@ export async function getAssetArpTable(id: string, range: keyof typeof ARP_RANGE
     retentionDays,
     pollIntervalSec,
   };
+}
+
+/**
+ * One thing that reads rows the Fibre Channel tab shows, stated the way the
+ * CPU / memory badges state theirs: by what (`method`, a PollingMethod),
+ * how often (`intervalSec`), from which tier (`tier`), and — on a host, whose
+ * rows other systems write — through which device or integration (`via`).
+ */
+export interface FcReadSource {
+  /** "switch": the FC switch's system-info pass (its ports, its logins). "vcenter" / "agent": a host's own HBA report. */
+  source: "switch" | "vcenter" | "agent";
+  method: string | null;
+  intervalSec: number | null;
+  /** The provenance tier of `method` ("asset", "class", "integration", "default"…); null when not a polled stream. */
+  tier: string | null;
+  monitored: boolean;
+  via: { kind: "asset"; id: string; name: string | null } | { kind: "integration"; id: string; name: string } | null;
+}
+
+/**
+ * GET /assets/:id/fibre-channel — the tab (business rule 159) plus how its
+ * rows are read (`readBy`). A switch's rows are written by its own
+ * system-info pass, on its interfaces polling method and system-info cadence;
+ * a host's come from the switches it is logged into (one entry per switch,
+ * named) and from its own HBA report — vCenter's discovery cycle or the
+ * agent's system-info push. `pollIntervalSec` is the shortest of them, the
+ * cadence the freshness stamp turns amber against. One effective-settings
+ * read per switch: a host sits on one or two fabrics.
+ */
+export async function getAssetFibreChannel(id: string) {
+  const fc = await getFibreChannelForAsset(id);
+  const switchIds = fc.switch ? [id] : (fc.host?.fabrics ?? []).map((f) => f.switch.id);
+  const switchRows = switchIds.length
+    ? await prisma.asset.findMany({ where: { id: { in: switchIds } }, select: { id: true, hostname: true, monitored: true } })
+    : [];
+  const switchSources = await Promise.all(switchRows.map(async (sw): Promise<FcReadSource> => {
+    const [eff, intervalSec] = await Promise.all([
+      getEffectiveMonitorSettings(sw.id).catch(() => null),
+      resolveCurrentStateIntervalSec(sw.id, { discoveryFallback: false }),
+    ]);
+    return {
+      source: "switch",
+      method: eff?.resolved.interfacesPolling ?? null,
+      intervalSec: sw.monitored ? intervalSec : null,
+      tier: eff?.provenance.interfacesPolling ?? null,
+      monitored: sw.monitored,
+      // A switch's own tab names nothing: the rows are its own.
+      via: fc.switch ? null : { kind: "asset", id: sw.id, name: sw.hostname },
+    };
+  }));
+
+  const hbaKinds = new Set((fc.host?.hbas ?? []).map((h) => h.source));
+  const hbaSources: FcReadSource[] = [];
+  if (hbaKinds.has("vcenter")) {
+    // The vCenter that knows this host. HBAs are read in its discovery cycle,
+    // so its poll interval (hours) is the cadence.
+    const src = await prisma.assetSource.findFirst({
+      where: { assetId: id, integration: { type: "vcenter" } },
+      select: { integration: { select: { id: true, name: true, pollInterval: true } } },
+    });
+    const integ = src?.integration ?? null;
+    hbaSources.push({
+      source: "vcenter",
+      method: "vcenter",
+      intervalSec: integ?.pollInterval ? integ.pollInterval * 3600 : null,
+      tier: null,
+      monitored: true,
+      via: integ ? { kind: "integration", id: integ.id, name: integ.name } : null,
+    });
+  }
+  if (hbaKinds.has("agent")) {
+    // The agent sends its HBAs with its system-info push, on that cadence.
+    hbaSources.push({
+      source: "agent",
+      method: "agent",
+      intervalSec: await resolveCurrentStateIntervalSec(id, { discoveryFallback: false }),
+      tier: null,
+      monitored: true,
+      via: null,
+    });
+  }
+
+  const readBy = [...switchSources, ...hbaSources];
+  const intervals = readBy.map((r) => r.intervalSec).filter((s): s is number => typeof s === "number" && s > 0);
+  return { ...fc, readBy, pollIntervalSec: intervals.length ? Math.min(...intervals) : null };
 }
 
 /** GET /assets/:id/services — the host's service inventory. 404 when absent. */

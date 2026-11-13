@@ -541,7 +541,7 @@ export interface CustomWidgetCatalogEntry {
   name: string;
   /** The manufacturer profile or Generic API integration that defines it. */
   source: string;
-  /** Its own warning / critical levels (business rule 180), null when it sets neither. */
+  /** Its own warning / critical levels (business rule 181), null when it sets neither. */
   levels: WidgetLevels | null;
   /** The unit its readings are in ("A", "%"), "" when it has none. */
   unit: string;

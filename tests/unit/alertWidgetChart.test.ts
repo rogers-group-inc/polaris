@@ -1,6 +1,6 @@
 /**
  * tests/unit/alertWidgetChart.test.ts — the chart a custom-widget alert leads
- * with in its email (business rule 180, from the approved design canvas).
+ * with in its email (business rule 181, from the approved design canvas).
  *
  * Pinned:
  *  - the three custom-widget metrics lead with `{chart.widget}` through

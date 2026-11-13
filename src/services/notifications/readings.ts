@@ -14,7 +14,7 @@ import { isPathMetric } from "../notificationTypes.js";
 import { FC_RATE_METRICS, fcErrorsFrom, isFcRateMetric } from "../../utils/fibreChannel.js";
 import { sdwanDimensionTerms } from "../../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../../utils/priorityTags.js";
-import { computeStorageForecast } from "../storageForecastService.js";
+import { computeStorageForecastShared } from "../storageForecastService.js";
 import { computeMemoryForecastDetail, computeMemoryProjection, forecastLevelReading } from "../memoryForecastService.js";
 import { queryProbeLossRatios } from "../probeLossQuery.js";
 import { logger } from "../../utils/logger.js";
@@ -578,6 +578,44 @@ async function yieldToSdwanParents(
   return readings.filter((r) => !out.has(`${r.assetId}|${r.dimKey}`));
 }
 
+// ─── Per-tick telemetry rows ─────────────────────────────────────────────────
+//
+// Armed for one engine pass by clearTickSampleCache(true) (beside the scope
+// memo, and disarmed in the same finally), so an operator's preview between
+// ticks reads live. Keyed on the asset id list; a later rule whose window
+// starts at or after the cached one filters the cached rows in memory, one
+// reaching further back re-reads and replaces the entry.
+type TelemetryRow = { assetId: string; timestamp: Date; cpuPct: number | null; memPct: number | null; memUsedBytes: bigint | null; sessionCount: number | null };
+const _tickTelemetry = new Map<string, { sinceMs: number; rows: Promise<TelemetryRow[]> }>();
+let _tickSampleCacheActive = false;
+
+export function clearTickSampleCache(active: boolean): void {
+  _tickTelemetry.clear();
+  _tickSampleCacheActive = active;
+}
+
+function fetchTelemetryRows(ids: string[], since: Date): Promise<TelemetryRow[]> {
+  return prisma.assetTelemetrySample.findMany({
+    where: { assetId: { in: ids }, timestamp: { gte: since } },
+    select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true },
+  });
+}
+
+async function tickTelemetryRows(ids: string[], since: Date): Promise<TelemetryRow[]> {
+  if (!_tickSampleCacheActive) return fetchTelemetryRows(ids, since);
+  const key = ids.join(",");
+  const sinceMs = since.getTime();
+  const hit = _tickTelemetry.get(key);
+  if (hit && hit.sinceMs <= sinceMs) {
+    const rows = await hit.rows;
+    return hit.sinceMs === sinceMs ? rows : rows.filter((r) => r.timestamp.getTime() >= sinceMs);
+  }
+  const rows = fetchTelemetryRows(ids, since);
+  _tickTelemetry.set(key, { sinceMs, rows });
+  rows.catch(() => { if (_tickTelemetry.get(key)?.rows === rows) _tickTelemetry.delete(key); });
+  return rows;
+}
+
 export async function resolveAssetMetricReadings(
   trigger: Extract<Trigger, { type: "asset_metric" }>,
   assets: ScopeAssetRow[],
@@ -613,7 +651,10 @@ export async function resolveAssetMetricReadings(
 
   switch (trigger.metric) {
     case "cpuPct": case "memPct": case "memUsedBytes": case "sessionCount": {
-      const rows = await prisma.assetTelemetrySample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since } }, select: { assetId: true, timestamp: true, cpuPct: true, memPct: true, memUsedBytes: true, sessionCount: true } });
+      // One read per tick per asset set: the High CPU and High memory rules
+      // (and any memory-bytes / session rule) over the same scope ask for the
+      // same rows, so the second is served from the first (tickTelemetryRows).
+      const rows = await tickTelemetryRows(ids, since);
       const pick = (r: any) => trigger.metric === "memUsedBytes" ? num(r.memUsedBytes) : (r[trigger.metric] ?? null);
       return reduceReadings(rows, index, () => "", () => "", pick, agg, winPolls);
     }
@@ -824,7 +865,7 @@ export async function resolveAssetMetricReadings(
       // the other two storage metrics (storageIsPinned) — the forecast service
       // is shared with the NOC dashboard, which asks a different question, so
       // the gate is applied HERE rather than inside it.
-      const fc = await computeStorageForecast(ids);
+      const fc = await computeStorageForecastShared(ids);
       return fc
         .filter((r) => storageIsPinned(index.get(r.assetId), r.mountPath) && substringMatch(r.mountPath, df.mountPathPattern))
         .map((r) => {
@@ -869,7 +910,7 @@ export async function resolveAssetMetricReadings(
       }, agg, winPolls);
     }
     case "customWidgetLevel": {
-      // Business rule 180: the widget's own level, 0 / 1 / 2, from the same
+      // Business rule 181: the widget's own level, 0 / 1 / 2, from the same
       // scalar samples customWidgetValue compares. Only widgets that define a
       // level are read — one without warningAt / criticalAt has no level to be
       // at, so it never reads 0 and never clears a live alert by accident.

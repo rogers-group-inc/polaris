@@ -407,7 +407,7 @@ function _gaParseWidgetLines(text) {
       if (mn !== undefined) w.min = mn;
       if (mx !== undefined) w.max = mx;
       if (wa !== undefined) w.warningAt = wa;
-      // The critical level (business rule 180) — its own column after the side,
+      // The critical level (business rule 181) — its own column after the side,
       // so a line written before it existed still parses the same.
       if (ca !== undefined) w.criticalAt = ca;
       // Which side of the levels is the problem: "above" (the default) or "below".

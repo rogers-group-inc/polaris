@@ -311,8 +311,12 @@ one at 0.0.0.0, shows nothing.
   latency, jitter and packet loss for that member, from the health checks
   probing through it, with the FortiGate's own SLA targets drawn as dashed
   lines. Any other port gets no graphs.
-- **Error-rate and throughput alerts** keep the device graphs, because a port
-  erroring or saturating can go with load on the device itself.
+- **Error-rate alerts** (in or out errors, and the five fibre-channel
+  counters) drop the device graphs too, and chart the port instead: its
+  error rate, with the automation's threshold dashed, then the port's
+  traffic in and traffic out over the same hour, so you can see whether the
+  errors follow load.
+- **Throughput alerts** keep the device graphs.
 
 This applies to the **default** email only. If you tick **Customize the
 email**, your body is sent exactly as written. A `{asset.ip}` you put in it
@@ -472,7 +476,9 @@ devices"* — and an ungrouped path alert's reads *"ERP HTTPS is down"*.
 `{chart.trigger}` (the chart of whatever fired — the CPU chart on a CPU
 alert, the storage chart on a storage alert)
 `{chart.responseTime}` `{chart.probeLoss}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
-`{chart.interface}` (the port an error-rate or fibre-channel counter alert fired on, in the unit its automation compares, with the threshold dashed), `{chart.widget}` (the custom widget a Custom widget value / level alert fired on, with the threshold that fired or the widget's own warning and critical levels, or a state probe row as one status lane; response time stays beside it, CPU, memory and packet loss are dropped — [rule 180](Business-Rules#rule-180))
+`{chart.interface}` (the port an error-rate or fibre-channel counter alert fired on, in the unit its automation compares, with the threshold dashed)
+`{chart.interfaceIn}` `{chart.interfaceOut}` (that port's traffic in and out, in bits per second)
+`{chart.widget}` (the custom widget a Custom widget value / level alert fired on, with the threshold that fired or the widget's own warning and critical levels, or a state probe row as one status lane; response time stays beside it, CPU, memory and packet loss are dropped — [rule 181](Business-Rules#rule-181))
 `{chart.sensor}` `{chart.sdwanLatency}` `{chart.sdwanJitter}`
 `{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
 `{path.graph}` (a Path Monitor alert's traceroute graph — up to four on a

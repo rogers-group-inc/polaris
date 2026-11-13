@@ -147,7 +147,7 @@ interface RenderMemo {
   storageThreshold: Map<string, Promise<number | null>>;
   /** Per (rule, severity): the level a memory forecast chart counts down to. */
   memoryForecast: Map<string, Promise<MemoryForecastTarget | null>>;
-  /** Per (rule, severity): the line a custom widget value chart draws (rule 180). */
+  /** Per (rule, severity): the line a custom widget value chart draws (rule 181). */
   widgetThreshold: Map<string, Promise<WidgetChartThreshold | null>>;
   /** Keyed by notification AND dispatch: the recipient lines describe one
    *  fan-out, so the two email rows of a single fire share an entry while a
@@ -241,7 +241,7 @@ async function memoryForecastChartTarget(ruleId: string | null, severity: string
 }
 
 /**
- * The line a custom widget VALUE alert's chart draws (rule 180): the band the
+ * The line a custom widget VALUE alert's chart draws (rule 181): the band the
  * alert is at, else the trigger's threshold. One indexed read per drain per
  * (rule, severity), only for an alert that draws the widget chart; null on any
  * failure, which draws no line.
@@ -321,7 +321,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
             () => memoryForecastChartTarget(d.notification.ruleId, d.notification.severity))
         : null;
       // A custom widget VALUE alert's chart draws the threshold it fired on
-      // (rule 180); a level alert draws the widget's own levels instead.
+      // (rule 181); a level alert draws the widget's own levels instead.
       const widgetThreshold = d.notification.metric === "customWidgetValue" && isWidgetScopedAlert(d.notification.metric) && (wanted.has("chart.widget") || wanted.has("chart.trigger"))
         ? await memoize(memo.widgetThreshold, `${d.notification.ruleId ?? ""}|${d.notification.severity}`,
             () => widgetChartThreshold(d.notification.ruleId, d.notification.severity))

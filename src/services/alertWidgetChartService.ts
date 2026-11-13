@@ -1,6 +1,6 @@
 /**
  * src/services/alertWidgetChartService.ts — the chart a custom-widget alert
- * leads with in its email (business rule 180, from the approved design canvas):
+ * leads with in its email (business rule 181, from the approved design canvas):
  *
  *  - `customWidgetValue` / `customWidgetLevel`: the widget's last hour as a
  *    line in the widget's own name and unit. A value alert draws the threshold

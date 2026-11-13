@@ -1552,7 +1552,7 @@ export async function deleteOverride(overrideId: string): Promise<void> {
 
 /**
  * A widget's critical level must lie beyond its warning level on the problem
- * side (business rule 180), or the card and a "Custom widget level" automation
+ * side (business rule 181), or the card and a "Custom widget level" automation
  * would read critical before warning.
  */
 function assertWidgetLevels(displayOptions: Record<string, unknown> | null | undefined): void {

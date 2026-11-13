@@ -929,6 +929,43 @@ function _fcHostHTML(host) {
     'or failing that by the host name its HBA registered. Error counts are the switch port\'s totals since its counters were last cleared.</p>';
 }
 
+/**
+ * How the tab's rows are read — one chip per source in `readBy`, worded like
+ * the CPU / memory stream badge ("SNMP · every 10m · Source default"). A
+ * switch's own tab gets one chip; a host names each switch it is logged into
+ * and the source of its own HBA rows (vCenter's discovery cycle or the agent).
+ */
+function _fcReadByChipsHTML(readBy) {
+  return (readBy || []).map(function (r) {
+    var parts = [];
+    if (r.via && r.via.name) parts.push(r.source === "switch" ? r.via.name : "HBAs");
+    else if (r.source !== "switch") parts.push("HBAs");
+    if (r.source === "switch" && !r.monitored) {
+      parts.push("not monitored");
+    } else {
+      var method = r.method ? (_POLLING_LABELS[r.method] || r.method) : "";
+      if (method) parts.push(method);
+      var every = _formatPollingInterval(r.intervalSec);
+      if (every) parts.push("every " + every);
+      if (r.tier && _TIER_LABELS[r.tier]) parts.push(_TIER_LABELS[r.tier]);
+      if (r.via && r.via.kind === "integration" && r.via.name) parts.push(r.via.name);
+    }
+    var title = r.source === "switch"
+      ? (r.via ? "Read from " + (r.via.name || "the switch") + " by its system-info pass" : "Read by this switch's system-info pass") +
+        " · Polling method · How often · Where this setting comes from"
+      : r.source === "vcenter"
+        ? "This host's HBA ports, as vCenter reports them in its discovery cycle"
+        : "This host's HBA ports, as the Polaris Agent reports them with its system information";
+    // Not `asset-stream-source-badge`: that class is the one the async
+    // effective-settings rewrite looks for, and these are not this asset's
+    // streams.
+    return '<span class="fc-read-source-badge" title="' + escapeHtml(title) + '" ' +
+      'style="font-size:0.75rem;padding:2px 6px;border-radius:10px;background:var(--color-bg-primary);' +
+      'border:1px solid var(--color-border);color:var(--color-text-secondary);white-space:nowrap">' +
+      escapeHtml(parts.join(" · ")) + '</span>';
+  }).join("");
+}
+
 function _renderAssetFc(assetId, payload) {
   var mount = document.getElementById("asset-fc-mount-" + assetId);
   if (!mount) return;
@@ -936,7 +973,9 @@ function _renderAssetFc(assetId, payload) {
   var refreshId = "fc-refresh-" + assetId;
   var html = _currentStateStripHTML({
     title: d.switch ? "Fibre Channel ports" : "Fibre Channel",
+    chipHTML: _fcReadByChipsHTML(d.readBy),
     lastAt: d.collectedAt || null,
+    cadenceSec: typeof d.pollIntervalSec === "number" ? d.pollIntervalSec : null,
     neverText: "not collected yet",
     refreshId: refreshId,
     refreshTitle: "Re-read the switch's fibre-channel tables now",

@@ -1,5 +1,5 @@
 /**
- * tests/unit/widgetLevel.test.ts — business rule 180: a custom widget's own
+ * tests/unit/widgetLevel.test.ts — business rule 181: a custom widget's own
  * warning and critical levels, read one way for the card, the automation
  * condition and the email chart.
  */

@@ -1,5 +1,5 @@
 /**
- * tests/unit/customWidgetLevelReadings.test.ts — business rule 180: the
+ * tests/unit/customWidgetLevelReadings.test.ts — business rule 181: the
  * `customWidgetLevel` condition reads each widget against ITS OWN warning /
  * critical levels, so one automation covers every widget that defines them —
  * an AP8830's 13 A and an AP8870's 19 A alike. A widget with no levels is not

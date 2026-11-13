@@ -41,7 +41,7 @@ Every severity band of an automation that reads the port is a dashed line in the
 
 ## Custom widget levels and the widget's email chart
 
-A custom widget can set a warning and a critical level (business rule 180). On the card each one is a mark in its severity colour, `color-sev-warning` and `color-sev-critical`: a tick across the gauge's arc, or a dashed line across the line widget. The arc, the value text and the line widget's "latest" take the colour of the level reached. The caption under the card names both levels ("Warning state at or above 16.0 A · Critical at or above 18.0 A"). Once a level is reached, the caption leads with it in that colour ("Critical state — at or above 18.0 A").
+A custom widget can set a warning and a critical level (business rule 181). On the card each one is a mark in its severity colour, `color-sev-warning` and `color-sev-critical`: a tick across the gauge's arc, or a dashed line across the line widget. The arc, the value text and the line widget's "latest" take the colour of the level reached. The caption under the card names both levels ("Warning state at or above 16.0 A · Critical at or above 18.0 A"). Once a level is reached, the caption leads with it in that colour ("Critical state — at or above 18.0 A").
 
 In an alert email a custom-widget alert leads with that widget. The widget's chart comes first, then the response-time chart:
 

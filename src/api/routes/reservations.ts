@@ -133,8 +133,7 @@ router.get("/alerts", requirePermission("staleReservations", "read"), async (req
 // operator and shouldn't drive a sidebar badge.
 router.get("/alerts/count", requirePermission("staleReservations", "read"), async (_req, res, next) => {
   try {
-    const alerts = await staleService.listStaleReservations("active");
-    res.json({ count: alerts.length });
+    res.json({ count: await staleService.countStaleReservations() });
   } catch (err) { next(err); }
 });
 

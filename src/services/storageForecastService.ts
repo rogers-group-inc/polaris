@@ -127,6 +127,38 @@ export async function computeStorageForecast(
   return out;
 }
 
+// ─── Shared fleet forecast ───────────────────────────────────────────────────
+//
+// The fit is a 30-day daily trend: today's point moves with each new sample,
+// but the days-until-full it yields changes on the scale of hours. The alert
+// engine (every storageDaysUntilFull rule, every 60 s tick) and the NOC
+// dashboard used to run the full raw-sample GROUP BY each time — at 2000
+// assets millions of asset_storage_samples rows a minute per rule. Both now
+// read ONE fleet-wide fit, recomputed at most every STORAGE_FORECAST_MEMO_MS
+// and shared while in flight, filtered to the caller's assets in memory.
+const STORAGE_FORECAST_MEMO_MS = 15 * 60_000;
+let fleetForecastMemo: { at: number; value: Promise<StorageForecastRow[]> } | null = null;
+
+export async function computeStorageForecastShared(assetIds: string[] | null = null): Promise<StorageForecastRow[]> {
+  const now = Date.now();
+  let memo = fleetForecastMemo;
+  if (!memo || now - memo.at >= STORAGE_FORECAST_MEMO_MS) {
+    const fresh = { at: now, value: computeStorageForecast(null) };
+    fleetForecastMemo = fresh;
+    // A failure is not remembered: the next caller tries again.
+    fresh.value.catch(() => { if (fleetForecastMemo === fresh) fleetForecastMemo = null; });
+    memo = fresh;
+  }
+  const all = await memo.value;
+  if (!assetIds) return all;
+  const want = new Set(assetIds);
+  return all.filter((r) => want.has(r.assetId));
+}
+
+export function invalidateStorageForecastMemo(): void {
+  fleetForecastMemo = null;
+}
+
 /** One mount's forecast, with the daily points it was fitted on. */
 export interface StorageForecastSeries {
   /** Daily average used bytes, ascending by day (`t` = the day's UTC start). */

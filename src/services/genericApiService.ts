@@ -179,7 +179,7 @@ export interface GenericApiWidgetDef {
   min?: number;
   max?: number;
   warningAt?: number;
-  /** The critical level (business rule 180), on the same side as warningAt. */
+  /** The critical level (business rule 181), on the same side as warningAt. */
   criticalAt?: number;
   /** Which side of the levels is the problem; absent = "above". */
   warningWhen?: "above" | "below";

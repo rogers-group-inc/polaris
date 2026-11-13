@@ -501,7 +501,7 @@ describe("Monitoring tab — monitor queries", () => {
     );
   });
 
-  // Business rule 180: a critical level in its own column after the side, so
+  // Business rule 181: a critical level in its own column after the side, so
   // a line written before it existed parses the same.
   it("reads a critical level after the side column, round-trips it, and refuses one short of warning", () => {
     const parsed = scope._gaParseWidgetLines(

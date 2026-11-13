@@ -146,7 +146,7 @@ function triggerUnit(trigger: SummarizableTrigger, sensorUnit?: string | null): 
 }
 
 /** Round for reading, not for precision: "760 ms", "93.8 %", "61 °C". */
-/** A `customWidgetLevel` reading or threshold as its word (business rule 180), or null. */
+/** A `customWidgetLevel` reading or threshold as its word (business rule 181), or null. */
 function widgetLevelWord(value: number | string | boolean | null | undefined): string | null {
   const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(n)) return null;
@@ -231,7 +231,7 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     return v ? `${label}${on} is ${v}` : `${label}${on} changed`;
   }
 
-  // A widget's own level (business rule 180) is 0 / 1 / 2 — "is 2" would be
+  // A widget's own level (business rule 181) is 0 / 1 / 2 — "is 2" would be
   // nonsense. The widget is the subject: "Bank 2 Current is in critical state".
   if (trigger.metric === "customWidgetLevel") {
     const widget = parts.dimensionLabel || "A custom widget";

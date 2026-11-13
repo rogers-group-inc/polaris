@@ -730,12 +730,22 @@ const MAINTENANCE_CLEARED_BY = "system:maintenance";
  * reconciler and has no edge of its own here.
  */
 export async function clearSuppressedAlerts(): Promise<number> {
+  // The silenced devices first: on almost every tick there are none, and both
+  // flags are indexed, so the sweep ends here instead of loading up to
+  // SUPPRESSION_SWEEP_CAP open alerts and their automations' triggers only to
+  // find nothing to clear (efficiency audit group 2).
+  const silenced = await prisma.asset.findMany({
+    where: { OR: [{ dependencySuppressed: true }, { status: "maintenance" }] },
+    select: { id: true, hostname: true, status: true },
+  });
+  if (silenced.length === 0) return 0;
+
   const openRows = await prisma.notification.findMany({
     where: {
       cleared: false,
       // A system-scoped alert (capacity, backups) has no asset and can't be
-      // suppressed by one.
-      assetId: { not: null },
+      // suppressed by one — `in` excludes a null assetId.
+      assetId: { in: silenced.map((a) => a.id) },
     },
     select: { id: true, assetId: true, groupKey: true, dependencyDown: true, rule: { select: { name: true, trigger: true } } },
     take: SUPPRESSION_SWEEP_CAP,
@@ -751,13 +761,9 @@ export async function clearSuppressedAlerts(): Promise<number> {
   );
   if (open.length === 0) return 0;
 
-  const candidates = await prisma.asset.findMany({
-    where: {
-      id: { in: Array.from(new Set(open.map((n) => n.assetId as string))) },
-      OR: [{ dependencySuppressed: true }, { status: "maintenance" }],
-    },
-    select: { id: true, hostname: true, status: true },
-  });
+  // Only the silenced devices that hold an alert need a reason (and a walk).
+  const withAlert = new Set(open.map((n) => n.assetId as string));
+  const candidates = silenced.filter((a) => withAlert.has(a.id));
   if (candidates.length === 0) return 0;
 
   // Why each candidate is silenced. An asset in its own window is owed to

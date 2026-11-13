@@ -611,7 +611,7 @@ function _formatDuration(sec) {
 }
 
 /**
- * A widget's own levels (business rule 180) against one reading, or null when
+ * A widget's own levels (business rule 181) against one reading, or null when
  * it sets neither. `at` is the warning level, `criticalAt` the critical one
  * (either may be null); `warningWhen` says which side is the problem for both —
  * "above" (the default: load, current, temperature) or "below" (battery,
@@ -649,7 +649,7 @@ function _customWidgetWarningShown(displayValue, opts, fmt) {
  *  `text` formats one number with its unit (the widget's _cwDisplay text).
  *  The caption names a STATE ("Warning state at or above 16.0 A"), never an
  *  action: "Warns at or above" read as a promise of a notification
- *  (2026-11-13). What alerts is a "Custom widget level" automation (rule 180);
+ *  (2026-11-13). What alerts is a "Custom widget level" automation (rule 181);
  *  the tooltip says so. */
 function _customWidgetWarnCaption(warn, text) {
   if (!warn) return "";
@@ -876,7 +876,7 @@ function _renderCustomWidgetScalarFallback(w) {
   if (Number.isFinite(n)) {
     fmt = _cwDisplay(w);
     txt = fmt.text(fmt.conv(n));
-    // A value widget's levels colour its text (rule 180), as a gauge's arc.
+    // A value widget's levels colour its text (rule 181), as a gauge's arc.
     warn = _customWidgetWarningShown(fmt.conv(n), w.displayOptions || {}, fmt);
   } else {
     // Not a number (a DisplayString, a row array): shown as is, with its unit.

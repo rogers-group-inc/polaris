@@ -1661,7 +1661,7 @@ which side is the problem for both: *at or above* (load, current, temperature)
 or *at or below* (battery capacity, runtime). The levels on their own only colour
 the card. To get alerts from them, add an automation on the *Custom widget level*
 metric: one automation covers every widget that has levels, each at its own levels
-([rule 180](Business-Rules#rule-180)). For a single threshold of your own, use an
+([rule 181](Business-Rules#rule-181)). For a single threshold of your own, use an
 automation on the *Custom widget value* metric.
 
 A widget whose unit is **°C** or **°F** is shown in your install's
@@ -1812,6 +1812,15 @@ Polaris has matched to one of its ports. It needs three things:
   name from the MIBs you upload; without them the tab doesn't appear.
 - **The switch's interfaces, LLDP or storage stream** turned on.
 - **One system-info poll** after both of the above, which fills the tab in.
+
+The heading says when the tab's rows were last read, and a badge beside it
+says how they are read, in the same words as the badges on the CPU and memory
+charts: the polling method, how often, and where that setting comes from. On a
+switch that is one badge, for the switch's own polls. On a server there is one
+badge per switch it is logged into, named, because those rows come from the
+switch's polls, plus one for the server's own HBA ports: vCenter (its
+discovery interval and the vCenter integration) or the Polaris Agent. The
+"last read" time turns amber once it is older than the most frequent of them.
 
 **On the switch:** one row per port in use. Each row shows:
 

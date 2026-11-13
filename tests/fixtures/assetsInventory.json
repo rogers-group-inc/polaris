@@ -487,6 +487,7 @@
     "_renderAllPerfSlaCharts",
     "_renderAssetEventRow",
     "_renderAssetEventsPagination",
+    "_fcReadByChipsHTML",
     "_renderAssetFc",
     "_renderAssetIpsec",
     "_renderAssetPanelNav",

@@ -146,7 +146,7 @@ export interface SparklineOptions {
   thresholdLegend?: string;
   /**
    * More dashed rules, each in its own colour and named in the legend — a
-   * custom widget's warning and critical levels (business rule 180), or an
+   * custom widget's warning and critical levels (business rule 181), or an
    * automation's severity bands. Folded into the axis range like `threshold`,
    * and, like it, only named when it fell on the axis.
    */
@@ -753,7 +753,7 @@ export interface StatusStripOptions {
 }
 
 /**
- * A state probe's last hour as ONE lane (business rule 180's email charts):
+ * A state probe's last hour as ONE lane (business rule 181's email charts):
  * each sample holds until the next, the problem side solid red and the OK side
  * faint green, so a line chart of 0 / 1 — which reads as a square wave with no
  * words on it — becomes "On battery / bypass 12 min of the last hour · now

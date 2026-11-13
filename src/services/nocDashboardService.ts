@@ -35,7 +35,7 @@ import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import { BUILT_IN_ASSET_TYPES } from "../utils/assetTypes.js";
 import { prisma } from "../db.js";
 import { resolveMonitorSettings, resolveProbeIntervalSec } from "./monitoringService.js";
-import { computeStorageForecast } from "./storageForecastService.js";
+import { computeStorageForecastShared } from "./storageForecastService.js";
 import { queryProbeLossRatios } from "./probeLossQuery.js";
 import { createTtlCache } from "../utils/ttlCache.js";
 import { ALERT_SEVERITY_RANK } from "../utils/alertSeverity.js";
@@ -1027,7 +1027,7 @@ export async function getPacketLoss(limit: number | null = 100, sinceMinutes = 1
  * within a severity band soonest-full leads.
  */
 export async function getStorageForecast(limit: number | null = 100, assetIds: string[] | null = null): Promise<TopNRow[]> {
-  const fc = await computeStorageForecast(assetIds);
+  const fc = await computeStorageForecastShared(assetIds);
   const capped = limit != null ? fc.slice(0, limit) : fc;
   if (capped.length === 0) return [];
   const ids = Array.from(new Set(capped.map((r) => r.assetId)));

@@ -670,7 +670,7 @@ function _widgetTypeSelectHTML(cls, current) {
 //   table → no operator-tunable options; the renderer derives columns
 //           from the latest sample.
 // warningAt / criticalAt / warningWhen are the widget's own LEVELS (business
-// rule 180): they colour the card (_customWidgetWarning in assets-snmp.js) and
+// rule 181): they colour the card (_customWidgetWarning in assets-snmp.js) and
 // are what a "Custom widget level" automation alerts on, so one automation
 // covers every widget at that widget's own thresholds. warningWhen gives the
 // direction of both.
@@ -726,7 +726,7 @@ function _widgetDisplayOptionsForm(widgetType, opts) {
     '</div>';
   }
   // A Value widget is the reading as text; its levels colour that text and
-  // are what a "Custom widget level" automation alerts on (rule 180).
+  // are what a "Custom widget level" automation alerts on (rule 181).
   if (widgetType === "value") {
     return '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px">' +
       _widgetFormField("Unit", '<input type="text" class="mfg-widget-opt-unit" value="' + escapeHtml(o.unit || "") + '" placeholder="e.g. bps, % or °C" style="width:100%;font-size:0.82rem">') +
@@ -759,7 +759,7 @@ function _widgetOptionsSummary(w) {
   return parts.length ? escapeHtml(parts.join(" · ")) : "";
 }
 
-/** "warn ≥ 16 · critical ≥ 18" for the view card (rule 180). */
+/** "warn ≥ 16 · critical ≥ 18" for the view card (rule 181). */
 function _widgetLevelSummary(o, parts) {
   var cmp = o.warningWhen === "below" ? "≤ " : "≥ ";
   if (o.warningAt != null) parts.push("warn " + cmp + o.warningAt);
@@ -2911,7 +2911,7 @@ function _readWidgetFormPayload(scope) {
   }
 
   var displayOptions = _readWidgetDisplayOptions(scope, widgetType);
-  // Critical must lie beyond warning on the problem side (rule 180), or the
+  // Critical must lie beyond warning on the problem side (rule 181), or the
   // card would read critical before warning.
   if (displayOptions.warningAt != null && displayOptions.criticalAt != null &&
       (displayOptions.warningWhen === "below" ? displayOptions.criticalAt > displayOptions.warningAt : displayOptions.criticalAt < displayOptions.warningAt)) {

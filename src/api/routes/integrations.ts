@@ -56,7 +56,7 @@ import {
   sweepMonitoredForIntegration,
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
-import { checkForSlowRuns, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
+import { checkForSlowRunsThrottled, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
 import { INTEGRATION_ADAPTERS } from "../../services/integrationAdapters.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
@@ -1197,13 +1197,13 @@ const GenericApiWidgetSchema = z.object({
   min:       z.number().finite().optional(),
   max:       z.number().finite().optional(),
   warningAt: z.number().finite().optional(),
-  // The critical level (business rule 180), on the same side as warningAt.
+  // The critical level (business rule 181), on the same side as warningAt.
   criticalAt: z.number().finite().optional(),
   // Which side of warningAt is the warning; absent = "above".
   warningWhen: z.enum(["above", "below"]).optional(),
   stateMap:  z.record(z.string(), z.unknown()).optional(),
 }).superRefine((w, ctx) => {
-  // Critical beyond warning on the problem side (business rule 180).
+  // Critical beyond warning on the problem side (business rule 181).
   const problem = widgetLevelsProblem(widgetLevelsOf(w));
   if (problem) ctx.addIssue({ code: "custom", message: `Widget "${w.name}": ${problem}`, path: ["criticalAt"] });
 });
@@ -1519,7 +1519,7 @@ router.get("/", async (req, res, next) => {
 // Also runs slow-detection inline so the UI sees amber within one poll cycle
 // of a run exceeding its baseline, without waiting for the 30s background job.
 router.get("/discoveries", async (req, res) => {
-  await checkForSlowRuns().catch(() => {});
+  await checkForSlowRunsThrottled().catch(() => {});
   const now = Date.now();
   const rows = await listActiveRuns();
   const running = rows.map((row) => {

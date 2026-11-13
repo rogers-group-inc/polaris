@@ -1,5 +1,5 @@
 /**
- * A custom widget's own warning and critical levels (business rule 180) — one
+ * A custom widget's own warning and critical levels (business rule 181) — one
  * reading of `warningAt` / `criticalAt` / `warningWhen` for every surface that
  * asks "is this widget in warning?": the asset card's colour and caption, the
  * `customWidgetLevel` automation condition, and the alert email's chart.

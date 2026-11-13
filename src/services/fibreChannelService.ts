@@ -340,7 +340,12 @@ export async function getFibreChannelForAsset(assetId: string) {
       .map((s) => ({ switch: s.asset, ifName: s.ifName, vsan: s.vsan })),
   }));
 
-  const collectedAt = [...ports, ...logins].reduce<Date | null>(
+  // The newest read behind ANY row this tab shows. A switch's own ports and
+  // logins; a host has none of those, so its rows' reads count instead — the
+  // switch logins matched to it (refreshed on every switch pass) and the HBA
+  // ports it reported. Reading only the first pair left every host saying
+  // "not collected yet" above a full table.
+  const collectedAt = [...ports, ...logins, ...hostLogins, ...hbaRows].reduce<Date | null>(
     (max, r) => (!max || r.lastSeen > max ? r.lastSeen : max),
     null,
   );
