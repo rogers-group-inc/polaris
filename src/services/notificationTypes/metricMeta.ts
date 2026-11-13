@@ -443,6 +443,7 @@ export const CHANGE_TYPE_META: Record<string, string> = {
   gateway_firewall_changed: "Gateway FortiGate changed",
   fortilink_changed: "Controller link changed (FortiLink / CAPWAP)",
   path_check_path_changed: "Path changed (traceroute)",
+  path_check_tls_cert_changed: "TLS certificate changed (renewed or replaced)",
 };
 
 /**

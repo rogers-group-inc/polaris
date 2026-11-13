@@ -40,6 +40,12 @@ import { sortOldestFirst } from "../utils/sortByTime.js";
  *  flapping between two equal-cost paths must not flood the Event table. */
 export const PATH_CHANGE_EVENT_FLOOR_MS = 10 * 60_000;
 
+/** Business rule 85(c): a certificate change within this long of the last one
+ *  for the same (host, check) moves the baseline but writes no second Event —
+ *  a load balancer whose backends serve two different certificates must not
+ *  flood the Event table on every run. */
+export const TLS_CHANGE_EVENT_FLOOR_MS = 10 * 60_000;
+
 /**
  * The subject id a result run by the Polaris SERVER itself is written under
  * (PathCheck.runOnServer, jobs/runServerPathChecks), in the FK-less assetId
@@ -235,6 +241,9 @@ interface SourceRow {
   lastPathHash: string | null;
   lastPathChangeEventAt: Date | null;
   lastSampleAt: Date | null;
+  lastTlsNotAfter: Date | null;
+  lastTlsIssuer: string | null;
+  lastTlsChangeEventAt: Date | null;
   check: { name: string; keepBodyExcerpt: boolean };
 }
 
@@ -243,6 +252,7 @@ async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise
     where: { assetId: assetId === POLARIS_SERVER_SUBJECT ? null : assetId, checkId: { in: [...new Set(checkIds)] } },
     select: {
       id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastSampleAt: true,
+      lastTlsNotAfter: true, lastTlsIssuer: true, lastTlsChangeEventAt: true,
       check: { select: { name: true, keepBodyExcerpt: true } },
     },
   });
@@ -253,6 +263,49 @@ function parseTlsNotAfter(raw: string | null | undefined): Date | null {
   if (!raw) return null;
   const d = new Date(raw);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Business rule 85(c): how a certificate's expiry moved. "later" is a renewal
+ *  (the usual case), "earlier" a replacement that expires sooner — worth more
+ *  attention, not less. null = the same expiry, no change. */
+export function tlsExpiryDirection(previous: Date, next: Date): "later" | "earlier" | null {
+  const d = next.getTime() - previous.getTime();
+  if (d === 0) return null;
+  return d > 0 ? "later" : "earlier";
+}
+
+/** Whole days between two expiries, signed (+ = the new one is later). */
+export function tlsExpiryShiftDays(previous: Date, next: Date): number {
+  return Math.round((next.getTime() - previous.getTime()) / 86_400_000);
+}
+
+interface TlsState {
+  notAfter: Date | null;
+  issuer: string | null;
+  lastEventAt: Date | null;
+  dirty: boolean;
+}
+
+/** One pending certificate-change Event, written once the host's name is known. */
+interface TlsChange {
+  checkId: string;
+  checkName: string;
+  at: Date;
+  previousNotAfter: Date;
+  notAfter: Date;
+  previousIssuer: string | null;
+  issuer: string | null;
+}
+
+function tlsChangeMessage(hostLabel: string, c: TlsChange): string {
+  const direction = tlsExpiryDirection(c.previousNotAfter, c.notAfter);
+  const days = Math.abs(tlsExpiryShiftDays(c.previousNotAfter, c.notAfter));
+  const newDay = c.notAfter.toISOString().slice(0, 10);
+  const oldDay = c.previousNotAfter.toISOString().slice(0, 10);
+  const what = direction === "later"
+    ? `renewed — expiry moved ${days} day${days === 1 ? "" : "s"} later`
+    : `replaced — expiry moved ${days} day${days === 1 ? "" : "s"} EARLIER`;
+  return `TLS certificate seen from ${hostLabel} for path check "${c.checkName}" ${what} (${oldDay} → ${newDay})`;
 }
 
 export async function ingestPathCheckSamples(
@@ -296,11 +349,42 @@ export async function ingestPathCheckSamples(
   }
   enqueuePathCheckSamples(rows);
 
+  // Business rule 85(c): walk each check's certificate readings oldest first
+  // against the source's baseline. Only runs NEWER than the source's latest
+  // result count — a late push carrying the old certificate must not read as
+  // a change back. A run that saw no certificate (a failed connect, a plain
+  // HTTP / TCP / ICMP check) is skipped: an outage is not a new certificate.
+  const tls = new Map<string, TlsState>();
+  const tlsChanges: TlsChange[] = [];
+  for (const row of sortOldestFirst(rows.filter((r) => r.tlsNotAfter), (r) => r.timestamp)) {
+    const src = sources.get(row.checkId)!;
+    if (src.lastSampleAt && src.lastSampleAt >= row.timestamp) continue;
+    const st = tls.get(row.checkId) ?? {
+      notAfter: src.lastTlsNotAfter, issuer: src.lastTlsIssuer, lastEventAt: src.lastTlsChangeEventAt, dirty: false,
+    };
+    const next = row.tlsNotAfter!;
+    if (st.notAfter === null) {
+      // The first certificate this source has seen is the baseline, not a change.
+      Object.assign(st, { notAfter: next, issuer: row.tlsIssuer, dirty: true });
+    } else if (tlsExpiryDirection(st.notAfter, next) !== null) {
+      if (!st.lastEventAt || row.timestamp.getTime() - st.lastEventAt.getTime() >= TLS_CHANGE_EVENT_FLOOR_MS) {
+        tlsChanges.push({
+          checkId: row.checkId, checkName: src.check.name, at: row.timestamp,
+          previousNotAfter: st.notAfter, notAfter: next, previousIssuer: st.issuer, issuer: row.tlsIssuer,
+        });
+        st.lastEventAt = row.timestamp;
+      }
+      Object.assign(st, { notAfter: next, issuer: row.tlsIssuer, dirty: true });
+    }
+    tls.set(row.checkId, st);
+  }
+
   const updates = [];
   for (const [checkId, { row }] of newest) {
     const src = sources.get(checkId)!;
     // A late-arriving older push must not overwrite a newer latest result.
     if (src.lastSampleAt && src.lastSampleAt > row.timestamp) continue;
+    const st = tls.get(checkId);
     updates.push(prisma.pathCheckSource.update({
       where: { id: src.id },
       data: {
@@ -311,10 +395,43 @@ export async function ingestPathCheckSamples(
         lastError: row.error,
         lastResolvedIp: row.resolvedIp,
         ...(row.ok ? {} : { lastFailAt: row.timestamp }),
+        ...(st?.dirty ? { lastTlsNotAfter: st.notAfter, lastTlsIssuer: st.issuer, lastTlsChangeEventAt: st.lastEventAt } : {}),
       },
     }));
   }
   if (updates.length) await prisma.$transaction(updates);
+
+  if (tlsChanges.length) {
+    // Rare (a certificate changes a few times a year), so the host's name is
+    // read only when there is an Event to write, never on the hot path.
+    const isServer = assetId === POLARIS_SERVER_SUBJECT;
+    const asset = isServer ? null : await prisma.asset.findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } });
+    const hostLabel = isServer ? POLARIS_SERVER_LABEL : asset?.hostname || asset?.ipAddress || assetId;
+    await Promise.all(tlsChanges.map((c) => {
+      const direction = tlsExpiryDirection(c.previousNotAfter, c.notAfter)!;
+      return logEvent({
+        action: "path_check.tls_cert_changed",
+        // Names the HOST, as a path change does (rule 46); the server names the check.
+        resourceType: isServer ? "path-check" : "asset",
+        resourceId: isServer ? c.checkId : assetId,
+        resourceName: isServer ? c.checkName : hostLabel,
+        // An expiry pulled EARLIER is the surprising case: warn. A renewal is news.
+        level: direction === "earlier" ? "warning" : "info",
+        message: tlsChangeMessage(hostLabel, c),
+        details: {
+          checkId: c.checkId,
+          checkName: c.checkName,
+          ...(isServer ? { source: "server" } : {}),
+          direction,
+          shiftDays: tlsExpiryShiftDays(c.previousNotAfter, c.notAfter),
+          previousNotAfter: c.previousNotAfter.toISOString(),
+          notAfter: c.notAfter.toISOString(),
+          previousIssuer: c.previousIssuer,
+          issuer: c.issuer,
+        },
+      });
+    }));
+  }
 
   const okN = rows.filter((r) => r.ok).length;
   recordPathCheckSamples("ok", okN);

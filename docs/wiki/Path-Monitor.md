@@ -318,6 +318,25 @@ most once every 10 minutes per host and check, naming the host. A route change
 seen from the Polaris server is written too, naming the check instead. It fires
 the automation when the server is ticked.
 
+### Certificate expiry and renewal
+
+An HTTPS check records the expiry date and issuer of the certificate it sees
+on every run. Two Path Monitor automations cover the usual needs:
+
+- **Expiring soon.** Fire when *a path check result meets the conditions
+  below*, with the condition **TLS certificate days remaining** `<` `30` (or
+  whatever lead time you want). Add a severity band at `< 7` to escalate.
+- **Renewed or replaced.** Fire when **a check's TLS certificate changes
+  (renewed or replaced)**. Polaris writes `path_check.tls_cert_changed` when
+  the certificate a host sees has a different expiry date from the last one it
+  saw. The event says whether the expiry moved later (a renewal, level *info*)
+  or earlier (a replacement that expires sooner, level *warning*), with both
+  dates and both issuers. The first certificate a host sees is a starting
+  point, not a change, and a run that could not connect is ignored. A target
+  behind a load balancer whose servers carry different certificates writes at
+  most one event every 10 minutes per host and check
+  ([rule 85(c)](Business-Rules#rule-85)).
+
 ## What is stored
 
 | Kept | For how long |

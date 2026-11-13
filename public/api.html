@@ -912,7 +912,8 @@
           on it with an automation on the <code>path*</code> metrics (<code>pathOk</code>,
           <code>pathLatencyMs</code>, <code>pathFailurePct</code>, <code>pathHttpStatus</code>,
           <code>pathHopCount</code>, <code>pathTlsDaysLeft</code>) or on the
-          <code>path_check.path_changed</code> event. Check endpoints gate on the
+          <code>path_check.path_changed</code> / <code>path_check.tls_cert_changed</code> events
+          (change types <code>path_check_path_changed</code> / <code>path_check_tls_cert_changed</code>). Check endpoints gate on the
           <code>pathChecks</code> key; the per-host readings under <code>/assets/:id</code> gate on
           <code>assets:read</code>, because they describe that asset.
         </p>
@@ -922,7 +923,7 @@
           asset: its results come back as the first <code>/results</code> row
           (<code>server: true</code>, <code>assetId: null</code>) and through the three
           <code>/path-checks/:id/server…</code> readings. They raise an automation alert only on
-          a <code>path*</code> trigger (or the <code>path_check_path_changed</code> change trigger)
+          a <code>path*</code> trigger (or a path change trigger)
           carrying <code>"includeServer": true</code> — a single condition, never with a
           <code>reset.mode</code> of <code>condition</code> — and that alert has
           <code>assetId: null</code> and <code>assetHostname: "Polaris server"</code>. A

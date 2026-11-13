@@ -383,7 +383,8 @@ describe that asset.
   caller (`429` past that).
 - A check has no threshold and never changes a host's Up / Down status. To be
   alerted, build an automation on the `path*` metrics or the
-  `path_check_path_changed` change type — the wizard's **Path Monitor** trigger.
+  `path_check_path_changed` / `path_check_tls_cert_changed` change types — the
+  wizard's **Path Monitor** trigger.
   Its devices are always the rule's `scope` ANDed with *Polaris Agent
   installed*, and a composite may not mix `path*` conditions with any other.
   `"includeServer": true` on a single `path*` condition (or on the change
