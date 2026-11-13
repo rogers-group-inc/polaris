@@ -513,6 +513,10 @@ export const ASSET_METRICS = [
   "fcCrcErrorRate", "fcLinkFailureRate", "fcSyncLossRate", "fcSignalLossRate", "fcInvalidTxWordRate",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
+  // A custom widget's own level (business rule 180): 0 normal, 1 warning,
+  // 2 critical, against the warningAt / criticalAt set on the widget — so one
+  // automation covers every widget with levels, each at its own thresholds.
+  "customWidgetLevel",
   // Agent-run path checks — the asset is the AGENT HOST and the
   // dimension is the check (`checkId`). pathOk is the 0/1 verdict,
   // pathFailurePct the windowed ratio, the rest gauges off the same samples

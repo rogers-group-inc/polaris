@@ -179,7 +179,9 @@ export interface GenericApiWidgetDef {
   min?: number;
   max?: number;
   warningAt?: number;
-  /** Which side of warningAt paints the card as a warning; absent = "above". */
+  /** The critical level (business rule 180), on the same side as warningAt. */
+  criticalAt?: number;
+  /** Which side of the levels is the problem; absent = "above". */
   warningWhen?: "above" | "below";
   /** state only — utils/stateProbes.ts StateMap (mode, values, labels, polarity). */
   stateMap?: unknown;

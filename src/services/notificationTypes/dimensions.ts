@@ -26,6 +26,7 @@ export const METRIC_DIMENSIONS: Record<string, string[]> = {
   sdwanPacketLoss: ["healthCheck", "link"],
   ipsecThroughputBps: ["tunnelName"],
   customWidgetValue: ["widgetId"],
+  customWidgetLevel: ["widgetId"],
   customStateValue: ["stateProbeId", "stateRowPattern"],
   pathLatencyMs: ["checkId"],
   pathHttpStatus: ["checkId"],

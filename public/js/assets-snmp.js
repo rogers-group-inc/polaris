@@ -611,17 +611,27 @@ function _formatDuration(sec) {
 }
 
 /**
- * A gauge / line widget's warning threshold against one reading, or null when
- * the widget sets none. `warningWhen` says which side is the warning — "above"
- * (the default: load, temperature) or "below" (battery, toner, runtime) — and
- * the threshold itself counts as breached, so "warn at 90" warns at 90.
- * Display only: an automation on the widget's value is what alerts.
+ * A widget's own levels (business rule 180) against one reading, or null when
+ * it sets neither. `at` is the warning level, `criticalAt` the critical one
+ * (either may be null); `warningWhen` says which side is the problem for both —
+ * "above" (the default: load, current, temperature) or "below" (battery,
+ * toner, runtime) — and a level itself counts as reached, so "warn at 90"
+ * warns at 90. `level` is 0 normal, 1 warning, 2 critical — the same reading a
+ * "Custom widget level" automation alerts on (src/utils/widgetLevel.ts).
  */
 function _customWidgetWarning(n, opts) {
-  var at = opts && opts.warningAt;
-  if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  function num(v) { return typeof v === "number" && Number.isFinite(v) ? v : null; }
+  var at = num(opts && opts.warningAt), crit = num(opts && opts.criticalAt);
+  if (at === null && crit === null) return null;
   var below = opts.warningWhen === "below";
-  return { at: at, below: below, breached: Number.isFinite(n) && (below ? n <= at : n >= at) };
+  function reached(t) { return t !== null && Number.isFinite(n) && (below ? n <= t : n >= t); }
+  var level = reached(crit) ? 2 : reached(at) ? 1 : 0;
+  return { at: at, criticalAt: crit, below: below, level: level, breached: level > 0 };
+}
+
+/** The severity colour of a level: amber at warning, red at critical. */
+function _customWidgetLevelColor(warn) {
+  return warn && warn.level === 2 ? "var(--color-sev-critical)" : "var(--color-sev-warning)";
 }
 
 /**
@@ -630,24 +640,40 @@ function _customWidgetWarning(n, opts) {
  * with the value it is compared to.
  */
 function _customWidgetWarningShown(displayValue, opts, fmt) {
-  var at = opts && opts.warningAt;
-  if (typeof at !== "number" || !Number.isFinite(at)) return null;
-  return _customWidgetWarning(displayValue, Object.assign({}, opts, { warningAt: fmt.conv(at) }));
+  if (!opts) return null;
+  function conv(v) { return typeof v === "number" && Number.isFinite(v) ? fmt.conv(v) : v; }
+  return _customWidgetWarning(displayValue, Object.assign({}, opts, { warningAt: conv(opts.warningAt), criticalAt: conv(opts.criticalAt) }));
 }
 
-/** The line under a gauge / line widget naming its threshold — amber once breached.
+/** The line under a widget naming its levels — amber at warning, red at critical.
  *  `text` formats one number with its unit (the widget's _cwDisplay text).
- *  The threshold only colours the card, so the caption names a STATE ("Warning
- *  state at or above 16.0 A"), never an action: it read "Warns at or above",
- *  which an operator took to mean a notification is sent (2026-11-13). An
- *  automation on the widget's value is what alerts; the tooltip says so. */
+ *  The caption names a STATE ("Warning state at or above 16.0 A"), never an
+ *  action: "Warns at or above" read as a promise of a notification
+ *  (2026-11-13). What alerts is a "Custom widget level" automation (rule 180);
+ *  the tooltip says so. */
 function _customWidgetWarnCaption(warn, text) {
   if (!warn) return "";
-  var rule = (warn.below ? "at or below " : "at or above ") + text(warn.at);
-  var tip = ' title="Display only: the card turns amber here. An automation on this widget&#39;s value (Custom widget value) is what sends an alert."';
-  return warn.breached
-    ? '<div class="custom-widget-warn is-breached"' + tip + ' style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning state — ' + escapeHtml(rule) + '</div>'
-    : '<div class="custom-widget-warn"' + tip + ' style="font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px">Warning state ' + escapeHtml(rule) + '</div>';
+  var cmp = warn.below ? "at or below " : "at or above ";
+  var tip = ' title="The card turns amber at the warning level and red at the critical level. A &quot;Custom widget level&quot; automation alerts on these levels."';
+  var muted = 'font-size:0.72rem;color:var(--color-text-tertiary);text-align:center;margin-top:2px';
+  if (warn.level === 2) {
+    return '<div class="custom-widget-warn is-breached is-critical"' + tip + ' style="font-size:0.76rem;font-weight:600;color:var(--color-sev-critical);text-align:center;margin-top:2px">Critical state — ' + escapeHtml(cmp + text(warn.criticalAt)) + '</div>';
+  }
+  var critPart = warn.criticalAt !== null ? "Critical " + cmp + text(warn.criticalAt) : "";
+  if (warn.level === 1) {
+    return '<div class="custom-widget-warn is-breached"' + tip + ' style="font-size:0.76rem;font-weight:600;color:var(--color-sev-warning);text-align:center;margin-top:2px">Warning state — ' + escapeHtml(cmp + text(warn.at)) + '</div>' +
+      (critPart ? '<div class="custom-widget-warn-critical" style="' + muted + '">' + escapeHtml(critPart) + '</div>' : "");
+  }
+  var parts = [];
+  if (warn.at !== null) parts.push("Warning state " + cmp + text(warn.at));
+  if (critPart) parts.push(critPart);
+  return '<div class="custom-widget-warn"' + tip + ' style="' + muted + '">' + escapeHtml(parts.join(" · ")) + '</div>';
+}
+
+/** One level's mark across a gauge's arc. */
+function _customWidgetGaugeTick(cls, frac, point, r, color) {
+  var t0 = point(frac, r - 9), t1 = point(frac, r + 9);
+  return '<line class="' + cls + '" x1="' + t0.x.toFixed(1) + '" y1="' + t0.y.toFixed(1) + '" x2="' + t1.x.toFixed(1) + '" y2="' + t1.y.toFixed(1) + '" stroke="' + color + '" stroke-width="2"/>';
 }
 
 function _renderCustomWidgetGauge(w) {
@@ -676,13 +702,16 @@ function _renderCustomWidgetGauge(w) {
   }
   var end = point(frac(n), r);
   var warn = _customWidgetWarningShown(n, opts, fmt);
-  var color = warn && warn.breached ? "var(--color-sev-warning)" : "#22d3ee";
+  var color = warn && warn.breached ? _customWidgetLevelColor(warn) : "#22d3ee";
   // The large-arc flag stays 0: the value arc never sweeps more than the
   // gauge's 180°, and a 1 past the midpoint drew the long way round the circle.
+  // A tick at each level inside the range: amber warning, red critical.
   var tick = "";
-  if (warn && warn.at >= min && warn.at <= max) {
-    var t0 = point(frac(warn.at), r - 9), t1 = point(frac(warn.at), r + 9);
-    tick = '<line class="custom-widget-warn-tick" x1="' + t0.x.toFixed(1) + '" y1="' + t0.y.toFixed(1) + '" x2="' + t1.x.toFixed(1) + '" y2="' + t1.y.toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="2"/>';
+  if (warn && warn.at !== null && warn.at >= min && warn.at <= max) {
+    tick += _customWidgetGaugeTick("custom-widget-warn-tick", frac(warn.at), point, r, "var(--color-sev-warning)");
+  }
+  if (warn && warn.criticalAt !== null && warn.criticalAt >= min && warn.criticalAt <= max) {
+    tick += _customWidgetGaugeTick("custom-widget-critical-tick", frac(warn.criticalAt), point, r, "var(--color-sev-critical)");
   }
   return '<div style="text-align:center">' +
     '<svg width="160" height="86" viewBox="0 0 160 86" aria-hidden="true">' +
@@ -762,8 +791,9 @@ function _renderCustomWidgetLine(w) {
   var warn = _customWidgetWarningShown(latest, opts, fmt);
   // The y-domain takes in the threshold, so its dashed line is on the chart
   // rather than off the top; the min / max labels stay the data's.
-  var lo = warn ? Math.min(minV, warn.at) : minV;
-  var hi = warn ? Math.max(maxV, warn.at) : maxV;
+  var levelVals = warn ? [warn.at, warn.criticalAt].filter(function (v) { return v !== null; }) : [];
+  var lo = Math.min.apply(null, [minV].concat(levelVals));
+  var hi = Math.max.apply(null, [maxV].concat(levelVals));
   if (lo >= 0) lo = 0;
   // A duration axis steps in whole time units (15 m, 30 m, 1 h …), not 2.5 × 10ⁿ
   // seconds — "1 h 6 m" / "33 m 20 s" ticks read as noise.
@@ -791,9 +821,11 @@ function _renderCustomWidgetLine(w) {
     return '<circle class="chart-hit" cx="' + xFor(p.t).toFixed(1) + '" cy="' + yFor(p.v).toFixed(1) + '" r="5" fill="transparent" style="cursor:crosshair"' +
       ' data-ts="' + p.t + '" data-v="' + escapeHtml(fmt.text(p.v)) + '"/>';
   }).join("");
-  var threshold = warn
-    ? '<line class="custom-widget-warn-line" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yFor(warn.at).toFixed(1) + '" y2="' + yFor(warn.at).toFixed(1) + '" stroke="var(--color-sev-warning)" stroke-width="1" stroke-dasharray="4 3"/>'
-    : "";
+  function levelLine(cls, v, color) {
+    return '<line class="' + cls + '" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + yFor(v).toFixed(1) + '" y2="' + yFor(v).toFixed(1) + '" stroke="' + color + '" stroke-width="1" stroke-dasharray="4 3"/>';
+  }
+  var threshold = (warn && warn.at !== null ? levelLine("custom-widget-warn-line", warn.at, "var(--color-sev-warning)") : "") +
+    (warn && warn.criticalAt !== null ? levelLine("custom-widget-critical-line", warn.criticalAt, "var(--color-sev-critical)") : "");
   return '<div class="cw-line" style="position:relative">' +
     '<svg width="100%" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">' +
       grid +
@@ -807,7 +839,7 @@ function _renderCustomWidgetLine(w) {
   '</div>' +
   '<div style="display:flex;justify-content:space-between;font-size:0.7rem;color:var(--color-text-tertiary);margin-top:2px">' +
     '<span>min ' + escapeHtml(fmt.text(minV)) + '</span>' +
-    '<span' + (warn && warn.breached ? ' style="color:var(--color-sev-warning);font-weight:600"' : '') + '>latest ' + escapeHtml(fmt.text(latest)) + '</span>' +
+    '<span' + (warn && warn.breached ? ' style="color:' + _customWidgetLevelColor(warn) + ';font-weight:600"' : '') + '>latest ' + escapeHtml(fmt.text(latest)) + '</span>' +
     '<span>max ' + escapeHtml(fmt.text(maxV)) + '</span>' +
   '</div>' +
   _customWidgetWarnCaption(warn, fmt.text);
@@ -840,16 +872,20 @@ function _renderCustomWidgetTable(w) {
 function _renderCustomWidgetScalarFallback(w) {
   var v = w.latest && w.latest.value;
   var n = typeof v === "number" ? v : (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
-  var txt;
+  var txt, warn = null, fmt = null;
   if (Number.isFinite(n)) {
-    var fmt = _cwDisplay(w);
+    fmt = _cwDisplay(w);
     txt = fmt.text(fmt.conv(n));
+    // A value widget's levels colour its text (rule 180), as a gauge's arc.
+    warn = _customWidgetWarningShown(fmt.conv(n), w.displayOptions || {}, fmt);
   } else {
     // Not a number (a DisplayString, a row array): shown as is, with its unit.
     var unit = (w.displayOptions && w.displayOptions.unit) ? (" " + w.displayOptions.unit) : "";
     txt = ((v === null || v === undefined) ? "—" : (typeof v === "object" ? JSON.stringify(v) : String(v))) + unit;
   }
-  return '<div style="font-size:1.4rem;font-weight:600">' + escapeHtml(txt) + '</div>';
+  var color = warn && warn.breached ? ";color:" + _customWidgetLevelColor(warn) : "";
+  return '<div class="custom-widget-value" style="font-size:1.4rem;font-weight:600' + color + '">' + escapeHtml(txt) + '</div>' +
+    (warn ? _customWidgetWarnCaption(warn, fmt.text) : "");
 }
 
 function _formatNumber(n) {

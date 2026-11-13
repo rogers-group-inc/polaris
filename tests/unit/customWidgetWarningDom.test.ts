@@ -56,9 +56,9 @@ beforeAll(() => {
       "_renderCustomWidgetScalarFallback", "_formatNumber",
       // The renderers draw through the widget display helper (°C/°F in the
       // install's unit, durations) — no PolarisTempUnit here, so plain numbers.
-      "_cwDisplay", "_formatDuration", "_customWidgetWarningShown"].map((n) => fnSrc(FILES.assets, n)),
+      "_cwDisplay", "_formatDuration", "_customWidgetWarningShown", "_customWidgetLevelColor", "_customWidgetGaugeTick"].map((n) => fnSrc(FILES.assets, n)),
     ...["WIDGET_VALUE_FORMATS", "WIDGET_UNIT_HINT"].map((n) => varSrc(FILES.settings, n)),
-    ...["_widgetFormField", "_widgetDisplayOptionsForm", "_widgetOptionsSummary", "_readWidgetDisplayOptions",
+    ...["_widgetFormField", "_widgetDisplayOptionsForm", "_widgetOptionsSummary", "_widgetLevelSummary", "_readWidgetDisplayOptions",
       "_widgetFormatSelectHTML"].map((n) => fnSrc(FILES.settings, n)),
   ].join("\n");
   // Indirect eval: the declarations land on globalThis, where the tests call them.
@@ -74,10 +74,20 @@ const gauge = (value: number, displayOptions: Record<string, unknown> = {}) =>
 
 describe("_customWidgetWarning", () => {
   it("warns at or above by default, and at or below when told", () => {
-    expect(g._customWidgetWarning(90, { warningAt: 90 })).toEqual({ at: 90, below: false, breached: true });
+    expect(g._customWidgetWarning(90, { warningAt: 90 })).toEqual({ at: 90, criticalAt: null, below: false, level: 1, breached: true });
     expect(g._customWidgetWarning(89, { warningAt: 90 }).breached).toBe(false);
     expect(g._customWidgetWarning(50, { warningAt: 50, warningWhen: "below" }).breached).toBe(true);
     expect(g._customWidgetWarning(51, { warningAt: 50, warningWhen: "below" }).breached).toBe(false);
+  });
+
+  // Business rule 180: the card's level is the one a "Custom widget level"
+  // automation reads — critical first, then warning, either side.
+  it("reads 0 / 1 / 2 against both levels, either side", () => {
+    const up = { warningAt: 16, criticalAt: 18 };
+    expect([10, 16, 17.9, 18, 25].map((v) => g._customWidgetWarning(v, up).level)).toEqual([0, 1, 1, 2, 2]);
+    const down = { warningAt: 50, criticalAt: 25, warningWhen: "below" };
+    expect([80, 50, 30, 25, 5].map((v) => g._customWidgetWarning(v, down).level)).toEqual([0, 1, 1, 2, 2]);
+    expect(g._customWidgetWarning(19, { criticalAt: 18 })).toMatchObject({ at: null, criticalAt: 18, level: 2 });
   });
 
   it("is null when the widget sets no threshold", () => {
@@ -110,6 +120,17 @@ describe("_renderCustomWidgetGauge", () => {
     expect(html).not.toContain("is-breached");
   });
 
+  it("draws a red tick at the critical level and turns the arc red past it (rule 180)", () => {
+    const opts = { unit: "A", max: 20, warningAt: 16, criticalAt: 18 };
+    const amber = gauge(17, opts);
+    expect(amber).toContain("custom-widget-warn-tick");
+    expect(amber).toContain("custom-widget-critical-tick");
+    expect(amber).toMatch(/custom-widget-gauge-arc[^>]*stroke="var\(--color-sev-warning\)"/);
+    const red = gauge(18.4, opts);
+    expect(red).toMatch(/custom-widget-gauge-arc[^>]*stroke="var\(--color-sev-critical\)"/);
+    expect(red).toContain("Critical state — at or above 18.0 A");
+  });
+
   it("draws no tick for a threshold outside the gauge's range, and no caption without one", () => {
     expect(gauge(10, { warningAt: 500 })).not.toContain("custom-widget-warn-tick");
     expect(gauge(10)).not.toContain("custom-widget-warn");
@@ -130,6 +151,15 @@ describe("_renderCustomWidgetLine", () => {
     expect(html).toContain("min 6000 s");
     expect(html).toContain("max 6400 s");
     expect(html).toContain("Warning state at or below 1800 s");
+  });
+
+  it("draws the critical level as a second dashed line inside the chart (rule 180)", () => {
+    const html = g._renderCustomWidgetLine({ samples: samples([7, 8, 7.5]), displayOptions: { unit: "A", warningAt: 16, criticalAt: 18 } });
+    const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+    const yc = Number(doc.querySelector(".custom-widget-critical-line")!.getAttribute("y1"));
+    const yw = Number(doc.querySelector(".custom-widget-warn-line")!.getAttribute("y1"));
+    expect(yc).toBeGreaterThanOrEqual(8);
+    expect(yc).toBeLessThan(yw);
   });
 
   it("flags the latest reading once it crosses", () => {
@@ -183,6 +213,25 @@ describe("_renderCustomWidgetLine", () => {
   });
 });
 
+// Business rule 180: a Value widget has levels too; they colour its text.
+describe("a Value widget's levels", () => {
+  const value = (v: unknown, displayOptions: Record<string, unknown> = {}) =>
+    g._renderCustomWidgetScalarFallback({ latest: { value: v }, displayOptions }) as string;
+
+  it("colours the reading amber at warning and red at critical, with the caption", () => {
+    const opts = { unit: "packs", warningAt: 21, criticalAt: 20, warningWhen: "below" };
+    expect(value(22, opts)).not.toContain("color:var(--color-sev");
+    expect(value(21, opts)).toContain("color:var(--color-sev-warning)");
+    expect(value(19, opts)).toContain("color:var(--color-sev-critical)");
+    expect(value(19, opts)).toContain("Critical state");
+  });
+
+  it("stays a bare reading without levels, or when it is not a number", () => {
+    expect(value(5)).not.toContain("custom-widget-warn");
+    expect(value("onLine", { warningAt: 1 })).not.toContain("custom-widget-warn");
+  });
+});
+
 describe("_cwNiceScale", () => {
   it("rounds to 1 / 2 / 2.5 / 5 × 10ⁿ steps and covers the data", () => {
     expect(g._cwNiceScale(0, 0.75)).toMatchObject({ lo: 0, hi: 0.8, step: 0.2 });
@@ -230,6 +279,19 @@ describe("the profile editor's warning fields", () => {
   it("summarises the side on the widget card", () => {
     expect(g._widgetOptionsSummary({ widgetType: "gauge", displayOptions: { warningAt: 20, warningWhen: "below" } })).toBe("warn ≤ 20");
     expect(g._widgetOptionsSummary({ widgetType: "line", displayOptions: { unit: "%", warningAt: 90 } })).toBe("unit % · warn ≥ 90");
+    expect(g._widgetOptionsSummary({ widgetType: "gauge", displayOptions: { warningAt: 16, criticalAt: 18 } })).toBe("warn ≥ 16 · critical ≥ 18");
+  });
+
+  // Business rule 180: a critical level beside the warning one, on every
+  // numeric widget type — a Value widget too, whose text the levels colour.
+  it("offers Critical at on gauge, line and value, and stores it", () => {
+    for (const t of ["gauge", "line", "value"]) {
+      expect(formFor(t, {}).querySelector(".mfg-widget-opt-critical"), t).not.toBeNull();
+    }
+    const both = formFor("value", { unit: "A", warningAt: 16, criticalAt: 18 });
+    expect(g._readWidgetDisplayOptions(both, "value")).toMatchObject({ warningAt: 16, criticalAt: 18 });
+    const critOnly = formFor("gauge", { criticalAt: 10, warningWhen: "below" });
+    expect(g._readWidgetDisplayOptions(critOnly, "gauge")).toEqual({ criticalAt: 10, warningWhen: "below" });
   });
 });
 
@@ -237,12 +299,31 @@ describe("the profile editor's warning fields", () => {
 // promise of a notification (2026-11-13), so the caption names a state and the
 // tooltip says an automation is what alerts.
 describe("_customWidgetWarnCaption wording", () => {
-  it("names a state, never an action, and points at automations", () => {
-    const quiet = g._customWidgetWarnCaption({ at: 16, below: false, breached: false }, (v: number) => v.toFixed(1) + " A");
+  const amps = (v: number) => v.toFixed(1) + " A";
+  it("names a state, never an action, and points at the level automation", () => {
+    const quiet = g._customWidgetWarnCaption(g._customWidgetWarning(10, { warningAt: 16 }), amps);
     expect(quiet).toContain("Warning state at or above 16.0 A");
     expect(quiet).not.toContain("Warns");
-    expect(quiet).toContain("An automation on this widget");
-    const hit = g._customWidgetWarnCaption({ at: 16, below: false, breached: true }, (v: number) => v.toFixed(1) + " A");
+    expect(quiet).toContain("Custom widget level");
+    const hit = g._customWidgetWarnCaption(g._customWidgetWarning(16.5, { warningAt: 16 }), amps);
     expect(hit).toContain("Warning state — at or above 16.0 A");
+  });
+
+  // Business rule 180: both levels are named; the caption turns red at critical.
+  it("names both levels, and the reached one in its colour", () => {
+    const opts = { warningAt: 16, criticalAt: 18 };
+    expect(g._customWidgetWarnCaption(g._customWidgetWarning(10, opts), amps))
+      .toContain("Warning state at or above 16.0 A · Critical at or above 18.0 A");
+    const warn = g._customWidgetWarnCaption(g._customWidgetWarning(17, opts), amps);
+    expect(warn).toContain("Warning state — at or above 16.0 A");
+    expect(warn).toContain("Critical at or above 18.0 A");
+    const crit = g._customWidgetWarnCaption(g._customWidgetWarning(18.3, opts), amps);
+    expect(crit).toContain("Critical state — at or above 18.0 A");
+    expect(crit).toContain("var(--color-sev-critical)");
+    expect(crit).not.toContain("Warning state");
+  });
+
+  it("a widget with only a critical level names only that", () => {
+    expect(g._customWidgetWarnCaption(g._customWidgetWarning(10, { criticalAt: 18 }), amps)).toContain(">Critical at or above 18.0 A<");
   });
 });

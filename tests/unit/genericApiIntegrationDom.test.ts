@@ -501,6 +501,22 @@ describe("Monitoring tab — monitor queries", () => {
     );
   });
 
+  // Business rule 180: a critical level in its own column after the side, so
+  // a line written before it existed parses the same.
+  it("reads a critical level after the side column, round-trips it, and refuses one short of warning", () => {
+    const parsed = scope._gaParseWidgetLines(
+      "Bank | gauge | bank | A | 0 | 20 | 16 |  | 18\nBattery | gauge | b | % | 0 | 100 | 50 | below | 25\nBackwards | gauge | x | A | 0 | 20 | 18 |  | 16",
+    );
+    expect(parsed.widgets).toEqual([
+      { name: "Bank", type: "gauge", path: "bank", unit: "A", min: 0, max: 20, warningAt: 16, criticalAt: 18 },
+      { name: "Battery", type: "gauge", path: "b", unit: "%", min: 0, max: 100, warningAt: 50, criticalAt: 25, warningWhen: "below" },
+    ]);
+    expect(parsed.bad).toEqual(["Backwards | gauge | x | A | 0 | 20 | 18 |  | 16"]);
+    expect(scope._gaFormatWidgetLines(parsed.widgets)).toBe(
+      "Bank | gauge | bank | A | 0 | 20 | 16 |  | 18\nBattery | gauge | b | % | 0 | 100 | 50 | below | 25",
+    );
+  });
+
   it("parses a state widget's OK values into a notEquals StateMap, and formats it back the same way", () => {
     const parsed = scope._gaParseWidgetLines("Door | state | door | closed, locked\nAlarm bit | state | alarm");
     expect(parsed.widgets).toEqual([

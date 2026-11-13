@@ -24,6 +24,7 @@ import { coreVector, coreConditionIsBelow, coreSeries, coresToName, formatCoreLi
 import { sdwanDimensionMatch, sdwanChildrenYielding } from "../../utils/sdwanDimensions.js";
 import { SERIES_CAP, lookbackMsFor, aggregateSinceMs, aggregateFallbackSinceMs, type DbRule, type ScopeAssetRow, type Reading, compareNum, compareValue } from "./ruleModel.js";
 import { assetIsAnsweringProbes, interfaceIsPinned, poeFaultCoversUnpinned, interfaceDimLabel, tunnelIsPinned, storageIsPinned } from "./scope.js";
+import { widgetLevel } from "../../utils/widgetLevel.js";
 
 // ─── Reading resolvers ──────────────────────────────────────────────────────
 
@@ -865,6 +866,23 @@ export async function resolveAssetMetricReadings(
       return reduceReadings(rows, index, (r) => r.widgetId, (r) => names.get(r.widgetId) ?? r.widgetId, (r) => {
         const n = typeof r.value === "number" ? r.value : Number(r.value);
         return Number.isFinite(n) ? n : null;
+      }, agg, winPolls);
+    }
+    case "customWidgetLevel": {
+      // Business rule 180: the widget's own level, 0 / 1 / 2, from the same
+      // scalar samples customWidgetValue compares. Only widgets that define a
+      // level are read — one without warningAt / criticalAt has no level to be
+      // at, so it never reads 0 and never clears a live alert by accident.
+      // Key = widget id, label = widget name (as customWidgetValue).
+      const { listCustomWidgetCatalog } = await import("../notificationDimensionService.js");
+      const catalog = new Map((await listCustomWidgetCatalog()).filter((w) => w.levels).map((w) => [w.id, w]));
+      if (catalog.size === 0) return [];
+      const widgetIds = df.widgetId ? (catalog.has(df.widgetId) ? [df.widgetId] : []) : [...catalog.keys()];
+      if (widgetIds.length === 0) return [];
+      const rows = await prisma.assetCustomWidgetSample.findMany({ where: { assetId: { in: ids }, timestamp: { gte: since }, kind: "scalar", widgetId: { in: widgetIds } }, select: { assetId: true, timestamp: true, widgetId: true, value: true } });
+      return reduceReadings(rows, index, (r) => r.widgetId, (r) => catalog.get(r.widgetId)?.name ?? r.widgetId, (r) => {
+        const n = typeof r.value === "number" ? r.value : Number(r.value);
+        return widgetLevel(Number.isFinite(n) ? n : null, catalog.get(r.widgetId)?.levels ?? null);
       }, agg, winPolls);
     }
     case "customStateValue": {
@@ -1726,7 +1744,7 @@ export async function deletedTargetGone(rule: DbRule, rows: SweepStateRow[]): Pr
   if (keyed.length === 0) return gone;
   const t = rule.trigger as { type?: string; metric?: string };
   if (t.type !== "asset_metric" || !t.metric) return gone;
-  const kind = isPathMetric(t.metric) ? "check" : t.metric === "customWidgetValue" ? "widget" : t.metric === "customStateValue" ? "probe" : null;
+  const kind = isPathMetric(t.metric) ? "check" : (t.metric === "customWidgetValue" || t.metric === "customWidgetLevel") ? "widget" : t.metric === "customStateValue" ? "probe" : null;
   if (!kind) return gone;
   // A state probe's key is `<probeId>|<rowKey>`; the others are the id itself.
   const idOf = (st: SweepStateRow) => (kind === "probe" ? st.dimensionKey.split("|")[0]! : st.dimensionKey);

@@ -7,6 +7,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
+import { widgetLevelsOf, widgetLevelsProblem } from "../../utils/widgetLevel.js";
 import { hasNoControlChars } from "../../utils/safeText.js";
 import { purgeDirectoryContacts } from "../../services/directorySyncService.js";
 import { detachIntegration, detachSummary, previewIntegrationDetach } from "../../services/integrationDetachService.js";
@@ -1196,9 +1197,15 @@ const GenericApiWidgetSchema = z.object({
   min:       z.number().finite().optional(),
   max:       z.number().finite().optional(),
   warningAt: z.number().finite().optional(),
+  // The critical level (business rule 180), on the same side as warningAt.
+  criticalAt: z.number().finite().optional(),
   // Which side of warningAt is the warning; absent = "above".
   warningWhen: z.enum(["above", "below"]).optional(),
   stateMap:  z.record(z.string(), z.unknown()).optional(),
+}).superRefine((w, ctx) => {
+  // Critical beyond warning on the problem side (business rule 180).
+  const problem = widgetLevelsProblem(widgetLevelsOf(w));
+  if (problem) ctx.addIssue({ code: "custom", message: `Widget "${w.name}": ${problem}`, path: ["criticalAt"] });
 });
 
 const GenericApiMonitorQuerySchema = z.object({

@@ -39,6 +39,7 @@ import { loadMemoryForecastSeries, memoryForecastFromDailyPoints, type MemoryFor
 import type { TrendPoint } from "../utils/linearTrend.js";
 import { forecastLevelsOf, forecastDaysOf, type SeverityBand } from "./notificationTypes.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
+import { isWidgetScopedAlert, buildWidgetValueChart, buildStateStripChart, type WidgetChartThreshold, type WidgetChart } from "./alertWidgetChartService.js";
 
 /**
  * Template token → what it draws. The token vocabulary lives in
@@ -53,7 +54,7 @@ export const CHART_TOKENS = [
   "chart.trigger", "chart.sensor", "chart.probeLoss",
   "chart.sdwanLatency", "chart.sdwanJitter", "chart.sdwanLoss",
   "chart.cpu", "chart.memory", "chart.responseTime",
-  "chart.storage", "chart.interface",
+  "chart.storage", "chart.interface", "chart.widget",
 ] as const;
 export type ChartToken = (typeof CHART_TOKENS)[number];
 
@@ -190,6 +191,12 @@ export function chartTokenForMetric(metric: string | null | undefined): ChartTok
     case "fcSignalLossRate":
     case "fcInvalidTxWordRate":
       return "chart.interface";
+    // A custom widget's own chart (rule 180, alertWidgetChartService): the
+    // widget's line for a value or level alert, a state probe's status strip.
+    case "customWidgetValue":
+    case "customWidgetLevel":
+    case "customStateValue":
+      return "chart.widget";
     default:
       // Throughput has no chart of its own yet, so the trigger token renders
       // away and the generic charts below it still tell the device's story.
@@ -389,7 +396,7 @@ const DEVICE_CHART_TOKENS: readonly ChartToken[] = ["chart.cpu", "chart.memory",
 export function chartTokensForAlert(
   tokens: Iterable<ChartToken>,
   metric: string | null | undefined,
-  has: { port: boolean; sensor: boolean; mount: boolean; ratePort?: boolean },
+  has: { port: boolean; sensor: boolean; mount: boolean; ratePort?: boolean; widget?: boolean },
 ): Set<ChartToken> {
   const wanted = new Set(tokens);
   const primary = chartTokenForMetric(metric);
@@ -397,6 +404,15 @@ export function chartTokensForAlert(
   // The port's own rate chart (rule 159a): only on an interface rate alert
   // that names its port; every other alert loses the token, no query.
   if (!isInterfaceRateAlert(metric) || !has.ratePort) wanted.delete("chart.interface");
+  // The widget's own chart (rule 180): only on a custom-widget alert naming
+  // its widget or probe row. Such an alert keeps response time beside it —
+  // the "is the device answering at all" picture — and drops CPU, memory,
+  // packet loss and the sensor chart: a PDU or UPS reports none of the first
+  // two, and loss repeats what response time already says.
+  if (!isWidgetScopedAlert(metric) || !has.widget) wanted.delete("chart.widget");
+  if (isWidgetScopedAlert(metric)) {
+    for (const t of ["chart.cpu", "chart.memory", "chart.probeLoss", "chart.sensor"] as const) wanted.delete(t);
+  }
   // An alert about one port never draws the device charts — see
   // isPortScopedAlert. The only thing it can draw is the SD-WAN trio, when the
   // port is an SD-WAN member; without a port to ask about it draws nothing.
@@ -514,6 +530,9 @@ const META: Record<ChartToken, { label: string; unit: string; color: string; per
   // Label and unit come from INTERFACE_RATE_CHART; the blue is the email's
   // informational blue, the one the approved canvas drew CRC errors in.
   "chart.interface": { label: "Interface errors", unit: "", color: "#0277bd", percent: false },
+  // Label, unit and lines come from the widget (alertWidgetChartService); the
+  // orange is the approved canvas's widget line.
+  "chart.widget": { label: "Custom widget", unit: "", color: "#ea580c", percent: false },
 };
 
 /** Even-ish downsample that always keeps the newest point (the alerting one). */
@@ -1873,6 +1892,20 @@ async function renderInterfaceRateChart(
   };
 }
 
+/** Rasterise a widget chart (rule 180) into the entry the email embeds. */
+async function renderWidgetChart(chart: WidgetChart): Promise<RenderedChart> {
+  const token: ChartToken = "chart.widget";
+  const png = await rasterize(chart.svg);
+  const cid = `polaris-${token.replace(".", "-")}@polaris`;
+  return {
+    token,
+    cid,
+    hasData: true,
+    summary: chart.summary,
+    attachment: png ? { cid, filename: `${token.replace(".", "-")}.png`, contentType: "image/png", content: png } : null,
+  };
+}
+
 /** A test alert's port series: quiet, then a climb past the threshold. */
 function sampleInterfaceRateSeries(metric: string, threshold: number | null, now: Date): SparkPoint[] {
   const spec = INTERFACE_RATE_CHART[metric];
@@ -2116,6 +2149,12 @@ export async function buildAlertCharts(
      * rule) draws toward 100 % over two weeks.
      */
     memoryForecast?: MemoryForecastTarget | null;
+    /**
+     * A `customWidgetValue` alert's fired threshold and its severity — the
+     * dashed line its widget chart draws (rule 180), resolved per alert by
+     * notificationDeliveryService (`widgetChartThresholdFromRule`).
+     */
+    widgetThreshold?: WidgetChartThreshold | null;
   },
 ): Promise<Map<ChartToken, RenderedChart>> {
   // Resolve the alias up front: from here on it's an ordinary token request,
@@ -2135,8 +2174,23 @@ export async function buildAlertCharts(
     sensor: !!opts?.sensorName,
     mount: !!mountPath,
     ratePort: !!ratePort,
+    widget: isWidgetScopedAlert(opts?.metric) && !!(opts?.dimension ?? opts?.sensorName),
   });
   if (wanted.size === 0) return out;
+
+  // The widget's own chart (rule 180) is built on its own, like the port's.
+  let widgetChart: WidgetChart | null = null;
+  if (wanted.has("chart.widget")) {
+    const to = (opts?.now ?? new Date()).getTime();
+    const dim = opts?.dimension ?? opts?.sensorName ?? null;
+    try {
+      widgetChart = opts!.metric === "customStateValue"
+        ? await buildStateStripChart(assetId, { dimension: dim, from: to - CHART_WINDOW_MS, to, sampleData: !!opts?.sampleData })
+        : await buildWidgetValueChart(assetId, { metric: opts!.metric!, dimension: dim, from: to - CHART_WINDOW_MS, to, threshold: opts?.widgetThreshold ?? null, sampleData: !!opts?.sampleData });
+    } catch (err) {
+      logger.warn({ err: (err as Error)?.message, assetId, dimension: dim }, "alert widget chart load failed — sending without it");
+    }
+  }
 
   // The port's rate chart is built on its own, like storage's: its series and
   // unit come from the metric (INTERFACE_RATE_CHART), its line is the
@@ -2298,6 +2352,7 @@ export async function buildAlertCharts(
     // Rendered from its own spec above; never read from here.
     "chart.storage": [],
     "chart.interface": [],
+    "chart.widget": [],
   };
 
   /** The health check's own SLA target for a chart, when it configures one. */
@@ -2325,6 +2380,10 @@ export async function buildAlertCharts(
     }
     if (token === "chart.memory" && memForecastAlert) {
       if (memForecast) out.set(token, await renderStorageChart(memForecast, META[token].color, token));
+      continue;
+    }
+    if (token === "chart.widget") {
+      if (widgetChart) out.set(token, await renderWidgetChart(widgetChart));
       continue;
     }
     if (token === "chart.interface") {

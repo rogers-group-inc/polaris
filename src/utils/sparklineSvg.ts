@@ -145,6 +145,13 @@ export interface SparklineOptions {
   /** The legend's name for the dashed `threshold` rule. Defaults to "Threshold". */
   thresholdLegend?: string;
   /**
+   * More dashed rules, each in its own colour and named in the legend — a
+   * custom widget's warning and critical levels (business rule 180), or an
+   * automation's severity bands. Folded into the axis range like `threshold`,
+   * and, like it, only named when it fell on the axis.
+   */
+  levels?: Array<{ value: number; color: string; legend: string }>;
+  /**
    * The colour an "outage" span is drawn in — the covering down automation's
    * SEVERITY colour (business rule 36), resolved by the caller through
    * `downSeverityCss` in utils/severityStyle.ts.
@@ -415,8 +422,9 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   const projection = opts.projection ?? [];
   const projMin = projection.reduce((m, p) => Math.min(m, p.v), Infinity);
   const projMax = projection.reduce((m, p) => Math.max(m, p.v), -Infinity);
-  let yMin = opts.yMin ?? Math.min(stats.min, projMin, opts.threshold ?? Infinity);
-  let yMax = opts.yMax ?? Math.max(stats.max, projMax, opts.threshold ?? -Infinity, opts.ceiling ?? -Infinity);
+  const levelValues = (opts.levels ?? []).map((l) => l.value).filter((v) => Number.isFinite(v));
+  let yMin = opts.yMin ?? Math.min(stats.min, projMin, opts.threshold ?? Infinity, ...levelValues);
+  let yMax = opts.yMax ?? Math.max(stats.max, projMax, opts.threshold ?? -Infinity, opts.ceiling ?? -Infinity, ...levelValues);
   if (opts.yMin === undefined && opts.yMax === undefined) {
     const span = yMax - yMin;
     if (span <= 0) {
@@ -646,6 +654,11 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
       ? `<line x1="${PAD_L}" y1="${y(opts.threshold).toFixed(1)}" x2="${width - PAD_R}" y2="${y(opts.threshold).toFixed(1)}" stroke="#dc2626" stroke-width="1" stroke-dasharray="4 3"/>`
       : "";
 
+  const drawnLevels = (opts.levels ?? []).filter((l) => Number.isFinite(l.value) && l.value >= yMin && l.value <= yMax);
+  const levelLines = drawnLevels
+    .map((l) => `<line x1="${PAD_L}" y1="${y(l.value).toFixed(1)}" x2="${width - PAD_R}" y2="${y(l.value).toFixed(1)}" stroke="${l.color}" stroke-width="1" stroke-dasharray="4 3"/>`)
+    .join("");
+
   // The capacity rule: solid grey, labelled inside the plot just under the
   // line (the caption owns the row above the plot, so a label there collides).
   const ceilingLine =
@@ -710,6 +723,7 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
   }
   if (projectionSvg) entries.push({ label: "Forecast", color, style: "dash" });
   if (thresholdLine) entries.push({ label: opts.thresholdLegend ?? "Threshold", color: "#dc2626", style: "dash" });
+  for (const l of drawnLevels) entries.push({ label: l.legend, color: l.color, style: "dash" });
   if ((opts.alarmSpans ?? []).some((s) => s.to >= from && s.from <= to)) entries.push(alarmEntry);
   // One entry is just the series, which the title already names: a key under a
   // plain CPU line would only repeat "CPU".
@@ -717,7 +731,79 @@ export function sparklineSvg(points: SparkPoint[], opts: SparklineOptions): stri
     ? legendSvg(entries, height, width)
     : { svg: "", height: 0 };
 
-  return headFor(height + key.height) + defsBlock + alarmBands + grid + area + background + line + dot + projectionSvg + ceilingLine + thresholdLine + axis + xLabels + caption + key.svg + `</svg>`;
+  return headFor(height + key.height) + defsBlock + alarmBands + grid + area + background + line + dot + projectionSvg + ceilingLine + thresholdLine + levelLines + axis + xLabels + caption + key.svg + `</svg>`;
+}
+
+/** The status strip's two lanes: the OK side faint green, the problem side solid red. */
+const STATUS_STRIP_OK_COLOR = "#2e7d32";
+const STATUS_STRIP_PROBLEM_COLOR = "#dc2626";
+
+export interface StatusStripOptions {
+  /** Chart title, drawn top-left — the state probe's name (and row). */
+  label: string;
+  /** The window, ms epoch. */
+  from: number;
+  to: number;
+  /** What the OK side and the problem side are called ("On utility power"). */
+  okLabel: string;
+  problemLabel: string;
+  /** Which sample value (0 or 1) is the problem side. */
+  problemValue: 0 | 1;
+  width?: number;
+}
+
+/**
+ * A state probe's last hour as ONE lane (business rule 180's email charts):
+ * each sample holds until the next, the problem side solid red and the OK side
+ * faint green, so a line chart of 0 / 1 — which reads as a square wave with no
+ * words on it — becomes "On battery / bypass 12 min of the last hour · now
+ * On battery / bypass". Caller omits the chart when the window held no sample.
+ */
+export function statusStripSvg(points: SparkPoint[], opts: StatusStripOptions): string {
+  const width = opts.width ?? W;
+  const laneTop = PAD_T + 4;
+  const laneH = 22;
+  const axisY = laneTop + laneH;
+  const height = axisY + PAD_B;
+  const plotW = width - PAD_L - PAD_R;
+  const from = opts.from;
+  const span = Math.max(1, opts.to - from);
+  const x = (t: number) => PAD_L + Math.max(0, Math.min(1, (t - from) / span)) * plotW;
+  const pts = points.filter((p) => p.t <= opts.to).slice().sort((a, b) => a.t - b.t);
+  let problemMs = 0;
+  const rects: string[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i]!;
+    const start = Math.max(p.t, from);
+    const end = i + 1 < pts.length ? pts[i + 1]!.t : opts.to;
+    if (end <= start) continue;
+    const problem = p.v === opts.problemValue;
+    if (problem) problemMs += end - start;
+    const x1 = x(start), x2 = x(end);
+    rects.push(problem
+      ? `<rect x="${x1.toFixed(1)}" y="${laneTop}" width="${Math.max(1, x2 - x1).toFixed(1)}" height="${laneH}" fill="${STATUS_STRIP_PROBLEM_COLOR}" fill-opacity="0.85"/>`
+      : `<rect x="${x1.toFixed(1)}" y="${laneTop}" width="${Math.max(1, x2 - x1).toFixed(1)}" height="${laneH}" fill="${STATUS_STRIP_OK_COLOR}" fill-opacity="0.22"/>`);
+  }
+  const last = pts[pts.length - 1];
+  const nowLabel = !last ? "no reading" : last.v === opts.problemValue ? opts.problemLabel : opts.okLabel;
+  const minutes = Math.round(problemMs / 60_000);
+  const captionText = `${opts.problemLabel} ${minutes} min of the last ${timeAxisLabel(span) === "60 min" ? "hour" : timeAxisLabel(span)} · now ${nowLabel}`;
+  const key = legendSvg([
+    { label: opts.okLabel, color: STATUS_STRIP_OK_COLOR, style: "band" },
+    { label: opts.problemLabel, color: STATUS_STRIP_PROBLEM_COLOR, style: "band" },
+  ], height, width);
+  const label = (lx: number, anchor: "start" | "end", text: string) =>
+    `<text x="${lx.toFixed(1)}" y="${height - 5}"${anchor === "start" ? "" : ` text-anchor="end"`} font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#9ca3af">${esc(text)}</text>`;
+  const h = height + key.height;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}">` +
+    `<rect x="0" y="0" width="${width}" height="${h}" fill="#ffffff"/>` +
+    `<text x="4" y="14" font-family="Helvetica,Arial,sans-serif" font-size="12" font-weight="bold" fill="#1f2430">${esc(opts.label)}</text>` +
+    `<text x="${width - PAD_R}" y="14" text-anchor="end" font-family="Helvetica,Arial,sans-serif" font-size="11" fill="#4b5563">${esc(captionText)}</text>` +
+    `<rect x="${PAD_L}" y="${laneTop}" width="${plotW}" height="${laneH}" fill="#f3f4f6"/>` +
+    rects.join("") +
+    `<line x1="${PAD_L}" y1="${axisY}" x2="${width - PAD_R}" y2="${axisY}" stroke="#d1d5db" stroke-width="1"/>` +
+    label(PAD_L, "start", `-${timeAxisLabel(span)}`) + label(width - PAD_R, "end", "now") +
+    key.svg + `</svg>`;
 }
 
 /** Split a secondary series wherever its samples stop arriving — a gap over

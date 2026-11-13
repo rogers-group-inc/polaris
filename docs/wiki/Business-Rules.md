@@ -3703,3 +3703,16 @@ shown in the racks are drawn as cables: each leaves its device into the nearer c
 manager, runs up to the trough, along it and down into the other device. You can re-route a
 cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
 its automatic route.
+
+### Rule 180
+
+**A custom widget's warning and critical levels are its own, and one automation alerts on them for every widget.**
+A gauge, line or value widget on a manufacturer profile (and a Generic API gauge or line) can
+set a **Warning at** and a **Critical at** level; **Warn when** says whether the problem side is
+above or below. The card turns amber at the warning level and red at the critical level. An
+automation on **Custom widget level** reads every widget that has levels against its own
+levels — so one automation covers an AP8830's 16 A bank and an AP8870's 19 A bank alike —
+and says "Bank 2 Current is in critical state". Set it to *at or above 1* for warning and add
+a severity band at 2 for critical. A widget with no levels is never read. A custom-widget
+alert's email leads with that widget's own chart (its levels or the threshold that fired, or a
+state probe's status lane), with response time underneath.

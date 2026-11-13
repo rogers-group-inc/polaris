@@ -196,6 +196,9 @@ export const DEFAULT_ALERT_TEXT = [
   // 159a) — usually already drawn by {chart.trigger}, which it then does not
   // repeat; renders away on every other alert.
   "{chart.interface}",
+  // A custom widget's own chart (rule 180) — its line, or a state probe's
+  // status strip; the same {chart.trigger} rule applies.
+  "{chart.widget}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -431,6 +434,8 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.storage}",
   // See the text body: an interface rate alert's port chart.
   "{chart.interface}",
+  // See the text body: a custom widget alert's own chart.
+  "{chart.widget}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",

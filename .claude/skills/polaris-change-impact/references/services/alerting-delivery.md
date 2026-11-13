@@ -313,6 +313,28 @@ Also note the two storage conventions: user/role/group `regionTags` are stored *
 
 ---
 
+## services/alertWidgetChartService.ts
+
+**What it owns:** The chart a CUSTOM-WIDGET alert leads its email with (business rule 180, from the approved design canvas of 2026-11-13) — `{chart.widget}`, which `{chart.trigger}` resolves to on `customWidgetValue` / `customWidgetLevel` / `customStateValue`. A value or level alert gets the widget's last hour as a line in the widget's own name and unit (orange `#ea580c`); a state alert gets the probe row as one status lane.
+
+**Public API:** `isWidgetScopedAlert(metric)`; `widgetChartThresholdFromRule(rule, severity)` (pure: the severity band the alert is AT, else the trigger's threshold, with its severity; null for any other condition); `buildWidgetValueChart(assetId, {metric, dimension, from, to, threshold?, sampleData?})` and `buildStateStripChart(assetId, {dimension, from, to, sampleData?})` → `{svg, summary}` or null.
+
+**Cross-service deps:** `notificationDimensionService.listCustomWidgetCatalog` (name, unit, `levels`) and `manufacturerProfileService.listStateProbes` (name, `stateMap`) — both lazy-imported, as `readings.ts` does, to stay out of the alert-chart import graph; Prisma reads of `AssetCustomWidgetSample` (`kind: "scalar"`) and `AssetStateSample`; `utils/sparklineSvg` (`sparklineSvg` with `levels`, `statusStripSvg`); `utils/severityStyle.severityCss`; `utils/stateProbes.normalizeStateMap`.
+
+**Used by:** `alertChartService.buildAlertCharts` (builds it before the render loop and rasterises it through `renderWidgetChart`); `notificationDeliveryService.emailMessageFor` (`widgetChartThreshold` → `widgetChartThresholdFromRule`, memoised per (rule, severity) in `RenderMemo.widgetThreshold`, read only for a `customWidgetValue` alert that draws the chart).
+
+**Invariants:**
+- **No reading in the hour → null → no chart.** Never an empty box under "Bank 2 Current is in critical state".
+- A widget alert's `Notification.dimension` is the widget id (`customWidgetValue` / `customWidgetLevel`) or `"<probeId>|<rowKey>"` (`customStateValue`) — the `dimKey` `readings.ts` writes. A rowKey of "" is a scalar probe and its chart is not row-labelled; a table probe's is ("Fan — Fan 2", from the newest sample's `rowLabel`).
+- A LEVEL alert draws the widget's own levels (amber warning, red critical, `Warning level` / `Critical level` in the legend) read live from the catalogue; a VALUE alert draws ONE line, the threshold that fired, in that severity's colour. Never both.
+- The status lane: problem side solid `#dc2626` at 0.85, OK side `#2e7d32` at 0.22, each sample holding until the next and the last until `to`; caption "<problem label> N min of the last hour · now <label>". The problem side is `stateMap.trueIsProblem ? 1 : 0`.
+- `alertChartService.chartTokensForAlert` drops CPU, memory, packet loss and the sensor chart from a widget alert and keeps response time; the token itself renders away unless the alert is widget-scoped and names a dimension.
+- A failed load logs at warn in `buildAlertCharts` and sends without the chart.
+
+**When changing this:** a new custom-widget metric goes into `WIDGET_SCOPED_METRICS` AND `alertChartService.chartTokenForMetric`; a new line on the value chart goes through `sparklineSvg`'s `levels` (it folds them into the axis and the legend). `tests/unit/alertWidgetChart.test.ts` pins the token set, both charts, the threshold choice and the empty case.
+
+---
+
 ## services/alertInterfaceService.ts
 
 **What it owns:** The per-INTERFACE block an alert email carries when the thing that broke is one port — the LLDP-neighbour lookup for that port and both rendered forms of it. It is the answer to what `alertChartService.isPortScopedAlert` removes: an interface-down email with no charts and no LLDP block would be a headline and nothing else.

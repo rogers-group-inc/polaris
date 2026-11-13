@@ -50,6 +50,7 @@ that, its newest reading is used. See [rule 178](Business-Rules#rule-178).
 | `sdwanLatencyMs` / `sdwanJitterMs` / `sdwanPacketLoss` | ms / ms / % | health check, member |
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` — **Custom widget value** | the widget's own | widget (a gauge, line or HTTP-check widget, picked by name) |
+| `customWidgetLevel` — **Custom widget level** | 0 normal, 1 warning, 2 critical | widget (optional — leave it empty to cover every widget whose profile sets a Warning at or Critical at level; [rule 180](Business-Rules#rule-180)). *At or above 1* alerts on warning; add a severity band at 2 for critical. The alert reads "Bank 2 Current is in critical state" |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
 
 The path check metrics are not here — they have their own trigger type,

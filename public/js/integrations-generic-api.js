@@ -316,7 +316,7 @@ var _GA_MONITOR_MAP_EXAMPLES = {
   widgets:      "",
 };
 
-var _GA_WIDGET_FORMAT_HINT = 'gauge / line: <code>name | type | path | unit | min | max | warn at | above or below</code> (the last five optional; a warning is at or above its value unless the last column says below). state: <code>name | state | path | values that mean OK</code> — anything else shows as an alarm.';
+var _GA_WIDGET_FORMAT_HINT = 'gauge / line: <code>name | type | path | unit | min | max | warn at | above or below | critical at</code> (the last six optional; a level is reached at or above its value unless the side column says below, and a &quot;Custom widget level&quot; automation alerts on warning and critical). state: <code>name | state | path | values that mean OK</code> — anything else shows as an alarm.';
 
 function _gaMonitorQueryHTML(q) {
   q = q || {};
@@ -371,7 +371,8 @@ function _gaFormatWidgetLines(widgets) {
       var ok = (w.stateMap && w.stateMap.mode === "notEquals" && Array.isArray(w.stateMap.values)) ? w.stateMap.values : [];
       return [w.name, "state", w.path].concat(ok.length ? [ok.join(", ")] : []).join(" | ");
     }
-    var cols = [w.name, w.type, w.path, w.unit || "", w.min != null ? String(w.min) : "", w.max != null ? String(w.max) : "", w.warningAt != null ? String(w.warningAt) : "", w.warningAt != null && w.warningWhen === "below" ? "below" : ""];
+    var hasLevel = w.warningAt != null || w.criticalAt != null;
+    var cols = [w.name, w.type, w.path, w.unit || "", w.min != null ? String(w.min) : "", w.max != null ? String(w.max) : "", w.warningAt != null ? String(w.warningAt) : "", hasLevel && w.warningWhen === "below" ? "below" : "", w.criticalAt != null ? String(w.criticalAt) : ""];
     while (cols.length > 3 && cols[cols.length - 1] === "") cols.pop();
     return cols.join(" | ");
   }).join("\n");
@@ -401,15 +402,21 @@ function _gaParseWidgetLines(text) {
     } else {
       var num = function (v) { if (v === undefined || v === "") return undefined; var n = Number(v); return isFinite(n) ? n : NaN; };
       if (c[3]) w.unit = c[3];
-      var mn = num(c[4]), mx = num(c[5]), wa = num(c[6]);
-      if ([mn, mx, wa].some(function (n) { return n !== undefined && isNaN(n); })) { bad.push(s); return; }
+      var mn = num(c[4]), mx = num(c[5]), wa = num(c[6]), ca = num(c[8]);
+      if ([mn, mx, wa, ca].some(function (n) { return n !== undefined && isNaN(n); })) { bad.push(s); return; }
       if (mn !== undefined) w.min = mn;
       if (mx !== undefined) w.max = mx;
       if (wa !== undefined) w.warningAt = wa;
-      // Which side of warn-at is the warning: "above" (the default) or "below".
+      // The critical level (business rule 180) — its own column after the side,
+      // so a line written before it existed still parses the same.
+      if (ca !== undefined) w.criticalAt = ca;
+      // Which side of the levels is the problem: "above" (the default) or "below".
       var when = (c[7] || "").toLowerCase();
       if (when && when !== "above" && when !== "below") { bad.push(s); return; }
-      if (when === "below" && wa !== undefined) w.warningWhen = "below";
+      if (when === "below" && (wa !== undefined || ca !== undefined)) w.warningWhen = "below";
+      // Critical must lie beyond warning on the problem side, or a card would
+      // read critical before warning.
+      if (wa !== undefined && ca !== undefined && (w.warningWhen === "below" ? ca > wa : ca < wa)) { bad.push(s); return; }
     }
     widgets.push(w);
   });
