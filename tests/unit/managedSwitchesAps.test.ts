@@ -47,7 +47,9 @@ const m = vi.hoisted(() => ({
   reconcileMacs: vi.fn(),
   isGhost: vi.fn(),
   mergeGhost: vi.fn(),
+  ipRefresh: vi.fn(),
 }));
+vi.mock("../../src/services/assetIpHistoryService.js", () => ({ refreshIpHistoryLastSeen: m.ipRefresh }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: m.logEvent,
@@ -221,8 +223,9 @@ describe("FortiSwitch — updating", () => {
   });
 
   it("status: written with statusChangedAt only when it changes; never over maintenance", async () => {
+    // Unchanged → not re-sent at all (the prune drops what the row holds).
     await run({ fortiSwitches: [sw()] }, { assetIdx: index([existingSwitch()]) }).done;
-    expect(updateData()).toMatchObject({ status: "active" });
+    expect("status" in updateData()).toBe(false);
     expect(updateData().statusChangedAt).toBeUndefined();
 
     db.assetUpdate.mockClear();
@@ -304,6 +307,45 @@ describe("FortiSwitch — updating", () => {
   });
 });
 
+// ─── Skip unchanged writes (efficiency audit) ────────────────────────────────
+
+describe("unchanged fields are left out of the write", () => {
+  // A row as the run's full-row preload carries it: pin columns present and empty.
+  const unpinned = { ipOverride: false, ipBlankPinned: false, primaryAddressIp: null, hostnameOverride: null, ipSource: "SITE-A-FW", osVersion: "v7.4.4" };
+
+  it("an unchanged, monitored switch is not written at all; its IP history is still refreshed", async () => {
+    // First pass learns the topology blob the switch produces…
+    await run({ fortiSwitches: [sw()] }, { assetIdx: index([existingSwitch(unpinned)]) }).done;
+    const topology = updateData().fortinetTopology;
+    db.assetUpdate.mockClear();
+    m.ipRefresh.mockClear();
+    // …a row already holding all of it (monitored: discovery may not bump lastSeen).
+    const row = existingSwitch({ ...unpinned, monitored: true, fortinetTopology: topology, lastSeen: new Date(NOW), acquiredAt: new Date(1_700_000_000_000) });
+    await run({ fortiSwitches: [sw()] }, { assetIdx: index([row]), switchMonitorCfg: { ...OFF, addAsMonitored: true } }).done;
+    expect(db.assetUpdate).not.toHaveBeenCalled();
+    expect(m.ipRefresh).toHaveBeenCalledWith([{ assetId: "e1", ip: "10.2.0.11", source: "SITE-A-FW" }]);
+  });
+
+  it("only the changed key is sent; a pinned row keeps its IP", async () => {
+    await run({ fortiSwitches: [sw({ osVersion: "v7.4.5" })] }, { assetIdx: index([existingSwitch(unpinned)]) }).done;
+    const d = updateData();
+    expect(d.osVersion).toBe("v7.4.5");
+    expect("ipAddress" in d).toBe(false);
+    expect("serialNumber" in d).toBe(false);
+    // hostnameOverride null → hostname equal to the row's is dropped too.
+    expect("hostname" in d).toBe(false);
+
+    db.assetUpdate.mockClear();
+    await run({ fortiSwitches: [sw()] }, { assetIdx: index([existingSwitch({ ...unpinned, ipOverride: true })]) }).done;
+    expect(updateData()).toMatchObject({ ipAddress: "10.2.0.11", ipSource: "SITE-A-FW" });
+  });
+
+  it("assetType is still written when the branch retypes the in-memory row first", async () => {
+    await run({ fortiSwitches: [sw()] }, { assetIdx: index([existingSwitch({ ...unpinned, assetType: "other" })]) }).done;
+    expect(updateData().assetType).toBe("switch");
+  });
+});
+
 // ─── The class-monitor stamp ─────────────────────────────────────────────────
 
 describe("class-monitor stamp on an existing switch", () => {
@@ -312,7 +354,7 @@ describe("class-monitor stamp on an existing switch", () => {
     ["off + monitored → swept off", { ...OFF }, { monitored: true }, { monitored: false }],
     ["addAsMonitored only → monitored, no credential", { ...OFF, addAsMonitored: true }, { monitored: false }, { monitored: true }],
     ["enabled, no credential to stamp → monitored only", { ...OFF, enabled: true, addAsMonitored: true }, { monitored: false }, { monitored: true }],
-    ["same credential → re-stamped (idempotent)", { ...OFF, enabled: true, addAsMonitored: true, stampCredentialId: "c1" }, { monitored: true, monitorCredentialId: "c1" }, { monitorCredentialId: "c1" }],
+    ["same credential → nothing re-sent (pruned as unchanged)", { ...OFF, enabled: true, addAsMonitored: true, stampCredentialId: "c1" }, { monitored: true, monitorCredentialId: "c1" }, {}],
     ["no credential yet → stamped", { ...OFF, enabled: true, addAsMonitored: true, stampCredentialId: "c1" }, { monitored: true }, { monitorCredentialId: "c1" }],
     ["operator's other credential → kept, sweep still applies", { ...OFF, enabled: true, addAsMonitored: true, stampCredentialId: "c1" }, { monitored: false, monitorCredentialId: "mine" }, { monitored: true }],
     ["override → monitored left alone", { ...OFF, enabled: true, addAsMonitored: true, stampCredentialId: "c1" }, { monitored: false, monitorOverride: true }, { monitorCredentialId: "c1" }],
