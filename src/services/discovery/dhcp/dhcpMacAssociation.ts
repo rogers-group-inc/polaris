@@ -35,6 +35,8 @@ import * as sightings from "../../assetSightingService.js";
 import { quarantineAsset, verifyAssetQuarantine } from "../../assetQuarantineService.js";
 import { reconcileMacAddresses } from "../../macAddressService.js";
 import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
+import { pruneUnchangedAssetFields } from "../../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../../assetIpHistoryService.js";
 
 export async function associateDhcpMacs(input: {
   result: DiscoveryResult;
@@ -74,6 +76,12 @@ export async function associateDhcpMacs(input: {
     // asset.update lands, so the in-memory MAC merge logic can stay
     // unchanged while the persist path uses the new side table.
     const assetUpdates: Array<{ id: string; data: any; macs?: MacJsonEntry[] }> = [];
+    // Each asset's row as it stood BEFORE this phase touched it, captured at
+    // its first queued update. The merged update is pruned against this at
+    // flush (utils/assetWritePrune.ts): this phase mirrors only some staged
+    // keys into memory, so comparing at queue time could let an earlier
+    // entry's value outlive a later one that equals the stored value.
+    const phaseBaseline = new Map<string, Record<string, unknown>>();
     const resUpdates: Array<{ id: string; data: Record<string, string> }> = [];
     // Quarantine fan-out hook: every (asset, FortiGate) DHCP attribution
     // becomes a sighting. The flush at the end of the phase is fire-and-
@@ -315,6 +323,7 @@ export async function associateDhcpMacs(input: {
         updateData.ipSource = entry.device || integrationType;
         if (entry.device) updateData.learnedLocation = entry.device;
       }
+      if (!phaseBaseline.has(asset.id)) phaseBaseline.set(asset.id, { ...(asset as Record<string, unknown>) });
       assetUpdates.push({
         id: asset.id,
         data: updateData,
@@ -411,9 +420,22 @@ export async function associateDhcpMacs(input: {
     // Keeping the reconcile inline (per-asset) instead of as a second
     // global pass means a failure on one asset's reconcile only affects
     // that asset's MAC table — the others stay consistent.
+    // Drop what the row already held before this phase (an unchanged
+    // primary MAC alone fired a dns_resolved reconcile per asset); a dropped
+    // IP refreshes its history in one batch. A merge left empty skips the
+    // UPDATE but still reconciles the MAC side table.
+    const macIpHistoryRefresh: Array<{ assetId: string; ip: string; source: string }> = [];
+    for (const u of mergedAssetUpdates) {
+      const baseline = phaseBaseline.get(u.id);
+      if (!baseline) continue;
+      const { ipHistoryRefresh } = pruneUnchangedAssetFields(baseline, u.data);
+      if (ipHistoryRefresh) macIpHistoryRefresh.push({ assetId: u.id, ...ipHistoryRefresh });
+    }
     if (mergedAssetUpdates.length > 0) {
       const results = await mapSettledWithConcurrency(mergedAssetUpdates, 50, async (u) => {
-        const updated = await prisma.asset.update({ where: { id: u.id }, data: u.data });
+        const updated = Object.keys(u.data).length > 0
+          ? await prisma.asset.update({ where: { id: u.id }, data: u.data })
+          : null;
         if (u.macs) await reconcileMacAddresses(u.id, u.macs);
         return updated;
       });
@@ -424,6 +446,8 @@ export async function associateDhcpMacs(input: {
         }
       }
     }
+
+    if (macIpHistoryRefresh.length > 0) await refreshIpHistoryLastSeen(macIpHistoryRefresh);
 
     // Batch-execute reservation cross-updates
     if (resUpdates.length > 0) {

@@ -16,7 +16,8 @@
  *     `ipBlankPinned`, `primaryAddressIp`): an IP equal to the pin is what lets
  *     the db.ts guard release it, and the guard owns pinned writes;
  *   - `hostname` on an asset with a `hostnameOverride`, for the same reason;
- *   - any key the current row does not carry (unknown ⇒ keep).
+ *   - any key the current row does not carry (unknown ⇒ keep) — and the pin
+ *     columns count too: a row read without them keeps its IP and hostname.
  * `ipAddress` and `ipSource` go together: one is dropped only when both match.
  *
  * A dropped `ipAddress` still refreshes its IP history — the caller collects
@@ -56,8 +57,11 @@ export function pruneUnchangedAssetFields(
   data: Record<string, unknown>,
 ): PruneResult {
   const pruned: string[] = [];
-  const ipPinned = truthy(current.ipOverride) || truthy(current.ipBlankPinned) || truthy(current.primaryAddressIp);
-  const hostPinned = truthy(current.hostnameOverride);
+  // A row read with a narrowed select may not carry the pin columns at all:
+  // unknown counts as pinned, so the guarded keys are kept.
+  const ipPinKnown = "ipOverride" in current && "ipBlankPinned" in current && "primaryAddressIp" in current;
+  const ipPinned = !ipPinKnown || truthy(current.ipOverride) || truthy(current.ipBlankPinned) || truthy(current.primaryAddressIp);
+  const hostPinned = !("hostnameOverride" in current) || truthy(current.hostnameOverride);
   let ipHistoryRefresh: PruneResult["ipHistoryRefresh"] = null;
 
   // ipAddress + ipSource travel together.

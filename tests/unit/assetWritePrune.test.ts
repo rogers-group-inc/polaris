@@ -54,6 +54,14 @@ describe("pruneUnchangedAssetFields", () => {
     expect(data).toEqual({ hostname: "pc-1" });
   });
 
+  it("a row read WITHOUT the pin columns keeps its IP and hostname (unknown counts as pinned)", () => {
+    const narrow = { id: "a1", hostname: "pc-1", ipAddress: "10.0.0.5", ipSource: "FGT-A", os: "Windows" };
+    const data: Record<string, unknown> = { hostname: "pc-1", ipAddress: "10.0.0.5", ipSource: "FGT-A", os: "Windows" };
+    const r = pruneUnchangedAssetFields(narrow, data);
+    expect(data).toEqual({ hostname: "pc-1", ipAddress: "10.0.0.5", ipSource: "FGT-A" });
+    expect(r.ipHistoryRefresh).toBeNull();
+  });
+
   it("keeps a key the row does not carry, and Prisma operation objects", () => {
     const data: Record<string, unknown> = { brandNewField: "x", loginCount: { increment: 1 } };
     pruneUnchangedAssetFields({ ...row(), loginCount: 1 }, data);
