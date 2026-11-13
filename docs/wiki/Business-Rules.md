@@ -3691,3 +3691,14 @@ expected. If a device is polled less often than the window (say every 10 minutes
 5-minute window), the newest reading is used instead. Expect averaged alerts, including the
 built-in High CPU, High memory, Slow response and temperature automations, to fire and clear
 sooner than before.
+
+### Rule 179
+
+**Monitoring work starts as soon as it is queued, and an idle server stays quiet.** In the
+pg-boss queue mode, the processes that run monitoring and discovery jobs are told by the
+database the moment a job is queued, instead of each of their workers asking every one to five
+seconds. A worker that finds work keeps going until the queue is empty; an idle one checks in
+only every 30 seconds as a safety net. Each such process holds one extra database connection
+for this, which the Capacity Advisor counts. If your database connection for the queue goes
+through a transaction pooler that cannot hold that connection, set
+`POLARIS_PGBOSS_LISTEN_NOTIFY=false` and restart: the workers then poll as before.

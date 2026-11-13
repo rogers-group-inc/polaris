@@ -17,6 +17,10 @@ DATABASE_POOL_SIZE=25
 
 # Other pool / worker env vars tunable via the Capacity Advisor:
 #   POLARIS_PGBOSS_POOL_SIZE          (default 20)
+#   POLARIS_PGBOSS_LISTEN_NOTIFY      (default true; not advisor-tuned) — business rule 179: a consuming
+#                                     process LISTENs on one extra connection outside the pool and its
+#                                     workers wake on NOTIFY, polling only every 30 s. false = a
+#                                     "direct" URL that is really a transaction pooler; workers poll as before
 #   POLARIS_MONITOR_PROBE_WORKERS     (default 24)
 #   POLARIS_MONITOR_FAST_WORKERS      (default 24)
 #   POLARIS_MONITOR_HEAVY_WORKERS     (default 24) — telemetry + systemInfo

@@ -235,6 +235,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Read-only. The per-caller `canEditLayout` (rule 141 (e)) is judged in the ROUTE — it needs the request's write scope — on the `createdBy` / `tags` each site row carries; the route spreads it FIRST so the payload's key order is unchanged.
 - A site's children are matched by serial / FMG device name / hostname via `controllerStampWhereOr`, and an endpoint's switch by its `switch-port` edge or a fleet-unique hostname prefix (business rule 91) — the same attribution as the topology payload's `endpoints[]`.
 
+- `listMapSites` runs its three follow-ups (sample stats, down acknowledgements, subnet counts) in one `Promise.all` — they are independent of each other.
+
 **When changing this:** a new field on the sites list is a new `select` column here AND the Status Map / Device Map widgets that read it; at 2000 assets the list is the firewalls with coordinates (tens to hundreds), one subnet groupBy and two bounded follow-ups — keep it that shape.
 
 ## services/topologyGraphService.ts
@@ -260,6 +262,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 - **Fibre-channel links ride the payload as `fcLinks`** (business rule 162): one `fibreChannelService.getFcLoginsForSwitches` query over the site's endpoint ids, so a site with no FC switch pays one empty indexed read. Each entry is `{ switchId, port, vsan, portWwn, label, matchMethod, host }` — `host` is the matched asset's node summary (health, type, icon, location as written in `Asset.description`, NOT region-tree resolved) or null, and a retired host comes back null. `topology-render.js → applyShownTypes` draws them only while the FC switch is a shown node; nothing here filters by shown types.
 - **The payload carries every attributed endpoint, not just the sidebar sample** (rule 147): `endpoints` (id, hostname, ip, mac, `assetType`, status, monitorHealth, location from `Asset.description` only, `switchId`, `port`, iconUrl) from the same rule-91 query, newest first, capped at the module constant `MAX_SITE_ENDPOINTS` (2000) with `endpointsTruncated`; `switches[].endpoints` stays the 25-per-switch sidebar sample cut from the same rows. Every node also carries `assetType` (firewall / switch / access_point for the three infrastructure arrays) — the device-type toggles key on it.
+
+- `fetchRecentSampleStats(ids)` is ONE query (`unnest` + `LATERAL … ORDER BY timestamp DESC LIMIT 10` over `asset_monitor_samples`, response-time rows only), not a `findMany` per asset — the site map asks for every monitored firewall at once, and the fan-out ran hundreds of concurrent queries against the pool. Ids are de-duplicated; an empty list issues no query.
 
 **When changing this:**
 - A new edge class needs a place in the dedupe order and a `reason` string (the hover tooltip is the operator's audit trail), and `topology-render.js` must know it.
