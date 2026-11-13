@@ -39,6 +39,7 @@ import * as proxmox from "./proxmoxService.js";
 import * as llm from "./llmService.js";
 import * as genericApi from "./genericApiService.js";
 import * as arcgis from "./arcgisService.js";
+import { testArcgisBasemap } from "./satelliteTileService.js";
 import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 /** Every integration type Polaris knows. Integration.type holds exactly one of these. */
@@ -162,7 +163,15 @@ export const INTEGRATION_ADAPTERS: { readonly [K in IntegrationType]: Integratio
   // A map / GIS service: satellite imagery and cable-run write-back, no inventory.
   arcgis: {
     label: "ArcGIS",
-    testConnection: (config) => arcgis.testConnection(config),
+    // The sign-in, then — when the basemap is on — one imagery tile (rule 183).
+    testConnection: async (config) => {
+      const r = await arcgis.testConnection(config);
+      if (!r.ok || config?.basemapEnabled !== true) return r;
+      const t = await testArcgisBasemap(config);
+      return t.ok
+        ? { ...r, message: `${r.message}; ${t.message}` }
+        : { ok: false, message: `${r.message}, but satellite imagery failed: ${t.message}` };
+    },
     discovery: null,
   },
 };

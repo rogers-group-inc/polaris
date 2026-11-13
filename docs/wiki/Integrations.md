@@ -62,7 +62,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
 | Generic API | General → Records & Mapping → Preview (its assets are monitored one by one, like manually added ones) |
 | AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
-| ArcGIS | one untabbed form — Portal and sign-in ([ArcGIS](Integration-ArcGIS)) |
+| ArcGIS | General (portal and sign-in) → Basemap ([ArcGIS](Integration-ArcGIS)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
 the General tab. **The FortiManager and standalone FortiGate layouts are

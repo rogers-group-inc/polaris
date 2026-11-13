@@ -355,7 +355,12 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Portal</span><span class="detail-value mono">' + escapeHtml(config.portalUrl || "https://www.arcgis.com") + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Sign-in</span><span class="detail-value">' + escapeHtml(arcgisModes[arcgisMode] || arcgisMode) +
             (arcgisWho ? ' <span class="mono">' + escapeHtml(arcgisWho) + '</span>' : '') + '</span></div>' +
-          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>';
+          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Satellite Imagery</span><span class="detail-value">' +
+            (config.basemapEnabled !== true ? '<span style="color:var(--color-text-tertiary)">Off</span>'
+              : config.basemapSource === "service" ? 'Portal service <span class="mono">' + escapeHtml(config.imageryUrl || "") + '</span>'
+              : 'Esri World Imagery') +
+          '</span></div>';
       } else if (intg.type === "activedirectory") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -879,6 +884,15 @@ function _integrationTabs(ctx) {
     return gaTabs;
   }
 
+  // ArcGIS: the sign-in, then what it is used for (rule 183's basemap; the
+  // write-back tab joins it later).
+  if (type === "arcgis") {
+    return [
+      { key: "general", label: "General", html: ctx.generalHtml },
+      { key: "basemap", label: "Basemap", html: arcgisBasemapHTML(Object.assign({}, defaults, config)) },
+    ];
+  }
+
   if (_NON_FORTINET_TABBED.indexOf(type) === -1) return null;   // flat form only
 
   // AD / Entra / Windows Server / vCenter / Azure Arc: the type's own flat form
@@ -938,6 +952,15 @@ function _wireArcgisForm() {
   }
   sel.addEventListener("change", paint);
   paint();
+  // Basemap tab: the service URL only for "an imagery service in your portal".
+  var radios = document.querySelectorAll('input[name="f-basemapSource"]');
+  function paintSource() {
+    var picked = document.querySelector('input[name="f-basemapSource"]:checked');
+    var svc = document.querySelector('[data-arcgis-basemap="service"]');
+    if (svc) svc.hidden = !picked || picked.value !== "service";
+  }
+  for (var r = 0; r < radios.length; r++) radios[r].addEventListener("change", paintSource);
+  paintSource();
 }
 
 /** The per-type wiring both flows run after the modal is in the DOM. */
@@ -1322,6 +1345,11 @@ function _intgEditFormSpec(intg, config) {
         clientId: config.clientId,
         username: config.username,
         verifySsl: config.verifySsl !== false,
+        basemapEnabled: config.basemapEnabled === true,
+        basemapSource: config.basemapSource,
+        imageryUrl: config.imageryUrl,
+        basemapAttribution: config.basemapAttribution,
+        basemapMaxZoom: config.basemapMaxZoom,
         apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "API key",
         clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "Client secret",
         passwordPlaceholder: config.password ? "Leave blank to keep the current password" : "Password",

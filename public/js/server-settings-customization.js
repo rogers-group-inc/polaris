@@ -238,6 +238,12 @@ function _satelliteSettingsCardHtml(s) {
       'imagery, so it comes from a provider you choose, under that provider’s terms and your own licence or API key. ' +
       'Polaris fetches the tiles and passes them on: the key never reaches a browser.' +
     '</p>' +
+    // Business rule 183: an ArcGIS integration's basemap, while on, wins.
+    (s.overriddenBy
+      ? calloutHTML("note", "ArcGIS imagery is in use",
+          'The ArcGIS integration <strong>' + escapeHtml(s.overriddenBy) + '</strong> supplies the satellite imagery while its basemap is on, so these settings are not used. ' +
+          'They apply again if that basemap is turned off (Integrations → ' + escapeHtml(s.overriddenBy) + ' → Edit → Basemap).')
+      : '') +
     '<label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:0.8rem">' +
       '<input type="checkbox" id="f-sat-enabled"' + (s.enabled ? ' checked' : '') + ' style="margin-top:0.2rem">' +
       '<span><strong>Offer satellite imagery</strong></span>' +

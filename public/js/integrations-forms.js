@@ -1232,6 +1232,33 @@ function arcgisFormHTML(defaults) {
     verboseLoggingFormHTML(d);
 }
 
+// The Basemap tab (business rule 183): satellite imagery for the Device Map.
+// While on it replaces Server Settings → Customization's imagery.
+var ARCGIS_WORLD_IMAGERY_CREDIT = "Esri, Maxar, Earthstar Geographics, and the GIS User Community";
+
+function arcgisBasemapHTML(defaults) {
+  var d = defaults || {};
+  var source = d.basemapSource === "service" ? "service" : "world_imagery";
+  function radio(value, label) {
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0">' +
+      '<input type="radio" name="f-basemapSource" value="' + value + '"' + (source === value ? ' checked' : '') + ' style="width:auto"> ' + label + '</label>';
+  }
+  return infoBox('Adds a <strong style="color:var(--color-text-primary)">Map | Satellite</strong> switch to the Device Map&rsquo;s Topology views. While it is on, this imagery replaces the one set under <strong style="color:var(--color-text-primary)">Server Settings → Customization</strong>. Only one ArcGIS integration can supply imagery.') +
+    checkboxRow("f-basemapEnabled", "Offer satellite imagery on the Device Map", d.basemapEnabled === true) +
+    '<div class="form-group"><label>Imagery</label><div style="display:flex;flex-direction:column;gap:6px">' +
+      radio("world_imagery", "Esri World Imagery") +
+      radio("service", "An imagery service in your portal") +
+    '</div><p class="hint">World Imagery uses the keyed Location Platform host with an API key, and the public host otherwise.</p></div>' +
+    '<div class="form-group" data-arcgis-basemap="service"' + (source === "service" ? '' : ' hidden') + '>' +
+      '<label>Imagery service URL</label><input type="text" id="f-imageryUrl" value="' + escapeHtml(d.imageryUrl || "") + '" placeholder="https://tiles.arcgis.com/…/MapServer">' +
+      '<p class="hint">A cached MapServer or ImageServer. Polaris signs its requests with this integration&rsquo;s sign-in.</p></div>' +
+    '<div style="display:grid;grid-template-columns:3fr 1fr;gap:12px">' +
+      '<div class="form-group"><label>Attribution</label><input type="text" id="f-basemapAttribution" maxlength="200" value="' + escapeHtml(d.basemapAttribution || "") + '" placeholder="' + escapeHtml(ARCGIS_WORLD_IMAGERY_CREDIT) + '"></div>' +
+      '<div class="form-group"><label>Deepest zoom</label><input type="number" id="f-basemapMaxZoom" min="1" max="22" value="' + (d.basemapMaxZoom || 19) + '"></div>' +
+    '</div>' +
+    '<p class="hint">The credit shown on the map; blank uses Esri&rsquo;s for World Imagery. Past the deepest zoom the map enlarges the last real tiles instead of showing &ldquo;Map data not yet available&rdquo; — 19 suits most sites. <strong>Test Connection</strong> also fetches one imagery tile while this is on.</p>';
+}
+
 function getArcgisFormConfig() {
   var mode = document.getElementById("f-authMode").value;
   var cfg = {
@@ -1240,6 +1267,15 @@ function getArcgisFormConfig() {
     verifySsl: document.getElementById("f-verifySsl").checked,
     verboseLogging: readVerboseLoggingFromForm(),
   };
+  var bmEnabled = document.getElementById("f-basemapEnabled");
+  if (bmEnabled) {
+    var picked = document.querySelector('input[name="f-basemapSource"]:checked');
+    cfg.basemapEnabled = bmEnabled.checked;
+    cfg.basemapSource = picked ? picked.value : "world_imagery";
+    cfg.imageryUrl = val("f-imageryUrl");
+    cfg.basemapAttribution = val("f-basemapAttribution");
+    cfg.basemapMaxZoom = parseInt(document.getElementById("f-basemapMaxZoom").value, 10) || 19;
+  }
   // Only the chosen method's fields go out; the others keep what is stored.
   if (mode === "appCredentials") { cfg.clientId = val("f-clientId"); cfg.clientSecret = val("f-clientSecret"); }
   if (mode === "apiKey") cfg.apiToken = val("f-apiToken");

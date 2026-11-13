@@ -371,6 +371,10 @@ provider's terms and your own licence or key. Off by default.
 - **Deepest zoom**: the most detailed level the provider serves; the map
   enlarges its tiles beyond that.
 
+**An [ArcGIS integration](Integration-ArcGIS) with its Basemap turned on wins over this card**
+([rule 183](Business-Rules#rule-183)). The card then says which integration supplies the imagery,
+and its settings apply again once that basemap is off.
+
 **Test** fetches one tile with what is on screen, before you save. The Polaris
 server fetches the tiles and passes them on, so the key never reaches a browser
 and the browser only talks to Polaris. The server therefore needs to reach the

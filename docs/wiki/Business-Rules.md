@@ -3744,3 +3744,14 @@ DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF fi
 drawing is placed by the location it carries, by lining it up with another floor drawn in
 the same coordinates (as levels of one survey are), or by clicking two places on the
 drawing and the same two on the map.
+
+### Rule 183
+
+**An ArcGIS integration's satellite imagery wins over the Customization setting, and only one supplies it.**
+The Device Map's **Map | Satellite** imagery can come from two places: **Server Settings → Customization**
+(any tile provider) or an [ArcGIS integration](Integration-ArcGIS) with its **Basemap** turned on. While an
+enabled ArcGIS integration supplies imagery, it is used and the Customization settings wait; turn its basemap
+off and they apply again. Only one ArcGIS integration can supply imagery at a time — turning on a second is
+refused. Views saved on the satellite layer work whichever one is in use. Moving a portal imagery service to a
+new address needs the integration's secret typed again ([rule 111](#rule-111)).
+

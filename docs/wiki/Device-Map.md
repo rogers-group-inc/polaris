@@ -594,7 +594,9 @@ the column under the tick:
   with the view. An image is shown at any resolution, scaled to fit. Switching
   between the two clears the polygons and placements drawn on the old one.
 - **Map | Satellite** (under the zoom buttons, OpenStreetMap only): shown when
-  an administrator has set up [Satellite imagery](Server-Settings#satellite-imagery).
+  an administrator has set up satellite imagery — on an [ArcGIS integration](Integration-ArcGIS)'s
+  **Basemap** tab, or under [Satellite imagery](Server-Settings#satellite-imagery). An ArcGIS
+  integration's imagery wins while it is on ([rule 183](Business-Rules#rule-183)).
   While you are viewing, switching is just a look; in edit mode the choice is
   saved with the view. Polygons and placements stay where they are, since both
   layers use the same coordinates.
