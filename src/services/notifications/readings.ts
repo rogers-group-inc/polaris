@@ -839,7 +839,18 @@ export async function resolveAssetMetricReadings(
       // "== 0" / "<= 0" condition could never fire, and an auto-reset rule
       // could never clear because the recovery value is the one being dropped.
       // Only genuinely non-numeric JSON becomes null.
-      return reduceReadings(rows, index, (r) => r.widgetId, (r) => r.widgetId, (r) => {
+      // The KEY stays the widget id (an alert's identity must survive a rename);
+      // the LABEL is the widget's name, which is what the alert, its email and
+      // its Event read — they said "Custom widget value on 9db96a44-… is 80"
+      // (2026-11-13). Imported lazily: the dimension service imports the
+      // engine, which imports this file. An id the catalogue no longer has
+      // (a deleted widget's last samples) falls back to the id.
+      const names = new Map<string, string>();
+      if (rows.length) {
+        const { listCustomWidgetCatalog } = await import("../notificationDimensionService.js");
+        for (const w of await listCustomWidgetCatalog()) names.set(w.id, w.name);
+      }
+      return reduceReadings(rows, index, (r) => r.widgetId, (r) => names.get(r.widgetId) ?? r.widgetId, (r) => {
         const n = typeof r.value === "number" ? r.value : Number(r.value);
         return Number.isFinite(n) ? n : null;
       }, agg, winPolls);
