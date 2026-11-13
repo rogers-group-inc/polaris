@@ -256,6 +256,7 @@
     "_modalReturnFocus",
     "_modalStepKeyTeardown",
     "_navFromCache",
+    "_navGeneration",
     "_notifPref",
     "_panelScriptLoads",
     "_passkeyFetched",

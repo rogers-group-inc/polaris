@@ -227,8 +227,10 @@ Asset
   -- Success writers spread monitoringService.telemetrySuccessStamps / systemInfoSuccessStamps
   -- (the agent /samples routes too), which stamp the attempt as well — a success that skipped
   -- it would leave the stream due on every tick.
-  lastLldpAt            DateTime?
-  lastStorageAt         DateTime?
+  lastLldpAt            DateTime?        -- last LLDP pass that RETURNED DATA (System tab freshness)
+  lastStorageAt         DateTime?        -- last storage pass that RETURNED DATA
+  lastLldpAttemptAt     DateTime?        -- business rule 118(a): every LLDP attempt, stamped before dialling; the due check reads the later of this and lastLldpAt (migration 20261113120000_lldp_storage_attempt_stamps)
+  lastStorageAttemptAt  DateTime?        -- business rule 118(a): the same for storage — a bad SSH/WinRM credential waits a cadence instead of failing a login every heavy tick
   lastSdwanAt           DateTime?        -- SD-WAN cadence anchor (2026-09-23, migration 20260923120000_sdwan_cadence_anchor): monitoringService.runSdwanFor stamps it BEFORE collecting, even on failure (the lastEventLogAt pattern), so an unreachable gate is asked once per Integration.config.sdwanIntervalSeconds (default 60s) rather than every 5s light tick. No per-asset interval column — the interval is per integration. Never dates the SD-WAN rows themselves (the tab reads the samples' own timestamps).
   lastCustomWidgetAt    DateTime?        -- Bumped after each successful collectAndRecordCustomWidgets pass.
   -- ifNames pinned for fast-cadence polling on the System tab. Each entry

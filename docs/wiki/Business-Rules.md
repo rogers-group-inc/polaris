@@ -2754,7 +2754,10 @@ long a stream has been failing is something an automation can alert on.**
   chart or table adds the same error — and a stream that has never succeeded
   shows the banner with the error straight away.
 - **A failing device is retried once per polling interval**, the same as a
-  healthy one. A failure does not make Polaris ask again sooner.
+  healthy one. A failure does not make Polaris ask again sooner. This holds for
+  the LLDP and storage polls too: a device whose storage login fails is tried
+  again at its storage interval, not every 30 seconds, so a wrong password does
+  not lock the account.
 - **Two automation conditions measure it**: *CPU & memory polls failing
   (minutes)* and *Interface polls failing (minutes)*. Each reads how many
   minutes the stream's polls have been failing, counted from the first failed
@@ -3654,6 +3657,11 @@ expiry date passes:
 An expiry does not disconnect a device that is using the address; releasing the reservation
 does.
 
+Networks that were left marked *reserved* by an expiry before this was fixed are not changed,
+because a network can also be marked reserved on purpose. Instead, each network marked
+reserved that no reservation holds is named once in [Events](Events) as a warning, so you can
+set it back to *available* if it should be.
+
 ### Rule 176
 
 **A change to monitoring settings takes effect within about 30 seconds, with no restart.**
@@ -3663,3 +3671,23 @@ defaults — every Polaris process picks the change up within about 30 seconds.
 
 Before this, the change was saved and shown correctly but the monitoring processes went on
 using the old settings until Polaris was next restarted or updated.
+
+### Rule 177
+
+**An automation that uses something that was deleted is marked.** If an automation sends to
+a delivery channel, runs a script, or watches a path check, custom widget or state probe that
+no longer exists, those parts of it do nothing. On the Automations page it gets a warning
+triangle before its name; hover the triangle to see what is wrong. Open it and the same
+explanation is shown above the steps. Polaris does not change the automation; point it at
+something that exists and save. (Deleting one of those things while an automation uses it is
+refused — see [rule 167](#rule-167).)
+
+### Rule 178
+
+**An averaged condition covers the time it says.** A condition such as *average CPU over 5
+minutes* (also minimum, maximum and median) uses the readings of the last 5 minutes — before
+this it used the last 15, whatever the window said, so alerts fired and cleared later than
+expected. If a device is polled less often than the window (say every 10 minutes for a
+5-minute window), the newest reading is used instead. Expect averaged alerts, including the
+built-in High CPU, High memory, Slow response and temperature automations, to fire and clear
+sooner than before.

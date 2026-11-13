@@ -24,7 +24,9 @@ conditions*, *Audit event match* and *Change detection*.
 
 ## Asset metric
 
-A number, compared against a threshold.
+A number, compared against a threshold. With **average**, **minimum**, **maximum** or
+**median**, it is taken over exactly the window you set; if the device is polled less often than
+that, its newest reading is used. See [rule 178](Business-Rules#rule-178).
 
 | Metric | Unit | Dimension |
 |---|---|---|

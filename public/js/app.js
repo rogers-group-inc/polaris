@@ -1021,10 +1021,29 @@ const ICONS = {
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle class="ac" cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
 };
 
+// Which renderNav() call owns the sidebar's pollers. renderNav runs more than
+// once on some pages (map.js paints from cache, then again after
+// fetchCurrentUser; a role change re-renders), and every call used to start a
+// full new set of pollers while the old set kept running — the Device Map tab
+// asked the server for everything twice (efficiency audit 2026-11-13). Each
+// timer and visibility listener below checks this and stops itself once a
+// newer render has taken over.
+var _navGeneration = 0;
+
 function renderNav() {
   const current = window.location.pathname;
   const sidebar = document.getElementById("sidebar");
   if (!sidebar) return;
+  var navGen = ++_navGeneration;
+  function navCurrent() { return navGen === _navGeneration; }
+  // A visibilitychange listener that goes away when this render is replaced.
+  function onNavVisible(handler) {
+    function listener() {
+      if (!navCurrent()) { document.removeEventListener("visibilitychange", listener); return; }
+      if (!document.hidden) handler();
+    }
+    document.addEventListener("visibilitychange", listener);
+  }
 
   const visibleItems = NAV_ITEMS.filter(function (item) {
     if (item.adminOnly) return isAdmin();
@@ -1151,10 +1170,11 @@ function renderNav() {
   // was looking — multiplied by tabs and operators, that was the largest
   // server-side cost in the frontend audit.
   function pollVisible(fn, ms) {
-    var timer = setInterval(function () { if (!document.hidden) fn(); }, ms);
-    document.addEventListener("visibilitychange", function () {
+    var timer = setInterval(function () {
+      if (!navCurrent()) { clearInterval(timer); return; }
       if (!document.hidden) fn();
-    });
+    }, ms);
+    onNavVisible(fn);
     return timer;
   }
 
@@ -1195,6 +1215,7 @@ function renderNav() {
   }
   function _scheduleFirmwarePoll() {
     if (_firmwareTimer) clearTimeout(_firmwareTimer);
+    if (!navCurrent()) return;
     _firmwareTimer = setTimeout(function () {
       if (document.hidden) { _scheduleFirmwarePoll(); return; }
       pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
@@ -1202,9 +1223,7 @@ function renderNav() {
   }
   if (permAtLeast("assets", "read")) {
     pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
-    document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll);
-    });
+    onNavVisible(function () { pollFirmwareRuns().then(_scheduleFirmwarePoll, _scheduleFirmwarePoll); });
   }
   window._getFirmwareRuns = function () { return _firmwareRuns; };
   // The card calls this right after a flash starts, so the panel shows it
@@ -1360,6 +1379,7 @@ function renderNav() {
   }
   function _scheduleUpdatePoll() {
     if (_updateTimer) clearTimeout(_updateTimer);
+    if (!navCurrent()) return;
     _updateTimer = setTimeout(_runUpdatePoll, _updateApplying() ? 5000 : 15000);
   }
   function _runUpdatePoll() {
@@ -1371,9 +1391,7 @@ function renderNav() {
   // update that started while the tab was in the background is already
   // several steps in, and the panel exists to be seen — waiting out the
   // remaining idle interval can outlast the whole applying phase.
-  document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) window._pollUpdateProgress();
-  });
+  onNavVisible(function () { window._pollUpdateProgress(); });
   // Callers that just kicked an update (or want the panel fresh now) get an
   // immediate read AND a re-paced loop — without this an Apply click could
   // sit out the idle interval before the sidebar panel showed progress. The

@@ -89,3 +89,26 @@ describe("reconcileDependencySuppression — read-your-writes (rule 38(c))", () 
     expect(db.resumed).toEqual(["sw"]);
   });
 });
+
+describe("reconcileDependencySuppression — single-flight (efficiency audit 2026-11-13)", () => {
+  it("a burst of calls costs the run in flight plus ONE follow-up, and every caller gets a result", async () => {
+    const { prisma } = await import("../../src/db.js");
+    const edges = prisma.assetDependencyParent.findMany as unknown as ReturnType<typeof vi.fn>;
+    edges.mockClear();
+    // An outage flipping many assets in one probe batch: each change calls the
+    // reconcile without waiting for it.
+    const results = await Promise.all(Array.from({ length: 25 }, () => reconcileDependencySuppression()));
+    // One full read of the dependency edges per run.
+    expect(edges).toHaveBeenCalledTimes(2);
+    expect(results.every((r) => typeof r.evaluated === "number")).toBe(true);
+  });
+
+  it("a call made after the burst settles starts a fresh run", async () => {
+    const { prisma } = await import("../../src/db.js");
+    const edges = prisma.assetDependencyParent.findMany as unknown as ReturnType<typeof vi.fn>;
+    await Promise.all([reconcileDependencySuppression(), reconcileDependencySuppression()]);
+    edges.mockClear();
+    await reconcileDependencySuppression();
+    expect(edges).toHaveBeenCalledTimes(1);
+  });
+});

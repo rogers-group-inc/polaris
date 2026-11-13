@@ -1366,6 +1366,23 @@ export async function runFastFilteredFor(assetId: string, labels: WorkItemLabels
  * Stamps `Asset.lastLldpAt` on every successful pass so the publisher in
  * `monitorAssets.ts` knows when the next LLDP job is due.
  */
+/** The LLDP methods `runLldpFor` actually collects. Shared with the due check. */
+export function lldpPollingCollects(method: string | null | undefined): boolean {
+  return method === "snmp" || method === "rest_api";
+}
+
+/** Business rule 118(a): stamp a cadence attempt. Best-effort: a failed stamp only means an earlier retry. */
+async function stampCadenceAttempt(assetId: string, field: "lastLldpAttemptAt" | "lastStorageAttemptAt"): Promise<void> {
+  await prisma.asset.update({ where: { id: assetId }, data: { [field]: new Date() } }).catch(() => {});
+}
+
+/** The due anchor: the later of the last data and the last attempt (rule 118(a)). */
+function laterOf(a: Date | null | undefined, b: Date | null | undefined): Date | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return a.getTime() >= b.getTime() ? a : b;
+}
+
 export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promise<CadenceOutcome> {
   const stopWork = startWorkTimer("lldp", labels);
   try {
@@ -1383,11 +1400,17 @@ export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promi
       discoveredByIntegrationType: asset.discoveredByIntegration?.type ?? null,
     });
     const lldpPolling = effective.lldpPolling;
-    if (!lldpPolling || lldpPolling === "disabled" || lldpPolling === "agent") {
+    if (!lldpPollingCollects(lldpPolling)) {
+      // Nothing this runner collects (agent, ssh, winrm, icmp, a generic API
+      // feed, or switched off). lldpDue never queues these; a job already in
+      // flight from before a settings change just ends.
       recordWorkOutcome("lldp", "success", labels);
       return "success";
     }
-    const targetIp = dial(asset) || ((lldpPolling === "winrm" || lldpPolling === "ssh") ? (asset.dnsName || asset.hostname) : null);
+    // Rule 118(a): the attempt is stamped before anything can fail, so every
+    // failure path below waits a cadence.
+    await stampCadenceAttempt(assetId, "lastLldpAttemptAt");
+    const targetIp = dial(asset);
     if (!targetIp) {
       recordWorkOutcome("lldp", "failure", labels);
       return "failure";
@@ -1420,14 +1443,11 @@ export async function runLldpFor(assetId: string, labels: WorkItemLabels): Promi
       }
       sourceLabel = "snmp";
       neighbors = await collectLldpOnlySnmp(targetIp, snmpCfg, lldpTimeout).catch(() => undefined);
-    } else {
-      // winrm / ssh / icmp don't deliver LLDP today.
-      recordWorkOutcome("lldp", "success", labels);
-      return "success";
     }
     if (neighbors === undefined) {
       // Transport failure — don't wipe existing rows, don't bump lastLldpAt
-      // (so the next tick retries promptly).
+      // (it means "last returned data"); the attempt stamp above already
+      // makes the next try wait a cadence.
       recordWorkOutcome("lldp", "failure", labels);
       return "failure";
     }
@@ -1510,6 +1530,9 @@ export async function runStorageFor(assetId: string, labels: WorkItemLabels): Pr
       recordWorkOutcome("storage", "success", labels);
       return "success";
     }
+    // Rule 118(a): stamped before anything can fail — a bad SSH/WinRM
+    // credential used to be retried every heavy tick (account lockout).
+    await stampCadenceAttempt(assetId, "lastStorageAttemptAt");
     const targetIp = dial(asset)
       || ((storagePolling === "ssh" || storagePolling === "winrm") ? (asset.dnsName || asset.hostname) : null);
     if (!targetIp) {
@@ -1590,8 +1613,8 @@ const PROCESS_PINS_INTERVAL_SEC = 60;
  * session. Agent-mode assets never reach the collectors — the agent runs its
  * own loops; SNMP stays declared-but-unimplemented for this stream.
  *
- * Unlike runStorageFor, the cadence anchors (lastProcessesAt /
- * lastProcessPinsAt) are stamped EVEN ON FAILURE: SSH/WinRM are authenticated
+ * Like runStorageFor's attempt stamp (rule 118(a)), the cadence anchors
+ * (lastProcessesAt / lastProcessPinsAt) are stamped EVEN ON FAILURE: SSH/WinRM are authenticated
  * transports, and a host with a bad credential must not be re-attempted every
  * heavy tick (AD-lockout / fail2ban exposure). Failures are metrics + debug
  * log only — no Event spam.
@@ -2264,7 +2287,7 @@ const MONITOR_PASS_CANDIDATE_SELECT = {
       dependencySuppressed: true,
       // Dedicated LLDP + Storage cadences (pg-boss only — the cursor pass
       // carries both as systemInfo side effects): their anchors.
-      lastLldpAt: true, lastStorageAt: true,
+      lastLldpAt: true, lastStorageAt: true, lastLldpAttemptAt: true, lastStorageAttemptAt: true,
       // Every remaining resolver input (the satisfies clause below enforces
       // it): per-asset interval / timeout overrides, MIB ids, and the
       // per-stream credential ids — an own REST token keeps `rest_api` where
@@ -2497,13 +2520,16 @@ export async function resolveDueCadences(
   // are idempotent against the overlap). isUp-gated: heavy walks. Storage's
   // own queue covers SNMP and the agentless transports only — agent hosts push
   // on their own schedule and vCenter storage rides the system-info pass.
+  // Rule 118(a): only methods runLldpFor collects are queued (an agent host's
+  // lldpPolling is "agent" — it used to be queued every heavy tick and return
+  // at once), and both cadences are due from the later of data and attempt.
   const lldp =
-    isUp && enabled.has("lldp") && !!eff.lldpPolling && eff.lldpPolling !== "disabled" &&
-    isDue(a.lastLldpAt, eff.lldpIntervalSeconds);
+    isUp && enabled.has("lldp") && lldpPollingCollects(eff.lldpPolling) &&
+    isDue(laterOf(a.lastLldpAt, a.lastLldpAttemptAt), eff.lldpIntervalSeconds);
   const storage =
     isUp && enabled.has("storage") &&
     (eff.storagePolling === "snmp" || eff.storagePolling === "ssh" || eff.storagePolling === "winrm") &&
-    isDue(a.lastStorageAt, eff.storageIntervalSeconds);
+    isDue(laterOf(a.lastStorageAt, a.lastStorageAttemptAt), eff.storageIntervalSeconds);
 
   // Agentless processes (ssh/winrm only — agent hosts self-collect). Due when
   // the inventory interval elapsed OR pins / mapped names arm the 60s

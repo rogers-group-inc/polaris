@@ -160,8 +160,9 @@ describe("sampleWriteBuffer — enqueue + flush", () => {
     // settle so the test sees the createMany.
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(createManyMocks.assetMonitorSample).toHaveBeenCalledTimes(1);
-    expect(createManyMocks.assetMonitorSample.mock.calls[0][0].data).toHaveLength(5000);
+    // Written in statements of at most 2000 rows, in order.
+    const sizes = createManyMocks.assetMonitorSample.mock.calls.map((c: any[]) => c[0].data.length);
+    expect(sizes).toEqual([2000, 2000, 1000]);
   });
 
   it("does not write when no rows were enqueued for a table", async () => {
@@ -199,6 +200,43 @@ describe("sampleWriteBuffer — error handling", () => {
     await flushAllSampleBuffers();
     // Rows should still be queued, ready for the next tick to retry.
     expect(__test__.getBufferDepth("monitor")).toBe(2);
+  });
+
+  it("waits out a backoff after a failure instead of retrying on every enqueue, but the shutdown drain does not wait", async () => {
+    createManyMocks.assetMonitorSample.mockImplementationOnce(async () => { throw new Error("connection refused"); });
+    enqueueMonitorSample(probeRow("a", true));
+    await flushAllSampleBuffers();
+    expect(createManyMocks.assetMonitorSample).toHaveBeenCalledTimes(1);
+    await flushAllSampleBuffers();
+    expect(createManyMocks.assetMonitorSample).toHaveBeenCalledTimes(1);
+    await shutdownFlushSampleBuffers();
+    expect(createManyMocks.assetMonitorSample).toHaveBeenCalledTimes(2);
+    expect(__test__.getBufferDepth("monitor")).toBe(0);
+  });
+
+  it("re-queues only the chunks that were not written, ahead of newer rows, with no argument spread", async () => {
+    let calls = 0;
+    createManyMocks.assetMonitorSample.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("connection refused");
+      return { count: 0 };
+    });
+    for (let i = 0; i < 5000; i++) enqueueMonitorSample(probeRow(`a${i}`, true));
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    // The first 2000 were written; 3000 wait for the retry.
+    expect(__test__.getBufferDepth("monitor")).toBe(3000);
+    createManyMocks.assetMonitorSample.mockReset();
+  });
+
+  it("caps a failing table at 200,000 rows, dropping the oldest", async () => {
+    createManyMocks.assetMonitorSample.mockImplementation(async () => { throw new Error("connection refused"); });
+    // A long outage: far more rows than the cap, in one failed flush.
+    const rows = Array.from({ length: 250_000 }, (_, i) => probeRow(`a${i}`, true));
+    for (const r of rows) (enqueueMonitorSample as any)(r);
+    await shutdownFlushSampleBuffers();
+    expect(__test__.getBufferDepth("monitor")).toBe(200_000);
+    createManyMocks.assetMonitorSample.mockReset();
   });
 });
 

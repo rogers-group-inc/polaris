@@ -22,6 +22,7 @@
  * notificationRuleService; preview/dry-run in notificationEngine.
  */
 
+import { withBrokenReferences } from "../../services/actionReferenceService.js";
 import { maskActionHeaders } from "../../utils/actionHeaderMask.js";
 import { Router } from "express";
 import type { Request } from "express";
@@ -50,7 +51,8 @@ const notificationRulesRouter = Router();
 notificationRulesRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {
   try {
     // api_call headers are secrets: masked in every response (rule 114(h)).
-    res.json({ rules: maskActionHeaders(await listRules()) });
+    // Rule 177: each row says what it names that no longer exists.
+    res.json({ rules: maskActionHeaders(await withBrokenReferences(await listRules())) });
   } catch (err) { next(err); }
 });
 

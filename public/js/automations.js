@@ -742,7 +742,17 @@ var _rulesPage = 1;
       // an Actions column. Without edit rights the menu still opens — View (the
       // wizard in read-only mode), View code, Export — so a read-level role can
       // see how an automation is configured.
-      var nameCell =
+      // Business rule 177: only a marker; what is wrong is its hover text.
+      var broken = Array.isArray(r.brokenReferences) ? r.brokenReferences : [];
+      var brokenText = broken.map(function (b) { return b.message; }).join(" ");
+      var marker = broken.length
+        ? '<span class="rule-broken-marker" title="' + escapeHtml(brokenText) + '" ' +
+            'style="display:inline-flex;vertical-align:-3px;margin-right:6px;color:var(--color-warning);cursor:help">' +
+            '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" role="img" aria-label="' + escapeHtml("Needs attention: " + brokenText) + '">' +
+              '<path d="M8 1.8 15 14H1z" stroke-linejoin="round"></path><path d="M8 6v4" stroke-linecap="round"></path><circle cx="8" cy="12" r="0.6" fill="currentColor"></circle>' +
+            '</svg></span>'
+        : "";
+      var nameCell = marker +
         '<button type="button" class="row-menu-trigger rule-menu" data-id="' + r.id + '" ' +
             'aria-haspopup="menu" aria-expanded="false" title="' + (canEditRules ? "Actions for this automation" : "View this automation") + '">' +
             escapeHtml(r.name) + '</button>';

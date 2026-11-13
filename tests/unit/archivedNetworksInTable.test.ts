@@ -98,3 +98,29 @@ describe("archived networks in the Networks table", () => {
     expect(branch).not.toContain("starCellHTML");
   });
 });
+
+describe("the archive is fetched only when it is shown (efficiency audit 2026-11-13)", () => {
+  it("is not loaded for the unfiltered list, and is loaded once — then repainted in — when deprecated networks are shown", async () => {
+    g._subnetsData = [{ id: "s1", status: "available" }];
+    g._archivedLoading = false;
+    let loads = 0;
+    let repaints = 0;
+    g._loadArchivedSubnets = async () => { loads += 1; return [g.archivedSubnetRow(ARCHIVED)]; };
+    g.renderSubnetsPage = () => { repaints += 1; };
+    (0, eval)([fnSrc("archivedSubnetRow"), fnSrc("archiveReasonText"), fnSrc("_statusFilterShowsDeprecated"), fnSrc("_subnetTableRows"), fnSrc("_ensureArchivedSubnets")].join(String.fromCharCode(10)));
+
+    g._archivedSubnets = null;
+    g._subnetsSF = { getPrefs: () => ({ sfFilters: {} }) };
+    expect(g._subnetTableRows().map((r: any) => r.id)).toEqual(["s1"]);
+    expect(loads).toBe(0);
+
+    g._subnetsSF = { getPrefs: () => ({ sfFilters: { status: ["deprecated"] } }) };
+    // First paint: live rows while the archive loads; asking twice loads once.
+    expect(g._subnetTableRows().map((r: any) => r.id)).toEqual(["s1"]);
+    g._subnetTableRows();
+    expect(loads).toBe(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(repaints).toBe(1);
+    expect(g._subnetTableRows().map((r: any) => r.id)).toEqual(["s1", "archived:a1"]);
+  });
+});
