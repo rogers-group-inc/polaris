@@ -343,7 +343,8 @@
     "removeWidgetFromDetail",
     "_mfgUnprofiledHTML",
     "_loadUnprofiledManufacturers",
-    "_mfgStandardReadingHTML"
+    "_mfgStandardReadingHTML",
+    "_mfgWidgetListOrder"
   ],
   "vars": [
     "_tzClockTimer",
