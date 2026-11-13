@@ -3691,3 +3691,15 @@ expected. If a device is polled less often than the window (say every 10 minutes
 5-minute window), the newest reading is used instead. Expect averaged alerts, including the
 built-in High CPU, High memory, Slow response and temperature automations, to fire and clear
 sooner than before.
+
+### Rule 179
+
+**Racks have cable managers and a trough, things can stand beside them, and connections are drawn as cables.**
+In a Room view every rack has a vertical cable manager on each side and a trough across the
+top; right-click a rack's header to turn any of them off. A device (or a Third party box,
+such as a vertical PDU) dragged beside a rack stands there full height, outside the cable
+manager, using no rack U — two per side. The connections Layer 2 knows between devices
+shown in the racks are drawn as cables: each leaves its device into the nearer cable
+manager, runs up to the trough, along it and down into the other device. You can re-route a
+cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
+its automatic route.

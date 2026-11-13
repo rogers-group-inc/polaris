@@ -68,6 +68,13 @@ const MAX_BACKGROUND_IMAGE_SIDE = 30000;
 const MAX_ID_LEN = 64;
 const MAX_RACK_NAME_LEN = 60;
 const MAX_RACK_LABEL_LEN = 64;
+// Rule 179: hand-routed cables in a Room view.
+const MAX_CABLE_ROUTES = 2000;
+const MAX_CABLE_BENDS = 24;
+const MAX_CABLE_KEY_LEN = 300;
+const MAX_CABLE_SIG_LEN = 400;
+/** Items that may stand beside a rack, per side (rule 179). */
+const MAX_SIDE_SLOTS = 2;
 const THIRD_PARTY_DEFAULT_LABEL = "Third party";
 const MAX_COORD = 1e7;
 /** An unreferenced uploaded image older than this is an abandoned edit. */
@@ -157,6 +164,18 @@ export interface TopologyRack {
   units: number;
   order: number;
   face: "front" | "rear";
+  /** Rule 179: the vertical cable managers and the top trough, each on unless turned off. */
+  cableManagers: { left: boolean; right: boolean; trough: boolean };
+}
+
+/** One hand-routed cable (rule 179), in the Room strip's pixels. */
+export interface TopologyCableRoute {
+  bends: Array<[number, number]>;
+  /** Where each end leaves its device: which side, and how far down it (0-1). */
+  s?: { side: "left" | "right"; f: number };
+  t?: { side: "left" | "right"; f: number };
+  /** Where both ends stood when it was routed; a route whose ends moved is dropped by the client. */
+  sig: string;
 }
 
 export interface TopologyRackPlacement {
@@ -171,6 +190,15 @@ export interface TopologyRackPlacement {
   startU: number;
   heightU: number;
   fullDepth: boolean;
+  /**
+   * Rule 179: "rack" (in the U) or "side" (standing beside the rack, outside
+   * its cable manager, full height, using no U — a vertical PDU). A side item
+   * keeps startU 1 / heightU 1, which nothing reads.
+   */
+  mount: "rack" | "side";
+  side: "left" | "right" | null;
+  /** 0 next to the cable manager, 1 outside it. */
+  slot: number | null;
 }
 
 export interface TopologyViewDto {
@@ -189,6 +217,8 @@ export interface TopologyViewDto {
   walls: TopologyWall[];
   wallPlacements: TopologyWallPlacement[];
   layers: TopologyLayer[];
+  /** Rule 179: a Room view's hand-routed cables. */
+  cableRoutes: Record<string, TopologyCableRoute>;
   /** TopologyLayout key prefix: "" for the default view, "v:<id>" otherwise. */
   layoutPrefix: string;
   createdBy: string | null;
@@ -212,6 +242,7 @@ type ViewRow = {
   walls: Prisma.JsonValue;
   wallPlacements: Prisma.JsonValue;
   layers: Prisma.JsonValue;
+  cableRoutes: Prisma.JsonValue;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: Date;
@@ -230,12 +261,15 @@ function toDto(row: ViewRow): TopologyViewDto {
     background: (row.background ?? null) as unknown as TopologyBackground | null,
     polygons: ((Array.isArray(row.polygons) ? row.polygons : []) as unknown as TopologyPolygon[])
       .map((p) => ({ ...p, layer: Number.isInteger(p.layer) ? p.layer : 0 })),
-    racks: (Array.isArray(row.racks) ? row.racks : []) as unknown as TopologyRack[],
-    rackPlacements: (Array.isArray(row.rackPlacements) ? row.rackPlacements : []) as unknown as TopologyRackPlacement[],
+    // Racks and placements saved before rule 179 read with its defaults.
+    racks: ((Array.isArray(row.racks) ? row.racks : []) as unknown as TopologyRack[]).map(withCableManagers),
+    rackPlacements: ((Array.isArray(row.rackPlacements) ? row.rackPlacements : []) as unknown as TopologyRackPlacement[])
+      .map((p) => (p.mount === "side" ? p : { ...p, mount: "rack" as const, side: null, slot: null })),
     region: (row.region && typeof row.region === "object" && !Array.isArray(row.region) ? row.region : null) as unknown as LocationCodes | null,
     walls: (Array.isArray(row.walls) ? row.walls : []) as unknown as TopologyWall[],
     wallPlacements: (Array.isArray(row.wallPlacements) ? row.wallPlacements : []) as unknown as TopologyWallPlacement[],
     layers: (Array.isArray(row.layers) ? row.layers : []) as unknown as TopologyLayer[],
+    cableRoutes: (isObj(row.cableRoutes) ? row.cableRoutes : {}) as unknown as Record<string, TopologyCableRoute>,
     layoutPrefix: viewLayoutPrefix(row),
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
@@ -251,6 +285,12 @@ const json = (v: unknown): Prisma.InputJsonValue => v as Prisma.InputJsonValue;
 const bad = (msg: string): never => {
   throw new AppError(400, msg);
 };
+
+/** A rack read back with rule 179's defaults: both cable managers and the trough on. */
+function withCableManagers(r: TopologyRack): TopologyRack {
+  const m = (r as { cableManagers?: Partial<TopologyRack["cableManagers"]> }).cableManagers || {};
+  return { ...r, cableManagers: { left: m.left !== false, right: m.right !== false, trough: m.trough !== false } };
+}
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -538,12 +578,18 @@ export function sanitizeRacks(raw: unknown): TopologyRack[] {
     if (typeof rr.name !== "string" || !rr.name.trim() || rr.name.trim().length > MAX_RACK_NAME_LEN) {
       bad(`rack ${i + 1} needs a name of 1-${MAX_RACK_NAME_LEN} characters`);
     }
+    // Rule 179: each cable manager and the trough is on unless set false.
+    const cm = isObj(rr.cableManagers) ? rr.cableManagers : {};
+    for (const k of ["left", "right", "trough"]) {
+      if (cm[k] !== undefined && typeof cm[k] !== "boolean") bad(`rack ${i + 1} cableManagers.${k} must be true or false`);
+    }
     return {
       id,
       name: (rr.name as string).trim(),
       units: int(rr.units, `rack ${i + 1} size (U)`, 1, MAX_RACK_UNITS),
       order: int(rr.order ?? i, `rack ${i + 1} order`, 0, 10000),
       face: rr.face === undefined ? "front" : face(rr.face, `rack ${i + 1}`),
+      cableManagers: { left: cm.left !== false, right: cm.right !== false, trough: cm.trough !== false },
     } as TopologyRack;
   });
   return racks.sort((a, b) => a.order - b.order).map((r, i) => ({ ...r, order: i }));
@@ -591,6 +637,18 @@ export function sanitizeRackPlacements(raw: unknown, racks: TopologyRack[]): Top
     }
     if (typeof pr.rackId !== "string" || !rackById.has(pr.rackId)) bad(`rack placement ${i + 1} names a rack that does not exist`);
     const rack = rackById.get(pr.rackId as string)!;
+    // Rule 179: an item standing beside the rack uses no U.
+    if (pr.mount === "side") {
+      if (kind === "cableManagement") bad(`rack placement ${i + 1}: cable management goes in the rack, not beside it`);
+      if (pr.side !== "left" && pr.side !== "right") bad(`rack placement ${i + 1} side must be "left" or "right"`);
+      return {
+        id, kind, assetId, label, rackId: rack.id,
+        face: pr.face === undefined ? "front" : face(pr.face, `rack placement ${i + 1}`),
+        startU: 1, heightU: 1, fullDepth: false,
+        mount: "side", side: pr.side, slot: int(pr.slot ?? 0, `rack placement ${i + 1} slot`, 0, MAX_SIDE_SLOTS - 1),
+      } as TopologyRackPlacement;
+    }
+    if (pr.mount !== undefined && pr.mount !== "rack") bad(`rack placement ${i + 1} mount must be "rack" or "side"`);
     const startU = int(pr.startU, `rack placement ${i + 1} start U`, 1, rack.units);
     const heightU = int(pr.heightU, `rack placement ${i + 1} height (U)`, 1, rack.units);
     if (startU + heightU - 1 > rack.units) bad(`rack placement ${i + 1} runs past the top of ${rack.name} (${rack.units}U)`);
@@ -606,11 +664,24 @@ export function sanitizeRackPlacements(raw: unknown, racks: TopologyRack[]): Top
       // Half depth unless marked full: the face it is on, so a front item and a
       // rear item may share a U (operator request 2026-11-10).
       fullDepth: pr.fullDepth === true,
+      mount: "rack",
+      side: null,
+      slot: null,
     } as TopologyRackPlacement;
   });
+  // Beside a rack: one item per slot.
+  const slots = new Map<string, string>();
+  for (const p of out) {
+    if (p.mount !== "side") continue;
+    const key = `${p.rackId}|${p.side}|${p.slot}`;
+    const other = slots.get(key);
+    if (other) bad(`rack placements "${other}" and "${p.id}" stand in the same place beside the rack`);
+    slots.set(key, p.id);
+  }
   // Overlap: per rack, per face, per U.
   const taken = new Map<string, string>();
   for (const p of out) {
+    if (p.mount === "side") continue;
     for (const f of occupiedFaces(p)) {
       for (let u = p.startU; u < p.startU + p.heightU; u++) {
         const key = `${p.rackId}|${f}|${u}`;
@@ -628,12 +699,47 @@ function placementsOutsideRacks(placements: TopologyRackPlacement[], racks: Topo
   const byId = new Map(racks.map((r) => [r.id, r]));
   return placements.filter((p) => {
     const r = byId.get(p.rackId);
-    return !r || p.startU + p.heightU - 1 > r.units;
+    return !r || (p.mount !== "side" && p.startU + p.heightU - 1 > r.units);
   });
 }
 
 function newRack(order = 0, name = "Rack 1"): TopologyRack {
-  return { id: randomUUID(), name, units: DEFAULT_RACK_UNITS, order, face: "front" };
+  return { id: randomUUID(), name, units: DEFAULT_RACK_UNITS, order, face: "front", cableManagers: { left: true, right: true, trough: true } };
+}
+
+/**
+ * Rule 179: a Room view's hand-routed cables, keyed by the link's path key.
+ * Bends are strip pixels; an end is a side and a fraction down the device.
+ */
+export function sanitizeCableRoutes(raw: unknown): Record<string, TopologyCableRoute> {
+  if (!isObj(raw)) bad("cableRoutes must be an object");
+  const keys = Object.keys(raw as Record<string, unknown>);
+  if (keys.length > MAX_CABLE_ROUTES) bad(`a view may hold at most ${MAX_CABLE_ROUTES} cable routes`);
+  const out: Record<string, TopologyCableRoute> = {};
+  const end = (v: unknown, what: string) => {
+    if (v === undefined || v === null) return undefined;
+    if (!isObj(v) || (v.side !== "left" && v.side !== "right")) bad(`${what} side must be "left" or "right"`);
+    const e = v as Record<string, unknown>;
+    const f = finite(e.f, `${what} position`);
+    if (f < 0 || f > 1) bad(`${what} position must be from 0 to 1`);
+    return { side: e.side as "left" | "right", f };
+  };
+  for (const k of keys) {
+    if (k.length > MAX_CABLE_KEY_LEN || /[\x00-\x1f\x7f]/.test(k)) bad("a cable route key is too long or has a control character");
+    const v = (raw as Record<string, unknown>)[k];
+    if (!isObj(v)) bad(`cable route "${k}" must be an object`);
+    const r = v as Record<string, unknown>;
+    if (!Array.isArray(r.bends) || r.bends.length > MAX_CABLE_BENDS) bad(`cable route "${k}" may have at most ${MAX_CABLE_BENDS} bends`);
+    const bends = (r.bends as unknown[]).map((b, i) => {
+      if (!Array.isArray(b) || b.length !== 2) bad(`cable route "${k}" bend ${i + 1} must be [x, y]`);
+      return [finite((b as unknown[])[0], "a bend x"), finite((b as unknown[])[1], "a bend y")] as [number, number];
+    });
+    if (typeof r.sig !== "string" || r.sig.length > MAX_CABLE_SIG_LEN) bad(`cable route "${k}" needs a sig of at most ${MAX_CABLE_SIG_LEN} characters`);
+    const s = end(r.s, `cable route "${k}" start`);
+    const t = end(r.t, `cable route "${k}" end`);
+    out[k] = { bends, sig: r.sig as string, ...(s ? { s } : {}), ...(t ? { t } : {}) };
+  }
+  return out;
 }
 
 /** Mode-specific fields of a freshly created or reset view. */
@@ -653,6 +759,7 @@ function freshModeFields(mode: TopologyViewMode) {
     walls: json([]),
     wallPlacements: json([]),
     layers: json([]),
+    cableRoutes: json({}),
   };
 }
 
@@ -868,6 +975,7 @@ export interface ViewPatch {
   walls?: unknown;
   wallPlacements?: unknown;
   layers?: unknown;
+  cableRoutes?: unknown;
 }
 
 interface ModeChangeSummary {
@@ -986,6 +1094,10 @@ export async function updateView(
     imagesTouched = true;
   }
   if (patch.polygons !== undefined) data.polygons = json(sanitizePolygons(patch.polygons));
+  if (patch.cableRoutes !== undefined) {
+    if (current.mode !== "room") bad("Only a Room view has cable routes");
+    data.cableRoutes = json(sanitizeCableRoutes(patch.cableRoutes));
+  }
   const walls = patch.walls !== undefined ? sanitizeWalls(patch.walls) : current.walls;
   if (patch.walls !== undefined) data.walls = json(walls);
   if (patch.wallPlacements !== undefined || patch.walls !== undefined) {

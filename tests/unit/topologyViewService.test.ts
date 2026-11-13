@@ -21,6 +21,7 @@ import {
   sanitizeWallPlacements,
   sanitizeLayers,
   sanitizeRegion,
+  sanitizeCableRoutes,
   MAX_RACK_UNITS,
   MAX_VIEW_NAME_LEN,
   type TopologyRack,
@@ -249,3 +250,41 @@ describe("floor layers and regions (rules 150, 152)", () => {
   });
 });
 
+
+describe("rule 179: cable managers, items beside a rack, cable routes", () => {
+  const racks: TopologyRack[] = sanitizeRacks([{ id: "rA", name: "Rack A", units: 24, order: 0 }]);
+
+  it("turns every cable manager and the trough on unless set false", () => {
+    expect(racks[0].cableManagers).toEqual({ left: true, right: true, trough: true });
+    const r = sanitizeRacks([{ id: "a", name: "A", units: 10, cableManagers: { left: false, trough: false } }]);
+    expect(r[0].cableManagers).toEqual({ left: false, right: true, trough: false });
+    expect(status(() => sanitizeRacks([{ id: "a", name: "A", units: 10, cableManagers: { left: "no" } }]))).toBe(400);
+  });
+
+  it("stands an item beside the rack using no U, one per slot", () => {
+    const out = sanitizeRackPlacements([
+      { id: "u1", kind: "asset", assetId: A1, rackId: "rA", face: "front", startU: 1, heightU: 24 },
+      { id: "pdu", kind: "asset", assetId: A2, rackId: "rA", face: "front", startU: 5, heightU: 3, mount: "side", side: "left", slot: 0 },
+      { id: "tp", kind: "thirdParty", label: "PDU B", rackId: "rA", face: "front", mount: "side", side: "left", slot: 1 },
+    ], racks);
+    expect(out[0]).toMatchObject({ mount: "rack", side: null, slot: null });
+    expect(out[1]).toMatchObject({ mount: "side", side: "left", slot: 0, startU: 1, heightU: 1 });
+    expect(status(() => sanitizeRackPlacements([
+      { id: "a", kind: "thirdParty", rackId: "rA", mount: "side", side: "right", slot: 0 },
+      { id: "b", kind: "thirdParty", rackId: "rA", mount: "side", side: "right", slot: 0 },
+    ], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "c", kind: "cableManagement", rackId: "rA", mount: "side", side: "left", slot: 0 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "c", kind: "thirdParty", rackId: "rA", mount: "side", side: "left", slot: 2 }], racks))).toBe(400);
+    expect(status(() => sanitizeRackPlacements([{ id: "c", kind: "thirdParty", rackId: "rA", mount: "side", side: "up", slot: 0 }], racks))).toBe(400);
+  });
+
+  it("keeps a route's bends, ends and sig and refuses a malformed one", () => {
+    const out = sanitizeCableRoutes({ "e|a|b": { bends: [[10, 20], [30.5, 40]], s: { side: "left", f: 0.25 }, sig: "x" } });
+    expect(out["e|a|b"]).toEqual({ bends: [[10, 20], [30.5, 40]], s: { side: "left", f: 0.25 }, sig: "x" });
+    expect(status(() => sanitizeCableRoutes([]))).toBe(400);
+    expect(status(() => sanitizeCableRoutes({ k: { bends: Array.from({ length: 25 }, () => [0, 0]), sig: "" } }))).toBe(400);
+    expect(status(() => sanitizeCableRoutes({ k: { bends: [[0, "1"]], sig: "" } }))).toBe(400);
+    expect(status(() => sanitizeCableRoutes({ k: { bends: [], s: { side: "left", f: 2 }, sig: "" } }))).toBe(400);
+    expect(status(() => sanitizeCableRoutes({ k: { bends: [] } }))).toBe(400);
+  });
+});
