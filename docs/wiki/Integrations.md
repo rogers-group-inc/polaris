@@ -31,8 +31,12 @@ discovery at `write`.
 | **Proxmox VE** | Proxmox VE REST API (9.x), read-only | cluster nodes, VMs, LXC containers | [Proxmox VE](Integration-Proxmox) |
 | **Generic API** | any REST API returning JSON, mapped field by field | assets | [Generic API](Integration-Generic-API) |
 
-Plus one integration that discovers nothing: **AI Assistant** — the model server
-behind the [AI assistant](AI-Assistant), either one you run or an Azure AI Foundry deployment.
+Plus two integrations that discover nothing:
+
+- **AI Assistant** — the model server behind the [AI assistant](AI-Assistant),
+  either one you run or an Azure AI Foundry deployment.
+- **ArcGIS** — a sign-in to ArcGIS Online, Location Platform or your own ArcGIS
+  Enterprise portal, for map features ([ArcGIS](Integration-ArcGIS)).
 
 The page has a second tab, **Polaris Agents** — the
 [Polaris Agent](Polaris-Agent) build, SSH deployment, and service/process
@@ -58,6 +62,7 @@ The modal is tabbed, and the tab set depends on the type:
 | Windows Server, vCenter, Unraid, TrueNAS SCALE, Proxmox VE | General → Monitoring |
 | Generic API | General → Records & Mapping → Preview (its assets are monitored one by one, like manually added ones) |
 | AI Assistant | one untabbed form — Model Server, then Assistant Behaviour ([AI assistant](AI-Assistant)) |
+| ArcGIS | one untabbed form — Portal and sign-in ([ArcGIS](Integration-ArcGIS)) |
 
 Outside the Fortinet pair, the connection settings **and** the filters live on
 the General tab. **The FortiManager and standalone FortiGate layouts are

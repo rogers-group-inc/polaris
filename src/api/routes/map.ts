@@ -27,6 +27,7 @@
  *   PUT    /map/sites/:id/topology/views/:viewId — update a view (a mode change resets it, rule 149)
  *   DELETE /map/sites/:id/topology/views/:viewId — delete a view
  *   POST   /map/sites/:id/topology/views/:viewId/background — upload a background image
+ *   POST   /map/sites/:id/topology/views/:viewId/cad — read a DXF (no `layers`) or import it as a floor plan (rule 182)
  *   POST   /map/sites/:id/topology/location-codes — rewrite descriptions from
  *          polygon placements (rule 148; assets=write + the assets write scope, not deviceMap)
  *
@@ -60,6 +61,9 @@ import {
   deleteView,
   describeModeChangeLoss,
   saveBackgroundImage,
+  analyzeCadDrawing,
+  saveCadDrawing,
+  MAX_CAD_FILE_BYTES,
   getBackgroundImage,
   sanitizeLocationCodeChanges,
   applyLocationCodeChanges,
@@ -603,6 +607,46 @@ router.post("/sites/:id/topology/views/:viewId/background", ...viewWriteGate, (r
   }
 });
 
+// Rule 182: a DXF CAD drawing as a floor plan. Without `layers` the file is
+// only read (the import dialog's units, layers and preview); with them it is
+// drawn and stored like an uploaded image. The DXF itself is never kept.
+const cadUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_CAD_FILE_BYTES, files: 1 } });
+router.post("/sites/:id/topology/views/:viewId/cad", ...viewWriteGate, (req, res, next) => {
+  cadUpload.single("file")(req, res, (err: unknown) => {
+    const code = (err as { code?: string } | undefined)?.code;
+    if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `CAD drawings are limited to ${MAX_CAD_FILE_BYTES / (1024 * 1024)} MB`));
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const viewId = req.params.viewId as string;
+    if (!req.file) throw new AppError(400, "No drawing uploaded (form field \"file\")");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.layers === undefined) {
+      res.json(await analyzeCadDrawing(siteId, viewId, req.file.buffer));
+      return;
+    }
+    let layers: unknown;
+    try { layers = JSON.parse(String(body.layers)); } catch { throw new AppError(400, "layers must be a JSON list of layer names"); }
+    const img = await saveCadDrawing(siteId, viewId, req.file.buffer, {
+      fileName: req.file.originalname, layers, units: body.units,
+    }, req.session?.username ?? null);
+    logEvent({
+      action: "map.topology.cad_imported",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `CAD drawing ${img.cad.file} imported to a topology view (${img.cad.layers.length} layer${img.cad.layers.length === 1 ? "" : "s"})`,
+      details: { viewId: img.viewId, imageId: img.id, file: img.cad.file, layers: img.cad.layers.length, units: img.cad.units.name, size: img.size },
+    });
+    res.status(201).json(img);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Authenticated only (the /map mount's deviceMap=read floor) — never the
 // unauthenticated /uploads static mount. An image id is immutable, so the
 // browser may cache it privately.
@@ -613,6 +657,9 @@ router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => 
     res.setHeader("Content-Length", String(img.data.length));
     res.setHeader("Cache-Control", "private, max-age=86400, immutable");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // An SVG (a CAD drawing, rule 182) is Polaris's own markup, but opened on
+    // its own it must still run nothing.
+    if (img.mimeType === "image/svg+xml") res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.send(img.data);
   } catch (err) {
     next(err);

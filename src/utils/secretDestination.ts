@@ -50,6 +50,8 @@ export const DESTINATION_KEYS = [
   "fortigateVerifySsl",
   "useProxy",
   "mgmtInterface",
+  // ArcGIS: the portal a key / app secret / password is sent to.
+  "portalUrl",
 ] as const;
 
 /**

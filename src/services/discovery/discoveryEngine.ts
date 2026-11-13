@@ -1127,7 +1127,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
         syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
       }
-    } else if (collectorType === "llm") {
+    } else if (collectorType === "llm" || collectorType === "arcgis") {
       // triggerDiscovery refuses it; a replayed or hand-queued job must not run.
       throw new AppError(400, `${integrationName} is not a discovery integration — there is nothing to discover`);
     } else {

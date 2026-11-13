@@ -1290,6 +1290,15 @@ card (unchanged).
 > hand-edited the config will (correctly) see the drift banner and need to
 > re-adopt managed mode for `/dash` to route. The wallboard itself stays
 > dark either way until you enable it on the Dash Wallboard card.
+> **Upgrade note (floor plans and CAD drawings, rule 182):** the shipped nginx
+> config gained an eleventh `location`, a regex over a Topology view's
+> `…/topology/views/<id>/background` and `…/cad` uploads, lifting their body
+> limit to `64m` (a floor-plan image is up to 15 MB, a DXF up to 64 MB). Until
+> the config is re-rendered, a floor plan over 8 MB is refused at nginx with a
+> 413; re-apply Server Settings → **Web Server**, or add that block by hand
+> (copy it from `deploy/nginx/polaris.conf`) and reload nginx. A managed
+> install shows the drift banner (10 locations, expected 11) until re-adopted.
+
 > **Upgrade note (request-body limits):** the shipped nginx config gained a
 > server-level `client_max_body_size 8m` plus one `location` that lifts the
 > limit for the database-restore upload (7 → 8 locations), and later a second
@@ -1567,7 +1576,7 @@ Two more things worth knowing before you need them:
 
 ## Secrets at rest
 
-Polaris stores the credentials it uses to reach your infrastructure in its own database: SNMP communities, WinRM and SSH passwords and private keys, the bearer token, or the username and password, on an HTTP credential, FortiManager and FortiGate API tokens, the Entra and Azure Arc client secrets, the AD bind password, vCenter credentials, the Unraid and TrueNAS SCALE API keys, the Proxmox VE API token secret, a Generic API integration's token, password or OAuth client secret (its extra headers are stored as typed), an AI Assistant integration's API key, and delivery-channel secrets (SMTP password, M365 client secret, Slack/Teams webhook URLs, the Web Push private key).
+Polaris stores the credentials it uses to reach your infrastructure in its own database: SNMP communities, WinRM and SSH passwords and private keys, the bearer token, or the username and password, on an HTTP credential, FortiManager and FortiGate API tokens, the Entra and Azure Arc client secrets, the AD bind password, vCenter credentials, the Unraid and TrueNAS SCALE API keys, the Proxmox VE API token secret, a Generic API integration's token, password or OAuth client secret (its extra headers are stored as typed), an AI Assistant integration's API key, an ArcGIS integration's API key, OAuth app client secret or password, and delivery-channel secrets (SMTP password, M365 client secret, Slack/Teams webhook URLs, the Web Push private key).
 
 `POLARIS_SECRET_KEY` in `/opt/polaris/.env` encrypts those values (AES-256-GCM, per-value). The first-run wizard and every `deploy/setup-*` script generate one automatically, so a fresh install is already covered — and re-running a setup script over an existing `.env` appends a key if one is missing. The exception is **Docker**, where no wizard or setup script runs: you supply the key yourself (see [Docker](#docker)). Verify with:
 

@@ -179,7 +179,7 @@ describe("parseNginxConfigText — missing pieces", () => {
   location = /metrics-discovery { proxy_pass http://127.0.0.1:9110/metrics; }
 }`;
     const { drift } = parseNginxConfigText(preDash);
-    expect(drift.some((d) => d.includes("location block count is 5 (expected 10)"))).toBe(true);
+    expect(drift.some((d) => d.includes("location block count is 5 (expected 11)"))).toBe(true);
   });
 
   it("reports drift on a pre-restore-override 7-location config", () => {
@@ -199,7 +199,7 @@ describe("parseNginxConfigText — missing pieces", () => {
   location = /metrics-discovery { proxy_pass http://127.0.0.1:9110/metrics; }
 }`;
     const { drift } = parseNginxConfigText(preRestore);
-    expect(drift.some((d) => d.includes("location block count is 7 (expected 10)"))).toBe(true);
+    expect(drift.some((d) => d.includes("location block count is 7 (expected 11)"))).toBe(true);
   });
 
   it("reports drift on a pre-api-docs 8-location config (forces re-adoption after upgrade)", () => {
@@ -219,7 +219,7 @@ describe("parseNginxConfigText — missing pieces", () => {
   location = /metrics-discovery { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:9110/metrics; }
 }`;
     const { config, drift } = parseNginxConfigText(preApiDocs);
-    expect(drift.some((d) => d.includes("location block count is 8 (expected 10)"))).toBe(true);
+    expect(drift.some((d) => d.includes("location block count is 8 (expected 11)"))).toBe(true);
     // Single-line location bodies still parse: the Prometheus IP is seeded.
     expect(config.prometheusAllowIps).toEqual(["10.0.0.42"]);
   });
@@ -243,7 +243,27 @@ describe("parseNginxConfigText — missing pieces", () => {
   location = /api { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:3000; }
 }`;
     const { drift } = parseNginxConfigText(preFirmware);
-    expect(drift.some((d) => d.includes("location block count is 9 (expected 10)"))).toBe(true);
+    expect(drift.some((d) => d.includes("location block count is 9 (expected 11)"))).toBe(true);
+  });
+
+  it("reports drift on a pre-floor-plan 10-location config (forces re-adoption after upgrade)", () => {
+    // The generation before the Topology floor-plan upload override (rule 182).
+    const preFloorPlan = `server {
+  listen 443 ssl;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  location / { proxy_pass http://127.0.0.1:3000; }
+  location = /api/v1/server-settings/database/restore { proxy_pass http://127.0.0.1:3000; }
+  location = /api/v1/server-settings/firmware/images { proxy_pass http://127.0.0.1:3000; }
+  location = /dash { proxy_pass http://127.0.0.1:3001; }
+  location /dash/ { proxy_pass http://127.0.0.1:3001; }
+  location = /metrics { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:3000/metrics; }
+  location = /metrics-monitor-1 { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:9101/metrics; }
+  location = /metrics-monitor-2 { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:9102/metrics; }
+  location = /metrics-discovery { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:9110/metrics; }
+  location = /api { allow 10.0.0.42; deny all; proxy_pass http://127.0.0.1:3000; }
+}`;
+    const { drift } = parseNginxConfigText(preFloorPlan);
+    expect(drift.some((d) => d.includes("location block count is 10 (expected 11)"))).toBe(true);
   });
 
   it("defaults managedMode=false (bootstrap caller decides when to flip it)", () => {
