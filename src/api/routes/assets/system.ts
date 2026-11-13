@@ -12,7 +12,6 @@ import { requirePermission } from "../../middleware/permissions.js";
 import { resolveWriteScope, inWriteScope, scheduleCanEditByIds } from "../../../services/writeScopeService.js";
 import { getAssetSoftware } from "../../../services/softwareInventoryService.js";
 import { getInventoryPresence } from "../../../services/serviceInventoryService.js";
-import { getFibreChannelForAsset } from "../../../services/fibreChannelService.js";
 import { countControllerChildren, getControllerMacTable, getControllerWireless } from "../../../services/controllerChildrenService.js";
 import { pickSampleTierForAsset } from "../../../services/sampleQueryRouter.js";
 import { resolveRange, extendSinceForLookback } from "../../../utils/chartRange.js";
@@ -24,7 +23,7 @@ import { readProbeOutages, serializeOutages } from "../../../services/probeOutag
 import { loadMemoryForecastSeries } from "../../../services/memoryForecastService.js";
 import { assertAssetExists, findAssetScopeRecord } from "../../../services/assetDetailReadService.js";
 
-import { getAssetSystemInfo, getAssetProcesses, getAssetMacTable, getAssetArpTable, getAssetServices } from "../../../services/assetSystemTabService.js";
+import { getAssetSystemInfo, getAssetProcesses, getAssetMacTable, getAssetArpTable, getAssetServices, getAssetFibreChannel } from "../../../services/assetSystemTabService.js";
 
 
 const router = Router();
@@ -166,11 +165,13 @@ router.get("/:id/processes", requirePermission("assets", "read"), async (req, re
  * `switch` = this asset's FC ports and the devices logged into them;
  * `host` = this asset's HBA ports as the switches it is matched on see them,
  * one entry per switch. Either is null when it has nothing; both null means
- * the tab is not drawn.
+ * the tab is not drawn. `readBy` says how those rows are read (method,
+ * cadence, and on a host which switch or integration), and `pollIntervalSec`
+ * the cadence the freshness stamp is judged against.
  */
 router.get("/:id/fibre-channel", requirePermission("assets", "read"), async (req, res, next) => {
   try {
-    res.json(await getFibreChannelForAsset(req.params.id as string));
+    res.json(await getAssetFibreChannel(req.params.id as string));
   } catch (err) { next(err); }
 });
 
