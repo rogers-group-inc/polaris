@@ -619,6 +619,7 @@
       drawCrossLinks();
       paintSelected();
       paintCenter();
+      if (cableRuns) cableRuns.draw();
     }
     function drawFloor(level) {
       var f = floorPane(level);
@@ -1772,7 +1773,8 @@
 
     // ── Staging + history ───────────────────────────────────────────────
     function snapshot() {
-      return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer });
+      return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer,
+        cableRuns: cableRuns ? cableRuns.snapshot() : null });
     }
     function stageAll(fields) {
       fields.forEach(function (f) {
@@ -1807,6 +1809,7 @@
       paintLayerCtl();
       if (adjust) endAdjust();
       if (JSON.stringify(state.background) !== before) buildMap(); else drawAll();
+      if (cableRuns && o.cableRuns) cableRuns.restore(o.cableRuns);
       restageAllCodes();
       ctx.refreshSidebar();
       ctx.historyChanged();
@@ -1824,12 +1827,19 @@
       });
     }
     function setEditing(on) {
+      var wasEditing = state.editing;
       state.editing = !!on;
       if (viewLayer) { viewLayer = null; applyBaseLayer(); }
       paintDragging();
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
       if (!on) { endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
+      if (cableRuns) {
+        cableRuns.setEditing(!!on);
+        // Leaving edit mode drops (or has just committed) the session: show the
+        // server's runs again, not the working copy.
+        if (!on && wasEditing) cableRuns.load();
+      }
       if (on) resetHistory();
       paintLayerCtl();
     }
@@ -2002,13 +2012,33 @@
     function onKey(e) {
       if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
       if (e.key === "Escape" && adjust) endAdjust();
+      if (e.key === "Escape" && cableRuns) cableRuns.cancelDraw();
       if (e.key === "Escape" && placing) endPlacing(false);
     }
     document.addEventListener("keydown", onKey);
 
+    // Cable runs (rule 184): their own layer on floor 0's ground, shown only
+    // over the map / satellite (an uploaded plan has no latitude / longitude),
+    // and only to a caller holding cableRuns read (ctx.fetchCableRuns is null
+    // otherwise).
+    var cableRuns = window.PolarisTopologyCableRuns && ctx.fetchCableRuns
+      ? window.PolarisTopologyCableRuns.create({
+          L: L,
+          map: function () { return map; },
+          pane: function () { return floorPane(0); },
+          editing: function () { return state.editing; },
+          visible: function () { return !imageGround(); },
+          fetch: ctx.fetchCableRuns,
+          stage: function (edits) { if (ctx.stageCableRuns) ctx.stageCableRuns(edits); },
+          onChange: function () { changed(); },
+          toast: function (m, k) { ctx.toast(m, k); },
+        })
+      : null;
+
     host.appendChild(centerMark);
     buildMap();
     setEditing(state.editing);
+    if (cableRuns) cableRuns.load();
     // Leaflet measures its container on creation; the modal may still be
     // animating in.
     setTimeout(function () { if (map) map.invalidateSize(); }, 60);
@@ -2028,6 +2058,7 @@
       // The Delete key (map.js): the selected placed device comes off the map.
       deleteSelected: function () {
         if (deleteSelectedHandle()) return true;
+        if (cableRuns && cableRuns.removeSelected()) return true;
         if (!state.editing || !selectedId || !state.placements[selectedId]) return false;
         var id = selectedId;
         select(null);
@@ -2035,6 +2066,8 @@
         return true;
       },
       beforeCommit: captureOsmView,
+      // map.js, once the session's cable-run PUT has answered.
+      reloadCableRuns: function () { if (cableRuns) cableRuns.load(); },
       cornerButtons: function () {
         return [
           { id: "topology-background", label: "Background", tip: "Choose the map or upload a floor-plan image",
@@ -2042,7 +2075,17 @@
             onClick: openBackgroundMenu, editOnly: true },
           { id: "topology-draw-polygon", label: "Draw polygon", tip: "Draw a polygon for a location group",
             icon: '<polygon points="12 2 22 9 18 21 6 21 2 9 12 2"/>', onClick: startDrawing, editOnly: true },
-        ];
+        ].concat(cableRuns && ctx.canDrawRuns ? [
+          // Rule 184: cableRuns write, not deviceMap. The site's own write
+          // scope is checked when the run layer loads (canEditRuns).
+          { id: "topology-draw-run", label: "Draw pole run", tip: "Draw a fiber or ethernet run along poles (each bend is a pole)",
+            icon: '<polyline points="2 20 8 9 14 14 22 4"/><circle cx="8" cy="9" r="1.5"/><circle cx="14" cy="14" r="1.5"/>',
+            onClick: function () {
+              if (imageGround()) { ctx.toast("Cable runs are drawn on the map or satellite ground, not on a floor plan", "error"); return; }
+              if (!cableRuns.canEdit()) { ctx.toast("You can see this site's cable runs but not change them", "error"); return; }
+              cableRuns.startDraw();
+            }, editOnly: true },
+        ] : []);
       },
       canUndo: function () { return state.history.index > 0; },
       canRedo: function () { return state.history.index < state.history.entries.length - 1; },
@@ -2056,6 +2099,7 @@
         endAdjust();
         document.removeEventListener("keydown", onKey);
         if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
+        if (cableRuns) cableRuns.destroy();
         if (map) { map.remove(); map = null; }
       },
     };

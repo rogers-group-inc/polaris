@@ -604,6 +604,36 @@ the column under the tick:
   site's descriptions already name, or a new group inside one), then click to
   add points and click the first point to close it. Click a polygon to
   reshape it, change its group or delete it.
+- **Draw pole run** (needs the **Cable Runs** permission, [rule 184](Business-Rules#rule-184)):
+  draw a fiber or ethernet run along electric or telephone poles — click each
+  pole, double-click the last one to finish. See [Cable runs](#cable-runs) below.
+
+#### Cable runs
+
+Cable runs are the physical fiber and ethernet routes at a site, drawn over
+the map or satellite imagery (never over an uploaded floor plan). They belong
+to the **site**, so every Topology view of it shows them, and changing a
+view's mode never removes them.
+
+| Kind | Colour | How it gets on the map |
+|---|---|---|
+| **Electric pole** | orange | drawn by hand; each bend is a pole |
+| **Telephone pole** | green | drawn by hand; each bend is a pole |
+| **Trench** | blue | imported from a survey file (coming soon); its points cannot be moved on the map |
+
+Fiber is a solid line, ethernet a dashed one; the legend in the bottom-left
+corner names every colour and line style. Click a run to open its panel —
+name, fiber or ethernet, which poles, length, pole count and notes, and, when
+an [ArcGIS integration](Integration-ArcGIS) writes runs to your ArcGIS
+organization, whether it has been sent. While editing, drag the white
+handles to move a pole, or **Delete run**; the Delete key also removes the
+selected run. Runs are saved with the view (the tick or **Save**), undone with
+the rest of the edit, and every change is recorded as an Event.
+
+Seeing runs needs **Read** on **Cable Runs**; drawing them needs
+**Read-Write** (sites you added or that carry your tags) or **Full Read-Write**
+(any site). Device Map rights alone do neither, because runs are written to
+another system. Only administrators have Cable Runs by default.
 
 The details pane's **Device List** names every device of a shown type, with a
 filter box; it shows about five rows and scrolls past that. A device on the

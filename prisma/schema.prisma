@@ -1381,6 +1381,7 @@ model Asset {
   rebootSchedules    RebootSchedule[]
   topologyLayouts    TopologyLayout[]
   topologyViews      TopologyView[]
+  cableRuns          CableRun[]
   topologyBackgroundImages TopologyBackgroundImage[]
   regionNodes        RegionNode[]
   processConnections AssetProcessConnection[]
@@ -4397,6 +4398,44 @@ model TopologyView {
   @@unique([siteId, name])
   @@index([siteId])
   @@map("topology_views")
+}
+
+// A physical cable route at a site (business rule 184): a fiber or ethernet
+// run along electric or telephone poles, drawn by hand on a Topology view, or
+// a trench imported from a survey file. It belongs to the SITE (the
+// FortiGate), not to a view, so every Topology view of the site shows it and
+// a view's mode reset (rule 149) never touches it. Gated by its own key,
+// `cableRuns`, because it is written one way to an ArcGIS layer. `points` is
+// WGS84 [[lng, lat, z?], ...]; z (elevation) is kept for ArcGIS but Polaris
+// draws in 2D. The sync columns are the write-back state: "off" while no
+// ArcGIS write-back is configured.
+model CableRun {
+  id             String    @id @default(uuid())
+  siteId         String    @map("site_id")
+  site           Asset     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name           String    @default("")
+  medium         String    @default("fiber")
+  placement      String    @default("electric_pole")
+  points         Json
+  source         String    @default("drawn")
+  sourceFile     String?   @map("source_file")
+  notes          String    @default("")
+  lengthM        Float     @default(0) @map("length_m")
+  version        Int       @default(1)
+  syncStatus     String    @default("off") @map("sync_status")
+  syncError      String?   @map("sync_error")
+  syncedAt       DateTime? @map("synced_at")
+  arcgisObjectId Int?      @map("arcgis_object_id")
+  // A run deleted in Polaris whose ArcGIS feature still has to be deleted.
+  deletedAt      DateTime? @map("deleted_at")
+  createdBy      String?   @map("created_by")
+  updatedBy      String?   @map("updated_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([siteId])
+  @@index([syncStatus])
+  @@map("cable_runs")
 }
 
 // A site's region tree (business rule 153): areas > buildings > floors >
