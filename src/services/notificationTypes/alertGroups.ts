@@ -744,6 +744,7 @@ const DIMENSION_NOUNS: Record<string, string> = {
   sensorNamePattern: "sensor",
   mountPathPattern: "storage mount",
   healthCheck: "SD-WAN health check",
+  sdwanRulePattern: "SD-WAN rule",
   link: "WAN member",
   tunnelName: "IPsec tunnel",
   widgetId: "custom widget",
@@ -767,7 +768,7 @@ const DIMENSION_NOUNS: Record<string, string> = {
  * index each other's keys at all, and the device-wide answer is the only one
  * there is — which is the mixed-tree case resolveResetTruths exists to serve.
  *
- * The key SET is the identity on purpose: `sdwanRuleStatus` (`["healthCheck"]`)
+ * The key SET is the identity on purpose: `sdwanRuleStatus` (`["sdwanRulePattern"]`)
  * and `sdwanMemberState` (`["healthCheck", "link"]`) are both SD-WAN, but their
  * readings are keyed differently, so a member-state leaf genuinely cannot
  * answer about a rule-status dimension and the two are correctly separate.
