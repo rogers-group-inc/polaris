@@ -685,7 +685,9 @@ an optional name such as Basement; right-click the floor number to rename or
 delete it.
 
 All floors are drawn together. The floor you're on is at full strength, the floor
-above it at 10 % and the one above that at 2 %; floors below are hidden. Floors
+above it at 10 % and the one above that at 2 %; floors below are hidden. The ground
+map (or satellite, or site plan) is part of floor 0, so on floor −1 it fades to 10 % and
+grows with floor 0's devices. Floors
 above are drawn 25 % larger per floor and floors below 25 % smaller, scaled about
 the middle of the screen (the small crosshair), so as you pan, the floors above
 move a little faster than the ground. Changing floors fades and scales them
