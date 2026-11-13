@@ -9,6 +9,7 @@
  * elapsed time.
  */
 
+import { jsonEqual } from "../../../utils/jsonEqual.js";
 import type { DiscoveryResult } from "../../fortimanagerService.js";
 import type { SyncMode } from "../discoveryEngine.js";
 import type { SyncLog } from "../syncLog.js";
@@ -110,18 +111,27 @@ export async function runFinalizeReconciles(input: {
         },
         select: { assetId: true, externalId: true },
       });
+      // Only the devices whose summary CHANGED are written (efficiency
+      // audit): the same allowaccess every run is ~800 identical updates.
+      const stored = new Map<string, unknown>();
+      for (const chunk of chunkArray([...new Set(sources.map((s) => s.assetId))], 1000)) {
+        const rows = await prisma.asset.findMany({ where: { id: { in: chunk } }, select: { id: true, managementAccess: true } });
+        for (const r of rows) stored.set(r.id, r.managementAccess);
+      }
       const seen = new Set<string>();
       const updates: Array<ReturnType<typeof prisma.asset.update>> = [];
+      let unchanged = 0;
       for (const src of sources) {
         const summary = summaries.get(src.externalId);
         if (!summary || seen.has(src.assetId)) continue;
         seen.add(src.assetId);
+        if (stored.has(src.assetId) && jsonEqual(stored.get(src.assetId), summary)) { unchanged++; continue; }
         updates.push(prisma.asset.update({ where: { id: src.assetId }, data: { managementAccess: summary as any } }));
       }
       for (const chunk of chunkArray(updates, 200)) {
         await prisma.$transaction(chunk);
       }
-      if (updates.length > 0) syncLog("info", `Management-access: recorded allowaccess for ${updates.length} device(s)`);
+      if (updates.length > 0) syncLog("info", `Management-access: recorded allowaccess for ${updates.length} device(s)${unchanged > 0 ? `, ${unchanged} unchanged` : ""}`);
     } catch (err: any) {
       syncLog("error", `Management-access write failed: ${err?.message || "Unknown error"}`);
     }

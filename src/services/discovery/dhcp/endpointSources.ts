@@ -11,6 +11,7 @@
 import type { AssetIndex } from "../discoveryEngine.js";
 import type { SyncLog } from "../syncLog.js";
 import type { ChangeBaselineFields } from "./changeEvents.js";
+import { chunkArray } from "../../../utils/chunk.js";
 import { prisma } from "../../../db.js";
 import { bareFortinetDeviceName } from "../../../utils/assetSourceLocation.js";
 import { buildEndpointGateResolver } from "../../../utils/endpointGate.js";
@@ -36,7 +37,8 @@ export async function stampEndpointSources(input: {
   upsertFortigateEndpointSource: (
     assetId: string, integrationId: string, asset: any, integrationType: string,
     lastSeen: Date, integrationName: string | null, gateName: string | null,
-  ) => Promise<unknown>;
+    prior?: { assetId: string; integrationId: string | null; observed: unknown; lastSeen: Date },
+  ) => Promise<"written" | "unchanged" | Date | null | unknown>;
   syncLog: SyncLog;
 }): Promise<number> {
   const {
@@ -51,12 +53,16 @@ export async function stampEndpointSources(input: {
     // rather than nulling it. One bulk read, mirroring Phase 11's — and NOT
     // shared with it, because Phase 11 must see the rows this phase writes.
     const priorGateByAsset = new Map<string, string>();
+    // The same read gives each row's prior state, so an unchanged blob is not
+    // rewritten (efficiency audit) — keyed by externalId (the MAC).
+    const priorByExternalId = new Map<string, { assetId: string; integrationId: string | null; observed: unknown; lastSeen: Date }>();
     try {
       const priorRows = await prisma.assetSource.findMany({
         where: { sourceKind: "fortigate-endpoint", assetId: { in: [...fortigateEndpointAssetIds] } },
-        select: { assetId: true, observed: true },
+        select: { assetId: true, externalId: true, integrationId: true, observed: true, lastSeen: true },
       });
       for (const row of priorRows) {
+        priorByExternalId.set(row.externalId, { assetId: row.assetId, integrationId: row.integrationId, observed: row.observed, lastSeen: row.lastSeen });
         const prior = (row.observed as Record<string, unknown> | null)?.learnedLocation;
         if (typeof prior !== "string" || !prior.trim()) continue;
         priorGateByAsset.set(row.assetId, bareFortinetDeviceName(prior.trim()));
@@ -64,6 +70,8 @@ export async function stampEndpointSources(input: {
     } catch (err: any) {
       syncLog("error", `fortigate-endpoint AssetSource: prior-gate preload failed (${err?.message || "unknown"})`);
     }
+    const stampedAssetIds: string[] = [];
+    const lastSeenBumps: Array<{ externalId: string; lastSeen: Date }> = [];
     // Parsed once for the whole flush — one lookup per touched endpoint.
     const gateForAddress = buildEndpointGateResolver(allSubnets);
     const results = await mapSettledWithConcurrency(
@@ -79,10 +87,48 @@ export async function stampEndpointSources(input: {
           ?? pathwayGate
           ?? priorGate
           ?? null;
-        await upsertFortigateEndpointSource(assetId, integrationId, asset, integrationType, asset.lastSeen ?? flushedAt, integrationName, gateName);
+        const prior = priorByExternalId.get(String(asset.macAddress).trim().toUpperCase());
+        const outcome = await upsertFortigateEndpointSource(assetId, integrationId, asset, integrationType, asset.lastSeen ?? flushedAt, integrationName, gateName, prior);
+        if (outcome === null) return false;
+        stampedAssetIds.push(assetId);
+        if (outcome instanceof Date) lastSeenBumps.push({ externalId: String(asset.macAddress).trim().toUpperCase(), lastSeen: outcome });
         return true;
       },
     );
+    // Unchanged rows whose only news is a fresher lastSeen: one statement.
+    if (lastSeenBumps.length > 0) {
+      const syncedAt = new Date();
+      for (const chunk of chunkArray(lastSeenBumps, 1000)) {
+        const params: unknown[] = [syncedAt.toISOString()];
+        const groups = chunk.map((b) => {
+          const e = params.push(b.externalId);
+          const l = params.push(b.lastSeen.toISOString());
+          return `($${e}::text, $${l}::timestamp)`;
+        });
+        try {
+          await prisma.$executeRawUnsafe(
+            `UPDATE "asset_sources" s SET "lastSeen" = v.ls, "syncedAt" = $1::timestamp
+               FROM (VALUES ${groups.join(", ")}) AS v(ext, ls)
+              WHERE s."sourceKind" = 'fortigate-endpoint' AND s."externalId" = v.ext`,
+            ...params,
+          );
+        } catch (err: any) {
+          syncLog("error", `fortigate-endpoint AssetSource: lastSeen refresh failed (${err?.message || "unknown"})`);
+        }
+      }
+    }
+    // The Phase 1 backfill placeholder (sourceKind "manual") is superseded by
+    // a real source on every stamped asset: one sweep for the flush, instead
+    // of one per endpoint. It runs after every stamp, so a placeholder the
+    // unawaited db.ts shadow-write minted for an asset created this run is
+    // at least as likely to be in place as with the per-endpoint delete.
+    for (const chunk of chunkArray(stampedAssetIds, 1000)) {
+      try {
+        await prisma.assetSource.deleteMany({ where: { assetId: { in: chunk }, sourceKind: "manual" } });
+      } catch {
+        // Non-fatal: the manual row just lingers (both source cards show).
+      }
+    }
     for (const r of results) {
       if (r.status === "fulfilled" && r.value === true) endpointSourcesStamped++;
     }

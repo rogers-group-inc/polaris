@@ -201,6 +201,22 @@ describe("Phase 5 — an existing row at the address", () => {
     expect(db.update.mock.calls[0][0].data).toMatchObject({ sourceType: "dhcp_reservation", owner: "dhcp-reservation" });
   });
 
+  // Efficiency audit: per-row flips / renewals are written after the loop,
+  // concurrently, and one failing row costs only itself.
+  it("flips are flushed after the loop; a failing row is logged and the rest still land", async () => {
+    db.update.mockRejectedValueOnce(new Error("row locked"));
+    const { state, done } = run(
+      [reservation(), reservation({ ipAddress: "10.1.0.6", macAddress: "aa-bb-cc-dd-ee-06" })],
+      {
+        [KEY]: { id: "d1", sourceType: "dhcp_lease", owner: "dhcp-lease", expiresAt: null },
+        "net1|10.1.0.6": { id: "d2", sourceType: "dhcp_lease", owner: "dhcp-lease", expiresAt: null },
+      },
+    );
+    await done;
+    expect(db.update.mock.calls.map((c) => c[0].where.id).sort()).toEqual(["d1", "d2"]);
+    expect(state.syncLog).toHaveBeenCalledWith("error", expect.stringContaining("Failed to update DHCP reservation"));
+  });
+
   it("a steady held reservation costs one updateMany for the whole run, not a write per row", async () => {
     const rows = {
       [KEY]: { id: "r1", sourceType: "dhcp_reservation", expiresAt: null },

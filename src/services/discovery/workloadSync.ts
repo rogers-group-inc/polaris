@@ -72,7 +72,9 @@ import {
 } from "../../utils/workloadSources.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
-import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
+import { loadAssetsForSync, decommissionUnclaimedAssets, observedUnchanged, bumpSourcesSeen } from "./syncSteps.js";
+import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
 
 // ─── The normalized shape both services return ────────────────────────────────
 
@@ -525,6 +527,7 @@ interface SourceEntry {
   inferred: boolean;
   observed: Record<string, unknown> | null;
   lastSeen: Date | null;
+  integrationId?: string | null;
 }
 
 export interface WorkloadSyncSummary {
@@ -568,7 +571,12 @@ export async function syncWorkloadDevices(
   };
 
   // Preload — tight selects, once (2000-asset scale: no per-device reads).
-  const { allAssets, assetById } = await loadAssetsForSync({ learnedAddress: true, dependencyLayer: true, virtualization: true });
+  const { allAssets, assetById } = await loadAssetsForSync({
+    learnedAddress: true, dependencyLayer: true, virtualization: true,
+    // The pin columns, so an unchanged IP can be left out of the write
+    // (utils/assetWritePrune.ts treats a row without them as pinned).
+    ipOverride: true, ipBlankPinned: true, primaryAddressIp: true, ipSource: true,
+  });
 
   const allSources = await prisma.assetSource.findMany({
     select: { assetId: true, sourceKind: true, externalId: true, integrationId: true, inferred: true, observed: true, lastSeen: true },
@@ -584,6 +592,7 @@ export async function syncWorkloadDevices(
     const entry: SourceEntry = {
       sourceKind: src.sourceKind, externalId: src.externalId, inferred: src.inferred,
       observed: (src.observed as Record<string, unknown> | null) || {}, lastSeen: src.lastSeen,
+      integrationId: src.integrationId,
     };
     const list = sourcesByAssetId.get(src.assetId);
     if (list) list.push(entry); else sourcesByAssetId.set(src.assetId, [entry]);
@@ -610,10 +619,23 @@ export async function syncWorkloadDevices(
   const staleHint = (assetId: string, kind: string, externalId: string): boolean =>
     (sourcesByAssetId.get(assetId) ?? []).some((s) => s.sourceKind === kind && s.externalId !== externalId);
 
+  const unchangedSources: Array<{ sourceKind: string; externalId: string; lastSeen: Date }> = [];
+  const prunedThisPass = new Set<string>();
+  const ipHistoryRefreshRows: Array<{ assetId: string; ip: string; source: string }> = [];
   const upsertSource = async (
     assetId: string, kind: string, externalId: string, observed: Record<string, unknown>, seen: Date,
   ): Promise<void> => {
     const hasStale = staleHint(assetId, kind, externalId);
+    const priorRow = (sourcesByAssetId.get(assetId) ?? []).find((s) => s.sourceKind === kind && s.externalId === externalId);
+    if (!hasStale && priorRow && priorRow.integrationId === integrationId && priorRow.inferred === false && observedUnchanged(priorRow.observed, observed)) {
+      // Unchanged but for syncedAt: freshness bumped in one statement after
+      // the pass (efficiency audit), not an upsert per workload.
+      unchangedSources.push({ sourceKind: kind, externalId, lastSeen: seen });
+      const list = (sourcesByAssetId.get(assetId) ?? []).filter((s) => !(s.sourceKind === kind));
+      list.push({ sourceKind: kind, externalId, inferred: false, observed, lastSeen: seen, integrationId });
+      sourcesByAssetId.set(assetId, list);
+      return;
+    }
     await prisma.assetSource.upsert({
       where: { sourceKind_externalId: { sourceKind: kind, externalId } },
       create: { assetId, sourceKind: kind, externalId, integrationId, observed: observed as any, inferred: false, syncedAt: now, firstSeen: seen, lastSeen: seen },
@@ -624,7 +646,7 @@ export async function syncWorkloadDevices(
     }
     // Mirror into the preloaded map (the projection input).
     const list = (sourcesByAssetId.get(assetId) ?? []).filter((s) => !(s.sourceKind === kind));
-    list.push({ sourceKind: kind, externalId, inferred: false, observed, lastSeen: seen });
+    list.push({ sourceKind: kind, externalId, inferred: false, observed, lastSeen: seen, integrationId });
     sourcesByAssetId.set(assetId, list);
   };
 
@@ -782,7 +804,14 @@ export async function syncWorkloadDevices(
         Object.assign(updateData, buildMonitoredSweep(classed ? addAs[role] : null, existing));
         updateData.tags = mergeTags(existing);
         clampAcquiredToLastSeen(updateData, existing);
-        await prisma.asset.update({ where: { id: existing.id }, data: updateData });
+        // Drop what the row already holds — the asset's first write this pass
+        // only, since `existing` is not refreshed after writing.
+        if (!prunedThisPass.has(existing.id)) {
+          prunedThisPass.add(existing.id);
+          const { ipHistoryRefresh } = pruneUnchangedAssetFields(existing, updateData);
+          if (ipHistoryRefresh) ipHistoryRefreshRows.push({ assetId: existing.id, ...ipHistoryRefresh });
+        }
+        if (Object.keys(updateData).length > 0) await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(before, updateData, existing.id, displayName, { integrationName, integrationId, sourceKind: kind, actor });
         if (mergedMacs) await reconcileMacAddresses(existing.id, mergedMacs);
         assetByExternalId.set(`${kind}|${externalId}`, existing);
@@ -1043,6 +1072,18 @@ export async function syncWorkloadDevices(
       noteMove(id, "container", c.name, priorVirt, hostAssetId, hostName);
     }
   }
+
+  // Freshness for the source rows no pass rewrote, and the IP history of
+  // addresses no write re-staged — each one statement (per 1000) here,
+  // before Pass E reads the source rows.
+  if (unchangedSources.length > 0) {
+    try {
+      await bumpSourcesSeen(unchangedSources, now);
+    } catch (err: any) {
+      syncLog("error", `Source freshness refresh failed: ${err?.message || "Unknown error"}`);
+    }
+  }
+  if (ipHistoryRefreshRows.length > 0) await refreshIpHistoryLastSeen(ipHistoryRefreshRows);
 
   // ── Pass D — placement edges (VM / container → its host) ──────────────────
   // Delete-replace scoped to this integration's workloads (prior + current)
