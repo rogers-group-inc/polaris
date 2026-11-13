@@ -14,7 +14,7 @@ import { isPathMetric } from "../notificationTypes.js";
 import { FC_RATE_METRICS, fcErrorsFrom, isFcRateMetric } from "../../utils/fibreChannel.js";
 import { sdwanDimensionTerms } from "../../utils/sdwanDimensions.js";
 import { PRIORITY_TAGS, prioritySeverityOf, type PrioritySeverity } from "../../utils/priorityTags.js";
-import { computeStorageForecast } from "../storageForecastService.js";
+import { computeStorageForecastShared } from "../storageForecastService.js";
 import { computeMemoryForecastDetail, computeMemoryProjection, forecastLevelReading } from "../memoryForecastService.js";
 import { queryProbeLossRatios } from "../probeLossQuery.js";
 import { logger } from "../../utils/logger.js";
@@ -823,7 +823,7 @@ export async function resolveAssetMetricReadings(
       // the other two storage metrics (storageIsPinned) — the forecast service
       // is shared with the NOC dashboard, which asks a different question, so
       // the gate is applied HERE rather than inside it.
-      const fc = await computeStorageForecast(ids);
+      const fc = await computeStorageForecastShared(ids);
       return fc
         .filter((r) => storageIsPinned(index.get(r.assetId), r.mountPath) && substringMatch(r.mountPath, df.mountPathPattern))
         .map((r) => {

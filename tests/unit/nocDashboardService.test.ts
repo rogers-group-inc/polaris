@@ -27,6 +27,7 @@ vi.mock("../../src/services/notificationService.js", () => ({
 import * as noc from "../../src/services/nocDashboardService.js";
 import { prisma } from "../../src/db.js";
 import { resetDbStub } from "./_dbStub.js";
+import { invalidateStorageForecastMemo } from "../../src/services/storageForecastService.js";
 import { resolveMonitorSettings } from "../../src/services/monitoringService.js";
 import { BUILT_IN_ASSET_TYPES } from "../../src/utils/assetTypes.js";
 
@@ -44,6 +45,7 @@ const maintFindMany = (prisma as unknown as { maintenanceSchedule: { findMany: R
 
 beforeEach(() => {
   resetDbStub();
+  invalidateStorageForecastMemo(); // the fleet fit is memoised for 15 min
   vi.clearAllMocks();
   // Default: no active alerts — feeds keep their base ordering.
   notifFindMany.mockResolvedValue([]);
