@@ -507,3 +507,72 @@ d("the periodic sweep releases rows whose owner a bulk decommission retired (rul
     ]);
   });
 });
+
+// ─── Efficiency audit group 3: the sweep skips only settled assets ──────────
+//
+// reconcileDnsResolvedForAllAssets now settles provable no-ops in memory and
+// hands the rest to the per-asset reconcile. Drift is made behind the asset
+// write hooks (raw SQL), which is exactly what the periodic sweep exists to
+// catch: each case must still be acted on, and a settled fleet must not be.
+d("reconcileDnsResolvedForAllAssets: drift behind the hooks is still reconciled", () => {
+  async function settledAsset(over: Parameters<typeof makeAsset>[0] = {}) {
+    const a = await makeAsset(over);
+    expect(await reconcileAndCountDnsRows(a.id)).toBe(1);
+    return a;
+  }
+
+  it("a settled fleet changes nothing", async () => {
+    await makeBlockAndSubnet();
+    await settledAsset({ hostname: "steady", macAddress: "AA:BB:CC:DD:EE:40" });
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect({ c: out.created, u: out.updated, r: out.released }).toEqual({ c: 0, u: 0, r: 0 });
+    expect(out.scanned).toBeGreaterThanOrEqual(1);
+  });
+
+  it("re-creates a row deleted behind the hooks", async () => {
+    await makeBlockAndSubnet();
+    await settledAsset({ hostname: "lost-row", macAddress: "AA:BB:CC:DD:EE:41" });
+    await prisma.$executeRaw`DELETE FROM reservations WHERE "sourceType"::text = 'dns_resolved'`;
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect(out.created).toBe(1);
+    expect((await dnsRows())[0]!.hostname).toBe("lost-row");
+  });
+
+  it("updates a row whose asset's MAC changed behind the hooks", async () => {
+    await makeBlockAndSubnet();
+    const a = await settledAsset({ hostname: "mac-drift", macAddress: "AA:BB:CC:DD:EE:42" });
+    await prisma.$executeRaw`UPDATE assets SET "macAddress" = 'AA:BB:CC:DD:EE:43' WHERE id = ${a.id}`;
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect(out.updated).toBe(1);
+    expect((await dnsRows())[0]!.macAddress).toBe("AA:BB:CC:DD:EE:43");
+  });
+
+  it("moves the row when the asset's IP changed behind the hooks", async () => {
+    await makeBlockAndSubnet();
+    const a = await settledAsset({ hostname: "ip-drift", macAddress: "AA:BB:CC:DD:EE:44" });
+    await prisma.$executeRaw`UPDATE assets SET "ipAddress" = '10.77.1.51' WHERE id = ${a.id}`;
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect(out.created).toBe(1);
+    expect(out.released).toBeGreaterThanOrEqual(1);
+    const rows = await dnsRows();
+    expect(rows.map((r) => r.ipAddress)).toEqual(["10.77.1.51"]);
+  });
+
+  it("releases the row when an authoritative reservation appears at the target", async () => {
+    const { subnet } = await makeBlockAndSubnet();
+    await settledAsset({ hostname: "outranked", macAddress: "AA:BB:CC:DD:EE:45" });
+    await prisma.$executeRaw`DELETE FROM reservations WHERE "sourceType"::text = 'dns_resolved'`;
+    await prisma.reservation.create({
+      data: { subnetId: subnet.id, ipAddress: TARGET_IP, hostname: "manual", status: "active", sourceType: "manual" },
+    });
+    // Re-insert the system row as a stale leftover beside the authoritative one is
+    // impossible (unique slot), so put it at another address the asset owns.
+    await prisma.reservation.create({
+      data: { subnetId: subnet.id, ipAddress: "10.77.1.60", hostname: "outranked", macAddress: "AA:BB:CC:DD:EE:45",
+        status: "active", sourceType: "dns_resolved" as any, createdBy: "system:dns-resolved" },
+    });
+    const out = await reconcileDnsResolvedForAllAssets();
+    expect(out.released).toBe(1);
+    expect(await dnsRows()).toHaveLength(0);
+  });
+});

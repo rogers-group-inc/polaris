@@ -81,7 +81,7 @@ import {
   type ScopeConditionAsset,
   type ScopeConditionGroup,
 } from "./notificationTypes.js";
-import { deviceFilterSelect, resolveDeviceFilterAssetIds } from "./deviceFilterService.js";
+import { deviceFilterSelect, resolveDeviceFilterAssetIds, resolveDeviceFilterAssetIdsMany } from "./deviceFilterService.js";
 import { decorateSubnetNameHits, type RelationDecoratable } from "./scopeRelationIndex.js";
 import { reconcileNetworkTags } from "./networkTagInheritanceService.js";
 import { randomTagColor } from "./mapRegionService.js";
@@ -887,18 +887,22 @@ export interface TagReconcileSummary extends Record<string, unknown> {
  * cleared), strip every engine-owned copy and exit. Otherwise diff expected
  * vs. provenance and apply the add/remove delta.
  */
-export async function reconcileTag(tagId: string): Promise<TagReconcileSummary> {
+export async function reconcileTag(
+  tagId: string,
+  /** reconcileAllTags hands these in, read once for every tag. */
+  precomputed?: { currentIds: Set<string>; expectedIds: Set<string>; conditionKey: string },
+): Promise<TagReconcileSummary> {
   const tag = await prisma.tag.findUnique({ where: { id: tagId } });
   if (!tag) return { tagId, added: 0, removed: 0 };
 
   const filter = tagFilterOf(tag);
-  const provRows = await prisma.tagAutoAssignment.findMany({
-    where: { tagId },
-    select: { assetId: true },
-  });
-  const currentIds = new Set(provRows.map((p) => p.assetId));
+  // A filter edited since the shared read was resolved is resolved afresh.
+  if (precomputed && precomputed.conditionKey !== JSON.stringify(filter.condition ?? null)) precomputed = undefined;
+  const currentIds = precomputed?.currentIds ?? new Set(
+    (await prisma.tagAutoAssignment.findMany({ where: { tagId }, select: { assetId: true } })).map((p) => p.assetId),
+  );
 
-  const expectedIds = await resolveTagFilterAssetIds(filter);
+  const expectedIds = precomputed?.expectedIds ?? await resolveTagFilterAssetIds(filter);
 
   const toAdd = [...expectedIds].filter((id) => !currentIds.has(id));
   const toRemove = [...currentIds].filter((id) => !expectedIds.has(id));
@@ -932,13 +936,48 @@ export async function reconcileTag(tagId: string): Promise<TagReconcileSummary> 
 export async function reconcileAllTags(): Promise<TagReconcileSummary> {
   const tags = await prisma.tag.findMany({ select: { id: true, criteria: true, assetCondition: true } });
   const managed = tags.filter(tagIsManaged);
+  // Shared reads (efficiency audit group 3): every tree-shaped filter is
+  // resolved over ONE fleet read and one relation-leaf pass, and provenance is
+  // read once — instead of a fleet query and a provenance query per tag. The
+  // legacy (unconvertible) shape keeps its own prefiltered resolve. A failed
+  // shared read falls back to the per-tag path.
+  const precomputed = new Map<string, { currentIds: Set<string>; expectedIds: Set<string>; conditionKey: string }>();
+  try {
+    const trees = managed
+      .map((t) => ({ id: t.id, condition: tagFilterOf(t).condition }))
+      .filter((t): t is { id: string; condition: ScopeConditionGroup } => t.condition != null);
+    const [expected, prov] = await Promise.all([
+      resolveDeviceFilterAssetIdsMany(
+        trees.map((t) => t.condition),
+        (cond, row) => tagAssetIsEligible(cond, row.status as string | null | undefined),
+      ),
+      prisma.tagAutoAssignment.findMany({
+        where: { tagId: { in: trees.map((t) => t.id) } },
+        select: { tagId: true, assetId: true },
+      }),
+    ]);
+    const current = new Map<string, Set<string>>();
+    for (const r of prov) {
+      const set = current.get(r.tagId) ?? new Set<string>();
+      set.add(r.assetId);
+      current.set(r.tagId, set);
+    }
+    trees.forEach((t, i) => precomputed.set(t.id, {
+      currentIds: current.get(t.id) ?? new Set(),
+      expectedIds: expected[i]!,
+      conditionKey: JSON.stringify(t.condition),
+    }));
+  } catch (err: any) {
+    logger.debug({ err: err?.message ?? String(err) }, "tagAssignment: shared tag resolve failed; reconciling per tag");
+    precomputed.clear();
+  }
   let added = 0;
   let removed = 0;
   let portsAdded = 0;
   let portsRemoved = 0;
   for (const t of managed) {
     try {
-      const s = await reconcileTag(t.id);
+      const s = await reconcileTag(t.id, precomputed.get(t.id));
       added += s.added;
       removed += s.removed;
       portsAdded += s.portsAdded ?? 0;

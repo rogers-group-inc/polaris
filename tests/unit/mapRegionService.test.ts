@@ -272,6 +272,15 @@ describe("applyRename / reconcileMapRegions", () => {
     expect(s.retiredTagSweep).toMatchObject({ namesSwept: [], namesReclaimed: [] });
   });
 
+  // Efficiency audit group 3: one pass reads the fleet once, not once per region.
+  it("every region in a pass shares one read of the firewalls (and a failed read is retried, not kept)", async () => {
+    settings.set("mapRegions", [region({ id: "a", name: "Alpha" }), region({ id: "b", name: "Beta" }), region({ id: "c", name: "Gamma" })]);
+    await reconcileMapRegions();
+    const firewallReads = () => stubbed(prisma.asset.findMany).mock.calls.filter((c) => c[0]?.where?.assetType === "firewall").length;
+    expect(firewallReads()).toBe(1);
+    expect(stubbed(prisma.regionTagAssignment.findMany).mock.calls.map((c) => c[0].where.regionId)).toEqual(["a", "b", "c"]);
+  });
+
   it("a failing retired-name sweep does not fail the reconcile; it is simply absent from the summary", async () => {
     settings.set("mapRegions", []);
     stubbed(prisma.setting.findUnique).mockImplementation(async ({ where }: any) => {

@@ -96,6 +96,26 @@ describe("Phase 5 — new entries", () => {
     expect(state.dhcpReservations).toEqual(["10.1.0.6 (pc-1)"]);
   });
 
+  // Efficiency audit group 3: the release is skipped where the run's load saw no
+  // dns_resolved row; a row created mid-run is still caught by the retry below.
+  it("releases a dns_resolved row only where the run's load saw one", async () => {
+    const { done } = run([lease(), lease({ ipAddress: "10.1.0.9", macAddress: "aa-bb-cc-dd-ee-09" })], {},
+      { dnsResolvedKeys: new Set(["net1|10.1.0.9"]) });
+    await done;
+    expect(m.releaseDns.mock.calls).toEqual([["net1", "10.1.0.9"]]);
+    expect(db.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("a dns_resolved row created mid-run (not in the load) is still released by the collide-retry", async () => {
+    db.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
+    db.findFirst.mockResolvedValue({ id: "dns-late", sourceType: "dns_resolved" });
+    const { done } = run([lease()], {}, { dnsResolvedKeys: new Set<string>() });
+    await done;
+    expect(m.releaseDns).not.toHaveBeenCalled();
+    expect(db.del).toHaveBeenCalledWith({ where: { id: "dns-late" } });
+    expect(db.create).toHaveBeenCalledTimes(2);
+  });
+
   it("on a unique collision with a dns_resolved row, deletes it and retries once", async () => {
     db.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
     db.findFirst.mockResolvedValue({ id: "dns1", sourceType: "dns_resolved" });

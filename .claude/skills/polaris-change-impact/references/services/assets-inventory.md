@@ -353,6 +353,8 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 
 - `previewTagFilter`'s `sample` names devices; `POST /server-settings/tags/preview-criteria` blanks it (`sampleHidden: true`) for callers without `assets:read` (rule 114(l)). Counts and the diff stay.
 
+- **`reconcileAllTags` shares its reads** (efficiency audit group 3): every tree-shaped tag is resolved through `deviceFilterService.resolveDeviceFilterAssetIdsMany` (one fleet read, eligibility = `tagAssetIsEligible`) and provenance is read once; `reconcileTag(tagId, precomputed)` takes the sets. A tag whose filter changed since the shared read (`conditionKey` mismatch) is resolved afresh; the legacy criteria shape keeps its prefiltered `resolveMatchingAssetIds`; a failed shared read falls back to the per-tag path. tests/integration/tagAssignment.test.ts pins the shared pass to the per-tag result.
+
 **When changing this:**
 - Adding a field to the CURRENT (tree) vocabulary is a change to `DEVICE_FILTER_FIELD_OPS` in `notificationTypes/scopeConditions.ts`, not here — see that service's entry; the tag surface picks it up for free through `GET /server-settings/tags/filter-schema`. Remember the asset-write hook's field list in `assets.ts`, which decides when a PUT re-runs `reconcileTagsForAsset`.
 - Adding a field to the LEGACY (flat) vocabulary: don't. It exists only to keep un-migrated rows matching. If you must, extend `STRING_FIELDS`/`ENUM_FIELDS` (+ domain validation), add the column to `CANDIDATE_SELECT`, keep `buildPrefilterWhere` a superset, AND teach `utils/criteriaToCondition.ts` to fold it — an unfoldable field pins every row carrying it on the legacy predicate forever.

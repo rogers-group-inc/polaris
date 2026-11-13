@@ -408,6 +408,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - All public functions are best-effort: they log at warn and never throw out of the public surface so a transient DB error can't break the asset write that called them.
 - Events emitted: `reservation.dns_resolved.created`, `reservation.dns_resolved.updated`, `reservation.dns_resolved.released` (info level).
 
+- **The periodic sweep skips settled assets** (efficiency audit group 3): `reconcileDnsResolvedForAllAssets` reads identities, the active system rows, every containing subnet (`buildIpContexts`) and the active rows at the assets' IPs once, and `assetsNeedingReconcile` hands to `reconcileDnsResolvedForAsset` only the assets that could create, update or release something — everything else is a provable no-op under the same rules. A change to what the per-asset reconcile decides MUST change `assetsNeedingReconcile` with it, or the sweep stops catching that drift; tests/integration/dnsResolvedReservation.test.ts makes drift behind the write hooks (raw SQL) to pin it.
+
 **When changing this:**
 - Adding a new authoritative `sourceType`? Add a `releaseDnsResolvedAt(subnetId, ip)` call in `discoveryEngine.ts` next to the new create, and (if it can be created from the manual UI) in `reservationService.createReservation`. The activeResMap exclusion already covers the discovery read path.
 - Adding a new column to the eligibility check? Update `assetEligible()` and ensure the periodic job's `findMany` scope still surfaces rows that need release-without-create. The job intentionally scans even ineligible-by-status assets so they can release stale rows.

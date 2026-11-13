@@ -43,7 +43,7 @@ import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 import * as azureArc from "../azureArcService.js";
-import { ipInCidr, cidrContains } from "../../utils/cidr.js";
+import { cidrContains, firstCidrContaining } from "../../utils/cidr.js";
 import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
 import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
@@ -2447,8 +2447,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // any IP that ends up bare again later.
   const reservationKey = (subnetId: string, ip: string) => `${subnetId}|${ip}`;
   const activeResMap = new Map<string, any>();
+  // The (subnet, ip) keys that DO hold a dns_resolved row at load: Phase 5
+  // releases one before a create only where the preload saw it (a row created
+  // mid-run is caught by its collide-release-retry).
+  const dnsResolvedKeys = new Set<string>();
   for (const r of allReservationsRaw) {
-    if (r.sourceType === "dns_resolved") continue;
+    if (r.sourceType === "dns_resolved") {
+      if (r.ipAddress) dnsResolvedKeys.add(reservationKey(r.subnetId, r.ipAddress));
+      continue;
+    }
     if (r.ipAddress) activeResMap.set(reservationKey(r.subnetId, r.ipAddress), r);
     else activeResMap.set(`${r.subnetId}|__full__`, r);
   }
@@ -2532,8 +2539,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   }
 
   // Helper: find which subnet contains an IP
+  // First match in allSubnets order, deprecated skipped — read live, since
+  // subnets are pushed and deprecated as the run goes. firstCidrContaining keeps
+  // that exact contract and parses each CIDR once (efficiency audit group 3).
   function findSubnetForIp(ip: string) {
-    return allSubnets.find((s) => s.status !== "deprecated" && ipInCidr(ip, s.cidr));
+    return firstCidrContaining(ip, allSubnets, (s) => s.status === "deprecated");
   }
 
   // Roster of FortiGates currently configured in the upstream (FortiManager or
@@ -2834,7 +2844,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // ══════════════════════════════════════════════════════════════════════════════
 
   await syncDhcpEntries({
-    result, activeResMap, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
+    result, activeResMap, dnsResolvedKeys, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
     findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
     integrationId, integrationName, actor, syncLog,
   });
