@@ -36,7 +36,7 @@ const KNOWN_ADD_HEADERS = new Set(["Alt-Svc", "Strict-Transport-Security"]);
 
 /** Location blocks deploy/nginx/polaris.conf.template ships. Keep in lockstep
  *  with that file — a mismatch reports drift on every managed install. */
-const EXPECTED_LOCATION_BLOCKS = 10;
+const EXPECTED_LOCATION_BLOCKS = 11;
 
 /**
  * Every `location` block in the (comment-stripped) text, as selector + body.
@@ -146,11 +146,12 @@ export function parseNginxConfigText(rawText: string): ParseResult {
       drift.push(`unknown add_header: ${m[1]}`);
     }
   }
-  // We ship exactly 10 location blocks: / + the database-restore override +
-  // the firmware-image upload override + 2 dash + 4 metrics + the /api docs
-  // block. Anything else is custom. (A file rendered by an older template
+  // We ship exactly 11 location blocks: / + the database-restore override +
+  // the firmware-image upload override + the topology floor-plan upload
+  // override (rule 182) + 2 dash + 4 metrics + the /api docs block. Anything else is custom. (A file rendered by an older template
   // reports drift here by design — a pre-dash one has 5, a pre-restore-override
-  // one has 7, a pre-api-docs one has 8, a pre-firmware one has 9 — because
+  // one has 7, a pre-api-docs one has 8, a pre-firmware one has 9, a
+  // pre-floor-plan one has 10 — because
   // the refuse-and-banner UX makes the operator re-adopt so
   // the new blocks land explicitly rather than by silent clobber.)
   const locationCount = (text.match(/^\s*location\b/gm) ?? []).length;

@@ -3727,3 +3727,13 @@ and says "Bank 2 Current is in critical state". Set it to *at or above 1* for wa
 a severity band at 2 for critical. A widget with no levels is never read. A custom-widget
 alert's email leads with that widget's own chart (its levels or the threshold that fired, or a
 state probe's status lane), with response time underneath.
+
+### Rule 182
+
+**A floor plan can be a CAD drawing.** On a Topology view's floor you can import a DXF
+saved from AutoCAD. Polaris reads it, lets you choose its units and which layers to keep
+(leave out the title block and border), and draws those layers as a sharp vector plan. The
+DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF first. The
+drawing is placed by the location it carries, by lining it up with another floor drawn in
+the same coordinates (as levels of one survey are), or by clicking two places on the
+drawing and the same two on the map.

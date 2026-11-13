@@ -22,6 +22,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { detectImageMagic } from "../utils/imageMagic.js";
+import { parseDxf, extentsOf, renderDxfSvg, dxfPreview, DxfError, DXF_UNIT_METRES, type DxfGeo, type DxfExtents } from "../utils/dxf.js";
 import { readImageSize } from "../utils/imageDimensions.js";
 import { isFloorNumber, locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
@@ -84,7 +85,17 @@ const ORPHAN_IMAGE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 type TopologyBackground =
   | { kind: "osm"; center: [number, number]; zoom: number; layer: "map" | "satellite" }
-  | { kind: "image"; imageId: string; width: number; height: number };
+  | { kind: "image"; imageId: string; width: number; height: number; cad?: CadDrawingMeta };
+
+/** Rule 182: what Polaris read from an imported DXF, kept with its drawing. */
+export interface CadDrawingMeta {
+  file: string;
+  units: { code: number; name: string; metres: number | null };
+  /** The drawing's extents (of the kept layers), in drawing units: the SVG covers exactly this. */
+  ext: DxfExtents;
+  layers: string[];
+  geo: DxfGeo | null;
+}
 
 export interface TopologyPolygon {
   id: string;
@@ -1073,10 +1084,12 @@ export async function updateView(
     if (!bg || bg.kind !== "image") return bg as TopologyBackground | null;
     const img = await prisma.topologyBackgroundImage.findFirst({
       where: { id: bg.imageId, viewId },
-      select: { id: true, width: true, height: true },
+      select: { id: true, width: true, height: true, cad: true },
     });
     if (!img) throw new AppError(400, "The background image was not uploaded to this view");
-    return { kind: "image", imageId: img.id, width: img.width, height: img.height };
+    // A CAD drawing's details come from its stored row (rule 182), never the client.
+    const cad = (img as { cad?: Prisma.JsonValue }).cad;
+    return { kind: "image", imageId: img.id, width: img.width, height: img.height, ...(cad && typeof cad === "object" ? { cad: cad as unknown as CadDrawingMeta } : {}) };
   }
   let nextBackground = current.background;
   let nextLayers = current.layers;
@@ -1386,6 +1399,109 @@ export async function saveBackgroundImage(
     select: { id: true, viewId: true, mimeType: true, width: true, height: true, size: true },
   });
   return row;
+}
+
+// ─── CAD drawings (business rule 182) ─────────────────────────────────────────
+
+/** A DXF may be this large; it is read on the server and not kept. */
+export const MAX_CAD_FILE_BYTES = 64 * 1024 * 1024;
+/** The SVG Polaris draws from it may be this large. */
+const MAX_CAD_SVG_BYTES = 30 * 1024 * 1024;
+
+function readDxfOrRefuse(buf: Buffer) {
+  if (buf.length === 0) throw new AppError(400, "The file is empty");
+  if (buf.length > MAX_CAD_FILE_BYTES) throw new AppError(413, `The drawing is larger than ${MAX_CAD_FILE_BYTES / (1024 * 1024)} MB`);
+  try {
+    return parseDxf(buf);
+  } catch (err) {
+    if (err instanceof DxfError) throw new AppError(400, err.message);
+    throw err;
+  }
+}
+
+function unitsFor(code: number) {
+  const u = DXF_UNIT_METRES[code];
+  return { code: u ? code : 0, name: u ? u.name : "Unitless", metres: u ? u.metres : null };
+}
+
+/** What the import dialog shows: units, layers with counts, a thinned preview, the geographic location. */
+export async function analyzeCadDrawing(siteId: string, viewId: string, buf: Buffer) {
+  const view = toDto(await loadView(siteId, viewId));
+  if (view.mode !== "topology") throw new AppError(400, "Only a Topology view takes a floor plan");
+  const d = readDxfOrRefuse(buf);
+  const ext = extentsOf(d.primitives);
+  if (!ext) throw new AppError(400, "The drawing has nothing Polaris can draw (no lines, arcs, circles or text)");
+  return {
+    version: d.version,
+    units: unitsFor(d.insUnits),
+    layers: d.layers,
+    skipped: d.skipped,
+    truncated: d.truncated,
+    shapes: d.primitives.length,
+    ext,
+    geo: d.geo,
+    preview: dxfPreview(d.primitives, ext),
+  };
+}
+
+/**
+ * Import a DXF as a floor plan: draw the layers kept as an SVG (Polaris's
+ * own markup), store it like an uploaded image with its CAD details. Like an
+ * upload, it changes no view until a save names it.
+ */
+export async function saveCadDrawing(
+  siteId: string,
+  viewId: string,
+  buf: Buffer,
+  opts: { fileName: string; layers: unknown; units: unknown },
+  actor: string | null,
+): Promise<BackgroundImageDto & { cad: CadDrawingMeta }> {
+  const view = toDto(await loadView(siteId, viewId));
+  if (view.mode !== "topology") throw new AppError(400, "Only a Topology view takes a floor plan");
+  if (!Array.isArray(opts.layers) || opts.layers.length === 0 || opts.layers.length > 2000 || opts.layers.some((l) => typeof l !== "string")) {
+    throw new AppError(400, "Choose at least one layer to keep");
+  }
+  let code = 0;
+  if (opts.units !== undefined && opts.units !== null && opts.units !== "") {
+    code = Number(opts.units);
+    if (!Number.isInteger(code) || (code !== 0 && !DXF_UNIT_METRES[code])) throw new AppError(400, "Unknown drawing units");
+  }
+  const d = readDxfOrRefuse(buf);
+  if (opts.units === undefined || opts.units === null || opts.units === "") code = d.insUnits;
+  const keep = new Set(opts.layers as string[]);
+  const prims = d.primitives.filter((p) => keep.has(p.layer));
+  const ext = extentsOf(prims);
+  if (!ext) throw new AppError(400, "The layers chosen have nothing to draw");
+  const colors = new Map(d.layers.map((l) => [l.name, l.color]));
+  const { svg, width, height } = renderDxfSvg(prims, ext, colors);
+  const data = Buffer.from(svg, "utf8");
+  if (data.length > MAX_CAD_SVG_BYTES) throw new AppError(413, "The drawing is too detailed to show: leave out some layers");
+  const units = unitsFor(code);
+  // A geographic location is in the drawing's own units: keep it only when they are known.
+  const geo = d.geo && units.metres ? { ...d.geo, metresPerUnit: d.geo.metresPerUnit ?? units.metres } : null;
+  const cad: CadDrawingMeta = {
+    file: String(opts.fileName || "drawing.dxf").replace(/[\x00-\x1f\x7f]/g, "").slice(0, 200),
+    units,
+    ext,
+    layers: [...keep].filter((l) => d.layers.some((x) => x.name === l)).slice(0, 2000),
+    geo,
+  };
+  const referenced = referencedImageIds(view.background, view.layers);
+  await prisma.topologyBackgroundImage.deleteMany({
+    where: {
+      viewId,
+      uploadedAt: { lt: new Date(Date.now() - ORPHAN_IMAGE_MAX_AGE_MS) },
+      ...(referenced.length ? { id: { notIn: referenced } } : {}),
+    },
+  });
+  const row = await prisma.topologyBackgroundImage.create({
+    data: {
+      siteId, viewId, mimeType: "image/svg+xml", width, height, size: data.length,
+      data: new Uint8Array(data), uploadedBy: actor, cad: json(cad),
+    },
+    select: { id: true, viewId: true, mimeType: true, width: true, height: true, size: true },
+  });
+  return { ...row, cad };
 }
 
 export async function getBackgroundImage(siteId: string, imageId: string): Promise<{ mimeType: string; data: Buffer; uploadedAt: Date }> {

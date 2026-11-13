@@ -34,6 +34,13 @@ and may have more; views are shared, and creating or changing one needs Device M
   health colour; Cable management is a striped placeholder; a Third party box (equipment Polaris does not monitor, named by the operator) is solid with a neutral border; a full-depth item seen from its other
   face is a dashed outline. **Junction boxes** are pegboard in inches, items whole-inch polygons that
   never overlap.
+- **CAD floor plans** (rule 182): a floor's map button offers Import CAD drawing (DXF). The import
+  dialog (`modal-large`) is a preview beside a 320px column of Drawing units, a Layers tick list
+  (mono names, counts right-aligned, sheet furniture unticked) and Placement radio cards (accent
+  outline on the chosen one): the drawing's location, Line up with another floor (with how much they
+  overlap), Keep this floor's placement, or Place with two points. Two-point placing uses the plan
+  bar: numbered pins (round on the drawing, square on the map; 1 accent, 2 serious-orange), each
+  pair's progress, the scale check (amber past 5 %), Start over / Cancel / Done.
 - **Rack cabling** (rule 179): every rack has a hatched vertical cable manager down each side and a
   hatched trough across the top (the header's right-click menu turns each off; its space stays).
   A device or Third party box beside the rack stands full height outside the manager (24px wide,

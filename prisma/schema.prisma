@@ -4441,6 +4441,9 @@ model TopologyBackgroundImage {
   height     Int
   size       Int
   data       Bytes
+  // Rule 182: set when this image is Polaris's drawing of an imported DXF —
+  // { file, units {code, name, metres}, ext {minX, minY, maxX, maxY}, layers, geo }.
+  cad        Json?
   uploadedBy String?      @map("uploaded_by")
   uploadedAt DateTime     @default(now()) @map("uploaded_at")
 

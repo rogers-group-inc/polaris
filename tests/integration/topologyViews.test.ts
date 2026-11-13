@@ -195,6 +195,49 @@ d("topology views", () => {
     expect(anon.status).toBe(401);
   });
 
+  it("rule 182: reads a DXF, imports its kept layers as an SVG, and a save takes the CAD details from the row", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const created = await agent.post(`/api/v1/map/sites/${fgId}/topology/views`).set("X-CSRF-Token", csrf)
+      .send({ name: "Mine levels", mode: "topology" });
+    const viewId = created.body.id;
+    const dxf = Buffer.from([
+      "0", "SECTION", "2", "HEADER", "9", "$INSUNITS", "70", "2", "0", "ENDSEC",
+      "0", "SECTION", "2", "ENTITIES",
+      "0", "LINE", "8", "OUTLINE", "10", "0", "20", "0", "11", "200", "21", "100",
+      "0", "TEXT", "8", "TITLEBLOCK", "10", "500", "20", "500", "40", "10", "1", "SHEET 1",
+      "0", "ENDSEC", "0", "EOF",
+    ].join("\n"));
+    const url = `/api/v1/map/sites/${fgId}/topology/views/${viewId}/cad`;
+
+    const dwg = await agent.post(url).set("X-CSRF-Token", csrf).attach("file", Buffer.from("AC1032\0\0garbage"), "x.dwg");
+    expect(dwg.status).toBe(400);
+    expect(dwg.body.error).toMatch(/DWG/);
+
+    const read = await agent.post(url).set("X-CSRF-Token", csrf).attach("file", dxf, "level1.dxf");
+    expect(read.status).toBe(200);
+    expect(read.body.units).toMatchObject({ code: 2, name: "Feet" });
+    expect(read.body.layers.map((l: { name: string }) => l.name)).toEqual(["OUTLINE", "TITLEBLOCK"]);
+
+    const imp = await agent.post(url).set("X-CSRF-Token", csrf)
+      .field("layers", JSON.stringify(["OUTLINE"])).field("units", "2").attach("file", dxf, "level1.dxf");
+    expect(imp.status).toBe(201);
+    expect(imp.body).toMatchObject({ mimeType: "image/svg+xml", width: 4096, height: 2048 });
+    expect(imp.body.cad).toMatchObject({ file: "level1.dxf", layers: ["OUTLINE"], ext: { minX: 0, minY: 0, maxX: 200, maxY: 100 } });
+
+    // The client's copy of `cad` is ignored: the row's is what the view keeps.
+    const saved = await agent.put(`/api/v1/map/sites/${fgId}/topology/views/${viewId}`).set("X-CSRF-Token", csrf).send({
+      layers: [{ level: -1, name: "Level 1", background: { kind: "image", imageId: imp.body.id, cad: { file: "forged" } } }],
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.view.layers[0].background.cad.file).toBe("level1.dxf");
+
+    const img = await agent.get(`/api/v1/map/sites/${fgId}/topology/background/${imp.body.id}`);
+    expect(img.headers["content-type"]).toMatch(/image\/svg\+xml/);
+    expect(img.headers["content-security-policy"]).toMatch(/sandbox/);
+    expect(String(img.body ?? img.text)).not.toContain("SHEET 1");
+    await waitForEventCount("map.topology.cad_imported", 1);
+  });
+
   it("a mode change resets the view: layouts, image, polygons gone, an empty room, Event written", async () => {
     const { agent, csrf } = await authedAgent(app);
     const views = (await agent.get(`/api/v1/map/sites/${fgId}/topology/views`)).body;
