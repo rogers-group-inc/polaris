@@ -134,7 +134,27 @@ describe("Phase 10 — fortigate-endpoint AssetSource flush", () => {
     expect(gateOf("e1")).toBe("FGT-NET");
     expect(gateOf("e2")).toBe("FGT-PRIOR");
     expect(upsert.mock.calls.some((c) => c[0] === "nomac")).toBe(false);
-    expect(upsert).toHaveBeenCalledWith("e1", "i1", expect.anything(), "fortimanager", new Date(NOW), "FMG", "FGT-NET");
+    expect(upsert).toHaveBeenCalledWith("e1", "i1", expect.anything(), "fortimanager", new Date(NOW), "FMG", "FGT-NET", undefined);
+  });
+
+  // Efficiency audit: the prior row rides along so an unchanged blob is not
+  // rewritten; a lastSeen-only change is one bulk statement, and the manual
+  // placeholder sweep is one delete for the whole flush.
+  it("hands each endpoint its prior row, bumps lastSeen-only rows in one statement, and sweeps manual rows once", async () => {
+    const prior = { assetId: "e1", externalId: "AA:AA:AA:AA:AA:01", integrationId: "i1", observed: { x: 1 }, lastSeen: new Date("2026-01-01T00:00:00Z") };
+    db.sourceFindMany.mockResolvedValue([prior]);
+    const raw = stubbed((prisma as any).$executeRawUnsafe).mockResolvedValue(1);
+    const del = stubbed(prisma.assetSource.deleteMany).mockResolvedValue({ count: 0 } as never);
+    const { state, upsert } = run();
+    upsert.mockImplementation(async (id: string) => (id === "e1" ? new Date(NOW) : "written"));
+    expect(await stampEndpointSources(state)).toBe(2);
+    expect(upsert.mock.calls.find((c) => c[0] === "e1")?.[7]).toMatchObject({ assetId: "e1", integrationId: "i1" });
+    expect(raw).toHaveBeenCalledTimes(1);
+    expect(String(raw.mock.calls[0][0])).toContain('UPDATE "asset_sources"');
+    expect(raw.mock.calls[0]).toContain("AA:AA:AA:AA:AA:01");
+    expect(del).toHaveBeenCalledTimes(1);
+    expect(del.mock.calls[0][0].where.sourceKind).toBe("manual");
+    expect([...del.mock.calls[0][0].where.assetId.in].sort()).toEqual(["e1", "e2"]);
   });
 
   it("counts and logs a failed upsert without throwing", async () => {

@@ -43,6 +43,7 @@ import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 import * as azureArc from "../azureArcService.js";
+import { jsonEqual } from "../../utils/jsonEqual.js";
 import { cidrContains, firstCidrContaining } from "../../utils/cidr.js";
 import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
 import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
@@ -5543,10 +5544,25 @@ function buildFortigateEndpointObservedBlob(
  * to the FMG/FortiGate integration that just sighted it. Idempotent on
  * the (sourceKind, externalId=mac) unique key.
  *
- * After upserting, sweep any "manual" source row from the same asset —
- * those are Phase 1 backfill placeholders for assets that didn't match
- * a tag prefix at the time. With a real fortigate-endpoint source now
- * present, the placeholder is no longer correct.
+ * The "manual" placeholder rows (Phase 1 backfill, superseded once a real
+ * fortigate-endpoint source exists) are swept by the caller
+ * (dhcp/endpointSources.ts), in one delete for the whole flush.
+ */
+/** The preloaded fortigate-endpoint row Phase 10 compares against. */
+interface PriorEndpointSource {
+  assetId: string;
+  integrationId: string | null;
+  observed: unknown;
+  lastSeen: Date;
+}
+
+/**
+ * Phase 10's per-endpoint source write. With the row's preloaded `prior`, an
+ * unchanged blob is not rewritten (efficiency audit): `"unchanged"` when even
+ * lastSeen matches, the new lastSeen when only that moved (the caller bumps
+ * those in one statement), `"written"` after an upsert, `null` when the asset
+ * has no MAC to key on. The `manual` placeholder sweep that used to follow each
+ * upsert is the caller's, batched for the whole flush.
  */
 async function upsertFortigateEndpointSource(
   assetId: string,
@@ -5557,11 +5573,15 @@ async function upsertFortigateEndpointSource(
   integrationName: string | null,
   /** The FortiGate that sighted it, from the touching pathway — see the blob builder. */
   gateName: string | null,
-): Promise<void> {
-  if (!asset?.macAddress) return;
+  prior?: PriorEndpointSource,
+): Promise<"written" | "unchanged" | Date | null> {
+  if (!asset?.macAddress) return null;
   const externalId = String(asset.macAddress).trim().toUpperCase();
-  if (!externalId) return;
+  if (!externalId) return null;
   const observed = buildFortigateEndpointObservedBlob(asset, integrationType, integrationName, gateName);
+  if (prior && prior.assetId === assetId && prior.integrationId === integrationId && jsonEqual(prior.observed, observed)) {
+    return prior.lastSeen.getTime() === lastSeen.getTime() ? "unchanged" : lastSeen;
+  }
   const now = new Date();
   await prisma.assetSource.upsert({
     where: { sourceKind_externalId: { sourceKind: "fortigate-endpoint", externalId } },
@@ -5584,16 +5604,7 @@ async function upsertFortigateEndpointSource(
       lastSeen,
     },
   });
-  // Manual-source sweep: the Phase 1 backfill placeholder for this
-  // asset is now superseded by a real source. Best-effort.
-  try {
-    await prisma.assetSource.deleteMany({
-      where: { assetId, sourceKind: "manual" },
-    });
-  } catch {
-    // Sweep failure is non-fatal — the manual row just lingers; UI
-    // shows both source cards, which is mildly redundant but harmless.
-  }
+  return "written";
 }
 
 // Build the AD sync's lookup index from AssetSource rows. Replaces the legacy
