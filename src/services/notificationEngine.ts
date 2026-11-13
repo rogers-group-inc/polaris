@@ -40,6 +40,7 @@ import { _assetDetailCache, _blameCache, clearAssetDetailCache } from "./notific
 
 // CQ-B063 — scope → assets and the pin tests (notifications/scope.ts).
 import { clearScopeAssetCache } from "./notifications/scope.js";
+import { clearTickSampleCache } from "./notifications/readings.js";
 
 // CQ-B063 — the alert lifecycle: fire / reset / recover + grouped alerts, business rule 75 (notifications/alertLifecycle.ts).
 import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends } from "./notifications/alertLifecycle.js";
@@ -121,6 +122,7 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // finally below disarms it even if the pass throws — left armed, an
   // operator's preview between ticks would answer from a stale snapshot.
   clearScopeAssetCache(true);
+  clearTickSampleCache(true);
   try {
 
   // Precedence index: which asset_metric/asset_state rules can carve assets out
@@ -178,5 +180,6 @@ export async function evaluateAllNotificationRules(): Promise<void> {
 
   } finally {
     clearScopeAssetCache(false);
+    clearTickSampleCache(false);
   }
 }
