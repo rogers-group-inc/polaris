@@ -1161,11 +1161,17 @@ model Asset {
   //   Open SSH buttons and the FortiAP "SNMP not enabled in profile" warning.
   // Monitor/discovery-owned (like lastSystemInfoAt), never projected from AssetSource.
   managementAccess        Json?
-  // Per-cadence last-touched stamps for the LLDP + Storage queues. Bumped by
-  // runLldpFor / runStorageFor on every successful pass; publisher reads them
-  // to decide when the next job is due.
+  // Per-cadence stamps for the LLDP + Storage queues, rule 118's split
+  // (business rule 118(a)): last<Stream>At is the last pass that RETURNED
+  // DATA (the System tab's "updated X ago"); last<Stream>AttemptAt is every
+  // attempt, success or failure, stamped by runLldpFor / runStorageFor before
+  // they dial. The due check reads the later of the two, so a device that
+  // fails waits a cadence instead of being re-queued every 30s heavy tick —
+  // which on SSH/WinRM storage was a stream of failed logins.
   lastLldpAt              DateTime?
   lastStorageAt           DateTime?
+  lastLldpAttemptAt       DateTime?
+  lastStorageAttemptAt    DateTime?
   // Agentless (ssh/winrm) processes-stream cadence anchors, same model as
   // lastLldpAt/lastStorageAt: lastProcessesAt gates the full inventory pass
   // (processesIntervalSec, default 600s); lastProcessPinsAt gates the 60s

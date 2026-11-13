@@ -2748,7 +2748,10 @@ long a stream has been failing is something an automation can alert on.**
   chart or table adds the same error — and a stream that has never succeeded
   shows the banner with the error straight away.
 - **A failing device is retried once per polling interval**, the same as a
-  healthy one. A failure does not make Polaris ask again sooner.
+  healthy one. A failure does not make Polaris ask again sooner. This holds for
+  the LLDP and storage polls too: a device whose storage login fails is tried
+  again at its storage interval, not every 30 seconds, so a wrong password does
+  not lock the account.
 - **Two automation conditions measure it**: *CPU & memory polls failing
   (minutes)* and *Interface polls failing (minutes)*. Each reads how many
   minutes the stream's polls have been failing, counted from the first failed

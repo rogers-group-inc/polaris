@@ -103,3 +103,14 @@ remains available for an operator who wants it stated.
 A stream switched off while its run is open keeps its frozen reading, so an alert already
 firing on it stays until the run closes or the automation is changed. Rare and visible;
 clearing it would need the engine to resolve every asset's polling method per tick.
+
+### Rule 118(a) — LLDP and storage stamp their attempts too
+
+**How it was found.** The 2026-11-13 efficiency audit. Rule 118 split telemetry and system info into "last data" and "last attempt" so a failing device waits a cadence. LLDP and storage kept one stamp each, written only after a successful pass. Two things followed:
+
+- **Every agent host was queued for LLDP on every 30 s heavy tick, for ever.** Enrolling an agent sets the asset's `lldpPolling` to `agent`; the due check accepted any method that was not `disabled`, and `runLldpFor` returned at once for `agent` without stamping. With 500 agent hosts that was about 17 jobs a second, each a queue round-trip and a full asset read.
+- **A failing device was retried every heavy tick instead of every cadence.** For SNMP that is a timed-out walk every 30 s; for SSH / WinRM storage it is a failed login every 30 s — the account-lockout exposure `runProcessesFor` already guards against.
+
+**What it does.** Two columns, `lastLldpAttemptAt` and `lastStorageAttemptAt` (migration `20261113120000_lldp_storage_attempt_stamps`), stamped by each runner before it dials, so every failure path waits a cadence. The last-data stamps are unchanged, because the System tab's "updated X ago" reads them and must not call a failing stream fresh. The due check reads the later of the two, and queues LLDP only for snmp and rest_api — the methods `runLldpFor` collects; ssh, winrm and icmp delivered no LLDP and returned at once.
+
+Pinned by the existing runner tests and the due-check path in `monitoringService`.
