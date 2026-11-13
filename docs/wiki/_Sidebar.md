@@ -51,6 +51,7 @@
 - [Proxmox VE](Integration-Proxmox)
 - [Generic API (build your own)](Integration-Generic-API)
 - [Windows Server DHCP](Integration-Windows-Server)
+- [ArcGIS](Integration-ArcGIS)
 - [Polaris Agent](Polaris-Agent)
 - [Network Discovery (active scan)](Network-Discovery)
 

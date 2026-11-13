@@ -1175,6 +1175,78 @@ function getWorkloadFormConfig() {
   return cfg;
 }
 
+// ─── ArcGIS ─────────────────────────────────────────────────────────────────
+// A portal sign-in (ArcGIS Online, Location Platform or ArcGIS Enterprise). It
+// discovers nothing: it supplies satellite imagery to the Device Map and is
+// where cable runs are written back. One credential block per sign-in method,
+// shown by the method picker (_wireArcgisForm in integrations.js).
+
+var ARCGIS_AUTH_MODES = [
+  ["appCredentials", "OAuth app credentials (client ID + secret)"],
+  ["apiKey",         "API key"],
+  ["userPassword",   "Username and password (ArcGIS Enterprise)"],
+  ["none",           "None (public World Imagery only)"],
+];
+
+function arcgisFormHTML(defaults) {
+  var d = defaults || {};
+  var mode = d.authMode || "apiKey";
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  function block(m, html) {
+    return '<div data-arcgis-auth="' + m + '"' + (m === mode ? '' : ' hidden') + '>' + html + '</div>';
+  }
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corporate GIS"></div>' +
+    infoBox('Connects Polaris to an <strong style="color:var(--color-text-primary)">ArcGIS</strong> portal — ArcGIS Online, ArcGIS Location Platform or your own ArcGIS Enterprise. It discovers no devices: it supplies satellite imagery to the Device Map and is where the cable runs drawn on the map are written.') +
+    formDivider() +
+    sectionHeading("Portal") +
+    '<div class="form-group"><label>Portal URL</label><input type="text" id="f-portalUrl" value="' + escapeHtml(d.portalUrl || "") + '" placeholder="https://www.arcgis.com">' +
+      '<p class="hint">Leave blank for ArcGIS Online and Location Platform. For ArcGIS Enterprise, give your portal, e.g. <code>https://gis.example.com/portal</code>.</p></div>' +
+    '<div class="form-group"><label>Sign in with</label><select id="f-authMode">' +
+      ARCGIS_AUTH_MODES.map(function (o) {
+        return '<option value="' + o[0] + '"' + (o[0] === mode ? ' selected' : '') + '>' + escapeHtml(o[1]) + '</option>';
+      }).join("") +
+    '</select></div>' +
+    block("appCredentials",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+        '<div class="form-group"><label>Client ID</label><input type="text" id="f-clientId" value="' + escapeHtml(d.clientId || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Client secret</label><input type="password" id="f-clientSecret" value="" placeholder="' + escapeHtml(d.clientSecretPlaceholder || "Client secret") + '" autocomplete="off"></div>' +
+      '</div>' +
+      '<p class="hint">From an OAuth 2.0 app (Content → New item → Developer credentials). Polaris exchanges it for a two-hour token and renews it as needed.</p>') +
+    block("apiKey",
+      '<div class="form-group"><label>API key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "API key") + '" autocomplete="off">' +
+      '<p class="hint">Grant it only the privileges Polaris uses: basemaps for imagery, and editing of the cable-run layer for write-back.</p></div>') +
+    block("userPassword",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+        '<div class="form-group"><label>Username</label><input type="text" id="f-username" value="' + escapeHtml(d.username || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Password</label><input type="password" id="f-password" value="" placeholder="' + escapeHtml(d.passwordPlaceholder || "Password") + '" autocomplete="off"></div>' +
+      '</div>' +
+      '<p class="hint">Use a dedicated account. Polaris signs in through the portal&rsquo;s generateToken endpoint.</p>') +
+    block("none", '<p class="hint">No sign-in: only public services answer. Write-back needs a sign-in.</p>') +
+    checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
+    '<p class="hint">Turn off only for an Enterprise portal with a private certificate; Polaris then pins the certificate it first sees.</p>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<input type="hidden" id="f-pollInterval" value="' + (d.pollInterval || 12) + '">' +
+    verboseLoggingFormHTML(d);
+}
+
+function getArcgisFormConfig() {
+  var mode = document.getElementById("f-authMode").value;
+  var cfg = {
+    portalUrl: val("f-portalUrl"),
+    authMode: mode,
+    verifySsl: document.getElementById("f-verifySsl").checked,
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+  // Only the chosen method's fields go out; the others keep what is stored.
+  if (mode === "appCredentials") { cfg.clientId = val("f-clientId"); cfg.clientSecret = val("f-clientSecret"); }
+  if (mode === "apiKey") cfg.apiToken = val("f-apiToken");
+  if (mode === "userPassword") { cfg.username = val("f-username"); cfg.password = val("f-password"); }
+  return cfg;
+}
+
 // ─── Proxmox VE ─────────────────────────────────────────────────────────────
 // The workload classes with Proxmox's own transport: an API token (token ID +
 // secret) and a list of node addresses — any node answers for the cluster. The

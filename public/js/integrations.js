@@ -309,10 +309,12 @@ async function loadIntegrations() {
         intg.type === "proxmox" ? "Proxmox VE" :
         intg.type === "genericapi" ? "Generic API" :
         intg.type === "llm" ? "AI Assistant" :
+        intg.type === "arcgis" ? "ArcGIS" :
         "FortiManager";
-      // The AI Assistant integration discovers nothing: no Discover button and no
-      // auto-discovery rows on its card.
       var isLlm = intg.type === "llm";
+      // The AI Assistant and ArcGIS integrations discover nothing: no Discover
+      // button and no auto-discovery rows on their cards.
+      var noDiscovery = isLlm || intg.type === "arcgis";
 
       function filterRow(baseLabel, include, exclude) {
         include = include || []; exclude = exclude || [];
@@ -345,6 +347,15 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Tool Calling</span><span class="detail-value">' + _llmToolCheckHTML(config.toolCheck) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each · ' + Math.round((config.contextWindow || 8192) / 1024) + 'K-token window</span></div>' +
           '<div class="detail-row"><span class="detail-label">API Access Role</span><span class="detail-value">' + (config.roleName ? escapeHtml(config.roleName) + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(read-only)</span>' : '<span style="color:var(--color-text-tertiary)">—</span>') + '</span></div>';
+      } else if (intg.type === "arcgis") {
+        var arcgisModes = { none: "None (public services only)", apiKey: "API key", appCredentials: "OAuth app credentials", userPassword: "Named user" };
+        var arcgisMode = config.authMode || "apiKey";
+        var arcgisWho = arcgisMode === "appCredentials" ? config.clientId : arcgisMode === "userPassword" ? config.username : "";
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Portal</span><span class="detail-value mono">' + escapeHtml(config.portalUrl || "https://www.arcgis.com") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Sign-in</span><span class="detail-value">' + escapeHtml(arcgisModes[arcgisMode] || arcgisMode) +
+            (arcgisWho ? ' <span class="mono">' + escapeHtml(arcgisWho) + '</span>' : '') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>';
       } else if (intg.type === "activedirectory") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -504,7 +515,7 @@ async function loadIntegrations() {
             '<div class="integration-card-enabled">' +
               (intg.enabled ? '<span class="badge badge-active">Enabled</span>' : '<span class="badge badge-deprecated">Disabled</span>') +
             '</div>' +
-            (isLlm ? '' :
+            (noDiscovery ? '' :
             '<div class="integration-card-discover" id="discover-wrap-' + intg.id + '" data-disabled="' + (intg.lastTestOk !== true ? '1' : '0') + '">' +
               _discoverBtnHTML(intg.id, intg.name, activeDiscoveries.find(function(d){ return d.id === intg.id; }) || null, intg.lastTestOk !== true) +
             '</div>') +
@@ -525,7 +536,7 @@ async function loadIntegrations() {
         '</div>' +
         '<div class="integration-card-details">' +
           detailRows +
-          (isLlm ? '' :
+          (noDiscovery ? '' :
           '<div class="detail-row"><span class="detail-label">Auto-Discovery</span><span class="detail-value">' + (!intg.lastTestOk ? '<span style="color:var(--color-text-tertiary)">Disabled until a successful connection test</span>' : intg.autoDiscover === false ? '<span style="color:var(--color-text-tertiary)">Disabled</span>' : 'Every ' + (intg.pollInterval || 4) + ' hour' + ((intg.pollInterval || 4) === 1 ? '' : 's')) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Next Auto-Discovery</span><span class="detail-value">' + nextDiscoveryText + '</span></div>' +
           avgRow) +
@@ -587,6 +598,7 @@ function showTypePicker() {
       '<button class="btn btn-secondary" id="pick-proxmox" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Proxmox VE</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Cluster nodes, VMs &amp; LXC containers via the REST API</span>' +
+      '</button>' +
       '<button class="btn btn-secondary" id="pick-generic" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Generic API</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Any REST API that lists devices as JSON</span>' +
@@ -594,6 +606,10 @@ function showTypePicker() {
       '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>AI Assistant</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server or Azure AI Foundry</span>' +
+      '</button>' +
+      '<button class="btn btn-secondary" id="pick-arcgis" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>ArcGIS</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Satellite imagery &amp; cable runs via ArcGIS Online or Enterprise</span>' +
       '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
@@ -610,10 +626,12 @@ function showTypePicker() {
   document.getElementById("pick-proxmox").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("proxmox"); });
   document.getElementById("pick-generic").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("genericapi"); });
   document.getElementById("pick-llm").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("llm"); });
+  document.getElementById("pick-arcgis").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("arcgis"); });
 }
 
 function _formHTMLForType(type, defaults) {
   if (type === "llm") return llmFormHTML(defaults);
+  if (type === "arcgis") return arcgisFormHTML(defaults);
   if (type === "genericapi") return genericApiGeneralHTML(defaults);
   if (type === "windowsserver") return windowsServerFormHTML(defaults);
   if (type === "fortigate") return fortiGateFormHTML(defaults);
@@ -628,6 +646,7 @@ function _formHTMLForType(type, defaults) {
 
 function _formConfigForType(type) {
   if (type === "llm") return getLlmFormConfig();
+  if (type === "arcgis") return getArcgisFormConfig();
   if (type === "genericapi") return getGenericApiFormConfig();
   if (type === "windowsserver") return getWinFormConfig();
   if (type === "fortigate") return getFgtFormConfig();
@@ -679,6 +698,7 @@ var _INTEGRATION_PRODUCTS = {
   proxmox:         "Proxmox VE",
   genericapi:      "Generic API",
   llm:             "AI Assistant",
+  arcgis:          "ArcGIS",
 };
 
 /** The product an operator picked to get here. Unknown types fall back to the
@@ -726,6 +746,9 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   // The identity path is required too, but which input holds it depends on
   // the identity picker — the server names it if it is missing.
   genericapi:   [["f-host", "host"]],
+  // The portal defaults to ArcGIS Online and which credential is needed
+  // depends on the sign-in method — the server names a missing one.
+  arcgis:       [],
 };
 
 function _integrationRequires(type, mode) {
@@ -905,9 +928,22 @@ function _integrationTabs(ctx) {
   return nonFortinet;
 }
 
+/** ArcGIS: show only the chosen sign-in method's credential fields. */
+function _wireArcgisForm() {
+  var sel = document.getElementById("f-authMode");
+  if (!sel) return;
+  function paint() {
+    var blocks = document.querySelectorAll("[data-arcgis-auth]");
+    for (var i = 0; i < blocks.length; i++) blocks[i].hidden = blocks[i].getAttribute("data-arcgis-auth") !== sel.value;
+  }
+  sel.addEventListener("change", paint);
+  paint();
+}
+
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
   if (type === "llm") { _wireLlmForm(id); return; }
+  if (type === "arcgis") { _wireArcgisForm(); return; }
   if (type === "genericapi") { _wireGenericApiForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
@@ -1274,6 +1310,35 @@ function _intgEditFormSpec(intg, config) {
         return fc;
       };
       return { body: body, formGetter: formGetter, defaults: defaults };
+    }
+
+    if (intg.type === "arcgis") {
+      var agDefaults = {
+        name: intg.name,
+        enabled: intg.enabled,
+        pollInterval: intg.pollInterval,
+        portalUrl: config.portalUrl,
+        authMode: config.authMode,
+        clientId: config.clientId,
+        username: config.username,
+        verifySsl: config.verifySsl !== false,
+        apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "API key",
+        clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "Client secret",
+        passwordPlaceholder: config.password ? "Leave blank to keep the current password" : "Password",
+        verboseLogging: config.verboseLogging === true,
+        verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+      };
+      return {
+        body: arcgisFormHTML(agDefaults),
+        formGetter: function () {
+          var fc = getArcgisFormConfig();
+          if (!fc.apiToken) delete fc.apiToken;
+          if (!fc.clientSecret) delete fc.clientSecret;
+          if (!fc.password) delete fc.password;
+          return fc;
+        },
+        defaults: agDefaults,
+      };
     }
 
     if (intg.type === "genericapi") {

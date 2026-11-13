@@ -57,7 +57,8 @@ import {
   applyFixedMonitorDefaults,
 } from "../../services/monitorOverrideService.js";
 import { checkForSlowRunsThrottled, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
-import { INTEGRATION_ADAPTERS } from "../../services/integrationAdapters.js";
+import { INTEGRATION_ADAPTERS, isNonDiscoveryType } from "../../services/integrationAdapters.js";
+import * as arcgis from "../../services/arcgisService.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
@@ -1359,6 +1360,35 @@ const GenericApiConfigSchema = z.object({
   if (badNetwork) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networkQueries"], message: badNetwork });
 });
 
+/**
+ * An ArcGIS portal sign-in (services/arcgisService.ts). `host` is derived from
+ * the portal URL — never typed — so the generic host checks (the PUT SSRF
+ * guard, the card) see the portal like any other integration's target.
+ */
+const ArcgisConfigSchema = z.object({
+  portalUrl:    z.string().trim().max(500).optional().default(arcgis.ARCGIS_ONLINE_PORTAL),
+  authMode:     z.enum(arcgis.ARCGIS_AUTH_MODES).optional().default("apiKey"),
+  apiToken:     z.string().max(4096).optional().default(""),
+  clientId:     z.string().trim().max(512).optional().default(""),
+  clientSecret: z.string().max(4096).optional().default(""),
+  username:     z.string().trim().max(256).optional().default(""),
+  password:     z.string().max(1024).optional().default(""),
+  verifySsl:    z.boolean().optional().default(true),
+  verboseLogging: z.boolean().optional().default(false),
+}).superRefine((cfg, ctx) => {
+  const problem = arcgis.portalUrlProblem(cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL);
+  if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["portalUrl"], message: problem });
+  if (cfg.authMode === "appCredentials" && !cfg.clientId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["clientId"], message: "App credentials need a client ID" });
+  }
+  if (cfg.authMode === "userPassword" && !cfg.username) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "A named-user sign-in needs a username" });
+  }
+}).transform((cfg) => {
+  const portalUrl = (cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL).replace(/\/+$/, "");
+  return { ...cfg, portalUrl, host: new URL(portalUrl).hostname };
+});
+
 /** Server-stamped llm config keys a client may never set or overwrite. */
 const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId", "toolCheck"] as const;
 
@@ -1466,6 +1496,15 @@ const CreateIntegrationSchema = z.discriminatedUnion("type", [
     type:         z.literal("llm"),
     name:         IntegrationNameSchema,
     config:       LlmConfigSchema,
+    enabled:      z.boolean().optional().default(true),
+    // Nothing to discover — forced false at create regardless of input.
+    autoDiscover: z.boolean().optional().default(false),
+    pollInterval: z.number().int().min(1).max(24).optional().default(12),
+  }),
+  z.object({
+    type:         z.literal("arcgis"),
+    name:         IntegrationNameSchema,
+    config:       ArcgisConfigSchema,
     enabled:      z.boolean().optional().default(true),
     // Nothing to discover — forced false at create regardless of input.
     autoDiscover: z.boolean().optional().default(false),
@@ -1693,8 +1732,8 @@ router.post("/", async (req, res, next) => {
         name: input.name,
         config: createConfig as any,
         enabled: input.enabled,
-        // llm has nothing to discover — never let the scheduler pick it up.
-        autoDiscover: input.type === "llm" ? false : (input.autoDiscover ?? true),
+        // llm / arcgis have nothing to discover — never let the scheduler pick them up.
+        autoDiscover: isNonDiscoveryType(input.type) ? false : (input.autoDiscover ?? true),
         pollInterval: input.pollInterval,
       },
     });
@@ -1834,6 +1873,18 @@ router.put("/:id", async (req, res, next) => {
         Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
         await applyGenericApiMonitorDefaults(newConfig);
       }
+      if (existing.type === "arcgis") {
+        // The loose update schema skips ArcgisConfigSchema: re-run the merged
+        // config through it, so the portal URL guard and the derived `host`
+        // apply to an edit as to a create.
+        const { verboseLoggingEnabledAt, host: _host, ...rest } = newConfig;
+        const parsed = ArcgisConfigSchema.safeParse(rest);
+        if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
+        for (const k of Object.keys(newConfig)) delete newConfig[k];
+        Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
+        arcgis.clearArcgisTokenCache();
+      }
+      if (isNonDiscoveryType(existing.type)) data.autoDiscover = false;
       // SSRF guard — the update path validates config as a loose record, so the
       // per-type schema's host refinement (refineConfigHost) doesn't run here.
       // Re-check the merged host explicitly so an edit can't smuggle in a
@@ -2951,6 +3002,7 @@ const TEST_SECRET_KEYS: Record<string, readonly string[]> = {
   proxmox: ["apiToken"],
   llm: ["apiToken", "clientSecret"],
   [GENERIC_API_TYPE]: ["apiToken", "password", "clientSecret"],
+  arcgis: ["apiToken", "clientSecret", "password"],
 };
 
 /**
