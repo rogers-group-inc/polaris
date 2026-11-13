@@ -203,13 +203,26 @@ on that router must not confer tenant writes.
 
 ## Decommissioning
 
-**Azure Arc never writes `status` at all.** There is no absence pass, and no
-disabled flag is consulted.
+**A disconnected agent never changes an asset's status.** *Disconnected* and
+*Expired* mean Azure stopped hearing from the host, which is a reachability
+signal. Polaris keeps the machine and tags it `arc-disconnected`.
 
-A machine that leaves Azure simply stops having its Arc source row refreshed. If
-nothing else claims the asset and a **vCenter** integration also covers it,
-vCenter's own [disappearance sweep](Integration-vCenter#the-disappearance-sweep)
-may then decommission it — but Arc itself will not.
+**A machine deleted from Azure is different, and what happens is your choice.**
+
+- **Decommission machines that leave Azure Arc** is **off** by default. Off, a
+  machine that leaves Azure keeps its asset and its Arc details exactly as they
+  were on the last read.
+- **On**, an asset this integration manages is set to *decommissioned* once its
+  machine or connected cluster is deleted from Azure, and its `azure:` tags are
+  removed. An asset another integration manages only loses its Arc details and
+  `azure:` tags; it stays active.
+
+Polaris refuses to act, and says so in the discovery log, when the read cannot
+be trusted: a cancelled or capped read, an empty read, a single-machine
+**Discover Now**, or a run that would decommission an implausibly large share of
+the fleet. A machine is also left alone whenever **its own subscription** could
+not be read, so losing access to one subscription never decommissions the
+machines in it. See [rule 70a](Business-Rules#rule-70a).
 
 ---
 

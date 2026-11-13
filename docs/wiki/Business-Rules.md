@@ -704,6 +704,23 @@ See [Integration-Directory](Integration-Directory) for the operator view.
 
 ---
 
+### Rule 70a
+
+**A machine deleted from Azure Arc can decommission its asset — when you switch that on.**
+With **Decommission machines that leave Azure Arc** ticked on an Azure Arc integration, an
+asset that integration manages is set to *decommissioned* once its machine (or connected
+cluster) is deleted from Azure, and its `azure:` tags are removed. It follows the same
+safeguards as [rule 70](#rule-70), plus one of its own:
+
+- A **disconnected** Arc agent is never a reason. The machine is still in Azure.
+- A machine that a filter excludes is not treated as deleted.
+- A machine is only judged when **its own subscription** was read. If the app registration
+  loses access to a subscription, that subscription's machines are left alone.
+- A partial, cancelled or empty read, a single-machine **Discover Now**, and any run that
+  would decommission an implausibly large share of the fleet are refused and logged.
+
+It is off by default. Off, nothing changes when a machine leaves Arc.
+
 ## Reading a rule correctly
 
 Three habits make these easier to apply:
@@ -3552,7 +3569,8 @@ those devices.
 
 Renaming a **map region** works the same way. As well as moving the region's tag on devices
 and networks and every user's region scope, Polaris updates the device filters that select
-by that region and the notify actions sent to that region's users.
+by that region and the notify actions sent to that region's users. A region tag you typed
+onto an IP block is renamed with the region, and removed when the region is deleted.
 
 ### Rule 170
 
@@ -3621,3 +3639,13 @@ expiry date passes:
 
 An expiry does not disconnect a device that is using the address; releasing the reservation
 does.
+
+### Rule 176
+
+**A change to monitoring settings takes effect within about 30 seconds, with no restart.**
+When you change how often something is polled, which method a stream uses or which
+credential it signs in with — on an integration, on a device class or in the manual
+defaults — every Polaris process picks the change up within about 30 seconds.
+
+Before this, the change was saved and shown correctly but the monitoring processes went on
+using the old settings until Polaris was next restarted or updated.

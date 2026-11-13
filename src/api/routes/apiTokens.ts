@@ -32,7 +32,7 @@ const router = Router();
 const CreateTokenSchema = z.object({
   name: z.string().min(1).max(80).refine(hasNoControlChars, "Name may not contain control characters"),
   roleId: z.string().min(1),
-  integrationIds: z.array(z.string().uuid()).optional(),
+  integrationIds: z.array(z.string().guid()).max(1_000).optional(),
   // Bare IPs / CIDRs the token is accepted from; omitted or empty = any
   // source. Format is validated in the service (normalizeTrustedHosts).
   trustedHosts: z.array(z.string().max(64)).max(256).optional(),

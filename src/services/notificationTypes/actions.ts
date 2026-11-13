@@ -486,7 +486,7 @@ const apiCallActionSchema = z
       .url()
       .refine((u) => /^https?:\/\//i.test(u), { message: "api_call URL must be http(s)" }),
     headers: z
-      .record(z.string().max(1000))
+      .record(z.string(), z.string().max(1000))
       .refine((h) => Object.keys(h).length <= 20, { message: "at most 20 headers" })
       .refine((h) => Object.keys(h).every((k) => k.length >= 1 && k.length <= 100), {
         message: "header names must be 1–100 characters",

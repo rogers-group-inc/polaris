@@ -39,7 +39,7 @@ const BodySchema = z.object({
       z.object({
         id:              z.string().min(1).max(64),
         name:            z.string().min(1).max(MAX_TAB_NAME_LEN),
-        state:           z.record(z.unknown()).optional(),
+        state:           z.record(z.string(), z.unknown()).optional(),
         savedFilterId:   z.string().max(64).nullish(),
         savedFilterName: z.string().max(MAX_TAB_NAME_LEN).nullish(),
         // The tab's pinned BASE filter — `defaultState` is what Reset applies,
@@ -47,7 +47,7 @@ const BodySchema = z.object({
         // together, so a body carrying an id with no state loses the id.
         defaultFilterId:   z.string().max(64).nullish(),
         defaultFilterName: z.string().max(MAX_TAB_NAME_LEN).nullish(),
-        defaultState:      z.record(z.unknown()).nullish(),
+        defaultState:      z.record(z.string(), z.unknown()).nullish(),
         // Per-tab favorites. Null (or absent) is meaningful — see the service.
         favoriteIds:       z.array(z.string().max(64)).max(MAX_TAB_FAVORITES).nullish(),
         // The tab's column order. Null (or absent) is meaningful the same way:

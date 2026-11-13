@@ -26,8 +26,8 @@ const router = Router();
 // watches per-asset installStatus.
 const BulkAgentInstallSchema = z.object({
   ids:               z.array(z.string()).min(1).max(200),
-  sshCredentialId:   z.string().uuid().optional(),
-  winrmCredentialId: z.string().uuid().optional(),
+  sshCredentialId:   z.string().guid().optional(),
+  winrmCredentialId: z.string().guid().optional(),
   arch:              z.enum(["amd64", "arm64"]).default("amd64"),
   // Per-OS install-method variant (bulk spans mixed OSes; the service applies
   // each per an asset's inferred platform). Omitted keys use the per-OS
@@ -105,7 +105,7 @@ router.post("/bulk-agent-install", requirePermission("agentDeploy", "write"), as
 // file upload + remote service start that automates the agent-side work.
 
 const AgentInstallSchema = z.object({
-  credentialId: z.string().uuid("credentialId must be a UUID"),
+  credentialId: z.string().guid("credentialId must be a UUID"),
   osPlatform:   z.enum(["linux", "darwin", "windows"]),
   arch:         z.enum(["amd64", "arm64"]),
   // Remote transport. Optional for backward-compat with older clients; when
@@ -176,7 +176,7 @@ router.post("/:id/agent/reinstall", requirePermission("agentDeploy", "write"), a
 });
 
 const AgentUpgradeSchema = z.object({
-  credentialId: z.string().uuid().optional(),
+  credentialId: z.string().guid().optional(),
 });
 
 router.post("/:id/agent/upgrade", requirePermission("agentDeploy", "write"), async (req, res, next) => {

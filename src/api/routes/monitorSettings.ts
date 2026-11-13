@@ -177,13 +177,13 @@ const OverrideSettingsSchema = z.object({
   processesPolling:           PollingMethodEnum.nullable().optional(),
   eventLogPolling:            PollingMethodEnum.nullable().optional(),
   // Per-stream credential IDs (FK to Credential, null = inherit)
-  responseTimeCredentialId:   z.string().uuid().nullable().optional(),
-  cpuMemoryCredentialId:      z.string().uuid().nullable().optional(),
-  temperatureCredentialId:    z.string().uuid().nullable().optional(),
-  interfacesCredentialId:     z.string().uuid().nullable().optional(),
-  lldpCredentialId:           z.string().uuid().nullable().optional(),
-  processesCredentialId:      z.string().uuid().nullable().optional(),
-  eventLogCredentialId:       z.string().uuid().nullable().optional(),
+  responseTimeCredentialId:   z.string().guid().nullable().optional(),
+  cpuMemoryCredentialId:      z.string().guid().nullable().optional(),
+  temperatureCredentialId:    z.string().guid().nullable().optional(),
+  interfacesCredentialId:     z.string().guid().nullable().optional(),
+  lldpCredentialId:           z.string().guid().nullable().optional(),
+  processesCredentialId:      z.string().guid().nullable().optional(),
+  eventLogCredentialId:       z.string().guid().nullable().optional(),
   // Retired per-stream MIB pins (business rule 173): accepted, never stored.
   responseTimeMibId:          retiredStreamMibField(),
   cpuMemoryMibId:             retiredStreamMibField(),
@@ -244,7 +244,7 @@ async function auditClassOverrideCredentials(req: Request, before: unknown, afte
 
 const ClassCreateSchema = z
   .object({
-    integrationId: z.string().uuid().nullable(), // null = manual-tier override
+    integrationId: z.string().guid().nullable(), // null = manual-tier override
     assetType:     AssetTypeSchema,
   })
   .merge(OverrideSettingsSchema);

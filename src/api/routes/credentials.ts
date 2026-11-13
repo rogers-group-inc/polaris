@@ -45,12 +45,12 @@ const CredentialTypeEnum = z.enum(["snmp", "winrm", "ssh", "restapi", "http"]);
 const CreateSchema = z.object({
   name:   z.string().min(1),
   type:   CredentialTypeEnum,
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
 });
 
 const UpdateSchema = z.object({
   name:   z.string().min(1).optional(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Body for POST /credentials/test. Drives the Test Connection button on the
@@ -66,17 +66,17 @@ const UpdateSchema = z.object({
 // at all (a staging box, a vendor's demo unit, a loopback stub). `assetId` stays
 // first-class and unchanged; `host` is validated by normalizeProbeTarget.
 const TestSchema = z.object({
-  assetId: z.string().uuid("assetId must be a UUID").optional(),
+  assetId: z.string().guid("assetId must be a UUID").optional(),
   host:    z.string().min(1).max(300).optional(),
   type:    CredentialTypeEnum,
-  config:  z.record(z.unknown()),
-  id:      z.string().uuid().optional(),
+  config:  z.record(z.string(), z.unknown()),
+  id:      z.string().guid().optional(),
   // `http` only: the check to exercise (path / expected status / expected body
   // / TLS). It is supplied per-test rather than read off the credential because
   // the credential carries authentication only — and supplying it here is what
   // lets an operator dial a check in against a real device before saving it to
   // a manufacturer widget.
-  check:   z.record(z.unknown()).optional(),
+  check:   z.record(z.string(), z.unknown()).optional(),
 }).refine((v) => !!v.assetId || !!v.host || v.type === "restapi", {
   // restapi is the exception it has always been: the credential carries its own
   // baseUrl, so it needs no target of either kind.

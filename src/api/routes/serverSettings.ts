@@ -1869,7 +1869,7 @@ router.get("/agents/script-publish/targets", requirePermission("serverSettingsSy
 // sits at the read gate; the dispatch below is what carries the write gate.
 router.get("/agents/script-publish/arc/machines", requirePermission("serverSettingsSystem", "read"), async (req, res, next) => {
   try {
-    const integrationId = z.string().uuid().parse(req.query.integrationId);
+    const integrationId = z.string().guid().parse(req.query.integrationId);
     const { listMachines } = await import("../../services/arcPublishService.js");
     res.json({ machines: await listMachines(integrationId) });
   } catch (err) { next(err); }
@@ -1886,8 +1886,8 @@ router.post(
   async (req, res, next) => {
     try {
       const { integrationId, armIds } = z.object({
-        integrationId: z.string().uuid(),
-        armIds: z.array(z.string().min(1)).min(1),
+        integrationId: z.string().guid(),
+        armIds: z.array(z.string().min(1)).max(10_000).min(1),
       }).parse(req.body ?? {});
       const { runOnboardingOnMachines } = await import("../../services/arcPublishService.js");
       res.json(await runOnboardingOnMachines(integrationId, armIds, requestActor(req) || "unknown"));
@@ -1897,7 +1897,7 @@ router.post(
 
 router.get("/agents/script-publish/arc/result", requirePermission("serverSettingsSystem", "read"), async (req, res, next) => {
   try {
-    const integrationId = z.string().uuid().parse(req.query.integrationId);
+    const integrationId = z.string().guid().parse(req.query.integrationId);
     const armId = z.string().min(1).parse(req.query.armId);
     const { getMachineResult } = await import("../../services/arcPublishService.js");
     res.json({ result: await getMachineResult(integrationId, armId) });
@@ -1916,7 +1916,7 @@ router.post(
   requirePermission("integrations", "fullwrite"),
   async (req, res, next) => {
     try {
-      const { integrationId } = z.object({ integrationId: z.string().uuid() }).parse(req.body ?? {});
+      const { integrationId } = z.object({ integrationId: z.string().guid() }).parse(req.body ?? {});
       const { publishOnboardingScripts } = await import("../../services/intunePublishService.js");
       res.json(await publishOnboardingScripts(integrationId, requestActor(req) || "unknown"));
     } catch (err) { next(err); }

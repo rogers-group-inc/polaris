@@ -609,6 +609,8 @@ function azureArcFormHTML(defaults) {
     '<p class="hint">One query covers every subscription instead of one call each — much lighter on a large tenant. Polaris falls back to a per-subscription list automatically if Resource Graph is unavailable. Resource Graph is an indexed snapshot that can trail Azure by a minute or two, which does not matter on a multi-hour discovery interval.</p>' +
     checkboxRow("f-includeDisconnected", "Include disconnected machines", inclDisc) +
     '<p class="hint">A <em>Disconnected</em> or <em>Expired</em> Arc agent means Azure stopped hearing from the host — a reachability signal, not a lifecycle one. Polaris keeps those machines as assets and tags them <code>arc-disconnected</code>; it never decommissions on this signal.</p>' +
+    checkboxRow("f-arcDecommissionMissing", "Decommission machines that leave Azure Arc", d.decommissionMissing === true) +
+    '<div style="background:color-mix(in srgb, var(--color-accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 20%, transparent);border-radius:var(--radius-md);padding:0.6rem 0.75rem;margin-top:0.5rem;margin-bottom:1rem;font-size:0.82rem;color:var(--color-text-secondary);line-height:1.5">When on, an asset <strong style="color:var(--color-text-primary)">this integration manages</strong> is set to <em>decommissioned</em> once its machine or cluster resource is deleted from Azure — other sources still describing it do not keep it active — and its <code>azure:</code> tags are removed. A disconnected agent is never a reason. Assets managed by another integration are never touched. A partial, cancelled or empty read, a subscription that could not be read, a single-machine run, and any run that would decommission an implausibly large share of the fleet are all refused and logged instead.</div>' +
     checkboxRow("f-fetchNetworkProfile", "Fetch IP addresses for each machine", netProfile) +
     '<p class="hint" style="color:var(--color-warning)">Costs <strong>one extra Azure request per machine</strong> — on a large fleet that is thousands of calls per discovery run against a rate-limited API. Polaris caps the concurrency and stops the pass at a deadline (reporting what it skipped), but leave this off unless you actually need Arc-sourced IPs.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
@@ -703,6 +705,7 @@ function getArcFormConfig() {
     subscriptionInclude: linesToArray("f-subscriptionIds"),
     useResourceGraph: document.getElementById("f-useResourceGraph").checked,
     includeDisconnected: document.getElementById("f-includeDisconnected").checked,
+    decommissionMissing: document.getElementById("f-arcDecommissionMissing").checked,
     fetchNetworkProfile: document.getElementById("f-fetchNetworkProfile").checked,
     enableVmInstances: document.getElementById("f-enableVmInstances").checked,
     enableSqlServer: document.getElementById("f-enableSqlServer").checked,

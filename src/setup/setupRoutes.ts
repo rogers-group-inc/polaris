@@ -243,7 +243,7 @@ router.post("/preflight", setupActionLimiter, requireSetupToken, async (req, res
     });
   } catch (err: any) {
     if (err.name === "ZodError") {
-      return res.status(400).json({ ok: false, message: "Invalid input", errors: err.errors });
+      return res.status(400).json({ ok: false, message: "Invalid input", errors: err.issues });
     }
     res.status(500).json({ ok: false, message: err.message || "Preflight check failed" });
   }
@@ -538,7 +538,7 @@ router.post("/finalize", setupActionLimiter, requireSetupToken, async (req, res)
     }, 1500);
   } catch (err: any) {
     if (err.name === "ZodError") {
-      return res.status(400).json({ ok: false, message: "Invalid input", errors: err.errors });
+      return res.status(400).json({ ok: false, message: "Invalid input", errors: err.issues });
     }
     res.status(500).json({ ok: false, message: err.message || "Setup failed" });
   }

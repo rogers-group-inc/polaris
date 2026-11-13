@@ -120,7 +120,7 @@ const BindingUpsertSchema = z.object({
   manufacturer: z.string().trim().min(1),
   assetType: AssetTypeSchema.optional().nullable(),
   model: z.string().max(200).optional().nullable(),
-  credentialId: z.string().uuid().nullable(),
+  credentialId: z.string().guid().nullable(),
   // "integration-token" binds the discovering integration's FortiOS API token
   // (a firewall scope only; credentialId is then null).
   source: z.enum(FIRMWARE_BINDING_SOURCES).optional(),
@@ -134,7 +134,7 @@ const RunsQuerySchema = z.object({
 // `notifyEmails` (optional, may be empty): who is emailed that the flash
 // started and how it ended (rule 93) — the dialog's "Email me" box.
 const StartUpgradeSchema = z.object({
-  imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+  imageId: z.string().guid({ message: "imageId is required — approve the image to push" }),
   notifyEmails: z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS).optional(),
   // The dialog's To / Cc / Bcc picker + email channels (2026-11-09); wins over notifyEmails.
   notify: notifySpecSchema.optional(),
@@ -150,7 +150,7 @@ const ScheduledForSchema = z.string().datetime({ offset: true, message: "schedul
 const RecipientsSchema = z.array(z.string().trim().max(254)).max(MAX_RECIPIENTS);
 
 const CreateScheduleSchema = z.object({
-  imageId: z.string().uuid({ message: "imageId is required — approve the image to push" }),
+  imageId: z.string().guid({ message: "imageId is required — approve the image to push" }),
   scheduledFor: ScheduledForSchema,
   // Plain addresses (the original shape) or the dialog's picker spec — one is needed.
   notifyEmails: RecipientsSchema.optional(),
@@ -158,7 +158,7 @@ const CreateScheduleSchema = z.object({
 });
 
 const UpdateScheduleSchema = z.object({
-  imageId: z.string().uuid().optional(),
+  imageId: z.string().guid().optional(),
   scheduledFor: ScheduledForSchema.optional(),
   notifyEmails: RecipientsSchema.optional(),
   notify: notifySpecSchema.optional(),
@@ -170,7 +170,7 @@ const ScheduleListQuerySchema = z.object({
 
 // ─── Group upgrades (business rule 122) ──────────────────────────────────────
 
-const GroupAssetIdsSchema = z.array(z.string().uuid()).min(1, "Select at least one device").max(MAX_GROUP_SIZE, `A group upgrade can select at most ${MAX_GROUP_SIZE} devices`);
+const GroupAssetIdsSchema = z.array(z.string().guid()).min(1, "Select at least one device").max(MAX_GROUP_SIZE, `A group upgrade can select at most ${MAX_GROUP_SIZE} devices`);
 
 const GroupSelectionSchema = z.object({ assetIds: GroupAssetIdsSchema });
 
@@ -184,7 +184,7 @@ const CreateGroupSchema = z.object({
 });
 
 const GroupListQuerySchema = z.object({
-  gateAssetId: z.string().uuid().optional(),
+  gateAssetId: z.string().guid().optional(),
   status: z.enum(["pending", "running", "completed", "cancelled", "missed", "refused"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });

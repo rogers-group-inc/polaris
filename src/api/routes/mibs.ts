@@ -266,8 +266,8 @@ router.delete("/:id", requirePermission("mibDatabase", "write"), async (req, res
 // ─── MIB-aware walk ──────────────────────────────────────────────────────
 
 const WalkSchema = z.object({
-  assetId:      z.string().uuid("assetId must be a UUID"),
-  credentialId: z.string().uuid("credentialId must be a UUID"),
+  assetId:      z.string().guid("assetId must be a UUID"),
+  credentialId: z.string().guid("credentialId must be a UUID"),
   objectName:   z.string().min(1, "objectName is required").max(128),
   maxRows:      z.number().int().min(1).max(5000).optional().default(500),
 });

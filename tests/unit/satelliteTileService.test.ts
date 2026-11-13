@@ -123,6 +123,23 @@ describe("satellite tile proxy", () => {
     expect(init.redirect).toBe("error");
   });
 
+  it("a key changed on another process (no local save) misses the cache", async () => {
+    await saveSatelliteSettings(on, "admin");
+    const fetchMock = vi.fn(async () => imageResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    await getSatelliteTile(3, 2, 1);
+    // Another role writes the row; this process sees it once the store's TTL lapses.
+    h.stored = { ...on, apiToken: "rotated" };
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 10 * 60_000);
+    try {
+      await getSatelliteTile(3, 2, 1);
+      await getSatelliteTile(3, 2, 1);
+    } finally { clock.mockRestore(); }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[1] as unknown as [string])[0]).toBe("https://tiles.example.com/sat/3/2/1.jpg?token=rotated");
+  });
+
   it("refuses out-of-range coordinates, a zoom past the source, a non-image and an upstream refusal", async () => {
     await saveSatelliteSettings({ ...on, maxNativeZoom: 18 }, "admin");
     expect(await status(() => getSatelliteTile(2, 4, 0))).toBe(400);

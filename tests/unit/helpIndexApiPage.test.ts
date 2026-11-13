@@ -14,6 +14,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
   splitApiPage,
   htmlToText,
@@ -58,6 +59,28 @@ describe("htmlToText", () => {
     expect(htmlToText("a <script alert(1)")).toBe("a script alert(1)");
     expect(htmlToText("<code>x <script</code>")).toBe("`x script`");
     expect(htmlToText("<p>&lt;tag&gt;</p>")).toBe("<tag>");
+  });
+
+  // The tag strip was rewritten from a regex pair into a scan (CodeQL
+  // js/incomplete-multi-character-sanitization). It must be byte-identical to
+  // the old pair over a generated corpus of "<", ">" and text. The old pair is
+  // not in this file — it is the very idiom CodeQL flags (#127 was this test) —
+  // so the corpus is pinned by the SHA-256 of the old pair's outputs, computed
+  // once on 2026-11-12 with `s.replace(/<[^>]+>/g, "").replace(/</g, "")`
+  // followed by htmlToText's whitespace passes (the corpus has no entities).
+  it("strips tags exactly as the old regex pair did", () => {
+    const alphabet = ["<", ">", "a", " ", "\n", "/", "<<", ">>", "<>"];
+    let seed = 12345;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const outs: string[] = [];
+    for (let i = 0; i < 5000; i++) {
+      let s = "";
+      const len = rnd(14);
+      for (let j = 0; j < len; j++) s += alphabet[rnd(alphabet.length)];
+      outs.push(htmlToText(s));
+    }
+    expect(createHash("sha256").update(JSON.stringify(outs)).digest("hex"))
+      .toBe("a4bdbad7cfe3c11fece2e31a2df86090dd3370de4e7ccc5403104cddbd7ef739");
   });
 });
 

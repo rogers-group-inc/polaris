@@ -19,6 +19,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `public/js/region-pills.js` (browser) — the ONLY browser-side reader of `GET /map/regions` for DISPLAY: it caches the name→color index behind `window.PolarisRegionPills`, and the Users page pickers (`users.js`) plus the Device Map’s "My regions" strip (`map.js`) go through it rather than fetching or re-deriving a pill color themselves. A 403 (the GET is gated `mapRegions:read`, which a `deviceMap:read`-only viewer need not hold) degrades to neutral-hued pills, never an error. The Device Map’s region EDIT mode still fetches the list itself — it needs the polygons, not the colors.
 
 **Invariants:**
+- **Blocks are retagged on rename / delete only (rule 169(b)).** `retagAllBlocks` handles a `region:` tag an operator typed onto an IP block; a block is never a member, so `applyOneRegion` and the periodic reconcile never touch block tags.
 - Region name unique case-insensitively, 1..64 chars, no control characters.
 - Polygon ≥3 vertices and ≤1000; lat in [-90,90]; lng in [-180,180]; finite numbers only.
 - `color` is a 7-char hex string (`/^#[0-9a-fA-F]{6}$/`). On create it defaults to a random pick from the shared `TAG_COLOR_PALETTE`; on read, legacy rows missing the field are filled in with a random pick (not persisted until the next update).
@@ -382,7 +383,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A settings read failure means "not offered"**, never a broken map. A satellite choice saved on a view (`background.layer`) falls back to the map while satellite is off.
 
 **When changing this:**
-- The cache (64 MB / 4000 tiles, per process, keyed by a hash of template + key) is cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL plus its own cache — acceptable for imagery.
+- The cache (64 MB / 4000 tiles, per process) is keyed by a source GENERATION: the template + key are compared in memory to the last ones seen, and a change moves the generation and clears the cache. It is never a digest of the key: a SHA-256 of the API key read as an insecure password hash (CodeQL js/insufficient-password-hash, #126, 2026-11-12). Cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL, then sees the change and misses — acceptable for imagery.
 - Scale: tiles are requested only by open Topology views on the satellite layer; one upstream fetch per tile per process (in-flight dedupe). At 2000 assets nothing here runs per asset.
 - Tests: `tests/unit/satelliteTileService.test.ts`.
 

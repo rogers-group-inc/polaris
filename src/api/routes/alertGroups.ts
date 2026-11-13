@@ -76,7 +76,7 @@ const groupInputSchema = z.object({
   resetActions: z.array(actionSchema).max(20).optional().nullable(),
   escalation: z.union([escalationSchema, escalationV2Schema]).optional().nullable(),
   repeat: repeatConfigSchema.optional().nullable(),
-  ruleIds: z.array(z.string().uuid()).max(50).optional(),
+  ruleIds: z.array(z.string().guid()).max(50).optional(),
 });
 
 alertGroupsRouter.get("/", requirePermission("automationManagement", "read"), async (_req, res, next) => {

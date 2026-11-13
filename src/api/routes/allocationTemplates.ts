@@ -24,7 +24,7 @@ const EntrySchema = z.object({
 
 const SaveTemplateSchema = z.object({
   name:         z.string().min(1, "Template name is required"),
-  entries:      z.array(EntrySchema).min(1, "Template must have at least one entry"),
+  entries:      z.array(EntrySchema).max(10_000).min(1, "Template must have at least one entry"),
   anchorPrefix: z.number().int().min(8).max(32).optional(),
 });
 

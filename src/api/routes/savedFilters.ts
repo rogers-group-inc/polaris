@@ -60,7 +60,7 @@ const BodySchema = z.object({
   visibility: z.enum(["private", "public"]),
   // Shape-validated by sanitizeFilterState (which is also the unit-tested
   // contract); Zod only guarantees it's an object here.
-  state:      z.record(z.unknown()),
+  state:      z.record(z.string(), z.unknown()),
   // Omitted = leave the preset where it is (PUT) / top level (POST).
   folderId:   z.string().min(1).max(64).nullable().optional(),
 });
