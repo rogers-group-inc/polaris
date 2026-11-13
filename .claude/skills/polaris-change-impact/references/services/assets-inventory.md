@@ -425,6 +425,8 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 - `pruneOldHistory()` is a manual operation (not yet hooked to a background job); operator triggers via Server Settings → Maintenance → Prune old IP history.
 - Setting persists across app restarts; read-time filtering is applied client-side by `getIpHistory()` calls.
 
+- `refreshIpHistoryLastSeen(rows)` is db.ts `recordIpHistory`'s upsert for many (asset, ip, source) rows per statement (chunks of 1000, joined to `assets` so a deleted asset is skipped). It exists for the discovery writes that no longer stage an unchanged IP (utils/assetWritePrune.ts): their history must still advance. Keep its ON CONFLICT clause identical to `recordIpHistory`'s and `recordIpHistoryEntries`' — three writers, one semantics.
+
 **When changing this:**
 - If adding background prune job (jobs/pruneIpHistory.ts), ensure it respects the Setting key "assetIpHistorySettings".
 - Verify Prisma extension in `src/db.ts` still writes `AssetIpHistory` on Asset.ipAddress changes.
