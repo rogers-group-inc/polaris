@@ -621,12 +621,6 @@ model MonitorClassOverride {
   eventLogCredentialId          String?
   eventLogCredential            Credential?  @relation("ClassOverrideEventLogCred", fields: [eventLogCredentialId], references: [id], onDelete: SetNull)
   // Per-stream MIB overrides (String: "std:<key>" or uploaded MIB UUID or null)
-  responseTimeMibId             String?
-  cpuMemoryMibId                String?
-  temperatureMibId              String?
-  interfacesMibId               String?
-  lldpMibId                     String?
-  processesMibId                String?
   createdAt                     DateTime     @default(now())
   updatedAt                     DateTime     @updatedAt
 
@@ -931,12 +925,6 @@ model Asset {
   eventLogCredentialId     String?
   eventLogCredential       Credential? @relation("AssetEventLogCred", fields: [eventLogCredentialId], references: [id], onDelete: SetNull)
   // Per-stream MIB overrides (String: "std:<key>" or uploaded MIB UUID or null)
-  responseTimeMibId        String?
-  cpuMemoryMibId           String?
-  temperatureMibId         String?
-  interfacesMibId          String?
-  lldpMibId                String?
-  processesMibId           String?
   monitorIntervalSec       Int? // Per-asset override for response-time probes; falls back to the resolved tier-3 setting
   // Per-asset override for the probe TCP/UDP/HTTP timeout in milliseconds.
   // Range 100..60000; null = inherit from the resolved tier-3 setting (default 5000ms).

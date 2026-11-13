@@ -33,6 +33,7 @@ import { isBlockedOutboundHost, isBlockedLlmHost, isLoopbackHost } from "../../u
 import * as llm from "../../services/llmService.js";
 import * as genericApi from "../../services/genericApiService.js";
 import { GENERIC_API_TYPE } from "../../utils/genericApiSource.js";
+import { retiredStreamMibField } from "../../utils/retiredStreamMib.js";
 import {
   assertCanProvision,
   llmRepointKeys,
@@ -351,7 +352,8 @@ const ClassStreamSchema = z.object({
   // Fast-confirm re-probe cadence (business rule 30) — responseTime only, same
   // as failureThreshold: they're one policy ("how many confirmations, how fast").
   fastConfirmIntervalSec: z.number().int().min(5).max(300).nullable().optional(),
-  mibId:            z.string().nullable().optional(),
+  // Retired per-stream MIB pin (business rule 173): accepted, never stored.
+  mibId:            retiredStreamMibField(),
 }).partial();
 
 const ClassStreamsSchema = z.object({

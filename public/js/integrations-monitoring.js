@@ -247,18 +247,17 @@ function _classSettingsOverlay(flatSettings, classStreams) {
     if (Object.prototype.hasOwnProperty.call(cell, "polling")          && cell.polling          != null) out[fields.poll]     = cell.polling;
     if (Object.prototype.hasOwnProperty.call(cell, "intervalSeconds")  && cell.intervalSeconds  != null) out[fields.interval] = cell.intervalSeconds;
     if (Object.prototype.hasOwnProperty.call(cell, "timeoutMs")        && cell.timeoutMs        != null) out[fields.timeout]  = cell.timeoutMs;
-    if (fields.mib && Object.prototype.hasOwnProperty.call(cell, "mibId")            && cell.mibId  != null) out[fields.mib]      = cell.mibId;
     if (fields.cred && Object.prototype.hasOwnProperty.call(cell, "credentialId")    && cell.credentialId != null) out[fields.cred] = cell.credentialId;
   }
-  pickStream("responseTime", { poll: "responseTimePolling", interval: "intervalSeconds",            timeout: "probeTimeoutMs",       mib: "responseTimeMibId", cred: "responseTimeCredentialId" });
-  pickStream("cpuMemory",    { poll: "cpuMemoryPolling",    interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs",   mib: "cpuMemoryMibId",    cred: "cpuMemoryCredentialId" });
-  pickStream("temperature",  { poll: "temperaturePolling",  interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs", mib: "temperatureMibId",  cred: "temperatureCredentialId" });
-  pickStream("interfaces",   { poll: "interfacesPolling",   interval: "systemInfoIntervalSeconds",  timeout: "systemInfoTimeoutMs",  mib: "interfacesMibId",   cred: "interfacesCredentialId" });
-  pickStream("lldp",         { poll: "lldpPolling",         interval: "lldpIntervalSeconds",        timeout: "lldpTimeoutMs",        mib: "lldpMibId",         cred: "lldpCredentialId" });
+  pickStream("responseTime", { poll: "responseTimePolling", interval: "intervalSeconds",            timeout: "probeTimeoutMs",                                 cred: "responseTimeCredentialId" });
+  pickStream("cpuMemory",    { poll: "cpuMemoryPolling",    interval: "cpuMemoryIntervalSeconds",   timeout: "cpuMemoryTimeoutMs",                             cred: "cpuMemoryCredentialId" });
+  pickStream("temperature",  { poll: "temperaturePolling",  interval: "temperatureIntervalSeconds", timeout: "temperatureTimeoutMs",                           cred: "temperatureCredentialId" });
+  pickStream("interfaces",   { poll: "interfacesPolling",   interval: "systemInfoIntervalSeconds",  timeout: "systemInfoTimeoutMs",                            cred: "interfacesCredentialId" });
+  pickStream("lldp",         { poll: "lldpPolling",         interval: "lldpIntervalSeconds",        timeout: "lldpTimeoutMs",                                  cred: "lldpCredentialId" });
   // Storage shares the interfaces credential at the backend overlay layer,
   // so the pre-select uses interfacesCredentialId — matching the resolver.
   pickStream("storage",      { poll: "storagePolling",      interval: "storageIntervalSeconds",     timeout: "storageTimeoutMs",     cred: "interfacesCredentialId" });
-  pickStream("processes",    { poll: "processesPolling",    interval: "processesIntervalSeconds",   timeout: "processesTimeoutMs",   mib: "processesMibId",    cred: "processesCredentialId" });
+  pickStream("processes",    { poll: "processesPolling",    interval: "processesIntervalSeconds",   timeout: "processesTimeoutMs",                             cred: "processesCredentialId" });
   pickStream("eventLog",     { poll: "eventLogPolling",     interval: "eventLogIntervalSeconds",    timeout: "eventLogTimeoutMs",    cred: "eventLogCredentialId" });
   return out;
 }

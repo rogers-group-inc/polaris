@@ -47,14 +47,6 @@ afterAll(async () => {
 });
 
 d("deleting a MIB (rule 173: no stream pin holds it)", () => {
-  it("deletes even when a retired stream pin still names it on an asset or a class setting", async () => {
-    const m = await mib("STALE");
-    await prisma.asset.create({ data: { hostname: `${PFX}-sw1`, assetType: "switch", status: "active", temperatureMibId: m.id } as never });
-    await prisma.monitorClassOverride.create({ data: { assetType: `${PFX}-type`, interfacesMibId: m.id } as never });
-    await deleteMib(m.id);
-    expect(await prisma.mibFile.findUnique({ where: { id: m.id } })).toBeNull();
-  });
-
   it("an unselected MIB deletes, and a missing one is a 404", async () => {
     const m = await mib("FREE");
     await deleteMib(m.id);

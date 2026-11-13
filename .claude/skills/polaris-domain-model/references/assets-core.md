@@ -174,18 +174,6 @@ Asset
   -- resolveHttpTarget (utils/httpCheck.ts) is the single place that decides it.
   -- Only read when responseTimePolling resolves to "http".
   httpCheckPath             String?
-  -- RETIRED per-stream MIB pins (business rule 173, 2026-11-12): nothing
-  -- reads them (the resolver yields null, the collectors build the profile
-  -- subject from the asset alone), the write schemas drop them, and
-  -- migration 20261112180000_retire_stream_mib_pins cleared them after
-  -- logging each one that had switched the asset's manufacturer profile.
-  -- Kept one release for rollback; drop them after. Same on
-  -- MonitorClassOverride, plus processesMibId on both.
-  responseTimeMibId         String?
-  cpuMemoryMibId            String?
-  temperatureMibId          String?
-  interfacesMibId           String?
-  lldpMibId                 String?
   -- System tab cadences (asset details modal). Same monitorAssets job, but
   -- on independent timers from the response-time probe. CPU/memory + temperature
   -- dispatch on their own polling methods (`cpuMemoryPolling` vs

@@ -68,12 +68,6 @@ const FLOOR = {
   lldpPolling:                null,
   // Per-stream MIB id hints — tierFromJson always includes them on the
   // resolved shape (null when unseeded). Mirrored here so toEqual() lines up.
-  responseTimeMibId:          null,
-  cpuMemoryMibId:             null,
-  temperatureMibId:           null,
-  interfacesMibId:            null,
-  lldpMibId:                  null,
-  processesMibId:             null,
   // Per-stream credential IDs are class-override-only, but the resolver
   // unconditionally writes null for them at every other tier so toEqual()
   // sees a stable shape.
@@ -118,12 +112,6 @@ const TUNED_TIER = {
   temperaturePolling:         null,
   interfacesPolling:          null,
   lldpPolling:                null,
-  responseTimeMibId:          null,
-  cpuMemoryMibId:             null,
-  temperatureMibId:           null,
-  interfacesMibId:            null,
-  lldpMibId:                  null,
-  processesMibId:             null,
   responseTimeCredentialId:   null,
   cpuMemoryCredentialId:      null,
   temperatureCredentialId:    null,
