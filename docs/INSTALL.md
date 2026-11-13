@@ -1293,7 +1293,7 @@ card (unchanged).
 > **Upgrade note (floor plans and CAD drawings, rule 182):** the shipped nginx
 > config gained an eleventh `location`, a regex over a Topology view's
 > `…/topology/views/<id>/background` and `…/cad` uploads, lifting their body
-> limit to `64m` (a floor-plan image is up to 15 MB, a DXF up to 64 MB). Until
+> limit to `64m` (a floor-plan image is up to 20 MB, a DXF up to 64 MB). Until
 > the config is re-rendered, a floor plan over 8 MB is refused at nginx with a
 > 413; re-apply Server Settings → **Web Server**, or add that block by hand
 > (copy it from `deploy/nginx/polaris.conf`) and reload nginx. A managed

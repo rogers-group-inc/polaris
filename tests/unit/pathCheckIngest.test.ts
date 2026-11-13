@@ -53,6 +53,9 @@ import {
   sampleTime,
   PATH_CHANGE_EVENT_FLOOR_MS,
   POLARIS_SERVER_SUBJECT,
+  TLS_CHANGE_EVENT_FLOOR_MS,
+  tlsExpiryDirection,
+  tlsExpiryShiftDays,
 } from "../../src/services/pathCheckIngestService.js";
 import { prisma } from "../../src/db.js";
 import { MAX_EXCERPT_CHARS } from "../../src/utils/httpCheck.js";
@@ -63,6 +66,7 @@ function source(checkId: string, extra: any = {}) {
   return {
     id: `src-${checkId}`, checkId, assetId: "host",
     lastOk: null, lastPathHash: null, lastPathChangeEventAt: null, lastSampleAt: null,
+    lastTlsNotAfter: null, lastTlsIssuer: null, lastTlsChangeEventAt: null,
     check: { name: `Check ${checkId}`, keepBodyExcerpt: false },
     ...extra,
   };
@@ -121,6 +125,82 @@ describe("ingestPathCheckSamples", () => {
     await ingestPathCheckSamples("host", [{ checkId: "c1", ok: false, timestamp: "2026-09-23T11:59:50Z", error: "timeout" }], now);
     expect(db.sources[0]).toMatchObject({ lastOk: false, lastError: "timeout" });
     expect(db.sources[0].lastFailAt).toEqual(new Date("2026-09-23T11:59:50Z"));
+  });
+});
+
+describe("TLS certificate change (business rule 85(c))", () => {
+  const OLD = "2026-10-01T00:00:00Z";
+  const NEW = "2027-01-01T00:00:00Z";
+  const run = (ts: string, tlsNotAfter: string | null, extra: any = {}) =>
+    ({ checkId: "c1", ok: true, timestamp: ts, tlsNotAfter, tlsIssuer: "R11", ...extra });
+
+  it("tells a renewal from a replacement, signed in whole days", () => {
+    expect(tlsExpiryDirection(new Date(OLD), new Date(NEW))).toBe("later");
+    expect(tlsExpiryDirection(new Date(NEW), new Date(OLD))).toBe("earlier");
+    expect(tlsExpiryDirection(new Date(OLD), new Date(OLD))).toBeNull();
+    expect(tlsExpiryShiftDays(new Date(OLD), new Date(NEW))).toBe(92);
+    expect(tlsExpiryShiftDays(new Date(NEW), new Date(OLD))).toBe(-92);
+  });
+
+  it("takes the first certificate as a baseline, then writes one Event when the expiry moves later", async () => {
+    db.sources = [source("c1")];
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:00:00Z", OLD)], now);
+    expect(logEvent).not.toHaveBeenCalled();
+    expect(db.sources[0].lastTlsNotAfter).toEqual(new Date(OLD));
+    // Same certificate again: nothing.
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:01:00Z", OLD)], now);
+    expect(logEvent).not.toHaveBeenCalled();
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:02:00Z", NEW, { tlsIssuer: "E6" })], now);
+    expect(logEvent).toHaveBeenCalledTimes(1);
+    const ev = (logEvent.mock.calls[0] as any)[0];
+    expect(ev).toMatchObject({
+      action: "path_check.tls_cert_changed",
+      resourceType: "asset", resourceId: "host", resourceName: "branch-pc-01",
+      level: "info",
+      details: { checkId: "c1", direction: "later", shiftDays: 92, previousNotAfter: new Date(OLD).toISOString(), notAfter: new Date(NEW).toISOString(), previousIssuer: "R11", issuer: "E6" },
+    });
+    expect(ev.message).toMatch(/renewed — expiry moved 92 days later \(2026-10-01 → 2027-01-01\)/);
+    expect(db.sources[0]).toMatchObject({ lastTlsNotAfter: new Date(NEW), lastTlsIssuer: "E6" });
+  });
+
+  it("warns when a replacement expires EARLIER than the certificate it replaced", async () => {
+    db.sources = [source("c1", { lastTlsNotAfter: new Date(NEW), lastSampleAt: new Date("2026-09-23T09:00:00Z") })];
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:00:00Z", OLD)], now);
+    expect((logEvent.mock.calls[0] as any)[0]).toMatchObject({ level: "warning", details: { direction: "earlier", shiftDays: -92 } });
+    expect((logEvent.mock.calls[0] as any)[0].message).toMatch(/EARLIER/);
+  });
+
+  it("never reads a failed run or a late push of the old certificate as a change", async () => {
+    db.sources = [source("c1", { lastTlsNotAfter: new Date(NEW), lastSampleAt: new Date("2026-09-23T10:00:00Z") })];
+    // No certificate seen (connect failed): the baseline stays.
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:05:00Z", null, { ok: false, error: "timeout" })], now);
+    expect(db.sources[0].lastTlsNotAfter).toEqual(new Date(NEW));
+    // A push older than the latest result, carrying the old certificate.
+    await ingestPathCheckSamples("host", [run("2026-09-23T09:00:00Z", OLD)], now);
+    expect(logEvent).not.toHaveBeenCalled();
+    expect(db.sources[0].lastTlsNotAfter).toEqual(new Date(NEW));
+  });
+
+  it("follows a flapping certificate in the baseline but writes one Event per floor", async () => {
+    db.sources = [source("c1", { lastTlsNotAfter: new Date(OLD) })];
+    const within = new Date(Date.parse("2026-09-23T10:00:00Z") + TLS_CHANGE_EVENT_FLOOR_MS - 1000).toISOString();
+    await ingestPathCheckSamples("host", [run("2026-09-23T10:00:00Z", NEW), run(within, OLD)], now);
+    expect(logEvent).toHaveBeenCalledTimes(1);
+    expect(db.sources[0].lastTlsNotAfter).toEqual(new Date(OLD));
+    const after = new Date(Date.parse("2026-09-23T10:00:00Z") + TLS_CHANGE_EVENT_FLOOR_MS + 1000).toISOString();
+    await ingestPathCheckSamples("host", [run(after, NEW)], now);
+    expect(logEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("names the CHECK when the Polaris server's own run sees the change", async () => {
+    db.sources = [source("c1", { assetId: null, lastTlsNotAfter: new Date(OLD) })];
+    vi.mocked(prisma.asset.findUnique).mockClear();
+    await ingestPathCheckSamples(POLARIS_SERVER_SUBJECT, [run("2026-09-23T10:00:00Z", NEW)], now);
+    expect(prisma.asset.findUnique).not.toHaveBeenCalled();
+    expect((logEvent.mock.calls[0] as any)[0]).toMatchObject({
+      action: "path_check.tls_cert_changed", resourceType: "path-check", resourceId: "c1", resourceName: "Check c1",
+      details: { source: "server" },
+    });
   });
 });
 

@@ -262,7 +262,12 @@ APs would fill this log. The device's current AP still shows on the asset.
 [path check](Path-Monitor) took a different set of hops from its
 previous one. Written against the **host** (so an automation's device filter
 applies to it), at most once every 10 minutes per host and check; the details
-list the old and new hops. `path_check.created` / `.updated` /
+list the old and new hops. `path_check.tls_cert_changed` — the TLS
+certificate an HTTPS check sees from a host has a different expiry from the
+last one it saw: *info* when the expiry moved later (renewed), *warning* when
+it moved earlier. Written against the host like a path change, with the same
+10-minute floor; the details carry `direction` (`later` / `earlier`),
+`shiftDays`, both expiry dates and both issuers. `path_check.created` / `.updated` /
 `.enabled` / `.disabled` / `.deleted` audit edits to a check (a target change is
 written at warning level), and `path_check.agent_over_cap` names a host
 that matches more than 20 enabled checks.

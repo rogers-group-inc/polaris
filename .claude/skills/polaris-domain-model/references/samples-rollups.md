@@ -241,6 +241,7 @@ PathCheckSource         -- path_check_sources (plain, FK cascade to both check a
   explicit          Boolean        -- from PathCheck.assetIds
   lastOk / lastSampleAt / lastLatencyMs / lastHttpStatus / lastError / lastResolvedIp / lastFailAt
   lastHopCount / lastTracerouteComplete / lastPathHash / lastTracerouteAt / lastPathChangeEventAt   -- path-change detection state (10-minute Event floor)
+  lastTlsNotAfter / lastTlsIssuer / lastTlsChangeEventAt   -- business rule 85(c): the certificate the source last saw on an HTTPS run, the baseline for path_check.tls_cert_changed (10-minute Event floor). A run with no certificate leaves them alone
 
 AssetPathCheckSample         -- asset_path_check_samples, hypertable, NO FK. One source's result for one check run. assetId = the AGENT HOST, or "polaris-server" for the server source — never the target.
   id, timestamp (@@id)  assetId  checkId (not a FK — AssetStateSample.probeId precedent)

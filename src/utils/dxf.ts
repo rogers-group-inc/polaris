@@ -8,7 +8,11 @@
  * transformed, nested up to MAX_BLOCK_DEPTH; MINSERT grids too). Entities with
  * a negative extrusion (mirrored in AutoCAD's object coordinates) are mirrored
  * back. Everything else — HATCH, SOLID, 3D faces, dimensions, images, proxies
- * — is counted under `skipped` and not drawn. Binary DXF and DWG are refused.
+ * — is counted under `skipped` and not drawn. Only MODEL space is read: a
+ * shape flagged as paper space (group code 67 = 1 — the printed sheet's
+ * title block, legend, viewports) sits in sheet inches near 0,0 and would
+ * stretch the extents until the drawing itself is a speck (the first real
+ * mine DXF, 2026-11-13). Binary DXF and DWG are refused.
  *
  * The SVG is generated here from numbers and escaped text only, so nothing in
  * the uploaded file reaches the browser as markup.
@@ -55,6 +59,8 @@ export interface DxfDrawing {
   version: string | null;
   /** $INSUNITS (0 unitless, 1 in, 2 ft, 4 mm, 5 cm, 6 m, 21 US survey ft, …). */
   insUnits: number;
+  /** $MEASUREMENT: 0 imperial, 1 metric, null when the header has none. */
+  measurement: 0 | 1 | null;
   layers: Array<{ name: string; color: number; count: number }>;
   primitives: DxfPrimitive[];
   skipped: Record<string, number>;
@@ -241,12 +247,14 @@ export function parseDxf(buf: Buffer): DxfDrawing {
   // Header: version and units.
   let version: string | null = null;
   let insUnits = 0;
+  let measurement: 0 | 1 | null = null;
   const hdr = sec.HEADER || [];
   for (let i = 0; i < hdr.length; i++) {
     if (hdr[i][0] !== 9) continue;
     const v = hdr[i][1].trim();
     if (v === "$ACADVER" && hdr[i + 1]) version = hdr[i + 1][1].trim();
     if (v === "$INSUNITS" && hdr[i + 1]) { const n = Number(hdr[i + 1][1]); insUnits = Number.isInteger(n) ? n : 0; }
+    if (v === "$MEASUREMENT" && hdr[i + 1]) { const n = Number(hdr[i + 1][1]); measurement = n === 1 ? 1 : n === 0 ? 0 : null; }
   }
 
   // Layers: name → colour (ACI; negative = off, kept but noted by abs).
@@ -291,6 +299,11 @@ export function parseDxf(buf: Buffer): DxfDrawing {
     for (let i = 0; i < list.length; i++) {
       if (truncated) return;
       const e = list[i];
+      // Paper space (the sheet layout) is not the drawing.
+      if (num(e, 67, 0) === 1) {
+        if (e.type !== "VERTEX" && e.type !== "SEQEND" && e.type !== "ATTRIB") skip("on the sheet layout");
+        continue;
+      }
       let layer = str(e, 8, "0");
       if (inheritLayer !== null && layer === "0") layer = inheritLayer;
       const color = colorOf(e);
@@ -429,7 +442,7 @@ export function parseDxf(buf: Buffer): DxfDrawing {
     .map(([name, count]) => ({ name, count, color: layerColor.get(name) ?? 7 }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
 
-  return { version, insUnits, layers, primitives, skipped, geo: readGeoData(sec.OBJECTS || [], insUnits), truncated };
+  return { version, insUnits, measurement, layers, primitives, skipped, geo: readGeoData(sec.OBJECTS || [], insUnits), truncated };
 }
 
 /**

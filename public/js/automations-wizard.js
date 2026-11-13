@@ -991,14 +991,17 @@ async function openAutomationWizard(existing, opts) {
   // The Path Monitor category's vocabulary (see isPathTriggerC).
   var PATH_MONITOR = s.pathMonitor || {
     metrics: ["pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft"],
-    changeTypes: ["path_check_path_changed"],
+    changeTypes: ["path_check_path_changed", "path_check_tls_cert_changed"],
     agentRule: { field: "agentInstalled", operator: "equals", value: "yes" },
     serverLabel: "Polaris server",
   };
-  // Which half of Path Monitor the trigger step shows: a measurement crossing
-  // a threshold (the condition tree) or the route changing (the traceroute
-  // change Event). Seeded from the stored trigger.
-  var _pathMode = draft.trigger && draft.trigger.type === "change" ? "route" : "measure";
+  // Which part of Path Monitor the trigger step shows: a measurement crossing
+  // a threshold (the condition tree), the route changing (the traceroute
+  // change Event) or the certificate changing (business rule 85(c)). Seeded
+  // from the stored trigger. Each change mode stores its own change type.
+  var PATH_MODE_CHANGE_TYPES = { route: "path_check_path_changed", cert: "path_check_tls_cert_changed" };
+  var _pathMode = !(draft.trigger && draft.trigger.type === "change") ? "measure"
+    : draft.trigger.changeType === PATH_MODE_CHANGE_TYPES.cert ? "cert" : "route";
   var TRIGGER_CATEGORIES = [
     { value: "device", label: "Device conditions" },
     { value: "path", label: "Path Monitor" },
@@ -3310,7 +3313,9 @@ async function openAutomationWizard(existing, opts) {
     return '<div class="form-group"><label>Fire when</label><select id="tf-path-mode">' +
         '<option value="measure">A path check result meets the conditions below</option>' +
         '<option value="route">A check’s route changes (traceroute)</option>' +
+        '<option value="cert">A check’s TLS certificate changes (renewed or replaced)</option>' +
       '</select></div>' +
+      '<p id="tf-path-cert-note" style="font-size:0.78rem;color:var(--color-text-tertiary);margin:-0.25rem 0 0.5rem"' + (_pathMode === "cert" ? "" : " hidden") + '>HTTPS checks only. Fires when the certificate a source sees has a different expiry from the last one — the alert says whether it moved later (renewed) or earlier. To be warned before a certificate expires, choose the first option and add a <em>TLS certificate days remaining</em> condition.</p>' +
       '<div class="form-group" style="margin-bottom:0.25rem"><label><input type="checkbox" id="tf-path-server"' + (serverOn ? " checked" : "") + '> Include the ' + escapeHtml(PATH_MONITOR.serverLabel) + '’s own runs</label>' +
         '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 24px">The server isn’t a device, so the Devices-step filter doesn’t apply to it, nor do maintenance windows. With more than one condition only agent hosts are evaluated.</p></div>' +
       '<p id="aw-path-pool" style="font-size:0.82rem;margin:0 0 0.5rem"><span class="aw-preview-muted">Checking…</span></p>';
@@ -3522,7 +3527,7 @@ async function openAutomationWizard(existing, opts) {
     var tr = draft.trigger || {};
     var html = "";
     if (cat === "path") html += pathTriggerHeaderHtml(tr);
-    if (cat === "device" || cat === "host" || (cat === "path" && _pathMode !== "route")) {
+    if (cat === "device" || cat === "host" || (cat === "path" && _pathMode === "measure")) {
       var kind = treeKindForCategory(cat);
       var tree = triggerToTree(tr, kind);
       html += '<p style="font-size:0.82rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">Add conditions and combine them with AND/OR groups — drag the <span class="aw-grip" style="cursor:default">&#x2842;</span> handle to move them. ' + escapeHtml(tgMeta.anyDimensionNote || "") + '</p>' +
@@ -3640,7 +3645,7 @@ async function openAutomationWizard(existing, opts) {
       var t = e.target;
       if (!t || !t.id) return;
       if (t.id === "tf-path-mode") {
-        _pathMode = t.value === "route" ? "route" : "measure";
+        _pathMode = PATH_MODE_CHANGE_TYPES[t.value] ? t.value : "measure";
         renderTriggerFields();
       } else if (t.id === "tf-path-server") {
         refreshPathPool();
@@ -3737,8 +3742,8 @@ async function openAutomationWizard(existing, opts) {
     var cat = typeSel.value;
     var pathServerCb = panel.querySelector("#tf-path-server");
     var pathServer = !!(pathServerCb && pathServerCb.checked);
-    if (cat === "path" && _pathMode === "route") {
-      draft.trigger = { type: "change", changeType: PATH_MONITOR.changeTypes[0], includeServer: pathServer };
+    if (cat === "path" && PATH_MODE_CHANGE_TYPES[_pathMode]) {
+      draft.trigger = { type: "change", changeType: PATH_MODE_CHANGE_TYPES[_pathMode], includeServer: pathServer };
     } else if (cat === "device" || cat === "host" || cat === "path") {
       var kind = treeKindForCategory(cat);
       var root = panel.querySelector("#aw-trig-root > .scg-group");
