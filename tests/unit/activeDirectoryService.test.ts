@@ -248,15 +248,11 @@ describe("listDirectoryPeople", () => {
     expect(kinds).toEqual(["shared", "room", "equipment", "user", "unknown"]);
   });
 
-  // BUG: mailboxKindOf runs Number(firstStr(raw)); an ABSENT msExchRecipientTypeDetails
-  // gives firstStr → null and Number(null) → 0, which is finite, so an entry from a
-  // directory with no Exchange schema is reported as mailboxKind "user" — a positive
-  // claim — instead of "unknown" ("no Exchange schema: not a claim either way", the
-  // function's own comment). It is the same Number(null) trap the userAccountControl
-  // read four lines below guards against. No exclusion decision changes today
-  // (directoryExclusionReason treats "user" and "unknown" alike), but the wrong claim
-  // is persisted in every DirectoryContactSource.observed blob.
-  it.fails("reports a missing Exchange recipient type as unknown, not user", async () => {
+  // Was a bug until 2026-11-13: mailboxKindOf ran Number(firstStr(raw)); an ABSENT
+  // msExchRecipientTypeDetails gave Number(null) → 0 (finite), so every entry from a
+  // directory with no Exchange schema was persisted as mailboxKind "user" instead of
+  // "unknown" in DirectoryContactSource.observed.
+  it("reports a missing Exchange recipient type as unknown, not user", async () => {
     m.search.mockResolvedValue({ searchEntries: [{ objectGUID: guid("05"), mail: "e@c.com" }] });
     const [p] = await listDirectoryPeople(CFG, F);
     expect(p.mailboxKind).toBe("unknown");

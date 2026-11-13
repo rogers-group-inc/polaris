@@ -386,14 +386,12 @@ describe("syncFirewallAssets — update by serial", () => {
     expect(state.upsertFortigateFirewallAssetSource.mock.calls[0][5]).toBeNull();
   });
 
-  // BUG: the in-memory mirror after the write (`if (existingAsset.status ===
-  // "decommissioned") existingAsset.status = "active"`) is unconditional, while the
-  // DB write above it only resurrects on a LIVE read. For an offline-in-FMG gate
-  // whose asset is decommissioned, the row stays decommissioned in the database but
-  // the indexed asset the rest of the run reads says "active" — so a later phase
-  // that keys on status (deviceInventory Phase 7 resurrects only a row it sees as
-  // decommissioned) acts on a status the database does not hold.
-  it.fails("leaves an offline gate's decommissioned asset decommissioned in the in-memory index too", async () => {
+  // Was a bug until 2026-11-13: the in-memory mirror after the write flipped a
+  // decommissioned asset to "active" unconditionally, while the DB write only
+  // resurrects on a LIVE read (rule 12). For an offline-in-FMG gate the database
+  // said decommissioned and the run's index said active, so a later phase keyed
+  // on status (deviceInventory Phase 7) acted on a status the database did not hold.
+  it("leaves an offline gate's decommissioned asset decommissioned in the in-memory index too", async () => {
     const asset = existing({ status: "decommissioned" });
     await runUpdate(device({ offline: true }), asset);
     expect(asset.status).toBe("decommissioned");
