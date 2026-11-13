@@ -200,6 +200,9 @@ export const DEFAULT_ALERT_TEXT = [
   "{chart.interface}",
   "{chart.interfaceIn}",
   "{chart.interfaceOut}",
+  // A custom widget's own chart (rule 181) — its line, or a state probe's
+  // status strip; the same {chart.trigger} rule applies.
+  "{chart.widget}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",
@@ -438,6 +441,8 @@ export const DEFAULT_ALERT_HTML = [
   "{chart.interface}",
   "{chart.interfaceIn}",
   "{chart.interfaceOut}",
+  // See the text body: a custom widget alert's own chart.
+  "{chart.widget}",
   "{chart.cpu}",
   "{chart.memory}",
   "{chart.responseTime}",

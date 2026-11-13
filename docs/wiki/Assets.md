@@ -1652,12 +1652,17 @@ matches it (see [Monitoring](Monitoring)). One card per widget,
 drawn as its type says — a gauge with its threshold ranges, a line over the
 last 60 samples, the latest value as text, a table, or a pass/fail state.
 
-A gauge or line with a **Warning at** value marks it (a tick on the gauge, a
-dashed line on the chart) with the caption *Warning state at or above …* (or
-*below*), and turns amber once the reading reaches it. **Warn when** says which side is the warning: *at or
-above* (load, temperature) or *at or below* (battery capacity, runtime). The
-warning only colours the card; an automation on the widget's value — the
-*Custom widget value* metric, which offers the widget by name — is what alerts.
+A gauge, line or value widget can have a **Warning at** and a **Critical at**
+level. Each is marked (a tick on the gauge, a dashed line on the chart — amber
+for warning, red for critical) and named in the caption — *Warning state at or
+above 16.0 A · Critical at or above 18.0 A*. The card turns amber once the
+reading reaches the warning level and red at the critical one. **Warn when** says
+which side is the problem for both: *at or above* (load, current, temperature)
+or *at or below* (battery capacity, runtime). The levels on their own only colour
+the card. To get alerts from them, add an automation on the *Custom widget level*
+metric: one automation covers every widget that has levels, each at its own levels
+([rule 181](Business-Rules#rule-181)). For a single threshold of your own, use an
+automation on the *Custom widget value* metric.
 
 A widget whose unit is **°C** or **°F** is shown in your install's
 temperature unit (Server Settings), converted when the two differ; its

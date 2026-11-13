@@ -344,7 +344,8 @@
     "_mfgUnprofiledHTML",
     "_loadUnprofiledManufacturers",
     "_mfgStandardReadingHTML",
-    "_mfgWidgetListOrder"
+    "_mfgWidgetListOrder",
+    "_widgetLevelSummary"
   ],
   "vars": [
     "_tzClockTimer",

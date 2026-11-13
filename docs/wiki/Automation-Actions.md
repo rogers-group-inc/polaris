@@ -478,6 +478,7 @@ alert, the storage chart on a storage alert)
 `{chart.responseTime}` `{chart.probeLoss}` `{chart.cpu}` `{chart.memory}` `{chart.storage}`
 `{chart.interface}` (the port an error-rate or fibre-channel counter alert fired on, in the unit its automation compares, with the threshold dashed)
 `{chart.interfaceIn}` `{chart.interfaceOut}` (that port's traffic in and out, in bits per second)
+`{chart.widget}` (the custom widget a Custom widget value / level alert fired on, with the threshold that fired or the widget's own warning and critical levels, or a state probe row as one status lane; response time stays beside it, CPU, memory and packet loss are dropped — [rule 181](Business-Rules#rule-181))
 `{chart.sensor}` `{chart.sdwanLatency}` `{chart.sdwanJitter}`
 `{chart.sdwanLoss}` `{processes.top}` `{interface.ip}` `{interface.lldp}`
 `{path.graph}` (a Path Monitor alert's traceroute graph — up to four on a

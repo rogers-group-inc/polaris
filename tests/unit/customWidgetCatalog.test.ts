@@ -19,7 +19,7 @@ vi.mock("../../src/services/manufacturerProfileService.js", () => ({
     {
       manufacturer: "APC",
       widgets: [
-        { id: "w-load", name: "Output Load", widgetType: "gauge" },
+        { id: "w-load", name: "Output Load", widgetType: "gauge", displayOptions: { unit: "%", warningAt: 80, criticalAt: 90 } },
         { id: "w-run", name: "Run Time Remaining", widgetType: "line" },
         { id: "w-web", name: "Web UI", widgetType: "http" },
         { id: "w-status", name: "UPS Status", widgetType: "state" },
@@ -56,10 +56,10 @@ describe("listCustomWidgetCatalog", () => {
 
     const out = await listCustomWidgetCatalog();
     expect(out).toEqual([
-      { id: "w-load", name: "Output Load", source: "APC" },
-      { id: "w-run", name: "Run Time Remaining", source: "APC" },
-      { id: genericApiWidgetId("intg-1", "Toner"), name: "Toner", source: "Printers" },
-      { id: "w-web", name: "Web UI", source: "APC" },
+      { id: "w-load", name: "Output Load", source: "APC", unit: "%", levels: { warningAt: 80, criticalAt: 90, below: false } },
+      { id: "w-run", name: "Run Time Remaining", source: "APC", unit: "", levels: null },
+      { id: genericApiWidgetId("intg-1", "Toner"), name: "Toner", source: "Printers", unit: "", levels: null },
+      { id: "w-web", name: "Web UI", source: "APC", unit: "", levels: null },
     ]);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { type: "genericapi" } }));
   });

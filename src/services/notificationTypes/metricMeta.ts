@@ -291,6 +291,10 @@ export const METRIC_META: Record<string, { label: string; unit: string }> = {
   sdwanPacketLoss: { label: "SD-WAN packet loss", unit: "%" },
   ipsecThroughputBps: { label: "IPsec throughput", unit: "bps" },
   customWidgetValue: { label: "Custom widget value", unit: "" },
+  // Business rule 181: 0 normal, 1 warning, 2 critical — the levels the widget
+  // itself defines. "at or above 1" alerts on warning; a severity band at 2
+  // raises it to critical.
+  customWidgetLevel: { label: "Custom widget level (1 = warning, 2 = critical)", unit: "" },
   // 0/1 reading from an operator-defined state probe (Manufacturer Profile →
   // state widget). Compared with "==" against 1 (the probe's true state) or 0;
   // the builder renders the probe's own labels ("Alarm" / "OK") instead of the
