@@ -43,7 +43,23 @@ export interface ArcgisConfig {
   password?: string;
   verifySsl?: boolean;
   verboseLogging?: boolean;
+  // The satellite basemap (rule 183). Flat keys, not a nested block, so
+  // `imageryUrl` is a rule-111 destination key like any other address a token
+  // is sent to.
+  basemapEnabled?: boolean;
+  basemapSource?: ArcgisBasemapSource;
+  imageryUrl?: string;
+  basemapAttribution?: string;
+  basemapMaxZoom?: number;
 }
+
+export const ARCGIS_BASEMAP_SOURCES = ["world_imagery", "service"] as const;
+type ArcgisBasemapSource = (typeof ARCGIS_BASEMAP_SOURCES)[number];
+
+/** Esri World Imagery, public (no token) and the keyed Location Platform host. */
+const WORLD_IMAGERY_PUBLIC = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
+const WORLD_IMAGERY_KEYED = "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer";
+export const WORLD_IMAGERY_ATTRIBUTION = "Esri, Maxar, Earthstar Geographics, and the GIS User Community";
 
 /** An error the ArcGIS REST API answered (or the transport hit). */
 export class ArcgisError extends Error {
@@ -77,6 +93,47 @@ export function portalUrlProblem(raw: string): string | null {
     return `Portal host "${u.hostname}" is in a blocked range (loopback / link-local / metadata / multicast)`;
   }
   return null;
+}
+
+/**
+ * Why an imagery service URL cannot be used, or null: https, no credentials /
+ * query / fragment, a host outside the blocked ranges, and a path ending in a
+ * cached MapServer or ImageServer (its tiles are `<url>/tile/{z}/{y}/{x}`).
+ */
+export function imageryUrlProblem(raw: string): string | null {
+  let u: URL;
+  try { u = new URL(raw.trim()); } catch { return "Imagery service URL must be a full address ending in /MapServer or /ImageServer"; }
+  if (u.protocol !== "https:") return "Imagery service URL must start with https://";
+  if (u.username || u.password) return "Imagery service URL may not contain a user name or password";
+  if (u.search || u.hash) return "Imagery service URL may not contain a query (?…) or fragment (#…)";
+  if (isBlockedOutboundHost(u.hostname)) {
+    return `Imagery host "${u.hostname}" is in a blocked range (loopback / link-local / metadata / multicast)`;
+  }
+  if (!/\/(MapServer|ImageServer)$/i.test(u.pathname.replace(/\/+$/, ""))) {
+    return "Imagery service URL must end in /MapServer or /ImageServer";
+  }
+  return null;
+}
+
+/**
+ * The imagery service a config's basemap draws from, and whether the token is
+ * sent to it. World Imagery: the keyed host with an API key, the public host
+ * otherwise (no token goes there). A portal service always gets the token.
+ */
+export function basemapService(config: ArcgisConfig): { root: string; sendToken: boolean } {
+  if ((config.basemapSource ?? "world_imagery") === "service") {
+    return { root: (config.imageryUrl ?? "").trim().replace(/\/+$/, ""), sendToken: (config.authMode ?? "apiKey") !== "none" };
+  }
+  return (config.authMode ?? "apiKey") === "apiKey" && config.apiToken
+    ? { root: WORLD_IMAGERY_KEYED, sendToken: true }
+    : { root: WORLD_IMAGERY_PUBLIC, sendToken: false };
+}
+
+/** The upstream address of one imagery tile (ArcGIS tile order is z / y / x). */
+export function basemapTileUrl(config: ArcgisConfig, token: string | null, z: number, x: number, y: number): string {
+  const { root, sendToken } = basemapService(config);
+  const url = `${root}/tile/${z}/${y}/${x}`;
+  return sendToken && token ? `${url}?token=${encodeURIComponent(token)}` : url;
 }
 
 /** The portal's base URL with no trailing slash (ArcGIS Online when unset). */

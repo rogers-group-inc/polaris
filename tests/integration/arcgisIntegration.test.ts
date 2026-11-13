@@ -101,4 +101,45 @@ d("ArcGIS integration routes", () => {
     const disc = await agent.post(`/api/v1/integrations/${created.body.id}/discover`).set("X-CSRF-Token", csrf).send({});
     expect(disc.status).toBe(400);
   });
+  it("lets only one ArcGIS integration supply satellite imagery, and checks the imagery service (rule 183)", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const first = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send({
+      type: "arcgis", name: `${NAME} imagery A`, config: { authMode: "none", basemapEnabled: true },
+    });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+
+    const second = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send({
+      type: "arcgis", name: `${NAME} imagery B`, config: { authMode: "none", basemapEnabled: true },
+    });
+    expect(second.status).toBe(409);
+    expect(second.body.error ?? JSON.stringify(second.body)).toMatch(/imagery A/);
+
+    // Off is fine; turning it on while A still supplies imagery is refused.
+    const off = await agent.post("/api/v1/integrations").set("X-CSRF-Token", csrf).send({
+      type: "arcgis", name: `${NAME} imagery B`, config: { authMode: "apiKey", apiToken: "AAPK-x", basemapEnabled: false },
+    });
+    expect(off.status, JSON.stringify(off.body)).toBe(201);
+    const turnOn = await agent.put(`/api/v1/integrations/${off.body.id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { basemapEnabled: true } });
+    expect(turnOn.status).toBe(409);
+
+    // A portal imagery service must be a MapServer / ImageServer and needs an attribution.
+    const badSvc = await agent.put(`/api/v1/integrations/${off.body.id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { basemapSource: "service", imageryUrl: "https://tiles.example.com/x/FeatureServer", apiToken: "AAPK-x" } });
+    expect(badSvc.status).toBe(400);
+
+    // The token goes to the imagery service, so moving it needs the key typed again (rule 111).
+    const svc = await agent.put(`/api/v1/integrations/${off.body.id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { basemapSource: "service", imageryUrl: "https://tiles.example.com/x/MapServer", apiToken: "AAPK-x" } });
+    expect(svc.status, JSON.stringify(svc.body)).toBe(200);
+    const got = await agent.get(`/api/v1/integrations/${off.body.id}`);
+    const moved = await agent.put(`/api/v1/integrations/${off.body.id}`).set("X-CSRF-Token", csrf)
+      .send({ config: { ...got.body.config, imageryUrl: "https://elsewhere.example.com/y/MapServer" } });
+    expect(moved.status).toBe(400);
+
+    // The map status names the ArcGIS home while A supplies the imagery.
+    const st = await agent.get("/api/v1/map/satellite");
+    expect(st.status).toBe(200);
+    expect(st.body).toMatchObject({ available: true, source: "arcgis" });
+  });
 });

@@ -50,8 +50,11 @@ export const DESTINATION_KEYS = [
   "fortigateVerifySsl",
   "useProxy",
   "mgmtInterface",
-  // ArcGIS: the portal a key / app secret / password is sent to.
+  // ArcGIS: the portal a key / app secret / password is sent to, and the
+  // imagery service its token goes to (rule 183).
   "portalUrl",
+  "imageryUrl",
+  "basemapSource",
 ] as const;
 
 /**

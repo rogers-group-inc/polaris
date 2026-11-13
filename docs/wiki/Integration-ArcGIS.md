@@ -4,10 +4,9 @@ Connects Polaris to an **ArcGIS** portal: ArcGIS Online, ArcGIS Location
 Platform, or your own **ArcGIS Enterprise**.
 
 It discovers no devices. It is how Polaris signs in to ArcGIS for map features:
-satellite imagery on the [Device Map](Device-Map), and writing the cable runs
-drawn on the map to a layer in your ArcGIS organization. Both are being built on
-this integration and are not available yet; today it holds the sign-in and
-tests it.
+satellite imagery on the [Device Map](Device-Map) (the **Basemap** tab, below),
+and — still being built — writing the cable runs drawn on the map to a layer in
+your ArcGIS organization.
 
 Add it from **Integrations → + Add Integration → ArcGIS**. Like the
 [AI Assistant](AI-Assistant) integration it has no Discover button and no
@@ -49,6 +48,32 @@ password.*
 The Polaris server makes these requests, not the browser, so the server needs
 to reach the portal. Check with your IT team that the portal is reachable from
 the Polaris host and that the provider is approved.
+
+## Basemap
+
+Adds a **Map | Satellite** switch to the Device Map's Topology views, with
+imagery from ArcGIS.
+
+| Field | |
+|---|---|
+| **Offer satellite imagery on the Device Map** | Off by default. |
+| **Imagery** | **Esri World Imagery**, or **An imagery service in your portal** (a cached `MapServer` or `ImageServer`, for example your own orthophotos). |
+| **Imagery service URL** | Only for a portal service: its `https://…/MapServer` or `…/ImageServer` address. Polaris sends this integration's sign-in with each request. |
+| **Attribution** | The credit shown on the map. Blank uses Esri's for World Imagery; required for a portal service. |
+| **Deepest zoom** | The most detailed level the imagery has (default 19). Past it the map enlarges the last real tiles instead of showing "Map data not yet available". |
+
+World Imagery is fetched from Esri's keyed host when you sign in with an
+**API key**, and from its public host otherwise (no credential is sent there).
+
+**This imagery wins over Server Settings → Customization → Satellite imagery**
+while it is on ([rule 183](Business-Rules#rule-183)); turn it off and those
+settings apply again. Only one ArcGIS integration can supply imagery at a time.
+Views saved on the satellite layer keep working whichever one is in use.
+
+While the basemap is on, **Test Connection** also fetches one imagery tile. A
+portal service with no tile at that spot still passes — a regional service
+covers only its area. Moving a portal service to a new address needs the
+integration's secret typed again.
 
 ## Permissions
 

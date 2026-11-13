@@ -59,6 +59,7 @@ import {
 import { checkForSlowRunsThrottled, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
 import { INTEGRATION_ADAPTERS, isNonDiscoveryType } from "../../services/integrationAdapters.js";
 import * as arcgis from "../../services/arcgisService.js";
+import { arcgisBasemapOwner, invalidateArcgisBasemap } from "../../services/satelliteTileService.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
 const router = Router();
@@ -1375,9 +1376,23 @@ const ArcgisConfigSchema = z.object({
   password:     z.string().max(1024).optional().default(""),
   verifySsl:    z.boolean().optional().default(true),
   verboseLogging: z.boolean().optional().default(false),
+  // The satellite basemap (rule 183). Flat, so imageryUrl is a rule-111
+  // destination key.
+  basemapEnabled:     z.boolean().optional().default(false),
+  basemapSource:      z.enum(arcgis.ARCGIS_BASEMAP_SOURCES).optional().default("world_imagery"),
+  imageryUrl:         z.string().trim().max(500).optional().default(""),
+  basemapAttribution: z.string().trim().max(200).optional().default(""),
+  basemapMaxZoom:     z.number().int().min(1).max(22).optional().default(19),
 }).superRefine((cfg, ctx) => {
   const problem = arcgis.portalUrlProblem(cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL);
   if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["portalUrl"], message: problem });
+  if (cfg.basemapSource === "service" && (cfg.basemapEnabled || cfg.imageryUrl)) {
+    const imgProblem = arcgis.imageryUrlProblem(cfg.imageryUrl);
+    if (imgProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["imageryUrl"], message: imgProblem });
+    if (cfg.basemapEnabled && !cfg.basemapAttribution) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["basemapAttribution"], message: "Enter the credit the imagery service's terms require" });
+    }
+  }
   if (cfg.authMode === "appCredentials" && !cfg.clientId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["clientId"], message: "App credentials need a client ID" });
   }
@@ -1386,8 +1401,18 @@ const ArcgisConfigSchema = z.object({
   }
 }).transform((cfg) => {
   const portalUrl = (cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL).replace(/\/+$/, "");
-  return { ...cfg, portalUrl, host: new URL(portalUrl).hostname };
+  const imageryUrl = cfg.imageryUrl.replace(/\/+$/, "");
+  return { ...cfg, portalUrl, imageryUrl, host: new URL(portalUrl).hostname };
 });
+
+/** Rule 183: only one ArcGIS integration supplies satellite imagery at a time. */
+async function assertSingleArcgisBasemap(config: Record<string, unknown>, excludeId?: string): Promise<void> {
+  if (config.basemapEnabled !== true) return;
+  const owner = await arcgisBasemapOwner(excludeId);
+  if (owner) {
+    throw new AppError(409, `Only one ArcGIS integration can supply satellite imagery — "${owner.name}" already does. Turn its basemap off first.`);
+  }
+}
 
 /** Server-stamped llm config keys a client may never set or overwrite. */
 const LLM_SERVER_KEYS = ["roleId", "roleName", "tokenId", "toolCheck"] as const;
@@ -1726,6 +1751,7 @@ router.post("/", async (req, res, next) => {
       createConfig.verboseLoggingEnabledAt = new Date().toISOString();
     }
     if (input.type === GENERIC_API_TYPE) await applyGenericApiMonitorDefaults(createConfig);
+    if (input.type === "arcgis") await assertSingleArcgisBasemap(createConfig);
     let integration = await prisma.integration.create({
       data: {
         type: input.type,
@@ -1766,6 +1792,7 @@ router.post("/", async (req, res, next) => {
     // covers the freshly-created → /monitor-settings/integration/:id PUT
     // path the frontend fires right after create.
     invalidateMonitorSettingsCache({ integrationId: integration.id });
+    if (input.type === "arcgis") invalidateArcgisBasemap();
 
     logEvent({ action: "integration.created", resourceType: "integration", resourceId: integration.id, resourceName: input.name, actor: req.session?.username, message: `Integration "${input.name}" (${input.type}) created` });
     await auditIntegrationCredentialRefs(req, integration.name, null, integration.config);
@@ -1882,6 +1909,7 @@ router.put("/:id", async (req, res, next) => {
         if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
         for (const k of Object.keys(newConfig)) delete newConfig[k];
         Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
+        await assertSingleArcgisBasemap(newConfig, existing.id);
         arcgis.clearArcgisTokenCache();
       }
       if (isNonDiscoveryType(existing.type)) data.autoDiscover = false;
@@ -2013,6 +2041,8 @@ router.put("/:id", async (req, res, next) => {
     // the next monitor tick would keep using the previously-cached polling
     // method until process restart.
     invalidateMonitorSettingsCache({ integrationId: req.params.id });
+    // Enabling, disabling or editing an ArcGIS basemap changes the imagery (rule 183).
+    if (existing.type === "arcgis") invalidateArcgisBasemap();
 
     // Auto-Monitor flag change sweep — if any per-class addAsMonitored value
     // flipped, sweep `monitored` on affected NON-override assets immediately
@@ -2167,6 +2197,7 @@ router.delete("/:id", async (req, res, next) => {
     await prisma.integration.delete({ where: { id: req.params.id } });
     invalidateMonitorSettingsCache({ integrationId: req.params.id });
     if (existing.type === "entraid" || existing.type === "activedirectory") bumpDirectoryCache();
+    if (existing.type === "arcgis") invalidateArcgisBasemap();
     logEvent({ action: "integration.deleted", resourceType: "integration", resourceId: req.params.id, resourceName: existing.name, actor: req.session?.username, message: `Integration "${existing.name}" deleted` + (detachSummary(detached) ? ` — ${detachSummary(detached)}` : ""), details: { detached } });
     res.status(204).send();
   } catch (err) {

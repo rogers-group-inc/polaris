@@ -632,9 +632,10 @@ router.get("/assets/:id/region-views", async (req, res, next) => {
   }
 });
 
-// The optional satellite basemap (Server Settings → Customization). Status is
-// all a viewer learns — never the provider URL or key; the tiles come back
-// through Polaris so the CSP keeps its one tile host.
+// The optional satellite basemap — an ArcGIS integration's when its basemap is
+// on, else Server Settings → Customization (rule 183). Status is all a viewer
+// learns — never the provider URL or key; the tiles come back through Polaris
+// so the CSP keeps its one tile host.
 router.get("/satellite", async (_req, res, next) => {
   try {
     res.json(await getSatelliteStatus());

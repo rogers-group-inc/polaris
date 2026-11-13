@@ -158,3 +158,27 @@ describe("testConnection", () => {
     expect(await testConnection({ portalUrl: "http://gis.example.com" })).toMatchObject({ ok: false, message: expect.stringMatching(/https/) });
   });
 });
+
+describe("imagery (rule 183)", () => {
+  it("accepts a cached MapServer / ImageServer over https and refuses the rest", async () => {
+    const { imageryUrlProblem } = await import("../../src/services/arcgisService.js");
+    expect(imageryUrlProblem("https://tiles.arcgis.com/tiles/abc/arcgis/rest/services/Site/MapServer")).toBeNull();
+    expect(imageryUrlProblem("https://gis.example.com/server/rest/services/Ortho/ImageServer/")).toBeNull();
+    expect(imageryUrlProblem("http://gis.example.com/server/rest/services/Ortho/ImageServer")).toMatch(/https/);
+    expect(imageryUrlProblem("https://gis.example.com/server/rest/services/Ortho/FeatureServer")).toMatch(/MapServer or \/ImageServer/);
+    expect(imageryUrlProblem("https://127.0.0.1/rest/services/X/MapServer")).toMatch(/blocked range/);
+    expect(imageryUrlProblem("https://gis.example.com/X/MapServer?token=a")).toMatch(/query/);
+  });
+
+  it("picks the World Imagery host by sign-in, and orders tiles z / y / x", async () => {
+    const { basemapTileUrl } = await import("../../src/services/arcgisService.js");
+    expect(basemapTileUrl({ authMode: "none" }, null, 4, 3, 2))
+      .toBe("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/2/3");
+    expect(basemapTileUrl({ authMode: "appCredentials" }, "t", 4, 3, 2))
+      .toBe("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/4/2/3");
+    expect(basemapTileUrl({ authMode: "apiKey", apiToken: "k" }, "k", 4, 3, 2))
+      .toBe("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/4/2/3?token=k");
+    expect(basemapTileUrl({ authMode: "userPassword", basemapSource: "service", imageryUrl: "https://g.example.com/s/MapServer/" }, "a b", 1, 0, 0))
+      .toBe("https://g.example.com/s/MapServer/tile/1/0/0?token=a%20b");
+  });
+});

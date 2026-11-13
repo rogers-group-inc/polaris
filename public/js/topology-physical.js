@@ -30,7 +30,8 @@
   var DEFAULT_OSM_ZOOM = 19;  // a site, not a city (operator: "zoomed in much further")
   var OSM_NATIVE_MAX = 19;    // tile.openstreetmap.org's deepest tiles
   var OSM_MAX_ZOOM = 22;      // overzoom past the tiles for indoor placement
-  // The optional satellite basemap (Server Settings → Customization), proxied
+  // The optional satellite basemap (an ArcGIS integration's, else Server
+  // Settings → Customization — business rule 183), proxied
   // through Polaris so the CSP keeps its one tile host. Asked once per page;
   // null until the answer arrives.
   var SATELLITE_TILE_URL = "/api/v1/map/satellite/{z}/{x}/{y}";
@@ -347,7 +348,10 @@
         baseLayer.on("tileerror", function () {
           if (satelliteErrorShown) return;
           satelliteErrorShown = true;
-          ctx.toast("Some satellite tiles did not load — the imagery provider may be refusing them (Server Settings → Customization → Test)", "error");
+          ctx.toast("Some satellite tiles did not load — the imagery provider may be refusing them (" +
+            (_satelliteStatus && _satelliteStatus.source === "arcgis"
+              ? "Integrations → the ArcGIS integration → Test Connection"
+              : "Server Settings → Customization → Test") + ")", "error");
         });
       } else {
         baseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
