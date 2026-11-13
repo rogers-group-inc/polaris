@@ -108,6 +108,32 @@ export function deviceFilterSelect(
   };
 }
 
+/**
+ * resolveDeviceFilterAssetIds for SEVERAL trees over ONE fleet read: one
+ * findMany with the union select and one relation-leaf pass (a query per
+ * distinct leaf), then each tree evaluated in memory. `eligible` is the
+ * caller's per-tree eligibility rule — the in-memory twin of the `where` the
+ * single-tree call takes — so the answer for each tree is the same set that
+ * call would return. Used where many trees are resolved back to back (every
+ * managed tag at the end of a discovery run).
+ */
+export async function resolveDeviceFilterAssetIdsMany(
+  conds: ScopeConditionGroup[],
+  eligible?: (cond: ScopeConditionGroup, row: { status?: unknown }) => boolean,
+): Promise<Set<string>[]> {
+  if (conds.length === 0) return [];
+  const rows = await prisma.asset.findMany({ select: deviceFilterSelect(conds) });
+  await decorateRelationLeafHits(rows, conds);
+  return conds.map((cond) => {
+    const out = new Set<string>();
+    for (const row of rows) {
+      if (eligible && !eligible(cond, row)) continue;
+      if (evaluateScopeCondition(cond, row as ScopeConditionAsset)) out.add(row.id);
+    }
+    return out;
+  });
+}
+
 export interface ResolveDeviceFilterOptions {
   /**
    * An extra WHERE ANDed OUTSIDE the tree — for a caller-owned rule about which
