@@ -425,23 +425,40 @@ export async function fetchRecentSampleStats(
   assetIds: string[],
 ): Promise<Map<string, { samples: number; failures: number; health: MonitorHealth }>> {
   const out = new Map<string, { samples: number; failures: number; health: MonitorHealth }>();
-  await Promise.all(
-    assetIds.map(async (id) => {
-      const rows = await prisma.assetMonitorSample.findMany({
-        // Response-time poll only. This window is a fixed COUNT, not a
-        // duration, so counting the ICMP loss sampler's 10s rows would shrink
-        // the span these 10 samples cover from ~10 minutes to ~100 seconds
-        // exactly when an asset is in trouble — the traffic light would start
-        // reporting a different thing than it does the rest of the time.
-        where: { assetId: id, OR: [{ probeKind: null }, { probeKind: "primary" }] },
-        orderBy: { timestamp: "desc" },
-        take: 10,
-        select: { success: true },
-      });
-      const failures = rows.reduce((n, s) => n + (s.success ? 0 : 1), 0);
-      out.set(id, { samples: rows.length, failures, health: computeMonitorHealth(rows) });
-    }),
-  );
+  const ids = [...new Set(assetIds)];
+  if (ids.length === 0) return out;
+  // ONE query for every asset (the site map asks for every firewall at once):
+  // a per-asset findMany fanned out to hundreds of concurrent queries against a
+  // ~25-connection pool on a big fleet. The LATERAL reads each asset's newest
+  // 10 off the (assetId, timestamp) index, exactly as the findMany did.
+  //
+  // Response-time poll only. This window is a fixed COUNT, not a duration, so
+  // counting the ICMP loss sampler's 10s rows would shrink the span these 10
+  // samples cover from ~10 minutes to ~100 seconds exactly when an asset is in
+  // trouble — the traffic light would start reporting a different thing than
+  // it does the rest of the time.
+  const rows = await prisma.$queryRaw<Array<{ assetId: string; success: boolean }>>`
+    SELECT a.id AS "assetId", s.success
+      FROM unnest(${ids}::text[]) AS a(id)
+      CROSS JOIN LATERAL (
+        SELECT m.success
+          FROM "asset_monitor_samples" m
+         WHERE m."assetId" = a.id
+           AND (m."probeKind" IS NULL OR m."probeKind" = 'primary')
+         ORDER BY m."timestamp" DESC
+         LIMIT 10
+      ) s`;
+  const byAsset = new Map<string, { success: boolean }[]>();
+  for (const r of rows) {
+    const list = byAsset.get(r.assetId);
+    if (list) list.push({ success: r.success });
+    else byAsset.set(r.assetId, [{ success: r.success }]);
+  }
+  for (const id of ids) {
+    const samples = byAsset.get(id) ?? [];
+    const failures = samples.reduce((n, s) => n + (s.success ? 0 : 1), 0);
+    out.set(id, { samples: samples.length, failures, health: computeMonitorHealth(samples) });
+  }
   return out;
 }
 
