@@ -6,6 +6,7 @@
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
 - [Rule 184](#rule-184) — A cable run belongs to its site, rides its own key, and a trench is never drawn by hand
+- [Rule 184(a)](#rule-184a) — A device link can ride runs, and that stays in Polaris
 
 ## Rule 184 — A cable run belongs to its site, rides its own key, and a trench is never drawn by hand
 
@@ -28,3 +29,20 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 - *Drawing trenches by hand "for now"* — the survey is the source of truth for a trench.
 
 **Where.** `prisma/schema.prisma` (`CableRun`), migration `20261113210000_cable_runs` (table + key seed); `src/services/cableRunService.ts`; `src/api/routes/map.ts` (`GET` / `PUT /sites/:id/cable-runs`); `src/api/middleware/permissions.ts` (`cableRuns`); `public/js/topology-cable-runs.js` (the layer, panel, legend), `topology-physical.js` (host: draw tool, undo, Delete, Escape), `map.js` (`fetchCableRuns` / `stageCableRuns` / `canDrawRuns`, the commit), `api.js`, `css/map.css` (`.topo-run-*`). Tests: `cableRunService`, `topologyCableRuns`, `permissionLevelLadders`, `tests/integration/cableRuns.test.ts`.
+
+## Rule 184(a) — A device link can ride runs, and that stays in Polaris
+
+**The request (2026-11-13).** "When two assets that connect together are added to the map then that connection is a straight line between them. Allow the user to drag the connection, like editing a point, to the freely drawn run and connect it to that. When that happens the connection then goes through the freely drawn run." And, asked whether ArcGIS should learn which links ride a run: runs only.
+
+**Decisions.**
+
+- **The drag that makes a bend makes a route.** Pressing a link and dragging is already how a bend is made; within 12 px of a run the run lights up, the bend is withdrawn and a dashed preview shows the routed line, and the drop attaches the run. A routed link takes no bends and shows one handle per run it rides, at the middle of its stretch: dragged onto another run it swaps runs, dragged off every run (or Delete) it leaves that run, and with none left the link is straight again — its old bends come back, untouched.
+- **The route is computed, not stored.** Stored is only which runs (`runIds`); the line is worked out at draw time in Web Mercator metres: each device joins its run at the run's nearest point, consecutive runs are joined where they come closest (vertex-to-segment both ways), and the runs are put in order along S → T at draw time, so moving a device or editing a run's points re-routes every link on it.
+- **Site-owned, like the run.** `CableRunLink` is keyed by the site and the link's Topology path key (`<kind>|<source>|<target>[#n]`, the key its bends use), so every view of the site draws the same route, and rule 149's mode reset never wipes it. It is a table rather than a placement-blob key because the blob holds `{x, y}` points only.
+- **The view's gate, not the run's.** Which links ride a run is never sent to ArcGIS (the operator's choice), so it is ordinary Device Map layout: `deviceMap` write plus its write scope. Someone who may route links but not draw runs can still route along existing runs.
+- **Forgiving on ids, strict on keys.** A run id that is not a live run at the site is dropped (another session may have just deleted it) rather than failing the whole save; a malformed path key is a 400. Only a saved run has an id, so a run drawn this session must be saved before a link can ride it (the map says so).
+- **A deleted run leaves its links in the same transaction** as the delete (`applyRunEdits`), and a link left riding nothing is deleted. The edit session sends the runs PUT first and the links PUT after it.
+
+**Rejected.** *Storing the routed geometry* — it would go stale the moment a device or a run moved. *Writing riders to ArcGIS* — the operator chose runs only. *Gating on `cableRuns`* — nothing leaves Polaris.
+
+**Where.** `prisma/schema.prisma` (`CableRunLink`), migration `20261113220000_cable_run_links`; `cableRunService` (`listRunLinks`, `applyRunLinkEdits`, the delete hook in `applyRunEdits`); `src/api/routes/map.ts` (`PUT /sites/:id/cable-run-links`, `links` on the GET); `public/js/cable-run-geometry.js`; `topology-cable-runs.js` (`links`, `hitRun`, `highlight`, `setLinkRuns`, the panel's "Links on this run"); `topology-physical.js` (`routedRuns`, `previewRoute`, `attachRun`, `drawRunHandles`, `refreshRoutedLinks`); `map.js` (`stageCableRunLinks`, the commit). Tests: `cableRunGeometry`, `topologyCableRuns` (`diffLinks`), `tests/integration/cableRuns.test.ts`.

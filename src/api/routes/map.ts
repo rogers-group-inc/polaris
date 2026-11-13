@@ -36,6 +36,9 @@
  *   GET /map/sites/:id/cable-runs — the site's runs (cableRuns=read) + canEditRuns
  *   PUT /map/sites/:id/cable-runs — one edit session's upserts + deletes
  *          (cableRuns=write + the cableRuns write scope on the site)
+ *   PUT /map/sites/:id/cable-run-links — which runs some device links are
+ *          drawn through (rule 184(a)): Polaris-only layout, so the view gate
+ *          (deviceMap=write + the deviceMap write scope), not cableRuns
  *
  * Coordinates and topology metadata are populated by the FortiManager / FortiGate
  * discovery pipelines (see fortimanagerService.ts step 3d.5/3d.6 and
@@ -50,7 +53,7 @@ import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { buildSiteTopology } from "../../services/topologyGraphService.js";
 import { listMapSites, getSiteLayoutOwner, searchSiteEndpoints } from "../../services/mapSitesService.js";
-import { listRuns, applyRunEdits, CABLE_MEDIA, CABLE_PLACEMENTS } from "../../services/cableRunService.js";
+import { listRuns, applyRunEdits, listRunLinks, applyRunLinkEdits, MAX_RUNS_PER_LINK, CABLE_MEDIA, CABLE_PLACEMENTS } from "../../services/cableRunService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
 import {
   saveLayout,
@@ -757,10 +760,10 @@ const CableRunEditsSchema = z.object({
 router.get("/sites/:id/cable-runs", requirePermission("cableRuns", "read"), async (req, res, next) => {
   try {
     const siteId = req.params.id as string;
-    const [runs, site] = await Promise.all([listRuns(siteId), getSiteLayoutOwner(siteId)]);
+    const [runs, links, site] = await Promise.all([listRuns(siteId), listRunLinks(siteId), getSiteLayoutOwner(siteId)]);
     // Whether THIS caller may edit the site's runs rides along (rule 141 (e)).
     const canEditRuns = site ? inWriteScope(await resolveWriteScope(req, "cableRuns"), site) : false;
-    res.json({ runs, canEditRuns });
+    res.json({ runs, links, canEditRuns });
   } catch (err) {
     next(err);
   }
@@ -780,5 +783,20 @@ router.put(
     }
   },
 );
+
+// Rule 184(a): routing a device link through runs is a layout change that
+// stays in Polaris (never written to ArcGIS), so it is the view gate's.
+const CableRunLinkEditsSchema = z.object({
+  links: z.record(z.string().max(500), z.array(z.string().uuid()).max(MAX_RUNS_PER_LINK)),
+});
+
+router.put("/sites/:id/cable-run-links", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const { links } = CableRunLinkEditsSchema.parse(req.body);
+    res.json({ links: await applyRunLinkEdits(req.params.id as string, links, req.session?.username ?? "unknown") });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

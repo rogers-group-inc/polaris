@@ -1080,9 +1080,30 @@
       }
       return map.containerPointToLatLng(L.point(c.x + dir.x * END_PX, c.y + dir.y * END_PX));
     }
-    function linePoints(e, level, path) {
+    // Rule 184(a): a floor-0 link that rides cable runs is drawn through them
+    // (cable-run-geometry.js), ignoring its bends and end directions. `alt`
+    // previews a drag: { add: run } joins one more, { without: id } drops one.
+    var G = window.PolarisCableRunGeometry || null;
+    var SNAP_PX = 12;
+    function routedRuns(e, level, alt) {
+      if (level !== 0 || !cableRuns || !G || !cableRuns.visible()) return null;
+      var pk = pathKeyById[e.id];
+      var rs = pk ? cableRuns.linkRuns(pk) : [];
+      if (alt && alt.without) rs = rs.filter(function (r) { return r.id !== alt.without; });
+      if (alt && alt.add && rs.indexOf(alt.add) === -1) rs = rs.concat([alt.add]);
+      return rs.length ? rs : null;
+    }
+    function isRouted(e, level) { return !!routedRuns(e, level); }
+    function lngLat(ll) { return [ll.lng, ll.lat]; }
+    function linePoints(e, level, path, alt) {
       var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
       var S = localToLatLng(level, a.x, a.y), T = localToLatLng(level, b.x, b.y);
+      var rs = routedRuns(e, level, alt);
+      if (rs) {
+        var r = G.route(lngLat(S), lngLat(T), G.orderRuns(lngLat(S), lngLat(T), rs));
+        var via = r.slice(1, -1).map(function (p) { return L.latLng(p[1], p[0]); });
+        return [endLatLng(S, null, via.length ? via[0] : T)].concat(via, [endLatLng(T, null, via.length ? via[via.length - 1] : S)]);
+      }
       var mid = ((path && path.bends) || []).map(function (q) { return localToLatLng(level, q.x, q.y); });
       return [endLatLng(S, path && path.s, mid.length ? mid[0] : T)].concat(mid, [endLatLng(T, path && path.t, mid.length ? mid[mid.length - 1] : S)]);
     }
@@ -1096,7 +1117,7 @@
       var pk = pathKeyById[e.id];
       var line = L.polyline(linePoints(e, level, pk ? pathsOf(level)[pk] : null), {
         color: st.color, weight: st.width, dashArray: st.dash, interactive: true, pane: f.name, renderer: f.renderer,
-        baseWeight: st.width,
+        baseWeight: st.width, baseDash: st.dash,
       });
       wireLinkTip(line, e);
       line.on("mousedown", function (ev) { onLinePress(ev, e, level); });
@@ -1122,10 +1143,24 @@
       var start = map.mouseEventToContainerPoint(ev.originalEvent);
       var bendAt = null;
       var paths = pathsOf(level);
+      // Rule 184(a): over a cable run the drag previews the link routed
+      // through it (no bend); a link already riding runs never takes bends.
+      var routed = isRouted(e, level);
+      var moved = false;
+      var hit = null;
       function onMove(mv) {
         var cp = map.mouseEventToContainerPoint(mv);
+        if (!moved && cp.distanceTo(start) < 4) return;
+        moved = true;
+        hit = level === 0 && cableRuns && G ? cableRuns.hitRun(cp, SNAP_PX) : null;
+        if (cableRuns) cableRuns.highlight(hit ? hit.key : null);
+        if (hit || routed) {
+          if (bendAt !== null) { paths[pk].bends.splice(bendAt, 1); bendAt = null; linkSel = null; }
+          previewRoute(e, level, hit ? { add: hit.run } : null);
+          return;
+        }
+        previewRoute(e, level, null, true);
         if (bendAt === null) {
-          if (cp.distanceTo(start) < 4) return;
           var path = paths[pk] || (paths[pk] = { bends: [] });
           path.bends = path.bends || [];
           if (path.bends.length >= EE.MAX_BENDS) return;
@@ -1141,17 +1176,101 @@
         window.removeEventListener("pointermove", onMove, true);
         window.removeEventListener("pointerup", onUp, true);
         map.dragging.enable();
-        if (bendAt === null) return; // a plain click: the line's click handler selects it
+        if (cableRuns) cableRuns.highlight(null);
+        if (!moved) return; // a plain click: the line's click handler selects it
         // The click the browser fires after this release would reach the
         // map's background click and drop the selection: swallow it.
         var eat = function (ce) { ce.stopPropagation(); ce.preventDefault(); };
         window.addEventListener("click", eat, true);
         setTimeout(function () { window.removeEventListener("click", eat, true); }, 0);
+        if (hit) { attachRun(e, level, hit, null); return; }
+        if (bendAt === null) { previewRoute(e, level, null); return; }
         savePaths(level, paths);
         drawHandles();
       }
       window.addEventListener("pointermove", onMove, true);
       window.addEventListener("pointerup", onUp, true);
+    }
+    // A drag's preview of a link: `alt` (see routedRuns) draws it through one
+    // more run, or without one, dashed; `styleOnly` just restores its look.
+    function previewRoute(e, level, alt, styleOnly) {
+      var line = linkLines[e.id];
+      if (!line) return;
+      var previewing = !!(alt && (alt.add || alt.without));
+      line.setStyle({ dashArray: previewing ? "5 4" : (line.options.baseDash || null) });
+      if (!styleOnly) line.setLatLngs(linePoints(e, level, pathsOf(level)[pathKeyById[e.id]], alt));
+    }
+    // Rule 184(a): drop a link onto a run (or move a run handle onto another):
+    // the link rides it from now on. Only a SAVED run has an id to ride.
+    function attachRun(e, level, hit, replaceId) {
+      var pk = pathKeyById[e.id];
+      if (!hit.id) {
+        ctx.toast("Save the view first — a new run can carry links once it has been saved", "error");
+        previewRoute(e, level, null);
+        return;
+      }
+      var ids = cableRuns.linkRunIds(pk).filter(function (x) { return x !== replaceId; });
+      if (ids.indexOf(hit.id) === -1) ids.push(hit.id);
+      if (!cableRuns.setLinkRuns(pk, ids)) previewRoute(e, level, null);
+      linkSel = { id: e.id, level: level, handle: null };
+      drawHandles();
+    }
+    function detachRun(e, runId) {
+      var pk = pathKeyById[e.id];
+      cableRuns.setLinkRuns(pk, cableRuns.linkRunIds(pk).filter(function (x) { return x !== runId; }));
+    }
+    // Runs moved, were removed or loaded, or a link's runs changed: redraw
+    // every floor-0 line from its routes.
+    function refreshRoutedLinks() {
+      if (!map) return;
+      edges.forEach(function (e) {
+        var line = linkLines[e.id];
+        if (!line || layerOfDevice(e.source) !== 0 || layerOfDevice(e.target) !== 0) return;
+        line.setStyle({ dashArray: line.options.baseDash || null });
+        line.setLatLngs(linePoints(e, 0, pathsOf(0)[pathKeyById[e.id]]));
+      });
+      if (linkSel && linkSel.level === 0) drawHandles();
+    }
+    function describeLink(pk) {
+      var e = edges.filter(function (x) { return pathKeyById[x.id] === pk; })[0];
+      if (!e) return "A link no longer on this view";
+      var name = function (id) { return (nodeById[id] && (nodeById[id].label || nodeById[id].hostname)) || id; };
+      return name(e.source) + " ↔ " + name(e.target);
+    }
+    // A routed link's handles: one on each run it rides, at the middle of its
+    // stretch. Drag one onto another run to swap runs, or off every run to
+    // leave it (the link goes straight when it rides nothing).
+    function drawRunHandles(e, level) {
+      var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
+      var S = lngLat(localToLatLng(level, a.x, a.y)), T = lngLat(localToLatLng(level, b.x, b.y));
+      var ordered = G.orderRuns(S, T, routedRuns(e, level));
+      ordered.forEach(function (run, i) {
+        var mid = G.rideMidpoint(S, T, ordered, i);
+        if (!mid) return;
+        var part = "r" + run.id;
+        var m = L.marker(L.latLng(mid[1], mid[0]), {
+          draggable: true, keyboard: false, pane: "floor_links",
+          icon: L.divIcon({ className: "topo-link-handle is-run" + (linkSel.handle === part ? " is-selected" : ""), iconSize: [14, 14], iconAnchor: [7, 7] }),
+          title: "Drag onto another run, or off the run to leave it",
+        });
+        var over = null;
+        m.on("click", function (ev) { L.DomEvent.stop(ev); linkSel.handle = part; drawHandles(); });
+        m.on("dragstart", function () { linkSel.handle = part; });
+        m.on("drag", function () {
+          over = cableRuns.hitRun(map.latLngToContainerPoint(m.getLatLng()), SNAP_PX);
+          cableRuns.highlight(over ? over.key : null);
+          previewRoute(e, level, over && over.id === run.id ? null : { without: run.id, add: over ? over.run : null });
+        });
+        m.on("dragend", function () {
+          cableRuns.highlight(null);
+          if (over && over.id === run.id) { previewRoute(e, level, null); drawHandles(); return; }
+          if (over) { attachRun(e, level, over, run.id); return; }
+          linkSel.handle = null;
+          detachRun(e, run.id);
+        });
+        m.addTo(map);
+        handleLayers.push(m);
+      });
     }
     // The selected line's handles: every bend (drag to move) and one end
     // point on each device (drag round the device to attach the line there).
@@ -1162,6 +1281,7 @@
       var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
       var pk = e && pathKeyById[e.id];
       if (!e || !pk || !linkLines[e.id]) { linkSel = null; return; }
+      if (isRouted(e, linkSel.level)) { drawRunHandles(e, linkSel.level); return; }
       var level = linkSel.level, paths = pathsOf(level), path = paths[pk] || { bends: [] };
       var pts = linePoints(e, level, path);
       function handle(ll, part, round) {
@@ -1202,6 +1322,13 @@
       var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
       var pk = e && pathKeyById[e.id];
       if (!pk) return false;
+      // Rule 184(a): Delete on a run handle takes the link off that run.
+      if (linkSel.handle.charAt(0) === "r" && cableRuns) {
+        var runId = linkSel.handle.slice(1);
+        linkSel.handle = null;
+        detachRun(e, runId);
+        return true;
+      }
       var paths = pathsOf(linkSel.level), path = paths[pk];
       if (!path) return false;
       if (linkSel.handle === "s" || linkSel.handle === "t") delete path[linkSel.handle];
@@ -2030,6 +2157,10 @@
           visible: function () { return !imageGround(); },
           fetch: ctx.fetchCableRuns,
           stage: function (edits) { if (ctx.stageCableRuns) ctx.stageCableRuns(edits); },
+          // Rule 184(a): which runs each link rides — the view gate's, staged apart.
+          stageLinks: function (changes) { if (ctx.stageCableRunLinks) ctx.stageCableRunLinks(changes); },
+          onRoutesChanged: function () { refreshRoutedLinks(); },
+          describeLink: describeLink,
           onChange: function () { changed(); },
           toast: function (m, k) { ctx.toast(m, k); },
         })

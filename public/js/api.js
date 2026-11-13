@@ -1896,6 +1896,7 @@ const api = {
     // Cable runs (rule 184): { runs, canEditRuns } / one edit session's { upserts, deletes }.
     cableRuns:          (id)               => request("GET",    `/map/sites/${id}/cable-runs`),
     saveCableRuns:      (id, edits)        => request("PUT",    `/map/sites/${id}/cable-runs`, edits),
+    saveCableRunLinks:  (id, links)        => request("PUT",    `/map/sites/${id}/cable-run-links`, { links }),
     deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
     topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
     topologyBackgroundUrl:  (id, imageId)  => `${API_BASE}/map/sites/${id}/topology/background/${imageId}`,

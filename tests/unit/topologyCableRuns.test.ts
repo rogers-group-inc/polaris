@@ -56,3 +56,12 @@ describe("lengthM mirrors the server", async () => {
     expect(C._lengthM(pts)).toBeCloseTo(runLengthM(pts as never), 1);
   });
 });
+
+describe("diffLinks (rule 184(a))", () => {
+  it("sends only the links whose runs changed, an empty list for one made straight", () => {
+    const loaded = { "lldp|a|b": ["r1"], "lldp|a|c": ["r1", "r2"], "lldp|b|c": ["r2"] };
+    const current = { "lldp|a|b": ["r1"], "lldp|a|c": ["r2", "r1"], "lldp|c|d": ["r3"] };
+    const d = JSON.parse(JSON.stringify(C._diffLinks(loaded, current)));
+    expect(d).toEqual({ "lldp|a|c": ["r2", "r1"], "lldp|b|c": [], "lldp|c|d": ["r3"] });
+  });
+});

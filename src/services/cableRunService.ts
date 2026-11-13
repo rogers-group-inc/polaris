@@ -267,6 +267,22 @@ export async function applyRunEdits(siteId: string, edits: CableRunEdits, actor:
     });
   }
 
+  if (deletes.length) {
+    // Rule 184(a): a deleted run leaves every link that rode it, and a link
+    // that rode nothing else goes straight again.
+    const gone = new Set(deletes);
+    const riding = await prisma.cableRunLink.findMany({
+      where: { siteId, runIds: { hasSome: deletes } },
+      select: { id: true, runIds: true },
+    });
+    for (const l of riding) {
+      const keep = l.runIds.filter((r) => !gone.has(r));
+      ops.push(keep.length
+        ? prisma.cableRunLink.update({ where: { id: l.id }, data: { runIds: keep, updatedBy: actor } })
+        : prisma.cableRunLink.delete({ where: { id: l.id } }));
+    }
+  }
+
   for (const id of deletes) {
     const prev = byId.get(id)!;
     // Sent to ArcGIS already: keep a tombstone until the write-back removes the feature.
@@ -283,4 +299,82 @@ export async function applyRunEdits(siteId: string, edits: CableRunEdits, actor:
   if (ops.length) await prisma.$transaction(ops);
   await logEventsBatch(events);
   return listRuns(siteId);
+}
+
+// ─── Links routed through runs (rule 184(a)) ─────────────────────────────
+
+/** A link's Topology path key: `<kind>|<source>|<target>` plus an optional `#n`. */
+const PATH_KEY_RE = /^[^|\x00-\x1f]{1,80}\|[^|\x00-\x1f]{1,200}\|[^|\x00-\x1f]{1,200}$/;
+const MAX_LINK_CHANGES = 500;
+/** How many runs one link may ride. */
+export const MAX_RUNS_PER_LINK = 20;
+
+/** The site's routed links: path key → ordered run ids (live runs only). */
+export async function listRunLinks(siteId: string): Promise<Record<string, string[]>> {
+  const rows = await prisma.cableRunLink.findMany({ where: { siteId }, select: { pathKey: true, runIds: true } });
+  const out: Record<string, string[]> = {};
+  for (const r of rows) if (r.runIds.length) out[r.pathKey] = r.runIds;
+  return out;
+}
+
+/**
+ * Set which runs some links ride: `{ pathKey: runIds }`, an empty list making
+ * the link straight again. Ids that are not a live run at this site are
+ * dropped (another session may have deleted the run meanwhile — the link then
+ * rides what is left); a malformed key is refused. One Event for the batch.
+ */
+export async function applyRunLinkEdits(
+  siteId: string,
+  changes: Record<string, string[]>,
+  actor: string,
+): Promise<Record<string, string[]>> {
+  const siteName = await assertSite(siteId);
+  const keys = Object.keys(changes);
+  if (keys.length > MAX_LINK_CHANGES) throw new AppError(400, `At most ${MAX_LINK_CHANGES} link changes at once`);
+  if (keys.length === 0) return listRunLinks(siteId);
+  for (const k of keys) {
+    if (!PATH_KEY_RE.test(k)) throw new AppError(400, `Not a link key: ${k.slice(0, 60)}`);
+    if (!Array.isArray(changes[k]) || changes[k].length > MAX_RUNS_PER_LINK) {
+      throw new AppError(400, `A link rides at most ${MAX_RUNS_PER_LINK} runs`);
+    }
+  }
+  const wanted = Array.from(new Set(keys.flatMap((k) => changes[k])));
+  const live = wanted.length
+    ? new Set((await prisma.cableRun.findMany({
+      where: { id: { in: wanted }, siteId, deletedAt: null }, select: { id: true },
+    })).map((r) => r.id))
+    : new Set<string>();
+
+  const before = await prisma.cableRunLink.findMany({
+    where: { siteId, pathKey: { in: keys } }, select: { pathKey: true, runIds: true },
+  });
+  const prev = new Map(before.map((b) => [b.pathKey, b.runIds]));
+  const ops: Prisma.PrismaPromise<unknown>[] = [];
+  const routed: string[] = [];
+  const straightened: string[] = [];
+  for (const k of keys) {
+    const ids = Array.from(new Set(changes[k])).filter((id) => live.has(id));
+    const old = prev.get(k) ?? [];
+    if (JSON.stringify(old) === JSON.stringify(ids)) continue;
+    if (ids.length) {
+      ops.push(prisma.cableRunLink.upsert({
+        where: { siteId_pathKey: { siteId, pathKey: k } },
+        create: { siteId, pathKey: k, runIds: ids, updatedBy: actor },
+        update: { runIds: ids, updatedBy: actor },
+      }));
+      routed.push(k);
+    } else if (prev.has(k)) {
+      ops.push(prisma.cableRunLink.delete({ where: { siteId_pathKey: { siteId, pathKey: k } } }));
+      straightened.push(k);
+    }
+  }
+  if (ops.length) {
+    await prisma.$transaction(ops);
+    await logEventsBatch([{
+      action: "cable_run_link.updated", resourceType: "asset", resourceId: siteId, resourceName: siteName, actor,
+      message: `Links routed through cable runs at ${siteName}: ${routed.length} routed, ${straightened.length} made straight`,
+      details: { routed, straightened },
+    }]);
+  }
+  return listRunLinks(siteId);
 }

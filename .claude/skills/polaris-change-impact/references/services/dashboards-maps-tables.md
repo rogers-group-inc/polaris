@@ -401,13 +401,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/cableRunService.ts
 
-**What it owns:** the `CableRun` table (single writer) — fiber / ethernet routes at a Device Map site, business rule 184. Pole runs are drawn on a Topology view; trenches come only from a survey import (`source: "crd"`).
+**What it owns:** the `CableRun` and `CableRunLink` tables (single writer) — fiber / ethernet routes at a Device Map site, business rule 184. Pole runs are drawn on a Topology view; trenches come only from a survey import (`source: "crd"`).
 
-**Public API:** `CABLE_MEDIA`, `CABLE_PLACEMENTS`, `MAX_DRAWN_POINTS`, types CablePoint / CableRunView / CableRunEdits; pure `normalizePoints(raw, max)`, `runLengthM(points)`, `syncStatusAfterEdit(status)`; `listRuns(siteId)`, `applyRunEdits(siteId, {upserts, deletes}, actor)`.
+**Public API:** `CABLE_MEDIA`, `CABLE_PLACEMENTS`, `MAX_DRAWN_POINTS`, types CablePoint / CableRunView / CableRunEdits; pure `normalizePoints(raw, max)`, `runLengthM(points)`, `syncStatusAfterEdit(status)`; `listRuns(siteId)`, `applyRunEdits(siteId, {upserts, deletes}, actor)`; rule 184(a): `MAX_RUNS_PER_LINK`, `listRunLinks(siteId)` → `{pathKey: runIds}`, `applyRunLinkEdits(siteId, {pathKey: runIds}, actor)`.
 
 **Cross-service deps:** `eventLogService` (`buildChanges`, `logEventsBatch`); prisma `asset` (the site must be a firewall) and `cableRun`.
 
-**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-runs` (`cableRuns=read`) and `PUT /sites/:id/cable-runs` (`cableRuns=write` + the site's write scope); `public/js/topology-cable-runs.js` through those routes (staged by map.js's edit session).
+**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-runs` (`cableRuns=read`) and `PUT /sites/:id/cable-runs` (`cableRuns=write` + the site's write scope), `PUT /sites/:id/cable-run-links` (the view gate: `deviceMap=write` + its write scope); `public/js/topology-cable-runs.js` through those routes (staged by map.js's edit session).
 
 **Invariants:**
 - **The site owns a run**, never a view: every Topology view shows it, rule 149's mode reset never touches it; `site_id` cascades with the FortiGate.
@@ -415,6 +415,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A trench is surveyed, never drawn**: a hand-drawn `trench` is refused, and a `crd` run's points and placement cannot change through this path.
 - **All or nothing**: one `$transaction` per edit session; ids naming another site's run or a deleted one are 404 before any write.
 - **Sync state**: `off` until write-back is configured; a sent run is edited to `pending` and deleted to a tombstone (`deletedAt`), a never-sent one is deleted outright.
+- **Riders (rule 184(a))**: a deleted run is removed from every `CableRunLink` in the same transaction, and a link left with none is deleted; `applyRunLinkEdits` drops ids that are not a live run at the site and refuses a malformed path key.
 
 **When changing this:**
 - The `cableRuns` key is its own (tag-scoped, full ladder) — never gate a run route on `deviceMap`.

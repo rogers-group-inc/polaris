@@ -959,6 +959,8 @@
 }
 .topo-link-handle.is-end { border-radius: 50%; }
 .topo-link-handle.is-selected { background: var(--color-accent); }
+/* Rule 184(a): a routed link's handle on each run it rides (drag off to leave the run). */
+.topo-link-handle.is-run { border-radius: 50%; border-width: 3px; }
 .topo-room-hull-label span {
   display: inline-block; transform: translate(-50%, -110%); white-space: nowrap;
   padding: 1px 8px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 600;
@@ -1095,6 +1097,7 @@ path.topo-run-pole { fill: var(--color-bg-secondary); stroke: var(--color-text-p
 .topo-run-facts { display: flex; gap: 18px; margin-bottom: 8px; }
 .topo-run-facts > div { display: flex; flex-direction: column; gap: 2px; }
 .topo-run-sync { margin-bottom: 8px; }
+.topo-run-riders { margin: 0 0 4px; padding-left: 18px; font-size: 0.85rem; }
 .topo-run-legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
 .topo-run-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
 .topo-run-legend-row { display: flex; align-items: center; gap: 8px; }
