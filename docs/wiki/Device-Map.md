@@ -734,6 +734,39 @@ existing regions are never removed — a region is still just the codes in devic
 descriptions ([rule 150](Business-Rules#rule-150)). Topology and Layer 2 views
 don't take a room; they draw the regions themselves.
 
+**Racks come with cable management.** Every rack has a vertical cable manager down each
+side and a trough across the top. Right-click a rack's header (in edit mode) to turn the left
+manager, the right manager or the trough off or on. Turning one off leaves its space empty,
+so nothing in the rack moves.
+
+**Things can stand beside a rack.** Drag a device or **Third party** beside a rack, onto one
+of the dashed places outside its cable manager, and it stands there the full height of the
+rack, like a vertical PDU. It uses no rack units. Each side has two places: one next to the
+cable manager and one outside it. Right-click it to open it, rename it (Third party), move
+it to the other side or remove it. A device beside a rack takes that rack's `ra:` code, like
+a racked one.
+
+**Connections are drawn as cables.** When Polaris knows a connection between two devices
+shown in the room's racks (the same connections Layer 2 draws), it draws it as a cable: out
+of the side of the device into the nearer cable manager, up to the trough, along it (across
+the bridge between neighbouring racks) and down the other rack's manager into the other
+device. Within one rack the cable stays in the manager. With a trough turned off the cable
+runs over the top of the racks. Hover over a cable for the same card as Layer 2: the two
+devices, their ports, speed and optics. A cable is drawn only when both devices show on the
+face you're looking at.
+
+In edit mode you re-route cables the way you edit a Layer 2 link:
+
+- **Drag a cable** to add a corner there and move it.
+- **Click a cable** to show its ends (round) and corners (square). Drag a corner to move it;
+  drag an end around its device to change the side it leaves from.
+- **Select a corner and press Delete** to remove it. A deleted end goes back to automatic.
+- **Right-click a cable → Reset route**, or right-click a rack's header → **Reset cable
+  routes**, to go back to the automatic route.
+
+A re-routed cable is saved with the view. If either of its devices moves (another U,
+another rack, or the racks reordered), the cable goes back to its automatic route.
+
 **Devices already in a rack or junction box are placed for you.** When you
 create a Room view for a room (with **Start with: The room's racks and junction
 boxes**, the default), or link a view to a room in **View settings** or from the

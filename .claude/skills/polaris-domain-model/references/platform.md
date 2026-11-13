@@ -418,10 +418,16 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- (satellite = the Setting("satelliteConfig") provider)
   polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
                                 -- in background coordinates; codes in display casing (rule 148)
-  racks         Json            -- [{id, name, units 1-60, order, face}]  (room views; name = ra:)
+  racks         Json            -- [{id, name, units 1-60, order, face, cableManagers {left, right,
+                                -- trough}}]  (room views; name = ra:; each manager on unless false, rule 179)
   rackPlacements Json           -- [{id, kind:"asset"|"cableManagement"|"thirdParty", assetId?, label?,
-                                -- rackId, face, startU, heightU, fullDepth}] — bounded + overlap-free per
-                                -- face; label = a thirdParty box's name (≤64, default "Third party")
+                                -- rackId, face, startU, heightU, fullDepth, mount "rack"|"side", side,
+                                -- slot}] — bounded + overlap-free per face; label = a thirdParty box's name
+                                -- (≤64, default "Third party"); mount "side" = beside the rack, no U,
+                                -- side left/right, slot 0-1, one per slot (rule 179)
+  cableRoutes   Json            -- {<Layer 2 edge path key>: {bends:[[x,y]…] ≤24, s?/t? {side, f 0-1},
+                                -- sig}} strip pixels; a Room view's hand-routed cables (rule 179),
+                                -- migration 20261113120000_rack_cable_routes
   region        Json?           -- the ROOM a Room view stands for (rules 150, 156): a code chain
                                 -- {area, building, floor, room} (rack / junctionBox always null); refused on
                                 -- layer2 / topology views, cleared by a mode change to one. A POINTER to
