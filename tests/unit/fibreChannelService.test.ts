@@ -126,6 +126,18 @@ describe("getFibreChannelForAsset", () => {
     expect(fabric.others).toEqual([{ ifName: "fc1/8", portWwn: "52:4a:93:00:00:00:30:09", label: "PURE01-ct0" }]);
   });
 
+  it("dates a host's tab from the rows it shows, not the switch-only ones", async () => {
+    await persistFibreChannel("sw", INV, new Date("2026-11-11T10:00:00Z"));
+    const host = await getFibreChannelForAsset("host");
+    expect(host.collectedAt).toEqual(new Date("2026-11-11T10:00:00Z"));
+
+    // A host whose only FC rows are its own HBA report is dated by that.
+    h.assets.push({ id: "esx07", hostname: "esx07", dnsName: null, model: null });
+    await recordHostHbaPorts("esx07", "vcenter", [{ name: "vmhba9", portWwn: "10:00:00:00:00:00:00:77" }], new Date("2026-11-12T08:00:00Z"));
+    const esx = await getFibreChannelForAsset("esx07");
+    expect(esx.collectedAt).toEqual(new Date("2026-11-12T08:00:00Z"));
+  });
+
   it("is empty on both sides for an asset with no FC rows", async () => {
     const r = await getFibreChannelForAsset("host");
     expect(r).toMatchObject({ switch: null, host: null, collectedAt: null });
