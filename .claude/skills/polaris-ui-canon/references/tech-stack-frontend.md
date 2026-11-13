@@ -134,6 +134,7 @@ of that blob must skip the keys: `placedIds` filters `edgepath:`, `setPlan` neve
 `:s`/`:t` (a direction, not a place). A line press disables map dragging and listens on
 `window` pointer events; the click the browser fires after a drag is swallowed, and a line
 click stops propagation, or the map's background click clears the selection.
+**CAD floor plans (rule 182)** are ordinary plan images (`PlanOverlay` `<img>`) whose source is an SVG the server drew, so nothing new renders on the map. What is new is the maths: the image covers the drawing's extents exactly, so `cadToPlan` maps a drawing coordinate onto plan units by ONE factor (both y-up), and every placement — the drawing's GEODATA location (`geoPlan`, Web Mercator's 1/cos(lat) applied), another CAD floor's coordinates (`lineUpPlan`, two corners carried through that floor's plan) and two clicked pairs (`startPlacing`) — is `fitTwoPoints` (a uniform-scale similarity, no reflection: plan y is already up). The import dialog's preview is built with DOM calls from the server's thinned paths (never `innerHTML` of file content), one `<g data-cad-l>` per layer so a tick shows or hides it. While placing, the map's click handler hands the click to `onPlaceClick` before anything else.
 **The Rack canvas (`topology-rack.js`)** plugs into the same context and corner-tool routing
 (no extra corner buttons); it is plain DOM with pointer-event gestures, and `U_PX` (20) must
 match the `.topo-rack-rail span` / `.topo-rack-bay` row height in map.css.
