@@ -1382,6 +1382,7 @@ model Asset {
   topologyLayouts    TopologyLayout[]
   topologyViews      TopologyView[]
   cableRuns          CableRun[]
+  cableRunLinks      CableRunLink[]
   topologyBackgroundImages TopologyBackgroundImage[]
   regionNodes        RegionNode[]
   processConnections AssetProcessConnection[]
@@ -4436,6 +4437,23 @@ model CableRun {
   @@index([siteId])
   @@index([syncStatus])
   @@map("cable_runs")
+}
+
+// Which cable runs a device link rides at a site (business rule 184(a)):
+// the link's Topology path key (`<kind>|<source>|<target>[#n]`, the key its
+// bends use) → the ordered run ids it is drawn through. Polaris-only layout,
+// never written to ArcGIS; a deleted run is removed from every list.
+model CableRunLink {
+  id        String   @id @default(uuid())
+  siteId    String   @map("site_id")
+  site      Asset    @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  pathKey   String   @map("path_key")
+  runIds    String[] @map("run_ids")
+  updatedBy String?  @map("updated_by")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([siteId, pathKey])
+  @@map("cable_run_links")
 }
 
 // A site's region tree (business rule 153): areas > buildings > floors >
