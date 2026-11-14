@@ -1,0 +1,143 @@
+<!-- @dsCard group="Data" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>Cable runs</title>
+<style>
+  body { padding: 24px; }
+  .demo-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 28px; }
+  .demo-cap { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); margin: 0 0 6px; }
+  .demo-float { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+  .demo-legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; width: 170px; font-size: 0.85rem; }
+  .demo-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
+  .demo-legend-row { display: flex; align-items: center; gap: 8px; }
+  .demo-legend-rule { height: 1px; background: var(--color-border-light); margin: 2px 0; }
+  .demo-line { fill: none; stroke-width: 4; stroke-linecap: round; }
+  .demo-trench { stroke: var(--color-accent); }
+  .demo-electric { stroke: var(--color-sev-serious); }
+  .demo-telephone { stroke: var(--color-success); }
+  .demo-medium { stroke: var(--color-text-secondary); stroke-width: 3; }
+  .demo-pole { fill: var(--color-bg-secondary); stroke: var(--color-text-primary); stroke-width: 1.5; }
+  .demo-device { fill: var(--color-bg-tertiary); stroke: var(--color-text-secondary); stroke-width: 1.5; }
+  .demo-handle { fill: var(--color-bg-secondary); stroke: var(--color-accent); stroke-width: 3; }
+  .demo-link { fill: none; stroke: var(--color-text-secondary); stroke-width: 2; }
+  .demo-preview { fill: none; stroke: var(--color-accent); stroke-width: 2; stroke-dasharray: 6 5; }
+  .demo-canvas { background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .demo-canvas text { fill: var(--color-text-secondary); font: 11px "Roboto", sans-serif; }
+  .demo-panel { width: 280px; padding: 10px 12px; }
+  .demo-panel .form-group { margin-bottom: 8px; }
+  .demo-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .demo-panel-head h4 { margin: 0; font-size: 0.9rem; }
+  .demo-seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .demo-facts { display: flex; gap: 18px; margin-bottom: 8px; }
+  .demo-facts > div { display: flex; flex-direction: column; gap: 2px; }
+  .demo-riders { margin: 0 0 4px; padding-left: 18px; font-size: 0.85rem; }
+  .demo-tab { width: 560px; padding: 14px 16px; }
+  .demo-radio { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 0; }
+  .demo-radio input { width: auto; }
+  .demo-inline { display: flex; gap: 8px; }
+  .demo-inline input { flex-grow: 1; }
+  .demo-pills { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .demo-strip { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--color-bg-primary); border: 1px solid var(--color-border-light); border-radius: var(--radius-md); flex-wrap: wrap; }
+  .demo-strip-msg { font-size: 12px; color: var(--color-text-secondary); flex-grow: 1; }
+</style>
+</head>
+<body>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">Legend — colour is placement, dash is medium</p>
+    <div class="demo-float demo-legend">
+      <div class="demo-legend-title">Cable runs</div>
+      <div class="demo-legend-row"><svg width="28" height="8"><line x1="1" y1="4" x2="27" y2="4" class="demo-line demo-trench"/></svg>Trench</div>
+      <div class="demo-legend-row"><svg width="28" height="8"><line x1="1" y1="4" x2="27" y2="4" class="demo-line demo-electric"/></svg>Electric pole</div>
+      <div class="demo-legend-row"><svg width="28" height="8"><line x1="1" y1="4" x2="27" y2="4" class="demo-line demo-telephone"/></svg>Telephone pole</div>
+      <div class="demo-legend-rule"></div>
+      <div class="demo-legend-row"><svg width="28" height="8"><line x1="1" y1="4" x2="27" y2="4" class="demo-line demo-medium"/></svg>Fiber</div>
+      <div class="demo-legend-row"><svg width="28" height="8"><line x1="1" y1="4" x2="27" y2="4" class="demo-line demo-medium" stroke-dasharray="6 4"/></svg>Ethernet</div>
+    </div>
+  </div>
+
+  <div>
+    <p class="demo-cap">A link routed through a run, and one being dragged onto it</p>
+    <svg class="demo-canvas" width="460" height="230" viewBox="0 0 460 230">
+      <polyline points="70,170 180,120 300,110 400,60" class="demo-line demo-electric" stroke-width="6"/>
+      <circle cx="70" cy="170" r="3" class="demo-pole"/><circle cx="180" cy="120" r="3" class="demo-pole"/>
+      <circle cx="300" cy="110" r="3" class="demo-pole"/><circle cx="400" cy="60" r="3" class="demo-pole"/>
+      <polyline points="40,200 76,167 180,120 300,110 360,82 420,30" class="demo-link"/>
+      <circle cx="240" cy="115" r="6" class="demo-handle"/>
+      <rect x="28" y="190" width="24" height="20" rx="4" class="demo-device"/>
+      <rect x="408" y="18" width="24" height="20" rx="4" class="demo-device"/>
+      <line x1="160" y1="210" x2="200" y2="122" class="demo-preview"/>
+      <line x1="200" y1="122" x2="300" y2="210" class="demo-preview"/>
+      <rect x="148" y="200" width="24" height="20" rx="4" class="demo-device"/>
+      <rect x="288" y="200" width="24" height="20" rx="4" class="demo-device"/>
+      <text x="58" y="225">Gate</text><text x="380" y="14">Barn switch</text>
+      <text x="320" y="190">dragging — run lit, route previewed</text>
+    </svg>
+  </div>
+</div>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">Run panel (top right of the Topology view)</p>
+    <div class="demo-float demo-panel">
+      <div class="demo-panel-head"><h4>Cable run</h4><button type="button" class="btn-icon" aria-label="Close">×</button></div>
+      <div class="form-group"><label for="d-name">Name</label><input type="text" id="d-name" value="North field poles"></div>
+      <div class="form-group"><label>Medium</label><div class="demo-seg">
+        <button type="button" class="btn btn-sm btn-primary">Fiber</button><button type="button" class="btn btn-sm btn-secondary">Ethernet</button></div></div>
+      <div class="form-group"><label>Placement</label><div class="demo-seg">
+        <button type="button" class="btn btn-sm btn-secondary" disabled>Trench</button><button type="button" class="btn btn-sm btn-primary">Electric pole</button><button type="button" class="btn btn-sm btn-secondary">Telephone pole</button></div>
+        <p class="hint">Trenches come only from a survey import.</p></div>
+      <div class="demo-facts"><div><span class="hint">Length</span><span class="mono">412 m</span></div><div><span class="hint">Poles</span><span class="mono">7</span></div></div>
+      <div class="form-group"><label for="d-notes">Notes</label><textarea id="d-notes" rows="2">Shared with the co-op's lines.</textarea></div>
+      <div class="form-group"><label>Links on this run</label><ul class="demo-riders"><li>Gate ↔ Barn switch</li><li>Barn switch ↔ Silo AP</li></ul>
+        <p class="hint">Kept in Polaris — not sent to ArcGIS.</p></div>
+      <div><span class="badge badge-active">Synced</span> <span class="mono hint">OBJECTID 118</span></div>
+      <p class="hint">Changes are kept when you save the view, then sent to ArcGIS.</p>
+      <button type="button" class="btn btn-sm btn-danger">Delete run</button>
+    </div>
+  </div>
+
+  <div>
+    <p class="demo-cap">Sync pill — Pending · Synced · Failed (with ArcGIS's message)</p>
+    <div class="demo-float demo-panel">
+      <div><span class="badge badge-expired">Pending</span></div><br>
+      <div><span class="badge badge-active">Synced</span> <span class="mono hint">OBJECTID 118</span></div><br>
+      <div><span class="badge badge-conflict">Failed</span>
+        <p class="hint" style="color:var(--color-danger)">Field NAME: value exceeds field length (50).</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">ArcGIS integration → Write-back tab</p>
+    <div class="demo-float demo-tab">
+      <label class="demo-radio"><input type="checkbox" checked> Write cable runs to ArcGIS</label>
+      <p class="hint">One way: runs drawn, edited or deleted in Polaris are pushed to the layer. Edits made in ArcGIS are not read back. Only one ArcGIS integration can write runs.</p>
+      <div class="form-group"><label>Layer</label>
+        <label class="demo-radio"><input type="radio" name="d-mode" checked> An existing layer, with a field map</label>
+        <label class="demo-radio"><input type="radio" name="d-mode"> A layer Polaris creates with its own fields</label></div>
+      <div class="form-group"><label for="d-url">Feature layer URL</label>
+        <div class="demo-inline"><input type="text" id="d-url" value="https://services.arcgis.com/…/FeatureServer/0"><button type="button" class="btn btn-secondary">Read layer</button></div>
+        <div class="demo-pills"><span class="badge badge-readonly">Polyline</span><span class="badge badge-readonly">Z values</span>
+          <span class="badge badge-active">Create</span><span class="badge badge-active">Update</span><span class="badge badge-active">Delete</span></div></div>
+      <div class="card-title">Field map</div>
+      <div class="table-wrapper"><table><thead><tr><th>Polaris</th><th>Layer field</th></tr></thead><tbody>
+        <tr><td>Polaris id (required)</td><td><select><option>POLARIS_ID</option></select></td></tr>
+        <tr><td>Name</td><td><select><option>NAME</option></select></td></tr>
+        <tr><td>Medium</td><td><select><option>CABLE_TYPE</option></select></td></tr>
+        <tr><td>Placement</td><td><select><option>— not written —</option></select></td></tr>
+      </tbody></table></div>
+      <div class="form-group"><label>Medium values (CABLE_TYPE is a coded list)</label>
+        <div class="demo-inline"><span class="hint">Fiber</span><select><option>1 — Fiber optic</option></select><span class="hint">Ethernet</span><select><option>2 — Copper</option></select></div></div>
+      <div class="demo-strip"><span class="badge badge-active">42 synced</span><span class="badge badge-expired">1 pending</span><span class="badge badge-conflict">1 failed</span>
+        <span class="demo-strip-msg">Failed: “value exceeds field length”</span><button type="button" class="btn btn-sm btn-secondary">Retry failed</button></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
