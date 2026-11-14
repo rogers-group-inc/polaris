@@ -150,15 +150,14 @@ describe("buildSnmpSession — v2c", () => {
     expect(h.createSession.mock.calls[0][2].timeout).toBe(10_000);
   });
 
-  // BUG: walkLoopError's remediation tells the operator to "Try an SNMP v1
-  // credential (avoids GETBULK)", but buildSnmpSession maps every version that
-  // is not "v3" to Version2c — a config of { version: "v1" } still opens a v2c
-  // session that issues GETBULK, so the advice cannot work (no code path in
-  // src/ ever uses snmp.Version1). Fix: build a Version1 session for "v1"
-  // (and allow it in the credential schema), or drop the v1 advice.
-  it.fails("a v1 config opens a Version1 session, as the walk-loop error advises", () => {
+  // Was a bug until 2026-11-13: walkLoopError told the operator to "Try an SNMP
+  // v1 credential (avoids GETBULK)", but buildSnmpSession maps every version
+  // that is not "v3" to Version2c, so the advice could not work. The advice is
+  // gone; v1 is not supported (a { version: "v1" } config opens v2c).
+  it("a v1 config still opens v2c, and the walk-loop error no longer advises v1", () => {
     buildSnmpSession("10.0.0.1", { version: "v1", community: "c" });
-    expect(h.createSession.mock.calls[0][2].version).toBe(snmp.Version1);
+    expect(h.createSession.mock.calls[0][2].version).toBe(snmp.Version2c);
+    expect(walkLoopError("1.3.6.1.2.1.2", "1.3.6.1.2.1.2.1", "1.3.6.1.2.1.2.1").message).not.toMatch(/v1/i);
   });
 });
 

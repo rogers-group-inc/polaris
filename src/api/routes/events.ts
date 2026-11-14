@@ -234,7 +234,7 @@ router.put("/archive-settings", requirePermission("events", "write"), async (req
     const body = ArchiveSettingsSchema.parse(req.body ?? {});
     // Don't overwrite password if placeholder was sent back
     if (isMaskedSecret(body.password)) delete body.password;
-    const updated = await updateArchiveSettings(body);
+    const updated = await updateArchiveSettings(body, requestActor(req));
     const safe = { ...updated };
     if (safe.password) safe.password = SECRET_MASK;
     res.json(safe);
@@ -284,7 +284,7 @@ router.get("/syslog-settings", requirePermission("events", "write"), async (_req
 // PUT /api/v1/events/syslog-settings — update syslog forwarding settings
 router.put("/syslog-settings", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    const updated = await updateSyslogSettings(req.body);
+    const updated = await updateSyslogSettings(req.body, requestActor(req));
     res.json(updated);
   } catch (err) {
     next(err);
@@ -321,7 +321,7 @@ router.put("/retention-settings", requirePermission("events", "write"), async (r
     if (rawAlertDays !== undefined && normalizeAlertHistoryDays(rawAlertDays) === null) {
       await updateAlertHistorySettings(rawAlertDays); // throws the 400 with the allowed range
     }
-    const events = await updateRetentionSettings(req.body);
+    const events = await updateRetentionSettings(req.body, requestActor(req));
     const alerts = rawAlertDays !== undefined
       ? await updateAlertHistorySettings(rawAlertDays, requestActor(req))
       : await getAlertHistorySettings();
@@ -353,7 +353,7 @@ router.get("/asset-decommission-settings", requirePermission("assetMonitorSettin
 // PUT /api/v1/events/asset-decommission-settings
 router.put("/asset-decommission-settings", requirePermission("assetMonitorSettings", "write"), async (req, res, next) => {
   try {
-    res.json(await updateAssetDecommissionSettings(req.body));
+    res.json(await updateAssetDecommissionSettings(req.body, requestActor(req)));
   } catch (err) {
     next(err);
   }

@@ -282,13 +282,13 @@ describe("getArchiveSettings / updateArchiveSettings", () => {
     await expect(updateArchiveSettings({ username: "fixed" })).resolves.toMatchObject({ username: "fixed" });
   });
 
-  // BUG: changing where the audit log is SHIPPED (host / user / path / enabled)
+  // Was a bug until 2026-11-13: changing where the audit log is SHIPPED (host / user / path / enabled)
   // is an audit-worthy mutation, but neither updateArchiveSettings nor its
   // route (PUT /events/archive-settings) writes an Event — an operator can
   // repoint or disable the archive and the event log records nothing.
   // Fix: logEvent({ action: "event_archive.settings_updated", … }) with the
   // changed keys (password masked), as forgetArchiveHostKey already does.
-  it.fails("writes an audit Event when the archive destination changes", async () => {
+  it("writes an audit Event when the archive destination changes", async () => {
     settingRows.eventArchive = { ...GOOD };
     await updateArchiveSettings({ host: "elsewhere.example.com" });
     expect(eventLog.logEvent).toHaveBeenCalled();
@@ -596,7 +596,12 @@ describe("asset auto-decommission settings", () => {
     settingRows.assetAutoDecommission = { inactivityMonths: 6 };
     expect(await updateAssetDecommissionSettings({})).toEqual({ inactivityMonths: 0 });
     expect(await updateAssetDecommissionSettings({ inactivityMonths: -4 })).toEqual({ inactivityMonths: 0 });
-    expect(findSetting()).not.toHaveBeenCalled();
+    // It reads the current value only to audit the change (one Event naming
+    // the changed key), never to keep it.
+    expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "asset_auto_decommission.settings_updated",
+      details: { changed: ["inactivityMonths"] },
+    }));
   });
 });
 
@@ -617,10 +622,10 @@ describe("syslog settings", () => {
     expect(upsertSetting().mock.calls[0][0]).toMatchObject({ where: { key: "eventSyslog" }, update: { value: out } });
   });
 
-  // BUG: repointing (or disabling) syslog forwarding of the event log is an
+  // Was a bug until 2026-11-13: repointing (or disabling) syslog forwarding of the event log is an
   // audit-worthy mutation, but neither updateSyslogSettings nor PUT
   // /events/syslog-settings writes an Event. Fix: logEvent the change.
-  it.fails("writes an audit Event when the syslog destination changes", async () => {
+  it("writes an audit Event when the syslog destination changes", async () => {
     await updateSyslogSettings({ host: "elsewhere.corp", enabled: true });
     expect(eventLog.logEvent).toHaveBeenCalled();
   });
@@ -664,12 +669,12 @@ describe("testSyslogConnection", () => {
     expect(client.close).toHaveBeenCalled();
   });
 
-  // BUG: sendUdp always opens a "udp4" socket, so a syslog server configured
+  // Was a bug until 2026-11-13: sendUdp always opens a "udp4" socket, so a syslog server configured
   // by its IPv6 address (host "fd00::5") can never be reached — the send fails
   // with EINVAL / EAFNOSUPPORT and the test reports a dead server. The TCP and
   // TLS paths resolve either family. Fix: createSocket(isIP(host) === 6 ? "udp6" : "udp4"),
   // the same choice buildSnmpSession makes for SNMP (rule 128).
-  it.fails("UDP: an IPv6 syslog server gets a udp6 socket", async () => {
+  it("UDP: an IPv6 syslog server gets a udp6 socket", async () => {
     const client = { send: vi.fn((...a: unknown[]) => (a[5] as (e?: Error) => void)()), close: vi.fn() };
     h.createSocket.mockReturnValue(client);
     await testSyslogConnection({ ...SYSLOG, host: "fd00::5" });

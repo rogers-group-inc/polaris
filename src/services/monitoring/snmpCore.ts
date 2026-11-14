@@ -389,7 +389,9 @@ export function walkLoopError(baseOid: string, prevOid: string, oid: string): Ap
     502,
     `SNMP walk of ${baseOid} aborted: agent returned a non-increasing OID (${oid} after ${prevOid}) — ` +
     `the device's SNMP agent is stuck in a GETNEXT/GETBULK loop instead of advancing. ` +
-    `Try an SNMP v1 credential (avoids GETBULK) or a device firmware update.`,
+    // No "try SNMP v1" here: buildSnmpSession opens v2c for every non-v3
+    // credential, so that advice could not work.
+    `A device firmware update is the usual fix.`,
   );
 }
 

@@ -479,13 +479,13 @@ describe("audit — down detection absent / restored", () => {
     expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
-  // BUG: reportBuild records `lastRuleCountWasZero = true` even when it skipped
+  // Was a bug until 2026-11-13: reportBuild records `lastRuleCountWasZero = true` even when it skipped
   // the Event because the fleet was EMPTY (isZero && assetCount === 0). A fresh
   // install boots with no monitored assets and no down automation; discovery
   // then adds monitored devices, every one reads Passive, and the next rebuild
   // sees isZero === lastRuleCountWasZero, so monitor.down_detection_absent is
   // never written — rule 36 says a zero-rule fleet stamps it once.
-  it.fails("stamps the absent Event once monitored assets ARRIVE in a fleet that has never had a down rule", async () => {
+  it("stamps the absent Event once monitored assets ARRIVE in a fleet that has never had a down rule", async () => {
     assetRows = [];
     await resolveDownDetection("nothing-yet");
     assetRows = [asset("a"), asset("b")];
@@ -636,7 +636,7 @@ describe("previewDownDetectionRemoval — the blind-fleet guard", () => {
     expect(assetFind()).toHaveBeenCalledWith(expect.objectContaining({ where: { monitored: true } }));
   });
 
-  // BUG: previewDownDetectionRemoval never calls decorateRelationLeafHits, so a
+  // Was a bug until 2026-11-13: previewDownDetectionRemoval never calls decorateRelationLeafHits, so a
   // down automation scoped by a relation-backed condition (interfaceName,
   // nativeVlan, ssid, agentInstalled, subnet-by-name) matches NO asset in the
   // preview — the undecorated row falls through to `asset.interfaces`, which
@@ -645,7 +645,7 @@ describe("previewDownDetectionRemoval — the blind-fleet guard", () => {
   // 0 and would leave 0 passive, so deleting it silently blinds those devices.
   // Fix: `await decorateRelationLeafHits(assets, rules.map((r) => r.scope?.condition))`
   // after the asset query, exactly as buildDownDetectionIndex does.
-  it.fails("counts devices governed through an interface-scoped condition (relation leaves are decorated)", async () => {
+  it("counts devices governed through an interface-scoped condition (relation leaves are decorated)", async () => {
     const leaf: ScopeConditionRule = { field: "interfaceName", operator: "equals", value: "port9" } as ScopeConditionRule;
     ruleRows = [rule("iface", { scope: { condition: { op: "and", children: [leaf] } } })];
     assetRows = [asset("has")];
