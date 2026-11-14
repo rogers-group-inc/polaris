@@ -358,7 +358,7 @@ describe("Phase 7 — fingerprints and users", () => {
     expect(written().associatedUsers.map((u: any) => u.user)).toEqual(["jdoe", "other"]);
   });
 
-  // BUG: deviceInventory.ts:332 copies associatedUsers with a SHALLOW spread,
+  // Was a bug until 2026-11-13: the phase copied associatedUsers with a SHALLOW spread,
   // then 338-339 mutate the matched entry in place — which is also the entry
   // inside existingAsset.associatedUsers. pruneUnchangedAssetFields (line 393)
   // then compares the staged list against that already-mutated array, finds
@@ -367,7 +367,7 @@ describe("Phase 7 — fingerprints and users", () => {
   // persists the refreshed lastSeen / source: stored stays Nov 1 / "intune"
   // run after run. Fix: clone the entries before mutating
   // (`(existingAsset.associatedUsers as any[]).map((u) => ({ ...u }))`).
-  it.fails("persists the refresh of a device's only known user", async () => {
+  it("persists the refresh of a device's only known user", async () => {
     const a = asset({ associatedUsers: [{ user: "jdoe", domain: "CORP", lastSeen: "2026-11-01T00:00:00.000Z", source: "intune" }] });
     await run([inv({ user: "CORP\\jdoe" })], [a]).done;
     expect(written().associatedUsers).toEqual([{ user: "jdoe", domain: "CORP", lastSeen: NOW, source: "device-inventory" }]);

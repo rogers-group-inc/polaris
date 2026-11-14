@@ -167,7 +167,7 @@ describe("Phase 6 — presence (rule 12) and status (rules 10 / 16)", () => {
     expect(written()).not.toHaveProperty("status");
   });
 
-  // BUG: dhcpMacAssociation.ts:340 sets `asset.status = "active"` in memory on
+  // Was a bug until 2026-11-13: the phase set `asset.status = "active"` in memory on
   // ANY lease presence, including for a maintenance asset whose DB write was
   // just guarded (line 313). The next held binding for the same asset (a
   // second gate, or a second card) then sees status "active", stages
@@ -176,7 +176,7 @@ describe("Phase 6 — presence (rule 12) and status (rules 10 / 16)", () => {
   // ends the operator's maintenance window early (rule 16: discovery never
   // writes status over a maintenance asset). Fix: guard the in-memory mirror
   // the same way, `if (leasePresence && asset.status !== "maintenance")`.
-  it.fails("never pulls a maintenance asset back to active on a second held lease for it", async () => {
+  it("never pulls a maintenance asset back to active on a second held lease for it", async () => {
     await run([lease(), lease({ device: "FGT-B", ipAddress: "10.1.0.7" })], [asset({ status: "maintenance" })]).done;
     expect(written()).not.toHaveProperty("status");
   });

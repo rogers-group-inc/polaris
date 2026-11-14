@@ -381,7 +381,7 @@ describe("reconcileDnsResolvedForAsset — keeping, updating and releasing its o
     expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
-  // BUG: ownership is "same MAC OR same resolved hostname", so two live assets
+  // Was a bug until 2026-11-13: ownership was "same MAC OR same resolved hostname", so two live assets
   // that share a hostname (a: printer-1 / MAC …01 at .5, b: printer-1 / MAC
   // …02 at .6) each "own" the other's row. a's reconcile releases b's row at
   // .6 as "stale row replaced by current target" although b is eligible and
@@ -389,7 +389,7 @@ describe("reconcileDnsResolvedForAsset — keeping, updating and releasing its o
   // every sweep with an event each way. A row whose MAC names a different
   // device should not be owned by hostname (match on hostname only when the
   // row has no MAC, or the MACs agree).
-  it.fails("does not release a namesake's row that records a different MAC at its own address", async () => {
+  it("does not release a namesake's row that records a different MAC at its own address", async () => {
     assets = [asset(), asset({ id: "b", ipAddress: "10.0.0.6", macAddress: "AA:BB:CC:00:00:02" })];
     reservations = [
       sysRow({ id: "ra" }),
@@ -397,6 +397,19 @@ describe("reconcileDnsResolvedForAsset — keeping, updating and releasing its o
     ];
     await reconcileDnsResolvedForAsset("a1");
     expect(reservations.map((r) => r.id).sort()).toEqual(["ra", "rb"]);
+  });
+
+  // The other side of that fix: a same-name row carrying a MAC NO other asset
+  // holds is the orphan this asset's own MAC change left behind — still ours,
+  // still released as stale.
+  it("still releases its own orphan from before a MAC change (a MAC no other asset holds)", async () => {
+    assets = [asset()];
+    reservations = [
+      sysRow({ id: "ra" }),
+      sysRow({ id: "old", ipAddress: "10.0.0.6", macAddress: "AA:BB:CC:00:00:99" }),
+    ];
+    await reconcileDnsResolvedForAsset("a1");
+    expect(reservations.map((r) => r.id)).toEqual(["ra"]);
   });
 });
 

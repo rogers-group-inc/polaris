@@ -87,7 +87,7 @@ async function findOwnedSystemRows(a: AssetIdentity): Promise<SystemReservationR
   const ors: any[] = [];
   if (mac) ors.push({ macAddress: mac });
   if (host) ors.push({ hostname: host });
-  return prisma.reservation.findMany({
+  const rows = await prisma.reservation.findMany({
     where: {
       createdBy: SYSTEM_ACTOR,
       sourceType: "dns_resolved" as any,
@@ -96,6 +96,20 @@ async function findOwnedSystemRows(a: AssetIdentity): Promise<SystemReservationR
     },
     select: { id: true, subnetId: true, ipAddress: true, hostname: true, macAddress: true },
   });
+  // A hostname is not an identity (rule 91): a row matched only by name whose
+  // MAC is ANOTHER asset's belongs to that namesake, not to us. Without this,
+  // two live assets sharing a hostname each released the other's row on every
+  // sweep. A row carrying a MAC no other asset holds is still ours — the
+  // orphan our own MAC change left behind, which step 5 must clean up.
+  if (!mac) return rows;
+  const foreignMacs = Array.from(new Set(rows.map((r) => r.macAddress).filter((m): m is string => !!m && m !== mac)));
+  if (!foreignMacs.length) return rows;
+  const namesakes = await prisma.asset.findMany({
+    where: { id: { not: a.id }, macAddress: { in: foreignMacs } },
+    select: { macAddress: true },
+  });
+  const claimed = new Set(namesakes.map((n) => n.macAddress));
+  return rows.filter((r) => !r.macAddress || r.macAddress === mac || !claimed.has(r.macAddress));
 }
 
 interface ActiveAuthoritativeRow {

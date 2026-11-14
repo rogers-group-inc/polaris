@@ -329,7 +329,10 @@ export async function syncDeviceInventory(input: {
         }
 
         if (inv.user && !invAdoptRefused) {
-          const userList: Array<{user: string; domain?: string; lastSeen: string; source: string}> = Array.isArray(existingAsset.associatedUsers) ? [...(existingAsset.associatedUsers as any)] : [];
+          const userList: Array<{user: string; domain?: string; lastSeen: string; source: string}> = Array.isArray(existingAsset.associatedUsers) ? (existingAsset.associatedUsers as any[]).map((u) => ({ ...u })) : [];
+          // ^ copy the ENTRIES, not just the array: editing a shared entry in
+          // place also edits existingAsset's, so pruneUnchangedAssetFields saw
+          // no change and a refreshed lastSeen / source was never written.
           const parts = inv.user.includes("\\") ? inv.user.split("\\") : [null, inv.user];
           const domain = parts[0] || undefined;
           const username = parts[1] || inv.user;
