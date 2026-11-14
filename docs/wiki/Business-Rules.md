@@ -3704,7 +3704,7 @@ manager, runs up to the trough, along it and down into the other device. You can
 cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
 its automatic route.
 
-### Rule 180
+### Rule 186
 
 **The last logged-on user is whoever a source saw most recently, at the time that source saw them.**
 An asset lists the users its integrations have seen on it, each with when and who reported

@@ -1,6 +1,6 @@
 /**
  * tests/unit/fortiosAuthUsers.test.ts — a FortiGate's authenticated-user
- * table as user sightings (business rule 180): sessions are parsed with every
+ * table as user sightings (business rule 186): sessions are parsed with every
  * known field name, and joined ONLY to the same gate's single online
  * inventory row at the session's address — never by address alone.
  */

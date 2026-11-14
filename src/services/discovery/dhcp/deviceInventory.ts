@@ -47,7 +47,7 @@ import { mergeUserSightings, type UserSighting } from "../../../utils/associated
 import type { Prisma } from "../../../generated/prisma/client.js";
 
 /**
- * The user sightings one inventory row carries (business rule 180): the
+ * The user sightings one inventory row carries (business rule 186): the
  * row's own `user` at the time the gate saw the client, and the user the
  * gate's live auth table has at the row's address — an online row only, so
  * that one is current.
@@ -342,7 +342,7 @@ export async function syncDeviceInventory(input: {
           if (touched.length) noteChangeBaseline(existingAsset, touched);
         }
 
-        // Business rule 180: a user sighting is stamped with when the GATE saw
+        // Business rule 186: a user sighting is stamped with when the GATE saw
         // the client (an online row is now), never the run time — a
         // remembered-but-offline row must not read as a fresh logon.
         if (!invAdoptRefused && invSeenValid) {

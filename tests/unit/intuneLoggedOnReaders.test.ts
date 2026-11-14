@@ -1,6 +1,6 @@
 /**
  * tests/unit/intuneLoggedOnReaders.test.ts — the two Graph reads behind the
- * Intune last logged-on user (business rule 180):
+ * Intune last logged-on user (business rule 186):
  *   - fetchIntuneLoggedOnUsers — per-device `usersLoggedOn` through Graph
  *     BETA $batch (the property is absent from v1.0); a failed sub-response
  *     leaves that device out, a non-GUID id never reaches a URL.

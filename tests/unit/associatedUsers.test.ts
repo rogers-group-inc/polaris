@@ -1,6 +1,6 @@
 /**
  * tests/unit/associatedUsers.test.ts — the user sightings on
- * Asset.associatedUsers and the last logged-on user (business rule 180):
+ * Asset.associatedUsers and the last logged-on user (business rule 186):
  * sightings keep the SOURCE's time, only advance per account, compare
  * case-blind, and the list stays bounded.
  */

@@ -4468,7 +4468,7 @@
   function canFlashFirmware() { return scopedVerb("assets", "canEdit", null); }
 
   /**
-   * The newest user sighting from any source (business rule 180), as plain
+   * The newest user sighting from any source (business rule 186), as plain
    * text — the row escapes it. Null when nothing has reported a user.
    */
   function lastLoggedOnRowValue(users) {

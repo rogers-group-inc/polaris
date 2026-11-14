@@ -87,7 +87,7 @@ export interface ParsedInventoryClient {
   /**
    * The user the same gate's live auth table (`user/firewall`) has logged on
    * at this row's address — set by `attachAuthUsers` on online rows only
-   * (business rule 180).
+   * (business rule 186).
    */
   authUser?: string;
   isOnline: boolean;

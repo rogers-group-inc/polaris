@@ -2,7 +2,7 @@
  * src/utils/fortiosAuthUsers.ts — a FortiGate's authenticated-user table
  * (`GET /api/v2/monitor/user/firewall`: FSSO, RSSO, captive-portal and
  * firewall-policy logins) as user sightings for the gate's own clients
- * (business rule 180).
+ * (business rule 186).
  *
  * An auth session names a user and an ADDRESS, not a device. An address is
  * not an identity — it recycles — so a session is joined only to a client the

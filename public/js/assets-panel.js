@@ -2931,7 +2931,7 @@ function macDeleteButtonHTML(assetId, m) {
     '>&times;</button>';
 }
 
-// Who reported a user sighting (business rule 180). An unknown source shows
+// Who reported a user sighting (business rule 186). An unknown source shows
 // as stored, so an older row's label still reads.
 var _USER_SOURCE_LABELS = {
   "intune": "Intune",
@@ -2957,7 +2957,7 @@ function _userSeenMs(u) {
 }
 
 // The last logged-on user is the NEWEST sighting from any source (business
-// rule 180) — Intune's last logon, a FortiGate auth session, or the gate's
+// rule 186) — Intune's last logon, a FortiGate auth session, or the gate's
 // device inventory — so the row reads the same whichever integration saw it.
 function associatedUsersViewHTML(users) {
   if (!users || users.length === 0) return '';

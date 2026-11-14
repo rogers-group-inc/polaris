@@ -846,7 +846,7 @@ async function fgtChainInventory(ctx: FgtChainCtx): Promise<void> {
         gateRows.push(parsed);
       }
     }
-    // Business rule 180: the gate's live authenticated users (FSSO / RSSO /
+    // Business rule 186: the gate's live authenticated users (FSSO / RSSO /
     // captive portal / firewall auth), joined to its own online rows by
     // address. Its own try: a gate that refuses the read keeps its inventory.
     try {

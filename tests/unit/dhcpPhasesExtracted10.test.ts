@@ -104,7 +104,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     expect(m.logCreated).toHaveBeenCalledWith("a1", "pc-40", expect.objectContaining({ sourceKind: "fortigate-endpoint" }));
   });
 
-  it("records the gate's auth-session user at run time beside the row's own user (rule 180)", async () => {
+  it("records the gate's auth-session user at run time beside the row's own user (rule 186)", async () => {
     const { done } = run({ deviceInventory: [inv({ user: "CORP\\jdoe", authUser: "CORP\\asmith" })] });
     await done;
     expect(db.create.mock.calls[0][0].data.associatedUsers).toEqual([
@@ -113,7 +113,7 @@ describe("Phase 7 — creating an asset from a detected device", () => {
     ]);
   });
 
-  it("stamps an offline row's user with when the gate last saw the client, not the run (rule 180)", async () => {
+  it("stamps an offline row's user with when the gate last saw the client, not the run (rule 186)", async () => {
     const seen = "2026-11-08T09:15:00.000Z";
     const { done } = run({ deviceInventory: [inv({ user: "jdoe", authUser: "ignored", isOnline: false, lastSeen: seen })] });
     await done;

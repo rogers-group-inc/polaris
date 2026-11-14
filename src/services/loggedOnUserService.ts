@@ -1,5 +1,5 @@
 // loggedOnUserService — the Intune half of "who last logged on to this
-// device" (business rule 180). Intune's per-device `usersLoggedOn` (Graph
+// device" (business rule 186). Intune's per-device `usersLoggedOn` (Graph
 // beta) lists each account that logged on and when; this pass reads it during
 // an Entra/Intune discovery run, names the accounts, and merges them into
 // `Asset.associatedUsers` as `intune` sightings stamped with Intune's own

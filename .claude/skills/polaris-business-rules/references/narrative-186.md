@@ -1,13 +1,13 @@
-# Business rule 180 — full narrative
+# Business rule 186 — full narrative
 
 > Written 2026-11-13 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
 Each rule records the decision *and the incident or constraint that forced it*. The invariant is in `invariants-30-43.md`; rule numbers are a stable citation key — never renumber.
 
-- [Rule 180](#rule-180) — The last logged-on user is the newest user sighting, stamped with when its source saw the user
+- [Rule 186](#rule-186) — The last logged-on user is the newest user sighting, stamped with when its source saw the user
 
-## Rule 180 — The last logged-on user is the newest user sighting, stamped with when its source saw the user — never when Polaris read it
+## Rule 186 — The last logged-on user is the newest user sighting, stamped with when its source saw the user — never when Polaris read it
 
 **The question (2026-11-13).** The operator asked how Polaris knows the last logged-in user for an asset. The honest answer was that it did not, quite. `Asset.assignedTo` is Intune's `userPrincipalName` — the device's PRIMARY user, the person it is enrolled or assigned to, which on a shared PC or a reassigned laptop can be someone who has not touched it in months. `Asset.associatedUsers` existed, but only one path wrote it: Phase 7 of DHCP discovery copied the FortiGate detected-device inventory's `user` field — and stamped every entry with the discovery run's time, so a remembered-but-offline inventory row (FortiOS keeps those for days) made a user read as "seen now" every run. The operator chose two sources to add: Intune's `usersLoggedOn`, and the FortiGate's authenticated-user table.
 

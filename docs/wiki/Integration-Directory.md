@@ -95,7 +95,7 @@ managed device and when, and adds them to the asset's user list. The most
 recent one is shown as **Last Logged-On User** on the asset's General tab
 ([Assets](Assets)). **Assigned To** does not change: it is still the device's
 primary user in Intune, which is who the device is assigned to, not who used
-it last. See [Rule 180](Business-Rules#rule-180).
+it last. See [Rule 186](Business-Rules#rule-186).
 
 - **One optional permission.** Intune reports each account as an ID. An
   account that is some device's primary user is named for free. Naming any

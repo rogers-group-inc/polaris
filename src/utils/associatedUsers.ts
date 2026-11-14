@@ -1,6 +1,6 @@
 /**
  * src/utils/associatedUsers.ts — the user sightings on `Asset.associatedUsers`
- * and the "last logged-on user" read from them (business rule 180).
+ * and the "last logged-on user" read from them (business rule 186).
  *
  * Three discovery paths report who uses a device: Intune's `usersLoggedOn`
  * (each user's last logon on the device), a FortiGate's live authenticated-

@@ -91,7 +91,7 @@ export interface DiscoveredEntraDevice {
   userPrincipalName?: string;
   // Intune `userId` — the primary user's directory object id, paired with
   // `userPrincipalName` above. Names a logged-on user's GUID with no extra
-  // permission (business rule 180, fetchIntuneLoggedOnUsers).
+  // permission (business rule 186, fetchIntuneLoggedOnUsers).
   intuneUserId?: string;
   chassisType?: string;        // "desktop" | "laptop" | "tablet" | "phone" | ...
   complianceState?: string;    // "compliant" | "noncompliant" | "unknown" | ...
@@ -956,7 +956,7 @@ export async function fetchIntuneDetectedApps(
   return { apps, failedBatches, batchCount, lastError };
 }
 
-// ─── Intune logged-on users (business rule 180) ─────────────────────────────
+// ─── Intune logged-on users (business rule 186) ─────────────────────────────
 //
 // `usersLoggedOn` — each account that logged on to the device and when — is a
 // Graph BETA property of managedDevice (absent from v1.0, so it must never go

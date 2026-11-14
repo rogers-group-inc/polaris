@@ -582,7 +582,7 @@ users, or the gate's device list. **Associated Users** below it lists up to 25
 of them, newest first, each with who reported it and when. The time is when
 that source saw the user, not when Polaris last read it. **Assigned To** is a
 different fact: who the device is assigned to (Intune's primary user, or what
-you typed). See [Rule 180](Business-Rules#rule-180).
+you typed). See [Rule 186](Business-Rules#rule-186).
 
 **An SNMP-polled device fills in its own identity.** When no integration that
 manages a device names it (a switch a FortiGate only saw on the network, a

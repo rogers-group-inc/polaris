@@ -903,7 +903,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         await syncIntuneSoftware(integrationId, config as any, result.devices, {
           intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,
         });
-        // Who logged on → associatedUsers (business rule 180). Same placement
+        // Who logged on → associatedUsers (business rule 186). Same placement
         // and reason as the software pass above.
         await syncIntuneLoggedOnUsers(integrationId, config as any, result.devices, {
           intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,

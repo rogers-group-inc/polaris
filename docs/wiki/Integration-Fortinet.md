@@ -392,7 +392,7 @@ so a session at an address two devices share, or with no device the gate sees
 there, is skipped and counted in the run's log. The device list's own user
 field is kept too, dated by when the gate last saw the device. The newest of
 all of these is the device's **Last Logged-On User** ([Assets](Assets),
-[Rule 180](Business-Rules#rule-180)).
+[Rule 186](Business-Rules#rule-186)).
 
 **Resolving a managed switch's or AP's parent never matches against a
 hostname.** `controllerFortigate` holds FortiManager's *device name*, which

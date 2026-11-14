@@ -1067,7 +1067,7 @@ export interface DiscoveredInventoryDevice {
   user: string;             // Logged-in / registered user (if available)
   // The user the same gate's live auth table (user/firewall — FSSO, RSSO,
   // captive portal, firewall auth) has at this row's address; online rows
-  // only, joined by attachAuthUsers (business rule 180).
+  // only, joined by attachAuthUsers (business rule 186).
   authUser?: string;
   isOnline: boolean;
   lastSeen: string;         // ISO timestamp
@@ -2098,7 +2098,7 @@ async function fmgStepInventory(ctx: FmgDeviceCtx): Promise<void> {
           gateRows.push(parsed);
         }
       }
-      // Business rule 180 — parity with the standalone path: the gate's live
+      // Business rule 186 — parity with the standalone path: the gate's live
       // authenticated users, joined to its own online rows by address. Its own
       // try, so a refused read never costs the inventory.
       try {

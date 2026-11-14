@@ -1,6 +1,6 @@
 /**
  * tests/unit/loggedOnUserService.test.ts — the Intune half of the last
- * logged-on user (business rule 180): which devices are re-read, how logons
+ * logged-on user (business rule 186): which devices are re-read, how logons
  * become sightings, and the pass end to end against a stubbed database and
  * Graph — merged into associatedUsers with Intune's logon time, stamped so an
  * unchanged device is skipped next run, assignedTo never touched.

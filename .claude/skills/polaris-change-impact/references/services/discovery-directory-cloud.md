@@ -348,7 +348,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Cross-service deps:** None (pure Graph API client; no service-to-service calls).
 
-**Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices. src/services/softwareInventoryService.ts — `syncIntuneSoftware` calls `fetchIntuneDetectedApps` for the Software tab's Intune list. src/services/loggedOnUserService.ts — `syncIntuneLoggedOnUsers` calls `fetchIntuneLoggedOnUsers` + `resolveUserPrincipalNames` for the last logged-on user (business rule 180).
+**Used by:** src/api/routes/integrations.ts — discovery trigger, test connection, manual Graph proxy query. src/services/discovery/discoveryEngine.ts — sync path syncEntraDevices. src/services/softwareInventoryService.ts — `syncIntuneSoftware` calls `fetchIntuneDetectedApps` for the Software tab's Intune list. src/services/loggedOnUserService.ts — `syncIntuneLoggedOnUsers` calls `fetchIntuneLoggedOnUsers` + `resolveUserPrincipalNames` for the last logged-on user (business rule 186).
 
 **Invariants:**
 - OAuth2 client-credentials flow; tokens cached in-memory by tenantId:clientId until expiry ≥60s buffer.
@@ -361,7 +361,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **`ethernetMacAddress` never comes from the list call** — Graph returns it null on every managedDevices LIST row. `discoverDevices` takes a 5th arg `knownEthernetMacs?` (azureADDeviceId → stored `{ethernetMacAddress, ethernetMacSyncedAt}`, built by `discoveryEngine.knownEthernetMacsFromIntuneRows`) and `resolveEthernetMacs` reads the rest per device through `POST /v1.0/$batch` (20 per call, 4 in flight), skipping devices whose `lastSyncDateTime` equals the stored stamp (`planEthernetMacFetch`, pure, exported). Results surface as `DiscoveredEntraDevice.ethernetMacAddress` + `ethernetMacSyncedAt`; the latter is persisted on the intune observed blob and is the next run's skip key. A failed read keeps the stored MAC and OLD stamp (retried next run); a `$batch` outage never fails the run. Managed-device ids are GUID-checked before they reach a URL. Pinned by `tests/unit/entraEthernetMac.test.ts`.
 - **One `$batch` runner for every per-device read**: the private `graphBatchGet(config, "v1.0" | "beta", ids, pathFor, signal)` (20 sub-requests per call, 4 calls in flight, per-sub-response 429 retry) was factored out of `fetchEthernetMacs` and serves it, `fetchIntuneDetectedApps`, `fetchIntuneLoggedOnUsers` and `resolveUserPrincipalNames` (`/users/{id}`). A further per-device read goes through it too — never a fresh loop.
 - **`fetchIntuneDetectedApps(config, managedDeviceIds, signal)` is GRAPH BETA** — the `detectedApps` navigation on `managedDevice` exists only on `/beta`. It takes Intune's OWN managedDevice id (`DiscoveredEntraDevice.intuneManagedDeviceId`, carried from the list row's `id`, which is not the Entra `deviceId` and is deliberately NOT written to the observed blob), skips non-GUID ids, follows `@odata.nextLink` per device (cap 5000 apps), and returns a map in which **a device ABSENT from the result FAILED** — the caller keeps its stored list rather than wiping it. Same permission as the device list (`DeviceManagementManagedDevices.Read.All`). Gated by `EntraIdConfig.pullSoftware` (default false) on top of `enableIntune`. Intune lists unmanaged (discovered) apps only on CORPORATE-owned devices; a personal device reports managed apps alone.
-- **`fetchIntuneLoggedOnUsers(config, managedDeviceIds, signal)` is GRAPH BETA too** (business rule 180) — `usersLoggedOn` (`[{userId, lastLogOnDateTime}]`) does not exist on v1.0, so it is NEVER added to the v1.0 list's `$select` (an unknown property fails the whole Intune read); it is a per-device `$select=id,usersLoggedOn` GET through `graphBatchGet`. Absent from the result = failed. `resolveUserPrincipalNames(config, ids, known, signal)` names user object ids: `known` (each device's `intuneUserId` + `userPrincipalName` — `userId` was added to the v1.0 `$select` for this) costs nothing, the rest are `/v1.0/users/{id}` reads that need `User.Read.All`; an unreadable id is counted in `unresolved`, never raised. Names are cached per tenant+app for 24 h (module-level `upnCache`).
+- **`fetchIntuneLoggedOnUsers(config, managedDeviceIds, signal)` is GRAPH BETA too** (business rule 186) — `usersLoggedOn` (`[{userId, lastLogOnDateTime}]`) does not exist on v1.0, so it is NEVER added to the v1.0 list's `$select` (an unknown property fails the whole Intune read); it is a per-device `$select=id,usersLoggedOn` GET through `graphBatchGet`. Absent from the result = failed. `resolveUserPrincipalNames(config, ids, known, signal)` names user object ids: `known` (each device's `intuneUserId` + `userPrincipalName` — `userId` was added to the v1.0 `$select` for this) costs nothing, the rest are `/v1.0/users/{id}` reads that need `User.Read.All`; an unreadable id is counted in `unresolved`, never raised. Names are cached per tenant+app for 24 h (module-level `upnCache`).
 - Asset type is MEANT to come from Intune `chassisType` (desktop/laptop → workstation; other → other), but `chassisType` is beta-only and absent from the v1.0 `$select`, so it is always undefined and inference sees only the OS; Entra-only defaults to workstation.
 - `deviceInclude`/`deviceExclude` filters match against displayName with wildcard support.
 - proxyQuery is read-only Graph API pass-through (GET only, /v1.0/ or /beta/ prefix required).
@@ -382,7 +382,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/loggedOnUserService.ts
 
-**What it owns:** The Intune half of the last logged-on user (business rule 180): the post-sync pass of an Entra/Intune discovery run that reads each device's `usersLoggedOn`, names the accounts and merges them into `Asset.associatedUsers` as `intune` sightings at Intune's `lastLogOnDateTime`.
+**What it owns:** The Intune half of the last logged-on user (business rule 186): the post-sync pass of an Entra/Intune discovery run that reads each device's `usersLoggedOn`, names the accounts and merges them into `Asset.associatedUsers` as `intune` sightings at Intune's `lastLogOnDateTime`.
 
 **Public API:** syncIntuneLoggedOnUsers, planIntuneLogonFetch, intuneLogonSightings, IntuneLogonCandidate, INTUNE_LOGONS_SCRAPE_KIND, INTUNE_LOGONS_MAX_AGE_MS.
 
@@ -399,7 +399,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **When changing this:**
 - A new user source merges through `mergeUserSightings` with its own `source` label, and the label goes in `_USER_SOURCE_LABELS` (`public/js/assets-panel.js`).
-- Keep the source's own time on every sighting — never the run time (rule 180).
+- Keep the source's own time on every sighting — never the run time (rule 186).
 
 ---
 ## services/azureArcService.ts

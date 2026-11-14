@@ -173,14 +173,14 @@ var _FMG_PRESET_QUERIES = _FMG_PROXY_PRESET_QUERIES.concat(_FMG_DIRECT_PRESET_QU
 // 7: management access moved into discovery — allowaccess on the interface
 //    read, wtp-profile on the AP read, the AP profile + switch local-access reads.
 // 8: the authenticated-user table discovery reads for the last logged-on user
-//    (business rule 180).
+//    (business rule 186).
 var _FMG_QUERIES_VERSION = 8;
 // 2: every standalone FortiGate discovery query; ARP moved to network/arp.
 // 3: interface, DHCP server, VIP, switch and AP config reads carry discovery's
 //    format= lists (datasource=1 dropped).
 // 4: management access moved into discovery (allowaccess, wtp-profile, the AP
 //    profile and switch local-access reads).
-// 5: the authenticated-user table (business rule 180).
+// 5: the authenticated-user table (business rule 186).
 var _FGT_QUERIES_VERSION = 5;
 
 function _substituteFmgAdom(paramsStr, adom) {
@@ -966,7 +966,7 @@ var _ENTRA_PRESET_QUERIES = [
   },
 ];
 
-// 2: the logged-on-users read (business rule 180).
+// 2: the logged-on-users read (business rule 186).
 var _ENTRA_QUERIES_VERSION = 2;
 
 var _entraQueryStore = _makeSavedQueryStore("polaris-entra-queries", _ENTRA_QUERIES_VERSION, _ENTRA_PRESET_QUERIES);
