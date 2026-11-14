@@ -42,6 +42,8 @@ import { normalizeMacsDistinct } from "../../../utils/mac.js";
 import { buildMacRowsForCreate, type MacJsonEntry } from "../../../utils/macAddresses.js";
 import { sortNewestFirst } from "../../../utils/sortByTime.js";
 import { reconcileMacAddresses } from "../../macAddressService.js";
+import { pruneUnchangedAssetFields } from "../../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../../assetIpHistoryService.js";
 import { logger } from "../../../utils/logger.js";
 
 /**
@@ -97,6 +99,12 @@ export async function syncFirewallAssets(input: {
   verboseLogging: boolean;
   /** The run's in-memory AssetSource map and the mirrors of what the upserts do to it. */
   infraSourcesOf: (assetId: string) => EntraSourceEntry[];
+  /**
+   * Loads one asset's source rows into the map when the per-gate prefetch
+   * (assets matched by this gate's serials) did not cover it. Awaited at the
+   * top of every update branch, before the map is read or mirrored.
+   */
+  ensureInfraSources: (assetId: string) => Promise<void>;
   applyInfraSourceInMemory: (
     assetId: string, sourceKind: string, externalId: string,
     observed: Record<string, unknown>, lastSeen: Date | null, syncedAt: Date,
@@ -116,11 +124,14 @@ export async function syncFirewallAssets(input: {
     membershipSwitchByDevice, membershipSwitchKnown, membershipApByDevice, membershipApKnown,
     fortigateAddAsMonitored, pullSnmpLocation, useSnmpLocationCoords, pushGeocodedCoords,
     latitudeMetavar, longitudeMetavar, addressMetavar, integrationConfig, verboseLogging,
-    infraSourcesOf, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
+    infraSourcesOf, ensureInfraSources, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
     buildFortigateFirewallObservedBlob, upsertFortigateFirewallAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
 
+  // IP-history refreshes for addresses the prune left out of a write (the
+  // hook's per-write upsert, batched after the loop).
+  const ipHistoryRefreshRows: Array<{ assetId: string; ip: string; source: string }> = [];
   // Geocode misses, one per firewall asset, written as asset Events after the
   // loop in one batch (logGeocodeFailureEvents dedupes against recent rows).
   const geocodeFailures: GeocodeFailureForAsset[] = [];
@@ -360,10 +371,12 @@ export async function syncFirewallAssets(input: {
         existingAsset = null;
       }
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot material fields before the branch mutates existingAsset in
         // place (macAddresses / status below) so the per-asset audit diff is
         // computed against the true pre-write state.
         const fwBefore = snapshotMaterialAssetFields(existingAsset);
+        const fwPruneBase: Record<string, unknown> = { ...existingAsset };
         // Phase 3b.1 cutover: discovery-owned fields come from projection.
         // Same shape as AD/Entra cutovers — upsert source first, fetch all
         // sources, project, single Asset.update.
@@ -502,7 +515,14 @@ export async function syncFirewallAssets(input: {
         // Standby HA members are excluded.
         const isStandbyMember = haMembers != null && !member.isPrimary;
         Object.assign(updateData, buildFortigateMonitorStamp(existingAsset, isStandbyMember, fortigateAddAsMonitored));
-        await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
+        // Drop what the row already holds (efficiency audit, as Phases 6/7 do):
+        // an unchanged device no longer re-sends hostname / IP / model and so
+        // skips the db.ts hook chain those keys fire; a monitored one, whose
+        // lastSeen discovery may not bump, usually needs no write at all.
+        // Compared against the copy taken before this branch mutated the row.
+        const { ipHistoryRefresh: fwIpRefresh } = pruneUnchangedAssetFields(fwPruneBase, updateData);
+        if (fwIpRefresh) ipHistoryRefreshRows.push({ assetId: existingAsset.id, ...fwIpRefresh });
+        if (Object.keys(updateData).length > 0) await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
         logDiscoveryAssetUpdated(fwBefore, updateData, existingAsset.id, memberDevice.hostname || device.name, {
           integrationName, integrationId, sourceKind: "fortigate-firewall", actor,
         });
@@ -723,5 +743,6 @@ export async function syncFirewallAssets(input: {
       syncLog("error", `Failed to create/update asset for device ${device.name}: ${err.message || "Unknown error"}`);
     }
   }
+  if (ipHistoryRefreshRows.length > 0) await refreshIpHistoryLastSeen(ipHistoryRefreshRows);
   await logGeocodeFailureEvents(geocodeFailures);
 }
