@@ -87,7 +87,10 @@ names the live count. The all-clear of a held, unsummarised alert is dropped (ru
 when NO row of it ever went out; otherwise `heldFireAudience` builds the readers a held fire
 row named who no live row has reached since, and the all-clear goes to everyone else
 (`excludeRecipients`). Chat rows have no reader: a chat send held at fire and never live is
-skipped.
+skipped. The fire's `api_call` row (an automation's webhook action) is never held and reaches
+no reader, so `heldFireAudience` leaves it out: until 2026-11-13 it counted as "told", so an
+automation with notify + api_call firing in quiet time sent its all-clear and a held Slack
+channel got "resolved" for a fire it never saw (CQ-T010 batch 6).
 
 A policy with no `recipients` is not split (`QuietHold.split` false): every path above is the
 rule-92 path, byte for byte.

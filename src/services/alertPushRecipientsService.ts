@@ -133,7 +133,9 @@ const PUSH_RECIPIENT_TOKEN_RE = /\{push\.recipients\}/g;
  */
 export function substitutePushRecipientTokens(body: string, block: string): string {
   if (!body) return body;
-  return body.replace(PUSH_RECIPIENT_TOKEN_RE, block);
+  // `() => block`, not the string: a replacement string expands `$&`, `$'` and
+  // `` $` ``, and the block carries display names an operator or IdP sets.
+  return body.replace(PUSH_RECIPIENT_TOKEN_RE, () => block);
 }
 
 /** Do any of these templates reference an `{email.recipients}` token? */
@@ -153,7 +155,7 @@ const EMAIL_RECIPIENT_TOKEN_RE = /\{email\.recipients\}/g;
 /** The `substitutePushRecipientTokens` sibling, same empty-block contract. */
 export function substituteEmailRecipientTokens(body: string, block: string): string {
   if (!body) return body;
-  return body.replace(EMAIL_RECIPIENT_TOKEN_RE, block);
+  return body.replace(EMAIL_RECIPIENT_TOKEN_RE, () => block);
 }
 
 /**

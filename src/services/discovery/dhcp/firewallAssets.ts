@@ -543,7 +543,9 @@ export async function syncFirewallAssets(input: {
         if (memberDevice.hostname) existingAsset.hostname = memberDevice.hostname;
         if (device.model) existingAsset.model = device.model;
         if (!existingAsset.learnedLocation) existingAsset.learnedLocation = memberDevice.hostname || fgHostname;
-        if (existingAsset.status === "decommissioned") existingAsset.status = "active";
+        // Mirror the DB write's rule-12 guard: an offline gate's cached CMDB
+        // does not resurrect it, so the in-memory copy stays decommissioned too.
+        if (existingAsset.status === "decommissioned" && !memberDevice.offline) existingAsset.status = "active";
         // Mirror the backfilled MACs so the same-cycle Phase 7 lookup finds
         // this firewall byMac (reindex below reads existingAsset.macAddress +
         // .macAddresses — the latter already holds every interface MAC from the
