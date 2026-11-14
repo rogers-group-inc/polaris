@@ -337,7 +337,9 @@ export async function associateDhcpMacs(input: {
         asset.ipAddress = entry.ipAddress;
         if (entry.device) asset.learnedLocation = entry.device;
       }
-      if (leasePresence) asset.status = "active";
+      // Same guard as the write above (rule 16): a maintenance asset stays in
+      // maintenance in memory too, or its NEXT lease this run stages "active".
+      if (leasePresence && asset.status !== "maintenance") asset.status = "active";
       if (updateData.lastSeen) asset.lastSeen = updateData.lastSeen;
       assetIdx.reindex(asset);
 

@@ -89,7 +89,7 @@ The integration's Monitoring tab additionally carries a **Discovery Defaults** s
 - `POST   /events/archive-test`                 *(admin)* — the same checks; a refused value answers `{ ok: false, message }` and no process is spawned The archive's ssh / scp / sftp pin the server's host key on first use (`StrictHostKeyChecking=accept-new`, `<state>/data/archive_known_hosts`, business rule 113(d)); a changed key returns a message that says so.
 - `POST   /events/archive-forget-host-key`      *(events write)* — Forget the archive server's pinned SSH host key (deletes `archive_known_hosts`; audited `event_archive.host_key_forgotten`, warning). The next connection pins whatever answers (business rule 113(d)).
 - `GET    /events/syslog-settings`              *(admin)* — reveals host/port/TLS paths
-- `PUT    /events/syslog-settings`              *(admin)*
+- `PUT    /events/syslog-settings`              *(admin)* — like the archive, retention and asset-decommission PUTs, writes one `<area>.settings_updated` Event naming the changed keys (never values) with the caller as actor (2026-11-13)
 - `POST   /events/syslog-test`                  *(admin)*
 - `GET    /events/retention-settings`           *(auth)* — `{ retentionDays, minLevel, alertHistoryDays }`; `alertHistoryDays` is the alert-history period (business rule 158; 0 = keep forever).
 - `PUT    /events/retention-settings`           *(admin)* — `alertHistoryDays` optional (an older client still saves the Event settings); 400 when present and not 0 or 30–3650, before anything is written. A blank / null is refused, not read as 0.
