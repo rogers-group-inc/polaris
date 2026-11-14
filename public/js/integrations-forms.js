@@ -1259,6 +1259,139 @@ function arcgisBasemapHTML(defaults) {
     '<p class="hint">The credit shown on the map; blank uses Esri&rsquo;s for World Imagery. Past the deepest zoom the map enlarges the last real tiles instead of showing &ldquo;Map data not yet available&rdquo; — 19 suits most sites. <strong>Test Connection</strong> also fetches one imagery tile while this is on.</p>';
 }
 
+// The Write-back tab (business rule 185): cable runs drawn on the Device Map
+// written one way to an ArcGIS feature layer. The field map and value maps are
+// filled from the layer itself (Read layer); _wireArcgisWriteBack in
+// integrations.js does the reading, creating and the status strip.
+var ARCGIS_WB_ATTRS = [
+  ["polarisId", "Polaris ID", true],
+  ["name",      "Name"],
+  ["medium",    "Medium"],
+  ["placement", "Placement"],
+  ["site",      "Site"],
+  ["notes",     "Notes"],
+  ["lengthM",   "Length (m)"],
+  ["updatedAt", "Updated in Polaris"],
+];
+var ARCGIS_WB_VALUES = {
+  medium:    [["fiber", "Fiber"], ["ethernet", "Ethernet"]],
+  placement: [["trench", "Trench"], ["electric_pole", "Electric pole"], ["telephone_pole", "Telephone pole"]],
+};
+
+function arcgisFieldSelectHTML(attr, label, current, fields) {
+  var opts = '<option value="">— not written —</option>';
+  var names = (fields || []).filter(function (f) { return f.editable; });
+  var seen = false;
+  names.forEach(function (f) {
+    var on = current && f.name.toLowerCase() === String(current).toLowerCase();
+    if (on) seen = true;
+    var kind = f.codedValues ? "coded" : String(f.type || "").replace("esriFieldType", "");
+    opts += '<option value="' + escapeHtml(f.name) + '"' + (on ? " selected" : "") + '>' + escapeHtml(f.name) + ' (' + escapeHtml(kind) + ')</option>';
+  });
+  // Not read yet (or gone from the layer): keep what is stored, visibly.
+  if (current && !seen) opts += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + (fields ? " (not in the layer)" : "") + '</option>';
+  return '<select data-wb-attr="' + attr + '" aria-label="Layer field for ' + escapeHtml(label) + '">' + opts + '</select>';
+}
+
+function arcgisFieldMapRowsHTML(fieldMap, fields) {
+  var fm = fieldMap || {};
+  return ARCGIS_WB_ATTRS.map(function (a) {
+    return '<tr><td>' + escapeHtml(a[1]) + (a[2] ? ' <span class="hint" style="margin:0">(required)</span>' : '') + '</td>' +
+      '<td>' + arcgisFieldSelectHTML(a[0], a[1], fm[a[0]], fields) + '</td></tr>';
+  }).join("");
+}
+
+/** Value maps for medium / placement: a code picker when the mapped field has a coded-value domain. */
+function arcgisValueMapHTML(fieldMap, valueMap, fields) {
+  var fm = fieldMap || {};
+  var vm = valueMap || {};
+  var byName = {};
+  (fields || []).forEach(function (f) { byName[f.name.toLowerCase()] = f; });
+  return ["medium", "placement"].map(function (kind) {
+    var field = fm[kind];
+    if (!field) return "";
+    var f = byName[String(field).toLowerCase()];
+    var current = vm[kind] || {};
+    var cells = ARCGIS_WB_VALUES[kind].map(function (v) {
+      var id = "wb-v-" + kind + "-" + v[0];
+      var cur = current[v[0]];
+      var input;
+      if (f && f.codedValues) {
+        input = '<select id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '">' +
+          '<option value="">— ' + escapeHtml(v[0]) + ' (as is) —</option>' +
+          f.codedValues.map(function (c) {
+            var on = cur !== undefined && String(cur) === String(c.code);
+            return '<option value="' + escapeHtml(String(c.code)) + '" data-numeric="' + (typeof c.code === "number" ? "1" : "") + '"' + (on ? " selected" : "") + '>' +
+              escapeHtml(String(c.code)) + ' — ' + escapeHtml(c.name) + '</option>';
+          }).join("") + '</select>';
+      } else {
+        input = '<input type="text" id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '" maxlength="128" value="' +
+          escapeHtml(cur === undefined ? "" : String(cur)) + '" placeholder="' + escapeHtml(v[0]) + '">';
+      }
+      return '<div class="form-group"><label for="' + id + '">' + escapeHtml(v[1]) + '</label>' + input + '</div>';
+    }).join("");
+    return '<div class="card-title">Values for ' + escapeHtml(field) + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' + cells + '</div>';
+  }).join("");
+}
+
+function arcgisWriteBackHTML(defaults) {
+  var d = defaults || {};
+  var mode = d.writeBackMode === "polaris" ? "polaris" : "existing";
+  function radio(value, label) {
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0">' +
+      '<input type="radio" name="f-writeBackMode" value="' + value + '"' + (mode === value ? ' checked' : '') + ' style="width:auto"> ' + label + '</label>';
+  }
+  return checkboxRow("f-writeBackEnabled", "Write cable runs to ArcGIS", d.writeBackEnabled === true) +
+    '<p class="hint">One way: runs drawn, edited or deleted in Polaris are pushed to the layer. Edits made in ArcGIS are not read back, and are overwritten on the next change in Polaris. Which connections ride a run stays in Polaris. Only one ArcGIS integration can write runs.</p>' +
+    '<div class="form-group"><label>Layer</label><div style="display:flex;flex-direction:column;gap:6px">' +
+      radio("existing", "An existing layer, with a field map") +
+      radio("polaris", "A layer Polaris creates with its own fields") +
+    '</div></div>' +
+    '<div class="form-group" data-wb-mode="polaris"' + (mode === "polaris" ? '' : ' hidden') + '>' +
+      '<label for="f-wbServiceName">New service name</label>' +
+      '<div style="display:flex;gap:8px"><input type="text" id="f-wbServiceName" maxlength="60" value="Polaris_cable_runs" style="flex-grow:1">' +
+      '<button type="button" class="btn btn-secondary" id="wb-create"' + (d.id ? '' : ' disabled') + '>Create layer</button></div>' +
+      '<p class="hint">' + (d.id
+        ? 'Creates a hosted feature layer in the signed-in user&rsquo;s content, with z values for surveyed elevation, and fills in the URL and field map below. Needs Full Read-Write on Integrations and a sign-in allowed to create content.'
+        : 'Save the integration first, then create the layer.') + '</p></div>' +
+    '<div class="form-group"><label for="f-featureLayerUrl">Feature layer URL</label>' +
+      '<div style="display:flex;gap:8px"><input type="text" id="f-featureLayerUrl" value="' + escapeHtml(d.featureLayerUrl || "") + '" placeholder="https://services.arcgis.com/…/FeatureServer/0" style="flex-grow:1">' +
+      '<button type="button" class="btn btn-secondary" id="wb-read">Read layer</button></div>' +
+      '<div id="wb-layer-info" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"></div></div>' +
+    '<div class="card-title" style="margin-top:10px">Field map</div>' +
+    '<div class="table-wrapper" style="margin-bottom:10px"><table><thead><tr><th>Polaris</th><th>Layer field</th></tr></thead>' +
+      '<tbody id="wb-fieldmap">' + arcgisFieldMapRowsHTML(d.fieldMap, null) + '</tbody></table></div>' +
+    '<div id="wb-valuemap">' + arcgisValueMapHTML(d.fieldMap, d.valueMap, null) + '</div>' +
+    '<div id="wb-status"></div>';
+}
+
+/** The Write-back tab's fields, or null when the tab is not on the page. */
+function getArcgisWriteBackConfig() {
+  var on = document.getElementById("f-writeBackEnabled");
+  if (!on) return null;
+  var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
+  var fieldMap = {};
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-attr]"), function (s) {
+    if (s.value) fieldMap[s.getAttribute("data-wb-attr")] = s.value;
+  });
+  var valueMap = {};
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-value]"), function (el) {
+    if (!el.value) return;
+    var kind = el.getAttribute("data-wb-kind");
+    var opt = el.tagName === "SELECT" ? el.options[el.selectedIndex] : null;
+    var v = opt && opt.getAttribute("data-numeric") === "1" ? Number(el.value) : el.value;
+    (valueMap[kind] = valueMap[kind] || {})[el.getAttribute("data-wb-polaris")] = v;
+  });
+  return {
+    writeBackEnabled: on.checked,
+    writeBackMode: picked ? picked.value : "existing",
+    featureLayerUrl: val("f-featureLayerUrl"),
+    fieldMap: fieldMap,
+    valueMap: valueMap,
+  };
+}
+
 function getArcgisFormConfig() {
   var mode = document.getElementById("f-authMode").value;
   var cfg = {
@@ -1276,6 +1409,8 @@ function getArcgisFormConfig() {
     cfg.basemapAttribution = val("f-basemapAttribution");
     cfg.basemapMaxZoom = parseInt(document.getElementById("f-basemapMaxZoom").value, 10) || 19;
   }
+  var wb = getArcgisWriteBackConfig();
+  if (wb) Object.assign(cfg, wb);
   // Only the chosen method's fields go out; the others keep what is stored.
   if (mode === "appCredentials") { cfg.clientId = val("f-clientId"); cfg.clientSecret = val("f-clientSecret"); }
   if (mode === "apiKey") cfg.apiToken = val("f-apiToken");

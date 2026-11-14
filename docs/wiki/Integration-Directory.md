@@ -88,6 +88,29 @@ them on the asset's **Software** tab ([Assets](Assets)).
   The run's log shows the failure under *discover.intune.software*.
 - Turning the option off removes the Intune lists from this integration's
   devices on the next run.
+### Logged-on users
+
+With Intune sync on, each run also reads which accounts have logged on to each
+managed device and when, and adds them to the asset's user list. The most
+recent one is shown as **Last Logged-On User** on the asset's General tab
+([Assets](Assets)). **Assigned To** does not change: it is still the device's
+primary user in Intune, which is who the device is assigned to, not who used
+it last. See [Rule 186](Business-Rules#rule-186).
+
+- **One optional permission.** Intune reports each account as an ID. An
+  account that is some device's primary user is named for free. Naming any
+  other account (a colleague signing in to a shared PC, an admin) needs the
+  **User.Read.All** application permission, the same one the address book's
+  search and sync use. Without it those accounts are left out, and the run's
+  log says how many under *discover.intune.logons*.
+- **The time shown is Intune's logon time**, not when Polaris read it.
+- **A device is re-read only after it checks in with Intune again** (and at
+  least once a week regardless). **Discover Now** on one device always
+  re-reads it.
+- Microsoft offers this information only in its preview (beta) Graph API. If
+  Microsoft changes it, the read fails, the run's log says so, and the rest of
+  discovery is unaffected.
+
 
 ---
 

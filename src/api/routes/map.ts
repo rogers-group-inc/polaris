@@ -31,6 +31,15 @@
  *   POST   /map/sites/:id/topology/location-codes — rewrite descriptions from
  *          polygon placements (rule 148; assets=write + the assets write scope, not deviceMap)
  *
+ * Cable runs (rule 184) ride their OWN key, never deviceMap — a run is written
+ * one way to an ArcGIS layer:
+ *   GET /map/sites/:id/cable-runs — the site's runs (cableRuns=read) + canEditRuns
+ *   PUT /map/sites/:id/cable-runs — one edit session's upserts + deletes
+ *          (cableRuns=write + the cableRuns write scope on the site)
+ *   PUT /map/sites/:id/cable-run-links — which runs some device links are
+ *          drawn through (rule 184(a)): Polaris-only layout, so the view gate
+ *          (deviceMap=write + the deviceMap write scope), not cableRuns
+ *
  * Coordinates and topology metadata are populated by the FortiManager / FortiGate
  * discovery pipelines (see fortimanagerService.ts step 3d.5/3d.6 and
  * fortigateService.ts step 3e.5/3e.6). The topology GET's graph construction
@@ -44,6 +53,8 @@ import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { buildSiteTopology } from "../../services/topologyGraphService.js";
 import { listMapSites, getSiteLayoutOwner, searchSiteEndpoints } from "../../services/mapSitesService.js";
+import { kickWriteBack } from "../../services/arcgisWriteBackService.js";
+import { listRuns, applyRunEdits, listRunLinks, applyRunLinkEdits, MAX_RUNS_PER_LINK, CABLE_MEDIA, CABLE_PLACEMENTS } from "../../services/cableRunService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
 import {
   saveLayout,
@@ -725,6 +736,67 @@ router.post("/sites/:id/topology/location-codes", requirePermission("assets", "w
       inScope: (rec) => inWriteScope(scope, rec),
     });
     res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Cable runs (rule 184) ───────────────────────────────────────────────
+// Their own key: a run is written one way to an ArcGIS layer, so drawing one
+// is a grant an admin gives, never a rung of deviceMap. Schemas are shapes
+// only; cableRunService validates the points and the trench rule.
+const CableRunInputSchema = z.object({
+  id:        z.string().uuid().optional(),
+  name:      z.string().max(120).optional(),
+  medium:    z.enum(CABLE_MEDIA),
+  placement: z.enum(CABLE_PLACEMENTS),
+  points:    z.array(z.array(z.number()).max(3)).max(5000),
+  notes:     z.string().max(2000).optional(),
+});
+const CableRunEditsSchema = z.object({
+  upserts: z.array(CableRunInputSchema).max(500).optional(),
+  deletes: z.array(z.string().uuid()).max(500).optional(),
+});
+
+router.get("/sites/:id/cable-runs", requirePermission("cableRuns", "read"), async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const [runs, links, site] = await Promise.all([listRuns(siteId), listRunLinks(siteId), getSiteLayoutOwner(siteId)]);
+    // Whether THIS caller may edit the site's runs rides along (rule 141 (e)).
+    const canEditRuns = site ? inWriteScope(await resolveWriteScope(req, "cableRuns"), site) : false;
+    res.json({ runs, links, canEditRuns });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put(
+  "/sites/:id/cable-runs",
+  requirePermission("cableRuns", "write"),
+  scopeAssetParam("cableRuns", "edit cable runs for sites"),
+  async (req, res, next) => {
+    try {
+      const body = CableRunEditsSchema.parse(req.body);
+      const runs = await applyRunEdits(req.params.id as string, body, req.session?.username ?? "unknown");
+      // Rule 185: push the saved runs now rather than on the next tick.
+      kickWriteBack();
+      res.json({ runs });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Rule 184(a): routing a device link through runs is a layout change that
+// stays in Polaris (never written to ArcGIS), so it is the view gate's.
+const CableRunLinkEditsSchema = z.object({
+  links: z.record(z.string().max(500), z.array(z.string().uuid()).max(MAX_RUNS_PER_LINK)),
+});
+
+router.put("/sites/:id/cable-run-links", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const { links } = CableRunLinkEditsSchema.parse(req.body);
+    res.json({ links: await applyRunLinkEdits(req.params.id as string, links, req.session?.username ?? "unknown") });
   } catch (err) {
     next(err);
   }

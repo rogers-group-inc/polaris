@@ -376,11 +376,15 @@ export async function buildInterfaceLldpBlocks(
       renderInterfaceLldp(p, byPort.get(p) ?? [], { html, timeZone }) +
       (html ? "" : (byPort.get(p) ?? []).length && (fcByPort.get(p) ?? []).length ? "\n" : "") +
       renderInterfaceFcLogins(p, fcByPort.get(p) ?? [], { html, timeZone }));
-    if (extraPorts <= 0) return blocks.join("");
+    // Each HTML block is a whole <tr>; a TEXT stanza ends on its "Last
+    // advertised" line with no newline, so text stanzas need one between them
+    // (and before the trailer) or the next heading is glued onto a timestamp.
+    const joined = blocks.join(html ? "" : "\n");
+    if (extraPorts <= 0) return joined;
     const more = `and ${extraPorts} more port${extraPorts === 1 ? "" : "s"} on this alert`;
-    return blocks.join("") + (html
+    return joined + (html
       ? `<tr><td colspan="2" style="padding:0 0 8px;font-size:12px;color:#6b7280">${escapeHtml(more)}</td></tr>`
-      : `  ${more}\n`);
+      : `\n  ${more}\n`);
   };
   return { html: render(true), text: render(false), ipHtml, ipText };
 }

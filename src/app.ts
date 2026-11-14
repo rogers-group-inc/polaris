@@ -1382,6 +1382,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",
+      // Cable runs → the ArcGIS layer (business rule 185). Scheduler role
+      // only; a save also pushes at once, under the same advisory lock.
+      "./jobs/arcgisWriteBack.js",
       "./jobs/reconcileMapRegions.js",
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",

@@ -102,7 +102,8 @@ describe("ownership-dimensioned keys", () => {
       expect(def.hasOwnershipDimension, `${def.key} is tagScoped without the ownership dimension`).toBe(true);
     }
     const scoped = FUNCTION_KEYS.filter(f => f.tagScoped).map(f => f.key).sort();
-    expect(scoped).toEqual(["alerts", "assets", "assetsQuarantine", "deviceMap", "discoveryConflicts", "maintenanceManagement", "reservations", "staleReservations", "subnets"]);
+    // cableRuns (rule 184, 2026-11-13): a site's runs are judged by the site, like deviceMap.
+    expect(scoped).toEqual(["alerts", "assets", "assetsQuarantine", "cableRuns", "deviceMap", "discoveryConflicts", "maintenanceManagement", "reservations", "staleReservations", "subnets"]);
     for (const key of ["contacts", "credentials", "networkScan"]) {
       expect(FUNCTION_KEYS.find(f => f.key === key)?.tagScoped, `${key} must stay owner-only`).toBeFalsy();
     }

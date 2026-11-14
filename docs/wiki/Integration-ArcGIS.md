@@ -75,6 +75,38 @@ portal service with no tile at that spot still passes — a regional service
 covers only its area. Moving a portal service to a new address needs the
 integration's secret typed again.
 
+## Write-back
+
+Writes the [cable runs](Device-Map#cable-runs) drawn on the Device Map to a
+line layer in your ArcGIS organization. It is **one way**: runs drawn,
+edited or deleted in Polaris are pushed to the layer; edits made in ArcGIS
+are not read back, and are overwritten on the next change in Polaris.
+Which connections ride a run is not sent.
+
+| Field | |
+|---|---|
+| **Write cable runs to ArcGIS** | Off by default. Only one ArcGIS integration can write runs. Needs a sign-in. |
+| **Layer** | **An existing layer, with a field map**, or **A layer Polaris creates with its own fields**. |
+| **New service name** / **Create layer** | Only for a Polaris layer, on a saved integration: creates a hosted feature layer in the signed-in user's content, with elevation (z) values, and fills in the URL and field map. Needs **Full Read-Write** on Integrations and a sign-in allowed to create content. It does not turn write-back on. |
+| **Feature layer URL** | One layer of a feature service: `https://…/FeatureServer/<number>`. **Read layer** shows its geometry, whether it allows create, update and delete, and anything that would stop or limit write-back. Changing it needs the secret typed again. |
+| **Field map** | Which layer field receives each Polaris value: Polaris ID (required), name, medium, placement, site, notes, length in metres, last updated. Leave a row on *not written* to skip it. |
+| **Values for …** | When Medium or Placement goes to a field with a list of codes (a coded-value domain), pick the code for each Polaris value. |
+
+Polaris writes the run's id to the **Polaris ID** field and uses it to find
+its features again, so a run is never added twice. Runs are sent as soon as
+the view is saved, and again every minute until they land. Each run's panel
+on the map shows **Pending**, **Synced** or **Failed** with the message
+ArcGIS gave; this tab counts them, and **Retry failed** (Full Read-Write on
+Cable Runs) sends the failed ones again once you have fixed the cause.
+Elevation from surveyed trenches is written when the layer has z values.
+
+Turning write-back off, or pointing it at another layer, starts over: every
+run is sent again when it is next on, and runs deleted meanwhile stay in the
+old layer (an Event lists them). See [rule 185](Business-Rules#rule-185).
+
+**Before you point this at your organization's production GIS, test it
+against a scratch layer, and have your GIS team review the field map.**
+
 ## Permissions
 
 Adding, editing and testing the integration needs **Read-Write** on
