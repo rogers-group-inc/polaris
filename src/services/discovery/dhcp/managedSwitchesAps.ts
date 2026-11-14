@@ -194,6 +194,12 @@ export async function syncManagedSwitchesAndAps(input: {
   projectRefLabel: string;
   /** The run's in-memory AssetSource map and the mirrors of what the upserts do to it. */
   infraSourcesOf: (assetId: string) => EntraSourceEntry[];
+  /**
+   * Loads one asset's source rows into the map when the per-gate prefetch
+   * (assets matched by this gate's serials) did not cover it. Awaited at the
+   * top of every update branch, before the map is read or mirrored.
+   */
+  ensureInfraSources: (assetId: string) => Promise<void>;
   infraPriorObserved: (assetId: string, sourceKind: string, externalId: string) => Record<string, unknown> | null;
   applyInfraSourceInMemory: (
     assetId: string, sourceKind: string, externalId: string,
@@ -212,7 +218,7 @@ export async function syncManagedSwitchesAndAps(input: {
   const {
     result, activeResMap, assetIdx, assetNames, reservationNames, controllerClaims, now,
     switchMonitorCfg, apMonitorCfg, findSubnetForIp, reservationKey, projectRefLabel,
-    infraSourcesOf, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
+    infraSourcesOf, ensureInfraSources, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
     upsertConflict, upsertFortinetInfraAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
@@ -442,6 +448,7 @@ export async function syncManagedSwitchesAndAps(input: {
         ...buildDeviceDescriptionStamp(sw.description),
       };
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot before the branch retypes assetType / mutates status below.
         const swBefore = snapshotMaterialAssetFields(existingAsset);
         const swPruneBase: Record<string, unknown> = { ...existingAsset };
@@ -781,6 +788,7 @@ export async function syncManagedSwitchesAndAps(input: {
       const apOnline = isFortiapStatusOnline(ap.status);
       let apAssetId: string | null = null;
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot before the branch retypes assetType / mutates status below.
         const apBefore = snapshotMaterialAssetFields(existingAsset);
         const apPruneBase: Record<string, unknown> = { ...existingAsset };

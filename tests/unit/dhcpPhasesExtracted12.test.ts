@@ -87,7 +87,7 @@ function run(devices: unknown[], over: Record<string, unknown> = {}) {
     fortigateAddAsMonitored: true, pullSnmpLocation: false, useSnmpLocationCoords: false, pushGeocodedCoords: false,
     latitudeMetavar: "Latitude", longitudeMetavar: "Longitude", addressMetavar: "",
     integrationConfig: { host: "fmg" }, verboseLogging: false,
-    infraSourcesOf: () => [], applyInfraSourceInMemory: vi.fn(), dropInfraSourceKindInMemory: vi.fn(),
+    infraSourcesOf: () => [], ensureInfraSources: vi.fn(async () => undefined), applyInfraSourceInMemory: vi.fn(), dropInfraSourceKindInMemory: vi.fn(),
     buildFortigateFirewallObservedBlob: vi.fn(() => ({ stub: true })),
     upsertFortigateFirewallAssetSource: vi.fn(async () => undefined),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",

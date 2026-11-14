@@ -1792,6 +1792,31 @@ export type AssetIndexRung = "mac" | "serial" | "hostname" | "ip";
 // whether discovery RE-USES an existing asset or mints a second one for the
 // same device, and a mismatch between `add` and `find*` is silent — the only
 // symptom is a duplicate asset appearing days later.
+/**
+ * The Asset columns syncDhcpSubnets' preload leaves out: no phase reads them
+ * off the preloaded row (each consumer reloads the asset by id), and the VM
+ * blob and the per-asset selection arrays are the bulk of a large fleet's row
+ * width — multiplied by the gate count in FortiManager mode. Adding a reader
+ * of one of these to a phase means removing it here; the rows are `any`, so
+ * nothing else will say so. tests/unit/discoveryAssetOmit.test.ts pins it.
+ */
+export const DISCOVERY_ASSET_OMIT = {
+  virtualization: true,
+  descriptionSync: true,
+  managementAccess: true,
+  quarantineTargets: true,
+  quarantineReason: true,
+  quarantineStranded: true,
+  monitoredInterfaces: true,
+  monitoredStorage: true,
+  monitoredIpsecTunnels: true,
+  monitoredProcesses: true,
+  alertWatchedProcesses: true,
+  mappedProcesses: true,
+  monitoredServices: true,
+  mappedServices: true,
+} as const;
+
 export class AssetIndex {
   private byId = new Map<string, any>();
   private byMac = new Map<string, any>();       // normalized MAC → asset
@@ -2330,34 +2355,51 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // shape. Each asset write site writes back through reconcileMacAddresses
   // at end of asset.update.
   //
-  // The source rows come along for the same reason the Entra / AD / vCenter
-  // syncs preload theirs: the firewall / FortiSwitch / FortiAP loops below
-  // each upsert their own source row and then re-read EVERY source row on
-  // that asset to project it, which was one round trip per device per run —
-  // hundreds on a Fortinet estate. `infraSources` is that projection input,
-  // kept in step with the loops' own writes by applyInfraSourceInMemory.
+  // Two things this read leaves out (efficiency audit, "whole-fleet preload").
+  // In FortiManager mode this function runs once PER GATE, several gates at
+  // a time, and again to finalize, so every byte here is multiplied by the
+  // gate count:
+  //   - DISCOVERY_ASSET_OMIT: the asset columns no phase of this function
+  //     reads off the preloaded row (the VM blob, the per-asset monitoring
+  //     selections, quarantine bookkeeping…). Every consumer that needs one
+  //     reloads the asset by id. A key absent from a row is "unknown" to
+  //     utils/assetWritePrune (kept), never "equal".
+  //   - the AssetSource rows. Only Phase 3 / 3b project from them, and only
+  //     for the assets they update: they are prefetched below for the assets
+  //     this gate's serials match, and fetched on a miss (ensureInfraSources),
+  //     instead of every source row of the fleet, observed blobs and all.
   // The exclusion list rides this same read: it is tiny, and Phase 1 needs it
   // per SUBNET, so loading it once per run is what keeps business rule 42 free
   // of a per-create round trip at 2000-asset fleet size.
-  const [blocks, allSubnetsRaw, allReservationsRaw, allAssetsRawWithRows, allInfraSourceRows, subnetExclusions] = await Promise.all([
+  const [blocks, allSubnetsRaw, allReservationsRaw, allAssetsRawWithRows, subnetExclusions] = await Promise.all([
     prisma.ipBlock.findMany(),
     prisma.subnet.findMany(),
     prisma.reservation.findMany({ where: { status: "active" } }),
-    prisma.asset.findMany({ include: { macAddressRows: { select: MAC_ROW_SELECT } } }),
-    prisma.assetSource.findMany({
-      select: { assetId: true, sourceKind: true, externalId: true, inferred: true, observed: true, lastSeen: true },
-    }),
+    prisma.asset.findMany({ omit: DISCOVERY_ASSET_OMIT, include: { macAddressRows: { select: MAC_ROW_SELECT } } }),
     prisma.subnetExclusion.findMany({ select: { cidr: true, name: true } }),
   ]);
+  // The projection input of Phase 3 / 3b, per asset, kept in step with the
+  // loops' own writes by applyInfraSourceInMemory. Filled on demand: an asset
+  // absent from `infraSourcesLoaded` has not been read yet.
   const infraSources = new Map<string, EntraSourceEntry[]>();
-  for (const r of allInfraSourceRows) {
-    const entry: EntraSourceEntry = {
-      sourceKind: r.sourceKind, externalId: r.externalId, inferred: r.inferred,
-      observed: (r.observed as Record<string, unknown> | null) || {}, lastSeen: r.lastSeen,
-    };
-    const list = infraSources.get(r.assetId);
-    if (list) list.push(entry); else infraSources.set(r.assetId, [entry]);
-  }
+  const infraSourcesLoaded = new Set<string>();
+  const loadInfraSources = async (assetIds: string[]): Promise<void> => {
+    const ids = [...new Set(assetIds)].filter((id) => !infraSourcesLoaded.has(id));
+    for (const chunk of chunkArray(ids, 1000)) {
+      const rows = await prisma.assetSource.findMany({
+        where: { assetId: { in: chunk } },
+        select: { assetId: true, sourceKind: true, externalId: true, inferred: true, observed: true, lastSeen: true },
+      });
+      for (const id of chunk) { infraSourcesLoaded.add(id); infraSources.set(id, []); }
+      for (const r of rows) {
+        infraSources.get(r.assetId)!.push({
+          sourceKind: r.sourceKind, externalId: r.externalId, inferred: r.inferred,
+          observed: (r.observed as Record<string, unknown> | null) || {}, lastSeen: r.lastSeen,
+        });
+      }
+    }
+  };
+  const ensureInfraSources = (assetId: string): Promise<void> => loadInfraSources([assetId]);
   /** The source rows for one asset, as the projection takes them. */
   const infraSourcesOf = (assetId: string): EntraSourceEntry[] => infraSources.get(assetId) ?? [];
   /** The prior `observed` blob for one (kind, externalId), for the
@@ -2751,12 +2793,30 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   phaseMark("3");
   // ══════════════════════════════════════════════════════════════════════════════
 
+  // The source rows of the assets this gate's devices match by serial, in one
+  // read; a match by any other rung is loaded on its own (ensureInfraSources).
+  {
+    const serials: string[] = [];
+    for (const d of result.devices || []) {
+      if (d.serial) serials.push(d.serial);
+      for (const m of d.haMembers || []) if (m.serial) serials.push(m.serial);
+    }
+    for (const sw of result.fortiSwitches || []) if (sw.serial) serials.push(sw.serial);
+    for (const ap of result.fortiAps || []) if (ap.serial) serials.push(ap.serial);
+    const ids: string[] = [];
+    for (const serial of serials) {
+      const hit = assetIdx.findBySerial(serial);
+      if (hit?.id) ids.push(hit.id);
+    }
+    await loadInfraSources(ids);
+  }
+
   await syncFirewallAssets({
     result, assetIdx, assetNames, now,
     membershipSwitchByDevice, membershipSwitchKnown, membershipApByDevice, membershipApKnown,
     fortigateAddAsMonitored, pullSnmpLocation, useSnmpLocationCoords, pushGeocodedCoords,
     latitudeMetavar, longitudeMetavar, addressMetavar, integrationConfig, verboseLogging,
-    infraSourcesOf, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
+    infraSourcesOf, ensureInfraSources, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
     buildFortigateFirewallObservedBlob, upsertFortigateFirewallAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   });
@@ -2770,7 +2830,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   await syncManagedSwitchesAndAps({
     result, activeResMap, assetIdx, assetNames, reservationNames, controllerClaims, now,
     switchMonitorCfg, apMonitorCfg, findSubnetForIp, reservationKey, projectRefLabel,
-    infraSourcesOf, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
+    infraSourcesOf, ensureInfraSources, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
     upsertConflict, upsertFortinetInfraAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   });

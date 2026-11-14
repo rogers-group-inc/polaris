@@ -100,7 +100,7 @@ function run(resultOver: Record<string, unknown>, over: Record<string, unknown> 
     findSubnetForIp: (ip: string) => (ip.startsWith("10.2.") ? { id: "mgmt" } : undefined),
     reservationKey: (s: string, ip: string) => `${s}|${ip}`,
     projectRefLabel: "FortiManager Integration",
-    infraSourcesOf: () => [], infraPriorObserved: () => null, applyInfraSourceInMemory: vi.fn(), noteChangeBaseline: vi.fn(),
+    infraSourcesOf: () => [], ensureInfraSources: vi.fn(async () => undefined), infraPriorObserved: () => null, applyInfraSourceInMemory: vi.fn(), noteChangeBaseline: vi.fn(),
     upsertConflict: vi.fn(async () => undefined), upsertFortinetInfraAssetSource: vi.fn(async () => undefined),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",
     actor: "system", syncLog: vi.fn(),

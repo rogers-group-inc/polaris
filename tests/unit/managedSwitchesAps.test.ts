@@ -118,7 +118,7 @@ function run(resultOver: Record<string, unknown>, over: Record<string, unknown> 
     findSubnetForIp: (ip: string) => (ip.startsWith("10.2.") ? { id: "mgmt" } : undefined),
     reservationKey: (s: string, ip: string) => `${s}|${ip}`,
     projectRefLabel: "FortiManager Integration",
-    infraSourcesOf: vi.fn((): any[] => []), infraPriorObserved: vi.fn(() => null), applyInfraSourceInMemory: vi.fn(), noteChangeBaseline: vi.fn(),
+    infraSourcesOf: vi.fn((): any[] => []), ensureInfraSources: vi.fn(async (_id: string) => undefined), infraPriorObserved: vi.fn((..._a: any[]) => null), applyInfraSourceInMemory: vi.fn(), noteChangeBaseline: vi.fn(),
     upsertConflict: vi.fn(async () => undefined), upsertFortinetInfraAssetSource: vi.fn(async (..._a: any[]) => undefined),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",
     actor: "system", syncLog: vi.fn(),
@@ -343,6 +343,29 @@ describe("unchanged fields are left out of the write", () => {
   it("assetType is still written when the branch retypes the in-memory row first", async () => {
     await run({ fortiSwitches: [sw()] }, { assetIdx: index([existingSwitch({ ...unpinned, assetType: "other" })]) }).done;
     expect(updateData().assetType).toBe("switch");
+  });
+});
+
+// ─── Source rows loaded on demand (efficiency audit, whole-fleet preload) ────
+
+describe("the update path loads the asset's source rows before reading them", () => {
+  it("ensureInfraSources(id) is awaited before the prior blob or the projection input is read", async () => {
+    const order: string[] = [];
+    const ensure = vi.fn(async (id: string) => { order.push(`ensure:${id}`); });
+    const prior = vi.fn((id: string) => { order.push(`prior:${id}`); return null; });
+    await run({ fortiSwitches: [sw()], fortiAps: [ap()] }, {
+      assetIdx: index([existingSwitch(), existingAp()]), ensureInfraSources: ensure, infraPriorObserved: prior,
+    }).done;
+    expect(order.indexOf("ensure:e1")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("ensure:e1")).toBeLessThan(order.indexOf("prior:e1"));
+    expect(order.indexOf("ensure:e2")).toBeLessThan(order.indexOf("prior:e2"));
+  });
+
+  it("a new device needs no load", async () => {
+    const ensure = vi.fn(async () => undefined);
+    await run({ fortiSwitches: [sw()] }, { ensureInfraSources: ensure }).done;
+    expect(db.assetCreate).toHaveBeenCalledTimes(1);
+    expect(ensure).not.toHaveBeenCalled();
   });
 });
 

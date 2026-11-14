@@ -99,6 +99,12 @@ export async function syncFirewallAssets(input: {
   verboseLogging: boolean;
   /** The run's in-memory AssetSource map and the mirrors of what the upserts do to it. */
   infraSourcesOf: (assetId: string) => EntraSourceEntry[];
+  /**
+   * Loads one asset's source rows into the map when the per-gate prefetch
+   * (assets matched by this gate's serials) did not cover it. Awaited at the
+   * top of every update branch, before the map is read or mirrored.
+   */
+  ensureInfraSources: (assetId: string) => Promise<void>;
   applyInfraSourceInMemory: (
     assetId: string, sourceKind: string, externalId: string,
     observed: Record<string, unknown>, lastSeen: Date | null, syncedAt: Date,
@@ -118,7 +124,7 @@ export async function syncFirewallAssets(input: {
     membershipSwitchByDevice, membershipSwitchKnown, membershipApByDevice, membershipApKnown,
     fortigateAddAsMonitored, pullSnmpLocation, useSnmpLocationCoords, pushGeocodedCoords,
     latitudeMetavar, longitudeMetavar, addressMetavar, integrationConfig, verboseLogging,
-    infraSourcesOf, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
+    infraSourcesOf, ensureInfraSources, applyInfraSourceInMemory, dropInfraSourceKindInMemory,
     buildFortigateFirewallObservedBlob, upsertFortigateFirewallAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
@@ -365,6 +371,7 @@ export async function syncFirewallAssets(input: {
         existingAsset = null;
       }
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot material fields before the branch mutates existingAsset in
         // place (macAddresses / status below) so the per-asset audit diff is
         // computed against the true pre-write state.
