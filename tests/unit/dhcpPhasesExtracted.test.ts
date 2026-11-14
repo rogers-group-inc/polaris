@@ -14,6 +14,7 @@ const db = {
   reservationFindMany: stubbed(prisma.reservation.findMany),
   reservationUpdateMany: stubbed(prisma.reservation.updateMany),
   assetUpdate: stubbed(prisma.asset.update),
+  assetUpdateMany: stubbed(prisma.asset.updateMany),
 };
 
 const m = vi.hoisted(() => ({
@@ -119,6 +120,49 @@ describe("Phases 8 and 9 — DNS and OUI", () => {
     expect(m.reverse.mock.calls.map((c) => c[0]).sort()).toEqual(["10.0.0.2", "10.0.0.3"]);
     expect(n).toBe(1);
     expect(never.dnsName).toBe("host3.example");
+  });
+
+  it("writes dnsName only when it changed; a same-name or no-PTR result only restamps, batched per TTL", async () => {
+    const renamed = { id: "renamed", ipAddress: "10.0.0.1", dnsName: "old.example" } as Record<string, unknown>;
+    const same1 = { id: "same1", ipAddress: "10.0.0.2", dnsName: "s1.example" };
+    const same2 = { id: "same2", ipAddress: "10.0.0.3", dnsName: "s2.example" };
+    const otherTtl = { id: "other-ttl", ipAddress: "10.0.0.4", dnsName: "o.example" };
+    const none = { id: "none", ipAddress: "10.0.0.5", dnsName: "kept.example" };
+    const failed = { id: "failed", ipAddress: "10.0.0.6" };
+    const answers: Record<string, Array<{ name: string; ttl: number }>> = {
+      "10.0.0.1": [{ name: "new.example", ttl: 300 }],
+      "10.0.0.2": [{ name: "s1.example", ttl: 300 }],
+      "10.0.0.3": [{ name: "s2.example", ttl: 300 }],
+      "10.0.0.4": [{ name: "o.example", ttl: 1200 }],
+      "10.0.0.5": [],
+    };
+    m.reverse.mockImplementation(async (ip: string) => {
+      if (ip === "10.0.0.6") throw new Error("SERVFAIL");
+      return answers[ip];
+    });
+    const n = await reverseDnsForAssets([renamed, same1, same2, otherTtl, none, failed], log);
+    expect(n).toBe(4);
+
+    // Only the changed name goes through asset.update (it runs the dns_resolved reconcile).
+    expect(db.assetUpdate).toHaveBeenCalledTimes(1);
+    expect(db.assetUpdate.mock.calls[0][0]).toMatchObject({
+      where: { id: "renamed" }, data: { dnsName: "new.example", dnsNameTtl: 300 },
+    });
+    expect(renamed.dnsName).toBe("new.example");
+
+    // The rest: one updateMany per TTL, never carrying dnsName (no PTR keeps the old name).
+    const calls = db.assetUpdateMany.mock.calls.map((c) => c[0]);
+    expect(calls).toHaveLength(3);
+    for (const c of calls) expect(c.data).not.toHaveProperty("dnsName");
+    const idsFor = (ttl: number | null) => calls.find((c) => c.data.dnsNameTtl === ttl)?.where.id.in.slice().sort();
+    expect(idsFor(300)).toEqual(["same1", "same2"]);
+    expect(idsFor(1200)).toEqual(["other-ttl"]);
+    expect(idsFor(null)).toEqual(["none"]);
+    // A failed lookup writes nothing, so it is retried next run.
+    for (const c of calls) expect(c.where.id.in).not.toContain("failed");
+    // Every write carries the same pass stamp.
+    const stamps = new Set([db.assetUpdate.mock.calls[0][0].data.dnsNameFetchedAt, ...calls.map((c) => c.data.dnsNameFetchedAt)].map((d) => (d as Date).getTime()));
+    expect(stamps.size).toBe(1);
   });
 
   it("applies overrides to named assets and looks up the rest, returning both counts", async () => {

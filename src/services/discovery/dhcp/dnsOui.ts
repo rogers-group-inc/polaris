@@ -15,6 +15,7 @@ import { prisma } from "../../../db.js";
 import { getConfiguredResolver } from "../../dnsService.js";
 import { lookupOui, lookupOuiOverride } from "../../ouiService.js";
 import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
+import { chunkArray } from "../../../utils/chunk.js";
 
 /** syncDhcpSubnets' bounded fan-out (its BATCH_SIZE). */
 const BATCH_SIZE = 50;
@@ -34,19 +35,48 @@ export async function reverseDnsForAssets(finalizeAssets: any[], syncLog: SyncLo
   if (assetsNeedingDns.length > 0) {
     syncLog("info", `DNS lookup: resolving ${assetsNeedingDns.length} assets with expired/missing PTR`);
     const dnsResolver = await getConfiguredResolver();
+    // One stamp for the pass, taken before any lookup: never later than the
+    // lookup it records, so a PTR is re-checked no later than its TTL says.
+    const fetchedAt = new Date();
     const dnsResults = await mapSettledWithConcurrency(assetsNeedingDns, BATCH_SIZE, async (asset: any) => {
-      const fetchedAt = new Date();
       const records = await dnsResolver.reverse(asset.ipAddress);
-      if (records.length > 0) {
-        await prisma.asset.update({ where: { id: asset.id }, data: { dnsName: records[0].name, dnsNameFetchedAt: fetchedAt, dnsNameTtl: records[0].ttl } });
-        asset.dnsName = records[0].name;
-        return records[0].name;
-      }
-      await prisma.asset.update({ where: { id: asset.id }, data: { dnsNameFetchedAt: fetchedAt, dnsNameTtl: null } });
-      return null;
+      return { asset, record: records.length > 0 ? records[0] : null };
     });
+    // A new or changed name is a per-row update: `dnsName` in the data is what
+    // runs the dns_resolved reservation reconcile (src/db.ts asset.update).
+    // Everything else — the same name again, or no PTR — only moves the
+    // fetch stamp, so those rows share one updateMany per TTL value instead
+    // of one UPDATE (and one reconcile) each, every TTL, on every run.
+    const renamed: Array<{ id: string; name: string; ttl: number | null }> = [];
+    const restampByTtl = new Map<number | null, string[]>();
+    const restamp = (ttl: number | null, id: string): void => {
+      const ids = restampByTtl.get(ttl);
+      if (ids) ids.push(id); else restampByTtl.set(ttl, [id]);
+    };
     for (const r of dnsResults) {
-      if (r.status === "fulfilled" && r.value) dnsResolved++;
+      if (r.status !== "fulfilled") continue;
+      const { asset, record } = r.value;
+      if (!record) { restamp(null, asset.id); continue; }
+      dnsResolved++;
+      const ttl = record.ttl ?? null;
+      if (record.name !== asset.dnsName) {
+        renamed.push({ id: asset.id, name: record.name, ttl });
+        asset.dnsName = record.name;
+      } else {
+        restamp(ttl, asset.id);
+      }
+    }
+    await mapSettledWithConcurrency(renamed, BATCH_SIZE, (u) =>
+      prisma.asset.update({ where: { id: u.id }, data: { dnsName: u.name, dnsNameFetchedAt: fetchedAt, dnsNameTtl: u.ttl } }),
+    );
+    for (const [ttl, ids] of restampByTtl) {
+      for (const chunk of chunkArray(ids, 1000)) {
+        try {
+          await prisma.asset.updateMany({ where: { id: { in: chunk } }, data: { dnsNameFetchedAt: fetchedAt, dnsNameTtl: ttl } });
+        } catch (err: any) {
+          syncLog("error", `DNS lookup: failed to record the fetch time on ${chunk.length} asset(s): ${err?.message || "Unknown error"}`);
+        }
+      }
     }
     if (dnsResolved > 0) {
       syncLog("info", `DNS lookup: resolved ${dnsResolved} of ${assetsNeedingDns.length} assets`);
