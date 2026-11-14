@@ -60,7 +60,10 @@ import type { GenericApiDiscoveryResult, GenericApiMappedRecord, GenericApiIdent
 import { listAssetTypes } from "../assetTypeService.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
-import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
+import { loadAssetsForSync, decommissionUnclaimedAssets, observedUnchanged, bumpSourcesSeen } from "./syncSteps.js";
+import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
+import { mapSettledWithConcurrency } from "../../utils/concurrency.js";
 
 const KIND = GENERIC_API_SOURCE_KIND;
 const MAC_SOURCE = "generic-api";
@@ -256,6 +259,9 @@ export async function syncGenericApiDevices(
   const { allAssets, assetById } = await loadAssetsForSync({
     department: true, description: true, purchaseOrder: true, warrantyExpiry: true, assetTag: true,
     coordSource: true, latitude: true, longitude: true,
+    // The pin columns, so an unchanged IP can be left out of the write
+    // (utils/assetWritePrune.ts treats a row without them as pinned).
+    ipOverride: true, ipBlankPinned: true, primaryAddressIp: true, ipSource: true,
   });
   const assetIdByTag = new Map<string, string>();
   for (const a of allAssets) if (a.assetTag) assetIdByTag.set(a.assetTag, a.id);
@@ -321,8 +327,14 @@ export async function syncGenericApiDevices(
   const mergeMacs = (existingMacs: unknown, macs: string[]) =>
     mergeObservedMacs(existingMacs, macs.map((mac) => ({ mac, source: MAC_SOURCE })), nowIso, { keepSource: true });
 
+  // Rows whose blob is unchanged but for syncedAt: bumped in one statement
+  // after the loop instead of an upsert each (efficiency audit).
+  const unchangedSources: Array<{ sourceKind: string; externalId: string; lastSeen: Date }> = [];
   const upsertSource = async (assetId: string, externalId: string, observed: Record<string, unknown>): Promise<void> => {
-    await prisma.assetSource.upsert({
+    const priorRow = (sourcesByAssetId.get(assetId) ?? []).find((s) => s.sourceKind === KIND && s.externalId === externalId);
+    if (priorRow && priorRow.integrationId === integrationId && priorRow.inferred === false && observedUnchanged(priorRow.observed, observed)) {
+      unchangedSources.push({ sourceKind: KIND, externalId, lastSeen: now });
+    } else await prisma.assetSource.upsert({
       where: { sourceKind_externalId: { sourceKind: KIND, externalId } },
       // lastSeen on the SOURCE row is "the feed listed it this run" — row
       // freshness for the projection, not Asset.lastSeen (rule 12).
@@ -333,6 +345,10 @@ export async function syncGenericApiDevices(
     list.push({ sourceKind: KIND, externalId, integrationId, inferred: false, observed, lastSeen: now });
     sourcesByAssetId.set(assetId, list);
   };
+
+  const prunedThisPass = new Set<string>();
+  const ipHistoryRefreshRows: Array<{ assetId: string; ip: string; source: string }> = [];
+  const pendingUpdates = new Map<string, { data: Record<string, unknown>; macs: MacJsonEntry[] | null; name: string }>();
 
   for (const r of result.records) {
     const externalId = genericApiExternalId(integrationId, r.identity);
@@ -403,9 +419,22 @@ export async function syncGenericApiDevices(
         if (typeof feed.data.assetTag === "string") assetIdByTag.set(feed.data.assetTag, existing.id);
         updateData.tags = mergeTags(existing, obsTags(prior), r.tags);
         clampAcquiredToLastSeen(updateData, existing);
-        await prisma.asset.update({ where: { id: existing.id }, data: updateData });
+        // Drop what the row already holds (first write to an asset this pass
+        // only — `existing` is not refreshed after a write), then queue the
+        // write: one flush after the loop, merged per asset in record order,
+        // instead of an awaited update + MAC reconcile per record.
+        if (!prunedThisPass.has(existing.id)) {
+          prunedThisPass.add(existing.id);
+          const { ipHistoryRefresh } = pruneUnchangedAssetFields(existing, updateData);
+          if (ipHistoryRefresh) ipHistoryRefreshRows.push({ assetId: existing.id, ...ipHistoryRefresh });
+        }
+        const queued = pendingUpdates.get(existing.id);
+        pendingUpdates.set(existing.id, {
+          data: { ...(queued?.data ?? {}), ...updateData },
+          macs: mergedMacs ?? queued?.macs ?? null,
+          name: displayName,
+        });
         logDiscoveryAssetUpdated(before, updateData, existing.id, displayName, { integrationName, integrationId, sourceKind: KIND, actor });
-        if (mergedMacs) await reconcileMacAddresses(existing.id, mergedMacs);
         assetByExternalId.set(externalId, existing);
         ownIdentityByAssetId.set(existing.id, r.identity);
         updated.push(displayName);
@@ -497,6 +526,30 @@ export async function syncGenericApiDevices(
       created.push(displayName);
     } catch (err: any) {
       syncLog("error", `Failed to create asset for "${displayName}": ${err.message || "Unknown error"}`);
+    }
+  }
+
+  // ── Flush the queued updates (before the sweep reads the source rows) ────
+  if (pendingUpdates.size > 0) {
+    const flush = [...pendingUpdates];
+    const results = await mapSettledWithConcurrency(flush, 25, async ([id, u]) => {
+      if (Object.keys(u.data).length > 0) await prisma.asset.update({ where: { id }, data: u.data });
+      if (u.macs) await reconcileMacAddresses(id, u.macs);
+    });
+    results.forEach((res, i) => {
+      if (res.status !== "rejected") return;
+      const name = flush[i]![1].name;
+      syncLog("error", `Failed to update asset for "${name}": ${(res.reason as Error)?.message || "Unknown error"}`);
+      const at = updated.indexOf(name);
+      if (at >= 0) updated.splice(at, 1);
+    });
+  }
+  if (ipHistoryRefreshRows.length > 0) await refreshIpHistoryLastSeen(ipHistoryRefreshRows);
+  if (unchangedSources.length > 0) {
+    try {
+      await bumpSourcesSeen(unchangedSources, now);
+    } catch (err: any) {
+      syncLog("error", `Source freshness refresh failed: ${err?.message || "Unknown error"}`);
     }
   }
 

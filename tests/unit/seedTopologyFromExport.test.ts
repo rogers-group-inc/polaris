@@ -62,7 +62,14 @@ vi.mock("../../src/db.js", () => {
   };
   const empty = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
   const prisma = new Proxy({} as any, {
-    get: (_t, k: string) => (k === "$queryRaw" ? async () => [] : models[k] ?? empty),
+    // fetchRecentSampleStats is one raw LATERAL query over asset_monitor_samples
+    // (ids as its one parameter): answer it from the seeded samples, newest 10 per asset.
+    get: (_t, k: string) => (k === "$queryRaw"
+      ? async (strings: TemplateStringsArray, ids?: string[]) =>
+          strings.join("?").includes("asset_monitor_samples") && Array.isArray(ids)
+            ? ids.flatMap((id) => db.samples.filter((s) => s.assetId === id).slice(0, 10).map((s) => ({ assetId: id, success: s.success })))
+            : []
+      : models[k] ?? empty),
   });
   return { prisma, prismaBase: prisma };
 });

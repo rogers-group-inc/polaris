@@ -358,7 +358,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Stale DHCP-reservation detection, alerting, and alert management (snooze, ignore) — including the lifecycle audit Events (`reservation.stale-settings.updated` / `reservation.stale.snoozed` / `reservation.stale.ignored` / `reservation.stale.unignored`), emitted in-service with the route passing `actor`.
 
-**Public API:** getStaleSettings, updateStaleSettings, listStaleReservations, snoozeReservation, setStaleIgnored, flagStaleReservations.
+**Public API:** getStaleSettings, updateStaleSettings, listStaleReservations, countStaleReservations, invalidateStaleReservationCount, snoozeReservation, setStaleIgnored, flagStaleReservations.
 
 **Used by:** src/api/routes/reservations.ts (list/snooze/ignore endpoints), src/jobs/flagStaleReservations.ts (flagStaleReservations every 6 hours).
 
@@ -376,6 +376,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Ignored rows stay suppressed regardless of threshold; detectionStartedAt persists across runs
 - flagStaleReservations emits one reservation.stale Event per fresh transition (staleNotifiedAt null → timestamp)
 - Discovery clears staleNotifiedAt on re-sighting (re-arms alert for future silence) — both the lease path (Phase 5) and the ARP path (Phase 7.6) clear staleNotifiedAt + staleSnoozedUntil
+
+- **The badge count is memoised (efficiency audit group 2):** `countStaleReservations()` — behind `GET /reservations/alerts/count`, polled every 30 s by the sidebar dot, the Events page and the widget from every tab — evaluates `listStaleReservations("active")` at most once per 30 s per process and shares an evaluation in flight; the count is not write-scoped, so one value serves every caller. `updateStaleSettings`, `snoozeReservation` and `setStaleIgnored` call `invalidateStaleReservationCount()`; a new operator mutation that changes the active list must too. Discovery-driven changes show within the TTL.
 
 **When changing this:**
 - Verify staleAfterDays threshold propagates to all callers (threshold=0 should disable all alerts)
@@ -405,6 +407,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Never pushes to FortiGate — writes go through `prisma.reservation.create` directly, not `reservationService.createReservation`.
 - All public functions are best-effort: they log at warn and never throw out of the public surface so a transient DB error can't break the asset write that called them.
 - Events emitted: `reservation.dns_resolved.created`, `reservation.dns_resolved.updated`, `reservation.dns_resolved.released` (info level).
+
+- **The periodic sweep skips settled assets** (efficiency audit group 3): `reconcileDnsResolvedForAllAssets` reads identities, the active system rows, every containing subnet (`buildIpContexts`) and the active rows at the assets' IPs once, and `assetsNeedingReconcile` hands to `reconcileDnsResolvedForAsset` only the assets that could create, update or release something — everything else is a provable no-op under the same rules. A change to what the per-asset reconcile decides MUST change `assetsNeedingReconcile` with it, or the sweep stops catching that drift; tests/integration/dnsResolvedReservation.test.ts makes drift behind the write hooks (raw SQL) to pin it.
 
 **When changing this:**
 - Adding a new authoritative `sourceType`? Add a `releaseDnsResolvedAt(subnetId, ip)` call in `discoveryEngine.ts` next to the new create, and (if it can be created from the manual UI) in `reservationService.createReservation`. The activeResMap exclusion already covers the discovery read path.

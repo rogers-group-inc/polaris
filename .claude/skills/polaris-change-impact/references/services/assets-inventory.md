@@ -227,13 +227,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/assetSystemTabService.ts
 
-**What it owns:** The asset details System-tab family's reads, moved out of `routes/assets/system.ts` (CQ-B062 slice 2): the System tab itself (latest telemetry, interfaces with tags / optics / alerts, storage, hardware sensors, reported + peer-inferred LLDP neighbours, wireless stations, physical entities, IPsec tunnels, AP radios, probe outages), the process list, the MAC table (VLAN fill, VLAN names, per-port configured VLANs) and the ARP table (ranges, retention, interface counts), each with its freshness pair, and the service inventory. The route keeps the gates and the query parsing.
+**What it owns:** The asset details System-tab family's reads, moved out of `routes/assets/system.ts` (CQ-B062 slice 2): the System tab itself (latest telemetry, interfaces with tags / optics / alerts, storage, hardware sensors, reported + peer-inferred LLDP neighbours, wireless stations, physical entities, IPsec tunnels, AP radios, probe outages), the process list, the MAC table (VLAN fill, VLAN names, per-port configured VLANs) and the ARP table (ranges, retention, interface counts), each with its freshness pair, the service inventory, and the Fibre Channel tab's read sources (`getAssetFibreChannel`: `getFibreChannelForAsset` plus `readBy` — per switch its effective `interfacesPolling` + tier and system-info cadence, the vCenter integration's discovery interval or the agent's system-info cadence for a host's HBA rows — and `pollIntervalSec`, the shortest). The route keeps the gates and the query parsing.
 
-**Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`.
+**Public API:** `getAssetSystemInfo(id)`, `getAssetProcesses(id)`, `getAssetMacTable(id)`, `getAssetArpTable(id, range)`, `getAssetServices(id)`, `getAssetFibreChannel(id)` (+ `FcReadSource`).
 
-**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), fibreChannelService (`getFcByInterface` — each interface's `fc`: an FC switch port's counters and logins, beside `AssetInterface.wwn`, rule 159a), utils/sfpOptics.
+**Cross-service deps:** sampleRetentionService (`getArpEntryRetentionDays`), monitoring/monitorSettings (`resolveCurrentStateIntervalSec`), vlanNameService, interfaceTagService, ipsecConnectionService, apRadioService, peerInferredLldpService, probeOutageService, notificationService (`activeAlertSummaryByAsset`), fibreChannelService (`getFcByInterface` — each interface's `fc`: an FC switch port's counters and logins, beside `AssetInterface.wwn`, rule 159a; `getFibreChannelForAsset` for the Fibre Channel tab), assetDetailReadService (`getEffectiveMonitorSettings` — one per FC switch the tab names, for its resolved method and tier), utils/sfpOptics.
 
-**Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services).
+**Used by:** `src/api/routes/assets/system.ts` (GET /:id/system-info, /:id/processes, /:id/mac-table, /:id/arp-table, /:id/services, /:id/fibre-channel).
 
 **Invariants:**
 - The ARP `current` view is the newest read only — rows within `ARP_CURRENT_TOLERANCE_MS` of the asset's max `lastSeen` — never every retained row; the "" interface sentinel leaves the API as null.
@@ -353,6 +353,8 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 
 - `previewTagFilter`'s `sample` names devices; `POST /server-settings/tags/preview-criteria` blanks it (`sampleHidden: true`) for callers without `assets:read` (rule 114(l)). Counts and the diff stay.
 
+- **`reconcileAllTags` shares its reads** (efficiency audit group 3): every tree-shaped tag is resolved through `deviceFilterService.resolveDeviceFilterAssetIdsMany` (one fleet read, eligibility = `tagAssetIsEligible`) and provenance is read once; `reconcileTag(tagId, precomputed)` takes the sets. A tag whose filter changed since the shared read (`conditionKey` mismatch) is resolved afresh; the legacy criteria shape keeps its prefiltered `resolveMatchingAssetIds`; a failed shared read falls back to the per-tag path. tests/integration/tagAssignment.test.ts pins the shared pass to the per-tag result.
+
 **When changing this:**
 - Adding a field to the CURRENT (tree) vocabulary is a change to `DEVICE_FILTER_FIELD_OPS` in `notificationTypes/scopeConditions.ts`, not here — see that service's entry; the tag surface picks it up for free through `GET /server-settings/tags/filter-schema`. Remember the asset-write hook's field list in `assets.ts`, which decides when a PUT re-runs `reconcileTagsForAsset`.
 - Adding a field to the LEGACY (flat) vocabulary: don't. It exists only to keep un-migrated rows matching. If you must, extend `STRING_FIELDS`/`ENUM_FIELDS` (+ domain validation), add the column to `CANDIDATE_SELECT`, keep `buildPrefilterWhere` a superset, AND teach `utils/criteriaToCondition.ts` to fold it — an unfoldable field pins every row carrying it on the legacy predicate forever.
@@ -424,6 +426,8 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 - Retention is Setting-backed (`retentionDays`, default 0 = keep forever); `getIpHistory()` filters on read, stored rows never auto-delete unless `pruneOldHistory()` is called.
 - `pruneOldHistory()` is a manual operation (not yet hooked to a background job); operator triggers via Server Settings → Maintenance → Prune old IP history.
 - Setting persists across app restarts; read-time filtering is applied client-side by `getIpHistory()` calls.
+
+- `refreshIpHistoryLastSeen(rows)` is db.ts `recordIpHistory`'s upsert for many (asset, ip, source) rows per statement (chunks of 1000, joined to `assets` so a deleted asset is skipped). It exists for the discovery writes that no longer stage an unchanged IP (utils/assetWritePrune.ts): their history must still advance. Keep its ON CONFLICT clause identical to `recordIpHistory`'s and `recordIpHistoryEntries`' — three writers, one semantics.
 
 **When changing this:**
 - If adding background prune job (jobs/pruneIpHistory.ts), ensure it respects the Setting key "assetIpHistorySettings".

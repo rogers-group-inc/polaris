@@ -11,8 +11,11 @@
  *   - resolve each row's channel + config (secrets live on the channel),
  *   - dispatch with bounded concurrency,
  *   - mark sent / failed (failed rows retry until MAX_ATTEMPTS),
- *   - a NULL channel (deleted/disabled) → permanent fail, EXCEPT api_call
- *     rows whose NULL channel is legitimate (normal retry path),
+ *   - a NULL (deleted) channel → permanent fail, EXCEPT api_call rows whose
+ *     NULL channel is legitimate (normal retry path); a DISABLED channel is
+ *     an ordinary failure that retries until MAX_ATTEMPTS, so re-enabling it
+ *     within those ticks still delivers (pinned in
+ *     notificationDeliveryService.test.ts),
  *   - prune dead push subscriptions (HTTP 410/404),
  *   - write ONE summary audit Event per non-empty drain.
  */
@@ -22,6 +25,7 @@ import { prisma } from "../db.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { logger } from "../utils/logger.js";
 import { notificationsPageUrl, pushDeepLinkUrl, ackUrlForEmail, ackUrlForPush, assetUrlForPush } from "../utils/notificationTemplate.js";
+import { isWidgetScopedAlert, widgetChartThresholdFromRule, type WidgetChartThreshold } from "./alertWidgetChartService.js";
 import { buildAlertCharts, chartTokensIn, substituteChartTokens, attachmentsFor, isStorageScopedAlert, isInterfaceRateAlert, storageThresholdFromTrigger, isMemoryForecastAlert, memoryForecastTargetFromRule, type ChartToken, type RenderedChart, type MemoryForecastTarget } from "./alertChartService.js";
 import { buildInterfaceLldpBlocks, interfaceTokensIn, substituteInterfaceTokens } from "./alertInterfaceService.js";
 import { buildTopProcessBlocks, processTokensIn, substituteProcessTokens } from "./alertProcessService.js";
@@ -146,6 +150,8 @@ interface RenderMemo {
   storageThreshold: Map<string, Promise<number | null>>;
   /** Per (rule, severity): the level a memory forecast chart counts down to. */
   memoryForecast: Map<string, Promise<MemoryForecastTarget | null>>;
+  /** Per (rule, severity): the line a custom widget value chart draws (rule 181). */
+  widgetThreshold: Map<string, Promise<WidgetChartThreshold | null>>;
   /** Keyed by notification AND dispatch: the recipient lines describe one
    *  fan-out, so the two email rows of a single fire share an entry while a
    *  reminder drained in the same pass gets its own. Both transports resolve
@@ -160,7 +166,7 @@ interface RenderMemo {
 }
 
 function newRenderMemo(): RenderMemo {
-  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), memoryForecast: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map(), pathGraph: new Map() };
+  return { charts: new Map(), lossWindow: new Map(), storageThreshold: new Map(), memoryForecast: new Map(), widgetThreshold: new Map(), recipients: new Map(), processes: new Map(), dependencyPath: new Map(), pathGraph: new Map() };
 }
 
 /** Memoized read-through: one build per (alert, exact chart set) per drain. */
@@ -237,6 +243,23 @@ async function memoryForecastChartTarget(ruleId: string | null, severity: string
   }
 }
 
+/**
+ * The line a custom widget VALUE alert's chart draws (rule 181): the band the
+ * alert is at, else the trigger's threshold. One indexed read per drain per
+ * (rule, severity), only for an alert that draws the widget chart; null on any
+ * failure, which draws no line.
+ */
+async function widgetChartThreshold(ruleId: string | null, severity: string): Promise<WidgetChartThreshold | null> {
+  if (!ruleId) return null;
+  try {
+    const rule = await prisma.notificationRule.findUnique({ where: { id: ruleId }, select: { trigger: true, severity: true, severityBands: true } });
+    return rule ? widgetChartThresholdFromRule({ trigger: rule.trigger, severity: rule.severity, severityBands: rule.severityBands as unknown as SeverityBand[] | null }, severity) : null;
+  } catch (err) {
+    logger.debug({ err: (err as Error)?.message, ruleId }, "widget chart threshold lookup failed — drawing without it");
+    return null;
+  }
+}
+
 function titleFor(n: DeliveryRow["notification"], meta?: Record<string, unknown>): string {
   const sev = severityFor(n, meta).toUpperCase();
   return n.assetHostname ? `[${sev}] ${n.assetHostname}` : `[${sev}] Polaris notification`;
@@ -300,6 +323,12 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
         ? await memoize(memo.memoryForecast, `${d.notification.ruleId ?? ""}|${d.notification.severity}`,
             () => memoryForecastChartTarget(d.notification.ruleId, d.notification.severity))
         : null;
+      // A custom widget VALUE alert's chart draws the threshold it fired on
+      // (rule 181); a level alert draws the widget's own levels instead.
+      const widgetThreshold = d.notification.metric === "customWidgetValue" && isWidgetScopedAlert(d.notification.metric) && (wanted.has("chart.widget") || wanted.has("chart.trigger"))
+        ? await memoize(memo.widgetThreshold, `${d.notification.ruleId ?? ""}|${d.notification.severity}`,
+            () => widgetChartThreshold(d.notification.ruleId, d.notification.severity))
+        : null;
       // A test alert has no asset and no telemetry — it is about an invented
       // device — so its charts are GENERATED. Same memo key shape, same
       // pruning afterwards: the operator is testing what the email looks like,
@@ -317,6 +346,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 lossWindowMs: null,
                 ruleThreshold,
                 memoryForecast,
+                widgetThreshold,
               }),
           )
         : assetId
@@ -338,6 +368,7 @@ async function emailMessageFor(d: DeliveryRow, meta: Record<string, unknown>, ur
                 metric: d.notification.metric,
                 ruleThreshold,
                 memoryForecast,
+                widgetThreshold,
                 // The loss chart follows the automation's own History window; only
                 // resolved when the body embeds one, and only meaningful there.
                 lossWindowMs: wanted.has("chart.probeLoss") || wanted.has("chart.trigger")

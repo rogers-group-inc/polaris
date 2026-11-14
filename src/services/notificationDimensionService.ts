@@ -39,6 +39,7 @@ import { loadScopeAssetIds } from "./notificationEngine.js";
 import { listStateProbes, listCachedProfiles } from "./manufacturerProfileService.js";
 import { genericApiWidgetId, type GenericApiConfig } from "./genericApiService.js";
 import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
+import { widgetLevelsOf, type WidgetLevels } from "../utils/widgetLevel.js";
 
 /** Lookback for "currently reported". Long enough to catch any realistic
  *  telemetry cadence (minutes; an hourly cadence still lands ≥3 samples),
@@ -540,6 +541,10 @@ export interface CustomWidgetCatalogEntry {
   name: string;
   /** The manufacturer profile or Generic API integration that defines it. */
   source: string;
+  /** Its own warning / critical levels (business rule 181), null when it sets neither. */
+  levels: WidgetLevels | null;
+  /** The unit its readings are in ("A", "%"), "" when it has none. */
+  unit: string;
 }
 
 /**
@@ -556,7 +561,11 @@ export async function listCustomWidgetCatalog(): Promise<CustomWidgetCatalogEntr
   for (const profile of listCachedProfiles()) {
     for (const w of profile.widgets) {
       if (w.widgetType === "state" || w.widgetType === "table") continue;
-      out.push({ id: w.id, name: w.name, source: profile.manufacturer });
+      const opts = (w.displayOptions ?? {}) as Record<string, unknown>;
+      out.push({
+        id: w.id, name: w.name, source: profile.manufacturer,
+        levels: widgetLevelsOf(opts), unit: typeof opts.unit === "string" ? opts.unit : "",
+      });
     }
   }
   const integrations = await prisma.integration.findMany({
@@ -568,7 +577,11 @@ export async function listCustomWidgetCatalog(): Promise<CustomWidgetCatalogEntr
     for (const q of queries) {
       for (const w of q.widgets ?? []) {
         if (w.type === "state") continue;
-        out.push({ id: genericApiWidgetId(intg.id, w.name), name: w.name, source: intg.name });
+        out.push({
+          id: genericApiWidgetId(intg.id, w.name), name: w.name, source: intg.name,
+          levels: widgetLevelsOf({ warningAt: w.warningAt, criticalAt: w.criticalAt, warningWhen: w.warningWhen }),
+          unit: w.unit ?? "",
+        });
       }
     }
   }

@@ -52,6 +52,15 @@ describe("discovery facts", () => {
     expect(["entraid", "activedirectory", "vcenter", "azurearc", "unraid", "truenas", "proxmox", "genericapi"].map(kind))
       .toEqual(Array(8).fill("assets"));
     expect(kind("llm")).toBeNull();
+    expect(kind("arcgis")).toBeNull();
+  });
+
+  it("names exactly the types with nothing to discover, for the scheduler and the autoDiscover force", async () => {
+    const { NON_DISCOVERY_TYPES, isNonDiscoveryType } = await import("../../src/services/integrationAdapters.js");
+    expect([...NON_DISCOVERY_TYPES].sort()).toEqual(["arcgis", "llm"]);
+    expect(isNonDiscoveryType("arcgis")).toBe(true);
+    expect(isNonDiscoveryType("fortigate")).toBe(false);
+    expect(isNonDiscoveryType("not-a-type")).toBe(false);
   });
 
   // The hand-written triggerDiscovery checks, case for case.

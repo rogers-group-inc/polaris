@@ -12,10 +12,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const h = vi.hoisted(() => ({
   stored: undefined as unknown,
   events: [] as Array<Record<string, any>>,
+  integrations: [] as Array<{ id: string; name: string; type: string; enabled: boolean; config: Record<string, unknown> }>,
 }));
 
 vi.mock("../../src/db.js", () => ({
   prisma: {
+    integration: {
+      findMany: vi.fn(async ({ where }: { where: { type: string; enabled?: boolean; id?: { not: string } } }) =>
+        h.integrations.filter((i) => i.type === where.type
+          && (where.enabled === undefined || i.enabled === where.enabled)
+          && (!where.id || i.id !== where.id.not))),
+    },
     setting: {
       findUnique: vi.fn(async () => (h.stored === undefined ? null : { value: h.stored })),
       upsert: vi.fn(async ({ create }: { create: { value: unknown } }) => { h.stored = create.value; return create; }),
@@ -50,6 +57,7 @@ function imageResponse(type = "image/jpeg", body = "JPEGDATA", status = 200): Re
 beforeEach(() => {
   h.stored = undefined;
   h.events = [];
+  h.integrations = [];
   _resetSatelliteForTests();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -96,7 +104,7 @@ describe("satellite settings", () => {
     expect(view).not.toHaveProperty("apiToken");
     expect(view.apiTokenSet).toBe(true);
     expect((await getSatelliteSettings()).apiTokenSet).toBe(true);
-    expect(await getSatelliteStatus()).toEqual({ available: true, attribution: "Imagery © Example", maxNativeZoom: 19 });
+    expect(await getSatelliteStatus()).toEqual({ available: true, attribution: "Imagery © Example", maxNativeZoom: 19, source: "custom" });
     const ev = h.events.find((e) => e.action === "setting.satellite_updated")!;
     expect(ev.message).toMatch(/tiles\.example\.com/);
     expect(JSON.stringify(ev)).not.toContain("s3cret");
@@ -159,5 +167,84 @@ describe("satellite tile proxy", () => {
     const r = await testSatelliteSettings({ enabled: false, urlTemplate: "https://other.example.com/{z}/{x}/{y}?k={key}", attribution: "", maxNativeZoom: 19 });
     expect(r).toEqual({ ok: true, contentType: "image/png", bytes: 3 });
     expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe("https://other.example.com/1/0/0?k=s3cret");
+  });
+});
+
+describe("the ArcGIS home (rule 183)", () => {
+  const arcgisRow = (config: Record<string, unknown>, extra: Partial<{ id: string; name: string; enabled: boolean }> = {}) => ({
+    id: extra.id ?? "ag-1", name: extra.name ?? "Corporate GIS", type: "arcgis", enabled: extra.enabled ?? true,
+    config: { portalUrl: "https://www.arcgis.com", authMode: "none", basemapEnabled: true, basemapSource: "world_imagery", basemapMaxZoom: 19, ...config },
+  });
+
+  it("wins over the Customization setting, and says so on the settings view", async () => {
+    await saveSatelliteSettings(on, "admin");
+    h.integrations = [arcgisRow({})];
+    _resetSatelliteForTests();
+    h.stored = { ...on };
+    const st = await getSatelliteStatus();
+    expect(st).toMatchObject({ available: true, source: "arcgis", maxNativeZoom: 19 });
+    expect(st.attribution).toMatch(/Esri/);
+    expect((await getSatelliteSettings()).overriddenBy).toBe("Corporate GIS");
+
+    const fetchMock = vi.fn(async () => imageResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    await getSatelliteTile(3, 1, 2);
+    // ArcGIS tiles are z / y / x, and no token goes to the public host.
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0])
+      .toBe("https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/3/2/1");
+  });
+
+  it("falls back to the setting when the integration is disabled or its basemap is off", async () => {
+    await saveSatelliteSettings(on, "admin");
+    h.integrations = [arcgisRow({}, { enabled: false }), arcgisRow({ basemapEnabled: false }, { id: "ag-2" })];
+    _resetSatelliteForTests();
+    h.stored = { ...on };
+    expect(await getSatelliteStatus()).toMatchObject({ available: true, source: "custom" });
+    expect((await getSatelliteSettings()).overriddenBy).toBeNull();
+  });
+
+  it("sends an API key to the keyed World Imagery host, and an app token to a portal service", async () => {
+    h.integrations = [arcgisRow({ authMode: "apiKey", apiToken: "AAPK1" })];
+    const fetchMock = vi.fn(async () => imageResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    await getSatelliteTile(2, 1, 1);
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0])
+      .toBe("https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/2/1/1?token=AAPK1");
+
+    const { _setRequestImplForTests } = await import("../../src/services/arcgisService.js");
+    _setRequestImplForTests(async () => ({ status: 200, body: JSON.stringify({ access_token: "app-tok", expires_in: 7200 }) }));
+    try {
+      h.integrations = [arcgisRow({
+        authMode: "appCredentials", clientId: "c", clientSecret: "s",
+        basemapSource: "service", imageryUrl: "https://tiles.example.com/arcgis/rest/services/Site_2026/MapServer",
+        basemapAttribution: "Site imagery © Example", basemapMaxZoom: 21,
+      })];
+      _resetSatelliteForTests();
+      expect(await getSatelliteStatus()).toMatchObject({ source: "arcgis", attribution: "Site imagery © Example", maxNativeZoom: 21 });
+      await getSatelliteTile(20, 5, 7);
+      expect((fetchMock.mock.calls[1] as unknown as [string])[0])
+        .toBe("https://tiles.example.com/arcgis/rest/services/Site_2026/MapServer/tile/20/7/5?token=app-tok");
+    } finally {
+      _setRequestImplForTests(null);
+    }
+  });
+
+  it("names the one integration that already supplies imagery, never the one being saved", async () => {
+    const { arcgisBasemapOwner } = await import("../../src/services/satelliteTileService.js");
+    h.integrations = [arcgisRow({}, { id: "ag-1", name: "A" }), arcgisRow({ basemapEnabled: false }, { id: "ag-2", name: "B" })];
+    expect(await arcgisBasemapOwner()).toEqual({ id: "ag-1", name: "A" });
+    expect(await arcgisBasemapOwner("ag-1")).toBeNull();
+  });
+
+  it("Test fetches one tile; a 404 still proves a regional service answers", async () => {
+    const { testArcgisBasemap } = await import("../../src/services/satelliteTileService.js");
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("image/jpeg", "J".repeat(2048))));
+    expect(await testArcgisBasemap({ authMode: "none", basemapEnabled: true })).toMatchObject({ ok: true, message: expect.stringMatching(/2 KB/) });
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("text/plain", "no", 404)));
+    expect((await testArcgisBasemap({ authMode: "none", basemapEnabled: true })).ok).toBe(true);
+    vi.stubGlobal("fetch", vi.fn(async () => imageResponse("text/plain", "denied", 403)));
+    expect((await testArcgisBasemap({ authMode: "none", basemapEnabled: true })).ok).toBe(false);
+    expect(await testArcgisBasemap({ basemapSource: "service", imageryUrl: "https://x.example.com/foo" }))
+      .toMatchObject({ ok: false, message: expect.stringMatching(/MapServer or \/ImageServer/) });
   });
 });

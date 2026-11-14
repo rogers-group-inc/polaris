@@ -589,12 +589,14 @@ in one view never moves them in another.
 the column under the tick:
 
 - **Background** (the map icon): **OpenStreetMap** or **Upload image** (PNG,
-  JPEG or WebP, up to 15 MB). On OpenStreetMap the map opens zoomed in on the
+  JPEG or WebP, up to 20 MB). On OpenStreetMap the map opens zoomed in on the
   site; pan and zoom to frame it, and the view you leave edit mode on is saved
   with the view. An image is shown at any resolution, scaled to fit. Switching
   between the two clears the polygons and placements drawn on the old one.
 - **Map | Satellite** (under the zoom buttons, OpenStreetMap only): shown when
-  an administrator has set up [Satellite imagery](Server-Settings#satellite-imagery).
+  an administrator has set up satellite imagery — on an [ArcGIS integration](Integration-ArcGIS)'s
+  **Basemap** tab, or under [Satellite imagery](Server-Settings#satellite-imagery). An ArcGIS
+  integration's imagery wins while it is on ([rule 183](Business-Rules#rule-183)).
   While you are viewing, switching is just a look; in edit mode the choice is
   saved with the view. Polygons and placements stay where they are, since both
   layers use the same coordinates.
@@ -602,6 +604,49 @@ the column under the tick:
   site's descriptions already name, or a new group inside one), then click to
   add points and click the first point to close it. Click a polygon to
   reshape it, change its group or delete it.
+- **Draw pole run** (needs the **Cable Runs** permission, [rule 184](Business-Rules#rule-184)):
+  draw a fiber or ethernet run along electric or telephone poles — click each
+  pole, double-click the last one to finish. See [Cable runs](#cable-runs) below.
+
+#### Cable runs
+
+Cable runs are the physical fiber and ethernet routes at a site, drawn over
+the map or satellite imagery (never over an uploaded floor plan). They belong
+to the **site**, so every Topology view of it shows them, and changing a
+view's mode never removes them.
+
+| Kind | Colour | How it gets on the map |
+|---|---|---|
+| **Electric pole** | orange | drawn by hand; each bend is a pole |
+| **Telephone pole** | green | drawn by hand; each bend is a pole |
+| **Trench** | blue | imported from a survey file (coming soon); its points cannot be moved on the map |
+
+Fiber is a solid line, ethernet a dashed one; the legend in the bottom-left
+corner names every colour and line style. Click a run to open its panel —
+name, fiber or ethernet, which poles, length, pole count and notes, and, when
+an [ArcGIS integration](Integration-ArcGIS) writes runs to your ArcGIS
+organization, whether it has been sent. While editing, drag the white
+handles to move a pole, or **Delete run**; the Delete key also removes the
+selected run. Runs are saved with the view (the tick or **Save**), undone with
+the rest of the edit, and every change is recorded as an Event.
+
+**Routing a connection through a run.** While editing, press a
+connection between two devices on the map and drag it onto a run: the run
+lights up and a dashed line previews the route. Let go and the connection
+is drawn through the run — from each device to the nearest point on the
+run, along it, and across to the next run if you add another. Moving a
+device or a pole re-routes it. A routed connection shows a round handle on
+each run it rides: drag it onto a different run to swap, or off the run
+(or press Delete) to take the connection off it. A run you have just drawn
+must be saved before a connection can ride it. The run's panel lists the
+connections on it. Which connections ride a run stays in Polaris — it is
+not sent to ArcGIS — so it needs only Device Map **Read-Write**, like
+any other layout change.
+
+Seeing runs needs **Read** on **Cable Runs**; drawing them needs
+**Read-Write** (sites you added or that carry your tags) or **Full Read-Write**
+(any site). Device Map rights alone do neither, because runs are written to
+another system. Only administrators have Cable Runs by default.
 
 The details pane's **Device List** names every device of a shown type, with a
 filter box; it shows about five rows and scrolls past that. A device on the
@@ -685,7 +730,9 @@ an optional name such as Basement; right-click the floor number to rename or
 delete it.
 
 All floors are drawn together. The floor you're on is at full strength, the floor
-above it at 10 % and the one above that at 2 %; floors below are hidden. Floors
+above it at 10 % and the one above that at 2 %; floors below are hidden. The ground
+map (or satellite, or site plan) is part of floor 0, so on floor −1 it fades to 10 % and
+grows with floor 0's devices. Floors
 above are drawn 25 % larger per floor and floors below 25 % smaller, scaled about
 the middle of the screen (the small crosshair), so as you pan, the floors above
 move a little faster than the ground. Changing floors fades and scales them
@@ -720,6 +767,35 @@ its speed and the interface details. In edit mode:
 
 Bends are saved with the floor, on Save or the tick like everything else, and
 move with the floor's plan when you adjust it.
+
+**A floor plan can be a CAD drawing.** On a floor, the map button also offers **Import CAD
+drawing (DXF)**. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
+level); DWG files are not read. The import dialog shows:
+
+- a preview of the drawing;
+- its **units**, read from the file (change them only if the drawing says otherwise);
+- its **layers** with how many shapes each holds. Untick the title block, border and
+  anything else you don't want on the map; layers that look like sheet furniture start
+  unticked. Only the ticked layers are kept, and the DXF file itself is not stored.
+
+Hatching, dimensions and 3D objects are not drawn; the dialog lists what was skipped.
+
+Then choose how to place it:
+
+- **Use the drawing's location** — offered when the drawing carries its geographic location
+  in longitude and latitude. It lands in place, north up, at its own scale.
+- **Line up with** another floor — offered for every floor that already has a CAD drawing.
+  It uses that floor's placement, which is right when both drawings share coordinates, as
+  the levels of one mine survey do; the dialog shows how much the two drawings overlap.
+- **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
+- **Place with two points** — click a place you can find on both the drawing and the map
+  (a portal, a shaft), then the same place on the map, and repeat for a second place as far
+  away as you can. Satellite makes the map side easier. Polaris works out where the drawing
+  goes and checks its scale against the drawing's own units ("your points make one unit
+  1.003 ft, 0.3 % off"); a big difference usually means a point was clicked in the wrong
+  place. **Done** keeps it, **Start over** or **Cancel** (or Esc) don't. The map button's
+  **Place with two points** does it again later, and **Adjust floor plan** still works for
+  fine-tuning.
 
 A device is on one floor at a time: the Device List says which, and clicking it
 takes you there. A device placed on a floor gets that floor's number as its `f:`

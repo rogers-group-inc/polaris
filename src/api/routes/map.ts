@@ -27,8 +27,18 @@
  *   PUT    /map/sites/:id/topology/views/:viewId — update a view (a mode change resets it, rule 149)
  *   DELETE /map/sites/:id/topology/views/:viewId — delete a view
  *   POST   /map/sites/:id/topology/views/:viewId/background — upload a background image
+ *   POST   /map/sites/:id/topology/views/:viewId/cad — read a DXF (no `layers`) or import it as a floor plan (rule 182)
  *   POST   /map/sites/:id/topology/location-codes — rewrite descriptions from
  *          polygon placements (rule 148; assets=write + the assets write scope, not deviceMap)
+ *
+ * Cable runs (rule 184) ride their OWN key, never deviceMap — a run is written
+ * one way to an ArcGIS layer:
+ *   GET /map/sites/:id/cable-runs — the site's runs (cableRuns=read) + canEditRuns
+ *   PUT /map/sites/:id/cable-runs — one edit session's upserts + deletes
+ *          (cableRuns=write + the cableRuns write scope on the site)
+ *   PUT /map/sites/:id/cable-run-links — which runs some device links are
+ *          drawn through (rule 184(a)): Polaris-only layout, so the view gate
+ *          (deviceMap=write + the deviceMap write scope), not cableRuns
  *
  * Coordinates and topology metadata are populated by the FortiManager / FortiGate
  * discovery pipelines (see fortimanagerService.ts step 3d.5/3d.6 and
@@ -43,6 +53,8 @@ import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { buildSiteTopology } from "../../services/topologyGraphService.js";
 import { listMapSites, getSiteLayoutOwner, searchSiteEndpoints } from "../../services/mapSitesService.js";
+import { kickWriteBack } from "../../services/arcgisWriteBackService.js";
+import { listRuns, applyRunEdits, listRunLinks, applyRunLinkEdits, MAX_RUNS_PER_LINK, CABLE_MEDIA, CABLE_PLACEMENTS } from "../../services/cableRunService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
 import {
   saveLayout,
@@ -60,6 +72,9 @@ import {
   deleteView,
   describeModeChangeLoss,
   saveBackgroundImage,
+  analyzeCadDrawing,
+  saveCadDrawing,
+  MAX_CAD_FILE_BYTES,
   getBackgroundImage,
   sanitizeLocationCodeChanges,
   applyLocationCodeChanges,
@@ -603,6 +618,46 @@ router.post("/sites/:id/topology/views/:viewId/background", ...viewWriteGate, (r
   }
 });
 
+// Rule 182: a DXF CAD drawing as a floor plan. Without `layers` the file is
+// only read (the import dialog's units, layers and preview); with them it is
+// drawn and stored like an uploaded image. The DXF itself is never kept.
+const cadUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_CAD_FILE_BYTES, files: 1 } });
+router.post("/sites/:id/topology/views/:viewId/cad", ...viewWriteGate, (req, res, next) => {
+  cadUpload.single("file")(req, res, (err: unknown) => {
+    const code = (err as { code?: string } | undefined)?.code;
+    if (code === "LIMIT_FILE_SIZE") return next(new AppError(413, `CAD drawings are limited to ${MAX_CAD_FILE_BYTES / (1024 * 1024)} MB`));
+    if (err) return next(err);
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const viewId = req.params.viewId as string;
+    if (!req.file) throw new AppError(400, "No drawing uploaded (form field \"file\")");
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.layers === undefined) {
+      res.json(await analyzeCadDrawing(siteId, viewId, req.file.buffer));
+      return;
+    }
+    let layers: unknown;
+    try { layers = JSON.parse(String(body.layers)); } catch { throw new AppError(400, "layers must be a JSON list of layer names"); }
+    const img = await saveCadDrawing(siteId, viewId, req.file.buffer, {
+      fileName: req.file.originalname, layers, units: body.units,
+    }, req.session?.username ?? null);
+    logEvent({
+      action: "map.topology.cad_imported",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: req.session?.username,
+      message: `CAD drawing ${img.cad.file} imported to a topology view (${img.cad.layers.length} layer${img.cad.layers.length === 1 ? "" : "s"})`,
+      details: { viewId: img.viewId, imageId: img.id, file: img.cad.file, layers: img.cad.layers.length, units: img.cad.units.name, size: img.size },
+    });
+    res.status(201).json(img);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Authenticated only (the /map mount's deviceMap=read floor) — never the
 // unauthenticated /uploads static mount. An image id is immutable, so the
 // browser may cache it privately.
@@ -613,6 +668,9 @@ router.get("/sites/:id/topology/background/:imageId", async (req, res, next) => 
     res.setHeader("Content-Length", String(img.data.length));
     res.setHeader("Cache-Control", "private, max-age=86400, immutable");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    // An SVG (a CAD drawing, rule 182) is Polaris's own markup, but opened on
+    // its own it must still run nothing.
+    if (img.mimeType === "image/svg+xml") res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
     res.send(img.data);
   } catch (err) {
     next(err);
@@ -632,9 +690,10 @@ router.get("/assets/:id/region-views", async (req, res, next) => {
   }
 });
 
-// The optional satellite basemap (Server Settings → Customization). Status is
-// all a viewer learns — never the provider URL or key; the tiles come back
-// through Polaris so the CSP keeps its one tile host.
+// The optional satellite basemap — an ArcGIS integration's when its basemap is
+// on, else Server Settings → Customization (rule 183). Status is all a viewer
+// learns — never the provider URL or key; the tiles come back through Polaris
+// so the CSP keeps its one tile host.
 router.get("/satellite", async (_req, res, next) => {
   try {
     res.json(await getSatelliteStatus());
@@ -677,6 +736,67 @@ router.post("/sites/:id/topology/location-codes", requirePermission("assets", "w
       inScope: (rec) => inWriteScope(scope, rec),
     });
     res.json({ results });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Cable runs (rule 184) ───────────────────────────────────────────────
+// Their own key: a run is written one way to an ArcGIS layer, so drawing one
+// is a grant an admin gives, never a rung of deviceMap. Schemas are shapes
+// only; cableRunService validates the points and the trench rule.
+const CableRunInputSchema = z.object({
+  id:        z.string().uuid().optional(),
+  name:      z.string().max(120).optional(),
+  medium:    z.enum(CABLE_MEDIA),
+  placement: z.enum(CABLE_PLACEMENTS),
+  points:    z.array(z.array(z.number()).max(3)).max(5000),
+  notes:     z.string().max(2000).optional(),
+});
+const CableRunEditsSchema = z.object({
+  upserts: z.array(CableRunInputSchema).max(500).optional(),
+  deletes: z.array(z.string().uuid()).max(500).optional(),
+});
+
+router.get("/sites/:id/cable-runs", requirePermission("cableRuns", "read"), async (req, res, next) => {
+  try {
+    const siteId = req.params.id as string;
+    const [runs, links, site] = await Promise.all([listRuns(siteId), listRunLinks(siteId), getSiteLayoutOwner(siteId)]);
+    // Whether THIS caller may edit the site's runs rides along (rule 141 (e)).
+    const canEditRuns = site ? inWriteScope(await resolveWriteScope(req, "cableRuns"), site) : false;
+    res.json({ runs, links, canEditRuns });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put(
+  "/sites/:id/cable-runs",
+  requirePermission("cableRuns", "write"),
+  scopeAssetParam("cableRuns", "edit cable runs for sites"),
+  async (req, res, next) => {
+    try {
+      const body = CableRunEditsSchema.parse(req.body);
+      const runs = await applyRunEdits(req.params.id as string, body, req.session?.username ?? "unknown");
+      // Rule 185: push the saved runs now rather than on the next tick.
+      kickWriteBack();
+      res.json({ runs });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Rule 184(a): routing a device link through runs is a layout change that
+// stays in Polaris (never written to ArcGIS), so it is the view gate's.
+const CableRunLinkEditsSchema = z.object({
+  links: z.record(z.string().max(500), z.array(z.string().uuid()).max(MAX_RUNS_PER_LINK)),
+});
+
+router.put("/sites/:id/cable-run-links", ...viewWriteGate, async (req, res, next) => {
+  try {
+    const { links } = CableRunLinkEditsSchema.parse(req.body);
+    res.json({ links: await applyRunLinkEdits(req.params.id as string, links, req.session?.username ?? "unknown") });
   } catch (err) {
     next(err);
   }

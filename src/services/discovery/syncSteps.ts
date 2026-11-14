@@ -32,6 +32,7 @@ import { logEvent } from "../eventLogService.js";
 import { releaseAssetsForDecommission } from "../maintenanceScheduleService.js";
 import { ENRICHMENT_SOURCE_KINDS } from "../../utils/assetProjection.js";
 import { MAC_ROW_SELECT, shapeMacRows } from "../../utils/macAddresses.js";
+import { jsonEqual } from "../../utils/jsonEqual.js";
 
 const SYNC_ASSET_SELECT = {
   id: true, hostname: true, hostnameOverride: true, assetType: true, status: true,
@@ -52,6 +53,52 @@ export async function loadAssetsForSync(
   const rows = await prisma.asset.findMany({ select: { ...SYNC_ASSET_SELECT, ...extra } });
   const allAssets = rows.map((a: any) => ({ ...a, macAddresses: shapeMacRows(a.macAddressRows) }));
   return { allAssets, assetById: new Map<string, any>(allAssets.map((a) => [a.id, a])) };
+}
+
+/**
+ * Does a source row's stored `observed` blob say what this run's does, apart
+ * from the per-run `syncedAt` stamp? Then the row needs only its freshness
+ * bumped (bumpSourcesSeen), not an upsert. Key order does not count.
+ */
+export function observedUnchanged(prior: unknown, next: Record<string, unknown>): boolean {
+  if (!prior || typeof prior !== "object" || Array.isArray(prior)) return false;
+  const { syncedAt: _a, ...p } = prior as Record<string, unknown>;
+  const { syncedAt: _b, ...n } = next;
+  return jsonEqual(p, n);
+}
+
+/**
+ * Freshness for source rows whose content did not change: lastSeen (per row),
+ * syncedAt, and the `syncedAt` inside the blob when it carries one — what the
+ * skipped upsert would have written. One UPDATE … FROM (VALUES …) per 1000
+ * rows, keyed by (sourceKind, externalId). Best-effort: a failure is logged by
+ * the caller's syncLog and costs only freshness.
+ */
+export async function bumpSourcesSeen(
+  rows: ReadonlyArray<{ sourceKind: string; externalId: string; lastSeen: Date }>,
+  syncedAt: Date,
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += 1000) {
+    const chunk = rows.slice(i, i + 1000);
+    const params: unknown[] = [syncedAt.toISOString()];
+    const groups = chunk.map((r) => {
+      const k = params.push(r.sourceKind);
+      const e = params.push(r.externalId);
+      const l = params.push(r.lastSeen.toISOString());
+      return `($${k}::text, $${e}::text, $${l}::timestamp)`;
+    });
+    await prisma.$executeRawUnsafe(
+      `UPDATE "asset_sources" s
+          SET "lastSeen" = v.ls,
+              "syncedAt" = $1::timestamp,
+              "observed" = CASE WHEN jsonb_typeof(s."observed"::jsonb) = 'object' AND s."observed"::jsonb ? 'syncedAt'
+                                THEN jsonb_set(s."observed"::jsonb, '{syncedAt}', to_jsonb($1::text))
+                                ELSE s."observed" END
+         FROM (VALUES ${groups.join(", ")}) AS v(kind, ext, ls)
+        WHERE s."sourceKind" = v.kind AND s."externalId" = v.ext`,
+      ...params,
+    );
+  }
 }
 
 export interface DecommissionUnclaimedOptions {

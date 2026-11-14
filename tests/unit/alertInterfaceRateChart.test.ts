@@ -4,8 +4,11 @@
  *
  * Pinned:
  *  - an interface error-rate or FC counter alert leads with `{chart.interface}`
- *    through `{chart.trigger}`, keeps the device charts, and the token renders
- *    away on every other alert and on one with no port;
+ *    through `{chart.trigger}`, follows it with the port's traffic in and out,
+ *    and draws none of the device charts; the three tokens render away on
+ *    every other alert, and an alert with no port keeps the device charts;
+ *  - the traffic series is bits per second, a cleared or wrapped counter
+ *    skipped, each direction paired on its own readings;
  *  - the series is the rate the engine compared: per second for the error
  *    rates, per minute for FC, a cleared counter skipped, FC rows without a
  *    reading skipped rather than paired;
@@ -20,27 +23,41 @@ vi.mock("../../src/db.js", () => ({ prisma: {} }));
 import {
   chartTokenForMetric,
   chartTokensForAlert,
+  bitsDisplayScale,
   interfaceRatePoints,
+  interfaceTrafficPoints,
   isInterfaceRateAlert,
   storageThresholdFromTrigger,
   type ChartToken,
 } from "../../src/services/alertChartService.js";
 import { renderInterfaceFcLogins } from "../../src/services/alertInterfaceService.js";
 
-const DEFAULT: ChartToken[] = ["chart.trigger", "chart.sensor", "chart.probeLoss", "chart.storage", "chart.cpu", "chart.memory", "chart.responseTime"];
+const DEFAULT: ChartToken[] = [
+  "chart.trigger", "chart.sensor", "chart.probeLoss", "chart.storage",
+  "chart.interface", "chart.interfaceIn", "chart.interfaceOut",
+  "chart.cpu", "chart.memory", "chart.responseTime",
+];
 const has = (ratePort: boolean) => ({ port: false, sensor: false, mount: false, ratePort });
 const at = (m: number) => new Date(Date.UTC(2026, 10, 12, 14, m));
 
 describe("which charts an interface rate alert draws", () => {
-  it("leads with the port chart and keeps the device charts", () => {
+  it("leads with the port chart, adds its traffic, and drops the device charts", () => {
     for (const m of ["ifInErrorRate", "ifOutErrorRate", "fcCrcErrorRate", "fcLinkFailureRate", "fcSyncLossRate", "fcSignalLossRate", "fcInvalidTxWordRate"]) {
       expect(chartTokenForMetric(m)).toBe("chart.interface");
       expect(isInterfaceRateAlert(m)).toBe(true);
       const w = chartTokensForAlert(DEFAULT, m, has(true));
-      expect(w.has("chart.interface")).toBe(true);
-      expect(w.has("chart.cpu")).toBe(true);
-      expect(w.has("chart.memory")).toBe(true);
+      expect([...w].sort()).toEqual(["chart.interface", "chart.interfaceIn", "chart.interfaceOut"]);
     }
+  });
+
+  it("keeps the device charts on a rate alert with no port, and on a throughput alert", () => {
+    const noPort = chartTokensForAlert(DEFAULT, "ifInErrorRate", has(false));
+    expect(noPort.has("chart.cpu")).toBe(true);
+    expect(noPort.has("chart.interfaceIn")).toBe(false);
+    const bps = chartTokensForAlert(DEFAULT, "ifInBps", has(true));
+    expect(bps.has("chart.cpu")).toBe(true);
+    expect(bps.has("chart.interfaceIn")).toBe(false);
+    expect(bps.has("chart.interfaceOut")).toBe(false);
   });
 
   it("draws no port chart without a port, and none on any other alert", () => {
@@ -53,6 +70,26 @@ describe("which charts an interface rate alert draws", () => {
     expect(storageThresholdFromTrigger({ type: "asset_metric", metric: "fcCrcErrorRate", threshold: 5 })).toBe(5);
     expect(storageThresholdFromTrigger({ type: "asset_metric", metric: "ifInErrorRate", threshold: 0.5 })).toBe(0.5);
     expect(storageThresholdFromTrigger({ type: "asset_metric", metric: "cpuPct", threshold: 90 })).toBeNull();
+  });
+});
+
+describe("interfaceTrafficPoints", () => {
+  it("is bits per second each way, a cleared counter skipped, each direction on its own readings", () => {
+    const t = interfaceTrafficPoints([
+      { timestamp: at(0), inOctets: 0n, outOctets: 1000n },
+      { timestamp: at(1), inOctets: 7_500_000n, outOctets: null },
+      { timestamp: at(2), inOctets: 100n, outOctets: 1000n + 15_000n },  // in cleared
+      { timestamp: at(3), inOctets: 750_100n, outOctets: 1000n + 22_500n },
+    ]);
+    expect(t.in.map((p) => p.v)).toEqual([1_000_000, 100_000]);
+    // out pairs minute 0 with minute 2 (the null is skipped, not a zero).
+    expect(t.out.map((p) => p.v)).toEqual([1000, 1000]);
+  });
+
+  it("scales a reading to the unit that fits", () => {
+    expect(bitsDisplayScale(950)).toEqual({ divisor: 1, unit: " bps" });
+    expect(bitsDisplayScale(2_400_000_000)).toEqual({ divisor: 1e9, unit: " Gbps" });
+    expect(bitsDisplayScale(0)).toEqual({ divisor: 1, unit: " bps" });
   });
 });
 

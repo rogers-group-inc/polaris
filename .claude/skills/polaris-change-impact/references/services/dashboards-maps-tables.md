@@ -37,6 +37,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **The rename's reach does NOT end at this service.** `applyRename` rewrites asset tags, subnet tags and the `Tag` registry; the RBAC scope columns (`User`/`Role`/`GroupMapping.regionTags`) are rewritten by `regionScopeService.renameRegionInPrincipalScopes`, called from the route beside `applyRename`. It lives there, not here, because jobs import this service and have no business pulling in group-mapping resolution. A new rename path must call both, or it revokes every scoped operator's region in silence. **The route runs the scope half FIRST and guards the two independently**: `updateRegion` has already committed the renamed blob by then (its own locked transaction), so both halves run past the point of no return, and a throw in either used to skip the other and return before any Event was written. Scope goes first because it is a handful of rows against the tag rotation's thousands and it is the half whose failure is silent; whichever half fails, the other still runs, an `error`-level `region.rename_incomplete` Event names exactly what is stranded, and the error is rethrown so the operator still sees a failure. A new rename path must reproduce that shape, not just the two calls.
 - Subnet region tags obey the SAME provenance-bounded contract as asset tags, and `Subnet.tags` has no other system writer (`tagAssignmentService` targets assets only; `subnet` is a criteria FIELD there, not a target) — an operator editing a network in the IPAM form can drop the inherited tag, and the next reconcile re-adds it.
 
+- **One fleet read per reconcile pass** (efficiency audit group 3): `computeMembership` reads through a `RegionMembershipSnapshot` (firewalls, switch / AP topology, gate subnets, IP assets — each at most once, a failed read dropped so the next region retries); `reconcileMapRegions` shares one across all regions, a lone `applyOneRegion` takes a fresh one. Membership must keep reading only what a pass never writes, or the snapshot goes stale mid-pass. Provenance is written only for members it does not already cover; the tag is still re-applied to every member.
+
 **When changing this:**
 - If the tag prefix or category constants change, also update CLAUDE.md "Map Regions" section + the assets edit modal's tag picker label conventions.
 - Membership resolves each in-polygon firewall to its `controllerIdentityKeys` (serial + `fortinetTopology.deviceName` + hostname, `utils/fortinetParentKey.ts`) and matches infra children on `controllerSerial` first, then `controllerFortigate` against any of those keys. It previously compared `controllerFortigate` to the hostname ALONE — which is the one key that is NOT it, since children stamp FortiManager's device NAME — so on installs where the two differ NO switch/AP inherited its gate's region. The same keys feed the `Subnet.fortigateDevice` lookup for subnet propagation (that column also holds the device name, so the hostname-only comparison meant no server/workstation inherited a region either). If discovery ever stops setting those fields, the cascade silently breaks.
@@ -235,6 +237,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Read-only. The per-caller `canEditLayout` (rule 141 (e)) is judged in the ROUTE — it needs the request's write scope — on the `createdBy` / `tags` each site row carries; the route spreads it FIRST so the payload's key order is unchanged.
 - A site's children are matched by serial / FMG device name / hostname via `controllerStampWhereOr`, and an endpoint's switch by its `switch-port` edge or a fleet-unique hostname prefix (business rule 91) — the same attribution as the topology payload's `endpoints[]`.
 
+- `listMapSites` runs its three follow-ups (sample stats, down acknowledgements, subnet counts) in one `Promise.all` — they are independent of each other.
+
 **When changing this:** a new field on the sites list is a new `select` column here AND the Status Map / Device Map widgets that read it; at 2000 assets the list is the firewalls with coordinates (tens to hundreds), one subnet groupBy and two bounded follow-ups — keep it that shape.
 
 ## services/topologyGraphService.ts
@@ -260,6 +264,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 - **Fibre-channel links ride the payload as `fcLinks`** (business rule 162): one `fibreChannelService.getFcLoginsForSwitches` query over the site's endpoint ids, so a site with no FC switch pays one empty indexed read. Each entry is `{ switchId, port, vsan, portWwn, label, matchMethod, host }` — `host` is the matched asset's node summary (health, type, icon, location as written in `Asset.description`, NOT region-tree resolved) or null, and a retired host comes back null. `topology-render.js → applyShownTypes` draws them only while the FC switch is a shown node; nothing here filters by shown types.
 - **The payload carries every attributed endpoint, not just the sidebar sample** (rule 147): `endpoints` (id, hostname, ip, mac, `assetType`, status, monitorHealth, location from `Asset.description` only, `switchId`, `port`, iconUrl) from the same rule-91 query, newest first, capped at the module constant `MAX_SITE_ENDPOINTS` (2000) with `endpointsTruncated`; `switches[].endpoints` stays the 25-per-switch sidebar sample cut from the same rows. Every node also carries `assetType` (firewall / switch / access_point for the three infrastructure arrays) — the device-type toggles key on it.
+
+- `fetchRecentSampleStats(ids)` is ONE query (`unnest` + `LATERAL … ORDER BY timestamp DESC LIMIT 10` over `asset_monitor_samples`, response-time rows only), not a `findMany` per asset — the site map asks for every monitored firewall at once, and the fan-out ran hundreds of concurrent queries against the pool. Ids are de-duplicated; an empty list issues no query.
 
 **When changing this:**
 - A new edge class needs a place in the dedupe order and a `reason` string (the hover tooltip is the operator's audit trail), and `topology-render.js` must know it.
@@ -305,7 +311,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Saved, SHARED per-site Device Map topology views (business rules 147-152; the third mode, `room` (rule 156; Rack and Wall views were converted to it), holds a room's racks and its junction boxes — `walls` + `wallPlacements`, overlap-checked by `utils/wallGeometry.ts`, never holding a rack; a Room view may carry a `region` room chain that is only a pointer at description codes; a Topology view may carry floor `layers`, its polygons a `layer`) — the `TopologyView` and `TopologyBackgroundImage` tables (single writer). A view is a name + ONE mode (`layer2` / `topology` / `rack`) + `shownTypes` + that mode's content: a Topology view's `background` (OSM centre + zoom + `layer` map / satellite — satelliteTileService — or an uploaded image) and `polygons` (location-group codes in display casing + points in background coordinates); a Room view's `racks` and `rackPlacements` (devices and cable-management placeholders) and its junction boxes; a device is in a rack OR a box (`updateView` refuses both). Also commits the location-code rewrites a Topology view's polygon placements stage (rule 148). Node positions stay in `TopologyLayout` (topologyLayoutService) under the view's prefix.
 
-**Public API:** MAX_RACK_UNITS, MAX_VIEW_NAME_LEN, MAX_BACKGROUND_IMAGE_BYTES; `sanitizeCableRoutes` (rule 179); types TopologyViewMode, TopologyPolygon, TopologyRack, TopologyRackPlacement, TopologyCableRoute, TopologyViewDto, ViewPatch, UpdateViewResult (+ `autoPlaced`), AutoPlaced, LocationCodeChange, LocationCodeResult, BackgroundImageDto; pure validators sanitizeViewName, sanitizeMode, sanitizeShownTypes, sanitizeBackground, sanitizePolygons, sanitizeRacks, sanitizeRackPlacements, sanitizeLocationCodeChanges; DB functions listViews (materialises the default through the private ensureDefaultView), createView (returns `{ view, autoPlaced }`) and updateView (both take the site's resolved devices for rule 150(a)'s fill), describeModeChangeLoss, deleteView, applyLocationCodeChanges, saveBackgroundImage, getBackgroundImage, sanitizeRegion, sanitizeWalls, sanitizeWallPlacements, sanitizeLayers, siteForAsset (an asset's Device Map site through utils/fortinetParentKey.ts) and regionViewsForSite (rule 150's prompt). The limits (racks, placements, polygons, views per site, image side, changes per commit) and defaults (shown types, view name, 42U) are module constants.
+**Public API:** MAX_RACK_UNITS, MAX_VIEW_NAME_LEN, MAX_BACKGROUND_IMAGE_BYTES, MAX_CAD_FILE_BYTES; `analyzeCadDrawing`, `saveCadDrawing`, type CadDrawingMeta (rule 182); `sanitizeCableRoutes` (rule 179); types TopologyViewMode, TopologyPolygon, TopologyRack, TopologyRackPlacement, TopologyCableRoute, TopologyViewDto, ViewPatch, UpdateViewResult (+ `autoPlaced`), AutoPlaced, LocationCodeChange, LocationCodeResult, BackgroundImageDto; pure validators sanitizeViewName, sanitizeMode, sanitizeShownTypes, sanitizeBackground, sanitizePolygons, sanitizeRacks, sanitizeRackPlacements, sanitizeLocationCodeChanges; DB functions listViews (materialises the default through the private ensureDefaultView), createView (returns `{ view, autoPlaced }`) and updateView (both take the site's resolved devices for rule 150(a)'s fill), describeModeChangeLoss, deleteView, applyLocationCodeChanges, saveBackgroundImage, getBackgroundImage, sanitizeRegion, sanitizeWalls, sanitizeWallPlacements, sanitizeLayers, siteForAsset (an asset's Device Map site through utils/fortinetParentKey.ts) and regionViewsForSite (rule 150's prompt). The limits (racks, placements, polygons, views per site, image side, changes per commit) and defaults (shown types, view name, 42U) are module constants.
 
 **Cross-service deps:** `topologyLayoutService.deleteLayoutsForView` / `countTopologyPlacements`, `eventLogService.logEventsBatch` + `buildChanges` (the `asset.updated` Events of a location-code commit), `descriptionSyncService.syncDescriptionsOnSave` (pushes a rewritten description to the device, fire-and-forget), `utils/locationCodes.ts → setLocationCodes` / `locationCodeValueProblem`, `utils/imageMagic.ts → detectImageMagic`, `utils/imageDimensions.ts → readImageSize`, `utils/regionAutoPlace.ts` + `regionTreeService.loadRegionIndex` / `resolveLocation` (the region fill); reads/writes `prisma.topologyView`, `prisma.topologyBackgroundImage`, `prisma.asset` (site check; description write).
 
@@ -323,6 +329,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **A region fills a view once, at the moment it is set** (rule 150(a), private `fillFromRegion`): on create with a region, a region change to a DIFFERENT place (`sameRegion`, tree-resolved), or a mode-change reset that keeps one; never on read, and never when the same patch carries placements. The route builds the device list (`siteDevicesPlaceable` over `buildSiteTopology`, resolved `location`) only for such a patch, so an ordinary Save costs nothing extra. The fill's output goes through `sanitizeRacks` / `sanitizeRackPlacements` / `sanitizeWalls` / `sanitizeWallPlacements` like any client save. No description is written.
 - **Room views (rule 156)**: `sanitizeRegion` keeps only the room chain; `fillFromRegion` racks first, then boxes the rest; `rack` / `wall` are no longer accepted modes (`toDto` reads a stray stored one as `room`); `MAX_WALLS` is 50. The conversion of stored Rack / Wall views is migration `20261111120000_room_views` (folded per room, `map.topology.views_converted` Events), pinned by `tests/integration/roomViews.test.ts`.
 - **Rack cabling (rule 179)**: `sanitizeRacks` fills `cableManagers {left, right, trough}` (true unless false; `toDto` → `withCableManagers` reads a pre-179 rack the same); a placement with `mount: "side"` is checked for its side / slot (one per slot, never cable management) and skipped by the U overlap and `placementsOutsideRacks`, and `toDto` reads a pre-179 placement as `mount: "rack"`; `cableRoutes` is accepted only on a Room view (`sanitizeCableRoutes`) and cleared by `freshModeFields`. Routing and the stale-route drop are client-side (`topology-rack.js`).
+- **CAD drawings (rule 182)**: `analyzeCadDrawing` reads a DXF (`utils/dxf.ts`) and returns what the import dialog shows; `saveCadDrawing` draws the kept layers as an SVG, stores it as a `TopologyBackgroundImage` (`image/svg+xml`, `cad` = file / units / extents / layers / geo) and keeps no DXF. `resolveImage` copies `cad` from the row onto a layer background — never from the client. ≤64 MB in, ≤30 MB SVG out; DWG / binary DXF refused (`DxfError` → 400). Scale: parsing is one pass over the file in memory, ~O(entities); a 64 MB DXF is the upper bound per request.
 - **An upload never changes the view.** The client stages `background: {kind:"image", imageId}`; saving it deletes the view's other images (abandoned or replaced uploads), and an upload prunes unreferenced ones older than a day. Width / height come from the stored image, never the client.
 - Images are served only by the authenticated `GET …/background/:imageId` (private, immutable cache) — never the unauthenticated `/uploads` mount.
 
@@ -366,27 +373,113 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/satelliteTileService.ts
 
-**What it owns:** The OPTIONAL, operator-configured satellite basemap of the Device Map topology view's Topology canvas — `Setting("satelliteConfig")` `{enabled, urlTemplate, apiToken, attribution, maxNativeZoom}` (single writer) and the tile proxy that serves it. OpenStreetMap has no aerial imagery and the browser's basemap rule is one tile host (polaris-ui-canon → tech-stack-frontend.md), so the provider (Esri, Mapbox, an in-house ArcGIS server…) is the operator's choice under their own licence, and Polaris fetches its tiles server-side. Off by default.
+**What it owns:** The OPTIONAL, operator-configured satellite basemap of the Device Map topology view's Topology canvas — `Setting("satelliteConfig")` `{enabled, urlTemplate, apiToken, attribution, maxNativeZoom}` (single writer), the choice between its TWO HOMES (business rule 183: an enabled `arcgis` integration with `basemapEnabled` wins — `resolveSource` — else the setting), and the tile proxy that serves whichever is active. OpenStreetMap has no aerial imagery and the browser's basemap rule is one tile host (polaris-ui-canon → tech-stack-frontend.md), so the provider (Esri, Mapbox, an in-house ArcGIS server…) is the operator's choice under their own licence, and Polaris fetches its tiles server-side. Off by default.
 
-**Public API:** types SatelliteSettings, SatelliteSettingsView (the token replaced by `apiTokenSet`), SatelliteStatus, SatelliteSettingsPatch; pure parseSatelliteSettings, urlTemplateProblem, buildTileUrl, mergeSatelliteSettings; getSatelliteSettings, getSatelliteStatus, saveSatelliteSettings (Event `setting.satellite_updated`, never the key), getSatelliteTile (z/x/y → `{body, contentType}`), testSatelliteSettings (one tile with the unsaved values); `_resetSatelliteForTests`.
+**Public API:** types SatelliteSettings, SatelliteSettingsView (the token replaced by `apiTokenSet`), SatelliteStatus, SatelliteSettingsPatch; pure parseSatelliteSettings, urlTemplateProblem, buildTileUrl, mergeSatelliteSettings; getSatelliteSettings, getSatelliteStatus, saveSatelliteSettings (Event `setting.satellite_updated`, never the key), getSatelliteTile (z/x/y → `{body, contentType}`), testSatelliteSettings (one tile with the unsaved values); the ArcGIS home: invalidateArcgisBasemap, arcgisBasemapOwner(excludeId) (the one-supplier 409), testArcgisBasemap(config) (one tile; a 404 passes); `_resetSatelliteForTests`. SatelliteStatus carries `source` ("arcgis" | "custom" | null); SatelliteSettingsView carries `overriddenBy` (the ArcGIS integration's name).
 
-**Cross-service deps:** `settingsStore.createSettingStore` (10 s TTL), `eventLogService.logEvent`, `utils/version.getAppVersion` (User-Agent); global `fetch`. The key is sealed at rest by the Setting.value hook in `src/db.ts` because `apiToken` is in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS` — no sealing code here.
+**Cross-service deps:** `settingsStore.createSettingStore` (10 s TTL), `eventLogService.logEvent`, `utils/version.getAppVersion` (User-Agent); `arcgisService` (`basemapService`, `basemapTileUrl`, `getArcgisToken`, `imageryUrlProblem`); `prisma.integration.findMany` (the ArcGIS home, own 10 s cache); global `fetch`, or `utils/tlsDispatcher.tlsFetch` for an ArcGIS source with Verify TLS off. The key is sealed at rest by the Setting.value hook in `src/db.ts` because `apiToken` is in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS` — no sealing code here.
 
 **Used by:**
 - `src/api/routes/serverSettings.ts` — `GET /server-settings/satellite` (the blanket read), `PUT /server-settings/satellite` and `POST /server-settings/satellite/test` (`serverSettingsSystem=write`).
 - `src/api/routes/map.ts` — `GET /map/satellite` (status only: available, attribution, deepest zoom) and `GET /map/satellite/:z/:x/:y` (the tile), both under the deviceMap read floor.
-- `public/js/topology-physical.js` (the Map | Satellite switch) and `public/js/server-settings-customization.js` (the Satellite imagery card).
+- `public/js/topology-physical.js` (the Map | Satellite switch; its tile-error toast names the home from `source`) and `public/js/server-settings-customization.js` (the Satellite imagery card; the `overriddenBy` note).
+- `src/api/routes/integrations.ts` → `assertSingleArcgisBasemap` (POST / PUT, `arcgisBasemapOwner`) and `invalidateArcgisBasemap` after an ArcGIS create, update or delete; `src/services/integrationAdapters.ts` → the arcgis test (`testArcgisBasemap` when the basemap is on).
 
 **Invariants:**
 - **The key never leaves the server**: no read returns it (`apiTokenSet` only), the Event records `apiTokenChanged`, and the browser only ever sees `/api/v1/map/satellite/...` — so the CSP `imgSrc` keeps its one tile host.
 - **A switched-on source must work**: https, `{z}` `{x}` `{y}` present, `{key}` only with a key, no user:password in the URL, an attribution (the provider's terms). A switched-off one may be left half filled in. An omitted `apiToken` keeps the stored key; `""` clears it.
 - **The fetch is constrained**: `redirect: "error"`, 8 s timeout, `image/*` only (never `image/svg+xml`), ≤4 MB, zoom ≤ `maxNativeZoom`, x/y in range. An internal host is allowed on purpose (an on-premises imagery server), which is why the setting is write-gated.
+- **Rule 183 — the ArcGIS home wins.** `resolveSource` takes the enabled ArcGIS integration with `basemapEnabled` (oldest first) and the setting only when there is none; both serve through the same status + tile route, so a view's saved satellite layer works under either. The cache generation is the source's identity (kind, integration id, imagery root, sign-in fields) compared in memory — a switch of home or credential never serves an old tile. World Imagery: keyed host with an API key, public host (no token) otherwise; a portal service gets the token; ArcGIS tile order is z/y/x.
 - **A settings read failure means "not offered"**, never a broken map. A satellite choice saved on a view (`background.layer`) falls back to the map while satellite is off.
 
 **When changing this:**
 - The cache (64 MB / 4000 tiles, per process) is keyed by a source GENERATION: the template + key are compared in memory to the last ones seen, and a change moves the generation and clears the cache. It is never a digest of the key: a SHA-256 of the API key read as an insecure password hash (CodeQL js/insufficient-password-hash, #126, 2026-11-12). Cleared on save; a second process (split roles) keeps serving the old provider's tiles for up to the settings TTL, then sees the change and misses — acceptable for imagery.
 - Scale: tiles are requested only by open Topology views on the satellite layer; one upstream fetch per tile per process (in-flight dedupe). At 2000 assets nothing here runs per asset.
 - Tests: `tests/unit/satelliteTileService.test.ts`.
+
+---
+
+## services/cableRunService.ts
+
+**What it owns:** the `CableRun` and `CableRunLink` tables (single writer) — fiber / ethernet routes at a Device Map site, business rule 184. Pole runs are drawn on a Topology view; trenches come only from a survey import (`source: "crd"`).
+
+**Public API:** `CABLE_MEDIA`, `CABLE_PLACEMENTS`, `MAX_DRAWN_POINTS`, types CablePoint / CableRunView / CableRunEdits; pure `normalizePoints(raw, max)`, `runLengthM(points)`, `syncStatusAfterEdit(status)`; `listRuns(siteId)`, `applyRunEdits(siteId, {upserts, deletes}, actor)`; rule 184(a): `MAX_RUNS_PER_LINK`, `listRunLinks(siteId)` → `{pathKey: runIds}`, `applyRunLinkEdits(siteId, {pathKey: runIds}, actor)`.
+
+**Cross-service deps:** `eventLogService` (`buildChanges`, `logEventsBatch`); prisma `asset` (the site must be a firewall) and `cableRun`.
+
+**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-runs` (`cableRuns=read`) and `PUT /sites/:id/cable-runs` (`cableRuns=write` + the site's write scope), `PUT /sites/:id/cable-run-links` (the view gate: `deviceMap=write` + its write scope); `public/js/topology-cable-runs.js` through those routes (staged by map.js's edit session).
+
+**Invariants:**
+- **The site owns a run**, never a view: every Topology view shows it, rule 149's mode reset never touches it; `site_id` cascades with the FortiGate.
+- **WGS84 only**: `[[lng, lat, z?], ...]`, rounded to ~1 cm / 1 mm, 2..1000 points drawn; a value outside latitude / longitude range is a 400 — which is what keeps a survey-grid file out.
+- **A trench is surveyed, never drawn**: a hand-drawn `trench` is refused, and a `crd` run's points and placement cannot change through this path.
+- **All or nothing**: one `$transaction` per edit session; ids naming another site's run or a deleted one are 404 before any write.
+- **Sync state**: `off` until write-back is configured; a sent run is edited to `pending` and deleted to a tombstone (`deletedAt`), a never-sent one is deleted outright.
+- **Riders (rule 184(a))**: a deleted run is removed from every `CableRunLink` in the same transaction, and a link left with none is deleted; `applyRunLinkEdits` drops ids that are not a live run at the site and refuses a malformed path key.
+
+**When changing this:**
+- The `cableRuns` key is its own (tag-scoped, full ladder) — never gate a run route on `deviceMap`.
+- The survey importer (a later batch) creates `source: "crd"` rows with z; the write-back (a later batch) reads `syncStatus` / `deletedAt` / `version`.
+- Scale: per site, typically tens to hundreds of runs; one `findMany` per read, one transaction per save. Nothing here runs per asset or on a tick.
+- Tests: `tests/unit/cableRunService.test.ts`, `tests/integration/cableRuns.test.ts`.
+
+---
+
+## services/arcgisService.ts
+
+**What it owns:** the client of the `arcgis` integration type — a sign-in to an ArcGIS portal (ArcGIS Online, Location Platform or ArcGIS Enterprise) and the REST transport every later ArcGIS use goes through (the integration's basemap and cable-run write-back are being built on it). Four sign-in methods (`authMode`): `none`, `apiKey` (stored as `apiToken`, sent as `token`), `appCredentials` (`clientId` + `clientSecret` → `<portal>/sharing/rest/oauth2/token`, client-credentials grant) and `userPassword` (`username` + `password` → `<portal>/sharing/rest/generateToken`, referer = the portal). The integration discovers nothing (`integrationAdapters` → `discovery: null`).
+
+**Public API:** `ARCGIS_ONLINE_PORTAL`, `ARCGIS_AUTH_MODES`, types ArcgisConfig / ArcgisHttpRequest, class ArcgisError (`code`, `details`); `portalUrlProblem(url)`, `portalBase(config)`, the basemap's imagery address (rule 183: `ARCGIS_BASEMAP_SOURCES`, `WORLD_IMAGERY_ATTRIBUTION`, `imageryUrlProblem(url)` — https MapServer / ImageServer outside the blocked ranges —, `basemapService(config)` → `{root, sendToken}`, `basemapTileUrl(config, token, z, x, y)`), `arcgisRequest(config, url, {method, params, token})`, `getArcgisToken(config)`, `clearArcgisTokenCache()`, `testConnection(config)`; `_setRequestImplForTests(impl | null)`.
+
+**Cross-service deps:** `utils/tlsDispatcher.tlsFetch` (verifySsl false = certificate pinning, rule 113(e)), `utils/netGuard.isBlockedOutboundHost`, `utils/logger`. Secrets are sealed at rest by the `src/db.ts` hook (`apiToken`, `clientSecret`, `password` are all in `utils/configSecretFields.ts → SECRET_CONFIG_KEYS`) — no sealing code here.
+
+**Used by:**
+- `src/services/integrationAdapters.ts` → `INTEGRATION_ADAPTERS.arcgis.testConnection` (both Test Connection paths).
+- `src/services/satelliteTileService.ts` → the ArcGIS home of the satellite basemap (rule 183): `basemapService`, `basemapTileUrl`, `getArcgisToken`, `imageryUrlProblem`.
+- `src/api/routes/integrations.ts` → `ArcgisConfigSchema` (`portalUrlProblem`, the auth-mode enum; derives `config.host` from `portalUrl`), `PUT /:id` (re-parses the merged config, then `clearArcgisTokenCache`).
+- `src/services/arcgisWriteBackService.ts` → the cable-run write-back (rule 185): `arcgisRequest`, `getArcgisToken`, `clearArcgisTokenCache` (on 498 / 499), `portalBase`, `ArcgisError`.
+
+**Invariants:**
+- **A token never follows a redirect**: `redirect: "error"` on every request, plus a 20 s timeout and a 10 MB response cap.
+- **The ArcGIS REST error envelope is an error**: most failures answer HTTP 200 with `{ error: { code, message, details } }`; `arcgisRequest` throws an ArcgisError carrying the portal's own message, so Test Connection shows what ArcGIS said.
+- **The portal is https and outside the blocked ranges**, checked by the schema on create and on the PUT re-parse; `portalUrl` is a rule-111 destination key (`utils/secretDestination.ts → DESTINATION_KEYS`), so a moved portal needs the secret typed again.
+- **Token cache** (per process, keyed portal | method | client ID or user name): a short-lived token is reused until a minute before it expires, and never for a different secret (the secret is compared in memory, never hashed — the CodeQL #126 lesson from satelliteTileService).
+
+**When changing this:**
+- A new ArcGIS feature (imagery, write-back) calls `getArcgisToken` + `arcgisRequest` rather than its own fetch, so sign-in and errors stay in one place.
+- Scale: nothing here runs per asset; the token is fetched at most once per two hours per process.
+- Tests: `tests/unit/arcgisService.test.ts` (transport replaced through the seam), `tests/integration/arcgisIntegration.test.ts` (create / PUT / Discover against a real DB).
+
+---
+
+## services/arcgisWriteBackService.ts
+
+**What it owns:** the one-way write of cable runs to an ArcGIS feature layer (business rule 185) — the write-back keys of an `arcgis` integration's config (flat: `writeBackEnabled`, `writeBackMode` `existing` | `polaris`, `featureLayerUrl`, `fieldMap`, `valueMap`), reading and checking the layer, creating a Polaris layer, and draining the queue that is `cable_runs`' own sync columns (rule 184).
+
+**Public API:** `WRITE_BACK_MODES`, `WRITE_BACK_ATTRS`, `POLARIS_FIELD_MAP`, types WriteBackConfig / LayerInfo / SyncSummary; pure `featureLayerUrlProblem(url)`, `writeBackConfigProblem(cfg)`, `layerProblems(info, cfg)` → `{problems, warnings}`, `featureFor(run, cfg, info)`; `readLayer(cfg)`, `createPolarisLayer(cfg, serviceName)`, `writeBackIntegration(excludeId?)`, `writeBackStopped(reason, actor)`, `writeBackStatus()`, `retryFailed(actor)`, `syncWriteBack()`, `kickWriteBack()`.
+
+**Cross-service deps:** `arcgisService` (`arcgisRequest`, `getArcgisToken`, `clearArcgisTokenCache`, `portalBase`, `ArcgisError`); `cableRunService` (`CABLE_MEDIA`, `CABLE_PLACEMENTS`, `CablePoint`); `eventLogService.logEvent`; `utils/netGuard.isBlockedOutboundHost`; `utils/dbConnections.getDirectDatabaseUrl` + `pg` (the advisory lock's side connection); prisma `integration`, `cableRun` (with `site.hostname`).
+
+**Used by:**
+- `src/jobs/arcgisWriteBack.ts` → `syncWriteBack` every 60 s (scheduler role).
+- `src/api/routes/map.ts` → `kickWriteBack` after `PUT /sites/:id/cable-runs`.
+- `src/api/routes/integrations.ts` → the schema (`WRITE_BACK_MODES`, `WRITE_BACK_ATTRS`, `featureLayerUrlProblem`, `writeBackConfigProblem`), `assertSingleArcgisWriteBack` (`writeBackIntegration`, 409), the PUT / delete hooks (`writeBackStopped`, `kickWriteBack`), `GET /:id/arcgis/write-back` (`writeBackStatus`), `POST /arcgis/read-layer` (`readLayer` + `layerProblems`), `POST /:id/arcgis/create-layer` (`createPolarisLayer`), `POST /:id/arcgis/retry-failed` (`retryFailed`).
+- `src/services/integrationAdapters.ts` → `arcgis.testConnection` reads and checks the layer when write-back is on.
+- `public/js/integrations-forms.js` / `integrations.js` → the Write-back tab through those routes.
+
+**Invariants:**
+- **The run table is the queue**: a push first turns live `off` runs `pending`; nothing else lists what to send.
+- **Never add twice**: a run with no object id is looked up by `fieldMap.polarisId` before an add (and a tombstone before a delete).
+- **Per-feature results**: `rollbackOnFailure=false`; a refusal fails THAT run with ArcGIS's description; transport / 5xx / 429 / 498 / 499 leave the batch `pending` (`syncError` set); a layer that refuses outright fails every queued run with the reason.
+- **Version-guarded success**: `synced` only `where version = <sent>`; the object id is recorded either way.
+- **One pusher**: `pg_try_advisory_lock(0x504c4157, 1)` on a side connection around every push (job and kick alike); **one writer** integration (409 at save).
+- **Stop resets**: turned off, re-pointed or deleted → runs `off` with no object id, tombstones dropped, one `cable_run.write_back_stopped` Event; a disabled integration only pauses.
+
+**When changing this:**
+- The request shapes (`applyEdits`, `query`, `createService`, `addToDefinition`) follow Esri's REST docs and are pinned only against a fake layer; validate against a scratch ArcGIS layer before claiming a change works.
+- A new Polaris attribute = `WRITE_BACK_ATTRS` + `featureFor` + `POLARIS_FIELDS` + the form's `ARCGIS_WB_ATTRS`.
+- Scale: per tick one indexed query when nothing is pending; ≤ 1000 runs a tick in batches of 100, one query + one applyEdits per batch, results written with `Promise.all`. Nothing per asset.
+- Tests: `tests/unit/arcgisWriteBack.test.ts`, `tests/integration/arcgisWriteBack.test.ts` (fake layer through `arcgisService._setRequestImplForTests`).
 
 ---
 

@@ -55,7 +55,7 @@ import { roleConfig, type RoleConfig } from "./utils/role.js";
 import { startDiscoveryScheduler } from "./jobs/discoveryScheduler.js";
 import { ensureRegistryLoaded } from "./services/oidRegistry.js";
 import { detectTimescale, migrateToHypertables } from "./services/timescaleService.js";
-import { initializeQueue, startPgbossWorkers, startDiscoveryWorker, startScanWorker, startQueueProducer, stopPgbossWorkers } from "./services/queueService.js";
+import { initializeQueue, listenNotifyEnabled, startPgbossWorkers, startDiscoveryWorker, startScanWorker, startQueueProducer, stopPgbossWorkers } from "./services/queueService.js";
 import { runDiscovery } from "./services/discovery/discoveryEngine.js";
 import { runScan } from "./services/networkScanRunner.js";
 import { startSampleWriteBuffer, shutdownFlushSampleBuffers } from "./services/sampleWriteBuffer.js";
@@ -149,7 +149,10 @@ if (cfg.role === "web") {
   };
   const prismaPool = envInt("DATABASE_POOL_SIZE", 25);
   const pgbossPool = envInt("POLARIS_PGBOSS_POOL_SIZE", 20);
-  setDbPoolRoleCapacity(cfg.role, prismaPool + pgbossPool);
+  // + the pg-boss LISTEN connection a consuming process holds outside its pool
+  // (business rule 180).
+  const listener = listenNotifyEnabled() && (cfg.runsMonitorConsumers || cfg.runsDiscoveryConsumers) ? 1 : 0;
+  setDbPoolRoleCapacity(cfg.role, prismaPool + pgbossPool + listener);
 }
 
 // Warm the monitor-queue mode cache at startup so the dispatcher in
@@ -1379,6 +1382,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",
+      // Cable runs → the ArcGIS layer (business rule 185). Scheduler role
+      // only; a save also pushes at once, under the same advisory lock.
+      "./jobs/arcgisWriteBack.js",
       "./jobs/reconcileMapRegions.js",
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",

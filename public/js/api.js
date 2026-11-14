@@ -1200,6 +1200,11 @@ const api = {
     storageAggregateApply:     (id, klass) => trackedRequest("Applying auto-monitor storage", "POST", `/integrations/${id}/storage-aggregate/apply`, { class: klass }),
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
+    // ArcGIS cable-run write-back (business rule 185).
+    arcgisReadLayer:     (body)     => trackedRequest("Reading the layer", "POST", "/integrations/arcgis/read-layer", body),
+    arcgisCreateLayer:   (id, name) => trackedRequest("Creating the layer", "POST", `/integrations/${id}/arcgis/create-layer`, { name: name }),
+    arcgisWriteBack:     (id)       => request("GET", `/integrations/${id}/arcgis/write-back`),
+    arcgisRetryFailed:   (id)       => request("POST", `/integrations/${id}/arcgis/retry-failed`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
     // Generic API Preview tab: the first page, mapped (nothing is written).
     genericApiPreview:  (body) => trackedRequest("Reading the first page", "POST", "/integrations/generic-api/preview", body),
@@ -1893,6 +1898,10 @@ const api = {
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),
+    // Cable runs (rule 184): { runs, canEditRuns } / one edit session's { upserts, deletes }.
+    cableRuns:          (id)               => request("GET",    `/map/sites/${id}/cable-runs`),
+    saveCableRuns:      (id, edits)        => request("PUT",    `/map/sites/${id}/cable-runs`, edits),
+    saveCableRunLinks:  (id, links)        => request("PUT",    `/map/sites/${id}/cable-run-links`, { links }),
     deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
     topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
     topologyBackgroundUrl:  (id, imageId)  => `${API_BASE}/map/sites/${id}/topology/background/${imageId}`,
@@ -1906,6 +1915,23 @@ const api = {
       }).then(function (res) {
         if (res.status === 401) { window.location.href = "/login.html"; return; }
         return _readResponseBody(res, "Background upload failed");
+      });
+    },
+    // Rule 182: a DXF as a floor plan — read it (no layers) or import it.
+    topologyCad: (id, viewId, file, layers, units) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (layers) {
+        formData.append("layers", JSON.stringify(layers));
+        if (units !== undefined && units !== null) formData.append("units", String(units));
+      }
+      return fetch(`${API_BASE}/map/sites/${id}/topology/views/${viewId}/cad`, {
+        method: "POST",
+        headers: _csrfHeaders(),
+        body: formData,
+      }).then(function (res) {
+        if (res.status === 401) { window.location.href = "/login.html"; return; }
+        return _readResponseBody(res, layers ? "CAD import failed" : "The drawing could not be read");
       });
     },
     // Rule 148: assets=write — rewrites descriptions from polygon placements.

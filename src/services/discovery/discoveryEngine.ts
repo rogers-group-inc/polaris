@@ -44,7 +44,10 @@ import { syncGenericApiNetwork } from "./genericApiNetworkSync.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets } from "./syncSteps.js";
 import * as azureArc from "../azureArcService.js";
-import { ipInCidr, cidrContains } from "../../utils/cidr.js";
+import { jsonEqual } from "../../utils/jsonEqual.js";
+import { cidrContains, firstCidrContaining } from "../../utils/cidr.js";
+import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
 import { withoutIpv6 } from "../../utils/fortiosIpv6.js";
 import { ipv6Enabled } from "../ipv6GateService.js";
 import { macHexKeyOrNull, normalizeMacOrNull } from "../../utils/mac.js";
@@ -256,6 +259,25 @@ export async function isDiscoveryRunning(integrationId: string): Promise<boolean
  * Called by the 30s background job and inline on the /discoveries poll, so
  * the UI flips to amber promptly without waiting on the slower timer.
  */
+let slowCheckInFlight: Promise<void> | null = null;
+let slowCheckLastAt = 0;
+
+/**
+ * checkForSlowRuns, at most once per `minIntervalMs` per process and never two
+ * at once. The Integrations page polls /discoveries every 4 s from every open
+ * tab, and each poll ran the check: N tabs = N checks per 4 s, and two that
+ * overlapped both read `slowAlerted = false` and both logged the slow Event.
+ * The 30 s job passes 0 — single-flight, no throttle.
+ */
+export function checkForSlowRunsThrottled(minIntervalMs = 5_000): Promise<void> {
+  if (slowCheckInFlight) return slowCheckInFlight;
+  if (minIntervalMs > 0 && Date.now() - slowCheckLastAt < minIntervalMs) return Promise.resolve();
+  slowCheckLastAt = Date.now();
+  const run = checkForSlowRuns().finally(() => { slowCheckInFlight = null; });
+  slowCheckInFlight = run;
+  return run;
+}
+
 export async function checkForSlowRuns(): Promise<void> {
   const rows = await listActiveRuns();
   if (rows.length === 0) return;
@@ -1112,7 +1134,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         syncTotals.decommissionedSwitches.push(...(r.decommissionedSwitches || []));
         syncTotals.decommissionedAps.push(...(r.decommissionedAps || []));
       }
-    } else if (collectorType === "llm") {
+    } else if (collectorType === "llm" || collectorType === "arcgis") {
       // triggerDiscovery refuses it; a replayed or hand-queued job must not run.
       throw new AppError(400, `${integrationName} is not a discovery integration — there is nothing to discover`);
     } else {
@@ -2432,8 +2454,15 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // any IP that ends up bare again later.
   const reservationKey = (subnetId: string, ip: string) => `${subnetId}|${ip}`;
   const activeResMap = new Map<string, any>();
+  // The (subnet, ip) keys that DO hold a dns_resolved row at load: Phase 5
+  // releases one before a create only where the preload saw it (a row created
+  // mid-run is caught by its collide-release-retry).
+  const dnsResolvedKeys = new Set<string>();
   for (const r of allReservationsRaw) {
-    if (r.sourceType === "dns_resolved") continue;
+    if (r.sourceType === "dns_resolved") {
+      if (r.ipAddress) dnsResolvedKeys.add(reservationKey(r.subnetId, r.ipAddress));
+      continue;
+    }
     if (r.ipAddress) activeResMap.set(reservationKey(r.subnetId, r.ipAddress), r);
     else activeResMap.set(`${r.subnetId}|__full__`, r);
   }
@@ -2517,8 +2546,11 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   }
 
   // Helper: find which subnet contains an IP
+  // First match in allSubnets order, deprecated skipped — read live, since
+  // subnets are pushed and deprecated as the run goes. firstCidrContaining keeps
+  // that exact contract and parses each CIDR once (efficiency audit group 3).
   function findSubnetForIp(ip: string) {
-    return allSubnets.find((s) => s.status !== "deprecated" && ipInCidr(ip, s.cidr));
+    return firstCidrContaining(ip, allSubnets, (s) => s.status === "deprecated");
   }
 
   // Roster of FortiGates currently configured in the upstream (FortiManager or
@@ -2819,7 +2851,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // ══════════════════════════════════════════════════════════════════════════════
 
   await syncDhcpEntries({
-    result, activeResMap, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
+    result, activeResMap, dnsResolvedKeys, assetIdx, currentVipKeys, vipQueriedDevices, dhcpLeases, dhcpReservations,
     findSubnetForIp, reservationKey, upsertConflict, projectRefLabel,
     integrationId, integrationName, actor, syncLog,
   });
@@ -3708,6 +3740,27 @@ async function buildEntraSyncIndex(
  * distinct thing than the same device seen twice, so it takes over only when
  * the existing asset is already a cluster.
  */
+/**
+ * Drop the keys of a directory / hypervisor sync's asset write that equal the
+ * stored row (utils/assetWritePrune.ts): which db.ts hooks a write runs is
+ * decided by its keys, so an unchanged device costs one UPDATE instead of the
+ * full chain. Only an asset's FIRST write in a sync pass is pruned — these
+ * syncs do not refresh `existing` after writing, so a second record mapping to
+ * the same asset goes in full, exactly as before. A dropped IP refreshes its
+ * history. `existing` may be a narrowed select: a missing pin column keeps the
+ * IP and hostname.
+ */
+async function pruneDirectoryWrite(
+  existing: { id: string },
+  updateData: Record<string, unknown>,
+  written: Set<string>,
+): Promise<void> {
+  if (written.has(existing.id)) return;
+  written.add(existing.id);
+  const { ipHistoryRefresh } = pruneUnchangedAssetFields(existing as Record<string, unknown>, updateData);
+  if (ipHistoryRefresh) await refreshIpHistoryLastSeen([{ assetId: existing.id, ...ipHistoryRefresh }]);
+}
+
 async function syncArcClusters(
   integrationId: string,
   integrationName: string,
@@ -3715,6 +3768,8 @@ async function syncArcClusters(
   clusters: azureArc.DiscoveredArcCluster[],
   actor?: string,
 ): Promise<{ created: string[]; updated: string[]; skipped: string[] }> {
+  /** Assets written once already this pass (pruneDirectoryWrite). */
+  const arcClusterWrites = new Set<string>();
   const created: string[] = [];
   const updated: string[] = [];
   const skipped: string[] = [];
@@ -3776,6 +3831,7 @@ async function syncArcClusters(
         updateData.tags = appendMissingTags(preserved, tags);
 
         clampAcquiredToLastSeen(updateData, existing);
+        await pruneDirectoryWrite(existing, updateData, arcClusterWrites);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData as any });
         await upsertArcClusterSource(existing.id, integrationId, c, observed, now);
         logDiscoveryAssetUpdated(before, updateData, existing.id, label, {
@@ -3873,6 +3929,8 @@ export async function syncArcDevices(
   result: { machines: azureArc.DiscoveredArcMachine[] },
   actor?: string,
 ): Promise<{ created: string[]; updated: string[]; skipped: string[] }> {
+  /** Assets written once already this pass (pruneDirectoryWrite). */
+  const arcDeviceWrites = new Set<string>();
   const workstationAddAs = getAddAsMonitoredFromConfig("azurearc", integrationConfig, "workstation");
   const serverAddAs      = getAddAsMonitoredFromConfig("azurearc", integrationConfig, "server");
   const resolveAddAs = (assetType: string): boolean | null =>
@@ -4196,6 +4254,7 @@ export async function syncArcDevices(
       updateData.tags = appendMissingTags(preserved, tags);
 
       clampAcquiredToLastSeen(updateData, existing);
+      await pruneDirectoryWrite(existing, updateData, arcDeviceWrites);
       pendingAssetUpdates.push({ id: existing.id, data: updateData });
       logDiscoveryAssetUpdated(before, updateData, existing.id, label, {
         integrationName, integrationId, sourceKind: "arc", actor,
@@ -4606,6 +4665,8 @@ export async function syncEntraDevices(
   result: entraId.EntraDiscoveryResult,
   actor?: string,
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
+  /** Assets written once already this pass (pruneDirectoryWrite). */
+  const entraWrites = new Set<string>();
   // Per-class addAsMonitored snapshot for the auto-monitor sweep. null = the
   // class block isn't enabled / present, in which case buildMonitoredSweep
   // returns {} and discovery leaves monitored alone.
@@ -5015,6 +5076,7 @@ export async function syncEntraDevices(
 
       try {
         clampAcquiredToLastSeen(updateData, existing);
+        await pruneDirectoryWrite(existing, updateData, entraWrites);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(entraBefore, updateData, existing.id, dev.displayName || dev.deviceId, {
           integrationName, integrationId, sourceKind: "entra", actor,
@@ -5488,10 +5550,25 @@ function buildFortigateEndpointObservedBlob(
  * to the FMG/FortiGate integration that just sighted it. Idempotent on
  * the (sourceKind, externalId=mac) unique key.
  *
- * After upserting, sweep any "manual" source row from the same asset —
- * those are Phase 1 backfill placeholders for assets that didn't match
- * a tag prefix at the time. With a real fortigate-endpoint source now
- * present, the placeholder is no longer correct.
+ * The "manual" placeholder rows (Phase 1 backfill, superseded once a real
+ * fortigate-endpoint source exists) are swept by the caller
+ * (dhcp/endpointSources.ts), in one delete for the whole flush.
+ */
+/** The preloaded fortigate-endpoint row Phase 10 compares against. */
+interface PriorEndpointSource {
+  assetId: string;
+  integrationId: string | null;
+  observed: unknown;
+  lastSeen: Date;
+}
+
+/**
+ * Phase 10's per-endpoint source write. With the row's preloaded `prior`, an
+ * unchanged blob is not rewritten (efficiency audit): `"unchanged"` when even
+ * lastSeen matches, the new lastSeen when only that moved (the caller bumps
+ * those in one statement), `"written"` after an upsert, `null` when the asset
+ * has no MAC to key on. The `manual` placeholder sweep that used to follow each
+ * upsert is the caller's, batched for the whole flush.
  */
 async function upsertFortigateEndpointSource(
   assetId: string,
@@ -5502,11 +5579,15 @@ async function upsertFortigateEndpointSource(
   integrationName: string | null,
   /** The FortiGate that sighted it, from the touching pathway — see the blob builder. */
   gateName: string | null,
-): Promise<void> {
-  if (!asset?.macAddress) return;
+  prior?: PriorEndpointSource,
+): Promise<"written" | "unchanged" | Date | null> {
+  if (!asset?.macAddress) return null;
   const externalId = String(asset.macAddress).trim().toUpperCase();
-  if (!externalId) return;
+  if (!externalId) return null;
   const observed = buildFortigateEndpointObservedBlob(asset, integrationType, integrationName, gateName);
+  if (prior && prior.assetId === assetId && prior.integrationId === integrationId && jsonEqual(prior.observed, observed)) {
+    return prior.lastSeen.getTime() === lastSeen.getTime() ? "unchanged" : lastSeen;
+  }
   const now = new Date();
   await prisma.assetSource.upsert({
     where: { sourceKind_externalId: { sourceKind: "fortigate-endpoint", externalId } },
@@ -5529,16 +5610,7 @@ async function upsertFortigateEndpointSource(
       lastSeen,
     },
   });
-  // Manual-source sweep: the Phase 1 backfill placeholder for this
-  // asset is now superseded by a real source. Best-effort.
-  try {
-    await prisma.assetSource.deleteMany({
-      where: { assetId, sourceKind: "manual" },
-    });
-  } catch {
-    // Sweep failure is non-fatal — the manual row just lingers; UI
-    // shows both source cards, which is mildly redundant but harmless.
-  }
+  return "written";
 }
 
 // Build the AD sync's lookup index from AssetSource rows. Replaces the legacy
@@ -5608,6 +5680,8 @@ export async function syncActiveDirectoryDevices(
   result: activeDirectory.AdDiscoveryResult,
   actor?: string,
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
+  /** Assets written once already this pass (pruneDirectoryWrite). */
+  const adWrites = new Set<string>();
   const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
@@ -5798,6 +5872,7 @@ export async function syncActiveDirectoryDevices(
         const sweepAssetType = (updateData.assetType ?? existing.assetType) as string | null | undefined;
         Object.assign(updateData, buildMonitoredSweep(resolveAddAs(sweepAssetType), existing));
         clampAcquiredToLastSeen(updateData, existing);
+        await pruneDirectoryWrite(existing, updateData, adWrites);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(adBefore, updateData, existing.id, displayName || dev.objectGuid, {
           integrationName, integrationId, sourceKind: "ad", actor,
@@ -6066,6 +6141,8 @@ export async function syncVcenterDevices(
   /** "scoped" disables every fleet-absence pass — see `vcenterPassEnabled`. */
   mode: VcenterSyncMode = "full",
 ): Promise<{ created: string[]; updated: string[]; skipped: string[]; decommissioned: string[] }> {
+  /** Assets written once already this pass (pruneDirectoryWrite). */
+  const vcenterWrites = new Set<string>();
   const syncLog = makeSyncLog(integrationId, integrationName, actor);
   const created: string[] = [];
   const updated: string[] = [];
@@ -6308,6 +6385,7 @@ export async function syncVcenterDevices(
       const freshTags = ["vcenter", "auto-discovered"];
       updateData.tags = appendMissingTags(preserved, freshTags);
       clampAcquiredToLastSeen(updateData, existing);
+      await pruneDirectoryWrite(existing, updateData, vcenterWrites);
       await prisma.asset.update({ where: { id: existing.id }, data: updateData });
       logDiscoveryAssetUpdated(hostBefore, updateData, existing.id, host.name || host.moref, {
         integrationName, integrationId, sourceKind: "vcenter-host", actor,
@@ -6484,6 +6562,7 @@ export async function syncVcenterDevices(
         const freshTags = ["vcenter", "auto-discovered"];
         updateData.tags = appendMissingTags(preserved, freshTags);
         clampAcquiredToLastSeen(updateData, existing);
+        await pruneDirectoryWrite(existing, updateData, vcenterWrites);
         await prisma.asset.update({ where: { id: existing.id }, data: updateData });
         logDiscoveryAssetUpdated(vmBefore, updateData, existing.id, displayName, {
           integrationName, integrationId, sourceKind: "vcenter-vm", actor,

@@ -22,6 +22,7 @@
 
 import { METRIC_META, FIELD_META, CHANGE_TYPE_META, WINDOWED_RATIO_METRICS, FORECAST_HORIZON_METRICS, forecastDaysOf, probeLossWindowSec, isPathMetric } from "../services/notificationTypes.js";
 import { monitorStatusLabel } from "./monitorStatus.js";
+import { WIDGET_LEVEL_NAMES } from "./widgetLevel.js";
 
 /** "5 minutes" / "1 hour" / "45 seconds" — mirrors the wizard's humanDuration. */
 export function humanDuration(sec: number | null | undefined): string {
@@ -145,6 +146,13 @@ function triggerUnit(trigger: SummarizableTrigger, sensorUnit?: string | null): 
 }
 
 /** Round for reading, not for precision: "760 ms", "93.8 %", "61 °C". */
+/** A `customWidgetLevel` reading or threshold as its word (business rule 181), or null. */
+function widgetLevelWord(value: number | string | boolean | null | undefined): string | null {
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return null;
+  return n >= 2 ? WIDGET_LEVEL_NAMES[2] : n >= 1 ? WIDGET_LEVEL_NAMES[1] : WIDGET_LEVEL_NAMES[0];
+}
+
 function formatValue(value: number | string | boolean | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "boolean") return value ? "yes" : "no";
@@ -223,6 +231,13 @@ export function triggerSummary(parts: TriggerSummaryParts): string {
     return v ? `${label}${on} is ${v}` : `${label}${on} changed`;
   }
 
+  // A widget's own level (business rule 181) is 0 / 1 / 2 — "is 2" would be
+  // nonsense. The widget is the subject: "Bank 2 Current is in critical state".
+  if (trigger.metric === "customWidgetLevel") {
+    const widget = parts.dimensionLabel || "A custom widget";
+    const lvl = widgetLevelWord(parts.value) ?? widgetLevelWord(trigger.threshold ?? null) ?? "warning";
+    return lvl === "normal" ? `${widget} is back to normal` : `${widget} is in ${lvl} state`;
+  }
   const subject = triggerSubject(trigger, parts.dimensionLabel);
   // The alarm metric is a 0/1 flag — "is 1" would be nonsense to a reader.
   if (trigger.metric === "hwSensorAlarm") {
@@ -333,6 +348,14 @@ export function triggerTokenParts(
       const flag = value;
       const valueDisplay = value === null || value === undefined ? "" : flag === 1 || flag === true || flag === "1" ? "in ALARM" : "OK";
       return { metricLabel, valueDisplay, thresholdDisplay: "" };
+    }
+    if (trigger.metric === "customWidgetLevel") {
+      const at = widgetLevelWord(trigger.threshold ?? null);
+      return {
+        metricLabel: "Custom widget level",
+        valueDisplay: widgetLevelWord(value ?? null) ?? "",
+        thresholdDisplay: at ? `${at} or worse` : "",
+      };
     }
     const thr = formatValue(trigger.threshold ?? null);
     return {

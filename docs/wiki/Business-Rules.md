@@ -1361,6 +1361,13 @@ describes whether that source can reach the target, so:
   `path_check.path_changed` to Events (at most once every 10 minutes per host
   and check). You can alert on it with a Path Monitor automation set to fire
   when the route changes.
+- **A changed certificate is an Event too (85(c)).** When the TLS
+  certificate an HTTPS check sees from a host has a different expiry date
+  from the last one, Polaris writes `path_check.tls_cert_changed`, saying
+  whether the expiry moved later (renewed) or earlier. The first certificate
+  is a starting point, a run that could not connect is ignored, and there is
+  at most one such event every 10 minutes per host and check. Alert on it with
+  a Path Monitor automation set to fire when the certificate changes.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works
@@ -3703,6 +3710,78 @@ shown in the racks are drawn as cables: each leaves its device into the nearer c
 manager, runs up to the trough, along it and down into the other device. You can re-route a
 cable the way you edit a Layer 2 link, and a re-routed cable whose devices move goes back to
 its automatic route.
+
+### Rule 180
+
+**Monitoring work starts as soon as it is queued, and an idle server stays quiet.** In the
+pg-boss queue mode, the processes that run monitoring and discovery jobs are told by the
+database the moment a job is queued, instead of each of their workers asking every one to five
+seconds. A worker that finds work keeps going until the queue is empty; an idle one checks in
+only every 30 seconds as a safety net. Each such process holds one extra database connection
+for this, which the Capacity Advisor counts. If your database connection for the queue goes
+through a transaction pooler that cannot hold that connection, set
+`POLARIS_PGBOSS_LISTEN_NOTIFY=false` and restart: the workers then poll as before.
+
+### Rule 181
+
+**A custom widget's warning and critical levels are its own, and one automation alerts on them for every widget.**
+A gauge, line or value widget on a manufacturer profile (and a Generic API gauge or line) can
+set a **Warning at** and a **Critical at** level; **Warn when** says whether the problem side is
+above or below. The card turns amber at the warning level and red at the critical level. An
+automation on **Custom widget level** reads every widget that has levels against its own
+levels — so one automation covers an AP8830's 16 A bank and an AP8870's 19 A bank alike —
+and says "Bank 2 Current is in critical state". Set it to *at or above 1* for warning and add
+a severity band at 2 for critical. A widget with no levels is never read. A custom-widget
+alert's email leads with that widget's own chart (its levels or the threshold that fired, or a
+state probe's status lane), with response time underneath.
+
+### Rule 182
+
+**A floor plan can be a CAD drawing.** On a Topology view's floor you can import a DXF
+saved from AutoCAD. Polaris reads it, lets you choose its units and which layers to keep
+(leave out the title block and border), and draws those layers as a sharp vector plan. The
+DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF first. The
+drawing is placed by the location it carries, by lining it up with another floor drawn in
+the same coordinates (as levels of one survey are), or by clicking two places on the
+drawing and the same two on the map.
+
+### Rule 183
+
+**An ArcGIS integration's satellite imagery wins over the Customization setting, and only one supplies it.**
+The Device Map's **Map | Satellite** imagery can come from two places: **Server Settings → Customization**
+(any tile provider) or an [ArcGIS integration](Integration-ArcGIS) with its **Basemap** turned on. While an
+enabled ArcGIS integration supplies imagery, it is used and the Customization settings wait; turn its basemap
+off and they apply again. Only one ArcGIS integration can supply imagery at a time — turning on a second is
+refused. Views saved on the satellite layer work whichever one is in use. Moving a portal imagery service to a
+new address needs the integration's secret typed again ([rule 111](#rule-111)).
+
+### Rule 184
+
+**A cable run belongs to its site, has its own permission, and a trench is never drawn by hand.**
+Cable runs are fiber or ethernet routes drawn on a site's Topology views, over the map or satellite
+imagery. Every Topology view of the site shows them, and changing a view's mode never removes them.
+A run along **electric** or **telephone poles** is drawn by hand — each bend is a pole. A **trench**
+comes only from a survey file, and its points cannot be moved on the map. Drawing and editing runs
+needs the **Cable Runs** permission, not Device Map, because runs are written to your ArcGIS
+organization: Read shows them, Read-Write edits them at sites you added or that carry your tags,
+Full Read-Write at any site. Only administrators have it by default. Runs are saved with the view
+(the tick or Save) and every change is recorded as an Event.
+
+**184(a)** A connection between two devices can be dragged onto a run; it is then drawn through the
+run, from each device to the run's nearest point. Which connections ride a run stays in Polaris — it
+is not sent to ArcGIS — so it needs only Device Map Read-Write. Deleting a run takes it off every
+connection, and a connection left on none is straight again.
+
+### Rule 185
+
+**Cable runs are written one way to one ArcGIS layer, and found again by their Polaris ID.**
+An [ArcGIS integration](Integration-ArcGIS#write-back) with write-back on pushes every run drawn, edited or
+deleted in Polaris to one line layer — an existing layer with a field map, or one Polaris creates. Nothing
+is read back. Only one integration can write runs. Each run's id is written to the layer's Polaris ID
+field and looked up before an add, so a run is never added twice. A run ArcGIS refuses is marked Failed
+with ArcGIS's message until it is retried; one that could not be sent because ArcGIS was unreachable stays
+Pending and goes on the next try. Elevation is written when the layer has z values. Turning write-back
+off, or pointing it at another layer, starts over: every run is sent again when it is next on.
 
 ### Rule 186
 

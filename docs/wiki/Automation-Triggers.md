@@ -50,6 +50,7 @@ that, its newest reading is used. See [rule 178](Business-Rules#rule-178).
 | `sdwanLatencyMs` / `sdwanJitterMs` / `sdwanPacketLoss` | ms / ms / % | health check, member |
 | `ipsecThroughputBps` | bps | tunnel name |
 | `customWidgetValue` — **Custom widget value** | the widget's own | widget (a gauge, line or HTTP-check widget, picked by name) |
+| `customWidgetLevel` — **Custom widget level** | 0 normal, 1 warning, 2 critical | widget (optional — leave it empty to cover every widget whose profile sets a Warning at or Critical at level; [rule 181](Business-Rules#rule-181)). *At or above 1* alerts on warning; add a severity band at 2 for critical. The alert reads "Bank 2 Current is in critical state" |
 | `customStateValue` — Device state flag | 0/1 | state probe, row |
 
 The path check metrics are not here — they have their own trigger type,
@@ -161,6 +162,14 @@ type, then choose what fires it:
 - **A check's route changes (traceroute).** Fires each time a source's
   traceroute takes a different set of hops (at most once per 10 minutes per
   source and check).
+- **A check's TLS certificate changes (renewed or replaced).** HTTPS checks
+  only. Fires each time the certificate a source sees has a different expiry
+  date from the last one it saw (at most once per 10 minutes per source and
+  check). The alert says whether the expiry moved later (a renewal) or
+  earlier (a replacement that expires sooner). The first certificate a source
+  sees, and a run that could not connect, never fire it. To be warned
+  *before* a certificate expires, use the `pathTlsDaysLeft` condition above
+  instead, for example *TLS certificate days remaining < 30*.
 
 **Which sources it watches.** Only devices with an active **Polaris Agent** —
 the Devices step's conditions narrow those, and its preview counts only agent

@@ -1753,11 +1753,38 @@
         if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from, levels: (info && info.levels) || null };
         else delete _editStaged.locationCodes[assetId];
       },
+      // Cable runs (rule 184): their own key, never deviceMap. Null without
+      // cableRuns read, so the canvas draws no run layer at all.
+      fetchCableRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "read")
+        ? function () { return api.map.cableRuns(topoState.siteId); }
+        : null,
+      canDrawRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "write"),
+      stageCableRuns: function (edits) {
+        if (!_editSessionActive()) return false;
+        _editStaged.cableRuns = edits;
+        return true;
+      },
+      // Rule 184(a): which runs each link rides — Polaris-only layout, sent
+      // on the view gate (deviceMap write), after the runs PUT.
+      stageCableRunLinks: function (changes) {
+        if (!_editSessionActive()) return false;
+        _editStaged.cableRunLinks = changes;
+        return true;
+      },
       uploadBackground: function (file) {
         var v = _currentView();
         return api.map.uploadTopologyBackground(topoState.siteId, v && v.id, file);
       },
       backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(topoState.siteId, imageId); },
+      // Rule 182: read a DXF for the import dialog, then import its ticked layers.
+      analyzeCad: function (file) {
+        var v = _currentView();
+        return api.map.topologyCad(topoState.siteId, v && v.id, file);
+      },
+      importCad: function (file, layers, units) {
+        var v = _currentView();
+        return api.map.topologyCad(topoState.siteId, v && v.id, file, layers, units);
+      },
       refreshSidebar: function () { if (topoState.data) renderTopologyInfo(topoState.data); },
       selectAsset: function (id) { _selectTopologyAsset(id); },
       // Layer 2's link hover card, for the Topology canvas's lines.
@@ -2958,6 +2985,8 @@
         ["Floor + / − (left)", "Change floor: the floor above shows faint and larger, the one above that fainter still; floors below are hidden"],
         ["Map button on a floor → Upload floor plan", "Put that floor's plan image on the ground"],
         ["Map button → Adjust floor plan", "Drag to move, drag a corner to stretch, Ctrl + corner keeps the shape, Alt + drag rotates; Done or Esc finishes"],
+        ["Map button → Import CAD drawing (DXF)", "Choose units and layers, then place it: its own location, lined up with another floor, or two points"],
+        ["Placing with two points", "Click a place on the drawing, then the same place on the map; twice. Esc cancels"],
         ["Drag a connection line", "Add a bend point there and move it"],
         ["Click a connection line", "Show its points — drag a bend to move it, drag an end point around its device to attach the line there"],
         ["Select a point, then Delete", "Remove the bend (an end point goes back to automatic)"],
@@ -3174,12 +3203,17 @@
     if (!session) return false;
     var had = Object.keys(session.views).length > 0 ||
       !!(session.viewPatch && Object.keys(session.viewPatch).length) ||
-      !!(session.locationCodes && Object.keys(session.locationCodes).length);
+      !!(session.locationCodes && Object.keys(session.locationCodes).length) ||
+      _cableRunEditsPending(session.cableRuns) ||
+      !!(session.cableRunLinks && Object.keys(session.cableRunLinks).length);
     var prefix = session.siteId + "|";
     Object.keys(_layoutDirty).forEach(function (k) {
       if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
     });
     return had;
+  }
+  function _cableRunEditsPending(edits) {
+    return !!(edits && ((edits.upserts && edits.upserts.length) || (edits.deletes && edits.deletes.length)));
   }
   // Land every staged view through the normal pipeline (localStorage + the
   // debounced PUT, flushed now) and start an empty session. Returns a promise
@@ -3192,8 +3226,41 @@
     if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
     var views = session.views;
     var viewPatch = session.viewPatch || {};
+    var runEdits = session.cableRuns;
+    var linkEdits = session.cableRunLinks;
     _editStaged = { siteId: siteId, views: {}, viewPatch: {}, locationCodes: {} };
     var pending = [];
+    function reloadRuns() {
+      var inst = _modeInstance();
+      if (inst && typeof inst.reloadCableRuns === "function" && topoState.siteId === siteId) inst.reloadCableRuns();
+    }
+    // Cable runs (rule 184) land as one PUT of their own, on their own key.
+    var runsSaved = Promise.resolve();
+    if (_cableRunEditsPending(runEdits) && typeof permAtLeast === "function" && permAtLeast("cableRuns", "write")) {
+      runsSaved = api.map.saveCableRuns(siteId, runEdits).then(function (res) {
+        reloadRuns();
+        return res;
+      }).catch(function (err) {
+        if (typeof showToast === "function") {
+          showToast("Cable runs not saved — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      });
+      pending.push(runsSaved);
+    }
+    // Rule 184(a): links routed through runs, after the runs (a run deleted
+    // this session is gone first), on the view gate.
+    if (linkEdits && Object.keys(linkEdits).length && _canEditViews()) {
+      pending.push(runsSaved.then(function () {
+        return api.map.saveCableRunLinks(siteId, linkEdits);
+      }).then(function (res) {
+        reloadRuns();
+        return res;
+      }).catch(function (err) {
+        if (typeof showToast === "function") {
+          showToast("Links on cable runs not saved — " + (err && err.message ? err.message : String(err)), "error");
+        }
+      }));
+    }
     // The view's own staged fields (rule 147: its shown device types; the
     // Topology / Rack canvases stage theirs here too) land as one PUT.
     var editedView = _currentView();

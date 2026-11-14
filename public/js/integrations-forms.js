@@ -1175,6 +1175,249 @@ function getWorkloadFormConfig() {
   return cfg;
 }
 
+// ─── ArcGIS ─────────────────────────────────────────────────────────────────
+// A portal sign-in (ArcGIS Online, Location Platform or ArcGIS Enterprise). It
+// discovers nothing: it supplies satellite imagery to the Device Map and is
+// where cable runs are written back. One credential block per sign-in method,
+// shown by the method picker (_wireArcgisForm in integrations.js).
+
+var ARCGIS_AUTH_MODES = [
+  ["appCredentials", "OAuth app credentials (client ID + secret)"],
+  ["apiKey",         "API key"],
+  ["userPassword",   "Username and password (ArcGIS Enterprise)"],
+  ["none",           "None (public World Imagery only)"],
+];
+
+function arcgisFormHTML(defaults) {
+  var d = defaults || {};
+  var mode = d.authMode || "apiKey";
+  var enabledChecked = d.enabled !== false ? "checked" : "";
+  function block(m, html) {
+    return '<div data-arcgis-auth="' + m + '"' + (m === mode ? '' : ' hidden') + '>' + html + '</div>';
+  }
+  return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corporate GIS"></div>' +
+    infoBox('Connects Polaris to an <strong style="color:var(--color-text-primary)">ArcGIS</strong> portal — ArcGIS Online, ArcGIS Location Platform or your own ArcGIS Enterprise. It discovers no devices: it supplies satellite imagery to the Device Map and is where the cable runs drawn on the map are written.') +
+    formDivider() +
+    sectionHeading("Portal") +
+    '<div class="form-group"><label>Portal URL</label><input type="text" id="f-portalUrl" value="' + escapeHtml(d.portalUrl || "") + '" placeholder="https://www.arcgis.com">' +
+      '<p class="hint">Leave blank for ArcGIS Online and Location Platform. For ArcGIS Enterprise, give your portal, e.g. <code>https://gis.example.com/portal</code>.</p></div>' +
+    '<div class="form-group"><label>Sign in with</label><select id="f-authMode">' +
+      ARCGIS_AUTH_MODES.map(function (o) {
+        return '<option value="' + o[0] + '"' + (o[0] === mode ? ' selected' : '') + '>' + escapeHtml(o[1]) + '</option>';
+      }).join("") +
+    '</select></div>' +
+    block("appCredentials",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+        '<div class="form-group"><label>Client ID</label><input type="text" id="f-clientId" value="' + escapeHtml(d.clientId || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Client secret</label><input type="password" id="f-clientSecret" value="" placeholder="' + escapeHtml(d.clientSecretPlaceholder || "Client secret") + '" autocomplete="off"></div>' +
+      '</div>' +
+      '<p class="hint">From an OAuth 2.0 app (Content → New item → Developer credentials). Polaris exchanges it for a two-hour token and renews it as needed.</p>') +
+    block("apiKey",
+      '<div class="form-group"><label>API key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "API key") + '" autocomplete="off">' +
+      '<p class="hint">Grant it only the privileges Polaris uses: basemaps for imagery, and editing of the cable-run layer for write-back.</p></div>') +
+    block("userPassword",
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+        '<div class="form-group"><label>Username</label><input type="text" id="f-username" value="' + escapeHtml(d.username || "") + '" autocomplete="off"></div>' +
+        '<div class="form-group"><label>Password</label><input type="password" id="f-password" value="" placeholder="' + escapeHtml(d.passwordPlaceholder || "Password") + '" autocomplete="off"></div>' +
+      '</div>' +
+      '<p class="hint">Use a dedicated account. Polaris signs in through the portal&rsquo;s generateToken endpoint.</p>') +
+    block("none", '<p class="hint">No sign-in: only public services answer. Write-back needs a sign-in.</p>') +
+    checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
+    '<p class="hint">Turn off only for an Enterprise portal with a private certificate; Polaris then pins the certificate it first sees.</p>' +
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
+      '<input type="checkbox" id="f-enabled" ' + enabledChecked + ' style="width:auto">' +
+      '<label for="f-enabled" style="margin:0">Enabled</label>' +
+    '</div>' +
+    '<input type="hidden" id="f-pollInterval" value="' + (d.pollInterval || 12) + '">' +
+    verboseLoggingFormHTML(d);
+}
+
+// The Basemap tab (business rule 183): satellite imagery for the Device Map.
+// While on it replaces Server Settings → Customization's imagery.
+var ARCGIS_WORLD_IMAGERY_CREDIT = "Esri, Maxar, Earthstar Geographics, and the GIS User Community";
+
+function arcgisBasemapHTML(defaults) {
+  var d = defaults || {};
+  var source = d.basemapSource === "service" ? "service" : "world_imagery";
+  function radio(value, label) {
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0">' +
+      '<input type="radio" name="f-basemapSource" value="' + value + '"' + (source === value ? ' checked' : '') + ' style="width:auto"> ' + label + '</label>';
+  }
+  return infoBox('Adds a <strong style="color:var(--color-text-primary)">Map | Satellite</strong> switch to the Device Map&rsquo;s Topology views. While it is on, this imagery replaces the one set under <strong style="color:var(--color-text-primary)">Server Settings → Customization</strong>. Only one ArcGIS integration can supply imagery.') +
+    checkboxRow("f-basemapEnabled", "Offer satellite imagery on the Device Map", d.basemapEnabled === true) +
+    '<div class="form-group"><label>Imagery</label><div style="display:flex;flex-direction:column;gap:6px">' +
+      radio("world_imagery", "Esri World Imagery") +
+      radio("service", "An imagery service in your portal") +
+    '</div><p class="hint">World Imagery uses the keyed Location Platform host with an API key, and the public host otherwise.</p></div>' +
+    '<div class="form-group" data-arcgis-basemap="service"' + (source === "service" ? '' : ' hidden') + '>' +
+      '<label>Imagery service URL</label><input type="text" id="f-imageryUrl" value="' + escapeHtml(d.imageryUrl || "") + '" placeholder="https://tiles.arcgis.com/…/MapServer">' +
+      '<p class="hint">A cached MapServer or ImageServer. Polaris signs its requests with this integration&rsquo;s sign-in.</p></div>' +
+    '<div style="display:grid;grid-template-columns:3fr 1fr;gap:12px">' +
+      '<div class="form-group"><label>Attribution</label><input type="text" id="f-basemapAttribution" maxlength="200" value="' + escapeHtml(d.basemapAttribution || "") + '" placeholder="' + escapeHtml(ARCGIS_WORLD_IMAGERY_CREDIT) + '"></div>' +
+      '<div class="form-group"><label>Deepest zoom</label><input type="number" id="f-basemapMaxZoom" min="1" max="22" value="' + (d.basemapMaxZoom || 19) + '"></div>' +
+    '</div>' +
+    '<p class="hint">The credit shown on the map; blank uses Esri&rsquo;s for World Imagery. Past the deepest zoom the map enlarges the last real tiles instead of showing &ldquo;Map data not yet available&rdquo; — 19 suits most sites. <strong>Test Connection</strong> also fetches one imagery tile while this is on.</p>';
+}
+
+// The Write-back tab (business rule 185): cable runs drawn on the Device Map
+// written one way to an ArcGIS feature layer. The field map and value maps are
+// filled from the layer itself (Read layer); _wireArcgisWriteBack in
+// integrations.js does the reading, creating and the status strip.
+var ARCGIS_WB_ATTRS = [
+  ["polarisId", "Polaris ID", true],
+  ["name",      "Name"],
+  ["medium",    "Medium"],
+  ["placement", "Placement"],
+  ["site",      "Site"],
+  ["notes",     "Notes"],
+  ["lengthM",   "Length (m)"],
+  ["updatedAt", "Updated in Polaris"],
+];
+var ARCGIS_WB_VALUES = {
+  medium:    [["fiber", "Fiber"], ["ethernet", "Ethernet"]],
+  placement: [["trench", "Trench"], ["electric_pole", "Electric pole"], ["telephone_pole", "Telephone pole"]],
+};
+
+function arcgisFieldSelectHTML(attr, label, current, fields) {
+  var opts = '<option value="">— not written —</option>';
+  var names = (fields || []).filter(function (f) { return f.editable; });
+  var seen = false;
+  names.forEach(function (f) {
+    var on = current && f.name.toLowerCase() === String(current).toLowerCase();
+    if (on) seen = true;
+    var kind = f.codedValues ? "coded" : String(f.type || "").replace("esriFieldType", "");
+    opts += '<option value="' + escapeHtml(f.name) + '"' + (on ? " selected" : "") + '>' + escapeHtml(f.name) + ' (' + escapeHtml(kind) + ')</option>';
+  });
+  // Not read yet (or gone from the layer): keep what is stored, visibly.
+  if (current && !seen) opts += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + (fields ? " (not in the layer)" : "") + '</option>';
+  return '<select data-wb-attr="' + attr + '" aria-label="Layer field for ' + escapeHtml(label) + '">' + opts + '</select>';
+}
+
+function arcgisFieldMapRowsHTML(fieldMap, fields) {
+  var fm = fieldMap || {};
+  return ARCGIS_WB_ATTRS.map(function (a) {
+    return '<tr><td>' + escapeHtml(a[1]) + (a[2] ? ' <span class="hint" style="margin:0">(required)</span>' : '') + '</td>' +
+      '<td>' + arcgisFieldSelectHTML(a[0], a[1], fm[a[0]], fields) + '</td></tr>';
+  }).join("");
+}
+
+/** Value maps for medium / placement: a code picker when the mapped field has a coded-value domain. */
+function arcgisValueMapHTML(fieldMap, valueMap, fields) {
+  var fm = fieldMap || {};
+  var vm = valueMap || {};
+  var byName = {};
+  (fields || []).forEach(function (f) { byName[f.name.toLowerCase()] = f; });
+  return ["medium", "placement"].map(function (kind) {
+    var field = fm[kind];
+    if (!field) return "";
+    var f = byName[String(field).toLowerCase()];
+    var current = vm[kind] || {};
+    var cells = ARCGIS_WB_VALUES[kind].map(function (v) {
+      var id = "wb-v-" + kind + "-" + v[0];
+      var cur = current[v[0]];
+      var input;
+      if (f && f.codedValues) {
+        input = '<select id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '">' +
+          '<option value="">— ' + escapeHtml(v[0]) + ' (as is) —</option>' +
+          f.codedValues.map(function (c) {
+            var on = cur !== undefined && String(cur) === String(c.code);
+            return '<option value="' + escapeHtml(String(c.code)) + '" data-numeric="' + (typeof c.code === "number" ? "1" : "") + '"' + (on ? " selected" : "") + '>' +
+              escapeHtml(String(c.code)) + ' — ' + escapeHtml(c.name) + '</option>';
+          }).join("") + '</select>';
+      } else {
+        input = '<input type="text" id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '" maxlength="128" value="' +
+          escapeHtml(cur === undefined ? "" : String(cur)) + '" placeholder="' + escapeHtml(v[0]) + '">';
+      }
+      return '<div class="form-group"><label for="' + id + '">' + escapeHtml(v[1]) + '</label>' + input + '</div>';
+    }).join("");
+    return '<div class="card-title">Values for ' + escapeHtml(field) + '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' + cells + '</div>';
+  }).join("");
+}
+
+function arcgisWriteBackHTML(defaults) {
+  var d = defaults || {};
+  var mode = d.writeBackMode === "polaris" ? "polaris" : "existing";
+  function radio(value, label) {
+    return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0">' +
+      '<input type="radio" name="f-writeBackMode" value="' + value + '"' + (mode === value ? ' checked' : '') + ' style="width:auto"> ' + label + '</label>';
+  }
+  return checkboxRow("f-writeBackEnabled", "Write cable runs to ArcGIS", d.writeBackEnabled === true) +
+    '<p class="hint">One way: runs drawn, edited or deleted in Polaris are pushed to the layer. Edits made in ArcGIS are not read back, and are overwritten on the next change in Polaris. Which connections ride a run stays in Polaris. Only one ArcGIS integration can write runs.</p>' +
+    '<div class="form-group"><label>Layer</label><div style="display:flex;flex-direction:column;gap:6px">' +
+      radio("existing", "An existing layer, with a field map") +
+      radio("polaris", "A layer Polaris creates with its own fields") +
+    '</div></div>' +
+    '<div class="form-group" data-wb-mode="polaris"' + (mode === "polaris" ? '' : ' hidden') + '>' +
+      '<label for="f-wbServiceName">New service name</label>' +
+      '<div style="display:flex;gap:8px"><input type="text" id="f-wbServiceName" maxlength="60" value="Polaris_cable_runs" style="flex-grow:1">' +
+      '<button type="button" class="btn btn-secondary" id="wb-create"' + (d.id ? '' : ' disabled') + '>Create layer</button></div>' +
+      '<p class="hint">' + (d.id
+        ? 'Creates a hosted feature layer in the signed-in user&rsquo;s content, with z values for surveyed elevation, and fills in the URL and field map below. Needs Full Read-Write on Integrations and a sign-in allowed to create content.'
+        : 'Save the integration first, then create the layer.') + '</p></div>' +
+    '<div class="form-group"><label for="f-featureLayerUrl">Feature layer URL</label>' +
+      '<div style="display:flex;gap:8px"><input type="text" id="f-featureLayerUrl" value="' + escapeHtml(d.featureLayerUrl || "") + '" placeholder="https://services.arcgis.com/…/FeatureServer/0" style="flex-grow:1">' +
+      '<button type="button" class="btn btn-secondary" id="wb-read">Read layer</button></div>' +
+      '<div id="wb-layer-info" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"></div></div>' +
+    '<div class="card-title" style="margin-top:10px">Field map</div>' +
+    '<div class="table-wrapper" style="margin-bottom:10px"><table><thead><tr><th>Polaris</th><th>Layer field</th></tr></thead>' +
+      '<tbody id="wb-fieldmap">' + arcgisFieldMapRowsHTML(d.fieldMap, null) + '</tbody></table></div>' +
+    '<div id="wb-valuemap">' + arcgisValueMapHTML(d.fieldMap, d.valueMap, null) + '</div>' +
+    '<div id="wb-status"></div>';
+}
+
+/** The Write-back tab's fields, or null when the tab is not on the page. */
+function getArcgisWriteBackConfig() {
+  var on = document.getElementById("f-writeBackEnabled");
+  if (!on) return null;
+  var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
+  var fieldMap = {};
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-attr]"), function (s) {
+    if (s.value) fieldMap[s.getAttribute("data-wb-attr")] = s.value;
+  });
+  var valueMap = {};
+  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-value]"), function (el) {
+    if (!el.value) return;
+    var kind = el.getAttribute("data-wb-kind");
+    var opt = el.tagName === "SELECT" ? el.options[el.selectedIndex] : null;
+    var v = opt && opt.getAttribute("data-numeric") === "1" ? Number(el.value) : el.value;
+    (valueMap[kind] = valueMap[kind] || {})[el.getAttribute("data-wb-polaris")] = v;
+  });
+  return {
+    writeBackEnabled: on.checked,
+    writeBackMode: picked ? picked.value : "existing",
+    featureLayerUrl: val("f-featureLayerUrl"),
+    fieldMap: fieldMap,
+    valueMap: valueMap,
+  };
+}
+
+function getArcgisFormConfig() {
+  var mode = document.getElementById("f-authMode").value;
+  var cfg = {
+    portalUrl: val("f-portalUrl"),
+    authMode: mode,
+    verifySsl: document.getElementById("f-verifySsl").checked,
+    verboseLogging: readVerboseLoggingFromForm(),
+  };
+  var bmEnabled = document.getElementById("f-basemapEnabled");
+  if (bmEnabled) {
+    var picked = document.querySelector('input[name="f-basemapSource"]:checked');
+    cfg.basemapEnabled = bmEnabled.checked;
+    cfg.basemapSource = picked ? picked.value : "world_imagery";
+    cfg.imageryUrl = val("f-imageryUrl");
+    cfg.basemapAttribution = val("f-basemapAttribution");
+    cfg.basemapMaxZoom = parseInt(document.getElementById("f-basemapMaxZoom").value, 10) || 19;
+  }
+  var wb = getArcgisWriteBackConfig();
+  if (wb) Object.assign(cfg, wb);
+  // Only the chosen method's fields go out; the others keep what is stored.
+  if (mode === "appCredentials") { cfg.clientId = val("f-clientId"); cfg.clientSecret = val("f-clientSecret"); }
+  if (mode === "apiKey") cfg.apiToken = val("f-apiToken");
+  if (mode === "userPassword") { cfg.username = val("f-username"); cfg.password = val("f-password"); }
+  return cfg;
+}
+
 // ─── Proxmox VE ─────────────────────────────────────────────────────────────
 // The workload classes with Proxmox's own transport: an API token (token ID +
 // secret) and a list of node addresses — any node answers for the cluster. The

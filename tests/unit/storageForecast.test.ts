@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 
 import { leastSquaresSlopePerDay, daysUntilFull } from "../../src/utils/linearTrend.js";
-import { computeStorageForecast, FORECAST_MAX_DAYS } from "../../src/services/storageForecastService.js";
+import { computeStorageForecast, computeStorageForecastShared, invalidateStorageForecastMemo, FORECAST_MAX_DAYS } from "../../src/services/storageForecastService.js";
 import { prisma } from "../../src/db.js";
 import { resetDbStub } from "./_dbStub.js";
 
@@ -19,6 +19,7 @@ const rawUnsafe = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   resetDbStub();
   vi.clearAllMocks();
+  invalidateStorageForecastMemo();
 });
 
 const DAY = 86_400_000;
@@ -97,5 +98,39 @@ describe("computeStorageForecast", () => {
     expect(call[1]).toBe("30");
     expect(call[2]).toBe(7);
     expect(call[3]).toEqual(["a1", "a2"]);
+  });
+});
+
+// Efficiency audit group 2: the alert engine and the NOC feed share one fleet
+// fit, recomputed at most every 15 min, instead of a raw-sample GROUP BY per
+// rule per 60 s tick.
+describe("computeStorageForecastShared", () => {
+  const row = (assetId: string) => ({ assetId, mountPath: "/", slope_per_day: 1e9, points: 10, last_used: 50e9, total_bytes: 100e9 });
+
+  it("fits the whole fleet once, filters to the caller's assets, and reuses the fit for 15 min", async () => {
+    vi.useFakeTimers();
+    try {
+      rawUnsafe.mockResolvedValue([row("a"), row("b")]);
+      const [some, all] = await Promise.all([computeStorageForecastShared(["b", "zz"]), computeStorageForecastShared()]);
+      expect(some.map((r) => r.assetId)).toEqual(["b"]);
+      expect(all).toHaveLength(2);
+      expect(rawUnsafe).toHaveBeenCalledTimes(1);
+      expect(rawUnsafe.mock.calls[0]).toHaveLength(3); // fleet-wide: no assetId parameter
+      vi.advanceTimersByTime(15 * 60_000 - 1);
+      await computeStorageForecastShared(["a"]);
+      expect(rawUnsafe).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      await computeStorageForecastShared(["a"]);
+      expect(rawUnsafe).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not remember a failed fit", async () => {
+    rawUnsafe.mockRejectedValueOnce(new Error("db down"));
+    await expect(computeStorageForecastShared()).rejects.toThrow("db down");
+    rawUnsafe.mockResolvedValueOnce([row("a")]);
+    await expect(computeStorageForecastShared()).resolves.toHaveLength(1);
   });
 });

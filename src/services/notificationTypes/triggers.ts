@@ -513,6 +513,10 @@ export const ASSET_METRICS = [
   "fcCrcErrorRate", "fcLinkFailureRate", "fcSyncLossRate", "fcSignalLossRate", "fcInvalidTxWordRate",
   "sdwanLatencyMs", "sdwanJitterMs", "sdwanPacketLoss", "ipsecThroughputBps",
   "customWidgetValue", "customStateValue",
+  // A custom widget's own level (business rule 181): 0 normal, 1 warning,
+  // 2 critical, against the warningAt / criticalAt set on the widget — so one
+  // automation covers every widget with levels, each at its own thresholds.
+  "customWidgetLevel",
   // Agent-run path checks — the asset is the AGENT HOST and the
   // dimension is the check (`checkId`). pathOk is the 0/1 verdict,
   // pathFailurePct the windowed ratio, the rest gauges off the same samples
@@ -576,7 +580,7 @@ export const PATH_METRICS = [
   "pathLatencyMs", "pathHttpStatus", "pathOk", "pathFailurePct", "pathHopCount", "pathTlsDaysLeft",
 ] as const;
 
-export const PATH_CHANGE_TYPES = ["path_check_path_changed"] as const;
+export const PATH_CHANGE_TYPES = ["path_check_path_changed", "path_check_tls_cert_changed"] as const;
 
 /** What the server's readings are called ({asset}, the alert's hostname). */
 export const PATH_SERVER_LABEL = "Polaris server";
@@ -712,6 +716,7 @@ export const CHANGE_TYPES = [
   "firmware_changed", "switch_port_changed", "wireless_ap_changed", "gateway_firewall_changed",
   "fortilink_changed",
   "path_check_path_changed",
+  "path_check_tls_cert_changed",
 ] as const;
 
 // Map a change type → the audit Event action the persist functions emit and
@@ -750,6 +755,10 @@ export const CHANGE_TYPE_ACTIONS: Record<(typeof CHANGE_TYPES)[number], string> 
   // traceroute for a check takes a different hop sequence than the last one
   // (10-minute floor per host and check). Names the agent HOST as its asset.
   path_check_path_changed: "path_check.path_changed",
+  // Business rule 85(c): written unconditionally by pathCheckIngestService when
+  // the certificate an HTTPS check sees from a host carries a different expiry
+  // than the last one (renewed or replaced; 10-minute floor per host and check).
+  path_check_tls_cert_changed: "path_check.tls_cert_changed",
 };
 
 const dimensionFilterSchema = z
@@ -992,9 +1001,9 @@ const changeTrigger = z.object({
   type: z.literal("change"),
   changeType: z.enum(CHANGE_TYPES),
   dimensionFilter: dimensionFilterSchema,
-  /** PATH MONITOR — `path_check_path_changed` only: also fire on a change in
-   *  the Polaris server's own traceroute (an Event naming the CHECK, not a
-   *  host). Absent keeps the pre-flag behaviour — see eventMatchesPathServer. */
+  /** PATH MONITOR — the path change types only: also fire on a change in
+   *  the Polaris server's own run (traceroute or certificate — an Event naming
+   *  the CHECK, not a host). Absent keeps the pre-flag behaviour — see eventMatchesPathServer. */
   includeServer: z.boolean().optional(),
 });
 

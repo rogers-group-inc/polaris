@@ -356,6 +356,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Used by:** `nocDashboardService.getStorageForecast` (widget feed), `notificationEngine.resolveAssetMetricReadings` (the `storageDaysUntilFull` case — dimKey = mountPath, so single-trigger rules alert per filesystem and composite leaves fold ANY-mount), `alertChartService` (`loadStorageForecastSeries` — the forecast chart on a days-until-full alert email).
 
+**Shared fleet fit:** `computeStorageForecastShared(assetIds | null)` — the alert engine's `storageDaysUntilFull` reading and the NOC `storageForecast` feed read ONE fleet-wide `computeStorageForecast(null)`, recomputed at most every 15 min, shared while in flight, filtered to the caller's assets in memory; a failed fit is not remembered. `invalidateStorageForecastMemo()` drops it (tests). `computeStorageForecast` itself stays uncached — the alert email's chart and the tests call it directly.
+
 **Invariants:**
 - Trend source is a UNION of day-bucketed DETAIL samples (7-day retention — covers every storage-scraped asset, incl. the slow 24h cadence) and the DAILY rollups (365-day retention but **cadence='fast' pinned assets only** — sampleRollupService's sqlStorageHourly cadence filter). Never rely on the rollups alone: unpinned assets would silently vanish from the forecast.
 - Growing mounts only (regr_slope > 0 in the HAVING) with ≥ minPoints distinct days — a flat/shrinking/new filesystem produces NO row, which is what keeps `storageDaysUntilFull <= N` automations silent for healthy mounts (absence of a reading is never a firing signal).

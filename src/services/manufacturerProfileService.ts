@@ -30,6 +30,7 @@ import { safeRegexProblem, tryCompileSafeRegex } from "../utils/safeRegex.js";
 import { validateHttpCheckDefinition } from "./credentialService.js";
 import { isDeviceLoginCredential, type HttpAuthConfig } from "../utils/httpCheck.js";
 import { logger } from "../utils/logger.js";
+import { widgetLevelsOf, widgetLevelsProblem } from "../utils/widgetLevel.js";
 import { isHardwareSensorClass, type SensorColumns } from "../utils/hardwareSensors.js";
 import {
   normalizeStateMap,
@@ -1549,6 +1550,16 @@ export async function deleteOverride(overrideId: string): Promise<void> {
   await refreshProfileCache();
 }
 
+/**
+ * A widget's critical level must lie beyond its warning level on the problem
+ * side (business rule 181), or the card and a "Custom widget level" automation
+ * would read critical before warning.
+ */
+function assertWidgetLevels(displayOptions: Record<string, unknown> | null | undefined): void {
+  const problem = widgetLevelsProblem(widgetLevelsOf(displayOptions ?? {}));
+  if (problem) throw new AppError(400, problem);
+}
+
 export async function createWidget(
   profileId: string,
   input: {
@@ -1579,6 +1590,7 @@ export async function createWidget(
   if (input.modelPattern) {
     assertValidModelPattern(input.modelPattern);
   }
+  assertWidgetLevels(input.displayOptions);
   const state = stateFieldsForWrite(widgetType, input.stateMap, input.labelSymbol);
   const http = await httpFieldsForWrite(widgetType, input.httpCheck, input.credentialId);
   const created = await (prisma as any).manufacturerCustomWidget.create({
@@ -1663,6 +1675,7 @@ export async function updateWidget(
         input.credentialId === undefined ? (existing.credentialId ?? null) : input.credentialId,
       );
 
+  if (input.displayOptions !== undefined) assertWidgetLevels(input.displayOptions);
   const updated = await (prisma as any).manufacturerCustomWidget.update({
     where: { id: widgetId },
     data: {

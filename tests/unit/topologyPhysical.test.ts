@@ -125,3 +125,28 @@ describe("room outlines", () => {
     expect(Math.max(...xs)).toBeCloseTo(230, 6);
   });
 });
+
+describe("CAD drawings (rule 182): placement maths", () => {
+  const ext = { w: 1000, h: 500 };
+  it("fitTwoPoints puts both plan points exactly on their ground points", () => {
+    const p1 = [100, 50], p2 = [900, 400], g1 = [5000, -2000], g2 = [5300, -1700];
+    const plan = P._fitTwoPoints(p1, p2, g1, g2, ext);
+    const a = P._planToGround(plan, ext, p1[0], p1[1]);
+    const b = P._planToGround(plan, ext, p2[0], p2[1]);
+    expect(a[0]).toBeCloseTo(g1[0], 6); expect(a[1]).toBeCloseTo(g1[1], 6);
+    expect(b[0]).toBeCloseTo(g2[0], 6); expect(b[1]).toBeCloseTo(g2[1], 6);
+    expect(plan.sx).toBe(plan.sy);
+    expect(P._fitTwoPoints(p1, p1, g1, g2, ext)).toBeNull();
+  });
+  it("cadToPlan maps the drawing's extents onto the plan, y up", () => {
+    const bg = { cad: { ext: { minX: 1000, minY: 2000, maxX: 3000, maxY: 3000 } } };
+    expect(P._cadToPlan(bg, ext, [1000, 2000])).toEqual([0, 0]);
+    expect(P._cadToPlan(bg, ext, [3000, 3000])).toEqual([1000, 500]);
+  });
+  it("overlapShare is the shared area over the smaller drawing", () => {
+    const a = { minX: 0, minY: 0, maxX: 10, maxY: 10 };
+    expect(P._overlapShare(a, { minX: 5, minY: 0, maxX: 15, maxY: 10 })).toBeCloseTo(0.5);
+    expect(P._overlapShare(a, { minX: 2, minY: 2, maxX: 4, maxY: 4 })).toBeCloseTo(1);
+    expect(P._overlapShare(a, { minX: 20, minY: 20, maxX: 30, maxY: 30 })).toBe(0);
+  });
+});

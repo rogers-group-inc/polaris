@@ -119,6 +119,56 @@ export async function recordIpHistoryEntries(
   }
 }
 
+/**
+ * The IP-history upsert db.ts's `recordIpHistory` runs on every asset write
+ * that stages an address, for MANY (asset, ip, source) rows in one statement
+ * per chunk. A discovery write whose address equals the row's no longer stages
+ * it (utils/assetWritePrune.ts), so this keeps that address's history fresh:
+ * same semantics — bump lastSeen + source, reset firstSeen only when the source
+ * changes. Duplicate (asset, ip) pairs keep the last source. Best-effort.
+ */
+export async function refreshIpHistoryLastSeen(
+  rows: ReadonlyArray<{ assetId: string; ip: string; source: string }>,
+): Promise<void> {
+  const byKey = new Map<string, { assetId: string; ip: string; source: string }>();
+  for (const r of rows) if (r.assetId && r.ip) byKey.set(`${r.assetId}\u0000${r.ip}`, r);
+  const all = [...byKey.values()];
+  const CHUNK = 1000;
+  const now = new Date().toISOString();
+  for (let i = 0; i < all.length; i += CHUNK) {
+    const chunk = all.slice(i, i + CHUNK);
+    const params: unknown[] = [now];
+    const groups: string[] = [];
+    for (const r of chunk) {
+      const idP = params.push(randomUUID());
+      const aP = params.push(r.assetId);
+      const ipP = params.push(r.ip);
+      const sP = params.push(r.source);
+      groups.push(`($${idP}, $${aP}, $${ipP}, $${sP})`);
+    }
+    try {
+      // Joined to assets so a row deleted mid-run is skipped rather than
+      // failing the whole chunk on its foreign key.
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "asset_ip_history" ("id", "assetId", "ip", "source", "firstSeen", "lastSeen")
+         SELECT v.id, v."assetId", v.ip, v.source, $1::timestamp, $1::timestamp
+           FROM (VALUES ${groups.join(", ")}) AS v(id, "assetId", ip, source)
+           JOIN "assets" a ON a.id = v."assetId"
+         ON CONFLICT ("assetId", "ip") DO UPDATE SET
+           "lastSeen" = EXCLUDED."lastSeen",
+           "source" = EXCLUDED."source",
+           "firstSeen" = CASE
+             WHEN "asset_ip_history"."source" <> EXCLUDED."source" THEN EXCLUDED."firstSeen"
+             ELSE "asset_ip_history"."firstSeen"
+           END`,
+        ...params,
+      );
+    } catch {
+      // Best-effort, like the per-write hook.
+    }
+  }
+}
+
 export async function pruneOldHistory(): Promise<number> {
   const { retentionDays } = await getHistorySettings();
   if (retentionDays <= 0) return 0;

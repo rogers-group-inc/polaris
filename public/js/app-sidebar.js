@@ -649,6 +649,7 @@ function renderIntegrationFailedStatus() {
     if (t === "proxmox") return "Proxmox VE";
     if (t === "genericapi") return "Generic API";
     if (t === "llm") return "AI Assistant";
+    if (t === "arcgis") return "ArcGIS";
     return t || "";
   }
   container.innerHTML =

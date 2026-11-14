@@ -159,6 +159,8 @@ export async function runEventTail(rules: DbRule[]): Promise<void> {
     where: { timestamp: { gt: since } },
     orderBy: { timestamp: "asc" },
     take: 1000,
+    // Only what the matchers, the fire and the cursor read.
+    select: { timestamp: true, level: true, action: true, resourceType: true, resourceId: true, resourceName: true, actor: true, message: true, details: true },
   });
   if (events.length === 0) return;
 

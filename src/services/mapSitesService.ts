@@ -63,27 +63,26 @@ export async function listMapSites(regionNames: string[]) {
     orderBy: { hostname: "asc" },
   });
 
-  const monitorStats = await fetchRecentSampleStats(
-    sites.filter((s) => s.monitored).map((s) => s.id),
-  );
-
-  // Acknowledged-ness of each DOWN site's down alert, so the map widgets can
-  // fade an outage someone already owns. Bounded to the down sites only.
-  const downAck = await downAlertAcknowledgedByAsset(
-    sites.filter((s) => s.monitored && s.monitorStatus === "down").map((s) => s.id),
-  );
-
-  // Subnet counts per FortiGate — the `fortigateDevice` column on Subnet
-  // stores the FMG-side device name, which (for auto-discovered FortiGates)
-  // matches the Asset's hostname or learnedLocation. One query, grouped.
+  // The three follow-ups are independent: run them together.
   const hostnames = sites.map((s) => s.hostname).filter((h): h is string => !!h);
-  const subnetCounts = hostnames.length
-    ? await prisma.subnet.groupBy({
-        by: ["fortigateDevice"],
-        where: { fortigateDevice: { in: hostnames } },
-        _count: { _all: true },
-      })
-    : [];
+  const [monitorStats, downAck, subnetCounts] = await Promise.all([
+    fetchRecentSampleStats(sites.filter((s) => s.monitored).map((s) => s.id)),
+    // Acknowledged-ness of each DOWN site's down alert, so the map widgets can
+    // fade an outage someone already owns. Bounded to the down sites only.
+    downAlertAcknowledgedByAsset(
+      sites.filter((s) => s.monitored && s.monitorStatus === "down").map((s) => s.id),
+    ),
+    // Subnet counts per FortiGate — the `fortigateDevice` column on Subnet
+    // stores the FMG-side device name, which (for auto-discovered FortiGates)
+    // matches the Asset's hostname or learnedLocation. One query, grouped.
+    hostnames.length
+      ? prisma.subnet.groupBy({
+          by: ["fortigateDevice"],
+          where: { fortigateDevice: { in: hostnames } },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
+  ]);
   const countByName = new Map<string, number>();
   for (const row of subnetCounts) {
     if (row.fortigateDevice) countByName.set(row.fortigateDevice, row._count._all);

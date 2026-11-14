@@ -123,11 +123,22 @@ describe("renderNginxConfig — defaults", () => {
     expect(block).toMatch(/proxy_pass http:\/\/127\.0\.0\.1:3000;/);
   });
 
-  it("only those two locations override the limit", () => {
+  it("raises the body limit for a Topology view's floor plan and CAD drawing uploads to 64 MiB (rule 182)", () => {
+    // The image route's multer cap is 15 MB and the DXF's 64 MB; without this
+    // the server-level 8m refused both at the edge.
+    const sel = "location ~ ^/api/v1/map/sites/[^/]+/topology/views/[^/]+/(background|cad)$ {";
+    expect(contents).toContain(sel);
+    const block = contents.split(sel)[1]!.split("}")[0]!;
+    expect(block).toMatch(/^\s*client_max_body_size 64m;/m);
+    expect(block).toMatch(/^\s*proxy_request_buffering off;/m);
+    expect(block).toMatch(/proxy_pass http:\/\/127\.0\.0\.1:3000;/);
+  });
+
+  it("only those three locations override the limit", () => {
     // Anchored to directive lines so the surrounding explanatory comments
-    // don't count as occurrences: the server-level 8m plus the two overrides.
-    expect((contents.match(/^\s*client_max_body_size .+;/gm) ?? []).length).toBe(3);
-    expect((contents.match(/^\s*proxy_request_buffering .+;/gm) ?? []).length).toBe(2);
+    // don't count as occurrences: the server-level 8m plus the three overrides.
+    expect((contents.match(/^\s*client_max_body_size .+;/gm) ?? []).length).toBe(4);
+    expect((contents.match(/^\s*proxy_request_buffering .+;/gm) ?? []).length).toBe(3);
   });
 
   it("points the restore override at the app upstream, not dash or metrics", () => {

@@ -321,3 +321,26 @@ d("syncWorkloadDevices — several hosts", () => {
     expect((await byName("n2"))?.status).toBe("active");
   });
 });
+
+// Efficiency audit: a workload whose source blob is unchanged but for syncedAt
+// is not re-upserted — its freshness is bumped in one statement after the
+// passes — and its asset write drops the unchanged keys. Freshness must still
+// move, and nothing else may.
+d("syncWorkloadDevices: unchanged workloads", () => {
+  it("a re-run bumps every source row's lastSeen / syncedAt (blob included) and leaves the assets as they were", async () => {
+    await syncWorkloadDevices(integrationId, NAME, {}, result());
+    const before = await prisma.assetSource.findMany({ where: { integrationId }, orderBy: { externalId: "asc" } });
+    const assetsBefore = await prisma.asset.findMany({ where: { hostname: { startsWith: PREFIX } }, orderBy: { hostname: "asc" }, select: { hostname: true, ipAddress: true, macAddress: true, tags: true, assetType: true, status: true } });
+    await new Promise((r) => setTimeout(r, 20));
+    await syncWorkloadDevices(integrationId, NAME, {}, result());
+    const after = await prisma.assetSource.findMany({ where: { integrationId }, orderBy: { externalId: "asc" } });
+    const assetsAfter = await prisma.asset.findMany({ where: { hostname: { startsWith: PREFIX } }, orderBy: { hostname: "asc" }, select: { hostname: true, ipAddress: true, macAddress: true, tags: true, assetType: true, status: true } });
+    expect(after.map((s) => s.externalId)).toEqual(before.map((s) => s.externalId));
+    after.forEach((s, i) => {
+      const b = before[i]!;
+      expect(s.syncedAt!.getTime(), s.externalId).toBeGreaterThan(b.syncedAt!.getTime());
+      expect((s.observed as any).syncedAt).not.toBe((b.observed as any).syncedAt);
+    });
+    expect(assetsAfter).toEqual(assetsBefore);
+  });
+});

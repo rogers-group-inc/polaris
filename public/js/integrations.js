@@ -309,10 +309,12 @@ async function loadIntegrations() {
         intg.type === "proxmox" ? "Proxmox VE" :
         intg.type === "genericapi" ? "Generic API" :
         intg.type === "llm" ? "AI Assistant" :
+        intg.type === "arcgis" ? "ArcGIS" :
         "FortiManager";
-      // The AI Assistant integration discovers nothing: no Discover button and no
-      // auto-discovery rows on its card.
       var isLlm = intg.type === "llm";
+      // The AI Assistant and ArcGIS integrations discover nothing: no Discover
+      // button and no auto-discovery rows on their cards.
+      var noDiscovery = isLlm || intg.type === "arcgis";
 
       function filterRow(baseLabel, include, exclude) {
         include = include || []; exclude = exclude || [];
@@ -345,6 +347,20 @@ async function loadIntegrations() {
           '<div class="detail-row"><span class="detail-label">Tool Calling</span><span class="detail-value">' + _llmToolCheckHTML(config.toolCheck) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Lookups</span><span class="detail-value">Up to ' + (config.maxToolRounds || 6) + ' rounds, ' + (config.maxRowsPerTool || 200) + ' rows each · ' + Math.round((config.contextWindow || 8192) / 1024) + 'K-token window</span></div>' +
           '<div class="detail-row"><span class="detail-label">API Access Role</span><span class="detail-value">' + (config.roleName ? escapeHtml(config.roleName) + ' <span style="color:var(--color-text-tertiary);font-size:0.85em">(read-only)</span>' : '<span style="color:var(--color-text-tertiary)">—</span>') + '</span></div>';
+      } else if (intg.type === "arcgis") {
+        var arcgisModes = { none: "None (public services only)", apiKey: "API key", appCredentials: "OAuth app credentials", userPassword: "Named user" };
+        var arcgisMode = config.authMode || "apiKey";
+        var arcgisWho = arcgisMode === "appCredentials" ? config.clientId : arcgisMode === "userPassword" ? config.username : "";
+        detailRows =
+          '<div class="detail-row"><span class="detail-label">Portal</span><span class="detail-value mono">' + escapeHtml(config.portalUrl || "https://www.arcgis.com") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Sign-in</span><span class="detail-value">' + escapeHtml(arcgisModes[arcgisMode] || arcgisMode) +
+            (arcgisWho ? ' <span class="mono">' + escapeHtml(arcgisWho) + '</span>' : '') + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Verify TLS</span><span class="detail-value">' + (config.verifySsl !== false ? "Yes" : "No") + '</span></div>' +
+          '<div class="detail-row"><span class="detail-label">Satellite Imagery</span><span class="detail-value">' +
+            (config.basemapEnabled !== true ? '<span style="color:var(--color-text-tertiary)">Off</span>'
+              : config.basemapSource === "service" ? 'Portal service <span class="mono">' + escapeHtml(config.imageryUrl || "") + '</span>'
+              : 'Esri World Imagery') +
+          '</span></div>';
       } else if (intg.type === "activedirectory") {
         detailRows =
           '<div class="detail-row"><span class="detail-label">Host</span><span class="detail-value mono">' + escapeHtml(config.host || "-") + ':' + (config.port || defaultPort) + '</span></div>' +
@@ -504,7 +520,7 @@ async function loadIntegrations() {
             '<div class="integration-card-enabled">' +
               (intg.enabled ? '<span class="badge badge-active">Enabled</span>' : '<span class="badge badge-deprecated">Disabled</span>') +
             '</div>' +
-            (isLlm ? '' :
+            (noDiscovery ? '' :
             '<div class="integration-card-discover" id="discover-wrap-' + intg.id + '" data-disabled="' + (intg.lastTestOk !== true ? '1' : '0') + '">' +
               _discoverBtnHTML(intg.id, intg.name, activeDiscoveries.find(function(d){ return d.id === intg.id; }) || null, intg.lastTestOk !== true) +
             '</div>') +
@@ -525,7 +541,7 @@ async function loadIntegrations() {
         '</div>' +
         '<div class="integration-card-details">' +
           detailRows +
-          (isLlm ? '' :
+          (noDiscovery ? '' :
           '<div class="detail-row"><span class="detail-label">Auto-Discovery</span><span class="detail-value">' + (!intg.lastTestOk ? '<span style="color:var(--color-text-tertiary)">Disabled until a successful connection test</span>' : intg.autoDiscover === false ? '<span style="color:var(--color-text-tertiary)">Disabled</span>' : 'Every ' + (intg.pollInterval || 4) + ' hour' + ((intg.pollInterval || 4) === 1 ? '' : 's')) + '</span></div>' +
           '<div class="detail-row"><span class="detail-label">Next Auto-Discovery</span><span class="detail-value">' + nextDiscoveryText + '</span></div>' +
           avgRow) +
@@ -587,6 +603,7 @@ function showTypePicker() {
       '<button class="btn btn-secondary" id="pick-proxmox" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Proxmox VE</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Cluster nodes, VMs &amp; LXC containers via the REST API</span>' +
+      '</button>' +
       '<button class="btn btn-secondary" id="pick-generic" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>Generic API</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Any REST API that lists devices as JSON</span>' +
@@ -594,6 +611,10 @@ function showTypePicker() {
       '<button class="btn btn-secondary" id="pick-llm" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>AI Assistant</strong>' +
         '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">AI assistant via an OpenAI-compatible model server or Azure AI Foundry</span>' +
+      '</button>' +
+      '<button class="btn btn-secondary" id="pick-arcgis" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
+        '<strong>ArcGIS</strong>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Satellite imagery &amp; cable runs via ArcGIS Online or Enterprise</span>' +
       '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
@@ -610,10 +631,12 @@ function showTypePicker() {
   document.getElementById("pick-proxmox").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("proxmox"); });
   document.getElementById("pick-generic").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("genericapi"); });
   document.getElementById("pick-llm").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("llm"); });
+  document.getElementById("pick-arcgis").addEventListener("click", function () { closeModal(); openIntegrationCreateModal("arcgis"); });
 }
 
 function _formHTMLForType(type, defaults) {
   if (type === "llm") return llmFormHTML(defaults);
+  if (type === "arcgis") return arcgisFormHTML(defaults);
   if (type === "genericapi") return genericApiGeneralHTML(defaults);
   if (type === "windowsserver") return windowsServerFormHTML(defaults);
   if (type === "fortigate") return fortiGateFormHTML(defaults);
@@ -628,6 +651,7 @@ function _formHTMLForType(type, defaults) {
 
 function _formConfigForType(type) {
   if (type === "llm") return getLlmFormConfig();
+  if (type === "arcgis") return getArcgisFormConfig();
   if (type === "genericapi") return getGenericApiFormConfig();
   if (type === "windowsserver") return getWinFormConfig();
   if (type === "fortigate") return getFgtFormConfig();
@@ -679,6 +703,7 @@ var _INTEGRATION_PRODUCTS = {
   proxmox:         "Proxmox VE",
   genericapi:      "Generic API",
   llm:             "AI Assistant",
+  arcgis:          "ArcGIS",
 };
 
 /** The product an operator picked to get here. Unknown types fall back to the
@@ -726,6 +751,9 @@ var _INTEGRATION_REQUIRED_FIELDS = {
   // The identity path is required too, but which input holds it depends on
   // the identity picker — the server names it if it is missing.
   genericapi:   [["f-host", "host"]],
+  // The portal defaults to ArcGIS Online and which credential is needed
+  // depends on the sign-in method — the server names a missing one.
+  arcgis:       [],
 };
 
 function _integrationRequires(type, mode) {
@@ -856,6 +884,16 @@ function _integrationTabs(ctx) {
     return gaTabs;
   }
 
+  // ArcGIS: the sign-in, then what it is used for (rule 183's basemap, rule
+  // 185's cable-run write-back).
+  if (type === "arcgis") {
+    return [
+      { key: "general", label: "General", html: ctx.generalHtml },
+      { key: "basemap", label: "Basemap", html: arcgisBasemapHTML(Object.assign({}, defaults, config)) },
+      { key: "writeback", label: "Write-back", html: arcgisWriteBackHTML(Object.assign({}, defaults, config, { id: ctx.id || null })) },
+    ];
+  }
+
   if (_NON_FORTINET_TABBED.indexOf(type) === -1) return null;   // flat form only
 
   // AD / Entra / Windows Server / vCenter / Azure Arc: the type's own flat form
@@ -905,9 +943,130 @@ function _integrationTabs(ctx) {
   return nonFortinet;
 }
 
+/** ArcGIS: show only the chosen sign-in method's credential fields. */
+function _wireArcgisForm() {
+  var sel = document.getElementById("f-authMode");
+  if (!sel) return;
+  function paint() {
+    var blocks = document.querySelectorAll("[data-arcgis-auth]");
+    for (var i = 0; i < blocks.length; i++) blocks[i].hidden = blocks[i].getAttribute("data-arcgis-auth") !== sel.value;
+  }
+  sel.addEventListener("change", paint);
+  paint();
+  // Basemap tab: the service URL only for "an imagery service in your portal".
+  var radios = document.querySelectorAll('input[name="f-basemapSource"]');
+  function paintSource() {
+    var picked = document.querySelector('input[name="f-basemapSource"]:checked');
+    var svc = document.querySelector('[data-arcgis-basemap="service"]');
+    if (svc) svc.hidden = !picked || picked.value !== "service";
+  }
+  for (var r = 0; r < radios.length; r++) radios[r].addEventListener("change", paintSource);
+  paintSource();
+}
+
+/**
+ * ArcGIS Write-back tab (business rule 185): Read layer fills the field map's
+ * pickers and the value maps from the layer; Create layer makes a Polaris
+ * layer (a saved integration only); the strip shows runs by sync state.
+ */
+function _wireArcgisWriteBack(id) {
+  var readBtn = document.getElementById("wb-read");
+  if (!readBtn) return;
+  var layerFields = null;
+  function current() { return getArcgisWriteBackConfig() || {}; }
+  function repaintMaps() {
+    var c = current();
+    document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(c.fieldMap, layerFields);
+    document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+  }
+  // A changed Medium / Placement field re-draws its value map.
+  document.getElementById("wb-fieldmap").addEventListener("change", function (e) {
+    var a = e.target && e.target.getAttribute && e.target.getAttribute("data-wb-attr");
+    if (a === "medium" || a === "placement") {
+      var c = current();
+      document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+    }
+  });
+  var modeRadios = document.querySelectorAll('input[name="f-writeBackMode"]');
+  function paintMode() {
+    var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
+    var block = document.querySelector('[data-wb-mode="polaris"]');
+    if (block) block.hidden = !picked || picked.value !== "polaris";
+  }
+  for (var i = 0; i < modeRadios.length; i++) modeRadios[i].addEventListener("change", paintMode);
+  paintMode();
+
+  function badge(cls, text) { return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>'; }
+  function readLayer() {
+    var info = document.getElementById("wb-layer-info");
+    return api.integrations.arcgisReadLayer({ id: id || undefined, config: getArcgisFormConfig() }).then(function (res) {
+      var L = res.layer;
+      layerFields = L.fields;
+      var caps = ["Create", "Update", "Delete"].map(function (c) {
+        var ok = L.capabilities.indexOf(c) !== -1 || L.capabilities.indexOf("Editing") !== -1;
+        return badge(ok ? "badge-active" : "badge-conflict", c);
+      }).join("");
+      info.innerHTML = badge("badge-readonly", L.geometryType === "esriGeometryPolyline" ? "Polyline" : (L.geometryType || "No geometry").replace("esriGeometry", "")) +
+        (L.hasZ ? badge("badge-readonly", "Z values") : "") + caps +
+        '<span class="hint" style="margin:0">&ldquo;' + escapeHtml(L.name) + '&rdquo; · ' + L.fields.length + ' fields</span>' +
+        (res.problems || []).concat(res.warnings || []).map(function (p, k) {
+          return '<p class="hint" style="width:100%;margin:2px 0;color:' + (k < (res.problems || []).length ? "var(--color-danger)" : "var(--color-text-secondary)") + '">' + escapeHtml(p) + '</p>';
+        }).join("");
+      repaintMaps();
+    }).catch(function (err) {
+      info.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
+    });
+  }
+  readBtn.addEventListener("click", readLayer);
+
+  var createBtn = document.getElementById("wb-create");
+  if (createBtn && id) {
+    createBtn.addEventListener("click", function () {
+      var name = val("f-wbServiceName");
+      createBtn.disabled = true;
+      api.integrations.arcgisCreateLayer(id, name).then(function (res) {
+        document.getElementById("f-featureLayerUrl").value = res.featureLayerUrl;
+        document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(res.fieldMap, null);
+        showToast("Layer created — its URL and field map are filled in. Save to keep them.");
+        return readLayer();
+      }).catch(function (err) {
+        showToast("Layer not created — " + (err && err.message ? err.message : String(err)), "error");
+      }).then(function () { createBtn.disabled = false; });
+    });
+  }
+
+  // The runs by sync state (a saved integration only).
+  var strip = document.getElementById("wb-status");
+  if (!id || !strip) return;
+  function paintStatus() {
+    api.integrations.arcgisWriteBack(id).then(function (s) {
+      var c = s.counts || {};
+      if (!s.writing && !c.synced && !c.pending && !c.failed) { strip.innerHTML = ""; return; }
+      var canRetry = c.failed > 0 && typeof permAtLeast === "function" && permAtLeast("cableRuns", "fullwrite");
+      strip.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--color-bg-primary);border:1px solid var(--color-border-light);border-radius:var(--radius-md);flex-wrap:wrap">' +
+        badge("badge-active", (c.synced || 0) + " synced") + badge("badge-expired", (c.pending || 0) + " pending") + badge("badge-conflict", (c.failed || 0) + " failed") +
+        '<span style="font-size:12px;color:var(--color-text-secondary);flex-grow:1">' + (s.lastError ? "Failed: &ldquo;" + escapeHtml(s.lastError) + "&rdquo;" : (s.writing ? "" : "Write-back is off")) + '</span>' +
+        (canRetry ? '<button type="button" class="btn btn-sm btn-secondary" id="wb-retry">Retry failed</button>' : '') + '</div>';
+      var retry = document.getElementById("wb-retry");
+      if (retry) retry.addEventListener("click", function () {
+        retry.disabled = true;
+        api.integrations.arcgisRetryFailed(id).then(function (r) {
+          showToast(r.queued + " run(s) queued to be sent again");
+          paintStatus();
+        }).catch(function (err) {
+          retry.disabled = false;
+          showToast("Not retried — " + (err && err.message ? err.message : String(err)), "error");
+        });
+      });
+    }).catch(function () { strip.innerHTML = ""; });
+  }
+  paintStatus();
+}
+
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
   if (type === "llm") { _wireLlmForm(id); return; }
+  if (type === "arcgis") { _wireArcgisForm(); _wireArcgisWriteBack(id); return; }
   if (type === "genericapi") { _wireGenericApiForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
@@ -1274,6 +1433,45 @@ function _intgEditFormSpec(intg, config) {
         return fc;
       };
       return { body: body, formGetter: formGetter, defaults: defaults };
+    }
+
+    if (intg.type === "arcgis") {
+      var agDefaults = {
+        name: intg.name,
+        enabled: intg.enabled,
+        pollInterval: intg.pollInterval,
+        portalUrl: config.portalUrl,
+        authMode: config.authMode,
+        clientId: config.clientId,
+        username: config.username,
+        verifySsl: config.verifySsl !== false,
+        basemapEnabled: config.basemapEnabled === true,
+        basemapSource: config.basemapSource,
+        imageryUrl: config.imageryUrl,
+        basemapAttribution: config.basemapAttribution,
+        basemapMaxZoom: config.basemapMaxZoom,
+        writeBackEnabled: config.writeBackEnabled === true,
+        writeBackMode: config.writeBackMode,
+        featureLayerUrl: config.featureLayerUrl,
+        fieldMap: config.fieldMap,
+        valueMap: config.valueMap,
+        apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "API key",
+        clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "Client secret",
+        passwordPlaceholder: config.password ? "Leave blank to keep the current password" : "Password",
+        verboseLogging: config.verboseLogging === true,
+        verboseLoggingEnabledAt: config.verboseLoggingEnabledAt,
+      };
+      return {
+        body: arcgisFormHTML(agDefaults),
+        formGetter: function () {
+          var fc = getArcgisFormConfig();
+          if (!fc.apiToken) delete fc.apiToken;
+          if (!fc.clientSecret) delete fc.clientSecret;
+          if (!fc.password) delete fc.password;
+          return fc;
+        },
+        defaults: agDefaults,
+      };
     }
 
     if (intg.type === "genericapi") {

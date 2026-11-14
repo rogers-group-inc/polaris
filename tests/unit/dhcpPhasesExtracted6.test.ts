@@ -168,6 +168,7 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
       { serial: "SW1", summary: { ssh: true } },
       { serial: "FGT1", summary: { https: false } }, // first one wins
     ] } });
+    stubbed(prisma.asset.findMany).mockResolvedValue([] as never); // nothing stored yet
     await runFinalizeReconciles(input);
     expect(db.sourceFindMany.mock.calls[0][0].where).toMatchObject({ integrationId: "i1", externalId: { in: ["FGT1", "SW1"] } });
     expect(db.transaction).toHaveBeenCalledWith([
@@ -175,6 +176,22 @@ describe("Phases 12–13.7 — finalize reconciles", () => {
       { where: { id: "a2" }, data: { managementAccess: { ssh: true } } },
     ]);
     expect(input.syncLog).toHaveBeenCalledWith("info", "Management-access: recorded allowaccess for 2 device(s)");
+  });
+
+  // Efficiency audit: a summary equal to the stored one (key order aside) is not rewritten.
+  it("rewrites only the devices whose management-access summary changed", async () => {
+    db.sourceFindMany.mockResolvedValue([{ assetId: "a1", externalId: "FGT1" }, { assetId: "a2", externalId: "SW1" }]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { id: "a1", managementAccess: { ssh: false, https: true } },
+      { id: "a2", managementAccess: { ssh: false } },
+    ] as never);
+    const input = base({ result: { devices: [], managementAccess: [
+      { serial: "FGT1", summary: { https: true, ssh: false } },
+      { serial: "SW1", summary: { ssh: true } },
+    ] } });
+    await runFinalizeReconciles(input);
+    expect(db.transaction).toHaveBeenCalledWith([{ where: { id: "a2" }, data: { managementAccess: { ssh: true } } }]);
+    expect(input.syncLog).toHaveBeenCalledWith("info", "Management-access: recorded allowaccess for 1 device(s), 1 unchanged");
   });
 
   it("a scoped run reconciles descriptions for its own gate only (rule 142)", async () => {
