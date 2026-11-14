@@ -592,12 +592,19 @@ describe("asset auto-decommission settings", () => {
     });
   });
 
-  it("unlike retention, an omitted or invalid value is written as 0 — it DISABLES rather than keeping the current setting", async () => {
+  // Was a bug until 2026-11-14: an omitted value was written as 0 and
+  // silently DISABLED auto-decommission. Like retention, it now keeps the
+  // current setting; only an explicit 0 disables.
+  it("like retention, an omitted, blank or invalid value keeps the current setting", async () => {
+    for (const input of [{}, { inactivityMonths: -4 }, { inactivityMonths: "" as unknown as number }, { inactivityMonths: null as unknown as number }, { inactivityMonths: "soon" as unknown as number }]) {
+      settingRows.assetAutoDecommission = { inactivityMonths: 6 };
+      expect(await updateAssetDecommissionSettings(input)).toEqual({ inactivityMonths: 6 });
+    }
+  });
+
+  it("an explicit 0 disables, and the change is audited by key name", async () => {
     settingRows.assetAutoDecommission = { inactivityMonths: 6 };
-    expect(await updateAssetDecommissionSettings({})).toEqual({ inactivityMonths: 0 });
-    expect(await updateAssetDecommissionSettings({ inactivityMonths: -4 })).toEqual({ inactivityMonths: 0 });
-    // It reads the current value only to audit the change (one Event naming
-    // the changed key), never to keep it.
+    expect(await updateAssetDecommissionSettings({ inactivityMonths: 0 })).toEqual({ inactivityMonths: 0 });
     expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({
       action: "asset_auto_decommission.settings_updated",
       details: { changed: ["inactivityMonths"] },

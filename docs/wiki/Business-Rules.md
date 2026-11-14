@@ -1368,6 +1368,10 @@ describes whether that source can reach the target, so:
   is a starting point, a run that could not connect is ignored, and there is
   at most one such event every 10 minutes per host and check. Alert on it with
   a Path Monitor automation set to fire when the certificate changes.
+- **A late traceroute is history, not a route change (85(d)).** A traceroute
+  that arrives after a newer one from the same host (an agent catching up after
+  a reconnect, say) is kept in the check's history but is not compared with the
+  current route, so it never writes `path_check.path_changed`.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works

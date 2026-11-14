@@ -425,9 +425,13 @@ export async function updateAssetDecommissionSettings(
   actor?: string,
 ): Promise<AssetDecommissionSettings> {
   const current = await getAssetDecommissionSettings();
-  const months = Number(settings.inactivityMonths);
+  // An absent / blank / invalid value keeps the current setting, like
+  // retention does; only an explicit 0 disables auto-decommission. (Until
+  // 2026-11-14 an omitted field wrote 0 and silently turned it off.)
+  const raw = settings.inactivityMonths as unknown;
+  const months = raw == null || raw === "" ? NaN : Number(raw);
   const merged: AssetDecommissionSettings = {
-    inactivityMonths: Number.isFinite(months) && months >= 0 ? Math.floor(months) : 0,
+    inactivityMonths: Number.isFinite(months) && months >= 0 ? Math.floor(months) : current.inactivityMonths,
   };
   await prisma.setting.upsert({
     where: { key: ASSET_DECOMMISSION_KEY },
