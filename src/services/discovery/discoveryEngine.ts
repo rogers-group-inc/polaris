@@ -20,6 +20,7 @@ import * as windowsServer from "../windowsServerService.js";
 import * as entraId from "../entraIdService.js";
 import * as activeDirectory from "../activeDirectoryService.js";
 import { syncArcSoftware, syncIntuneSoftware } from "../softwareInventoryService.js";
+import { syncIntuneLoggedOnUsers } from "../loggedOnUserService.js";
 import * as vcenter from "../vcenterService.js";
 import { recordHostHbaPorts } from "../fibreChannelService.js";
 import * as unraid from "../unraidService.js";
@@ -922,6 +923,11 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
         // Detected apps → the Software tab. After the device sync, so a new
         // device's asset (and its intune source row) already exists.
         await syncIntuneSoftware(integrationId, config as any, result.devices, {
+          intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,
+        });
+        // Who logged on → associatedUsers (business rule 186). Same placement
+        // and reason as the software pass above.
+        await syncIntuneLoggedOnUsers(integrationId, config as any, result.devices, {
           intuneRead: result.intuneRead, scoped: result.scoped, signal: ac.signal, log: onProgress,
         });
       }

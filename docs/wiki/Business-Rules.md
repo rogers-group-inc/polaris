@@ -3783,3 +3783,15 @@ with ArcGIS's message until it is retried; one that could not be sent because Ar
 Pending and goes on the next try. Elevation is written when the layer has z values. Turning write-back
 off, or pointing it at another layer, starts over: every run is sent again when it is next on.
 
+### Rule 186
+
+**The last logged-on user is whoever a source saw most recently, at the time that source saw them.**
+An asset lists the users its integrations have seen on it, each with when and who reported
+it, and the newest is shown as the **Last Logged-On User**. Intune reports each account that
+logged on to a device and when (naming accounts that are nobody’s primary user needs the
+`User.Read.All` permission). A FortiGate reports the users it has authenticated (FSSO, RSSO,
+captive portal, firewall policy logins), matched to a device only when the same gate is
+seeing that device online at the user’s address. The gate’s device list reports a user too,
+dated by when the gate last saw the device. The time shown is always when the source saw the
+user, never when Polaris last read it. Each asset keeps its 25 most recent users. **Assigned
+To** is unchanged: it is still the device’s primary user in Intune.
