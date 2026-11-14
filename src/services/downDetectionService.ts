@@ -407,9 +407,13 @@ function reportBuild(index: DownDetectionIndex): void {
   // thing that would normally alert about that is exactly what was deleted. Fire
   // on the TRANSITION into that state so it is in the audit trail once, rather
   // than every 60s forever.
+  // The state tracked is BLIND (no rule AND something monitored), not "zero
+  // rules": an empty fresh install is not blind, and recording it as zero-rule
+  // meant the Event never fired once discovery later added monitored devices.
   const isZero = index.ruleCount === 0;
-  if (isZero !== lastRuleCountWasZero) {
-    if (isZero && index.assetCount > 0) {
+  const isBlind = isZero && index.assetCount > 0;
+  if (isBlind !== lastRuleCountWasZero) {
+    if (isBlind) {
       logger.warn(
         { monitoredAssets: index.assetCount },
         "down detection: no enabled automation defines down — every monitored asset is passive",
@@ -424,6 +428,7 @@ function reportBuild(index: DownDetectionIndex): void {
         details: { monitoredAssets: index.assetCount },
       });
     } else if (!isZero && lastRuleCountWasZero === true) {
+      // Left blind because a rule appeared — not because the fleet emptied.
       void logEvent({
         action: "monitor.down_detection_restored",
         level: "info",
@@ -434,7 +439,7 @@ function reportBuild(index: DownDetectionIndex): void {
         details: { ruleCount: index.ruleCount },
       });
     }
-    lastRuleCountWasZero = isZero;
+    lastRuleCountWasZero = isBlind;
   }
 }
 
@@ -588,6 +593,11 @@ export async function previewDownDetectionRemoval(ruleId: string): Promise<{
 
   const survivors = rules.filter((r) => r.id !== ruleId);
   const assets = await prisma.asset.findMany({ where: { monitored: true }, select: DOWN_SCOPE_SELECT });
+  // Relation-backed leaves (interfaceName, nativeVlan, ssid, agentInstalled,
+  // subnet-by-name) read nothing DOWN_SCOPE_SELECT loads — resolve them in SQL
+  // exactly as buildDownDetectionIndex does, or the preview counts 0 for a rule
+  // the live index says governs the device.
+  await decorateRelationLeafHits(assets, rules.map((r) => r.scope?.condition));
 
   let governs = 0;
   let fallback = 0;

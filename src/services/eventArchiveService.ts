@@ -187,8 +187,41 @@ export async function getArchiveSettings(): Promise<ArchiveSettings> {
   return { ...DEFAULT_SETTINGS, ...(row.value as Record<string, unknown>) } as ArchiveSettings;
 }
 
+/**
+ * Audit a settings write: one Event naming the KEYS that changed — never their
+ * values, so a password or private-key path is not copied into the log. Where
+ * the event log is shipped, how long it is kept and when assets are retired
+ * are all audit-worthy; none of the four updaters below recorded anything.
+ * Imported lazily, as forgetArchiveHostKey does (eventLogService imports this
+ * module for retention).
+ */
+async function logSettingsChange(
+  action: string,
+  settingKey: string,
+  label: string,
+  before: object,
+  after: object,
+  actor: string | undefined,
+): Promise<void> {
+  const b = before as Record<string, unknown>;
+  const a = after as Record<string, unknown>;
+  const changed = Array.from(new Set([...Object.keys(b), ...Object.keys(a)]))
+    .filter((k) => JSON.stringify(b[k]) !== JSON.stringify(a[k]));
+  if (!changed.length) return;
+  const { logEvent } = await import("./eventLogService.js");
+  await logEvent({
+    action,
+    resourceType: "setting",
+    resourceName: settingKey,
+    actor,
+    message: `${label} settings updated (${changed.join(", ")})`,
+    details: { changed },
+  });
+}
+
 export async function updateArchiveSettings(
   settings: Partial<ArchiveSettings>,
+  actor?: string,
 ): Promise<ArchiveSettings> {
   const current = await getArchiveSettings();
   const merged: ArchiveSettings = { ...current, ...settings };
@@ -199,6 +232,7 @@ export async function updateArchiveSettings(
     create: { key: SETTINGS_KEY, value: merged as any },
     update: { value: merged as any },
   });
+  await logSettingsChange("event_archive.settings_updated", SETTINGS_KEY, "Event archive", current, merged, actor);
 
   return merged;
 }
@@ -347,6 +381,7 @@ export async function getCachedRetentionSettings(): Promise<RetentionSettings> {
 
 export async function updateRetentionSettings(
   settings: Partial<RetentionSettings>,
+  actor?: string,
 ): Promise<RetentionSettings> {
   const current = await getRetentionSettings();
   const days = Number(settings.retentionDays);
@@ -362,6 +397,7 @@ export async function updateRetentionSettings(
   });
   _retentionCache = merged;
   _retentionCacheAt = Date.now();
+  await logSettingsChange("event_retention.settings_updated", RETENTION_KEY, "Event retention", current, merged, actor);
   return merged;
 }
 
@@ -386,7 +422,9 @@ export async function getAssetDecommissionSettings(): Promise<AssetDecommissionS
 
 export async function updateAssetDecommissionSettings(
   settings: Partial<AssetDecommissionSettings>,
+  actor?: string,
 ): Promise<AssetDecommissionSettings> {
+  const current = await getAssetDecommissionSettings();
   const months = Number(settings.inactivityMonths);
   const merged: AssetDecommissionSettings = {
     inactivityMonths: Number.isFinite(months) && months >= 0 ? Math.floor(months) : 0,
@@ -396,6 +434,7 @@ export async function updateAssetDecommissionSettings(
     create: { key: ASSET_DECOMMISSION_KEY, value: merged as any },
     update: { value: merged as any },
   });
+  await logSettingsChange("asset_auto_decommission.settings_updated", ASSET_DECOMMISSION_KEY, "Asset auto-decommission", current, merged, actor);
   return merged;
 }
 
@@ -437,6 +476,7 @@ export async function getSyslogSettings(): Promise<SyslogSettings> {
 
 export async function updateSyslogSettings(
   settings: Partial<SyslogSettings>,
+  actor?: string,
 ): Promise<SyslogSettings> {
   const current = await getSyslogSettings();
   const merged: SyslogSettings = { ...current, ...settings };
@@ -446,6 +486,7 @@ export async function updateSyslogSettings(
     create: { key: SYSLOG_KEY, value: merged as any },
     update: { value: merged as any },
   });
+  await logSettingsChange("event_syslog.settings_updated", SYSLOG_KEY, "Syslog forwarding", current, merged, actor);
 
   return merged;
 }
@@ -481,7 +522,8 @@ export async function testSyslogConnection(
 
 function sendUdp(host: string, port: number, msg: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const client = createSocket("udp4");
+    // An IPv6 server needs a udp6 socket (rule 128), as buildSnmpSession picks.
+    const client = createSocket(isIP(host) === 6 ? "udp6" : "udp4");
     const buf = Buffer.from(msg);
     client.send(buf, 0, buf.length, port, host, (err) => {
       client.close();
