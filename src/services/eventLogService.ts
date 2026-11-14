@@ -14,6 +14,7 @@
 
 import { prisma } from "../db.js";
 import { getCachedRetentionSettings } from "./eventArchiveService.js";
+import { forwardEvents } from "./syslogForwarderService.js";
 import { jsonEqual } from "../utils/jsonEqual.js";
 
 const LEVEL_ORDER: Record<string, number> = { info: 0, warning: 1, error: 2 };
@@ -71,6 +72,9 @@ export async function logEvent(input: LogEventInput): Promise<void> {
         assetId: eventAssetIdOf(input),
       },
     });
+    // Business rule 187: an Event that was WRITTEN is forwarded to syslog —
+    // a synchronous, bounded hand-off that never waits on the network.
+    forwardEvents([{ at: new Date(), action: input.action, level, message: input.message, resourceType: input.resourceType, resourceId: input.resourceId, resourceName: input.resourceName, actor: input.actor }]);
   } catch {
     // Never let event logging break the main request
   }
@@ -108,6 +112,8 @@ export async function logEventsBatch(inputs: LogEventInput[]): Promise<number> {
       });
     if (rows.length === 0) return 0;
     await prisma.event.createMany({ data: rows });
+    const at = new Date();
+    forwardEvents(rows.map((r) => ({ at, action: r.action, level: r.level, message: r.message, resourceType: r.resourceType, resourceId: r.resourceId, resourceName: r.resourceName, actor: r.actor })));
     return rows.length;
   } catch {
     return 0;

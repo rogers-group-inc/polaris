@@ -657,6 +657,9 @@ describe("testSyslogConnection", () => {
     expect(h.createSocket).not.toHaveBeenCalled();
   });
 
+  // Since 2026-11-14 (business rule 187) the test message is formatted by the
+  // forwarder, so it carries this host's name, the configured facility and
+  // format, and the same structured data an Event would.
   it("UDP: sends one RFC 5424 test datagram to host:port and closes the socket", async () => {
     const client = { send: vi.fn((_b: Buffer, _o: number, _l: number, _p: number, _h: string, cb: (e?: Error) => void) => cb()), close: vi.fn() };
     h.createSocket.mockReturnValue(client);
@@ -664,7 +667,7 @@ describe("testSyslogConnection", () => {
     expect(r).toEqual({ ok: true, message: "Test message sent to syslog.corp:514 via UDP" });
     expect(h.createSocket).toHaveBeenCalledWith("udp4");
     const [buf, off, len, port, host] = client.send.mock.calls[0];
-    expect(buf.toString()).toMatch(/^<134>1 \d{4}-\d\d-\d\dT[\d:.]+Z polaris test - - - Polaris syslog connection test$/);
+    expect(buf.toString()).toMatch(/^<134>1 \d{4}-\d\d-\d\dT[\d:.]+Z \S+ polaris \d+ event_syslog\.test \[polaris@32473 action="event_syslog\.test" level="info"\] Polaris syslog connection test$/);
     expect([off, len, port, host]).toEqual([0, buf.length, 514, "syslog.corp"]);
     expect(client.close).toHaveBeenCalled();
   });
@@ -688,14 +691,24 @@ describe("testSyslogConnection", () => {
     expect(h.createSocket).toHaveBeenCalledWith("udp6");
   });
 
-  it("TCP: connects, writes the message newline-terminated, and ends the socket", async () => {
+  it("TCP: RFC 5424 is octet-counted (RFC 6587), and the socket is ended", async () => {
     const sock = new FakeSock();
     h.createConnection.mockImplementation((_o: unknown, onConnect: () => void) => { setImmediate(onConnect); return sock; });
     const r = await testSyslogConnection({ ...SYSLOG, protocol: "tcp", port: 601 });
     expect(r).toEqual({ ok: true, message: "Test message sent to syslog.corp:601 via TCP" });
     expect(h.createConnection.mock.calls[0][0]).toEqual({ host: "syslog.corp", port: 601 });
-    expect(sock.written[0]).toMatch(/Polaris syslog connection test\n$/);
+    const m = /^(\d+) (<134>1 .* Polaris syslog connection test)$/.exec(String(sock.written[0]));
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBe(Buffer.byteLength(m![2]));
     expect(sock.end).toHaveBeenCalled();
+  });
+
+  it("TCP: RFC 3164 is newline-framed, in the configured facility", async () => {
+    const sock = new FakeSock();
+    h.createConnection.mockImplementation((_o: unknown, onConnect: () => void) => { setImmediate(onConnect); return sock; });
+    await testSyslogConnection({ ...SYSLOG, protocol: "tcp", format: "rfc3164", facility: "local3" });
+    // local3 = 19 → 19 * 8 + info (6) = 158
+    expect(String(sock.written[0])).toMatch(/^<158>[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \S+ polaris\[\d+\]: event_syslog\.test: Polaris syslog connection test\n$/);
   });
 
   it("TCP: a socket error is reported", async () => {
@@ -710,16 +723,21 @@ describe("testSyslogConnection", () => {
     h.createConnection.mockImplementation(() => sock);
     const p = testSyslogConnection({ ...SYSLOG, protocol: "tcp" });
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(await p).toEqual({ ok: false, message: "Connection timeout" });
+    expect(await p).toEqual({ ok: false, message: "TCP connection timeout" });
     expect(sock.destroy).toHaveBeenCalled();
   });
 
-  it("TLS without a CA path does not verify the server certificate and reads no files", async () => {
+  // Until 2026-11-14 a TLS server with no CA path set was NOT verified at all
+  // (rejectUnauthorized: false). Business rule 187: it is verified against the
+  // system trust store plus Server Settings' Trusted CAs, reading no files.
+  it("TLS without a CA path verifies against the system store, by server name, and reads no files", async () => {
     const sock = new FakeSock();
     h.tlsConnect.mockImplementation((_o: unknown, onConnect: () => void) => { setImmediate(onConnect); return sock; });
     const r = await testSyslogConnection({ ...SYSLOG, protocol: "tls", port: 6514, tlsCaPath: "", tlsCertPath: "", tlsKeyPath: "" });
     expect(r).toEqual({ ok: true, message: "Test message sent to syslog.corp:6514 via TLS" });
-    expect(h.tlsConnect.mock.calls[0][0]).toEqual({ host: "syslog.corp", port: 6514, rejectUnauthorized: false });
+    const opts = h.tlsConnect.mock.calls[0][0];
+    expect(opts).toMatchObject({ host: "syslog.corp", port: 6514, rejectUnauthorized: true, servername: "syslog.corp" });
+    expect(opts.ca.length).toBeGreaterThan(0);
     expect(h.readFileSync).not.toHaveBeenCalled();
   });
 
