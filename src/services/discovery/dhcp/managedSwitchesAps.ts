@@ -31,6 +31,8 @@ import { releaseDnsResolvedAt } from "../../dnsResolvedReservationService.js";
 import { persistManagedApLldpNeighbors, invalidateLldpMatchCache } from "../../monitoringService.js";
 import { persistApRadioInventory } from "../../apRadioService.js";
 import { reconcileMacAddresses } from "../../macAddressService.js";
+import { pruneUnchangedAssetFields } from "../../../utils/assetWritePrune.js";
+import { refreshIpHistoryLastSeen } from "../../assetIpHistoryService.js";
 import { buildGateMacIndex, fortiapGateMac, fortiswitchGateMac, isFortiapUnauthorized } from "../../../utils/fortiapGateMac.js";
 import { isFortiapStatusOnline } from "../../../utils/fortiapMonitorRow.js";
 import { reservationBelongsToInfraDevice } from "../../../utils/infraDhcpBinding.js";
@@ -192,6 +194,12 @@ export async function syncManagedSwitchesAndAps(input: {
   projectRefLabel: string;
   /** The run's in-memory AssetSource map and the mirrors of what the upserts do to it. */
   infraSourcesOf: (assetId: string) => EntraSourceEntry[];
+  /**
+   * Loads one asset's source rows into the map when the per-gate prefetch
+   * (assets matched by this gate's serials) did not cover it. Awaited at the
+   * top of every update branch, before the map is read or mirrored.
+   */
+  ensureInfraSources: (assetId: string) => Promise<void>;
   infraPriorObserved: (assetId: string, sourceKind: string, externalId: string) => Record<string, unknown> | null;
   applyInfraSourceInMemory: (
     assetId: string, sourceKind: string, externalId: string,
@@ -210,10 +218,14 @@ export async function syncManagedSwitchesAndAps(input: {
   const {
     result, activeResMap, assetIdx, assetNames, reservationNames, controllerClaims, now,
     switchMonitorCfg, apMonitorCfg, findSubnetForIp, reservationKey, projectRefLabel,
-    infraSourcesOf, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
+    infraSourcesOf, ensureInfraSources, infraPriorObserved, applyInfraSourceInMemory, noteChangeBaseline,
     upsertConflict, upsertFortinetInfraAssetSource,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
+
+  // IP-history refreshes for addresses the prune left out of a write (the
+  // hook's per-write upsert, batched at the end of the phase).
+  const ipHistoryRefreshRows: Array<{ assetId: string; ip: string; source: string }> = [];
 
   // Auto-stamping policy for managed FortiSwitch / FortiAP. `enabled` drives
   // credential stamping (direct polling SNMP/SSH); `addAsMonitored` drives
@@ -436,8 +448,10 @@ export async function syncManagedSwitchesAndAps(input: {
         ...buildDeviceDescriptionStamp(sw.description),
       };
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot before the branch retypes assetType / mutates status below.
         const swBefore = snapshotMaterialAssetFields(existingAsset);
+        const swPruneBase: Record<string, unknown> = { ...existingAsset };
         const acquiredAtUpdate = swJoinDate && (!existingAsset.acquiredAt || swJoinDate < new Date(existingAsset.acquiredAt))
           ? swJoinDate : undefined;
         // Re-discovery resurrects a previously-decommissioned asset back to
@@ -537,7 +551,14 @@ export async function syncManagedSwitchesAndAps(input: {
           swMacListForReconcile = macList;
         }
         clampAcquiredToLastSeen(updateData, existingAsset);
-        await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
+        // Drop what the row already holds (efficiency audit, as Phases 6/7 do):
+        // an unchanged device no longer re-sends hostname / IP / model and so
+        // skips the db.ts hook chain those keys fire; a monitored one, whose
+        // lastSeen discovery may not bump, usually needs no write at all.
+        // Compared against the copy taken before this branch mutated the row.
+        const { ipHistoryRefresh: swIpRefresh } = pruneUnchangedAssetFields(swPruneBase, updateData);
+        if (swIpRefresh) ipHistoryRefreshRows.push({ assetId: existingAsset.id, ...swIpRefresh });
+        if (Object.keys(updateData).length > 0) await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
         logDiscoveryAssetUpdated(swBefore, updateData, existingAsset.id, sw.name || sw.serial, {
           integrationName, integrationId, sourceKind: "fortiswitch", actor,
         });
@@ -767,8 +788,10 @@ export async function syncManagedSwitchesAndAps(input: {
       const apOnline = isFortiapStatusOnline(ap.status);
       let apAssetId: string | null = null;
       if (existingAsset) {
+        await ensureInfraSources(existingAsset.id);
         // Snapshot before the branch retypes assetType / mutates status below.
         const apBefore = snapshotMaterialAssetFields(existingAsset);
+        const apPruneBase: Record<string, unknown> = { ...existingAsset };
         // Phase 3b.1 cutover: projection-driven discovery fields.
         if (ap.serial) {
           try {
@@ -836,7 +859,14 @@ export async function syncManagedSwitchesAndAps(input: {
           updateData.ipSource = ap.device || integrationType;
         }
         clampAcquiredToLastSeen(updateData, existingAsset);
-        await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
+        // Drop what the row already holds (efficiency audit, as Phases 6/7 do):
+        // an unchanged device no longer re-sends hostname / IP / model and so
+        // skips the db.ts hook chain those keys fire; a monitored one, whose
+        // lastSeen discovery may not bump, usually needs no write at all.
+        // Compared against the copy taken before this branch mutated the row.
+        const { ipHistoryRefresh: apIpRefresh } = pruneUnchangedAssetFields(apPruneBase, updateData);
+        if (apIpRefresh) ipHistoryRefreshRows.push({ assetId: existingAsset.id, ...apIpRefresh });
+        if (Object.keys(updateData).length > 0) await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
         logDiscoveryAssetUpdated(apBefore, updateData, existingAsset.id, ap.name || ap.serial, {
           integrationName, integrationId, sourceKind: "fortiap", actor,
         });
@@ -986,4 +1016,5 @@ export async function syncManagedSwitchesAndAps(input: {
       }
     }
   }
+  if (ipHistoryRefreshRows.length > 0) await refreshIpHistoryLastSeen(ipHistoryRefreshRows);
 }

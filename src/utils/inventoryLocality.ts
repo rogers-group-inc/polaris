@@ -84,6 +84,12 @@ export interface ParsedInventoryClient {
   switchPort: string;
   apName: string;
   user: string;
+  /**
+   * The user the same gate's live auth table (`user/firewall`) has logged on
+   * at this row's address — set by `attachAuthUsers` on online rows only
+   * (business rule 186).
+   */
+  authUser?: string;
   isOnline: boolean;
   lastSeen: string;
   /** `ipv6_address`, canonicalised; absent when none or not IPAM space (rule 125). */

@@ -161,6 +161,48 @@ d("cable runs (rule 184)", () => {
     expect(anySite.status, JSON.stringify(anySite.body)).toBe(200);
   });
 
+  it("routes links through runs on the view gate; a deleted run leaves every link (rule 184(a))", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    const made = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf)
+      .send({ upserts: [{ ...POLE, name: "link-a" }, { ...POLE, name: "link-b" }] });
+    expect(made.status, JSON.stringify(made.body)).toBe(200);
+    const a = made.body.runs.find((r: { name: string }) => r.name === "link-a").id;
+    const b = made.body.runs.find((r: { name: string }) => r.name === "link-b").id;
+    const stranger = "00000000-0000-4000-8000-000000000000";
+
+    const set = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
+      .send({ links: { "lldp|sw1|sw2": [a, b, stranger], "lldp|sw2|sw3": [b] } });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    // An id that is not a live run here is dropped, not an error.
+    expect(set.body.links).toEqual({ "lldp|sw1|sw2": [a, b], "lldp|sw2|sw3": [b] });
+    const got = await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`);
+    expect(got.body.links).toEqual(set.body.links);
+    expect(await prisma.event.count({ where: { action: "cable_run_link.updated", resourceId: siteId } })).toBeGreaterThan(0);
+
+    // Deleting run b takes it off both links; the one that rode only b goes straight.
+    await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ deletes: [b] });
+    expect((await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`)).body.links).toEqual({ "lldp|sw1|sw2": [a] });
+
+    // An empty list makes a link straight again.
+    const straight = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
+      .send({ links: { "lldp|sw1|sw2": [] } });
+    expect(straight.body.links).toEqual({});
+    // A malformed key is refused.
+    expect((await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
+      .send({ links: { "not-a-key": [a] } })).status).toBe(400);
+  });
+
+  it("routing links is the Device Map's write, not cableRuns'", async () => {
+    // cableRuns fullwrite but Device Map read: no.
+    const full = await loginAs("full");
+    expect((await full.agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", full.csrf)
+      .send({ links: {} })).status).toBe(403);
+    // Device Map fullwrite alone: yes.
+    const map = await loginAs("maponly");
+    expect((await map.agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", map.csrf)
+      .send({ links: {} })).status).toBe(200);
+  });
+
   it("the migration seeded the key: admin full, readonly read, the other built-ins none", async () => {
     const roles = await prisma.role.findMany({ where: { name: { in: ["admin", "readonly", "networkadmin", "assetsadmin", "user"] } }, select: { name: true, permissions: true } });
     const level = Object.fromEntries(roles.map((r) => [r.name, (r.permissions as Record<string, string>).cableRuns]));

@@ -22,9 +22,16 @@
  *
  * opts: {
  *   L, map(), pane() → {name, renderer}, editing(), visible(), canEdit(),
- *   fetch() → Promise<{runs, canEditRuns}>, stage(edits), onChange(),
+ *   fetch() → Promise<{runs, links, canEditRuns}>, stage(edits), onChange(),
  *   toast(msg, kind),
+ *   stageLinks(changes)?, onRoutesChanged()?, describeLink(pathKey)?,
  * }
+ *
+ * Rule 184(a): it also holds which runs each device link rides (`links`,
+ * path key → ordered run ids). The canvas routes the link through them
+ * (cable-run-geometry.js), asks `hitRun` while a link is dragged, and calls
+ * `setLinkRuns`; the change is staged through `stageLinks` and sent on commit
+ * like the runs. A run removed here leaves every link that rode it.
  */
 (function () {
   "use strict";
@@ -89,6 +96,22 @@
     return { upserts: upserts, deletes: deletes };
   }
 
+  /**
+   * Which links' routes one edit session changed: `{ pathKey: runIds }`, an
+   * empty list for a link made straight again (rule 184(a)).
+   */
+  function diffLinks(loaded, current) {
+    var out = {};
+    var keys = {};
+    Object.keys(loaded || {}).forEach(function (k) { keys[k] = true; });
+    Object.keys(current || {}).forEach(function (k) { keys[k] = true; });
+    Object.keys(keys).forEach(function (k) {
+      var a = (loaded && loaded[k]) || [], b = (current && current[k]) || [];
+      if (JSON.stringify(a) !== JSON.stringify(b)) out[k] = b.slice();
+    });
+    return out;
+  }
+
   function create(opts) {
     var L = opts.L;
     var loaded = [];            // as the server last answered
@@ -98,6 +121,9 @@
     var group = null;
     var shapes = {};            // key → L.polyline
     var drawHandler = null;
+    var loadedLinks = {};       // path key → run ids, as the server last answered
+    var links = {};             // working copy
+    var targetKey = null;       // the run a dragged link is over (highlighted)
     var panel = null;           // L.Control
     var legend = null;          // L.Control
     var seq = 0;
@@ -107,10 +133,18 @@
     function find(k) { for (var i = 0; i < runs.length; i++) if (key(runs[i]) === k) return runs[i]; return null; }
     function stage() {
       opts.stage(diffRuns(loaded, runs));
+      if (opts.stageLinks) opts.stageLinks(diffLinks(loadedLinks, links));
     }
+    function routesChanged() { if (opts.onRoutesChanged) opts.onRoutesChanged(); }
     function changedRuns() {
       stage();
       if (opts.onChange) opts.onChange();
+      routesChanged();
+    }
+    function cloneLinks(o) {
+      var out = {};
+      Object.keys(o || {}).forEach(function (k) { if (o[k] && o[k].length) out[k] = o[k].slice(); });
+      return out;
     }
 
     function load() {
@@ -118,10 +152,14 @@
         loaded = (res && res.runs) || [];
         canEditRuns = !!(res && res.canEditRuns);
         runs = loaded.map(function (r) { return Object.assign({}, r, { points: r.points.map(function (p) { return p.slice(); }) }); });
+        loadedLinks = cloneLinks(res && res.links);
+        links = cloneLinks(loadedLinks);
         draw();
+        routesChanged();
         return res;
       }, function () {
-        loaded = []; runs = []; canEditRuns = false; draw();
+        loaded = []; runs = []; loadedLinks = {}; links = {}; canEditRuns = false; draw();
+        routesChanged();
       });
     }
 
@@ -146,8 +184,8 @@
         var k = key(r);
         var sel = k === selectedKey;
         var line = L.polyline(latlngsOf(r), {
-          pane: f.name, renderer: f.renderer, className: classOf(r, sel),
-          weight: sel ? 6 : 4, dashArray: r.medium === "ethernet" ? "10 7" : null,
+          pane: f.name, renderer: f.renderer, className: classOf(r, sel || k === targetKey),
+          weight: k === targetKey ? 12 : sel ? 6 : 4, dashArray: r.medium === "ethernet" ? "10 7" : null,
           lineCap: "round", lineJoin: "round", interactive: true, bubblingMouseEvents: false,
         });
         line.on("click", function (e) { if (e.originalEvent) L.DomEvent.stop(e.originalEvent); select(k); });
@@ -209,11 +247,74 @@
 
     function removeSelected() {
       if (!editable() || !selectedKey) return false;
+      var gone = find(selectedKey);
+      if (gone && gone.id) dropRunFromLinks(gone.id);
       runs = runs.filter(function (r) { return key(r) !== selectedKey; });
       selectedKey = null;
       changedRuns();
       draw();
       return true;
+    }
+
+    // ── Links routed through runs (rule 184(a)) ─────────────────────────
+    function dropRunFromLinks(id) {
+      Object.keys(links).forEach(function (k) {
+        var left = links[k].filter(function (x) { return x !== id; });
+        if (left.length) links[k] = left; else delete links[k];
+      });
+    }
+    function byId(id) { for (var i = 0; i < runs.length; i++) if (runs[i].id === id) return runs[i]; return null; }
+    /** The runs a link rides, in its stored order (runs no longer here are skipped). */
+    function linkRuns(pk) {
+      if (!opts.visible()) return [];
+      return (links[pk] || []).map(byId).filter(function (r) { return r && r.points && r.points.length >= 2; });
+    }
+    function setLinkRuns(pk, ids) {
+      var clean = [];
+      (ids || []).forEach(function (id) { if (id && clean.indexOf(id) === -1 && byId(id)) clean.push(id); });
+      if (JSON.stringify(clean) === JSON.stringify(links[pk] || [])) return false;
+      if (clean.length) links[pk] = clean; else delete links[pk];
+      stage();
+      if (opts.onChange) opts.onChange();
+      routesChanged();
+      paintPanel();
+      return true;
+    }
+    /** The run under a screen point (within `px`), nearest first: { key, id, run } or null. */
+    function hitRun(cp, px) {
+      var map = opts.map();
+      if (!map || !opts.visible()) return null;
+      var best = null;
+      runs.forEach(function (r) {
+        var pts = r.points.map(function (p) { return map.latLngToContainerPoint(L.latLng(p[1], p[0])); });
+        for (var i = 0; i < pts.length - 1; i++) {
+          var a = pts[i], b = pts[i + 1];
+          var dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+          var t = len2 > 0 ? Math.max(0, Math.min(1, ((cp.x - a.x) * dx + (cp.y - a.y) * dy) / len2)) : 0;
+          var x = a.x + t * dx - cp.x, y = a.y + t * dy - cp.y;
+          var d = Math.sqrt(x * x + y * y);
+          if (d <= px && (!best || d < best.d)) best = { d: d, key: key(r), id: r.id || null, run: r };
+        }
+      });
+      return best ? { key: best.key, id: best.id, run: best.run } : null;
+    }
+    /** Light up the run a dragged link would join (null clears). */
+    function highlight(k) {
+      if (k === targetKey) return;
+      var prev = targetKey;
+      targetKey = k || null;
+      [prev, targetKey].forEach(function (x) {
+        var line = x && shapes[x];
+        var r = x && find(x);
+        if (!line || !r) return;
+        var on = x === targetKey;
+        line.setStyle({ weight: on ? 12 : x === selectedKey ? 6 : 4 });
+        var el = line.getElement && line.getElement();
+        if (el) el.setAttribute("class", classOf(r, on || x === selectedKey) + " leaflet-interactive");
+      });
+    }
+    function linksOn(id) {
+      return Object.keys(links).filter(function (k) { return links[k].indexOf(id) !== -1; });
     }
 
     // ── The run panel (top right) ───────────────────────────────────────
@@ -243,11 +344,19 @@
           (r.placement !== "trench" ? '<div><span class="hint">Poles</span><span class="mono">' + r.points.length + '</span></div>' : '') + '</div>' +
         '<div class="form-group"><label for="topo-run-notes">Notes</label>' +
           '<textarea id="topo-run-notes" rows="2" maxlength="2000"' + (can ? "" : " disabled") + '>' + esc(r.notes) + '</textarea></div>' +
+        ridersHtml(r) +
         (sync ? '<div class="topo-run-sync"><span class="badge ' + sync.cls + '">' + sync.text + '</span>' +
           (r.arcgisObjectId != null ? ' <span class="mono hint">OBJECTID ' + esc(r.arcgisObjectId) + '</span>' : '') +
           (r.syncError ? '<p class="hint" style="color:var(--color-danger)">' + esc(r.syncError) + '</p>' : '') + '</div>' : '') +
         (can ? '<p class="hint">Changes are kept when you save the view' + (r.syncStatus && r.syncStatus !== "off" ? ", then sent to ArcGIS." : ".") + '</p>' +
           '<button type="button" class="btn btn-sm btn-danger" data-run-delete>Delete run</button>' : '');
+    }
+    function ridersHtml(r) {
+      var on = r.id ? linksOn(r.id) : [];
+      if (!on.length) return "";
+      return '<div class="form-group"><label>Links on this run</label><ul class="topo-run-riders">' +
+        on.map(function (k) { return '<li>' + esc(opts.describeLink ? opts.describeLink(k) : k) + '</li>'; }).join("") +
+        '</ul><p class="hint">Kept in Polaris — not sent to ArcGIS.</p></div>';
     }
     function paintPanel() {
       var map = opts.map();
@@ -321,13 +430,24 @@
       select: select,
       removeSelected: removeSelected,
       // Undo / redo: the canvas's history carries the working copy.
-      snapshot: function () { return runs.map(function (r) { return Object.assign({}, r); }); },
-      restore: function (list) {
-        runs = (list || []).map(function (r) { return Object.assign({}, r); });
+      snapshot: function () {
+        return { runs: runs.map(function (r) { return Object.assign({}, r); }), links: cloneLinks(links) };
+      },
+      restore: function (snap) {
+        var list = Array.isArray(snap) ? snap : (snap && snap.runs) || [];
+        runs = list.map(function (r) { return Object.assign({}, r); });
+        if (snap && !Array.isArray(snap)) links = cloneLinks(snap.links);
         if (selectedKey && !find(selectedKey)) selectedKey = null;
         stage();
         draw();
+        routesChanged();
       },
+      linkRuns: linkRuns,
+      linkRunIds: function (pk) { return (links[pk] || []).slice(); },
+      setLinkRuns: setLinkRuns,
+      hitRun: hitRun,
+      highlight: highlight,
+      visible: function () { return opts.visible(); },
       setEditing: function (on) {
         if (!on) cancelDraw();
         draw();
@@ -345,6 +465,7 @@
     create: create,
     // Pure helpers, exported for tests.
     _diffRuns: diffRuns,
+    _diffLinks: diffLinks,
     _lengthM: lengthM,
   };
 })();

@@ -119,6 +119,7 @@ function run(devices: Array<Record<string, any>>, over: Record<string, unknown> 
     integrationConfig: { host: "fmg" } as Record<string, unknown> | null,
     verboseLogging: false,
     infraSourcesOf: vi.fn((_id: string): any[] => []),
+    ensureInfraSources: vi.fn(async (_id: string) => undefined),
     applyInfraSourceInMemory: vi.fn(),
     dropInfraSourceKindInMemory: vi.fn(),
     buildFortigateFirewallObservedBlob: vi.fn((dev: any, _type: string, _at: Date, ha?: any) => ({ ...dev, ha: ha ?? null })),
@@ -343,9 +344,11 @@ describe("syncFirewallAssets — update by serial", () => {
     expect(where).toEqual({ id: "a1" });
     expect(data).toMatchObject({
       learnedLocation: "fgt-hq", fortinetTopology: { role: "fortigate", deviceName: "FGT-HQ" }, discoveredByIntegrationId: "int1",
-      hostname: "fgt-hq", model: "FortiGate-100F", osVersion: "7.4.3", manufacturer: "Fortinet", serialNumber: "FG100F0001",
+      hostname: "fgt-hq", model: "FortiGate-100F", osVersion: "7.4.3", manufacturer: "Fortinet",
       ipAddress: "10.0.0.1", ipSource: "fgt-hq", lastSeenSource: "discovery",
     });
+    // The serial the row already holds is not re-sent (unchanged-field prune).
+    expect(data).not.toHaveProperty("serialNumber");
     expect(data.lastSeen).toEqual(new Date(NOW));
     expect(data).not.toHaveProperty("assetType");
     expect(data).not.toHaveProperty("status");

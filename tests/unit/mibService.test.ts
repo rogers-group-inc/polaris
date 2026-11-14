@@ -173,7 +173,7 @@ describe("parseMib", () => {
   });
 
   it("tolerates CRLF line endings and tabs", () => {
-    expect(parseMib(MINI.replace(/\n/g, "\r\n").replace(/  /g, "\t")).moduleName).toBe("TEST-MIB");
+    expect(parseMib(MINI.replace(/\n/g, "\r\n").replace(/ {2}/g, "\t")).moduleName).toBe("TEST-MIB");
   });
 
   it("refuses an empty file (and a BOM-only one) with 400", () => {

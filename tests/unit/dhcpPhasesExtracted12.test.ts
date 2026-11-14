@@ -30,7 +30,9 @@ const m = vi.hoisted(() => ({
   sysLocation: vi.fn(),
   pushCoords: vi.fn(),
   reconcileMacs: vi.fn(),
+  ipRefresh: vi.fn(),
 }));
+vi.mock("../../src/services/assetIpHistoryService.js", () => ({ refreshIpHistoryLastSeen: m.ipRefresh }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", () => ({
   logEvent: m.logEvent,
@@ -85,7 +87,7 @@ function run(devices: unknown[], over: Record<string, unknown> = {}) {
     fortigateAddAsMonitored: true, pullSnmpLocation: false, useSnmpLocationCoords: false, pushGeocodedCoords: false,
     latitudeMetavar: "Latitude", longitudeMetavar: "Longitude", addressMetavar: "",
     integrationConfig: { host: "fmg" }, verboseLogging: false,
-    infraSourcesOf: () => [], applyInfraSourceInMemory: vi.fn(), dropInfraSourceKindInMemory: vi.fn(),
+    infraSourcesOf: () => [], ensureInfraSources: vi.fn(async () => undefined), applyInfraSourceInMemory: vi.fn(), dropInfraSourceKindInMemory: vi.fn(),
     buildFortigateFirewallObservedBlob: vi.fn(() => ({ stub: true })),
     upsertFortigateFirewallAssetSource: vi.fn(async () => undefined),
     integrationId: "i1", integrationName: "FMG", integrationType: "fortimanager", integrationLabel: "FortiManager",
@@ -165,6 +167,33 @@ describe("Phase 3 — the monitored stamp on an existing gate", () => {
     const pinned = existing({ id: "fw-s", hostname: "site-a-fw-2", serialNumber: "FGT60F0000000002", monitored: true, monitorOverride: true });
     await run([pair], { assetIdx: index([existing({ monitored: true }), pinned]) as never }).done;
     expect(db.update.mock.calls.find((c) => c[0].where.id === "fw-s")![0].data.monitored).toBeUndefined();
+  });
+});
+
+describe("Phase 3 — unchanged fields are left out of an existing gate's write (efficiency audit)", () => {
+  // As the full-row preload carries it: pin columns present and empty.
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: "fw-e", hostname: "site-a-fw", serialNumber: "FGT60F0000000001", ipAddress: "10.0.0.1", ipSource: "site-a-fw",
+    ipOverride: false, ipBlankPinned: false, primaryAddressIp: null, hostnameOverride: null,
+    osVersion: "v7.6.8", learnedLocation: "site-a-fw", discoveredByIntegrationId: "i1",
+    macAddress: "00:09:0f:00:00:01", macAddresses: [], monitored: true, monitorOverride: false,
+    status: "active", assetType: "firewall", lastSeen: new Date(NOW), ...over,
+  });
+
+  it("drops what the row holds, sends what moved, and refreshes the dropped IP's history once after the loop", async () => {
+    await run([gate()], { assetIdx: index([row({ osVersion: "v7.6.7" })]) as never }).done;
+    const data = db.update.mock.calls[0][0].data;
+    expect(data.osVersion).toBe("v7.6.8");
+    for (const k of ["ipAddress", "ipSource", "hostname", "learnedLocation", "discoveredByIntegrationId", "assetType", "monitored"]) {
+      expect(k in data, k).toBe(false);
+    }
+    expect(m.ipRefresh).toHaveBeenCalledTimes(1);
+    expect(m.ipRefresh).toHaveBeenCalledWith([{ assetId: "fw-e", ip: "10.0.0.1", source: "site-a-fw" }]);
+  });
+
+  it("a pinned IP is still staged (the db.ts guard owns it)", async () => {
+    await run([gate()], { assetIdx: index([row({ ipOverride: true })]) as never }).done;
+    expect(db.update.mock.calls[0][0].data).toMatchObject({ ipAddress: "10.0.0.1", ipSource: "site-a-fw" });
   });
 });
 

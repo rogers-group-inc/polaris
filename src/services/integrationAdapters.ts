@@ -40,6 +40,7 @@ import * as llm from "./llmService.js";
 import * as genericApi from "./genericApiService.js";
 import * as arcgis from "./arcgisService.js";
 import { testArcgisBasemap } from "./satelliteTileService.js";
+import * as writeBackLayer from "./arcgisWriteBackService.js";
 import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 /** Every integration type Polaris knows. Integration.type holds exactly one of these. */
@@ -164,13 +165,27 @@ export const INTEGRATION_ADAPTERS: { readonly [K in IntegrationType]: Integratio
   arcgis: {
     label: "ArcGIS",
     // The sign-in, then — when the basemap is on — one imagery tile (rule 183).
+    // The sign-in; when the basemap is on, one imagery tile (rule 183); when
+    // write-back is on, the layer read and checked against the field map (rule 185).
     testConnection: async (config) => {
-      const r = await arcgis.testConnection(config);
-      if (!r.ok || config?.basemapEnabled !== true) return r;
-      const t = await testArcgisBasemap(config);
-      return t.ok
-        ? { ...r, message: `${r.message}; ${t.message}` }
-        : { ok: false, message: `${r.message}, but satellite imagery failed: ${t.message}` };
+      let r = await arcgis.testConnection(config);
+      if (!r.ok) return r;
+      if (config?.basemapEnabled === true) {
+        const t = await testArcgisBasemap(config);
+        if (!t.ok) return { ok: false, message: `${r.message}, but satellite imagery failed: ${t.message}` };
+        r = { ...r, message: `${r.message}; ${t.message}` };
+      }
+      if (config?.writeBackEnabled === true) {
+        try {
+          const layer = await writeBackLayer.readLayer(config);
+          const { problems, warnings } = writeBackLayer.layerProblems(layer, config);
+          if (problems.length) return { ok: false, message: `${r.message}, but cable runs cannot be written: ${problems.join("; ")}` };
+          r = { ...r, message: `${r.message}; cable runs go to "${layer.name}"${warnings.length ? ` (${warnings.join("; ")})` : ""}` };
+        } catch (err) {
+          return { ok: false, message: `${r.message}, but the cable-run layer could not be read: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      return r;
     },
     discovery: null,
   },

@@ -239,7 +239,7 @@ export function parseDxf(buf: Buffer): DxfDrawing {
   if (buf.subarray(0, 22).toString("latin1").startsWith("AutoCAD Binary DXF")) {
     throw new DxfError("Binary DXF is not supported. Save it from AutoCAD as an ASCII DXF");
   }
-  const text = buf.toString("utf8").replace(/^﻿/, "");
+  const text = buf.toString("utf8").replace(/^\uFEFF/, "");
   const pairs = toPairs(text);
   const sec = sections(pairs);
   if (!sec.ENTITIES) throw new DxfError("Not a DXF drawing: it has no ENTITIES section");
@@ -358,7 +358,8 @@ export function parseDxf(buf: Buffer): DxfDrawing {
           break;
         case "ELLIPSE": {
           const cx = num(e, 10), cy = num(e, 20), mx = num(e, 11), my = num(e, 21), ratio = num(e, 40, 1);
-          let t0 = num(e, 41, 0), t1 = num(e, 42, Math.PI * 2);
+          const t0 = num(e, 41, 0);
+          let t1 = num(e, 42, Math.PI * 2);
           while (t1 <= t0) t1 += Math.PI * 2;
           const n = Math.max(8, Math.ceil(((t1 - t0) * 180 / Math.PI) / ARC_STEP_DEG));
           const pts: DxfPoint[] = [];

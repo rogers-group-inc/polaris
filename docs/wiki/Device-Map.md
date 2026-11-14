@@ -630,6 +630,19 @@ handles to move a pole, or **Delete run**; the Delete key also removes the
 selected run. Runs are saved with the view (the tick or **Save**), undone with
 the rest of the edit, and every change is recorded as an Event.
 
+**Routing a connection through a run.** While editing, press a
+connection between two devices on the map and drag it onto a run: the run
+lights up and a dashed line previews the route. Let go and the connection
+is drawn through the run — from each device to the nearest point on the
+run, along it, and across to the next run if you add another. Moving a
+device or a pole re-routes it. A routed connection shows a round handle on
+each run it rides: drag it onto a different run to swap, or off the run
+(or press Delete) to take the connection off it. A run you have just drawn
+must be saved before a connection can ride it. The run's panel lists the
+connections on it. Which connections ride a run stays in Polaris — it is
+not sent to ArcGIS — so it needs only Device Map **Read-Write**, like
+any other layout change.
+
 Seeing runs needs **Read** on **Cable Runs**; drawing them needs
 **Read-Write** (sites you added or that carry your tags) or **Full Read-Write**
 (any site). Device Map rights alone do neither, because runs are written to

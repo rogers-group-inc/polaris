@@ -884,12 +884,13 @@ function _integrationTabs(ctx) {
     return gaTabs;
   }
 
-  // ArcGIS: the sign-in, then what it is used for (rule 183's basemap; the
-  // write-back tab joins it later).
+  // ArcGIS: the sign-in, then what it is used for (rule 183's basemap, rule
+  // 185's cable-run write-back).
   if (type === "arcgis") {
     return [
       { key: "general", label: "General", html: ctx.generalHtml },
       { key: "basemap", label: "Basemap", html: arcgisBasemapHTML(Object.assign({}, defaults, config)) },
+      { key: "writeback", label: "Write-back", html: arcgisWriteBackHTML(Object.assign({}, defaults, config, { id: ctx.id || null })) },
     ];
   }
 
@@ -963,10 +964,109 @@ function _wireArcgisForm() {
   paintSource();
 }
 
+/**
+ * ArcGIS Write-back tab (business rule 185): Read layer fills the field map's
+ * pickers and the value maps from the layer; Create layer makes a Polaris
+ * layer (a saved integration only); the strip shows runs by sync state.
+ */
+function _wireArcgisWriteBack(id) {
+  var readBtn = document.getElementById("wb-read");
+  if (!readBtn) return;
+  var layerFields = null;
+  function current() { return getArcgisWriteBackConfig() || {}; }
+  function repaintMaps() {
+    var c = current();
+    document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(c.fieldMap, layerFields);
+    document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+  }
+  // A changed Medium / Placement field re-draws its value map.
+  document.getElementById("wb-fieldmap").addEventListener("change", function (e) {
+    var a = e.target && e.target.getAttribute && e.target.getAttribute("data-wb-attr");
+    if (a === "medium" || a === "placement") {
+      var c = current();
+      document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+    }
+  });
+  var modeRadios = document.querySelectorAll('input[name="f-writeBackMode"]');
+  function paintMode() {
+    var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
+    var block = document.querySelector('[data-wb-mode="polaris"]');
+    if (block) block.hidden = !picked || picked.value !== "polaris";
+  }
+  for (var i = 0; i < modeRadios.length; i++) modeRadios[i].addEventListener("change", paintMode);
+  paintMode();
+
+  function badge(cls, text) { return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>'; }
+  function readLayer() {
+    var info = document.getElementById("wb-layer-info");
+    return api.integrations.arcgisReadLayer({ id: id || undefined, config: getArcgisFormConfig() }).then(function (res) {
+      var L = res.layer;
+      layerFields = L.fields;
+      var caps = ["Create", "Update", "Delete"].map(function (c) {
+        var ok = L.capabilities.indexOf(c) !== -1 || L.capabilities.indexOf("Editing") !== -1;
+        return badge(ok ? "badge-active" : "badge-conflict", c);
+      }).join("");
+      info.innerHTML = badge("badge-readonly", L.geometryType === "esriGeometryPolyline" ? "Polyline" : (L.geometryType || "No geometry").replace("esriGeometry", "")) +
+        (L.hasZ ? badge("badge-readonly", "Z values") : "") + caps +
+        '<span class="hint" style="margin:0">&ldquo;' + escapeHtml(L.name) + '&rdquo; · ' + L.fields.length + ' fields</span>' +
+        (res.problems || []).concat(res.warnings || []).map(function (p, k) {
+          return '<p class="hint" style="width:100%;margin:2px 0;color:' + (k < (res.problems || []).length ? "var(--color-danger)" : "var(--color-text-secondary)") + '">' + escapeHtml(p) + '</p>';
+        }).join("");
+      repaintMaps();
+    }).catch(function (err) {
+      info.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
+    });
+  }
+  readBtn.addEventListener("click", readLayer);
+
+  var createBtn = document.getElementById("wb-create");
+  if (createBtn && id) {
+    createBtn.addEventListener("click", function () {
+      var name = val("f-wbServiceName");
+      createBtn.disabled = true;
+      api.integrations.arcgisCreateLayer(id, name).then(function (res) {
+        document.getElementById("f-featureLayerUrl").value = res.featureLayerUrl;
+        document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(res.fieldMap, null);
+        showToast("Layer created — its URL and field map are filled in. Save to keep them.");
+        return readLayer();
+      }).catch(function (err) {
+        showToast("Layer not created — " + (err && err.message ? err.message : String(err)), "error");
+      }).then(function () { createBtn.disabled = false; });
+    });
+  }
+
+  // The runs by sync state (a saved integration only).
+  var strip = document.getElementById("wb-status");
+  if (!id || !strip) return;
+  function paintStatus() {
+    api.integrations.arcgisWriteBack(id).then(function (s) {
+      var c = s.counts || {};
+      if (!s.writing && !c.synced && !c.pending && !c.failed) { strip.innerHTML = ""; return; }
+      var canRetry = c.failed > 0 && typeof permAtLeast === "function" && permAtLeast("cableRuns", "fullwrite");
+      strip.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--color-bg-primary);border:1px solid var(--color-border-light);border-radius:var(--radius-md);flex-wrap:wrap">' +
+        badge("badge-active", (c.synced || 0) + " synced") + badge("badge-expired", (c.pending || 0) + " pending") + badge("badge-conflict", (c.failed || 0) + " failed") +
+        '<span style="font-size:12px;color:var(--color-text-secondary);flex-grow:1">' + (s.lastError ? "Failed: &ldquo;" + escapeHtml(s.lastError) + "&rdquo;" : (s.writing ? "" : "Write-back is off")) + '</span>' +
+        (canRetry ? '<button type="button" class="btn btn-sm btn-secondary" id="wb-retry">Retry failed</button>' : '') + '</div>';
+      var retry = document.getElementById("wb-retry");
+      if (retry) retry.addEventListener("click", function () {
+        retry.disabled = true;
+        api.integrations.arcgisRetryFailed(id).then(function (r) {
+          showToast(r.queued + " run(s) queued to be sent again");
+          paintStatus();
+        }).catch(function (err) {
+          retry.disabled = false;
+          showToast("Not retried — " + (err && err.message ? err.message : String(err)), "error");
+        });
+      });
+    }).catch(function () { strip.innerHTML = ""; });
+  }
+  paintStatus();
+}
+
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
   if (type === "llm") { _wireLlmForm(id); return; }
-  if (type === "arcgis") { _wireArcgisForm(); return; }
+  if (type === "arcgis") { _wireArcgisForm(); _wireArcgisWriteBack(id); return; }
   if (type === "genericapi") { _wireGenericApiForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
@@ -1350,6 +1450,11 @@ function _intgEditFormSpec(intg, config) {
         imageryUrl: config.imageryUrl,
         basemapAttribution: config.basemapAttribution,
         basemapMaxZoom: config.basemapMaxZoom,
+        writeBackEnabled: config.writeBackEnabled === true,
+        writeBackMode: config.writeBackMode,
+        featureLayerUrl: config.featureLayerUrl,
+        fieldMap: config.fieldMap,
+        valueMap: config.valueMap,
         apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "API key",
         clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "Client secret",
         passwordPlaceholder: config.password ? "Leave blank to keep the current password" : "Password",
