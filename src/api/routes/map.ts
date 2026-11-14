@@ -53,6 +53,7 @@ import { z } from "zod";
 import { AppError } from "../../utils/errors.js";
 import { buildSiteTopology } from "../../services/topologyGraphService.js";
 import { listMapSites, getSiteLayoutOwner, searchSiteEndpoints } from "../../services/mapSitesService.js";
+import { kickWriteBack } from "../../services/arcgisWriteBackService.js";
 import { listRuns, applyRunEdits, listRunLinks, applyRunLinkEdits, MAX_RUNS_PER_LINK, CABLE_MEDIA, CABLE_PLACEMENTS } from "../../services/cableRunService.js";
 import { getRegionHierarchy } from "../../services/mapRegionService.js";
 import {
@@ -777,6 +778,8 @@ router.put(
     try {
       const body = CableRunEditsSchema.parse(req.body);
       const runs = await applyRunEdits(req.params.id as string, body, req.session?.username ?? "unknown");
+      // Rule 185: push the saved runs now rather than on the next tick.
+      kickWriteBack();
       res.json({ runs });
     } catch (err) {
       next(err);

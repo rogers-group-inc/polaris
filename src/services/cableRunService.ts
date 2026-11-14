@@ -285,8 +285,10 @@ export async function applyRunEdits(siteId: string, edits: CableRunEdits, actor:
 
   for (const id of deletes) {
     const prev = byId.get(id)!;
-    // Sent to ArcGIS already: keep a tombstone until the write-back removes the feature.
-    ops.push(prev.arcgisObjectId !== null
+    // Sent to ArcGIS already, or queued to be (its add may have landed without
+    // an answer — rule 185): keep a tombstone until the write-back removes the
+    // feature, or finds there is none.
+    ops.push(prev.arcgisObjectId !== null || prev.syncStatus !== "off"
       ? prisma.cableRun.update({ where: { id }, data: { deletedAt: new Date(), syncStatus: "pending", updatedBy: actor } })
       : prisma.cableRun.delete({ where: { id } }));
     events.push({

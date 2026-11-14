@@ -1200,6 +1200,11 @@ const api = {
     storageAggregateApply:     (id, klass) => trackedRequest("Applying auto-monitor storage", "POST", `/integrations/${id}/storage-aggregate/apply`, { class: klass }),
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
+    // ArcGIS cable-run write-back (business rule 185).
+    arcgisReadLayer:     (body)     => trackedRequest("Reading the layer", "POST", "/integrations/arcgis/read-layer", body),
+    arcgisCreateLayer:   (id, name) => trackedRequest("Creating the layer", "POST", `/integrations/${id}/arcgis/create-layer`, { name: name }),
+    arcgisWriteBack:     (id)       => request("GET", `/integrations/${id}/arcgis/write-back`),
+    arcgisRetryFailed:   (id)       => request("POST", `/integrations/${id}/arcgis/retry-failed`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
     // Generic API Preview tab: the first page, mapped (nothing is written).
     genericApiPreview:  (body) => trackedRequest("Reading the first page", "POST", "/integrations/generic-api/preview", body),

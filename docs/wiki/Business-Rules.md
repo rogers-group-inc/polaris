@@ -3767,3 +3767,19 @@ organization: Read shows them, Read-Write edits them at sites you added or that 
 Full Read-Write at any site. Only administrators have it by default. Runs are saved with the view
 (the tick or Save) and every change is recorded as an Event.
 
+**184(a)** A connection between two devices can be dragged onto a run; it is then drawn through the
+run, from each device to the run's nearest point. Which connections ride a run stays in Polaris — it
+is not sent to ArcGIS — so it needs only Device Map Read-Write. Deleting a run takes it off every
+connection, and a connection left on none is straight again.
+
+### Rule 185
+
+**Cable runs are written one way to one ArcGIS layer, and found again by their Polaris ID.**
+An [ArcGIS integration](Integration-ArcGIS#write-back) with write-back on pushes every run drawn, edited or
+deleted in Polaris to one line layer — an existing layer with a field map, or one Polaris creates. Nothing
+is read back. Only one integration can write runs. Each run's id is written to the layer's Polaris ID
+field and looked up before an add, so a run is never added twice. A run ArcGIS refuses is marked Failed
+with ArcGIS's message until it is retried; one that could not be sent because ArcGIS was unreachable stays
+Pending and goes on the next try. Elevation is written when the layer has z values. Turning write-back
+off, or pointing it at another layer, starts over: every run is sent again when it is next on.
+
