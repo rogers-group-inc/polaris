@@ -40,7 +40,7 @@ import * as llm from "./llmService.js";
 import * as genericApi from "./genericApiService.js";
 import * as arcgis from "./arcgisService.js";
 import { testArcgisBasemap } from "./satelliteTileService.js";
-import * as writeBackLayer from "./arcgisWriteBackService.js";
+import * as arcgisLayers from "./arcgisLayerService.js";
 import { GENERIC_API_TYPE } from "../utils/genericApiSource.js";
 
 /** Every integration type Polaris knows. Integration.type holds exactly one of these. */
@@ -161,12 +161,11 @@ export const INTEGRATION_ADAPTERS: { readonly [K in IntegrationType]: Integratio
       },
     },
   },
-  // A map / GIS service: satellite imagery and cable-run write-back, no inventory.
+  // A map / GIS service, read only: satellite imagery and feature layers, no inventory.
   arcgis: {
     label: "ArcGIS",
-    // The sign-in, then — when the basemap is on — one imagery tile (rule 183).
-    // The sign-in; when the basemap is on, one imagery tile (rule 183); when
-    // write-back is on, the layer read and checked against the field map (rule 185).
+    // The sign-in; when the basemap is on, one imagery tile (rule 183); then
+    // every configured layer read and checked: fields still there, filter accepted (rule 188).
     testConnection: async (config) => {
       let r = await arcgis.testConnection(config);
       if (!r.ok) return r;
@@ -175,15 +174,11 @@ export const INTEGRATION_ADAPTERS: { readonly [K in IntegrationType]: Integratio
         if (!t.ok) return { ok: false, message: `${r.message}, but satellite imagery failed: ${t.message}` };
         r = { ...r, message: `${r.message}; ${t.message}` };
       }
-      if (config?.writeBackEnabled === true) {
-        try {
-          const layer = await writeBackLayer.readLayer(config);
-          const { problems, warnings } = writeBackLayer.layerProblems(layer, config);
-          if (problems.length) return { ok: false, message: `${r.message}, but cable runs cannot be written: ${problems.join("; ")}` };
-          r = { ...r, message: `${r.message}; cable runs go to "${layer.name}"${warnings.length ? ` (${warnings.join("; ")})` : ""}` };
-        } catch (err) {
-          return { ok: false, message: `${r.message}, but the cable-run layer could not be read: ${err instanceof Error ? err.message : String(err)}` };
-        }
+      const layers = Array.isArray(config?.layers) ? config.layers : [];
+      if (layers.length) {
+        const problems = await arcgisLayers.checkLayers(config);
+        if (problems.length) return { ok: false, message: `${r.message}, but ${problems.length} layer problem(s): ${problems.join("; ")}` };
+        r = { ...r, message: `${r.message}; ${layers.length} layer${layers.length === 1 ? "" : "s"} read` };
       }
       return r;
     },

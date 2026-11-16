@@ -59,7 +59,7 @@ import {
 import { checkForSlowRunsThrottled, triggerDiscovery, runPreflightTest } from "../../services/discovery/discoveryEngine.js";
 import { INTEGRATION_ADAPTERS, isNonDiscoveryType } from "../../services/integrationAdapters.js";
 import * as arcgis from "../../services/arcgisService.js";
-import * as writeBack from "../../services/arcgisWriteBackService.js";
+import * as arcgisLayers from "../../services/arcgisLayerService.js";
 import { arcgisBasemapOwner, invalidateArcgisBasemap } from "../../services/satelliteTileService.js";
 import { listIntegrationFortigates } from "../../services/integrationFortigateRosterService.js";
 
@@ -194,19 +194,6 @@ function validateAutoMonitorPatterns(cfg: any): void {
 router.get("/health-summary", async (_req, res, next) => {
   try {
     res.json(await getIntegrationHealthSummary());
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/v1/integrations/:id/arcgis/write-back — rule 185: the cable runs
-// by sync state and the latest refusal, for the Write-back tab. Read-gated.
-router.get("/:id/arcgis/write-back", async (req, res, next) => {
-  try {
-    const integration = await prisma.integration.findUnique({ where: { id: req.params.id }, select: { type: true, enabled: true, config: true } });
-    if (!integration || integration.type !== "arcgis") throw new AppError(404, "ArcGIS integration not found");
-    const writing = integration.enabled && (integration.config as Record<string, unknown>)?.writeBackEnabled === true;
-    res.json({ writing, ...(await writeBack.writeBackStatus()) });
   } catch (err) {
     next(err);
   }
@@ -1375,10 +1362,29 @@ const GenericApiConfigSchema = z.object({
   if (badNetwork) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networkQueries"], message: badNetwork });
 });
 
-/** Rule 185: Polaris attribute → layer field name (each optional; blank = not written). */
-const ArcgisFieldMapSchema = z.object(Object.fromEntries(
-  writeBack.WRITE_BACK_ATTRS.map((a) => [a, z.string().trim().max(128).optional()]),
-) as Record<(typeof writeBack.WRITE_BACK_ATTRS)[number], z.ZodOptional<z.ZodString>>);
+/** Rule 188: one ArcGIS feature layer Polaris reads. `layersProblem` checks the rest. */
+const ArcgisLayerSchema = z.object({
+  id:          z.string().uuid(),
+  url:         z.string().trim().max(500),
+  itemId:      z.string().trim().regex(/^[0-9a-f]{32}$/i).optional(),
+  title:       z.string().trim().min(1).max(120),
+  geometry:    z.enum(arcgisLayers.LAYER_GEOMETRIES),
+  idField:     z.string().trim().max(64),
+  labelField:  z.string().trim().max(64).optional(),
+  popupFields: z.array(z.object({ name: z.string().trim().max(64), alias: z.string().trim().max(120) })).max(arcgisLayers.MAX_POPUP_FIELDS).optional().default([]),
+  where:       z.string().trim().max(arcgisLayers.MAX_WHERE).optional(),
+  style: z.object({
+    color: z.enum(arcgisLayers.LAYER_COLORS),
+    width: z.number().int().min(1).max(8),
+    dash:  z.enum(arcgisLayers.LAYER_DASHES),
+  }),
+}).transform((l) => ({
+  ...l,
+  id: l.id.toLowerCase(),
+  url: l.url.replace(/\/+$/, ""),
+  labelField: l.labelField || undefined,
+  where: l.where || undefined,
+}));
 
 /**
  * An ArcGIS portal sign-in (services/arcgisService.ts). `host` is derived from
@@ -1402,25 +1408,15 @@ const ArcgisConfigSchema = z.object({
   imageryUrl:         z.string().trim().max(500).optional().default(""),
   basemapAttribution: z.string().trim().max(200).optional().default(""),
   basemapMaxZoom:     z.number().int().min(1).max(22).optional().default(19),
-  // Cable-run write-back (rule 185). Flat too: featureLayerUrl is a rule-111
-  // destination key.
-  writeBackEnabled: z.boolean().optional().default(false),
-  writeBackMode:    z.enum(writeBack.WRITE_BACK_MODES).optional().default("existing"),
-  featureLayerUrl:  z.string().trim().max(500).optional().default(""),
-  fieldMap:         ArcgisFieldMapSchema.optional().default({}),
-  valueMap: z.object({
-    medium:    z.record(z.string().max(32), z.union([z.string().max(128), z.number()])).optional(),
-    placement: z.record(z.string().max(32), z.union([z.string().max(128), z.number()])).optional(),
-  }).optional().default({}),
+  // The feature layers drawn on Topology views (rule 188), read only.
+  // `layerHosts` is derived (never typed): the hosts outside the portal a
+  // token goes to, a rule-111 destination key.
+  layers: z.array(ArcgisLayerSchema).max(arcgisLayers.MAX_LAYERS).optional().default([]),
 }).superRefine((cfg, ctx) => {
   const problem = arcgis.portalUrlProblem(cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL);
   if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["portalUrl"], message: problem });
-  if (cfg.featureLayerUrl) {
-    const layerProblem = writeBack.featureLayerUrlProblem(cfg.featureLayerUrl);
-    if (layerProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["featureLayerUrl"], message: layerProblem });
-  }
-  const wbProblem = writeBack.writeBackConfigProblem(cfg);
-  if (wbProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["writeBackEnabled"], message: wbProblem });
+  const layersProblem = arcgisLayers.layersProblem(cfg.layers as arcgisLayers.ArcgisLayerConfig[]);
+  if (layersProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["layers"], message: layersProblem });
   if (cfg.basemapSource === "service" && (cfg.basemapEnabled || cfg.imageryUrl)) {
     const imgProblem = arcgis.imageryUrlProblem(cfg.imageryUrl);
     if (imgProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["imageryUrl"], message: imgProblem });
@@ -1437,17 +1433,22 @@ const ArcgisConfigSchema = z.object({
 }).transform((cfg) => {
   const portalUrl = (cfg.portalUrl || arcgis.ARCGIS_ONLINE_PORTAL).replace(/\/+$/, "");
   const imageryUrl = cfg.imageryUrl.replace(/\/+$/, "");
-  const featureLayerUrl = cfg.featureLayerUrl.replace(/\/+$/, "");
-  const fieldMap = Object.fromEntries(Object.entries(cfg.fieldMap).filter(([, v]) => !!v));
-  return { ...cfg, portalUrl, imageryUrl, featureLayerUrl, fieldMap, host: new URL(portalUrl).hostname };
+  const layerHosts = arcgisLayers.layerHosts({ ...cfg, portalUrl, layers: cfg.layers as arcgisLayers.ArcgisLayerConfig[] });
+  return { ...cfg, portalUrl, imageryUrl, layerHosts, host: new URL(portalUrl).hostname };
 });
 
-/** Rule 185: only one ArcGIS integration writes cable runs at a time. */
-async function assertSingleArcgisWriteBack(config: Record<string, unknown>, excludeId?: string): Promise<void> {
-  if (config.writeBackEnabled !== true) return;
-  const owner = await writeBack.writeBackIntegration(excludeId);
-  if (owner) {
-    throw new AppError(409, `Only one ArcGIS integration can write cable runs — "${owner.name}" already does. Turn its write-back off first.`);
+/**
+ * Stamp the layer hosts a submitted ArcGIS config would send its token to, so
+ * the rule-111 comparison sees a new host as a move. `base` fills keys the
+ * request left out (an edit's stored config).
+ */
+function stampArcgisLayerHosts(sent: Record<string, unknown>, base: Record<string, unknown> = {}): void {
+  if (sent.layers === undefined && sent.portalUrl === undefined) return;
+  const merged = { ...base, ...sent } as arcgisLayers.ArcgisLayersConfig;
+  try {
+    sent.layerHosts = arcgisLayers.layerHosts({ ...merged, layers: Array.isArray(merged.layers) ? merged.layers : [] });
+  } catch {
+    // A malformed portal or layer URL: the schema refuses it below.
   }
 }
 
@@ -1797,10 +1798,7 @@ router.post("/", async (req, res, next) => {
       createConfig.verboseLoggingEnabledAt = new Date().toISOString();
     }
     if (input.type === GENERIC_API_TYPE) await applyGenericApiMonitorDefaults(createConfig);
-    if (input.type === "arcgis") {
-      await assertSingleArcgisBasemap(createConfig);
-      await assertSingleArcgisWriteBack(createConfig);
-    }
+    if (input.type === "arcgis") await assertSingleArcgisBasemap(createConfig);
     let integration = await prisma.integration.create({
       data: {
         type: input.type,
@@ -1843,7 +1841,7 @@ router.post("/", async (req, res, next) => {
     invalidateMonitorSettingsCache({ integrationId: integration.id });
     if (input.type === "arcgis") {
       invalidateArcgisBasemap();
-      if (createConfig.writeBackEnabled === true && integration.enabled) writeBack.kickWriteBack();
+      arcgisLayers.clearFeatureCache();
     }
 
     logEvent({ action: "integration.created", resourceType: "integration", resourceId: integration.id, resourceName: input.name, actor: req.session?.username, message: `Integration "${input.name}" (${input.type}) created` });
@@ -1906,6 +1904,7 @@ router.put("/:id", async (req, res, next) => {
       // (host, port, token URL, transport) is unchanged; a moved destination
       // needs the secret typed again (rule 111).
       const sentConfig = input.config as Record<string, unknown>;
+      if (existing.type === "arcgis") stampArcgisLayerHosts(sentConfig, currentConfig);
       restoreStoredSecrets(newConfig, currentConfig, SECRET_CONFIG_KEYS, existing.type === "llm" ? llmComparable(sentConfig) : sentConfig);
       for (const k of SECRET_CONFIG_KEYS) {
         // Nothing stored and nothing typed: keep the key absent rather than "".
@@ -1962,7 +1961,6 @@ router.put("/:id", async (req, res, next) => {
         for (const k of Object.keys(newConfig)) delete newConfig[k];
         Object.assign(newConfig, parsed.data, verboseLoggingEnabledAt ? { verboseLoggingEnabledAt } : {});
         await assertSingleArcgisBasemap(newConfig, existing.id);
-        await assertSingleArcgisWriteBack(newConfig, existing.id);
         arcgis.clearArcgisTokenCache();
       }
       if (isNonDiscoveryType(existing.type)) data.autoDiscover = false;
@@ -2097,17 +2095,7 @@ router.put("/:id", async (req, res, next) => {
     // Enabling, disabling or editing an ArcGIS basemap changes the imagery (rule 183).
     if (existing.type === "arcgis") {
       invalidateArcgisBasemap();
-      // Rule 185: write-back turned off, or pointed at another layer, starts
-      // over (runs back to off, object ids forgotten); on, it pushes now.
-      const before = existing.config as Record<string, unknown>;
-      const after = updated.config as Record<string, unknown>;
-      const wasWriting = before.writeBackEnabled === true;
-      const writing = after.writeBackEnabled === true;
-      const moved = wasWriting && writing && before.featureLayerUrl !== after.featureLayerUrl;
-      if (wasWriting && (!writing || moved)) {
-        await writeBack.writeBackStopped(moved ? "the layer changed" : "turned off", req.session?.username ?? "unknown");
-      }
-      if (writing && updated.enabled) writeBack.kickWriteBack();
+      arcgisLayers.clearFeatureCache();
     }
 
     // Auto-Monitor flag change sweep — if any per-class addAsMonitored value
@@ -2262,11 +2250,11 @@ router.delete("/:id", async (req, res, next) => {
     );
     await prisma.integration.delete({ where: { id: req.params.id } });
     invalidateMonitorSettingsCache({ integrationId: req.params.id });
-    if (existing.type === "arcgis" && (existing.config as Record<string, unknown>)?.writeBackEnabled === true) {
-      await writeBack.writeBackStopped("the integration was deleted", req.session?.username ?? "unknown");
-    }
     if (existing.type === "entraid" || existing.type === "activedirectory") bumpDirectoryCache();
-    if (existing.type === "arcgis") invalidateArcgisBasemap();
+    if (existing.type === "arcgis") {
+      invalidateArcgisBasemap();
+      arcgisLayers.clearFeatureCache();
+    }
     logEvent({ action: "integration.deleted", resourceType: "integration", resourceId: req.params.id, resourceName: existing.name, actor: req.session?.username, message: `Integration "${existing.name}" deleted` + (detachSummary(detached) ? ` — ${detachSummary(detached)}` : ""), details: { detached } });
     res.status(204).send();
   } catch (err) {
@@ -3146,6 +3134,7 @@ router.post("/test", async (req, res, next) => {
         // never reads as a move.
         const sentRaw = (req.body?.config ?? {}) as Record<string, unknown>;
         const sent = input.type === "llm" ? llmComparable(sentRaw) : sentRaw;
+        if (input.type === "arcgis") stampArcgisLayerHosts(sent);
         restoreStoredSecrets(cfg, stored, TEST_SECRET_KEYS[input.type] ?? [], sent);
       }
     }
@@ -3173,82 +3162,95 @@ router.post("/test", async (req, res, next) => {
   }
 });
 
-// ─── ArcGIS cable-run write-back (rule 185) ──────────────────────────────────
+// ─── ArcGIS layers, read only (rule 188) ─────────────────────────────────────
 
 /**
- * The form's config as an ArcGIS sign-in + layer, with the stored secrets
- * restored for an existing integration (only while the destination is
- * unchanged — rule 111). Write-back is parsed as off: the form may be reading
- * the layer precisely to finish its field map.
+ * The form's config as an ArcGIS sign-in, with the stored secrets restored for
+ * an existing integration (only while the destination is unchanged — rule
+ * 111). The layer list is not needed to search or read a layer.
  */
-async function arcgisDraftConfig(body: unknown): Promise<writeBack.WriteBackConfig> {
+async function arcgisDraftConfig(body: unknown): Promise<arcgis.ArcgisConfig> {
   const b = (body ?? {}) as { id?: unknown; config?: unknown };
-  const sent = (b.config && typeof b.config === "object" ? b.config : {}) as Record<string, unknown>;
+  const sent = { ...(b.config && typeof b.config === "object" ? b.config : {}) } as Record<string, unknown>;
+  delete sent.layers;
   const cfg: Record<string, unknown> = { ...sent };
   if (typeof b.id === "string") {
     const stored = await prisma.integration.findFirst({ where: { id: b.id, type: "arcgis" }, select: { config: true } });
     if (!stored) throw new AppError(404, "ArcGIS integration not found");
     restoreStoredSecrets(cfg, stored.config as Record<string, unknown>, TEST_SECRET_KEYS.arcgis, sent);
   }
-  const parsed = ArcgisConfigSchema.safeParse({ ...cfg, writeBackEnabled: false });
+  const parsed = ArcgisConfigSchema.safeParse(cfg);
   if (!parsed.success) throw new AppError(400, parsed.error.issues.map((i) => i.message).join("; "));
-  return { ...parsed.data, fieldMap: parsed.data.fieldMap, valueMap: parsed.data.valueMap };
+  return parsed.data;
 }
 
-// POST /api/v1/integrations/arcgis/read-layer — { id?, config } → the layer's
-// geometry, fields, domains and capabilities, plus what would stop or limit
-// write-back with the form's field map.
+/**
+ * A token goes to a layer host outside the portal only once that host is in
+ * the SAVED config (rule 111): searching and reading a new host's layer from
+ * the form would otherwise hand the stored secret to an address the caller
+ * chose. A host not yet saved is read without a token.
+ */
+async function arcgisConfigForUrl(body: unknown, url: string): Promise<arcgis.ArcgisConfig> {
+  const cfg = await arcgisDraftConfig(body);
+  const host = new URL(url).hostname.toLowerCase();
+  const probe = arcgisLayers.layerHosts({ ...cfg, layers: [{ url } as arcgisLayers.ArcgisLayerConfig] });
+  if (!probe.includes(host)) return cfg;
+  const b = (body ?? {}) as { id?: unknown };
+  const stored = typeof b.id === "string"
+    ? await prisma.integration.findFirst({ where: { id: b.id, type: "arcgis" }, select: { config: true } })
+    : null;
+  const saved = ((stored?.config as Record<string, unknown> | undefined)?.layerHosts ?? []) as string[];
+  if (saved.includes(host)) return cfg;
+  return { ...cfg, authMode: "none" };
+}
+
+function arcgisFailure(err: unknown, next: (e: unknown) => void): void {
+  if (err instanceof arcgis.ArcgisError) return next(new AppError(502, err.message));
+  next(err);
+}
+
+// POST /api/v1/integrations/arcgis/search — { id?, config, q?, scope?, start? }
+// → feature services this sign-in can see, newest first.
+router.post("/arcgis/search", async (req, res, next) => {
+  try {
+    const q = z.object({
+      q: z.string().trim().max(200).optional(),
+      scope: z.enum(["org", "mine"]).optional(),
+      start: z.number().int().min(1).max(10000).optional(),
+    }).parse(req.body ?? {});
+    const cfg = await arcgisDraftConfig(req.body);
+    res.json(await arcgisLayers.searchItems(cfg, q));
+  } catch (err) {
+    arcgisFailure(err, next);
+  }
+});
+
+// POST /api/v1/integrations/arcgis/service-layers — { id?, config, url } → the
+// layers of one feature service (tables left out).
+router.post("/arcgis/service-layers", async (req, res, next) => {
+  try {
+    const { url } = z.object({ url: z.string().trim().url().max(500) }).parse(req.body ?? {});
+    const cfg = await arcgisConfigForUrl(req.body, url);
+    res.json({ layers: await arcgisLayers.serviceLayers(cfg, url) });
+  } catch (err) {
+    arcgisFailure(err, next);
+  }
+});
+
+// POST /api/v1/integrations/arcgis/read-layer — { id?, config, url, itemId?, title? }
+// → the layer's description and a ready-to-add layer entry.
 router.post("/arcgis/read-layer", async (req, res, next) => {
   try {
-    const cfg = await arcgisDraftConfig(req.body);
-    const layer = await writeBack.readLayer(cfg);
-    res.json({ layer, ...writeBack.layerProblems(layer, cfg) });
+    const b = z.object({
+      url: z.string().trim().url().max(500),
+      itemId: z.string().trim().regex(/^[0-9a-f]{32}$/i).optional(),
+      title: z.string().trim().max(120).optional(),
+    }).parse(req.body ?? {});
+    const cfg = await arcgisConfigForUrl(req.body, b.url);
+    const layer = await arcgisLayers.readLayer(cfg, b.url);
+    res.json({ layer, entry: layer.geometry ? arcgisLayers.newLayerConfig(layer, b.itemId, b.title) : null });
   } catch (err) {
-    if (err instanceof arcgis.ArcgisError) return next(new AppError(502, err.message));
-    next(err);
-  }
-});
-
-// POST /api/v1/integrations/:id/arcgis/create-layer — { name } → a new hosted
-// feature layer with Polaris's own fields, stored as this integration's
-// write-back layer (write-back is NOT turned on). It creates content in the
-// external organisation, so it takes Full Read-Write on Integrations.
-router.post("/:id/arcgis/create-layer", requirePermission("integrations", "fullwrite"), async (req, res, next) => {
-  try {
-    const { name } = z.object({ name: z.string().trim().min(3).max(60) }).parse(req.body);
-    const existing = await prisma.integration.findUnique({ where: { id: req.params.id as string } });
-    if (!existing || existing.type !== "arcgis") throw new AppError(404, "ArcGIS integration not found");
-    const before = existing.config as Record<string, unknown>;
-    const made = await writeBack.createPolarisLayer(before as writeBack.WriteBackConfig, name);
-    const config = { ...before, writeBackMode: "polaris", featureLayerUrl: made.featureLayerUrl, fieldMap: made.fieldMap };
-    await prisma.integration.update({ where: { id: existing.id }, data: { config: config as object } });
-    if (before.writeBackEnabled === true && before.featureLayerUrl !== made.featureLayerUrl) {
-      await writeBack.writeBackStopped("the layer changed", req.session?.username ?? "unknown");
-    }
-    logEvent({
-      action: "integration.arcgis_layer_created", resourceType: "integration", resourceId: existing.id, resourceName: existing.name, actor: req.session?.username,
-      message: `Created the ArcGIS layer "${name}" for cable runs: ${made.featureLayerUrl}`,
-      details: { featureLayerUrl: made.featureLayerUrl, itemId: made.itemId },
-    });
-    res.json(made);
-  } catch (err) {
-    if (err instanceof arcgis.ArcgisError) return next(new AppError(502, err.message));
-    next(err);
-  }
-});
-
-// POST /api/v1/integrations/:id/arcgis/retry-failed — send every run ArcGIS
-// refused again (after fixing the layer or the field map). Cable Runs Full
-// Read-Write: it re-sends every site's runs.
-router.post("/:id/arcgis/retry-failed", requirePermission("cableRuns", "fullwrite"), async (req, res, next) => {
-  try {
-    const existing = await prisma.integration.findUnique({ where: { id: req.params.id as string }, select: { type: true } });
-    if (!existing || existing.type !== "arcgis") throw new AppError(404, "ArcGIS integration not found");
-    const queued = await writeBack.retryFailed(req.session?.username ?? "unknown");
-    if (queued) writeBack.kickWriteBack();
-    res.json({ queued });
-  } catch (err) {
-    next(err);
+    arcgisFailure(err, next);
   }
 });
 

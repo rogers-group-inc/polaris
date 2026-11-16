@@ -2,7 +2,7 @@
  * tests/unit/cableRunGeometry.test.ts
  *
  * The geometry of a device link routed through cable runs
- * (public/js/cable-run-geometry.js, business rule 184(a)): the link joins a
+ * (public/js/cable-run-geometry.js, business rule 188(a)): the link joins a
  * run at its point nearest each device, follows the run between them in
  * either direction, crosses between runs where they come closest, and is
  * straight when it rides nothing. Synthetic coordinates only.

@@ -604,49 +604,36 @@ the column under the tick:
   site's descriptions already name, or a new group inside one), then click to
   add points and click the first point to close it. Click a polygon to
   reshape it, change its group or delete it.
-- **Draw pole run** (needs the **Cable Runs** permission, [rule 184](Business-Rules#rule-184)):
-  draw a fiber or ethernet run along electric or telephone poles — click each
-  pole, double-click the last one to finish. See [Cable runs](#cable-runs) below.
 
-#### Cable runs
+#### ArcGIS layers
 
-Cable runs are the physical fiber and ethernet routes at a site, drawn over
-the map or satellite imagery (never over an uploaded floor plan). They belong
-to the **site**, so every Topology view of it shows them, and changing a
-view's mode never removes them.
+When an [ArcGIS integration](Integration-ArcGIS#layers) lists feature layers —
+fiber routes, pole lines, handholes, parcels — a Topology view can draw them
+over the map or satellite imagery (never over an uploaded floor plan). Polaris
+only reads them; edit them in ArcGIS ([rule 188](Business-Rules#rule-188)).
 
-| Kind | Colour | How it gets on the map |
-|---|---|---|
-| **Electric pole** | orange | drawn by hand; each bend is a pole |
-| **Telephone pole** | green | drawn by hand; each bend is a pole |
-| **Trench** | blue | imported from a survey file (coming soon); its points cannot be moved on the map |
+Tick the layers a view draws under **Map layers** at the top of the details
+pane. A new view draws none. While editing, the ticks are saved with the view;
+otherwise they last until you close the map. Each layer has the colour, width
+and line style set on the integration, and the legend in the bottom-left
+corner names every one shown. Polaris reads the features in view as you pan;
+a layer with more features in view than one answer carries says *(partial)* —
+zoom in. Labels appear when you zoom in close. Click a feature to see the
+fields chosen for it, a line's length, the connections riding it, and
+**Open in ArcGIS**.
 
-Fiber is a solid line, ethernet a dashed one; the legend in the bottom-left
-corner names every colour and line style. Click a run to open its panel —
-name, fiber or ethernet, which poles, length, pole count and notes, and, when
-an [ArcGIS integration](Integration-ArcGIS) writes runs to your ArcGIS
-organization, whether it has been sent. While editing, drag the white
-handles to move a pole, or **Delete run**; the Delete key also removes the
-selected run. Runs are saved with the view (the tick or **Save**), undone with
-the rest of the edit, and every change is recorded as an Event.
-
-**Routing a connection through a run.** While editing, press a
-connection between two devices on the map and drag it onto a run: the run
-lights up and a dashed line previews the route. Let go and the connection
-is drawn through the run — from each device to the nearest point on the
-run, along it, and across to the next run if you add another. Moving a
-device or a pole re-routes it. A routed connection shows a round handle on
-each run it rides: drag it onto a different run to swap, or off the run
-(or press Delete) to take the connection off it. A run you have just drawn
-must be saved before a connection can ride it. The run's panel lists the
-connections on it. Which connections ride a run stays in Polaris — it is
-not sent to ArcGIS — so it needs only Device Map **Read-Write**, like
-any other layout change.
-
-Seeing runs needs **Read** on **Cable Runs**; drawing them needs
-**Read-Write** (sites you added or that carry your tags) or **Full Read-Write**
-(any site). Device Map rights alone do neither, because runs are written to
-another system. Only administrators have Cable Runs by default.
+**Routing a connection through a line.** While editing, press a connection
+between two devices on the map and drag it onto an ArcGIS line: the line
+lights up and a dashed line previews the route. Let go and the connection is
+drawn through it — from each device to the nearest point on the line, along
+it, and across to the next line if you add another. A routed connection shows
+a round handle on each line it rides: drag it onto a different line to swap,
+or off the line (or press Delete) to take the connection off it. Which
+connections ride a line stays in Polaris, so it needs Device Map
+**Read-Write**, like any other layout change. If a line is hidden on this
+view, filtered out, or deleted in ArcGIS, the connection is drawn straight
+again and **Map layers** shows **Route line missing** with how many
+connections it affects.
 
 The details pane's **Device List** names every device of a shown type, with a
 filter box; it shows about five rows and scrolls past that. A device on the
