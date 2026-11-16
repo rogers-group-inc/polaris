@@ -181,6 +181,8 @@ export function buildGraphMessage(msg: EmailMessage): Record<string, unknown> {
 
 export async function sendM365Email(cfg: M365Config, msg: EmailMessage): Promise<void> {
   if (!cfg.tenantId || !cfg.clientId || !cfg.fromUserId) throw new AppError(400, "Microsoft 365 channel is missing tenant/client/from");
+  // Fail here with a clear reason rather than as an opaque token error from Microsoft.
+  if (!cfg.clientSecret) throw new AppError(400, "Microsoft 365 channel is missing its client secret");
   const token = await m365Token(cfg);
   const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.fromUserId)}/sendMail`;
   const controller = new AbortController();
