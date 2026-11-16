@@ -107,14 +107,19 @@ export async function getOidcSettingsForUi(): Promise<OidcSettings & { redirectU
  * The client secret to save. The discovery document names the token endpoint
  * the secret is posted to, so an echoed mask keeps the stored secret only
  * while the discovery URL and the client id are unchanged — business rule
- * 111(a), re-scan F4. Anything else typed is saved exactly as typed — a
+ * 111(a), re-scan F4. An omitted clientSecret is treated like the echoed
+ * mask. Anything else typed is saved exactly as typed — a
  * secret is never trimmed — and a blank (or whitespace-only) value clears it.
  */
 export function keptOidcClientSecret(
   cur: Pick<OidcSettings, "discoveryUrl" | "clientId" | "clientSecret">,
   input: Record<string, any>,
 ): string {
-  const echoed = isMaskedSecret(input.clientSecret) || input.clientSecret === LEGACY_ASTERISK_MASK;
+  // An omitted clientSecret (a partial PUT) is treated like the echoed mask.
+  const echoed =
+    input.clientSecret === undefined ||
+    isMaskedSecret(input.clientSecret) ||
+    input.clientSecret === LEGACY_ASTERISK_MASK;
   if (!echoed) {
     const typed = String(input.clientSecret ?? "");
     return typed.trim() === "" ? "" : typed;
@@ -139,7 +144,8 @@ export function keptOidcClientSecret(
 export async function updateOidcSettings(input: Record<string, any>): Promise<OidcSettings> {
   const cur = await getOidcSettings();
   const value: OidcSettings = {
-    enabled: !!input.enabled,
+    // An omitted field keeps its stored value; an explicit false still works.
+    enabled: input.enabled === undefined ? !!cur.enabled : !!input.enabled,
     discoveryUrl: (input.discoveryUrl ?? cur.discoveryUrl ?? "").trim(),
     clientId: (input.clientId ?? cur.clientId ?? "").trim(),
     clientSecret: keptOidcClientSecret(cur, input),

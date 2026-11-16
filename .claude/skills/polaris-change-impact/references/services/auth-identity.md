@@ -132,7 +132,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Callback never honors a caller-supplied return path — always redirects to `/`; `clientSecret` masked on read, preserved-on-unchanged on write.
 - Redirect URI is derived from `POLARIS_PUBLIC_URL` (missing → throws with a clear message); userinfo claims merge into ID-token claims when present.
 
-- **Rule 111(a) (2026-10-13, re-scan F4).** `keptOidcClientSecret(cur, input)`: an echoed mask keeps the stored client secret only while `discoveryUrl` and `clientId` are unchanged — the discovery document names the token endpoint the secret is posted to. A typed secret is saved exactly as typed, never trimmed (blank or whitespace-only clears).
+- **Rule 111(a) (2026-10-13, re-scan F4).** `keptOidcClientSecret(cur, input)`: an echoed mask keeps the stored client secret only while `discoveryUrl` and `clientId` are unchanged — the discovery document names the token endpoint the secret is posted to. An OMITTED clientSecret is treated like the echoed mask; a typed secret is saved exactly as typed, never trimmed (blank or whitespace-only clears).
+- `updateOidcSettings` is a merge: every omitted field keeps its stored value, `enabled` included (2026-11-16 — a partial PUT used to turn OIDC off and clear the secret); an explicit `false` / blank still applies.
 - The discovered `Configuration` is cached per process KEYED by discoveryUrl + clientId + a sha256 of the secret, so a settings change saved by another web process is picked up once the 30 s settings cache expires (it used to be dropped only by `updateOidcSettings` in the same process).
 - The username falls back from `usernameClaim` to the configured `emailClaim`, then to `sub`.
 

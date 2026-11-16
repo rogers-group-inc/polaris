@@ -118,6 +118,11 @@ describe("getOidcSettingsForUi", () => {
 describe("keptOidcClientSecret (rule 111(a))", () => {
   const cur = { discoveryUrl: "https://idp.example", clientId: "polaris", clientSecret: "stored" };
 
+  it("keeps the stored secret when clientSecret is omitted, under the same destination check", () => {
+    expect(svc.keptOidcClientSecret(cur, {})).toBe("stored");
+    expect(() => svc.keptOidcClientSecret(cur, { clientId: "other" })).toThrow(expect.objectContaining({ httpStatus: 400 }));
+  });
+
   it("saves a typed secret exactly as typed, clears on blank", () => {
     // Was a bug until 2026-11-16: a typed secret was trimmed (" typed " saved as "typed").
     expect(svc.keptOidcClientSecret(cur, { clientSecret: " typed " })).toBe(" typed ");
@@ -179,6 +184,28 @@ describe("updateOidcSettings / isOidcEnabled", () => {
     await svc.buildAuthorizationUrl();
     expect(h.client.discovery).toHaveBeenCalledTimes(2);
     expect(h.client.discovery.mock.calls[1][2]).toBe("rotated");
+  });
+
+  it("an omitted enabled / clientSecret keeps its stored value", async () => {
+    // Was a bug until 2026-11-16: an omitted enabled turned OIDC off and an omitted clientSecret cleared the secret.
+    stored(CONFIGURED);
+    const out = await svc.updateOidcSettings({ scopes: "openid email" });
+    expect(out.enabled).toBe(true);
+    expect(out.clientSecret).toBe(CONFIGURED.clientSecret);
+    expect(out.scopes).toBe("openid email");
+  });
+
+  it("an omitted clientSecret still refuses to follow a moved discovery URL (rule 111(a))", async () => {
+    stored(CONFIGURED);
+    await expect(svc.updateOidcSettings({ discoveryUrl: "https://evil.example" })).rejects.toMatchObject({ httpStatus: 400 });
+    expect(h.prisma.setting.upsert).not.toHaveBeenCalled();
+  });
+
+  it("an explicit false / blank still turns OIDC off and clears the secret", async () => {
+    stored(CONFIGURED);
+    const out = await svc.updateOidcSettings({ enabled: false, clientSecret: "" });
+    expect(out.enabled).toBe(false);
+    expect(out.clientSecret).toBe("");
   });
 
   it("rediscovers when another process changed the settings (the cached discovery is keyed by them)", async () => {
