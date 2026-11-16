@@ -301,16 +301,33 @@ describe("regenerateLlmToken", () => {
     expect(h.deleteToken).not.toHaveBeenCalled();
   });
 
-  it("deletes the old token, mints a new one on the same role and logs a warning", async () => {
+  it("mints a new token on the same role, points the config at it, then deletes the old one and logs a warning", async () => {
+    // Was a bug until 2026-11-16: the old token was deleted BEFORE the new one was minted, so a failed mint left the integration with no token.
     const out = await regenerateLlmToken(integration, "alice");
     expect(out).toEqual({ tokenId: "tok-1", tokenName: "LLM: Ollama", rawToken: "pol_raw", roleName: "llm-ollama" });
     expect(h.deleteToken).toHaveBeenCalledWith("old-tok");
     expect(h.createToken).toHaveBeenCalledWith({ name: "LLM: Ollama", roleId: "role-1", createdBy: "alice" });
+    expect(integ.update).toHaveBeenCalledWith({ where: { id: "i1" }, data: { config: { roleId: "role-1", tokenId: "tok-1" } } });
     expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({
       action: "integration.llm.token_regenerated", level: "warning", resourceId: "i1",
       details: { oldTokenId: "old-tok", tokenId: "tok-1" },
     });
-    expect(h.deleteToken.mock.invocationCallOrder[0]).toBeLessThan(h.createToken.mock.invocationCallOrder[0]);
+    expect(h.createToken.mock.invocationCallOrder[0]).toBeLessThan(integ.update.mock.invocationCallOrder[0]);
+    expect(integ.update.mock.invocationCallOrder[0]).toBeLessThan(h.deleteToken.mock.invocationCallOrder[0]);
+  });
+
+  it("a failed mint leaves the old token and the config untouched", async () => {
+    h.createToken.mockRejectedValueOnce(new AppError(500, "mint failed"));
+    expect((await rejection(regenerateLlmToken(integration, "alice"))).httpStatus).toBe(500);
+    expect(h.deleteToken).not.toHaveBeenCalled();
+    expect(integ.update).not.toHaveBeenCalled();
+  });
+
+  it("a failed config write deletes the new token, keeps the old one, and rethrows", async () => {
+    integ.update.mockRejectedValueOnce(new Error("db down"));
+    await expect(regenerateLlmToken(integration, "alice")).rejects.toThrow("db down");
+    expect(h.deleteToken).toHaveBeenCalledTimes(1);
+    expect(h.deleteToken).toHaveBeenCalledWith("tok-1");
   });
 
   it("carries on when the old token was already deleted by hand", async () => {

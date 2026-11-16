@@ -2997,11 +2997,7 @@ router.post("/:id/llm/regenerate-token", requirePermission("apiTokens", "write")
       { id: integration.id, name: integration.name, config },
       req.session?.username ?? "unknown",
       req,
-    );
-    await prisma.integration.update({
-      where: { id: integration.id },
-      data: { config: { ...config, tokenId: out.tokenId } as any },
-    });
+    ); // writes config.tokenId itself, between minting the new token and deleting the old
     res.json({ roleName: out.roleName, tokenName: out.tokenName, rawToken: out.rawToken, apiPath: "/api/v1" });
   } catch (err) {
     next(err);

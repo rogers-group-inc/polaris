@@ -111,9 +111,18 @@ describe("getLdapSettingsMasked", () => {
 describe("keptLdapBindPassword (rule 111(a))", () => {
   const cur = { url: "ldaps://dc.example:636", tlsVerify: true, bindPassword: "stored" };
 
-  it("saves a typed password (trimmed) and clears on blank", () => {
-    expect(svc.keptLdapBindPassword(cur, { bindPassword: " new " })).toBe("new");
+  it("saves a typed password exactly as typed and clears on blank", () => {
+    // Was a bug until 2026-11-16: a typed password was trimmed (" new " saved as "new").
+    expect(svc.keptLdapBindPassword(cur, { bindPassword: " new " })).toBe(" new ");
     expect(svc.keptLdapBindPassword(cur, { bindPassword: "" })).toBe("");
+    expect(svc.keptLdapBindPassword(cur, { bindPassword: "   " })).toBe("");
+  });
+
+  it("keeps the stored password when bindPassword is omitted, under the same destination check", () => {
+    expect(svc.keptLdapBindPassword(cur, {})).toBe("stored");
+    expect(() => svc.keptLdapBindPassword(cur, { url: "ldaps://evil.example:636" })).toThrow(
+      expect.objectContaining({ httpStatus: 400 }),
+    );
   });
 
   it("keeps the stored password for an echoed mask (bullet or legacy asterisks) when the destination is unchanged", () => {
@@ -180,15 +189,22 @@ describe("updateLdapSettings", () => {
     expect(h.prisma.setting.upsert).not.toHaveBeenCalled();
   });
 
-  // Partial bodies are not merged for these three fields: the UI always posts
-  // the whole form, so this is current behaviour, noted in the batch report.
-  it("an omitted enabled / tlsVerify / bindPassword resets to off / on / blank (full-form semantics)", async () => {
+  it("an omitted enabled / tlsVerify / bindPassword keeps its stored value", async () => {
+    // Was a bug until 2026-11-16: omitted fields reset to off / on / blank, so a partial PUT turned LDAP off and cleared the bind password.
     stored({ ...CONFIGURED, tlsVerify: false });
     const out = await svc.updateLdapSettings({ url: CONFIGURED.url });
-    expect(out.enabled).toBe(false);
-    expect(out.tlsVerify).toBe(true);
-    expect(out.bindPassword).toBe("");
+    expect(out.enabled).toBe(true);
+    expect(out.tlsVerify).toBe(false);
+    expect(out.bindPassword).toBe(CONFIGURED.bindPassword);
     expect(out.bindDn).toBe(CONFIGURED.bindDn);
+  });
+
+  it("an explicit false / blank still turns LDAP off, certificate checking off and clears the password", async () => {
+    stored(CONFIGURED);
+    const out = await svc.updateLdapSettings({ enabled: false, tlsVerify: false, bindPassword: "" });
+    expect(out.enabled).toBe(false);
+    expect(out.tlsVerify).toBe(false);
+    expect(out.bindPassword).toBe("");
   });
 });
 

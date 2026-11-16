@@ -95,14 +95,22 @@ export async function getLdapSettingsMasked(): Promise<LdapSettings> {
  * stored one" — business rule 111(a): only while the server it goes to is
  * unchanged (the URL: host, port, ldap vs ldaps; and certificate checking).
  * A moved destination is a 400 asking for the password again (re-scan F3).
- * Anything else typed is saved as typed (blank clears it).
+ * An omitted bindPassword (a partial PUT) is treated like the echoed mask.
+ * Anything else typed is saved exactly as typed — a secret is never trimmed —
+ * and a blank (or whitespace-only) value clears it.
  */
 export function keptLdapBindPassword(
   cur: Pick<LdapSettings, "url" | "tlsVerify" | "bindPassword">,
   input: Record<string, any>,
 ): string {
-  const echoed = isMaskedSecret(input.bindPassword) || input.bindPassword === LEGACY_ASTERISK_MASK;
-  if (!echoed) return String(input.bindPassword ?? "").trim();
+  const echoed =
+    input.bindPassword === undefined ||
+    isMaskedSecret(input.bindPassword) ||
+    input.bindPassword === LEGACY_ASTERISK_MASK;
+  if (!echoed) {
+    const typed = String(input.bindPassword ?? "");
+    return typed.trim() === "" ? "" : typed;
+  }
   if (!cur.bindPassword) return "";
   const moved = movedDestinationKey(
     { url: cur.url ?? "", verifyTls: cur.tlsVerify !== false },
@@ -123,13 +131,15 @@ export function keptLdapBindPassword(
 export async function updateLdapSettings(input: Record<string, any>): Promise<LdapSettings> {
   const cur = await getLdapSettings();
   const value: LdapSettings = {
-    enabled: !!input.enabled,
+    // An omitted field keeps its stored value (a partial PUT must not turn
+    // LDAP off or certificate checking back on); an explicit false still works.
+    enabled: input.enabled === undefined ? !!cur.enabled : !!input.enabled,
     url: (input.url ?? cur.url ?? "").trim(),
     bindDn: (input.bindDn ?? cur.bindDn ?? "").trim(),
     bindPassword: keptLdapBindPassword(cur, input),
     searchBase: (input.searchBase ?? cur.searchBase ?? "").trim(),
     searchFilter: (input.searchFilter ?? cur.searchFilter ?? LDAP_DEFAULTS.searchFilter).trim(),
-    tlsVerify: input.tlsVerify !== false,
+    tlsVerify: input.tlsVerify === undefined ? cur.tlsVerify !== false : input.tlsVerify !== false,
     displayNameAttr: (input.displayNameAttr ?? cur.displayNameAttr ?? LDAP_DEFAULTS.displayNameAttr).trim(),
     emailAttr: (input.emailAttr ?? cur.emailAttr ?? LDAP_DEFAULTS.emailAttr).trim(),
     userIdAttribute: (input.userIdAttribute ?? cur.userIdAttribute ?? LDAP_DEFAULTS.userIdAttribute).trim(),

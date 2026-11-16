@@ -152,6 +152,33 @@ describe("provisionExternalUser — existing user", () => {
     await provisionExternalUser(profile());
     expect(updateData()).not.toHaveProperty("needsRoleReview");
   });
+
+  it("judges the admin exemption on the group-resolved role as well as the stored one", async () => {
+    // Was a bug until 2026-11-16: only the stored role was read, so a pre-assigned admin whose groups resolved a lesser role on first login was not flagged.
+    h.resolve.mockResolvedValue({ roleId: "role-readonly" });
+    roleFind().mockResolvedValue({ id: "role-readonly", name: "readonly" });
+    userFindFirst().mockResolvedValue(existingUser({ lastLogin: null, roleId: "role-admin", role: { name: "admin" } }));
+    await provisionExternalUser(profile());
+    expect(updateData().needsRoleReview).toBe(true);
+
+    // groups granting admin to a first-time non-admin are flagged
+    resetDbStub();
+    h.resolve.mockResolvedValue({ roleId: "role-admin" });
+    roleFind().mockResolvedValue({ id: "role-admin", name: "admin" });
+    userFindFirst().mockResolvedValue(existingUser({ lastLogin: null }));
+    userUpdate().mockResolvedValue({});
+    await provisionExternalUser(profile());
+    expect(updateData().needsRoleReview).toBe(true);
+
+    // an admin who stays admin is not
+    resetDbStub();
+    h.resolve.mockResolvedValue({ roleId: "role-admin" });
+    roleFind().mockResolvedValue({ id: "role-admin", name: "admin" });
+    userFindFirst().mockResolvedValue(existingUser({ lastLogin: null, roleId: "role-admin", role: { name: "admin" } }));
+    userUpdate().mockResolvedValue({});
+    await provisionExternalUser(profile());
+    expect(updateData()).not.toHaveProperty("needsRoleReview");
+  });
 });
 
 describe("provisionExternalUser — new user", () => {
