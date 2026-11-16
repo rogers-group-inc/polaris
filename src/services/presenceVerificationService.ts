@@ -190,7 +190,9 @@ export async function runPresenceVerification(opts: {
       }
       // DNS name first — the stored ipAddress on directory-discovered
       // assets is frequently stale (DHCP churn the directory never sees).
-      const target = (a.dnsName || a.hostname || a.ipAddress || "").trim();
+      // Each candidate trimmed BEFORE the fallback: a whitespace-only dnsName
+      // must not hide a usable hostname.
+      const target = a.dnsName?.trim() || a.hostname?.trim() || a.ipAddress?.trim() || "";
       if (!target) {
         summary.pingSkippedNoTarget++;
         return;

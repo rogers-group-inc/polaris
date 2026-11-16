@@ -263,7 +263,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Public API:** `queryProbeLossRatios({ sinceMinutes, assetIds?, onlyLossy?, limit? })`, `ProbeLossRow`.
 
 **Used by:**
-- `src/services/notificationEngine.ts` — the `probeLossPct` trigger (engine mode: every asset with ≥1 successful probe, INCLUDING 0%-loss rows so hysteresis/auto-clear rules recover).
+- `src/services/notificationEngine.ts` — the `probeLossPct` trigger (engine mode: no HAVING — every asset with ≥1 countable row in the window, INCLUDING 0%-loss rows so hysteresis/auto-clear rules recover, and including an asset with no successful probe, which reads its real ratio; see the `includeFullyDown` invariant below).
 - `src/services/nocDashboardService.ts` — `getPacketLoss` (widget mode `onlyLossy: true`: additionally requires ≥1 failure, orders lossiest-first, caps at `limit`; `limit` null = uncapped via Postgres `LIMIT NULL`).
 
 **Invariants:**

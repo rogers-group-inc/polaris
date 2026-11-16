@@ -179,6 +179,18 @@ export async function pruneOldAgentCommands(now: Date = new Date()): Promise<num
 }
 
 const OUTPUT_CAP_BYTES = SCRIPT_OUTPUT_CAP_BYTES;
+
+/** Cut `s` to at most `maxBytes` of UTF-8, never splitting a multi-byte character. */
+function truncateUtf8(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s, "utf8") <= maxBytes) return s;
+  const buf = Buffer.from(s, "utf8");
+  let end = maxBytes;
+  // buf[end] is the first byte cut; while it is a continuation byte the cut
+  // lands inside a character, so back off to that character's lead byte.
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end).toString("utf8");
+}
+
 const RUN_STATUSES = new Set(["succeeded", "failed", "timeout"]);
 
 /** Agent result report. Bound to the agent's own commands; audited.
@@ -212,8 +224,8 @@ export async function recordCommandResult(
         data: {
           status: runStatus,
           exitCode: output?.exitCode ?? null,
-          stdout: (output?.stdout ?? "").slice(0, OUTPUT_CAP_BYTES) || null,
-          stderr: ((output?.stderr ?? "") || (error ?? "")).slice(0, OUTPUT_CAP_BYTES) || null,
+          stdout: truncateUtf8(output?.stdout ?? "", OUTPUT_CAP_BYTES) || null,
+          stderr: truncateUtf8((output?.stderr ?? "") || (error ?? ""), OUTPUT_CAP_BYTES) || null,
           completedAt: new Date(),
         },
       });

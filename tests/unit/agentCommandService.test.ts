@@ -142,6 +142,15 @@ describe("recordCommandResult — run_script", () => {
     expect(d.exitCode).toBeNull();
   });
 
+  // Was a bug until 2026-11-16: output was cut at 16 UTF-16 chars, not 16 UTF-8 bytes.
+  it("caps output by UTF-8 bytes without splitting a multi-byte character", async () => {
+    // "é" is 2 bytes, "€" is 3: 7 × "é" = 14 bytes, then "€" would reach 17.
+    await recordCommandResult("agent-1", "c1", true, null, "succeeded", { stdout: "ééééééé€x", stderr: "€".repeat(10) });
+    const d = runUpdate().mock.calls[0][0].data;
+    expect(d.stdout).toBe("ééééééé");
+    expect(d.stderr).toBe("€".repeat(5));
+  });
+
   it("stores null rather than empty strings when nothing was printed", async () => {
     await recordCommandResult("agent-1", "c1", true, null, "succeeded", { stdout: "", stderr: "" });
     expect(runUpdate().mock.calls[0][0].data).toMatchObject({ stdout: null, stderr: null });

@@ -460,7 +460,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - A failed ping writes NOTHING (Windows hosts commonly drop ICMP; no pong ≠ absence) — `lastSeen` advances only on positive evidence via `bumpLastSeen`.
 - ICMP is concurrency-capped with a per-ping timeout and a hard pass deadline; `lastSeen` writes are batched in chunked transactions.
-- Ping target priority is dnsName > hostname > ipAddress (stored ipAddress is often stale on directory-discovered assets).
+- Ping target priority is dnsName > hostname > ipAddress, each trimmed so a whitespace-only value falls through to the next (stored ipAddress is often stale on directory-discovered assets).
 
 **When changing this:**
 - Agent-heartbeat and monitor-probe steps are best-effort; keep the no-write-on-ping-failure rule.

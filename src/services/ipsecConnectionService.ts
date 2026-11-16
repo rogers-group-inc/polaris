@@ -103,13 +103,15 @@ export async function persistIpsecConnections(
   // here by construction and nothing it owns is re-inserted.
   // Chunked inserts: 15 columns × the 5000-row cap would overrun Postgres'
   // 65535 bind-parameter limit in one statement. Still one transaction.
-  await retryOnDeadlock(() =>
+  const results = await retryOnDeadlock(() =>
     prisma.$transaction([
       prisma.assetIpsecConnection.deleteMany({ where: scope }),
       ...chunkArray(data, INSERT_CHUNK).map((chunk) => prisma.assetIpsecConnection.createMany({ data: chunk, skipDuplicates: true })),
     ]),
   );
-  return data.length;
+  // skipDuplicates can drop rows, so report what the inserts actually wrote
+  // (results[0] is the delete).
+  return results.slice(1).reduce((sum, r) => sum + r.count, 0);
 }
 
 export interface IpsecTunnelRow {

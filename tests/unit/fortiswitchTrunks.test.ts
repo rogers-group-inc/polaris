@@ -62,14 +62,15 @@ describe("overlayFortiswitchTrunkMembers", () => {
     const list = [i("T"), i("p1", { ifParent: "OTHER", ifType: "aggregate" })];
     const n = overlayFortiswitchTrunkMembers(list, new Map([["T", ["p1"]]]));
     expect(byName(list).p1).toMatchObject({ ifParent: "OTHER", ifType: "aggregate" });
-    // Counted although nothing was stamped — see the report (suspicious, not pinned).
-    expect(n).toBe(1);
+    // Was a bug until 2026-11-16: counted as a link although nothing was stamped.
+    expect(n).toBe(0);
   });
 
   it("synthesizes a missing member by default, and only once when two trunks name it", () => {
     const list: InterfaceSample[] = [i("T")];
     const n = overlayFortiswitchTrunkMembers(list, new Map([["T", ["port52", "port52"]]]));
-    expect(n).toBe(2);
+    // Was a bug until 2026-11-16: a member listed twice counted twice.
+    expect(n).toBe(1);
     expect(list.filter((x) => x.ifName === "port52")).toEqual([{ ifName: "port52", ifType: "physical", ifParent: "T" }]);
   });
 

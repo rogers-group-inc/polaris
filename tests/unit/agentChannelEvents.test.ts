@@ -117,9 +117,25 @@ describe("agent WS lifecycle events", () => {
     eventLog.logEvent.mockClear();
 
     detach("ma-4", "socket error");
+    await settle();
 
+    // Was a bug until 2026-11-16: the event had no resourceName at all; it now names the agent id.
     expect(eventLog.logEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "agent.disconnected", resourceName: undefined }),
+      expect.objectContaining({ action: "agent.disconnected", resourceName: "ma-4" }),
+    );
+  });
+
+  // Was a bug until 2026-11-16: a detach that beat attach's name lookup wrote agent.disconnected unnamed.
+  it("names the device on a disconnect that lands before attach's name lookup finished", async () => {
+    let resolve!: (v: unknown) => void;
+    stubbed(prisma.asset.findUnique).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    attach("ma-5", "asset-5", fakeWs() as never);
+    detach("ma-5", "socket error");
+    expect(eventLog.logEvent).not.toHaveBeenCalledWith(expect.objectContaining({ action: "agent.disconnected" }));
+    resolve({ hostname: "app-05", ipAddress: null });
+    await settle();
+    expect(eventLog.logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "agent.disconnected", resourceName: "app-05", message: expect.stringContaining("app-05") }),
     );
   });
 

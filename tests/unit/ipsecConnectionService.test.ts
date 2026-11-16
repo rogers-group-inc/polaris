@@ -61,6 +61,8 @@ beforeEach(() => {
   h.resolveIpsToAssets.mockReset().mockResolvedValue(new Map());
   h.warn.mockReset();
   stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetIpsecConnection.deleteMany).mockResolvedValue({ count: 0 });
+  stubbed(prisma.assetIpsecConnection.createMany).mockImplementation(async (a: { data: unknown[] }) => ({ count: a.data.length }));
 });
 
 // ─── persistIpsecConnections ───────────────────────────────────────────────
@@ -102,6 +104,13 @@ describe("persistIpsecConnections — which halves are replaced", () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(stubbed(prisma.$transaction).mock.calls[0][0]).toHaveLength(2);
     expect(stubbed(prisma.assetIpsecConnection.createMany).mock.calls[0][0].skipDuplicates).toBe(true);
+  });
+
+  // Was a bug until 2026-11-16: it returned data.length, counting rows skipDuplicates dropped.
+  it("returns the rows the inserts actually wrote", async () => {
+    stubbed(prisma.assetIpsecConnection.createMany).mockResolvedValueOnce({ count: 1 });
+    const n = await persistIpsecConnections("fw1", { ipsec: [conn({ name: "a" }), conn({ name: "b" })] }, NOW);
+    expect(n).toBe(1);
   });
 });
 
@@ -210,7 +219,6 @@ describe("persistIpsecConnections — scale", () => {
   it("retries the transaction on a Postgres deadlock", async () => {
     const deadlock = Object.assign(new Error("deadlock"), { code: "40P01" });
     stubbed(prisma.$transaction).mockRejectedValueOnce(deadlock);
-    stubbed(prisma.$transaction).mockResolvedValueOnce([]);
     const n = await persistIpsecConnections("fw1", { ipsec: [conn()] }, NOW);
     expect(n).toBe(1);
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);

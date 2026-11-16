@@ -295,18 +295,39 @@ export interface RetentionPruneResult {
   reason?: "not-due" | "lock-held";
 }
 
-async function getLastRetentionPruneAt(): Promise<number> {
-  const row = await prisma.setting.findUnique({ where: { key: RETENTION_PRUNE_SETTING_KEY } });
-  const v = row?.value as { at?: unknown } | null | undefined;
-  return typeof v?.at === "number" ? v.at : 0;
+/** After a prune that threw, wait this long before the next attempt (a failing
+ *  prune must not retry on every ~30 s heavy tick). */
+const RETENTION_PRUNE_FAILURE_BACKOFF_MS = 10 * 60 * 1000;
+
+interface RetentionPruneStamp {
+  /** Last SUCCESSFUL prune (epoch ms; 0 = never). */
+  at: number;
+  /** Last FAILED attempt (epoch ms), cleared by the next success. */
+  failedAt?: number;
 }
 
-async function setLastRetentionPruneAt(at: number): Promise<void> {
+async function getRetentionPruneStamp(): Promise<RetentionPruneStamp> {
+  const row = await prisma.setting.findUnique({ where: { key: RETENTION_PRUNE_SETTING_KEY } });
+  const v = row?.value as { at?: unknown; failedAt?: unknown } | null | undefined;
+  return {
+    at: typeof v?.at === "number" ? v.at : 0,
+    ...(typeof v?.failedAt === "number" ? { failedAt: v.failedAt } : {}),
+  };
+}
+
+async function setRetentionPruneStamp(stamp: RetentionPruneStamp): Promise<void> {
+  const value = { ...stamp };
   await prisma.setting.upsert({
     where: { key: RETENTION_PRUNE_SETTING_KEY },
-    update: { value: { at } },
-    create: { key: RETENTION_PRUNE_SETTING_KEY, value: { at } },
+    update: { value },
+    create: { key: RETENTION_PRUNE_SETTING_KEY, value },
   });
+}
+
+/** Due when the last success is a full interval old AND no failed attempt is inside its backoff. */
+function pruneIsDue(stamp: RetentionPruneStamp, intervalMs: number, now: number): boolean {
+  if (now - stamp.at < intervalMs) return false;
+  return stamp.failedAt === undefined || now - stamp.failedAt >= RETENTION_PRUNE_FAILURE_BACKOFF_MS;
 }
 
 /**
@@ -349,21 +370,32 @@ export async function runRetentionPrune(
   intervalMs: number = RETENTION_PRUNE_INTERVAL_MS,
 ): Promise<RetentionPruneResult> {
   const zero: RetentionPruneResult = { monitor: 0, telemetry: 0, systemInfo: 0, skipped: true };
-  if (Date.now() - (await getLastRetentionPruneAt()) < intervalMs) {
+  if (!pruneIsDue(await getRetentionPruneStamp(), intervalMs, Date.now())) {
     return { ...zero, reason: "not-due" };
   }
   const result = await withPruneLock(async () => {
-    // Re-check inside the lock: another replica may have just pruned and
-    // bumped the timestamp while we waited to acquire.
-    if (Date.now() - (await getLastRetentionPruneAt()) < intervalMs) return null;
-    const [monitor, telemetry, systemInfo] = await Promise.all([
-      pruneMonitorSamples(),
-      pruneTelemetrySamples(),
-      pruneSystemInfoSamples(),
-    ]);
-    await setLastRetentionPruneAt(Date.now());
+    // Re-check inside the lock: another replica may have just pruned (or just
+    // failed) and bumped the stamp while we waited to acquire.
+    const stamp = await getRetentionPruneStamp();
+    if (!pruneIsDue(stamp, intervalMs, Date.now())) return "not-due" as const;
+    let counts: [number, number, number];
+    try {
+      counts = await Promise.all([
+        pruneMonitorSamples(),
+        pruneTelemetrySamples(),
+        pruneSystemInfoSamples(),
+      ]);
+    } catch (err) {
+      // Record the failed attempt (keeping the last SUCCESS stamp) so the next
+      // attempt waits out the backoff instead of firing every heavy tick.
+      await setRetentionPruneStamp({ at: stamp.at, failedAt: Date.now() }).catch(() => undefined);
+      throw err;
+    }
+    await setRetentionPruneStamp({ at: Date.now() });
+    const [monitor, telemetry, systemInfo] = counts;
     return { monitor, telemetry, systemInfo };
   });
   if (result === null) return { ...zero, reason: "lock-held" };
+  if (result === "not-due") return { ...zero, reason: "not-due" };
   return { ...result, skipped: false };
 }
