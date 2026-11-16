@@ -753,8 +753,38 @@
       var cp = map.latLngToContainerPoint(ll);
       return map.containerPointToLatLng(c.add(cp.subtract(c).multiplyBy(sc)));
     }
-    // Links between floors: from each end's drawn position, fading from one
-    // end's opacity to the other's (operator request 2026-11-12).
+    // Links between floors: from one end to the other through the bends the
+    // operator gave it, fading from one end's opacity to the other's
+    // (operator requests 2026-11-12, 2026-11-16). Its path is stored with the
+    // GROUND's (floor 0) placements: floors no longer zoom, so every floor
+    // shares the ground's coordinates and a bend stays put on any floor.
+    var CROSS_STORE = 0;
+    // The path of a cross-floor link being dragged, before it is saved.
+    var crossLive = null;   // { pk, path }
+    function isCross(e) {
+      var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
+      return la !== null && lb !== null && la !== lb;
+    }
+    // The stretch of a polyline (container points) between two fractions of its length.
+    function slicePolyline(cps, f0, f1) {
+      var lens = [0];
+      for (var i = 1; i < cps.length; i++) lens.push(lens[i - 1] + cps[i].distanceTo(cps[i - 1]));
+      var total = lens[lens.length - 1] || 1;
+      function at(f) {
+        var d = f * total;
+        for (var k = 1; k < cps.length; k++) {
+          if (lens[k] >= d) {
+            var seg = lens[k] - lens[k - 1] || 1;
+            return cps[k - 1].add(cps[k].subtract(cps[k - 1]).multiplyBy((d - lens[k - 1]) / seg));
+          }
+        }
+        return cps[cps.length - 1];
+      }
+      var out = [at(f0)];
+      for (var j = 1; j < cps.length - 1; j++) if (lens[j] > f0 * total && lens[j] < f1 * total) out.push(cps[j]);
+      out.push(at(f1));
+      return out;
+    }
     function drawCrossLinks() {
       if (!crossGroup || !map) return;
       crossGroup.clearLayers();
@@ -763,19 +793,32 @@
         if (la === null || lb === null || la === lb || !nodeById[e.source] || !nodeById[e.target]) return;
         var oa = lookNow(la).opacity, ob = lookNow(lb).opacity;
         if (oa < 0.005 && ob < 0.005) return;
-        var pa = placementsOf(la)[e.source], pb = placementsOf(lb)[e.target];
-        var A = map.latLngToContainerPoint(visualLatLng(la, localToLatLng(la, pa.x, pa.y)));
-        var B = map.latLngToContainerPoint(visualLatLng(lb, localToLatLng(lb, pb.x, pb.y)));
+        var pk = pathKeyById[e.id];
+        var path = crossLive && crossLive.pk === pk ? crossLive.path : pk ? pathsOf(CROSS_STORE)[pk] : null;
+        var pts = linePoints(e, CROSS_STORE, path);
+        var cps = pts.map(function (ll) { return map.latLngToContainerPoint(ll); });
         var st = R.edgeLineStyle(e, family());
         var N = 12, ops = fadeSteps(oa, ob, N);
         for (var i = 0; i < N; i++) {
-          var p0 = A.add(B.subtract(A).multiplyBy(i / N)), p1 = A.add(B.subtract(A).multiplyBy((i + 1) / N));
-          var seg = L.polyline([map.containerPointToLatLng(p0), map.containerPointToLatLng(p1)], {
-            color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: ops[i] > 0.05,
-            pane: "floor_links", renderer: crossRenderer, lineCap: "butt", baseWeight: st.width,
+          L.polyline(slicePolyline(cps, i / N, (i + 1) / N).map(function (c) { return map.containerPointToLatLng(c); }), {
+            color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: false,
+            pane: "floor_links", renderer: crossRenderer, lineCap: "butt",
           }).addTo(crossGroup);
-          if (ops[i] > 0.05) wireLinkTip(seg, e);
         }
+        // One invisible line along the whole path takes the pointer: Layer 2's
+        // hover card, and in edit mode the same bend gestures as a same-floor link.
+        var hit = L.polyline(pts, {
+          color: st.color, weight: Math.max(10, st.width + 6), opacity: 0, interactive: true,
+          pane: "floor_links", renderer: crossRenderer, baseWeight: st.width,
+        }).addTo(crossGroup);
+        wireLinkTip(hit, e);
+        hit.on("mousedown", function (ev) { onLinePress(ev, e, CROSS_STORE); });
+        hit.on("click", function (ev) {
+          if (!state.editing || adjust || !pk || !editableOn(e, CROSS_STORE)) return;
+          L.DomEvent.stopPropagation(ev);
+          linkSel = { id: e.id, level: CROSS_STORE, handle: null };
+          drawHandles();
+        });
       });
     }
     function tickCross() {
@@ -1076,7 +1119,9 @@
       var pl = placementsOf(level);
       Object.keys(pl).forEach(function (k) { if (k.indexOf("edgepath:") === 0) delete pl[k]; });
       Object.assign(pl, EE.serializePaths(paths));
-      changed("placements");
+      // A cross-floor link's path lives on the ground's floor even while another floor is viewed.
+      changed(level === state.layer ? "placements" : "allPlacements");
+      if (crossLive) { crossLive = null; drawCrossLinks(); }
     }
     // An end point sits on a ring round its device: along the stored
     // direction, or (automatic) facing the next point of the line.
@@ -1103,12 +1148,29 @@
       if (alt && alt.add && rs.indexOf(alt.add) === -1) rs = rs.concat([alt.add]);
       return rs.length ? rs : null;
     }
-    function isRouted(e, level) { return !!routedRuns(e, level); }
+    function isRouted(e, level) { return !isCross(e) && !!routedRuns(e, level); }
     function lngLat(ll) { return [ll.lng, ll.lat]; }
+    // Where a device is drawn: on its own floor (a link between floors has its
+    // ends on two), falling back to `level`.
+    function devCenter(id, level) {
+      var lv = layerOfDevice(id);
+      if (lv === null) lv = level;
+      var p = placementsOf(lv)[id];
+      return visualLatLng(lv, localToLatLng(lv, p.x, p.y));
+    }
+    // A link can be edited from the floor it is on — for a link between
+    // floors, from either end's floor.
+    function editableOn(e, level) {
+      if (!isCross(e)) return level === state.layer;
+      return layerOfDevice(e.source) === state.layer || layerOfDevice(e.target) === state.layer;
+    }
+    function redrawLink(e, level, path) {
+      if (isCross(e)) { crossLive = { pk: pathKeyById[e.id], path: path }; drawCrossLinks(); return; }
+      if (linkLines[e.id]) linkLines[e.id].setLatLngs(linePoints(e, level, path));
+    }
     function linePoints(e, level, path, alt) {
-      var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
-      var S = localToLatLng(level, a.x, a.y), T = localToLatLng(level, b.x, b.y);
-      var rs = routedRuns(e, level, alt);
+      var S = devCenter(e.source, level), T = devCenter(e.target, level);
+      var rs = isCross(e) ? null : routedRuns(e, level, alt);
       if (rs) {
         var r = G.route(lngLat(S), lngLat(T), G.orderRuns(lngLat(S), lngLat(T), rs));
         var via = r.slice(1, -1).map(function (p) { return L.latLng(p[1], p[0]); });
@@ -1145,9 +1207,10 @@
     // under the pointer and moves it; a plain click selects the line and
     // shows its handles (Layer 2's gestures).
     function onLinePress(ev, e, level) {
-      if (!state.editing || level !== state.layer || adjust || !EE || ev.originalEvent.button !== 0) return;
+      if (!state.editing || !editableOn(e, level) || adjust || !EE || ev.originalEvent.button !== 0) return;
       var pk = pathKeyById[e.id];
       if (!pk) return;
+      var cross = isCross(e);
       L.DomEvent.stop(ev.originalEvent);
       map.dragging.disable();
       var start = map.mouseEventToContainerPoint(ev.originalEvent);
@@ -1162,7 +1225,7 @@
         var cp = map.mouseEventToContainerPoint(mv);
         if (!moved && cp.distanceTo(start) < 4) return;
         moved = true;
-        hit = level === 0 && arcgisLayers && G ? arcgisLayers.hitRun(cp, SNAP_PX) : null;
+        hit = !cross && level === 0 && arcgisLayers && G ? arcgisLayers.hitRun(cp, SNAP_PX) : null;
         if (arcgisLayers) arcgisLayers.highlight(hit ? hit.key : null);
         if (hit || routed) {
           if (bendAt !== null) { paths[pk].bends.splice(bendAt, 1); bendAt = null; linkSel = null; }
@@ -1180,7 +1243,7 @@
           linkSel = { id: e.id, level: level, handle: "b" + bendAt };
         }
         paths[pk].bends[bendAt] = latLngToLocal(level, map.containerPointToLatLng(cp));
-        linkLines[e.id].setLatLngs(linePoints(e, level, paths[pk]));
+        redrawLink(e, level, paths[pk]);
       }
       function onUp() {
         window.removeEventListener("pointermove", onMove, true);
@@ -1282,10 +1345,11 @@
     function clearHandles() { handleLayers.forEach(function (x) { x.remove(); }); handleLayers = []; }
     function drawHandles() {
       clearHandles();
-      if (!linkSel || !state.editing || linkSel.level !== state.layer || !map) return;
+      if (!linkSel || !state.editing || !map) return;
       var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
       var pk = e && pathKeyById[e.id];
-      if (!e || !pk || !linkLines[e.id]) { linkSel = null; return; }
+      if (!e || !pk || (!isCross(e) && !linkLines[e.id])) { linkSel = null; return; }
+      if (!editableOn(e, linkSel.level)) return;
       if (isRouted(e, linkSel.level)) { drawRunHandles(e, linkSel.level); return; }
       var level = linkSel.level, paths = pathsOf(level), path = paths[pk] || { bends: [] };
       var pts = linePoints(e, level, path);
@@ -1301,17 +1365,17 @@
           var p = paths[pk] || (paths[pk] = { bends: [] });
           if (round) {
             var who = part === "s" ? e.source : e.target;
-            var q = placementsOf(level)[who];
-            var c = map.latLngToContainerPoint(localToLatLng(level, q.x, q.y));
+            var centre = devCenter(who, level);
+            var c = map.latLngToContainerPoint(centre);
             var at = map.latLngToContainerPoint(m.getLatLng());
             var dx = at.x - c.x, dy = at.y - c.y, len = Math.sqrt(dx * dx + dy * dy);
             if (len < 1e-6) return;
             p[part] = { x: dx / len, y: dy / len };
-            m.setLatLng(endLatLng(localToLatLng(level, q.x, q.y), p[part]));
+            m.setLatLng(endLatLng(centre, p[part]));
           } else {
             p.bends[Number(part.slice(1))] = latLngToLocal(level, m.getLatLng());
           }
-          linkLines[e.id].setLatLngs(linePoints(e, level, p));
+          redrawLink(e, level, p);
         });
         m.on("dragend", function () { savePaths(level, paths); drawHandles(); });
         m.addTo(map);
