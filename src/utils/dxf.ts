@@ -510,9 +510,6 @@ function escXml(s: string): string {
 
 /** The long side of the generated SVG, in its own pixels. */
 const DXF_SVG_SIDE = 4096;
-/** Line width and the light casing under it, in SVG pixels of the 4096 px drawing. */
-const LINE_PX = 3;
-const HALO_PX = 8;
 
 /**
  * Draw `prims` as an SVG whose image space maps the extents onto
@@ -526,22 +523,13 @@ export function renderDxfSvg(prims: DxfPrimitive[], ext: DxfExtents, layerColors
   const Y = (y: number) => ((ext.maxY - y) * s).toFixed(1);
   const parts: string[] = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
-  // Every line and label gets a light casing (a halo) under it so the
-  // drawing reads over satellite imagery and a dimmed ground as well as on a
-  // plain map (operator report 2026-11-16: dark lines on imagery unreadable).
-  const paths: Array<{ d: string; stroke: string }> = [];
+  parts.push(`<g fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">`);
   for (const p of prims) {
     if (p.kind !== "path") continue;
-    paths.push({
-      d: p.points.map((q, i) => (i ? "L" : "M") + X(q[0]) + " " + Y(q[1])).join("") + (p.closed ? "Z" : ""),
-      stroke: hexOf(p.color, layerColors.get(p.layer) ?? 7),
-    });
+    const d = p.points.map((q, i) => (i ? "L" : "M") + X(q[0]) + " " + Y(q[1])).join("") + (p.closed ? "Z" : "");
+    parts.push(`<path d="${d}" stroke="${hexOf(p.color, layerColors.get(p.layer) ?? 7)}"/>`);
   }
-  parts.push(`<g fill="none" stroke="#ffffff" stroke-opacity="0.8" stroke-width="${HALO_PX}" stroke-linejoin="round" stroke-linecap="round">`);
-  for (const p of paths) parts.push(`<path d="${p.d}"/>`);
-  parts.push(`</g><g fill="none" stroke-width="${LINE_PX}" stroke-linejoin="round" stroke-linecap="round">`);
-  for (const p of paths) parts.push(`<path d="${p.d}" stroke="${p.stroke}"/>`);
-  parts.push(`</g><g font-family="Arial, Helvetica, sans-serif" font-weight="600" stroke="#ffffff" stroke-opacity="0.85" stroke-linejoin="round" paint-order="stroke">`);
+  parts.push(`</g><g font-family="Arial, Helvetica, sans-serif">`);
   for (const p of prims) {
     if (p.kind !== "text") continue;
     const size = Math.max(0.5, p.height * s);
@@ -550,7 +538,7 @@ export function renderDxfSvg(prims: DxfPrimitive[], ext: DxfExtents, layerColors
     const lines = p.text.split("\n");
     const tx = X(p.x), ty = Y(p.y);
     const tsp = lines.map((l, i) => `<tspan x="${tx}" dy="${i ? (size * 1.25).toFixed(1) : 0}">${escXml(l)}</tspan>`).join("");
-    parts.push(`<text x="${tx}" y="${ty}" font-size="${size.toFixed(1)}" stroke-width="${Math.max(1, size * 0.22).toFixed(1)}" fill="${fill}" text-anchor="${anchor}"` +
+    parts.push(`<text x="${tx}" y="${ty}" font-size="${size.toFixed(1)}" fill="${fill}" text-anchor="${anchor}"` +
       (p.rotation ? ` transform="rotate(${(-p.rotation).toFixed(2)} ${tx} ${ty})"` : "") + `>${tsp}</text>`);
   }
   parts.push(`</g></svg>`);
