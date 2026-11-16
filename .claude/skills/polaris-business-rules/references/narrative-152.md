@@ -36,3 +36,7 @@ As first built, the ground (the map, satellite or site plan) stayed at 100 % and
 ### 152(a) amended 2026-11-16 — no zoom while lining up; the floor above at 5 %
 
 Lining CAD drawings up across floors with the zoom on proved awkward: floors only coincided at the screen centre, so each feature had to be brought to the centre + before it could be judged. The operator first asked for the zoom to go entirely, tried that, and then: "keep the zoom change between layers, that was pretty cool. But when lining up layers, no zoom change." So the zoom (and the centre + that marks its origin) stays for viewing, and while a plan is adjusted every floor is drawn at scale 1 (`lookFor`, which `lookNow` and the cross-floor links follow) with the + hidden, so a drawing lines up with the floor above across the whole screen. The floor above the viewed one fades to 5 % (was 10 %); while adjusting the reference floors rise to 35 %. Right-drag (not Shift + drag) moves the map while adjusting.
+
+### 152(a) amended again 2026-11-16 — the zoom removed
+
+With the zoom kept for viewing, the operator still saw floors slide against each other while panning — the zoom about the screen centre IS the parallax. Offered a zoom pinned to a fixed map point (no sliding) as a middle ground, the operator chose to remove the zoom: every floor is drawn at its true size and place (`floorLook` scale 1), and the centre + is gone. Opacity stays as amended (5 % one up, 2 % two up; 35 % while adjusting).

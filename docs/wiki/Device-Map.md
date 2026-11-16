@@ -716,14 +716,10 @@ always shown. The **Floor** control at the left edge steps up (**+**) and down
 an optional name such as Basement; right-click the floor number to rename or
 delete it.
 
-All floors are drawn together. The floor you're on is at full strength, the floor
-above it at 5 % and the one above that at 2 %; floors below are hidden. The ground
-map (or satellite, or site plan) is part of floor 0, so on floor −1 it fades to 5 % and
-grows with floor 0's devices. Floors
-above are drawn 25 % larger per floor and floors below 25 % smaller, scaled about
-the middle of the screen (the small crosshair), so as you pan, the floors above
-move a little faster than the ground. Changing floors fades and scales them
-smoothly. Only the floor you're on responds to clicks. A connection between two
+All floors are drawn together, each at its true size and place. The floor you're on is
+at full strength, the floor above it at 5 % and the one above that at 2 %; floors below
+are hidden. The ground map (or satellite, or site plan) is part of floor 0, so on floor −1
+it fades to 5 % with floor 0's devices. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
 floors fades from one floor's strength to the other's.
 
 **Each floor can have its own plan.** On a floor, the map button offers **Upload
@@ -778,10 +774,9 @@ Then choose how to place it:
 - **Line it up by hand** — the default when the drawing has no location of its own and no
   other floor to line up with. The drawing opens ready to adjust: drag to move it, drag a
   corner to stretch it (Ctrl keeps its shape), Alt + drag to turn it, and **right-drag** to
-  move the whole map. While you adjust, every floor is drawn at its true size (no zoom
-  between floors), so the drawing lines up with the floor above across the whole screen;
-  line a few features you can see on both (a portal, a shaft, a property corner) up with
-  it. The floor above and the ground show at 35 % instead of 5 % so you can see them.
+  move the whole map. Line a few features you can see on both (a portal, a shaft, a
+  property corner) up with the floor above. While you adjust, the floor above and the
+  ground show at 35 % instead of 5 % so you can see them.
 - **Place with two points** — click a place you can find on both the drawing and the map
   (a portal, a shaft), then the same place on the map, and repeat for a second place as far
   away as you can. Satellite makes the map side easier. Polaris works out where the drawing
