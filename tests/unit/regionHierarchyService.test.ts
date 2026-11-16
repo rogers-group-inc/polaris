@@ -220,14 +220,14 @@ describe("deviceRegionsAtLevels — routing", () => {
     expect(deviceRegionsAtLevels(["R0", `R${n - 1}`], [1], ix)).toEqual([`R${n - 1}`]);
   });
 
-  // BUG: isAncestorOfAny stops its upward walk after MAX_DEVICE_REGION_LEVELS
+  // Was a bug until 2026-11-14: isAncestorOfAny stops its upward walk after MAX_DEVICE_REGION_LEVELS
   // + 1 hops, but region nesting (polygon containment, mapRegionService) has
   // no depth cap. On a chain R0 ⊃ R1 ⊃ … ⊃ R11, an asset whose snapshot holds
   // only the leaf R11 and the top R0 (the intermediate tags one reconcile
   // behind — the case the contract says the walk must tolerate) gets R0, 11
   // hops up, reported at level 1 beside the leaf: [1] → ["R0", "R11"].
   // Expected ["R11"]: level 1 excludes every container the asset carries.
-  it.fails("level 1 excludes a carried container more than MAX_DEVICE_REGION_LEVELS hops above the leaf", () => {
+  it("level 1 excludes a carried container more than MAX_DEVICE_REGION_LEVELS hops above the leaf", () => {
     const n = MAX_DEVICE_REGION_LEVELS + 4;
     const ix = chain(n);
     expect(deviceRegionsAtLevels(["R0", `R${n - 1}`], [1], ix)).toEqual([`R${n - 1}`]);

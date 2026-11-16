@@ -134,14 +134,14 @@ describe("assertCredentialInAssetScope", () => {
     await expect403(assertCredentialInAssetScope("a1", "", false));
   });
 
-  // BUG: credentialIdsAttachedToAsset reads only ASSET_CREDENTIAL_SLOTS
+  // Was a bug until 2026-11-14: credentialIdsAttachedToAsset reads only ASSET_CREDENTIAL_SLOTS
   // (monitor / responseTime / cpuMemory / temperature / interfaces / lldp),
   // but Asset also carries processesCredentialId, eventLogCredentialId and
   // customWidgetCredentialId — credential slots the asset's own monitoring
   // authenticates with. An asset whose processes stream polls with its own
   // "c-proc" refuses a read-level walk with c-proc: 403. Rule 112(e) says
   // "its credential slots" — expected: allowed.
-  it.fails("admits the asset's own processes / event-log / custom-widget credential slots", async () => {
+  it("admits the asset's own processes / event-log / custom-widget credential slots", async () => {
     serveAsset({ ...BASE, processesCredentialId: "c-proc", eventLogCredentialId: "c-ev", customWidgetCredentialId: "c-cw" });
     await expect(assertCredentialInAssetScope("a1", "c-proc", false)).resolves.toBeUndefined();
     await expect(assertCredentialInAssetScope("a1", "c-ev", false)).resolves.toBeUndefined();
@@ -154,7 +154,7 @@ describe("assertCredentialInAssetScope", () => {
   // read-only user who then clicks Walk with that default is refused 403 by
   // assertCredentialInAssetScope — the tab's own default fails the tab's own
   // gate. Expected: the default credential passes.
-  it.fails("the walk tab's default credential always passes the walk's read-level gate", async () => {
+  it("the walk tab's default credential always passes the walk's read-level gate", async () => {
     const assetRow = { ...BASE, customWidgetCredentialId: "c-cw", customWidgetPolling: "snmp" };
     stubbed(p.credential.findMany).mockResolvedValue([{ id: "c-cw", type: "snmp" }]);
     const picked = await snmpPollingCredentialId({

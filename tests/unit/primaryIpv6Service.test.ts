@@ -102,13 +102,13 @@ describe("pickPrimaryIpv6", () => {
     expect(pickPrimaryIpv6([...c].reverse())).toBe("2001:db8::a");
   });
 
-  // Suspicious, not pinned: "smallest" is a STRING compare (the code comment
-  // says lexical), so ::10 sorts before ::9.
-  it("compares the tie-break lexically, not numerically", () => {
+  // Was a string compare until 2026-11-14 (::10 beat ::9); rule 128 says the
+  // smallest ADDRESS, so it is numeric now.
+  it("compares the tie-break numerically, not lexically", () => {
     expect(pickPrimaryIpv6([
-      { ip: "2001:db8::9", evidenceScore: 1, lastSeen: T0 },
       { ip: "2001:db8::10", evidenceScore: 1, lastSeen: T0 },
-    ])).toBe("2001:db8::10");
+      { ip: "2001:db8::9", evidenceScore: 1, lastSeen: T0 },
+    ])).toBe("2001:db8::9");
   });
 });
 

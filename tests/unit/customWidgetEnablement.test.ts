@@ -71,6 +71,7 @@ beforeEach(() => {
   widgetFindUnique.mockResolvedValue(WIDGET);
   enableCreateMany.mockResolvedValue({ count: 0 });
   enableDeleteMany.mockResolvedValue({ count: 0 });
+  enableFindMany.mockResolvedValue([]);
   logEventsBatch.mockResolvedValue(0);
 });
 
@@ -116,6 +117,8 @@ describe("setWidgetAssets", () => {
     assetFindMany.mockResolvedValue([{ id: "a1", hostname: "ups-dc", manufacturer: "APC", model: "Smart-UPS 1500" }]);
     enableCreateMany.mockResolvedValue({ count: 1 });
     enableDeleteMany.mockResolvedValue({ count: 1 });
+    // Before the write: a9 was on, a1 was not (only real changes are audited).
+    enableFindMany.mockResolvedValueOnce([{ assetId: "a9" }]);
 
     const out = await svc.setWidgetAssets("p-apc", "w1", { enable: ["a1"], disable: ["a9"] }, "dmoore");
 

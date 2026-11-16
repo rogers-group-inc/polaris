@@ -236,25 +236,30 @@ describe("setWidgetAssets", () => {
     expect(eventsWritten()).toEqual([]);
   });
 
-  // BUG: setWidgetAssets writes a "disabled" Event for EVERY id in `disable`
+  // Was a bug until 2026-11-14: setWidgetAssets writes a "disabled" Event for EVERY id in `disable`
   // once deleteMany removed at least one row. disable: ["a1", "a2"] where only
   // a1 was switched on (deleteMany count 1) writes two
   // `asset.custom_widget.disabled` Events, telling a2's history it was switched
   // off when nothing changed. The contract is one Event per asset CHANGED:
   // only a1's.
-  it.fails("audits only the assets whose switch actually went off", async () => {
+  it("audits only the assets whose switch actually went off", async () => {
+    stubbed(p.assetCustomWidgetEnable.findMany).mockResolvedValue([{ assetId: "a1" }]); // only a1 was on
+    stubbed(p.asset.findMany).mockResolvedValue([{ id: "a1", hostname: "host-a1" }]);
     stubbed(p.assetCustomWidgetEnable.deleteMany).mockResolvedValue({ count: 1 });
     await setWidgetAssets("p-apc", "w1", { disable: ["a1", "a2"] });
     expect(eventsWritten()).toHaveLength(1);
+    // …and it now names the asset it switched off.
+    expect(eventLog.logEventsBatch.mock.calls[0]![0][0]).toMatchObject({ resourceId: "a1", resourceName: "host-a1" });
   });
 
-  // BUG: the enable half audits every id in `enable`, including assets that
+  // Was a bug until 2026-11-14: the enable half audits every id in `enable`, including assets that
   // were already switched on (createMany skipDuplicates creates nothing for
   // them). enable: ["a1"] with a1 already on returns { enabled: 0 } yet writes
   // an `asset.custom_widget.enabled` Event "switched on for polling". Expected:
   // no Event for an asset whose switch did not move.
-  it.fails("does not audit an enable for an asset already switched on", async () => {
+  it("does not audit an enable for an asset already switched on", async () => {
     stubbed(p.asset.findMany).mockResolvedValue([asset("a1", "Smart-UPS")]);
+    stubbed(p.assetCustomWidgetEnable.findMany).mockResolvedValue([{ assetId: "a1" }]); // already on
     stubbed(p.assetCustomWidgetEnable.createMany).mockResolvedValue({ count: 0 });
     const res = await setWidgetAssets("p-apc", "w1", { enable: ["a1"] });
     expect(res.enabled).toBe(0);

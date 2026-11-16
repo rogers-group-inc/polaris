@@ -184,6 +184,19 @@ export async function setWidgetAssets(
     toEnable = assets;
   }
 
+  // One Event per asset whose switch actually CHANGED: an enable of an asset
+  // already on, or a disable of one never on, is not audited (until
+  // 2026-11-14 every listed id was, whatever the write did).
+  const touched = [...toEnable.map((a) => a.id), ...disableIds];
+  const wasOn = new Set(touched.length
+    ? (await prisma.assetCustomWidgetEnable.findMany({
+        where: { widgetId, assetId: { in: touched } },
+        select: { assetId: true },
+      })).map((r) => r.assetId)
+    : []);
+  const newlyOn = toEnable.filter((a) => !wasOn.has(a.id));
+  const goingOff = disableIds.filter((id) => wasOn.has(id));
+
   const [created, removed] = await prisma.$transaction([
     prisma.assetCustomWidgetEnable.createMany({
       data: toEnable.map((a) => ({ assetId: a.id, widgetId, enabledBy: actor ?? null })),
@@ -192,9 +205,13 @@ export async function setWidgetAssets(
     prisma.assetCustomWidgetEnable.deleteMany({ where: { widgetId, assetId: { in: disableIds } } }),
   ]);
 
+  const offNames = goingOff.length
+    ? new Map((await prisma.asset.findMany({ where: { id: { in: goingOff } }, select: { id: true, hostname: true } }))
+        .map((a) => [a.id, a.hostname]))
+    : new Map<string, string | null>();
   const events: LogEventInput[] = [
-    ...toEnable.map((a) => widgetEvent("enabled", widget, a.id, a.hostname, actor)),
-    ...(removed.count ? disableIds.map((id) => widgetEvent("disabled", widget, id, null, actor)) : []),
+    ...newlyOn.map((a) => widgetEvent("enabled", widget, a.id, a.hostname, actor)),
+    ...goingOff.map((id) => widgetEvent("disabled", widget, id, offNames.get(id) ?? null, actor)),
   ];
   await logEventsBatch(events);
   return { enabled: created.count, disabled: removed.count };

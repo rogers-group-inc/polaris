@@ -210,12 +210,12 @@ describe("updateAlias", () => {
     await expectAppError(updateAlias("nope", { canonical: "X" }), 404, /Alias not found/);
   });
 
-  // BUG: updateAlias catches EVERY update error as "Alias not found". Renaming
+  // Was a bug until 2026-11-14: updateAlias catches EVERY update error as "Alias not found". Renaming
   // an alias onto one that already exists raises the unique-constraint error
   // (Prisma P2002); the operator is told 404 "Alias not found" for a row that
   // plainly exists. createAlias answers the same clash with 409 "already
   // exists" — the update should too (or at least not claim the row is missing).
-  it.fails("renaming onto an alias that already exists is a 409 conflict, not a 404", async () => {
+  it("renaming onto an alias that already exists is a 409 conflict, not a 404", async () => {
     stubbed(p.manufacturerAlias.update).mockRejectedValue(
       Object.assign(new Error("Unique constraint failed on the fields: (`alias`)"), { code: "P2002" }),
     );
