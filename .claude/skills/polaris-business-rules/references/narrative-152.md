@@ -40,3 +40,5 @@ Lining CAD drawings up across floors with the zoom on proved awkward: floors onl
 ### 152(a) amended again 2026-11-16 — the zoom removed
 
 With the zoom kept for viewing, the operator still saw floors slide against each other while panning — the zoom about the screen centre IS the parallax. Offered a zoom pinned to a fixed map point (no sliding) as a middle ground, the operator chose to remove the zoom: every floor is drawn at its true size and place (`floorLook` scale 1), and the centre + is gone. Opacity stays as amended (5 % one up, 2 % two up; 35 % while adjusting).
+
+**2026-11-16 — corner drag keeps the shape by default.** Adjusting a floor plan, a corner drag now resizes keeping the plan's proportions, and Ctrl + corner stretches freely (the reverse of the first build), at the operator's request.

@@ -1764,8 +1764,9 @@
     }
 
     // ── Adjusting a floor's plan ────────────────────────────────────────
-    // Drag = move; drag a corner = stretch freely; Ctrl + corner = keep its
-    // shape; Alt + drag = rotate. Done or Esc finishes.
+    // Drag = move; drag a corner = resize keeping its shape; Ctrl + corner =
+    // stretch freely (operator decision 2026-11-16); Alt + drag = rotate.
+    // Done or Esc finishes.
     var adjust = null;
     function planCorners(fp) {
       return [[0, 0], [fp.ext.w, 0], [fp.ext.w, fp.ext.h], [0, fp.ext.h]].map(function (q) {
@@ -1780,7 +1781,7 @@
       adjust = { level: state.layer, bar: document.createElement("div"), shapes: [] };
       adjust.bar.className = "topo-plan-bar";
       adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
-        '<span class="hint" style="margin:0">Drag to move it · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates · right-drag moves the map</span>' +
+        '<span class="hint" style="margin:0">Drag to move it · drag a corner to resize · Ctrl + corner stretches freely · Alt + drag rotates · right-drag moves the map</span>' +
         '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
       host.appendChild(adjust.bar);
@@ -1868,7 +1869,7 @@
           var dx = g[0] - start.cx, dy = g[1] - start.cy;
           var nsx = Math.max(Math.abs(dx * c - dy * sn) / (fp.ext.w / 2), 1e-6);
           var nsy = Math.max(Math.abs(dx * sn + dy * c) / (fp.ext.h / 2), 1e-6);
-          if (ev.ctrlKey || ev.metaKey) {
+          if (!(ev.ctrlKey || ev.metaKey)) {
             var r = (nsx / start.sx + nsy / start.sy) / 2;
             nsx = start.sx * r; nsy = start.sy * r;
           }

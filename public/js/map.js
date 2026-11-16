@@ -2979,7 +2979,7 @@
         ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
         ["Floor + / − (left)", "Change floor: the floor above shows faint and larger, the one above that fainter still; floors below are hidden"],
         ["Map button on a floor → Upload floor plan", "Put that floor's plan image on the ground"],
-        ["Map button → Adjust floor plan", "Drag to move, drag a corner to stretch, Ctrl + corner keeps the shape, Alt + drag rotates; Done or Esc finishes"],
+        ["Map button → Adjust floor plan", "Drag to move, drag a corner to resize (keeps the shape), Ctrl + corner stretches freely, Alt + drag rotates, right-drag moves the map; Done or Esc finishes"],
         ["Map button → Import CAD drawing (DXF)", "Choose units and layers, then place it: its own location, lined up with another floor, or two points"],
         ["Placing with two points", "Click a place on the drawing, then the same place on the map; twice. Esc cancels"],
         ["Drag a connection line", "Add a bend point there and move it"],

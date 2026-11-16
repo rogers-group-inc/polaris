@@ -725,7 +725,7 @@ floors fades from one floor's strength to the other's.
 **Each floor can have its own plan.** On a floor, the map button offers **Upload
 floor plan** (PNG, JPEG or WebP), **Adjust floor plan** and **Remove floor plan**.
 **Adjust floor plan** shows the plan with corner handles: drag to move it, drag a
-corner to stretch it, hold **Ctrl** while dragging a corner to keep its shape, and
+corner to resize it (it keeps its shape), hold **Ctrl** while dragging a corner to stretch it freely, and
 hold **Alt** while dragging to rotate it; **Done** or Esc finishes and **Reset**
 puts it back. The floor's devices and polygons move with its plan, so they stay in
 the same rooms.
@@ -773,7 +773,7 @@ Then choose how to place it:
 - **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
 - **Line it up by hand** — the default when the drawing has no location of its own and no
   other floor to line up with. The drawing opens ready to adjust: drag to move it, drag a
-  corner to stretch it (Ctrl keeps its shape), Alt + drag to turn it, and **right-drag** to
+  corner to resize it (it keeps its shape; Ctrl stretches freely), Alt + drag to turn it, and **right-drag** to
   move the whole map. Line a few features you can see on both (a portal, a shaft, a
   property corner) up with the floor above. While you adjust, the floor above and the
   ground show at 35 % instead of 5 % so you can see them.
