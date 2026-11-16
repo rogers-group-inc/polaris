@@ -300,13 +300,13 @@ describe("buildMonitorAssocIpEntries", () => {
     expect(buildMonitorAssocIpEntries([iface({ ipAddress: "10.0.0.1", macAddress: null })], NOW)[0].mac).toBeNull();
   });
 
-  // BUG: secondary addresses skip the reportable-address filter every other
+  // Was a bug until 2026-11-14: secondary addresses skip the reportable-address filter every other
   // address goes through. A FortiOS interface whose CMDB secondary-ip list
   // holds "169.254.10.1 255.255.0.0" (or a loopback) lands that link-local
   // address in the asset's address list and IP history — the comment right
   // above the loop says "Loopback and link-local never land" (rule 126).
   // Right: the secondary is dropped like a link-local primary would be.
-  it.fails("never lands a link-local or loopback SECONDARY address either", () => {
+  it("never lands a link-local or loopback SECONDARY address either", () => {
     const out = buildMonitorAssocIpEntries([iface({
       ipAddress: "10.0.0.1",
       secondaryIps: ["169.254.10.1 255.255.0.0", "127.0.0.2/8"],

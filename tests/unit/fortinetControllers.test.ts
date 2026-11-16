@@ -418,13 +418,13 @@ describe("fetchFortinetControllerInventory — AP table", () => {
     expect(inventory.get("FP4")!.connected).toBe(false);
   });
 
-  // BUG: an AP row whose status is "Online" (or "CONNECTED") is stored with
+  // Was a bug until 2026-11-14: an AP row whose status is "Online" (or "CONNECTED") is stored with
   // connected=false, so probeFortinetController marks a REST-probed AP DOWN,
   // while fortinetLinkStateService reads the same row through
   // isFortiapStatusOnline and calls the CAPWAP link UP. Both files claim to
   // use one online set ("exactly like the probe path", "keeps the sweep and
   // the probe from disagreeing"). Right: connected === isFortiapStatusOnline(status).
-  it.fails("agrees with isFortiapStatusOnline for a capitalised status word", async () => {
+  it("agrees with isFortiapStatusOnline for a capitalised status word", async () => {
     h.fgRequest.mockResolvedValue([{ serial: "FP9", status: "Online" }]);
     const { inventory } = await fetchFortinetControllerInventory(fg(), "G", "aps", 1000);
     expect(inventory.get("FP9")!.connected).toBe(isFortiapStatusOnline("Online"));

@@ -275,7 +275,7 @@ describe("persistApRadioInventory — VAP identity", () => {
     expect(calls.vapCreates()).toEqual([]);
   });
 
-  // BUG: the name fallback ignores that a stored row was already claimed by
+  // Was a bug until 2026-11-14: the name fallback ignores that a stored row was already claimed by
   // BSSID earlier in the same scrape. Stored: one VAP "corp-2g" on BSSID B1.
   // FortiOS now reports two VAPs on the radio: "guest" on B1 and "corp-2g" on
   // B2 (an operator renamed/added a VAP, shifting the slot). The first matches
@@ -284,7 +284,7 @@ describe("persistApRadioInventory — VAP identity", () => {
   // overwrites its bssid with B2. Result: one row ("guest" on B2), the
   // reported "corp-2g" VAP is lost, and `vaps` says 2. Right: the stored row
   // becomes "guest" on B1 and "corp-2g" on B2 is created.
-  it.fails("does not let a second incoming VAP re-claim a row the BSSID already matched", async () => {
+  it("does not let a second incoming VAP re-claim a row the BSSID already matched", async () => {
     given([storedRadio()], [storedVap({ id: "v0", vapName: "corp-2g", bssid: "B1:00:00:00:00:01" })]);
 
     await persistApRadioInventory("ap1", [radio({

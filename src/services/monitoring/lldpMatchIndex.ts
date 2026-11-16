@@ -6,8 +6,8 @@
 
 import { normalizeMacOrNull } from "../../utils/mac.js";
 import { prisma } from "../../db.js";
-import { bareInterfaceIp, interfaceIpIsUnaddressed } from "../../utils/cidr.js";
-import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
+import { interfaceIpIsUnaddressed } from "../../utils/cidr.js";
+import { splitInterfaceAddresses, reportableInterfaceIp } from "../../utils/interfaceAddress.js";
 import { ipv6Enabled } from "../ipv6GateService.js";
 import { createTtlCache } from "../../utils/ttlCache.js";
 import { expandMacRange } from "../../utils/macAddresses.js";
@@ -215,7 +215,13 @@ export function buildMonitorAssocIpEntries(
       : [];
     const candidates: Array<{ ip: string | null; role: string | null }> = [
       { ip: addr.ipAddress, role: rolesKnown ? "primary" : null },
-      ...secondaries.map((s) => ({ ip: bareInterfaceIp(s), role: "secondary" })),
+      // Secondaries pass the same reportability test as the primary (rule
+      // 126: no loopback / link-local; rule 128: no IPv6 while it is off) —
+      // until 2026-11-14 only 0.0.0.0 was dropped.
+      ...secondaries.map((s) => {
+        const ip = reportableInterfaceIp(s);
+        return { ip: ip && ip.includes(":") && !ipv6Enabled() ? null : ip, role: "secondary" };
+      }),
       { ip: addr.ipv6Address, role: null },
     ];
     for (const { ip, role } of candidates) {

@@ -9,7 +9,7 @@ import { prisma } from "../../db.js";
 import { AppError } from "../../utils/errors.js";
 import { fgRequest, type FortiGateConfig } from "../fortigateService.js";
 import { fmgProxyRest, resolveDeviceMgmtIpViaFmg, type FortiManagerConfig } from "../fortimanagerService.js";
-import { parseFortiapTelemetrySnapshot, isCanonicalFortiapVersion } from "../../utils/fortiapMonitorRow.js";
+import { parseFortiapTelemetrySnapshot, isCanonicalFortiapVersion, isFortiapStatusOnline } from "../../utils/fortiapMonitorRow.js";
 
 // ─── Fortinet controller-status probe (managed switches & APs) ──────────────
 //
@@ -276,8 +276,13 @@ export async function fetchFortinetControllerInventory(
           // Managed switch reports `status: "Connected" | "Disconnected"`.
           ? status === "Connected"
           // Managed APs report `status: "online" | "offline" | "discovered" | ...`
-          // — only "online"/"connected" count as up.
-          : (status === "online" || status === "connected");
+          // — only "online"/"connected" count as up, in any case: the SAME
+          // definition the link-state sweep reads (isFortiapStatusOnline;
+          // until 2026-11-14 this was case-sensitive, so "Online" probed down
+          // while the sweep said up). One deliberate difference: an EMPTY
+          // status is not proof of up for a probe, though the sweep gives it
+          // the benefit of the doubt so lastSeen does not freeze.
+          : (status.trim() !== "" && isFortiapStatusOnline(status));
         const entry: FortinetControllerEntry = { connected, status };
         // APs: os_version is live; the cached version/firmware_version fields
         // lag upgrades and are trusted only in the canonical shape — the same
