@@ -1,5 +1,7 @@
 # Business rule 184 — full narrative
 
+> **Retired 2026-11-16 — see [rule 188](narrative-188.md#rule-188).** The operator made Polaris read-only towards ArcGIS: Polaris-drawn runs, the `cableRuns` key, the survey importer and the write-back were removed, and ArcGIS lines replaced the runs. The text below is kept as the record of what this rule was.
+
 > Written 2026-11-13 as its own file (one file per rule from 78 on). Rule numbers are a
 > stable citation key — never renumber. 81 is a deliberate gap.
 
@@ -28,7 +30,7 @@ Each rule records the decision *and the incident or constraint that forced it*. 
 - *Gating on `deviceMap` write* — the operator's explicit RBAC decision: writing to another system is its own grant.
 - *Drawing trenches by hand "for now"* — the survey is the source of truth for a trench.
 
-**Where.** `prisma/schema.prisma` (`CableRun`), migration `20261113210000_cable_runs` (table + key seed); `src/services/cableRunService.ts`; `src/api/routes/map.ts` (`GET` / `PUT /sites/:id/cable-runs`); `src/api/middleware/permissions.ts` (`cableRuns`); `public/js/topology-cable-runs.js` (the layer, panel, legend), `topology-physical.js` (host: draw tool, undo, Delete, Escape), `map.js` (`fetchCableRuns` / `stageCableRuns` / `canDrawRuns`, the commit), `api.js`, `css/map.css` (`.topo-run-*`). Tests: `cableRunService`, `topologyCableRuns`, `permissionLevelLadders`, `tests/integration/cableRuns.test.ts`.
+**Where.** `prisma/schema.prisma` (`CableRun`), migration `20261113210000_cable_runs` (table + key seed); `src/services/cableRunService.ts`; `src/api/routes/map.ts` (`GET` / `PUT /sites/:id/cable-runs`); `src/api/middleware/permissions.ts` (`cableRuns`); `topology-cable-runs.js (removed 2026-11-16)` (the layer, panel, legend), `topology-physical.js` (host: draw tool, undo, Delete, Escape), `map.js` (`fetchCableRuns` / `stageCableRuns` / `canDrawRuns`, the commit), `api.js`, `css/map.css` (`.topo-run-*`). Tests: `cableRunService`, `topologyCableRuns`, `permissionLevelLadders`, `tests/integration/cableRuns.test.ts`.
 
 ## Rule 184(a) — A device link can ride runs, and that stays in Polaris
 

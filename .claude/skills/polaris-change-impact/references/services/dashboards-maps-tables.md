@@ -401,33 +401,29 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/cableRunService.ts
 
-**What it owns:** the `CableRun` and `CableRunLink` tables (single writer) — fiber / ethernet routes at a Device Map site, business rule 184. Pole runs are drawn on a Topology view; trenches come only from a survey import (`source: "crd"`).
+**What it owns:** the `CableRunLink` table (single writer) — which ArcGIS lines each device link at a Device Map site rides, business rule 188(a). The lines live in ArcGIS and are only read (`arcgisLayerService`); a row holds ordered references `<layerId>/<featureId>`. (Until 2026-11-16 it also owned Polaris-drawn `CableRun` rows — rule 184, retired.)
 
-**Public API:** `CABLE_MEDIA`, `CABLE_PLACEMENTS`, `MAX_DRAWN_POINTS`, types CablePoint / CableRunView / CableRunEdits; pure `normalizePoints(raw, max)`, `runLengthM(points)`, `syncStatusAfterEdit(status)`; `listRuns(siteId)`, `applyRunEdits(siteId, {upserts, deletes}, actor)`; rule 184(a): `MAX_RUNS_PER_LINK`, `listRunLinks(siteId)` → `{pathKey: runIds}`, `applyRunLinkEdits(siteId, {pathKey: runIds}, actor)`.
+**Public API:** `FEATURE_REF_RE`, `MAX_RUNS_PER_LINK` (20); `listRunLinks(siteId)` → `{pathKey: refs}`; `applyRunLinkEdits(siteId, {pathKey: refs}, actor)`.
 
-**Cross-service deps:** `eventLogService` (`buildChanges`, `logEventsBatch`); prisma `asset` (the site must be a firewall) and `cableRun`.
+**Cross-service deps:** `eventLogService.logEventsBatch`; prisma `asset` (the site must be a firewall), `integration` (the configured line layers, read from `config.layers`), `cableRunLink`.
 
-**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-runs` (`cableRuns=read`) and `PUT /sites/:id/cable-runs` (`cableRuns=write` + the site's write scope), `PUT /sites/:id/cable-run-links` (the view gate: `deviceMap=write` + its write scope); `public/js/topology-cable-runs.js` through those routes (staged by map.js's edit session).
+**Used by:** `src/api/routes/map.ts` → `GET /sites/:id/cable-run-links` (deviceMap read) and `PUT /sites/:id/cable-run-links` (the view gate: `deviceMap=write` + its write scope); `public/js/topology-arcgis-layers.js` through them (staged by map.js's edit session).
 
 **Invariants:**
-- **The site owns a run**, never a view: every Topology view shows it, rule 149's mode reset never touches it; `site_id` cascades with the FortiGate.
-- **WGS84 only**: `[[lng, lat, z?], ...]`, rounded to ~1 cm / 1 mm, 2..1000 points drawn; a value outside latitude / longitude range is a 400 — which is what keeps a survey-grid file out.
-- **A trench is surveyed, never drawn**: a hand-drawn `trench` is refused, and a `crd` run's points and placement cannot change through this path.
-- **All or nothing**: one `$transaction` per edit session; ids naming another site's run or a deleted one are 404 before any write.
-- **Sync state**: `off` until write-back is configured; a sent run is edited to `pending` and deleted to a tombstone (`deletedAt`), a never-sent one is deleted outright.
-- **Riders (rule 184(a))**: a deleted run is removed from every `CableRunLink` in the same transaction, and a link left with none is deleted; `applyRunLinkEdits` drops ids that are not a live run at the site and refuses a malformed path key.
+- **References, not geometry**: a ref is `<layer uuid>/<identity value>`; the routed path is drawn from the live features, never stored.
+- **Malformed is refused, unknown is dropped**: a bad path key or ref is 400; a ref to a layer that is not a configured LINE layer of an enabled `arcgis` integration is dropped silently (the layer may have been removed meanwhile).
+- **No existence check**: whether the feature still exists in ArcGIS is not checked on save (a round trip per save) — the canvas draws a vanished line's link straight and counts it.
+- One `$transaction` per save, one `cable_run_link.updated` Event per batch.
 
 **When changing this:**
-- The `cableRuns` key is its own (tag-scoped, full ladder) — never gate a run route on `deviceMap`.
-- The survey importer (a later batch) creates `source: "crd"` rows with z; the write-back (a later batch) reads `syncStatus` / `deletedAt` / `version`.
-- Scale: per site, typically tens to hundreds of runs; one `findMany` per read, one transaction per save. Nothing here runs per asset or on a tick.
+- Scale: per site, one `findMany` per read, one transaction per save, one small `integration.findMany` per save. Nothing per asset or on a tick.
 - Tests: `tests/unit/cableRunService.test.ts`, `tests/integration/cableRuns.test.ts`.
 
 ---
 
 ## services/arcgisService.ts
 
-**What it owns:** the client of the `arcgis` integration type — a sign-in to an ArcGIS portal (ArcGIS Online, Location Platform or ArcGIS Enterprise) and the REST transport every later ArcGIS use goes through (the integration's basemap and cable-run write-back are being built on it). Four sign-in methods (`authMode`): `none`, `apiKey` (stored as `apiToken`, sent as `token`), `appCredentials` (`clientId` + `clientSecret` → `<portal>/sharing/rest/oauth2/token`, client-credentials grant) and `userPassword` (`username` + `password` → `<portal>/sharing/rest/generateToken`, referer = the portal). The integration discovers nothing (`integrationAdapters` → `discovery: null`).
+**What it owns:** the client of the `arcgis` integration type — a sign-in to an ArcGIS portal (ArcGIS Online, Location Platform or ArcGIS Enterprise) and the REST transport every ArcGIS use goes through (the basemap, rule 183, and the layers read for Topology views, rule 188 — nothing is ever written). Four sign-in methods (`authMode`): `none`, `apiKey` (stored as `apiToken`, sent as `token`), `appCredentials` (`clientId` + `clientSecret` → `<portal>/sharing/rest/oauth2/token`, client-credentials grant) and `userPassword` (`username` + `password` → `<portal>/sharing/rest/generateToken`, referer = the portal). The integration discovers nothing (`integrationAdapters` → `discovery: null`).
 
 **Public API:** `ARCGIS_ONLINE_PORTAL`, `ARCGIS_AUTH_MODES`, types ArcgisConfig / ArcgisHttpRequest, class ArcgisError (`code`, `details`); `portalUrlProblem(url)`, `portalBase(config)`, the basemap's imagery address (rule 183: `ARCGIS_BASEMAP_SOURCES`, `WORLD_IMAGERY_ATTRIBUTION`, `imageryUrlProblem(url)` — https MapServer / ImageServer outside the blocked ranges —, `basemapService(config)` → `{root, sendToken}`, `basemapTileUrl(config, token, z, x, y)`), `arcgisRequest(config, url, {method, params, token})`, `getArcgisToken(config)`, `clearArcgisTokenCache()`, `testConnection(config)`; `_setRequestImplForTests(impl | null)`.
 
@@ -437,7 +433,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `src/services/integrationAdapters.ts` → `INTEGRATION_ADAPTERS.arcgis.testConnection` (both Test Connection paths).
 - `src/services/satelliteTileService.ts` → the ArcGIS home of the satellite basemap (rule 183): `basemapService`, `basemapTileUrl`, `getArcgisToken`, `imageryUrlProblem`.
 - `src/api/routes/integrations.ts` → `ArcgisConfigSchema` (`portalUrlProblem`, the auth-mode enum; derives `config.host` from `portalUrl`), `PUT /:id` (re-parses the merged config, then `clearArcgisTokenCache`).
-- `src/services/arcgisWriteBackService.ts` → the cable-run write-back (rule 185): `arcgisRequest`, `getArcgisToken`, `clearArcgisTokenCache` (on 498 / 499), `portalBase`, `ArcgisError`.
+- `src/services/arcgisLayerService.ts` → the layers read for Topology views (rule 188): `arcgisRequest`, `getArcgisToken`, `portalBase`, `ArcgisError`.
 
 **Invariants:**
 - **A token never follows a redirect**: `redirect: "error"` on every request, plus a 20 s timeout and a 10 MB response cap.
@@ -446,41 +442,36 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Token cache** (per process, keyed portal | method | client ID or user name): a short-lived token is reused until a minute before it expires, and never for a different secret (the secret is compared in memory, never hashed — the CodeQL #126 lesson from satelliteTileService).
 
 **When changing this:**
-- A new ArcGIS feature (imagery, write-back) calls `getArcgisToken` + `arcgisRequest` rather than its own fetch, so sign-in and errors stay in one place.
+- A new ArcGIS feature calls `getArcgisToken` + `arcgisRequest` rather than its own fetch, so sign-in and errors stay in one place.
 - Scale: nothing here runs per asset; the token is fetched at most once per two hours per process.
 - Tests: `tests/unit/arcgisService.test.ts` (transport replaced through the seam), `tests/integration/arcgisIntegration.test.ts` (create / PUT / Discover against a real DB).
 
 ---
 
-## services/arcgisWriteBackService.ts
+## services/arcgisLayerService.ts
 
-**What it owns:** the one-way write of cable runs to an ArcGIS feature layer (business rule 185) — the write-back keys of an `arcgis` integration's config (flat: `writeBackEnabled`, `writeBackMode` `existing` | `polaris`, `featureLayerUrl`, `fieldMap`, `valueMap`), reading and checking the layer, creating a Polaris layer, and draining the queue that is `cable_runs`' own sync columns (rule 184).
+**What it owns:** the ArcGIS feature layers READ for the Device Map's Topology views (business rule 188) — the `layers` list of an `arcgis` integration's config, finding layers in the portal, and answering features for a viewport or by id. Nothing here writes to ArcGIS.
 
-**Public API:** `WRITE_BACK_MODES`, `WRITE_BACK_ATTRS`, `POLARIS_FIELD_MAP`, types WriteBackConfig / LayerInfo / SyncSummary; pure `featureLayerUrlProblem(url)`, `writeBackConfigProblem(cfg)`, `layerProblems(info, cfg)` → `{problems, warnings}`, `featureFor(run, cfg, info)`; `readLayer(cfg)`, `createPolarisLayer(cfg, serviceName)`, `writeBackIntegration(excludeId?)`, `writeBackStopped(reason, actor)`, `writeBackStatus()`, `retryFailed(actor)`, `syncWriteBack()`, `kickWriteBack()`.
+**Public API:** `LAYER_GEOMETRIES`, `LAYER_COLORS`, `LAYER_DASHES`, `MAX_LAYERS` (20), `MAX_POPUP_FIELDS` (10), `MAX_WHERE` (500), types ArcgisLayerConfig / ArcgisLayersConfig / LayerInfo / PortalItem / MapFeature / Bbox; pure `layerUrlProblem(url)`, `whereProblem(where)`, `layerHosts(cfg)`, `layersProblem(layers)`, `newLayerConfig(info, itemId?, title?)`, `parseBbox(raw)`, `snapBbox(bbox, zoom)`; `readLayer(cfg, url)`, `searchItems(cfg, {q, scope, start})`, `serviceLayers(cfg, serviceUrl)`, `listMapLayers()`, `queryFeatures(layerId, bbox, zoom)`, `featuresByIds(layerId, ids)`, `checkLayers(cfg)`, `clearFeatureCache()`.
 
-**Cross-service deps:** `arcgisService` (`arcgisRequest`, `getArcgisToken`, `clearArcgisTokenCache`, `portalBase`, `ArcgisError`); `cableRunService` (`CABLE_MEDIA`, `CABLE_PLACEMENTS`, `CablePoint`); `eventLogService.logEvent`; `utils/netGuard.isBlockedOutboundHost`; `utils/dbConnections.getDirectDatabaseUrl` + `pg` (the advisory lock's side connection); prisma `integration`, `cableRun` (with `site.hostname`).
+**Cross-service deps:** `arcgisService` (`arcgisRequest`, `getArcgisToken`, `portalBase`, `ArcgisError`); `utils/netGuard.isBlockedOutboundHost`; prisma `integration` (enabled `arcgis` rows' `config.layers`).
 
 **Used by:**
-- `src/jobs/arcgisWriteBack.ts` → `syncWriteBack` every 60 s (scheduler role).
-- `src/api/routes/map.ts` → `kickWriteBack` after `PUT /sites/:id/cable-runs`.
-- `src/api/routes/integrations.ts` → the schema (`WRITE_BACK_MODES`, `WRITE_BACK_ATTRS`, `featureLayerUrlProblem`, `writeBackConfigProblem`), `assertSingleArcgisWriteBack` (`writeBackIntegration`, 409), the PUT / delete hooks (`writeBackStopped`, `kickWriteBack`), `GET /:id/arcgis/write-back` (`writeBackStatus`), `POST /arcgis/read-layer` (`readLayer` + `layerProblems`), `POST /:id/arcgis/create-layer` (`createPolarisLayer`), `POST /:id/arcgis/retry-failed` (`retryFailed`).
-- `src/services/integrationAdapters.ts` → `arcgis.testConnection` reads and checks the layer when write-back is on.
-- `public/js/integrations-forms.js` / `integrations.js` → the Write-back tab through those routes.
+- `src/api/routes/map.ts` → `GET /arcgis-layers` (`listMapLayers`), `GET /arcgis-layers/:layerId/features` (`parseBbox`, `queryFeatures`, `featuresByIds`) — deviceMap read.
+- `src/api/routes/integrations.ts` → `ArcgisLayerSchema` + `ArcgisConfigSchema` (`LAYER_*`, `MAX_*`, `layersProblem`, `layerHosts` into the derived `config.layerHosts`), `stampArcgisLayerHosts` (rule 111), `arcgisConfigForUrl`, `POST /arcgis/search` / `service-layers` / `read-layer`, `clearFeatureCache` on create / PUT / delete.
+- `src/services/integrationAdapters.ts` → `arcgis.testConnection` runs `checkLayers` (fields still there, filter accepted).
+- `src/services/cableRunService.ts` → reads the same `config.layers` for the line-layer ids (type `ArcgisLayersConfig` only).
 
 **Invariants:**
-- **2026-11-14:** a 498 / 499 on the LAYER READ (the first call of every tick) also calls `clearArcgisTokenCache()`, as the per-batch catch does — otherwise every later tick re-read the layer with the same dead token until it expired.
-- **The run table is the queue**: a push first turns live `off` runs `pending`; nothing else lists what to send.
-- **Never add twice**: a run with no object id is looked up by `fieldMap.polarisId` before an add (and a tombstone before a delete).
-- **Per-feature results**: `rollbackOnFailure=false`; a refusal fails THAT run with ArcGIS's description; transport / 5xx / 429 / 498 / 499 leave the batch `pending` (`syncError` set); a layer that refuses outright fails every queued run with the reason.
-- **Version-guarded success**: `synced` only `where version = <sent>`; the object id is recorded either way.
-- **One pusher**: `pg_try_advisory_lock(0x504c4157, 1)` on a side connection around every push (job and kick alike); **one writer** integration (409 at save).
-- **Stop resets**: turned off, re-pointed or deleted → runs `off` with no object id, tombstones dropped, one `cable_run.write_back_stopped` Event; a disabled integration only pauses.
+- **The token never leaves the server**: the browser gets styles and features; `listMapLayers` returns no URL, filter or token.
+- **Bounded reads**: a bbox query is WGS84, generalised to half a pixel at the zoom (`maxAllowableOffset`), ≤ 2000 features (`truncated`), cached 60 s (≤ 300 entries, FIFO) on the bbox snapped outward to the zoom's tile grid; by id ≤ 50, quoted (`''`), POSTed, AND-ed with the layer's `where`.
+- **Rule 111**: `layerHosts` lists only hosts outside the portal (and, for an Online portal, outside `*.arcgis.com`), so adding a layer on a new host needs the secret typed again; reading a not-yet-saved foreign host from the form goes without a token (`arcgisConfigForUrl` in the route).
+- **Identity**: GlobalID preferred over OBJECTID (`newLayerConfig`), because a routed link (rule 188(a)) remembers a line by it.
 
 **When changing this:**
-- The request shapes (`applyEdits`, `query`, `createService`, `addToDefinition`) follow Esri's REST docs and are pinned only against a fake layer; validate against a scratch ArcGIS layer before claiming a change works.
-- A new Polaris attribute = `WRITE_BACK_ATTRS` + `featureFor` + `POLARIS_FIELDS` + the form's `ARCGIS_WB_ATTRS`.
-- Scale: per tick one indexed query when nothing is pending; ≤ 1000 runs a tick in batches of 100, one query + one applyEdits per batch, results written with `Promise.all`. Nothing per asset.
-- Tests: `tests/unit/arcgisWriteBack.test.ts`, `tests/integration/arcgisWriteBack.test.ts` (fake layer through `arcgisService._setRequestImplForTests`).
+- The request shapes (`/sharing/rest/search`, service JSON, layer `query`) follow Esri's REST docs and are pinned only against a fake portal; check against a real portal before claiming a change works.
+- Scale: per map pan, one query per SHOWN layer (debounced client-side), cached; nothing per asset or on a tick. A layer with tens of thousands of features stays cheap because every read is bbox-scoped and capped.
+- Tests: `tests/unit/arcgisLayerService.test.ts` (seam + mocked prisma), `tests/integration/cableRuns.test.ts` (routes against a real DB and a fake ArcGIS).
 
 ---
 

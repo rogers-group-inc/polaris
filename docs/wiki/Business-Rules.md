@@ -3761,31 +3761,14 @@ new address needs the integration's secret typed again ([rule 111](#rule-111)).
 
 ### Rule 184
 
-**A cable run belongs to its site, has its own permission, and a trench is never drawn by hand.**
-Cable runs are fiber or ethernet routes drawn on a site's Topology views, over the map or satellite
-imagery. Every Topology view of the site shows them, and changing a view's mode never removes them.
-A run along **electric** or **telephone poles** is drawn by hand — each bend is a pole. A **trench**
-comes only from a survey file, and its points cannot be moved on the map. Drawing and editing runs
-needs the **Cable Runs** permission, not Device Map, because runs are written to your ArcGIS
-organization: Read shows them, Read-Write edits them at sites you added or that carry your tags,
-Full Read-Write at any site. Only administrators have it by default. Runs are saved with the view
-(the tick or Save) and every change is recorded as an Event.
-
-**184(a)** A connection between two devices can be dragged onto a run; it is then drawn through the
-run, from each device to the run's nearest point. Which connections ride a run stays in Polaris — it
-is not sent to ArcGIS — so it needs only Device Map Read-Write. Deleting a run takes it off every
-connection, and a connection left on none is straight again.
+**Retired 2026-11-16 — see [rule 188](#rule-188).** (Was: a cable run belongs to its site, has its own
+permission, and a trench is never drawn by hand.) Polaris no longer draws its own cable runs; ArcGIS lines
+took their place.
 
 ### Rule 185
 
-**Cable runs are written one way to one ArcGIS layer, and found again by their Polaris ID.**
-An [ArcGIS integration](Integration-ArcGIS#write-back) with write-back on pushes every run drawn, edited or
-deleted in Polaris to one line layer — an existing layer with a field map, or one Polaris creates. Nothing
-is read back. Only one integration can write runs. Each run's id is written to the layer's Polaris ID
-field and looked up before an add, so a run is never added twice. A run ArcGIS refuses is marked Failed
-with ArcGIS's message until it is retried; one that could not be sent because ArcGIS was unreachable stays
-Pending and goes on the next try. Elevation is written when the layer has z values. Turning write-back
-off, or pointing it at another layer, starts over: every run is sent again when it is next on.
+**Retired 2026-11-16 — see [rule 188](#rule-188).** (Was: cable runs are written one way to one ArcGIS
+layer.) Polaris never writes to ArcGIS.
 
 ### Rule 186
 
@@ -3812,3 +3795,19 @@ certificate: against the CA file you name, or else against the system's trusted 
 any you uploaded under [Server Settings → Trusted Certificate Authorities](Server-Settings#trusted-certificate-authorities).
 A problem reaching the syslog server is written to the Polaris log, not to Events. Every Polaris
 process forwards its own events and picks up a settings change within about 30 seconds.
+
+### Rule 188
+
+**ArcGIS layers are read, never written, and each Topology view picks the ones it draws.**
+An [ArcGIS integration](Integration-ArcGIS#layers) lists the feature layers Polaris reads, found by
+searching your portal or by pasting a layer's address, each with its own colour, line style, label, the
+fields a click shows and an optional filter. Nothing is ever written to ArcGIS. Your sign-in stays on the
+Polaris server: the browser only receives the features in view. A Topology view draws only the layers ticked
+under **Map layers**, and a new view draws none. A layer on a host other than your portal needs the secret
+typed again when saved ([rule 111](#rule-111)).
+
+**188(a)** A connection between two devices can be dragged onto an ArcGIS line; it is then drawn through
+the line. Which connections ride a line stays in Polaris, so it needs only Device Map Read-Write. A line
+that is hidden, filtered out or deleted in ArcGIS leaves the connection straight, and the view says how many
+connections lost one.
+

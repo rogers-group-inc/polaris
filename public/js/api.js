@@ -1200,11 +1200,10 @@ const api = {
     storageAggregateApply:     (id, klass) => trackedRequest("Applying auto-monitor storage", "POST", `/integrations/${id}/storage-aggregate/apply`, { class: klass }),
     autoMonitorAssetsPreflight: (id, proposed) => request("POST", `/integrations/${id}/auto-monitor-assets/preflight`, { proposed: proposed }),
     llmRegenerateToken: (id) => request("POST", `/integrations/${id}/llm/regenerate-token`),
-    // ArcGIS cable-run write-back (business rule 185).
+    // ArcGIS layers Polaris reads (business rule 188): body = { id?, config, … }.
+    arcgisSearch:        (body)     => trackedRequest("Searching ArcGIS", "POST", "/integrations/arcgis/search", body),
+    arcgisServiceLayers: (body)     => trackedRequest("Reading the service", "POST", "/integrations/arcgis/service-layers", body),
     arcgisReadLayer:     (body)     => trackedRequest("Reading the layer", "POST", "/integrations/arcgis/read-layer", body),
-    arcgisCreateLayer:   (id, name) => trackedRequest("Creating the layer", "POST", `/integrations/${id}/arcgis/create-layer`, { name: name }),
-    arcgisWriteBack:     (id)       => request("GET", `/integrations/${id}/arcgis/write-back`),
-    arcgisRetryFailed:   (id)       => request("POST", `/integrations/${id}/arcgis/retry-failed`),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
     // Generic API Preview tab: the first page, mapped (nothing is written).
     genericApiPreview:  (body) => trackedRequest("Reading the first page", "POST", "/integrations/generic-api/preview", body),
@@ -1898,9 +1897,10 @@ const api = {
     topologyViews:      (id)               => request("GET",    `/map/sites/${id}/topology/views`),
     createTopologyView: (id, body)         => request("POST",   `/map/sites/${id}/topology/views`, body),
     updateTopologyView: (id, viewId, body) => request("PUT",    `/map/sites/${id}/topology/views/${viewId}`, body),
-    // Cable runs (rule 184): { runs, canEditRuns } / one edit session's { upserts, deletes }.
-    cableRuns:          (id)               => request("GET",    `/map/sites/${id}/cable-runs`),
-    saveCableRuns:      (id, edits)        => request("PUT",    `/map/sites/${id}/cable-runs`, edits),
+    // ArcGIS layers, read only (rule 188): params = { bbox, zoom } or { ids }.
+    arcgisLayers:       ()                 => request("GET",    `/map/arcgis-layers`),
+    arcgisFeatures:     (layerId, params)  => request("GET",    `/map/arcgis-layers/${encodeURIComponent(layerId)}/features?` + new URLSearchParams(params).toString()),
+    cableRunLinks:      (id)               => request("GET",    `/map/sites/${id}/cable-run-links`),
     saveCableRunLinks:  (id, links)        => request("PUT",    `/map/sites/${id}/cable-run-links`, { links }),
     deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
     topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
