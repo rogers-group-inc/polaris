@@ -89,6 +89,7 @@ Vanilla JavaScript SPA served from `/public/`. **No build step** — plain ES mo
 | `public/js/automations-wizard.js` | `openAutomationWizard` | the 6-step automation wizard; loads on every page that loads `assets.js` |
 | `public/js/automations-portability.js` | `PolarisAutomationPortability` | automation export / import / view code |
 | `public/js/dashboard-portability.js` | `PolarisDashboardPortability` | one dashboard tab to / from a `.dashboard.json` file (the Dashboards ▾ menu's Export / Import) — no ids out, imports land as a new tab through `loadAsNewTab` |
+| `public/js/automation-script-portability.js` | `PolarisScriptPortability` | one automation script to / from a `.script.json` file (or a plain script file IN) — the Scripts tab's card menu **Export** and the New script dialog's **Import from file**, which fills the form and saves nothing; no id, hash or enabled flag out |
 | `public/js/genericapi-portability.js` | `PolarisGenericApiPortability` | Generic API configuration export / import (the dialog's JSON tab) — secrets never out or in, connection details opt-in |
 | `public/js/automations-wizard-sentences.js` | `PolarisAutomationSentences` | trigger/reset prose — one phrasing for the list AND the editor |
 | `public/js/alert-ack-view.js` | `PolarisAlertAckView` | the presentation of ONE alert about to be acknowledged — shared by `/alert-ack.html` and the in-app modal so the two cards cannot drift |

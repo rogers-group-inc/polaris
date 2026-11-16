@@ -63,6 +63,22 @@ Refused with a friendly 409 while any automation's actions or escalation tiers
 reference the script. Run rows snapshot the script name and digest, so history
 survives deletion.
 
+### Exporting and importing
+
+**Right-click a script** (or click its name) for its menu: **Edit**, **Test run**,
+**Export** and **Delete**. Readers see only Export.
+
+- **Export** downloads `<name>.script.json`: the name, description, interpreter,
+  where it runs, the default timeout and the body. It does not carry the
+  script's id, its sha256 (Polaris computes that again on save) or whether it is
+  enabled.
+- **+ Add Script → Import from file** fills the New script form from a
+  `.script.json` export or from a plain script file (`.sh`, `.py`, `.ps1`,
+  `.cmd`, `.bat`). For a plain file, the interpreter comes from the extension or
+  the file's `#!` line, and the name from the file name. **Nothing is saved
+  until you read the body and press Create script** — a script runs with full
+  privileges, so an imported one gets the same review as one typed in.
+
 ---
 
 ## Writing a script

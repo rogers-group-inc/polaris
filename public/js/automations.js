@@ -1419,9 +1419,12 @@ function renderScriptsList(scripts) {
         '<button class="btn btn-sm btn-secondary script-edit" data-id="' + sc.id + '">Edit</button> ' +
         '<button class="btn btn-sm btn-danger script-del" data-id="' + sc.id + '">Delete</button>'
       : "";
-    return '<div class="card" style="margin-bottom:0.75rem;padding:0.9rem">' +
+    // The card is the right-click target and the name its menu trigger (left
+    // click = Edit for a writer, the menu otherwise) — the row-menu gestures,
+    // on a card list (app-modals.js → showRowMenu).
+    return '<div class="card" data-row-menu data-script-id="' + escapeHtml(sc.id) + '" style="margin-bottom:0.75rem;padding:0.9rem">' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<strong>' + escapeHtml(sc.name) + '</strong>' +
+        '<button type="button" class="row-menu-trigger script-menu" data-id="' + escapeHtml(sc.id) + '" aria-haspopup="menu" title="Actions for this script"><strong>' + escapeHtml(sc.name) + '</strong></button>' +
         '<span class="badge">' + escapeHtml(sc.interpreter) + '</span>' +
         '<span class="badge">runs on ' + escapeHtml(runTargetLabel) + '</span>' +
         (sc.enabled ? "" : '<span class="badge" style="opacity:0.7">disabled</span>') +
@@ -1454,6 +1457,67 @@ function renderScriptsList(scripts) {
       if (sc) runScriptTest(sc, b);
     });
   });
+  // One delegated listener for the row menu, bound once — the list repaints.
+  if (!container._scriptMenuWired) {
+    container._scriptMenuWired = true;
+    container.addEventListener("click", function (e) {
+      var t = e.target;
+      var trigger = t && typeof t.closest === "function" ? t.closest(".script-menu, [data-row-menu]") : null;
+      if (!trigger) return;
+      var onCard = !trigger.classList.contains("script-menu");
+      // A plain click on the card body (or one of its buttons) is not a menu
+      // request; only the right-click replay (rowMenuGesture) is.
+      if (onCard && !(typeof rowMenuGesture === "function" && rowMenuGesture())) return;
+      var id = onCard ? trigger.getAttribute("data-script-id") : trigger.getAttribute("data-id");
+      var sc = (_awScriptList || []).find(function (x) { return x.id === id; });
+      if (!sc) return;
+      e.preventDefault();
+      showRowMenu(trigger, scriptMenuItems(sc, trigger), { menuAt: typeof rowMenuGesture === "function" ? rowMenuGesture() : null });
+    });
+  }
+}
+
+/** The script card's row menu. Export needs only read; the rest are the writer's. */
+function scriptMenuItems(sc, anchor) {
+  var canEdit = permAtLeast("automationScripts", "write");
+  var items = [];
+  if (canEdit) {
+    items.push({ label: "Edit", primary: true, onSelect: function () { openScriptModal(sc); } });
+    items.push({
+      label: "Test run",
+      disabled: sc.runTarget === "agent",
+      title: sc.runTarget === "agent" ? "An agent-only script runs only through an automation on a real asset" : "",
+      onSelect: function () {
+        var btn = document.querySelector('.script-test[data-id="' + sc.id + '"]') || anchor;
+        runScriptTest(sc, btn);
+      },
+    });
+  }
+  items.push({ label: "Export", onSelect: function () { exportScriptFile(sc); } });
+  if (canEdit) {
+    items.push({ separator: true });
+    items.push({ label: "Delete", danger: true, onSelect: function () {
+      var del = document.querySelector('.script-del[data-id="' + sc.id + '"]');
+      if (del) del.click();
+    } });
+  }
+  return items;
+}
+
+/** Download one script as `<name>.script.json` — no id, hash or enabled flag. */
+function exportScriptFile(sc) {
+  var P = window.PolarisScriptPortability;
+  if (!P) { showToast("Export is not available on this page", "error"); return; }
+  var blob = new Blob([P.exportText(sc)], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = P.filenameForExport(sc);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  showToast('Exported "' + sc.name + '"', "success");
 }
 
 /**
@@ -1534,6 +1598,41 @@ async function runScriptTest(sc, btn) {
   }
 }
 
+/** New script dialog: Import from file → fill the form from a picked file. */
+function wireScriptImport() {
+  var btn = document.getElementById("script-import");
+  var input = document.getElementById("script-import-file");
+  var notes = document.getElementById("script-import-notes");
+  var P = window.PolarisScriptPortability;
+  if (!btn || !input) return;
+  if (!P) { btn.disabled = true; return; }
+  btn.addEventListener("click", function () { input.value = ""; input.click(); });
+  input.addEventListener("change", function () {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    if (file.size > P.MAX_IMPORT_BYTES) { showToast("That file is too large to be a script.", "error"); return; }
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed;
+      try { parsed = P.parseImportFile(String(reader.result || ""), file.name); }
+      catch (err) { showToast(err.message || "Could not read that file", "error"); return; }
+      document.getElementById("script-name").value = parsed.name || "";
+      document.getElementById("script-desc").value = parsed.description || "";
+      document.getElementById("script-interp").value = parsed.interpreter;
+      document.getElementById("script-target").value = parsed.runTarget;
+      document.getElementById("script-body").value = parsed.body;
+      document.getElementById("script-timeout").value = String(parsed.timeoutSec);
+      if (notes) {
+        notes.textContent = (parsed.problems || []).join(" ");
+        notes.hidden = !(parsed.problems && parsed.problems.length);
+      }
+      showToast('Loaded "' + file.name + '" — read the script before you create it', "info");
+    };
+    reader.onerror = function () { showToast("Could not read that file", "error"); };
+    reader.readAsText(file);
+  });
+}
+
 function openScriptModal(existing) {
   var s = _ruleSchema || {};
   var meta = s.scriptMeta || { languages: ["bash", "sh", "powershell", "cmd", "python3"], runOnOptions: ["server", "agent"], maxTimeoutSec: 600 };
@@ -1541,7 +1640,17 @@ function openScriptModal(existing) {
   function optList(list, sel) {
     return (list || []).map(function (v) { return '<option value="' + escapeHtml(v) + '"' + (v === sel ? " selected" : "") + '>' + escapeHtml(v) + '</option>'; }).join("");
   }
-  var body =
+  // A NEW script may start from a file — our own .script.json export or a plain
+  // script. It only fills this form: the operator reads the body and presses
+  // Create, because an import is exactly where an unread body would slip in.
+  var importRow = existing ? "" :
+    '<div class="form-group" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="script-import">Import from file</button>' +
+      '<input type="file" id="script-import-file" accept=".json,.sh,.bash,.py,.ps1,.cmd,.bat,.txt" hidden>' +
+      '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">A .script.json export or a plain script file. It fills this form; nothing is saved until you press Create script.</span>' +
+      '<div id="script-import-notes" style="flex-basis:100%;font-size:0.78rem;color:var(--color-warning,#d97706)" hidden></div>' +
+    '</div>';
+  var body = importRow +
     '<div class="form-group"><label>Name</label><input type="text" id="script-name" value="' + escapeHtml(sc.name || "") + '" placeholder="e.g. restart-print-spooler"></div>' +
     '<div class="form-group"><label>Description (optional)</label><input type="text" id="script-desc" value="' + escapeHtml(sc.description || "") + '"></div>' +
     '<div class="form-group"><label>Interpreter</label><select id="script-interp">' + optList(meta.languages, sc.interpreter || "bash") + '</select></div>' +
@@ -1559,6 +1668,7 @@ function openScriptModal(existing) {
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
     '<button class="btn btn-primary" id="script-save">' + (existing ? "Save changes" : "Create script") + '</button>';
   openModal(existing ? "Edit script" : "New script", body, footer, { wide: true });
+  if (!existing) wireScriptImport();
 
   document.getElementById("script-save").addEventListener("click", async function () {
     var payload = {
