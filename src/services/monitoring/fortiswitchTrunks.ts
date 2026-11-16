@@ -44,7 +44,9 @@ import { type InterfaceSample } from "./types.js";
  * peer-serial inference, FortiLink trunk preservation). Only a row whose
  * stripped name the trunk map itself lists is renamed.
  *
- * Mutates `interfaces` in place; returns the number of member links stamped.
+ * Mutates `interfaces` in place; returns the number of distinct members whose
+ * parent link this call stamped (a member that kept its existing parent is not
+ * counted).
  */
 export function overlayFortiswitchTrunkMembers(
   interfaces: InterfaceSample[],
@@ -59,7 +61,9 @@ export function overlayFortiswitchTrunkMembers(
     const base = stripTrunkRoleSuffix(i.ifName);
     if (base !== i.ifName && !suffixedByBase.has(base)) suffixedByBase.set(base, i);
   }
-  let links = 0;
+  // Distinct members whose ifParent THIS call wrote — a member that kept an
+  // existing parent, or a name listed twice, is not a new link.
+  const stamped = new Set<string>();
   for (const [trunkName, members] of trunkMembers) {
     if (members.length === 0) continue;
     let trunkRow = byName.get(trunkName);
@@ -81,7 +85,10 @@ export function overlayFortiswitchTrunkMembers(
     for (const memberName of members) {
       const existing = byName.get(memberName);
       if (existing) {
-        if (!existing.ifParent) existing.ifParent = trunkName;
+        if (!existing.ifParent) {
+          existing.ifParent = trunkName;
+          stamped.add(memberName);
+        }
         if (!existing.ifType) existing.ifType = "physical";
       } else if (opts.synthesizeMissing !== false) {
         const synthetic: InterfaceSample = {
@@ -91,11 +98,10 @@ export function overlayFortiswitchTrunkMembers(
         };
         interfaces.push(synthetic);
         byName.set(memberName, synthetic);
-      } else {
-        continue; // unknown member port — see synthesizeMissing above
+        stamped.add(memberName);
       }
-      links++;
+      // else: unknown member port, skipped — see synthesizeMissing above
     }
   }
-  return links;
+  return stamped.size;
 }

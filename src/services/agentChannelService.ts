@@ -55,6 +55,9 @@ export interface Session {
    * a socket has already died — and so both events agree on the label.
    */
   assetName: string | null;
+  /** The attach-time name lookup. A detach that lands before it settles waits
+   *  on it rather than writing an unnamed event (or reading the row again). */
+  assetNameLookup: Promise<string | null>;
   attachedAt: number;
   // Heartbeat ping timer; cleared in detach().
   pingTimer: NodeJS.Timeout | null;
@@ -88,10 +91,21 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
     teardown(existing, "replaced");
   }
 
+  // Name the device. An `asset` Event with no resourceName gives the alert no
+  // subject at all (alertSubject.eventSubjectLabel returns "" for one), so
+  // every automation on agent.connected/disconnected rendered a row and an
+  // email that never said WHICH agent — the one fact those alerts exist to
+  // carry.
+  const assetNameLookup = prisma.asset
+    .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
+    .then((a) => a?.hostname || a?.ipAddress || null)
+    .catch(() => null);
+
   const session: Session = {
     ws,
     assetId,
     assetName: null, // filled in below, before either event is written
+    assetNameLookup,
     attachedAt: Date.now(),
     pingTimer: null,
     pongSeen: true, // assume alive on attach so we don't kill ourselves on the first ping cycle
@@ -150,15 +164,7 @@ export function attach(managedAgentId: string, assetId: string, ws: WebSocket): 
   }).catch(() => { /* best-effort */ });
 
   void (async () => {
-    // Name the device. An `asset` Event with no resourceName gives the alert no
-    // subject at all (alertSubject.eventSubjectLabel returns "" for one), so
-    // every automation on agent.connected/disconnected rendered a row and an
-    // email that never said WHICH agent — the one fact those alerts exist to
-    // carry.
-    const asset = await prisma.asset
-      .findUnique({ where: { id: assetId }, select: { hostname: true, ipAddress: true } })
-      .catch(() => null);
-    const name = asset?.hostname || asset?.ipAddress || null;
+    const name = await assetNameLookup;
     // The session may already be gone (a socket that died during this read),
     // and a stale entry must not be re-stamped — check identity, not presence.
     if (sessions.get(managedAgentId) === session) session.assetName = name;
@@ -205,19 +211,25 @@ export function detach(managedAgentId: string, reason: string, only?: Session): 
     where: { id: managedAgentId },
     data:  { wsDisconnectedAt: new Date() },
   }).catch(() => { /* best-effort */ });
-  void logEvent({
-    action:       "agent.disconnected",
-    resourceType: "asset",
-    resourceId:   session.assetId,
-    // Without this the alert has no subject: an operator reading "a Polaris
-    // Agent disconnected" on the widget could not tell WHICH host it was.
-    resourceName: session.assetName ?? undefined,
-    level:        reason === "replaced" || reason === "revoked" ? "info" : "warning",
-    message:      session.assetName
-      ? `Polaris Agent WebSocket detached from ${session.assetName} (${reason})`
-      : `Polaris Agent WebSocket detached (${reason})`,
-    details:      { managedAgentId, reason },
-  });
+  const writeEvent = (assetName: string | null) => {
+    // Without a name the alert has no subject: an operator reading "a Polaris
+    // Agent disconnected" on the widget could not tell WHICH host it was. A
+    // device whose name could not be read is named by its agent id.
+    const label = assetName ?? managedAgentId;
+    return logEvent({
+      action:       "agent.disconnected",
+      resourceType: "asset",
+      resourceId:   session.assetId,
+      resourceName: label,
+      level:        reason === "replaced" || reason === "revoked" ? "info" : "warning",
+      message:      `Polaris Agent WebSocket detached from ${label} (${reason})`,
+      details:      { managedAgentId, reason },
+    });
+  };
+  // A detach that beat attach's name lookup waits for it (until 2026-11-16 it
+  // wrote the event unnamed).
+  if (session.assetName) void writeEvent(session.assetName);
+  else void session.assetNameLookup.then(writeEvent);
 }
 
 function teardown(session: Session, _reason: string): void {

@@ -56,23 +56,26 @@ function dailyPointsCte(detailFilter: string, dailyFilter: string): string {
        SELECT s."assetId" AS "assetId", s."mountPath" AS "mountPath",
               date_trunc('day', s."timestamp") AS day,
               avg(s."usedBytes")::float8 AS used,
-              (ARRAY_AGG(s."totalBytes" ORDER BY s."timestamp" DESC) FILTER (WHERE s."totalBytes" IS NOT NULL))[1]::float8 AS total
+              (ARRAY_AGG(s."totalBytes" ORDER BY s."timestamp" DESC) FILTER (WHERE s."totalBytes" IS NOT NULL))[1]::float8 AS total,
+              0 AS arm
        FROM "asset_storage_samples" s
        WHERE s."timestamp" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
          AND s."usedBytes" IS NOT NULL${detailFilter}
        GROUP BY 1, 2, 3
        UNION ALL
        SELECT d."assetId", d."mountPath", d."bucketStart" AS day,
-              d."avgUsedBytes"::float8, d."lastTotalBytes"::float8
+              d."avgUsedBytes"::float8, d."lastTotalBytes"::float8, 1 AS arm
        FROM "asset_storage_samples_daily" d
        WHERE d."bucketStart" > (now() AT TIME ZONE 'UTC') - ($1 || ' days')::interval
          AND d."avgUsedBytes" IS NOT NULL${dailyFilter}
      ),
      dedup AS (
        -- Fast-cadence assets have BOTH a detail bucket and a rollup bucket for
-       -- the same day; keep one per (asset, mount, day) — the values agree.
+       -- the same day; keep one per (asset, mount, day). The used figures
+       -- agree, but the detail arm's capacity can be null where the rollup's
+       -- is not, so prefer the row with a capacity, then the detail arm.
        SELECT DISTINCT ON ("assetId", "mountPath", day) "assetId", "mountPath", day, used, total
-       FROM pts ORDER BY "assetId", "mountPath", day
+       FROM pts ORDER BY "assetId", "mountPath", day, (total IS NULL), arm
      )`;
 }
 
@@ -81,6 +84,7 @@ export async function computeStorageForecast(
   lookbackDays: number = FORECAST_LOOKBACK_DAYS,
   minPoints: number = FORECAST_MIN_POINTS,
 ): Promise<StorageForecastRow[]> {
+  if (assetIds && assetIds.length === 0) return [];
   const idDetail = assetIds ? ` AND s."assetId" = ANY($3::text[])` : "";
   const idDaily = assetIds ? ` AND d."assetId" = ANY($3::text[])` : "";
   const params: unknown[] = [String(lookbackDays), minPoints];

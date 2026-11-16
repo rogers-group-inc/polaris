@@ -90,6 +90,11 @@ const RADIO_MERGE_FIELDS = [
 /** The mergeable (nullable) columns of a VAP row. */
 const VAP_MERGE_FIELDS = ["ssid", "bssid", "vlanId", "clientCount"] as const;
 
+/** Radio addresses: matched case-blind, so they compare case-blind too — the
+ *  stored spelling is kept when only the case differs (otherwise a source that
+ *  reports lowercase rewrites the column on every pass). */
+const CASE_BLIND_FIELDS = new Set<string>(["bssid", "baseBssid"]);
+
 /**
  * Merge an incoming sample over a stored row: any non-null incoming value
  * wins, a null leaves the stored value in place. Returns only the columns
@@ -106,6 +111,8 @@ function mergeFields(
     const v = incoming[f];
     if (v === null || v === undefined) continue;
     if (stored && stored[f] === v) continue;
+    if (stored && CASE_BLIND_FIELDS.has(f) && typeof v === "string" && typeof stored[f] === "string"
+      && (stored[f] as string).toUpperCase() === v.toUpperCase()) continue;
     out[f] = v;
   }
   return out;

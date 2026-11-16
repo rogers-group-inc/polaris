@@ -206,6 +206,17 @@ describe("getSampleRetention (cache)", () => {
     expect(findUnique()).toHaveBeenCalledTimes(2);
   });
 
+  // Was a bug until 2026-11-16: the cached object was returned by reference, so a caller's mutation leaked to every reader.
+  it("returns a copy, so mutating a result does not change the cached value", async () => {
+    findUnique().mockResolvedValue({ value: { assets: { detail: 2 } } });
+    const first = await getSampleRetention();
+    first.assets.detail = 99;
+    const second = await getSampleRetention();
+    expect(findUnique()).toHaveBeenCalledTimes(1);
+    expect(second.assets.detail).toBe(2);
+    expect(second).not.toBe(first);
+  });
+
   it("re-reads after invalidateSampleRetentionCache", async () => {
     findUnique().mockResolvedValue(null);
     await getSampleRetention();
