@@ -583,7 +583,7 @@ function renderCertsTab(container) {
   var caCardHtml =
     '<div class="settings-card" style="display:flex;flex-direction:column">' +
       '<h4>Trusted Certificate Authorities</h4>' +
-      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">CA certificates used to verify remote servers when Polaris connects to integrations, syslog, and archive targets. Still operator-editable in proxy mode.</p>' +
+      '<p style="font-size:0.82rem;color:var(--color-text-secondary);margin-bottom:1rem">CA certificates Polaris trusts, on top of the built-in ones, whenever it checks a server&#39;s TLS certificate: integrations, syslog, email. Every Polaris process picks up a change within 30 seconds. The SFTP / SCP event archive uses SSH, which trusts a server by its host key instead.</p>' +
       '<ul class="cert-list" id="ca-list"><li class="cert-empty">Loading...</li></ul>' +
       '<div style="margin-top:auto;padding-top:1rem">' +
         '<div class="upload-area" id="ca-upload-area">' +

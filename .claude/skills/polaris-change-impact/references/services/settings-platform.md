@@ -603,6 +603,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Rule 170: the override is applied by assigning `process.env.TZ` — Node re-reads it for `Date` local getters and `Intl`'s resolved zone, so `userTimezoneService.serverTimeZone()`, `maintenanceRecurrence`, `notificationTemplate` and every other server-local reader follow it with no change of their own. Clearing assigns the HOST zone captured at module load (`HOST_TIME_ZONE`) — deleting `TZ` does NOT revert Node's zone. A zone this build's ICU cannot format in is refused on save (400) and read back as no override — never assigned, since Node turns an unknown `TZ` into "Etc/Unknown" = UTC silently.
 - The host's clock, timezone and time service are never touched. The NTP servers / mode / enable flag and Test Sync were retired 2026-11-12 (nothing ever applied them; `utils/sntp.ts` deleted with them).
 - Certificate store is a single JSON array in the "certificates" Setting; each cert carries id, category (ca/server), type (cert/key), PEM, and metadata. The route surface only handles `category="ca"`; the cleanup migration `20260608000000_drop_legacy_server_certs` strips any legacy `category="server"` entries on upgrade.
+- Business rule 188: the CA records are READ by `trustedCaService` into every role's default TLS trust store. `addCertificate` / `deleteCertificate` (both take the route's `actor`) call `refreshTrustedCas()` at once for a CA and write `certificate.ca_added` / `certificate.ca_removed` (warning) — before 2026-11-16 nothing read the uploads and nothing audited them.
 - Backup/restore flows NOT in this service (they live in updateService).
 
 **When changing this:**
@@ -611,6 +612,30 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Test CA upload validation (PEM parsing, magic-byte checks if added).
 - Confirm cert list dedup handles UUID collisions.
 
+
+---
+
+## services/trustedCaService.ts
+
+**What it owns:** business rule 188 — the CAs uploaded under Server Settings → Trusted Certificate Authorities, applied to THIS process's default TLS trust store, so every outbound TLS client that names no `ca` of its own (node:https, `tls.connect`, undici `fetch`, ldapts) trusts servers they signed.
+
+**Public API:** `applyTrustedCas(pems)` → `{ added, skipped } | null`, `refreshTrustedCas()`, `usableCaPems(pems)`, `trustedCaSupported()`, `TRUSTED_CA_REFRESH_MS`; test seam `_resetTrustedCasForTests`.
+
+**Cross-service deps:** `serverSettingsService.listCertificates` (dynamic import — serverSettingsService imports this module statically).
+
+**Used by:** `src/app.ts → startBackgroundJobs` — `refreshTrustedCas()` awaited in EVERY role before any job import, then every `TRUSTED_CA_REFRESH_MS` (30 s, unref'd); `src/services/serverSettingsService.ts → addCertificate / deleteCertificate` — applied at once on a CA upload / removal.
+
+**Invariants:**
+- The store set is the ORIGINAL default (`tls.getCACertificates("default")`, captured once — Node's roots + `NODE_EXTRA_CA_CERTS`) plus the uploads: an upload only ADDS trust, and removing one really removes it.
+- Each upload is parsed (`X509Certificate`) first; a malformed one is skipped, never passed to `setDefaultCACertificates` (which would throw and apply nothing). Deduplicated by SHA-256 fingerprint. An unchanged list is not re-applied.
+- A connection with `rejectUnauthorized: false` is unaffected; a transport that passes its own `ca` (the syslog CA path) keeps it.
+- Node without `tls.setDefaultCACertificates` (< 22.19 / 24.5) applies nothing and warns once; the floor in `package.json` is 22.12, production runs 24.
+- `refreshTrustedCas` never throws.
+
+**When changing this:**
+- Never call `tls.setDefaultCACertificates` anywhere else — two writers would undo each other.
+- A new outbound TLS client gets the uploads for free as long as it passes no `ca`; one that must pin a specific CA passes `ca` explicitly and opts out.
+- Tests: `tests/unit/trustedCaService.test.ts` (node:tls mocked). A real before / after proof (node:https, fetch, tls.connect against a self-signed server) was run by hand on Node 24 on 2026-11-16.
 
 ---
 

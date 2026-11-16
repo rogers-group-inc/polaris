@@ -1175,6 +1175,16 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     setInterval(() => { void refreshProcessTimezone(); }, TIMEZONE_REFRESH_MS).unref();
   }
 
+  // Business rule 188: the Trusted CAs uploaded in Server Settings join this
+  // process's default TLS trust store — every role, before any job connects
+  // out, re-read on a timer so an upload on the web role reaches the others.
+  // Never throws.
+  {
+    const { refreshTrustedCas, TRUSTED_CA_REFRESH_MS } = await import("./services/trustedCaService.js");
+    await refreshTrustedCas();
+    setInterval(() => { void refreshTrustedCas(); }, TRUSTED_CA_REFRESH_MS).unref();
+  }
+
   // Install the operator's Sources-column (learned-location) priority into this
   // process's projection before anything projects. Every role does this: the
   // web role projects on the asset-detail + agent-enroll paths, the discovery

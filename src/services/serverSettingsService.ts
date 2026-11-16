@@ -8,6 +8,7 @@ import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { isValidTimeZone } from "./userTimezoneService.js";
+import { refreshTrustedCas } from "./trustedCaService.js";
 
 // ─── Server timezone (business rule 170) ───────────────────────────────────
 //
@@ -159,6 +160,7 @@ export async function addCertificate(
   category: "ca" | "server",
   filename: string,
   pemContent: string,
+  actor?: string,
 ): Promise<CertificateRecord> {
   const row = await prisma.setting.findUnique({ where: { key: CERTS_KEY } });
   const certs: CertificateRecord[] = row
@@ -188,10 +190,26 @@ export async function addCertificate(
   });
 
   logger.info({ id: record.id, name: filename, category }, "Certificate uploaded");
+  // Business rule 188: a CA reaches this process's TLS trust store at once;
+  // the other roles pick it up on their refresh tick.
+  if (category === "ca") {
+    await refreshTrustedCas();
+    // Adding trust is security-relevant: audited (it was not before 2026-11-16).
+    await logEvent({
+      action: "certificate.ca_added",
+      resourceType: "setting",
+      resourceId: record.id,
+      resourceName: filename,
+      actor,
+      level: "warning",
+      message: `Trusted CA "${filename}" added — integrations now trust servers it signed`,
+      details: { subject },
+    });
+  }
   return record;
 }
 
-export async function deleteCertificate(id: string): Promise<void> {
+export async function deleteCertificate(id: string, actor?: string): Promise<void> {
   const row = await prisma.setting.findUnique({ where: { key: CERTS_KEY } });
   if (!row) return;
 
@@ -205,6 +223,20 @@ export async function deleteCertificate(id: string): Promise<void> {
   });
 
   logger.info({ id }, "Certificate deleted");
+  const gone = (row.value as any as CertificateRecord[]).find((c) => c.id === id);
+  if (gone?.category === "ca") {
+    await refreshTrustedCas();
+    await logEvent({
+      action: "certificate.ca_removed",
+      resourceType: "setting",
+      resourceId: id,
+      resourceName: gone.name,
+      actor,
+      level: "warning",
+      message: `Trusted CA "${gone.name}" removed — integrations stop trusting servers it signed`,
+      details: { subject: gone.subject },
+    });
+  }
 }
 
 function extractSubject(pem: string): string | null {

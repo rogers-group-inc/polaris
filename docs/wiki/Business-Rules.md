@@ -3812,3 +3812,14 @@ certificate: against the CA file you name, or else against the system's trusted 
 any you uploaded under [Server Settings → Trusted Certificate Authorities](Server-Settings#trusted-certificate-authorities).
 A problem reaching the syslog server is written to the Polaris log, not to Events. Every Polaris
 process forwards its own events and picks up a settings change within about 30 seconds.
+
+### Rule 188
+
+**A CA you upload is trusted in addition to the built-in ones, by every connection that checks a server's certificate.**
+Upload your internal CA under [Server Settings → Trusted Certificate Authorities](Server-Settings#trusted-certificate-authorities)
+and integrations (FortiManager, FortiGate, vCenter, Proxmox, TrueNAS, Unraid, LDAPS, the Generic
+API, the AI assistant), syslog over TLS, email and sign-in providers all accept servers it signed,
+so you can leave TLS verification on. The built-in authorities stay trusted, and a connection with
+verification turned off is not affected. Every Polaris process picks up a change within about 30
+seconds. Adding or removing a CA is recorded in Events. The SFTP / SCP event archive is not
+affected: SSH trusts a server by its host key.
