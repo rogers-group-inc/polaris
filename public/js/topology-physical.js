@@ -131,13 +131,14 @@
 
   // How a floor looks from the floor being viewed (d = its level − the
   // viewed one): itself at 100 %, one up 5 %, two up 2 %, anything higher or
-  // lower hidden. Every floor is drawn at its true size and place — no
-  // parallax (operator decision 2026-11-16); `scale` stays 1 for the panes.
+  // lower hidden; floors above drawn 25 % bigger per floor, below 25 % smaller
+  // (the zoom, kept by operator decision 2026-11-16 — but never while a plan
+  // is being lined up: see lookFor).
   var FLOOR_OPACITY = { 0: 1, 1: 0.05, 2: 0.02 };
   function floorLook(d) {
     return {
       opacity: d >= 0 && FLOOR_OPACITY[d] !== undefined ? FLOOR_OPACITY[d] : 0,
-      scale: 1,
+      scale: d > 0 ? Math.pow(1.25, d) : d < 0 ? Math.pow(0.75, -d) : 1,
     };
   }
   // A link between floors fades from one end's opacity to the other's.
@@ -619,6 +620,7 @@
       applyFloorLook(false);
       drawCrossLinks();
       paintSelected();
+      paintCenter();
       if (arcgisLayers) arcgisLayers.draw();
     }
     function drawFloor(level) {
@@ -689,7 +691,7 @@
     var trans = null;
     function easeInOut(k) { return k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; }
     function lookNow(level) {
-      var to = floorLook(level - state.layer);
+      var to = lookFor(level);
       if (!trans) return to;
       var k = easeInOut(Math.min(1, (performance.now() - trans.t0) / FADE_MS));
       var fr = floorLook(level - trans.from);
@@ -715,9 +717,12 @@
     // above it that show at all, and the ground) are drawn at this strength
     // instead of 10 % / 2 % (operator request 2026-11-16).
     var ADJUST_REF_OPACITY = 0.35;
+    // While a plan is lined up there is no zoom between floors (operator
+    // decision 2026-11-16): every floor at its true size, so features line
+    // up across the whole screen, not only at the centre.
     function lookFor(level) {
       var look = floorLook(level - state.layer);
-      if (adjust && level !== state.layer && look.opacity > 0) look = { opacity: Math.max(look.opacity, ADJUST_REF_OPACITY), scale: look.scale };
+      if (adjust) look = { opacity: level !== state.layer && look.opacity > 0 ? Math.max(look.opacity, ADJUST_REF_OPACITY) : look.opacity, scale: 1 };
       return look;
     }
     function applyFloorLook(animate) {
@@ -778,6 +783,12 @@
       trans = null;
       drawCrossLinks();
     }
+    // The centre the floors scale about, marked while the view has floors.
+    var centerMark = document.createElement("div");
+    centerMark.className = "topo-floor-center";
+    centerMark.setAttribute("aria-hidden", "true");
+    // Hidden while a plan is lined up: there is no zoom then, so no centre to mark.
+    function paintCenter() { centerMark.hidden = !state.layers.length || !!adjust; }
 
     // ── Polygons ────────────────────────────────────────────────────────
     function polygonColor(p) {
@@ -1539,7 +1550,7 @@
         var share = Math.round(overlapShare(a.ext, l.background.cad.ext) * 100);
         places.push({ v: "lineup:" + l.level, t: "Line up with " + esc(layerName(l.level)), d: "Uses its placement: right when both drawings share coordinates, as levels from one survey do. They overlap " + share + " %." });
       });
-      places.push({ v: "hand", t: "Line it up by hand", d: "Drag, stretch and turn it until it lines up with the floor above; right-drag moves the map." });
+      places.push({ v: "hand", t: "Line it up by hand", d: "Drag, stretch and turn it until it lines up with the floor above; right-drag moves the map. Floors keep their true size while you line up." });
       places.push({ v: "two", t: "Place with two points", d: "Click two places on the drawing, then the same two on the map." });
       var placeHtml = places.map(function (p, i) {
         return '<label class="topo-cad-place-opt"><input type="radio" name="topo-cad-place" value="' + esc(p.v) + '"' + (i === 0 ? " checked" : "") + '>' +
@@ -1775,6 +1786,7 @@
       adjust.bar.className = "topo-plan-bar";
       adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
         '<span class="hint" style="margin:0">Drag to move it · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates · right-drag moves the map</span>' +
+        '<span class="hint" style="margin:0">Floors are at their true size while you line up, so they match across the whole screen.</span>' +
         '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
       host.appendChild(adjust.bar);
@@ -1795,6 +1807,8 @@
       mapEl.addEventListener("contextmenu", noMenu, true);
       host.classList.add("is-adjusting");
       applyFloorLook(true);
+      paintCenter();
+      drawCrossLinks();
       drawAdjustShapes();
     }
     function noMenu(e) { e.preventDefault(); e.stopPropagation(); }
@@ -1806,7 +1820,7 @@
       if (adjust.bar.parentNode) adjust.bar.parentNode.removeChild(adjust.bar);
       host.classList.remove("is-adjusting");
       adjust = null;
-      if (map) { map.dragging.enable(); map.doubleClickZoom.enable(); applyFloorLook(true); }
+      if (map) { map.dragging.enable(); map.doubleClickZoom.enable(); applyFloorLook(true); paintCenter(); drawCrossLinks(); }
     }
     function drawAdjustShapes() {
       if (!adjust) return;
@@ -2034,6 +2048,7 @@
         requestAnimationFrame(tickCross);
       }
       paintLayerCtl();
+      paintCenter();
       ctx.refreshSidebar();
     }
     layerCtl.addEventListener("click", function (e) {
@@ -2202,6 +2217,7 @@
         })
       : null;
 
+    host.appendChild(centerMark);
     buildMap();
     setEditing(state.editing);
     if (arcgisLayers) arcgisLayers.load();
