@@ -959,7 +959,7 @@
 }
 .topo-link-handle.is-end { border-radius: 50%; }
 .topo-link-handle.is-selected { background: var(--color-accent); }
-/* Rule 184(a): a routed link's handle on each run it rides (drag off to leave the run). */
+/* Rule 188(a): a routed link's handle on each run it rides (drag off to leave the run). */
 .topo-link-handle.is-run { border-radius: 50%; border-width: 3px; }
 .topo-room-hull-label span {
   display: inline-block; transform: translate(-50%, -110%); white-space: nowrap;
@@ -1070,38 +1070,47 @@
 .topo-phys-layer-switch button + button { border-left: 1px solid var(--color-border); }
 .topo-phys-layer-switch button:hover { background: var(--color-surface); color: var(--color-text-primary); }
 .topo-phys-layer-switch button.is-on { background: var(--color-accent); color: #fff; }
-/* Cable runs (business rule 184, topology-cable-runs.js). Placement is the
-   colour, medium the dash (set per line); the legend names both, so colour is
-   never the only cue. Classes, not inline strokes: an SVG presentation
+/* ArcGIS layers (business rule 188, topology-arcgis-layers.js), read only.
+   Each layer picks a colour NAME (mapped here to a theme token), a width and a
+   dash; the legend and the Map layers card name every shown layer, so colour
+   is never the only cue. Classes, not inline strokes: an SVG presentation
    attribute cannot read a CSS variable. */
-path.topo-run, .topo-run-legend line { fill: none; stroke-width: 4; stroke-linecap: round; }
-path.topo-run-trench,         .topo-run-legend .topo-run-trench         { stroke: var(--color-accent); }
-path.topo-run-electric_pole,  .topo-run-legend .topo-run-electric_pole  { stroke: var(--color-sev-serious); }
-path.topo-run-telephone_pole, .topo-run-legend .topo-run-telephone_pole { stroke: var(--color-success); }
-.topo-run-legend .topo-run-medium { stroke: var(--color-text-secondary); stroke-width: 3; }
-path.topo-run-selected { filter: drop-shadow(0 0 3px var(--color-text-primary)); }
-path.topo-run-pole { fill: var(--color-bg-secondary); stroke: var(--color-text-primary); }
-.topo-run-panel, .topo-run-legend {
+.topo-arc-c-accent { --arc: var(--color-accent); }
+.topo-arc-c-orange { --arc: var(--color-sev-serious); }
+.topo-arc-c-green  { --arc: var(--color-success); }
+.topo-arc-c-yellow { --arc: var(--color-warning); }
+.topo-arc-c-grey   { --arc: var(--color-sev-notice); }
+.topo-arc-c-red    { --arc: var(--color-danger); }
+path.topo-arc-line, line.topo-arc-line, line.topo-arc-area { fill: none; stroke: var(--arc); stroke-linecap: round; }
+path.topo-arc-area { stroke: var(--arc); fill: var(--arc); fill-opacity: 0.08; }
+path.topo-arc-point, circle.topo-arc-point { stroke: var(--color-bg-secondary); fill: var(--arc); fill-opacity: 1; }
+path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
+.topo-arc-label {
+  background: none; border: none; box-shadow: none; padding: 0;
+  color: var(--color-text-primary); font: 600 0.7rem var(--font-sans);
+  text-shadow: 0 0 3px var(--color-bg-secondary), 0 0 3px var(--color-bg-secondary);
+}
+.topo-arc-label::before { display: none; }
+.topo-arc-legend {
   background: var(--color-surface);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border) !important;
   border-radius: var(--radius-md) !important;
   box-shadow: var(--shadow-md) !important;
   font: 0.8rem var(--font-sans);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
 }
-.topo-run-panel { width: 280px; padding: 10px 12px; max-height: 70vh; overflow: auto; }
-.topo-run-panel .form-group { margin-bottom: 8px; }
-.topo-run-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.topo-run-panel-head h4 { margin: 0; font-size: 0.9rem; }
-.topo-run-seg { display: flex; flex-wrap: wrap; gap: 4px; }
-.topo-run-facts { display: flex; gap: 18px; margin-bottom: 8px; }
-.topo-run-facts > div { display: flex; flex-direction: column; gap: 2px; }
-.topo-run-sync { margin-bottom: 8px; }
-.topo-run-riders { margin: 0 0 4px; padding-left: 18px; font-size: 0.85rem; }
-.topo-run-legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
-.topo-run-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
-.topo-run-legend-row { display: flex; align-items: center; gap: 8px; }
-.topo-run-legend-rule { height: 1px; background: var(--color-border-light); margin: 2px 0; }
+.topo-arc-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
+.topo-arc-legend-row { display: flex; align-items: center; gap: 8px; }
+.topo-arc-popup .leaflet-popup-content-wrapper { background: var(--color-surface); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+.topo-arc-popup .leaflet-popup-tip { background: var(--color-surface); }
+.topo-arc-card { display: flex; flex-direction: column; gap: 6px; font: 0.82rem var(--font-sans); }
+.topo-arc-card .hint { margin: 0; }
+.topo-arc-card-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; }
+.topo-arc-card-riders { border-top: 1px solid var(--color-border-light); padding-top: 6px; }
+.topology-arc-layers .topology-arc-row { display: flex; align-items: center; gap: 8px; margin: 4px 4px; font-weight: 400; cursor: pointer; }
+.topology-arc-layers .topology-arc-row input { width: auto; margin: 0; }
+.topology-arc-layers p { margin: 6px 4px 0; font-size: 0.78rem; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

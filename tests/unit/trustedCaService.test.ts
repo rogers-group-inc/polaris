@@ -1,5 +1,5 @@
 /**
- * tests/unit/trustedCaService.test.ts — business rule 188: uploaded CAs join
+ * tests/unit/trustedCaService.test.ts — business rule 189: uploaded CAs join
  * the process's default TLS trust store, on top of the ORIGINAL default,
  * applied once per distinct list, malformed PEMs skipped, never throwing.
  * node:tls and X509Certificate are mocked — the real store is never touched.

@@ -614,7 +614,7 @@ function showTypePicker() {
       '</button>' +
       '<button class="btn btn-secondary" id="pick-arcgis" style="padding:1.2rem;font-size:0.95rem;display:flex;flex-direction:column;align-items:center;gap:6px;white-space:normal;text-align:center">' +
         '<strong>ArcGIS</strong>' +
-        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Satellite imagery &amp; cable runs via ArcGIS Online or Enterprise</span>' +
+        '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">Satellite imagery &amp; map layers from ArcGIS Online or Enterprise</span>' +
       '</button>' +
     '</div>';
   var footer = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>';
@@ -885,12 +885,12 @@ function _integrationTabs(ctx) {
   }
 
   // ArcGIS: the sign-in, then what it is used for (rule 183's basemap, rule
-  // 185's cable-run write-back).
+  // 184's layers, read only).
   if (type === "arcgis") {
     return [
       { key: "general", label: "General", html: ctx.generalHtml },
       { key: "basemap", label: "Basemap", html: arcgisBasemapHTML(Object.assign({}, defaults, config)) },
-      { key: "writeback", label: "Write-back", html: arcgisWriteBackHTML(Object.assign({}, defaults, config, { id: ctx.id || null })) },
+      { key: "layers", label: "Layers", html: arcgisLayersHTML(Object.assign({}, defaults, config)) },
     ];
   }
 
@@ -965,108 +965,202 @@ function _wireArcgisForm() {
 }
 
 /**
- * ArcGIS Write-back tab (business rule 185): Read layer fills the field map's
- * pickers and the value maps from the layer; Create layer makes a Polaris
- * layer (a saved integration only); the strip shows runs by sync state.
+ * ArcGIS Layers tab (business rule 188): search the portal (or paste a layer
+ * URL), add a layer, and edit the picked layer's style, fields and filter.
+ * The list is _arcgisDraft (integrations-forms.js); Save sends it.
  */
-function _wireArcgisWriteBack(id) {
-  var readBtn = document.getElementById("wb-read");
-  if (!readBtn) return;
-  var layerFields = null;
-  function current() { return getArcgisWriteBackConfig() || {}; }
-  function repaintMaps() {
-    var c = current();
-    document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(c.fieldMap, layerFields);
-    document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+function _wireArcgisLayers(id) {
+  var results = document.getElementById("arc-results");
+  if (!results) return;
+  var scope = "org";
+  var items = [];
+  var subLayers = {};      // itemId → [{ id, name, geometry, url }]
+  var openItem = null;
+
+  function draftConfig() {
+    var c = getArcgisFormConfig();
+    delete c.layers;
+    return c;
   }
-  // A changed Medium / Placement field re-draws its value map.
-  document.getElementById("wb-fieldmap").addEventListener("change", function (e) {
-    var a = e.target && e.target.getAttribute && e.target.getAttribute("data-wb-attr");
-    if (a === "medium" || a === "placement") {
-      var c = current();
-      document.getElementById("wb-valuemap").innerHTML = arcgisValueMapHTML(c.fieldMap, c.valueMap, layerFields);
+  function body(extra) { return Object.assign({ id: id || undefined, config: draftConfig() }, extra); }
+  function fail(what, err) { showToast(what + " — " + (err && err.message ? err.message : String(err)), "error"); }
+  function addedUrl(url) {
+    var u = String(url).replace(/\/+$/, "").toLowerCase();
+    return _arcgisDraft.layers.some(function (l) { return String(l.url).replace(/\/+$/, "").toLowerCase() === u; });
+  }
+
+  function paintResults() {
+    if (!items.length) {
+      results.innerHTML = '<tr><td colspan="2" class="empty-state">No feature layers found.</td></tr>';
+      return;
+    }
+    results.innerHTML = items.map(function (it) {
+      var row = '<tr><td><div>' + escapeHtml(it.title) + '</div><div class="hint">Feature layer · ' + escapeHtml(it.owner) +
+        (it.modified ? ' · updated ' + escapeHtml(String(it.modified).slice(0, 10)) : '') + '</div></td>' +
+        '<td><button type="button" class="btn btn-sm btn-secondary" data-arc-open="' + escapeHtml(it.itemId) + '">' + (openItem === it.itemId ? "Hide" : "Layers") + '</button></td></tr>';
+      if (openItem !== it.itemId) return row;
+      var subs = subLayers[it.itemId];
+      if (!subs) return row + '<tr><td colspan="2" class="hint">Reading the service…</td></tr>';
+      if (!subs.length) return row + '<tr><td colspan="2" class="hint">This service has no map layers.</td></tr>';
+      return row + subs.map(function (s) {
+        var done = addedUrl(s.url);
+        return '<tr><td style="padding-left:24px">' + escapeHtml(s.name) + ' <span class="badge badge-readonly">' + escapeHtml(ARCGIS_GEOMETRY_LABEL[s.geometry] || "Table") + '</span></td>' +
+          '<td><button type="button" class="btn btn-sm btn-secondary" data-arc-add="' + escapeHtml(s.url) + '" data-arc-item="' + escapeHtml(it.itemId) + '"' +
+          (done || !s.geometry ? ' disabled' : '') + '>' + (done ? "Added" : "Add") + '</button></td></tr>';
+      }).join("");
+    }).join("");
+  }
+
+  function paintSelected() {
+    document.getElementById("arc-selected").innerHTML = arcgisSelectedRowsHTML();
+    document.getElementById("arc-editor").innerHTML = arcgisEditorHTML();
+    document.getElementById("arc-count").textContent = "Layers Polaris reads (" + _arcgisDraft.layers.length + ")";
+    wireEditor();
+    loadFields();
+    if (items.length) paintResults();
+  }
+
+  // The picked layer's fields come from its description (read once per open dialog).
+  function loadFields() {
+    var l = _arcgisDraft.layers[_arcgisDraft.selected];
+    if (!l || _arcgisDraft.fields[l.id]) return;
+    _arcgisDraft.fields[l.id] = null;
+    api.integrations.arcgisReadLayer(body({ url: l.url })).then(function (res) {
+      _arcgisDraft.fields[l.id] = (res.layer && res.layer.fields) || [];
+      if (_arcgisDraft.layers[_arcgisDraft.selected] === l) {
+        document.getElementById("arc-editor").innerHTML = arcgisEditorHTML();
+        wireEditor();
+      }
+    }).catch(function (err) {
+      delete _arcgisDraft.fields[l.id];
+      fail("Could not read " + l.title, err);
+    });
+  }
+
+  function addLayer(url, itemId, title) {
+    api.integrations.arcgisReadLayer(body({ url: url, itemId: itemId || undefined, title: title || undefined })).then(function (res) {
+      if (!res.entry) { showToast("That layer has no map geometry (it is a table)", "error"); return; }
+      if (addedUrl(res.entry.url)) { showToast("That layer is already in the list", "error"); return; }
+      _arcgisDraft.layers.push(res.entry);
+      _arcgisDraft.fields[res.entry.id] = (res.layer && res.layer.fields) || [];
+      _arcgisDraft.selected = _arcgisDraft.layers.length - 1;
+      paintSelected();
+    }).catch(function (err) { fail("Layer not added", err); });
+  }
+
+  function search() {
+    var q = document.getElementById("arc-q").value.trim();
+    results.innerHTML = '<tr><td colspan="2" class="empty-state">Searching…</td></tr>';
+    api.integrations.arcgisSearch(body({ q: q || undefined, scope: scope })).then(function (res) {
+      items = res.items || [];
+      openItem = null;
+      document.getElementById("arc-results-hint").textContent = items.length < (res.total || 0)
+        ? "The " + items.length + " most recently updated of " + res.total + " — narrow the search to find others."
+        : "Lists only feature layers this integration's sign-in can see.";
+      paintResults();
+    }).catch(function (err) {
+      results.innerHTML = '<tr><td colspan="2" class="empty-state">Search failed.</td></tr>';
+      fail("Search failed", err);
+    });
+  }
+
+  function wireEditor() {
+    var l = _arcgisDraft.layers[_arcgisDraft.selected];
+    var ed = document.getElementById("arc-editor");
+    if (!l || !ed) return;
+    function repaintList() { document.getElementById("arc-selected").innerHTML = arcgisSelectedRowsHTML(); }
+    var title = document.getElementById("arc-title");
+    title.addEventListener("change", function () { l.title = title.value.trim() || l.title; repaintList(); });
+    Array.prototype.forEach.call(ed.querySelectorAll("[data-arc-color]"), function (b) {
+      b.addEventListener("click", function () {
+        l.style.color = b.getAttribute("data-arc-color");
+        ed.innerHTML = arcgisEditorHTML(); wireEditor(); repaintList();
+      });
+    });
+    document.getElementById("arc-width").addEventListener("change", function (e) { l.style.width = parseInt(e.target.value, 10) || 3; repaintList(); });
+    document.getElementById("arc-dash").addEventListener("change", function (e) { l.style.dash = e.target.value; repaintList(); });
+    document.getElementById("arc-label").addEventListener("change", function (e) { l.labelField = e.target.value || undefined; repaintList(); });
+    document.getElementById("arc-idfield").addEventListener("change", function (e) { l.idField = e.target.value; });
+    document.getElementById("arc-where").addEventListener("change", function (e) { l.where = e.target.value.trim() || undefined; repaintList(); });
+    var add = document.getElementById("arc-popup-add");
+    if (add) add.addEventListener("change", function () {
+      var f = (_arcgisDraft.fields[l.id] || []).filter(function (x) { return x.name === add.value; })[0];
+      if (!f) return;
+      if ((l.popupFields || []).length >= 10) { showToast("At most 10 fields are shown", "error"); return; }
+      l.popupFields = (l.popupFields || []).concat([{ name: f.name, alias: f.alias || f.name }]);
+      ed.innerHTML = arcgisEditorHTML(); wireEditor();
+    });
+    Array.prototype.forEach.call(ed.querySelectorAll("[data-arc-unpop]"), function (b) {
+      b.addEventListener("click", function () {
+        l.popupFields.splice(Number(b.getAttribute("data-arc-unpop")), 1);
+        ed.innerHTML = arcgisEditorHTML(); wireEditor();
+      });
+    });
+  }
+
+  // Scope buttons: organization / my content search, or paste a URL.
+  Array.prototype.forEach.call(document.querySelectorAll("[data-arc-scope]"), function (b) {
+    b.addEventListener("click", function () {
+      scope = b.getAttribute("data-arc-scope");
+      Array.prototype.forEach.call(document.querySelectorAll("[data-arc-scope]"), function (x) {
+        x.classList.toggle("btn-primary", x === b);
+        x.classList.toggle("btn-secondary", x !== b);
+      });
+      document.getElementById("arc-url-row").hidden = scope !== "url";
+      document.getElementById("arc-search-row").hidden = scope === "url";
+    });
+  });
+  document.getElementById("arc-search").addEventListener("click", search);
+  document.getElementById("arc-q").addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); search(); } });
+  document.getElementById("arc-url-read").addEventListener("click", function () {
+    var url = document.getElementById("arc-url").value.trim();
+    if (url) addLayer(url);
+  });
+
+  results.addEventListener("click", function (e) {
+    var open = e.target.closest("[data-arc-open]");
+    if (open) {
+      var itemId = open.getAttribute("data-arc-open");
+      openItem = openItem === itemId ? null : itemId;
+      paintResults();
+      var it = items.filter(function (x) { return x.itemId === itemId; })[0];
+      if (openItem && it && !subLayers[itemId]) {
+        api.integrations.arcgisServiceLayers(body({ url: it.url })).then(function (res) {
+          subLayers[itemId] = res.layers || [];
+          paintResults();
+        }).catch(function (err) { openItem = null; paintResults(); fail("Could not read " + it.title, err); });
+      }
+      return;
+    }
+    var add = e.target.closest("[data-arc-add]");
+    if (add && !add.disabled) {
+      var item = items.filter(function (x) { return x.itemId === add.getAttribute("data-arc-item"); })[0];
+      var sub = item && (subLayers[item.itemId] || []).filter(function (s) { return s.url === add.getAttribute("data-arc-add"); })[0];
+      addLayer(add.getAttribute("data-arc-add"), item && item.itemId, sub && item ? (item.title === sub.name ? sub.name : item.title + " — " + sub.name) : undefined);
     }
   });
-  var modeRadios = document.querySelectorAll('input[name="f-writeBackMode"]');
-  function paintMode() {
-    var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
-    var block = document.querySelector('[data-wb-mode="polaris"]');
-    if (block) block.hidden = !picked || picked.value !== "polaris";
-  }
-  for (var i = 0; i < modeRadios.length; i++) modeRadios[i].addEventListener("change", paintMode);
-  paintMode();
 
-  function badge(cls, text) { return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>'; }
-  function readLayer() {
-    var info = document.getElementById("wb-layer-info");
-    return api.integrations.arcgisReadLayer({ id: id || undefined, config: getArcgisFormConfig() }).then(function (res) {
-      var L = res.layer;
-      layerFields = L.fields;
-      var caps = ["Create", "Update", "Delete"].map(function (c) {
-        var ok = L.capabilities.indexOf(c) !== -1 || L.capabilities.indexOf("Editing") !== -1;
-        return badge(ok ? "badge-active" : "badge-conflict", c);
-      }).join("");
-      info.innerHTML = badge("badge-readonly", L.geometryType === "esriGeometryPolyline" ? "Polyline" : (L.geometryType || "No geometry").replace("esriGeometry", "")) +
-        (L.hasZ ? badge("badge-readonly", "Z values") : "") + caps +
-        '<span class="hint" style="margin:0">&ldquo;' + escapeHtml(L.name) + '&rdquo; · ' + L.fields.length + ' fields</span>' +
-        (res.problems || []).concat(res.warnings || []).map(function (p, k) {
-          return '<p class="hint" style="width:100%;margin:2px 0;color:' + (k < (res.problems || []).length ? "var(--color-danger)" : "var(--color-text-secondary)") + '">' + escapeHtml(p) + '</p>';
-        }).join("");
-      repaintMaps();
-    }).catch(function (err) {
-      info.innerHTML = '<p class="hint" style="margin:0;color:var(--color-danger)">' + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
-    });
-  }
-  readBtn.addEventListener("click", readLayer);
+  document.getElementById("arc-selected").addEventListener("click", function (e) {
+    var rm = e.target.closest("[data-arc-remove]");
+    if (rm) {
+      var i = Number(rm.getAttribute("data-arc-remove"));
+      _arcgisDraft.layers.splice(i, 1);
+      if (_arcgisDraft.selected >= _arcgisDraft.layers.length) _arcgisDraft.selected = _arcgisDraft.layers.length - 1;
+      paintSelected();
+      return;
+    }
+    var row = e.target.closest("[data-arc-pick]");
+    if (row) { _arcgisDraft.selected = Number(row.getAttribute("data-arc-pick")); paintSelected(); }
+  });
 
-  var createBtn = document.getElementById("wb-create");
-  if (createBtn && id) {
-    createBtn.addEventListener("click", function () {
-      var name = val("f-wbServiceName");
-      createBtn.disabled = true;
-      api.integrations.arcgisCreateLayer(id, name).then(function (res) {
-        document.getElementById("f-featureLayerUrl").value = res.featureLayerUrl;
-        document.getElementById("wb-fieldmap").innerHTML = arcgisFieldMapRowsHTML(res.fieldMap, null);
-        showToast("Layer created — its URL and field map are filled in. Save to keep them.");
-        return readLayer();
-      }).catch(function (err) {
-        showToast("Layer not created — " + (err && err.message ? err.message : String(err)), "error");
-      }).then(function () { createBtn.disabled = false; });
-    });
-  }
-
-  // The runs by sync state (a saved integration only).
-  var strip = document.getElementById("wb-status");
-  if (!id || !strip) return;
-  function paintStatus() {
-    api.integrations.arcgisWriteBack(id).then(function (s) {
-      var c = s.counts || {};
-      if (!s.writing && !c.synced && !c.pending && !c.failed) { strip.innerHTML = ""; return; }
-      var canRetry = c.failed > 0 && typeof permAtLeast === "function" && permAtLeast("cableRuns", "fullwrite");
-      strip.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--color-bg-primary);border:1px solid var(--color-border-light);border-radius:var(--radius-md);flex-wrap:wrap">' +
-        badge("badge-active", (c.synced || 0) + " synced") + badge("badge-expired", (c.pending || 0) + " pending") + badge("badge-conflict", (c.failed || 0) + " failed") +
-        '<span style="font-size:12px;color:var(--color-text-secondary);flex-grow:1">' + (s.lastError ? "Failed: &ldquo;" + escapeHtml(s.lastError) + "&rdquo;" : (s.writing ? "" : "Write-back is off")) + '</span>' +
-        (canRetry ? '<button type="button" class="btn btn-sm btn-secondary" id="wb-retry">Retry failed</button>' : '') + '</div>';
-      var retry = document.getElementById("wb-retry");
-      if (retry) retry.addEventListener("click", function () {
-        retry.disabled = true;
-        api.integrations.arcgisRetryFailed(id).then(function (r) {
-          showToast(r.queued + " run(s) queued to be sent again");
-          paintStatus();
-        }).catch(function (err) {
-          retry.disabled = false;
-          showToast("Not retried — " + (err && err.message ? err.message : String(err)), "error");
-        });
-      });
-    }).catch(function () { strip.innerHTML = ""; });
-  }
-  paintStatus();
+  wireEditor();
+  loadFields();
 }
 
 /** The per-type wiring both flows run after the modal is in the DOM. */
 function _wireIntegrationModal(type, id) {
   if (type === "llm") { _wireLlmForm(id); return; }
-  if (type === "arcgis") { _wireArcgisForm(); _wireArcgisWriteBack(id); return; }
+  if (type === "arcgis") { _wireArcgisForm(); _wireArcgisLayers(id); return; }
   if (type === "genericapi") { _wireGenericApiForm(id); return; }
   var isFmgOrFgt = (type === "fortimanager" || type === "fortigate");
   if (isFmgOrFgt) {
@@ -1450,11 +1544,7 @@ function _intgEditFormSpec(intg, config) {
         imageryUrl: config.imageryUrl,
         basemapAttribution: config.basemapAttribution,
         basemapMaxZoom: config.basemapMaxZoom,
-        writeBackEnabled: config.writeBackEnabled === true,
-        writeBackMode: config.writeBackMode,
-        featureLayerUrl: config.featureLayerUrl,
-        fieldMap: config.fieldMap,
-        valueMap: config.valueMap,
+        layers: Array.isArray(config.layers) ? config.layers : [],
         apiTokenPlaceholder: config.apiToken ? "Leave blank to keep the current key" : "API key",
         clientSecretPlaceholder: config.clientSecret ? "Leave blank to keep the current secret" : "Client secret",
         passwordPlaceholder: config.password ? "Leave blank to keep the current password" : "Password",

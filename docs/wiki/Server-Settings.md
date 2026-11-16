@@ -478,7 +478,7 @@ are reloaded. See [Primary IPv6](Assets#primary-ipv6).
 
 Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris should trust
 when it checks a server's TLS certificate — on top of the built-in trusted
-authorities, never instead of them ([rule 188](Business-Rules#rule-188)). They
+authorities, never instead of them ([rule 189](Business-Rules#rule-189)). They
 apply to every connection that verifies its server: integrations (FortiManager,
 FortiGate, vCenter, Proxmox, TrueNAS, Unraid, LDAPS, the Generic API, the AI
 assistant), syslog over TLS, email and sign-in providers. This is how you let

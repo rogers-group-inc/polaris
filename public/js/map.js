@@ -1753,19 +1753,14 @@
         if (codes) _editStaged.locationCodes[assetId] = { codes: codes, name: info && info.name, from: info && info.from, levels: (info && info.levels) || null };
         else delete _editStaged.locationCodes[assetId];
       },
-      // Cable runs (rule 184): their own key, never deviceMap. Null without
-      // cableRuns read, so the canvas draws no run layer at all.
-      fetchCableRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "read")
-        ? function () { return api.map.cableRuns(topoState.siteId); }
-        : null,
-      canDrawRuns: typeof permAtLeast === "function" && permAtLeast("cableRuns", "write"),
-      stageCableRuns: function (edits) {
-        if (!_editSessionActive()) return false;
-        _editStaged.cableRuns = edits;
-        return true;
-      },
-      // Rule 184(a): which runs each link rides — Polaris-only layout, sent
-      // on the view gate (deviceMap write), after the runs PUT.
+      // ArcGIS layers (rule 188), read only: the configured layers, their
+      // features in view (the token stays on the server), and which lines
+      // the site's links ride.
+      fetchArcgisLayers: function () { return api.map.arcgisLayers(); },
+      fetchArcgisFeatures: function (layerId, params) { return api.map.arcgisFeatures(layerId, params); },
+      fetchCableRunLinks: function () { return api.map.cableRunLinks(topoState.siteId); },
+      // Rule 188(a): which ArcGIS lines each link rides — Polaris-only
+      // layout, sent on the view gate (deviceMap write).
       stageCableRunLinks: function (changes) {
         if (!_editSessionActive()) return false;
         _editStaged.cableRunLinks = changes;
@@ -3204,16 +3199,12 @@
     var had = Object.keys(session.views).length > 0 ||
       !!(session.viewPatch && Object.keys(session.viewPatch).length) ||
       !!(session.locationCodes && Object.keys(session.locationCodes).length) ||
-      _cableRunEditsPending(session.cableRuns) ||
       !!(session.cableRunLinks && Object.keys(session.cableRunLinks).length);
     var prefix = session.siteId + "|";
     Object.keys(_layoutDirty).forEach(function (k) {
       if (k.indexOf(prefix) === 0) { delete _layoutDirty[k]; had = true; }
     });
     return had;
-  }
-  function _cableRunEditsPending(edits) {
-    return !!(edits && ((edits.upserts && edits.upserts.length) || (edits.deletes && edits.deletes.length)));
   }
   // Land every staged view through the normal pipeline (localStorage + the
   // debounced PUT, flushed now) and start an empty session. Returns a promise
@@ -3226,38 +3217,21 @@
     if (cyInstance && !topoState.pathOverlay) saveNodePositions(siteId);
     var views = session.views;
     var viewPatch = session.viewPatch || {};
-    var runEdits = session.cableRuns;
     var linkEdits = session.cableRunLinks;
     _editStaged = { siteId: siteId, views: {}, viewPatch: {}, locationCodes: {} };
     var pending = [];
-    function reloadRuns() {
+    function reloadRoutes() {
       var inst = _modeInstance();
       if (inst && typeof inst.reloadCableRuns === "function" && topoState.siteId === siteId) inst.reloadCableRuns();
     }
-    // Cable runs (rule 184) land as one PUT of their own, on their own key.
-    var runsSaved = Promise.resolve();
-    if (_cableRunEditsPending(runEdits) && typeof permAtLeast === "function" && permAtLeast("cableRuns", "write")) {
-      runsSaved = api.map.saveCableRuns(siteId, runEdits).then(function (res) {
-        reloadRuns();
-        return res;
-      }).catch(function (err) {
-        if (typeof showToast === "function") {
-          showToast("Cable runs not saved — " + (err && err.message ? err.message : String(err)), "error");
-        }
-      });
-      pending.push(runsSaved);
-    }
-    // Rule 184(a): links routed through runs, after the runs (a run deleted
-    // this session is gone first), on the view gate.
+    // Rule 188(a): links routed through ArcGIS lines, on the view gate.
     if (linkEdits && Object.keys(linkEdits).length && _canEditViews()) {
-      pending.push(runsSaved.then(function () {
-        return api.map.saveCableRunLinks(siteId, linkEdits);
-      }).then(function (res) {
-        reloadRuns();
+      pending.push(api.map.saveCableRunLinks(siteId, linkEdits).then(function (res) {
+        reloadRoutes();
         return res;
       }).catch(function (err) {
         if (typeof showToast === "function") {
-          showToast("Links on cable runs not saved — " + (err && err.message ? err.message : String(err)), "error");
+          showToast("Connections on ArcGIS lines not saved — " + (err && err.message ? err.message : String(err)), "error");
         }
       }));
     }
@@ -3274,8 +3248,10 @@
         }
       }));
       // Until the PUT answers, the patch is what the view now is.
-      if (viewPatch.shownTypes) {
-        var copy = Object.assign({}, editedView, { shownTypes: viewPatch.shownTypes });
+      if (viewPatch.shownTypes || viewPatch.arcgisLayers) {
+        var copy = Object.assign({}, editedView,
+          viewPatch.shownTypes ? { shownTypes: viewPatch.shownTypes } : {},
+          viewPatch.arcgisLayers ? { arcgisLayers: viewPatch.arcgisLayers } : {});
         _replaceSiteView(copy);
       }
     }

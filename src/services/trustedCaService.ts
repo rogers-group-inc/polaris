@@ -1,7 +1,7 @@
 /**
  * src/services/trustedCaService.ts — the CAs uploaded under Server Settings →
  * Trusted Certificate Authorities, made part of THIS process's default TLS
- * trust store (business rule 188).
+ * trust store (business rule 189).
  *
  * `tls.setDefaultCACertificates()` replaces the store every TLS connection
  * uses when it names no `ca` of its own — node:https, tls.connect, undici's

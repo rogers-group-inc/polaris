@@ -1,6 +1,6 @@
 /**
  * public/js/cable-run-geometry.js — the geometry of a device link routed
- * through cable runs (business rule 184(a)).
+ * through ArcGIS lines (business rule 188(a)).
  *
  *   window.PolarisCableRunGeometry.route(S, T, runs) → [[lng, lat], ...]
  *

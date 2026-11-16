@@ -1175,7 +1175,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     setInterval(() => { void refreshProcessTimezone(); }, TIMEZONE_REFRESH_MS).unref();
   }
 
-  // Business rule 188: the Trusted CAs uploaded in Server Settings join this
+  // Business rule 189: the Trusted CAs uploaded in Server Settings join this
   // process's default TLS trust store — every role, before any job connects
   // out, re-read on a timer so an upload on the web role reaches the others.
   // Never throws.
@@ -1392,9 +1392,6 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       "./jobs/dependencyReconciler.js",
       "./jobs/maintenanceScheduler.js",
       "./jobs/retryQueuedReservationPushes.js",
-      // Cable runs → the ArcGIS layer (business rule 185). Scheduler role
-      // only; a save also pushes at once, under the same advisory lock.
-      "./jobs/arcgisWriteBack.js",
       "./jobs/reconcileMapRegions.js",
       "./jobs/reconcileTagAssignments.js",
       "./jobs/reconcileAppMapAutoMap.js",

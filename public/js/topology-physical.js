@@ -619,7 +619,7 @@
       drawCrossLinks();
       paintSelected();
       paintCenter();
-      if (cableRuns) cableRuns.draw();
+      if (arcgisLayers) arcgisLayers.draw();
     }
     function drawFloor(level) {
       var f = floorPane(level);
@@ -1080,15 +1080,15 @@
       }
       return map.containerPointToLatLng(L.point(c.x + dir.x * END_PX, c.y + dir.y * END_PX));
     }
-    // Rule 184(a): a floor-0 link that rides cable runs is drawn through them
+    // Rule 188(a): a floor-0 link that rides ArcGIS lines is drawn through them
     // (cable-run-geometry.js), ignoring its bends and end directions. `alt`
     // previews a drag: { add: run } joins one more, { without: id } drops one.
     var G = window.PolarisCableRunGeometry || null;
     var SNAP_PX = 12;
     function routedRuns(e, level, alt) {
-      if (level !== 0 || !cableRuns || !G || !cableRuns.visible()) return null;
+      if (level !== 0 || !arcgisLayers || !G || !arcgisLayers.visible()) return null;
       var pk = pathKeyById[e.id];
-      var rs = pk ? cableRuns.linkRuns(pk) : [];
+      var rs = pk ? arcgisLayers.linkRuns(pk) : [];
       if (alt && alt.without) rs = rs.filter(function (r) { return r.id !== alt.without; });
       if (alt && alt.add && rs.indexOf(alt.add) === -1) rs = rs.concat([alt.add]);
       return rs.length ? rs : null;
@@ -1143,8 +1143,8 @@
       var start = map.mouseEventToContainerPoint(ev.originalEvent);
       var bendAt = null;
       var paths = pathsOf(level);
-      // Rule 184(a): over a cable run the drag previews the link routed
-      // through it (no bend); a link already riding runs never takes bends.
+      // Rule 188(a): over an ArcGIS line the drag previews the link routed
+      // through it (no bend); a link already riding lines never takes bends.
       var routed = isRouted(e, level);
       var moved = false;
       var hit = null;
@@ -1152,8 +1152,8 @@
         var cp = map.mouseEventToContainerPoint(mv);
         if (!moved && cp.distanceTo(start) < 4) return;
         moved = true;
-        hit = level === 0 && cableRuns && G ? cableRuns.hitRun(cp, SNAP_PX) : null;
-        if (cableRuns) cableRuns.highlight(hit ? hit.key : null);
+        hit = level === 0 && arcgisLayers && G ? arcgisLayers.hitRun(cp, SNAP_PX) : null;
+        if (arcgisLayers) arcgisLayers.highlight(hit ? hit.key : null);
         if (hit || routed) {
           if (bendAt !== null) { paths[pk].bends.splice(bendAt, 1); bendAt = null; linkSel = null; }
           previewRoute(e, level, hit ? { add: hit.run } : null);
@@ -1176,7 +1176,7 @@
         window.removeEventListener("pointermove", onMove, true);
         window.removeEventListener("pointerup", onUp, true);
         map.dragging.enable();
-        if (cableRuns) cableRuns.highlight(null);
+        if (arcgisLayers) arcgisLayers.highlight(null);
         if (!moved) return; // a plain click: the line's click handler selects it
         // The click the browser fires after this release would reach the
         // map's background click and drop the selection: swallow it.
@@ -1200,26 +1200,21 @@
       line.setStyle({ dashArray: previewing ? "5 4" : (line.options.baseDash || null) });
       if (!styleOnly) line.setLatLngs(linePoints(e, level, pathsOf(level)[pathKeyById[e.id]], alt));
     }
-    // Rule 184(a): drop a link onto a run (or move a run handle onto another):
-    // the link rides it from now on. Only a SAVED run has an id to ride.
+    // Rule 188(a): drop a link onto an ArcGIS line (or move a line handle onto
+    // another): the link rides it from now on.
     function attachRun(e, level, hit, replaceId) {
       var pk = pathKeyById[e.id];
-      if (!hit.id) {
-        ctx.toast("Save the view first — a new run can carry links once it has been saved", "error");
-        previewRoute(e, level, null);
-        return;
-      }
-      var ids = cableRuns.linkRunIds(pk).filter(function (x) { return x !== replaceId; });
+      var ids = arcgisLayers.linkRunIds(pk).filter(function (x) { return x !== replaceId; });
       if (ids.indexOf(hit.id) === -1) ids.push(hit.id);
-      if (!cableRuns.setLinkRuns(pk, ids)) previewRoute(e, level, null);
+      if (!arcgisLayers.setLinkRuns(pk, ids)) previewRoute(e, level, null);
       linkSel = { id: e.id, level: level, handle: null };
       drawHandles();
     }
     function detachRun(e, runId) {
       var pk = pathKeyById[e.id];
-      cableRuns.setLinkRuns(pk, cableRuns.linkRunIds(pk).filter(function (x) { return x !== runId; }));
+      arcgisLayers.setLinkRuns(pk, arcgisLayers.linkRunIds(pk).filter(function (x) { return x !== runId; }));
     }
-    // Runs moved, were removed or loaded, or a link's runs changed: redraw
+    // Lines loaded or a link's lines changed: redraw
     // every floor-0 line from its routes.
     function refreshRoutedLinks() {
       if (!map) return;
@@ -1251,18 +1246,18 @@
         var m = L.marker(L.latLng(mid[1], mid[0]), {
           draggable: true, keyboard: false, pane: "floor_links",
           icon: L.divIcon({ className: "topo-link-handle is-run" + (linkSel.handle === part ? " is-selected" : ""), iconSize: [14, 14], iconAnchor: [7, 7] }),
-          title: "Drag onto another run, or off the run to leave it",
+          title: "Drag onto another ArcGIS line, or off the line to leave it",
         });
         var over = null;
         m.on("click", function (ev) { L.DomEvent.stop(ev); linkSel.handle = part; drawHandles(); });
         m.on("dragstart", function () { linkSel.handle = part; });
         m.on("drag", function () {
-          over = cableRuns.hitRun(map.latLngToContainerPoint(m.getLatLng()), SNAP_PX);
-          cableRuns.highlight(over ? over.key : null);
+          over = arcgisLayers.hitRun(map.latLngToContainerPoint(m.getLatLng()), SNAP_PX);
+          arcgisLayers.highlight(over ? over.key : null);
           previewRoute(e, level, over && over.id === run.id ? null : { without: run.id, add: over ? over.run : null });
         });
         m.on("dragend", function () {
-          cableRuns.highlight(null);
+          arcgisLayers.highlight(null);
           if (over && over.id === run.id) { previewRoute(e, level, null); drawHandles(); return; }
           if (over) { attachRun(e, level, over, run.id); return; }
           linkSel.handle = null;
@@ -1322,8 +1317,8 @@
       var e = edges.filter(function (x) { return x.id === linkSel.id; })[0];
       var pk = e && pathKeyById[e.id];
       if (!pk) return false;
-      // Rule 184(a): Delete on a run handle takes the link off that run.
-      if (linkSel.handle.charAt(0) === "r" && cableRuns) {
+      // Rule 188(a): Delete on a run handle takes the link off that run.
+      if (linkSel.handle.charAt(0) === "r" && arcgisLayers) {
         var runId = linkSel.handle.slice(1);
         linkSel.handle = null;
         detachRun(e, runId);
@@ -1901,7 +1896,7 @@
     // ── Staging + history ───────────────────────────────────────────────
     function snapshot() {
       return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer,
-        cableRuns: cableRuns ? cableRuns.snapshot() : null });
+        arcgisLayers: arcgisLayers ? arcgisLayers.snapshot() : null });
     }
     function stageAll(fields) {
       fields.forEach(function (f) {
@@ -1936,7 +1931,7 @@
       paintLayerCtl();
       if (adjust) endAdjust();
       if (JSON.stringify(state.background) !== before) buildMap(); else drawAll();
-      if (cableRuns && o.cableRuns) cableRuns.restore(o.cableRuns);
+      if (arcgisLayers && o.arcgisLayers) arcgisLayers.restore(o.arcgisLayers);
       restageAllCodes();
       ctx.refreshSidebar();
       ctx.historyChanged();
@@ -1961,11 +1956,11 @@
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
       if (!on) { endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
-      if (cableRuns) {
-        cableRuns.setEditing(!!on);
+      if (arcgisLayers) {
+        arcgisLayers.setEditing(!!on);
         // Leaving edit mode drops (or has just committed) the session: show the
-        // server's runs again, not the working copy.
-        if (!on && wasEditing) cableRuns.load();
+        // server's routes and the view's layers again, not the working copy.
+        if (!on && wasEditing) arcgisLayers.load();
       }
       if (on) resetHistory();
       paintLayerCtl();
@@ -2089,8 +2084,9 @@
     // The details pane's Device List (topology-device-list.js): every shown
     // device, the ones on the map highlighted with an × to take them off.
     function sidebarHtml() {
+      var arcHtml = arcgisLayers ? arcgisLayers.sidebarHtml() : "";
       var DL = window.PolarisTopologyDeviceList;
-      if (!DL) return "";
+      if (!DL) return arcHtml;
       var rows = Object.keys(nodeById).map(function (id) {
         var d = nodeById[id];
         var t = R.nodeAssetType(d) || "";
@@ -2108,7 +2104,7 @@
       }).sort(function (a, b) {
         return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
       });
-      return DL.html({
+      return arcHtml + DL.html({
         title: "Device List",
         hint: state.editing ? "Drag device from list to map." : "Edit the map to place devices.",
         rows: rows,
@@ -2119,6 +2115,7 @@
       });
     }
     function wireSidebar(pane) {
+      if (pane && arcgisLayers) arcgisLayers.wireSidebar(pane);
       var DL = window.PolarisTopologyDeviceList;
       if (!pane || !DL) return;
       DL.wire(pane, {
@@ -2139,25 +2136,41 @@
     function onKey(e) {
       if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
       if (e.key === "Escape" && adjust) endAdjust();
-      if (e.key === "Escape" && cableRuns) cableRuns.cancelDraw();
       if (e.key === "Escape" && placing) endPlacing(false);
     }
     document.addEventListener("keydown", onKey);
 
-    // Cable runs (rule 184): their own layer on floor 0's ground, shown only
-    // over the map / satellite (an uploaded plan has no latitude / longitude),
-    // and only to a caller holding cableRuns read (ctx.fetchCableRuns is null
-    // otherwise).
-    var cableRuns = window.PolarisTopologyCableRuns && ctx.fetchCableRuns
-      ? window.PolarisTopologyCableRuns.create({
+    // ArcGIS layers (rule 188), read only: drawn on floor 0's ground over the
+    // map / satellite (an uploaded plan has no latitude / longitude). Which
+    // layers the view draws: a staged edit, else this session's toggles,
+    // else the view's own list (none for a new view).
+    var arcShownOverride = null;
+    function shownArcgisLayers() {
+      var patch = ctx.stagedViewPatch ? ctx.stagedViewPatch() : {};
+      if (patch && Array.isArray(patch.arcgisLayers)) return patch.arcgisLayers;
+      if (arcShownOverride) return arcShownOverride;
+      return (ctx.view && Array.isArray(ctx.view.arcgisLayers)) ? ctx.view.arcgisLayers : [];
+    }
+    function canSaveArcgisLayers() { return !!(state.editing && ctx.canEdit); }
+    function setShownArcgisLayers(ids) {
+      if (canSaveArcgisLayers() && ctx.stageViewPatch && ctx.stageViewPatch({ arcgisLayers: ids })) changed();
+      else arcShownOverride = ids;
+      ctx.refreshSidebar();
+    }
+    var arcgisLayers = window.PolarisTopologyArcgisLayers && ctx.fetchArcgisLayers
+      ? window.PolarisTopologyArcgisLayers.create({
           L: L,
           map: function () { return map; },
           pane: function () { return floorPane(0); },
           editing: function () { return state.editing; },
           visible: function () { return !imageGround(); },
-          fetch: ctx.fetchCableRuns,
-          stage: function (edits) { if (ctx.stageCableRuns) ctx.stageCableRuns(edits); },
-          // Rule 184(a): which runs each link rides — the view gate's, staged apart.
+          fetchLayers: ctx.fetchArcgisLayers,
+          fetchFeatures: ctx.fetchArcgisFeatures,
+          fetchLinks: ctx.fetchCableRunLinks,
+          shownLayers: shownArcgisLayers,
+          setShownLayers: setShownArcgisLayers,
+          canSaveShown: canSaveArcgisLayers,
+          // Rule 188(a): which lines each link rides — the view gate's, staged apart.
           stageLinks: function (changes) { if (ctx.stageCableRunLinks) ctx.stageCableRunLinks(changes); },
           onRoutesChanged: function () { refreshRoutedLinks(); },
           describeLink: describeLink,
@@ -2169,7 +2182,7 @@
     host.appendChild(centerMark);
     buildMap();
     setEditing(state.editing);
-    if (cableRuns) cableRuns.load();
+    if (arcgisLayers) arcgisLayers.load();
     // Leaflet measures its container on creation; the modal may still be
     // animating in.
     setTimeout(function () { if (map) map.invalidateSize(); }, 60);
@@ -2189,7 +2202,6 @@
       // The Delete key (map.js): the selected placed device comes off the map.
       deleteSelected: function () {
         if (deleteSelectedHandle()) return true;
-        if (cableRuns && cableRuns.removeSelected()) return true;
         if (!state.editing || !selectedId || !state.placements[selectedId]) return false;
         var id = selectedId;
         select(null);
@@ -2197,8 +2209,8 @@
         return true;
       },
       beforeCommit: captureOsmView,
-      // map.js, once the session's cable-run PUT has answered.
-      reloadCableRuns: function () { if (cableRuns) cableRuns.load(); },
+      // map.js, once the session's routed-link PUT has answered.
+      reloadCableRuns: function () { if (arcgisLayers) arcgisLayers.load(); },
       cornerButtons: function () {
         return [
           { id: "topology-background", label: "Background", tip: "Choose the map or upload a floor-plan image",
@@ -2206,17 +2218,7 @@
             onClick: openBackgroundMenu, editOnly: true },
           { id: "topology-draw-polygon", label: "Draw polygon", tip: "Draw a polygon for a location group",
             icon: '<polygon points="12 2 22 9 18 21 6 21 2 9 12 2"/>', onClick: startDrawing, editOnly: true },
-        ].concat(cableRuns && ctx.canDrawRuns ? [
-          // Rule 184: cableRuns write, not deviceMap. The site's own write
-          // scope is checked when the run layer loads (canEditRuns).
-          { id: "topology-draw-run", label: "Draw pole run", tip: "Draw a fiber or ethernet run along poles (each bend is a pole)",
-            icon: '<polyline points="2 20 8 9 14 14 22 4"/><circle cx="8" cy="9" r="1.5"/><circle cx="14" cy="14" r="1.5"/>',
-            onClick: function () {
-              if (imageGround()) { ctx.toast("Cable runs are drawn on the map or satellite ground, not on a floor plan", "error"); return; }
-              if (!cableRuns.canEdit()) { ctx.toast("You can see this site's cable runs but not change them", "error"); return; }
-              cableRuns.startDraw();
-            }, editOnly: true },
-        ] : []);
+        ];
       },
       canUndo: function () { return state.history.index > 0; },
       canRedo: function () { return state.history.index < state.history.entries.length - 1; },
@@ -2230,7 +2232,7 @@
         endAdjust();
         document.removeEventListener("keydown", onKey);
         if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
-        if (cableRuns) cableRuns.destroy();
+        if (arcgisLayers) arcgisLayers.destroy();
         if (map) { map.remove(); map = null; }
       },
     };

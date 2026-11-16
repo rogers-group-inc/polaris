@@ -52,7 +52,7 @@ beforeAll(async () => {
   await ensureTestUser();
   // Importing the whole app (every route, the boot-time refreshes) takes
   // 10–14 s on a loaded dev box — over Vitest's 10 s hook default, so this
-  // suite flaked on a cold run (2026-11-16, before and after rule 188).
+  // suite flaked on a cold run (2026-11-16, before and after rule 189).
 }, 60_000);
 
 afterAll(async () => {

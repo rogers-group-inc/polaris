@@ -603,7 +603,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Rule 170: the override is applied by assigning `process.env.TZ` — Node re-reads it for `Date` local getters and `Intl`'s resolved zone, so `userTimezoneService.serverTimeZone()`, `maintenanceRecurrence`, `notificationTemplate` and every other server-local reader follow it with no change of their own. Clearing assigns the HOST zone captured at module load (`HOST_TIME_ZONE`) — deleting `TZ` does NOT revert Node's zone. A zone this build's ICU cannot format in is refused on save (400) and read back as no override — never assigned, since Node turns an unknown `TZ` into "Etc/Unknown" = UTC silently.
 - The host's clock, timezone and time service are never touched. The NTP servers / mode / enable flag and Test Sync were retired 2026-11-12 (nothing ever applied them; `utils/sntp.ts` deleted with them).
 - Certificate store is a single JSON array in the "certificates" Setting; each cert carries id, category (ca/server), type (cert/key), PEM, and metadata. The route surface only handles `category="ca"`; the cleanup migration `20260608000000_drop_legacy_server_certs` strips any legacy `category="server"` entries on upgrade.
-- Business rule 188: the CA records are READ by `trustedCaService` into every role's default TLS trust store. `addCertificate` / `deleteCertificate` (both take the route's `actor`) call `refreshTrustedCas()` at once for a CA and write `certificate.ca_added` / `certificate.ca_removed` (warning) — before 2026-11-16 nothing read the uploads and nothing audited them.
+- Business rule 189: the CA records are READ by `trustedCaService` into every role's default TLS trust store. `addCertificate` / `deleteCertificate` (both take the route's `actor`) call `refreshTrustedCas()` at once for a CA and write `certificate.ca_added` / `certificate.ca_removed` (warning) — before 2026-11-16 nothing read the uploads and nothing audited them.
 - Backup/restore flows NOT in this service (they live in updateService).
 
 **When changing this:**
@@ -617,7 +617,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ## services/trustedCaService.ts
 
-**What it owns:** business rule 188 — the CAs uploaded under Server Settings → Trusted Certificate Authorities, applied to THIS process's default TLS trust store, so every outbound TLS client that names no `ca` of its own (node:https, `tls.connect`, undici `fetch`, ldapts) trusts servers they signed.
+**What it owns:** business rule 189 — the CAs uploaded under Server Settings → Trusted Certificate Authorities, applied to THIS process's default TLS trust store, so every outbound TLS client that names no `ca` of its own (node:https, `tls.connect`, undici `fetch`, ldapts) trusts servers they signed.
 
 **Public API:** `applyTrustedCas(pems)` → `{ added, skipped } | null`, `refreshTrustedCas()`, `usableCaPems(pems)`, `trustedCaSupported()`, `TRUSTED_CA_REFRESH_MS`; test seam `_resetTrustedCasForTests`.
 

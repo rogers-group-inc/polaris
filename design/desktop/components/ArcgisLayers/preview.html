@@ -1,0 +1,148 @@
+<!-- @dsCard group="Data" page -->
+<!DOCTYPE html>
+<html lang="en" data-theme="nightfall">
+<head>
+<meta charset="UTF-8">
+<title>ArcGIS layers</title>
+<style>
+  body { padding: 24px; }
+  .demo-row { display: flex; gap: 32px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 28px; }
+  .demo-cap { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); margin: 0 0 6px; }
+  .demo-float { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+  .demo-legend { padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; width: 170px; font-size: 0.85rem; }
+  .demo-legend-title { font-weight: 600; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--color-text-secondary); }
+  .demo-legend-row { display: flex; align-items: center; gap: 8px; }
+  .demo-line { fill: none; stroke-width: 4; stroke-linecap: round; }
+  .demo-accent { stroke: var(--color-accent); }
+  .demo-orange { stroke: var(--color-sev-serious); }
+  .demo-dot { fill: var(--color-success); stroke: var(--color-bg-secondary); stroke-width: 1.5; }
+  .demo-device { fill: var(--color-bg-tertiary); stroke: var(--color-text-secondary); stroke-width: 1.5; }
+  .demo-handle { fill: var(--color-bg-secondary); stroke: var(--color-accent); stroke-width: 3; }
+  .demo-link { fill: none; stroke: var(--color-text-primary); stroke-width: 2; }
+  .demo-preview { fill: none; stroke: var(--color-accent); stroke-width: 2; stroke-dasharray: 6 5; }
+  .demo-canvas { background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+  .demo-canvas text { fill: var(--color-text-secondary); font: 11px "Inter", sans-serif; }
+  .demo-card { width: 260px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; }
+  .demo-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; }
+  .demo-riders { border-top: 1px solid var(--color-border-light); padding-top: 6px; }
+  .demo-pane { width: 280px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; }
+  .demo-pane h5 { margin: 0 0 4px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-tertiary); }
+  .demo-check { display: flex; align-items: center; gap: 8px; font-weight: 400; }
+  .demo-check input { width: auto; margin: 0; }
+  .demo-sw { display: inline-block; width: 26px; height: 0; }
+  .demo-tab { width: 640px; padding: 14px 16px; }
+  .demo-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+  .demo-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .demo-inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .demo-editor { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 12px 14px; background: var(--color-bg-primary); display: flex; flex-direction: column; gap: 10px; }
+  .demo-swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid var(--color-border); }
+  .demo-swatch.on { border: 2px solid var(--color-text-primary); }
+</style>
+</head>
+<body>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">Legend — one row per shown layer, in its own style</p>
+    <div class="demo-float demo-legend">
+      <div class="demo-legend-title">ArcGIS layers</div>
+      <div class="demo-legend-row"><svg width="28" height="10"><line x1="2" y1="5" x2="26" y2="5" class="demo-line demo-accent" stroke-width="3"/></svg>Fiber Routes</div>
+      <div class="demo-legend-row"><svg width="28" height="10"><line x1="2" y1="5" x2="26" y2="5" class="demo-line demo-orange" stroke-width="3" stroke-dasharray="10 7"/></svg>Pole Lines</div>
+      <div class="demo-legend-row"><svg width="28" height="10"><circle cx="14" cy="5" r="4" class="demo-dot"/></svg>Handholes <span class="hint">(partial)</span></div>
+    </div>
+  </div>
+
+  <div>
+    <p class="demo-cap">A connection routed through an ArcGIS line, and one being dragged onto it</p>
+    <svg class="demo-canvas" width="460" height="230" viewBox="0 0 460 230">
+      <polyline points="70,170 180,120 300,110 400,60" class="demo-line demo-accent" stroke-width="5"/>
+      <polyline points="40,60 180,70 320,40" class="demo-line demo-orange" stroke-width="3" stroke-dasharray="10 7"/>
+      <circle cx="180" cy="120" r="5" class="demo-dot"/>
+      <polyline points="40,200 76,167 180,120 300,110 360,82 420,30" class="demo-link"/>
+      <circle cx="240" cy="115" r="6" class="demo-handle"/>
+      <rect x="28" y="190" width="24" height="20" rx="4" class="demo-device"/>
+      <rect x="408" y="18" width="24" height="20" rx="4" class="demo-device"/>
+      <line x1="160" y1="210" x2="200" y2="122" class="demo-preview"/>
+      <line x1="200" y1="122" x2="300" y2="210" class="demo-preview"/>
+      <rect x="148" y="200" width="24" height="20" rx="4" class="demo-device"/>
+      <rect x="288" y="200" width="24" height="20" rx="4" class="demo-device"/>
+      <text x="58" y="225">Gate</text><text x="370" y="14">Scale house</text>
+      <text x="320" y="190">dragging — line lit, route previewed</text>
+    </svg>
+  </div>
+</div>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">Details pane — Map layers (saved with the view while editing)</p>
+    <div class="demo-float demo-pane">
+      <h5>Map layers</h5>
+      <label class="demo-check"><input type="checkbox" checked> <span class="demo-sw" style="border-top: 3px solid var(--color-accent)"></span> Fiber Routes</label>
+      <label class="demo-check"><input type="checkbox" checked> <span class="demo-sw" style="border-top: 3px dashed var(--color-sev-serious)"></span> Pole Lines</label>
+      <label class="demo-check"><input type="checkbox"> <span class="demo-sw" style="height: 10px; border: 2px solid var(--color-sev-notice)"></span> Parcels</label>
+      <p style="margin: 4px 0 0"><span class="badge badge-expired">Route line missing</span> 1 connection rides a line that is hidden, filtered out or gone from ArcGIS.</p>
+      <p class="hint" style="margin: 0">Editing: saved with this view.</p>
+    </div>
+  </div>
+
+  <div>
+    <p class="demo-cap">Click card — the layer's chosen fields, read only</p>
+    <div class="demo-float demo-card">
+      <strong>MAIN-TRUNK-04</strong>
+      <div class="hint" style="margin: 0">Fiber Routes · from ArcGIS, read only</div>
+      <div class="demo-fields">
+        <span class="hint" style="margin: 0">Fibers</span><span>48</span>
+        <span class="hint" style="margin: 0">Installed</span><span>2019-06-11</span>
+        <span class="hint" style="margin: 0">Length</span><span class="mono">1.42 km</span>
+      </div>
+      <div class="demo-riders"><div class="hint" style="margin: 0">Connections on this line</div><div>Gate ↔ Scale house</div></div>
+      <a href="#">Open in ArcGIS</a>
+    </div>
+  </div>
+</div>
+
+<div class="demo-row">
+  <div>
+    <p class="demo-cap">ArcGIS integration → Layers tab</p>
+    <div class="demo-float demo-tab">
+      <p class="hint" style="margin-top: 0">Polaris only reads these layers — nothing is ever written to ArcGIS.</p>
+      <div class="demo-grid">
+        <div class="demo-col">
+          <div class="card-title">Find layers in your organization</div>
+          <div class="demo-inline">
+            <button type="button" class="btn btn-sm btn-primary">My organization</button>
+            <button type="button" class="btn btn-sm btn-secondary">My content</button>
+            <button type="button" class="btn btn-sm btn-secondary">Paste a URL</button>
+          </div>
+          <div class="demo-inline"><input type="text" aria-label="Search" value="fiber" style="flex: 1 1 120px"><button type="button" class="btn btn-secondary">Search</button></div>
+          <div class="table-wrapper"><table><thead><tr><th>Item</th><th></th></tr></thead><tbody>
+            <tr><td><div>Fiber Network</div><div class="hint">Feature layer · gis · updated 2026-11-12</div></td><td><button type="button" class="btn btn-sm btn-secondary">Hide</button></td></tr>
+            <tr><td style="padding-left: 24px">Routes <span class="badge badge-readonly">Line</span></td><td><button type="button" class="btn btn-sm btn-secondary" disabled>Added</button></td></tr>
+            <tr><td style="padding-left: 24px">Handholes <span class="badge badge-readonly">Point</span></td><td><button type="button" class="btn btn-sm btn-secondary">Add</button></td></tr>
+          </tbody></table></div>
+        </div>
+        <div class="demo-col">
+          <div class="card-title">Layers Polaris reads (2)</div>
+          <div class="table-wrapper"><table><thead><tr><th>Layer</th><th>Style</th><th>Label</th><th></th></tr></thead><tbody>
+            <tr class="selected"><td><div>Fiber Routes</div><div class="hint">Line · filtered</div></td><td><span class="demo-sw" style="border-top: 3px solid var(--color-accent)"></span></td><td class="mono">ROUTE_NAME</td><td><button type="button" class="btn-icon" aria-label="Remove Fiber Routes">×</button></td></tr>
+            <tr><td><div>Pole Lines</div><div class="hint">Line</div></td><td><span class="demo-sw" style="border-top: 3px dashed var(--color-sev-serious)"></span></td><td class="mono">LINE_ID</td><td><button type="button" class="btn-icon" aria-label="Remove Pole Lines">×</button></td></tr>
+          </tbody></table></div>
+          <div class="demo-editor">
+            <div class="demo-inline">
+              <button type="button" class="demo-swatch on" aria-label="Accent" style="background: var(--color-accent)"></button>
+              <button type="button" class="demo-swatch" aria-label="Orange" style="background: var(--color-sev-serious)"></button>
+              <button type="button" class="demo-swatch" aria-label="Green" style="background: var(--color-success)"></button>
+              <button type="button" class="demo-swatch" aria-label="Grey" style="background: var(--color-sev-notice)"></button>
+            </div>
+            <div class="form-group" style="margin: 0"><label for="d-id">Identity field</label><select id="d-id"><option>GlobalID</option></select></div>
+            <div class="demo-inline"><span class="badge badge-readonly">FIBER_COUNT</span><span class="badge badge-readonly">INSTALL_DATE</span><select aria-label="Add field" style="width: auto"><option>Add field</option></select></div>
+            <div class="form-group" style="margin: 0"><label for="d-w">Only features where (optional)</label><input type="text" id="d-w" class="mono" value="STATUS = 'In service'"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

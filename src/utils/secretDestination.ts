@@ -50,13 +50,13 @@ export const DESTINATION_KEYS = [
   "fortigateVerifySsl",
   "useProxy",
   "mgmtInterface",
-  // ArcGIS: the portal a key / app secret / password is sent to, and the
-  // imagery service its token goes to (rule 183), and the feature layer cable
-  // runs are written to (rule 185).
+  // ArcGIS: the portal a key / app secret / password is sent to, the imagery
+  // service its token goes to (rule 183), and the layer hosts outside the
+  // portal that its token is sent to when reading layers (rule 188).
   "portalUrl",
   "imageryUrl",
   "basemapSource",
-  "featureLayerUrl",
+  "layerHosts",
 ] as const;
 
 /**
@@ -64,7 +64,7 @@ export const DESTINATION_KEYS = [
  * before the key existed has no list, which means "no extra destinations" — so
  * a list added later still counts as a move rather than as a key never stored.
  */
-const LIST_KEYS: ReadonlySet<string> = new Set(["fallbackHosts"]);
+const LIST_KEYS: ReadonlySet<string> = new Set(["fallbackHosts", "layerHosts"]);
 
 function normOne(v: unknown): string {
   if (v === null || v === undefined) return "";

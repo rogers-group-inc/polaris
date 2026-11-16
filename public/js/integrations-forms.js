@@ -1177,8 +1177,8 @@ function getWorkloadFormConfig() {
 
 // ─── ArcGIS ─────────────────────────────────────────────────────────────────
 // A portal sign-in (ArcGIS Online, Location Platform or ArcGIS Enterprise). It
-// discovers nothing: it supplies satellite imagery to the Device Map and is
-// where cable runs are written back. One credential block per sign-in method,
+// discovers nothing: it supplies satellite imagery to the Device Map and the
+// feature layers drawn on Topology views, read only. One credential block per sign-in method,
 // shown by the method picker (_wireArcgisForm in integrations.js).
 
 var ARCGIS_AUTH_MODES = [
@@ -1196,7 +1196,7 @@ function arcgisFormHTML(defaults) {
     return '<div data-arcgis-auth="' + m + '"' + (m === mode ? '' : ' hidden') + '>' + html + '</div>';
   }
   return '<div class="form-group"><label>Name *</label><input type="text" id="f-name" value="' + escapeHtml(d.name || "") + '" placeholder="e.g. Corporate GIS"></div>' +
-    infoBox('Connects Polaris to an <strong style="color:var(--color-text-primary)">ArcGIS</strong> portal — ArcGIS Online, ArcGIS Location Platform or your own ArcGIS Enterprise. It discovers no devices: it supplies satellite imagery to the Device Map and is where the cable runs drawn on the map are written.') +
+    infoBox('Connects Polaris to an <strong style="color:var(--color-text-primary)">ArcGIS</strong> portal — ArcGIS Online, ArcGIS Location Platform or your own ArcGIS Enterprise. It discovers no devices and never writes to ArcGIS: it supplies satellite imagery and the feature layers (fiber routes, pole lines, handholes…) drawn on the Device Map.') +
     formDivider() +
     sectionHeading("Portal") +
     '<div class="form-group"><label>Portal URL</label><input type="text" id="f-portalUrl" value="' + escapeHtml(d.portalUrl || "") + '" placeholder="https://www.arcgis.com">' +
@@ -1214,14 +1214,14 @@ function arcgisFormHTML(defaults) {
       '<p class="hint">From an OAuth 2.0 app (Content → New item → Developer credentials). Polaris exchanges it for a two-hour token and renews it as needed.</p>') +
     block("apiKey",
       '<div class="form-group"><label>API key</label><input type="password" id="f-apiToken" value="" placeholder="' + escapeHtml(d.apiTokenPlaceholder || "API key") + '" autocomplete="off">' +
-      '<p class="hint">Grant it only the privileges Polaris uses: basemaps for imagery, and editing of the cable-run layer for write-back.</p></div>') +
+      '<p class="hint">Grant it only the privileges Polaris uses: basemaps for imagery, and viewing the feature layers it reads. Polaris never edits ArcGIS.</p></div>') +
     block("userPassword",
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
         '<div class="form-group"><label>Username</label><input type="text" id="f-username" value="' + escapeHtml(d.username || "") + '" autocomplete="off"></div>' +
         '<div class="form-group"><label>Password</label><input type="password" id="f-password" value="" placeholder="' + escapeHtml(d.passwordPlaceholder || "Password") + '" autocomplete="off"></div>' +
       '</div>' +
       '<p class="hint">Use a dedicated account. Polaris signs in through the portal&rsquo;s generateToken endpoint.</p>') +
-    block("none", '<p class="hint">No sign-in: only public services answer. Write-back needs a sign-in.</p>') +
+    block("none", '<p class="hint">No sign-in: only public services and public layers answer.</p>') +
     checkboxRow("f-verifySsl", "Verify TLS certificate", d.verifySsl !== false) +
     '<p class="hint">Turn off only for an Enterprise portal with a private certificate; Polaris then pins the certificate it first sees.</p>' +
     '<div class="form-group" style="display:flex;align-items:center;gap:8px">' +
@@ -1259,137 +1259,151 @@ function arcgisBasemapHTML(defaults) {
     '<p class="hint">The credit shown on the map; blank uses Esri&rsquo;s for World Imagery. Past the deepest zoom the map enlarges the last real tiles instead of showing &ldquo;Map data not yet available&rdquo; — 19 suits most sites. <strong>Test Connection</strong> also fetches one imagery tile while this is on.</p>';
 }
 
-// The Write-back tab (business rule 185): cable runs drawn on the Device Map
-// written one way to an ArcGIS feature layer. The field map and value maps are
-// filled from the layer itself (Read layer); _wireArcgisWriteBack in
-// integrations.js does the reading, creating and the status strip.
-var ARCGIS_WB_ATTRS = [
-  ["polarisId", "Polaris ID", true],
-  ["name",      "Name"],
-  ["medium",    "Medium"],
-  ["placement", "Placement"],
-  ["site",      "Site"],
-  ["notes",     "Notes"],
-  ["lengthM",   "Length (m)"],
-  ["updatedAt", "Updated in Polaris"],
+// The Layers tab (business rule 188): the ArcGIS feature layers Polaris READS
+// and draws on the Device Map's Topology views — never writes. Layers are
+// found by searching the portal (or pasting a layer URL); each carries a
+// style, a label field, an identity field, the fields a click shows and an
+// optional filter. The working list lives in _arcgisDraft while the dialog is
+// open; _wireArcgisLayers in integrations.js does the searching and editing,
+// and getArcgisFormConfig sends the list.
+var ARCGIS_LAYER_COLORS = [
+  { value: "accent", label: "Accent", css: "var(--color-accent)" },
+  { value: "orange", label: "Orange", css: "var(--color-sev-serious)" },
+  { value: "green",  label: "Green",  css: "var(--color-success)" },
+  { value: "yellow", label: "Yellow", css: "var(--color-warning)" },
+  { value: "grey",   label: "Grey",   css: "var(--color-sev-notice)" },
+  { value: "red",    label: "Red",    css: "var(--color-danger)" },
 ];
-var ARCGIS_WB_VALUES = {
-  medium:    [["fiber", "Fiber"], ["ethernet", "Ethernet"]],
-  placement: [["trench", "Trench"], ["electric_pole", "Electric pole"], ["telephone_pole", "Telephone pole"]],
-};
+var ARCGIS_GEOMETRY_LABEL = { line: "Line", point: "Point", area: "Area" };
+var _arcgisDraft = { layers: [], selected: -1, fields: {} };
 
-function arcgisFieldSelectHTML(attr, label, current, fields) {
-  var opts = '<option value="">— not written —</option>';
-  var names = (fields || []).filter(function (f) { return f.editable; });
-  var seen = false;
-  names.forEach(function (f) {
-    var on = current && f.name.toLowerCase() === String(current).toLowerCase();
-    if (on) seen = true;
-    var kind = f.codedValues ? "coded" : String(f.type || "").replace("esriFieldType", "");
-    opts += '<option value="' + escapeHtml(f.name) + '"' + (on ? " selected" : "") + '>' + escapeHtml(f.name) + ' (' + escapeHtml(kind) + ')</option>';
-  });
-  // Not read yet (or gone from the layer): keep what is stored, visibly.
-  if (current && !seen) opts += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + (fields ? " (not in the layer)" : "") + '</option>';
-  return '<select data-wb-attr="' + attr + '" aria-label="Layer field for ' + escapeHtml(label) + '">' + opts + '</select>';
+function arcgisColorCss(name) {
+  for (var i = 0; i < ARCGIS_LAYER_COLORS.length; i++) if (ARCGIS_LAYER_COLORS[i].value === name) return ARCGIS_LAYER_COLORS[i].css;
+  return ARCGIS_LAYER_COLORS[0].css;
 }
 
-function arcgisFieldMapRowsHTML(fieldMap, fields) {
-  var fm = fieldMap || {};
-  return ARCGIS_WB_ATTRS.map(function (a) {
-    return '<tr><td>' + escapeHtml(a[1]) + (a[2] ? ' <span class="hint" style="margin:0">(required)</span>' : '') + '</td>' +
-      '<td>' + arcgisFieldSelectHTML(a[0], a[1], fm[a[0]], fields) + '</td></tr>';
+/** A small sample of a layer's style: a line (solid / dashed / dotted), a dot or a box. */
+function arcgisStyleSwatchHTML(l) {
+  var c = arcgisColorCss(l.style && l.style.color);
+  if (l.geometry === "point") return '<span style="display:inline-block;width:10px;height:10px;margin:0 9px;border-radius:50%;background:' + c + '"></span>';
+  if (l.geometry === "area") return '<span style="display:inline-block;width:22px;height:10px;border:2px solid ' + c + '"></span>';
+  var dash = l.style && l.style.dash;
+  var w = Math.min(4, (l.style && l.style.width) || 3);
+  return '<span style="display:inline-block;width:28px;border-top:' + w + 'px ' + (dash === "dashed" ? "dashed" : dash === "dotted" ? "dotted" : "solid") + ' ' + c + '"></span>';
+}
+
+function arcgisSelectedRowsHTML() {
+  var rows = _arcgisDraft.layers.map(function (l, i) {
+    return '<tr data-arc-pick="' + i + '"' + (i === _arcgisDraft.selected ? ' class="selected"' : '') + ' style="cursor:pointer">' +
+      '<td><div>' + escapeHtml(l.title) + '</div><div class="hint">' + escapeHtml(ARCGIS_GEOMETRY_LABEL[l.geometry] || l.geometry) +
+        (l.where ? ' · filtered' : '') + '</div></td>' +
+      '<td>' + arcgisStyleSwatchHTML(l) + '</td>' +
+      '<td class="mono">' + escapeHtml(l.labelField || "—") + '</td>' +
+      '<td><button type="button" class="btn-icon" data-arc-remove="' + i + '" aria-label="Remove ' + escapeHtml(l.title) + '">×</button></td></tr>';
+  }).join("");
+  return rows || '<tr><td colspan="4" class="empty-state">No layers yet — find one on the left.</td></tr>';
+}
+
+function arcgisFieldOptionsHTML(fields, current, blankLabel) {
+  var names = (fields || []).map(function (f) { return f.name; });
+  var opts = blankLabel !== null ? '<option value="">' + escapeHtml(blankLabel) + '</option>' : '';
+  // A saved value the layer description has not been read for yet still shows.
+  if (current && names.indexOf(current) === -1) opts += '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + '</option>';
+  return opts + (fields || []).map(function (f) {
+    return '<option value="' + escapeHtml(f.name) + '"' + (f.name === current ? ' selected' : '') + '>' +
+      escapeHtml(f.alias && f.alias !== f.name ? f.name + " — " + f.alias : f.name) + '</option>';
   }).join("");
 }
 
-/** Value maps for medium / placement: a code picker when the mapped field has a coded-value domain. */
-function arcgisValueMapHTML(fieldMap, valueMap, fields) {
-  var fm = fieldMap || {};
-  var vm = valueMap || {};
-  var byName = {};
-  (fields || []).forEach(function (f) { byName[f.name.toLowerCase()] = f; });
-  return ["medium", "placement"].map(function (kind) {
-    var field = fm[kind];
-    if (!field) return "";
-    var f = byName[String(field).toLowerCase()];
-    var current = vm[kind] || {};
-    var cells = ARCGIS_WB_VALUES[kind].map(function (v) {
-      var id = "wb-v-" + kind + "-" + v[0];
-      var cur = current[v[0]];
-      var input;
-      if (f && f.codedValues) {
-        input = '<select id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '">' +
-          '<option value="">— ' + escapeHtml(v[0]) + ' (as is) —</option>' +
-          f.codedValues.map(function (c) {
-            var on = cur !== undefined && String(cur) === String(c.code);
-            return '<option value="' + escapeHtml(String(c.code)) + '" data-numeric="' + (typeof c.code === "number" ? "1" : "") + '"' + (on ? " selected" : "") + '>' +
-              escapeHtml(String(c.code)) + ' — ' + escapeHtml(c.name) + '</option>';
-          }).join("") + '</select>';
-      } else {
-        input = '<input type="text" id="' + id + '" data-wb-value data-wb-kind="' + kind + '" data-wb-polaris="' + v[0] + '" maxlength="128" value="' +
-          escapeHtml(cur === undefined ? "" : String(cur)) + '" placeholder="' + escapeHtml(v[0]) + '">';
-      }
-      return '<div class="form-group"><label for="' + id + '">' + escapeHtml(v[1]) + '</label>' + input + '</div>';
-    }).join("");
-    return '<div class="card-title">Values for ' + escapeHtml(field) + '</div>' +
-      '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' + cells + '</div>';
+function arcgisEditorHTML() {
+  var l = _arcgisDraft.layers[_arcgisDraft.selected];
+  if (!l) return '';
+  var fields = _arcgisDraft.fields[l.id] || null;
+  var swatches = ARCGIS_LAYER_COLORS.map(function (c) {
+    var on = (l.style && l.style.color) === c.value;
+    return '<button type="button" data-arc-color="' + c.value + '" aria-label="' + c.label + '" aria-pressed="' + on + '" title="' + c.label + '"' +
+      ' style="width:24px;height:24px;padding:0;border-radius:50%;background:' + c.css + ';border:' + (on ? '2px solid var(--color-text-primary)' : '1px solid var(--color-border)') + '"></button>';
   }).join("");
+  var widths = [1, 2, 3, 4, 5, 6, 8].map(function (w) {
+    return '<option value="' + w + '"' + (l.style.width === w ? ' selected' : '') + '>' + w + ' px</option>';
+  }).join("");
+  var dashes = [["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]].map(function (d) {
+    return '<option value="' + d[0] + '"' + (l.style.dash === d[0] ? ' selected' : '') + '>' + d[1] + '</option>';
+  }).join("");
+  var chips = (l.popupFields || []).map(function (p, i) {
+    return '<span class="badge badge-readonly">' + escapeHtml(p.name) +
+      ' <button type="button" class="btn-icon" data-arc-unpop="' + i + '" aria-label="Remove ' + escapeHtml(p.name) + '" style="padding:0 2px">×</button></span>';
+  }).join(" ");
+  var addable = (fields || []).filter(function (f) { return !(l.popupFields || []).some(function (p) { return p.name === f.name; }); });
+  return '<div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:12px 14px;background:var(--color-bg-primary);display:flex;flex-direction:column;gap:10px">' +
+    '<div class="form-group" style="margin:0"><label for="arc-title">Name on the map</label><input type="text" id="arc-title" maxlength="120" value="' + escapeHtml(l.title) + '"></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
+      '<div class="form-group" style="margin:0"><label>Colour</label><div style="display:flex;gap:6px;flex-wrap:wrap">' + swatches + '</div></div>' +
+      '<div class="form-group" style="margin:0"><label for="arc-width">Width</label><select id="arc-width">' + widths + '</select></div>' +
+      '<div class="form-group" style="margin:0"><label for="arc-dash">Line</label><select id="arc-dash">' + dashes + '</select></div>' +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">' +
+      '<div class="form-group" style="margin:0"><label for="arc-label">Label field</label><select id="arc-label">' + arcgisFieldOptionsHTML(fields, l.labelField, "No label") + '</select>' +
+        '<p class="hint">Drawn along the line when zoomed in.</p></div>' +
+      '<div class="form-group" style="margin:0"><label for="arc-idfield">Identity field</label><select id="arc-idfield">' + arcgisFieldOptionsHTML(fields, l.idField, null) + '</select>' +
+        '<p class="hint">Keeps a routed connection on the same line across ArcGIS edits — GlobalID where the layer has one.</p></div>' +
+    '</div>' +
+    '<div class="form-group" style="margin:0"><label>Shown when a feature is clicked</label>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + chips +
+        (fields ? '<select id="arc-popup-add" style="width:auto"><option value="">Add field</option>' + arcgisFieldOptionsHTML(addable, "", null) + '</select>'
+          : '<span class="hint">Reading the layer&rsquo;s fields…</span>') +
+      '</div></div>' +
+    '<div class="form-group" style="margin:0"><label for="arc-where">Only features where (optional)</label>' +
+      '<input type="text" id="arc-where" class="mono" maxlength="500" value="' + escapeHtml(l.where || "") + '" placeholder="STATUS = \'In service\'">' +
+      '<p class="hint">An ArcGIS where clause. <strong>Test Connection</strong> checks it.</p></div>' +
+  '</div>';
 }
 
-function arcgisWriteBackHTML(defaults) {
+function arcgisLayersHTML(defaults) {
   var d = defaults || {};
-  var mode = d.writeBackMode === "polaris" ? "polaris" : "existing";
-  function radio(value, label) {
-    return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;margin:0">' +
-      '<input type="radio" name="f-writeBackMode" value="' + value + '"' + (mode === value ? ' checked' : '') + ' style="width:auto"> ' + label + '</label>';
-  }
-  return checkboxRow("f-writeBackEnabled", "Write cable runs to ArcGIS", d.writeBackEnabled === true) +
-    '<p class="hint">One way: runs drawn, edited or deleted in Polaris are pushed to the layer. Edits made in ArcGIS are not read back, and are overwritten on the next change in Polaris. Which connections ride a run stays in Polaris. Only one ArcGIS integration can write runs.</p>' +
-    '<div class="form-group"><label>Layer</label><div style="display:flex;flex-direction:column;gap:6px">' +
-      radio("existing", "An existing layer, with a field map") +
-      radio("polaris", "A layer Polaris creates with its own fields") +
-    '</div></div>' +
-    '<div class="form-group" data-wb-mode="polaris"' + (mode === "polaris" ? '' : ' hidden') + '>' +
-      '<label for="f-wbServiceName">New service name</label>' +
-      '<div style="display:flex;gap:8px"><input type="text" id="f-wbServiceName" maxlength="60" value="Polaris_cable_runs" style="flex-grow:1">' +
-      '<button type="button" class="btn btn-secondary" id="wb-create"' + (d.id ? '' : ' disabled') + '>Create layer</button></div>' +
-      '<p class="hint">' + (d.id
-        ? 'Creates a hosted feature layer in the signed-in user&rsquo;s content, with z values for surveyed elevation, and fills in the URL and field map below. Needs Full Read-Write on Integrations and a sign-in allowed to create content.'
-        : 'Save the integration first, then create the layer.') + '</p></div>' +
-    '<div class="form-group"><label for="f-featureLayerUrl">Feature layer URL</label>' +
-      '<div style="display:flex;gap:8px"><input type="text" id="f-featureLayerUrl" value="' + escapeHtml(d.featureLayerUrl || "") + '" placeholder="https://services.arcgis.com/…/FeatureServer/0" style="flex-grow:1">' +
-      '<button type="button" class="btn btn-secondary" id="wb-read">Read layer</button></div>' +
-      '<div id="wb-layer-info" style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"></div></div>' +
-    '<div class="card-title" style="margin-top:10px">Field map</div>' +
-    '<div class="table-wrapper" style="margin-bottom:10px"><table><thead><tr><th>Polaris</th><th>Layer field</th></tr></thead>' +
-      '<tbody id="wb-fieldmap">' + arcgisFieldMapRowsHTML(d.fieldMap, null) + '</tbody></table></div>' +
-    '<div id="wb-valuemap">' + arcgisValueMapHTML(d.fieldMap, d.valueMap, null) + '</div>' +
-    '<div id="wb-status"></div>';
+  _arcgisDraft = {
+    layers: JSON.parse(JSON.stringify(Array.isArray(d.layers) ? d.layers : [])),
+    selected: Array.isArray(d.layers) && d.layers.length ? 0 : -1,
+    fields: {},
+  };
+  return '<p class="hint" style="margin-top:0">Polaris only reads these layers — nothing is ever written to ArcGIS. Lines can carry a connection on the Device Map&rsquo;s Topology views; points and areas are drawn for context. A sign-in that can only view is enough.</p>' +
+    '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px">' +
+      '<div style="display:flex;flex-direction:column;gap:8px;min-width:0">' +
+        '<div class="card-title">Find layers in your organization</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+          '<button type="button" class="btn btn-sm btn-primary" data-arc-scope="org">My organization</button>' +
+          '<button type="button" class="btn btn-sm btn-secondary" data-arc-scope="mine">My content</button>' +
+          '<button type="button" class="btn btn-sm btn-secondary" data-arc-scope="url">Paste a URL</button>' +
+        '</div>' +
+        '<div id="arc-search-row" style="display:flex;gap:8px"><input type="text" id="arc-q" aria-label="Search" placeholder="Search by title or tag" style="flex-grow:1">' +
+          '<button type="button" class="btn btn-secondary" id="arc-search">Search</button></div>' +
+        '<div id="arc-url-row" hidden style="display:flex;gap:8px"><input type="text" id="arc-url" aria-label="Layer URL" placeholder="https://services.arcgis.com/…/FeatureServer/0" style="flex-grow:1">' +
+          '<button type="button" class="btn btn-secondary" id="arc-url-read">Add</button></div>' +
+        '<div class="table-wrapper" style="max-height:360px;overflow:auto"><table><thead><tr><th>Item</th><th></th></tr></thead>' +
+          '<tbody id="arc-results"><tr><td colspan="2" class="empty-state">Search to list the feature layers this sign-in can see.</td></tr></tbody></table></div>' +
+        '<p class="hint" id="arc-results-hint" style="margin:0">Uses the sign-in on the General tab.</p>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;min-width:0">' +
+        '<div class="card-title" id="arc-count">Layers Polaris reads (' + _arcgisDraft.layers.length + ')</div>' +
+        '<div class="table-wrapper"><table><thead><tr><th>Layer</th><th>Style</th><th>Label</th><th></th></tr></thead>' +
+          '<tbody id="arc-selected">' + arcgisSelectedRowsHTML() + '</tbody></table></div>' +
+        '<div id="arc-editor">' + arcgisEditorHTML() + '</div>' +
+        '<p class="hint" style="margin:0">Each Topology view ticks which of these it draws, under Map layers.</p>' +
+      '</div>' +
+    '</div>';
 }
 
-/** The Write-back tab's fields, or null when the tab is not on the page. */
-function getArcgisWriteBackConfig() {
-  var on = document.getElementById("f-writeBackEnabled");
-  if (!on) return null;
-  var picked = document.querySelector('input[name="f-writeBackMode"]:checked');
-  var fieldMap = {};
-  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-attr]"), function (s) {
-    if (s.value) fieldMap[s.getAttribute("data-wb-attr")] = s.value;
+/** The Layers tab's list as the config sends it, or null when the tab is not on the page. */
+function getArcgisLayersConfig() {
+  if (!document.getElementById("arc-selected")) return null;
+  return _arcgisDraft.layers.map(function (l) {
+    var out = { id: l.id, url: l.url, title: l.title, geometry: l.geometry, idField: l.idField,
+      popupFields: (l.popupFields || []).slice(0, 10), style: l.style };
+    if (l.itemId) out.itemId = l.itemId;
+    if (l.labelField) out.labelField = l.labelField;
+    if (l.where) out.where = l.where;
+    return out;
   });
-  var valueMap = {};
-  Array.prototype.forEach.call(document.querySelectorAll("[data-wb-value]"), function (el) {
-    if (!el.value) return;
-    var kind = el.getAttribute("data-wb-kind");
-    var opt = el.tagName === "SELECT" ? el.options[el.selectedIndex] : null;
-    var v = opt && opt.getAttribute("data-numeric") === "1" ? Number(el.value) : el.value;
-    (valueMap[kind] = valueMap[kind] || {})[el.getAttribute("data-wb-polaris")] = v;
-  });
-  return {
-    writeBackEnabled: on.checked,
-    writeBackMode: picked ? picked.value : "existing",
-    featureLayerUrl: val("f-featureLayerUrl"),
-    fieldMap: fieldMap,
-    valueMap: valueMap,
-  };
 }
 
 function getArcgisFormConfig() {
@@ -1409,8 +1423,8 @@ function getArcgisFormConfig() {
     cfg.basemapAttribution = val("f-basemapAttribution");
     cfg.basemapMaxZoom = parseInt(document.getElementById("f-basemapMaxZoom").value, 10) || 19;
   }
-  var wb = getArcgisWriteBackConfig();
-  if (wb) Object.assign(cfg, wb);
+  var layers = getArcgisLayersConfig();
+  if (layers) cfg.layers = layers;
   // Only the chosen method's fields go out; the others keep what is stored.
   if (mode === "appCredentials") { cfg.clientId = val("f-clientId"); cfg.clientSecret = val("f-clientSecret"); }
   if (mode === "apiKey") cfg.apiToken = val("f-apiToken");

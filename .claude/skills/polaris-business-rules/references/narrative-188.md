@@ -1,59 +1,41 @@
-## Rule 188 — An uploaded Trusted CA adds trust to every outbound TLS connection that verifies — never replaces the built-in roots, never touches a connection with verification off
+# Business rule 188 — full narrative
 
-### What was found (2026-11-14)
+> The terse statement of this rule is in [invariants-30-43.md](invariants-30-43.md#188).
+> This file holds the reasoning, the incident and the rejected alternatives.
 
-Server Settings has a **Trusted Certificate Authorities** card: upload a CA certificate and,
-it said, Polaris uses it "to verify remote servers when Polaris connects to integrations,
-syslog, and archive targets". Nothing read the uploads. `serverSettingsService.addCertificate`
-stored them in the `certificates` setting and `listCertificates` listed them back, and that was
-all: an operator whose vCenter, FortiManager or LDAP server carries a certificate from an
-internal CA still had to turn "verify TLS" OFF for that integration. The syslog forwarder
-(rule 187, built 2026-11-14) became the first reader.
+## Contents
 
-The operator decided (2026-11-16): **the trusted CAs should be used for integrations.**
+- [Rule 188](#rule-188) — ArcGIS layers are read, never written, and each Topology view picks the ones it draws
+- [Rule 188(a)](#rule-188a) — A device link can ride ArcGIS lines, and that stays in Polaris
 
-### The decision
+## Rule 188 — ArcGIS layers are read, never written, and each Topology view picks the ones it draws
 
-- **One process-wide store, not a `ca` per transport.** Polaris reaches integrations through
-  at least a dozen TLS paths: node:https agents (vCenter, Proxmox, TrueNAS, Unraid, the
-  Generic API, the AI integration, device HTTP for firmware), undici `fetch` and its
-  dispatchers (FortiOS / FMG REST, webhooks), `tls.connect` (DoT, WinRM, probes) and ldapts
-  (LDAPS). Threading a `ca` option through each would miss the next one somebody adds.
-  `tls.setDefaultCACertificates()` (Node 22.19 / 24.5) replaces the store EVERY connection
-  uses when it names no `ca` of its own, so one call covers them all. Verified on Node 24
-  with a self-signed server: node:https, `fetch` and `tls.connect` all refused it before
-  and trusted it after.
-- **Adds, never replaces.** The store set is always the process's ORIGINAL default (captured
-  once, before any upload is applied) plus the uploads. Replacing the roots would break every
-  public endpoint (Microsoft Graph, Azure, ArcGIS). Recomputing from the captured baseline
-  means removing a CA really removes it, instead of the live store accumulating.
-- **Verification off stays off.** An integration with "verify TLS" unticked passes
-  `rejectUnauthorized: false`; a CA store does not change that. The point of the card is to
-  let operators turn verification ON for internal servers, not to second-guess the toggle.
-- **Every role, refreshed.** monitor and discovery make most integration connections, and
-  the upload happens on web. Each role applies the store at boot (before any job connects)
-  and re-reads it every 30 s, the same arrangement as the timezone override (rule 170). The
-  web role applies an upload or removal at once. A connection already open keeps the trust it
-  was opened with until it reconnects.
-- **A bad upload cannot break TLS.** Each upload is parsed as X.509 first; a malformed one is
-  skipped (and counted in the log), never handed to `setDefaultCACertificates`, which would
-  throw and leave the whole store unapplied.
-- **Audited.** Adding trust is security-relevant: whoever can upload a CA can, with network
-  position, impersonate any server Polaris verifies. Uploads and removals now write
-  `certificate.ca_added` / `certificate.ca_removed` at warning level, with the actor. Before
-  this rule they wrote nothing.
-- **SSH is out of scope.** The SFTP / SCP event archive (and every SSH transport) trusts a
-  server by its pinned host key (rules 21, 107); certificate authorities play no part. The
-  card used to promise "archive targets"; it now says the archive uses the host key.
+**The request (2026-11-16).** Three days after cable runs (rule 184) and their ArcGIS write-back (rule 185) shipped, the operator reversed the direction: "I no longer need to upload things to arcgis. Polaris will be purely read only. Maybe I need some options to choose what polaris reads and displays on the topology map." Decisions taken with the operator the same day: Polaris-drawn runs are removed and ArcGIS lines replace them; layers are picked by browsing the portal; the Carlson survey importer and the `cableRuns` key are dropped; a new view draws no ArcGIS layer until one is ticked; each layer may carry a where clause.
 
-### Rejected
+**What it says.**
 
-- **A `ca` option per integration.** Precise, but each transport is a place to forget, and the
-  next integration added would silently not honour the card.
-- **`NODE_EXTRA_CA_CERTS` written by Polaris.** It is read once at process start, so an upload
-  would need a restart of every role — and Polaris does not restart itself in a container
-  (rule 99). It remains the documented route for a CA the operator manages on the host, and
-  it is part of the captured baseline.
-- **Applying uploads only to integrations.** The same internal CA usually signs the SMTP relay,
-  the syslog collector and the OIDC provider; a store that trusted it for one and not the
-  others would be a second surprise of the kind this rule fixes.
+- **Read only, everywhere.** No route, job or service writes to ArcGIS. The integration's sign-in only needs to view; the API-key hint says so.
+- **The integration lists the layers (`config.layers`, ≤ 20).** Each: a uuid `id`, the layer `url` (`…/FeatureServer/<n>` or `/MapServer/<n>`, https, not a blocked host), the portal `itemId` when found by search, a `title`, its `geometry` (`line` / `point` / `area`), the `idField` (GlobalID preferred — it survives edits in ArcGIS; OBJECTID otherwise), an optional `labelField`, up to 10 `popupFields`, an optional `where` (≤ 500 characters, no `;` or control characters — ArcGIS checks the SQL, and Test Connection runs it), and a `style` (`color` name mapped to a theme token in map.css, `width` 1–8, `dash` solid / dashed / dotted). Found through `POST /integrations/arcgis/search` (portal search, `type:"Feature Service"`, the organization or the signed-in user's own content), `…/service-layers` and `…/read-layer` — all `integrations` write.
+- **The token stays on the server.** The canvas asks `GET /map/arcgis-layers/:layerId/features?bbox=&zoom=` (Device Map read); the server queries ArcGIS in WGS84, generalised to half a pixel at that zoom, capped at 2000 features (`truncated` says so), cached 60 s on a bbox snapped outward to the zoom's tile grid. `?ids=` (≤ 50) fetches a routed line that is outside the view. `GET /map/arcgis-layers` lists styles and an item link — never a URL, a filter or a token.
+- **Rule 111 reaches the layers.** A token sent to a layer host outside the portal is a new destination: the schema derives `layerHosts` (hosts that are not the portal's own, nor Esri's `*.arcgis.com` under an Online portal), a list-valued destination key. Saving a layer on a new host therefore needs the secret typed again, and the Layers tab reads a not-yet-saved foreign host without a token.
+- **Each view picks.** `TopologyView.arcgisLayers` (layer ids, ≤ 20; empty for a new view and after a mode reset). In the Map layers card, a tick while editing is staged and saved with the view; outside edit mode it lasts until the map closes — the Device types toggles' contract (rule 147).
+- **Floor 0, map or satellite only.** Like the runs before them, features draw on floor 0's ground and never over an uploaded plan, whose coordinates are not latitude / longitude.
+
+**Rejected.**
+
+- *Keeping Polaris-drawn runs as a local overlay* — two sources of truth for the same trench; the GIS team's layer is the record.
+- *Sending the layer URL and a token to the browser* — the token would leak to every Device Map reader.
+- *A web map instead of layers* — less control in Polaris; the operator chose per-layer styling.
+- *Checking the where clause at save* — a network round trip on every save; Test Connection does it.
+
+**What went away.** `arcgisWriteBackService`, the `arcgisWriteBack` job, the Write-back tab and its four routes, `CableRun` and `GET/PUT /map/sites/:id/cable-runs`, the Runs drawing tools, the `cableRuns` key (migration `20261116120000_arcgis_read_only` drops `cable_runs`, empties `cable_run_links`, strips the key from every role and the write-back keys from stored configs). Rules 184 and 185 are retired, see this rule.
+
+**Where.** `src/services/arcgisLayerService.ts`; `src/api/routes/integrations.ts` (`ArcgisLayerSchema`, `stampArcgisLayerHosts`, `arcgisConfigForUrl`, the three `/arcgis/*` routes); `src/api/routes/map.ts` (`/arcgis-layers`); `src/services/topologyViewService.ts` (`sanitizeArcgisLayers`); `src/utils/secretDestination.ts` (`layerHosts`); `public/js/topology-arcgis-layers.js`; `public/js/integrations-forms.js` (`arcgisLayersHTML`) + `integrations.js` (`_wireArcgisLayers`). Tests: `tests/unit/arcgisLayerService.test.ts`, `tests/integration/cableRuns.test.ts`.
+
+## Rule 188(a) — A device link can ride ArcGIS lines, and that stays in Polaris
+
+**What it says.** On floor 0 over the map / satellite, a link dragged within 12 px of a shown ArcGIS line is drawn through it: from each device to the line's nearest point, along it, across to the next line where the two come closest (`public/js/cable-run-geometry.js`); bends and end directions are ignored while it rides anything. `CableRunLink` (site + the link's Topology path key → ordered references `<layerId>/<featureId>`, the feature id being the layer's identity-field value) is Polaris-only layout, saved with the edit session through `PUT /map/sites/:id/cable-run-links` on the VIEW gate (`deviceMap` write + its write scope). A malformed reference is refused (400); a reference to a layer that is not a configured LINE layer is dropped. A routed line outside the view is fetched by id; one that is hidden, filtered out or gone from ArcGIS leaves its link drawn straight there, and the Map layers card counts those connections under a "Route line missing" pill.
+
+**Rejected.** *Storing the routed geometry* — stale the moment a device or a line moves. *Checking each feature exists on save* — a round trip per save; the canvas shows a missing line instead. *Routing through points or areas* — only lines are routes.
+
+**Where.** `src/services/cableRunService.ts` (`FEATURE_REF_RE`, `listRunLinks`, `applyRunLinkEdits`); `src/api/routes/map.ts` (`/sites/:id/cable-run-links`); `public/js/topology-arcgis-layers.js` (`linkRuns`, `setLinkRuns`, `hitRun`, `highlight`); `public/js/topology-physical.js` (`routedRuns`, `attachRun`, `detachRun`, `drawRunHandles`). Tests: `tests/unit/cableRunService.test.ts`, `tests/unit/cableRunGeometry.test.ts`, `tests/integration/cableRuns.test.ts`.

@@ -190,7 +190,7 @@ export async function addCertificate(
   });
 
   logger.info({ id: record.id, name: filename, category }, "Certificate uploaded");
-  // Business rule 188: a CA reaches this process's TLS trust store at once;
+  // Business rule 189: a CA reaches this process's TLS trust store at once;
   // the other roles pick it up on their refresh tick.
   if (category === "ca") {
     await refreshTrustedCas();

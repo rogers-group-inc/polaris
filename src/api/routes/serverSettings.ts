@@ -511,7 +511,7 @@ router.get("/certificates", async (_req, res, next) => {
 
 // Server-leaf cert mutations are always rejected — nginx owns TLS for the
 // life of the install. CA records (category="ca") stay editable because
-// every role's outbound TLS trusts them (business rule 188). The 409
+// every role's outbound TLS trusts them (business rule 189). The 409
 // message is the actionable guidance for an operator who landed here.
 const SERVER_CERT_EXTERNAL_MESSAGE =
   "Polaris is fronted by an external proxy; manage the server cert via POLARIS_PROXY_CERT_PATH";

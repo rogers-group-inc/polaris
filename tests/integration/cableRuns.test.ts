@@ -1,7 +1,11 @@
 /**
- * tests/integration/cableRuns.test.ts — cable runs (business rule 184)
- * against a real database: the routes, the trench rule, the `cableRuns` key's
- * rungs and write scope, and the migration's seeding of the key.
+ * tests/integration/cableRuns.test.ts — ArcGIS layers read only on the Device
+ * Map (business rule 188) and connections routed through ArcGIS lines (188(a))
+ * against a real database, with a fake ArcGIS behind arcgisService's seam:
+ * the layer list hides URLs and tokens, features come back for a bbox and by
+ * id, a view saves its ticked layers, routed links keep only references to a
+ * configured line layer, and the gates (deviceMap read to see, deviceMap
+ * write to route; no cableRuns key any more).
  *
  * Skips cleanly when DATABASE_URL isn't reachable (tests/integration/_helpers).
  */
@@ -12,17 +16,41 @@ import { app } from "../../src/app.js";
 import { prisma } from "../../src/db.js";
 import { hashPassword } from "../../src/utils/password.js";
 import { FUNCTION_KEYS } from "../../src/api/middleware/permissions.js";
+import { _setRequestImplForTests, type ArcgisHttpRequest } from "../../src/services/arcgisService.js";
+import { clearFeatureCache } from "../../src/services/arcgisLayerService.js";
 import { authedAgent, dbDescribe, dbReachable, ensureTestUser } from "./_helpers.js";
 
 const d = dbDescribe;
-const PFX = "cableruns-test";
-const PASSWORD = "cableruns-password-not-real";
+const PFX = "arcgis-layers-test";
+const PASSWORD = "arcgis-layers-password-not-real";
+const LINE_ID = "6d1f3a52-7c1e-4d4b-9a0e-2f5b8c9d0e11";
+const POINT_ID = "0b9e2f7c-5a41-4c3d-8e6f-1a2b3c4d5e6f";
+const LINE_URL = "https://services.example-gis.test/arcgis/rest/services/Fiber/FeatureServer/0";
+const POINT_URL = "https://services.example-gis.test/arcgis/rest/services/Fiber/FeatureServer/1";
 let siteId = "";
+let integrationId = "";
+let viewId = "";
+const calls: ArcgisHttpRequest[] = [];
 
-const POLE = {
-  name: "Yard road pole line", medium: "fiber", placement: "electric_pole",
-  points: [[-85.7001, 37.9801], [-85.7002, 37.9811], [-85.7015, 37.9812]], notes: "joint-use poles",
-};
+// Synthetic features only — never real survey coordinates.
+const FEATURES = [
+  { attributes: { GlobalID: "{AAAA-1}", ROUTE_NAME: "TRUNK-A", FIBER_COUNT: 48 }, geometry: { paths: [[[-85.70011, 37.98012], [-85.70021, 37.98112]]] } },
+  { attributes: { GlobalID: "{AAAA-2}", ROUTE_NAME: "TRUNK-B", FIBER_COUNT: 24 }, geometry: { paths: [[[-85.70121, 37.98012], [-85.70221, 37.98112]]] } },
+];
+
+function fakeArcgis(req: ArcgisHttpRequest): Promise<{ status: number; body: string }> {
+  calls.push(req);
+  const u = new URL(req.url);
+  const where = req.form?.where ?? u.searchParams.get("where") ?? "";
+  if (u.pathname.endsWith("/FeatureServer/0/query")) {
+    const feats = where.includes("IN (") ? FEATURES.filter((f) => where.includes(`'${f.attributes.GlobalID}'`)) : FEATURES;
+    return Promise.resolve({ status: 200, body: JSON.stringify({ features: feats }) });
+  }
+  if (u.pathname.endsWith("/FeatureServer/1/query")) {
+    return Promise.resolve({ status: 200, body: JSON.stringify({ features: [{ attributes: { OBJECTID: 7 }, geometry: { x: -85.7, y: 37.98 } }] }) });
+  }
+  return Promise.resolve({ status: 200, body: JSON.stringify({ error: { code: 400, message: `unexpected ${u.pathname}` } }) });
+}
 
 async function makeUser(suffix: string, perms: Record<string, string>): Promise<void> {
   const matrix: Record<string, string> = {};
@@ -46,8 +74,18 @@ async function loginAs(suffix: string): Promise<{ agent: request.Agent; csrf: st
   return { agent, csrf };
 }
 
+/** The test admin: GET / PUT with the session's CSRF token. */
+async function admin(): Promise<{ get: (u: string) => request.Test; put: (u: string, b: unknown) => request.Test }> {
+  const { agent, csrf } = await authedAgent(app);
+  return {
+    get: (u) => agent.get(u),
+    put: (u, b) => agent.put(u).set("x-csrf-token", csrf).send(b as object),
+  };
+}
+
 async function cleanup(): Promise<void> {
   await prisma.asset.deleteMany({ where: { hostname: { startsWith: PFX } } });
+  await prisma.integration.deleteMany({ where: { name: { startsWith: PFX } } });
   await prisma.user.deleteMany({ where: { username: { startsWith: PFX } } });
   await prisma.role.deleteMany({ where: { name: { startsWith: PFX } } });
 }
@@ -56,157 +94,135 @@ beforeAll(async () => {
   if (!dbReachable) return;
   await ensureTestUser();
   await cleanup();
+  _setRequestImplForTests(fakeArcgis);
+  clearFeatureCache();
   const fg = await prisma.asset.create({ data: { hostname: `${PFX}-fg`, assetType: "firewall", status: "active" } });
   siteId = fg.id;
-  await makeUser("maponly", { deviceMap: "fullwrite" });
-  await makeUser("rw", { deviceMap: "read", cableRuns: "write" });
-  await makeUser("full", { deviceMap: "read", cableRuns: "fullwrite" });
-  await makeUser("ro", { deviceMap: "read", cableRuns: "read" });
+  const integ = await prisma.integration.create({
+    data: {
+      type: "arcgis", name: `${PFX}-gis`, enabled: true, autoDiscover: false,
+      config: {
+        portalUrl: "https://gis.example-gis.test/portal", authMode: "none", host: "gis.example-gis.test",
+        layers: [
+          { id: LINE_ID, url: LINE_URL, itemId: "0123456789abcdef0123456789abcdef", title: "Fiber Routes", geometry: "line", idField: "GlobalID",
+            labelField: "ROUTE_NAME", popupFields: [{ name: "FIBER_COUNT", alias: "Fibers" }], where: "STATUS = 'In service'",
+            style: { color: "accent", width: 3, dash: "solid" } },
+          { id: POINT_ID, url: POINT_URL, title: "Handholes", geometry: "point", idField: "OBJECTID", popupFields: [],
+            style: { color: "green", width: 3, dash: "solid" } },
+        ],
+      },
+    },
+  });
+  integrationId = integ.id;
+  const view = await prisma.topologyView.create({ data: { siteId, name: `${PFX}-view`, mode: "topology" } });
+  viewId = view.id;
+  await makeUser("viewer", { deviceMap: "read" });
 });
-afterAll(async () => { if (dbReachable) await cleanup(); });
 
-d("cable runs (rule 184)", () => {
-  it("draws, edits and deletes a pole run in one edit session each, with Events", async () => {
-    const { agent, csrf } = await authedAgent(app);
-    const created = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ upserts: [POLE] });
-    expect(created.status, JSON.stringify(created.body)).toBe(200);
-    expect(created.body.runs).toHaveLength(1);
-    const run = created.body.runs[0];
-    expect(run).toMatchObject({ name: POLE.name, medium: "fiber", placement: "electric_pole", source: "drawn", syncStatus: "off" });
-    expect(run.lengthM).toBeGreaterThan(200);
+afterAll(async () => {
+  _setRequestImplForTests(null);
+  if (!dbReachable) return;
+  await cleanup();
+});
 
-    const got = await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`);
-    expect(got.status).toBe(200);
-    expect(got.body.canEditRuns).toBe(true);
-    expect(got.body.runs.map((r: { id: string }) => r.id)).toEqual([run.id]);
-
-    const edited = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf)
-      .send({ upserts: [{ ...POLE, id: run.id, medium: "ethernet", placement: "telephone_pole", points: POLE.points.slice(0, 2) }] });
-    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
-    expect(edited.body.runs[0]).toMatchObject({ medium: "ethernet", placement: "telephone_pole" });
-    const row = await prisma.cableRun.findUnique({ where: { id: run.id } });
-    expect(row!.version).toBe(2);
-    expect(row!.syncStatus).toBe("off");
-
-    const del = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ deletes: [run.id] });
-    expect(del.status).toBe(200);
-    expect(del.body.runs).toEqual([]);
-    // Never sent to ArcGIS: deleted outright, no tombstone.
-    expect(await prisma.cableRun.findUnique({ where: { id: run.id } })).toBeNull();
-
-    const events = await prisma.event.findMany({ where: { resourceId: run.id }, select: { action: true } });
-    expect(events.map((e) => e.action).sort()).toEqual(["cable_run.created", "cable_run.deleted", "cable_run.updated"]);
+d("ArcGIS layers on the Device Map (rule 188)", () => {
+  it("the catalogue has no cableRuns key any more", () => {
+    expect(FUNCTION_KEYS.map((k) => k.key)).not.toContain("cableRuns");
   });
 
-  it("a run already sent to ArcGIS leaves a tombstone, and an edit sends it again", async () => {
-    const { agent, csrf } = await authedAgent(app);
-    const created = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ upserts: [POLE] });
-    const id = created.body.runs[0].id as string;
-    await prisma.cableRun.update({ where: { id }, data: { syncStatus: "synced", arcgisObjectId: 42 } });
-
-    await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ upserts: [{ ...POLE, id, name: "Renamed" }] });
-    expect((await prisma.cableRun.findUnique({ where: { id } }))!.syncStatus).toBe("pending");
-
-    const del = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ deletes: [id] });
-    expect(del.body.runs).toEqual([]);
-    const tomb = await prisma.cableRun.findUnique({ where: { id } });
-    expect(tomb!.deletedAt).not.toBeNull();
-    expect(tomb!.syncStatus).toBe("pending");
-    await prisma.cableRun.delete({ where: { id } });
+  it("lists the configured layers without their URLs, filters or tokens", async () => {
+    const { agent } = await loginAs("viewer");
+    const res = await agent.get("/api/v1/map/arcgis-layers");
+    expect(res.status).toBe(200);
+    const mine = res.body.layers.filter((l: { id: string }) => l.id === LINE_ID || l.id === POINT_ID);
+    expect(mine).toHaveLength(2);
+    const line = mine.find((l: { id: string }) => l.id === LINE_ID);
+    expect(line).toMatchObject({ title: "Fiber Routes", geometry: "line", labelField: "ROUTE_NAME" });
+    expect(line.itemUrl).toBe("https://gis.example-gis.test/portal/home/item.html?id=0123456789abcdef0123456789abcdef");
+    expect(JSON.stringify(res.body)).not.toContain("FeatureServer");
+    expect(line).not.toHaveProperty("where");
   });
 
-  it("refuses a hand-drawn trench, grid coordinates, and another site's run", async () => {
-    const { agent, csrf } = await authedAgent(app);
-    const trench = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf)
-      .send({ upserts: [{ ...POLE, placement: "trench" }] });
-    expect(trench.status).toBe(400);
-    expect(JSON.stringify(trench.body)).toMatch(/imported from a survey file/);
-
-    const grid = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf)
-      .send({ upserts: [{ ...POLE, points: [[1230486.35, 196527.88], [1230502.79, 196527.84]] }] });
-    expect(grid.status).toBe(400);
-
-    const other = await prisma.asset.create({ data: { hostname: `${PFX}-fg2`, assetType: "firewall", status: "active" } });
-    const theirs = await prisma.cableRun.create({ data: { siteId: other.id, points: POLE.points, medium: "fiber", placement: "electric_pole" } });
-    const cross = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ deletes: [theirs.id] });
-    expect(cross.status).toBe(404);
-    expect(await prisma.cableRun.findUnique({ where: { id: theirs.id } })).not.toBeNull();
+  it("answers the features in a bbox, with the layer's filter, label and fields", async () => {
+    clearFeatureCache();
+    calls.length = 0;
+    const { agent } = await loginAs("viewer");
+    const res = await agent.get(`/api/v1/map/arcgis-layers/${LINE_ID}/features`).query({ bbox: "-85.71,37.97,-85.69,37.99", zoom: "17" });
+    expect(res.status).toBe(200);
+    expect(res.body.features.map((f: { id: string }) => f.id)).toEqual(["{AAAA-1}", "{AAAA-2}"]);
+    expect(res.body.features[0]).toMatchObject({ label: "TRUNK-A", attrs: { FIBER_COUNT: 48 } });
+    expect(res.body.features[0].g[0][0]).toEqual([-85.70011, 37.98012]);
+    const q = new URL(calls[0].url);
+    expect(q.searchParams.get("where")).toBe("STATUS = 'In service'");
+    expect(q.searchParams.get("outSR")).toBe("4326");
+    expect(q.searchParams.get("outFields")!.split(",").sort()).toEqual(["FIBER_COUNT", "GlobalID", "ROUTE_NAME"]);
+    expect(q.searchParams.get("token")).toBeNull();
   });
 
-  it("is its own key: Device Map rights alone neither show nor draw runs", async () => {
-    const { agent, csrf } = await loginAs("maponly");
-    expect((await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`)).status).toBe(403);
-    expect((await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ upserts: [POLE] })).status).toBe(403);
+  it("answers features by identity value for a routed line outside the view", async () => {
+    clearFeatureCache();
+    const { agent } = await loginAs("viewer");
+    const res = await agent.get(`/api/v1/map/arcgis-layers/${LINE_ID}/features`).query({ ids: "{AAAA-2}" });
+    expect(res.status).toBe(200);
+    expect(res.body.features.map((f: { id: string }) => f.id)).toEqual(["{AAAA-2}"]);
   });
 
-  it("Read shows runs; Read-Write is limited to the caller's sites; Full Read-Write reaches any site", async () => {
-    const ro = await loginAs("ro");
-    const roGet = await ro.agent.get(`/api/v1/map/sites/${siteId}/cable-runs`);
-    expect(roGet.status).toBe(200);
-    expect(roGet.body.canEditRuns).toBe(false);
-    expect((await ro.agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", ro.csrf).send({ upserts: [POLE] })).status).toBe(403);
-
-    // The site has no owner and no tags: Read-Write does not reach it.
-    const rw = await loginAs("rw");
-    expect((await rw.agent.get(`/api/v1/map/sites/${siteId}/cable-runs`)).body.canEditRuns).toBe(false);
-    expect((await rw.agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", rw.csrf).send({ upserts: [POLE] })).status).toBe(403);
-    // …until the caller owns it.
-    await prisma.asset.update({ where: { id: siteId }, data: { createdBy: `${PFX}-user-rw` } });
-    const owned = await rw.agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", rw.csrf).send({ upserts: [POLE] });
-    expect(owned.status, JSON.stringify(owned.body)).toBe(200);
-    await prisma.asset.update({ where: { id: siteId }, data: { createdBy: null } });
-
-    const full = await loginAs("full");
-    const anySite = await full.agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", full.csrf).send({ upserts: [POLE] });
-    expect(anySite.status, JSON.stringify(anySite.body)).toBe(200);
+  it("refuses a bad bbox and an unknown layer", async () => {
+    const { agent } = await loginAs("viewer");
+    expect((await agent.get(`/api/v1/map/arcgis-layers/${LINE_ID}/features`).query({ bbox: "1,2,3" })).status).toBe(400);
+    expect((await agent.get("/api/v1/map/arcgis-layers/11111111-2222-4333-8444-555555555555/features").query({ bbox: "0,0,1,1" })).status).toBe(404);
   });
 
-  it("routes links through runs on the view gate; a deleted run leaves every link (rule 184(a))", async () => {
-    const { agent, csrf } = await authedAgent(app);
-    const made = await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf)
-      .send({ upserts: [{ ...POLE, name: "link-a" }, { ...POLE, name: "link-b" }] });
-    expect(made.status, JSON.stringify(made.body)).toBe(200);
-    const a = made.body.runs.find((r: { name: string }) => r.name === "link-a").id;
-    const b = made.body.runs.find((r: { name: string }) => r.name === "link-b").id;
-    const stranger = "00000000-0000-4000-8000-000000000000";
+  it("a view saves the layers it draws; a new view draws none", async () => {
+    const agent = await admin();
+    const before = await prisma.topologyView.findUniqueOrThrow({ where: { id: viewId } });
+    expect(before.arcgisLayers).toEqual([]);
+    const res = await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, { arcgisLayers: [LINE_ID.toUpperCase(), LINE_ID] });
+    expect(res.status).toBe(200);
+    expect(res.body.view.arcgisLayers).toEqual([LINE_ID]);
+    expect((await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, { arcgisLayers: ["not-a-uuid"] })).status).toBe(400);
+  });
+});
 
-    const set = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
-      .send({ links: { "lldp|sw1|sw2": [a, b, stranger], "lldp|sw2|sw3": [b] } });
-    expect(set.status, JSON.stringify(set.body)).toBe(200);
-    // An id that is not a live run here is dropped, not an error.
-    expect(set.body.links).toEqual({ "lldp|sw1|sw2": [a, b], "lldp|sw2|sw3": [b] });
-    const got = await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`);
-    expect(got.body.links).toEqual(set.body.links);
-    expect(await prisma.event.count({ where: { action: "cable_run_link.updated", resourceId: siteId } })).toBeGreaterThan(0);
+d("connections routed through ArcGIS lines (rule 188(a))", () => {
+  const KEY = "iface|a1|b2";
 
-    // Deleting run b takes it off both links; the one that rode only b goes straight.
-    await agent.put(`/api/v1/map/sites/${siteId}/cable-runs`).set("X-CSRF-Token", csrf).send({ deletes: [b] });
-    expect((await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`)).body.links).toEqual({ "lldp|sw1|sw2": [a] });
-
-    // An empty list makes a link straight again.
-    const straight = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
-      .send({ links: { "lldp|sw1|sw2": [] } });
-    expect(straight.body.links).toEqual({});
-    // A malformed key is refused.
-    expect((await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", csrf)
-      .send({ links: { "not-a-key": [a] } })).status).toBe(400);
+  it("keeps references to a configured LINE layer and drops the rest", async () => {
+    const agent = await admin();
+    const res = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`, {
+      links: { [KEY]: [`${LINE_ID}/{AAAA-1}`, `${POINT_ID}/7`, "11111111-2222-4333-8444-555555555555/x", `${LINE_ID}/{AAAA-2}`] },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.links[KEY]).toEqual([`${LINE_ID}/{AAAA-1}`, `${LINE_ID}/{AAAA-2}`]);
+    const read = await agent.get(`/api/v1/map/sites/${siteId}/cable-run-links`);
+    expect(read.body.links[KEY]).toHaveLength(2);
+    const ev = await prisma.event.findFirst({ where: { action: "cable_run_link.updated", resourceId: siteId }, orderBy: { timestamp: "desc" } });
+    expect(ev).toBeTruthy();
   });
 
-  it("routing links is the Device Map's write, not cableRuns'", async () => {
-    // cableRuns fullwrite but Device Map read: no.
-    const full = await loginAs("full");
-    expect((await full.agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", full.csrf)
-      .send({ links: {} })).status).toBe(403);
-    // Device Map fullwrite alone: yes.
-    const map = await loginAs("maponly");
-    expect((await map.agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("X-CSRF-Token", map.csrf)
-      .send({ links: {} })).status).toBe(200);
+  it("refuses a malformed reference and a malformed link key", async () => {
+    const agent = await admin();
+    expect((await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`, { links: { [KEY]: ["not a ref"] } })).status).toBe(400);
+    expect((await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`, { links: { "no-pipes": [] } })).status).toBe(400);
   });
 
-  it("the migration seeded the key: admin full, readonly read, the other built-ins none", async () => {
-    const roles = await prisma.role.findMany({ where: { name: { in: ["admin", "readonly", "networkadmin", "assetsadmin", "user"] } }, select: { name: true, permissions: true } });
-    const level = Object.fromEntries(roles.map((r) => [r.name, (r.permissions as Record<string, string>).cableRuns]));
-    expect(level).toMatchObject({ admin: "fullwrite", readonly: "read" });
-    for (const n of ["networkadmin", "assetsadmin", "user"]) if (n in level) expect(level[n]).toBe("none");
+  it("an empty list makes the link straight again", async () => {
+    const agent = await admin();
+    const res = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`, { links: { [KEY]: [] } });
+    expect(res.status).toBe(200);
+    expect(res.body.links[KEY]).toBeUndefined();
+  });
+
+  it("deviceMap read sees routes but cannot change them", async () => {
+    const { agent, csrf } = await loginAs("viewer");
+    expect((await agent.get(`/api/v1/map/sites/${siteId}/cable-run-links`)).status).toBe(200);
+    const put = await agent.put(`/api/v1/map/sites/${siteId}/cable-run-links`).set("x-csrf-token", csrf).send({ links: {} });
+    expect(put.status).toBe(403);
+  });
+
+  it("the old run routes are gone", async () => {
+    const agent = await admin();
+    expect((await agent.get(`/api/v1/map/sites/${siteId}/cable-runs`)).status).toBe(404);
+    expect((await agent.get(`/api/v1/integrations/${integrationId}/arcgis/write-back`)).status).toBe(404);
   });
 });
