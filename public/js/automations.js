@@ -1456,16 +1456,54 @@ function renderScriptsList(scripts) {
   });
 }
 
+/**
+ * Business rule 190: should this test run get an email pass? "" = no email,
+ * a channel id = email the signed-in tester through it, null = cancelled.
+ * Asked only when an email channel exists (otherwise "" without a dialog).
+ */
+async function pickTestRunEmailChannel() {
+  var chans = [];
+  try { chans = ((await api.deliveryChannels.list()) || {}).channels || []; } catch (_e) { return ""; }
+  chans = chans.filter(function (c) { return (c.type === "smtp" || c.type === "oauth_m365") && c.enabled !== false; });
+  if (!chans.length) return "";
+  var pick = await showChoice(
+    "A script that sends email through Polaris (POLARIS_RUN_TOKEN) can be tested here. A test sends only to you, at the address on your account.",
+    {
+      title: "Email during the test",
+      choices: [{ id: "none", label: "Run without email", kind: "secondary" }].concat(chans.map(function (c) {
+        return { id: "ch:" + c.id, label: "Allow email to me via " + c.name, kind: "primary" };
+      })),
+      cancelLabel: "Cancel",
+    },
+  );
+  if (pick === null) return null;
+  return pick.indexOf("ch:") === 0 ? pick.slice(3) : "";
+}
+
 // Server-side test run: enqueue (202 + runId), then poll the run until it
 // completes (the 5s runner job executes it) and render exit code + output.
 async function runScriptTest(sc, btn) {
   var out = document.querySelector('.script-test-out[data-id="' + sc.id + '"]');
   if (sc.runTarget === "agent") { showToast("Agent-only scripts can't be test-run from here — trigger them through an automation on a real asset.", "info"); return; }
-  if (!(await showConfirm('Run "' + sc.name + '" on the Polaris server NOW (as the service account)?'))) return;
+  var args = await showPrompt('Run "' + sc.name + '" on the Polaris server NOW, as the service account?', {
+    title: "Test run",
+    label: "Arguments (optional)",
+    multiline: true,
+    maxLength: 2000,
+    okLabel: "Next",
+    help: "Passed as ONE string ($1 / %1), exactly as an automation's args template would render. A test run has no alert, so the POLARIS_ALERT_ID / POLARIS_RULE / POLARIS_ASSET variables are empty.",
+  });
+  if (args === null) return;
+  // Business rule 190: a test may exercise the script's email path, but it
+  // emails only the person running it.
+  var emailChannelId = await pickTestRunEmailChannel();
+  if (emailChannelId === null) return;
   btn.disabled = true;
   if (out) out.innerHTML = '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:6px 0 0">Queued…</p>';
   try {
-    var res = await api.automationScripts.testRun(sc.id, {});
+    var body = { args: args || null };
+    if (emailChannelId) body.emailChannelId = emailChannelId;
+    var res = await api.automationScripts.testRun(sc.id, body);
     var runId = res.runId;
     var tries = 0;
     var poll = async function () {

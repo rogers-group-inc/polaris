@@ -30,6 +30,17 @@ export interface InlineAttachment {
   content: Buffer;
 }
 
+/**
+ * A file the reader downloads — a regular attachment, never referenced from
+ * the body. Business rule 190: what an automation script sends (a certificate,
+ * a report); the alert email itself only ever carries inline images.
+ */
+export interface FileAttachment {
+  filename: string;
+  contentType: string;
+  content: Buffer;
+}
+
 export interface EmailMessage {
   /** Single address (legacy per-address fan-out) or full To list (composed sends). */
   to: string | string[];
@@ -39,6 +50,8 @@ export interface EmailMessage {
   text: string;
   html?: string;
   attachments?: InlineAttachment[];
+  /** Regular (downloadable) attachments — business rule 190. */
+  files?: FileAttachment[];
 }
 
 export interface SmtpConfig {
@@ -90,8 +103,12 @@ export async function sendSmtpEmail(cfg: SmtpConfig, msg: EmailMessage): Promise
       html: msg.html,
       // `cid` makes nodemailer emit Content-ID + inline disposition, which is
       // what lets the HTML body reference it as src="cid:…".
-      attachments: msg.attachments?.length
-        ? msg.attachments.map((a) => ({ filename: a.filename, cid: a.cid, contentType: a.contentType, content: a.content }))
+      // A file (no cid) goes as an ordinary attachment.
+      attachments: msg.attachments?.length || msg.files?.length
+        ? [
+            ...(msg.attachments ?? []).map((a) => ({ filename: a.filename, cid: a.cid, contentType: a.contentType, content: a.content })),
+            ...(msg.files ?? []).map((f) => ({ filename: f.filename, contentType: f.contentType, content: f.content })),
+          ]
         : undefined,
     });
   } catch (err: any) {
@@ -164,16 +181,26 @@ export function buildGraphMessage(msg: EmailMessage): Record<string, unknown> {
     // Graph's inline images: isInline + contentId, referenced from the HTML
     // body as cid:<contentId>. Only attached alongside an HTML body — a
     // text-only Graph message would deliver them as visible file attachments.
-    ...(msg.attachments?.length && msg.html
+    ...((msg.attachments?.length && msg.html) || msg.files?.length
       ? {
-          attachments: msg.attachments.map((a) => ({
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            name: a.filename,
-            contentType: a.contentType,
-            contentBytes: a.content.toString("base64"),
-            isInline: true,
-            contentId: a.cid,
-          })),
+          attachments: [
+            ...(msg.html ? msg.attachments ?? [] : []).map((a) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: a.filename,
+              contentType: a.contentType,
+              contentBytes: a.content.toString("base64"),
+              isInline: true,
+              contentId: a.cid,
+            })),
+            // Business rule 190: a file the reader downloads, with any body type.
+            ...(msg.files ?? []).map((f) => ({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: f.filename,
+              contentType: f.contentType,
+              contentBytes: f.content.toString("base64"),
+              isInline: false,
+            })),
+          ],
         }
       : {}),
   };

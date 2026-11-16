@@ -17,6 +17,7 @@ import eventsRouter from "./routes/events.js";
 import notificationsRouter from "./routes/notifications.js";
 import notificationRulesRouter from "./routes/notificationRules.js";
 import automationScriptsRouter from "./routes/automationScripts.js";
+import scriptRunSelfRouter from "./routes/scriptRunSelf.js";
 import alertGroupsRouter from "./routes/alertGroups.js";
 import quietTimeSchedulesRouter from "./routes/quietTimeSchedules.js";
 import maintenanceSchedulesRouter from "./routes/maintenanceSchedules.js";
@@ -138,6 +139,12 @@ router.use("/agents", agentsRouter);
 // any bundle is released, so this surface cannot hand out secrets on its
 // own. The gated half of the feature is mounted after requireAuth below.
 router.use("/ha/enroll", haEnrollRouter);
+
+// A RUNNING automation script asking about itself (business rule 190): no
+// session, no API token — it presents its run's single-use pass as a Bearer
+// header (CSRF-exempt like any bearer) and must call from loopback. The pass
+// answers only while that run is running, so this cannot outlive the run.
+router.use("/script-runs/self", scriptRunSelfRouter);
 
 // Everything below requires an active session OR a valid bearer token.
 // Both caller kinds pass the same requirePermission(...) gates: sessions

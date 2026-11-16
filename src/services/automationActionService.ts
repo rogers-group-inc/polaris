@@ -413,6 +413,7 @@ export async function executeActions(
           ruleId: exec.ruleId ?? null,
           assetId: exec.assetId ?? null,
           requestedBy: exec.actor ?? "system:automation",
+          email: action.email ?? null,
         });
         executed++;
       }

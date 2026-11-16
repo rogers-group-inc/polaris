@@ -323,6 +323,8 @@ a device that went `down`) or a saturated reading.
 | `automation_script.updated` | **warning** when the body changed, else info | a body change carries the **old and new sha256** |
 | `automation_script.deleted` | **warning** | |
 | `automation.script.run` | | one execution |
+| `automation.script.email_sent` | info | a running script emailed through its action's channel — recipients, subject and attachment names ([rule 190](Business-Rules#rule-190)) |
+| `automation.script.email_failed` | **warning** | the channel could not send a script's email; the details carry the error |
 | `ssh.host_key.mismatch` | | a host key **changed** and the connection was refused |
 | `tls.cert.mismatch` | **warning** | a server's TLS certificate **changed** and the connection was refused before any credential was sent — written once per new certificate ([rule 113](Business-Rules#rule-113)) |
 | `tls.cert.trusted` | **warning** | an administrator trusted a server's new certificate in place of the pinned one |

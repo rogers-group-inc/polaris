@@ -42,6 +42,7 @@ import { STATE_DIR } from "../utils/paths.js";
 import { logEvent } from "./eventLogService.js";
 import { pruneOldRuns, SCRIPT_OUTPUT_CAP_BYTES } from "./automationScriptService.js";
 import { expireStaleAgentCommands, pruneOldAgentCommands } from "./agentCommandService.js";
+import { issueRunEmailPass, scriptApiUrl } from "./scriptRunEmailService.js";
 
 const CONCURRENCY = 2;
 const CLAIM_BATCH = 10;
@@ -224,6 +225,8 @@ export async function executeServerScript(run: {
   notificationId: string | null;
   ruleId: string | null;
   assetId: string | null;
+  /** Business rule 190: set when the action lets this run send email. */
+  emailChannelId?: string | null;
 }): Promise<ExecResult> {
   const script = run.scriptId ? await prisma.automationScript.findUnique({ where: { id: run.scriptId } }) : null;
   if (!script) return { status: "failed", exitCode: null, stdout: "", stderr: "script no longer exists in the registry" };
@@ -239,6 +242,12 @@ export async function executeServerScript(run: {
 
   try {
     await writeFile(scriptPath, script.body, { encoding: "utf8", mode: 0o600 });
+    // Rule 190: issued as late as possible, so the pass's clock starts with
+    // the process, not with the claim (a batch is claimed at once and run two
+    // at a time). Cleared by the completion update in runPendingServerScripts.
+    const emailEnv: Record<string, string> = run.emailChannelId
+      ? { POLARIS_RUN_TOKEN: await issueRunEmailPass(run.id), POLARIS_API_URL: scriptApiUrl() }
+      : {};
     return await new Promise<ExecResult>((resolveExec) => {
       execFile(
         spec.bin,
@@ -251,6 +260,8 @@ export async function executeServerScript(run: {
             POLARIS_ALERT_ID: run.notificationId ?? "",
             POLARIS_RULE: run.ruleId ?? "",
             POLARIS_ASSET: run.assetId ?? "",
+            POLARIS_RUN_ID: run.id,
+            ...emailEnv,
           }),
           windowsHide: true,
           // cmd only. buildCmdCommandLine has already applied cmd.exe's own
@@ -319,7 +330,7 @@ export async function runPendingServerScripts(): Promise<{ started: number; comp
     if (s.startedAt && now.getTime() - s.startedAt.getTime() > s.timeoutSec * 1000 + STUCK_GRACE_MS) {
       await prisma.automationScriptRun.update({
         where: { id: s.id, status: "running" },
-        data: { status: "timeout", completedAt: now, stderr: "run abandoned (process restart or wedge) — swept by the runner" },
+        data: { status: "timeout", completedAt: now, stderr: "run abandoned (process restart or wedge) — swept by the runner", emailTokenHash: null },
       });
     }
   }
@@ -359,7 +370,8 @@ export async function runPendingServerScripts(): Promise<{ started: number; comp
     for (const { run, res } of results) {
       await prisma.automationScriptRun.update({
         where: { id: run.id },
-        data: { status: res.status, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr, completedAt: new Date() },
+        // emailTokenHash: null — the run's email pass dies with it (rule 190).
+        data: { status: res.status, exitCode: res.exitCode, stdout: res.stdout, stderr: res.stderr, completedAt: new Date(), emailTokenHash: null },
       });
       completed++;
       await logEvent({

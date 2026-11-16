@@ -314,7 +314,14 @@ describe("executeActions — script", () => {
     expect(res.executed).toBe(1);
     expect(h.scriptRun).toHaveBeenCalledWith({
       scriptId: "s1", runOn: "server", args: "--host sw1", timeoutSec: 30, notificationId: "n1", ruleId: "r1", assetId: "a1", requestedBy: "system:automation",
+      email: null,
     });
+  });
+
+  it("hands the action's email block to the run (rule 190)", async () => {
+    const email = { channelId: "c1", addresses: ["certs@example.com"] };
+    await executeActions("n1", [{ type: "script", scriptId: "s1", runOn: "server", email } as AutomationAction], CTX, { ruleId: "r1" });
+    expect(h.scriptRun.mock.calls.at(-1)![0]).toMatchObject({ email });
   });
 
   it("a blank args template is null; missing ids are null; actor rides as requestedBy", async () => {

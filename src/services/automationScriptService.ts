@@ -189,6 +189,8 @@ export interface ScriptRunRequest {
   ruleId?: string | null;
   assetId?: string | null;
   requestedBy: string;
+  /** Business rule 190: the channel + addresses this run may email (server only). */
+  email?: { channelId: string; addresses: string[] } | null;
 }
 
 /**
@@ -223,6 +225,11 @@ export async function requestScriptRun(req: ScriptRunRequest): Promise<{ runId: 
     agent = { id: row.id };
   }
 
+  // Rule 190: the pass rides the server runner's environment; an agent run
+  // never receives one. Save refuses the pairing — this is the backstop.
+  if (req.email && req.runOn !== "server") {
+    throw new AppError(400, `Script "${script.name}" runs on an agent, and only a server run can send email through Polaris`);
+  }
   const timeoutSec = Math.min(req.timeoutSec ?? script.timeoutSec, MAX_SCRIPT_TIMEOUT_SEC);
   const run = await prisma.automationScriptRun.create({
     data: {
@@ -236,6 +243,7 @@ export async function requestScriptRun(req: ScriptRunRequest): Promise<{ runId: 
       args: req.args,
       timeoutSec,
       requestedBy: req.requestedBy,
+      ...(req.email ? { emailChannelId: req.email.channelId, emailTo: [...new Set(req.email.addresses.map((a) => a.trim()))] } : {}),
     },
   });
 

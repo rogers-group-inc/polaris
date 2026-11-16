@@ -94,6 +94,7 @@ escalation emails" are blank on the first send.
 | Run on | `server` or `agent` |
 | Args template | ≤ 2000 chars, `{token}` vocabulary |
 | Timeout | 1–600 s, overrides the script's own default |
+| Let this script send email through Polaris | server runs only: an email channel and the addresses the script may send to ([rule 190](Business-Rules#rule-190), [how](Automation-Scripts#sending-email-through-polaris)) |
 
 Attaching one needs `automationScripts:write`. See
 [Automation scripts](Automation-Scripts) — it is an RCE-equivalent surface and
