@@ -1035,7 +1035,8 @@ router.put("/reboot", requirePermission("serverSettingsSystem", "write"), async 
 // key (sealed at rest, never returned — `apiTokenSet` only). `apiToken`
 // omitted keeps the stored key; "" clears it.
 const SatelliteSettingsSchema = z.object({
-  enabled: z.boolean(),
+  // Ignored (on = a tile URL is saved); still accepted from an older page.
+  enabled: z.boolean().optional(),
   urlTemplate: z.string().max(500),
   apiToken: z.string().max(2000).optional(),
   attribution: z.string().max(200),

@@ -357,7 +357,9 @@ required ([rule 115](Business-Rules#rule-115)).
 Adds a **Map | Satellite** switch to the [Device Map](Device-Map)'s Topology
 views. OpenStreetMap has no aerial imagery, so it comes from a provider you
 choose (Esri, Mapbox, MapTiler, your own imagery server…), under that
-provider's terms and your own licence or key. Off by default.
+provider's terms and your own licence or key. Off by default: satellite imagery
+is offered whenever a tile URL is saved, and clearing the URL (then **Save**)
+turns it off.
 
 - **Tile URL**: an https address with `{z}`, `{x}` and `{y}` in the order your
   provider uses, for example
@@ -367,7 +369,7 @@ provider's terms and your own licence or key. Off by default.
 - **API key**: stored encrypted and never shown again; leave it blank to keep
   the saved one, or **Remove key**.
 - **Attribution**: the credit the provider requires, shown in the corner of the
-  map. Required while satellite imagery is on.
+  map. Required whenever a tile URL is saved.
 - **Deepest zoom**: the most detailed level the provider serves; the map
   enlarges its tiles beyond that.
 

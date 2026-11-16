@@ -96,9 +96,13 @@ function defaults(): SatelliteSettings {
 export function parseSatelliteSettings(raw: unknown): SatelliteSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const zoom = Number(r.maxNativeZoom);
+  const urlTemplate = typeof r.urlTemplate === "string" ? r.urlTemplate.trim() : "";
   return {
-    enabled: r.enabled === true,
-    urlTemplate: typeof r.urlTemplate === "string" ? r.urlTemplate : "",
+    // Offered whenever a tile URL is saved; clearing the URL turns it off
+    // (operator decision 2026-11-16 — the separate "Offer" switch is gone, and
+    // a stored `enabled` from before is ignored).
+    enabled: urlTemplate !== "",
+    urlTemplate,
     apiToken: typeof r.apiToken === "string" ? r.apiToken : "",
     attribution: typeof r.attribution === "string" ? r.attribution : "",
     maxNativeZoom: Number.isInteger(zoom) && zoom >= 1 && zoom <= MAX_ZOOM ? zoom : DEFAULT_NATIVE_ZOOM,
@@ -276,7 +280,8 @@ export async function getSatelliteStatus(): Promise<SatelliteStatus> {
 }
 
 export interface SatelliteSettingsPatch {
-  enabled: boolean;
+  /** Ignored: satellite is on exactly when `urlTemplate` is set. Accepted for old clients. */
+  enabled?: boolean;
   urlTemplate: string;
   /** undefined = keep the stored key; "" = clear it; anything else replaces it. */
   apiToken?: string;
@@ -286,9 +291,10 @@ export interface SatelliteSettingsPatch {
 
 /** Merge a patch over the stored settings and validate the result. Pure apart from `current`. */
 export function mergeSatelliteSettings(current: SatelliteSettings, patch: SatelliteSettingsPatch): SatelliteSettings {
+  const urlTemplate = String(patch.urlTemplate ?? "").trim();
   const next: SatelliteSettings = {
-    enabled: patch.enabled === true,
-    urlTemplate: String(patch.urlTemplate ?? "").trim(),
+    enabled: urlTemplate !== "",
+    urlTemplate,
     apiToken: patch.apiToken === undefined ? current.apiToken : String(patch.apiToken).trim(),
     attribution: String(patch.attribution ?? "").trim().replace(/\s+/g, " "),
     maxNativeZoom: Number(patch.maxNativeZoom),
@@ -298,8 +304,8 @@ export function mergeSatelliteSettings(current: SatelliteSettings, patch: Satell
   if (!Number.isInteger(next.maxNativeZoom) || next.maxNativeZoom < 1 || next.maxNativeZoom > MAX_ZOOM) {
     throw new AppError(400, `The deepest zoom must be a whole number from 1 to ${MAX_ZOOM}`);
   }
-  // A switched-off source may be left half filled in; a switched-on one must work.
-  if (next.enabled || next.urlTemplate) {
+  // No URL = off (the rest may be left half filled in); a URL must work.
+  if (next.enabled) {
     const problem = urlTemplateProblem(next.urlTemplate, !!next.apiToken);
     if (problem) throw new AppError(400, problem);
   }
