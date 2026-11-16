@@ -270,7 +270,7 @@ describe("provisionLlmAccess", () => {
     expect(h.createToken.mock.calls[0][0].name).toHaveLength(100);
   });
 
-  // BUG: roleService.createRole refuses a description over 200 characters
+  // Was a bug until 2026-11-14: roleService.createRole refuses a description over 200 characters
   // (400 "Description must be ≤ 200 characters"), and an integration name has
   // no length cap (IntegrationNameSchema: min 1, no max). provisionLlmAccess
   // builds `Read-only access for the "<name>" AI Assistant integration's API
@@ -279,7 +279,7 @@ describe("provisionLlmAccess", () => {
   // throws 400, and POST /integrations rolls the llm integration back.
   // Right: the description fits 200 (truncate the quoted name), as the token
   // name already does with `.slice(0, 100)`.
-  it.fails("passes createRole a description within roleService's 200-character limit for a long integration name", async () => {
+  it("passes createRole a description within roleService's 200-character limit for a long integration name", async () => {
     await provisionLlmAccess({ id: "i1", name: "Nashville datacentre GPU inference host ".repeat(4) }, "alice");
     expect((h.createRole.mock.calls[0][0].description as string).length).toBeLessThanOrEqual(200);
   });

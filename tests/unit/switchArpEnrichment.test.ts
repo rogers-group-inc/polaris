@@ -240,14 +240,14 @@ describe("enrichFromSwitchMacAndArp — empty-address fill and sightings (rule 1
     expect(m.reconcile).not.toHaveBeenCalled();
   });
 
-  // BUG: rule 101(a) says "Fortinet infra is skipped on every pass", and the
+  // Was a bug until 2026-11-14: rule 101(a) says "Fortinet infra is skipped on every pass", and the
   // ladder loop and the sightings loop both skip firewall / switch / access_point
   // — but the conservative empty-address fill does not. An HA standby FortiGate
   // carries ipAddress = null BY DESIGN (Phase 3 creates it with no IP); when its
   // MAC shows up in a gate's ARP table (e.g. a dedicated HA management port),
   // Phase 7.5 writes { ipAddress: "10.0.0.3", ipSource: "FGT-A:arp" } onto the
   // standby. Right: an infra asset with no address is left alone (no write).
-  it.fails("never fills an empty address on Fortinet infra (an HA standby's null IP is by design)", async () => {
+  it("never fills an empty address on Fortinet infra (an HA standby's null IP is by design)", async () => {
     const standby = asset("sb", "00:09:0F:00:00:02", { assetType: "firewall", ipAddress: null });
     const { done } = run({ arpTable: [arp("00:09:0f:00:00:02", "10.0.0.3")] }, index([standby]));
     await done;

@@ -112,14 +112,14 @@ describe("pathGraphSubjects", () => {
     expect(pathGraphSubjects({ ...base, members }, 1)).toHaveLength(1);
   });
 
-  // BUG: pathGraphSubjects puts only the PRIMARY (worst) member first and
+  // Was a bug until 2026-11-14: pathGraphSubjects puts only the PRIMARY (worst) member first and
   // keeps every other member in stored (join) order, so "up to four, worst
   // first" (file header + the alerting-delivery touches entry) does not hold
   // past the first slot. Input: a device-spanning alert whose members are
   // warning a1, a2, a3 then critical a4, a5. Wrong output: a4, a1, a2, a3 — the
   // second critical device a5 is not drawn at all. Right output: a4, a5 first,
   // then two of the warnings.
-  it.fails("orders every slot worst first, so a second critical device is drawn before the warnings", () => {
+  it("orders every slot worst first, so a second critical device is drawn before the warnings", () => {
     const members = [
       member("c1", { assetId: "a1" }), member("c1", { assetId: "a2" }), member("c1", { assetId: "a3" }),
       member("c1", { assetId: "a4", severity: "critical" }), member("c1", { assetId: "a5", severity: "critical" }),

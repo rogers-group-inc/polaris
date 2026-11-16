@@ -174,14 +174,14 @@ describe("syncVipReservations — an existing vip row", () => {
     expect(db.update).not.toHaveBeenCalled();
   });
 
-  // BUG: the `vip` branch's change test compares name / device / role /
+  // Was a bug until 2026-11-14: the `vip` branch's change test compares name / device / role /
   // isVirtualServer but not `extip`. When a VIP's external address changes
   // while its mapped address stays (10.1.0.10 → 10.1.0.11, mapped 10.1.0.20),
   // the mapped row keeps vipInfo.extip = "10.1.0.10" forever — and
   // assetVipService reads that extip as "the EXTERNAL address the device
   // answers on" for the asset's General tab. The manual branch above does
   // compare extip. Right: the row is restamped with extip "10.1.0.11".
-  it.fails("an extip change on the same VIP restamps a vip row's snapshot", async () => {
+  it("an extip change on the same VIP restamps a vip row's snapshot", async () => {
     const row: Row = { id: "v1", sourceType: "vip", vipInfo: info({ role: "mapped" }) };
     await run([vip({ extip: "10.1.0.11", mappedips: ["10.1.0.20"] })], { "net1|10.1.0.20": row }).done;
     expect(db.update).toHaveBeenCalledWith({ where: { id: "v1" }, data: { vipInfo: info({ extip: "10.1.0.11", role: "mapped" }) } });
@@ -207,10 +207,10 @@ describe("syncVipReservations — a DHCP row at a VIP address", () => {
     expect(state.upsertConflict).toHaveBeenCalledWith("d1", "i1", expect.anything(), row, "fill-only");
   });
 
-  // BUG: same omission as the vip branch — the DHCP-row change test ignores
+  // Was a bug until 2026-11-14: same omission as the vip branch — the DHCP-row change test ignores
   // `extip`, so a DHCP row whose VIP moved to a new external address keeps the
   // stale vipInfo.extip. Right: the snapshot is rewritten with the new extip.
-  it.fails("an extip change on the same VIP restamps a DHCP row's snapshot", async () => {
+  it("an extip change on the same VIP restamps a DHCP row's snapshot", async () => {
     const row: Row = { id: "d1", sourceType: "dhcp_lease", owner: "alice", projectRef: "PRJ-9", vipInfo: info({ role: "mapped" }) };
     await run([vip({ extip: "10.1.0.11", mappedips: ["10.1.0.20"] })], { "net1|10.1.0.20": row }).done;
     expect(db.update).toHaveBeenCalledWith({ where: { id: "d1" }, data: { vipInfo: info({ extip: "10.1.0.11", role: "mapped" }) } });

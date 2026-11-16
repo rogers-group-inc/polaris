@@ -130,7 +130,7 @@ describe("runOnboardingOnMachines", () => {
     expect(eventLog.logEvent.mock.calls[0][0].message).toMatch(/on 0 Arc machine\(s\).*\(1 skipped, 1 failed\)/);
   });
 
-  // BUG: runOnboardingOnMachines resolves every id in `armIds` against the
+  // Was a bug until 2026-11-14: runOnboardingOnMachines resolves every id in `armIds` against the
   // roster and pushes the hit, with no de-duplication — so a selection that
   // names one machine twice (the same id, or the same id in another case,
   // which the case-insensitive match maps to one roster row) sends that
@@ -138,7 +138,7 @@ describe("runOnboardingOnMachines", () => {
   // name, the second replacing the first while it may still be executing as
   // root/SYSTEM, and the audit says "2 machines". Right: each roster machine
   // is targeted once.
-  it.fails("targets a machine once when the selection names it twice (any case)", async () => {
+  it("targets a machine once when the selection names it twice (any case)", async () => {
     enabled();
     await runOnboardingOnMachines("i1", [arm("m1"), arm("m1").toUpperCase()], "alice");
     expect(h.dispatchRunCommand.mock.calls[0][1]).toHaveLength(1);

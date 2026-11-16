@@ -243,7 +243,13 @@ export async function decommissionStaleFirewalls(input: {
       });
       continue;
     }
-    staleFwHostnames.push(a.hostname!);
+    // A child's controllerFortigate holds FortiManager's DEVICE NAME, which
+    // can differ from the gate's FortiOS hostname (fortinetParentKey.ts), so
+    // the cascade keys on both. Until 2026-11-14 it keyed on hostname alone,
+    // and a renamed gate's switches / APs stayed active as ghosts.
+    const deviceName = readFirewallDeviceName(a.fortinetTopology);
+    if (deviceName) staleFwHostnames.push(deviceName);
+    if (a.hostname) staleFwHostnames.push(a.hostname);
     logEvent({
       action: "asset.fortigate.decommissioned",
       resourceType: "asset",

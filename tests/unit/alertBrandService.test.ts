@@ -244,7 +244,7 @@ describe("brandTokensIn / substituteBrandTokens", () => {
     expect(substituteBrandTokens("", "X")).toBe("");
   });
 
-  // BUG: substituteBrandTokens passes the block to String.replace as a
+  // Was a bug until 2026-11-14: substituteBrandTokens passes the block to String.replace as a
   // replacement STRING, so `$&` / `$'` / `` $` `` in the operator's own
   // subtitle or app name (escapeHtml leaves `$` alone) are expanded. Input:
   // body "<td>{brand.header}</td>", block "Cash $& Carry" → wrong output
@@ -252,7 +252,7 @@ describe("brandTokensIn / substituteBrandTokens", () => {
   // The same bug was fixed in substitutePushRecipientTokens /
   // substituteEmailRecipientTokens (CQ-T010 batch 6) and is already avoided in
   // substituteProcessTokens / substitutePathGraphTokens (`() => block`).
-  it.fails("inserts the block literally, even when it contains $ replacement patterns", () => {
+  it("inserts the block literally, even when it contains $ replacement patterns", () => {
     expect(substituteBrandTokens("<td>{brand.header}</td>", "Cash $& Carry")).toBe("<td>Cash $& Carry</td>");
   });
 });

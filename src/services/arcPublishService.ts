@@ -127,8 +127,15 @@ export async function runOnboardingOnMachines(
   const byId = new Map(roster.map((m) => [m.armId.toLowerCase(), m]));
   const targets: ArcRunCommandTarget[] = [];
   const unknown: string[] = [];
+  // Each machine once, however often (and in whatever case) the selection
+  // names it — until 2026-11-14 a repeat created the same run command twice,
+  // the second replacing the first while it might still be running as root.
+  const seen = new Set<string>();
   for (const id of armIds) {
-    const hit = byId.get(String(id).toLowerCase());
+    const key = String(id).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const hit = byId.get(key);
     if (hit) targets.push(hit);
     else unknown.push(String(id));
   }

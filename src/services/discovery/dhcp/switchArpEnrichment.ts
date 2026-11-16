@@ -191,6 +191,10 @@ export async function enrichFromSwitchMacAndArp(input: {
         });
       }
       if (asset.ipAddress) continue; // conservative: don't overwrite
+      // Rule 101(a): Fortinet infra is skipped on every pass — an HA standby
+      // FortiGate's null address is by design (fixed 2026-11-14; the ladder
+      // and sightings loops already skipped it, this fill did not).
+      if (asset.assetType === "firewall" || asset.assetType === "switch" || asset.assetType === "access_point") continue;
       queueUpdate(asset.id, { ipAddress: row.ip, ipSource: `${row.fortigateDevice}:arp` });
       asset.ipAddress = row.ip;
       assetIdx.reindex(asset);

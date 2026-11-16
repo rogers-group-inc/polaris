@@ -253,7 +253,7 @@ describe("decommissionStaleFirewalls — controller cascade", () => {
     expect(run.decommissionedSwitches).toEqual(["swGone-host"]);
   });
 
-  // BUG: the cascade matches each child's `controllerFortigate` (FortiManager's
+  // Was a bug until 2026-11-14: the cascade matches each child's `controllerFortigate` (FortiManager's
   // DEVICE name) against the stale gate's `Asset.hostname` only — the mismatch
   // CLAUDE.md's coding conventions forbid. A gate whose FMG name ("BRANCH-12")
   // differs from its configured hostname ("fgt-branch12") leaves the roster
@@ -263,7 +263,7 @@ describe("decommissionStaleFirewalls — controller cascade", () => {
   // never inventoried again — though its orphan clause may catch it on a later
   // full run). Right: the switch is cascaded — the gate's
   // `fortinetTopology.deviceName` must be in the cascade's name set.
-  it.fails("cascades to a child that stamps the gone gate's FortiManager device name, not its hostname", async () => {
+  it("cascades to a child that stamps the gone gate's FortiManager device name, not its hostname", async () => {
     seed(
       [fw("f1", "fgt-branch12", SERIAL_GONE, { deviceName: "BRANCH-12" })],
       [child("sw1", "switch", "BRANCH-12")],

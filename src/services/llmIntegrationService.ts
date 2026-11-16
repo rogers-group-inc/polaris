@@ -143,6 +143,10 @@ export interface ProvisionResult {
   rawToken: string;
 }
 
+function shortName(name: string, max: number): string {
+  return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
+}
+
 export async function provisionLlmAccess(
   integration: { id: string; name: string },
   actor: string,
@@ -150,7 +154,10 @@ export async function provisionLlmAccess(
   const roleName = await uniqueRoleName(botRoleBaseName(integration.name));
   const role = await createRole({
     name: roleName,
-    description: `Read-only access for the "${integration.name}" AI Assistant integration's API token. Managed by that integration.`,
+    // Within roleService's 200-character limit whatever the integration is
+    // called (until 2026-11-14 a name over ~115 characters made createRole
+    // 400 and rolled the integration back); the name is cut, not the meaning.
+    description: `Read-only access for the "${shortName(integration.name, 100)}" AI Assistant integration's API token. Managed by that integration.`,
     permissions: botPermissions(),
   }, actor);
   try {
