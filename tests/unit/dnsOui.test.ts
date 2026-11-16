@@ -88,6 +88,17 @@ describe("reverseDnsForAssets (Phase 8)", () => {
     expect(log).toHaveBeenCalledWith("info", "DNS lookup: resolved 1 of 1 assets");
   });
 
+  it("logs a failed rename write, does not count it resolved, and restores the in-memory name", async () => {
+    const a = { id: "a", ipAddress: "10.0.0.1", dnsName: "old.example" } as Record<string, unknown>;
+    m.reverse.mockResolvedValue([{ name: "new.example", ttl: 60 }]);
+    db.assetUpdate.mockRejectedValueOnce(new Error("deadlock"));
+    const n = await reverseDnsForAssets([a], log);
+    // Was a bug until 2026-11-16: the failed write was swallowed without a log and still counted resolved.
+    expect(n).toBe(0);
+    expect(a.dnsName).toBe("old.example");
+    expect(log).toHaveBeenCalledWith("error", "DNS lookup: failed to record the resolved name on 1 asset(s): deadlock");
+  });
+
   it("stores a null TTL when the record carries none", async () => {
     m.reverse.mockResolvedValue([{ name: "x.example" }]);
     await reverseDnsForAssets([{ id: "a", ipAddress: "10.0.0.1" }], log);

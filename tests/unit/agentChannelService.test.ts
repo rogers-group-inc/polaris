@@ -215,12 +215,14 @@ describe("frames", () => {
     svc.detach("ma-1", "test");
   });
 
-  it("a frame handler that throws closes THAT socket (malformed frame), never the process (rule 119(d))", () => {
+  it("a frame handler that throws closes THAT socket (malformed frame), never the process (rule 119(d))", async () => {
     const ws = fakeWs();
     svc.attach("ma-1", "asset-1", ws as never);
     h.logger.debug.mockImplementation(() => { throw new Error("handler bug"); });
     expect(() => ws.handlers.get("message")!('{"type":"x"}')).not.toThrow();
     expect(svc.isAttached("ma-1")).toBe(false);
+    // The detach beat attach's name lookup, so its event waits for it.
+    await settle();
     expect(eventLog.logEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "agent.disconnected", details: { managedAgentId: "ma-1", reason: "malformed frame" } }));
   });
 

@@ -46,8 +46,8 @@ export async function publishConfigRefresh(managedAgentIds: readonly string[]): 
     try {
       await prisma.$executeRaw`SELECT pg_notify(${CFG_REFRESH_CHANNEL}, ${payload})`;
     } catch (err) {
-      logger.debug({ err }, "publishConfigRefresh NOTIFY failed (agents pick the change up on heartbeat)");
-      return;
+      // One chunk's failure must not starve the rest: carry on with them.
+      logger.debug({ err, chunkStart: i }, "publishConfigRefresh NOTIFY failed (agents pick the change up on heartbeat)");
     }
   }
 }

@@ -281,6 +281,12 @@ describe("listIcons / getIconImage / deleteIcon", () => {
     stubbed(prisma.deviceIcon.delete).mockRejectedValueOnce(Object.assign(new Error("not found"), { code: "P2025" }));
     expect(await deleteIcon("gone")).toBe(false);
   });
+
+  it("deleteIcon rethrows anything other than not-found", async () => {
+    // Was a bug until 2026-11-16: a DB outage answered false (reported as not found).
+    stubbed(prisma.deviceIcon.delete).mockRejectedValueOnce(new Error("connection refused"));
+    await expect(deleteIcon("icon-1")).rejects.toThrow("connection refused");
+  });
 });
 
 // ─── resolution ────────────────────────────────────────────────────────────

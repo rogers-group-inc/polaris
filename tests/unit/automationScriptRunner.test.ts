@@ -394,17 +394,43 @@ describe("runPendingServerScripts", () => {
     expect(rows[0]!.stderr).toMatch(/swept by the runner/);
     expect(rows[0]!.emailTokenHash).toBeNull();
     expect(rows[1]!.status).toBe("running");
-    expect(stubbed(prisma.automationScriptRun.update).mock.calls[0]![0].where).toEqual({ id: "old", status: "running" });
+    expect(stubbed(prisma.automationScriptRun.updateMany).mock.calls[0]![0].where).toEqual({ id: "old", status: "running" });
   });
 
-  it("aborts the whole tick when a stuck row settles between the sweep's read and its update (current behaviour)", async () => {
-    // Suspicious, not pinned: the guarded update throws P2025 when the row is
-    // no longer running, and nothing catches it, so no pending run is claimed
-    // on that tick.
+  it("skips a stuck row that settled between the sweep's read and its flip, and still claims pending runs", async () => {
+    // Was a bug until 2026-11-16: the guarded update threw P2025 uncaught and aborted the whole tick.
     rows = [pending("old", { status: "running", startedAt: new Date(clock - 120_000) }), pending("p1")];
-    stubbed(prisma.automationScriptRun.update).mockRejectedValueOnce(Object.assign(new Error("not found"), { code: "P2025" }));
-    await expect(runPendingServerScripts()).rejects.toThrow("not found");
-    expect(rows[1]!.status).toBe("pending");
+    stubbed(prisma.automationScriptRun.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+    expect(await runPendingServerScripts()).toEqual({ started: 1, completed: 1 });
+    expect(rows[1]!.status).toBe("succeeded");
+    expect(eventLog.logEventsBatch).not.toHaveBeenCalled();
+  });
+
+  it("writes one automation.script.run Event per run the stuck sweep flips, in one batch", async () => {
+    // Was a bug until 2026-11-16: swept runs flipped to timeout with no audit Event.
+    rows = [
+      pending("a", { status: "running", startedAt: new Date(clock - 120_000) }),
+      pending("b", { status: "running", startedAt: new Date(clock - 120_000), requestedBy: null }),
+    ];
+    await runPendingServerScripts();
+    expect(eventLog.logEventsBatch).toHaveBeenCalledTimes(1);
+    const evs = eventLog.logEventsBatch.mock.calls[0]![0];
+    expect(evs).toHaveLength(2);
+    expect(evs[0]).toMatchObject({ action: "automation.script.run", level: "warning", actor: "dave", resourceId: "s1", details: { runId: "a", status: "timeout", runOn: "server" } });
+    expect(evs[1]).toMatchObject({ actor: "system:automation", details: { runId: "b" } });
+  });
+
+  it("records a run whose execution throws as failed, without stranding the others", async () => {
+    // Was a bug until 2026-11-16: one rejected executeServerScript rejected Promise.all, leaving every claimed run "running".
+    rows = [pending("p1", { scriptId: "bad" }), pending("p2")];
+    stubbed(prisma.automationScript.findUnique).mockImplementation(async (args: Row) => {
+      if (args.where.id === "bad") throw new Error("lookup exploded");
+      return { id: "s1", enabled: true, interpreter: "bash", body: "echo ok" } as never;
+    });
+    expect(await runPendingServerScripts()).toEqual({ started: 2, completed: 2 });
+    expect(rows[0]).toMatchObject({ status: "failed", stderr: "lookup exploded" });
+    expect(rows[1]!.status).toBe("succeeded");
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(2);
   });
 
   it("claims pending server runs oldest first, at most ten per tick", async () => {

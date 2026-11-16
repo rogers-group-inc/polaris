@@ -230,7 +230,9 @@ export async function requestScriptRun(req: ScriptRunRequest): Promise<{ runId: 
   if (req.email && req.runOn !== "server") {
     throw new AppError(400, `Script "${script.name}" runs on an agent, and only a server run can send email through Polaris`);
   }
-  const timeoutSec = Math.min(req.timeoutSec ?? script.timeoutSec, MAX_SCRIPT_TIMEOUT_SEC);
+  // An override ≤ 0 or non-finite is "no override", not a zero-second run.
+  const override = typeof req.timeoutSec === "number" && Number.isFinite(req.timeoutSec) && req.timeoutSec > 0 ? req.timeoutSec : null;
+  const timeoutSec = Math.min(override ?? script.timeoutSec, MAX_SCRIPT_TIMEOUT_SEC);
   const run = await prisma.automationScriptRun.create({
     data: {
       scriptId: script.id,
@@ -290,7 +292,11 @@ export async function listRuns(filter: { scriptId?: string; notificationId?: str
       ...(filter.status ? { status: filter.status } : {}),
     },
     orderBy: { requestedAt: "desc" },
-    take: Math.min(filter.limit ?? 100, 500),
+    // Absent / non-finite → 100; otherwise clamped to 1..500 (a negative take
+    // would make Prisma read backwards from the cursor).
+    take: typeof filter.limit === "number" && Number.isFinite(filter.limit)
+      ? Math.min(Math.max(Math.floor(filter.limit), 1), 500)
+      : 100,
   });
 }
 

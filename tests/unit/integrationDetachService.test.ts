@@ -373,11 +373,14 @@ describe("detachIntegration — decommission (B-D1)", () => {
     expect(h.releaseAssetsForDecommission.mock.calls[0][1].statusChangedBy).toBe("Corp vCenter");
   });
 
-  it("writes one Event per retired asset, labelled hostname → IP → id", async () => {
+  it("writes one Event per retired asset in ONE batch, labelled hostname → IP → id", async () => {
+    // Was a bug until 2026-11-16: one logEvent per asset via Promise.all (2,000 concurrent inserts).
     sources(["a1", "a2", "a3"]);
     assets([{ id: "a1", hostname: "vm-01" }, { id: "a2", ipAddress: "2001:db8::5" }, { id: "a3" }]);
     await detachIntegration(INT, { decommission: true, actor: "alice" });
-    const evs = eventLog.logEvent.mock.calls.map((c) => c[0]).filter((e) => e.action === "asset.integration_deleted.decommissioned");
+    expect(eventLog.logEvent.mock.calls.map((c) => c[0]).filter((e) => e.action === "asset.integration_deleted.decommissioned")).toEqual([]);
+    expect(eventLog.logEventsBatch).toHaveBeenCalledTimes(1);
+    const evs = (eventLog.logEventsBatch.mock.calls[0][0] as Array<Record<string, any>>);
     expect(evs.map((e) => e.resourceName)).toEqual(["vm-01", "2001:db8::5", "a3"]);
     expect(evs[0]).toMatchObject({
       resourceType: "asset", resourceId: "a1", actor: "alice",

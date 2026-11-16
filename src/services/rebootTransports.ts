@@ -145,6 +145,17 @@ function lostAnswer(err: unknown): string | null {
   return null;
 }
 
+/**
+ * A fetch that failed before any request left — connection refused, name not
+ * resolved, host unreachable — so the reboot certainly did not happen. Read
+ * from undici's `err.cause.code`; anything else keeps the lost-answer reading.
+ */
+const NOTHING_SENT_CODES = new Set(["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH"]);
+function nothingSent(err: unknown): boolean {
+  const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return typeof code === "string" && NOTHING_SENT_CODES.has(code);
+}
+
 function tokenAdapter(l: Extract<GateLink, { kind: "token" }>): RestAdapter {
   const cfg: FortiGateConfig = { host: l.host, port: l.port, apiUser: "", apiToken: l.token, vdom: l.vdom, verifySsl: l.verifyTls };
   return {
@@ -155,7 +166,7 @@ function tokenAdapter(l: Extract<GateLink, { kind: "token" }>): RestAdapter {
         await fgRequest(cfg, "POST", path, { query: { vdom: l.vdom }, body });
         return {};
       } catch (err) {
-        const lost = lostAnswer(err);
+        const lost = nothingSent(err) ? null : lostAnswer(err);
         if (lost) return { uncertain: lost };
         throw new RebootSendError(err instanceof Error ? err.message : String(err));
       }

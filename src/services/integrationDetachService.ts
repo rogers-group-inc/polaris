@@ -37,7 +37,7 @@ import { logger } from "../utils/logger.js";
 import { chunkArray } from "../utils/chunk.js";
 import { ENRICHMENT_SOURCE_KINDS } from "../utils/assetProjection.js";
 import { isAzureTag } from "../utils/tagNormalize.js";
-import { logEvent } from "./eventLogService.js";
+import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { syncAzureTagRegistry } from "./tagAssignmentService.js";
 import { releaseAssetsForDecommission } from "./maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "./reservationService.js";
@@ -263,9 +263,12 @@ export async function detachIntegration(
         data: { status: "decommissioned", statusChangedAt: now, statusChangedBy: actor ?? name },
       })).count;
     }
-    await Promise.all(sole.map((a) => {
+    // One batched insert, not one per asset (2,000 concurrent inserts for a big
+    // vCenter). `sole` was read with the updateMany's own where clause
+    // (status not decommissioned), so these are the rows it changed.
+    await logEventsBatch(sole.map((a) => {
       const label = a.hostname || a.ipAddress || a.id;
-      return logEvent({
+      return {
         action: "asset.integration_deleted.decommissioned",
         resourceType: "asset",
         resourceId: a.id,
@@ -273,7 +276,7 @@ export async function detachIntegration(
         actor,
         message: `"${label}" decommissioned — ${reason}, and no other discovery source reports it`,
         details: { reason: "integration-deleted", integrationId: id, integrationName: name },
-      });
+      };
     }));
   }
 

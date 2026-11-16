@@ -21,7 +21,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
-vi.mock("../../src/services/monitoringService.js", () => ({ fetchFortinetControllerInventory: h.fetchInventory }));
+vi.mock("../../src/services/monitoringService.js", () => ({
+  fetchFortinetControllerInventory: h.fetchInventory,
+  resolveMonitorSettings: vi.fn(async () => ({ systemInfoIntervalSeconds: 600, interfacesPolling: "rest_api" })),
+}));
 vi.mock("../../src/services/eventLogService.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/services/eventLogService.js")>();
   return {
@@ -48,6 +51,7 @@ function asset(over: Record<string, unknown> = {}) {
     id: "a1", hostname: "SW-1", ipAddress: "10.0.0.5", assetType: "switch", serialNumber: "S1",
     fortinetTopology: { controllerFortigate: "GATE-A" },
     fortilinkStatus: null, fortilinkStatusRaw: null, discoveredByIntegrationId: "i-fmg", osVersion: null,
+    fortilinkCheckedAt: null, monitored: true,
     ...over,
   };
 }
@@ -103,7 +107,7 @@ describe("loading what to sweep", () => {
     });
   });
 
-  it("loads non-decommissioned switches and APs with a serial, discovered by those integrations, with a tight select", async () => {
+  it("loads switches and APs with a serial, outside decommission and maintenance, discovered by those integrations, with a tight select", async () => {
     stubbed(prisma.integration.findMany).mockResolvedValue([FMG, { id: "i-fg", type: "fortigate", name: "FG", config: { host: "h" } }]);
 
     await sweepFortinetLinkState();
@@ -111,14 +115,17 @@ describe("loading what to sweep", () => {
     const arg = stubbed(prisma.asset.findMany).mock.calls[0][0];
     expect(arg.where).toEqual({
       assetType: { in: ["switch", "access_point"] },
-      status: { not: "decommissioned" },
+      status: { notIn: ["decommissioned", "maintenance"] },
       discoveredByIntegrationId: { in: ["i-fmg", "i-fg"] },
       serialNumber: { not: null },
     });
-    // No monitorStatus / monitored filter: unmonitored devices are swept too.
+    // No monitored filter in the query: an unmonitored device is loaded so its
+    // stale value can be cleared (rule 59(a)), but it is never swept.
     expect(Object.keys(arg.select).sort()).toEqual([
-      "assetType", "discoveredByIntegrationId", "fortilinkStatus", "fortilinkStatusRaw",
-      "fortinetTopology", "hostname", "id", "ipAddress", "osVersion", "serialNumber",
+      "assetType", "cpuMemoryIntervalSec", "discoveredByIntegrationId", "fortilinkCheckedAt",
+      "fortilinkStatus", "fortilinkStatusRaw", "fortinetTopology", "hostname", "id",
+      "interfacesCredentialId", "interfacesPolling", "ipAddress", "monitorIntervalSec", "monitored",
+      "osVersion", "probeTimeoutMs", "serialNumber", "systemInfoIntervalSec", "temperatureIntervalSec",
     ]);
   });
 

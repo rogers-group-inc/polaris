@@ -30,6 +30,12 @@ describe("normalizeUserTimezone", () => {
     expect(normalizeUserTimezone("UTC")).toBe("UTC");
   });
 
+  it("canonicalises a case-variant spelling to the IANA name", () => {
+    // Was a bug until 2026-11-16: "america/chicago" was accepted and stored as typed.
+    expect(normalizeUserTimezone("america/chicago")).toBe("America/Chicago");
+    expect(normalizeUserTimezone("utc")).toBe("UTC");
+  });
+
   it("degrades anything unusable to auto rather than throwing", () => {
     // Read on the alerting path from a plain TEXT column: a row holding
     // something this build's ICU can't apply must fall back, not fail a send.

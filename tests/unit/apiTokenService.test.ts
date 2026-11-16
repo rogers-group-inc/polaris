@@ -122,7 +122,7 @@ describe("createToken", () => {
   it("mints a polaris_ token, stores only its hash + 16-char prefix, and returns the raw value once", async () => {
     stubbed(prisma.role.findUnique).mockResolvedValue(role("role-1", READ_PERMS));
     stubbed(prisma.apiToken.findUnique).mockResolvedValue(null);
-    const expiresAt = new Date("2027-01-01T00:00:00Z");
+    const expiresAt = new Date("2099-01-01T00:00:00Z"); // must stay in the future: a past expiry is refused
     const res = await createToken({ name: " siem ", roleId: "role-1", createdBy: "alice", expiresAt, trustedHosts: ["10.1.2.5/24"] });
 
     // Tail is UP TO 32 alphanumerics: generateRawToken strips +/= from the
@@ -143,6 +143,18 @@ describe("createToken", () => {
     expect(JSON.stringify(data)).not.toContain(res.rawToken);
     expect(res.token).toMatchObject({ id: "tok-new", name: "siem", roleName: "bound-role", tokenPrefix: res.rawToken.slice(0, 16) });
     expect(res.token).not.toHaveProperty("tokenHash");
+  });
+
+  it("400s an expiresAt that is not in the future, before anything is read or written", async () => {
+    // Was a bug until 2026-11-16: a past expiresAt minted a token that could never be used.
+    await expect(
+      createToken({ name: "x", roleId: "role-1", createdBy: "a", expiresAt: new Date(Date.now() - 60_000) }),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(
+      createToken({ name: "x", roleId: "role-1", createdBy: "a", expiresAt: new Date("not a date") }),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+    expect(prisma.role.findUnique).not.toHaveBeenCalled();
+    expect(prisma.apiToken.create).not.toHaveBeenCalled();
   });
 
   it("stores expiresAt null when none is given", async () => {

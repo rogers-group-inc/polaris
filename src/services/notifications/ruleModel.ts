@@ -186,6 +186,11 @@ export interface DbRule {
   /** Re-send while unhandled; null = never repeats. Read by ruleWantsContext —
    *  a repeat-only rule still needs its templateCtx snapshot. */
   repeat: RepeatConfig | null;
+  /** The automation's own quiet time (business rule 92), as stored. Read by
+   *  followUpPolicy for the "paused …" clause of the reminder sentence; a
+   *  legacy `repeat.quiet` is read only when this is absent. Optional so a
+   *  rule built without it reads as "no quiet time of its own". */
+  quietTime?: unknown;
   /** Consolidate this rule's per-component alerts into one alert per device
    *  (business rule 75). Never read directly — go through `ruleGroupsByAsset`,
    *  which also checks the trigger actually reports per component. */
@@ -314,7 +319,10 @@ export function compareValue(value: number | string | boolean | null, op: string
   const b = String(target).toLowerCase();
   if (op === "==") return a === b;
   if (op === "!=") return a !== b;
-  // allow numeric comparison if both coerce to numbers (e.g. consecutiveFailures)
+  // allow numeric comparison if both coerce to numbers (e.g. consecutiveFailures).
+  // A blank / whitespace-only string is NO reading, not 0 — Number("") is 0,
+  // which would make an empty field meet ">= 0".
+  if (a.trim() === "" || b.trim() === "") return false;
   const na = Number(value);
   const nb = Number(target);
   if (!Number.isNaN(na) && !Number.isNaN(nb)) return compareNum(na, op, nb);

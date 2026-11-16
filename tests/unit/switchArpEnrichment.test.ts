@@ -130,6 +130,7 @@ describe("enrichFromSwitchMacAndArp — switch-port attribution", () => {
     expect(state.syncLog).not.toHaveBeenCalled();
   });
 
+  // Deliberate (operator decision 2026-11-16): the port an AP is plugged into is stamped like any endpoint's.
   it("a FortiAP gets the port stamp but is not an endpoint touch", async () => {
     const idx = index([asset("ap", "CC:00:00:00:00:01", { assetType: "access_point" })]);
     const { state, done } = run({ switchMacTable: [macRow("CC:00:00:00:00:01", "SW1", "port3", { fortigateDevice: "" })] }, idx);

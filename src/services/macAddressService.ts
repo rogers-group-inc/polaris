@@ -10,7 +10,7 @@
 
 import { prisma } from "../db.js";
 import { retryOnDeadlock } from "../utils/dbRetry.js";
-import { isAllZeroMac } from "../utils/mac.js";
+import { isAllZeroMac, normalizeMacOrNull } from "../utils/mac.js";
 import {
   INTERFACE_MAC_SOURCE,
   foldMacsToRanges,
@@ -35,14 +35,10 @@ import {
  * statements inside one transaction, easily exceeding Prisma's 5-second
  * default timeout once batchSettled was running ~50 reconciles in
  * parallel and the connection pool started backing up. The bulk SQL form
- * collapses N upserts into one statement; no transaction overhead, no
- * pool contention.
- *
- * Trade-off: there's a brief window between the delete and the upsert
- * where a concurrent reader could see a partial set. Acceptable for
- * monitor-source MAC data — discovery doesn't read its own write mid-
- * pass, and external readers (asset details panel, quarantine push) are
- * not running during a discovery sync.
+ * collapses N upserts into one statement, so the delete + upsert pair now
+ * shares a short two-statement transaction (2026-11-16: the delete used to
+ * commit alone, and a bad lastSeen then threw before the upsert, leaving
+ * the asset with no discovery MAC rows at all).
  */
 export async function reconcileMacAddresses(
   assetId: string,
@@ -63,9 +59,24 @@ export async function reconcileMacAddresses(
   // The all-zero MAC is dropped like an empty one: it is "no MAC", and since
   // the delete below removes every row not in the new set, a zero row stored
   // before this filter existed is cleaned up on the asset's next reconcile.
-  const newMacs = macs
-    .filter((m) => !!m.mac && !isAllZeroMac(m.mac) && m.source !== INTERFACE_MAC_SOURCE)
-    .slice()
+  //
+  // MACs are stored colon-upper (normalizeMacOrNull) and deduped here: the
+  // INSERT below would otherwise carry the same key twice, which Postgres
+  // refuses ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+  // The freshest sighting of a duplicated MAC wins. An unparseable lastSeen
+  // falls back to now rather than throwing.
+  const byMac = new Map<string, MacJsonEntry & { lastSeenIso: string }>();
+  const nowIso = new Date().toISOString();
+  for (const m of macs) {
+    if (!m.mac || isAllZeroMac(m.mac) || m.source === INTERFACE_MAC_SOURCE) continue;
+    const mac = normalizeMacOrNull(m.mac) ?? m.mac.trim().toUpperCase();
+    const parsed = m.lastSeen ? new Date(m.lastSeen) : null;
+    const lastSeenIso = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : nowIso;
+    const prior = byMac.get(mac);
+    if (prior && prior.lastSeenIso >= lastSeenIso) continue;
+    byMac.set(mac, { ...m, mac, lastSeenIso });
+  }
+  const newMacs = [...byMac.values()]
     .sort((a, b) => (a.mac < b.mac ? -1 : a.mac > b.mac ? 1 : 0));
 
   // Empty list = wipe all non-interface-fold MAC rows for this asset.
@@ -78,18 +89,6 @@ export async function reconcileMacAddresses(
     return;
   }
 
-  // Delete any existing rows whose mac isn't in the new set. One statement
-  // regardless of row count.
-  await retryOnDeadlock(() =>
-    prisma.assetMacAddress.deleteMany({
-      where: {
-        assetId,
-        source: { not: INTERFACE_MAC_SOURCE },
-        mac: { notIn: newMacs.map((m) => m.mac) },
-      },
-    }),
-  );
-
   // Bulk upsert via INSERT ... ON CONFLICT. Build a flat parameter list and
   // parallel VALUES tuples; the (assetId, mac) unique index drives the
   // upsert path. id uses gen_random_uuid() (Postgres 13+ built-in) so we
@@ -98,7 +97,7 @@ export async function reconcileMacAddresses(
   const tuples: string[] = [];
   let p = 1;
   for (const m of newMacs) {
-    const lastSeen = m.lastSeen ? new Date(m.lastSeen).toISOString() : new Date().toISOString();
+    const lastSeen = m.lastSeenIso;
     tuples.push(
       `(gen_random_uuid()::text, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}::timestamp, $${p++}::timestamp)`,
     );
@@ -129,7 +128,19 @@ export async function reconcileMacAddresses(
     `  "subnetCidr" = EXCLUDED."subnetCidr", ` +
     `  "subnetName" = EXCLUDED."subnetName", ` +
     `  "lastSeen" = EXCLUDED."lastSeen"`;
-  await retryOnDeadlock(() => prisma.$executeRawUnsafe(sql, ...params));
+  // Params are built (and every date validated) above, BEFORE anything is
+  // deleted; the delete of rows outside the new set and the upsert then
+  // commit together, so a failed upsert never leaves the asset with neither
+  // its old rows nor its new ones.
+  const keep = newMacs.map((m) => m.mac);
+  await retryOnDeadlock(() =>
+    prisma.$transaction(async (tx) => {
+      await tx.assetMacAddress.deleteMany({
+        where: { assetId, source: { not: INTERFACE_MAC_SOURCE }, mac: { notIn: keep } },
+      });
+      await tx.$executeRawUnsafe(sql, ...params);
+    }),
+  );
 }
 
 /**

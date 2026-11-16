@@ -129,7 +129,8 @@ presence signal.
 **Presence verification** establishes `Asset.lastSeen` for directory-sourced
 assets, cheapest signal first: already-fresh lastSeen → agent heartbeat →
 answering monitor probe → a single ICMP against the DNS name. **A failed ping
-writes nothing.**
+writes nothing**, and an answered ping moves Last Seen only on an unmonitored
+asset — on a monitored one, polling decides presence.
 
 Auto-monitor pins land the cycle *after* an agent first reports, since these
 devices only report interfaces and mounts via the agent. That is self-healing,

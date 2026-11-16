@@ -92,9 +92,11 @@ export async function provisionExternalUser(profile: ExternalUserProfile) {
   // between resolve and now → onDelete:SetNull already nulled the mapping, but
   // be defensive). null means "no group resolved a role".
   let resolvedRoleId: string | null = access.roleId;
+  let resolvedRoleName: string | null = null;
   if (resolvedRoleId) {
-    const exists = await prisma.role.findUnique({ where: { id: resolvedRoleId }, select: { id: true } });
+    const exists = await prisma.role.findUnique({ where: { id: resolvedRoleId }, select: { id: true, name: true } });
     if (!exists) resolvedRoleId = null;
+    else resolvedRoleName = exists.name ?? null;
   }
 
   const existing = await prisma.user.findFirst({
@@ -107,7 +109,12 @@ export async function provisionExternalUser(profile: ExternalUserProfile) {
     // Override role only when groups resolved one; otherwise keep the current
     // (possibly admin-assigned) role so a coverage gap doesn't demote anyone.
     const roleId = resolvedRoleId ?? existing.roleId;
-    const stampReview = isFirstLogin && existing.role.name !== "admin";
+    // The admin exemption (an admin reviewing their own role is redundant)
+    // holds only while the user stays admin: a first login whose groups move
+    // the role — onto admin or off it — is exactly what the review is for.
+    const wasAdmin = existing.role.name === "admin";
+    const endsAdmin = resolvedRoleId ? resolvedRoleName === "admin" : wasAdmin;
+    const stampReview = isFirstLogin && !(wasAdmin && endsAdmin);
     return prisma.user.update({
       where: { id: existing.id },
       data: {

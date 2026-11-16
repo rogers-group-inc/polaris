@@ -313,13 +313,15 @@ function parseSampleRetention(raw: unknown): SampleRetention {
 
 export async function getSampleRetention(): Promise<SampleRetention> {
   const now = Date.now();
+  // Callers get a copy: a caller that mutates the result must not change what
+  // every other reader sees until the cache expires.
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache.value;
+    return structuredClone(cache.value);
   }
   const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
   const value = parseSampleRetention(row?.value);
   cache = { value, fetchedAt: now };
-  return value;
+  return structuredClone(value);
 }
 
 function mergeTier(current: TierRetention, input: unknown): TierRetention {

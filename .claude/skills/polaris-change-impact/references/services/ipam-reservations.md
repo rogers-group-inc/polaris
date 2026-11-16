@@ -94,6 +94,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - Three modes (standard, dot, doh): standard falls back to system DNS, returns null TTL; DoT connects to port 853 (configurable), parses TCP wire format; DoH uses JSON API (Cloudflare/Google/Quad9).
+- **2026-11-16:** DoT AAAA answers are returned in RFC 5952 form (`canonicalIp`), as DoH and standard return them; DoT `lookup` throws the last error when no server answered at all (like standard mode's), and returns `[]` only when a server answered with no records.
 - Standard mode cannot retrieve TTL from Node's DNS API; callers apply a sensible default (3600s).
 - Per-asset PTR caching lives on AssetAssociatedIp.ptrName/ptrTtl/ptrFetchedAt (separate call path for bulk DNS job).
 - IPv6 PTR queries use fully-expanded form with nibble reversal (e.g., 2001:db8::1 → 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa).

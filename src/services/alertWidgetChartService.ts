@@ -63,12 +63,31 @@ export interface WidgetChart {
 
 const MAX_POINTS = 240;
 
+/**
+ * Thin a dense series for DRAWING, keeping the first and newest points and,
+ * from each bucket in between, its lowest and highest reading in time order —
+ * so a short spike survives on the chart instead of falling between strides.
+ */
 function thin(points: SparkPoint[]): SparkPoint[] {
   if (points.length <= MAX_POINTS) return points;
-  const step = points.length / MAX_POINTS;
-  const out: SparkPoint[] = [];
-  for (let i = 0; i < MAX_POINTS - 1; i++) out.push(points[Math.floor(i * step)]!);
-  out.push(points[points.length - 1]!);
+  const n = points.length;
+  const interior = n - 2;
+  const buckets = Math.floor((MAX_POINTS - 2) / 2);
+  const out: SparkPoint[] = [points[0]!];
+  for (let b = 0; b < buckets; b++) {
+    const start = 1 + Math.floor((b * interior) / buckets);
+    const end = 1 + Math.floor(((b + 1) * interior) / buckets);
+    let lo = start;
+    let hi = start;
+    for (let i = start + 1; i < end; i++) {
+      if (points[i]!.v < points[lo]!.v) lo = i;
+      if (points[i]!.v > points[hi]!.v) hi = i;
+    }
+    if (lo === hi) out.push(points[lo]!);
+    else if (lo < hi) out.push(points[lo]!, points[hi]!);
+    else out.push(points[hi]!, points[lo]!);
+  }
+  out.push(points[n - 1]!);
   return out;
 }
 
@@ -120,17 +139,21 @@ export async function buildWidgetValueChart(
       select: { timestamp: true, value: true },
       orderBy: { timestamp: "asc" },
     });
-    points = thin(rows.flatMap((r) => {
+    // A stored null is no reading — Number(null) would plot it as 0.
+    points = rows.flatMap((r) => {
+      if (r.value === null || r.value === undefined) return [];
       const n = typeof r.value === "number" ? r.value : Number(r.value);
       return Number.isFinite(n) ? [{ t: r.timestamp.getTime(), v: n }] : [];
-    }));
+    });
   }
   if (points.length === 0) return null;
-  const svg = sparklineSvg(points, {
+  // Summary stats from the FULL series; only the drawing is thinned, so a
+  // short spike still sets the stated peak.
+  const s = seriesStats(points)!;
+  const svg = sparklineSvg(thin(points), {
     label: name, unit, color: WIDGET_SERIES_COLOR, from: o.from, to: o.to,
     seriesLegend: name, levels,
   });
-  const s = seriesStats(points)!;
   return {
     svg,
     summary: `${name} (last hour): now ${formatReading(s.last, unit)}, avg ${formatReading(s.avg, unit)}, peak ${formatReading(s.max, unit)}`,

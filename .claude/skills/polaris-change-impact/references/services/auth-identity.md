@@ -20,7 +20,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - ...and N other call sites (quarantine/release endpoints use verifyToken indirectly via middleware)
 
 **Invariants:**
-- Wire format: `Authorization: Bearer polaris_<32-char-base64url-tail>` (prefix stored separately for fast candidate lookup via index).
+- Wire format: `Authorization: Bearer polaris_<alphanumeric tail>` — base64 of 24 random bytes with + / = stripped, capped at 32 chars, so up to 32 and usually 30–31 (src/utils/bearerToken.ts; prefix stored separately for fast candidate lookup via index).
+- createToken refuses an expiresAt that is not in the future (400), in the service as well as the route.
 - tokenHash is argon2id; never returned; rawToken shown ONCE at creation (POST response).
 - A bound role granting assetsQuarantine ≥ write requires integrationIds (≥1 FortiManager/FortiGate id); other roles may have empty integrationIds.
 - Roles bound to tokens can't be deleted (roleService counts apiTokens and 409s); role edits propagate to live tokens via the bumpRoleVersion cache on the next request.
@@ -52,6 +53,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - SSO settings stored in Setting table (key="sso"); 30-second in-memory cache with expiry.
 - SAML IdP config (Entity ID, Login/Logout URLs, certificate) configured via Users page Settings modal.
+- `isAzureSsoConfiguredAsync` requires everything `getSamlClient` requires — enabled, IdP entity ID, login URL, certificate AND the Application URL (`spEntityId`) — so SSO never reads as configured while login 400s. `autoLogoutMinutes` is clamped to 0..1440; an omitted or non-finite value keeps the current one.
 - **Relay state is NOT this service's** (moved 2026-09-15): `generateRelayState` / `relayStateTarget` live in `utils/loginRedirect.ts`, beside the `polaris_next` cookie, because the two carry the same thing — where this login lands. RelayState is `<nonce>` or `<nonce>.<path>`, the nonce base64url and short enough to keep the whole value inside the SAML binding spec's 80-byte ceiling. It is still the CSRF binding on the redirect (the equality check in `/azure/callback` compares the whole string, path included), and it is still only checked when a session survived — which on a cross-site POST it usually has not.
 - SAML response validation uses @node-saml/node-saml library; wantResponseSigned flag controls signature check.
 - User provisioning on first login: extract nameID/email from validated Profile, upsert User row with default role, auto-enable if disabled.
@@ -107,7 +109,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Two-phase: service-account bind locates the user, then a rebind AS the user verifies credentials; optional reverse group search catches groups missing from `memberOf`.
 - Stable user id is objectGUID (hex) or entryUUID, falling back to DN; settings cache has a short TTL and preserves the bindPassword mask on write unless changed.
 
-- **Rule 111(a) (2026-10-13, re-scan F3).** `keptLdapBindPassword(cur, input)` decides the bind password to save: an echoed mask keeps the stored one only while `url` and `tlsVerify` are unchanged, else a 400 asking for it again; anything typed is saved as typed (blank clears). Never restore the stored password anywhere else.
+- **Rule 111(a) (2026-10-13, re-scan F3).** `keptLdapBindPassword(cur, input)` decides the bind password to save: an echoed mask keeps the stored one only while `url` and `tlsVerify` are unchanged, else a 400 asking for it again; an OMITTED bindPassword is treated like the echoed mask; anything typed is saved exactly as typed, never trimmed (blank or whitespace-only clears). Never restore the stored password anywhere else.
+- `updateLdapSettings` is a merge: every omitted field keeps its stored value, `enabled` and `tlsVerify` included (2026-11-16 — a partial PUT used to turn LDAP off and clear the bind password); an explicit `false` / blank still applies.
 
 **When changing this:**
 - Keep the empty-password check first, before any network I/O.
@@ -129,7 +132,10 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Callback never honors a caller-supplied return path — always redirects to `/`; `clientSecret` masked on read, preserved-on-unchanged on write.
 - Redirect URI is derived from `POLARIS_PUBLIC_URL` (missing → throws with a clear message); userinfo claims merge into ID-token claims when present.
 
-- **Rule 111(a) (2026-10-13, re-scan F4).** `keptOidcClientSecret(cur, input)`: an echoed mask keeps the stored client secret only while `discoveryUrl` and `clientId` are unchanged — the discovery document names the token endpoint the secret is posted to.
+- **Rule 111(a) (2026-10-13, re-scan F4).** `keptOidcClientSecret(cur, input)`: an echoed mask keeps the stored client secret only while `discoveryUrl` and `clientId` are unchanged — the discovery document names the token endpoint the secret is posted to. An OMITTED clientSecret is treated like the echoed mask; a typed secret is saved exactly as typed, never trimmed (blank or whitespace-only clears).
+- `updateOidcSettings` is a merge: every omitted field keeps its stored value, `enabled` included (2026-11-16 — a partial PUT used to turn OIDC off and clear the secret); an explicit `false` / blank still applies.
+- The discovered `Configuration` is cached per process KEYED by discoveryUrl + clientId + a sha256 of the secret, so a settings change saved by another web process is picked up once the 30 s settings cache expires (it used to be dropped only by `updateOidcSettings` in the same process).
+- The username falls back from `usernameClaim` to the configured `emailClaim`, then to `sub`.
 
 **When changing this:**
 - Never add a caller-supplied return_uri / open-redirect surface to the callback.
@@ -148,7 +154,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - `ssoGroups` capped (anti-bloat) and normalized per provider; they do NOT write to the user's own `regionTags`/`otherTags` (those stay operator-owned and union at read time).
-- Existing user: role overridden only when groups resolve a role (a manual admin assignment survives a no-match login); new user: group-resolved role else built-in `readonly`, always flagged `needsRoleReview`.
+- Existing user: role overridden only when groups resolve a role (a manual admin assignment survives a no-match login); new user: group-resolved role else built-in `readonly`, always flagged `needsRoleReview`. An existing user's first login is flagged unless they were admin AND stay admin after the group-resolved role is applied (the exemption reads both roles, not only the stored one).
 - Existing-user update stamps `authProvider = provider` — a no-op for oidc/ldap (matched by their own id column) but the mechanism that converges an `azureOid` row between `entra-proxy` and `azure` (SAML): since the 2026-08 fold the SAML path delegates here too, so the LAST login path owns `authProvider`+`ssoGroups`, and tag re-resolution translates `authProvider="azure"` to the `"saml"` mapping provider via `mappingProviderForAuthProvider`.
 - Username collisions resolve via base → base-provider → provider-externalId; SSO/LDAP users get a random placeholder password hash that is never checked at login.
 
@@ -268,9 +274,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Trust-on-first-use pinning for SSH SERVER host keys — the `SshHostKey` table, the verify/pin decision, the fingerprint + key-type parsers, and the operator list/delete.
 
-**Public API:** `SshHostKeyRecord`, `HostKeyVerdict`, `fingerprintKeyBlob`, `keyTypeFromBlob`, `verifyOrPin`, `listHostKeys`, `listHostKeysWithAssets` (each pin plus the assets whose `ipAddress` / `hostname` is its host — one bounded `asset.findMany`, the same lookup `listCertPinsWithUsers` does; what the list route serves), `deleteHostKey`, `forgetCachedHostKey(host, port)` (drop one endpoint from this process's `pinCache` / `lastSeenWrites` after another service wrote or removed its row — business rule 123), `_resetCaches`.
+**Public API:** `SshHostKeyRecord`, `HostKeyVerdict`, `fingerprintKeyBlob`, `keyTypeFromBlob`, `verifyOrPin`, `listHostKeys`, `listHostKeysWithAssets` (each pin plus the assets whose `ipAddress` / `hostname` is its host — one bounded `asset.findMany`, the same lookup `listCertPinsWithUsers` does; what the list route serves; an address pin joins on `canonicalIp`, so IPv6 case/compression differences still match), `deleteHostKey`, `forgetCachedHostKey(host, port)` (drop one endpoint from this process's `pinCache` / `lastSeenWrites` after another service wrote or removed its row — business rule 123), `_resetCaches`.
 
-**Cross-service deps:** `db` (prisma), `eventLogService`, `utils/errors`, `utils/logger`.
+**Cross-service deps:** `db` (prisma), `eventLogService`, `utils/errors`, `utils/logger`, `utils/cidr` (`canonicalIp`).
 
 **Used by:**
 - src/utils/remoteExec.ts — `buildHostVerifier` (dynamic import), which feeds BOTH `ssh2.connect` sites: `withSshClient` (agent install/upgrade/uninstall, agentless process collection) and `monitoringService.probeSsh`

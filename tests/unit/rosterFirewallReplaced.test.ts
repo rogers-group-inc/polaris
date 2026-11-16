@@ -76,4 +76,10 @@ describe("judgeRosterFirewall", () => {
   it("never judges a row with nothing to identify it by", () => {
     expect(judgeRosterFirewall({ hostname: null, serialNumber: "FGT60FOLD0000001", fortinetTopology: null }, ctx())).toEqual({ kind: "keep" });
   });
+
+  // Was a bug until 2026-11-16: a gate with no hostname was kept even when its FMG device name had left the roster.
+  it("calls a hostname-less gate STALE when its FMG device name is off the roster", () => {
+    expect(judgeRosterFirewall({ hostname: null, serialNumber: "FGT60FOLD0000001", fortinetTopology: { deviceName: "OTHER-FW" } }, ctx()))
+      .toEqual({ kind: "stale" });
+  });
 });

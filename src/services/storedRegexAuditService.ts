@@ -107,14 +107,18 @@ export async function findUnusableStoredPatterns(): Promise<UnusablePattern[]> {
 let cached: { at: number; count: number } | null = null;
 const CACHE_MS = 10 * 60 * 1000;
 
-/** How many stored patterns are unusable — cached for the capacity card. Never throws. */
-export async function countUnusableStoredPatterns(): Promise<number> {
+/**
+ * How many stored patterns are unusable — cached for the capacity card.
+ * Never throws: a failed read answers null ("unknown", not cached), so a
+ * database outage is never mistaken for "no unusable patterns".
+ */
+export async function countUnusableStoredPatterns(): Promise<number | null> {
   if (cached && Date.now() - cached.at < CACHE_MS) return cached.count;
   try {
     const n = (await findUnusableStoredPatterns()).length;
     cached = { at: Date.now(), count: n };
     return n;
   } catch {
-    return 0;
+    return null;
   }
 }

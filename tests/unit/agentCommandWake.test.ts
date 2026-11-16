@@ -69,10 +69,12 @@ describe("publishConfigRefresh", () => {
     for (const p of payloads) expect(Buffer.byteLength(p)).toBeLessThan(8000);
   });
 
-  it("stops at the first failed chunk and does not throw", async () => {
-    executeRaw().mockRejectedValue(new Error("db down"));
+  // Was a bug until 2026-11-16: the first failed chunk returned, so the remaining chunks were never sent.
+  it("carries on with the remaining chunks after a failed one and does not throw", async () => {
+    executeRaw().mockRejectedValueOnce(new Error("db down"));
     const ids = Array.from({ length: 200 }, (_, i) => `id${i}`);
     await expect(publishConfigRefresh(ids)).resolves.toBeUndefined();
-    expect(executeRaw()).toHaveBeenCalledOnce();
+    expect(executeRaw()).toHaveBeenCalledTimes(2);
+    expect((values(1)[1] as string).split(",")).toHaveLength(50);
   });
 });

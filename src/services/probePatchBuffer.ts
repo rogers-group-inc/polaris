@@ -133,14 +133,24 @@ const TABLE_LABEL = "assets:probe";
 
 let flushing = false;
 
+// The snapshot a flush is currently writing. It has left `buffer` but is not
+// yet settled on disk, so read-your-writes must still see it until the write
+// finishes (then the DB row carries it, or the failure path re-queues it).
+let inFlight: Map<string, ProbePatch> | null = null;
+
 /**
  * Look up the pending in-flight patch for an asset. `recordProbeResult`
  * calls this AFTER loading the asset row and BEFORE running the state
  * machine, so the counter and status reads see the latest write — not the
- * DB row, which may be up to one flush window stale.
+ * DB row, which may be up to one flush window stale. A patch whose flush is
+ * still awaiting its write stays visible, merged under any newer pending
+ * patch by the enqueue merge rule.
  */
 export function getPendingProbePatch(assetId: string): ProbePatch | null {
-  return buffer.get(assetId) ?? null;
+  const pending = buffer.get(assetId);
+  const writing = inFlight?.get(assetId);
+  if (pending && writing) return mergeProbePatch(writing, pending);
+  return pending ?? writing ?? null;
 }
 
 /**
@@ -204,6 +214,7 @@ export async function flushProbePatchBuffer(): Promise<void> {
   // awaited write land in a fresh map.
   const snapshot: Array<[string, ProbePatch]> = [];
   for (const entry of buffer.entries()) snapshot.push(entry);
+  inFlight = new Map(snapshot);
   buffer.clear();
   setProbePatchBufferDepth(TABLE_LABEL, 0);
   const stopTimer = startProbePatchWriteTimer();
@@ -233,6 +244,7 @@ export async function flushProbePatchBuffer(): Promise<void> {
     }
     setProbePatchBufferDepth(TABLE_LABEL, buffer.size);
   } finally {
+    inFlight = null;
     stopTimer();
     flushing = false;
   }
@@ -349,6 +361,7 @@ export const __test__ = {
   },
   reset(): void {
     buffer.clear();
+    inFlight = null;
     flushing = false;
     setProbePatchBufferDepth(TABLE_LABEL, 0);
     if (flushTimer) {

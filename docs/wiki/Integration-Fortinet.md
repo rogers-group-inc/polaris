@@ -468,16 +468,25 @@ Key behaviours:
 
 ### The controller-link sweep
 
-Separately from discovery, a 60-second sweep asks each parent FortiGate what it
-thinks of its **FortiLink session** to each managed FortiSwitch, and its
-**CAPWAP tunnel** to each managed FortiAP. See
+Separately from discovery, a sweep asks each parent FortiGate what it thinks of
+its **FortiLink session** to each managed FortiSwitch, and its **CAPWAP tunnel**
+to each managed FortiAP. See
 [`fortilinkStatus`](Automation-Triggers#fortilinkstatus--the-second-opinion).
 
-It sweeps **every** managed switch and AP regardless of polling method, which is
-the point: the devices it tells you something new about are the ICMP- and
-SNMP-polled ones, **where a dead FortiLink session still answers every ping**.
+It sweeps **every** managed switch and AP regardless of response-time polling
+method, which is the point: the devices it tells you something new about are
+the ICMP- and SNMP-polled ones, **where a dead FortiLink session still answers
+every ping**.
 
-Cost is bounded by **controller count**, not device count.
+The link is treated as one more interface on the device: each switch and AP is
+read on its own **interface polling interval** (10 minutes by default — the
+same setting as its interface charts), and only while interface polling is on
+for it. Turn interface polling or monitoring off and the value is cleared
+([rule 59a](Business-Rules#rule-59a)). To hear about a dead FortiLink session
+sooner, shorten the interface interval for that class.
+
+Cost is bounded by **controller count**, not device count: a gate is asked only
+when one of its devices is due.
 
 ---
 

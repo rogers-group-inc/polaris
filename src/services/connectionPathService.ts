@@ -18,6 +18,8 @@
 
 import { prisma } from "../db.js";
 import type { Asset } from "../generated/prisma/client.js";
+import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
+import { splitLastSeenSwitch } from "./assetUpstreamService.js";
 import {
   buildInfraParentIndex,
   parentAssetWhereOr,
@@ -161,11 +163,10 @@ export async function resolveConnectionPath(assetId: string): Promise<Connection
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+/** `splitLastSeenSwitch`'s reading, so the two surfaces agree: an empty switch half ("/port9") is no switch. */
 function parseLastSeenSwitch(s: string | null): { switchId: string; port: string } | null {
-  if (!s) return null;
-  const idx = s.indexOf("/");
-  if (idx === -1) return { switchId: s.trim(), port: "" };
-  return { switchId: s.substring(0, idx).trim(), port: s.substring(idx + 1).trim() };
+  const sw = splitLastSeenSwitch(s);
+  return sw ? { switchId: sw.name, port: sw.port } : null;
 }
 
 async function findSwitchByName(switchId: string, endpoint: Asset): Promise<Asset | null> {
@@ -173,9 +174,13 @@ async function findSwitchByName(switchId: string, endpoint: Asset): Promise<Asse
   // FS-XXXX-NN form) into Asset.hostname, and the device serial into
   // Asset.serialNumber. lastSeenSwitch can carry either form depending on
   // which discovery path stamped it; check both.
+  // A retired switch is never the hop: excluded the way interfaceTopologyService
+  // excludes it, so a replaced switch's same-name twin can't force the
+  // collision path below.
   const candidates = await prisma.asset.findMany({
     where: {
       assetType: "switch",
+      status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
       OR: [{ hostname: switchId }, { serialNumber: switchId }],
     },
   });

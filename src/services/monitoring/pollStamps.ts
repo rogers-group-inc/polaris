@@ -15,6 +15,11 @@ function bytesOrNull(v: number | null | undefined): bigint | null {
   return v != null && Number.isFinite(v) ? BigInt(Math.max(0, Math.round(v))) : null;
 }
 
+/** Percentage figure, keeping null as null; a NaN / Infinity is not a reading. */
+function finiteOrNull(v: number | null | undefined): number | null {
+  return v != null && Number.isFinite(v) ? v : null;
+}
+
 // ─── Attempt vs success stamps (business rule 118) ──────────────────────────
 //
 // Each heavy stream keeps the last ATTEMPT (the scheduler's due anchor) apart
@@ -71,8 +76,8 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
   enqueueTelemetrySample({
     assetId,
     timestamp: now,
-    cpuPct:        d.cpuPct ?? null,
-    memPct:        d.memPct ?? null,
+    cpuPct:        finiteOrNull(d.cpuPct),
+    memPct:        finiteOrNull(d.memPct),
     // bytesOrNull like the band figures: a NaN / Infinity is null, not a
     // RangeError that lost the whole sample (until 2026-11-14).
     memUsedBytes:  bytesOrNull(d.memUsedBytes),

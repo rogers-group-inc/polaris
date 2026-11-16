@@ -19,7 +19,9 @@
  *      recovering) with a fresh lastMonitorAt → source "probe".
  *   4. ICMP fallback — one system-ping echo against the DNS name (the
  *      stored ipAddress is often stale for directory-discovered assets).
- *      Success → lastSeen = now (source "ping"). FAILURE WRITES NOTHING —
+ *      Success → lastSeen = now (source "ping") on an UNMONITORED asset only:
+ *      for a monitored one polling is authoritative (rule 12), so bumpLastSeen
+ *      defers "ping" like the discovery sources. FAILURE WRITES NOTHING —
  *      Windows firewall profiles commonly drop ICMP and Entra-joined
  *      laptops are legitimately off-LAN; absence of pong is not evidence
  *      of absence.
@@ -190,7 +192,9 @@ export async function runPresenceVerification(opts: {
       }
       // DNS name first — the stored ipAddress on directory-discovered
       // assets is frequently stale (DHCP churn the directory never sees).
-      const target = (a.dnsName || a.hostname || a.ipAddress || "").trim();
+      // Each candidate trimmed BEFORE the fallback: a whitespace-only dnsName
+      // must not hide a usable hostname.
+      const target = a.dnsName?.trim() || a.hostname?.trim() || a.ipAddress?.trim() || "";
       if (!target) {
         summary.pingSkippedNoTarget++;
         return;

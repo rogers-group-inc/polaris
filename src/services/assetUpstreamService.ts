@@ -56,6 +56,7 @@
  */
 
 import { prisma } from "../db.js";
+import { EXCLUDED_LIFECYCLE_STATUSES } from "../utils/assetInvariants.js";
 import {
   buildInfraParentIndex,
   normalizeNameKey,
@@ -251,12 +252,16 @@ export async function resolveAssetUpstream(
   const subnetGateAssetId = owning?.gateAssetId ?? null;
 
   const branches: Array<Record<string, unknown>> = [];
-  const pushBranches = (name: string, assetType: string) => {
+  const pushBranches = (name: string, assetType: string, extra: Record<string, unknown> = {}) => {
     const or = parentAssetWhereOr({ name });
-    if (or.length > 0) branches.push({ assetType, OR: or });
+    if (or.length > 0) branches.push({ assetType, OR: or, ...extra });
   };
-  if (sw) pushBranches(sw.name, "switch");
-  if (apName) pushBranches(apName, "access_point");
+  // A retired switch / AP is never the one an endpoint sits behind: a
+  // replaced unit's same-name twin must not force the collision path.
+  // Firewalls stay in (pickFirewallEntry passes a decommissioned one over).
+  const inService = { status: { notIn: EXCLUDED_LIFECYCLE_STATUSES } };
+  if (sw) pushBranches(sw.name, "switch", inService);
+  if (apName) pushBranches(apName, "access_point", inService);
   for (const n of sightingNames) pushBranches(n, "firewall");
   if (useController) {
     const or = parentAssetWhereOr({ serial: controllerSerial || null, name: controllerName || null });
@@ -301,7 +306,9 @@ export async function resolveAssetUpstream(
       }),
       // The IPAM gate as SCOPE even when a sighting exists — the firewall ROW
       // keeps its evidence-over-inference rule; this only narrows a name.
-      owning === undefined && ip ? resolveOwningGateContexts([ip]).then((m) => m.get(ip)) : Promise.resolve(owning),
+      // Never when the caller turned the subnet gate off (no subnets:read):
+      // IPAM must not shape the pick for a caller who may not read it.
+      owning === undefined && ip && includeSubnetGate ? resolveOwningGateContexts([ip]).then((m) => m.get(ip)) : Promise.resolve(owning),
     ]);
     for (const c of controllers) if (!candidates.some((x) => x.id === c.id)) candidates.push(c);
     const gateIds: string[] = [];
@@ -390,7 +397,9 @@ function controllerEntry(
   serial: string,
 ): UpstreamEntry {
   const hit = resolveInfraParentAsset(index, { serial: serial || null, name: name || null }, "firewall");
-  const row = hit ? candidates.find((c) => c.id === hit.id) : undefined;
+  // A decommissioned controller is absent, as a decommissioned sighted gate is
+  // in pickFirewallEntry: the stamped name stays, the asset ref does not.
+  const row = hit ? candidates.find((c) => c.id === hit.id && c.status !== "decommissioned") : undefined;
   return {
     name: name || row?.hostname || serial,
     source: "controller",

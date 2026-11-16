@@ -192,25 +192,31 @@ export async function dismissStrandedQuarantine(
  * is one indexed-by-nothing scan of a JSON column that is `[]` on every row,
  * selecting only the id — and each asset with one costs a device call or two.
  */
-export async function retryAllStrandedQuarantine(now: Date = new Date()): Promise<{ assets: number; cleared: number; failed: number }> {
+export async function retryAllStrandedQuarantine(now: Date = new Date()): Promise<{ assets: number; cleared: number; failed: number; skipped: number }> {
   const rows = await prisma.asset.findMany({
     where: { NOT: { quarantineStranded: { equals: [] } } },
     select: { id: true, quarantineStranded: true },
   });
   let cleared = 0;
   let failed = 0;
+  // Entries still listed that were not tried this pass (backoff not elapsed).
+  let skipped = 0;
   let assets = 0;
   for (const row of rows) {
-    if (!parseStranded(row.quarantineStranded).some((e) => strandedRetryDue(e, now))) continue;
+    const dueKeys = new Set(parseStranded(row.quarantineStranded).filter((e) => strandedRetryDue(e, now)).map(strandedKey));
+    if (dueKeys.size === 0) continue;
     assets += 1;
     try {
       const r = await retryStrandedQuarantine(row.id, { actor: "system:quarantine-retry", onlyDue: now });
       cleared += r.cleared.length;
-      failed += r.remaining.length;
+      // Only an entry that was due (so was tried) and is still listed failed.
+      const triedAndLeft = r.remaining.filter((e) => dueKeys.has(strandedKey(e))).length;
+      failed += triedAndLeft;
+      skipped += r.remaining.length - triedAndLeft;
     } catch (err) {
       failed += 1;
       logger.warn({ err, assetId: row.id }, "stranded quarantine retry failed");
     }
   }
-  return { assets, cleared, failed };
+  return { assets, cleared, failed, skipped };
 }

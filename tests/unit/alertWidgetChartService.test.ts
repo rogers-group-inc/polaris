@@ -127,10 +127,8 @@ describe("buildWidgetValueChart", () => {
 
   it("is null when the window held no finite reading", async () => {
     stubbed(prisma.assetCustomWidgetSample.findMany).mockResolvedValue([{ timestamp: at(1), value: "n/a" }, { timestamp: at(2), value: null as never }]);
-    // Number(null) is 0 — a null value is read as a zero reading, so only the string is dropped.
-    const c = await buildWidgetValueChart("a1", { metric: "customWidgetValue", dimension: "w-amps", from: FROM, to: TO });
-    expect(sparkPoints()).toEqual([{ t: at(2).getTime(), v: 0 }]);
-    expect(c).not.toBeNull();
+    // Was a bug until 2026-11-16: Number(null) is 0, so a null value was plotted as a zero reading.
+    expect(await buildWidgetValueChart("a1", { metric: "customWidgetValue", dimension: "w-amps", from: FROM, to: TO })).toBeNull();
     stubbed(prisma.assetCustomWidgetSample.findMany).mockResolvedValue([{ timestamp: at(1), value: "n/a" }]);
     expect(await buildWidgetValueChart("a1", { metric: "customWidgetValue", dimension: "w-amps", from: FROM, to: TO })).toBeNull();
   });
@@ -181,6 +179,18 @@ describe("buildWidgetValueChart", () => {
     expect(pts[0]!.v).toBe(0);
     expect(pts.at(-1)!.v).toBe(999);
     expect(c!.summary).toContain("now 999 %");
+  });
+
+  it("states the peak of the full series and keeps a one-sample spike on the thinned chart", async () => {
+    // Was a bug until 2026-11-16: the peak was computed after stride-thinning, so a short spike vanished from it.
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ timestamp: new Date(FROM + i * 3600), value: i === 501 ? 500 : 10 }));
+    stubbed(prisma.assetCustomWidgetSample.findMany).mockResolvedValue(rows);
+    const c = await buildWidgetValueChart("a1", { metric: "customWidgetValue", dimension: "w-plain", from: FROM, to: TO });
+    expect(c!.summary).toContain("peak 500 %");
+    const pts = sparkPoints();
+    expect(pts.length).toBeLessThanOrEqual(240);
+    expect(pts.some((p) => p.v === 500)).toBe(true);
+    expect(pts.map((p) => p.t)).toEqual([...pts.map((p) => p.t)].sort((a, b) => a - b));
   });
 
   it("draws a sample series for a test send, climbing past the line, with no read", async () => {

@@ -194,8 +194,8 @@ describe("runRetentionPrune — advisory lock", () => {
       .mockResolvedValueOnce({ value: { at: NOW - 1000 } });
     const r = await runRetentionPrune();
     expect(r.skipped).toBe(true);
-    // Reported as "lock-held" — the inner re-check's null shares that path.
-    expect(r.reason).toBe("lock-held");
+    // Was a bug until 2026-11-16: the inner re-check was reported as "lock-held".
+    expect(r.reason).toBe("not-due");
     for (const m of ALL_MODELS) expect(del(m)).not.toHaveBeenCalled();
     expect(h.clients[0]!.ended).toBe(true);
   });
@@ -208,7 +208,9 @@ describe("runRetentionPrune — advisory lock", () => {
     expect(upsertSetting()).toHaveBeenCalled();
   });
 
-  it("releases the lock and closes the connection when a prune throws, and does not stamp the run", async () => {
+  // Was a bug until 2026-11-16: a failed prune left no trace, so it retried on every ~30 s heavy tick.
+  it("releases the lock when a prune throws, keeps the success stamp and records the failed attempt", async () => {
+    findSetting().mockResolvedValue({ value: { at: NOW - 30 * HOUR } });
     del("assetMonitorSample").mockRejectedValue(new Error("deadlock"));
     h.retention = retention((r) => { r.assets.detail = 3; });
     h.compress = { asset_monitor_samples: 7 };
@@ -216,7 +218,19 @@ describe("runRetentionPrune — advisory lock", () => {
     const c = h.clients[0]!;
     expect(c.queries.map(([s]) => s)).toContain("SELECT pg_advisory_unlock($1, $2)");
     expect(c.ended).toBe(true);
-    expect(upsertSetting()).not.toHaveBeenCalled();
+    expect(upsertSetting()).toHaveBeenCalledTimes(1);
+    expect(upsertSetting().mock.calls[0]![0]).toMatchObject({ update: { value: { at: NOW - 30 * HOUR, failedAt: NOW } } });
+  });
+
+  it("backs off after a failed attempt, then retries once the backoff has passed", async () => {
+    findSetting().mockResolvedValue({ value: { at: NOW - 30 * HOUR, failedAt: NOW - 5 * 60_000 } });
+    expect(await runRetentionPrune()).toMatchObject({ skipped: true, reason: "not-due" });
+    expect(h.clients).toHaveLength(0);
+    findSetting().mockResolvedValue({ value: { at: NOW - 30 * HOUR, failedAt: NOW - 10 * 60_000 } });
+    expect((await runRetentionPrune()).skipped).toBe(false);
+    // Success clears the failed-attempt stamp.
+    expect(upsertSetting().mock.calls.at(-1)![0]).toMatchObject({ update: { value: { at: NOW } } });
+    expect((upsertSetting().mock.calls.at(-1)![0] as { update: { value: object } }).update.value).not.toHaveProperty("failedAt");
   });
 });
 

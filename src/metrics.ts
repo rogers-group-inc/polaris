@@ -379,7 +379,7 @@ const processCrashTotal = new Counter({
 
 const fortilinkControllerReadTotal = new Counter({
   name: "polaris_fortilink_controller_read_total",
-  help: "Controller inventory reads attempted by the FortiLink/CAPWAP link-state sweep, by outcome (success | failure). One count per (controller, switches|aps) table per tick. A sustained `failure` rate means a FortiGate or FMG the sweep cannot reach — its managed devices keep their last reported link state and their fortilinkCheckedAt stops advancing, which is the stale-value case the asset-details row renders differently. Cardinality is deliberately outcome-only, not per-controller: a 50-gate fleet would otherwise add 100 series.",
+  help: "Controller inventory reads attempted by the FortiLink/CAPWAP link-state sweep, by outcome (success | failure). One count per (controller, switches|aps) table read — a controller is read only on a 60s tick where at least one of its devices is due on its interface interval (business rule 59a), so a healthy controller counts about twice per interface interval and an unreachable one, whose devices stay due, once per kind per tick. A sustained `failure` rate means a FortiGate or FMG the sweep cannot reach — its managed devices keep their last reported link state and their fortilinkCheckedAt stops advancing, which is the stale-value case the asset-details row renders differently. Cardinality is deliberately outcome-only, not per-controller: a 50-gate fleet would otherwise add 100 series.",
   labelNames: ["outcome"] as const,
   registers: [registry],
 });

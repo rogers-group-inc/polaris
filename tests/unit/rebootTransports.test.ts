@@ -147,6 +147,19 @@ describe("token link", () => {
     }
   });
 
+  it("a fetch that never connected (refused / no DNS / unreachable) is a refusal, not uncertain", async () => {
+    // Was a bug until 2026-11-16: "fetch failed" from ECONNREFUSED counted as a lost answer.
+    const ops = gateOps(TOKEN);
+    for (const code of ["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH"]) {
+      h.fgRequest.mockRejectedValueOnce(new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) }));
+      const e = await ops.rebootSelf("m").catch((x) => x);
+      expect(e).toBeInstanceOf(RebootSendError);
+    }
+    // A reset after the request may have gone out stays uncertain.
+    h.fgRequest.mockRejectedValueOnce(new TypeError("fetch failed", { cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }) }));
+    expect(await ops.rebootSelf("m")).toEqual({ uncertain: "fetch failed" });
+  });
+
   it("reads the serial from the status ENVELOPE", async () => {
     h.fgRequest.mockResolvedValue({ serial: "FGT60F0000000001", results: { hostname: "HQ" } });
     expect(await gateOps(TOKEN).serial()).toBe("FGT60F0000000001");

@@ -180,7 +180,10 @@ export async function provisionLlmAccess(
   }
 }
 
-/** Revoke-by-delete the old token and mint a fresh one on the same role. */
+/**
+ * Mint a fresh token on the same role, write it to the integration's
+ * config.tokenId, then revoke-by-delete the old one.
+ */
 export async function regenerateLlmToken(
   integration: { id: string; name: string; config: Record<string, unknown> },
   actor: string,
@@ -200,9 +203,20 @@ export async function regenerateLlmToken(
     assertGrantWithinCaller(req, role.permissions, `the AI Assistant integration's role "${role.name}"`);
   }
   const oldTokenId = typeof integration.config.tokenId === "string" ? integration.config.tokenId : null;
-  if (oldTokenId) await deleteToken(oldTokenId).catch(() => {});
+  // New token first, then point the config at it, then retire the old one: a
+  // failed mint leaves the integration on its working token, never on none.
   const tokenName = await uniqueTokenName(`LLM: ${integration.name}`.slice(0, 100));
   const { token, rawToken } = await createToken({ name: tokenName, roleId: role.id, createdBy: actor });
+  try {
+    await prisma.integration.update({
+      where: { id: integration.id },
+      data: { config: { ...integration.config, tokenId: token.id } as any },
+    });
+  } catch (err) {
+    await deleteToken(token.id).catch(() => {});
+    throw err;
+  }
+  if (oldTokenId) await deleteToken(oldTokenId).catch(() => {});
   await logEvent({
     action: "integration.llm.token_regenerated",
     resourceType: "integration",

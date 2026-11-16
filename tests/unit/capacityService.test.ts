@@ -681,6 +681,12 @@ describe("getCapacitySnapshot — side reasons never fail the snapshot", () => {
     expect(h.refreshPatroniScheme).toHaveBeenCalledTimes(1); // not probed while HA is off
   });
 
+  it("an unknown (null) unusable-regex count adds no reason", async () => {
+    h.countUnusableStoredPatterns.mockResolvedValue(null);
+    const snap = await getCapacitySnapshot({ pgTuningNeeded: false });
+    expect(codes(snap.reasons)).not.toContain("regex_pattern_unusable");
+  });
+
   it("every side source throwing still yields a snapshot", async () => {
     h.getPlatformLifecycle.mockRejectedValue(new Error("x"));
     h.listRolesNeedingGrantReview.mockRejectedValue(new Error("x"));

@@ -543,6 +543,16 @@ controller has no view at all.** An unreadable controller writes **nothing**;
 answered-but-absent is **`unknown`, never `down`**; it never touches
 `monitorStatus`. A null produces **no reading at all**.
 
+### Rule 59a
+**The controller link is a virtual interface: read on the device's interface
+cadence, and only while its interfaces are polled.** Each managed switch and AP
+is read on its own interface (system-info) interval — **10 minutes by default**
+— not every minute. Turn interface polling off for a device (or turn its
+monitoring off) and Polaris stops asking and **clears** the value, so an
+automation sees no reading rather than a stale `up`; no event is logged for the
+clear. A device in maintenance keeps its last value. `POLARIS_FORTILINK_SWEEP_SEC`
+is ignored since 2026-11-16. Operator decision 2026-11-16.
+
 ### Rule 60
 **A footer that tells the reader who else knows must never name a Bcc.** A blind
 copy that appears in a footer every recipient reads has stopped being blind. The
@@ -3569,6 +3579,9 @@ The same applies to what an automation's condition is narrowed to. A **path chec
 can a manufacturer profile that holds one, until the automation is pointed elsewhere. If an
 automation covers every check and one of them is deleted while its alert is firing, Polaris
 clears that alert on its next pass instead of leaving it open for good.
+
+**Disabling** a path check does the same to its alerts: they clear on the next pass, even
+while a maintenance window covers the check. Turning the check back on starts it fresh.
 
 ### Rule 168
 

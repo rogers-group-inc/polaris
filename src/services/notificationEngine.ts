@@ -104,6 +104,9 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       bandNotify: v2.bandNotify,
       resetActions: v2.resetActions,
       repeat: v2.repeat,
+      // The automation's own quiet time (business rule 92) — followUpPolicy
+      // reads it for the "paused …" clause of the fire-time reminder sentence.
+      quietTime: r.quietTime ?? null,
       // Not part of the v2 normalization — grouping is a real column on the
       // rule, deliberately not a key inside the trigger (a trigger key would
       // change triggerSignature and stop a grouped rule shadowing its

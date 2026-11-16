@@ -218,7 +218,9 @@ export function renderMessage(
     const phrase = component ? pathConditionPhrase(rule.trigger as never) : null;
     if (component && phrase && countTag) return `${component} ${phrase} from ${countTag.slice(3)} — ${list}${dep}`;
     const devices = component ? countTag.slice(3) : ctx["asset"];
-    return `${rule.name}${component ? ` — ${component}` : ""}: ${devices} — ${list}${dep}`;
+    // No count to state (no count tag on the split): drop the empty slot
+    // rather than render "Rule — Check:  — h1".
+    return `${rule.name}${component ? ` — ${component}` : ""}${devices ? `: ${devices}` : ""} — ${list}${dep}`;
   }
   if (members?.length) {
     const active = activeMembers(members);

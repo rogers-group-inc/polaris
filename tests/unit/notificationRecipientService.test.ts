@@ -164,6 +164,14 @@ describe("resolvers' empty-input contracts", () => {
     expect((await resolveUsersByRoles(["r-noc"])).map((u) => u.id)).toEqual(["u1", "u3"]);
     expect((await resolveRecipientUsers(["REGION:atlanta", "OnCall"])).map((u) => u.id)).toEqual(["u1", "u3"]);
   });
+
+  it("trims a needle before stripping the prefix, the same key regionHierarchyService uses", async () => {
+    // Was a bug until 2026-11-16: normalizeNeedle did not trim, so " region:atlanta " matched nobody.
+    expect((await resolveRecipientUsers([" region:atlanta "])).map((u) => u.id)).toEqual(
+      (await resolveRecipientUsers(["region:atlanta"])).map((u) => u.id),
+    );
+    expect((await resolveRecipientUsers([" region:atlanta "])).length).toBeGreaterThan(0);
+  });
 });
 
 describe("listRecipientUsers", () => {

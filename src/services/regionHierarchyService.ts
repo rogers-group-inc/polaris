@@ -49,7 +49,7 @@ import { getRegionHierarchy } from "./mapRegionService.js";
 // From the leaf util, NOT from notificationService (which re-exports it):
 // notificationService imports notificationRuleService, which imports this
 // module, so importing it from there would close a runtime cycle.
-import { stripRegionPrefix } from "../utils/tagNormalize.js";
+import { regionNameKey } from "../utils/tagNormalize.js";
 // The ceiling lives in notificationTypes with the recipient schemas that
 // enforce it — this module reads it rather than owning a second copy.
 import { MAX_DEVICE_REGION_LEVELS } from "./notificationTypes.js";
@@ -72,11 +72,10 @@ export interface RegionLevelIndex {
   maxLevel: number;
 }
 
-/** Match `normalizeNeedle` in notificationRecipientService: asset tags carry the
- *  `region:` prefix, user tags do not, and both compare case-insensitively. */
-function key(name: string): string {
-  return stripRegionPrefix(String(name ?? "")).trim().toLowerCase();
-}
+/** The same key `normalizeNeedle` in notificationRecipientService uses: asset
+ *  tags carry the `region:` prefix, user tags do not, and both compare
+ *  trimmed and case-insensitively. */
+const key = regionNameKey;
 
 /**
  * Build the name → {parent, level} index.

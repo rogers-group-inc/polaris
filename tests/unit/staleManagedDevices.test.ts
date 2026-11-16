@@ -75,7 +75,7 @@ describe("decommissionStaleManagedDevices — the sweep", () => {
     await decommissionStaleManagedDevices(input());
     expect(db.findMany).toHaveBeenCalledWith({
       where: { discoveredByIntegrationId: "i1", assetType: { in: ["switch", "access_point"] }, status: { not: "decommissioned" } },
-      select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true, status: true },
+      select: { id: true, hostname: true, serialNumber: true, macAddress: true, ipAddress: true, assetType: true, fortinetTopology: true, status: true },
     });
     expect(db.updateMany).not.toHaveBeenCalled();
     expect(m.releaseForDecommission).not.toHaveBeenCalled();
@@ -104,7 +104,20 @@ describe("decommissionStaleManagedDevices — the sweep", () => {
         message: 'FortiSwitch "s1-host" decommissioned — controller "SITE-A-FW" no longer reports it',
         details: { reason: "missing-from-controller", controllerFortigate: "SITE-A-FW", integrationId: "i1", integrationName: "HQ FMG" },
       },
-      expect.objectContaining({ action: "asset.fortiap.decommissioned", resourceName: "p1", message: 'FortiAP "null" decommissioned — controller "SITE-A-FW" no longer reports it' }),
+      // Was a bug until 2026-11-16: a nameless, serial-less AP was announced as FortiAP "null".
+      expect.objectContaining({ action: "asset.fortiap.decommissioned", resourceName: "p1", message: 'FortiAP (unnamed FortiAP) decommissioned — controller "SITE-A-FW" no longer reports it' }),
+    ]);
+  });
+
+  it("names a nameless, serial-less AP by its MAC, then its IP", async () => {
+    db.findMany.mockResolvedValue([
+      ap("p1", null, under("SITE-A-FW"), { hostname: null, macAddress: "AA:BB:CC:00:00:01" }),
+      ap("p2", null, under("SITE-A-FW"), { hostname: null, ipAddress: "10.0.0.9" }),
+    ]);
+    await decommissionStaleManagedDevices(input());
+    expect(events().map((e) => e.message)).toEqual([
+      'FortiAP "AA:BB:CC:00:00:01" decommissioned — controller "SITE-A-FW" no longer reports it',
+      'FortiAP "10.0.0.9" decommissioned — controller "SITE-A-FW" no longer reports it',
     ]);
   });
 

@@ -174,7 +174,7 @@ export async function decommissionStaleManagedDevices(input: {
       // the managed inventory reaches the decommission path.
       status: { not: "decommissioned" },
     },
-    select: { id: true, hostname: true, serialNumber: true, assetType: true, fortinetTopology: true, status: true },
+    select: { id: true, hostname: true, serialNumber: true, macAddress: true, ipAddress: true, assetType: true, fortinetTopology: true, status: true },
   });
   // Business rule 41(b): the controller is resolved by chassis first, so a
   // gate renamed in FortiManager still judges the switches/APs it left
@@ -227,7 +227,9 @@ export async function decommissionStaleManagedDevices(input: {
       details = { reason: "controller-not-in-roster", controllerFortigate: controller, integrationId, integrationName };
     }
     staleIds.push(a.id);
-    if (isSwitch)                            decommissionedSwitches.push(a.hostname || a.serialNumber || a.id);
+    const kindLabel = isSwitch ? "FortiSwitch" : "FortiAP";
+    const shownName = a.hostname || a.serialNumber || a.macAddress || a.ipAddress;
+    if (isSwitch)                           decommissionedSwitches.push(a.hostname || a.serialNumber || a.id);
     else if (a.assetType === "access_point") decommissionedAps.push(a.hostname || a.serialNumber || a.id);
     logEvent({
       action: isSwitch ? "asset.fortiswitch.decommissioned" : "asset.fortiap.decommissioned",
@@ -235,7 +237,7 @@ export async function decommissionStaleManagedDevices(input: {
       resourceId: a.id,
       resourceName: a.hostname || a.serialNumber || a.id,
       actor,
-      message: `${isSwitch ? "FortiSwitch" : "FortiAP"} "${a.hostname || a.serialNumber}" decommissioned — ${message}`,
+      message: `${kindLabel} ${shownName ? `"${shownName}"` : `(unnamed ${kindLabel})`} decommissioned — ${message}`,
       details,
     });
   }

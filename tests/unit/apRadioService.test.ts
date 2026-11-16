@@ -205,6 +205,14 @@ describe("persistApRadioInventory — VAP identity", () => {
     expect(upd[0].where).toEqual({ id: "v0" });
     expect(upd[0].data).not.toHaveProperty("vapName");
     expect(upd[0].data).toMatchObject({ clientCount: 5, source: "snmp", lastSeen: NOW });
+    // Was a bug until 2026-11-16: the case-only difference rewrote the bssid column every pass.
+    expect(upd[0].data).not.toHaveProperty("bssid");
+  });
+
+  it("keeps the stored spelling of a radio's base BSSID when only the case differs", async () => {
+    given([storedRadio({ baseBssid: "AA:BB:CC:00:00:00" })], []);
+    await persistApRadioInventory("ap1", [radio({ baseBssid: "aa:bb:cc:00:00:00" })], "snmp", NOW);
+    expect(stubbed(prisma.assetApRadio.update).mock.calls[0]![0].data).not.toHaveProperty("baseBssid");
   });
 
   it("renames an SNMP-named row to the controller's VAP name when FortiOS reports the same BSSID", async () => {

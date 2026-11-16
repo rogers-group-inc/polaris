@@ -41,6 +41,7 @@ function subnetRow(over: Record<string, unknown> = {}) {
   return {
     id: "s1", blockId: "b1", cidr: "10.1.0.0/24", name: "DHCP: lan (FW-A)", purpose: "p", status: "available",
     vlan: 10, tags: ["dhcp-discovered"], discoveredBy: "int-1", fortigateDevice: "FW-A", fortigateSerial: "FGT1",
+    fortigateInterface: "vlan10", fortigateVlanParent: "fortilink",
     createdBy: "alice", lastDiscoveredAt: UPDATED, createdAt: CREATED, updatedAt: UPDATED,
     block: { cidr: "10.0.0.0/8", name: "Corp" }, integration: { name: "FMG" },
     ...over,
@@ -88,6 +89,8 @@ describe("snapshotSubnet", () => {
       originalSubnetId: "s1", blockId: "b1", blockCidr: "10.0.0.0/8", blockName: "Corp", cidr: "10.1.0.0/24",
       name: "DHCP: lan (FW-A)", purpose: "p", status: "available", vlan: 10, tags: ["dhcp-discovered"],
       discoveredBy: "int-1", integrationName: "FMG", fortigateDevice: "FW-A", fortigateSerial: "FGT1",
+      // Was a bug until 2026-11-16: the archive dropped rule 137's interface and VLAN parent.
+      fortigateInterface: "vlan10", fortigateVlanParent: "fortilink",
       createdBy: "alice", lastDiscoveredAt: UPDATED, originalCreatedAt: CREATED, originalUpdatedAt: UPDATED,
       archivedBy: "bob", archiveReason: "chassis-replaced",
     });

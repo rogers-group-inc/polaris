@@ -178,6 +178,17 @@ describe("followUpParts / applyFollowUpPolicy", () => {
     expect(followUpParts(repeating, "warning").repeatPolicy).toMatch(/Reminders every 15 minutes/);
   });
 
+  it("states the automation's own quiet time in the reminder sentence (business rule 92)", () => {
+    // Was a bug until 2026-11-16: the engine built DbRule without quietTime, so this clause never appeared.
+    const quiet = rule({
+      ...repeating,
+      quietTime: { windows: [{ version: 1, kind: "recurring", freq: "daily", startTime: "22:00", endTime: "06:00" }], holds: "followUps" },
+    });
+    expect(followUpParts(quiet, "warning").repeatPolicy).toBe(
+      "Reminders every 15 minutes until acknowledged, paused daily 22:00–06:00.",
+    );
+  });
+
   it("says nothing for a rule that neither repeats nor escalates", () => {
     expect(followUpParts(rule(), "warning")).toEqual({ repeatPolicy: "", escalationPolicy: "" });
   });
@@ -268,12 +279,11 @@ describe("renderMessage", () => {
       .toBe("Salesforce HTTPS is down from 2 devices — h1, h2");
   });
 
-  it("leaves the device count blank on a path-check split whose context carries no count tag (current behaviour)", () => {
-    // Suspicious, not pinned: with no `dimension.suffix` the sentence keeps an
-    // empty slot where the device count would be.
+  it("omits the device count on a path-check split whose context carries no count tag", () => {
+    // Was a bug until 2026-11-16: it rendered an empty slot, "High CPU — Salesforce HTTPS:  — h1".
     const members = [member({ key: "c1", label: "h1", assetId: "a1", component: "Salesforce HTTPS" })];
     expect(renderMessage(rule({ trigger: pathOkTrigger }), reading(), { ...ctx, asset: "Salesforce HTTPS" }, members))
-      .toBe("High CPU — Salesforce HTTPS:  — h1");
+      .toBe("High CPU — Salesforce HTTPS — h1");
   });
 
   it("speaks for a whole-group alert", () => {

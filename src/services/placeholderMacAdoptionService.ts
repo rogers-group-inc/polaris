@@ -70,6 +70,9 @@ export const ADOPTION_RUN_CEILING = 50;
 /** Concurrent pushes. Low on purpose: these share the FMG worker lanes. */
 const PUSH_CONCURRENCY = 2;
 
+/** Rejection reason for a row the run was aborted before reaching. */
+const ABORTED = new Error("aborted");
+
 /** Mutable per-run write budget. Create with `createAdoptionBudget()`. */
 export interface AdoptionBudget {
   remaining: number;
@@ -285,6 +288,9 @@ export async function runPlaceholderMacAdoption(params: {
     const evidence = params.evidence.get(`${dev.toLowerCase()}|${r.ipAddress}`);
     if (!evidence) continue;
     const evidenceHex = macHexKeyOrNull(evidence.mac);
+    // Already adopted: the row itself holds the observed MAC. Nothing to do,
+    // and it is not a collision with anything (it was logged as one every cycle).
+    if (evidenceHex && evidenceHex === macHexKeyOrNull(r.macAddress)) continue;
     if (evidenceHex && occupiedBySubnet.get(r.subnetId)?.has(evidenceHex)) {
       skippedCollision++;
       continue;
@@ -329,7 +335,7 @@ export async function runPlaceholderMacAdoption(params: {
   params.budget.remaining -= batch.length;
 
   const results = await mapSettledWithConcurrency(batch, PUSH_CONCURRENCY, async (row) => {
-    if (params.signal?.aborted) throw new Error("aborted");
+    if (params.signal?.aborted) throw ABORTED;
     // Stored colon-LOWER, matching what updateReservation persists — this is
     // the same semantic operation, just performed by discovery instead of an
     // operator, and the column should not gain a second spelling because of it.
@@ -373,9 +379,13 @@ export async function runPlaceholderMacAdoption(params: {
     return row;
   });
 
+  let aborted = 0;
   for (let i = 0; i < results.length; i++) {
     const r = results[i]!;
     const row = batch[i]!;
+    // A row the run stopped before reaching was never tried: not a failure,
+    // no Event, and its budget slot is handed back below.
+    if (r.status === "rejected" && r.reason === ABORTED) { aborted++; continue; }
     if (r.status === "fulfilled") {
       out.adopted++;
       void logEvent({
@@ -444,6 +454,11 @@ export async function runPlaceholderMacAdoption(params: {
       { reservationId: row.id, ip: row.ipAddress, kind, err },
       "placeholderMacAdoption: push failed",
     );
+  }
+
+  if (aborted > 0) {
+    out.attempted -= aborted;
+    params.budget.remaining += aborted;
   }
 
   if (out.deferred > 0) {
