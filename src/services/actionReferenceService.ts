@@ -100,7 +100,10 @@ export function scriptReferrers(scriptId: string): Promise<ActionReferrer[]> {
  */
 export async function channelReferrers(channelId: string): Promise<ActionReferrer[]> {
   const [actions, upgrades, reboots] = await Promise.all([
-    findActionReferrers((a) => a.type === "notify" && notifyChannelIds(a).includes(channelId)),
+    findActionReferrers((a) =>
+      (a.type === "notify" && notifyChannelIds(a).includes(channelId))
+      // Business rule 190: a script action that emails through it.
+      || (a.type === "script" && a.email?.channelId === channelId)),
     prisma.firmwareUpgradeSchedule.count({ where: { status: "pending", notifyChannelIds: { has: channelId } } }),
     prisma.rebootSchedule.count({ where: { status: "pending", notifyChannelIds: { has: channelId } } }),
   ]);
@@ -231,6 +234,7 @@ export async function brokenReferencesByRule(rules: readonly BrokenRuleRow[]): P
         const a = ref.action as AutomationAction;
         if (a.type === "notify") for (const id of notifyChannelIds(a)) channels.push({ label: ref.label, id });
         if (a.type === "script" && a.scriptId) scripts.push({ label: ref.label, id: a.scriptId });
+        if (a.type === "script" && a.email?.channelId) channels.push({ label: ref.label, id: a.email.channelId });
       }
     } catch { /* a row that no longer normalizes: nothing to point at here */ }
     const dims = new Map<DimensionTargetField, Set<string>>(

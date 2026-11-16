@@ -618,6 +618,7 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
   // coherence rule.
   const notifyActions: { label: string; channelIds: string[]; broadcast: boolean }[] = [];
   const scriptRefs: { label: string; scriptId: string; runOn: string }[] = [];
+  const scriptEmailRefs: { label: string; channelId: string }[] = [];
   for (const { action, label, where } of all) {
     if (action.type === "reboot") {
       // Business rule 115(c): a recovery is no reason to reboot anything.
@@ -673,6 +674,14 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
       }
     } else if (action.type === "script") {
       scriptRefs.push({ label, scriptId: action.scriptId, runOn: action.runOn });
+      // Business rule 190: the send pass is a server-run thing — an agent
+      // script would have to carry the pass off the host to use it.
+      if (action.email) {
+        if (action.runOn !== "server") {
+          throw new AppError(400, `${label}: only a script that runs on the Polaris server can send email through a Polaris channel`);
+        }
+        scriptEmailRefs.push({ label, channelId: action.email.channelId });
+      }
     }
     // `event` references nothing — no channel, script or URL to validate.
   }
@@ -690,6 +699,19 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
       if (script.runTarget !== "either" && script.runTarget !== ref.runOn) {
         throw new AppError(400, `${ref.label}: script "${script.name}" only runs on ${script.runTarget}, but the action requests ${ref.runOn}`);
       }
+    }
+  }
+
+  if (scriptEmailRefs.length > 0) {
+    const rows = await prisma.notificationChannel.findMany({
+      where: { id: { in: Array.from(new Set(scriptEmailRefs.map((r) => r.channelId))) } },
+      select: { id: true, type: true },
+    });
+    const typeOf = new Map(rows.map((c) => [c.id, c.type]));
+    for (const ref of scriptEmailRefs) {
+      const t = typeOf.get(ref.channelId);
+      if (!t) throw new AppError(400, `${ref.label}: the script's email channel no longer exists`);
+      if (t !== "smtp" && t !== "oauth_m365") throw new AppError(400, `${ref.label}: the script's email channel must be an email channel (SMTP or Microsoft 365)`);
     }
   }
 

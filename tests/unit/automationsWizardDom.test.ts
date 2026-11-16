@@ -794,6 +794,48 @@ describe("automation wizard DOM render", () => {
     expect(() => ruleInputSchema.parse(payload)).not.toThrow();
   });
 
+  it("script action email (rule 190): hydrates, offers email channels only, gates on Run on, round-trips", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-sc-mail", name: "Cert renewed", description: null, enabled: true, severity: "informational",
+      trigger: { type: "event", actionPattern: "path_check.tls_cert_changed" },
+      scope: { allAssets: true }, reset: { mode: "timed", afterSec: 86400 }, cooldownSec: null, messageTemplate: null,
+      actions: [{ type: "script", scriptId: "sc1", runOn: "server", email: { channelId: "c1", addresses: ["certs@example.com", "sec@example.com"] } }],
+    });
+    (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    const box = doc.querySelector("#aw-step-5 .aw-action")!;
+    const on = box.querySelector(".sa-email-on") as unknown as { checked: boolean; disabled: boolean; dispatchEvent: (e: unknown) => void };
+    const fields = box.querySelector(".sa-email-fields") as unknown as { hidden: boolean };
+    expect(on.checked).toBe(true);
+    expect(fields.hidden).toBe(false);
+    const chOpts = Array.from(box.querySelectorAll(".sa-email-ch option")).map((o) => (o as unknown as { value: string }).value);
+    expect(chOpts).toEqual(["c1"]); // the web_push channel cannot carry a script's email
+    expect((box.querySelector(".sa-email-to") as unknown as { value: string }).value).toBe("certs@example.com, sec@example.com");
+
+    // An agent run cannot hold the pass: the block greys out and says why.
+    const agentRadio = box.querySelector(".sa-runon-agent") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void };
+    agentRadio.checked = true;
+    agentRadio.dispatchEvent(new (g.window as any).Event("change", { bubbles: true }));
+    expect(on.disabled).toBe(true);
+    expect(fields.hidden).toBe(true);
+    expect(box.querySelector(".sa-email-why")!.textContent).toMatch(/Polaris server/);
+    const serverRadio = box.querySelector(".sa-runon") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void };
+    serverRadio.checked = true;
+    serverRadio.dispatchEvent(new (g.window as any).Event("change", { bubbles: true }));
+    expect(fields.hidden).toBe(false);
+
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(toastErrors).toEqual([]);
+    const payload = savedPayloads[0]! as Record<string, any>;
+    const sa = payload.actions.find((a: { type: string }) => a.type === "script");
+    expect(sa.email).toEqual({ channelId: "c1", addresses: ["certs@example.com", "sec@example.com"] });
+    expect(() => ruleInputSchema.parse(payload)).not.toThrow();
+  });
+
   it("repeat control: omits stopAfterHours when blank, which is the unbounded default", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;

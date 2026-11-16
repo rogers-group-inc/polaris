@@ -497,6 +497,24 @@ const apiCallActionSchema = z
   })
   .strict();
 
+/**
+ * Business rule 190: a server script may send email through ONE Polaris email
+ * channel, to exactly these addresses — the script names the subject, body and
+ * attachments, never a recipient. The run gets a single-use pass for it
+ * (scriptRunEmailService).
+ */
+const MAX_SCRIPT_EMAIL_ADDRESSES = 20;
+const scriptEmailSchema = z
+  .object({
+    channelId: z.string().min(1).max(100),
+    addresses: z
+      .array(z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "is not an email address"))
+      .min(1)
+      .max(MAX_SCRIPT_EMAIL_ADDRESSES),
+  })
+  .strict();
+
+
 const scriptActionSchema = z
   .object({
     type: z.literal("script"),
@@ -504,6 +522,7 @@ const scriptActionSchema = z
     runOn: z.enum(SCRIPT_RUN_TARGETS),
     argsTemplate: z.string().max(2000).optional().nullable(), // {token} vocabulary
     timeoutSec: z.number().int().min(1).max(600).optional().nullable(), // overrides the script default
+    email: scriptEmailSchema.optional().nullable(), // rule 190 — server runs only
   })
   .strict();
 

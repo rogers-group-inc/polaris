@@ -61,6 +61,11 @@ const EXEMPT_PATH_PREFIXES = [
                                 // routes and keep CSRF. What enforces that is the segment-boundary
                                 // match in isExemptPath below; with a bare startsWith this entry
                                 // also exempted /ha/enrollments/:id/approve. Do not go back.
+  "/api/v1/script-runs/self",  // A RUNNING automation script on this host (business rule 190): no
+                                // session — it authenticates with its run's single-use pass, which
+                                // answers only while the run is running and only from loopback.
+                                // Token-is-the-defense, like /agents/ above. Exempt so a call that
+                                // forgot the header gets the pass's 401, not a CSRF 403.
 ];
 
 /**

@@ -13,7 +13,10 @@
  *   PUT  /:id           automationScripts:write      (update — warning Event on body change)
  *   DELETE /:id         automationScripts:write      (409 when referenced by an automation)
  *   POST /:id/test-run  automationScripts:write      (server-target only; enqueues a run
- *                                                     and returns runId — poll /runs/:id)
+ *                                                     and returns runId — poll /runs/:id).
+ *                                                     `emailChannelId` (rule 190) gives the
+ *                                                     run an email pass whose only recipient
+ *                                                     is the signed-in tester.
  *
  * The `automationScripts` key is RCE-equivalent (see permissions.ts) — every
  * route here sits behind it; attaching script actions to an automation is
@@ -38,6 +41,7 @@ import {
   MAX_SCRIPT_BODY_BYTES,
   MAX_SCRIPT_TIMEOUT_SEC,
 } from "../../services/automationScriptService.js";
+import { testRunEmailTarget } from "../../services/scriptRunEmailService.js";
 
 const automationScriptsRouter = Router();
 
@@ -53,6 +57,7 @@ const scriptInputSchema = z.object({
 
 const testRunSchema = z.object({
   args: z.string().max(2000).optional().nullable(),
+  emailChannelId: z.string().min(1).max(100).optional().nullable(),
 });
 
 automationScriptsRouter.get("/", requirePermission("automationScripts", "read"), async (_req, res, next) => {
@@ -117,11 +122,15 @@ automationScriptsRouter.delete("/:id", requirePermission("automationScripts", "w
 automationScriptsRouter.post("/:id/test-run", requirePermission("automationScripts", "write"), async (req, res, next) => {
   try {
     const input = testRunSchema.parse(req.body ?? {});
+    const email = input.emailChannelId
+      ? await testRunEmailTarget(input.emailChannelId, req.apiToken ? null : req.session?.userId ?? null)
+      : null;
     const { runId } = await requestScriptRun({
       scriptId: req.params.id as string,
       runOn: "server",
       args: input.args?.trim() ? input.args : null,
       requestedBy: req.session?.username ?? "operator",
+      email,
     });
     res.status(202).json({ runId });
   } catch (err) { next(err); }

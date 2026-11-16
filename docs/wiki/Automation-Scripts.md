@@ -63,6 +63,22 @@ Refused with a friendly 409 while any automation's actions or escalation tiers
 reference the script. Run rows snapshot the script name and digest, so history
 survives deletion.
 
+### Exporting and importing
+
+**Right-click a script** (or click its name) for its menu: **Edit**, **Test run**,
+**Export** and **Delete**. Readers see only Export.
+
+- **Export** downloads `<name>.script.json`: the name, description, interpreter,
+  where it runs, the default timeout and the body. It does not carry the
+  script's id, its sha256 (Polaris computes that again on save) or whether it is
+  enabled.
+- **+ Add Script → Import from file** fills the New script form from a
+  `.script.json` export or from a plain script file (`.sh`, `.py`, `.ps1`,
+  `.cmd`, `.bat`). For a plain file, the interpreter comes from the extension or
+  the file's `#!` line, and the name from the file name. **Nothing is saved
+  until you read the body and press Create script** — a script runs with full
+  privileges, so an imported one gets the same review as one typed in.
+
 ---
 
 ## Writing a script
@@ -77,6 +93,9 @@ context rides **environment variables**:
 | `POLARIS_ALERT_ID` | the triggering alert's id (empty on a test run) |
 | `POLARIS_RULE` | the automation's id |
 | `POLARIS_ASSET` | the triggering asset's id |
+| `POLARIS_RUN_ID` | this run's id (server runs) |
+| `POLARIS_RUN_TOKEN` | this run's email pass — only when the action lets the script send email (below) |
+| `POLARIS_API_URL` | the Polaris API on this host, e.g. `http://127.0.0.1:3000/api/v1` — with the pass |
 
 Use those. A script that needs more should call back into the
 [REST API](API) with a bearer token bound to a suitably narrow role.
@@ -190,11 +209,71 @@ script's, or the request is refused before a run row exists.
 
 ---
 
+## Sending email through Polaris
+
+A script that runs on the **Polaris server** can send email through one of your
+email delivery channels (SMTP or Microsoft 365), so it needs no mail settings
+or password of its own ([rule 190](Business-Rules#rule-190)).
+
+1. On the automation's **Script** action, tick **Let this script send email
+   through Polaris**, pick the **Email channel**, and type the addresses it may
+   send to under **Send to**.
+2. Each run then finds a one-time pass in `POLARIS_RUN_TOKEN` and the address to
+   use in `POLARIS_API_URL`. The script sends with:
+
+```python
+import base64, json, os, urllib.request
+
+body = {
+    "subject": "TLS certificate renewed: intranet.example.com",
+    "text": "The new certificate is attached.",
+    "files": [{"filename": "intranet.pem", "contentType": "application/x-pem-file",
+               "contentBase64": base64.b64encode(open("/tmp/cert.pem", "rb").read()).decode()}],
+}
+req = urllib.request.Request(
+    os.environ["POLARIS_API_URL"] + "/script-runs/self/email",
+    data=json.dumps(body).encode(), method="POST",
+    headers={"Content-Type": "application/json",
+             "Authorization": "Bearer " + os.environ["POLARIS_RUN_TOKEN"]})
+print(urllib.request.urlopen(req, timeout=20).read().decode())
+```
+
+What the script can and cannot do:
+
+- It sets the **subject, text and attachments**. It **cannot choose who
+  receives the email**: the addresses come from the action. A request that
+  names recipients is refused.
+- Up to **3 emails per run**, up to **5 attachments**, **512 KB** of
+  attachments in total. Programs and scripts (`.exe`, `.ps1`, `.js`, …) cannot
+  be attached.
+- The pass works only **while the run is running**, only from the Polaris host
+  itself, and is erased when the run ends.
+- Every email ends with a line naming the script and run, and every attempt is
+  recorded in Events (`automation.script.email_sent` /
+  `automation.script.email_failed`).
+- Not available to a script that runs on an agent.
+
+| Answer | Means |
+|---|---|
+| 200 `{ "sent": 1, "remaining": 2 }` | sent to that many recipients; that many sends left this run |
+| 400 | the request is wrong (a missing subject, a blocked attachment type, too large) |
+| 401 | no pass, a wrong one, or the run has ended |
+| 403 | not called from the Polaris host |
+| 409 | the channel was deleted or disabled |
+| 429 | this run has already sent 3 |
+| 502 | the channel could not send — the error says why |
+
+A delivery channel a script action sends through cannot be deleted while the
+automation uses it.
+
 ## Testing
 
-Each script has a **Test run** button (`automationScripts:write`). After a
-confirmation it starts a **server-side** run with no arguments and shows the
-status, exit code, stdout and stderr under the card when it finishes. A script
+Each script has a **Test run** button (`automationScripts:write`). It asks for
+the **arguments** to pass (one string, as an automation's args template would
+render), then — when an email channel exists — whether the test may send email.
+A test's email goes **only to you**, at the address on your account. It starts a
+**server-side** run and shows the status, exit code, stdout and stderr under the
+card when it finishes. A script
 that runs on `agent` only cannot be test-run from here — trigger it through an
 automation on a real asset.
 

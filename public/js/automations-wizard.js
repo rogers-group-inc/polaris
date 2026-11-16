@@ -965,6 +965,38 @@ async function openAutomationWizard(existing, opts) {
     if (!list) return "";
     return '<details id="' + id + '" class="tpl-palette"><summary>Insert variable…</summary>' + list + '</details>';
   }
+  /** Business rule 190: the script action's "send email through Polaris" block. */
+  function scriptEmailHtml(email) {
+    var emailChans = (_ruleChannels || []).filter(function (c) { return c.type === "smtp" || c.type === "oauth_m365"; });
+    var on = !!(email && email.channelId);
+    var opts = emailChans.map(function (c) {
+      return '<option value="' + escapeHtml(c.id) + '"' + (email && c.id === email.channelId ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>';
+    }).join("");
+    return '<div class="form-group sa-email-wrap" style="margin:8px 0 0">' +
+        '<label style="font-size:0.85rem"><input type="checkbox" class="sa-email-on"' + (on ? " checked" : "") + (emailChans.length ? "" : " disabled") + '> Let this script send email through Polaris</label>' +
+        '<p class="sa-email-why" style="font-size:0.75rem;color:var(--color-text-tertiary);margin:2px 0 0 24px"></p>' +
+        '<div class="sa-email-fields" style="margin:4px 0 0 24px"' + (on ? "" : " hidden") + '>' +
+          '<label style="font-size:0.8rem">Email channel</label><select class="sa-email-ch" style="width:100%">' + opts + '</select>' +
+          '<label style="font-size:0.8rem;margin-top:4px;display:block">Send to (addresses, comma-separated)</label>' +
+          '<input type="text" class="sa-email-to" style="width:100%" value="' + escapeHtml(((email && email.addresses) || []).join(", ")) + '" placeholder="certs-team@example.com">' +
+          '<p style="font-size:0.75rem;color:var(--color-text-tertiary);margin:4px 0 0">Each run gets a one-time pass in <code>POLARIS_RUN_TOKEN</code> and sends with <code>POST $POLARIS_API_URL/script-runs/self/email</code>. The script sets the subject, text and attachments — never who receives it. Up to 3 emails per run.</p>' +
+        '</div>' +
+      '</div>';
+  }
+  /** Gate the email block on Run on = server and the checkbox. */
+  function syncScriptEmail(box) {
+    var on = box.querySelector(".sa-email-on");
+    if (!on) return;
+    var agentRun = !!(box.querySelector("input.sa-runon-agent:checked"));
+    var hasChans = (_ruleChannels || []).some(function (c) { return c.type === "smtp" || c.type === "oauth_m365"; });
+    on.disabled = agentRun || !hasChans;
+    var why = box.querySelector(".sa-email-why");
+    if (why) why.textContent = !hasChans ? "Add an SMTP or Microsoft 365 channel on the Delivery tab first." : agentRun ? "Only a script that runs on the Polaris server can send email." : "";
+    box.querySelector(".sa-email-fields").hidden = !(on.checked && !on.disabled);
+  }
+  function awSplitAddresses(raw) {
+    return String(raw || "").split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+  }
   function scriptById(id) { return (_awScripts || []).find(function (x) { return x.id === id; }); }
 
   // Which action types the picker offers: catalog-driven, script additionally
@@ -7179,6 +7211,7 @@ async function openAutomationWizard(existing, opts) {
         '</div>' +
         '<div class="form-group" style="margin-bottom:6px"><label style="font-size:0.8rem">Arguments (one string; tokens render at fire time)</label><input type="text" class="sa-args tpl-field" value="' + escapeHtml(action.argsTemplate || "") + '" placeholder="{asset} {value}"></div>' +
         '<div class="form-group" style="margin-bottom:0"><label style="font-size:0.8rem">Timeout override</label> <input type="number" class="sa-timeout" min="1" max="600" value="' + (action.timeoutSec || "") + '" style="width:80px" placeholder="script default"> sec</div>' +
+        scriptEmailHtml(action.email) +
         '<p style="font-size:0.78rem;color:var(--color-warning,#d97706);margin:6px 0 0">Scripts run with full privileges (Polaris service account / agent root). A human must review a script before enabling it in production.</p>';
       var runonServer = box.querySelector('.sa-runon');
       var runonAgent = box.querySelector('.sa-runon-agent');
@@ -7196,8 +7229,13 @@ async function openAutomationWizard(existing, opts) {
         if (want === "agent" && !canAgent) want = "server";
         (want === "agent" ? runonAgent : runonServer).checked = true;
         row.querySelector(".aw-action-summary").textContent = actionSummary({ type: "script", scriptId: sc.id, runOn: want });
+        syncScriptEmail(box);
       };
       box.querySelector(".sa-script").addEventListener("change", syncScriptBits);
+      // A manual Run-on change only re-gates the email block; it is not a new default.
+      runonServer.addEventListener("change", function () { syncScriptEmail(box); });
+      runonAgent.addEventListener("change", function () { syncScriptEmail(box); });
+      box.querySelector(".sa-email-on").addEventListener("change", function () { syncScriptEmail(box); });
       syncScriptBits();
     } else if (t === "reboot") {
       // Business rule 115(c): books a reboot of the triggering device through
@@ -7393,6 +7431,14 @@ async function openAutomationWizard(existing, opts) {
       var args = box.querySelector(".sa-args").value; if (args.trim()) a3.argsTemplate = args;
       var to = box.querySelector(".sa-timeout").value;
       if (to !== "" && !isNaN(Number(to))) a3.timeoutSec = Number(to);
+      // Business rule 190: only a server run carries the email block.
+      var emOn = box.querySelector(".sa-email-on");
+      if (emOn && emOn.checked && a3.runOn === "server") {
+        a3.email = {
+          channelId: box.querySelector(".sa-email-ch").value,
+          addresses: awSplitAddresses(box.querySelector(".sa-email-to").value),
+        };
+      }
       return a3;
     }
     // The audit Event carries no configuration — its presence IS the setting.
@@ -8143,6 +8189,13 @@ async function openAutomationWizard(existing, opts) {
       if (!/^https?:\/\//i.test(a.url)) return label + ": the URL must start with http:// or https://.";
     } else if (a.type === "script") {
       if (!a.scriptId) return label + ": pick a script.";
+      if (a.email) {
+        if (!a.email.channelId) return label + ": pick the email channel the script sends through.";
+        if (!a.email.addresses.length) return label + ": add at least one address the script may email.";
+        var badAddr = a.email.addresses.filter(function (x) { return !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x); });
+        if (badAddr.length) return label + ": \"" + badAddr[0] + "\" is not an email address.";
+        if (a.email.addresses.length > 20) return label + ": a script may email at most 20 addresses.";
+      }
     } else if (a.type === "reboot") {
       if (a.when !== "now" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.at || "")) return label + ": pick the time of day to reboot at.";
       // Mirrors rebootActionHasTo on the server: someone always hears the

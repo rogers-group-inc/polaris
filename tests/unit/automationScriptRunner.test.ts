@@ -249,6 +249,28 @@ describe("executeServerScript — how the interpreter is invoked", () => {
     await executeServerScript(runRow({ notificationId: null, ruleId: null, assetId: null }));
     expect(lastExec().opts.env).toMatchObject({ POLARIS_ALERT_ID: "", POLARIS_RULE: "", POLARIS_ASSET: "" });
   });
+
+  it("hands an email-enabled run its pass and the loopback API URL, storing only the hash (rule 190)", async () => {
+    const { createHash } = await import("node:crypto");
+    stubbed(prisma.automationScriptRun.update).mockResolvedValue({} as never);
+    await executeServerScript(runRow({ emailChannelId: "ch1" }));
+    const env = lastExec().opts.env as Record<string, string>;
+    expect(env.POLARIS_RUN_ID).toBe("run1");
+    expect(env.POLARIS_RUN_TOKEN).toMatch(/^prun_[A-Za-z0-9_-]{40,}$/);
+    expect(env.POLARIS_API_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/api\/v1$/);
+    const stored = stubbed(prisma.automationScriptRun.update).mock.calls.at(-1)![0] as { where: { id: string }; data: Record<string, unknown> };
+    expect(stored.where).toEqual({ id: "run1" });
+    expect(stored.data.emailTokenHash).toBe(createHash("sha256").update(env.POLARIS_RUN_TOKEN).digest("hex"));
+    expect(JSON.stringify(stored.data)).not.toContain(env.POLARIS_RUN_TOKEN);
+  });
+
+  it("gives a run without email no pass and no API URL", async () => {
+    await executeServerScript(runRow());
+    const env = lastExec().opts.env as Record<string, string>;
+    expect(env.POLARIS_RUN_TOKEN).toBeUndefined();
+    expect(env.POLARIS_API_URL).toBeUndefined();
+    expect(env.POLARIS_RUN_ID).toBe("run1");
+  });
 });
 
 describe("executeServerScript — classifying the result", () => {
@@ -370,6 +392,7 @@ describe("runPendingServerScripts", () => {
     await runPendingServerScripts();
     expect(rows[0]).toMatchObject({ status: "timeout", completedAt: new Date(clock) });
     expect(rows[0]!.stderr).toMatch(/swept by the runner/);
+    expect(rows[0]!.emailTokenHash).toBeNull();
     expect(rows[1]!.status).toBe("running");
     expect(stubbed(prisma.automationScriptRun.updateMany).mock.calls[0]![0].where).toEqual({ id: "old", status: "running" });
   });
@@ -442,6 +465,8 @@ describe("runPendingServerScripts", () => {
     await runPendingServerScripts();
     expect(rows[0]).toMatchObject({ status: "succeeded", exitCode: 0, stdout: "ok\n", stderr: "" });
     expect(rows[0]!.completedAt).toEqual(new Date(clock));
+    // Rule 190: the run's email pass dies with it.
+    expect(rows[0]!.emailTokenHash).toBeNull();
     expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
     expect(eventLog.logEvent.mock.calls[0]![0]).toEqual({
       action: "automation.script.run",

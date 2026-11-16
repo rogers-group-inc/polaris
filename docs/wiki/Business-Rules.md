@@ -3834,3 +3834,14 @@ so you can leave TLS verification on. The built-in authorities stay trusted, and
 verification turned off is not affected. Every Polaris process picks up a change within about 30
 seconds. Adding or removing a CA is recorded in Events. The SFTP / SCP event archive is not
 affected: SSH trusts a server by its host key.
+
+### Rule 190
+
+**A script can email through Polaris, but only to the people its automation names.**
+Tick **Let this script send email through Polaris** on an automation's Script action, and choose a
+delivery channel and the addresses. While the script runs on the Polaris server it has a one-time
+pass that lets it send up to three emails with attachments through that channel. It writes the
+subject, text and attachments; it can never change who receives them. The pass ends with the run,
+works only from the Polaris server itself, and nothing about it is stored in the script or on
+disk. Every email is recorded in Events. A test run from the Scripts tab can send email too, but
+only to you. See [Automation scripts](Automation-Scripts#sending-email-through-polaris).

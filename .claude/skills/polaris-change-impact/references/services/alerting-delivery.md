@@ -14,6 +14,8 @@ Also `dimensionTargetReferrers(fields, ids)` (rule 167(a)): automations whose st
 
 Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177): the reverse walk — per automation, the channels / scripts (any action location, labelled) and path checks / widgets / state probes (conditions) that no longer exist; one `IN` read per kind for the whole list.
 
+A script action's `email.channelId` (business rule 190) is a CHANNEL reference in both directions: `channelReferrers` matches it, and `brokenReferencesByRule` reports it as a deleted channel.
+
 **Used by:** `automationScriptService.deleteScript`, `notificationChannelService.deleteChannel` (lazy import); `src/api/routes/notificationRules.ts` (`GET /automations`, rule 177); `pathCheckService.deleteCheck`, `manufacturerProfileService.assertWidgetsUnreferenced` (→ `deleteWidget`, `deleteProfile`, `manufacturerProfilePortabilityService.saveProfileCode`).
 
 **Invariants:**
@@ -42,6 +44,7 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 - Delete refuses (friendly 409) while any automation or alert group names the script in ANY action location — fire actions, rule-level and per-action tiers, severity bands, all-clear and reset actions (business rule 167). The scan is `actionReferenceService.scriptReferrers`, the one walker every registry delete guard shares; the 409 names the referrers via `summarizeReferrers`.
 - `requestScriptRun`'s action timeout override counts only when it is a finite number > 0; 0, negative or non-finite falls back to the script's own `timeoutSec` (then capped at `MAX_SCRIPT_TIMEOUT_SEC`). `listRuns`' `limit` is clamped to 1..500, absent or non-finite → 100.
 - Run rows snapshot scriptName + sha256 so history survives script deletion; `notificationId` carries NO FK (alert lifecycle is independent).
+- **Business rule 190:** `ScriptRunRequest.email` (the action's `{ channelId, addresses }`, or `testRunEmailTarget`'s tester-only target) is snapshot onto the run as `emailChannelId` / `emailTo` (deduped). An agent run with `email` is refused here too — save refuses it first.
 
 **When changing this:** New interpreter → `SCRIPT_INTERPRETERS` in notificationTypes + `interpreterArgv`/extension in automationScriptRunner + the Go agent's scriptexec mirror. Ask of any new interpreter whether it receives an argv or re-parses a command line — the second kind needs its own escaping, as `cmd` does. Never widen who can call these paths without revisiting the RBAC posture in permissions.ts.
 
@@ -53,7 +56,7 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 
 **Public API:** `runPendingServerScripts()` (the job tick), `executeServerScript(run)` (exported for tests), `buildScriptEnv(base, context)` (pure — the secret-stripped child environment), `buildCmdCommandLine(scriptPath, args)` (pure — the cmd.exe escaping, returns null when the args cannot be represented; both unit-tested in tests/unit/automationScripts.test.ts).
 
-**Cross-service deps:** `prisma`, `eventLogService.logEvent` + `logEventsBatch`, `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 155 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
+**Cross-service deps:** `prisma`, `eventLogService.logEvent` + `logEventsBatch`, `scriptRunEmailService` (`issueRunEmailPass`, `scriptApiUrl` — rule 190), `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 155 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
 
 **Used by:** `src/jobs/runAutomationScripts.ts`.
 
@@ -66,10 +69,32 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 - The interpreter resolves through `resolveInterpreterBin` to a known ABSOLUTE path (`INTERPRETER_PATHS`, or `%SystemRoot%\System32\...` on Windows) when one exists on disk, falling back to the bare name (PATH lookup) only when none does — an install with a non-standard layout must keep running, but the inherited PATH should not get first say in which binary executes operator scripts.
 - The child environment is `process.env` MINUS secret-shaped keys (`buildScriptEnv`, denylist `/SECRET|TOKEN|PASSWORD|PASSWD|DATABASE_URL|SESSION|CREDENTIAL|PRIVATE_KEY|_KEY$/i`), plus the alert context. This is not a privilege boundary — authoring a script already requires an RCE-equivalent permission — it exists because **stdout is stored on the run row and rendered in the Scripts tab**, so before the scrub a one-line `env` copied DATABASE_URL and POLARIS_SECRET_KEY into a displayed, backed-up, unencrypted column. Denylist not allowlist so PATH/HOME/proxy/locale stay inherited and existing scripts keep working; widening it is a compatibility decision, not just a security one.
 - Body goes to a 0600 temp file under the state dir and is ALWAYS unlinked (finally); stdout/stderr capped at 64 KB (a maxBuffer kill classifies as failure, not timeout); SIGKILL on timeout.
+- Every server run gets `POLARIS_RUN_ID`. **Business rule 190:** a run with `emailChannelId` also gets `POLARIS_RUN_TOKEN` (minted by `issueRunEmailPass` AFTER the temp file is written — the batch is claimed at once but runs two at a time, so the pass's clock starts with the process) and `POLARIS_API_URL` (loopback). They are added as context AFTER `buildScriptEnv`'s scrub, which would otherwise strip `*TOKEN*`. The completion update and the stuck sweep both write `emailTokenHash: null` — the pass dies with the run.
 - Claim via updateMany with a status re-check so concurrent processes can't double-run; the stuck sweep only flips rows past timeout+60s grace.
 - **2026-11-16:** the stuck sweep's flip is a conditional `updateMany({ id, status: "running" })` too — a row that settled after the read matches nothing and is skipped (the old guarded `update` threw P2025 and aborted the whole tick) — and every run it flips gets its `automation.script.run` Event (warning, `details.swept: true`), written in one `logEventsBatch`. A throw out of `executeServerScript` (the script lookup rejecting) is recorded as THAT run failing with the error as stderr; it never rejects the chunk and strands the other claimed runs in "running".
 
 **When changing this:** Anything touching the execution model (interpreters, env, caps, temp-file handling) is security-sensitive — human review required before production; keep the Go agent's scriptexec semantics in lockstep (same caps, same hash-verify posture).
+
+---
+
+## services/scriptRunEmailService.ts
+
+**What it owns:** Business rule 190 — a running SERVER automation script sends email through the channel its action names, to the action's addresses only: the single-use run pass, the send, and the Scripts-tab test target.
+
+**Public API:** `issueRunEmailPass(runId)` (mint `prun_…`, store its sha256 + issuedAt), `sendRunEmail(rawPass, {subject, text, files?}, now?)`, `testRunEmailTarget(channelId, userId)`, `scriptApiUrl()`, `hashRunPass`, the pure vetting `buildFiles` / `safeAttachmentName` / `refusedAttachmentReason`, and the limits `MAX_EMAILS_PER_RUN` (3) / `MAX_EMAIL_FILES` (5) / `MAX_EMAIL_FILES_BYTES` (512 KB) / `MAX_EMAIL_TEXT_CHARS` / `PASS_GRACE_MS` / `RUN_PASS_PREFIX`.
+
+**Cross-service deps:** `prisma` (`AutomationScriptRun`, `NotificationChannel`, `User`), `notificationDeliveryService.sendEmailThroughChannel` (the drain's own transport dispatch, so the channel's secrets are read exactly as alert delivery reads them), `eventLogService.logEvent`, `utils/publicUrl.derivePolarisPort`.
+
+**Used by:** `automationScriptRunner.executeServerScript` (issue), `src/api/routes/scriptRunSelf.ts` (`POST /script-runs/self/email` → `sendRunEmail`), `src/api/routes/automationScripts.ts` (test-run → `testRunEmailTarget`).
+
+**Invariants:**
+- **The request never names a recipient.** `emailTo` was snapshot on the run row from the saved action; the route's body schema is strict, so a `to` is a 400.
+- **One 401 for every way a pass is not good** (wrong prefix, unknown, run not `running`, past `issuedAt + timeoutSec + PASS_GRACE_MS`) — no oracle for which.
+- **The send count is claimed atomically** (`updateMany … emailsSent < MAX_EMAILS_PER_RUN`) before the transport is touched; a failed send still counts (attempts, not deliveries).
+- The channel is re-read at send time: deleted or disabled → 409. Subject loses CR/LF; filenames keep only their last path segment and a safe charset; executable extensions refused; decoded attachments ≤ 512 KB total (the app's JSON body limit is 1 MB).
+- Every message ends with a footer naming the script and run; every attempt writes `automation.script.email_sent` (info) or `automation.script.email_failed` (warning) with recipients, subject and attachment names.
+
+**When changing this:** the limits are part of rule 190 — raising the attachment cap means raising `express.json`'s limit for this route alone, never globally. A new caller of the pass (another self-service script endpoint) mounts under `/script-runs/self` beside this one, keeps the loopback check, and authenticates through the same hash lookup.
 
 ---
 
