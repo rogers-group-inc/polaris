@@ -570,7 +570,11 @@
         map.createPane("ground_plan").style.zIndex = "200";
         L.imageOverlay(ctx.backgroundUrl(bg.imageId), bounds, { pane: "ground_plan" }).addTo(map);
         map.fitBounds(bounds, { padding: [20, 20] });
-        map.setMaxBounds(L.latLngBounds([[-ext.h, -ext.w], [2 * ext.h, 2 * ext.w]]));
+        // Room to pan around the plan, sized by its LONG side in both directions:
+        // bounds that follow the image's own width left a tall plan no sideways
+        // room, and Leaflet re-centres a view wider than its bounds.
+        var room = 3 * Math.max(ext.w, ext.h);
+        map.setMaxBounds(L.latLngBounds([[-room, -room], [ext.h + room, ext.w + room]]));
       } else {
         map = L.map(mapEl, { maxZoom: OSM_MAX_ZOOM, zoomSnap: 0.5 });
         applyBaseLayer();
