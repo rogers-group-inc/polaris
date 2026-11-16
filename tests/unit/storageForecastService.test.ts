@@ -128,10 +128,19 @@ describe("computeStorageForecast", () => {
     expect(sql).not.toMatch(/now\(\)(?! AT TIME ZONE 'UTC')/);
   });
 
-  it("queries even for an empty id list (no short-circuit) and returns nothing", async () => {
-    raw().mockResolvedValueOnce([]);
+  // Was a bug until 2026-11-16: an empty id list still ran the fleet query.
+  it("returns nothing for an empty id list without querying", async () => {
     expect(await computeStorageForecast([])).toEqual([]);
-    expect(raw().mock.calls[0]![3]).toEqual([]);
+    expect(raw()).not.toHaveBeenCalled();
+  });
+
+  // Was a bug until 2026-11-16: DISTINCT ON had no tie-break, so a detail row with a null capacity could win over the rollup's.
+  it("dedups preferring the row with a capacity, then the detail arm", async () => {
+    raw().mockResolvedValueOnce([]);
+    await computeStorageForecast(null);
+    expect(sqlOf()).toContain(`ORDER BY "assetId", "mountPath", day, (total IS NULL), arm`);
+    expect(sqlOf()).toMatch(/0 AS arm/);
+    expect(sqlOf()).toMatch(/1 AS arm/);
   });
 
   it("propagates a failed query", async () => {

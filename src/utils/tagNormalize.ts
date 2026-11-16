@@ -81,6 +81,15 @@ export function stripRegionPrefix(tag: string): string {
 }
 
 /**
+ * The one comparison key for a region name, prefixed (asset tag) or bare (user
+ * tag): trim, then strip `region:`, then lower-case. Recipient resolution and
+ * the region hierarchy must agree on it, so both call this.
+ */
+export function regionNameKey(name: string): string {
+  return stripRegionPrefix(String(name ?? "").trim()).toLowerCase();
+}
+
+/**
  * Validate + normalize a list of operator-typed tags. `label` only shapes the
  * error message (e.g. "region tag" → "Region tag ... exceeds 64 characters").
  */

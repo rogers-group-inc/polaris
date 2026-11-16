@@ -141,6 +141,14 @@ describe("runPresenceVerification — the cascade", () => {
     expect(h.pingHost.mock.calls.map((c) => c[0]).sort()).toEqual(["2001:db8::3", "PC2", "pc1.corp"]);
   });
 
+  // Was a bug until 2026-11-16: a whitespace-only dnsName hid the hostname and the asset counted as "no target".
+  it("falls back past a whitespace-only DNS name to the hostname", async () => {
+    asset.findMany.mockResolvedValue([row({ id: "1", dnsName: "   ", hostname: "PC1", ipAddress: "10.0.0.1" })]);
+    const out = await runPresenceVerification(opts());
+    expect(out.pingSkippedNoTarget).toBe(0);
+    expect(h.pingHost).toHaveBeenCalledWith("PC1", 2_000);
+  });
+
   it("counts an asset with nothing to ping as skipped (no target)", async () => {
     asset.findMany.mockResolvedValue([row({ id: "a" }), row({ id: "b", hostname: "   " })]);
     const out = await runPresenceVerification(opts());

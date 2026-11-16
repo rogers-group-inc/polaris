@@ -3,9 +3,17 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, appendMissingTags, normalizeTagColor, TAG_COLOR_SEVERITIES } from "../../src/utils/tagNormalize.js";
+import { normalizeTags, unionTags, TAG_MAX_LEN, isAzureTag, withArcOwnedTags, appendMissingTags, normalizeTagColor, TAG_COLOR_SEVERITIES, regionNameKey } from "../../src/utils/tagNormalize.js";
 import { SEVERITIES } from "../../src/services/notificationTypes.js";
 import { AppError } from "../../src/utils/errors.js";
+
+describe("regionNameKey", () => {
+  it("trims, then strips region:, then lower-cases", () => {
+    expect(regionNameKey(" Region:Nashville ")).toBe("nashville");
+    expect(regionNameKey("Memphis")).toBe("memphis");
+    expect(regionNameKey("region:")).toBe("");
+  });
+});
 
 describe("normalizeTags", () => {
   it("trims, drops empties, and dedupes case-insensitively (first casing wins)", () => {

@@ -178,6 +178,14 @@ describe("setUserTimezone", () => {
     expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 
+  it("treats a case-only difference as no change", async () => {
+    // Was a bug until 2026-11-16: "europe/berlin" over "Europe/Berlin" was written and audited.
+    stubbed(prisma.user.findUnique).mockResolvedValue({ timezone: "Europe/Berlin" });
+    expect(await setUserTimezone("u1", "alice", "europe/berlin")).toBe("Europe/Berlin");
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
+  });
+
   it("compares NORMALIZED values: a stored unusable zone and an empty request are both auto", async () => {
     stubbed(prisma.user.findUnique).mockResolvedValue({ timezone: "Bogus/Zone" });
     expect(await setUserTimezone("u1", "alice", "")).toBe(AUTO_TIMEZONE);

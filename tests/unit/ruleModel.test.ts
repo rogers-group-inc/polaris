@@ -223,9 +223,11 @@ describe("compareNum / compareValue", () => {
     expect(compareValue("up", "<", "down")).toBe(false);
   });
 
-  it("coerces an empty string to 0 for an ordering comparison (current behaviour)", () => {
-    // Number("") is 0, so an empty reading meets ">= 0". Recorded, not endorsed.
-    expect(compareValue("", ">=", 0)).toBe(true);
+  it("treats a blank or whitespace reading as no reading for an ordering comparison", () => {
+    // Was a bug until 2026-11-16: Number("") is 0, so an empty reading met ">= 0".
+    expect(compareValue("", ">=", 0)).toBe(false);
+    expect(compareValue("   ", "<=", 5)).toBe(false);
+    expect(compareValue("3", ">=", "")).toBe(false);
   });
 });
 

@@ -18,7 +18,7 @@ import dns from "node:dns/promises";
 import https from "node:https";
 import tls from "node:tls";
 import { prisma } from "../db.js";
-import { ipToPtrName, isValidIpAddress } from "../utils/cidr.js";
+import { canonicalIp, ipToPtrName, isValidIpAddress } from "../utils/cidr.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -297,22 +297,26 @@ async function dotReverse(ip: string, servers: string[], verifyTls: boolean): Pr
 }
 
 async function dotLookup(hostname: string, servers: string[], verifyTls: boolean): Promise<ARecord[]> {
-  // Try A (type 1) first, then AAAA (type 28)
+  // Try A (type 1) first, then AAAA (type 28). Like the standard resolver's
+  // lookup, an unreachable resolver is an error, not "no such name": when no
+  // server answered at all, the last error is thrown.
+  let lastErr: Error | null = null;
+  let answered = false;
   for (const [qtype, family] of [[1, 4], [28, 6]] as [number, 4 | 6][]) {
-    let lastErr: Error | null = null;
     for (const server of servers) {
       try {
         const { host, port } = parseDotServer(server);
         const query = buildDnsQuery(hostname, qtype);
         const response = await sendTlsQuery(host, port, query, verifyTls);
+        answered = true;
         const addrs = parseDnsAResponse(response, qtype, family);
         if (addrs.length > 0) return addrs;
       } catch (err: any) {
         lastErr = err;
       }
     }
-    if (lastErr) continue; // try next record type
   }
+  if (!answered && lastErr) throw lastErr;
   return [];
 }
 
@@ -475,7 +479,9 @@ function parseDnsAResponse(buf: Buffer, qtype: number, family: 4 | 6): ARecord[]
       } else if (family === 6 && rdlength === 16) {
         const groups: string[] = [];
         for (let g = 0; g < 8; g++) groups.push(buf.readUInt16BE(offset + g * 2).toString(16));
-        results.push({ address: groups.join(":"), family: 6 });
+        // RFC 5952 form, the spelling DoH and the standard resolver return.
+        const raw = groups.join(":");
+        results.push({ address: canonicalIp(raw) ?? raw, family: 6 });
       }
     }
     offset += rdlength;

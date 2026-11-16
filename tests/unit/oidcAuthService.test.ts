@@ -118,9 +118,16 @@ describe("getOidcSettingsForUi", () => {
 describe("keptOidcClientSecret (rule 111(a))", () => {
   const cur = { discoveryUrl: "https://idp.example", clientId: "polaris", clientSecret: "stored" };
 
-  it("saves a typed secret trimmed, clears on blank", () => {
-    expect(svc.keptOidcClientSecret(cur, { clientSecret: " typed " })).toBe("typed");
+  it("keeps the stored secret when clientSecret is omitted, under the same destination check", () => {
+    expect(svc.keptOidcClientSecret(cur, {})).toBe("stored");
+    expect(() => svc.keptOidcClientSecret(cur, { clientId: "other" })).toThrow(expect.objectContaining({ httpStatus: 400 }));
+  });
+
+  it("saves a typed secret exactly as typed, clears on blank", () => {
+    // Was a bug until 2026-11-16: a typed secret was trimmed (" typed " saved as "typed").
+    expect(svc.keptOidcClientSecret(cur, { clientSecret: " typed " })).toBe(" typed ");
     expect(svc.keptOidcClientSecret(cur, { clientSecret: "" })).toBe("");
+    expect(svc.keptOidcClientSecret(cur, { clientSecret: "  " })).toBe("");
   });
 
   it("keeps the stored secret for an echoed mask while discovery URL + client id are unchanged", () => {
@@ -177,6 +184,46 @@ describe("updateOidcSettings / isOidcEnabled", () => {
     await svc.buildAuthorizationUrl();
     expect(h.client.discovery).toHaveBeenCalledTimes(2);
     expect(h.client.discovery.mock.calls[1][2]).toBe("rotated");
+  });
+
+  it("an omitted enabled / clientSecret keeps its stored value", async () => {
+    // Was a bug until 2026-11-16: an omitted enabled turned OIDC off and an omitted clientSecret cleared the secret.
+    stored(CONFIGURED);
+    const out = await svc.updateOidcSettings({ scopes: "openid email" });
+    expect(out.enabled).toBe(true);
+    expect(out.clientSecret).toBe(CONFIGURED.clientSecret);
+    expect(out.scopes).toBe("openid email");
+  });
+
+  it("an omitted clientSecret still refuses to follow a moved discovery URL (rule 111(a))", async () => {
+    stored(CONFIGURED);
+    await expect(svc.updateOidcSettings({ discoveryUrl: "https://evil.example" })).rejects.toMatchObject({ httpStatus: 400 });
+    expect(h.prisma.setting.upsert).not.toHaveBeenCalled();
+  });
+
+  it("an explicit false / blank still turns OIDC off and clears the secret", async () => {
+    stored(CONFIGURED);
+    const out = await svc.updateOidcSettings({ enabled: false, clientSecret: "" });
+    expect(out.enabled).toBe(false);
+    expect(out.clientSecret).toBe("");
+  });
+
+  it("rediscovers when another process changed the settings (the cached discovery is keyed by them)", async () => {
+    // Was a bug until 2026-11-16: discovery was cached until updateOidcSettings ran in THIS process, so other web processes kept the old issuer.
+    vi.useFakeTimers();
+    try {
+      stored(CONFIGURED);
+      await svc.buildAuthorizationUrl();
+      stored({ ...CONFIGURED, discoveryUrl: "https://idp2.example" });
+      vi.advanceTimersByTime(31_000); // settings cache expires
+      await svc.buildAuthorizationUrl();
+      expect(h.client.discovery).toHaveBeenCalledTimes(2);
+      expect(String(h.client.discovery.mock.calls[1][0])).toContain("idp2.example");
+      await svc.buildAuthorizationUrl();
+      expect(h.client.discovery).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([
@@ -285,6 +332,13 @@ describe("handleCallback", () => {
     const out = await svc.handleCallback(CALLBACK, checks);
     expect(out.username).toBe("u-2");
     expect(out.groups).toEqual([]);
+  });
+
+  it("the username fallback uses the configured email claim, not a literal `email`", async () => {
+    // Was a bug until 2026-11-16: the fallback read merged.email regardless of emailClaim.
+    stored({ ...CONFIGURED, emailClaim: "mail" });
+    h.client.authorizationCodeGrant.mockResolvedValueOnce(tokens({ sub: "u-1", mail: "m@x", email: "e@x" }));
+    expect((await svc.handleCallback(CALLBACK, checks)).username).toBe("m@x");
   });
 
   it("propagates a rejected code grant (state / nonce / PKCE mismatch)", async () => {

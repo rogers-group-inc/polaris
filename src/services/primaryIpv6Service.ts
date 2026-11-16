@@ -22,7 +22,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { canonicalIp, expandIpv6, isIpamIpv6Address, isIpv6Address } from "../utils/cidr.js";
 import { logEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
-import { buildAddressConfidence } from "./addressConfidenceService.js";
+import { buildAddressConfidence, type AddressConfidenceMap } from "./addressConfidenceService.js";
 import { ipv6Enabled } from "./ipv6GateService.js";
 
 /** Assets scored per confidence batch. */
@@ -54,6 +54,18 @@ export function pickPrimaryIpv6(candidates: readonly Ipv6Candidate[]): string | 
     }
   }
   return best?.ip ?? null;
+}
+
+/**
+ * One asset's confidence map re-keyed by canonical IP. `buildAddressConfidence`
+ * keys by the address as STORED, while candidates are canonicalised, so both
+ * sides are looked up in canonical form.
+ */
+function canonicalKeys<V>(m: Map<string, V> | undefined): Map<string, V> | undefined {
+  if (!m) return undefined;
+  const out = new Map<string, V>();
+  for (const [ip, v] of m) out.set(canonicalIp(ip) ?? ip, v);
+  return out;
 }
 
 /**
@@ -93,12 +105,13 @@ export async function reconcilePrimaryIpv6(now: Date = new Date()): Promise<{ ch
   for (let i = 0; i < holders.length; i += BATCH) {
     const batch = holders.slice(i, i + BATCH);
     const withRows = batch.filter((a) => byAsset.has(a.id)).map((a) => a.id);
-    const scores = withRows.length > 0 ? await buildAddressConfidence(withRows, { now }) : new Map();
+    const scores: AddressConfidenceMap = withRows.length > 0 ? await buildAddressConfidence(withRows, { now }) : new Map();
     const updates: Array<{ id: string; ipv6Address: string | null }> = [];
     for (const a of batch) {
+      const assetScores = canonicalKeys(scores.get(a.id));
       const candidates = (byAsset.get(a.id) ?? []).map((c) => ({
         ...c,
-        evidenceScore: scores.get(a.id)?.get(c.ip)?.evidenceScore ?? 0,
+        evidenceScore: assetScores?.get(c.ip)?.evidenceScore ?? 0,
       }));
       const next = pickPrimaryIpv6(candidates);
       if (next === (a.ipv6Address ?? null)) continue;
@@ -167,7 +180,7 @@ export async function unpinPrimaryIpv6(input: { assetId: string; actor: string }
       select: { ip: true, lastSeen: true },
     });
     const valid = rows.filter((r) => isIpamIpv6Address(r.ip)).map((r) => ({ ip: canonicalIp(r.ip) ?? r.ip, lastSeen: r.lastSeen }));
-    const scores = valid.length > 0 ? (await buildAddressConfidence([asset.id])).get(asset.id) : undefined;
+    const scores = valid.length > 0 ? canonicalKeys((await buildAddressConfidence([asset.id])).get(asset.id)) : undefined;
     next = pickPrimaryIpv6(valid.map((c) => ({ ...c, evidenceScore: scores?.get(c.ip)?.evidenceScore ?? 0 })));
   }
   await prisma.asset.update({

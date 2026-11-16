@@ -189,6 +189,15 @@ describe("reconcileFortinetLiveVersions — edges", () => {
     expect(prisma.assetSource.upsert).toHaveBeenCalledTimes(2);
   });
 
+  // Was a bug until 2026-11-16: the reading was remembered right after the upsert, so a failed asset update was never retried until restart.
+  it("does not remember a reading whose asset update failed, so the next pass retries it", async () => {
+    stubbed(prisma.asset.update).mockRejectedValueOnce(new Error("deadlock"));
+
+    expect(await reconcileFortinetLiveVersions([reading()])).toBe(0);
+    expect(await reconcileFortinetLiveVersions([reading()])).toBe(1);
+    expect(prisma.asset.update).toHaveBeenCalledTimes(2);
+  });
+
   it("never rejects, even when every device fails", async () => {
     stubbed(prisma.assetSource.upsert).mockRejectedValue(new Error("db gone"));
     await expect(reconcileFortinetLiveVersions([reading(), reading({ assetId: "a2" })])).resolves.toBe(0);

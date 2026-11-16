@@ -129,6 +129,14 @@ describe("updateSsoSettings", () => {
     expect((await updateSsoSettings({ autoLogoutMinutes: 30 })).autoLogoutMinutes).toBe(30);
   });
 
+  it("keeps the current autoLogoutMinutes for a non-finite value", async () => {
+    // Was a bug until 2026-11-16: Math.max/min let NaN through and it was stored.
+    await store({ ...CONFIGURED, autoLogoutMinutes: 45 });
+    expect((await updateSsoSettings({ autoLogoutMinutes: NaN })).autoLogoutMinutes).toBe(45);
+    expect((await updateSsoSettings({ autoLogoutMinutes: "abc" as unknown as number })).autoLogoutMinutes).toBe(45);
+    expect((await updateSsoSettings({ autoLogoutMinutes: Infinity })).autoLogoutMinutes).toBe(45);
+  });
+
   it("can switch booleans off explicitly (false is not 'unset')", async () => {
     await store({ ...CONFIGURED, wantResponseSigned: true, skipLoginPage: true });
     const out = await updateSsoSettings({ enabled: false, wantResponseSigned: false, skipLoginPage: false });
@@ -149,7 +157,7 @@ describe("updateSsoSettings", () => {
 describe("isAzureSsoConfiguredAsync", () => {
   it("is true only when enabled with an entity ID, login URL and certificate", async () => {
     expect(await isAzureSsoConfiguredAsync()).toBe(true);
-    for (const missing of ["idpEntityId", "idpLoginUrl", "idpCertificate"]) {
+    for (const missing of ["idpEntityId", "idpLoginUrl", "idpCertificate", "spEntityId"]) {
       h.raw = { ...CONFIGURED, [missing]: "" };
       expect(await isAzureSsoConfiguredAsync()).toBe(false);
     }
@@ -157,9 +165,10 @@ describe("isAzureSsoConfiguredAsync", () => {
     expect(await isAzureSsoConfiguredAsync()).toBe(false);
   });
 
-  it("does not require the Application URL, although building the client does (suspicious, not pinned)", async () => {
+  it("requires the Application URL, as building the client does", async () => {
+    // Was a bug until 2026-11-16: SSO reported configured without the Application URL while login 400'd.
     await store({ ...CONFIGURED, spEntityId: "" });
-    expect(await isAzureSsoConfiguredAsync()).toBe(true);
+    expect(await isAzureSsoConfiguredAsync()).toBe(false);
     await expect(getSamlLoginUrl("r")).rejects.toMatchObject({ httpStatus: 400 });
   });
 });

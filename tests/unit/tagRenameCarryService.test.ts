@@ -184,6 +184,9 @@ describe("carryTagRename — Application Map rules", () => {
 
 describe("carryRegionRename (rule 169(a))", () => {
   it("does nothing for blank names or a case-only rename", async () => {
+    // Deliberate, not a gap: updateRegion does not treat a case-only change as
+    // a rename (asset tags and principal scopes keep their spelling too), so
+    // filters keeping theirs stays consistent with every other region holder.
     for (const [f, t] of [["", "x"], ["x", ""], ["North", "north"]] as const) {
       expect(await carryRegionRename(f, t)).toEqual(ZERO);
     }

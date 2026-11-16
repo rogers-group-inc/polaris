@@ -27,7 +27,7 @@ import { logger } from "../utils/logger.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { resolveTagScopesForUser } from "./regionScopeService.js";
 import { createTtlCache } from "../utils/ttlCache.js";
-import { stripRegionPrefix } from "./notificationService.js";
+import { regionNameKey } from "../utils/tagNormalize.js";
 import {
   deviceRegionsAtLevels,
   orphanedRegionTags,
@@ -225,7 +225,8 @@ export function bumpRecipientIndex(): void {
 }
 
 function normalizeNeedle(tag: string): string {
-  return stripRegionPrefix(tag).toLowerCase();
+  // The same key regionHierarchyService uses — they must never disagree.
+  return regionNameKey(tag);
 }
 
 function loadUserIndex(): Promise<IndexedUser[]> {

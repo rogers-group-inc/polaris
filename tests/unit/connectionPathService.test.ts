@@ -34,6 +34,8 @@ function matches(r: Record<string, unknown>, where: Record<string, unknown>): bo
       const { path, equals } = v as { path: string[]; equals: unknown };
       const t = r.fortinetTopology as Record<string, unknown> | null;
       if (!t || t[path[0]] !== equals) return false;
+    } else if (v && typeof v === "object" && "notIn" in (v as object)) {
+      if ((v as { notIn: unknown[] }).notIn.includes(r[k])) return false;
     } else if (r[k] !== v) {
       return false;
     }
@@ -115,6 +117,13 @@ describe("resolveConnectionPath — start cases", () => {
     expect(ids(await resolveConnectionPath("ep"))).toEqual(["ep"]);
   });
 
+  it("reads an empty switch half (\"/port9\") as no switch, as splitLastSeenSwitch does", async () => {
+    table = [a("ep", "workstation", { lastSeenSwitch: "/port9" }), a("blank", "switch", { hostname: "" })];
+    // Was a bug until 2026-11-16: it queried for switch id "" (and could match a hostname-less switch).
+    expect(ids(await resolveConnectionPath("ep"))).toEqual(["ep"]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
   it("starts a switch's walk at itself, with its uplink on hop 0", async () => {
     table = [a("sw", "switch", { fortinetTopology: { uplinkInterface: "x1" } }), a("fgt", "firewall")];
     deps = [{ assetId: "sw", parentId: "fgt", source: "computed" }];
@@ -150,6 +159,15 @@ describe("resolveConnectionPath — a switch name several devices share (rule 91
     sightFind.mockResolvedValue([{ fortigateDevice: "GATE-B" }, { fortigateDevice: "gA" }]);
     expect(ids(await resolveConnectionPath("ep"))).toEqual(["ep", "swB", "gB"]);
     expect(sightFind.mock.calls[0][0]).toMatchObject({ where: { assetId: "ep", NOT: { fortigateDevice: "" } }, orderBy: { lastSeen: "desc" } });
+  });
+
+  it("ignores a decommissioned same-name twin, so the live switch is the hop", async () => {
+    table = [
+      a("ep", "workstation", { lastSeenSwitch: "IDF-1/port1" }),
+      ...fleet().map((r) => (r.id === "swB" ? { ...r, status: "decommissioned" } : r)),
+    ];
+    // Was a bug until 2026-11-16: the retired twin forced the collision path, which found nothing decisive.
+    expect(ids(await resolveConnectionPath("ep"))).toEqual(["ep", "swA", "gA"]);
   });
 
   it("adds no switch hop when nothing decides — never the first row", async () => {

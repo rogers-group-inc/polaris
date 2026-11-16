@@ -5,10 +5,11 @@
  * hand-maintained copies had already drifted in their HAVING clauses, which
  * turned out to be a real semantic difference, so it's a parameter here):
  *
- *   - Engine mode (onlyLossy=false): every asset with ≥1 successful probe in
- *     the window, INCLUDING 0%-loss rows — an auto-clear/hysteresis rule needs
- *     the clean reading to recover. Fully-down assets (0 successes) are
- *     dropped either way — asset-down owns them.
+ *   - Engine mode (onlyLossy=false): every asset with ≥1 countable row in the
+ *     window (no HAVING), INCLUDING 0%-loss rows — an auto-clear/hysteresis
+ *     rule needs the clean reading to recover. An asset with no successful
+ *     probe is kept too and reads its real ratio (100% when nothing answered);
+ *     only the failures of a run that reached `down` are excluded (below).
  *   - Widget mode (onlyLossy=true): additionally requires actual LOSS — asked of
  *     the effective packet counts, not of row outcomes, so a device whose every
  *     burst dropped packets while still getting something back is not filtered

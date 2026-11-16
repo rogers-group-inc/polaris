@@ -66,9 +66,9 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Mapping an orphaned tag back to the region it once named is still out of scope (it needs region IDS in `Notification.regionTags`, a separate migration). Rule 58 is about refusing to GUESS, not about resolving the name; rule 54's `mapRegionRetiredNames` sweep is what stops new ones being stranded.
 - Resolution happens at SEND time from the live catalogue, so a region re-nested between fire and escalation escalates to the NEW division's users. That is correct: an escalation asks whoever is responsible now.
 - **No second TTL cache, deliberately.** `getRegionHierarchy` is already memoized per `Setting.updatedAt`; the remaining indexed `findUnique` per call is what makes a region edit visible immediately in the monitor process (Polaris runs split-role), and callers on a fan-out path memoize the RESULT per notification.
-- Imports `stripRegionPrefix` from `utils/tagNormalize`, **not** from `notificationService` (which re-exports it): that file imports `notificationRuleService`, which imports this module, so the short path would close a runtime cycle.
+- Imports `regionNameKey` from `utils/tagNormalize`, **not** anything via `notificationService`: that file imports `notificationRuleService`, which imports this module, so the short path would close a runtime cycle.
 
-**When changing this:** the name-normalization rule must stay identical to `normalizeNeedle` in `notificationRecipientService` (prefix-stripped, lower-cased) or level routing and every other region source will disagree about who a name means. Raising `MAX_DEVICE_REGION_LEVELS` means raising it in `notificationTypes` (both recipient schemas enforce it) and re-checking the ancestor-walk hop ceiling here.
+**When changing this:** the name-normalization rule is ONE function, `utils/tagNormalize.regionNameKey` (trim, then strip `region:`, then lower-case — 2026-11-16), shared with `normalizeNeedle` in `notificationRecipientService`; change it there or level routing and every other region source will disagree about who a name means. Before that date the two copies differed (only this one trimmed, and it stripped before trimming). Raising `MAX_DEVICE_REGION_LEVELS` means raising it in `notificationTypes` (both recipient schemas enforce it) and re-checking the ancestor-walk hop ceiling here.
 
 ---
 

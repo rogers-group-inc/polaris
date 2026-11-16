@@ -268,12 +268,27 @@ describe("runTestDelivery — the delivery target", () => {
   it("returns the skip reason without running anything for a script action", async () => {
     const rule = baseRule({ actions: [{ type: "script", scriptId: "s1", runOn: "server" }] });
     const out = await runTestDelivery({ rule, path: { index: 0 }, target: "delivery", actorUserId: CALLER, actorUsername: "d" });
+    // Was a bug until 2026-11-16: the test Notification was created before the skip, leaving an orphan alert row, and no Event was written.
     expect(out).toEqual({
-      ok: false, notificationId: "n-test", message: "scripts are never run by a test button",
+      ok: false, notificationId: null, message: "scripts are never run by a test button",
       deliveries: [], skipped: [{ type: "script", reason: "scripts are never run by a test button" }], ackLinks: { enabled: false },
     });
+    expect(prisma.notification.create).not.toHaveBeenCalled();
     expect(mocks.executeActions).not.toHaveBeenCalled();
     expect(mocks.drainPendingDeliveries).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(eventLog.logEvent.mock.calls[0]![0]).toMatchObject({
+      action: "automation.test_delivery", actor: "d", level: "info",
+      details: { sent: 0, skipped: [{ type: "script", reason: "scripts are never run by a test button" }] },
+    });
+  });
+
+  it("creates no test alert when the addressed action no longer exists (400)", async () => {
+    // Was a bug until 2026-11-16: the Notification was created before selectTestActions refused.
+    const rule = baseRule({ actions: [] });
+    await expect(runTestDelivery({ rule, path: { index: 3 }, target: "delivery", actorUserId: CALLER, actorUsername: "d" }))
+      .rejects.toMatchObject({ httpStatus: 400 });
+    expect(prisma.notification.create).not.toHaveBeenCalled();
   });
 
   it("passes the rule-level email composition through to the executor", async () => {

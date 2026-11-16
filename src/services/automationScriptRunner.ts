@@ -39,7 +39,7 @@ import { resolve } from "node:path";
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { STATE_DIR } from "../utils/paths.js";
-import { logEvent } from "./eventLogService.js";
+import { logEvent, logEventsBatch } from "./eventLogService.js";
 import { pruneOldRuns, SCRIPT_OUTPUT_CAP_BYTES } from "./automationScriptService.js";
 import { expireStaleAgentCommands, pruneOldAgentCommands } from "./agentCommandService.js";
 
@@ -310,18 +310,41 @@ export async function runPendingServerScripts(): Promise<{ started: number; comp
   await sweepAgentQueue(now);
 
   // Stuck-running sweep: a run whose window (timeout + grace) elapsed without
-  // completing — e.g. the process died mid-run — flips to timeout.
+  // completing — e.g. the process died mid-run — flips to timeout. Each flip
+  // is a conditional updateMany: a row that settled after the read matches
+  // nothing (count 0) and is skipped rather than throwing and aborting the
+  // tick. Every run this sweep flips gets its `automation.script.run` Event.
   const stuck = await prisma.automationScriptRun.findMany({
     where: { status: "running", runOn: "server", startedAt: { not: null } },
-    select: { id: true, startedAt: true, timeoutSec: true, scriptName: true },
+    select: { id: true, startedAt: true, timeoutSec: true, scriptName: true, scriptId: true, ruleId: true, notificationId: true, requestedBy: true },
   });
-  for (const s of stuck) {
-    if (s.startedAt && now.getTime() - s.startedAt.getTime() > s.timeoutSec * 1000 + STUCK_GRACE_MS) {
-      await prisma.automationScriptRun.update({
-        where: { id: s.id, status: "running" },
-        data: { status: "timeout", completedAt: now, stderr: "run abandoned (process restart or wedge) — swept by the runner" },
-      });
-    }
+  const expired = stuck.filter((s) => s.startedAt && now.getTime() - s.startedAt.getTime() > s.timeoutSec * 1000 + STUCK_GRACE_MS);
+  const swept = (await Promise.all(expired.map((s) =>
+    prisma.automationScriptRun.updateMany({
+      where: { id: s.id, status: "running" },
+      data: { status: "timeout", completedAt: now, stderr: "run abandoned (process restart or wedge) — swept by the runner" },
+    }).then((r) => (r.count === 1 ? s : null)),
+  ))).filter((s): s is (typeof expired)[number] => s !== null);
+  if (swept.length > 0) {
+    await logEventsBatch(swept.map((s) => ({
+      action: "automation.script.run",
+      resourceType: "automation-script",
+      resourceId: s.scriptId ?? undefined,
+      resourceName: s.scriptName,
+      actor: s.requestedBy ?? "system:automation",
+      level: "warning" as const,
+      message: `Automation script "${s.scriptName}" timeout on server (abandoned run swept by the runner)`,
+      details: {
+        runId: s.id,
+        scriptId: s.scriptId,
+        ruleId: s.ruleId,
+        notificationId: s.notificationId,
+        exitCode: null,
+        runOn: "server",
+        status: "timeout",
+        swept: true,
+      },
+    }))).catch(() => {});
   }
 
   // Claim a bounded batch pending→running. updateMany's WHERE re-checks
@@ -355,7 +378,17 @@ export async function runPendingServerScripts(): Promise<{ started: number; comp
 
   let completed = 0;
   for (const chunk of chunkArray(claimed, CONCURRENCY)) {
-    const results = await Promise.all(chunk.map(async (run) => ({ run, res: await executeServerScript(run) })));
+    // A throw out of executeServerScript (the script lookup rejecting, say)
+    // is recorded as that run failing — never left "running" for the stuck
+    // sweep, and never allowed to strand the other runs in the chunk.
+    const results = await Promise.all(chunk.map(async (run) => {
+      try {
+        return { run, res: await executeServerScript(run) };
+      } catch (err) {
+        const res: ExecResult = { status: "failed", exitCode: null, stdout: "", stderr: String((err as Error)?.message ?? err).slice(0, 1000) };
+        return { run, res };
+      }
+    }));
     for (const { run, res } of results) {
       await prisma.automationScriptRun.update({
         where: { id: run.id },

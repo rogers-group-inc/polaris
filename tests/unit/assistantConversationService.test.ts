@@ -258,6 +258,13 @@ describe("listConversations", () => {
     expect(conv.findMany.mock.calls[0][0].take).toBe(1);
     expect(conv.findMany.mock.calls[1][0].take).toBe(200);
   });
+
+  it("takes the default 50 for a non-finite limit", async () => {
+    // Was a bug until 2026-11-16: listConversations(userId, NaN) passed take: NaN.
+    conv.findMany.mockResolvedValue([]);
+    await listConversations("u1", Number.NaN);
+    expect(conv.findMany.mock.calls[0][0].take).toBe(50);
+  });
 });
 
 describe("createConversation", () => {
@@ -271,6 +278,12 @@ describe("createConversation", () => {
     expect(conv.create.mock.calls[0][0].data).toEqual({ userId: "u1", title: "Weekly report" });
     await createConversation("u1", "x".repeat(200));
     expect(conv.create.mock.calls[1][0].data.title).toHaveLength(120);
+  });
+
+  it("collapses inner whitespace in the title, as rename does", async () => {
+    // Was a bug until 2026-11-16: create only trimmed, so "Weekly\n\n  report" was stored as typed.
+    await createConversation("u1", "Weekly\n\n  report");
+    expect(conv.create.mock.calls[0][0].data.title).toBe("Weekly report");
   });
 
   it("falls back to 'New conversation' for no title or a blank one", async () => {

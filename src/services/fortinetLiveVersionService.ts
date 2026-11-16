@@ -126,7 +126,6 @@ async function recordOne(r: FortinetLiveVersionReading, live: string): Promise<b
     create: { assetId: r.assetId, sourceKind: FORTINET_LIVE_SOURCE_KIND, externalId: r.assetId, observed, syncedAt: now, lastSeen: now },
     update: { assetId: r.assetId, observed, syncedAt: now, lastSeen: now },
   });
-  lastRecorded.set(r.assetId, live);
 
   // Whether the device's word WINS is the priority list's call. Only osVersion
   // is applied: this source speaks to nothing else, and applying the whole
@@ -144,8 +143,14 @@ async function recordOne(r: FortinetLiveVersionReading, live: string): Promise<b
     })),
   );
   const next = projected.osVersion;
-  if (next === null || next === r.currentOsVersion) return false;
+  // Remember the reading only once it is fully applied: a failed projection
+  // read or asset update must leave it due, so the next pass retries it.
+  if (next === null || next === r.currentOsVersion) {
+    lastRecorded.set(r.assetId, live);
+    return false;
+  }
   await prisma.asset.update({ where: { id: r.assetId }, data: { osVersion: next } });
+  lastRecorded.set(r.assetId, live);
 
   const ev = buildFirmwareChangedEvent(
     { assetId: r.assetId, assetName: r.hostname, actor: "system:monitor", source: FORTINET_LIVE_SOURCE_KIND },

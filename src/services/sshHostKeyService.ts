@@ -38,6 +38,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { logger } from "../utils/logger.js";
+import { canonicalIp } from "../utils/cidr.js";
 
 export interface SshHostKeyRecord {
   id: string;
@@ -236,15 +237,28 @@ export async function listHostKeysWithAssets(): Promise<
   const pins = await listHostKeys();
   if (!pins.length) return [];
   const hosts = [...new Set(pins.map((p) => p.host))];
+  // An address pin joins on the canonical spelling (RFC 5952 for IPv6), so a
+  // pin taken as "2001:DB8:0::5" still finds the asset stored as "2001:db8::5".
+  const addresses = [...new Set(hosts.flatMap((h) => [h, canonicalIp(h) ?? h]))];
   const assets = await prisma.asset.findMany({
-    where: { OR: [{ ipAddress: { in: hosts } }, { hostname: { in: hosts, mode: "insensitive" } }] },
+    where: {
+      OR: [{ ipAddress: { in: addresses, mode: "insensitive" } }, { hostname: { in: hosts, mode: "insensitive" } }],
+    },
     select: { id: true, hostname: true, ipAddress: true },
     orderBy: { hostname: "asc" },
     take: 500,
   });
   return pins.map((p) => {
     const host = p.host.toLowerCase();
-    return { ...p, assets: assets.filter((a) => a.ipAddress === p.host || (a.hostname ?? "").toLowerCase() === host) };
+    const ip = canonicalIp(p.host);
+    return {
+      ...p,
+      assets: assets.filter(
+        (a) =>
+          (ip !== null ? canonicalIp(a.ipAddress) === ip : a.ipAddress === p.host) ||
+          (a.hostname ?? "").toLowerCase() === host,
+      ),
+    };
   });
 }
 

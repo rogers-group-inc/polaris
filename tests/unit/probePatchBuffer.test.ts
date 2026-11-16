@@ -245,18 +245,21 @@ describe("flushProbePatchBuffer — the bulk UPDATE", () => {
     expect(execCall(1)[1]).toBe("b");
   });
 
-  // Suspicious, not pinned: while a flush is awaiting its write, the snapshot
-  // has already left the buffer and is not yet on disk, so read-your-writes
-  // returns nothing for those assets — a probe evaluated in that gap reads the
-  // stale DB counters.
-  it("has no pending patch for an asset whose write is still in flight", async () => {
+  // Was a bug until 2026-11-16: while a flush awaited its write the snapshot had left the buffer, so getPendingProbePatch returned null and a probe read stale DB counters.
+  it("keeps an asset's in-flight patch readable until the write settles", async () => {
     let release!: () => void;
     h.exec.mockImplementationOnce(() => new Promise<number>((r) => { release = () => r(0); }));
-    enqueueProbePatch("a", patch({ consecutiveFailures: 1 }));
+    enqueueProbePatch("a", patch({ consecutiveFailures: 1, monitorStatusChangedAt: T0 }));
     const inFlight = flushProbePatchBuffer();
-    expect(getPendingProbePatch("a")).toBeNull();
+    expect(getPendingProbePatch("a")).toMatchObject({ consecutiveFailures: 1 });
+    // A newer patch wins, merged over the in-flight one (preserve-on-absent).
+    enqueueProbePatch("a", patch({ consecutiveFailures: 2, lastMonitorAt: T1 }));
+    expect(getPendingProbePatch("a")).toMatchObject({ consecutiveFailures: 2, lastMonitorAt: T1, monitorStatusChangedAt: T0 });
     release();
     await inFlight;
+    // Settled: only the newer pending patch remains.
+    expect(getPendingProbePatch("a")).toMatchObject({ consecutiveFailures: 2 });
+    expect(getPendingProbePatch("a")?.monitorStatusChangedAt).toBeUndefined();
   });
 });
 

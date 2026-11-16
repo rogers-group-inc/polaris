@@ -142,13 +142,23 @@ describe("setWidgetAssets", () => {
 });
 
 describe("setWidgetEnabledForAsset", () => {
-  it("switches on with an upsert and off with a delete, auditing either way", async () => {
+  it("switches on with an insert and off with a delete, auditing each real change", async () => {
     assetFindUnique.mockResolvedValue({ id: "a1", hostname: "ups-dc", manufacturer: "APC", model: "Smart-UPS 1500" });
+    enableCreateMany.mockResolvedValueOnce({ count: 1 });
     await svc.setWidgetEnabledForAsset("a1", "w1", true, "dmoore");
-    expect(enableUpsert).toHaveBeenCalledTimes(1);
+    expect(enableCreateMany).toHaveBeenCalledTimes(1);
+    enableDeleteMany.mockResolvedValueOnce({ count: 1 });
     await svc.setWidgetEnabledForAsset("a1", "w1", false, "dmoore");
     expect(enableDeleteMany).toHaveBeenCalledWith({ where: { assetId: "a1", widgetId: "w1" } });
     expect(logEventsBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("audits nothing when the switch did not change", async () => {
+    // Was a bug until 2026-11-16: an on-for-already-on / off-for-never-on still wrote an Event.
+    assetFindUnique.mockResolvedValue({ id: "a1", hostname: "ups-dc", manufacturer: "APC", model: "Smart-UPS 1500" });
+    await svc.setWidgetEnabledForAsset("a1", "w1", true, "dmoore");
+    await svc.setWidgetEnabledForAsset("a1", "w1", false, "dmoore");
+    expect(logEventsBatch).not.toHaveBeenCalled();
   });
 
   it("refuses to switch on for an asset the widget does not apply to, but always allows off", async () => {
@@ -198,7 +208,7 @@ describe("a profile reached through its matchPattern (business rule 131)", () =>
   it("the switch turns on for a matchPattern-routed asset and stays refused for a keyed-elsewhere one", async () => {
     assetFindUnique.mockResolvedValueOnce({ id: "ar1", hostname: "sw-aruba", manufacturer: "Aruba Networks", os: null, model: "2930F", assetType: "switch" });
     await svc.setWidgetEnabledForAsset("ar1", "w-hp", true);
-    expect(enableUpsert).toHaveBeenCalledTimes(1);
+    expect(enableCreateMany).toHaveBeenCalledTimes(1);
 
     assetFindUnique.mockResolvedValueOnce({ id: "apc", hostname: "ups", manufacturer: "APC", os: "aruba-bridge", model: "Smart-UPS", assetType: "other" });
     await expect(svc.setWidgetEnabledForAsset("apc", "w-hp", true)).rejects.toMatchObject({ httpStatus: 400 });

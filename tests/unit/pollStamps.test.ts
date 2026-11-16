@@ -137,6 +137,17 @@ describe("recordTelemetryResult", () => {
     expect(buf.telemetry.mock.calls[0][0]).toMatchObject({ memUsedBytes: null, memTotalBytes: null });
     expect(assetUpdate()).toHaveBeenCalledOnce();
   });
+
+  it("clamps a negative memUsedBytes / memTotalBytes to 0, like the band figures", async () => {
+    await recordTelemetryResult("a1", { supported: true, data: { memUsedBytes: -5, memTotalBytes: -1 } });
+    expect(buf.telemetry.mock.calls[0][0]).toMatchObject({ memUsedBytes: 0n, memTotalBytes: 0n });
+  });
+
+  // Was a bug until 2026-11-16: a NaN / Infinity cpuPct or memPct was stored as-is.
+  it("stores a non-finite cpuPct / memPct as null", async () => {
+    await recordTelemetryResult("a1", { supported: true, data: { cpuPct: Number.NaN, memPct: Number.POSITIVE_INFINITY } });
+    expect(buf.telemetry.mock.calls[0][0]).toMatchObject({ cpuPct: null, memPct: null });
+  });
 });
 
 describe("recordHardwareSensorResult", () => {

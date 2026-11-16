@@ -29,6 +29,9 @@ const FAKE_SAML = {
   idpEntityId: "https://idp.example.test/saml",
   idpLoginUrl: "https://idp.example.test/sso",
   idpCertificate: "MIIB-login-page-skip-test",
+  // SAML counts as configured only with an Application URL (the SAML client
+  // refuses without one) — since 2026-11-16.
+  spEntityId: "https://polaris.example.test",
 };
 
 /** The `sso` Setting row as it was before the suite, restored afterwards. */

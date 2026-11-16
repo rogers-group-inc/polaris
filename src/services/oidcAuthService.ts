@@ -17,6 +17,7 @@
  * "/" — so there is no open-redirect surface.
  */
 
+import { createHash } from "node:crypto";
 import * as client from "openid-client";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
@@ -56,7 +57,16 @@ const MASK = SECRET_MASK;
 const CALLBACK_PATH = "/api/v1/auth/oidc/callback";
 
 let _cache: { value: OidcSettings; expiry: number } | null = null;
-let _config: client.Configuration | null = null;
+// Discovery is cached under the settings it was built from (issuer, client
+// id, a hash of the secret): another web process that saves new settings is
+// picked up here once the 30 s settings cache expires, instead of this
+// process keeping the old issuer's discovery until it restarts.
+let _config: { key: string; value: client.Configuration } | null = null;
+
+function configKey(s: OidcSettings): string {
+  const secretHash = createHash("sha256").update(s.clientSecret).digest("hex");
+  return `${s.discoveryUrl}\n${s.clientId}\n${secretHash}`;
+}
 
 async function getOidcSettings(): Promise<OidcSettings> {
   if (_cache && Date.now() < _cache.expiry) return _cache.value;
@@ -97,14 +107,23 @@ export async function getOidcSettingsForUi(): Promise<OidcSettings & { redirectU
  * The client secret to save. The discovery document names the token endpoint
  * the secret is posted to, so an echoed mask keeps the stored secret only
  * while the discovery URL and the client id are unchanged — business rule
- * 111(a), re-scan F4. Anything else typed is saved as typed.
+ * 111(a), re-scan F4. An omitted clientSecret is treated like the echoed
+ * mask. Anything else typed is saved exactly as typed — a
+ * secret is never trimmed — and a blank (or whitespace-only) value clears it.
  */
 export function keptOidcClientSecret(
   cur: Pick<OidcSettings, "discoveryUrl" | "clientId" | "clientSecret">,
   input: Record<string, any>,
 ): string {
-  const echoed = isMaskedSecret(input.clientSecret) || input.clientSecret === LEGACY_ASTERISK_MASK;
-  if (!echoed) return String(input.clientSecret ?? "").trim();
+  // An omitted clientSecret (a partial PUT) is treated like the echoed mask.
+  const echoed =
+    input.clientSecret === undefined ||
+    isMaskedSecret(input.clientSecret) ||
+    input.clientSecret === LEGACY_ASTERISK_MASK;
+  if (!echoed) {
+    const typed = String(input.clientSecret ?? "");
+    return typed.trim() === "" ? "" : typed;
+  }
   if (!cur.clientSecret) return "";
   const moved = movedDestinationKey(
     { url: cur.discoveryUrl ?? "", endpoint: cur.clientId ?? "" },
@@ -125,7 +144,8 @@ export function keptOidcClientSecret(
 export async function updateOidcSettings(input: Record<string, any>): Promise<OidcSettings> {
   const cur = await getOidcSettings();
   const value: OidcSettings = {
-    enabled: !!input.enabled,
+    // An omitted field keeps its stored value; an explicit false still works.
+    enabled: input.enabled === undefined ? !!cur.enabled : !!input.enabled,
     discoveryUrl: (input.discoveryUrl ?? cur.discoveryUrl ?? "").trim(),
     clientId: (input.clientId ?? cur.clientId ?? "").trim(),
     clientSecret: keptOidcClientSecret(cur, input),
@@ -157,13 +177,15 @@ function issuerUrl(discoveryUrl: string): URL {
 }
 
 async function getConfig(): Promise<client.Configuration> {
-  if (_config) return _config;
   const s = await getOidcSettings();
   if (!s.discoveryUrl || !s.clientId || !s.clientSecret) {
     throw new AppError(400, "OIDC is not configured");
   }
-  _config = await client.discovery(issuerUrl(s.discoveryUrl), s.clientId, s.clientSecret);
-  return _config;
+  const key = configKey(s);
+  if (_config && _config.key === key) return _config.value;
+  const value = await client.discovery(issuerUrl(s.discoveryUrl), s.clientId, s.clientSecret);
+  _config = { key, value };
+  return value;
 }
 
 export interface OidcAuthStart {
@@ -239,7 +261,7 @@ export async function handleCallback(
     }
   }
 
-  const username = String(merged[s.usernameClaim] || merged.email || sub);
+  const username = String(merged[s.usernameClaim] || merged[s.emailClaim] || sub);
   return {
     sub,
     username,

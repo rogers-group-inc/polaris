@@ -72,6 +72,14 @@ describe("getBranding", () => {
     expect(displayAppName(b)).toBe("Polaris");
   });
 
+  it("falls back to the defaults on a stored null appName / subtitle", async () => {
+    // Was a bug until 2026-11-16: a stored null was returned as-is despite the string type.
+    stored({ appName: null, subtitle: null });
+    const b = await getBranding();
+    expect(b.appName).toBe(BRANDING_DEFAULTS.appName);
+    expect(b.subtitle).toBe(BRANDING_DEFAULTS.subtitle);
+  });
+
   it("keeps a stored false on the default-ON placement flags", async () => {
     stored({ logoOnLogin: false, logoOnSidebar: false, logoAccent: true });
     const b = await getBranding();

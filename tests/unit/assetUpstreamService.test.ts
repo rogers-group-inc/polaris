@@ -51,6 +51,8 @@ function matches(r: Record<string, unknown>, where: Record<string, unknown>): bo
       const { path, equals } = v as { path: string[]; equals: unknown };
       const t = r.fortinetTopology as Record<string, unknown> | null;
       if (!t || t[path[0]] !== equals) return false;
+    } else if (v && typeof v === "object" && "notIn" in (v as object)) {
+      if ((v as { notIn: unknown[] }).notIn.includes(r[k])) return false;
     } else if (v && typeof v === "object" && "not" in (v as object)) {
       if (r[k] === (v as { not: unknown }).not) return false;
     } else if (r[k] !== v) {
@@ -239,6 +241,15 @@ describe("resolveAssetUpstream — controller-managed switch / AP", () => {
     expect((await resolveAssetUpstream("sw"))!.firewall).toEqual({ name: "FGT60F0000000009", source: "controller", asset: null });
   });
 
+  it("treats a controller that resolves to a decommissioned firewall as absent", async () => {
+    seed([
+      row("sw", "switch", { fortinetTopology: underGate("FGT60F0000000009", { controllerFortigate: "OLD-FGT" }) }),
+      row("gate", "firewall", { hostname: "old-host", serialNumber: "FGT60F0000000009", status: "decommissioned" }),
+    ]);
+    // Was a bug until 2026-11-16: the retired gate was returned as the controller's asset.
+    expect((await resolveAssetUpstream("sw"))!.firewall).toEqual({ name: "OLD-FGT", source: "controller", asset: null });
+  });
+
   it("resolves a name-only controller stamp through the gate's FMG device name", async () => {
     seed([
       row("sw", "switch", { fortinetTopology: { controllerFortigate: "BRANCH-FGT" } }),
@@ -358,6 +369,24 @@ describe("resolveAssetUpstream — a switch name several devices share (rule 91)
   it("leaves the row unresolved when nothing decides — never the first row returned", async () => {
     seed([row("ep", "workstation", { lastSeenSwitch: "IDF-1/port3" }), ...fleet()]);
     expect((await resolveAssetUpstream("ep"))!.switch).toEqual({ name: "IDF-1", port: "port3", asset: null });
+  });
+
+  it("ignores a decommissioned same-name twin: the live switch resolves with no collision path", async () => {
+    seed([
+      row("ep", "workstation", { lastSeenSwitch: "IDF-1/port3" }),
+      ...fleet().map((r) => (r.id === "swB" ? { ...r, status: "decommissioned" } : r)),
+    ]);
+    // Was a bug until 2026-11-16: the retired twin was a candidate, forcing the collision path (here: unresolved).
+    expect((await resolveAssetUpstream("ep"))!.switch!.asset!.id).toBe("swA");
+    expect(macFind).not.toHaveBeenCalled();
+  });
+
+  it("does not use the IPAM gate as collision scope when the caller turned the subnet gate off", async () => {
+    seed([row("ep", "workstation", { lastSeenSwitch: "IDF-1/port3", ipAddress: "10.2.0.9" }), ...fleet()]);
+    ipam.resolveOwningGateContexts.mockResolvedValue(new Map([["10.2.0.9", { subnetId: "s", subnetCidr: "10.2.0.0/24", gateAssetId: "gA" }]]));
+    // Was a bug until 2026-11-16: IPAM still shaped the pick for a caller without subnets:read.
+    expect((await resolveAssetUpstream("ep", { includeSubnetGate: false }))!.switch!.asset).toBeNull();
+    expect(ipam.resolveOwningGateContexts).not.toHaveBeenCalled();
   });
 
   it("does not load the scope when the name is unique", async () => {
