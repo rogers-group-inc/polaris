@@ -105,6 +105,22 @@ describe("Database card", () => {
     expect(el.classList.contains("severity-edge-ok")).toBe(true);
   });
 
+  it("leaves the Capacity Advisor rollups to the Capacity Advisor card", () => {
+    const advisorOwned = [
+      { severity: "warning", code: "max_connections_undersized", family: "db_max_connections", message: "PostgreSQL max_connections is below the recommended value", suggestion: "Set it." },
+      { severity: "watch", code: "pool_undersized", family: "db_pool", message: "Database connection pool is below current peak demand", suggestion: "Stage it." },
+      { severity: "watch", code: "monitor_workers_undersized", family: "monitor_workers", message: "Monitor worker pool is below current workload", suggestion: "Stage it." },
+      { severity: "warning", code: "pg_tuning_needed", family: "pg_tuning", message: "One or more PostgreSQL settings are below the recommended minimum", suggestion: "Tune it." },
+    ];
+    const el = card(fns.renderCapacityCard(capacity(advisorOwned, "warning"), null, null, null));
+    expect(el.textContent).not.toContain("max_connections");
+    expect(el.textContent).not.toContain("connection pool");
+    expect(el.textContent).not.toContain("worker pool");
+    expect(el.textContent).not.toContain("PostgreSQL settings");
+    expect(el.textContent).toContain("All capacity checks passed");
+    expect(el.classList.contains("severity-edge-ok")).toBe(true);
+  });
+
   it("keeps its own reasons and their severity alongside a dropped lifecycle reason", () => {
     const disk = { severity: "critical", code: "disk_db", family: "disk:db", message: "DB volume 95% full", suggestion: "Grow it." };
     const el = card(fns.renderCapacityCard(capacity([disk, NODE_ADVISORY], "critical"), null, null, null));

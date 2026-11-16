@@ -20,7 +20,7 @@
 
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
-import { canonicalIp, isIpamIpv6Address, isIpv6Address } from "../utils/cidr.js";
+import { canonicalIp, expandIpv6, isIpamIpv6Address, isIpv6Address } from "../utils/cidr.js";
 import { logEvent, logEventsBatch, type LogEventInput } from "./eventLogService.js";
 import { buildAddressConfidence } from "./addressConfidenceService.js";
 import { ipv6Enabled } from "./ipv6GateService.js";
@@ -36,16 +36,20 @@ export interface Ipv6Candidate {
 
 /**
  * The best candidate, or null: highest evidence score, then the most recent
- * sighting, then the lexically smallest address (a stable tie-break, so two
- * equal addresses do not swap on every run). Pure — exported for tests.
+ * sighting, then the numerically smallest address (rule 128; a stable
+ * tie-break, so two equal addresses do not swap on every run). Compared fully
+ * expanded — fixed-width hex orders as the numbers do; until 2026-11-14 the
+ * compressed strings were compared, so 2001:db8::10 beat 2001:db8::9.
+ * Pure — exported for tests.
  */
 export function pickPrimaryIpv6(candidates: readonly Ipv6Candidate[]): string | null {
   let best: Ipv6Candidate | null = null;
+  const order = (ip: string) => expandIpv6(ip.toLowerCase());
   for (const c of candidates) {
     if (!best
       || c.evidenceScore > best.evidenceScore
       || (c.evidenceScore === best.evidenceScore && c.lastSeen.getTime() > best.lastSeen.getTime())
-      || (c.evidenceScore === best.evidenceScore && c.lastSeen.getTime() === best.lastSeen.getTime() && c.ip < best.ip)) {
+      || (c.evidenceScore === best.evidenceScore && c.lastSeen.getTime() === best.lastSeen.getTime() && order(c.ip) < order(best.ip))) {
       best = c;
     }
   }

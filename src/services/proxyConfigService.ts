@@ -139,6 +139,20 @@ function mergeProxyConfig(current: ProxyConfig, input: Partial<ProxyConfig>): Pr
 }
 
 function validateProxyConfig(cfg: ProxyConfig): void {
+  // The booleans really are booleans: a string "false" is truthy, so the
+  // renderer read it as ON (listen … quic, HSTS) and nginxApplyService read
+  // managedMode "false" as adopted. Until 2026-11-14 nothing checked them, and
+  // POST /proxy/apply hands its body straight to saveProxyConfig.
+  const flags: Array<[string, unknown]> = [
+    ["managedMode", cfg.managedMode],
+    ["http3Enabled", cfg.http3Enabled],
+    ["hsts.enabled", cfg.hsts.enabled],
+    ["hsts.includeSubDomains", cfg.hsts.includeSubDomains],
+    ["hsts.preload", cfg.hsts.preload],
+  ];
+  for (const [name, v] of flags) {
+    if (typeof v !== "boolean") throw new AppError(400, `${name} must be true or false (got ${JSON.stringify(v)})`);
+  }
   if (!Number.isInteger(cfg.httpsPort) || cfg.httpsPort < 1 || cfg.httpsPort > 65535) {
     throw new AppError(400, `httpsPort must be an integer between 1 and 65535 (got ${cfg.httpsPort})`);
   }

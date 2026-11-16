@@ -240,6 +240,7 @@ interface SourceRow {
   lastOk: boolean | null;
   lastPathHash: string | null;
   lastPathChangeEventAt: Date | null;
+  lastTracerouteAt: Date | null;
   lastSampleAt: Date | null;
   lastTlsNotAfter: Date | null;
   lastTlsIssuer: string | null;
@@ -251,7 +252,7 @@ async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise
   const rows = await prisma.pathCheckSource.findMany({
     where: { assetId: assetId === POLARIS_SERVER_SUBJECT ? null : assetId, checkId: { in: [...new Set(checkIds)] } },
     select: {
-      id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastSampleAt: true,
+      id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastTracerouteAt: true, lastSampleAt: true,
       lastTlsNotAfter: true, lastTlsIssuer: true, lastTlsChangeEventAt: true,
       check: { select: { name: true, keepBodyExcerpt: true } },
     },
@@ -489,6 +490,26 @@ export async function ingestPathCheckTraceroutes(
         return stored;
       });
     const hash = pathHashOf(hops);
+    const traceRow = {
+      assetId,
+      timestamp: ts,
+      checkId: t.checkId,
+      destinationIp: t.destinationIp ?? null,
+      complete: t.complete,
+      hopCount: hops.length,
+      hops: hops as unknown as object,
+      pathHash: hash,
+      reason: t.reason ?? "scheduled",
+      note: t.note ?? null,
+    };
+    // Business rule 85(d): a trace no newer than the source's latest one (a
+    // late or re-delivered push) is kept in the history but never compared —
+    // judged against the NEWER path it read as a change, wrote a false
+    // path_check.path_changed and rewound lastPathHash / lastTracerouteAt.
+    if (src.lastTracerouteAt && ts <= src.lastTracerouteAt) {
+      creates.push(traceRow);
+      continue;
+    }
     const st = state.get(t.checkId) ?? {
       hash: src.lastPathHash, hops: null, lastEventAt: src.lastPathChangeEventAt, lastAt: null, complete: null, hopCount: null,
     };
@@ -524,18 +545,7 @@ export async function ingestPathCheckTraceroutes(
     st.complete = t.complete;
     st.hopCount = hops.length;
     state.set(t.checkId, st);
-    creates.push({
-      assetId,
-      timestamp: ts,
-      checkId: t.checkId,
-      destinationIp: t.destinationIp ?? null,
-      complete: t.complete,
-      hopCount: hops.length,
-      hops: hops as unknown as object,
-      pathHash: hash,
-      reason: t.reason ?? "scheduled",
-      note: t.note ?? null,
-    });
+    creates.push(traceRow);
   }
 
   await prisma.$transaction([

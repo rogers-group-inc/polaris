@@ -351,10 +351,21 @@ export async function syncDiscoveredSubnets(input: {
   }
 
   // Batch-execute subnet updates (discoveredBy/fortigateDevice)
+  // Ids whose update FAILED: no mirror, no claimed / renamed Event (until
+  // 2026-11-14 the settled results were discarded, so a failed first claim
+  // still wrote `subnet.claimed` and was mirrored as if written).
+  const failedUpdateIds = new Set<string>();
   if (subnetUpdates.length > 0) {
-    await mapSettledWithConcurrency(subnetUpdates, 50, (u) =>
+    const settled = await mapSettledWithConcurrency(subnetUpdates, 50, (u) =>
       prisma.subnet.update({ where: { id: u.id }, data: u.data })
     );
+    settled.forEach((r, i) => {
+      if (r.status !== "rejected") return;
+      const u = subnetUpdates[i];
+      failedUpdateIds.add(u.id);
+      const reason = r.reason as { message?: string } | undefined;
+      syncLog("error", `Failed to update subnet ${u.id}: ${reason?.message || "Unknown error"}`);
+    });
     // Mirror each write onto the in-memory row Phase 2 filters.
     //
     // Phase 2 decides staleness from `allSubnets` — the snapshot read at the
@@ -370,6 +381,7 @@ export async function syncDiscoveredSubnets(input: {
     // A gate rename was enough to trigger it.
     const subnetById = new Map(allSubnets.map((s: any) => [s.id, s]));
     for (const u of subnetUpdates) {
+      if (failedUpdateIds.has(u.id)) continue;
       const row = subnetById.get(u.id);
       if (row) Object.assign(row, u.data);
     }
@@ -416,6 +428,7 @@ export async function syncDiscoveredSubnets(input: {
   // transition). Fires once per subnet; subsequent discovery passes see
   // discoveredBy already set and skip the claim branch entirely.
   for (const c of claimedSubnets) {
+    if (failedUpdateIds.has(c.id)) continue;
     logEvent({
       action: "subnet.claimed",
       resourceType: "subnet",
@@ -436,6 +449,7 @@ export async function syncDiscoveredSubnets(input: {
   }
 
   for (const r of deviceRenames) {
+    if (failedUpdateIds.has(r.id)) continue;
     logEvent({
       action: "subnet.updated",
       resourceType: "subnet",

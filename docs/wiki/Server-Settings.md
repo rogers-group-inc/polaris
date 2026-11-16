@@ -582,6 +582,14 @@ is "no" — Unraid's default — would stay stopped after a self-restart
 PostgreSQL rows are advisory only — they have no Stage button, and a value you
 set yourself with `ALTER SYSTEM` is honoured.
 
+A gap the advisor shows as a row — `max_connections`, the connection pool, the
+worker counts, PostgreSQL tuning — is listed on this card only. Like the
+platform findings, it still reaches the sidebar alert, Events and email through
+the capacity snapshot, but the Database card neither lists it nor takes its
+colour, so it is named once in **Needs attention**. The one advisor finding
+with no row here, a monitor handler running close to its job timeout, stays on
+the Database card.
+
 Its `timescale_recommended` reason carries **no size gate** — it fires at zero
 bytes, because TimescaleDB's absence is a broken install from the first byte,
 not a problem that begins at a threshold ([rule 52](Business-Rules#rule-52)).

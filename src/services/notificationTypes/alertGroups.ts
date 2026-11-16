@@ -503,7 +503,7 @@ export function refreshMemberContext(
       out["dimension.suffix"] = ` · ${devices}`;
     } else out["asset"] = devices;
   }
-  if (before && out["trigger.summary"]?.includes(before)) out["trigger.summary"] = out["trigger.summary"].replace(before, list);
+  if (before && out["trigger.summary"]?.includes(before)) out["trigger.summary"] = out["trigger.summary"].replace(before, () => list); // device names: no `$` expansion
   if (message !== null) out["message"] = message;
   return out;
 }

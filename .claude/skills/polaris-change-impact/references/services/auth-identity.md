@@ -279,6 +279,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - src/services/agentHostPinService.ts — business rule 123: deletes an agent host's `SshHostKey` rows into `ManagedAgent.archivedHostPins` while its asset is decommissioned and re-creates them on return (writes the table directly, then calls `forgetCachedHostKey`). Archived keys are absent from `listHostKeys` meanwhile — by design
 
 **Invariants:**
+- **2026-11-14:** `verifyOrPin` fails CLOSED when the first-pin `create` fails and the re-read finds no row (not a lost race): it rethrows, so the verifier refuses — it used to return `pinned`, cache the key and write the Event with nothing stored. A race loser whose key agrees returns `matched` and writes no second `ssh.host_key.pinned`.
 - **Opt-in per credential** (`SshConfig.verifyHostKey`), default OFF. Absent the flag, `buildHostVerifier` returns null and ssh2 behaves exactly as it did pre-2026-08 (accepts any host key). This is the compatibility guarantee that lets the feature ship without breaking installs whose hosts were never pinned — do not flip the default without a fleet-wide pinning plan.
 - **Fails closed.** A verification error rejects the connection. An operator who ticked the box must never get a silently-unverified connection.
 - **A mismatch never overwrites the pin.** Overwriting would defeat the entire mechanism; the operator deletes the pin deliberately.

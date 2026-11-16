@@ -302,7 +302,18 @@ export async function runPlaceholderMacAdoption(params: {
       prefix,
       params.integrationId,
     );
-    if (ok) eligible.push({ ...r, evidence });
+    if (ok) {
+      eligible.push({ ...r, evidence });
+      // Claim the MAC for this subnet now, so a second placeholder whose
+      // evidence is the same card (one NIC at two addresses) is skipped as a
+      // collision this run — until 2026-11-14 both were pushed and FortiOS's
+      // permanent duplicate refusal parked the second at failed_permanent.
+      if (evidenceHex) {
+        let set = occupiedBySubnet.get(r.subnetId);
+        if (!set) { set = new Set(); occupiedBySubnet.set(r.subnetId, set); }
+        set.add(evidenceHex);
+      }
+    }
   }
   if (skippedCollision > 0) {
     logger.info(

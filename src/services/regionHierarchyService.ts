@@ -107,9 +107,14 @@ export async function regionLevelIndex(): Promise<RegionLevelIndex> {
 /** Is `candidateKey` an ancestor of any region in `present`? */
 function isAncestorOfAny(candidateKey: string, present: RegionLevelEntry[], index: RegionLevelIndex): boolean {
   for (const entry of present) {
+    // Walk to the root however deep the nesting is — a visited set guards a
+    // corrupt cycle. Until 2026-11-14 the walk stopped after
+    // MAX_DEVICE_REGION_LEVELS + 1 hops, so on a deeper chain a far-up carried
+    // container was not recognised as an ancestor and was paged with the leaf.
     let cursor = entry.parentName ? key(entry.parentName) : null;
-    let hops = 0;
-    while (cursor && hops++ <= MAX_DEVICE_REGION_LEVELS) {
+    const visited = new Set<string>();
+    while (cursor && !visited.has(cursor)) {
+      visited.add(cursor);
       if (cursor === candidateKey) return true;
       const parent = index.byName.get(cursor);
       cursor = parent?.parentName ? key(parent.parentName) : null;

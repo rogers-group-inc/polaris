@@ -8,6 +8,7 @@
  */
 
 import { AppError } from "../../utils/errors.js";
+import { fetchOr502 } from "../../utils/fetchOr502.js";
 
 export interface PushbulletConfig {
   accessToken: string;
@@ -23,7 +24,8 @@ export async function sendPushbullet(cfg: PushbulletConfig, payload: PushbulletP
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await fetch("https://api.pushbullet.com/v2/pushes", {
+    // A network failure is a 502 with its reason, not a bare 500 (2026-11-14).
+    const res = await fetchOr502("Pushbullet push", "https://api.pushbullet.com/v2/pushes", {
       method: "POST",
       headers: { "Access-Token": cfg.accessToken, "Content-Type": "application/json" },
       body: JSON.stringify({ type: "note", title: payload.title, body: payload.body }),

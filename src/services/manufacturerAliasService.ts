@@ -150,8 +150,14 @@ export async function updateAlias(
   let row: ManufacturerAliasRow;
   try {
     row = await prisma.manufacturerAlias.update({ where: { id }, data });
-  } catch {
-    throw new AppError(404, "Alias not found");
+  } catch (err) {
+    // A rename onto an alias that exists is a conflict, as createAlias says —
+    // until 2026-11-14 every failure read "not found".
+    if ((err as { code?: string })?.code === "P2002") {
+      throw new AppError(409, `An alias for "${data.alias ?? ""}" already exists`);
+    }
+    if ((err as { code?: string })?.code === "P2025") throw new AppError(404, "Alias not found");
+    throw err;
   }
   await refreshAliasCache();
   applyAliasesToExistingRows().catch((err) =>

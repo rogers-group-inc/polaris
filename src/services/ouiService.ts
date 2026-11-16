@@ -61,10 +61,10 @@ export async function lookupOuiDetailed(input: string): Promise<{
 }> {
   await ensureLoaded();
   await ensureOverridesLoaded();
-  // Accept either a full MAC or a bare 3-byte prefix (pad so the normalizer accepts it).
-  const cleanInput = String(input || "").replace(/[:\-.\s]/g, "");
-  const padded = cleanInput.length >= 6 ? cleanInput : (cleanInput + "000000").slice(0, 12);
-  const normalized = normalizeMacPrefix(padded);
+  // Accept either a full MAC or a bare 3-byte prefix. Fewer than 3 bytes, or
+  // anything not hex, is malformed (null) — it used to be zero-padded, so "AB"
+  // answered for AB:00:00 and "zz:zz:zz" for ZZ:ZZ:ZZ.
+  const normalized = normalizeMacPrefix(String(input || ""));
   if (!normalized) {
     return { prefix: null, normalized: null, ieee: null, override: null, effective: null, source: null };
   }
@@ -188,7 +188,7 @@ export async function setOuiOverride(
   manufacturer: string,
   device?: string,
 ): Promise<OuiOverride> {
-  const normalized = normalizeMacPrefix(prefixInput + ":00:00:00"); // pad so normalizer works
+  const normalized = normalizeMacPrefix(prefixInput);
   if (!normalized) throw new AppError(400, "Invalid MAC prefix");
   await ensureOverridesLoaded();
   const entry: OverrideEntry = { manufacturer };
@@ -204,7 +204,7 @@ export async function setOuiOverride(
  * Delete a static OUI override by prefix.
  */
 export async function deleteOuiOverride(prefixInput: string): Promise<void> {
-  const normalized = normalizeMacPrefix(prefixInput + ":00:00:00");
+  const normalized = normalizeMacPrefix(prefixInput);
   if (!normalized) throw new AppError(400, "Invalid MAC prefix");
   await ensureOverridesLoaded();
   _overridesMap.delete(normalized);
@@ -256,7 +256,8 @@ async function ensureOverridesLoaded(): Promise<void> {
 function normalizeMacPrefix(mac: string): string | null {
   if (!mac) return null;
   const clean = mac.replace(/[:\-.\s]/g, "").toUpperCase();
-  if (clean.length < 6) return null;
+  // At least 3 whole bytes of HEX — "ZZ:ZZ:ZZ" or "AB" is not a prefix.
+  if (!/^[0-9A-F]{6}/.test(clean)) return null;
   return clean.slice(0, 6);
 }
 

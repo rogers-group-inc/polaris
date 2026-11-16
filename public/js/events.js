@@ -602,7 +602,7 @@ function syslogFormHTML(d) {
   '<div id="syslog-tls-fields">' +
     '<hr style="border:none;border-top:1px solid var(--color-border);margin:1rem 0">' +
     '<p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--color-text-tertiary);margin-bottom:0.75rem">TLS Certificates</p>' +
-    '<div class="form-group"><label>CA Certificate Path</label><input type="text" id="f-syslog-tlsca" value="' + escapeHtml(d.tlsCaPath) + '" placeholder="e.g. /etc/polaris/ca.pem"><p class="hint">Certificate authority to verify the syslog server.</p></div>' +
+    '<div class="form-group"><label>CA Certificate Path</label><input type="text" id="f-syslog-tlsca" value="' + escapeHtml(d.tlsCaPath) + '" placeholder="e.g. /etc/polaris/ca.pem"><p class="hint">Certificate authority to verify the syslog server. Leave blank to use the system trust store plus the Trusted Certificate Authorities in Server Settings.</p></div>' +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">' +
       '<div class="form-group"><label>Client Certificate</label><input type="text" id="f-syslog-tlscert" value="' + escapeHtml(d.tlsCertPath) + '" placeholder="Optional"></div>' +
       '<div class="form-group"><label>Client Key</label><input type="text" id="f-syslog-tlskey" value="' + escapeHtml(d.tlsKeyPath) + '" placeholder="Optional"></div>' +

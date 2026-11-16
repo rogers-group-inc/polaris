@@ -324,14 +324,18 @@ export function pollingRunStart(
 
 /**
  * Hours of polling credit for `ip`: only the address the run is for, only
- * while the device is not down.
+ * while that is still the asset's primary (rule 103 — when `ipAddress` is
+ * given), only while the device is not down. Until 2026-11-14 the primary was
+ * not compared, so an agent-driven asset (whose run never restarts) kept
+ * crediting its OLD address after the primary moved.
  */
 export function pollingHoursFor(
   ip: string,
-  asset: { ipConfirmedFor?: string | null; ipConfirmedSince?: Date | null; monitorStatus?: string | null; monitored?: boolean | null },
+  asset: { ipAddress?: string | null; ipConfirmedFor?: string | null; ipConfirmedSince?: Date | null; monitorStatus?: string | null; monitored?: boolean | null },
   nowMs: number,
 ): number {
   if (!asset.monitored || asset.monitorStatus === "down") return 0;
   if (asset.ipConfirmedFor !== ip || !asset.ipConfirmedSince) return 0;
+  if (asset.ipAddress !== undefined && asset.ipAddress !== asset.ipConfirmedFor) return 0;
   return Math.max(0, (nowMs - asset.ipConfirmedSince.getTime()) / H);
 }

@@ -79,9 +79,16 @@ async function pruneSelectionAwareDetail(
   const now = Date.now();
   let total = 0;
   if (selectedDays !== FOREVER) {
-    const sel = selectedDays <= 0 ? new Date(now) : new Date(now - selectedDays * DAY_MS);
-    await dropChunks(hypertableName, sel);
-    total += (await fn({ cadence: "fast", timestamp: { lt: sel } })).count;
+    // The selected residue goes through tieredPruneWindow like every other
+    // tier: never a row-DELETE past the compression frontier (until
+    // 2026-11-14 this arm deleted `lt: sel` with no lower bound, reaching into
+    // the compressed chunk straddling the cutoff — the 2026-06 decompression
+    // mechanism).
+    const win = tieredPruneWindow(now, selectedDays, getEffectiveCompressAfterDays(hypertableName));
+    await dropChunks(hypertableName, win.cutoff);
+    if (!win.skipRowDelete) {
+      total += (await fn({ cadence: "fast", timestamp: win.gte ? { gte: win.gte, lt: win.cutoff } : { lt: win.cutoff } })).count;
+    }
   }
   // Unselected = "slow" or legacy NULL. `{ not: "fast" }` excludes NULL in SQL,
   // so NULL is matched explicitly. Lower-bound the window at the compressed-
@@ -151,11 +158,10 @@ async function pruneTelemetrySamples(): Promise<number> {
  */
 async function pruneSystemInfoSamples(): Promise<number> {
   const r = await getSampleRetention();
-  const [
-    iDetail, iHourly, iDaily, sDetail, sHourly, sDaily, ipDetail, ipHourly, ipDaily,
-    psDetail, psHourly, psDaily, lldp, customWidget, stateProbe, processLog, processConn, arpEntries,
-    cDetail, cHourly, cDaily, cTrace,
-  ] = await Promise.all([
+  // Summed, never destructured: until 2026-11-14 a 22-name destructure of 23
+  // prunes (the service-log prune had no name) shifted every name after it, so
+  // the path-check traceroute deletes were never counted.
+  const counts = await Promise.all([
     // interfaces — detail is selection-aware. Nothing WRITES unselected
     // (cadence="slow") interface rows any more (see persistInterfaceSampleStream:
     // current state moved to `asset_interfaces`), so the slow arm of this prune
@@ -213,9 +219,7 @@ async function pruneSystemInfoSamples(): Promise<number> {
     pruneTierByDays((w) => prisma.assetPathCheckSampleDaily.deleteMany({  where: w as any }), r.pathCheck.daily,  "bucketStart", "asset_path_check_samples_daily"),
     pruneTierByDays((w) => prisma.assetPathCheckTraceroute.deleteMany({   where: w as any }), r.pathCheckTraceroutes.days, "timestamp", "asset_path_check_traceroutes"),
   ]);
-  return iDetail + iHourly + iDaily + sDetail + sHourly + sDaily + ipDetail + ipHourly + ipDaily
-    + psDetail + psHourly + psDaily + lldp + customWidget + stateProbe + processLog + processConn + arpEntries
-    + cDetail + cHourly + cDaily + cTrace;
+  return counts.reduce((sum, n) => sum + n, 0);
 }
 
 async function pruneLldpNeighbors(days: number): Promise<number> {

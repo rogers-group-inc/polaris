@@ -358,8 +358,18 @@ async function runFortiCli(host: string, config: Record<string, unknown>, comman
         if (CONFIRM.test(tail) && !answered) { answered = true; stream.write("y"); return; }
         if (PROMPT.test(tail) && clean(buf).includes(command) && clean(buf).trim().length > command.length) finish(false);
       });
-      stream.on("close", () => finish(true));
-      stream.on("error", () => finish(true));
+      // A shell that goes away before the prompt never received the command:
+      // that is a refusal, not a lost answer (until 2026-11-14 it resolved as
+      // "dropped", and the reboot run watched for a reboot that could not come).
+      const closed = () => {
+        if (sent) return finish(true);
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(new Error(`the SSH session closed before the FortiGate CLI prompt appeared — "${command}" was never sent`));
+      };
+      stream.on("close", closed);
+      stream.on("error", closed);
     });
   }));
 }

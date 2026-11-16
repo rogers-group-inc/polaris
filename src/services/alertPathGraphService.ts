@@ -31,7 +31,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { escapeHtml } from "../utils/notificationTemplate.js";
 import { buildPathGraph, pathGraphSvg, pathGraphText, type PathTrace } from "../utils/pathGraphSvg.js";
-import { activeMembers, primaryMember, type AlertMember } from "./notificationTypes.js";
+import { activeMembers, primaryMember, severityRank, type AlertMember } from "./notificationTypes.js";
 import { POLARIS_SERVER_LABEL, POLARIS_SERVER_SUBJECT } from "./pathCheckIngestService.js";
 import type { InlineAttachment } from "./notificationChannels/emailChannel.js";
 
@@ -84,7 +84,15 @@ export function pathGraphSubjects(n: PathGraphNotification, max = MAX_PATH_GRAPH
     return n.dimension ? [{ assetId: n.assetId || null, checkId: n.dimension, ruleId: n.ruleId }] : [];
   }
   const primary = primaryMember(members);
-  const ordered = primary ? [primary, ...members.filter((m) => m !== primary)] : members;
+  // Worst first in EVERY slot, not only the first (until 2026-11-14 the rest
+  // kept stored order, so a second critical device could lose its slot to
+  // warnings). Stable: equal severities keep their stored order.
+  const rest = members
+    .filter((m) => m !== primary)
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => severityRank(b.m.severity) - severityRank(a.m.severity) || a.i - b.i)
+    .map((x) => x.m);
+  const ordered = primary ? [primary, ...rest] : rest;
   const spansDevices = ordered.some((m) => m.assetId);
   const candidates = ordered
     .filter((m) => m.key)

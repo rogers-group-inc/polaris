@@ -106,7 +106,9 @@ function dailyPointsCte(filter: string, bootFilter: string): string {
               ${pctExpr("r")} AS pct, r."sampleCount" AS n
        FROM "asset_telemetry_samples_hourly" r
        LEFT JOIN boot b ON b."assetId" = r."assetId"
-       WHERE r."bucketStart" > date_trunc('day', (now() AT TIME ZONE 'UTC')) - interval '${HOURLY_TAIL_DAYS - 1} days'${filter}
+       -- >= : yesterday's 00:00 bucket belongs to yesterday (a strict > left
+       -- it out, and the 23-hour average still replaced the daily point).
+       WHERE r."bucketStart" >= date_trunc('day', (now() AT TIME ZONE 'UTC')) - interval '${HOURLY_TAIL_DAYS - 1} days'${filter}
          -- An hour that began before the boot mixes the two hosts; drop it.
          AND (b.at IS NULL OR r."bucketStart" >= b.at)
      ),
