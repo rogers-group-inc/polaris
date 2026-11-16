@@ -130,13 +130,14 @@
   var CAD_SHEET_LAYER = /title|border|frame|viewport|defpoints|sheet|legend/i;
 
   // How a floor looks from the floor being viewed (d = its level − the
-  // viewed one): itself at 100 %, one up 10 %, two up 2 %, anything higher or
-  // lower hidden; floors above drawn 25 % bigger per floor, below 25 % smaller.
-  var FLOOR_OPACITY = { 0: 1, 1: 0.10, 2: 0.02 };
+  // viewed one): itself at 100 %, one up 5 %, two up 2 %, anything higher or
+  // lower hidden. Every floor is drawn at its true size and place — no
+  // parallax (operator decision 2026-11-16); `scale` stays 1 for the panes.
+  var FLOOR_OPACITY = { 0: 1, 1: 0.05, 2: 0.02 };
   function floorLook(d) {
     return {
       opacity: d >= 0 && FLOOR_OPACITY[d] !== undefined ? FLOOR_OPACITY[d] : 0,
-      scale: d > 0 ? Math.pow(1.25, d) : d < 0 ? Math.pow(0.75, -d) : 1,
+      scale: 1,
     };
   }
   // A link between floors fades from one end's opacity to the other's.
@@ -618,7 +619,6 @@
       applyFloorLook(false);
       drawCrossLinks();
       paintSelected();
-      paintCenter();
       if (arcgisLayers) arcgisLayers.draw();
     }
     function drawFloor(level) {
@@ -778,11 +778,6 @@
       trans = null;
       drawCrossLinks();
     }
-    // The centre the floors scale about, marked while the view has floors.
-    var centerMark = document.createElement("div");
-    centerMark.className = "topo-floor-center";
-    centerMark.setAttribute("aria-hidden", "true");
-    function paintCenter() { centerMark.hidden = !state.layers.length; }
 
     // ── Polygons ────────────────────────────────────────────────────────
     function polygonColor(p) {
@@ -1544,7 +1539,7 @@
         var share = Math.round(overlapShare(a.ext, l.background.cad.ext) * 100);
         places.push({ v: "lineup:" + l.level, t: "Line up with " + esc(layerName(l.level)), d: "Uses its placement: right when both drawings share coordinates, as levels from one survey do. They overlap " + share + " %." });
       });
-      places.push({ v: "hand", t: "Line it up by hand", d: "Drag, stretch and turn it; line a feature up with the floor above at the centre +, where floors don't shift with depth." });
+      places.push({ v: "hand", t: "Line it up by hand", d: "Drag, stretch and turn it until it lines up with the floor above; right-drag moves the map." });
       places.push({ v: "two", t: "Place with two points", d: "Click two places on the drawing, then the same two on the map." });
       var placeHtml = places.map(function (p, i) {
         return '<label class="topo-cad-place-opt"><input type="radio" name="topo-cad-place" value="' + esc(p.v) + '"' + (i === 0 ? " checked" : "") + '>' +
@@ -1779,8 +1774,7 @@
       adjust = { level: state.layer, bar: document.createElement("div"), shapes: [] };
       adjust.bar.className = "topo-plan-bar";
       adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
-        '<span class="hint" style="margin:0">Drag to move · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates · Shift + drag pans</span>' +
-        '<span class="hint" style="margin:0">Floors shift with depth everywhere except the centre +: bring a feature to the + (Shift + drag) and line it up with the floor above there.</span>' +
+        '<span class="hint" style="margin:0">Drag to move it · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates · right-drag moves the map</span>' +
         '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
       host.appendChild(adjust.bar);
@@ -1797,13 +1791,17 @@
       map.dragging.disable();
       map.doubleClickZoom.disable();
       mapEl.addEventListener("pointerdown", onAdjustDown, true);
+      // Right-drag pans: the browser's menu would open on release.
+      mapEl.addEventListener("contextmenu", noMenu, true);
       host.classList.add("is-adjusting");
       applyFloorLook(true);
       drawAdjustShapes();
     }
+    function noMenu(e) { e.preventDefault(); e.stopPropagation(); }
     function endAdjust() {
       if (!adjust) return;
       mapEl.removeEventListener("pointerdown", onAdjustDown, true);
+      mapEl.removeEventListener("contextmenu", noMenu, true);
       adjust.shapes.forEach(function (x) { x.remove(); });
       if (adjust.bar.parentNode) adjust.bar.parentNode.removeChild(adjust.bar);
       host.classList.remove("is-adjusting");
@@ -1823,7 +1821,7 @@
         }));
     }
     function onAdjustDown(e) {
-      if (!adjust || e.button !== 0 || e.target.closest(".topo-plan-bar, .leaflet-control")) return;
+      if (!adjust || (e.button !== 0 && e.button !== 2) || e.target.closest(".topo-plan-bar, .leaflet-control")) return;
       var fp = floorPlan(adjust.level);
       if (!fp) return;
       var l = fp.layer;
@@ -1832,8 +1830,9 @@
       var ci = -1;
       corners.forEach(function (c, i) { if (ci < 0 && c.distanceTo(cp) < 12) ci = i; });
       var ring = corners.map(function (c) { return [c.x, c.y]; });
-      // Shift + drag, or a drag off the plan, pans the map (dragging is off while adjusting).
-      var mode = e.shiftKey ? "pan" : e.altKey ? "rotate" : ci >= 0 ? "scale" : pointInRing([cp.x, cp.y], ring) ? "move" : "pan";
+      // Left-drag works the plan; right-drag (or a drag off the plan) moves the
+      // whole map (operator request 2026-11-16; Leaflet dragging is off while adjusting).
+      var mode = e.button === 2 ? "pan" : e.altKey ? "rotate" : ci >= 0 ? "scale" : pointInRing([cp.x, cp.y], ring) ? "move" : "pan";
       e.preventDefault();
       e.stopPropagation();
       var g0 = toGround(map.containerPointToLatLng(cp));
@@ -2035,7 +2034,6 @@
         requestAnimationFrame(tickCross);
       }
       paintLayerCtl();
-      paintCenter();
       ctx.refreshSidebar();
     }
     layerCtl.addEventListener("click", function (e) {
@@ -2204,7 +2202,6 @@
         })
       : null;
 
-    host.appendChild(centerMark);
     buildMap();
     setEditing(state.editing);
     if (arcgisLayers) arcgisLayers.load();
