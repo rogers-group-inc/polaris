@@ -111,7 +111,7 @@ a whole floor with one CSS opacity (no zoom between floors since 2026-11-16: `fl
 `PlanOverlay` (an `<img>` positioned by a CSS `matrix()` from three corners) and its devices /
 polygons convert through `localToLatLng` / `latLngToLocal` (plan units ↔ ground: EPSG:3857 metres
 on the map, map units on an image ground). Links between floors are drawn in the unscaled
-`floor_links` pane from each end's scaled screen position (`visualLatLng`) as 12 fading segments,
+`floor_links` pane through their bends (`linePoints` with `devCenter`, each end on its own floor) as 12 fading slices of the path (`slicePolyline`) plus one invisible hit line that carries the hover card and the same bend gestures as a same-floor link (`editableOn`: from either end's floor). Their paths are stored with the GROUND's placements (`CROSS_STORE` = 0 — every floor shares the ground's coordinates now floors don't zoom), so `savePaths` stages `allPlacements` when the viewed floor is another; `crossLive` carries a dragged path until it is saved. They are
 redrawn per frame during a floor change (`tickCross`). The basemap switch is `setBaseMap` — a
 second `setLayer` in the same scope once shadowed it. Layer 2 must skip the new
 `topo|L<n>` layout keys (`_layoutKeyBelongsToCurrentView`), or a floor layer's placements

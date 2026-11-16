@@ -720,7 +720,10 @@ All floors are drawn together, each at its true size and place. The floor you're
 at full strength, the floor above it at 5 % and the one above that at 2 %; floors below
 are hidden. The ground map (or satellite, or site plan) is part of floor 0, so on floor −1
 it fades to 5 % with floor 0's devices. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
-floors fades from one floor's strength to the other's.
+floors fades from one floor's strength to the other's, and you can bend it in edit mode from
+either end's floor like any other connection: drag it to add a corner, click it to show its
+corners and ends, and select a corner and press Delete to remove it. Its corners stay where
+you put them whichever floor you view.
 
 **Each floor can have its own plan.** On a floor, the map button offers **Upload
 floor plan** (PNG, JPEG or WebP), **Adjust floor plan** and **Remove floor plan**.
