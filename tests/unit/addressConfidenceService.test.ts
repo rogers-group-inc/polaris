@@ -258,14 +258,14 @@ describe("buildAddressConfidence — evidence", () => {
     expect(kinds(r)).not.toContain("polling");
   });
 
-  // BUG: the contract (rule 103 / the touches entry) gives polling credit "only
+  // Was a bug until 2026-11-14: the contract (rule 103 / the touches entry) gives polling credit "only
   // while the run's ipConfirmedFor equals the current ipAddress". The service
   // never compares against ipAddress: an asset whose primary moved from
   // 10.0.0.5 to 10.0.0.6 while the run still names 10.0.0.5 (always so for an
   // agent-driven monitor — pollingRunStart never restarts an agent-driven run)
   // keeps crediting 10.0.0.5 with 48 h of polling (+ sustained) and the actual
   // primary none. Right: the old address earns no polling piece.
-  it.fails("gives no polling credit to an address that is no longer the primary", async () => {
+  it("gives no polling credit to an address that is no longer the primary", async () => {
     assets = [assetRow({ ipAddress: "10.0.0.6", ipConfirmedFor: "10.0.0.5", ipConfirmedSince: ago(48 * H) })];
     const per = (await buildAddressConfidence(["a1"], { now: NOW, extraIps: new Map([["a1", ["10.0.0.5"]]]) })).get("a1")!;
     expect(kinds(per.get("10.0.0.5"))).not.toContain("polling");

@@ -466,7 +466,7 @@ describe("ssh link", () => {
     expect(e).toBeInstanceOf(RebootSendError);
   });
 
-  // BUG: sshOps.send / runFortiCli — a shell that CLOSES before its prompt ever
+  // Was a bug until 2026-11-14: sshOps.send / runFortiCli — a shell that CLOSES before its prompt ever
   // appeared (the command was never typed: `sent` is still false) resolves
   // `{ dropped: true }`, which send() reports as `{ uncertain: "the SSH session
   // closed as the command ran" }`. Nothing was sent, so the run watches for a
@@ -474,7 +474,7 @@ describe("ssh link", () => {
   // clear refusal. The contract: `{ uncertain }` is "the connection died
   // MID-SEND"; a session that never took the command is a RebootSendError —
   // as the same no-prompt case already is when it times out instead of closing.
-  it.fails("a shell that closes before the prompt (command never typed) is a refusal, not a lost answer", async () => {
+  it("a shell that closes before the prompt (command never typed) is a refusal, not a lost answer", async () => {
     const writes: string[] = [];
     h.withSshClient.mockImplementationOnce(async (_h: string, _c: unknown, fn: (c: unknown) => Promise<unknown>) => fn({
       shell(_o: unknown, cb: (err: Error | undefined, stream: unknown) => void) {

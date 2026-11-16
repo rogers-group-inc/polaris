@@ -337,14 +337,21 @@ export async function runPendingServerScripts(): Promise<{ started: number; comp
     await pruneOldRuns().catch(() => {});
     return { started: 0, completed: 0 };
   }
+  // One conditional updateMany PER row, so this tick knows exactly which rows
+  // IT flipped (count 1). Until 2026-11-14 one batch updateMany was followed by
+  // re-reading `{ id in ids, status: "running" }`, which also matched a row
+  // another runner had claimed in between — and executed it a second time.
   const ids = candidates.map((c) => c.id);
-  await prisma.automationScriptRun.updateMany({
-    where: { id: { in: ids }, status: "pending" },
-    data: { status: "running", startedAt: now },
-  });
-  const claimed = await prisma.automationScriptRun.findMany({
-    where: { id: { in: ids }, status: "running" },
-  });
+  const flips = await Promise.all(ids.map((id) =>
+    prisma.automationScriptRun.updateMany({
+      where: { id, status: "pending" },
+      data: { status: "running", startedAt: now },
+    }).then((r) => (r.count === 1 ? id : null)),
+  ));
+  const mine = flips.filter((id): id is string => id !== null);
+  const claimed = mine.length
+    ? await prisma.automationScriptRun.findMany({ where: { id: { in: mine } } })
+    : [];
 
   let completed = 0;
   for (const chunk of chunkArray(claimed, CONCURRENCY)) {

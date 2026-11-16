@@ -384,12 +384,12 @@ describe("syncDiscoveredSubnets — update", () => {
     expect(input.updated).toHaveLength(120);
   });
 
-  // BUG: the batch update is settled and its results are discarded. When the
+  // Was a bug until 2026-11-14: the batch update is settled and its results are discarded. When the
   // write for a manual row's first claim REJECTS, the row stays unclaimed
   // (discoveredBy null, old name) yet a `subnet.claimed` Event still says
   // "claimed by FMG — now tracked as DHCP: lan (FW-A)", and nothing logs the
   // failure. Right: no subnet.claimed Event for a claim that was not written.
-  it.fails("writes no subnet.claimed Event when the claim's update failed", async () => {
+  it("writes no subnet.claimed Event when the claim's update failed", async () => {
     stubbed(db.subnet.update).mockRejectedValue(new Error("deadlock"));
     const manual = stored({ discoveredBy: null, name: "Printers" });
     const { input } = makeInput([{ cidr: "10.1.0.0/24", name: "lan", fortigateDevice: "FW-A" }], [manual]);

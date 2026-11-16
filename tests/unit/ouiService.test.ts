@@ -117,24 +117,24 @@ describe("lookupOuiDetailed", () => {
     });
   });
 
-  it("zero-pads empty input into prefix 00:00:00 (current behaviour; the route never passes an empty param)", async () => {
-    expect((await oui.lookupOuiDetailed("")).normalized).toBe("000000");
+  it("empty input is malformed too — no zero-padding into 00:00:00", async () => {
+    expect((await oui.lookupOuiDetailed("")).normalized).toBeNull();
   });
 
-  // BUG: the docstring says "Returns null `prefix` for malformed input", and
+  // Was a bug until 2026-11-14: the docstring says "Returns null `prefix` for malformed input", and
   // GET /server-settings/oui/lookup/:prefix turns a null `normalized` into a
   // 400. Non-hex input "zz:zz:zz" normalizes to "ZZZZZZ" and comes back as
   // prefix "ZZ:ZZ:ZZ" (a 200 with an impossible OUI); it should be
   // { prefix: null, normalized: null, … }.
-  it.fails("returns a null prefix for non-hex input", async () => {
+  it("returns a null prefix for non-hex input", async () => {
     expect(await oui.lookupOuiDetailed("zz:zz:zz")).toMatchObject({ prefix: null, normalized: null });
   });
 
-  // BUG: the route's 400 message says "supply at least 3 bytes", but input
+  // Was a bug until 2026-11-14: the route's 400 message says "supply at least 3 bytes", but input
   // shorter than 3 bytes is zero-padded into a DIFFERENT prefix: "AB" reads as
   // AB:00:00 and reports that OUI's vendor. It should be { prefix: null,
   // normalized: null } so the route answers 400.
-  it.fails("returns a null prefix for fewer than 3 bytes", async () => {
+  it("returns a null prefix for fewer than 3 bytes", async () => {
     expect(await oui.lookupOuiDetailed("AB")).toMatchObject({ prefix: null, normalized: null });
   });
 });
@@ -177,12 +177,12 @@ describe("OUI overrides — set / get / delete", () => {
     expect(await oui.lookupOuiOverride("AABBCC000000")).toBeNull();
   });
 
-  // BUG: setOuiOverride throws AppError(400, "Invalid MAC prefix") only when
+  // Was a bug until 2026-11-14: setOuiOverride throws AppError(400, "Invalid MAC prefix") only when
   // the normalizer returns null — but it pads the input with ":00:00:00" first
   // and never checks for hex, so the throw is unreachable: "GG:HH:II" is
   // stored as override "GGHHII". (The POST route validates first, so today
   // only a direct caller reaches this.) It should reject with httpStatus 400.
-  it.fails("rejects a non-hex prefix with a 400", async () => {
+  it("rejects a non-hex prefix with a 400", async () => {
     await expect(oui.setOuiOverride("GG:HH:II", "Bogus")).rejects.toMatchObject({ httpStatus: 400 });
   });
 });

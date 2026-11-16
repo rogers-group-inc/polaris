@@ -166,22 +166,25 @@ describe("verifyOrPin", () => {
     expect(prisma.sshHostKey.findUnique).not.toHaveBeenCalled();
   });
 
-  it("the race loser that agrees with the winner accepts", async () => {
+  // Since 2026-11-14 the loser reports a match: the winner stored the pin and
+  // wrote the one "pinned" Event, so the loser no longer writes a second.
+  it("the race loser that agrees with the winner accepts as a match, writing no second pinned Event", async () => {
     stubbed(prisma.sshHostKey.findUnique)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(pin("10.0.0.9", 22, FP_A));
     stubbed(prisma.sshHostKey.create).mockRejectedValue(Object.assign(new Error("Unique"), { code: "P2002" }));
-    expect(await verifyOrPin("10.0.0.9", 22, KEY_A)).toEqual({ ok: true, outcome: "pinned" });
+    expect(await verifyOrPin("10.0.0.9", 22, KEY_A)).toEqual({ ok: true, outcome: "matched" });
+    expect(eventLog.logEvent.mock.calls.map((c) => c[0].action)).not.toContain("ssh.host_key.pinned");
   });
 
-  // BUG: verifyOrPin("10.0.0.9", 22, KEY_A) where sshHostKey.create rejects and
+  // Was a bug until 2026-11-14: verifyOrPin("10.0.0.9", 22, KEY_A) where sshHostKey.create rejects and
   // the re-read finds no row (the failure was not a lost race) returns
   // { ok: true, outcome: "pinned" }, caches KEY_A as the pin and writes an
   // "ssh.host_key.pinned" Event — though nothing was stored. The service's own
   // contract is "fails closed: a verification error rejects the connection";
   // it should refuse (ok:false, or throw so buildHostVerifier refuses) and
   // write no "pinned" Event.
-  it.fails("a create failure that is not a lost race fails closed and claims no pin", async () => {
+  it("a create failure that is not a lost race fails closed and claims no pin", async () => {
     stubbed(prisma.sshHostKey.findUnique).mockResolvedValue(null);
     stubbed(prisma.sshHostKey.create).mockRejectedValue(new Error("value too long for column"));
     const v = await verifyOrPin("10.0.0.9", 22, KEY_A).catch(() => "threw" as const);

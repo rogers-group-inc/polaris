@@ -248,13 +248,13 @@ describe("resolveConnectionPath — fortinetTopology fallback", () => {
     expect(await resolveConnectionPath("sw")).toMatchObject({ hops: [{ id: "sw" }], siteId: null });
   });
 
-  // BUG: the service contract says "`uplinkInterface` lives on every switch / AP
+  // Was a bug until 2026-11-14: the service contract says "`uplinkInterface` lives on every switch / AP
   // hop (from fortinetTopology.uplinkInterface)". A switch reached through the
   // fortinetTopology FALLBACK (an AP with no dependency rows whose parentSwitch
   // is IDF-1, IDF-1 stamped uplinkInterface "port49") is pushed without it —
   // hops[1].uplinkInterface is undefined; it should be "port49", as it is when
   // the same switch is reached through AssetDependencyParent.
-  it.fails("puts the uplink on a switch hop reached through the topology fallback", async () => {
+  it("puts the uplink on a switch hop reached through the topology fallback", async () => {
     table = [
       a("ap", "access_point", { fortinetTopology: { parentSwitch: "IDF-1" } }),
       a("sw", "switch", { hostname: "IDF-1", fortinetTopology: { uplinkInterface: "port49" } }),
@@ -263,13 +263,13 @@ describe("resolveConnectionPath — fortinetTopology fallback", () => {
     expect(out!.hops[1]).toMatchObject({ id: "sw", uplinkInterface: "port49" });
   });
 
-  // BUG: an AP whose parentSwitch names a switch Polaris does not hold (a
+  // Was a bug until 2026-11-14: an AP whose parentSwitch names a switch Polaris does not hold (a
   // third-party switch its LLDP table reported) never reaches the controller
   // fallback: resolveTopologyFallback returns the null from the parentSwitch
   // branch, so AP {parentSwitch: "CISCO-3850", controllerSerial: "FGT1"} with
   // FGT1 in inventory yields hops [ap], siteId null. It should fall through to
   // the controller and yield [ap, fgt], siteId "fgt".
-  it.fails("falls through to the AP's controller when its parentSwitch resolves to nothing", async () => {
+  it("falls through to the AP's controller when its parentSwitch resolves to nothing", async () => {
     table = [
       a("ap", "access_point", { fortinetTopology: { parentSwitch: "CISCO-3850", controllerSerial: "FGT1" } }),
       a("fgt", "firewall", { serialNumber: "FGT1" }),

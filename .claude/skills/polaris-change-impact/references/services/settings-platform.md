@@ -111,6 +111,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/deviceIcons.ts,56,83,105 — upload/list/delete CRUD + image serve`, `src/services/topologyGraphService.ts — icon resolution for topology switches/APs/firewalls/remote nodes (icon cache preloaded once per buildSiteTopology call)`
 
 **Invariants:**
+- **2026-11-14:** the WebP signature is the full `RIFF....WEBP` (bytes 4–7 a wildcard) — `RIFF` alone also accepted WAV / AVI declared as `image/webp`.
 - Scope: "manufacturer-type" (asset type key — any name in the live asset-type registry, built-in or custom, checked by `utils/assetTypes.isKnownAssetType`) or "manufacturer-model" (vendor-specific chassis/model). Both require a manufacturer; standalone type/model/manufacturer uploads are not supported.
 - **Upload upserts; re-key refuses.** `uploadIcon` upserts on `(scope, key)`, so uploading to a held key REPLACES that image (the intended "swap the logo" path). `updateIconKey` (PUT `/device-icons/:id`) changes scope/manufacturer/type-or-model and keeps the image, and answers 409 when another icon holds the target key (P2002 on a lost race included) — a re-key must never silently delete a different icon's image. Both go through the one `validateIconKey`, so an edited key meets exactly the upload's rules. Pinned by `tests/unit/deviceIconUpdateKey.test.ts`.
 - Canonical key form: `"<canonicalManufacturer>/<typeOrModel>"`. Manufacturer half always runs through normalizeManufacturer (alias map). Type tail lowercased; model tail preserved as typed.

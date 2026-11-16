@@ -66,13 +66,14 @@ const ALLOWED_MIME_TYPES = new Set([
 // Magic-byte signatures for the raster formats. SVG is handled separately
 // by validateSvg() because XML can start with an optional BOM + whitespace
 // + either `<?xml` or `<svg`.
-const MAGIC_BYTES: Array<{ mime: string; prefix: number[] }> = [
+// A null byte is a wildcard (WebP's four-byte RIFF chunk size).
+const MAGIC_BYTES: Array<{ mime: string; prefix: Array<number | null> }> = [
   // PNG: 89 50 4E 47 0D 0A 1A 0A
   { mime: "image/png", prefix: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
   // JPEG: FF D8 FF
   { mime: "image/jpeg", prefix: [0xff, 0xd8, 0xff] },
-  // WebP: RIFF....WEBP
-  { mime: "image/webp", prefix: [0x52, 0x49, 0x46, 0x46] },
+  // WebP: RIFF....WEBP — "RIFF" alone also matches WAV / AVI (fixed 2026-11-14).
+  { mime: "image/webp", prefix: [0x52, 0x49, 0x46, 0x46, null, null, null, null, 0x57, 0x45, 0x42, 0x50] },
 ];
 
 // SVG reject patterns. Any match → refuse the upload. Case-insensitive;
@@ -133,7 +134,7 @@ function detectMagicMime(data: Buffer): string | null {
     if (data.length < prefix.length) continue;
     let ok = true;
     for (let i = 0; i < prefix.length; i++) {
-      if (data[i] !== prefix[i]) { ok = false; break; }
+      if (prefix[i] !== null && data[i] !== prefix[i]) { ok = false; break; }
     }
     if (ok) return mime;
   }

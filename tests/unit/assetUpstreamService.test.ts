@@ -197,12 +197,12 @@ describe("resolveAssetUpstream — a firewall asset", () => {
     expect(out!.visibility.subnetGate).toBe(false);
   });
 
-  // BUG: the service contract says "All three are null for an assetType:
+  // Was a bug until 2026-11-14: the service contract says "All three are null for an assetType:
   // firewall" (the General tab hides the rows for a gate). A firewall whose own
   // lastSeenSwitch is "IDF-1/port1" and lastSeenAp is "AP-1" gets non-null
   // switch / ap entries back (only the firewall row is suppressed); the right
   // output is { switch: null, ap: null, firewall: null }.
-  it.fails("reports all three rows null for a firewall, even with lastSeenSwitch / lastSeenAp set", async () => {
+  it("reports all three rows null for a firewall, even with lastSeenSwitch / lastSeenAp set", async () => {
     seed([
       row("fgt", "firewall", { lastSeenSwitch: "IDF-1/port1", lastSeenAp: "AP-1" }),
       row("sw", "switch", { hostname: "IDF-1" }),
@@ -366,7 +366,7 @@ describe("resolveAssetUpstream — a switch name several devices share (rule 91)
     expect(macFind).not.toHaveBeenCalled();
   });
 
-  // BUG: rule 91 names "the child's own controller" as a gateIds source of
+  // Was a bug until 2026-11-14: rule 91 names "the child's own controller" as a gateIds source of
   // the scope. An AP stamped controllerSerial FGTB… whose lastSeenSwitch is
   // "IDF-1/port3", with two IDF-1 switches (one under gate A, one under gate B)
   // and no MAC-table / sighting / IPAM evidence, resolves the switch to null;
@@ -374,7 +374,7 @@ describe("resolveAssetUpstream — a switch name several devices share (rule 91)
   // scope list — [sighted gate, IPAM gate] — omits the controller, and the
   // sighting half never runs for a controller-managed device, so its gateIds
   // are always empty.)
-  it.fails("settles a controller-managed AP's shared upstream switch name by the AP's own controller", async () => {
+  it("settles a controller-managed AP's shared upstream switch name by the AP's own controller", async () => {
     seed([
       row("ap", "access_point", { lastSeenSwitch: "IDF-1/port3", fortinetTopology: underGate("FGTB000000000001") }),
       ...fleet(),

@@ -468,6 +468,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `public/js/integrations-forms.js` / `integrations.js` → the Write-back tab through those routes.
 
 **Invariants:**
+- **2026-11-14:** a 498 / 499 on the LAYER READ (the first call of every tick) also calls `clearArcgisTokenCache()`, as the per-batch catch does — otherwise every later tick re-read the layer with the same dead token until it expired.
 - **The run table is the queue**: a push first turns live `off` runs `pending`; nothing else lists what to send.
 - **Never add twice**: a run with no object id is looked up by `fieldMap.polarisId` before an add (and a tombstone before a delete).
 - **Per-feature results**: `rollbackOnFailure=false`; a refusal fails THAT run with ArcGIS's description; transport / 5xx / 429 / 498 / 499 leave the batch `pending` (`syncError` set); a layer that refuses outright fails every queued run with the reason.

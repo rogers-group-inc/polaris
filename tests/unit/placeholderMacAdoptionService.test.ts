@@ -147,14 +147,14 @@ describe("runPlaceholderMacAdoption — matching", () => {
     expect((await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]))).adopted).toBe(1);
   });
 
-  // BUG: occupiedBySubnet is built once from the STORED MACs and never updated
+  // Was a bug until 2026-11-14: occupiedBySubnet is built once from the STORED MACs and never updated
   // as candidates are chosen. Two placeholder rows in one subnet whose
   // evidence is the same real MAC (a card ARP shows at two addresses) are both
   // pushed; FortiOS refuses the second as a same-scope duplicate — a PERMANENT
   // refusal that parks it at failed_permanent, exactly the outcome the
   // collision skip's own comment says it exists to avoid. Right: only one of
   // the two is attempted in a run.
-  it.fails("never adopts one observed MAC onto two reservations in the same subnet in one run", async () => {
+  it("never adopts one observed MAC onto two reservations in the same subnet in one run", async () => {
     stubbed(db.reservation.findMany).mockResolvedValue([res(1), res(2)]);
     const out = await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL], ["FGT-Ashfield", "10.0.0.2", REAL]]));
     expect(out.attempted).toBe(1);

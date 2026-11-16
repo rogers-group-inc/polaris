@@ -67,14 +67,14 @@ describe("fireLookbackMsFor", () => {
     expect(fireLookbackMsFor({ forDurationSec: 3600 })).toBe(15 * MIN);
   });
 
-  // BUG: a poll-counted hold that states the COUNT but no wall-clock mirror
+  // Was a bug until 2026-11-14: a poll-counted hold that states the COUNT but no wall-clock mirror
   // ({forPolls: 30}, no forDurationSec — API-authored) fetches only the
   // 15-minute floor, so on a one-minute cadence it can never see 30 readings
   // and never fires. Its siblings in the same file (the count window just
   // above it, and withRecoveryLookback, "same sizing as a poll-counted hold")
   // give a count with no mirror the six-hour cap "rather than a guess".
   // Expected 6 h; actual 15 min.
-  it.fails("gives a poll-counted hold with no wall-clock mirror the cap rather than a guess", () => {
+  it("gives a poll-counted hold with no wall-clock mirror the cap rather than a guess", () => {
     expect(fireLookbackMsFor({ forPolls: 30 })).toBe(CAP);
   });
 

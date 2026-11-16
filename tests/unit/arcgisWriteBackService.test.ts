@@ -620,14 +620,14 @@ describe("syncWriteBack — errors", () => {
     expect(await syncWriteBack()).toEqual({ sent: 0, deleted: 0, failed: 1 });
   });
 
-  // BUG: pushPending — when the LAYER READ (readLayer, which runs first on every
+  // Was a bug until 2026-11-14: pushPending — when the LAYER READ (readLayer, which runs first on every
   // tick) answers 498 / 499 "Invalid token", the batch is left pending but the
   // cached token is NOT forgotten (clearArcgisTokenCache is only called in the
   // per-batch catch). Every following tick re-reads the layer with the same
   // dead cached token and stops there, so write-back stalls until the token's
   // natural expiry (up to TOKEN_LIFETIME_MIN = 120 min). Right: a 498 / 499 at
   // the layer read clears the cache exactly as one at applyEdits does.
-  it.fails("an expired token on the layer read also forgets the cached token", async () => {
+  it("an expired token on the layer read also forgets the cached token", async () => {
     stubQueue([run("r1")]);
     h.arcgisRequest.mockRejectedValue(new ArcgisError("Invalid token", 498));
     expect(await syncWriteBack()).toEqual({ sent: 0, deleted: 0, failed: 0 });

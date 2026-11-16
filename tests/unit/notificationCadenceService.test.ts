@@ -163,12 +163,12 @@ describe("resolveScopeCadence", () => {
     expect(out).toMatchObject({ mode: 300, min: 300, max: 300 });
   });
 
-  // BUG: a device whose settings fail to resolve "contributes nothing rather
+  // Was a bug until 2026-11-14: a device whose settings fail to resolve "contributes nothing rather
   // than a guess — the caption says how many devices it is speaking for"
   // (the catch block's own comment), yet assetCount is assets.length. Input:
   // two matched devices, one resolver failure. Actual assetCount 2 (the caption
   // claims both); expected 1 (the device the interval actually speaks for).
-  it.fails("counts only the devices the reported interval speaks for", async () => {
+  it("counts only the devices the reported interval speaks for", async () => {
     mocks.loadScopeAssetIds.mockResolvedValue(["a1", "a2"]);
     stubbed(prisma.asset.findMany).mockResolvedValue([asset("a1"), asset("a2")]);
     mocks.resolveMonitorSettings.mockResolvedValueOnce(SETTINGS).mockRejectedValueOnce(new Error("bad"));

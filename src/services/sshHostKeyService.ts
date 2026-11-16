@@ -144,15 +144,23 @@ export async function verifyOrPin(host: string, port: number, key: Buffer): Prom
     const keyType = keyTypeFromBlob(key);
     try {
       await prisma.sshHostKey.create({ data: { host, port, keyType, fingerprint: actual } });
-    } catch {
+    } catch (err) {
       // Concurrent first-connects race on the unique index. Re-read: whoever
       // won still has to agree with us, or this is a genuine mismatch.
       const raced = await prisma.sshHostKey.findUnique({ where: { host_port: { host, port } } });
-      if (raced && raced.fingerprint !== actual) {
-        pinCache.set(ck, raced.fingerprint);
+      if (!raced) {
+        // Not a lost race — nothing was stored. Fail closed (the caller's
+        // verifier refuses on a throw) rather than claim a pin that does not
+        // exist; until 2026-11-14 this returned "pinned" and wrote the Event.
+        throw err;
+      }
+      pinCache.set(ck, raced.fingerprint);
+      if (raced.fingerprint !== actual) {
         await reportMismatch(host, port, raced.fingerprint, actual);
         return { ok: false, outcome: "mismatch", expected: raced.fingerprint, actual };
       }
+      // The winner pinned the same key and wrote the "pinned" Event.
+      return { ok: true, outcome: "matched" };
     }
     pinCache.set(ck, actual);
     await logEvent({

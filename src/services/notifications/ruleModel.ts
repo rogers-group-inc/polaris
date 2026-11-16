@@ -77,7 +77,13 @@ export function fireLookbackMsFor(trigger: LookbackTrigger): number {
     return Math.max(base, Math.min(span * COUNT_WINDOW_LOOKBACK_FACTOR, HOLD_LOOKBACK_CAP_MS));
   }
   if (!triggerHoldPolls(trigger)) return base;
-  return Math.max(base, Math.min((trigger.forDurationSec ?? 0) * 2000, HOLD_LOOKBACK_CAP_MS));
+  // A count with no wall-clock mirror (API-authored `forPolls` alone) gets the
+  // cap rather than a guess, as the count window and withRecoveryLookback do —
+  // until 2026-11-14 it got the 15-min floor, which on a one-minute cadence
+  // can never hold 30 readings, so the hold never fired.
+  const mirror = trigger.forDurationSec ?? 0;
+  if (mirror <= 0) return HOLD_LOOKBACK_CAP_MS;
+  return Math.max(base, Math.min(mirror * 2000, HOLD_LOOKBACK_CAP_MS));
 }
 
 /**

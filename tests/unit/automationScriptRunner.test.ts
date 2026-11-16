@@ -445,7 +445,7 @@ describe("runPendingServerScripts", () => {
     expect(await runPendingServerScripts()).toEqual({ started: 2, completed: 2 });
   });
 
-  // BUG: the claim's comment and the touches invariant say "updateMany with a
+  // Was a bug until 2026-11-14: the claim's comment and the touches invariant say "updateMany with a
   // status re-check so concurrent processes can't double-run", but the claimed
   // set is re-read as `{ id in ids, status: "running" }` — which also matches a
   // row ANOTHER process claimed between this tick's candidate read and its
@@ -454,7 +454,7 @@ describe("runPendingServerScripts", () => {
   // claims 0 rows, yet it executes p1 anyway (started 1, a second execFile).
   // Expected: started 0 and no execution — only rows this tick's own updateMany
   // flipped may run.
-  it.fails("never executes a run a concurrent runner claimed first", async () => {
+  it("never executes a run a concurrent runner claimed first", async () => {
     rows = [pending("p1")];
     afterCandidates = () => { Object.assign(rows[0]!, { status: "running", startedAt: new Date(clock - 500) }); };
     const out = await runPendingServerScripts();

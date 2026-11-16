@@ -153,13 +153,13 @@ describe("uploadIcon — raster images", () => {
     await expect(uploadIcon(input({ data: Buffer.concat([at, Buffer.alloc(1)]) }))).rejects.toThrow(/Icon too large \(262145 bytes; max 262144 for raster\)/);
   });
 
-  // BUG: detectMagicMime checks only "RIFF" for image/webp (MAGIC_BYTES), although
+  // Was a bug until 2026-11-14: detectMagicMime checks only "RIFF" for image/webp (MAGIC_BYTES), although
   // its own comment says the signature is "RIFF....WEBP" and the contract says
   // a raster "requires magic-byte prefix matching declared mimeType". Input: a
   // RIFF WAVE (or AVI) file declared image/webp. Wrong: accepted and stored as
   // an icon. Right: 400 "doesn't look like a valid PNG / JPEG / WebP image" —
   // bytes 8..11 must read "WEBP".
-  it.fails("refuses a RIFF file that is not WebP (a WAV) declared as image/webp", async () => {
+  it("refuses a RIFF file that is not WebP (a WAV) declared as image/webp", async () => {
     await expect(uploadIcon(input({ mimeType: "image/webp", data: WAV }))).rejects.toMatchObject({ httpStatus: 400 });
     expect(prisma.deviceIcon.upsert).not.toHaveBeenCalled();
   });
