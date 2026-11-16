@@ -291,6 +291,21 @@ describe("sendM365Email", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a channel missing its client secret as a clear 400 before any request", async () => {
+    // Was a bug until 2026-11-16: an empty secret went to Microsoft and came back as an opaque token error.
+    await expect(sendM365Email(m365({ clientSecret: "" }), msg())).rejects.toMatchObject({
+      httpStatus: 400, message: "Microsoft 365 channel is missing its client secret",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a 200 token response that is not JSON as a 502, not a raw SyntaxError", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("<html>proxy login</html>", { status: 200 }));
+    await expect(sendM365Email(m365(), msg())).rejects.toMatchObject({
+      httpStatus: 502, message: "Microsoft 365 token response was not JSON",
+    });
+  });
+
   it("fetches a client-credentials token, then POSTs sendMail with it", async () => {
     fetchMock.mockResolvedValueOnce(okToken()).mockResolvedValueOnce(new Response(null, { status: 202 }));
     await sendM365Email(m365(), msg({ html: "<p>x</p>" }));

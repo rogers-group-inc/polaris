@@ -248,6 +248,14 @@ describe("requestScriptRun — server", () => {
     expect(stubbed(prisma.automationScriptRun.create).mock.calls[1]![0].data.timeoutSec).toBe(600);
   });
 
+  it("reads a timeout override of zero, below zero or non-finite as no override", async () => {
+    // Was a bug until 2026-11-16: `??` kept a 0 (or negative) override, queuing a zero-second run.
+    for (const [i, t] of [0, -10, Number.NaN].entries()) {
+      await requestScriptRun({ ...req, timeoutSec: t });
+      expect(stubbed(prisma.automationScriptRun.create).mock.calls[i]![0].data.timeoutSec).toBe(STORED.timeoutSec);
+    }
+  });
+
   it("refuses a disabled script with 409 and a target mismatch with 400, creating nothing", async () => {
     stubbed(prisma.automationScript.findUnique).mockResolvedValue({ ...STORED, enabled: false });
     await rejects(requestScriptRun(req), 409, /is disabled/);
@@ -323,6 +331,15 @@ describe("getRun / listRuns / pruneOldRuns", () => {
     });
     await listRuns({ limit: 7 });
     expect(stubbed(prisma.automationScriptRun.findMany).mock.calls[2]![0].take).toBe(7);
+  });
+
+  it("listRuns clamps a negative limit to 1 and reads a non-finite one as the default", async () => {
+    // Was a bug until 2026-11-16: a negative or NaN limit reached Prisma as `take` unchanged.
+    stubbed(prisma.automationScriptRun.findMany).mockResolvedValue([]);
+    await listRuns({ limit: -5 });
+    expect(stubbed(prisma.automationScriptRun.findMany).mock.calls[0]![0].take).toBe(1);
+    await listRuns({ limit: Number.NaN });
+    expect(stubbed(prisma.automationScriptRun.findMany).mock.calls[1]![0].take).toBe(100);
   });
 
   it("pruneOldRuns deletes only FINISHED runs older than 90 days and returns the count", async () => {

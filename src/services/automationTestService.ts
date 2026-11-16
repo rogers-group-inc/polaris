@@ -78,7 +78,8 @@ export interface SkippedAction {
 
 export interface TestDeliveryResult {
   ok: boolean;
-  notificationId: string;
+  /** Null when nothing was created: the addressed action is one a test never runs. */
+  notificationId: string | null;
   message: string;
   deliveries: Array<{ transport: string; target: string; status: string; error: string | null }>;
   skipped: SkippedAction[];
@@ -184,6 +185,34 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
   const speaksForSuppressed = !!rule.trigger && ruleAlertsWhenDependencyDown(rule.trigger as never);
   const sampleDependency = { upstream: SAMPLE_UPSTREAM_HOSTNAME, rootCause: null, reason: "down" as const };
 
+  // Resolve (and validate) the addressed action BEFORE creating the test
+  // alert: a refused path (400) or an action a test never runs must not leave
+  // an orphan Notification row behind.
+  let selected: { actions: AutomationAction[]; skipped: SkippedAction[] } | null = null;
+  if (args.target !== "event") {
+    selected = selectTestActions(rule, args.path, actorUserId);
+    if (selected.actions.length === 0) {
+      const reason = selected.skipped[0]?.reason ?? "Nothing to deliver for that action";
+      await logEvent({
+        action: "automation.test_delivery",
+        resourceType: "automation",
+        resourceName: rule.name,
+        actor: actorUsername,
+        level: "info",
+        message: `Delivery test for "${rule.name}": nothing delivered — ${reason}`,
+        details: { rows: 0, sent: 0, failed: 0, skipped: selected.skipped, ackLinks: false },
+      });
+      return {
+        ok: false,
+        notificationId: null,
+        message: reason,
+        deliveries: [],
+        skipped: selected.skipped,
+        ackLinks: { enabled: false },
+      };
+    }
+  }
+
   const notif = await prisma.notification.create({
     data: {
       // ALWAYS null — see the header. A real ruleId would enlist this alert in
@@ -240,17 +269,7 @@ export async function runTestDelivery(args: RunTestArgs): Promise<TestDeliveryRe
     };
   }
 
-  const { actions, skipped } = selectTestActions(rule, args.path, actorUserId);
-  if (actions.length === 0) {
-    return {
-      ok: false,
-      notificationId: notif.id,
-      message: skipped[0]?.reason ?? "Nothing to deliver for that action",
-      deliveries: [],
-      skipped,
-      ackLinks: { enabled: false },
-    };
-  }
+  const { actions, skipped } = selected!;
 
   const ctx = buildTemplateContext({
     asset: SAMPLE_ALERT_HOSTNAME,

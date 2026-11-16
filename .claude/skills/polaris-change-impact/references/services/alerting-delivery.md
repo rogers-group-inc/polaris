@@ -32,14 +32,15 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 
 **Public API:** `listScripts`/`getScript`/`createScript`/`updateScript`/`deleteScript`, `requestScriptRun` (validates exists + enabled + runTarget-compatible; agent runs additionally preflight the TRIGGERING asset's ManagedAgent — installed + active + agentVersion ≥ MIN_AGENT_SCRIPT_VERSION (0.13.0) — BEFORE creating the run, then enqueue the run_script AgentCommand with the sha256-carrying payload and link agentCommandId), `listRuns`, `pruneOldRuns` (90d), `sha256Hex`, `versionAtLeast`/`MIN_AGENT_SCRIPT_VERSION`, `SCRIPT_RUN_TARGET_VALUES`/`MAX_SCRIPT_BODY_BYTES`/`MAX_SCRIPT_TIMEOUT_SEC`.
 
-**Cross-service deps:** `prisma` (AutomationScript/AutomationScriptRun/NotificationRule), `eventLogService.logEvent`, `notificationTypes` (SCRIPT_INTERPRETERS + normalizeRuleToV2 for the delete-referenced scan).
+**Cross-service deps:** `prisma` (AutomationScript/AutomationScriptRun/NotificationRule), `eventLogService.logEvent`, `notificationTypes` (SCRIPT_INTERPRETERS), `actionReferenceService.scriptReferrers` + `summarizeReferrers` (the delete-referenced scan, rule 167).
 
 **Used by:** `src/api/routes/automationScripts.ts` (CRUD + test-run), `automationActionService` (script arm → requestScriptRun), `automationScriptRunner` (pruneOldRuns).
 
 **Invariants:**
 - sha256 recomputed on EVERY save — it's what agents verify before executing; never accept a client-supplied hash.
 - Creation is a warning Event; a body change is a warning Event carrying old+new sha256 — script tampering must be visible in the audit trail/syslog.
-- Delete refuses (friendly 409) while any automation's actions or escalation tiers reference the script (scan goes through `normalizeRuleToV2`, so legacy-shaped rows count too).
+- Delete refuses (friendly 409) while any automation or alert group names the script in ANY action location — fire actions, rule-level and per-action tiers, severity bands, all-clear and reset actions (business rule 167). The scan is `actionReferenceService.scriptReferrers`, the one walker every registry delete guard shares; the 409 names the referrers via `summarizeReferrers`.
+- `requestScriptRun`'s action timeout override counts only when it is a finite number > 0; 0, negative or non-finite falls back to the script's own `timeoutSec` (then capped at `MAX_SCRIPT_TIMEOUT_SEC`). `listRuns`' `limit` is clamped to 1..500, absent or non-finite → 100.
 - Run rows snapshot scriptName + sha256 so history survives script deletion; `notificationId` carries NO FK (alert lifecycle is independent).
 
 **When changing this:** New interpreter → `SCRIPT_INTERPRETERS` in notificationTypes + `interpreterArgv`/extension in automationScriptRunner + the Go agent's scriptexec mirror. Ask of any new interpreter whether it receives an argv or re-parses a command line — the second kind needs its own escaping, as `cmd` does. Never widen who can call these paths without revisiting the RBAC posture in permissions.ts.
@@ -52,7 +53,7 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 
 **Public API:** `runPendingServerScripts()` (the job tick), `executeServerScript(run)` (exported for tests), `buildScriptEnv(base, context)` (pure — the secret-stripped child environment), `buildCmdCommandLine(scriptPath, args)` (pure — the cmd.exe escaping, returns null when the args cannot be represented; both unit-tested in tests/unit/automationScripts.test.ts).
 
-**Cross-service deps:** `prisma`, `eventLogService.logEvent`, `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 155 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
+**Cross-service deps:** `prisma`, `eventLogService.logEvent` + `logEventsBatch`, `automationScriptService.pruneOldRuns`, `agentCommandService.expireStaleAgentCommands` + `pruneOldAgentCommands` (rule 155 — `sweepAgentQueue`, first thing each tick but at most once a minute; a failure is logged and never stops server scripts), `src/utils/paths.ts` (STATE_DIR → data/automation-scripts-tmp).
 
 **Used by:** `src/jobs/runAutomationScripts.ts`.
 
@@ -66,6 +67,7 @@ Also `brokenReferencesByRule(rules)` / `withBrokenReferences(rules)` (rule 177):
 - The child environment is `process.env` MINUS secret-shaped keys (`buildScriptEnv`, denylist `/SECRET|TOKEN|PASSWORD|PASSWD|DATABASE_URL|SESSION|CREDENTIAL|PRIVATE_KEY|_KEY$/i`), plus the alert context. This is not a privilege boundary — authoring a script already requires an RCE-equivalent permission — it exists because **stdout is stored on the run row and rendered in the Scripts tab**, so before the scrub a one-line `env` copied DATABASE_URL and POLARIS_SECRET_KEY into a displayed, backed-up, unencrypted column. Denylist not allowlist so PATH/HOME/proxy/locale stay inherited and existing scripts keep working; widening it is a compatibility decision, not just a security one.
 - Body goes to a 0600 temp file under the state dir and is ALWAYS unlinked (finally); stdout/stderr capped at 64 KB (a maxBuffer kill classifies as failure, not timeout); SIGKILL on timeout.
 - Claim via updateMany with a status re-check so concurrent processes can't double-run; the stuck sweep only flips rows past timeout+60s grace.
+- **2026-11-16:** the stuck sweep's flip is a conditional `updateMany({ id, status: "running" })` too — a row that settled after the read matches nothing and is skipped (the old guarded `update` threw P2025 and aborted the whole tick) — and every run it flips gets its `automation.script.run` Event (warning, `details.swept: true`), written in one `logEventsBatch`. A throw out of `executeServerScript` (the script lookup rejecting) is recorded as THAT run failing with the error as stderr; it never rejects the chunk and strands the other claimed runs in "running".
 
 **When changing this:** Anything touching the execution model (interpreters, env, caps, temp-file handling) is security-sensitive — human review required before production; keep the Go agent's scriptexec semantics in lockstep (same caps, same hash-verify posture).
 
