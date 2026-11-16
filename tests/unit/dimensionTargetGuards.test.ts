@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({
   rules: [] as Array<Record<string, unknown>>,
   checks: [] as string[],
+  disabledChecks: [] as string[],
   widgets: [] as string[],
   calls: [] as string[],
 }));
@@ -21,9 +22,12 @@ vi.mock("../../src/db.js", () => ({
     notificationRule: { findMany: vi.fn(async () => h.rules) },
     alertGroup: { findMany: vi.fn(async () => []) },
     pathCheck: {
-      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] }; enabled?: boolean } }) => {
         h.calls.push("pathCheck");
-        return where.id.in.filter((id) => h.checks.includes(id)).map((id) => ({ id }));
+        return where.id.in
+          .filter((id) => h.checks.includes(id))
+          .filter((id) => where.enabled !== true || !h.disabledChecks.includes(id))
+          .map((id) => ({ id }));
       }),
     },
     manufacturerCustomWidget: {
@@ -44,6 +48,7 @@ const rule = (name: string, trigger: unknown, reset: unknown = null) => ({ name,
 beforeEach(() => {
   h.rules = [];
   h.checks = [];
+  h.disabledChecks = [];
   h.widgets = [];
   h.calls = [];
 });
@@ -95,6 +100,13 @@ describe("rule 167(a): deletedTargetGone", () => {
     const gone = await deletedTargetGone(dbRule(leaf({})), [st("s1", "c-live"), st("s2", "c-dead"), st("s3", "c-dead", "")]);
     expect([...gone].sort()).toEqual(["s2", "s3"]);
     expect(h.calls).toEqual(["pathCheck"]);
+  });
+
+  it("rule 167(b): retires a row whose path check is disabled, as if it were deleted", async () => {
+    h.checks = ["c-on", "c-off"];
+    h.disabledChecks = ["c-off"];
+    const gone = await deletedTargetGone(dbRule(leaf({})), [st("s1", "c-on"), st("s2", "c-off"), st("s3", "c-off", "")]);
+    expect([...gone].sort()).toEqual(["s2", "s3"]);
   });
 
   it("reads a state probe's id off the front of its `<probe>|<row>` key", async () => {

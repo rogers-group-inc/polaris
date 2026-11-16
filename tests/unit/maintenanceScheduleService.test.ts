@@ -77,7 +77,7 @@ const h = vi.hoisted(() => {
     windows: [] as FakeWindow[],
     schedules: [] as FakeSchedule[],
     holds: [] as FakeHold[],
-    checks: [] as Array<{ id: string; name: string }>,
+    checks: [] as Array<{ id: string; name: string; enabled?: boolean }>,
     checkWindows: [] as FakeCheckWindow[],
   };
   function checkWindowMatches(w: FakeCheckWindow, where: any): boolean {
@@ -92,6 +92,7 @@ const h = vi.hoisted(() => {
     if (where.pathCheckId?.in && !where.pathCheckId.in.includes(w.pathCheckId)) return false;
     if (where.scheduleId?.in && !(w.scheduleId && where.scheduleId.in.includes(w.scheduleId))) return false;
     if (where.endReason && w.endReason !== where.endReason) return false;
+    if (where.pathCheck?.enabled === true && db.checks.find((c) => c.id === w.pathCheckId)?.enabled === false) return false;
     return true;
   }
   let seq = 1;
@@ -1181,6 +1182,15 @@ describe("path-check maintenance (business rule 135)", () => {
       expect.arrayContaining([expect.objectContaining({ action: "path_check.maintenance_entered", resourceId: "c1", resourceType: "path-check" })]),
     );
     expect(vi.mocked(publishConfigRefresh)).toHaveBeenCalled();
+    expect(await pathCheckIdsInMaintenance()).toEqual(new Set(["c1"]));
+  });
+
+  it("rule 167(b): a disabled check in an open window is not held — its alerts are retired, not frozen", async () => {
+    h.db.checks.push({ id: "c1", name: "Intranet" }, { id: "c2", name: "Portal" });
+    h.db.schedules.push(pathSchedule("s1", ACTIVE_ONESHOT, ["c1", "c2"]));
+    await reconcileMaintenance();
+    expect(await pathCheckIdsInMaintenance()).toEqual(new Set(["c1", "c2"]));
+    h.db.checks.find((c) => c.id === "c2")!.enabled = false;
     expect(await pathCheckIdsInMaintenance()).toEqual(new Set(["c1"]));
   });
 

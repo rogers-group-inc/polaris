@@ -45,3 +45,15 @@ The second cannot be closed by the guard alone: an automation that covers every 
 **What it does not do.** A widget whose TYPE is edited (a state probe turned into a gauge) keeps its id and is not caught. A composite automation's states are not keyed by a check or widget id, so the sweep does not look at them. The path-change trigger is left out for the same reason of caution: only the three metrics whose key is known to be the object's id are read.
 
 Pinned by `tests/unit/dimensionTargetGuards.test.ts` and the "167(a)" cases in `tests/integration/deleteGuards.test.ts`.
+
+### Rule 167(b) — a disabled path check is gone too
+
+**How it was found.** Operator report, 2026-11-16: disabling a path check left its alerts open. The vanished sweep already cleared a disabled check's row when the same host still reported OTHER checks for the rule, but a host (or the Polaris server) whose only check was the disabled one reported nothing, so the row parked — exactly the 167(a) hole, reached by a disable instead of a delete. A disabled check that was also inside a rule-135 maintenance window was worse: `pathHeld` marked its rows seen and froze them for the length of the window.
+
+**The decision.** A disable is a configuration edge like a delete, so it takes the same answer. `deletedTargetGone` asks for `enabled` checks only, and `pathCheckIdsInMaintenance` lists only windows on enabled checks — a disabled check is off, not held. The rows retire through the ordinary out-of-scope path on the next engine pass, with the usual `notification.out_of_scope` Event and no reset actions. Re-enabling starts the check with no state, like a new one.
+
+**Rejected.** Clearing the alerts synchronously inside `setCheckEnabled` / `updateCheck`: it would duplicate the engine's clear path (grouped alerts, Events, state rows) in a second place, for a gain of under a minute.
+
+**Scale.** No new query: the existing indexed read gains a column predicate, and the maintenance read gains a join to `PathCheck` on its primary key over the handful of open windows.
+
+Pinned by the "167(b)" cases in `tests/unit/dimensionTargetGuards.test.ts` and `tests/unit/maintenanceScheduleService.test.ts`.
