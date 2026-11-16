@@ -238,6 +238,34 @@ d("topology views", () => {
     await waitForEventCount("map.topology.cad_imported", 1);
   });
 
+  it("rule 191: moving the site re-centres its map views and clears what was placed on them", async () => {
+    const { agent, csrf } = await authedAgent(app);
+    await prisma.asset.update({ where: { id: fgId }, data: { latitude: 37.79, longitude: -84.6 } });
+    const created = await agent.post(`/api/v1/map/sites/${fgId}/topology/views`).set("X-CSRF-Token", csrf)
+      .send({ name: "Site move", mode: "topology" });
+    const viewId = created.body.id;
+    await agent.put(`/api/v1/map/sites/${fgId}/topology/views/${viewId}`).set("X-CSRF-Token", csrf).send({
+      background: { kind: "osm", center: [37.79, -84.6], zoom: 17, layer: "map" },
+      polygons: [{ id: "p1", codes: { building: "Shop" }, points: [[0, 0], [1, 0], [1, 1]] }],
+      layers: [{ level: -1, name: "Level 1", background: null }],
+    });
+    await agent.put(`/api/v1/map/sites/${fgId}/topology/layout`).set("X-CSRF-Token", csrf)
+      .send({ view: `v:${viewId}|topo`, positions: { [fgId]: { x: -84.6, y: 37.79 } } });
+
+    const impact = await agent.get(`/api/v1/map/sites/${fgId}/topology/move-impact`);
+    expect(impact.body).toMatchObject({ polygons: 1, placements: 1 });
+
+    const moved = await agent.put(`/api/v1/assets/${fgId}`).set("X-CSRF-Token", csrf).send({ latitude: 38.27, longitude: -85.5 });
+    expect(moved.status).toBe(200);
+    const v = (await agent.get(`/api/v1/map/sites/${fgId}/topology/views`)).body.find((x: { id: string }) => x.id === viewId);
+    expect(v.background.center).toEqual([38.27, -85.5]);
+    expect(v.polygons).toEqual([]);
+    expect(v.layers).toEqual([{ level: -1, name: "Level 1", background: null }]);
+    const after = await agent.get(`/api/v1/map/sites/${fgId}/topology/move-impact`);
+    expect(after.body).toMatchObject({ plans: 0, placements: 0, polygons: 0 });
+    await waitForEventCount("map.topology.views_reset_for_site_move", 1);
+  });
+
   it("a mode change resets the view: layouts, image, polygons gone, an empty room, Event written", async () => {
     const { agent, csrf } = await authedAgent(app);
     const views = (await agent.get(`/api/v1/map/sites/${fgId}/topology/views`)).body;

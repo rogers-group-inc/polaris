@@ -22,6 +22,7 @@ import {
   sanitizeLayers,
   sanitizeRegion,
   sanitizeCableRoutes,
+  siteMoved,
   MAX_RACK_UNITS,
   MAX_VIEW_NAME_LEN,
   type TopologyRack,
@@ -286,5 +287,15 @@ describe("rule 179: cable managers, items beside a rack, cable routes", () => {
     expect(status(() => sanitizeCableRoutes({ k: { bends: [[0, "1"]], sig: "" } }))).toBe(400);
     expect(status(() => sanitizeCableRoutes({ k: { bends: [], s: { side: "left", f: 2 }, sig: "" } }))).toBe(400);
     expect(status(() => sanitizeCableRoutes({ k: { bends: [] } }))).toBe(400);
+  });
+});
+
+describe("rule 191: siteMoved", () => {
+  it("is a real change of a site that already had a location", () => {
+    expect(siteMoved({ latitude: 37.79, longitude: -84.6 }, { latitude: 38.27, longitude: -85.5 })).toBe(true);
+    expect(siteMoved({ latitude: 37.79, longitude: -84.6 }, { latitude: 37.79, longitude: -84.6 })).toBe(false);
+    expect(siteMoved({ latitude: 37.79, longitude: -84.6 }, { latitude: 37.7900000001, longitude: -84.6 })).toBe(false);
+    expect(siteMoved({ latitude: null, longitude: null }, { latitude: 38.27, longitude: -85.5 })).toBe(false);
+    expect(siteMoved({ latitude: 37.79, longitude: -84.6 }, { latitude: null, longitude: null })).toBe(false);
   });
 });

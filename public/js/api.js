@@ -1904,6 +1904,7 @@ const api = {
     saveCableRunLinks:  (id, links)        => request("PUT",    `/map/sites/${id}/cable-run-links`, { links }),
     deleteTopologyView: (id, viewId)       => request("DELETE", `/map/sites/${id}/topology/views/${viewId}`),
     topologyViewModeChange: (id, viewId)   => request("GET",    `/map/sites/${id}/topology/views/${viewId}/mode-change`),
+    topologyMoveImpact:     (id)           => request("GET",    `/map/sites/${id}/topology/move-impact`),
     topologyBackgroundUrl:  (id, imageId)  => `${API_BASE}/map/sites/${id}/topology/background/${imageId}`,
     uploadTopologyBackground: (id, viewId, file) => {
       const formData = new FormData();

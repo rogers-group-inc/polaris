@@ -966,15 +966,6 @@
   padding: 1px 8px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 600;
   background: var(--color-surface); color: var(--color-text-primary);
 }
-.topo-floor-center {
-  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
-  z-index: 700; pointer-events: none;
-  background:
-    linear-gradient(var(--color-accent), var(--color-accent)) center / 2px 100% no-repeat,
-    linear-gradient(var(--color-accent), var(--color-accent)) center / 100% 2px no-repeat;
-  border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45); opacity: 0.85;
-}
-.topo-floor-center[hidden] { display: none; }
 .topo-plan-bar {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 800;
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; max-width: calc(100% - 24px); flex-wrap: wrap;

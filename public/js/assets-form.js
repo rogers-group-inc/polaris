@@ -1737,6 +1737,23 @@ async function openEditModal(id, opts) {
           var pinNotice = await _fetchDecommissionPinNotice([id]);
           if (pinNotice && !(await showConfirm("Decommission " + (asset.hostname ? '"' + asset.hostname + '"' : "this asset") + "?\n\n" + pinNotice))) return;
         }
+        // Rule 191: moving a site resets what was placed on its map-based Topology views.
+        if (asset.assetType === "firewall" && asset.latitude != null && asset.longitude != null &&
+            typeof formData.latitude === "number" && typeof formData.longitude === "number" &&
+            (Math.abs(formData.latitude - asset.latitude) > 1e-6 || Math.abs(formData.longitude - asset.longitude) > 1e-6)) {
+          var imp = null;
+          try { imp = await api.map.topologyMoveImpact(id); } catch (_) { imp = null; }
+          if (imp && imp.views && (imp.plans || imp.placements || imp.polygons)) {
+            var parts = [];
+            if (imp.plans) parts.push(imp.plans + " floor plan" + (imp.plans === 1 ? "" : "s"));
+            if (imp.placements) parts.push(imp.placements + " placed device" + (imp.placements === 1 ? "" : "s"));
+            if (imp.polygons) parts.push(imp.polygons + " polygon" + (imp.polygons === 1 ? "" : "s"));
+            var msg = "Moving this site resets its " + imp.views + " Topology view" + (imp.views === 1 ? "" : "s") +
+              ": they re-centre on the new location and " + parts.join(", ") + " will be cleared, since they sit at the old one. " +
+              "Floors and descriptions are kept; you will need to place the floor plans and devices again. Continue?";
+            if (!(await showConfirm(msg))) return;
+          }
+        }
         var updated = await api.assets.update(id, formData);
         // Rule 150: a description naming a new room / rack / junction box
         // offers a Wall or Rack view for it (after the save, never blocking it).

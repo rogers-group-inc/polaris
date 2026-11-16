@@ -3845,3 +3845,12 @@ subject, text and attachments; it can never change who receives them. The pass e
 works only from the Polaris server itself, and nothing about it is stored in the script or on
 disk. Every email is recorded in Events. A test run from the Scripts tab can send email too, but
 only to you. See [Automation scripts](Automation-Scripts#sending-email-through-polaris).
+
+### Rule 191
+
+**Moving a site resets its map-based Topology views.** When a FortiGate's latitude and
+longitude change — edited on the asset, or from FortiManager / FortiGate — its Topology
+views on the map re-centre on the new location, and the floor plans, placed devices and
+polygons on every floor are cleared, because they sit at the old spot. The floors and
+their names stay, and descriptions are untouched; you place the floor plans and devices
+again. Editing the location shows what will be cleared before it saves.

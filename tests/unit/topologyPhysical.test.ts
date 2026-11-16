@@ -94,11 +94,11 @@ describe("stacked floors (rule 152(a))", () => {
   });
   it("fades floors above, hides floors below, and scales by 25 % a floor", () => {
     expect(P._floorLook(0)).toEqual({ opacity: 1, scale: 1 });
-    expect(P._floorLook(1)).toEqual({ opacity: 0.1, scale: 1.25 });
-    expect(P._floorLook(2).opacity).toBe(0.02);
-    expect(P._floorLook(2).scale).toBeCloseTo(1.5625, 6);
+    // No zoom between floors (operator decision 2026-11-16).
+    expect(P._floorLook(1)).toEqual({ opacity: 0.05, scale: 1 });
+    expect(P._floorLook(2)).toEqual({ opacity: 0.02, scale: 1 });
     expect(P._floorLook(3).opacity).toBe(0);
-    expect(P._floorLook(-1)).toEqual({ opacity: 0, scale: 0.75 });
+    expect(P._floorLook(-1)).toEqual({ opacity: 0, scale: 1 });
   });
   it("fades a link between floors from one end's opacity to the other's", () => {
     const steps = P._fadeSteps(1, 0.1, 4);
