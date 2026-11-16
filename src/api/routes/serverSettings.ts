@@ -511,7 +511,7 @@ router.get("/certificates", async (_req, res, next) => {
 
 // Server-leaf cert mutations are always rejected — nginx owns TLS for the
 // life of the install. CA records (category="ca") stay editable because
-// outbound TLS to integrations (LDAP, SMTP) still depends on them. The 409
+// every role's outbound TLS trusts them (business rule 189). The 409
 // message is the actionable guidance for an operator who landed here.
 const SERVER_CERT_EXTERNAL_MESSAGE =
   "Polaris is fronted by an external proxy; manage the server cert via POLARIS_PROXY_CERT_PATH";
@@ -530,7 +530,7 @@ router.post("/certificates", requirePermission("serverSettingsSystem", "write"),
     // The filename is the record's display name and is chosen by the uploader, so
     // control characters come out of it (scan finding F167; business rule 109).
     const certName = stripControlChars(req.file.originalname) || "certificate";
-    const record = await addCertificate(category as any, certName, pem);
+    const record = await addCertificate(category as any, certName, pem, requestActor(req));
     res.status(201).json({ ...record, pem: undefined });
   } catch (err) {
     next(err);
@@ -545,7 +545,7 @@ router.delete("/certificates/:id", requirePermission("serverSettingsSystem", "wr
     if (target && target.category === "server") {
       return res.status(409).json({ error: SERVER_CERT_EXTERNAL_MESSAGE });
     }
-    await deleteCertificate(certId);
+    await deleteCertificate(certId, requestActor(req));
     res.status(204).end();
   } catch (err) {
     next(err);

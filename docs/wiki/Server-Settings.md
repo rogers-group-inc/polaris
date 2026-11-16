@@ -476,9 +476,20 @@ are reloaded. See [Primary IPv6](Assets#primary-ipv6).
 
 ### Trusted Certificate Authorities
 
-Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris uses to verify
-remote servers — integrations, syslog and archive targets. With none uploaded
-it uses the system trust store.
+Upload `.pem` / `.crt` / `.cer` / `.der` CA certificates Polaris should trust
+when it checks a server's TLS certificate — on top of the built-in trusted
+authorities, never instead of them ([rule 189](Business-Rules#rule-189)). They
+apply to every connection that verifies its server: integrations (FortiManager,
+FortiGate, vCenter, Proxmox, TrueNAS, Unraid, LDAPS, the Generic API, the AI
+assistant), syslog over TLS, email and sign-in providers. This is how you let
+Polaris verify a server whose certificate your internal CA signed, instead of
+turning verification off. A connection with verification switched off is not
+affected. Every Polaris process picks up an upload or removal within about 30
+seconds; connections already open keep their trust until they reconnect.
+Adding or removing a CA writes an Event.
+
+The SFTP / SCP event archive is not affected: it connects over SSH, which trusts
+a server by its pinned host key, not by a certificate authority.
 
 ### Server Timezone
 
