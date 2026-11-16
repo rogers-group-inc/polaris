@@ -244,14 +244,11 @@ function _satelliteSettingsCardHtml(s) {
           'The ArcGIS integration <strong>' + escapeHtml(s.overriddenBy) + '</strong> supplies the satellite imagery while its basemap is on, so these settings are not used. ' +
           'They apply again if that basemap is turned off (Integrations → ' + escapeHtml(s.overriddenBy) + ' → Edit → Basemap).')
       : '') +
-    '<label style="display:flex;align-items:flex-start;gap:0.5rem;margin-bottom:0.8rem">' +
-      '<input type="checkbox" id="f-sat-enabled"' + (s.enabled ? ' checked' : '') + ' style="margin-top:0.2rem">' +
-      '<span><strong>Offer satellite imagery</strong></span>' +
-    '</label>' +
     '<div class="form-group"><label for="f-sat-url">Tile URL</label>' +
       '<input id="f-sat-url" type="text" maxlength="500" spellcheck="false" value="' + escapeHtml(s.urlTemplate || "") + '" placeholder="https://…/{z}/{y}/{x}?token={key}">' +
       '<p class="hint">An https address with <code>{z}</code>, <code>{x}</code> and <code>{y}</code>, in the order your provider uses. ' +
-      'Write <code>{key}</code> where the API key goes rather than pasting the key into the URL.</p></div>' +
+      'Write <code>{key}</code> where the API key goes rather than pasting the key into the URL. ' +
+      'Satellite imagery is offered while a tile URL is saved; clear it and save to turn it off.</p></div>' +
     '<div class="form-group"><label for="f-sat-key">API key</label>' +
       '<div style="display:flex;gap:0.5rem">' +
         '<input id="f-sat-key" type="password" autocomplete="new-password" maxlength="2000" style="flex:1" placeholder="' + (s.apiTokenSet ? "Saved — leave blank to keep it" : "Optional") + '">' +
@@ -274,7 +271,6 @@ function _satelliteSettingsCardHtml(s) {
 
 function _satelliteFormValues() {
   var v = {
-    enabled: !!(document.getElementById("f-sat-enabled") || {}).checked,
     urlTemplate: (document.getElementById("f-sat-url") || {}).value || "",
     attribution: (document.getElementById("f-sat-attr") || {}).value || "",
     maxNativeZoom: Number((document.getElementById("f-sat-zoom") || {}).value || 19),

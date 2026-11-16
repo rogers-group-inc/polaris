@@ -67,6 +67,9 @@ describe("satellite settings", () => {
     expect((await getSatelliteStatus()).available).toBe(false);
     expect(parseSatelliteSettings("garbage")).toMatchObject({ enabled: false, maxNativeZoom: 19 });
     expect(parseSatelliteSettings({ enabled: "yes", maxNativeZoom: 99 })).toMatchObject({ enabled: false, maxNativeZoom: 19 });
+    // On exactly when a URL is stored; an old stored `enabled` is ignored either way.
+    expect(parseSatelliteSettings({ enabled: false, urlTemplate: "https://t.example.com/{z}/{x}/{y}" }).enabled).toBe(true);
+    expect(parseSatelliteSettings({ enabled: true, urlTemplate: "" }).enabled).toBe(false);
   });
 
   it("checks the URL template", () => {
@@ -91,12 +94,15 @@ describe("satellite settings", () => {
     expect(mergeSatelliteSettings(current, { ...on, urlTemplate: ESRI, apiToken: "" }).apiToken).toBe("");
   });
 
-  it("a switched-on source needs a working template and an attribution; a switched-off one may be blank", () => {
+  it("a saved URL turns it on and must work with an attribution; no URL is off and may be half filled in", () => {
     const blank = parseSatelliteSettings(undefined);
     expect(() => mergeSatelliteSettings(blank, { ...on, attribution: "" })).toThrow(/attribution/);
     expect(() => mergeSatelliteSettings(blank, { ...on, urlTemplate: "https://x/{z}" })).toThrow(/\{x\}/);
     expect(() => mergeSatelliteSettings(blank, { ...on, maxNativeZoom: 30 })).toThrow(/zoom/);
     expect(mergeSatelliteSettings(blank, { enabled: false, urlTemplate: "", attribution: "", maxNativeZoom: 19 }).enabled).toBe(false);
+    expect(mergeSatelliteSettings(blank, { urlTemplate: "", attribution: "", maxNativeZoom: 19 }).enabled).toBe(false);
+    // The old switch no longer decides: a URL is on even when `enabled: false` is sent.
+    expect(mergeSatelliteSettings(blank, { ...on, enabled: false }).enabled).toBe(true);
   });
 
   it("never returns the key, and audits a save without it", async () => {
