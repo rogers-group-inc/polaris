@@ -101,6 +101,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `api/routes/assets.ts` — `GET /assets/:id` (`addressConfidence: {[ip]: ConfidenceResult}`, full breakdown), the list enrichment behind `GET /assets` (compact `{score, band}` per address), `POST /assets/:id/address-check`; `primaryAddressService` (`unpinPrimaryAddress`'s pick, `releaseConfirmedPins`); `jobs/seedAddressPollingRuns.ts` (`seedPollingRuns`, one-shot at startup). The polling-run columns it reads are written by `monitoringService → recordProbeResult` (through `probePatchBuffer`) via `pollingRunStart`.
 
 **Invariants:**
+- **2026-11-14:** polling credit goes only to the current primary: `pollingHoursFor` returns 0 when `ipAddress` is given and differs from `ipConfirmedFor` (an agent-driven run never restarts, so the old address kept its credit after the primary moved).
 - Read only and informational: apart from `seedPollingRuns` (which only fills an EMPTY polling run from history), nothing here writes, alerts, gates an automation or refuses a pin / `PUT`. The browser asks before applying a candidate below `CONFIDENCE_WARN_BELOW` (50); the server never blocks.
 - Only the strongest piece of each evidence kind counts; `score` includes the operator kind, `evidenceScore` excludes it (the check endpoint judges a candidate on `evidenceScore`, so an operator's own pin cannot vouch for itself).
 - Batched: one call for N assets is a fixed handful of queries regardless of N — never per asset or per address.
@@ -774,6 +775,7 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 **Used by:** `src/api/routes/assets.ts — GET /api/v1/assets/:id/upstream` (gated `assets:read`, `includeFirewall` from `hasPermission(req, "assetsQuarantine", "read")`, `includeSubnetGate` from `hasPermission(req, "subnets", "read")` — two DIFFERENT grants, because the two answers come from two tables) and `services/assetDetailReadService.ts → connections` (the AI assistant's asset read, same two gates). `public/js/assets.js → _mountAssetViewAsyncSections` is the UI consumer.
 
 **Invariants:**
+- **2026-11-14 (CQ-T010 batch 8):** a firewall gets `{ switch: null, ap: null, firewall: null }` even when its own `lastSeenSwitch` / `lastSeenAp` are set; and a shared switch / AP name's scope (rule 91) puts the device's OWN controller first in `gateIds` (then the sighted gate, then the IPAM gate) — before, a controller-managed device's scope had no gates at all.
 - **A managed FortiSwitch / FortiAP is answered by its controller** (`assetType` `switch` / `access_point` with a `fortinetTopology.controllerSerial` / `controllerFortigate` stamp): resolved serial-first through `fortinetParentKey`, `source: "controller"`, no `lastSeen`. No sighting or IPAM query runs for it, and it needs no `assetsQuarantine` grant (the stamp is on the asset row), so `visibility.firewall` is true for it regardless. Why: sightings come only from DHCP bindings and are never pruned, so a statically-addressed AP under a replaced gate named the deleted gate forever while its Location already showed the new one.
 - **The sighting half names the newest sighting whose gate Polaris still holds** (`pickFirewallEntry`): walk newest first, stop at the first `fortigateDevice` that resolves to a non-`decommissioned` firewall Asset; none ⇒ the IPAM entry; no IPAM entry either ⇒ the newest name, unresolved (the pre-2026-11-04 answer, so an install whose gates are not Assets reads as before). A newer sighting still always outranks an older live one; an unresolved name is skipped only because the alternative is naming a gate that no longer exists. Scans at most `SIGHTING_SCAN_LIMIT` (50) rows — an asset carries one per gate × binding kind.
 - **Unresolved is a state, not an error** — `{name, asset: null}`. An unadopted switch, a gate another integration hasn't discovered yet and a decommissioned AP all land there legitimately, and the UI keeps rendering the name as plain text.
@@ -932,6 +934,7 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 **Used by:** `src/api/routes/assets.ts — GET /api/v1/assets/:id/connection-path`. Total 1 call site today.
 
 **Invariants:**
+- **2026-11-14:** a switch hop reached through the `fortinetTopology` fallback carries `uplinkInterface` like any other switch hop; an AP whose `parentSwitch` names no switch Polaris holds falls through to its controller instead of ending the path.
 - Firewall start short-circuits: `hops = [self]`, `siteId = self.id`, `alternateUplinks = 0`.
 - Switch / AP start: walk begins at self.
 - Endpoint start (workstation / server / printer / other): parse `Asset.lastSeenSwitch = "<switchId>/<port>"`; resolve the switch by hostname OR serialNumber under `assetType="switch"` — `findMany`, never `findFirst`. ONE candidate is the switch. SEVERAL (business rule 91 — a per-site `switch-id`) are settled by `fortinetParentKey.resolveInfraParentAsset` with a scope loaded only then: the candidates' controller gates, the switches whose `AssetMacTableEntry` holds the endpoint's MAC (`preferIds`), and the gates that sighted the endpoint freshest-first (`gateIds`). Nothing decisive ⇒ no switch hop, and the walk never starts from a guess.
@@ -1021,6 +1024,7 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 - src/jobs/ouiRefresh.ts — Weekly cron job, refresh database and log entries/size
 
 **Invariants:**
+- **2026-11-14:** `normalizeMacPrefix` needs at least 3 whole HEX bytes — `lookupOuiDetailed` / `setOuiOverride` / `deleteOuiOverride` no longer zero-pad ("AB" answered for AB:00:00, "zz:zz:zz" for ZZ:ZZ:ZZ, and the override 400 could never fire); empty input is malformed too.
 - IEEE database is downloaded from standards-oui.ieee.org/oui/oui.csv; stored as JSON in Setting table; loaded on-demand into module-level in-memory map (singleton pattern, reset only on refresh).
 - Prefix format: "AABBCC" (6 hex chars); input normalization handles colon/dash/mixed-case (AA:BB:CC, aa-bb-cc, etc.).
 - Overrides take priority over IEEE DB; back-compat layer supports legacy bare-string overrides (migrate to {manufacturer, device?} shape on load).

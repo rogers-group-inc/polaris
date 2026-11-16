@@ -1368,6 +1368,10 @@ describes whether that source can reach the target, so:
   is a starting point, a run that could not connect is ignored, and there is
   at most one such event every 10 minutes per host and check. Alert on it with
   a Path Monitor automation set to fire when the certificate changes.
+- **A late traceroute is history, not a route change (85(d)).** A traceroute
+  that arrives after a newer one from the same host (an agent catching up after
+  a reconnect, say) is kept in the check's history but is not compared with the
+  current route, so it never writes `path_check.path_changed`.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works
@@ -3795,3 +3799,16 @@ seeing that device online at the user’s address. The gate’s device list repo
 dated by when the gate last saw the device. The time shown is always when the source saw the
 user, never when Polaris last read it. Each asset keeps its 25 most recent users. **Assigned
 To** is unchanged: it is still the device’s primary user in Intune.
+
+### Rule 187
+
+**Every event Polaris records is forwarded to your syslog server, without ever slowing Polaris down.**
+When syslog forwarding is enabled on the [Events](Events#retention-and-archival) page, each event
+is sent as it is recorded, if it is at or above the minimum severity you chose. Events the
+retention setting drops are not sent either. UDP sends one message per event; TCP and TLS keep
+one connection open and reconnect on their own if the server goes away, holding up to 10,000
+messages meanwhile and dropping the oldest beyond that. TLS always checks the server's
+certificate: against the CA file you name, or else against the system's trusted authorities plus
+any you uploaded under [Server Settings → Trusted Certificate Authorities](Server-Settings#trusted-certificate-authorities).
+A problem reaching the syslog server is written to the Polaris log, not to Events. Every Polaris
+process forwards its own events and picks up a settings change within about 30 seconds.

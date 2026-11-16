@@ -83,7 +83,12 @@ export interface CredentialRow {
   createdBy: string | null;
 }
 
-/** The asset columns that hold a stored credential the monitor sends to the asset's address. */
+/**
+ * The asset columns that hold a stored credential the monitor sends to the
+ * asset's address. ALL of them: until 2026-11-14 the processes, event-log and
+ * custom-widget slots were missing, so their use went unaudited (rule 112(c))
+ * and a read-level SNMP walk with one of them was refused (rule 112(e)).
+ */
 export const ASSET_CREDENTIAL_SLOTS = [
   "monitorCredentialId",
   "responseTimeCredentialId",
@@ -91,6 +96,9 @@ export const ASSET_CREDENTIAL_SLOTS = [
   "temperatureCredentialId",
   "interfacesCredentialId",
   "lldpCredentialId",
+  "processesCredentialId",
+  "eventLogCredentialId",
+  "customWidgetCredentialId",
 ] as const;
 
 export type AssetCredentialSlots = {

@@ -221,6 +221,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/services/rebootService.ts` only.
 
 **Invariants:**
+- **2026-11-14:** `runFortiCli` rejects when the shell closes or errors BEFORE the prompt appeared (the command was never typed) — `sshOps.send` turns that into a `RebootSendError` (a refusal), not `{ uncertain }`; a close AFTER the command was sent stays a lost answer.
 - **Four link kinds**: `token` (an integration's or a restapi credential's bearer), `login` (a device admin form login), `fmg-proxy` (through FortiManager), `ssh` (FortiOS CLI over an interactive shell: `execute reboot`, `execute switch-controller switch-action restart swtp <id>`, `execute wireless-controller reset-wtp <serial>`; `runFortiCli` answers the `(y/n)` prompt and pages `--More--`).
 - **A refusal and a dropped connection are different results**: `RebootSendError` = the device said no (the run fails, nothing was rebooted); `{ uncertain: true }` = the connection died mid-send, which a reboot routinely does — the run watches for proof instead of failing.
 - **Every CLI argument passes `assertCliToken`** (switch-id, serial) — an interactive shell has no argv boundary.

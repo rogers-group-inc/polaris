@@ -91,7 +91,8 @@ export async function syncVipReservations(input: {
             // vip badge tooltip rendered from vipInfo.
             const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
             const cur = existingRes.vipInfo as any;
-            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
+            // extip too (until 2026-11-14 a moved external address never restamped).
+            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || cur.extip !== newVipInfo.extip || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
               await prisma.reservation.update({
                 where: { id: existingRes.id },
                 data: { vipInfo: newVipInfo },
@@ -115,7 +116,8 @@ export async function syncVipReservations(input: {
             const newVipInfo = { name: vip.name, device: vip.device, extip: vip.extip, role, isVirtualServer: vip.isVirtualServer };
             const cur = existingRes.vipInfo as any;
             const vipUpdate: Record<string, unknown> = {};
-            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
+            // extip too (until 2026-11-14 a moved external address never restamped).
+            if (!cur || cur.name !== newVipInfo.name || cur.device !== newVipInfo.device || cur.role !== newVipInfo.role || cur.extip !== newVipInfo.extip || !!cur.isVirtualServer !== newVipInfo.isVirtualServer) {
               vipUpdate.vipInfo = newVipInfo;
             }
             const isCanonicalDhcpOwner =

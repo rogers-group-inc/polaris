@@ -160,6 +160,7 @@ export async function persistApRadioInventory(
 
   const seenRadios = new Set<number>();
   const seenVaps = new Set<string>();
+  const claimedVapIds = new Set<string>();
   const writes: any[] = [];
   let vapCount = 0;
 
@@ -187,9 +188,14 @@ export async function persistApRadioInventory(
       continue;
     }
     for (const vap of radio.vaps) {
-      // BSSID first (the cross-source identity), then the name.
-      const storedVap = (vap.bssid ? storedVapByBssid.get(vapBssidKey(radio.radioIndex, vap.bssid)) : undefined)
-        ?? storedVapByKey.get(vapKey(radio.radioIndex, vap.vapName));
+      // BSSID first (the cross-source identity), then the name — but never a
+      // stored row an earlier VAP of this scrape already claimed (until
+      // 2026-11-14 the name fallback could re-claim one, merging two VAPs into
+      // one row and losing the other).
+      const unclaimed = <T extends { id: string }>(v: T | undefined) => (v && !claimedVapIds.has(v.id) ? v : undefined);
+      const storedVap = unclaimed(vap.bssid ? storedVapByBssid.get(vapBssidKey(radio.radioIndex, vap.bssid)) : undefined)
+        ?? unclaimed(storedVapByKey.get(vapKey(radio.radioIndex, vap.vapName)));
+      if (storedVap) claimedVapIds.add(storedVap.id);
       // Book the row under the name it is STORED as — the delete pass below
       // walks stored rows, so a row matched by BSSID under a different name
       // has to be marked seen under that name or it would be deleted as stale.
@@ -219,6 +225,10 @@ export async function persistApRadioInventory(
         }));
       } else {
         const taken = namesPerRadio.get(radio.radioIndex) ?? new Set<string>();
+        // The name is still held by a row another VAP claimed (and could not
+        // rename away from): a create would break the unique constraint and
+        // fail the whole write, so this VAP waits for the next scrape.
+        if (taken.has(vap.vapName)) { vapCount--; continue; }
         taken.add(vap.vapName);
         namesPerRadio.set(radio.radioIndex, taken);
         writes.push(prisma.assetApVap.create({

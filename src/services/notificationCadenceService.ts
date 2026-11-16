@@ -273,6 +273,7 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
 
   const intervals: number[] = [];
   let sdwanPolled = 0;
+  let resolved = 0;
   const timeouts: number[] = [];
   for (const a of assets) {
     try {
@@ -282,6 +283,7 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
       } as Parameters<typeof resolveMonitorSettings>[0]);
       let iv: unknown;
       if (fields.interval) {
+        resolved++;
         iv = eff[fields.interval];
       } else {
         // SD-WAN: the interval lives in the sidecar the resolve above warmed,
@@ -307,8 +309,9 @@ export async function resolveScopeCadence(scope: RuleScope, metric: string | nul
     min: s?.min ?? 0,
     max: s?.max ?? 0,
     timeoutMs: modalOf(timeouts) ?? 0,
-    // For SD-WAN, only the gates the SD-WAN pass actually polls — the caption
-    // says how many devices it is speaking for.
-    assetCount: fields.interval ? assets.length : sdwanPolled,
+    // Only the devices the interval speaks for: those whose settings resolved
+    // (until 2026-11-14 a resolver failure was still counted), and for SD-WAN
+    // only the gates the SD-WAN pass actually polls.
+    assetCount: fields.interval ? resolved : sdwanPolled,
   };
 }

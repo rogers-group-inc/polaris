@@ -111,6 +111,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Used by:** `src/api/routes/deviceIcons.ts,56,83,105 — upload/list/delete CRUD + image serve`, `src/services/topologyGraphService.ts — icon resolution for topology switches/APs/firewalls/remote nodes (icon cache preloaded once per buildSiteTopology call)`
 
 **Invariants:**
+- **2026-11-14:** the WebP signature is the full `RIFF....WEBP` (bytes 4–7 a wildcard) — `RIFF` alone also accepted WAV / AVI declared as `image/webp`.
 - Scope: "manufacturer-type" (asset type key — any name in the live asset-type registry, built-in or custom, checked by `utils/assetTypes.isKnownAssetType`) or "manufacturer-model" (vendor-specific chassis/model). Both require a manufacturer; standalone type/model/manufacturer uploads are not supported.
 - **Upload upserts; re-key refuses.** `uploadIcon` upserts on `(scope, key)`, so uploading to a held key REPLACES that image (the intended "swap the logo" path). `updateIconKey` (PUT `/device-icons/:id`) changes scope/manufacturer/type-or-model and keeps the image, and answers 409 when another icon holds the target key (P2002 on a lost race included) — a re-key must never silently delete a different icon's image. Both go through the one `validateIconKey`, so an edited key meets exactly the upload's rules. Pinned by `tests/unit/deviceIconUpdateKey.test.ts`.
 - Canonical key form: `"<canonicalManufacturer>/<typeOrModel>"`. Manufacturer half always runs through normalizeManufacturer (alias map). Type tail lowercased; model tail preserved as typed.
@@ -180,8 +181,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - All successful Events are written to `prisma.event.create()` by callers (routes, services, jobs); eventArchiveService manages their export/retention and writes only its own settings audit: each of `updateArchiveSettings` / `updateSyslogSettings` / `updateRetentionSettings` / `updateAssetDecommissionSettings` takes the route's actor and logs one `<area>.settings_updated` Event naming the changed KEYS, never values (no password in the log) — added 2026-11-13 (CQ-T010 batch 7); `forgetArchiveHostKey` logs `event_archive.host_key_forgotten`. Both import `logEvent` lazily (eventLogService imports this module for retention). The canonical helper is `logEvent` in [src/services/eventLogService.ts](src/services/eventLogService.ts) (re-exported from `src/api/routes/events.ts` for legacy importers) — it consults `getCachedRetentionSettings().minLevel` to drop sub-threshold events, and stamps the numeric `levelRank` (0=info, 1=warning, 2=error) at write time so the Events list endpoint's `sortBy=level` can dispatch to `orderBy: { levelRank }` for severity-ordered sort. Direct `prisma.event.create()` callers must stamp `levelRank` themselves; nothing in-tree bypasses `logEvent` today.
 - Archive export (SFTP/SCP) reads Events older than cutoff, writes JSON file, transfers via ssh/sftp spawn, then deletes from DB (via pruneEvents job).
 - Retention cache (1 min TTL) avoids DB read on every Event write; callers using `getCachedRetentionSettings()` must accept stale data.
-- Asset decommission threshold (0 = disabled) is in months; lastSeen older than that triggers `decommissioned` status in a separate 24h job.
-- Syslog (UDP/TCP/TLS) sends test messages synchronously; real event forwarding NOT in this service (would be added as a background job).
+- Asset decommission threshold (0 = disabled) is in months; lastSeen older than that triggers `decommissioned` status in a separate 24h job. `updateAssetDecommissionSettings` keeps the current value for an omitted / blank / invalid `inactivityMonths` (like retention); only an explicit 0 disables (since 2026-11-14 — it used to write 0).
+- Syslog: this service owns the `eventSyslog` SETTING; forwarding itself is `syslogForwarderService` (business rule 187). `updateSyslogSettings` calls `invalidateSyslogSettingsCache()`; `testSyslogConnection` formats a synthetic `event_syslog.test` Event with the forwarder's formatter and sends it through `sendSyslogOnce` (same framing and TLS verification as real forwarding).
 - SFTP batch-file injection prevention: paths with quotes/newlines rejected before spawn.
 
 **When changing this:**
@@ -190,6 +191,33 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - Check asset decommission query doesn't accidentally mark live assets as stale (lastSeen >= cutoff).
 - Confirm syslog test messages arrive with the right facility/severity/format.
 - Validate SFTP injection prevention doesn't reject legitimate Windows paths with backslashes.
+
+---
+
+## services/syslogForwarderService.ts
+
+**What it owns:** forwarding every written Event to the configured syslog server (business rule 187) — the bounded hand-off, the RFC 5424 / 3164 formatter, stream framing, TLS trust, the per-process UDP socket or persistent TCP / TLS connection, and the one-shot send the Test button uses.
+
+**Public API:** `forwardEvents`, `invalidateSyslogSettingsCache`, `formatSyslogMessage`, `frameForStream`, `syslogPri`, `passesSeverity`, `truncateUtf8`, `buildTlsOptions`, `sendSyslogOnce`, `SYSLOG_FACILITIES`, `MAX_QUEUE`; test seams `_resetSyslogForwarderForTests`, `_flushSyslogForwarderForTests`.
+
+**Cross-service deps:** `eventArchiveService.getSyslogSettings` (dynamic import — eventArchiveService imports this module statically; the `SyslogSettings` type is an `import type`), `serverSettingsService.listCertificates` (dynamic import, uploaded Trusted CAs).
+
+**Used by:** `src/services/eventLogService.ts → logEvent / logEventsBatch — forwardEvents after the row is written`; `src/services/eventArchiveService.ts → testSyslogConnection (formatSyslogMessage + sendSyslogOnce), updateSyslogSettings (invalidateSyslogSettingsCache)`; `src/api/routes/events.ts → SyslogSettingsSchema (SYSLOG_FACILITIES)`.
+
+**Invariants:**
+- `forwardEvents` is synchronous, bounded (`MAX_QUEUE`, oldest dropped) and never throws — an Event write never waits on or fails because of syslog.
+- Only rows that were WRITTEN are forwarded (after the retention `minLevel` drop); the syslog `severity` is a second floor applied at flush.
+- Each process forwards its own Events; settings cached 30 s per process.
+- TLS always verifies (`rejectUnauthorized: true`): `tlsCaPath` alone when set, else `tls.rootCertificates` + uploaded Trusted CA certs.
+- RFC 5424 over TCP / TLS is octet-counted; RFC 3164 newline-framed; UDP ≤ 2048 bytes, stream ≤ 8192, cut on a UTF-8 boundary; `udp6` for an IPv6 server (rule 128).
+- A forwarding failure is logged (≤ 1 warning a minute, with the drop count), never written as an Event.
+- Sockets and timers are `unref`'d.
+
+**When changing this:**
+- Keep `forwardEvents` free of `await` — it runs inside every Event write.
+- A new Event field worth indexing goes into the SD-ELEMENT params in `formatSyslogMessage`, escaped by `sdValue`.
+- Scale: at 2000 assets Event volume peaks during discovery; the hand-off batches per tick and the stream sink writes with backpressure (`drain`), so no per-Event connection or query is added.
+- Tests: `tests/unit/syslogForwarderService.test.ts`, and the Test button in `tests/unit/eventArchiveService.test.ts`.
 
 ---
 

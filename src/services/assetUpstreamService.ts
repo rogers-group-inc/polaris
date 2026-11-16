@@ -306,6 +306,13 @@ export async function resolveAssetUpstream(
     for (const c of controllers) if (!candidates.some((x) => x.id === c.id)) candidates.push(c);
     const gateIds: string[] = [];
     const preIndex = buildInfraParentIndex(candidates);
+    // Rule 91's first scope entry: the child's OWN controller. Until
+    // 2026-11-14 it was missing, and since the sighting half never runs for a
+    // controller-managed device, its scope had no gates at all.
+    if (useController) {
+      const own = resolveInfraParentAsset(preIndex, { serial: controllerSerial || null, name: controllerName || null }, "firewall");
+      if (own) gateIds.push(own.id);
+    }
     for (const n of sightingNames) {
       const sighted = resolveInfraParentAsset(preIndex, { name: n }, "firewall");
       if (sighted) { gateIds.push(sighted.id); break; }
@@ -342,11 +349,15 @@ export async function resolveAssetUpstream(
       }
     : null;
 
+  // All three rows are null for a firewall (the General tab hides them for a
+  // gate); until 2026-11-14 its own lastSeenSwitch / lastSeenAp still leaked
+  // through as switch / AP rows.
+  const isGate = asset.assetType === "firewall";
   return {
-    switch: sw
+    switch: sw && !isGate
       ? { name: sw.name, ...(sw.port ? { port: sw.port } : {}), asset: resolve(sw.name, "switch") }
       : null,
-    ap: apName ? { name: apName, asset: resolve(apName, "access_point") } : null,
+    ap: apName && !isGate ? { name: apName, asset: resolve(apName, "access_point") } : null,
     firewall: useController
       ? controllerEntry(index, candidates, controllerName, controllerSerial)
       : pickFirewallEntry(sightings, (name) => resolve(name, "firewall"), subnetGate),

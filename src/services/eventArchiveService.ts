@@ -9,10 +9,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { createSocket } from "node:dgram";
-import { createConnection, type Socket } from "node:net";
-import { connect as tlsConnect } from "node:tls";
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { STATE_DIR } from "../utils/paths.js";
 import { tmpdir } from "node:os";
@@ -20,6 +17,7 @@ import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { AppError } from "../utils/errors.js";
 import { isIP } from "node:net";
+import { formatSyslogMessage, invalidateSyslogSettingsCache, sendSyslogOnce } from "./syslogForwarderService.js";
 
 // Spawn a child process with an explicit argv — no shell — and resolve with
 // its stdout/stderr. Rejects on non-zero exit or timeout.
@@ -425,9 +423,13 @@ export async function updateAssetDecommissionSettings(
   actor?: string,
 ): Promise<AssetDecommissionSettings> {
   const current = await getAssetDecommissionSettings();
-  const months = Number(settings.inactivityMonths);
+  // An absent / blank / invalid value keeps the current setting, like
+  // retention does; only an explicit 0 disables auto-decommission. (Until
+  // 2026-11-14 an omitted field wrote 0 and silently turned it off.)
+  const raw = settings.inactivityMonths as unknown;
+  const months = raw == null || raw === "" ? NaN : Number(raw);
   const merged: AssetDecommissionSettings = {
-    inactivityMonths: Number.isFinite(months) && months >= 0 ? Math.floor(months) : 0,
+    inactivityMonths: Number.isFinite(months) && months >= 0 ? Math.floor(months) : current.inactivityMonths,
   };
   await prisma.setting.upsert({
     where: { key: ASSET_DECOMMISSION_KEY },
@@ -486,13 +488,17 @@ export async function updateSyslogSettings(
     create: { key: SYSLOG_KEY, value: merged as any },
     update: { value: merged as any },
   });
+  // This process forwards with the new settings at once; the others re-read
+  // them within the forwarder's 30 s cache (business rule 187).
+  invalidateSyslogSettingsCache();
   await logSettingsChange("event_syslog.settings_updated", SYSLOG_KEY, "Syslog forwarding", current, merged, actor);
 
   return merged;
 }
 
 /**
- * Test syslog connectivity by sending a test message.
+ * Test syslog connectivity by sending one test message, formatted and framed
+ * exactly as the forwarder sends Events (business rule 187).
  */
 export async function testSyslogConnection(
   settings: SyslogSettings,
@@ -500,85 +506,18 @@ export async function testSyslogConnection(
   if (!settings.host) {
     return { ok: false, message: "Host is required" };
   }
-
-  const testMsg = "<134>1 " + new Date().toISOString() + " polaris test - - - Polaris syslog connection test";
-
+  const s: SyslogSettings = { ...DEFAULT_SYSLOG, ...settings };
+  const msg = formatSyslogMessage(
+    { at: new Date(), action: "event_syslog.test", level: "info", message: "Polaris syslog connection test" },
+    s,
+  );
   try {
-    if (settings.protocol === "udp") {
-      await sendUdp(settings.host, settings.port, testMsg);
-    } else if (settings.protocol === "tcp") {
-      await sendTcp(settings.host, settings.port, testMsg);
-    } else {
-      await sendTls(settings, testMsg);
-    }
+    await sendSyslogOnce(s, msg);
     return {
       ok: true,
-      message: `Test message sent to ${settings.host}:${settings.port} via ${settings.protocol.toUpperCase()}`,
+      message: `Test message sent to ${s.host}:${s.port} via ${s.protocol.toUpperCase()}`,
     };
   } catch (err: any) {
     return { ok: false, message: err.message || "Connection failed" };
   }
-}
-
-function sendUdp(host: string, port: number, msg: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // An IPv6 server needs a udp6 socket (rule 128), as buildSnmpSession picks.
-    const client = createSocket(isIP(host) === 6 ? "udp6" : "udp4");
-    const buf = Buffer.from(msg);
-    client.send(buf, 0, buf.length, port, host, (err) => {
-      client.close();
-      if (err) reject(err);
-      else resolve();
-    });
-  });
-}
-
-function sendTcp(host: string, port: number, msg: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("Connection timeout"));
-    }, 10_000);
-    const socket: Socket = createConnection({ host, port }, () => {
-      socket.write(msg + "\n", () => {
-        clearTimeout(timeout);
-        socket.end();
-        resolve();
-      });
-    });
-    socket.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
-}
-
-function sendTls(settings: SyslogSettings, msg: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const opts: Record<string, unknown> = {
-      host: settings.host,
-      port: settings.port,
-      rejectUnauthorized: !!settings.tlsCaPath,
-    };
-    if (settings.tlsCaPath) opts.ca = readFileSync(settings.tlsCaPath);
-    if (settings.tlsCertPath) opts.cert = readFileSync(settings.tlsCertPath);
-    if (settings.tlsKeyPath) opts.key = readFileSync(settings.tlsKeyPath);
-
-    const timeout = setTimeout(() => {
-      socket.destroy();
-      reject(new Error("TLS connection timeout"));
-    }, 10_000);
-
-    const socket = tlsConnect(opts as any, () => {
-      socket.write(msg + "\n", () => {
-        clearTimeout(timeout);
-        socket.end();
-        resolve();
-      });
-    });
-    socket.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-  });
 }

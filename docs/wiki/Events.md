@@ -215,6 +215,19 @@ beyond letters, digits, `.`, `_` and `-` (and a leading hyphen), and a port outs
 1–65535, because those values are passed to `ssh`, `sftp` and `scp`
 ([rule 107](Business-Rules#rule-107)).
 
+**Syslog forwarding** sends each event as it is recorded, if it is at or above the
+**Minimum Severity** ([rule 187](Business-Rules#rule-187)). RFC 5424 messages carry the event's
+action, level, resource and actor as structured data (`[polaris@32473 …]`), so your collector
+can index them; RFC 3164 messages read `polaris[pid]: <action>: <message>`. Over TCP and TLS,
+RFC 5424 messages are octet-counted and RFC 3164 messages end with a newline. TLS always checks
+the server's certificate: against the **CA Certificate Path** when you give one, or else the
+system's trusted authorities plus those uploaded under
+[Server Settings → Trusted Certificate Authorities](Server-Settings#trusted-certificate-authorities).
+The **Test Connection** button sends a test message in exactly the format and framing events use.
+If the server cannot be reached, Polaris keeps trying in the background and notes it in its own
+log; your events are still recorded as usual. A change to these settings reaches every Polaris
+process within about 30 seconds.
+
 > **Anything archived leaves the host.** That is why several rules are careful
 > about what reaches an Event in the first place — most visibly, directory sync
 > writes **counts only**, never names ([rule 35e](Business-Rules#rule-35)), and

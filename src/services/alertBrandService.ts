@@ -112,7 +112,9 @@ const BRAND_TOKEN_RE = /\{brand\.header\}/g;
  */
 export function substituteBrandTokens(body: string, block: string): string {
   if (!body) return body;
-  return body.replace(BRAND_TOKEN_RE, block);
+  // A function replacement: a string one expands `$&` / `$'` in an app name
+  // or subtitle (fixed 2026-11-14, as the recipient footers were).
+  return body.replace(BRAND_TOKEN_RE, () => block);
 }
 
 /**

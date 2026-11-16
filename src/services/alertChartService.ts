@@ -2728,14 +2728,16 @@ export function substituteChartTokens(
     }
     emittedCids.add(chart.cid);
     if (!opts.html) {
-      out = out.replace(re, chart.summary);
+      // Function replacements throughout: a summary names a device / port,
+      // and a `$&` in one must not expand (2026-11-14).
+      out = out.replace(re, () => chart.summary);
       continue;
     }
     const replacement = chart.attachment
       ? `<img src="cid:${chart.cid}" width="520" alt="${escapeAttr(chart.summary)}" ` +
         `style="display:block;width:100%;max-width:520px;height:auto;border:1px solid #e5e7eb;border-radius:6px;margin:10px 0">`
       : `<p style="margin:8px 0;color:#6b7280;font-size:13px">${escapeAttr(chart.summary)}</p>`;
-    out = out.replace(re, replacement);
+    out = out.replace(re, () => replacement);
   }
   return out;
 }

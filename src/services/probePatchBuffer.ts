@@ -154,8 +154,14 @@ export function getPendingProbePatch(assetId: string): ProbePatch | null {
  */
 export function enqueueProbePatch(assetId: string, patch: ProbePatch): void {
   const existing = buffer.get(assetId);
-  if (existing) {
-    buffer.set(assetId, {
+  buffer.set(assetId, existing ? mergeProbePatch(existing, patch) : patch);
+  setProbePatchBufferDepth(TABLE_LABEL, buffer.size);
+  if (buffer.size >= SIZE_THRESHOLD) void flushProbePatchBuffer();
+}
+
+/** `patch` (newer) over `existing` (older), preserve-on-absent for every stamp. */
+function mergeProbePatch(existing: ProbePatch, patch: ProbePatch): ProbePatch {
+  return {
       ...patch,
       monitorStatusChangedAt:
         patch.monitorStatusChangedAt ?? existing.monitorStatusChangedAt,
@@ -182,12 +188,7 @@ export function enqueueProbePatch(assetId: string, patch: ProbePatch): void {
       ...(patch.ipConfirmedFor !== undefined
         ? { ipConfirmedFor: patch.ipConfirmedFor, ipConfirmedSince: patch.ipConfirmedSince }
         : { ipConfirmedFor: existing.ipConfirmedFor, ipConfirmedSince: existing.ipConfirmedSince }),
-    });
-  } else {
-    buffer.set(assetId, patch);
-  }
-  setProbePatchBufferDepth(TABLE_LABEL, buffer.size);
-  if (buffer.size >= SIZE_THRESHOLD) void flushProbePatchBuffer();
+  };
 }
 
 /**
@@ -216,16 +217,19 @@ export async function flushProbePatchBuffer(): Promise<void> {
       await retryOnDeadlock(() => writeBatch(chunk));
     }
   } catch (err: unknown) {
-    // Re-prepend what was not written, but only for entries the buffer
-    // doesn't already hold — concurrent enqueues during the awaited write
-    // represent fresher state and should win.
+    // Put back what was not written. A concurrent enqueue during the awaited
+    // write is fresher state and wins — but MERGED over the unwritten patch,
+    // preserve-on-absent, exactly as enqueue merges. Until 2026-11-14 the
+    // unwritten patch was dropped whenever the buffer held anything, losing
+    // its transition stamps (monitorStatusChangedAt, awaitingRecoveryConfirm).
     const unwritten = snapshot.slice(written);
     logger.warn(
       { err: (err as Error)?.message, rowCount: unwritten.length },
       "probePatchBuffer: flush failed; restoring rows missing from current buffer",
     );
     for (const [id, patch] of unwritten) {
-      if (!buffer.has(id)) buffer.set(id, patch);
+      const fresher = buffer.get(id);
+      buffer.set(id, fresher ? mergeProbePatch(patch, fresher) : patch);
     }
     setProbePatchBufferDepth(TABLE_LABEL, buffer.size);
   } finally {

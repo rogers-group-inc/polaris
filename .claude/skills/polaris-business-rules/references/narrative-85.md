@@ -382,6 +382,26 @@ about to be written.
 non-zero value for some window to be alerted on and then decay, which is a change event
 dressed as a gauge.
 
+### Rule 85(d) — a late trace is history, not a path change (2026-11-14)
+
+**Found by a test.** The CQ-T010 batch 7 suite for `pathCheckIngestService` showed that the
+traceroute stream, unlike the sample stream, had no late-push guard. A trace older than the
+source's latest one (an agent flushing a backlog after a reconnect, or a re-delivered batch)
+was compared against the NEWER path, so a route that had already changed and changed back
+read as a third change: a false `path_check.path_changed` warning (which an automation can
+page on). It also rewound `lastPathHash` / `lastTracerouteAt` to the older trace, so the
+next on-time trace was compared against stale state.
+
+**The decision (operator, 2026-11-14: "add a guard").** A trace whose time is not after
+`lastTracerouteAt` is still written to `asset_path_check_traceroutes`, because the history
+is what an operator reads to see what the route was at that hour. It is just never compared
+and never moves the source's latest-trace columns. An equal timestamp counts as late: it is a
+re-delivery of the trace the source already holds. In a mixed batch the late items are
+skipped and the newer ones are compared as before.
+
+**Rejected:** dropping the late trace entirely. The history would then have holes exactly
+where the network was unstable enough to delay a push.
+
 ### Rule 85 — the invariant as stated in full
 
 See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (the

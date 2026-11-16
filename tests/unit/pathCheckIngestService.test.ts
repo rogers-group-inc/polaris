@@ -64,7 +64,7 @@ const ASSET = "11111111-1111-1111-1111-111111111111";
 
 interface Src {
   id: string; checkId: string; lastOk: boolean | null; lastPathHash: string | null; lastPathChangeEventAt: Date | null;
-  lastSampleAt: Date | null; lastTlsNotAfter: Date | null; lastTlsIssuer: string | null; lastTlsChangeEventAt: Date | null;
+  lastTracerouteAt?: Date | null; lastSampleAt: Date | null; lastTlsNotAfter: Date | null; lastTlsIssuer: string | null; lastTlsChangeEventAt: Date | null;
   check: { name: string; keepBodyExcerpt: boolean };
 }
 
@@ -445,14 +445,29 @@ describe("ingestPathCheckTraceroutes", () => {
     expect(await ingestPathCheckTraceroutes(ASSET, [trace(), trace({ checkId: "x" })], NOW)).toEqual({ accepted: 1, rejected: 1 });
   });
 
-  // NOTE (not asserted as a bug — no rule states it): unlike the sample stream,
-  // the traceroute stream has no late-push guard. An older trace arriving after
-  // a newer one is compared against the newer hash and rewinds the source's
-  // latest-trace columns. Pinned as current behaviour.
-  it("current behaviour: an older trace pushed late is still compared and rewinds lastTracerouteAt", async () => {
-    sources(src("c1", { lastPathHash: "newer-hash" }));
+  // Was a gap until 2026-11-14 (business rule 85(d)): an older trace arriving
+  // after a newer one was compared against the newer hash — a false
+  // path_check.path_changed — and rewound the source's latest-trace columns.
+  it("an older trace pushed late is stored but neither compared nor allowed to rewind the source", async () => {
+    sources(src("c1", { lastPathHash: "newer-hash", lastTracerouteAt: new Date(iso(60_000)) }));
     await ingestPathCheckTraceroutes(ASSET, [trace({ timestamp: iso(3_600_000) })], NOW);
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
+    expect(srcUpdates()).toHaveLength(0);
+    const create = stubbed(prisma.assetPathCheckTraceroute.createMany).mock.calls[0][0] as { data: Array<{ timestamp: Date }> };
+    expect(create.data.map((r) => r.timestamp)).toEqual([new Date(iso(3_600_000))]);
+  });
+
+  it("a re-delivered trace at exactly the latest time is not compared either", async () => {
+    sources(src("c1", { lastPathHash: "newer-hash", lastTracerouteAt: new Date(iso(1000)) }));
+    await ingestPathCheckTraceroutes(ASSET, [trace({ timestamp: iso(1000) })], NOW);
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
+    expect(srcUpdates()).toHaveLength(0);
+  });
+
+  it("in a mixed batch the late trace is skipped and the newer one still compared", async () => {
+    sources(src("c1", { lastPathHash: "older-hash", lastTracerouteAt: new Date(iso(60_000)) }));
+    await ingestPathCheckTraceroutes(ASSET, [trace({ timestamp: iso(3_600_000) }), trace({ timestamp: iso(1000) })], NOW);
     expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
-    expect(srcUpdates()[0].data.lastTracerouteAt).toEqual(new Date(iso(3_600_000)));
+    expect(srcUpdates()[0].data.lastTracerouteAt).toEqual(new Date(iso(1000)));
   });
 });

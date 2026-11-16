@@ -423,6 +423,10 @@ async function pushPending(cfg: WriteBackConfig): Promise<SyncSummary> {
     const { problems } = layerProblems(info, cfg);
     if (problems.length) throw new AppError(400, problems.join("; "));
   } catch (err) {
+    // An expired token on the layer read forgets the cached token too, as the
+    // per-batch catch does — until 2026-11-14 only the batches did, so every
+    // later tick re-read the layer with the same dead token and stopped there.
+    if (err instanceof ArcgisError && (err.code === 498 || err.code === 499)) clearArcgisTokenCache();
     if (isTransient(err) && !(err instanceof AppError)) { await markPendingError(runs, errText(err)); return summary; }
     // The layer itself refuses: every run says why, until the integration is fixed and retried.
     summary.failed += await markFailed(runs, errText(err));

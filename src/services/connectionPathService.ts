@@ -124,7 +124,15 @@ export async function resolveConnectionPath(assetId: string): Promise<Connection
       const fallback = await resolveTopologyFallback(cur);
       if (!fallback || seen.has(fallback.id)) break;
       seen.add(fallback.id);
-      hops.push(toHop(fallback, fallback.assetType === "firewall" ? "firewall" : "switch"));
+      const fbKind: ConnectionHopKind = fallback.assetType === "firewall" ? "firewall" : "switch";
+      const fbHop = toHop(fallback, fbKind);
+      // Every switch hop carries its uplink, however it was reached (until
+      // 2026-11-14 a fallback-reached switch had none).
+      if (fbKind === "switch") {
+        const uplink = uplinkInterfaceOf(fallback);
+        if (uplink) fbHop.uplinkInterface = uplink;
+      }
+      hops.push(fbHop);
       if (fallback.assetType === "firewall") break;
       cursorId = fallback.id;
       continue;
@@ -263,8 +271,11 @@ async function resolveTopologyFallback(asset: Asset | null): Promise<Asset | nul
   // For an AP that stamps parentSwitch, hop to the switch (which on next loop
   // iteration will jump to its FortiGate via its own dependency rows or
   // controller stamp).
+  // A parentSwitch Polaris does not hold (a third-party switch from LLDP)
+  // falls through to the controller — until 2026-11-14 its null ended the walk.
   if (asset.assetType === "access_point" && parentSwitch.name) {
-    return fetchStampedParent(parentSwitch, "switch");
+    const sw = await fetchStampedParent(parentSwitch, "switch");
+    if (sw) return sw;
   }
   if (asset.assetType === "access_point" && (controller.name || controller.serial)) {
     return fetchStampedParent(controller, "firewall");

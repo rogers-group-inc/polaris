@@ -12,6 +12,7 @@ import { SECRET_MASK, isMaskedSecret } from "../../utils/secretMask.js";
 import { csvParam } from "../../utils/text.js";
 import { buildPrismaTextFilter } from "../../utils/prismaTextFilter.js";
 import { queryEventsPage, listEventResourceTypes, eventDeviceFilter } from "../../services/eventLogService.js";
+import { SYSLOG_FACILITIES } from "../../services/syslogForwarderService.js";
 import {
   getArchiveSettings,
   updateArchiveSettings,
@@ -270,6 +271,22 @@ router.post("/archive-test", requirePermission("events", "write"), async (req, r
   }
 });
 
+// The syslog settings are read by the forwarder on every Event (business rule
+// 187), so the body is parsed here: types, enums and sizes, unknown keys
+// dropped. The host may be a name or an IPv4 / IPv6 address.
+const SyslogSettingsSchema = z.object({
+  enabled:     z.boolean().optional(),
+  protocol:    z.enum(["udp", "tcp", "tls"]).optional(),
+  host:        z.string().trim().max(253).refine((h) => !/[\s/]/.test(h), "host must be a hostname or an IP address").optional(),
+  port:        z.coerce.number().int().min(1).max(65535).optional(),
+  facility:    z.enum(Object.keys(SYSLOG_FACILITIES) as [string, ...string[]]).optional(),
+  severity:    z.enum(["info", "warning", "error"]).optional(),
+  format:      z.enum(["rfc5424", "rfc3164"]).optional(),
+  tlsCaPath:   z.string().max(1024).optional(),
+  tlsCertPath: z.string().max(1024).optional(),
+  tlsKeyPath:  z.string().max(1024).optional(),
+});
+
 // GET /api/v1/events/syslog-settings — get syslog forwarding settings
 // Reveals host/port/TLS paths; admin-only.
 router.get("/syslog-settings", requirePermission("events", "write"), async (_req, res, next) => {
@@ -284,7 +301,7 @@ router.get("/syslog-settings", requirePermission("events", "write"), async (_req
 // PUT /api/v1/events/syslog-settings — update syslog forwarding settings
 router.put("/syslog-settings", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    const updated = await updateSyslogSettings(req.body, requestActor(req));
+    const updated = await updateSyslogSettings(SyslogSettingsSchema.parse(req.body ?? {}), requestActor(req));
     res.json(updated);
   } catch (err) {
     next(err);
@@ -294,7 +311,7 @@ router.put("/syslog-settings", requirePermission("events", "write"), async (req,
 // POST /api/v1/events/syslog-test — test syslog connection
 router.post("/syslog-test", requirePermission("events", "write"), async (req, res, next) => {
   try {
-    const result = await testSyslogConnection(req.body);
+    const result = await testSyslogConnection(SyslogSettingsSchema.parse(req.body ?? {}) as Parameters<typeof testSyslogConnection>[0]);
     res.json(result);
   } catch (err) {
     next(err);

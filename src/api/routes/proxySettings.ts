@@ -63,6 +63,22 @@ router.get("/", requirePermission("serverSettingsSystem", "read"), async (_req, 
   }
 });
 
+/**
+ * Keys a save or apply body may not carry: `managedMode` is flipped only by
+ * POST /adopt-managed-mode (which writes the audit Event), and the apply
+ * bookkeeping is the apply step's own — an operator-set hash could hide drift.
+ * Until 2026-11-14 only PUT refused managedMode; /apply let it through.
+ */
+function refuseReservedProxyKeys(body: Partial<ProxyConfig>): void {
+  if (body.managedMode !== undefined) {
+    throw new AppError(400, "Use POST /adopt-managed-mode to flip managedMode");
+  }
+  const b = body as Record<string, unknown>;
+  for (const k of ["lastAppliedAt", "lastAppliedHash"]) {
+    if (b[k] !== undefined) throw new AppError(400, `${k} is set by applying the config, not by a request`);
+  }
+}
+
 // ─── PUT / : save without applying ─────────────────────────────────────────
 
 router.put("/", requirePermission("serverSettingsSystem", "write"), async (req, res, next) => {
@@ -71,11 +87,7 @@ router.put("/", requirePermission("serverSettingsSystem", "write"), async (req, 
     // (saveProxyConfig → mergeProxyConfig + validateProxyConfig field-checks
     // every value and 400s on bad input).
     const body = req.body as Partial<ProxyConfig>;
-    // Block direct PUTs from flipping managedMode — that's what
-    // /adopt-managed-mode is for. Everything else flows through.
-    if (body.managedMode !== undefined) {
-      throw new AppError(400, "Use POST /adopt-managed-mode to flip managedMode");
-    }
+    refuseReservedProxyKeys(body);
     const saved = await saveProxyConfig(body);
     res.json({ config: saved });
   } catch (err) {
@@ -110,6 +122,7 @@ router.post("/apply", requirePermission("serverSettingsSystem", "write"), async 
   try {
     // Cast is TS-level only — applyProxyConfig routes through saveProxyConfig's
     // field-checked merge/validate before anything touches nginx.
+    if (req.body) refuseReservedProxyKeys(req.body as Partial<ProxyConfig>);
     const result = await applyProxyConfig(req.body as Partial<ProxyConfig> | undefined);
     await logEvent({
       action: result.ok ? "proxy.config_applied" : "proxy.config_apply_failed",
