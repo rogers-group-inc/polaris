@@ -127,12 +127,12 @@ describe("recordTelemetryResult", () => {
     expect(buf.telemetry.mock.calls[0][0]).toMatchObject({ memCachedBytes: 11n, memFreeBytes: 0n, memPrivateBytes: null, memSharedBytes: null });
   });
 
-  // BUG: memUsedBytes / memTotalBytes skip the bytesOrNull guard their band
+  // Was a bug until 2026-11-14: memUsedBytes / memTotalBytes skip the bytesOrNull guard their band
   // siblings use: BigInt(Math.round(NaN)) throws a RangeError, so a collector
   // that hands back memUsedBytes: NaN makes recordTelemetryResult REJECT — no
   // sample, no success stamp. Right: a non-finite total/used reads as null
   // (like every band figure) and the poll still records its success.
-  it.fails("treats a non-finite memUsedBytes / memTotalBytes as null instead of throwing", async () => {
+  it("treats a non-finite memUsedBytes / memTotalBytes as null instead of throwing", async () => {
     await recordTelemetryResult("a1", { supported: true, data: { cpuPct: 5, memUsedBytes: Number.NaN, memTotalBytes: Number.POSITIVE_INFINITY } });
     expect(buf.telemetry.mock.calls[0][0]).toMatchObject({ memUsedBytes: null, memTotalBytes: null });
     expect(assetUpdate()).toHaveBeenCalledOnce();

@@ -15,6 +15,7 @@ import net from "node:net";
 import nodemailer from "nodemailer";
 import { AppError } from "../../utils/errors.js";
 import { resolveAllowedHost } from "../../utils/netGuard.js";
+import { fetchOr502 } from "../../utils/fetchOr502.js";
 
 /**
  * An image referenced from the HTML body as `cid:<cid>` — the last-hour charts
@@ -65,10 +66,13 @@ export async function sendSmtpEmail(cfg: SmtpConfig, msg: EmailMessage): Promise
     if (err?.code === "BLOCKED_HOST") throw new AppError(400, err.message);
     throw err;
   });
-  const namedHost = !net.isIP(cfg.host.replace(/^\[|\]$/g, ""));
+  const bareHost = cfg.host.replace(/^\[|\]$/g, "");
+  const namedHost = !net.isIP(bareHost);
   const transport = nodemailer.createTransport({
     // Connect to the address that was checked; TLS still verifies the typed name.
-    host: namedHost && pinned ? pinned : cfg.host,
+    // A bracketed IPv6 literal goes in BARE — nodemailer's net.isIP refuses the
+    // brackets and DNS-resolves the string (ENOTFOUND; fixed 2026-11-14).
+    host: namedHost && pinned ? pinned : bareHost,
     ...(namedHost && pinned ? { tls: { servername: cfg.host } } : {}),
     port: Number(cfg.port) || 587,
     secure: cfg.security === "ssl", // 465 implicit TLS; 587 upgrades via STARTTLS
@@ -102,6 +106,7 @@ export async function sendSmtpEmail(cfg: SmtpConfig, msg: EmailMessage): Promise
 // Minimal Graph client-credentials token fetch (self-contained so the channel
 // config stays independent of entraIdService's EntraIdConfig type).
 async function m365Token(cfg: M365Config): Promise<string> {
+  // A network failure is a 502 with its reason, like SMTP's (fetchOr502).
   const url = `https://login.microsoftonline.com/${encodeURIComponent(cfg.tenantId)}/oauth2/v2.0/token`;
   const body = new URLSearchParams({
     grant_type: "client_credentials",
@@ -112,7 +117,7 @@ async function m365Token(cfg: M365Config): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchOr502("Microsoft 365 token request", url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
@@ -127,7 +132,12 @@ async function m365Token(cfg: M365Config): Promise<string> {
       } catch { /* ignore */ }
       throw new AppError(502, `Microsoft 365 token request failed: ${msg}`);
     }
-    const parsed = JSON.parse(text) as { access_token?: string };
+    let parsed: { access_token?: string };
+    try {
+      parsed = JSON.parse(text) as { access_token?: string };
+    } catch {
+      throw new AppError(502, "Microsoft 365 token response was not JSON");
+    }
     if (!parsed.access_token) throw new AppError(502, "Microsoft 365 token response missing access_token");
     return parsed.access_token;
   } finally {
@@ -145,7 +155,9 @@ export function buildGraphMessage(msg: EmailMessage): Record<string, unknown> {
   const toList = Array.isArray(msg.to) ? msg.to : [msg.to];
   return {
     subject: msg.subject,
-    body: { contentType: msg.html ? "HTML" : "Text", content: msg.html ?? msg.text },
+    // An EMPTY html is no html: the text body goes (until 2026-11-14 `??`
+    // kept the "" and sent an empty email).
+    body: { contentType: msg.html ? "HTML" : "Text", content: msg.html || msg.text },
     toRecipients: toList.map(rcpt),
     ...(msg.cc?.length ? { ccRecipients: msg.cc.map(rcpt) } : {}),
     ...(msg.bcc?.length ? { bccRecipients: msg.bcc.map(rcpt) } : {}),
@@ -174,7 +186,7 @@ export async function sendM365Email(cfg: M365Config, msg: EmailMessage): Promise
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await fetch(url, {
+    const res = await fetchOr502("Microsoft 365 sendMail", url, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({

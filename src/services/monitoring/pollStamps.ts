@@ -73,8 +73,10 @@ export async function recordTelemetryResult(assetId: string, result: CollectionR
     timestamp: now,
     cpuPct:        d.cpuPct ?? null,
     memPct:        d.memPct ?? null,
-    memUsedBytes:  d.memUsedBytes  != null ? BigInt(Math.round(d.memUsedBytes))  : null,
-    memTotalBytes: d.memTotalBytes != null ? BigInt(Math.round(d.memTotalBytes)) : null,
+    // bytesOrNull like the band figures: a NaN / Infinity is null, not a
+    // RangeError that lost the whole sample (until 2026-11-14).
+    memUsedBytes:  bytesOrNull(d.memUsedBytes),
+    memTotalBytes: bytesOrNull(d.memTotalBytes),
     // Per-core CPU reaches this function from the vCenter collector and the
     // Unraid / TrueNAS host snapshot (workloadMonitorService);
     // the agent's copy arrives on its own push path (routes/agents.ts),

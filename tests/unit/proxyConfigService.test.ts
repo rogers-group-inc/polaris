@@ -213,24 +213,24 @@ describe("saveProxyConfig — validation (400, nothing written)", () => {
     await expect(saveProxyConfig({ httpsPort: 8443 })).rejects.toThrow("write failed");
   });
 
-  // BUG: saveProxyConfig({ managedMode: "false" }) resolves and persists the
+  // Was a bug until 2026-11-14: saveProxyConfig({ managedMode: "false" }) resolves and persists the
   // STRING "false" (truthy — nginxApplyService's `if (!cfg.managedMode)` gate
   // reads it as adopted). The service header lists "managedMode: boolean" as a
   // validation rule; validateProxyConfig never checks it. Right: a 400, nothing
   // written. (The PUT route refuses managedMode, but POST /apply passes its
   // body straight to saveProxyConfig.)
-  it.fails("refuses a non-boolean managedMode", async () => {
+  it("refuses a non-boolean managedMode", async () => {
     await expect(saveProxyConfig({ managedMode: "false" as never })).rejects.toMatchObject({ httpStatus: 400 });
     expect(prisma.setting.upsert).not.toHaveBeenCalled();
   });
 
-  // BUG: saveProxyConfig({ http3Enabled: "false" }) (and the same for the hsts
+  // Was a bug until 2026-11-14: saveProxyConfig({ http3Enabled: "false" }) (and the same for the hsts
   // flags) persists the string, which the renderer reads as TRUE — the operator
   // turned HTTP/3 off and nginx gets `listen … quic` + `ssl_early_data on`; on
   // the next cache miss parseProxyConfig then flips it to the default (true).
   // The PUT route's comment says validateProxyConfig "field-checks every value
   // and 400s on bad input". Right: a 400, nothing written.
-  it.fails("refuses non-boolean http3Enabled / hsts flags", async () => {
+  it("refuses non-boolean http3Enabled / hsts flags", async () => {
     await expect(saveProxyConfig({ http3Enabled: "false" as never })).rejects.toMatchObject({ httpStatus: 400 });
     await expect(
       saveProxyConfig({ hsts: { ...defaultProxyConfig().hsts, enabled: "false" as never } }),

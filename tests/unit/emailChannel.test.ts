@@ -110,13 +110,13 @@ describe("sendSmtpEmail — config and host guard", () => {
     expect(transportOpts().tls).toBeUndefined();
   });
 
-  // BUG: sendSmtpEmail strips the brackets only to DECIDE the host is a literal
+  // Was a bug until 2026-11-14: sendSmtpEmail strips the brackets only to DECIDE the host is a literal
   // (net.isIP), then hands nodemailer the still-bracketed cfg.host. For host
   // "[2001:db8::25]" nodemailer receives host "[2001:db8::25]", which net.isIP
   // rejects, so it DNS-resolves the bracketed string and the send fails with
   // ENOTFOUND. It should connect to the bare "2001:db8::25" (the address the
   // guard checked).
-  it.fails("connects a bracketed IPv6 literal to the bare address", async () => {
+  it("connects a bracketed IPv6 literal to the bare address", async () => {
     resolveAllowedHost.mockResolvedValue("2001:db8::25");
     await sendSmtpEmail(smtp({ host: "[2001:db8::25]" }), msg());
     expect(transportOpts().host).toBe("2001:db8::25");
@@ -228,11 +228,11 @@ describe("buildGraphMessage", () => {
     expect(buildGraphMessage(msg({ html: "<p>x</p>" })).body).toEqual({ contentType: "HTML", content: "<p>x</p>" });
   });
 
-  // BUG: buildGraphMessage tests html for truthiness to choose the content
+  // Was a bug until 2026-11-14: buildGraphMessage tests html for truthiness to choose the content
   // type but uses `??` to choose the content. For html "" it returns
   // { contentType: "Text", content: "" } — an empty email — instead of
   // { contentType: "Text", content: "plain body" }.
-  it.fails("an empty html string falls back to the text body", () => {
+  it("an empty html string falls back to the text body", () => {
     expect(buildGraphMessage(msg({ html: "" })).body).toEqual({ contentType: "Text", content: "plain body" });
   });
 
@@ -348,12 +348,12 @@ describe("sendM365Email", () => {
     await expect(sendM365Email(m365(), msg())).rejects.toMatchObject({ message: "Microsoft 365 sendMail failed: HTTP 500" });
   });
 
-  // BUG: sendM365Email lets a transport failure escape raw. With
+  // Was a bug until 2026-11-14: sendM365Email lets a transport failure escape raw. With
   // login.microsoftonline.com unreachable, fetch rejects with a TypeError
   // ("fetch failed") and the channel Test route answers 500 "Internal server
   // error" — the exact thing sendSmtpEmail's catch exists to prevent. It should
   // reject with an AppError (502) naming the reason.
-  it.fails("a network failure surfaces as a 502 AppError, like SMTP's", async () => {
+  it("a network failure surfaces as a 502 AppError, like SMTP's", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
     const err = await sendM365Email(m365(), msg()).catch((e) => e);
     expect(err).toBeInstanceOf(AppError);

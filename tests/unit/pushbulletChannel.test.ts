@@ -49,12 +49,12 @@ describe("sendPushbullet", () => {
     await expect(sendPushbullet({ accessToken: "x" }, { title: "t", body: "b" })).rejects.toMatchObject({ message: "Pushbullet push failed: HTTP 429" });
   });
 
-  // BUG: sendPushbullet does not catch a transport failure. With
+  // Was a bug until 2026-11-14: sendPushbullet does not catch a transport failure. With
   // api.pushbullet.com unreachable, fetch rejects with TypeError("fetch
   // failed") and the channel Test route answers 500 "Internal server error"
   // with no reason. It should reject with an AppError (502), as its own non-2xx
   // path and sendSmtpEmail do.
-  it.fails("a network failure surfaces as a 502 AppError", async () => {
+  it("a network failure surfaces as a 502 AppError", async () => {
     fetchMock.mockRejectedValue(new TypeError("fetch failed"));
     const err = await sendPushbullet({ accessToken: "x" }, { title: "t", body: "b" }).catch((e) => e);
     expect(err).toBeInstanceOf(AppError);
