@@ -1357,7 +1357,9 @@ async function reconcilePathCheckWindows(
  *  which are few (at most the checks × their covering schedules). */
 export async function pathCheckIdsInMaintenance(): Promise<Set<string>> {
   const rows = await prisma.pathCheckMaintenanceWindow.findMany({
-    where: { endedAt: null },
+    // A disabled check is off, not held (rule 167(b)): its alerts are retired
+    // rather than frozen through the window.
+    where: { endedAt: null, pathCheck: { enabled: true } },
     select: { pathCheckId: true },
     distinct: ["pathCheckId"],
   });

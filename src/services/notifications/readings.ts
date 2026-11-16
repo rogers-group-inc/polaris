@@ -1778,6 +1778,10 @@ export async function sdwanCollectionStopped(
  *
  * Runs only over rows already parked, for the three metrics that key on such
  * an id; one indexed read.
+ *
+ * Rule 167(b): a DISABLED path check is gone too. It runs nowhere, so its
+ * subject reports nothing for it until someone turns it back on — the same
+ * "for ever" a delete causes. Re-enabling starts from a clean slate.
  */
 export async function deletedTargetGone(rule: DbRule, rows: SweepStateRow[]): Promise<Set<string>> {
   const gone = new Set<string>();
@@ -1791,7 +1795,7 @@ export async function deletedTargetGone(rule: DbRule, rows: SweepStateRow[]): Pr
   const idOf = (st: SweepStateRow) => (kind === "probe" ? st.dimensionKey.split("|")[0]! : st.dimensionKey);
   const ids = [...new Set(keyed.map(idOf))];
   const found = kind === "check"
-    ? await prisma.pathCheck.findMany({ where: { id: { in: ids } }, select: { id: true } })
+    ? await prisma.pathCheck.findMany({ where: { id: { in: ids }, enabled: true }, select: { id: true } })
     : await prisma.manufacturerCustomWidget.findMany({ where: { id: { in: ids } }, select: { id: true } });
   const live = new Set(found.map((r) => r.id));
   for (const st of keyed) if (!live.has(idOf(st))) gone.add(st.id);
