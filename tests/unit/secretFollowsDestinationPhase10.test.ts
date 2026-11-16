@@ -39,7 +39,8 @@ describe("keptLdapBindPassword (F3)", () => {
     expect(() => keptLdapBindPassword(cur, { bindPassword: SECRET_MASK, tlsVerify: false })).toThrow(/certificate check/);
   });
   it("saves a typed password as typed, wherever the server is", () => {
-    expect(keptLdapBindPassword(cur, { bindPassword: " new-pw ", url: "ldaps://dc2.corp.example" })).toBe("new-pw");
+    expect(keptLdapBindPassword(cur, { bindPassword: " new-pw ", url: "ldaps://dc2.corp.example" })).toBe(" new-pw ");
+    // Was a bug until 2026-11-16: a typed password was trimmed before saving.
     expect(keptLdapBindPassword(cur, { bindPassword: "" })).toBe("");
   });
 });
