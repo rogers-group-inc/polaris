@@ -139,6 +139,16 @@ describe("saveBackupSchedule", () => {
     expect((await saveBackupSchedule({ hourUtc: null })).hourUtc).toBeNull();
   });
 
+  it("leaves an unpinned hour unpinned on a non-finite hourUtc", async () => {
+    // Was a bug until 2026-11-16: NaN with no stored hour pinned hour 0.
+    expect((await saveBackupSchedule({ hourUtc: Number.NaN })).hourUtc).toBeNull();
+  });
+
+  it("keeps the stored pinned hour on a non-finite hourUtc", async () => {
+    stored({ hourUtc: 7 });
+    expect((await saveBackupSchedule({ hourUtc: Number.NaN })).hourUtc).toBe(7);
+  });
+
   it("never lets operator input write lastRunAt / lastError (job-owned)", async () => {
     stored({ lastRunAt: "2026-11-01T00:00:00Z", lastError: "disk full" });
     const out = await saveBackupSchedule({ lastRunAt: "2030-01-01T00:00:00Z", lastError: null } as Partial<BackupSchedule>);

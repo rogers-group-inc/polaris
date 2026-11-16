@@ -78,10 +78,11 @@ describe("DEFAULT_ALIASES", () => {
     expect(map.get("Microsoft Corporation")).toBe("Microsoft");
   });
 
-  it("carries one case-only duplicate (MikroTikls SIA / Mikrotikls SIA) — the seed's lowercasing folds them into one row", () => {
+  it("carries no case-only duplicates — the seed lowercases every alias into one row", () => {
+    // Was a bug until 2026-11-16: "MikroTikls SIA" and "Mikrotikls SIA" folded into one row.
     const keys = DEFAULT_ALIASES.map((e) => e.alias.trim().toLowerCase());
     const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
-    expect(dupes).toEqual(["mikrotikls sia"]);
+    expect(dupes).toEqual([]);
   });
 });
 
@@ -183,12 +184,23 @@ describe("updateAlias", () => {
   });
 
   it("only writes the fields given", async () => {
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(row("a", "A0"));
     stubbed(p.manufacturerAlias.update).mockResolvedValue(row("a", "B"));
     await updateAlias("id1", { canonical: "B" });
     expect(p.manufacturerAlias.update).toHaveBeenCalledWith({ where: { id: "id1" }, data: { canonical: "B" } });
   });
 
+  it("refuses a one-field update that would make a self-alias, comparing the stored other field (400)", async () => {
+    // Was a bug until 2026-11-16: only a two-field update was checked, so this was written.
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(row("cisco systems", "Cisco"));
+    await expectAppError(updateAlias("id1", { alias: "CISCO" }), 400, /cannot be the same/);
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(row("cisco", "Cisco Systems"));
+    await expectAppError(updateAlias("id1", { canonical: "Cisco" }), 400, /cannot be the same/);
+    expect(p.manufacturerAlias.update).not.toHaveBeenCalled();
+  });
+
   it("runs the backfill after the update", async () => {
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(row("a", "A0"));
     stubbed(p.manufacturerAlias.update).mockResolvedValue(row("a", "B"));
     await updateAlias("id1", { canonical: "B" });
     await flush();
@@ -206,8 +218,10 @@ describe("updateAlias", () => {
   });
 
   it("maps a missing row to 404", async () => {
-    stubbed(p.manufacturerAlias.update).mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }));
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(null);
     await expectAppError(updateAlias("nope", { canonical: "X" }), 404, /Alias not found/);
+    stubbed(p.manufacturerAlias.update).mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }));
+    await expectAppError(updateAlias("nope", { alias: "x", canonical: "X2" }), 404, /Alias not found/);
   });
 
   // Was a bug until 2026-11-14: updateAlias catches EVERY update error as "Alias not found". Renaming
@@ -216,6 +230,7 @@ describe("updateAlias", () => {
   // plainly exists. createAlias answers the same clash with 409 "already
   // exists" — the update should too (or at least not claim the row is missing).
   it("renaming onto an alias that already exists is a 409 conflict, not a 404", async () => {
+    stubbed(p.manufacturerAlias.findUnique).mockResolvedValue(row("dell computer", "Dell"));
     stubbed(p.manufacturerAlias.update).mockRejectedValue(
       Object.assign(new Error("Unique constraint failed on the fields: (`alias`)"), { code: "P2002" }),
     );

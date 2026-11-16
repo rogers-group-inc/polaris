@@ -349,12 +349,14 @@ export async function updateIconKey(
   }
 }
 
+/** True when deleted, false when no such icon; any other failure is thrown. */
 export async function deleteIcon(id: string): Promise<boolean> {
   try {
     await prisma.deviceIcon.delete({ where: { id } });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as { code?: string }).code === "P2025") return false;
+    throw err;
   }
 }
 

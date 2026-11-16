@@ -186,9 +186,10 @@ describe("countUnusableStoredPatterns", () => {
     expect(await countUnusableStoredPatterns()).toBe(0);
   });
 
-  it("never throws: a failed read answers 0 and is not cached", async () => {
+  it("never throws: a failed read answers null (unknown) and is not cached", async () => {
+    // Was a bug until 2026-11-16: a failed read answered 0, indistinguishable from "none".
     stubbed(prisma.integration.findMany).mockRejectedValueOnce(new Error("db down"));
-    expect(await countUnusableStoredPatterns()).toBe(0);
+    expect(await countUnusableStoredPatterns()).toBeNull();
     rows("manufacturerProfile", [{ id: "p1", manufacturer: "A", matchPattern: BACKREF }]);
     expect(await countUnusableStoredPatterns()).toBe(1);
   });

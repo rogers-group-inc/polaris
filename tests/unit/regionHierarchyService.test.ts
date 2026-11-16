@@ -83,12 +83,11 @@ describe("regionLevelIndex", () => {
     expect([...ix.byName.keys()]).toEqual(["nashville", "memphis"]);
   });
 
-  it("strips the prefix BEFORE trimming, so a leading-space prefix survives in the key", async () => {
-    // Asset tags are trimmed on write, so this shape should not occur; pinned
-    // so a reorder of strip/trim is a visible change.
+  it("trims BEFORE stripping the prefix, so a leading-space prefix is still stripped", async () => {
+    // Was a bug until 2026-11-16: the prefix was stripped before trimming, so " region:X" kept it.
     catalogue([{ id: "x", name: " region:Nashville" }], 1);
     const ix = await regionLevelIndex();
-    expect([...ix.byName.keys()]).toEqual(["region:nashville"]);
+    expect([...ix.byName.keys()]).toEqual(["nashville"]);
   });
 
   it("a region missing from the hierarchy reads as top-level at level 1", async () => {

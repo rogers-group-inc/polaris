@@ -278,25 +278,34 @@ describe("setWidgetEnabledForAsset", () => {
     await expectAppError(setWidgetEnabledForAsset("a1", "w1", false), 404, /Widget not found/);
   });
 
-  it("switching on upserts on (assetId, widgetId) with the actor and leaves an existing row unchanged", async () => {
+  it("switching on inserts (assetId, widgetId) with the actor, skipping an existing row, and audits it", async () => {
     stubbed(p.asset.findUnique).mockResolvedValue(asset("a1", "Smart-UPS"));
+    stubbed(p.assetCustomWidgetEnable.createMany).mockResolvedValue({ count: 1 });
     await setWidgetEnabledForAsset("a1", "w1", true, "alice");
-    expect(p.assetCustomWidgetEnable.upsert).toHaveBeenCalledWith({
-      where: { assetId_widgetId: { assetId: "a1", widgetId: "w1" } },
-      create: { assetId: "a1", widgetId: "w1", enabledBy: "alice" },
-      update: {},
+    expect(p.assetCustomWidgetEnable.createMany).toHaveBeenCalledWith({
+      data: [{ assetId: "a1", widgetId: "w1", enabledBy: "alice" }],
+      skipDuplicates: true,
     });
     expect(eventsWritten()).toEqual([expect.objectContaining({ action: "asset.custom_widget.enabled", resourceId: "a1", actor: "alice" })]);
+  });
+
+  it("switching on a widget already on (or off one never on) writes no Event", async () => {
+    // Was a bug until 2026-11-16: every call was audited, whatever the write did.
+    stubbed(p.asset.findUnique).mockResolvedValue(asset("a1", "Smart-UPS"));
+    await setWidgetEnabledForAsset("a1", "w1", true, "alice");
+    await setWidgetEnabledForAsset("a1", "w1", false, "alice");
+    expect(eventLog.logEventsBatch).not.toHaveBeenCalled();
   });
 
   it("without an actor stores enabledBy null", async () => {
     stubbed(p.asset.findUnique).mockResolvedValue(asset("a1", "Smart-UPS"));
     await setWidgetEnabledForAsset("a1", "w1", true);
-    expect(stubbed(p.assetCustomWidgetEnable.upsert).mock.calls[0]![0].create.enabledBy).toBeNull();
+    expect(stubbed(p.assetCustomWidgetEnable.createMany).mock.calls[0]![0].data[0].enabledBy).toBeNull();
   });
 
   it("switching off for an asset no longer governed is allowed and audited", async () => {
     stubbed(p.asset.findUnique).mockResolvedValue({ ...asset("a1", "Smart-UPS", "Eaton"), hostname: null });
+    stubbed(p.assetCustomWidgetEnable.deleteMany).mockResolvedValue({ count: 1 });
     await setWidgetEnabledForAsset("a1", "w1", false, "bob");
     expect(p.assetCustomWidgetEnable.deleteMany).toHaveBeenCalledWith({ where: { assetId: "a1", widgetId: "w1" } });
     const [ev] = eventsWritten() as Array<Record<string, unknown>>;
@@ -307,7 +316,7 @@ describe("setWidgetEnabledForAsset", () => {
   it("refuses switching on a model the pattern excludes (400) without writing", async () => {
     stubbed(p.asset.findUnique).mockResolvedValue(asset("a1", "Back-UPS"));
     await expectAppError(setWidgetEnabledForAsset("a1", "w1", true), 400, /does not apply to this asset/);
-    expect(p.assetCustomWidgetEnable.upsert).not.toHaveBeenCalled();
+    expect(p.assetCustomWidgetEnable.createMany).not.toHaveBeenCalled();
     expect(eventLog.logEventsBatch).not.toHaveBeenCalled();
   });
 });

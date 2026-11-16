@@ -2441,6 +2441,10 @@ async function unusableRegexReasonsSafe(): Promise<CapacityReason[]> {
   try {
     const { countUnusableStoredPatterns } = await import("./storedRegexAuditService.js");
     const n = await countUnusableStoredPatterns();
+    if (n === null) {
+      logger.debug("stored-regex audit unavailable; capacity snapshot continues without it");
+      return [];
+    }
     if (n === 0) return [];
     return [{
       severity: "watch",

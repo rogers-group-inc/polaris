@@ -214,14 +214,15 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The PROTOCOL half of a reboot (business rule 115) — no Prisma, no Events, no holds. A `GateLink` in, one gate's operations out (`gateOps(link)` → `GateOps`): reboot the gate, restart a managed switch, restart a managed AP, read the gate's status / boot time and the managed switch / AP tables (`ManagedSwitchState` / `ManagedApState`).
 
-**Public API:** `gateOps`, `runFortiCli`, `assertCliToken`, `RebootSendError`, types `GateLink` / `GateOps` / `SendResult` / `ManagedSwitchState` / `ManagedApState`, constants `REBOOT_PATH` (`/api/v2/monitor/system/os/reboot`, body `{event_log_message}`), `SWITCH_RESTART_PATH` (`/api/v2/monitor/switch-controller/managed-switch/restart`, `{mkey: switch-id}`), `AP_RESTART_PATH` (`/api/v2/monitor/wifi/managed_ap/restart`, `{wtpname}`); `_rebootTransportSeams` (the test seam rebootService calls through).
+**Public API:** `gateOps`, `RebootSendError`, types `GateLink` / `GateOps` / `SendResult` / `ManagedSwitchState` / `ManagedApState`, constants `REBOOT_PATH` (`/api/v2/monitor/system/os/reboot`, body `{event_log_message}`), `SWITCH_RESTART_PATH` (`/api/v2/monitor/switch-controller/managed-switch/restart`, `{mkey: switch-id}`), `AP_RESTART_PATH` (`/api/v2/monitor/wifi/managed_ap/restart`, `{wtpname}`); `_rebootTransportSeams` (the test seam rebootService calls through).
 
 **Cross-service deps:** `fortigateService.fgRequest` (kind `token` — rule 96 pacing); `fortimanagerService.fmgProxyRest` (kind `fmg-proxy`); `firmwareEngines/deviceHttp.DeviceHttpClient` + `firmwareEngines/fortigateHttps.gateLogin` (kind `login`) and `firmwareEngines/types.DEFAULT_FIRMWARE_TIMEOUTS`; `utils/remoteExec.withSshClient` (kind `ssh`); `utils/fortiosEnvelope.readSystemStatus`.
 
 **Used by:** `src/services/rebootService.ts` only.
 
 **Invariants:**
-- **2026-11-14:** `runFortiCli` rejects when the shell closes or errors BEFORE the prompt appeared (the command was never typed) — `sshOps.send` turns that into a `RebootSendError` (a refusal), not `{ uncertain }`; a close AFTER the command was sent stays a lost answer.
+- **2026-11-16:** on the `token` link, a fetch that failed with `cause.code` `ECONNREFUSED` / `ENOTFOUND` / `EHOSTUNREACH` (no request ever left) is a `RebootSendError`, not `{ uncertain }`; a timeout or a reset after send stays uncertain.
+- **2026-11-14:** `runFortiCli` (private) rejects when the shell closes or errors BEFORE the prompt appeared (the command was never typed) — `sshOps.send` turns that into a `RebootSendError` (a refusal), not `{ uncertain }`; a close AFTER the command was sent stays a lost answer.
 - **Four link kinds**: `token` (an integration's or a restapi credential's bearer), `login` (a device admin form login), `fmg-proxy` (through FortiManager), `ssh` (FortiOS CLI over an interactive shell: `execute reboot`, `execute switch-controller switch-action restart swtp <id>`, `execute wireless-controller reset-wtp <serial>`; `runFortiCli` answers the `(y/n)` prompt and pages `--More--`).
 - **A refusal and a dropped connection are different results**: `RebootSendError` = the device said no (the run fails, nothing was rebooted); `{ uncertain: true }` = the connection died mid-send, which a reboot routinely does — the run watches for proof instead of failing.
 - **Every CLI argument passes `assertCliToken`** (switch-id, serial) — an interactive shell has no argv boundary.

@@ -657,7 +657,7 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 
 **Public API:** `previewIntegrationDetach({ id, name, type })` → `{ sourcedAssets, soleSourceAssets, soleSourceMonitored, networks, pushedReservations, azureTaggedAssets }`; `detachIntegration({ id, name, type }, { decommission, actor })` → `IntegrationDetachResult`; pure `detachSummary(result)` (the text on the `integration.deleted` Event).
 
-**Cross-service deps:** `eventLogService.logEvent` (`integration.dhcp_entries_left`, `asset.integration_deleted.decommissioned`); `tagAssignmentService.syncAzureTagRegistry`; `maintenanceScheduleService.releaseAssetsForDecommission`; `reservationService.releaseInfraReservationsForAssets`; `dependencyTreeService.recomputeDependencyTree`; `utils/assetProjection.ENRICHMENT_SOURCE_KINDS`; `utils/tagNormalize.isAzureTag`.
+**Cross-service deps:** `eventLogService.logEvent` (`integration.dhcp_entries_left`) + `eventLogService.logEventsBatch` (`asset.integration_deleted.decommissioned`, one batched insert for every retired asset); `tagAssignmentService.syncAzureTagRegistry`; `maintenanceScheduleService.releaseAssetsForDecommission`; `reservationService.releaseInfraReservationsForAssets`; `dependencyTreeService.recomputeDependencyTree`; `utils/assetProjection.ENRICHMENT_SOURCE_KINDS`; `utils/tagNormalize.isAzureTag`.
 
 **Used by:** `src/api/routes/integrations.ts` — `GET /:id/delete-preview` and `DELETE /:id`.
 

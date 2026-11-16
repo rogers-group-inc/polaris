@@ -230,19 +230,24 @@ export async function setWidgetEnabledForAsset(
     select: { id: true, hostname: true, manufacturer: true, os: true, model: true, assetType: true },
   });
   if (!asset) throw new AppError(404, "Asset not found");
+  // Audited only when the switch actually changed, as setWidgetAssets is:
+  // switching on a widget already on (skipDuplicates → count 0), or off one
+  // never on, writes no Event (until 2026-11-16 it always did).
+  let changed: number;
   if (enabled) {
     if (!assetFallsUnder(widget, asset)) {
       throw new AppError(400, `Widget "${widget.name}" does not apply to this asset`);
     }
-    await prisma.assetCustomWidgetEnable.upsert({
-      where:  { assetId_widgetId: { assetId, widgetId } },
-      create: { assetId, widgetId, enabledBy: actor ?? null },
-      update: {},
-    });
+    changed = (await prisma.assetCustomWidgetEnable.createMany({
+      data: [{ assetId, widgetId, enabledBy: actor ?? null }],
+      skipDuplicates: true,
+    })).count;
   } else {
-    await prisma.assetCustomWidgetEnable.deleteMany({ where: { assetId, widgetId } });
+    changed = (await prisma.assetCustomWidgetEnable.deleteMany({ where: { assetId, widgetId } })).count;
   }
-  await logEventsBatch([widgetEvent(enabled ? "enabled" : "disabled", widget, asset.id, asset.hostname, actor)]);
+  if (changed > 0) {
+    await logEventsBatch([widgetEvent(enabled ? "enabled" : "disabled", widget, asset.id, asset.hostname, actor)]);
+  }
 }
 
 function widgetEvent(
