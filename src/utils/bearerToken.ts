@@ -17,7 +17,7 @@ import { randomBytes } from "node:crypto";
 export const TOKEN_PREFIX = "polaris_";
 /** Chars of a raw token used as the indexed lookup key ("polaris_xxxxxxxx"). */
 export const TOKEN_INDEX_PREFIX_LEN = TOKEN_PREFIX.length + 8;
-export const TOKEN_RANDOM_BYTES = 24; // → 32 base64url chars
+export const TOKEN_RANDOM_BYTES = 24; // → 32 base64 chars, then + / = stripped (usually 30–31 left)
 
 export function generateRawToken(): string {
   const tail = randomBytes(TOKEN_RANDOM_BYTES)

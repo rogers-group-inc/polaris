@@ -50,6 +50,17 @@ export async function getSsoSettings(): Promise<SsoSettings> {
   return ssoStore.get();
 }
 
+/**
+ * 0..1440 minutes. Omitted or non-finite (NaN, "abc", Infinity) keeps the
+ * current value — Math.max/min alone let NaN through to the stored row.
+ */
+function clampAutoLogoutMinutes(raw: unknown, current: number): number {
+  if (raw === undefined) return current;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return Number.isFinite(current) ? current : SSO_DEFAULTS.autoLogoutMinutes;
+  return Math.max(0, Math.min(1440, n));
+}
+
 export async function updateSsoSettings(updates: Partial<SsoSettings>): Promise<SsoSettings> {
   const current = await getSsoSettings();
   const merged: SsoSettings = {
@@ -61,10 +72,7 @@ export async function updateSsoSettings(updates: Partial<SsoSettings>): Promise<
     idpCertificate: updates.idpCertificate !== undefined ? updates.idpCertificate.trim() : current.idpCertificate,
     wantResponseSigned: updates.wantResponseSigned !== undefined ? updates.wantResponseSigned : current.wantResponseSigned,
     skipLoginPage: updates.skipLoginPage !== undefined ? updates.skipLoginPage : current.skipLoginPage,
-    autoLogoutMinutes:
-      updates.autoLogoutMinutes !== undefined
-        ? Math.max(0, Math.min(1440, updates.autoLogoutMinutes))
-        : current.autoLogoutMinutes,
+    autoLogoutMinutes: clampAutoLogoutMinutes(updates.autoLogoutMinutes, current.autoLogoutMinutes),
   };
   await ssoStore.save(merged);
 
@@ -76,9 +84,10 @@ export async function updateSsoSettings(updates: Partial<SsoSettings>): Promise<
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
+/** Configured = everything getSamlClient requires, including the Application URL. */
 export async function isAzureSsoConfiguredAsync(): Promise<boolean> {
   const s = await getSsoSettings();
-  return !!(s.enabled && s.idpEntityId && s.idpLoginUrl && s.idpCertificate);
+  return !!(s.enabled && s.idpEntityId && s.idpLoginUrl && s.idpCertificate && s.spEntityId);
 }
 
 // ─── SAML Client ─────────────────────────────────────────────────────────────

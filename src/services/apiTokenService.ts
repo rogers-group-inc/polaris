@@ -17,7 +17,9 @@
  * stored. Lookup cost is bounded by the number of non-revoked,
  * non-expired tokens sharing the 8-char prefix (small N in practice).
  *
- * Wire format: `Authorization: Bearer polaris_<32-char-base62-tail>`.
+ * Wire format: `Authorization: Bearer polaris_<alphanumeric tail>` — the tail
+ * is base64 of 24 random bytes with + / = stripped, capped at 32 chars, so it
+ * is up to 32 chars and usually 30–31 (see src/utils/bearerToken.ts).
  *
  * Trusted hosts: a token may name the source addresses it is accepted from
  * (bare IPs or CIDRs, matched against the trust-proxy-resolved req.ip). Empty
@@ -173,6 +175,11 @@ export interface CreateTokenResult {
 export async function createToken(input: CreateTokenInput): Promise<CreateTokenResult> {
   if (!input.name?.trim()) throw new AppError(400, "Token name is required");
   if (!input.roleId?.trim()) throw new AppError(400, "Token role is required");
+  // A token born expired is unusable (verifyToken never matches it); refuse
+  // here as well as in the route, so every caller of the service is covered.
+  if (input.expiresAt && !(input.expiresAt.getTime() > Date.now())) {
+    throw new AppError(400, "expiresAt must be in the future");
+  }
 
   const role = await prisma.role.findUnique({ where: { id: input.roleId } });
   if (!role) throw new AppError(400, `Role ${input.roleId} not found`);

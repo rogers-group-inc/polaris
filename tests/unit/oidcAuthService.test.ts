@@ -118,9 +118,11 @@ describe("getOidcSettingsForUi", () => {
 describe("keptOidcClientSecret (rule 111(a))", () => {
   const cur = { discoveryUrl: "https://idp.example", clientId: "polaris", clientSecret: "stored" };
 
-  it("saves a typed secret trimmed, clears on blank", () => {
-    expect(svc.keptOidcClientSecret(cur, { clientSecret: " typed " })).toBe("typed");
+  it("saves a typed secret exactly as typed, clears on blank", () => {
+    // Was a bug until 2026-11-16: a typed secret was trimmed (" typed " saved as "typed").
+    expect(svc.keptOidcClientSecret(cur, { clientSecret: " typed " })).toBe(" typed ");
     expect(svc.keptOidcClientSecret(cur, { clientSecret: "" })).toBe("");
+    expect(svc.keptOidcClientSecret(cur, { clientSecret: "  " })).toBe("");
   });
 
   it("keeps the stored secret for an echoed mask while discovery URL + client id are unchanged", () => {
@@ -177,6 +179,24 @@ describe("updateOidcSettings / isOidcEnabled", () => {
     await svc.buildAuthorizationUrl();
     expect(h.client.discovery).toHaveBeenCalledTimes(2);
     expect(h.client.discovery.mock.calls[1][2]).toBe("rotated");
+  });
+
+  it("rediscovers when another process changed the settings (the cached discovery is keyed by them)", async () => {
+    // Was a bug until 2026-11-16: discovery was cached until updateOidcSettings ran in THIS process, so other web processes kept the old issuer.
+    vi.useFakeTimers();
+    try {
+      stored(CONFIGURED);
+      await svc.buildAuthorizationUrl();
+      stored({ ...CONFIGURED, discoveryUrl: "https://idp2.example" });
+      vi.advanceTimersByTime(31_000); // settings cache expires
+      await svc.buildAuthorizationUrl();
+      expect(h.client.discovery).toHaveBeenCalledTimes(2);
+      expect(String(h.client.discovery.mock.calls[1][0])).toContain("idp2.example");
+      await svc.buildAuthorizationUrl();
+      expect(h.client.discovery).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([
@@ -285,6 +305,13 @@ describe("handleCallback", () => {
     const out = await svc.handleCallback(CALLBACK, checks);
     expect(out.username).toBe("u-2");
     expect(out.groups).toEqual([]);
+  });
+
+  it("the username fallback uses the configured email claim, not a literal `email`", async () => {
+    // Was a bug until 2026-11-16: the fallback read merged.email regardless of emailClaim.
+    stored({ ...CONFIGURED, emailClaim: "mail" });
+    h.client.authorizationCodeGrant.mockResolvedValueOnce(tokens({ sub: "u-1", mail: "m@x", email: "e@x" }));
+    expect((await svc.handleCallback(CALLBACK, checks)).username).toBe("m@x");
   });
 
   it("propagates a rejected code grant (state / nonce / PKCE mismatch)", async () => {

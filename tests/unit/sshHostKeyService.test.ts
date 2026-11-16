@@ -278,13 +278,26 @@ describe("listHostKeys / listHostKeysWithAssets", () => {
     ]);
     const out = await listHostKeysWithAssets();
     const where = stubbed(prisma.asset.findMany).mock.calls[0][0].where;
-    expect(where.OR[0]).toEqual({ ipAddress: { in: ["10.0.0.5", "Web01.corp"] } });
+    expect(where.OR[0]).toEqual({ ipAddress: { in: ["10.0.0.5", "Web01.corp"], mode: "insensitive" } });
     expect(where.OR[1]).toEqual({ hostname: { in: ["10.0.0.5", "Web01.corp"], mode: "insensitive" } });
     expect(out.map((p) => [p.id, p.assets.map((a) => a.id)])).toEqual([
       ["hk-1", ["a1"]],
       ["hk-2", ["a1"]],
       ["hk-3", ["a2"]],
     ]);
+  });
+
+  it("joins an IPv6 pin to its asset across case and compression differences", async () => {
+    // Was a bug until 2026-11-16: addresses were compared exactly, so "2001:DB8:0::5" never joined "2001:db8::5".
+    stubbed(prisma.sshHostKey.findMany).mockResolvedValue([pin("2001:DB8:0::5", 22, FP_A, "hk-6")]);
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { id: "a6", hostname: "v6host", ipAddress: "2001:db8::5" },
+      { id: "a7", hostname: "other", ipAddress: "2001:db8::6" },
+    ]);
+    const out = await listHostKeysWithAssets();
+    const where = stubbed(prisma.asset.findMany).mock.calls[0][0].where;
+    expect(where.OR[0].ipAddress.in).toEqual(["2001:DB8:0::5", "2001:db8::5"]);
+    expect(out[0].assets.map((a) => a.id)).toEqual(["a6"]);
   });
 });
 
