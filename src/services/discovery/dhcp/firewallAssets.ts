@@ -523,6 +523,16 @@ export async function syncFirewallAssets(input: {
         const { ipHistoryRefresh: fwIpRefresh } = pruneUnchangedAssetFields(fwPruneBase, updateData);
         if (fwIpRefresh) ipHistoryRefreshRows.push({ assetId: existingAsset.id, ...fwIpRefresh });
         if (Object.keys(updateData).length > 0) await prisma.asset.update({ where: { id: existingAsset.id }, data: updateData });
+        // Rule 191: a gate moved by its FortiManager / FortiGate location resets its map-based Topology views.
+        if (updateData.latitude !== undefined || updateData.longitude !== undefined) {
+          const from = { latitude: existingAsset.latitude ?? null, longitude: existingAsset.longitude ?? null };
+          const to = {
+            latitude: (updateData.latitude as number | undefined) ?? existingAsset.latitude ?? null,
+            longitude: (updateData.longitude as number | undefined) ?? existingAsset.longitude ?? null,
+          };
+          const tv = await import("../../topologyViewService.js");
+          if (tv.siteMoved(from, to)) await tv.resetTopologyViewsForSiteMove(existingAsset.id, to as { latitude: number; longitude: number }, from, "discovery");
+        }
         logDiscoveryAssetUpdated(fwBefore, updateData, existingAsset.id, memberDevice.hostname || device.name, {
           integrationName, integrationId, sourceKind: "fortigate-firewall", actor,
         });

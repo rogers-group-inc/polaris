@@ -20,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
+import { logger } from "../utils/logger.js";
 import type { Prisma } from "../generated/prisma/client.js";
 import { detectImageMagic } from "../utils/imageMagic.js";
 import { parseDxf, extentsOf, renderDxfSvg, dxfPreview, DxfError, DXF_UNIT_METRES, type DxfGeo, type DxfExtents } from "../utils/dxf.js";
@@ -1527,6 +1528,105 @@ export async function saveCadDrawing(
     select: { id: true, viewId: true, mimeType: true, width: true, height: true, size: true },
   });
   return { ...row, cad };
+}
+
+// ─── A site that moves (business rule 191) ───────────────────────────────────
+
+/** A site's Topology views that sit on the real map (an image ground is not geographic). */
+async function mapViewsOf(siteId: string): Promise<TopologyViewDto[]> {
+  const rows = await prisma.topologyView.findMany({ where: { siteId, mode: "topology" } });
+  return rows.map((r) => toDto(r as unknown as ViewRow)).filter((v) => !v.background || v.background.kind !== "image");
+}
+
+function topoKey(v: TopologyViewDto): string {
+  return v.isDefault ? "topo" : `v:${v.id}|topo`;
+}
+
+export interface SiteMoveImpact {
+  /** Map-based Topology views of the site (all re-centred). */
+  views: number;
+  /** Floor plans (images or CAD drawings) that would be removed. */
+  plans: number;
+  /** Devices placed on any floor of those views. */
+  placements: number;
+  /** Polygons drawn on them. */
+  polygons: number;
+}
+
+/** What moving a site would reset (the edit form's warning). */
+export async function siteMoveImpact(siteId: string): Promise<SiteMoveImpact> {
+  const views = await mapViewsOf(siteId);
+  let plans = 0, placements = 0, polygons = 0;
+  for (const v of views) {
+    plans += v.layers.filter((l) => l.background?.kind === "image").length;
+    polygons += v.polygons.length;
+    placements += await countTopologyPlacements(siteId, v);
+  }
+  return { views: views.length, plans, placements, polygons };
+}
+
+/**
+ * A site's coordinates changed: its map-based Topology views re-centre on the
+ * new spot, and everything placed on them — floor plans, placed devices,
+ * polygons, on every floor — is cleared, since it sits at the old spot. The
+ * floors (number + name) and the views stay; descriptions are untouched.
+ * One transaction; one Event when anything was reset. Never throws.
+ */
+export async function resetTopologyViewsForSiteMove(
+  siteId: string,
+  to: { latitude: number; longitude: number },
+  from: { latitude: number | null; longitude: number | null },
+  actor: string | null,
+): Promise<SiteMoveImpact | null> {
+  try {
+    const views = await mapViewsOf(siteId);
+    if (!views.length) return null;
+    const impact = await siteMoveImpact(siteId);
+    await prisma.$transaction(async (tx) => {
+      for (const v of views) {
+        const bg = v.background && v.background.kind === "osm" ? v.background : null;
+        const key = topoKey(v);
+        await tx.topologyLayout.deleteMany({ where: { siteId, OR: [{ view: key }, { view: { startsWith: `${key}|L` } }] } });
+        await tx.topologyBackgroundImage.deleteMany({ where: { viewId: v.id } });
+        await tx.topologyView.update({
+          where: { id: v.id },
+          data: {
+            updatedBy: actor,
+            polygons: json([]),
+            layers: json(v.layers.map((l) => ({ level: l.level, name: l.name, background: null }))),
+            // A view with no saved camera opens on the site anyway; one with a camera follows it.
+            background: bg
+              ? json({ ...bg, center: [to.latitude, to.longitude] })
+              : (null as unknown as Prisma.InputJsonValue),
+          },
+        });
+      }
+    });
+    await logEventsBatch([{
+      action: "map.topology.views_reset_for_site_move",
+      resourceType: "asset",
+      resourceId: siteId,
+      actor: actor ?? undefined,
+      level: impact.plans || impact.placements || impact.polygons ? "warning" : "info",
+      message: `The site moved: ${impact.views} Topology view${impact.views === 1 ? "" : "s"} re-centred` +
+        (impact.plans || impact.placements || impact.polygons
+          ? `; ${impact.plans} floor plan${impact.plans === 1 ? "" : "s"}, ${impact.placements} placed device${impact.placements === 1 ? "" : "s"} and ${impact.polygons} polygon${impact.polygons === 1 ? "" : "s"} cleared`
+          : ""),
+      details: { from, to, ...impact },
+    }]);
+    return impact;
+  } catch (err) {
+    // A failure here must not fail the asset save that moved the site.
+    logger.warn({ err, siteId }, "topology: site-move reset failed");
+    return null;
+  }
+}
+
+/** True when a site really moved (not a first location, not a float echo). */
+export function siteMoved(from: { latitude: number | null; longitude: number | null }, to: { latitude: number | null; longitude: number | null }): boolean {
+  if (typeof from.latitude !== "number" || typeof from.longitude !== "number") return false;
+  if (typeof to.latitude !== "number" || typeof to.longitude !== "number") return false;
+  return Math.abs(from.latitude - to.latitude) > 1e-6 || Math.abs(from.longitude - to.longitude) > 1e-6;
 }
 
 export async function getBackgroundImage(siteId: string, imageId: string): Promise<{ mimeType: string; data: Buffer; uploadedAt: Date }> {

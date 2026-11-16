@@ -3824,3 +3824,12 @@ so you can leave TLS verification on. The built-in authorities stay trusted, and
 verification turned off is not affected. Every Polaris process picks up a change within about 30
 seconds. Adding or removing a CA is recorded in Events. The SFTP / SCP event archive is not
 affected: SSH trusts a server by its host key.
+
+### Rule 191
+
+**Moving a site resets its map-based Topology views.** When a FortiGate's latitude and
+longitude change — edited on the asset, or from FortiManager / FortiGate — its Topology
+views on the map re-centre on the new location, and the floor plans, placed devices and
+polygons on every floor are cleared, because they sit at the old spot. The floors and
+their names stay, and descriptions are untouched; you place the floor plans and devices
+again. Editing the location shows what will be cleared before it saves.

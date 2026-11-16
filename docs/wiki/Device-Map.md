@@ -849,6 +849,15 @@ that doesn't fit is counted in the message rather than squeezed in. It
 happens only when the region is set or changed, so a device you take out
 stays out.
 
+**Moving the site resets its Topology views.** A view remembers where you left it, and
+everything on it is placed at real map positions. So when the FortiGate's latitude and
+longitude change (on the asset, or from FortiManager / FortiGate), its Topology views on
+the map re-centre on the new spot and their floor plans, placed devices and polygons are
+cleared on every floor — the floors and their names stay, and you place the plans and
+devices again ([rule 191](Business-Rules#rule-191)). Saving a new location on the asset
+says what will be cleared and asks first. A view drawn on an uploaded site plan is not on
+the map and is left as it is.
+
 **Floors are numbers.** In **Location regions** a floor is a number plus an
 optional name (Add region → Floor asks for both; ⋯ → Rename changes them). A
 building has one floor per number. A description must give a floor as its number

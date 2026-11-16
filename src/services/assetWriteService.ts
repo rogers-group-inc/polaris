@@ -852,6 +852,11 @@ async function applyAssetUpdateSideEffects(
   // refresh now instead of waiting for the periodic reconcile job.
   if (flags.coordChanged && asset.assetType === "firewall") {
     reconcileMapRegions().catch(() => {});
+    // Rule 191: a site that moved resets its map-based Topology views.
+    const from = { latitude: (existing as { latitude?: number | null }).latitude ?? null, longitude: (existing as { longitude?: number | null }).longitude ?? null };
+    const to = { latitude: (asset as { latitude?: number | null }).latitude ?? null, longitude: (asset as { longitude?: number | null }).longitude ?? null };
+    const tv = await import("./topologyViewService.js");
+    if (tv.siteMoved(from, to)) await tv.resetTopologyViewsForSiteMove(id, to as { latitude: number; longitude: number }, from, actor ?? null);
   }
 }
 

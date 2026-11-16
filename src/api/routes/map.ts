@@ -73,6 +73,7 @@ import {
   describeModeChangeLoss,
   saveBackgroundImage,
   analyzeCadDrawing,
+  siteMoveImpact,
   saveCadDrawing,
   MAX_CAD_FILE_BYTES,
   getBackgroundImage,
@@ -366,6 +367,15 @@ const viewWriteGate = [
   requirePermission("deviceMap", "write"),
   scopeAssetParam("deviceMap", "edit topology views for sites"),
 ];
+
+// Rule 191: what moving this site would reset — the asset form's warning.
+router.get("/sites/:id/topology/move-impact", async (req, res, next) => {
+  try {
+    res.json(await siteMoveImpact(req.params.id as string));
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get("/sites/:id/topology/views", async (req, res, next) => {
   try {
