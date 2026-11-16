@@ -79,6 +79,11 @@ export interface FreshestGateChange {
   to: string;
 }
 
+/** One gate however its name was written: integration prefix stripped, case folded. */
+function gateKey(d: string): string {
+  return bareFortinetDeviceName((d ?? "").trim()).toLowerCase();
+}
+
 /**
  * Which assets' FRESHEST FortiGate sighting is about to change gate — i.e.
  * "this device moved from behind gate A to behind gate B".
@@ -108,7 +113,7 @@ export function computeFreshestGateChanges(
   current: Array<{ assetId: string; fortigateDevice: string; lastSeen: Date }>,
   incoming: Array<{ assetId: string; fortigateDevice: string; seenAt: Date }>,
 ): FreshestGateChange[] {
-  const norm = (d: string) => bareFortinetDeviceName((d ?? "").trim()).toLowerCase();
+  const norm = gateKey;
 
   // Current rows per asset + the incumbent (max lastSeen; tie → lexicographic
   // device so the pick is deterministic across runs).
@@ -353,9 +358,12 @@ export async function getQuarantineCandidates(
   const settings = await getSightingSettings();
   // One candidate per GATE — the freshest of its rows (a gate holding both a
   // lease and a reservation has two), so a quarantine pushes once per gate.
+  // Grouped by the same key computeFreshestGateChanges compares by, so
+  // "fmg:GATE" and "GATE" are one gate, not two.
   const byGate = new Map<string, AssetSighting>();
   for (const s of await getSightingsForAsset(assetId)) {
-    if (!byGate.has(s.fortigateDevice)) byGate.set(s.fortigateDevice, s); // ordered lastSeen desc
+    const key = gateKey(s.fortigateDevice);
+    if (!byGate.has(key)) byGate.set(key, s); // ordered lastSeen desc
   }
   const all = [...byGate.values()];
   if (settings.sightingMaxAgeDays <= 0) return all;

@@ -162,15 +162,24 @@ export async function applyEndpointProjection(input: {
     // round-trips before any update happens. The bulk fetch + Map dispatch
     // collapses that to one round-trip. Per-asset writes still go through
     // mapSettledWithConcurrency so unchanged assets don't pay any DB cost.
-    const allSourceRows = await prisma.assetSource.findMany({
-      where: { assetId: { in: [...fortigateEndpointAssetIds] } },
-      // lastSeen rides along so the projection can let the FRESHEST of
-      // several same-kind rows speak for the kind — an asset that changed
-      // NICs keeps one fortigate-endpoint row per MAC, and without the
-      // freshness cue the stale NIC's blob could win the pick and revert
-      // the ipAddress Phase 6 just corrected.
-      select: { assetId: true, sourceKind: true, inferred: true, observed: true, lastSeen: true },
-    });
+    // A failed preload is logged and the pass skipped, like Phase 10's: a
+    // projection from no rows has nothing to say, and the phase must not
+    // throw out of the sync.
+    let allSourceRows;
+    try {
+      allSourceRows = await prisma.assetSource.findMany({
+        where: { assetId: { in: [...fortigateEndpointAssetIds] } },
+        // lastSeen rides along so the projection can let the FRESHEST of
+        // several same-kind rows speak for the kind — an asset that changed
+        // NICs keeps one fortigate-endpoint row per MAC, and without the
+        // freshness cue the stale NIC's blob could win the pick and revert
+        // the ipAddress Phase 6 just corrected.
+        select: { assetId: true, sourceKind: true, inferred: true, observed: true, lastSeen: true },
+      });
+    } catch (err: any) {
+      syncLog("error", `fortigate-endpoint projection apply: AssetSource preload failed (${err?.message || "unknown"})`);
+      return 0;
+    }
     const sourcesByAsset = new Map<string, typeof allSourceRows>();
     for (const r of allSourceRows) {
       const existing = sourcesByAsset.get(r.assetId);

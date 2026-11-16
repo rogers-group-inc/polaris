@@ -275,7 +275,7 @@ describe("retryAllStrandedQuarantine", () => {
 
   it("reads only rows with a non-empty list and returns zeros when there are none", async () => {
     db.assetFindMany.mockResolvedValue([]);
-    await expect(retryAllStrandedQuarantine(NOW)).resolves.toEqual({ assets: 0, cleared: 0, failed: 0 });
+    await expect(retryAllStrandedQuarantine(NOW)).resolves.toEqual({ assets: 0, cleared: 0, failed: 0, skipped: 0 });
     expect(db.assetFindMany).toHaveBeenCalledWith({
       where: { NOT: { quarantineStranded: { equals: [] } } },
       select: { id: true, quarantineStranded: true },
@@ -293,7 +293,7 @@ describe("retryAllStrandedQuarantine", () => {
       if (transport.dev === "FGT-B") throw new Error("down");
     });
     const r = await retryAllStrandedQuarantine(NOW);
-    expect(r).toEqual({ assets: 1, cleared: 1, failed: 1 });
+    expect(r).toEqual({ assets: 1, cleared: 1, failed: 1, skipped: 0 });
     expect(lastEvent()).toMatchObject({ actor: "system:quarantine-retry" });
   });
 
@@ -304,18 +304,16 @@ describe("retryAllStrandedQuarantine", () => {
     ]);
     db.assetFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
       where.id === "a1" ? asset([entry("FGT-B", "i2")]) : null);
-    await expect(retryAllStrandedQuarantine(NOW)).resolves.toEqual({ assets: 2, cleared: 1, failed: 1 });
+    await expect(retryAllStrandedQuarantine(NOW)).resolves.toEqual({ assets: 2, cleared: 1, failed: 1, skipped: 0 });
   });
 
-  // Suspicious, not pinned: `failed` adds r.remaining.length, which includes
-  // entries on the same asset that were NOT attempted because their backoff
-  // had not elapsed. Only the job's info log reads it.
-  it("counts a not-yet-due entry left on a retried asset in `failed`", async () => {
+  it("counts a not-yet-due entry left on a retried asset as skipped, not failed", async () => {
     const stored = [entry("FGT-A", "i1"), entry("FGT-B", "i2", { lastAttemptAt: recent })];
     db.assetFindMany.mockResolvedValue([{ id: "a1", quarantineStranded: stored }]);
     db.assetFindUnique.mockResolvedValue(asset(stored));
     const r = await retryAllStrandedQuarantine(NOW);
     expect(m.unpushQuarantineFromFortigate).toHaveBeenCalledTimes(1);
-    expect(r).toEqual({ assets: 1, cleared: 1, failed: 1 });
+    // Was a bug until 2026-11-16: `failed` added r.remaining.length, so the backoff-skipped entry counted as a failure.
+    expect(r).toEqual({ assets: 1, cleared: 1, failed: 0, skipped: 1 });
   });
 });

@@ -30,6 +30,7 @@ import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 import { AppError } from "../../src/utils/errors.js";
+import { logger } from "../../src/utils/logger.js";
 import {
   runPlaceholderMacAdoption,
   createAdoptionBudget,
@@ -142,6 +143,16 @@ describe("runPlaceholderMacAdoption — matching", () => {
     expect((await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]))).attempted).toBe(0);
   });
 
+  it("skips an already-adopted row silently, without calling it a collision", async () => {
+    stubbed(db.reservation.findMany).mockResolvedValue([res(1, { macAddress: "fc:aa:14:11:22:33" })]);
+    const info = vi.spyOn(logger, "info");
+    const out = await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]));
+    expect(out.attempted).toBe(0);
+    // Was a bug until 2026-11-16: the row's own MAC counted as a same-subnet collision, logged every cycle.
+    expect(info.mock.calls.some((c) => String(c[1]).includes("skipped candidate"))).toBe(false);
+    info.mockRestore();
+  });
+
   it("does not treat the same MAC in a DIFFERENT subnet as a collision", async () => {
     stubbed(db.reservation.findMany).mockResolvedValue([res(1), res(2, { subnetId: "s2", macAddress: REAL })]);
     expect((await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]))).adopted).toBe(1);
@@ -238,13 +249,13 @@ describe("runPlaceholderMacAdoption — writes", () => {
     stubbed(db.reservation.findMany).mockResolvedValue([res(1)]);
     const ctl = new AbortController();
     ctl.abort();
-    const out = await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]), { signal: ctl.signal });
+    const budget = createAdoptionBudget(5);
+    const out = await run(evidence([["FGT-Ashfield", "10.0.0.1", REAL]]), { signal: ctl.signal, budget });
     expect(h.updatePushed).not.toHaveBeenCalled();
-    expect(out.adopted).toBe(0);
-    // Current behaviour (suspicious, not pinned): the skipped row counts as a
-    // failure, spends budget and writes a warning-level adopt_failed Event.
-    expect(out).toMatchObject({ attempted: 1, failed: 1 });
-    expect(eventLog.logEvent.mock.calls[0][0]).toMatchObject({ action: "reservation.mac.adopt_failed", details: { error: "aborted" } });
+    // Was a bug until 2026-11-16: the skipped row counted as a failure, spent budget and wrote a warning adopt_failed Event.
+    expect(out).toEqual({ attempted: 0, adopted: 0, failed: 0, deferred: 0 });
+    expect(budget.remaining).toBe(5);
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
   });
 });
 

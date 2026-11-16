@@ -282,6 +282,16 @@ describe("getQuarantineCandidates", () => {
     expect((await getQuarantineCandidates("a")).map((s) => s.id)).toEqual(["lease", "g2"]);
   });
 
+  it("treats a prefixed and a bare spelling of one gate (any case) as one gate", async () => {
+    settingFind.mockResolvedValue({ value: { sightingMaxAgeDays: 0 } });
+    sightFind.mockResolvedValue([
+      sighting({ id: "bare", fortigateDevice: "GATE", lastSeen: daysAgo(1) }),
+      sighting({ id: "prefixed", fortigateDevice: "fmg:gate", lastSeen: daysAgo(2) }),
+    ]);
+    // Was a bug until 2026-11-16: grouped by the raw name, so this counted as two gates.
+    expect((await getQuarantineCandidates("a")).map((s) => s.id)).toEqual(["bare"]);
+  });
+
   it("drops gates last seen beyond the max age (the boundary day is kept)", async () => {
     settingFind.mockResolvedValue({ value: { sightingMaxAgeDays: 30 } });
     sightFind.mockResolvedValue([

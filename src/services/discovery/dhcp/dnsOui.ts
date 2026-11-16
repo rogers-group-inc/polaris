@@ -47,7 +47,7 @@ export async function reverseDnsForAssets(finalizeAssets: any[], syncLog: SyncLo
     // Everything else — the same name again, or no PTR — only moves the
     // fetch stamp, so those rows share one updateMany per TTL value instead
     // of one UPDATE (and one reconcile) each, every TTL, on every run.
-    const renamed: Array<{ id: string; name: string; ttl: number | null }> = [];
+    const renamed: Array<{ id: string; name: string; ttl: number | null; asset: any; prior: unknown }> = [];
     const restampByTtl = new Map<number | null, string[]>();
     const restamp = (ttl: number | null, id: string): void => {
       const ids = restampByTtl.get(ttl);
@@ -60,15 +60,29 @@ export async function reverseDnsForAssets(finalizeAssets: any[], syncLog: SyncLo
       dnsResolved++;
       const ttl = record.ttl ?? null;
       if (record.name !== asset.dnsName) {
-        renamed.push({ id: asset.id, name: record.name, ttl });
+        renamed.push({ id: asset.id, name: record.name, ttl, asset, prior: asset.dnsName });
         asset.dnsName = record.name;
       } else {
         restamp(ttl, asset.id);
       }
     }
-    await mapSettledWithConcurrency(renamed, BATCH_SIZE, (u) =>
+    const renameResults = await mapSettledWithConcurrency(renamed, BATCH_SIZE, (u) =>
       prisma.asset.update({ where: { id: u.id }, data: { dnsName: u.name, dnsNameFetchedAt: fetchedAt, dnsNameTtl: u.ttl } }),
     );
+    // A rename that did not land is not resolved: un-count it, put the
+    // in-memory name back (later phases read it), and say so like the restamp.
+    let renameFailed = 0;
+    let renameErr: string | undefined;
+    renameResults.forEach((r, i) => {
+      if (r.status !== "rejected") return;
+      renameFailed++;
+      dnsResolved--;
+      renamed[i]!.asset.dnsName = renamed[i]!.prior;
+      renameErr ??= (r.reason as any)?.message;
+    });
+    if (renameFailed > 0) {
+      syncLog("error", `DNS lookup: failed to record the resolved name on ${renameFailed} asset(s): ${renameErr || "Unknown error"}`);
+    }
     for (const [ttl, ids] of restampByTtl) {
       for (const chunk of chunkArray(ids, 1000)) {
         try {

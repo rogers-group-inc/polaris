@@ -102,20 +102,30 @@ describe("reconcileMacAddresses", () => {
     expect(input.map((m) => m.mac)).toEqual(["CC:00:00:00:00:01", "AA:00:00:00:00:01"]);
   });
 
-  // Callers dedupe their list before reconciling (find-then-push); this writer
-  // does not, so a duplicated MAC reaches the one INSERT twice.
-  it("passes a duplicated MAC through as two upsert tuples (no dedupe here)", async () => {
-    await reconcileMacAddresses("a1", [{ mac: "AA:00:00:00:00:01" }, { mac: "AA:00:00:00:00:01" }] as never);
-    expect(rows(db.execRaw.mock.calls[0], 8)).toHaveLength(2);
+  it("dedupes a MAC across spellings into one upsert tuple, keeping the freshest sighting", async () => {
+    await reconcileMacAddresses("a1", [
+      { mac: "aa:00:00:00:00:01", source: "old", lastSeen: "2026-11-01T00:00:00.000Z" },
+      { mac: "AA-00-00-00-00-01", source: "new", lastSeen: "2026-11-02T00:00:00.000Z" },
+    ] as never);
+    // Was a bug until 2026-11-16: both reached the one INSERT (Postgres refuses a key twice) and case was not normalised.
+    const r = rows(db.execRaw.mock.calls[0], 8);
+    expect(r).toHaveLength(1);
+    expect(r[0].slice(1, 3)).toEqual(["AA:00:00:00:00:01", "new"]);
+    expect(db.deleteMany.mock.calls[0][0].where.mac).toEqual({ notIn: ["AA:00:00:00:00:01"] });
   });
 
-  // Suspicious, not pinned: the params are built AFTER the delete, so an entry
-  // whose lastSeen does not parse throws a RangeError once the stale rows are
-  // already gone and before any new row is written.
-  it("throws on an unparseable lastSeen after the delete has already run", async () => {
-    await expect(reconcileMacAddresses("a1", [{ mac: "AA:00:00:00:00:01", lastSeen: "not-a-date" }] as never)).rejects.toThrow(RangeError);
+  it("defaults an unparseable lastSeen to now, and deletes + upserts in one transaction", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-16T12:00:00Z"));
+      await reconcileMacAddresses("a1", [{ mac: "AA:00:00:00:00:01", lastSeen: "not-a-date" }] as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    // Was a bug until 2026-11-16: a RangeError was thrown after the stale-row delete had committed, so no new row was written.
+    expect(rows(db.execRaw.mock.calls[0], 8)[0][6]).toBe("2026-11-16T12:00:00.000Z");
     expect(db.deleteMany).toHaveBeenCalledTimes(1);
-    expect(db.execRaw).not.toHaveBeenCalled();
+    expect(stubbed(prisma.$transaction)).toHaveBeenCalledTimes(1);
   });
 
   it("retries a deadlocked statement and then succeeds", async () => {
