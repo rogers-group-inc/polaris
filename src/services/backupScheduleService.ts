@@ -160,9 +160,15 @@ export async function saveBackupSchedule(input: Partial<BackupSchedule>): Promis
     intervalHours: input.intervalHours !== undefined
       ? clampInt(input.intervalHours, MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS, current.intervalHours)
       : current.intervalHours,
-    hourUtc: input.hourUtc !== undefined
-      ? (input.hourUtc === null ? null : clampInt(input.hourUtc, 0, 23, current.hourUtc ?? 0))
-      : current.hourUtc,
+    // A non-finite hour (NaN, a string) keeps the current pin — it must not
+    // pin hour 0 onto a schedule that had none.
+    hourUtc: input.hourUtc === undefined
+      ? current.hourUtc
+      : input.hourUtc === null
+        ? null
+        : typeof input.hourUtc === "number" && Number.isFinite(input.hourUtc)
+          ? clampInt(input.hourUtc, 0, 23, 0)
+          : current.hourUtc,
     retainCount: input.retainCount !== undefined
       ? clampInt(input.retainCount, MIN_RETAIN, MAX_RETAIN, current.retainCount)
       : current.retainCount,

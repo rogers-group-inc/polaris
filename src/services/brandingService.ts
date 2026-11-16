@@ -177,9 +177,10 @@ export async function getBranding(): Promise<BrandingSettings & { version: strin
   const saved = row ? (row.value as Record<string, unknown>) : {};
   const logoUrl = (saved.logoUrl as string) || BRANDING_DEFAULTS.logoUrl;
   return {
-    // `!== undefined`, not `||`: an operator can deliberately blank the name.
-    appName:  saved.appName  !== undefined ? (saved.appName as string)  : BRANDING_DEFAULTS.appName,
-    subtitle: saved.subtitle !== undefined ? (saved.subtitle as string) : BRANDING_DEFAULTS.subtitle,
+    // A string check, not `||`: an operator can deliberately blank the name,
+    // but a stored null (or any non-string) falls back to the default.
+    appName:  typeof saved.appName  === "string" ? saved.appName  : BRANDING_DEFAULTS.appName,
+    subtitle: typeof saved.subtitle === "string" ? saved.subtitle : BRANDING_DEFAULTS.subtitle,
     logoUrl,
     logoAccent:    normalizeBrandingFlag(saved.logoAccent,    BRANDING_DEFAULTS.logoAccent),
     logoOnLogin:   normalizeBrandingFlag(saved.logoOnLogin,   BRANDING_DEFAULTS.logoOnLogin),

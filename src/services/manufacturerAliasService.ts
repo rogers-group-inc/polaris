@@ -58,7 +58,6 @@ export const DEFAULT_ALIASES: ReadonlyArray<{ alias: string; canonical: string }
   { alias: "Aruba Networks",                          canonical: "Aruba" },
   // Mikrotik
   { alias: "MikroTikls SIA",                          canonical: "MikroTik" },
-  { alias: "Mikrotikls SIA",                          canonical: "MikroTik" },
   { alias: "Mikrotik",                                canonical: "MikroTik" },
   // Microsoft
   { alias: "Microsoft Corporation",                   canonical: "Microsoft" },
@@ -144,7 +143,17 @@ export async function updateAlias(
     if (!trimmed) throw new AppError(400, "canonical cannot be empty");
     data.canonical = trimmed;
   }
-  if (data.alias && data.canonical && data.alias === data.canonical.toLowerCase()) {
+  // A one-field update is compared against the stored other field, so it can
+  // never make the self-alias createAlias refuses.
+  let nextAlias = data.alias;
+  let nextCanonical = data.canonical;
+  if (nextAlias === undefined || nextCanonical === undefined) {
+    const stored = await prisma.manufacturerAlias.findUnique({ where: { id }, select: { alias: true, canonical: true } });
+    if (!stored) throw new AppError(404, "Alias not found");
+    nextAlias ??= stored.alias;
+    nextCanonical ??= stored.canonical;
+  }
+  if (nextAlias === nextCanonical.toLowerCase()) {
     throw new AppError(400, "alias and canonical cannot be the same string");
   }
   let row: ManufacturerAliasRow;

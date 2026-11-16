@@ -98,7 +98,20 @@ export function normalizeUserTimezone(v: unknown): string {
   if (typeof v !== "string") return AUTO_TIMEZONE;
   const t = v.trim();
   if (!t || t === AUTO_TIMEZONE) return AUTO_TIMEZONE;
-  return isValidTimeZone(t) ? t : AUTO_TIMEZONE;
+  return isValidTimeZone(t) ? canonicalTimeZone(t) : AUTO_TIMEZONE;
+}
+
+/**
+ * ICU accepts a zone name case-insensitively ("america/chicago"); answer its
+ * own spelling so a case-only variant is stored once and never reads as a
+ * change. Falls back to the input if a build reports no resolved zone.
+ */
+function canonicalTimeZone(tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: tz }).resolvedOptions().timeZone || tz;
+  } catch {
+    return tz;
+  }
 }
 
 /**

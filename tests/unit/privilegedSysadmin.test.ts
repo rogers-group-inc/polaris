@@ -144,6 +144,15 @@ describe("runNginxApply — started unit (preferred)", () => {
     expect(r.output).toMatch(/Access denied\n.*polaris-update-sync --apply-helpers/s);
   });
 
+  it("keeps the polkit hint when systemctl's output fills the 64 KB cap", async () => {
+    // Was a bug until 2026-11-16: the appended hint was sliced off at the cap.
+    h.scripts.push({ code: 4, stderr: ["Access denied " + "x".repeat(MAX)] });
+    const r = await runNginxApply({ kind: "reload" });
+    expect(r.output).toHaveLength(MAX);
+    expect(r.output).toMatch(/--apply-helpers.*\)\.$/s);
+    expect(r.truncated).toBe(true);
+  });
+
   it("does not add the hint when the unit ran and wrote output", async () => {
     h.scripts.push({ code: 1, stderr: ["Interactive authentication required."], unitOut: [`${STAGE}/reload.out`, "nginx: [emerg] bind() failed"] });
     const r = await runNginxApply({ kind: "reload" });
@@ -190,6 +199,15 @@ describe("runNginxApply — sudo fallback (unit not installed)", () => {
     h.scripts.push({ code: 1, stderr: ["cp: cannot create '/etc/nginx/conf.d/polaris.conf': Read-only file system"] });
     const r = await runNginxApply({ kind: "apply-config" });
     expect(r.output).toMatch(/Read-only file system\n.*--apply-helpers/s);
+  });
+
+  it("keeps the hint when the read-only failure already fills the 64 KB cap", async () => {
+    // Was a bug until 2026-11-16: the appended hint was sliced off at the cap.
+    h.scripts.push({ code: 1, stderr: ["Read-only file system " + "x".repeat(MAX)] });
+    const r = await runNginxApply({ kind: "apply-config" });
+    expect(r.output).toHaveLength(MAX);
+    expect(r.output).toMatch(/polaris-nginx-apply@\.service\)\.$/);
+    expect(r.truncated).toBe(true);
   });
 
   it("a plain failure carries no hint", async () => {

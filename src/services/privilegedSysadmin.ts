@@ -109,23 +109,29 @@ export async function runNginxApply(
     try { fromUnit = readFileSync(outFile, "utf8"); } catch { /* the unit never started */ }
     let output = fromUnit;
     if (run.exitCode !== 0 && run.output) output += (output ? "\n" : "") + run.output;
-    if (run.exitCode !== 0 && !fromUnit && /access denied|authentication required|not authorized/i.test(run.output)) {
-      output += `\n${APPLY_HELPERS_HINT}`;
-    }
-    return bounded(output, run.exitCode, run.durationMs, run.truncated);
+    const hint = run.exitCode !== 0 && !fromUnit && /access denied|authentication required|not authorized/i.test(run.output)
+      ? APPLY_HELPERS_HINT
+      : undefined;
+    return bounded(output, run.exitCode, run.durationMs, run.truncated, hint);
   }
 
   const args = [WRAPPER_PATH, ...(cmd.kind === "verify-listening" ? ["verify-listening", String(cmd.port)] : [cmd.kind])];
   const run = await capture("sudo", ["-n", "--", ...args], timeoutMs);
   if (run.exitCode !== 0 && /read-only file system/i.test(run.output)) {
-    return bounded(`${run.output}\n${APPLY_HELPERS_HINT}`, run.exitCode, run.durationMs, run.truncated);
+    return bounded(run.output, run.exitCode, run.durationMs, run.truncated, APPLY_HELPERS_HINT);
   }
   return run;
 }
 
-function bounded(output: string, exitCode: number, durationMs: number, alreadyTruncated: boolean): WrapperResult {
-  const truncated = alreadyTruncated || output.length > MAX_OUTPUT_BYTES;
-  return { exitCode, output: output.slice(0, MAX_OUTPUT_BYTES), durationMs, truncated };
+/**
+ * Cap the output at MAX_OUTPUT_BYTES. A hint is appended AFTER the cap, with
+ * room reserved for it, so the fix is never the part that gets cut off.
+ */
+function bounded(output: string, exitCode: number, durationMs: number, alreadyTruncated: boolean, hint?: string): WrapperResult {
+  const suffix = hint ? `\n${hint}` : "";
+  const room = MAX_OUTPUT_BYTES - suffix.length;
+  const truncated = alreadyTruncated || output.length > room;
+  return { exitCode, output: output.slice(0, room) + suffix, durationMs, truncated };
 }
 
 /** Spawn, capture stdout + stderr interleaved (bounded), kill on timeout. */

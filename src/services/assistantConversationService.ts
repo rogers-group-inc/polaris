@@ -135,7 +135,8 @@ export async function recentAdvisorLines(conversationId: string, n = 5): Promise
   };
 }
 
-/** First line of the opening question, trimmed to a title. Exported for tests. */
+/** The opening question with every run of whitespace (newlines included)
+ *  collapsed to one space, trimmed and cut to a 60-character title. */
 function titleFromQuestion(text: string): string {
   const line = text.replace(/\s+/g, " ").trim();
   if (!line) return "New conversation";
@@ -152,14 +153,16 @@ export async function listConversations(userId: string, limit = 50) {
   return prisma.assistantConversation.findMany({
     where: { userId },
     orderBy: { updatedAt: "desc" },
-    take: Math.min(Math.max(limit, 1), MAX_CONVERSATIONS_PER_USER),
+    // A non-finite limit (NaN from a bad query string) takes the default.
+    take: Math.min(Math.max(Number.isFinite(limit) ? Math.floor(limit) : 50, 1), MAX_CONVERSATIONS_PER_USER),
     select: { id: true, title: true, createdAt: true, updatedAt: true, _count: { select: { messages: true } } },
   }).then((rows) => rows.map(({ _count, ...r }) => ({ ...r, messageCount: _count.messages })));
 }
 
 export async function createConversation(userId: string, title?: string) {
   const conv = await prisma.assistantConversation.create({
-    data: { userId, title: title ? title.trim().slice(0, TITLE_MAX) || "New conversation" : "New conversation" },
+    // Cleaned as renameConversation cleans: inner whitespace collapsed too.
+    data: { userId, title: title ? title.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX) || "New conversation" : "New conversation" },
     select: { id: true, title: true, createdAt: true, updatedAt: true },
   });
   // Keep one user's history bounded without a job: past the cap, drop the oldest.

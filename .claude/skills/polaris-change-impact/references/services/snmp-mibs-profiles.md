@@ -14,7 +14,8 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - In-memory map (`setAliasMap()` in `manufacturerNormalize.ts`) must be refreshed after every mutation.
-- `seedDefaultAliases()` is idempotent; only inserts missing rows (no overwrites).
+- `seedDefaultAliases()` is idempotent; only inserts missing rows (no overwrites). Aliases are stored lower-cased, so `DEFAULT_ALIASES` must hold no two entries that differ only in case (a unit test pins it).
+- Alias == canonical (case-insensitive) is refused by `createAlias` AND `updateAlias`; a one-field update is compared against the stored other field (2026-11-16).
 - `applyAliasesToExistingRows()` respects (manufacturer, model, moduleName) uniqueness; logs warnings when normalization would create duplicates.
 - Prisma extension hooks `normalizeManufacturer()` on all Asset/MibFile create/update/upsert calls.
 
@@ -64,7 +65,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 **Invariants:**
 - Switching ON is refused (400) for an asset the widget does not apply to — governed by another profile (or none), or a model the pattern excludes. Switching OFF is always allowed, so a row stranded by a model change can be cleared.
 - "Applies" reads the WARM profile cache through `findDbProfile` (rule 131), which is null before it loads, so `loadWidget` calls `refreshProfileCacheIfStale()` first. On the web process the cache is warm and refreshed by every profile write, so that is one clock compare.
-- Every change writes one `asset.custom_widget.enabled|disabled` Event per asset changed, batched into one `logEventsBatch` — never one awaited write per asset.
+- Every change writes one `asset.custom_widget.enabled|disabled` Event per asset changed, batched into one `logEventsBatch` — never one awaited write per asset. "Changed" is real: `setWidgetEnabledForAsset` audits only when its insert (`createMany` skipDuplicates) or delete counted a row (2026-11-16), as `setWidgetAssets` does.
 - The scheduler asks `assetIdsWithEnabledWidgets()` ONCE per tick (one `DISTINCT assetId` read), never per asset — at 2000 assets that is the difference between one query and 2000.
 - `listWidgetCandidates` filters by the profile's canonical manufacturer in SQL when the profile has no `matchPattern` (asset manufacturers are alias-normalized on write by `db.ts`). With one it reads every non-decommissioned asset with a narrow select, because SQL cannot apply the pattern. Either way `findDbProfile` then decides, so an asset keyed to another profile is never offered. It is an on-demand picker, not a tick.
 
@@ -278,7 +279,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/storedRegexAuditService.ts
 
-**What it owns:** Business rule 116(e) — finding the operator regexes ALREADY stored that RE2 cannot compile. `findUnusableStoredPatterns()` reads every source (manufacturer profile `matchPattern`, override `modelPattern` / `parsePattern`, custom-widget `modelPattern`, asset-type `matchRules`, integration config auto-monitor blocks, HTTP-check credentials, path-check `http`, regex log-flag rules, the Application Map Setting) in one parallel batch; `regexPatternsIn(blob)` (pure) finds the stored shapes inside JSON; `countUnusableStoredPatterns()` is the 10-minute-cached count for the capacity card.
+**What it owns:** Business rule 116(e) — finding the operator regexes ALREADY stored that RE2 cannot compile. `findUnusableStoredPatterns()` reads every source (manufacturer profile `matchPattern`, override `modelPattern` / `parsePattern`, custom-widget `modelPattern`, asset-type `matchRules`, integration config auto-monitor blocks, HTTP-check credentials, path-check `http`, regex log-flag rules, the Application Map Setting) in one parallel batch; `regexPatternsIn(blob)` (pure) finds the stored shapes inside JSON; `countUnusableStoredPatterns()` is the 10-minute-cached count for the capacity card — `null` (unknown, uncached) when the read fails, never a false 0.
 
 **Callers:** `jobs/auditStoredRegexes` (boot: one warning `regex.pattern_unusable` Event per new (source, row, pattern) key), `capacityService.unusableRegexReasonsSafe` (watch reason `regex_pattern_unusable`).
 
