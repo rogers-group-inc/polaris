@@ -62,11 +62,16 @@ describe("METRIC_STREAM coverage", () => {
     expect(missing).toEqual([]);
   });
 
-  it("names a stream for every asset-state field except the controller-link one (own sweep cadence)", () => {
-    // fortilinkStatus is written by the controller-link sweep on its own timer;
-    // there is no CadenceStream for it, so it falls back to the probe cadence.
+  it("names a stream for every asset-state field", () => {
     const missing = (ASSET_STATE_FIELDS as readonly string[]).filter((f) => !(f in METRIC_STREAM));
-    expect(missing).toEqual(["fortilinkStatus"]);
+    expect(missing).toEqual([]);
+  });
+
+  it("maps the controller-link field to the system-info (interface) cadence (rule 59(a))", async () => {
+    // Was the probe cadence until 2026-11-16: the sweep ran on its own 60 s timer.
+    expect(METRIC_STREAM.fortilinkStatus).toBe("systemInfo");
+    stubbed(prisma.asset.findUnique).mockResolvedValue(asset("a1"));
+    expect(await resolveAssetCadenceSec("a1", "fortilinkStatus")).toBe(900);
   });
 
   it("summarizeIntervals ignores non-finite values", () => {

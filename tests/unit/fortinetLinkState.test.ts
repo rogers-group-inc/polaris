@@ -26,6 +26,9 @@ const h = vi.hoisted(() => ({
   // (deviceName, kind) -> inventory, or a thrown error for an unreadable one.
   inventories: new Map<string, Map<string, { connected: boolean; status: string; osVersion?: string }> | Error>(),
   versionReadings: [] as Array<Record<string, unknown>>,
+  // What the monitor-settings hierarchy resolves for one asset context.
+  settingsFor: (_ctx: Record<string, unknown>): Record<string, unknown> => ({ systemInfoIntervalSeconds: 600, interfacesPolling: "rest_api" }),
+  resolveCalls: 0,
 }));
 
 vi.mock("../../src/db.js", () => ({
@@ -50,6 +53,10 @@ vi.mock("../../src/services/monitoringService.js", () => ({
     const hit = h.inventories.get(`${deviceName}::${kind}`);
     if (hit instanceof Error) throw hit;
     return { inventory: hit ?? new Map(), fetchDurationMs: 5 };
+  }),
+  resolveMonitorSettings: vi.fn(async (ctx: Record<string, unknown>) => {
+    h.resolveCalls++;
+    return h.settingsFor(ctx);
   }),
 }));
 
@@ -82,6 +89,7 @@ function sw(id: string, serial: string, stored: string | null, controller = "GAT
     id, hostname: id, ipAddress: null, assetType: "switch", serialNumber: serial,
     fortinetTopology: { role: "fortiswitch", controllerFortigate: controller },
     fortilinkStatus: stored, fortilinkStatusRaw: null, discoveredByIntegrationId: "i-1",
+    fortilinkCheckedAt: null as Date | null, monitored: true, systemInfoIntervalSec: null as number | null,
   };
 }
 
@@ -90,8 +98,11 @@ function ap(id: string, serial: string, stored: string | null, controller = "GAT
     id, hostname: id, ipAddress: null, assetType: "access_point", serialNumber: serial,
     fortinetTopology: { role: "fortiap", controllerFortigate: controller },
     fortilinkStatus: stored, fortilinkStatusRaw: null, discoveredByIntegrationId: "i-1",
+    fortilinkCheckedAt: null as Date | null, monitored: true, systemInfoIntervalSec: null as number | null,
   };
 }
+
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
 
 /** Every `fortilinkStatus` value the pass wrote, by asset id. */
 function writtenStatuses(): Record<string, unknown> {
@@ -112,6 +123,149 @@ beforeEach(() => {
   h.inventories.clear();
   h.versionReadings.length = 0;
   h.integrationRows.push(FMG);
+  h.settingsFor = () => ({ systemInfoIntervalSeconds: 600, interfacesPolling: "rest_api" });
+  h.resolveCalls = 0;
+});
+
+describe("cadence — each device on its interface interval (rule 59(a))", () => {
+  async function fetchCalls() {
+    const { fetchFortinetControllerInventory } = await import("../../src/services/monitoringService.js");
+    return vi.mocked(fetchFortinetControllerInventory).mock.calls;
+  }
+  beforeEach(async () => {
+    const { fetchFortinetControllerInventory } = await import("../../src/services/monitoringService.js");
+    vi.mocked(fetchFortinetControllerInventory).mockClear();
+  });
+
+  it("reads a device never checked (null checkedAt) at once", async () => {
+    h.assetRows.push(sw("sw-1", "S1", null));
+    h.inventories.set("GATE-A::switches", new Map([["S1", { connected: true, status: "Connected" }]]));
+    await sweepFortinetLinkState();
+    expect(writtenStatuses()).toEqual({ "sw-1": "up" });
+  });
+
+  it("does not read a device checked 5 min ago on a 10-min interval — its controller is not asked", async () => {
+    h.assetRows.push({ ...sw("sw-1", "S1", "up"), fortilinkCheckedAt: minutesAgo(5) });
+    h.inventories.set("GATE-A::switches", new Map([["S1", { connected: false, status: "Disconnected" }]]));
+
+    const result = await sweepFortinetLinkState();
+
+    expect(await fetchCalls()).toHaveLength(0);
+    expect(result.controllersRead).toBe(0);
+    expect(h.updateManyCalls).toHaveLength(0);
+  });
+
+  it("reads a device checked 11 min ago on a 10-min interval", async () => {
+    h.assetRows.push({ ...sw("sw-1", "S1", "up"), fortilinkCheckedAt: minutesAgo(11) });
+    h.inventories.set("GATE-A::switches", new Map([["S1", { connected: false, status: "Disconnected" }]]));
+    await sweepFortinetLinkState();
+    expect(writtenStatuses()).toEqual({ "sw-1": "down" });
+  });
+
+  it("takes the interval per asset from the resolved settings", async () => {
+    // sw-fast carries a 2-min per-asset interval; sw-slow inherits 10 min.
+    h.settingsFor = (ctx) => ({
+      systemInfoIntervalSeconds: ctx.systemInfoIntervalSec ?? 600,
+      interfacesPolling: "rest_api",
+    });
+    h.assetRows.push(
+      { ...sw("sw-fast", "S1", "up"), fortilinkCheckedAt: minutesAgo(3), systemInfoIntervalSec: 120 },
+      { ...sw("sw-slow", "S2", "up"), fortilinkCheckedAt: minutesAgo(3) },
+    );
+    h.inventories.set("GATE-A::switches", new Map([
+      ["S1", { connected: false, status: "Disconnected" }],
+      ["S2", { connected: false, status: "Disconnected" }],
+    ]));
+
+    await sweepFortinetLinkState();
+
+    // Only the due device is written; the not-due one on the same controller
+    // response is left for its own interval.
+    expect(writtenStatuses()).toEqual({ "sw-fast": "down" });
+    expect(h.updateManyCalls.flatMap((c) => c.ids)).not.toContain("sw-slow");
+  });
+
+  it("asks a controller with no due device nothing, while a due one on another controller is read", async () => {
+    h.assetRows.push(
+      { ...sw("sw-quiet", "S1", "up", "GATE-QUIET"), fortilinkCheckedAt: minutesAgo(1) },
+      sw("sw-due", "S2", "up", "GATE-DUE"),
+    );
+    h.inventories.set("GATE-DUE::switches", new Map([["S2", { connected: true, status: "Connected" }]]));
+
+    await sweepFortinetLinkState();
+
+    expect((await fetchCalls()).map((c) => c[1])).toEqual(["GATE-DUE"]);
+  });
+
+  it("resolves settings once per (integration, assetType) when no per-asset override differs", async () => {
+    for (let i = 0; i < 25; i++) h.assetRows.push(sw(`sw-${i}`, `S${i}`, "up"));
+    for (let i = 0; i < 10; i++) h.assetRows.push(ap(`ap-${i}`, `A${i}`, "up"));
+
+    await sweepFortinetLinkState();
+
+    expect(h.resolveCalls).toBe(2);
+  });
+});
+
+describe("enabled with interfaces — disabled interface polling clears the reading", () => {
+  it("does not sweep a device whose interface polling resolves to disabled, and clears it once without an Event", async () => {
+    const { fetchFortinetControllerInventory } = await import("../../src/services/monitoringService.js");
+    vi.mocked(fetchFortinetControllerInventory).mockClear();
+    h.settingsFor = () => ({ systemInfoIntervalSeconds: 600, interfacesPolling: "disabled" });
+    const row = { ...sw("sw-1", "S1", "up"), fortilinkStatusRaw: "Connected" };
+    h.assetRows.push(row);
+    h.inventories.set("GATE-A::switches", new Map([["S1", { connected: true, status: "Connected" }]]));
+
+    await sweepFortinetLinkState();
+
+    expect(vi.mocked(fetchFortinetControllerInventory)).not.toHaveBeenCalled();
+    expect(h.updateManyCalls).toEqual([{
+      ids: ["sw-1"],
+      data: { fortilinkStatus: null, fortilinkStatusRaw: null, fortilinkChangedAt: null },
+    }]);
+    expect(h.loggedEvents).toHaveLength(0);
+
+    // Second tick: the row now holds null, so nothing is written again.
+    row.fortilinkStatus = null as unknown as string;
+    row.fortilinkStatusRaw = null as unknown as string;
+    h.updateManyCalls.length = 0;
+    await sweepFortinetLinkState();
+    expect(h.updateManyCalls).toHaveLength(0);
+  });
+
+  it("treats a null interface method and a zero interval as off too", async () => {
+    h.settingsFor = (ctx) => ctx.assetType === "switch"
+      ? { systemInfoIntervalSeconds: 600, interfacesPolling: null }
+      : { systemInfoIntervalSeconds: 0, interfacesPolling: "rest_api" };
+    h.assetRows.push(sw("sw-1", "S1", "down"), ap("ap-1", "A1", "up"));
+
+    await sweepFortinetLinkState();
+
+    expect(h.updateManyCalls).toHaveLength(1);
+    expect(h.updateManyCalls[0]!.ids.sort()).toEqual(["ap-1", "sw-1"]);
+  });
+
+  it("treats an unmonitored device as off (the system-info pass skips it) without resolving its settings", async () => {
+    h.assetRows.push({ ...sw("sw-1", "S1", "up"), monitored: false });
+
+    await sweepFortinetLinkState();
+
+    expect(h.resolveCalls).toBe(0);
+    expect(h.updateManyCalls).toEqual([{
+      ids: ["sw-1"],
+      data: { fortilinkStatus: null, fortilinkStatusRaw: null, fortilinkChangedAt: null },
+    }]);
+  });
+
+  it("leaves a device untouched when its settings will not resolve", async () => {
+    h.settingsFor = () => { throw new Error("tier read failed"); };
+    h.assetRows.push(sw("sw-1", "S1", "up"));
+
+    const result = await sweepFortinetLinkState();
+
+    expect(h.updateManyCalls).toHaveLength(0);
+    expect(result.controllersRead).toBe(0);
+  });
 });
 
 describe("refusal 1 — an unreadable controller writes nothing", () => {

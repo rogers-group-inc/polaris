@@ -2729,8 +2729,9 @@ function authorizationRowHTML(asset) {
 // Render the Controller Link row on the asset details General tab — what the
 // parent FortiGate says about its OWN session to this managed device
 // (business rule 59): the FortiLink session for a FortiSwitch, the CAPWAP
-// tunnel for a FortiAP. Swept every 60s by sweepFortinetLinkState, straight
-// off Asset.fortilinkStatus.
+// tunnel for a FortiAP. Read by sweepFortinetLinkState on the device's
+// interface (system-info) interval, and only while interface polling is on
+// (rule 59(a)), straight off Asset.fortilinkStatus.
 //
 // Deliberately NOT the same thing as the Monitoring pill above it, and the two
 // are allowed to disagree loudly. The pill is what Polaris sees on the
@@ -2740,8 +2741,8 @@ function authorizationRowHTML(asset) {
 // monitor loop is structurally unable to find because it is asking the switch.
 //
 // Renders nothing for other asset types, and nothing on a device the sweep has
-// never spoken about (not FortiGate-managed, or a pre-feature row awaiting its
-// first tick — those self-heal within a minute).
+// never spoken about (not FortiGate-managed, interface polling off, or a row
+// awaiting its first read — those fill within a minute of polling being on).
 function fortilinkRowHTML(asset) {
   if (!asset || (asset.assetType !== "switch" && asset.assetType !== "access_point")) return "";
   var state = asset.fortilinkStatus;
@@ -2777,11 +2778,15 @@ function fortilinkRowHTML(asset) {
   }
   // A checkedAt that has stopped advancing means the CONTROLLER is unreadable,
   // not that the link changed — the sweep refuses to write in that case. Say
-  // so rather than presenting a stale value as current. Threshold is 5x the
-  // 60s sweep, loose enough to absorb one slow FMG pass.
+  // so rather than presenting a stale value as current. A confirmed value is
+  // up to one interface interval (+ the 60s tick) old, so the threshold is two
+  // intervals plus a minute: one missed read, not merely the next one pending.
+  // The interval is the same resolution the System tab's stale banners use.
   if (asset.fortilinkCheckedAt) {
     var ageMs = Date.now() - new Date(asset.fortilinkCheckedAt).getTime();
-    if (ageMs > 5 * 60 * 1000) {
+    var ivSec = typeof _resolveStaleStreamSec === "function"
+      ? _resolveStaleStreamSec(asset.id, asset, "systemInfo") : 600;
+    if (ageMs > (2 * ivSec + 60) * 1000) {
       suffix += ' <span style="color:var(--color-warning,#fbbf24);font-size:0.8rem" title="The sweep has not been able to read this device\'s controller since then, so this value is the last one it reported.">· last confirmed ' +
         escapeHtml(formatDateTime(asset.fortilinkCheckedAt)) + '</span>';
     }
@@ -2791,7 +2796,8 @@ function fortilinkRowHTML(asset) {
 }
 
 // Coarse "2h 13m" elapsed label. Deliberately coarse: the sweep resolves to
-// 60s, so rendering seconds would promise a precision the data does not have.
+// one interface interval at best, so rendering seconds would promise a
+// precision the data does not have.
 function _fortilinkElapsed(iso) {
   var then = new Date(iso).getTime();
   if (isNaN(then)) return "";

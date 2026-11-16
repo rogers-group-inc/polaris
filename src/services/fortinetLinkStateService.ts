@@ -24,28 +24,42 @@
  * knows. So the sweep runs over every FortiGate-managed switch and AP
  * regardless of polling method.
  *
- * ── What it costs ──────────────────────────────────────────────────────────
- * It calls monitoringService's `fetchFortinetControllerInventory`, sharing its
- * 30s per-controller cache — so cost scales with CONTROLLER count, not fleet
- * size. That is the same property that makes the probe path survive FMG proxy
- * mode at concurrency 1, and it is the ceiling that matters: 2 calls per
- * controller per tick (switches + APs), whether that controller manages 3
- * devices or 300.
+ * ── When a device is read: its interface cadence (rule 59(a)) ─────────────
+ * The FortiLink session / CAPWAP tunnel is, in effect, a virtual interface
+ * between the controller and the device, so it is read on the device's
+ * INTERFACE cadence and only while interface polling is on (operator decision
+ * 2026-11-16). Per device, through the same monitor-settings hierarchy the
+ * system-info pass resolves:
+ *  - DUE when `fortilinkCheckedAt` is null or at least one resolved
+ *    `systemInfoIntervalSeconds` old (default 600 s);
+ *  - OFF when the resolved `interfacesPolling` is null or "disabled", the
+ *    interval is 0, or the asset is unmonitored (`monitored = false` stops the
+ *    system-info pass too). An OFF device is not swept and its status / raw
+ *    word / changedAt are cleared to null ONCE, so an automation sees no
+ *    reading rather than a stale "up" — no Event, it is not a link change;
+ *  - a device in maintenance is neither swept nor cleared (the system-info
+ *    pass pauses for it too); its value goes stale and resumes afterwards.
+ * Unlike the system-info pass, a device that is DOWN is still swept: the
+ * controller's view is most useful exactly when the device is not answering.
  *
- * Be precise about the overlap with the probe path, because it is tempting to
- * claim more than it delivers. The sweep and the monitor loop run on separate
- * 60s timers with a 30s cache between them, so their ticks coalesce only when
- * they happen to land in the same window — roughly half the time, drifting.
- * A controller already serving REST-probed devices therefore goes from ~1 call
- * per minute per kind to ~1.5, NOT to 1 and not to 2. A controller serving
- * only ICMP/SNMP-polled devices was being asked nothing and now costs the full
- * 2 per tick. Raise `POLARIS_FORTILINK_SWEEP_SEC` on an install where that
- * matters; the FMG-proxy arithmetic is in the job file.
+ * ── What it costs ──────────────────────────────────────────────────────────
+ * A controller is asked only when at least one of its devices is due, through
+ * monitoringService's `fetchFortinetControllerInventory` and its 30s
+ * per-controller cache — so cost scales with CONTROLLER count, not fleet size:
+ * at most 2 calls per controller (switches + APs) per interface interval,
+ * whether it manages 3 devices or 300. Devices first swept together stay in
+ * phase (one `now` per pass); a device that joins later can put a second phase
+ * on its controller, which at worst doubles that controller's rate — still a
+ * fifth of the 60 s sweep this replaced (at the default 10-min interval). A controller that cannot be read
+ * writes nothing (refusal 1 below), so its devices stay due and it is retried
+ * on every 60 s tick until it answers — the same rate the old sweep paid.
  *
  * Writes are diffed in memory and issued as at most three `updateMany`s per
- * controller (one per destination value) plus one timestamp refresh, so a
- * steady fleet of 2000 devices issues a handful of statements per tick rather
- * than one per asset.
+ * pass (one per destination value) plus one timestamp refresh and one clear,
+ * so a steady fleet of 2000 devices issues a handful of statements per tick
+ * rather than one per asset. Settings resolution is memoized per pass on
+ * (integration, assetType, the per-asset overrides that change the answer),
+ * and the resolver itself caches its tiers: no per-asset DB await.
  *
  * ── Three refusals that keep it from crying wolf ───────────────────────────
  *  1. A controller we could not READ writes nothing. Not "down" for every
@@ -68,14 +82,15 @@
  * The sweep hands those to `fortinetLiveVersionService`, which keeps
  * `Asset.osVersion` current between discoveries — so the Firmware card stops
  * offering an upgrade the device has already taken. No extra controller call;
- * an in-memory compare per device, DB work only where the firmware moved.
+ * an in-memory compare per device, DB work only where the firmware moved. It
+ * rides the due devices only, so it refreshes at the same interface cadence.
  */
 
 import { prisma } from "../db.js";
 import { logger } from "../utils/logger.js";
 import { isFortinetIntegrationType } from "../utils/pollingCompatibility.js";
 import { isFortiapStatusOnline } from "../utils/fortiapMonitorRow.js";
-import { fetchFortinetControllerInventory } from "./monitoringService.js";
+import { fetchFortinetControllerInventory, resolveMonitorSettings } from "./monitoringService.js";
 import { buildFortilinkChangedEvent, logEventsBatch } from "./eventLogService.js";
 import { recordFortilinkState } from "../metrics.js";
 import { reconcileFortinetLiveVersions, type FortinetLiveVersionReading } from "./fortinetLiveVersionService.js";
@@ -85,6 +100,14 @@ type FortilinkStatus = "up" | "down" | "unknown";
 
 /** Upstream timeout for one controller inventory call. Matches the probe. */
 const CONTROLLER_TIMEOUT_MS = 20_000;
+
+/**
+ * Slack on the due check. The job ticks every 60 s and stamps `checkedAt` with
+ * the pass's start time, so a device read at T is next due at T + interval —
+ * exactly on a tick. A timer that fires a few ms early would otherwise push the
+ * read a whole extra tick late.
+ */
+const DUE_GRACE_MS = 5_000;
 
 export interface FortilinkSweepResult {
   /** Controllers we successfully read (one count per switch/AP table). */
@@ -107,8 +130,84 @@ interface LinkStateAssetRow {
   fortinetTopology: unknown;
   fortilinkStatus: string | null;
   fortilinkStatusRaw: string | null;
+  fortilinkCheckedAt: Date | null;
   discoveredByIntegrationId: string | null;
   osVersion: string | null;
+  monitored: boolean;
+  // Settings-resolver inputs (the system-info cadence and the interfaces
+  // polling method are what this sweep reads off the resolved settings).
+  monitorIntervalSec: number | null;
+  cpuMemoryIntervalSec: number | null;
+  temperatureIntervalSec: number | null;
+  systemInfoIntervalSec: number | null;
+  probeTimeoutMs: number | null;
+  interfacesPolling: string | null;
+  interfacesCredentialId: string | null;
+}
+
+/** What the monitor-settings hierarchy says about one device's interface stream. */
+interface InterfaceCadence {
+  /** Interface polling is on (resolved method not null / "disabled", interval > 0). */
+  enabled: boolean;
+  /** The resolved system-info (interface) interval, seconds. */
+  intervalSec: number;
+}
+
+/**
+ * Is a device's controller link due a read? Null `checkedAt` = never read =
+ * due at once; otherwise due once one interface interval has passed.
+ */
+function linkDue(checkedAt: Date | null, intervalSec: number, now: Date): boolean {
+  if (!checkedAt) return true;
+  return now.getTime() - checkedAt.getTime() >= intervalSec * 1000 - DUE_GRACE_MS;
+}
+
+/**
+ * Resolve each device's interface cadence through the monitor-settings
+ * hierarchy, memoized for the pass on the inputs that can change the answer —
+ * (integration, assetType) plus the per-asset interval / method / credential
+ * overrides. A fleet with no per-asset overrides resolves once per
+ * (integration, assetType); the resolver's own tier cache keeps even those
+ * calls off the DB after the first. A device whose settings will not resolve
+ * answers null: left untouched this pass — neither swept at a guessed cadence
+ * nor cleared on a resolver hiccup.
+ */
+function makeCadenceResolver(integrationTypeById: Map<string, string>) {
+  const memo = new Map<string, Promise<InterfaceCadence | null>>();
+  return (a: LinkStateAssetRow): Promise<InterfaceCadence | null> => {
+    const key = [
+      a.discoveredByIntegrationId, a.assetType, a.systemInfoIntervalSec ?? "",
+      a.interfacesPolling ?? "", a.interfacesCredentialId ? "cred" : "",
+    ].join("|");
+    let hit = memo.get(key);
+    if (!hit) {
+      hit = (async () => {
+        try {
+          const eff = await resolveMonitorSettings({
+            assetType: a.assetType,
+            ipAddress: a.ipAddress,
+            discoveredByIntegrationId: a.discoveredByIntegrationId,
+            discoveredByIntegrationType: a.discoveredByIntegrationId ? integrationTypeById.get(a.discoveredByIntegrationId) ?? null : null,
+            monitorIntervalSec: a.monitorIntervalSec,
+            cpuMemoryIntervalSec: a.cpuMemoryIntervalSec,
+            temperatureIntervalSec: a.temperatureIntervalSec,
+            systemInfoIntervalSec: a.systemInfoIntervalSec,
+            probeTimeoutMs: a.probeTimeoutMs,
+            interfacesPolling: a.interfacesPolling,
+            interfacesCredentialId: a.interfacesCredentialId,
+          });
+          const intervalSec = Number(eff.systemInfoIntervalSeconds) || 0;
+          const method = eff.interfacesPolling;
+          return { enabled: method != null && method !== "disabled" && intervalSec > 0, intervalSec };
+        } catch (err: any) {
+          logger.debug({ err: err?.message, assetType: a.assetType }, "fortilink sweep: settings did not resolve");
+          return null;
+        }
+      })();
+      memo.set(key, hit);
+    }
+    return hit;
+  };
 }
 
 interface ControllerGroup {
@@ -153,52 +252,69 @@ function normalizeEntry(kind: "switches" | "aps", entry: { connected: boolean; s
 }
 
 /**
- * Load every FortiGate-managed switch/AP and bucket it by (integration,
- * controller, kind).
+ * Load every FortiGate-managed switch/AP, decide per device whether it is due,
+ * off, or neither, and bucket the DUE ones by (integration, controller, kind).
+ * Returns the groups to read and the ids to clear (OFF devices that still hold
+ * a value — once cleared they drop out of that list, so the clear is one write,
+ * not one per tick).
  *
  * The `select` is tight on purpose: this runs on a 60s tick against a table
- * that can hold 2000+ monitored rows, and `fortinetTopology` is already the
- * one wide column we cannot avoid (the controller name lives in it).
+ * that can hold 2000+ rows, and `fortinetTopology` is already the one wide
+ * column we cannot avoid (the controller name lives in it). Everything else is
+ * a scalar the due decision or the settings resolver reads.
  *
  * Decommissioned assets are excluded — they have no live link to report and
  * including them would resurrect a link-down alert on hardware that was
- * deliberately retired. Unmonitored assets are deliberately INCLUDED: the
- * controller call is per-controller either way, so the row costs nothing
- * extra, and the asset-details row should be right even on a device nobody
- * polls. Whether it can ALERT is rule 37's question, answered downstream by
- * the automation engine's own `monitored` gate, not here.
+ * deliberately retired. Assets in maintenance are excluded too: the
+ * system-info pass pauses for them, and they keep their last value. Unmonitored
+ * assets are LOADED but never swept — with monitoring off, interface polling is
+ * off, so their value is cleared like any other OFF device (rule 59(a)).
  */
-async function loadControllerGroups(): Promise<ControllerGroup[]> {
+async function loadControllerGroups(now: Date): Promise<{ groups: ControllerGroup[]; clearIds: string[] }> {
   const integrations = await prisma.integration.findMany({
     where: { type: { in: ["fortimanager", "fortigate"] }, enabled: true },
     select: { id: true, type: true, name: true, config: true },
   });
-  if (integrations.length === 0) return [];
+  if (integrations.length === 0) return { groups: [], clearIds: [] };
   const byId = new Map(integrations.map((i) => [i.id, i]));
 
-  const assets = await prisma.asset.findMany({
+  const assets: LinkStateAssetRow[] = await prisma.asset.findMany({
     where: {
       assetType: { in: ["switch", "access_point"] },
-      status: { not: "decommissioned" },
+      status: { notIn: ["decommissioned", "maintenance"] },
       discoveredByIntegrationId: { in: integrations.map((i) => i.id) },
       serialNumber: { not: null },
     },
     select: {
       id: true, hostname: true, ipAddress: true, assetType: true, serialNumber: true,
-      fortinetTopology: true, fortilinkStatus: true, fortilinkStatusRaw: true,
-      discoveredByIntegrationId: true, osVersion: true,
+      fortinetTopology: true, fortilinkStatus: true, fortilinkStatusRaw: true, fortilinkCheckedAt: true,
+      discoveredByIntegrationId: true, osVersion: true, monitored: true,
+      monitorIntervalSec: true, cpuMemoryIntervalSec: true, temperatureIntervalSec: true,
+      systemInfoIntervalSec: true, probeTimeoutMs: true, interfacesPolling: true, interfacesCredentialId: true,
     },
   });
 
+  const cadenceFor = makeCadenceResolver(new Map(integrations.map((i) => [i.id, i.type])));
+  const cadences = await Promise.all(assets.map((a) => (a.monitored ? cadenceFor(a) : Promise.resolve<InterfaceCadence>({ enabled: false, intervalSec: 0 }))));
+
   const groups = new Map<string, ControllerGroup>();
-  for (const asset of assets) {
+  const clearIds: string[] = [];
+  assets.forEach((asset, idx) => {
     const integration = asset.discoveredByIntegrationId ? byId.get(asset.discoveredByIntegrationId) : undefined;
-    if (!integration || !isFortinetIntegrationType(integration.type)) continue;
+    if (!integration || !isFortinetIntegrationType(integration.type)) return;
+    const cadence = cadences[idx];
+    // Settings did not resolve: leave the device exactly as it is this pass.
+    if (!cadence) return;
+    if (!cadence.enabled) {
+      if (asset.fortilinkStatus != null || asset.fortilinkStatusRaw != null) clearIds.push(asset.id);
+      return;
+    }
+    if (!linkDue(asset.fortilinkCheckedAt, cadence.intervalSec, now)) return;
     const config = (integration.config ?? {}) as Record<string, unknown>;
-    const deviceName = controllerNameFor(asset as LinkStateAssetRow, integration.type, config);
+    const deviceName = controllerNameFor(asset, integration.type, config);
     // No controller recorded = nothing to ask. A switch discovered before the
     // topology stamp existed self-heals on the next discovery cycle.
-    if (!deviceName) continue;
+    if (!deviceName) return;
     const kind: "switches" | "aps" = asset.assetType === "access_point" ? "aps" : "switches";
     const key = `${integration.id}::${deviceName}::${kind}`;
     let group = groups.get(key);
@@ -206,27 +322,38 @@ async function loadControllerGroups(): Promise<ControllerGroup[]> {
       group = { integration: { ...integration, config }, deviceName, kind, assets: [] };
       groups.set(key, group);
     }
-    group.assets.push(asset as LinkStateAssetRow);
-  }
-  return Array.from(groups.values());
+    group.assets.push(asset);
+  });
+  return { groups: Array.from(groups.values()), clearIds };
 }
 
 /**
- * One sweep pass: read each controller once, diff its answer against what the
- * assets currently store, and write only what moved.
+ * One sweep pass: clear the devices whose interface polling is off, read each
+ * controller with at least one DUE device once, diff its answer against what
+ * those devices currently store, and write only what moved.
  *
  * Controllers are read in PARALLEL across groups but the shared 30s cache and
  * the in-flight coalescing inside `fetchFortinetControllerInventory` mean a
  * burst here collapses to one upstream call per (controller, kind) — the same
- * protection the 60s monitor tick relies on. Per-group failures are isolated:
+ * protection the monitor tick relies on. Per-group failures are isolated:
  * one unreachable FortiGate must not stop the other 49 from being swept.
  */
 export async function sweepFortinetLinkState(): Promise<FortilinkSweepResult> {
-  const groups = await loadControllerGroups();
+  const now = new Date();
+  const { groups, clearIds } = await loadControllerGroups(now);
   const result: FortilinkSweepResult = { controllersRead: 0, controllersFailed: 0, transitions: 0, unchanged: 0 };
+  if (clearIds.length > 0) {
+    // Interface polling is off for these (rule 59(a)): no reading at all
+    // rather than a stale one. Not an `asset.fortilink.changed` — the link did
+    // not change, Polaris stopped asking. `checkedAt` is left as the record of
+    // the last read; with status null it is never used as a reading anchor.
+    await prisma.asset.updateMany({
+      where: { id: { in: clearIds } },
+      data: { fortilinkStatus: null, fortilinkStatusRaw: null, fortilinkChangedAt: null },
+    });
+  }
   if (groups.length === 0) return result;
 
-  const now = new Date();
   // assetId sets keyed by destination value, so the writes below are three
   // updateMany calls for the whole fleet instead of one per asset.
   const moved = new Map<FortilinkStatus, string[]>([["up", []], ["down", []], ["unknown", []]]);

@@ -5,32 +5,32 @@
  * FortiAPs (business rule 59): asks each controller FortiGate whether it still
  * has a FortiLink session / CAPWAP tunnel to each device it manages, and
  * projects the answer onto `Asset.fortilinkStatus`. The whole decision set —
- * the three refusals, the normalization, the batched writes — lives in
- * services/fortinetLinkStateService.ts.
+ * which devices are due, which are off, the three refusals, the normalization,
+ * the batched writes — lives in services/fortinetLinkStateService.ts.
  *
  * Why a job and not part of the monitor loop: the monitor loop asks the
  * DEVICE, on the transport the operator chose. That is structurally unable to
  * see this fault, because a switch with a dead FortiLink session answers ICMP
  * and SNMP perfectly well. Only the controller knows, and the controller is a
- * different target on a different cadence with a different failure mode — so
- * it gets its own tick rather than a fifth cadence inside `monitorAssets`.
+ * different target with a different failure mode — so it gets its own tick
+ * rather than a cadence inside `monitorAssets`.
  *
- * Cadence: 60s, matching the default probe interval so the link column and the
- * monitor column describe the same minute. Cost is bounded by CONTROLLER
- * count, not fleet size — at most two calls per controller per tick (switches
- * + APs), whether it manages 3 devices or 300. Where the REST probe path is
- * already reading the same controller the two coalesce through
- * monitoringService's shared 30s inventory cache, but only when their
- * independent 60s timers land in the same window: budget ~1.5 calls per minute
- * per kind on those controllers, not 1.
+ * Cadence (rule 59(a), operator decision 2026-11-16): the FortiLink session is
+ * a virtual interface to the device, so each device is read on its own
+ * INTERFACE (system-info) interval — default 10 min — and only while its
+ * interface polling is on. This job's 60 s tick is only the scheduler's
+ * granularity: each tick the service picks the devices that are due and asks
+ * only the controllers that manage at least one of them. Until 2026-11-16 every
+ * device was read every 60 s (`POLARIS_FORTILINK_SWEEP_SEC`, now ignored);
+ * detection latency moved from ~1 min to up to one interface interval, and
+ * controller load dropped ~10x at the defaults.
  *
- * `POLARIS_FORTILINK_SWEEP_SEC` raises the interval for installs where that
- * rate is too much for the transport. The case to watch is FMG PROXY mode,
- * which serializes at concurrency 1: a 50-gate fleet is 100 proxied calls per
- * minute there, against ~650ms each. Direct mode (useProxy=false) and
- * standalone FortiGate integrations talk to each gate independently and do not
- * have this ceiling. Floor of 30s so an operator cannot set a cadence below
- * the inventory cache's own TTL, which would just miss the cache.
+ * Cost is bounded by CONTROLLER count, not fleet size — at most two calls per
+ * controller (switches + APs) per interface interval, whether it manages 3
+ * devices or 300. That matters most on FMG PROXY mode, which serializes at
+ * concurrency 1; direct mode and standalone FortiGate integrations talk to each
+ * gate independently. A controller that cannot be read writes nothing, so its
+ * devices stay due and it is retried each tick until it answers.
  *
  * Scheduler role only — one sweep for the fleet, not one per monitor replica.
  * A second replica sweeping would double the upstream rate against exactly the
@@ -40,14 +40,8 @@
 import { defineJob } from "./_defineJob.js";
 import { sweepFortinetLinkState } from "../services/fortinetLinkStateService.js";
 
-const DEFAULT_INTERVAL_SEC = 60;
-const MIN_INTERVAL_SEC = 30;
-
-function resolveIntervalMs(): number {
-  const raw = Number(process.env.POLARIS_FORTILINK_SWEEP_SEC);
-  const sec = Number.isFinite(raw) && raw > 0 ? Math.max(MIN_INTERVAL_SEC, raw) : DEFAULT_INTERVAL_SEC;
-  return sec * 1000;
-}
+/** Scheduler granularity, not the read cadence — see the header. */
+const TICK_MS = 60_000;
 
 // Delayed first run: discovery stamps `fortinetTopology.controllerFortigate`,
 // which is how the sweep learns which controller to ask, and at boot a fresh
@@ -57,7 +51,7 @@ const FIRST_RUN_DELAY_MS = 45_000;
 
 defineJob({
   name: "sweepFortinetLinkState",
-  intervalMs: resolveIntervalMs(),
+  intervalMs: TICK_MS,
   firstRunDelayMs: FIRST_RUN_DELAY_MS,
   run: async () => {
     await sweepFortinetLinkState();

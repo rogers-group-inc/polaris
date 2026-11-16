@@ -1033,7 +1033,10 @@ model Asset {
   //   "unknown" — controller answered and the device was ABSENT from its
   //               table. Not "down": a brief post-config-push window looks
   //               identical, and down-detection authority is rule 36's.
-  //   null      — never swept (not FortiGate-managed, or pre-feature row)
+  //   null      — never swept (not FortiGate-managed, or pre-feature row), or
+  //               interface polling / monitoring is off for the device: the
+  //               sweep reads each device on its interface interval and only
+  //               while interfaces are polled, clearing it otherwise (rule 59a)
   //
   // A controller we could not READ writes nothing at all — the sweep skips,
   // it does not accuse. So a dark FMG leaves the whole fleet's last known

@@ -110,6 +110,10 @@ export const METRIC_STREAM: Record<string, CadenceStream> = {
   ifAdminStatus: "systemInfo",
   ifIpAddress: "systemInfo",
   poeStatus: "systemInfo",
+  // The controller's view of its FortiLink session / CAPWAP tunnel — read on
+  // the device's interface interval since 2026-11-16 (business rule 59(a)):
+  // the session is a virtual interface to the device.
+  fortilinkStatus: "systemInfo",
   // SD-WAN pass — its own cadence since 2026-09 (runSdwanFor, the integration's
   // sdwanIntervalSeconds, default 60s); it rode system-info before that.
   sdwanLatencyMs: "sdwan",

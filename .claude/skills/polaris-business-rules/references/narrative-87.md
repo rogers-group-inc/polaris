@@ -351,7 +351,8 @@ the device reports to the monitor path as an ENRICHMENT `AssetSource` row (`fort
 externalId = assetId, `observed.osVersion` only), ranked in `OS_VERSION_RULES` directly above
 `fortigate-firewall` / `fortiswitch` / `fortiap` and below the in-guest kinds. Two readers,
 neither issuing a call of its own: the FortiLink sweep (`fortinetLinkStateService`, every
-FortiGate-managed switch / AP, 60 s, from the controller row's `os_version`) and the FortiOS
+FortiGate-managed switch / AP, 60 s — each device's interface interval since 2026-11-16, rule
+59a — from the controller row's `os_version`) and the FortiOS
 REST response-time probe of a Fortinet-discovered firewall (`system/status` read with
 `envelope: true`, `version`; shaped by `fortigateLiveVersionFor` to the integration's discovery
 format — FMG `7.4.5`, standalone `v7.4.5`). Acted on only when `compareFirmwareVersions` says
