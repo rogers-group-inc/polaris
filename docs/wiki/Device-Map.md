@@ -775,6 +775,13 @@ Then choose how to place it:
   It uses that floor's placement, which is right when both drawings share coordinates, as
   the levels of one mine survey do; the dialog shows how much the two drawings overlap.
 - **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
+- **Line it up by hand** — the default when the drawing has no location of its own and no
+  other floor to line up with. The drawing opens ready to adjust: drag to move it, drag a
+  corner to stretch it (Ctrl keeps its shape), Alt + drag to turn it, and Shift + drag to pan
+  the map. Floors are drawn larger or smaller with depth, so they only line up exactly at the
+  **centre +**: pan a feature you can see on both (a portal, a shaft, a property corner) to
+  the +, then drag the drawing until it sits on the same feature on the floor above. While
+  you adjust, the floor above and the ground show at 35 % instead of 10 % so you can see them.
 - **Place with two points** — click a place you can find on both the drawing and the map
   (a portal, a shaft), then the same place on the map, and repeat for a second place as far
   away as you can. Satellite makes the map side easier. Polaris works out where the drawing

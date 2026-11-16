@@ -711,18 +711,27 @@
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
       groundPanes().forEach(function (pane) { pane.style.transformOrigin = o.x + "px " + o.y + "px"; });
     }
+    // While a plan is adjusted, the floors it is lined up against (the ones
+    // above it that show at all, and the ground) are drawn at this strength
+    // instead of 10 % / 2 % (operator request 2026-11-16).
+    var ADJUST_REF_OPACITY = 0.35;
+    function lookFor(level) {
+      var look = floorLook(level - state.layer);
+      if (adjust && level !== state.layer && look.opacity > 0) look = { opacity: Math.max(look.opacity, ADJUST_REF_OPACITY), scale: look.scale };
+      return look;
+    }
     function applyFloorLook(animate) {
       if (!map) return;
       var o = screenOrigin();
       Object.keys(floorPanes).forEach(function (k) {
-        var level = Number(k), f = floorPanes[k], look = floorLook(level - state.layer), st = f.pane.style;
+        var level = Number(k), f = floorPanes[k], look = lookFor(level), st = f.pane.style;
         st.transition = animate ? "opacity " + FADE_MS + "ms ease-in-out, transform " + FADE_MS + "ms ease-in-out" : "none";
         st.transformOrigin = o.x + "px " + o.y + "px";
         st.transform = "scale(" + look.scale + ")";
         st.opacity = String(look.opacity);
         f.pane.classList.toggle("is-faint", level !== state.layer);
       });
-      var g = floorLook(0 - state.layer);
+      var g = lookFor(0);
       groundPanes().forEach(function (pane) {
         var st = pane.style;
         st.transition = animate ? "opacity " + FADE_MS + "ms ease-in-out, transform " + FADE_MS + "ms ease-in-out" : "none";
@@ -1535,6 +1544,7 @@
         var share = Math.round(overlapShare(a.ext, l.background.cad.ext) * 100);
         places.push({ v: "lineup:" + l.level, t: "Line up with " + esc(layerName(l.level)), d: "Uses its placement: right when both drawings share coordinates, as levels from one survey do. They overlap " + share + " %." });
       });
+      places.push({ v: "hand", t: "Line it up by hand", d: "Drag, stretch and turn it; line a feature up with the floor above at the centre +, where floors don't shift with depth." });
       places.push({ v: "two", t: "Place with two points", d: "Click two places on the drawing, then the same two on the map." });
       var placeHtml = places.map(function (p, i) {
         return '<label class="topo-cad-place-opt"><input type="radio" name="topo-cad-place" value="' + esc(p.v) + '"' + (i === 0 ? " checked" : "") + '>' +
@@ -1595,13 +1605,17 @@
           var plan = null;
           if (pick === "geo") plan = geoPlan(bg);
           else if (pick.indexOf("lineup:") === 0) plan = lineUpPlan(bg, Number(pick.slice(7)));
-          var two = !plan;
+          var two = pick === "two" && !plan;
+          var hand = !plan && !two;
           if (!plan) plan = framedPlan(planExtent(bg));
           dlg.close();
           setPlan(level, bg, plan);
           if (two) {
             startPlacing(level);
             ctx.toast("Drawing imported — now place it: click a place on the drawing, then the same place on the map");
+          } else if (hand) {
+            startAdjust();
+            ctx.toast("Drawing imported — drag it into place; Done when it lines up");
           } else {
             ctx.toast("Drawing imported and placed — it is saved with the view when you save");
           }
@@ -1761,10 +1775,12 @@
       var fp = floorPlan(state.layer);
       if (!fp || !state.editing || !map) return;
       if (!fp.layer.plan) fp.layer.plan = Object.assign({}, fp.plan);
+      endPlacing(true);
       adjust = { level: state.layer, bar: document.createElement("div"), shapes: [] };
       adjust.bar.className = "topo-plan-bar";
       adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
-        '<span class="hint" style="margin:0">Drag to move · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates</span>' +
+        '<span class="hint" style="margin:0">Drag to move · drag a corner to stretch · Ctrl + corner keeps the shape · Alt + drag rotates · Shift + drag pans</span>' +
+        '<span class="hint" style="margin:0">Floors shift with depth everywhere except the centre +: bring a feature to the + (Shift + drag) and line it up with the floor above there.</span>' +
         '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
       host.appendChild(adjust.bar);
@@ -1782,6 +1798,7 @@
       map.doubleClickZoom.disable();
       mapEl.addEventListener("pointerdown", onAdjustDown, true);
       host.classList.add("is-adjusting");
+      applyFloorLook(true);
       drawAdjustShapes();
     }
     function endAdjust() {
@@ -1791,7 +1808,7 @@
       if (adjust.bar.parentNode) adjust.bar.parentNode.removeChild(adjust.bar);
       host.classList.remove("is-adjusting");
       adjust = null;
-      if (map) { map.dragging.enable(); map.doubleClickZoom.enable(); }
+      if (map) { map.dragging.enable(); map.doubleClickZoom.enable(); applyFloorLook(true); }
     }
     function drawAdjustShapes() {
       if (!adjust) return;
@@ -1815,15 +1832,22 @@
       var ci = -1;
       corners.forEach(function (c, i) { if (ci < 0 && c.distanceTo(cp) < 12) ci = i; });
       var ring = corners.map(function (c) { return [c.x, c.y]; });
-      var mode = e.altKey ? "rotate" : ci >= 0 ? "scale" : pointInRing([cp.x, cp.y], ring) ? "move" : null;
-      if (!mode) return;
+      // Shift + drag, or a drag off the plan, pans the map (dragging is off while adjusting).
+      var mode = e.shiftKey ? "pan" : e.altKey ? "rotate" : ci >= 0 ? "scale" : pointInRing([cp.x, cp.y], ring) ? "move" : "pan";
       e.preventDefault();
       e.stopPropagation();
       var g0 = toGround(map.containerPointToLatLng(cp));
       var start = Object.assign({}, l.plan);
       var pending = false;
       function redraw() { pending = false; if (!adjust) return; drawFloor(adjust.level); drawCrossLinks(); drawAdjustShapes(); }
+      var last = cp;
       function onMove(ev) {
+        if (mode === "pan") {
+          var now = map.mouseEventToContainerPoint(ev);
+          map.panBy(last.subtract(now), { animate: false });
+          last = now;
+          return;
+        }
         var g = toGround(map.containerPointToLatLng(map.mouseEventToContainerPoint(ev)));
         var p = l.plan;
         if (mode === "move") {
@@ -1849,6 +1873,7 @@
       function onUp() {
         window.removeEventListener("pointermove", onMove, true);
         window.removeEventListener("pointerup", onUp, true);
+        if (mode === "pan") return;
         changed("layers");
       }
       window.addEventListener("pointermove", onMove, true);
