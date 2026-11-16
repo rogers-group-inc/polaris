@@ -3580,6 +3580,9 @@ can a manufacturer profile that holds one, until the automation is pointed elsew
 automation covers every check and one of them is deleted while its alert is firing, Polaris
 clears that alert on its next pass instead of leaving it open for good.
 
+**Disabling** a path check does the same to its alerts: they clear on the next pass, even
+while a maintenance window covers the check. Turning the check back on starts it fresh.
+
 ### Rule 168
 
 **A floor is a number; its name is only a label.** A description's floor is a whole number:
