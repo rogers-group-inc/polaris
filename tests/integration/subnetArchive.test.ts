@@ -74,6 +74,8 @@ async function seed(opts: { cidr?: string; serial?: string | null } = {}) {
       status: "available",
       fortigateDevice: "gate-a",
       fortigateSerial: opts.serial === undefined ? OLD_SN : opts.serial,
+      fortigateInterface: "vlan77",
+      fortigateVlanParent: "fortilink",
     },
   });
   await prisma.reservation.createMany({
@@ -96,6 +98,9 @@ d("subnet archive — snapshot", () => {
     const archived = await getArchivedSubnet(snap.archivedSubnetId);
     expect(archived.cidr).toBe("10.77.1.0/24");
     expect(archived.fortigateSerial).toBe(OLD_SN);
+    // Was a bug until 2026-11-16: the archive dropped rule 137's interface and VLAN parent.
+    expect(archived.fortigateInterface).toBe("vlan77");
+    expect(archived.fortigateVlanParent).toBe("fortilink");
     expect(archived.archiveReason).toBe("chassis-replaced");
     expect(archived.reservations).toHaveLength(3);
     // Block identity is denormalized so the archive survives a block deletion.

@@ -49,7 +49,6 @@ export const DEFAULT_ALIASES: ReadonlyArray<{ alias: string; canonical: string }
   { alias: "Juniper Networks",                        canonical: "Juniper" },
   // HPE / HP / Aruba
   { alias: "Hewlett Packard Enterprise",              canonical: "HPE" },
-  { alias: "HPE",                                     canonical: "HPE" },
   { alias: "Hewlett-Packard Company",                 canonical: "HP" },
   { alias: "Hewlett Packard",                         canonical: "HP" },
   { alias: "HP Inc.",                                 canonical: "HP" },

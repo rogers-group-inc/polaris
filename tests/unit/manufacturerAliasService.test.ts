@@ -84,6 +84,13 @@ describe("DEFAULT_ALIASES", () => {
     const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
     expect(dupes).toEqual([]);
   });
+
+  it("carries no self-alias (an alias identical to its canonical); case-only rewrites stay", () => {
+    // Was a bug until 2026-11-16: "HPE" was seeded as an alias of "HPE".
+    expect(DEFAULT_ALIASES.filter((e) => e.alias.trim() === e.canonical.trim())).toEqual([]);
+    const map = new Map(DEFAULT_ALIASES.map((e) => [e.alias, e.canonical]));
+    expect(map.get("LENOVO")).toBe("Lenovo");
+  });
 });
 
 describe("listAliases", () => {

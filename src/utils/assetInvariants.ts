@@ -275,8 +275,12 @@ export type LastSeenSource =
  * failing its probe keeps lastSeen frozen at its last successful poll even if a
  * FortiGate still remembers it online in device inventory / a held lease / a
  * remembered-connected controller entry. Active/operator sources (probe, agent,
- * ping, conflict-*) are never deferred — they ARE the polling/operator signal.
+ * conflict-*) are never deferred — they ARE the polling/operator signal.
  */
+// "ping" is deferred too: presence verification's one-off ICMP echo (against
+// the DNS name, not the address the monitor polls) is a directory asset's
+// substitute for polling, so for a MONITORED asset — even one whose probe is
+// failing — the monitor probe still owns presence.
 // "vcenter" is deferred like "device-inventory": power_state is real-time
 // hypervisor truth at scrape time (unlike stale AD/Entra directory
 // timestamps, which never write lastSeen at all), but for a monitored VM
@@ -297,7 +301,7 @@ export type LastSeenSource =
 // "unraid" / "truenas" / "proxmox" are deferred for vCenter's reason: a running
 // state read off the host's API is real-time, but a monitored workload's probe
 // owns presence.
-const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc", "unraid", "truenas", "proxmox"]);
+const POLLING_DEFERRED_SOURCES = new Set<string>(["discovery", "device-inventory", "dhcp-lease", "vcenter", "arc", "unraid", "truenas", "proxmox", "ping"]);
 
 /**
  * Single write path for Asset.lastSeen: advance it to `evidenceAt` (stamping

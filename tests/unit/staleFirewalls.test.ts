@@ -101,7 +101,7 @@ describe("decommissionStaleFirewalls — candidate query", () => {
     expect(db.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("never judges a row with nothing to identify it by (no hostname, not on the roster)", async () => {
+  it("never judges a row with nothing to identify it by (no hostname, no FMG device name)", async () => {
     seed([fw("f1", null, SERIAL_GONE), fw("f2", "", null)]);
     await decommissionStaleFirewalls(input());
     expect(db.updateMany).not.toHaveBeenCalled();
@@ -119,11 +119,11 @@ describe("decommissionStaleFirewalls — missing from the roster", () => {
     seed([fw("f1", "GONE-FW", SERIAL_GONE), fw("f2", null, null, { deviceName: "x" }), fw("f3", "other-gone", null)]);
     const run = input();
     await decommissionStaleFirewalls(run);
-    expect(m.releaseForDecommission).toHaveBeenCalledWith(["f1", "f3"], {
+    expect(m.releaseForDecommission).toHaveBeenCalledWith(["f1", "f2", "f3"], {
       at: new Date(NOW), actor: "discovery", statusChangedBy: "FortiManager", reason: 'no longer configured in "HQ FMG"',
     });
     expect(db.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["f1", "f3"] } },
+      where: { id: { in: ["f1", "f2", "f3"] } },
       data: { status: "decommissioned", statusChangedAt: new Date(NOW), statusChangedBy: "FortiManager" },
     });
     // Maintenance is closed BEFORE the status flip, so the 30s reconcile cannot re-flip it.
@@ -134,8 +134,28 @@ describe("decommissionStaleFirewalls — missing from the roster", () => {
         message: 'FortiGate "GONE-FW" decommissioned — no longer configured in "HQ FMG"',
         details: { reason: "missing-from-roster", integrationId: "i1", integrationName: "HQ FMG" },
       },
+      // Was a bug until 2026-11-16: a gate with no hostname was kept forever even when its FMG device name had left the roster.
+      expect.objectContaining({
+        resourceId: "f2", resourceName: "x",
+        message: 'FortiGate "x" decommissioned — no longer configured in "HQ FMG"',
+      }),
       expect.objectContaining({ resourceId: "f3", resourceName: "other-gone" }),
     ]);
+  });
+
+  it("cascades a hostname-less gate's switches and APs by its FMG device name", async () => {
+    seed([fw("f1", null, SERIAL_GONE, { deviceName: "Branch-FW" })], [
+      child("sw1", "switch", "BRANCH-FW"),
+      child("sw2", "switch", "site-a-fw"),
+    ]);
+    const run = input();
+    await decommissionStaleFirewalls(run);
+    expect(events()[0]).toMatchObject({ resourceId: "f1", resourceName: "Branch-FW" });
+    expect(run.decommissionedSwitches).toEqual(["sw1-host"]);
+    expect(db.updateMany).toHaveBeenLastCalledWith({
+      where: { id: { in: ["sw1"] } },
+      data: { status: "decommissioned", statusChangedAt: new Date(NOW), statusChangedBy: "FortiManager" },
+    });
   });
 
   it("keeps the run's in-memory index in step so Phase 3 can resurrect the row", async () => {

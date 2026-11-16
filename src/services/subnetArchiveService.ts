@@ -131,6 +131,8 @@ export async function snapshotSubnet(
       integrationName: subnet.integration?.name ?? null,
       fortigateDevice: subnet.fortigateDevice,
       fortigateSerial: subnet.fortigateSerial,
+      fortigateInterface: subnet.fortigateInterface,
+      fortigateVlanParent: subnet.fortigateVlanParent,
       createdBy: subnet.createdBy,
       lastDiscoveredAt: subnet.lastDiscoveredAt,
       originalCreatedAt: subnet.createdAt,

@@ -157,12 +157,14 @@ describe("runPresenceVerification — the cascade", () => {
     expect(eventLog.logEvent.mock.calls[0][0].message).toMatch(/2 skipped \(no target\)/);
   });
 
-  it("a monitored asset that is down still gets its lastSeen from an answered ping", async () => {
+  // Was a bug until 2026-11-16: an answered ping set lastSeen on a monitored asset whose probe said down.
+  it("an answered ping never writes lastSeen on a monitored asset — polling is authoritative (rule 12)", async () => {
     asset.findMany.mockResolvedValue([row({ id: "a", monitored: true, monitorStatus: "down", lastMonitorAt: ago(1000), hostname: "a" })]);
     h.pingHost.mockResolvedValue({ success: true });
     const out = await runPresenceVerification(opts());
     expect(out.viaPing).toBe(1);
-    expect(writes().a).toEqual({ lastSeen: NOW, lastSeenSource: "ping" });
+    expect(writes().a).toBeUndefined();
+    expect(asset.update).not.toHaveBeenCalled();
   });
 });
 

@@ -43,8 +43,9 @@ interface InterfaceInferredEdge {
   matchVia: "serial" | "hostname";
   aggregateIndex: number | null;
   /** Set when the link is drawn from rows older than INTERFACE_STALE_MS that
-   * were kept because one end is dark (keepsLastKnownLinks): the oldest
-   * sighting the edge rests on. Absent on a fresh edge. */
+   * were kept because one end is dark (keepsLastKnownLinks): the NEWER of
+   * the edge's two rows — the last time either end saw the link. Absent on a
+   * fresh edge. */
   lastKnownAt?: Date;
 }
 

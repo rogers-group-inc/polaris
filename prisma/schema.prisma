@@ -5280,6 +5280,9 @@ model ArchivedSubnet {
   integrationName String?
   fortigateDevice String?
   fortigateSerial String?
+  // Business rule 137's serving interface and VLAN parent, as they stood.
+  fortigateInterface  String?
+  fortigateVlanParent String?
   createdBy       String?
 
   lastDiscoveredAt  DateTime?
