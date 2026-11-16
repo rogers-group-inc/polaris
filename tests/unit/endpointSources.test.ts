@@ -328,8 +328,11 @@ describe("applyEndpointProjection (Phase 11)", () => {
     expect(bad.hostname).toBe("a");
   });
 
-  it("the bulk source read is not caught: its failure propagates to the caller", async () => {
+  it("a failed bulk source read is logged and the pass skipped, like Phase 10's preload", async () => {
     db.sourceFindMany.mockRejectedValue(new Error("db gone"));
-    await expect(applyEndpointProjection(run([{ id: "e1" }]))).rejects.toThrow("db gone");
+    const state = run([{ id: "e1" }]);
+    // Was a bug until 2026-11-16: the failure propagated out of the phase.
+    expect(await applyEndpointProjection(state)).toBe(0);
+    expect(state.syncLog).toHaveBeenCalledWith("error", "fortigate-endpoint projection apply: AssetSource preload failed (db gone)");
   });
 });

@@ -25,7 +25,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { normalizeMacOrNull } from "../utils/mac.js";
-import { isIpv6Address } from "../utils/cidr.js";
+import { canonicalIp, isIpv6Address } from "../utils/cidr.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { logEvent } from "./eventLogService.js";
 import { resolvePendingIpOverrideConflicts } from "./ipOverrideService.js";
@@ -58,9 +58,12 @@ export async function pinPrimaryAddress(input: {
   actor: string;
 }): Promise<PinResult> {
   const mac = normalizeMacOrNull(input.mac);
-  const ip = input.ip.trim();
+  const typedIp = input.ip.trim();
   if (!mac) throw new AppError(400, "Not a valid MAC address");
-  if (!ip) throw new AppError(400, "An IP address is required");
+  if (!typedIp) throw new AppError(400, "An IP address is required");
+  // IPv6 case and zero-compression must not decide the match: both the typed
+  // address and the stored ones are compared in canonical form.
+  const wanted = canonicalIp(typedIp) ?? typedIp;
 
   const asset = await prisma.asset.findUnique({
     where: { id: input.assetId },
@@ -76,13 +79,16 @@ export async function pinPrimaryAddress(input: {
   if (INFRA_TYPES.has(asset.assetType) && asset.fortinetTopology != null) {
     throw new AppError(409, "A FortiGate, FortiSwitch or FortiAP is monitored on its management IP; its primary address can't be pinned");
   }
-  const row = await prisma.assetAssociatedIp.findFirst({
-    where: { assetId: asset.id, ip, mac },
-    select: { id: true, device: true },
+  const macRows = await prisma.assetAssociatedIp.findMany({
+    where: { assetId: asset.id, mac },
+    select: { id: true, device: true, ip: true },
   });
+  const row = macRows.find((r) => (canonicalIp(r.ip) ?? r.ip) === wanted);
   if (!row) {
-    throw new AppError(409, `${ip} is not an address of ${mac} on this asset — pick a pair from its address list, or type the address in Edit`);
+    throw new AppError(409, `${typedIp} is not an address of ${mac} on this asset — pick a pair from its address list, or type the address in Edit`);
   }
+  // The stored spelling, so the pin matches the address list it was picked from.
+  const ip = row.ip;
   // Business rule 101(b): the last-seen FortiGate follows the primary
   // address, so it moves with the pin rather than waiting for discovery.
   const gate = await gateForPinnedAddress(ip, [row.device, asset.learnedLocation]);

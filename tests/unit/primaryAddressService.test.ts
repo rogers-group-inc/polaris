@@ -114,28 +114,37 @@ describe("pinPrimaryAddress", () => {
 
   it("allows a non-Fortinet switch (no fortinetTopology)", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({ assetType: "switch" }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     await expect(pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" })).resolves.toEqual({ assetId: "a1", mac: MAC, ip: "10.0.0.5" });
   });
 
   it("409s a (mac, ip) pair that is not on the asset's address list", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset());
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue(null);
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.6" }]);
     await expectAppError(pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" }), 409, /not an address of/);
     expect(db.asset.update).not.toHaveBeenCalled();
   });
 
+  it("matches an IPv6 regardless of case and zero-compression, and pins the stored spelling", async () => {
+    stubbed(db.asset.findUnique).mockResolvedValue(asset());
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "2001:db8:0:0::5" }]);
+    // Was a bug until 2026-11-16: an uppercase / differently-compressed IPv6 got a 409.
+    const out = await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "2001:DB8::5", actor: "u" });
+    expect(out.ip).toBe("2001:db8:0:0::5");
+    expect(stubbed(db.asset.update).mock.calls[0][0].data.primaryAddressIp).toBe("2001:db8:0:0::5");
+  });
+
   it("normalises the MAC and trims the IP for the lookup and the write", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset());
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     const out = await pinPrimaryAddress({ assetId: "a1", mac: "aa-bb-cc-00-00-01", ip: " 10.0.0.5 ", actor: "u" });
     expect(out).toEqual({ assetId: "a1", mac: MAC, ip: "10.0.0.5" });
-    expect(stubbed(db.assetAssociatedIp.findFirst).mock.calls[0][0].where).toEqual({ assetId: "a1", ip: "10.0.0.5", mac: MAC });
+    expect(stubbed(db.assetAssociatedIp.findMany).mock.calls[0][0].where).toEqual({ assetId: "a1", mac: MAC });
   });
 
   it("writes the pin, sets ipAddress, clears the other operator pins and the contest stamp", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({ ipOverride: "10.0.0.77" }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "alice" });
     const { where, data } = stubbed(db.asset.update).mock.calls[0][0];
     expect(where).toEqual({ id: "a1" });
@@ -149,7 +158,7 @@ describe("pinPrimaryAddress", () => {
   });
 
   it("closes pending ip-override conflicts only when a typed or blank pin was held", async () => {
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     stubbed(db.asset.findUnique).mockResolvedValue(asset());
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" });
     expect(h.resolveConflicts).not.toHaveBeenCalled();
@@ -165,7 +174,7 @@ describe("pinPrimaryAddress", () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({
       ipOverride: "10.0.0.77", primaryAddressMac: "AA:BB:CC:00:00:02", primaryAddressIp: "10.0.0.6",
     }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" });
     const ev = eventLog.logEvent.mock.calls[0][0];
     expect(ev).toMatchObject({ action: "asset.primary_address.pinned", resourceType: "asset", resourceId: "a1", resourceName: "pc-1", actor: "u" });
@@ -179,7 +188,7 @@ describe("pinPrimaryAddress", () => {
 
   it("omits the 'was' clause when the address does not change", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({ ipAddress: "10.0.0.5", hostname: null }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" });
     const ev = eventLog.logEvent.mock.calls[0][0];
     expect(ev.message).not.toContain("(was");
@@ -188,7 +197,7 @@ describe("pinPrimaryAddress", () => {
 
   it("moves learnedLocation to the gate whose network holds the pinned address (rule 101(b))", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({ learnedLocation: "FW-OLD" }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: "FW-NEW" });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: "FW-NEW", ip: "10.0.0.5" }]);
     stubbed(db.subnet.findMany).mockResolvedValue([{ cidr: "10.0.0.0/24", status: "available", fortigateDevice: "FW-NEW" }]);
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" });
     expect(stubbed(db.asset.update).mock.calls[0][0].data.learnedLocation).toBe("FW-NEW");
@@ -197,7 +206,7 @@ describe("pinPrimaryAddress", () => {
 
   it("leaves learnedLocation alone when the gate is already it, or IPAM cannot say", async () => {
     stubbed(db.asset.findUnique).mockResolvedValue(asset({ learnedLocation: "FW-A" }));
-    stubbed(db.assetAssociatedIp.findFirst).mockResolvedValue({ id: "r1", device: null });
+    stubbed(db.assetAssociatedIp.findMany).mockResolvedValue([{ id: "r1", device: null, ip: "10.0.0.5" }]);
     stubbed(db.subnet.findMany).mockResolvedValue([{ cidr: "10.0.0.0/24", status: "available", fortigateDevice: "FW-A" }]);
     await pinPrimaryAddress({ assetId: "a1", mac: MAC, ip: "10.0.0.5", actor: "u" });
     expect(stubbed(db.asset.update).mock.calls[0][0].data).not.toHaveProperty("learnedLocation");

@@ -181,6 +181,18 @@ describe("reconcilePrimaryIpv6 — IPv6 on", () => {
     });
   });
 
+  it("finds a non-canonically stored address's score (the scorer keys by the stored spelling)", async () => {
+    db.ipFindMany.mockResolvedValue([
+      { assetId: "a1", ip: "2001:db8::1", lastSeen: T0 },
+      { assetId: "a1", ip: "2001:DB8:0:0::2", lastSeen: T0 },
+    ]);
+    db.assetFindMany.mockResolvedValue([{ id: "a1", hostname: "h", ipv6Address: null }]);
+    m.buildAddressConfidence.mockResolvedValue(scores({ a1: { "2001:db8::1": 1, "2001:DB8:0:0::2": 4 } }));
+    await reconcilePrimaryIpv6();
+    // Was a bug until 2026-11-16: the canonical candidate missed its raw-keyed score and scored 0.
+    expect(db.assetUpdate.mock.calls[0][0].data.ipv6Address).toBe("2001:db8::2");
+  });
+
   it("writes nothing and logs nothing in the steady state", async () => {
     db.ipFindMany.mockResolvedValue([{ assetId: "a1", ip: "2001:db8::1", lastSeen: T0 }]);
     db.assetFindMany.mockResolvedValue([{ id: "a1", hostname: "h", ipv6Address: "2001:db8::1" }]);

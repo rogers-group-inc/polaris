@@ -319,11 +319,20 @@ function csvSplitRow(line: string): string[] {
 }
 
 /**
+ * How long an EMPTY map is trusted before the database is read again. A
+ * refresh run by another process (the web role, while this is discovery or
+ * monitor) writes the row but not this process's cache, so "no database yet"
+ * must not be remembered for the process lifetime.
+ */
+const EMPTY_RETRY_MS = 5 * 60 * 1000;
+
+/**
  * Ensure the in-memory map is populated from the database.
- * Only reads from DB once per process (or after a refresh).
+ * A loaded map is read once per process (or after a refresh); an empty one is
+ * re-read after EMPTY_RETRY_MS.
  */
 async function ensureLoaded(): Promise<void> {
-  if (_ouiMap && _lastLoaded > 0) return;
+  if (_ouiMap && _lastLoaded > 0 && (_ouiMap.size > 0 || Date.now() - _lastLoaded < EMPTY_RETRY_MS)) return;
 
   const row = await prisma.setting.findUnique({ where: { key: SETTING_KEY } });
   if (!row?.value) {

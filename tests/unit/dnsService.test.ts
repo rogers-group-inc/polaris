@@ -482,16 +482,27 @@ describe("createResolver — DoT", () => {
     const out = await r.lookup("nas.lan");
     expect(out).toHaveLength(1);
     expect(out[0].family).toBe(6);
-    // Groups are written uncompressed (suspicious, not pinned: DoH and the
-    // standard resolver hand back the canonical "2001:db8::5").
-    expect(out[0].address).toBe("2001:db8:0:0:0:0:0:5");
+    // Was a bug until 2026-11-16: groups were written uncompressed ("2001:db8:0:0:0:0:0:5").
+    expect(out[0].address).toBe("2001:db8::5");
     expect(decodeQuery(tlsWrites[1]).qtype).toBe(28);
   });
 
-  it("lookup returns [] (never throws) when every server fails for both types", async () => {
+  it("lookup throws the last error when every server fails for both types", async () => {
     tlsQueue.push({ error: new Error("a") }, { error: new Error("b") }, { error: new Error("c") }, { error: new Error("d") });
     const r = await dot(["10.9.9.1", "10.9.9.2"]);
-    expect(await r.lookup("nas.lan")).toEqual([]);
+    // Was a bug until 2026-11-16: every server error was swallowed and [] returned.
+    await expect(r.lookup("nas.lan")).rejects.toThrow("d");
     expect(h.tlsConnect).toHaveBeenCalledTimes(4);
+  });
+
+  it("lookup returns [] when a server answered with no records, even if another failed", async () => {
+    tlsQueue.push(
+      { error: new Error("a") },
+      { chunks: [lenPrefixed(dnsResponse("nas.lan", 1, []))] },
+      { error: new Error("c") },
+      { chunks: [lenPrefixed(dnsResponse("nas.lan", 28, []))] },
+    );
+    const r = await dot(["10.9.9.1", "10.9.9.2"]);
+    expect(await r.lookup("nas.lan")).toEqual([]);
   });
 });

@@ -67,6 +67,18 @@ describe("lookupOui", () => {
     expect(await oui.lookupOui("2C:54:9A:00:11:22")).toBeNull();
   });
 
+  it("re-reads after 5 minutes when no row existed, so another process's refresh is seen", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T12:00:00Z"));
+    expect(await oui.lookupOui("2C:54:9A:00:11:22")).toBeNull();
+    settings.oui_database = IEEE; // written by another process
+    vi.setSystemTime(new Date("2026-11-16T12:04:00Z"));
+    expect(await oui.lookupOui("2C:54:9A:00:11:22")).toBeNull();
+    vi.setSystemTime(new Date("2026-11-16T12:05:01Z"));
+    // Was a bug until 2026-11-16: the empty map was cached for the process lifetime.
+    expect(await oui.lookupOui("2C:54:9A:00:11:22")).toBe("Example Corp");
+  });
+
   it("an override outranks the IEEE entry", async () => {
     settings.oui_database = IEEE;
     settings.oui_overrides = { "2C549A": { manufacturer: "Override Co", device: "Widget" } };
