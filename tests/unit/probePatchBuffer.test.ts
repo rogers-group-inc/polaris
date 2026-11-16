@@ -287,7 +287,7 @@ describe("flushProbePatchBuffer — failure restore", () => {
     expect(getPendingProbePatch("a")).toMatchObject({ consecutiveFailures: 2, lastMonitorAt: T1 });
   });
 
-  // BUG: the module's merge contract is preserve-on-absent for the
+  // Was a bug until 2026-11-14: the module's merge contract is preserve-on-absent for the
   // transition / reboot / recovery stamps ("the DB ends up with the actual
   // transition timestamp instead of NULL-erasing it"), but the failure restore
   // re-adds a snapshot entry ONLY when the buffer has no entry for that asset —
@@ -299,7 +299,7 @@ describe("flushProbePatchBuffer — failure restore", () => {
   // written (the status says down, the changed-at stamp stays at the old
   // transition). Right: the restored snapshot is merged under the fresher
   // patch by the same rule enqueueProbePatch uses, keeping T0 and `true`.
-  it.fails("keeps a failed snapshot's transition stamps under a fresher patch", async () => {
+  it("keeps a failed snapshot's transition stamps under a fresher patch", async () => {
     let fail!: () => void;
     h.exec.mockImplementationOnce(() => new Promise<number>((_r, rej) => { fail = () => rej(new Error("boom")); }));
     enqueueProbePatch("a", patch({ monitorStatus: "down", consecutiveFailures: 3, monitorStatusChangedAt: T0, awaitingRecoveryConfirm: true }));

@@ -229,7 +229,7 @@ describe("runRetentionPrune — counts", () => {
     expect(r.skipped).toBe(false);
   });
 
-  // BUG: pruneSystemInfoSamples destructures its Promise.all into 22 names but
+  // Was a bug until 2026-11-14: pruneSystemInfoSamples destructures its Promise.all into 22 names but
   // the array holds 23 promises (the asset_service_log_samples prune was added
   // without a name), so every name from `processConn` on is shifted one slot
   // and the LAST result — the path-check traceroute prune — is never summed.
@@ -237,7 +237,7 @@ describe("runRetentionPrune — counts", () => {
   // 1 row. Wrong: systemInfo = 25 (the 1,000 vanishes from the result and the
   // "Pruned old monitor samples" log). Right: 1,025 (26 deleteMany calls,
   // three selection-aware detail tiers making two each).
-  it.fails("counts every system-info delete, the path-check traceroutes included", async () => {
+  it("counts every system-info delete, the path-check traceroutes included", async () => {
     for (const m of ALL_MODELS) del(m).mockResolvedValue({ count: 1 });
     del("assetPathCheckTraceroute").mockResolvedValue({ count: 1000 });
     const r = await runRetentionPrune();
@@ -360,7 +360,7 @@ describe("selection-aware detail (interfaces / storage / ipsec)", () => {
     expect(fast).toEqual({ cadence: "fast", timestamp: { lt: new Date(NOW - 7 * DAY) } });
   });
 
-  // BUG: business rule / tiered-sample-retention invariant "NO tier prune —
+  // Was a bug until 2026-11-14: business rule / tiered-sample-retention invariant "NO tier prune —
   // detail OR rollup — may row-DELETE inside a compressed chunk". The SLOW arm
   // of pruneSelectionAwareDetail is bounded at the frontier, but the FAST
   // (selected) arm is a blanket `{ cadence: "fast", timestamp: { lt: sel } }`.
@@ -372,7 +372,7 @@ describe("selection-aware detail (interfaces / storage / ipsec)", () => {
   // delete with `lt: now-7d` and no lower bound. Right: route the fast arm
   // through tieredPruneWindow — skip the row-DELETE when the cutoff is past
   // the frontier (leave the residue to drop_chunks), or bound it at the frontier.
-  it.fails("never row-deletes selected rows past the compression frontier", async () => {
+  it("never row-deletes selected rows past the compression frontier", async () => {
     h.compress = { asset_interface_samples: 2 };
     await runRetentionPrune();
     const frontier = NOW - 2 * DAY;

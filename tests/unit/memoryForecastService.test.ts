@@ -354,13 +354,13 @@ describe("the shared daily-points SQL", () => {
     expect(sqlOf()).toContain(`(b.at IS NULL OR r."bucketStart" > date_trunc('day', b.at))`);
   });
 
-  // BUG: the hourly tail is meant to re-derive the last HOURLY_TAIL_DAYS (2)
+  // Was a bug until 2026-11-14: the hourly tail is meant to re-derive the last HOURLY_TAIL_DAYS (2)
   // whole days — today and yesterday — and the result WINS over yesterday's
   // daily bucket. The filter is `bucketStart > date_trunc('day', now) - 1 day`,
   // a strict `>` against yesterday's midnight, so yesterday's 00:00–01:00
   // hourly bucket is excluded and yesterday's point is averaged over 23 hours
   // instead of 24 (and replaces the complete daily bucket). Right: `>=`.
-  it.fails("re-derives yesterday from ALL of its hourly buckets, midnight included", () => {
+  it("re-derives yesterday from ALL of its hourly buckets, midnight included", () => {
     expect(sqlOf()).toContain(`r."bucketStart" >= date_trunc('day', (now() AT TIME ZONE 'UTC')) - interval '1 days'`);
   });
 });
