@@ -784,9 +784,22 @@ function renderCapacityCard(capacity, dbInfo, pgTuning, capacityTransition) {
   // email — but on this tab they belong to the Platform Lifecycle card, which
   // lists them per component. Drop them here and grade the card on what is
   // left, so a Node advisory does not paint the Database card amber.
+  // The Capacity Advisor rollups are dropped for the same reason: each one is a
+  // summary of a row the Capacity Advisor card already shows with its current
+  // and recommended value (and grades that card), so repeating it here put the
+  // same warning on two cards and twice in the "Needs attention" strip. They
+  // stay on the snapshot, so the sidebar alert, Events and capacity
+  // automations still see them.
+  var advisorOwned = {
+    max_connections_undersized: true,
+    pool_undersized: true,
+    monitor_workers_undersized: true,
+    pg_tuning_needed: true,
+  };
   var allReasons = capacity.reasons || [];
   var dbReasons = allReasons.filter(function (r) {
-    return r.family !== "platform_lifecycle" && !/^platform_/.test(r.code || "");
+    if (r.family === "platform_lifecycle" || /^platform_/.test(r.code || "")) return false;
+    return !advisorOwned[r.code];
   });
   var severity = capacity.severity || "ok";
   if (dbReasons.length !== allReasons.length) {
