@@ -127,8 +127,9 @@ Asset
   -- transport. The two are allowed to disagree and the disagreement is the
   -- point: a switch with a dead FortiLink session answers ICMP and SNMP
   -- perfectly, so monitorStatus reads "up" while the gate has stopped managing
-  -- it. Written ONLY by services/fortinetLinkStateService.ts (the 60s
-  -- jobs/sweepFortinetLinkState tick); never by the probe path, and never
+  -- it. Written ONLY by services/fortinetLinkStateService.ts (the
+  -- jobs/sweepFortinetLinkState tick, each device read on its own interface
+  -- interval and only while interface polling is on -- rule 59a); never by the probe path, and never
   -- feeding monitorStatus / consecutiveFailures.
   --
   -- Deliberately four scalar columns rather than keys on fortinetTopology:
@@ -136,7 +137,7 @@ Asset
   -- read-modify-writing it would lose-update the discovery stamp. Scalars also
   -- let notificationEngine's resolveAssetStateReadings read the field straight
   -- off the scope row like monitorStatus, with no query of its own.
-  fortilinkStatus    String?      -- "up" | "down" | "unknown"; null = the sweep has never spoken about this device (not FortiGate-managed, or a pre-feature row awaiting its first tick). "unknown" is answered-but-ABSENT from the controller's table, which is NOT "down" -- a post-config-push window looks identical and down-detection authority is rule 36's. A controller the sweep could not READ writes nothing at all, so a dark FMG leaves the last known values standing instead of reporting a fleet-wide link outage. Exposed as the `fortilinkStatus` asset_state automation field, where a null produces NO READING (a reading of null would make `!= up` true of every workstation in a fleet-wide scope).
+  fortilinkStatus    String?      -- "up" | "down" | "unknown"; null = the sweep has never spoken about this device (not FortiGate-managed, or a pre-feature row awaiting its first tick), or its interface polling / monitoring is off (cleared once, no Event -- rule 59a). "unknown" is answered-but-ABSENT from the controller's table, which is NOT "down" -- a post-config-push window looks identical and down-detection authority is rule 36's. A controller the sweep could not READ writes nothing at all, so a dark FMG leaves the last known values standing instead of reporting a fleet-wide link outage. Exposed as the `fortilinkStatus` asset_state automation field, where a null produces NO READING (a reading of null would make `!= up` true of every workstation in a fleet-wide scope).
   fortilinkStatusRaw String?      -- The raw word the controller used: "Connected"/"Disconnected" for a switch, "online"/"connected"/"offline"/"discovered" for an AP. DISPLAY ONLY -- every predicate, including the automation field, reads fortilinkStatus. Kept because the three AP words that all normalize to "down" mean different things to an operator.
   fortilinkCheckedAt DateTime?    -- When the controller last ANSWERED about this device, refreshed on every successful sweep whether or not the value moved. Two readers: the automation engine uses it as the READING ANCHOR for fortilinkStatus (so a forPolls hold counts times the controller answered, not monitor-loop ticks that never looked), and the asset-details row reads a stalled value as "last confirmed <time>" rather than presenting it as current. A frozen timestamp is how an unreadable controller surfaces at all.
   fortilinkChangedAt DateTime?    -- When fortilinkStatus last changed value. Deliberately NOT bumped by a confirmation, which is what makes the "down for 2h 13m" on the details row the outage length rather than the age of the last sweep. Timestamp on the asset.fortilink.changed Event.

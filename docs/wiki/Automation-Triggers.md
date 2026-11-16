@@ -394,6 +394,12 @@ means it has been unplugged long enough to age out of the managed-switch table.
 An operator who wants *"tell me when the gate stops seeing this switch at all"*
 writes `!= up`, not `== down`.
 
+It is read on the device's **interface polling interval** (10 minutes by
+default), so a hold counted in polls counts interface polls — "down for 3 polls"
+is about half an hour at the default. With interface polling (or monitoring)
+off for a device, the value is cleared and there is no reading at all
+([rule 59a](Business-Rules#rule-59a)).
+
 A null produces **no reading at all** — not a reading of null, which would make
 `!= up` true of every workstation in a fleet-wide scope.
 

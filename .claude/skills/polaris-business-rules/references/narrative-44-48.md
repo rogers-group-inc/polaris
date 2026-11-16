@@ -20,6 +20,7 @@ Verbatim from BUSINESS-RULES.md: each rule records the decision *and the inciden
 - [Rule 57](#rule-57) — A sub-asset alerts only if the operator pinned it
 - [Rule 58](#rule-58) — A tag that names no region strands the ranking, so level routing abstains
 - [Rule 59](#rule-59) — The controller's view of its own link is a second opinion, and an unreadable controller has no view at all
+- [Rule 59a](#rule-59a) — The controller link is a virtual interface: read on the device's interface cadence, and only while its interfaces are polled
 
 <a id="rule-44"></a>
 
@@ -1363,7 +1364,9 @@ State the overlap honestly — the sweep and the monitor loop run on independent
 they coalesce only when their ticks land in the same 30s window. A controller already serving
 REST-probed devices goes from ~1 call per minute per kind to ~1.5, not to 1 and not to 2; one
 serving only ICMP-polled devices was being asked nothing and now costs the full 2.
-`POLARIS_FORTILINK_SWEEP_SEC` raises the interval where that matters.
+`POLARIS_FORTILINK_SWEEP_SEC` raises the interval where that matters. *(This paragraph
+describes the 60 s sweep as built. Since 2026-11-16 each device is read on its interface
+interval instead and the variable is ignored — see [59a](#rule-59a).)*
 
 ### Three refusals, each of which is a false alarm not sent
 
@@ -1412,7 +1415,66 @@ Rule 37 still governs who may be alerted about: a FortiGate-managed switch with
 `monitored = false` shows the row in asset details and never fires. That is the intended
 reading of the monitoring toggle, but it is worth saying out loud, because the switch an
 operator most wants a FortiLink alarm on is not always one they thought to turn monitoring on
-for.
+for. *(Since 2026-11-16 an unmonitored switch no longer shows the row either: monitoring off
+means interface polling off, and 59a clears the value — see below.)*
+
+<a id="rule-59a"></a>
+
+## Rule 59a — The controller link is a virtual interface: read on the device's interface cadence, and only while its interfaces are polled (2026-11-16)
+
+**The decision.** Operator, 2026-11-16, verbatim: *"fortilink status polling should be on the
+10m polling interval like interfaces and enabled with interfaces since the fortilink connection
+is basically a virtual interface to the device."* The FortiLink session to a switch and the
+CAPWAP tunnel to an AP are, from the operator's chair, one more interface on the device — the
+one that connects it to its controller. So it is read on that device's interface cadence and
+switched on and off with its interface polling, rather than on a timer of its own.
+
+**What it supersedes.** The sweep was built at 60 s, "matching the default probe interval so
+the link column and the monitor column describe the same minute", with
+`POLARIS_FORTILINK_SWEEP_SEC` (floored at 30 s) as the relief valve for installs where two
+controller calls a minute per gate were too many — FMG proxy mode at concurrency 1 being the
+case to watch (a 50-gate fleet: ~100 proxied calls a minute at ~650 ms each). The variable is
+now ignored, and nothing reads it.
+
+**How it works now.** The job still ticks every 60 s, but that is only the scheduler's
+granularity. Each tick, every managed switch and AP is resolved through the same monitor-settings
+hierarchy the system-info pass uses: the interval is the resolved `systemInfoIntervalSeconds`
+(default 600 s), and the device is *due* when `fortilinkCheckedAt` is null or one interval old.
+A controller is asked only if at least one of its devices is due, and only the due devices are
+written — a not-due device on the same controller response is left for its own interval, which
+keeps each device's cadence honest. The resolution is memoized per pass on (integration,
+assetType, and the per-asset overrides that change the answer), over one tight-select
+`findMany`, so 2000 devices cost a handful of in-memory resolves, not 2000 awaits.
+
+**Enabled with interfaces.** A device is *off* when its resolved `interfacesPolling` is null or
+`"disabled"`, its interval is 0, or it is unmonitored (`monitored = false` stops the
+system-info pass, so it stops this too). An off device is not swept, and its status, raw word
+and `changedAt` are cleared to null once — one batched `updateMany` over the off devices that
+still hold a value, so a second tick writes nothing. Null is the "no reading" posture of rule
+59: an automation sees nothing rather than a stale `up` that nobody is refreshing. No
+`asset.fortilink.changed` Event is written for the clear: the link did not change, Polaris
+stopped asking. When polling comes back on the device is due at once (its `checkedAt` is old)
+and its first read logs as a first observation (`info`).
+
+Three deliberate departures from the system-info pass: a device that is **down** is still
+swept (the controller's view is most useful exactly when the device is not answering; the
+system-info pass suppresses heavy cadences on a down device); a managed switch/AP on
+`interfacesPolling = rest_api` counts as **on** even though the system-info pass cannot collect
+REST interfaces for it (that method is the integration default, and treating it as off would
+switch the feature off for every default fleet); and a device in **maintenance** is neither
+swept nor cleared — its value goes stale through the window and resumes afterwards.
+
+**The trade-off.** Detection latency moves from about a minute to up to one interface interval
+— 10 minutes at the default, so "controller link down for 3 polls" now means ~30 minutes, and
+the automation wizard says so because `METRIC_STREAM.fortilinkStatus` is `systemInfo` (rule
+75's grouped first-send hold reads the same table). Controller load drops about tenfold at the
+defaults: at most two calls per controller per interface interval, not per minute. Devices first
+swept together stay in phase; one that joins later can put a second phase on its controller,
+which at worst doubles that controller's rate — still a fifth of the old sweep. A controller
+that cannot be read still writes nothing (refusal 1), so its devices stay due and it is retried
+each tick until it answers — the rate the old sweep always paid. An operator who wants faster
+link detection on a particular class shortens its interface interval, which is the same knob
+that speeds up every other interface reading on that device.
 
 
 ---

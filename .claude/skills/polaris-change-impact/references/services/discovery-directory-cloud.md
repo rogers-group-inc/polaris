@@ -459,6 +459,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - A failed ping writes NOTHING (Windows hosts commonly drop ICMP; no pong ≠ absence) — `lastSeen` advances only on positive evidence via `bumpLastSeen`.
+- An answered ping writes `lastSeen` only on an UNMONITORED asset: `bumpLastSeen` defers source `ping` for a monitored one like the discovery sources (rule 12, polling is authoritative), so a monitored asset whose probe says down keeps its last polled presence.
 - ICMP is concurrency-capped with a per-ping timeout and a hard pass deadline; `lastSeen` writes are batched in chunked transactions.
 - Ping target priority is dnsName > hostname > ipAddress, each trimmed so a whitespace-only value falls through to the next (stored ipAddress is often stale on directory-discovered assets).
 

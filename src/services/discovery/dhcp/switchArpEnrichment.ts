@@ -83,10 +83,11 @@ export async function enrichFromSwitchMacAndArp(input: {
       if (!row.mac || !row.switchId || !row.portName) continue;
       const asset = assetIdx.findByMac(row.mac);
       if (!asset) continue;
-      // Skip Fortinet infrastructure assets — their topology already lives
-      // on `fortinetTopology` (parentSwitch/parentPort for APs, FortiLink
-      // uplinkInterface for switches). Stamping lastSeenSwitch on a
-      // managed switch or FortiGate would conflate roles.
+      // Skip managed switches and FortiGates — a switch's place is its
+      // FortiLink uplinkInterface on `fortinetTopology`, and stamping
+      // lastSeenSwitch on either would conflate roles. FortiAPs are NOT
+      // skipped, deliberately: the port an AP is plugged into is stamped
+      // here like any endpoint's (operator decision 2026-11-16).
       if (asset.assetType === "switch" || asset.assetType === "firewall") continue;
       const portLabel = `${row.switchId}/${row.portName}`;
       const rank = portMacCounts.get(portLabel)?.size ?? 1;

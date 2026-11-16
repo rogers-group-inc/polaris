@@ -113,8 +113,10 @@ export function judgeRosterFirewall(
     .filter((n) => n.length > 0);
   const onRoster = names.filter((n) => ctx.knownDeviceNamesLc.has(n));
   if (onRoster.length === 0) {
-    // Nothing to identify it by: never judged (matches the old `!hostname` skip).
-    return asset.hostname ? { kind: "stale" } : { kind: "keep" };
+    // Stale when it carries ANY name the roster could have listed it under —
+    // a gate with no hostname is still judged by its FMG device name. Only a
+    // row with neither is kept: nothing to identify it by.
+    return names.length > 0 ? { kind: "stale" } : { kind: "keep" };
   }
   if (!serial) return { kind: "keep" };
 
@@ -250,13 +252,15 @@ export async function decommissionStaleFirewalls(input: {
     const deviceName = readFirewallDeviceName(a.fortinetTopology);
     if (deviceName) staleFwHostnames.push(deviceName);
     if (a.hostname) staleFwHostnames.push(a.hostname);
+    // A gate with no hostname is named by its FMG device name, then serial.
+    const label = a.hostname || deviceName || a.serialNumber || a.id;
     logEvent({
       action: "asset.fortigate.decommissioned",
       resourceType: "asset",
       resourceId: a.id,
-      resourceName: a.hostname || a.serialNumber || a.id,
+      resourceName: label,
       actor,
-      message: `FortiGate "${a.hostname || a.serialNumber}" decommissioned — no longer configured in "${integrationName}"`,
+      message: `FortiGate "${label}" decommissioned — no longer configured in "${integrationName}"`,
       details: { reason: "missing-from-roster", integrationId, integrationName },
     });
   }

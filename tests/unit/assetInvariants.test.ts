@@ -120,10 +120,19 @@ describe("bumpLastSeen", () => {
     });
 
     it("lets active/operator sources through on a monitored asset", () => {
-      for (const source of ["agent", "ping", "conflict-accept"]) {
+      for (const source of ["agent", "conflict-accept"]) {
         const data: Record<string, unknown> = {};
         expect(bumpLastSeen(data, { lastSeen: T0, monitored: true }, T2, source), source).toBe(true);
       }
+    });
+
+    // Was a bug until 2026-11-16: a presence-verification ping advanced lastSeen on a monitored asset.
+    it("defers the presence-verification ping on a monitored asset, and lets it through on an unmonitored one", () => {
+      const data: Record<string, unknown> = {};
+      expect(bumpLastSeen(data, { lastSeen: T0, monitored: true }, T2, "ping")).toBe(false);
+      expect("lastSeen" in data).toBe(false);
+      expect(bumpLastSeen(data, { lastSeen: T0, monitored: false }, T2, "ping")).toBe(true);
+      expect(data.lastSeenSource).toBe("ping");
     });
 
     it("does not defer discovery-origin sources on an UNmonitored asset", () => {
