@@ -2109,7 +2109,13 @@
     var current = _currentView();
     var canEdit = _canEditViews();
     var items = [{ heading: "Views" }];
-    _siteViews().forEach(function (v) {
+    // Layer 2 views first, then Topology, then Room; within a mode the
+    // site's own order (operator request 2026-11-17).
+    var MODE_ORDER = { layer2: 0, topology: 1, room: 2 };
+    function rank(v) { var r = MODE_ORDER[v.mode]; return r === undefined ? 0 : r; }
+    _siteViews().map(function (v, i) { return { v: v, i: i }; }).sort(function (a, b) {
+      return rank(a.v) - rank(b.v) || a.i - b.i;
+    }).map(function (x) { return x.v; }).forEach(function (v) {
       items.push({
         label: (current && v.id === current.id ? "✓ " : "") + v.name + " — " + (VIEW_MODE_LABELS[v.mode] || "Layer 2"),
         onSelect: function () { _switchTopologyView(v.id); },

@@ -578,7 +578,8 @@ Every site has a default view, and you can save more. A view is a name, one
 - **Room** — one room's racks and junction boxes, side by side, that you put
   devices into.
 
-The view button beside the site's name opens the view menu: pick a view to
+The view button beside the site's name opens the view menu, which lists the
+Layer 2 views first, then Topology, then Room. Pick a view to
 switch to it, or choose **New view**, **View settings** (its name and mode) or
 **Delete view** (the default view can't be deleted). Views are shared: everyone
 who can open the Device Map sees the same views, and creating or changing them
@@ -604,8 +605,8 @@ the column under the tick:
   site's descriptions already name, or a new group inside one), then click to
   add points and click the first point to close it. While drawing, drag with
   the right mouse button to move the map; **Esc** stops drawing and leaves the
-  Topology window open. Click a polygon to reshape it, change its group or
-  delete it.
+  Topology window open. Click or right-click a polygon to reshape it, change
+  its group or delete it.
 
 #### ArcGIS layers
 

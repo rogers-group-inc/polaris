@@ -865,11 +865,16 @@
       });
       shape.bindTooltip(esc(groupName(p.codes)) + ' <span class="topo-phys-codes">' + esc(codesLabel(p.codes)) + '</span>',
         { permanent: true, direction: "center", className: "topo-phys-polygon-label", pane: f.name });
-      shape.on("click", function (e) {
-        if (!state.editing || level !== state.layer || adjust) return;
+      // A click or a right-click opens the polygon's menu (Reshape, Change
+      // group, Delete) — right-click added on operator request 2026-11-17.
+      function polyMenu(e) {
+        if (!state.editing || level !== state.layer || adjust || drawHandler) return;
         L.DomEvent.stopPropagation(e);
+        if (e.originalEvent && e.type === "contextmenu") e.originalEvent.preventDefault();
         openPolygonMenu(p, e.originalEvent, shape.getElement());
-      });
+      }
+      shape.on("click", polyMenu);
+      shape.on("contextmenu", polyMenu);
       f.group.addLayer(shape);
       polygonShapes[p.id] = shape;
     }
