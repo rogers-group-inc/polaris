@@ -1164,7 +1164,9 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .vis-no-group-labels .topo-phys-polygon-label:not(.is-hover),
 .vis-no-group-labels .topo-room-hull-label:not(.is-hover) { visibility: hidden; }
 /* The eye button's panel: a dropdown of switches beside the corner tools. */
-.topo-vis-panel { position: fixed; z-index: 1200; min-width: 240px; max-width: 320px; max-height: 70vh; overflow-y: auto; padding: 6px 0; }
+/* The same glass as the Mouse controls panel and the legend (--map-glass-bg),
+   not the page menus' (operator request 2026-11-17). */
+.topo-vis-panel { position: fixed; z-index: 1200; min-width: 240px; max-width: 320px; max-height: 70vh; overflow-y: auto; padding: 6px 0; background: var(--map-glass-bg); border-radius: 8px; }
 .topo-vis-panel .topo-vis-row { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 14px; font-weight: 500; cursor: pointer; }
 .topo-vis-panel .topo-vis-row input { width: auto; margin: 0; }
 .topo-vis-panel .topo-vis-sub { padding-left: 38px; font-weight: 400; font-size: 0.85rem; }
