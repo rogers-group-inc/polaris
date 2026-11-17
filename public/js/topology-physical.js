@@ -346,7 +346,20 @@
     // always drawn at 100 % under every floor; a floor's own background is a
     // plan image placed on it (layer.background + layer.plan).
     var background0 = staged.background !== undefined ? staged.background : (view.background || null);
-    function layerObj(level) { return state.layers.filter(function (l) { return l.level === level; })[0] || null; }
+    // The ground's CAD drawing (operator request 2026-11-17) rides the layer
+    // list as a level-0 entry carrying only a drawing: held apart here so it
+    // is never a floor, and put back in front whenever the layers are staged.
+    // It sits on the ground like a floor's plan, but the ground's devices and
+    // polygons stay in ground units — adjusting the drawing never moves them.
+    var groundDrawing = state.layers.filter(function (l) { return l.level === 0; })[0] || null;
+    state.layers = state.layers.filter(function (l) { return l.level !== 0; });
+    function layersOut() {
+      return groundDrawing && groundDrawing.background ? [groundDrawing].concat(state.layers) : state.layers;
+    }
+    function layerObj(level) {
+      if (level === 0) return groundDrawing;
+      return state.layers.filter(function (l) { return l.level === level; })[0] || null;
+    }
     Object.defineProperty(state, "background", {
       get: function () { return background0; },
       set: function (v) { background0 = v; },
@@ -562,20 +575,20 @@
       return { cx: c[0], cy: c[1], sx: k, sy: k, rot: 0 };
     }
     function floorPlan(level) {
-      if (level === 0) return null;
       var l = layerObj(level);
       var bg = l && l.background;
       if (!bg || bg.kind !== "image") return null;
       var ext = planExtent(bg);
       return { layer: l, bg: bg, ext: ext, plan: l.plan || defaultPlan(ext) };
     }
+    // Floor 0 keeps ground units: its drawing, if any, carries nothing.
     function localToLatLng(level, x, y) {
-      var fp = floorPlan(level);
+      var fp = level === 0 ? null : floorPlan(level);
       if (!fp) return L.latLng(y, x);
       return fromGround(planToGround(fp.plan, fp.ext, x, y));
     }
     function latLngToLocal(level, ll) {
-      var fp = floorPlan(level);
+      var fp = level === 0 ? null : floorPlan(level);
       if (!fp) return { x: ll.lng, y: ll.lat };
       var g = toGround(ll);
       var q = groundToPlan(fp.plan, fp.ext, g[0], g[1]);
@@ -1625,11 +1638,27 @@
           ctx.refreshSidebar();
         } },
         { label: isImage ? "Replace site plan" : "Upload site plan", onSelect: function () { chooseImage(); } },
-      ], { label: "Background", align: "end", overMap: true });
+      ].concat(groundCadItems()), { label: "Background", align: "end", overMap: true });
+    }
+    // A CAD drawing over the ground (operator request 2026-11-17): imported,
+    // placed and adjusted like a floor's, drawn over the map or site plan.
+    function groundCadItems() {
+      var fp = floorPlan(0);
+      var items = [{ separator: true },
+        { label: fp ? "Replace CAD drawing (DXF)" : "Import CAD drawing (DXF)", onSelect: function () { chooseCad(0); } }];
+      if (fp) {
+        items.push({ label: "Place with two points", onSelect: function () { startPlacing(0); } });
+        items.push({ label: "Adjust CAD drawing", onSelect: startAdjust });
+        items.push({ label: "Remove CAD drawing", danger: true, onSelect: function () { setPlan(0, null, null); } });
+      }
+      return items;
     }
     // The floors' plans sit in ground units; a new ground starts them again
     // at their default place (their devices follow, staying on their plans).
-    function dropPlans() { state.layers.forEach(function (l) { delete l.plan; }); }
+    function dropPlans() {
+      state.layers.forEach(function (l) { delete l.plan; });
+      if (groundDrawing) delete groundDrawing.plan;
+    }
     // A floor's plan: upload / replace, adjust (move, stretch, rotate), remove.
     function openPlanMenu(anchor) {
       var level = state.layer;
@@ -1648,6 +1677,7 @@
     // is on the map: their plan coordinates are re-expressed in the new plan.
     function setPlan(level, background, plan) {
       var l = layerObj(level);
+      if (!l && level === 0 && background) l = groundDrawing = { level: 0, name: "", background: null };
       if (!l) return;
       var pl = placementsOf(level);
       var spots = {};
@@ -1661,6 +1691,7 @@
       });
       l.background = background;
       if (plan) l.plan = plan; else delete l.plan;
+      if (level === 0 && !background) groundDrawing = null;
       Object.keys(spots).forEach(function (id) { pl[id] = latLngToLocal(level, spots[id]); });
       state.polygons.forEach(function (p) {
         if (rings[p.id]) p.points = rings[p.id].map(function (ll) { var q = latLngToLocal(level, ll); return [q.x, q.y]; });
@@ -1696,7 +1727,8 @@
 
     // ── CAD drawings (rule 182) ─────────────────────────────────────────
     function cadFloors(exceptLevel) {
-      return state.layers.filter(function (l) { return l.level !== exceptLevel && l.background && l.background.cad; });
+      return (groundDrawing ? [groundDrawing] : []).concat(state.layers)
+        .filter(function (l) { return l.level !== exceptLevel && l.background && l.background.cad; });
     }
     // Where a drawing with a geographic location (longitude / latitude) goes:
     // its design point on that spot, its north up, at its own scale.
@@ -2174,14 +2206,14 @@
 
     // ── Staging + history ───────────────────────────────────────────────
     function snapshot() {
-      return JSON.stringify({ background0: background0, layers: state.layers, polygons: state.polygons, byLayer: byLayer,
+      return JSON.stringify({ background0: background0, layers: state.layers, groundDrawing: groundDrawing, polygons: state.polygons, byLayer: byLayer,
         arcgisLayers: arcgisLayers ? arcgisLayers.snapshot() : null });
     }
     function stageAll(fields) {
       fields.forEach(function (f) {
         if (f === "polygons") ctx.stageViewPatch({ polygons: state.polygons });
         if (f === "background") ctx.stageViewPatch({ background: background0 });
-        if (f === "layers") ctx.stageViewPatch({ layers: state.layers });
+        if (f === "layers") ctx.stageViewPatch({ layers: layersOut() });
         if (f === "placements") ctx.stagePlacements(Object.assign({}, state.placements), state.layer);
         if (f === "allPlacements") Object.keys(byLayer).forEach(function (k) { ctx.stagePlacements(Object.assign({}, byLayer[k]), Number(k)); });
       });
@@ -2202,10 +2234,11 @@
       var before = JSON.stringify(state.background);
       background0 = o.background0;
       state.layers = o.layers;
+      groundDrawing = o.groundDrawing || null;
       state.polygons = o.polygons;
       byLayer = o.byLayer;
       if (state.layer !== 0 && !layerObj(state.layer)) state.layer = 0;
-      ctx.stageViewPatch({ background: background0, layers: state.layers, polygons: state.polygons });
+      ctx.stageViewPatch({ background: background0, layers: layersOut(), polygons: state.polygons });
       stageAll(["allPlacements"]);
       paintLayerCtl();
       if (adjust) endAdjust();

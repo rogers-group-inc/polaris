@@ -779,7 +779,10 @@ Bends are saved with the floor, on Save or the tick like everything else, and
 move with the floor's plan when you adjust it.
 
 **A floor plan can be a CAD drawing.** On a floor, the map button also offers **Import CAD
-drawing (DXF)**. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
+drawing (DXF)**. The ground (floor 0) offers it too, under the map or site plan choices: the
+drawing lies over the map, and **Adjust CAD drawing**, **Place with two points** and
+**Remove CAD drawing** work as on a floor. Unlike a floor's plan, moving the ground's
+drawing never moves the ground's devices or polygons; they stay where they are on the map. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
 level); DWG files are not read. The import dialog shows:
 
 - a preview of the drawing;

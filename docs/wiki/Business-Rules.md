@@ -3761,7 +3761,10 @@ saved from AutoCAD. Polaris reads it, lets you choose its units and which layers
 DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF first. The
 drawing is placed by the location it carries, by lining it up with another floor drawn in
 the same coordinates (as levels of one survey are), or by clicking two places on the
-drawing and the same two on the map.
+drawing and the same two on the map. The ground (floor 0) can carry a CAD drawing too, laid
+over the map or site plan. Moving it never moves the ground's devices, which stay where they
+are on the map. On a floor's **Adjust** bar, **Line up with** another floor copies that
+floor's placement again; it is a one-time copy, not a link.
 
 ### Rule 183
 
