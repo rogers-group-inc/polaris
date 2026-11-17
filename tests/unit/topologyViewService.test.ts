@@ -247,6 +247,14 @@ describe("floor layers and regions (rules 150, 152)", () => {
   it("polygons default to layer 0", () => {
     const [p] = sanitizePolygons([{ id: "p", codes: { room: "MDF" }, points: [[0, 0], [1, 0], [1, 1]] }]);
     expect(p.layer).toBe(0);
+    expect(p).not.toHaveProperty("viewId");
+  });
+
+  it("a room / junction-box polygon may name its Room view (rule 148(b))", () => {
+    const id = "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9";
+    const [p] = sanitizePolygons([{ id: "p", codes: { junctionBox: "7" }, points: [[0, 0], [1, 0], [1, 1]], viewId: id }]);
+    expect(p.viewId).toBe(id);
+    expect(status(() => sanitizePolygons([{ id: "p", codes: { room: "MDF" }, points: [[0, 0], [1, 0], [1, 1]], viewId: "nope" }]))).toBe(400);
   });
 
   it("a region is a room chain or null (a rack or junction box is the Room view's own)", () => {

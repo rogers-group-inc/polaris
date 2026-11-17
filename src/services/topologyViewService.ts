@@ -104,6 +104,8 @@ export interface TopologyPolygon {
   points: Array<[number, number]>;
   /** The floor layer it is drawn on (rule 152); 0 = the flat layer. */
   layer: number;
+  /** A room / junction-box polygon's Room view, opened by a double-click (rule 148(b)). */
+  viewId?: string;
 }
 
 /** A wall of a Wall view, in inches (rule 151). */
@@ -441,7 +443,12 @@ export function sanitizePolygons(raw: unknown): TopologyPolygon[] {
       return [finite((pt as unknown[])[0], "polygon point"), finite((pt as unknown[])[1], "polygon point")] as [number, number];
     });
     const layer = pr.layer === undefined || pr.layer === null ? 0 : int(pr.layer, `polygon ${i + 1} layer`, MIN_LAYER_LEVEL, MAX_LAYER_LEVEL);
-    return { id, codes, points, layer };
+    let viewId: string | undefined;
+    if (pr.viewId !== undefined && pr.viewId !== null) {
+      if (typeof pr.viewId !== "string" || !/^[0-9a-f-]{36}$/i.test(pr.viewId)) bad(`polygon ${i + 1} viewId must be a view id`);
+      viewId = pr.viewId as string;
+    }
+    return { id, codes, points, layer, ...(viewId ? { viewId } : {}) };
   });
 }
 

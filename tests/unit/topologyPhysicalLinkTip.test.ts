@@ -64,6 +64,15 @@ describe("Topology map link hover card", () => {
     expect(sb.tipFor("mesh", true)).toContain("AP to AP — wireless mesh backhaul");
   });
 
+  it("a wired link on a ring carries the yellow outline colour; one off the ring does not", () => {
+    const R = sb.window.PolarisTopologyRender;
+    const ring = R.edgeLineStyle({ isIface: 1, inLoop: 1, linkSpeed: "1g" }, "dark");
+    const plain = R.edgeLineStyle({ isIface: 1, linkSpeed: "1g" }, "dark");
+    expect(typeof ring.halo).toBe("string");
+    expect(ring.halo).toBeTruthy();
+    expect(plain.halo).toBeNull();
+  });
+
   it("without Cytoscape a ringed link still gets its card, minus the ring rows", () => {
     const html = sb.tipFor("ab", false);
     expect(html).toContain("port1 ↔ port2");

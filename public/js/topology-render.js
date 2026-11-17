@@ -360,7 +360,10 @@
     var st = LINK_SPEED_STYLE[cls] || LINK_SPEED_STYLE.unknown;
     var color = cls === "unknown" ? ec.neutral : ec[cls];
     var dash = d.isMclag || d.isLastKnown ? "8 5" : (st.dotted ? "1 4" : null);
-    return { color: color, width: st.width, dash: dash };
+    // A wired link on a ring (markPhysicalLoops) wears the yellow outline the
+    // Layer 2 graph draws with `line-outline-color`; a Leaflet surface draws
+    // it as a wider line underneath (the Topology canvas, 2026-11-17).
+    return { color: color, width: st.width, dash: dash, halo: d.inLoop === 1 ? ec.halo : null };
   }
 
   // The asset type a backbone node stands for (endpoint and cross-site nodes

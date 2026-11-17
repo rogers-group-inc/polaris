@@ -123,6 +123,21 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
+**Room and junction-box polygons are containers** (rule 148(b)): `isContainer`, `containerFor` /
+`containedIn` per floor draw (the innermost container holding the placement), `addMarker` skips a
+contained device while viewing and marks it `.is-contained` (faint) while editing, `devCenter` ends
+its links at `polygonMiddle`. A draw creates the Room view (`createContainerView` → `ctx.createView`)
+and stores `viewId`; a view-mode `dblclick` on the shape opens it (`openContainerView` →
+`ctx.openView`; the Device Map widget's read-only context has no `createView`, so it only opens).
+**Nearby devices cluster while viewing** (operator request 2026-11-17, the Device Map's FortiGate
+pattern): `drawFloor` gives each floor an `L.markerClusterGroup` (`makeCluster`, `clusterPane` the
+floor's pane, `maxClusterRadius` `CLUSTER_PX` 30, no zoom-on-click; a click spiderfies and the
+bubble is hidden under the fan) that the icon markers join (`clusterOf[level]`). The bubble takes
+the worst member's health colour (`clusterIcon` → `worstColor` over `POLARIS_HEALTH_COLORS`) and
+lists the names in its title. The name labels are not clustered: `syncClusterLabels` hides a
+clustered device's name and moves a fanned-out one's to its leg's end, on `animationend` /
+`spiderfied` / `unspiderfied`. Editing builds no cluster group (every device stays draggable);
+`setEditing` redraws on a change of mode. The Device Map widget's read-only canvas clusters too.
 **Device names on the Topology canvas** are markers of their own (`labels[id]`, `.topo-phys-label`
 → `.topo-phys-name`) in the device's floor pane, beside its icon marker (`markers[id]`) at the
 same point: `zIndexOffset` `LABEL_Z` puts every name over every icon, and hovering a name or its
@@ -147,6 +162,7 @@ the panel, and showing or hiding a layer goes through `setShownArcgisLayers`, wh
 session-only while viewing, as in the sidebar. The panel is a `.btn-dropdown-menu.open.topo-vis-panel` on
 `<body>`, beside the button. Esc and an outside pointerdown close it, and so does any change
 of edit mode.
+**Ring outline**: `edgeLineStyle` returns `halo` (the Layer 2 `line-outline-color`, `EDGE_COLORS[…].halo`) for a link with `inLoop`; the canvas draws it as a line `width + 4` UNDER the link (`linkHalos[id]`, kept in step by the `setLatLngs` wrapper; links between floors get faded halo slices).
 **Connection hit lines**: every same-floor link is a drawn line (not interactive) plus an
 invisible hit line `HIT_PX` (18) wide (`linkHits[id]`) that carries the hover card, the press
 and the click. `line.setLatLngs` is wrapped so the hit line follows every redraw. Links between
