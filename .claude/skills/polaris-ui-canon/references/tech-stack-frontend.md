@@ -123,6 +123,15 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
+**Nearby devices cluster while viewing** (operator request 2026-11-17, the Device Map's FortiGate
+pattern): `drawFloor` gives each floor an `L.markerClusterGroup` (`makeCluster`, `clusterPane` the
+floor's pane, `maxClusterRadius` `CLUSTER_PX` 30, no zoom-on-click; a click spiderfies and the
+bubble is hidden under the fan) that the icon markers join (`clusterOf[level]`). The bubble takes
+the worst member's health colour (`clusterIcon` → `worstColor` over `POLARIS_HEALTH_COLORS`) and
+lists the names in its title. The name labels are not clustered: `syncClusterLabels` hides a
+clustered device's name and moves a fanned-out one's to its leg's end, on `animationend` /
+`spiderfied` / `unspiderfied`. Editing builds no cluster group (every device stays draggable);
+`setEditing` redraws on a change of mode. The Device Map widget's read-only canvas clusters too.
 **Device names on the Topology canvas** are markers of their own (`labels[id]`, `.topo-phys-label`
 → `.topo-phys-name`) in the device's floor pane, beside its icon marker (`markers[id]`) at the
 same point: `zIndexOffset` `LABEL_Z` puts every name over every icon, and hovering a name or its

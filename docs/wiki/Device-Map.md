@@ -611,7 +611,7 @@ the column under the tick:
 While you are **viewing** a Topology view, the eye button in the same column
 opens **Show on the map**. It has a switch for each of these:
 
-- **Devices**, **Groups** (drawn areas and buildings, and room outlines), and
+- **Devices**, **Groups** (drawn areas, buildings and rooms, and room outlines), and
   **Connections**;
 - each ArcGIS layer the integration offers.
 
@@ -663,17 +663,27 @@ again (its codes stay). The FortiSwitch and FortiAP lists further down the pane
 name only the devices on the map.
 
 Drag a device from the **Device List** onto the map. Polygons stand for
-areas and buildings; the floor comes from the floor you place the device on,
-so the polygon picker offers no floors. A device dropped inside one takes that
-group's `a:` / `b:` codes in its description when you save, plus the floor's
-`f:`; the innermost polygon wins, so a device in a building inside an area gets
-both. Only those levels
-change: the device's room (`r:`), rack (`ra:`) and junction box (`jb:`) stay as
-they are, and a device whose building is already right isn't listed at all. A
-device placed outside every polygon keeps its codes
-([rule 148](Business-Rules#rule-148)). Rooms, racks and junction boxes are
-placed on Room views, which likewise change only the room, rack and junction
-box. Links between
+areas, buildings and rooms; the floor comes from the floor you place the device
+on, so the polygon picker offers no floors. A device dropped inside one takes
+that group's `a:` / `b:` / `r:` codes in its description when you save, plus
+the floor's `f:`; the innermost polygon wins, so a device in a room inside a
+building gets both. Only the levels a polygon names change: a building polygon
+leaves the device's room (`r:`) as it is, and no polygon touches its rack
+(`ra:`) or junction box (`jb:`). A device whose codes are already right isn't
+listed at all, and a device placed outside every polygon keeps its codes
+([rule 148](Business-Rules#rule-148)). Racks and junction boxes are placed on
+Room views.
+
+Devices sharing a room code get an automatic outline with the room's name. Draw
+a Room polygon for that room (same area and building, on the same floor) and it
+replaces the outline.
+
+**Devices close together join.** While you are viewing, devices that would
+overlap are drawn as one numbered circle in the colour of the worst health
+among them, as FortiGates do on the Device Map. Hover it for their names, and
+click it to fan them out with legs back to where they are; click the map to
+fold them again. Zooming in separates them too. In edit mode every device is
+drawn on its own so you can drag it. Links between
 placed devices draw themselves, in the same colours as the Layer 2 graph.
 Right-click a placed device to remove it from the map (its codes stay), or
 click it and press **Delete**: it goes back to the Device List.

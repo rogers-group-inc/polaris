@@ -45,10 +45,10 @@ describe("innermostPolygon", () => {
   });
 });
 
-describe("polyCodes (polygons are areas, buildings and floors)", () => {
-  it("keeps area / building / floor and drops room, rack and junction box", () => {
+describe("polyCodes (polygons are areas, buildings and rooms; the floor is the layer's)", () => {
+  it("keeps area / building / floor / room and drops rack and junction box", () => {
     expect(P._polyCodes({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: "R1", junctionBox: "7" }))
-      .toEqual({ area: "Mine", building: "Plant", floor: "1", room: null, rack: null, junctionBox: null });
+      .toEqual({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: null, junctionBox: null });
   });
 });
 
@@ -91,6 +91,13 @@ describe("stacked floors (rule 152(a))", () => {
     const turned = P._planToGround({ cx: 0, cy: 0, sx: 1, sy: 1, rot: 90 }, ext, 600, 250);
     expect(turned[0]).toBeCloseTo(0, 6);
     expect(turned[1]).toBeCloseTo(100, 6);
+  });
+  it("a cluster takes its worst member's health colour", () => {
+    const pal = { up: "#22c55e", degraded: "#f59e0b", down: "#ef4444", unknown: "#94a3b8", passive: "#a3a3a3", maintenance: "#a855f7", unmonitored: "#64748b" };
+    expect(P._worstColor(["#22c55e", "#EF4444", "#f59e0b"], pal)).toBe("#EF4444");
+    expect(P._worstColor(["#22c55e", "#a855f7"], pal)).toBe("#a855f7");
+    expect(P._worstColor(["#22c55e"], pal)).toBe("#22c55e");
+    expect(P._worstColor([], pal)).toBeNull();
   });
   it("numbers floors the building's way: the ground is 1, there is no 0", () => {
     expect([-2, -1, 0, 1, 2].map((l) => P._floorNumber(l))).toEqual([-2, -1, 1, 2, 3]);

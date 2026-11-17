@@ -57,10 +57,12 @@
     { field: "rack", key: "ra", kind: "ra", word: "Rack" },
     { field: "junctionBox", key: "jb", kind: "jb", word: "Junction box" },
   ];
-  // A Topology view's polygons stand for areas, buildings and floors only
-  // (operator decision 2026-11-11): rooms, racks and junction boxes are the
-  // Rack and Wall views' business, so a polygon never sets them.
-  var POLY_FIELDS = CODE_FIELDS.slice(0, 3);
+  // A Topology view's polygons stand for areas, buildings and rooms (the
+  // floor comes from the floor layer). Rooms joined on 2026-11-17 (operator
+  // request: a drawn room replaces the automatic outline round its devices);
+  // racks and junction boxes stay the Room views' business, so a polygon
+  // never sets them.
+  var POLY_FIELDS = CODE_FIELDS.slice(0, 4);
   function polyCodes(c) {
     var n = normCodes(c);
     var out = emptyCodes();
@@ -173,6 +175,19 @@
   function floorCodeFor(level, hasFloors) {
     if (level === 0) return hasFloors ? "1" : null;
     return String(floorNumber(level));
+  }
+  // A cluster of devices takes its worst member's health colour, as the
+  // Device Map's FortiGate clusters do: down, degraded, unknown / dep-down,
+  // passive, maintenance, unmonitored, up. `palette` is POLARIS_HEALTH_COLORS.
+  var CLUSTER_RANK = ["down", "degraded", "unknown", "passive", "maintenance", "unmonitored", "up"];
+  function worstColor(colors, palette) {
+    var best = null, bestRank = Infinity;
+    (colors || []).forEach(function (c) {
+      var rank = CLUSTER_RANK.length;
+      if (palette) CLUSTER_RANK.forEach(function (k, i) { if (rank === CLUSTER_RANK.length && String(palette[k] || "").toLowerCase() === String(c || "").toLowerCase()) rank = i; });
+      if (rank < bestRank || best === null) { best = c; bestRank = rank; }
+    });
+    return best;
   }
   // A link between floors fades from one end's opacity to the other's.
   function fadeSteps(a, b, n) {
@@ -426,6 +441,7 @@
     var labels = {};        // nodeId → its name label (a marker of its own, above every icon)
     var linkHits = {};      // edge id → its wide invisible hit line (what the pointer takes)
     var hullsDrawn = {};    // level → [{ latlngs, marker }] room outlines and their name markers
+    var clusterOf = {};     // level → its L.markerClusterGroup while viewing (none while editing)
     // What the map shows while VIEWING (the eye button; operator request
     // 2026-11-17): devices, groups (drawn polygons and room outlines) and
     // connections on or off, and each one's labels on or only on hover.
@@ -624,6 +640,56 @@
     function dropLayer(layer) {
       if (!layer) return;
       Object.keys(floorPanes).forEach(function (k) { if (floorPanes[k].group.hasLayer(layer)) floorPanes[k].group.removeLayer(layer); });
+      Object.keys(clusterOf).forEach(function (k) { if (clusterOf[k] && clusterOf[k].hasLayer(layer)) clusterOf[k].removeLayer(layer); });
+    }
+    // ── Devices close together join while VIEWING (operator request
+    // 2026-11-17), like the Device Map's FortiGates: one numbered circle in
+    // the worst member's health colour; a click fans them out on legs to
+    // where they are. Editing never clusters — every device stays draggable.
+    // A device's name hides while it is inside a cluster and follows it when
+    // fanned out.
+    var CLUSTER_PX = 30;
+    function makeCluster(level, f) {
+      if (state.editing || typeof L.markerClusterGroup !== "function") return null;
+      var cg = L.markerClusterGroup({
+        clusterPane: f.name,
+        showCoverageOnHover: false,
+        maxClusterRadius: CLUSTER_PX,
+        zoomToBoundsOnClick: false,
+        spiderfyOnMaxZoom: false,
+        spiderfyDistanceMultiplier: 3,
+        spiderLegPolylineOptions: { weight: 2, opacity: 0.85, className: "topo-spider-leg", pane: f.name },
+        iconCreateFunction: clusterIcon,
+      });
+      cg.on("clusterclick", function (e) { e.layer.spiderfy(); });
+      // markercluster leaves the bubble at 30 % under the fan; hide it (it
+      // restores the bubble itself on unspiderfy), as the Device Map does.
+      cg.on("spiderfied", function (e) { e.cluster.setOpacity(0); });
+      cg.on("animationend spiderfied unspiderfied", function () { syncClusterLabels(level); });
+      return cg;
+    }
+    function clusterIcon(cluster) {
+      var kids = cluster.getAllChildMarkers();
+      var color = worstColor(kids.map(function (m) { return nodeColor(nodeById[m._topoId] || {}); }), window.POLARIS_HEALTH_COLORS);
+      var names = kids.map(function (m) { var d = nodeById[m._topoId]; return d ? (d.label || m._topoId) : ""; }).filter(Boolean);
+      return L.divIcon({
+        className: "topo-phys-cluster",
+        html: '<div class="topo-phys-cluster-dot" style="border-color:' + esc(color || "#64748b") + '" title="' + esc(names.join(", ")) + '">' + kids.length + "</div>",
+        iconSize: [36, 36], iconAnchor: [18, 18],
+      });
+    }
+    function syncClusterLabels(level) {
+      var cg = clusterOf[level];
+      if (!cg || !map) return;
+      Object.keys(labels).forEach(function (id) {
+        var m = markers[id], lab = labels[id];
+        if (!m || !cg.hasLayer(m)) return;
+        var shown = cg.getVisibleParent(m) === m;
+        var el = lab.getElement && lab.getElement();
+        if (el) el.style.display = shown ? "" : "none";
+        // A fanned-out device sits at the end of its leg; its name goes with it.
+        if (shown) lab.setLatLng(m.getLatLng());
+      });
     }
     // A floor's plan image, drawn with a CSS matrix from three of its corners
     // so it can be moved, stretched and rotated on the ground.
@@ -657,7 +723,7 @@
       if (map) { map.remove(); map = null; }
       baseLayer = null; layerSwitch = null;
       floorPanes = {}; crossGroup = null;
-      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
       var bg = background0;
       if (bg && bg.kind === "image") {
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
@@ -714,7 +780,7 @@
     function drawAll() {
       if (!map) return;
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].group.clearLayers(); });
-      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
       allLevels().forEach(drawFloor);
       applyFloorLook(false);
       drawCrossLinks();
@@ -724,6 +790,8 @@
     function drawFloor(level) {
       var f = floorPane(level);
       f.group.clearLayers();
+      clusterOf[level] = makeCluster(level, f);
+      if (clusterOf[level]) f.group.addLayer(clusterOf[level]);
       var fp = floorPlan(level);
       if (fp) f.group.addLayer(new PlanOverlay(ctx.backgroundUrl(fp.bg.imageId), fp, f.name));
       // Drawn polygons and room outlines, largest first, so a smaller one
@@ -744,6 +812,7 @@
       edges.forEach(function (e) {
         if (layerOfDevice(e.source) === level && layerOfDevice(e.target) === level) addLine(e, level);
       });
+      if (clusterOf[level]) setTimeout(function () { syncClusterLabels(level); }, 0);
     }
 
     function screenArea(lls) {
@@ -756,12 +825,27 @@
     // code write (rule 148 is the drawn polygons' job). Padded in screen
     // pixels, so the map redraws them on zoom.
     var HULL_PAD_PX = 30;
+    // A drawn Room polygon on this floor naming the same area, building and
+    // room (case- and space-blind; the floor is the layer's) stands for that
+    // room: its automatic outline is not drawn (operator request 2026-11-17).
+    function roomKey(c) {
+      return ["area", "building", "room"].map(function (k) { return String((c && c[k]) || "").toLowerCase().replace(/\s+/g, " ").trim(); }).join("|");
+    }
+    function drawnRooms(level) {
+      var out = {};
+      state.polygons.forEach(function (p) {
+        if ((p.layer || 0) === level && p.codes && p.codes.room) out[roomKey(p.codes)] = true;
+      });
+      return out;
+    }
     function roomHulls(level) {
       if (!map) return [];
       var groups = {};
+      var drawn = drawnRooms(level);
       Object.keys(placementsOf(level)).forEach(function (id) {
         var c = currentCodes[id], m = nodeById[id], p = placementsOf(level)[id];
         if (!m || !p || !c || !c.room) return;
+        if (drawn[roomKey(c)]) return;
         var key = ["area", "building", "floor", "room"].map(function (k) { return String(c[k] || "").toLowerCase(); }).join("|");
         var g = groups[key] || (groups[key] = { key: key, name: c.room, pts: [] });
         var cp = map.latLngToContainerPoint(localToLatLng(level, p.x, p.y));
@@ -1059,7 +1143,7 @@
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
-        '<p class="hint" style="margin:0 0 8px">Areas and buildings from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on; its room, rack and junction box stay as they are.</p>' +
+        '<p class="hint" style="margin:0 0 8px">Areas, buildings and rooms from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on; a room polygon replaces the outline drawn round that room’s devices. Racks and junction boxes stay as they are.</p>' +
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
@@ -1170,7 +1254,8 @@
           ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
         });
       });
-      f.group.addLayer(m);
+      m._topoId = id;
+      (clusterOf[level] || f.group).addLayer(m);
       f.group.addLayer(lab);
       markers[id] = m;
       labels[id] = lab;
@@ -2312,7 +2397,7 @@
       host.classList.toggle("is-editing", !!on);
       closeVisPanel();
       paintVisClasses();
-      if (wasEditing !== state.editing && visAnyHidden() && map) { drawAll(); if (arcgisLayers) arcgisLayers.draw(); }
+      if (wasEditing !== state.editing && map) { drawAll(); if (arcgisLayers && visAnyHidden()) arcgisLayers.draw(); }
       if (arcgisLayers) {
         arcgisLayers.setEditing(!!on);
         // Leaving edit mode drops (or has just committed) the session: show the
@@ -2767,6 +2852,7 @@
     _cornerDragPlan: cornerDragPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
+    _worstColor: worstColor,
     _floorNumber: floorNumber,
     _floorCodeFor: floorCodeFor,
     _tipGraph: tipGraph,
