@@ -123,6 +123,14 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
+**Device names on the Topology canvas** are markers of their own (`labels[id]`, `.topo-phys-label`
+→ `.topo-phys-name`) in the device's floor pane, beside its icon marker (`markers[id]`) at the
+same point: `zIndexOffset` `LABEL_Z` puts every name over every icon, and hovering a name or its
+icon lifts that name to `LABEL_Z_HOVER`. A name is its device: both markers carry the same click /
+dblclick / contextmenu / drag handlers, a drag of either moves both, and `paintSelected` /
+`paintDragging` / `removePlacement` / `place` treat the pair together (operator request
+2026-11-17). Inside the icon's element a name could never sit over a later icon, and it took no
+mouse.
 **Links on the Topology canvas** reuse Layer 2's pieces: the hover card is
 `PolarisTopologyRender.edgeTooltipHtml` over a HEADLESS Cytoscape graph of the canvas's own
 elements (`tipGraph`, built on first hover; `linkTipHtml`), shown with map.js's

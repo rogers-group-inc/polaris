@@ -377,6 +377,7 @@
     var mapEl = host.firstChild;
     var map = null;
     var markers = {};       // nodeId → L.marker
+    var labels = {};        // nodeId → its name label (a marker of its own, above every icon)
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
     var drawHandler = null;
@@ -583,7 +584,7 @@
       if (map) { map.remove(); map = null; }
       baseLayer = null; layerSwitch = null;
       floorPanes = {}; crossGroup = null;
-      markers = {}; linkLines = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; polygonShapes = {};
       var bg = background0;
       if (bg && bg.kind === "image") {
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
@@ -640,7 +641,7 @@
     function drawAll() {
       if (!map) return;
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].group.clearLayers(); });
-      markers = {}; linkLines = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; polygonShapes = {};
       allLevels().forEach(drawFloor);
       applyFloorLook(false);
       drawCrossLinks();
@@ -1005,42 +1006,67 @@
       var t = R.nodeAssetType(d) || "";
       var inner = d.iconUrl ? '<img src="' + esc(d.iconUrl) + '" alt="">'
         : '<span>' + esc(TYPE_INITIALS[t] || String(t || "?").slice(0, 2).toUpperCase()) + '</span>';
-      return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '">' + inner + '</div>' +
-        '<div class="topo-phys-name">' + esc(d.label || d.id) + '</div>';
+      return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '">' + inner + '</div>';
     }
+    // A device's name is a marker of its own in the floor's pane, so every
+    // name sits over every icon (z-offset LABEL_Z), and the one under the
+    // mouse — or whose icon is under it — comes to the front. A label is its
+    // device: click, double-click, the menu and a drag all act on the icon
+    // (operator request 2026-11-17).
+    var LABEL_Z = 1000000, LABEL_Z_HOVER = 2000000;
     function drawMarkers() { drawAll(); }
     function addMarker(id, level) {
       var d = nodeById[id];
       var p = placementsOf(level)[id];
       if (!d || !p) return;
       var f = floorPane(level);
-      var m = L.marker(localToLatLng(level, p.x, p.y), {
+      var ll = localToLatLng(level, p.x, p.y);
+      var m = L.marker(ll, {
         icon: L.divIcon({ className: "topo-phys-marker", html: iconHtml(d), iconSize: [34, 34], iconAnchor: [17, 17] }),
         draggable: state.editing && level === state.layer,
         keyboard: false,
         title: d.label || "",
         pane: f.name,
       });
-      m.on("drag", function () { placementsOf(level)[id] = latLngToLocal(level, m.getLatLng()); drawLinksFor(id); });
-      m.on("dragend", function () {
-        placementsOf(level)[id] = latLngToLocal(level, m.getLatLng());
-        changed("placements");
-        stageCodesFor(id);
-        // The room outlines follow (this redraws the floor, the marker included).
-        setTimeout(function () { drawFloor(level); drawCrossLinks(); paintSelected(); }, 0);
+      var lab = L.marker(ll, {
+        icon: L.divIcon({ className: "topo-phys-label", html: '<div class="topo-phys-name">' + esc(d.label || d.id) + '</div>', iconSize: [0, 0], iconAnchor: [0, 0] }),
+        draggable: state.editing && level === state.layer,
+        keyboard: false,
+        pane: f.name,
+        zIndexOffset: LABEL_Z,
       });
-      m.on("click", function () { select(id); });
-      m.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
-      m.on("contextmenu", function (e) {
-        if (!state.editing || level !== state.layer || typeof showRowMenu !== "function") return;
-        showRowMenu(m.getElement() || e.originalEvent.target, [
-          { heading: d.label || "Device" },
-          { label: "Open", onSelect: function () { ctx.openAsset(d.assetId || id); } },
-          { label: "Remove from map", danger: true, onSelect: function () { removePlacement(id); } },
-        ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
+      function lift(on) { lab.setZIndexOffset(on ? LABEL_Z_HOVER : LABEL_Z); }
+      [m, lab].forEach(function (mk) {
+        var other = mk === m ? lab : m;
+        mk.on("mouseover", function () { lift(true); });
+        mk.on("mouseout", function () { lift(false); });
+        mk.on("drag", function () {
+          other.setLatLng(mk.getLatLng());
+          placementsOf(level)[id] = latLngToLocal(level, mk.getLatLng());
+          drawLinksFor(id);
+        });
+        mk.on("dragend", function () {
+          placementsOf(level)[id] = latLngToLocal(level, mk.getLatLng());
+          changed("placements");
+          stageCodesFor(id);
+          // The room outlines follow (this redraws the floor, the marker included).
+          setTimeout(function () { drawFloor(level); drawCrossLinks(); paintSelected(); }, 0);
+        });
+        mk.on("click", function () { select(id); });
+        mk.on("dblclick", function () { ctx.openAsset(d.assetId || id); });
+        mk.on("contextmenu", function (e) {
+          if (!state.editing || level !== state.layer || typeof showRowMenu !== "function") return;
+          showRowMenu(m.getElement() || e.originalEvent.target, [
+            { heading: d.label || "Device" },
+            { label: "Open", onSelect: function () { ctx.openAsset(d.assetId || id); } },
+            { label: "Remove from map", danger: true, onSelect: function () { removePlacement(id); } },
+          ], { menuAt: { x: e.originalEvent.clientX, y: e.originalEvent.clientY }, label: "Device", overMap: true });
+        });
       });
       f.group.addLayer(m);
+      f.group.addLayer(lab);
       markers[id] = m;
+      labels[id] = lab;
       paintSelected();
     }
     function place(id, latlng) {
@@ -1055,6 +1081,7 @@
       });
       state.placements[id] = latLngToLocal(state.layer, latlng);
       if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
+      if (labels[id]) { dropLayer(labels[id]); delete labels[id]; }
       Object.keys(floorPanes).forEach(function (k) { if (Number(k) !== state.layer) drawFloor(Number(k)); });
       drawFloor(state.layer);
       changed("placements");
@@ -1072,15 +1099,18 @@
       if (typeof ctx.selectAsset === "function") ctx.selectAsset(selectedId);
     }
     function paintSelected() {
-      Object.keys(markers).forEach(function (mid) {
-        var el = markers[mid].getElement && markers[mid].getElement();
-        if (el) el.classList.toggle("is-selected", mid === selectedId);
+      [markers, labels].forEach(function (set) {
+        Object.keys(set).forEach(function (mid) {
+          var el = set[mid].getElement && set[mid].getElement();
+          if (el) el.classList.toggle("is-selected", mid === selectedId);
+        });
       });
     }
 
     function removePlacement(id) {
       delete state.placements[id];
       if (markers[id]) { dropLayer(markers[id]); delete markers[id]; }
+      if (labels[id]) { dropLayer(labels[id]); delete labels[id]; }
       ctx.stageLocationCode(nodeById[id] ? (nodeById[id].assetId || id) : id, null);
       changed("placements");
       drawFloor(state.layer);
@@ -2060,10 +2090,12 @@
     }
 
     function paintDragging() {
-      Object.keys(markers).forEach(function (id) {
-        var m = markers[id];
-        if (!m.dragging) return;
-        if (state.editing && layerOfDevice(id) === state.layer) m.dragging.enable(); else m.dragging.disable();
+      [markers, labels].forEach(function (set) {
+        Object.keys(set).forEach(function (id) {
+          var m = set[id];
+          if (!m.dragging) return;
+          if (state.editing && layerOfDevice(id) === state.layer) m.dragging.enable(); else m.dragging.disable();
+        });
       });
     }
     function setEditing(on) {
