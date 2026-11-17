@@ -292,7 +292,10 @@ interface RawQuery { features?: RawFeature[]; exceededTransferLimit?: boolean }
 
 const MAX_FEATURES = 2000;
 const MAX_IDS = 50;
-const CACHE_TTL_MS = 60_000;
+// An hour (operator request 2026-11-17; a minute until then): fibre routes,
+// pole lines and parcels change rarely, and panning a site should read from
+// Polaris, not ArcGIS. Saving a layer's settings clears it (clearFeatureCache).
+const CACHE_TTL_MS = 60 * 60_000;
 const CACHE_MAX = 300;
 const cache = new Map<string, { at: number; value: unknown }>();
 
