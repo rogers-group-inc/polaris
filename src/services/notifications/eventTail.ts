@@ -378,6 +378,8 @@ export async function runEventTail(rules: DbRule[]): Promise<void> {
           // exactly this text, and the body no longer relies on that).
           message: ev.message,
         },
+        // Rule 85(e): a Path Monitor event names its check in its details.
+        check: pathCheckOfEvent(ev.details),
         triggerSummary: triggerSummary({
           trigger: c.rule.trigger as never,
           eventAction: ev.action,
@@ -469,6 +471,23 @@ export async function runEventTail(rules: DbRule[]): Promise<void> {
     create: { key: LAST_EVENT_SETTING_KEY, value: { lastTimestamp: newest } },
     update: { value: { lastTimestamp: newest } },
   });
+}
+
+/**
+ * Business rule 85(e). The path check an Event's details name — `checkId` plus
+ * the `checkName` / `checkTarget` written beside it (path_check.* events) — or
+ * null when the Event is not about one. An event written before 85(e) has no
+ * `checkTarget`; its `{check.target}` renders blank rather than being looked up.
+ */
+export function pathCheckOfEvent(details: unknown): { id: string; name: string | null; target: string | null } | null {
+  if (!details || typeof details !== "object") return null;
+  const d = details as Record<string, unknown>;
+  if (typeof d.checkId !== "string" || !d.checkId) return null;
+  return {
+    id: d.checkId,
+    name: typeof d.checkName === "string" ? d.checkName : null,
+    target: typeof d.checkTarget === "string" ? d.checkTarget : null,
+  };
 }
 
 function detailsMatch(details: unknown, match: Record<string, string | number | boolean>): boolean {

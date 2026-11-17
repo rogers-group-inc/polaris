@@ -402,6 +402,38 @@ skipped and the newer ones are compared as before.
 **Rejected:** dropping the late trace entirely. The history would then have holes exactly
 where the network was unstable enough to delay a push.
 
+### Rule 85(e) — a Path Monitor event names its check's target (2026-11-17)
+
+**What was asked for.** The certificate-renewed automation runs a script that downloads
+the new certificate and emails it (rule 190). The script needs the site, and the event
+did not say what the check points at, only its id and name. So every site needed its own
+copy of the automation, with the check name in the trigger and the site typed into the
+script's arguments by hand, and a mismatch between the two mailed the wrong site's
+certificate. The operator asked for the URL to ride on the event and reach the script.
+
+**The decision.** Both `path_check.*` events write `checkTarget` (the check's `target`
+as configured) into their details at the moment they are written, and the event alert
+reads `checkId` / `checkName` / `checkTarget` into three tokens, `{check.id}`,
+`{check.name}` and `{check.target}`. A Script action's arguments then say
+`target={check.target}`, and one automation with no check filter serves every HTTPS
+check.
+
+**Why it is read from the Event, not looked up at fire time.** The Event is the record
+of what happened; the target it names is the one the check had when the certificate was
+seen. A lookup would answer "what does the check point at now", which is wrong after an
+edit and empty after a delete, and it would cost a query per alert in the event tail.
+The price is that an event written before 85(e) carries no target and renders the token
+blank; such events are at most a day old by the time this ships.
+
+**Why the script was not given API access instead.** It was considered: the script could
+take `checkId` and read the check over `/api/v1`. That needs a standing bearer token with
+Path Monitor read on the server for a value Polaris already had in hand, where the run's
+one-time pass (rule 190) grants nothing but its own email.
+
+**Not covered.** A path METRIC alert (`pathTlsDaysLeft` and the rest) builds its context
+from a reading whose dimension is the check id; giving it the target would need a check
+lookup in a synchronous builder. Its `{check.*}` tokens render blank until someone asks.
+
 ### Rule 85 — the invariant as stated in full
 
 See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (the

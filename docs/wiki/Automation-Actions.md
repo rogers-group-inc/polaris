@@ -444,6 +444,11 @@ devices"* — and an ungrouped path alert's reads *"ERP HTTPS is down"*.
 `{event.action}` `{event.level}` `{event.resource}` `{event.resourceType}`
 `{event.actor}` `{event.message}`
 
+**The path check** (Path Monitor events: certificate changed, route changed)
+`{check.target}` `{check.name}` `{check.id}`. `{check.target}` is the URL for
+an HTTP / HTTPS check, host:port for TCP and the host for ICMP, as it was when
+the event was written.
+
 **The device**
 `{asset.ip}` `{asset.mac}` `{asset.type}` `{asset.status}` `{asset.location}`
 `{asset.description}` `{asset.manufacturer}` `{asset.model}` `{asset.serial}`

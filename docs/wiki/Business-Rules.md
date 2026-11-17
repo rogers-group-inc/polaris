@@ -1382,6 +1382,13 @@ describes whether that source can reach the target, so:
   that arrives after a newer one from the same host (an agent catching up after
   a reconnect, say) is kept in the check's history but is not compared with the
   current route, so it never writes `path_check.path_changed`.
+- **A Path Monitor event names its check's target (85(e)).** The certificate
+  changed and route changed events record what the check points at (its URL,
+  host:port or host) as it was when the event was written. An automation on
+  either event can use `{check.target}`, `{check.name}` and `{check.id}`, so a
+  script's arguments can say `target={check.target}` and one automation can
+  cover every check. Automations on a path check reading (latency, days
+  remaining, ...) leave these blank.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works
