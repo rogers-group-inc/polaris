@@ -185,7 +185,7 @@ function assetFormHTML(defaults) {
         // pattern): a changed value pins hostnameOverride server-side so
         // discovery can no longer rewrite it; clearing the field releases the
         // pin and reverts to the discovery-projected hostname.
-        '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" value="' + escapeHtml(d.hostname || "") + '" placeholder="e.g. server-01">' +
+        '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" data-title-name value="' + escapeHtml(d.hostname || "") + '" placeholder="e.g. server-01">' +
           (d.hostnameOverride
             ? '<p class="hint">Manually overridden — clear the field to resume the discovered hostname.</p>'
             : (d.discoveredByIntegrationId ? '<p class="hint">Discovered — saving a change pins it as a manual override.</p>' : '')) +
@@ -211,7 +211,7 @@ function assetFormHTML(defaults) {
         '<div class="form-group" style="grid-column:1 / -1"><label>Serial Number</label><input type="text" id="f-serialNumber" value="' + escapeHtml(d.serialNumber || "") + '" placeholder="e.g. SN-DELL-001"></div>' +
       '</div>'
     : '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">' +
-        '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" value="' + escapeHtml(d.hostname || "") + '" placeholder="e.g. server-01"></div>' +
+        '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" data-title-name value="' + escapeHtml(d.hostname || "") + '" placeholder="e.g. server-01"></div>' +
         '<div class="form-group"><label>DNS Name</label><input type="text" id="f-dnsName" value="' + escapeHtml(d.dnsName || "") + '" placeholder="e.g. server-01.corp.local"></div>' +
         '<div class="form-group"><label>IP Address</label><input type="text" id="f-ipAddress" value="' + escapeHtml(d.ipAddress || "") + '" placeholder="e.g. 10.0.1.50"></div>' +
         '<div class="form-group"><label>MAC Address</label><input type="text" id="f-macAddress" value="' + escapeHtml(d.macAddress || "") + '" placeholder="e.g. 00:1A:2B:3C:4D:5E"></div>' +
@@ -1648,7 +1648,8 @@ async function openEditModal(id, opts) {
         : '') +
       '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
       '<button class="btn btn-primary" id="btn-save">Save Changes</button>';
-    var title = "Edit Asset" + (asset.hostname ? " — " + asset.hostname : "");
+    // The shared title hook appends " — <hostname>" (data-title-name).
+    var title = "Edit Asset";
     openModal(title, body, footer, { wide: true });
     wireModalTabs("asset-edit");
     // Open on a caller-requested tab (e.g. the System-tab "Unmonitored" pill

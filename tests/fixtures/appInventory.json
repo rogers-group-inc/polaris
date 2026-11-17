@@ -207,7 +207,9 @@
     "wireResolvedBlockField",
     "wireSlideoverEscape",
     "wireTagPicker",
-    "wireTotpState"
+    "wireTotpState",
+    "_modalTitleNameField",
+    "_wireModalTitleName"
   ],
   "vars": [
     "AZURE_TAG_PREFIX",
@@ -290,6 +292,8 @@
     "currentUsername",
     "polarisIpv6Dialable",
     "polarisIpv6Enabled",
-    "userReady"
+    "userReady",
+    "_modalTitleNameTeardown",
+    "MODAL_TITLE_NAME_SEP"
   ]
 }

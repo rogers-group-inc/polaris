@@ -1841,7 +1841,7 @@ function _openEditReservationModal(reservationId) {
       '<div class="form-group"><label>Network</label><input type="text" value="' + subnetLabel + '" disabled></div>' +
       '<div class="form-group"><label>IP Address</label><input type="text" value="' + escapeHtml(r.ipAddress || "Full network") + '" disabled></div>' +
       '<div class="form-group"><label>Status</label>' + statusBadge(r.status) + '</div>' +
-      '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" value="' + escapeHtml(r.hostname || "") + '"' + lock + '></div>' +
+      '<div class="form-group"><label>Hostname</label><input type="text" id="f-hostname" data-title-name value="' + escapeHtml(r.hostname || "") + '"' + lock + '></div>' +
       '<div class="form-group"><label>' + macLabel + '</label>' +
         '<div style="display:flex;gap:6px;align-items:stretch">' +
           '<input type="text" id="f-mac" placeholder="AA:BB:CC:DD:EE:FF" value="' + escapeHtml(r.macAddress || "") + '" style="flex:1"' + lock + '>' +

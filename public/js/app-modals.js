@@ -75,6 +75,61 @@ var _modalReturnFocus = null;  // element refocused when the shared modal closes
 var _modalKeyTeardown = null;  // active focus-trap teardown for the shared modal
 var _modalStepKeyTeardown = null; // active stepper-key teardown for the shared modal
 var _modalReadOnlyTeardown = null; // active read-only lock on the shared modal (openModal options.readOnly)
+var _modalTitleNameTeardown = null; // live "Edit X — <name>" title on the shared modal
+
+// ─── Edit-modal title carries the item's name ───────────────────────────────
+//
+// Every "Edit …" dialog names what it is editing once a name is set:
+// "Edit Path Monitor — RGILink Auth". One hook here rather than a per-dialog
+// concatenation, so a new edit dialog gets it for free and the title follows
+// the Name field as the operator retypes it. The name field is the one marked
+// `data-title-name`, else the first text input whose id is `name` or ends in
+// `-name` (not a username / filename / "save as" name). Only titles that
+// start with "Edit " are touched, and one that already carries " — " (the
+// caller named it itself) is left alone. Returns a teardown.
+var MODAL_TITLE_NAME_SEP = " — ";
+function _modalTitleNameField(root) {
+  var marked = root.querySelector("[data-title-name]");
+  if (marked) return marked;
+  var inputs = root.querySelectorAll('input#name, input[id$="-name"]');
+  for (var i = 0; i < inputs.length; i++) {
+    var el = inputs[i];
+    var type = (el.getAttribute("type") || "text").toLowerCase();
+    if (type !== "text") continue;
+    if (/user|file|save-name|new-name/i.test(el.id)) continue;
+    return el;
+  }
+  return null;
+}
+function _wireModalTitleName(dialog, titleEl, title) {
+  if (!dialog || !titleEl || !/^Edit /.test(title || "")) return function () {};
+  if (title.indexOf(MODAL_TITLE_NAME_SEP) !== -1) return function () {};
+  var body = dialog.querySelector(".modal-body") || dialog;
+  var shown = "";
+  function update() {
+    var field = _modalTitleNameField(body);
+    var name = field ? String(field.value || "").trim() : "";
+    // A caller may rewrite the title after open; strip only what WE appended.
+    var current = titleEl.textContent || "";
+    var base = shown && current.slice(-shown.length) === shown ? current.slice(0, -shown.length) : current;
+    shown = name ? MODAL_TITLE_NAME_SEP + name : "";
+    titleEl.textContent = base + shown;
+  }
+  function onInput(e) {
+    if (e.target && e.target === _modalTitleNameField(body)) update();
+  }
+  body.addEventListener("input", onInput);
+  body.addEventListener("change", onInput);
+  // The caller fills the form synchronously after openModal returns (a
+  // pinned .value), so read once now and once after that code has run.
+  update();
+  var timer = setTimeout(update, 0);
+  return function () {
+    clearTimeout(timer);
+    body.removeEventListener("input", onInput);
+    body.removeEventListener("change", onInput);
+  };
+}
 
 /**
  * Lock the shared modal's body for VIEWING: every field is disabled, every
@@ -527,6 +582,8 @@ function openModal(title, bodyHTML, footerHTML, options) {
   overlay.querySelector(".modal-header h3").textContent = title;
   overlay.querySelector(".modal-body").innerHTML = bodyHTML;
   overlay.querySelector(".modal-footer").innerHTML = footerHTML || "";
+  if (_modalTitleNameTeardown) _modalTitleNameTeardown();
+  if (typeof _wireModalTitleName === "function") _modalTitleNameTeardown = _wireModalTitleName(modal, overlay.querySelector(".modal-header h3"), title);
   // A view-only dialog (e.g. an automation opened by a role without write).
   if (options && options.readOnly) _modalReadOnlyTeardown = _lockModalReadOnly(modal);
   var slideoverOpen = !!document.querySelector(".slideover-overlay.open");
@@ -567,6 +624,7 @@ function closeModal() {
   if (_modalKeyTeardown) { _modalKeyTeardown(); _modalKeyTeardown = null; }
   if (_modalStepKeyTeardown) { _modalStepKeyTeardown(); _modalStepKeyTeardown = null; }
   if (_modalReadOnlyTeardown) { _modalReadOnlyTeardown(); _modalReadOnlyTeardown = null; }
+  if (_modalTitleNameTeardown) { _modalTitleNameTeardown(); _modalTitleNameTeardown = null; }
   if (_modalReturnFocus && typeof _modalReturnFocus.focus === "function") {
     try { _modalReturnFocus.focus(); } catch (_) { /* element gone */ }
   }
@@ -935,11 +993,14 @@ function buildOverlay(z, title, bodyHtml, footerHtml, onClose, wide) {
   var prevFocus = document.activeElement;
   var closed = false;
   var teardownTrap = _trapFocus(dialog, function () { close(); });
+  // Guarded: harnesses that slice buildOverlay out alone have no hook.
+  var teardownTitleName = typeof _wireModalTitleName === "function" ? _wireModalTitleName(dialog, dialog.querySelector(".modal-header h3"), title) : function () {};
 
   function close() {
     if (closed) return;
     closed = true;
     teardownTrap();
+    teardownTitleName();
     overlay.classList.remove("open");
     // Remove on transition end, with a timer fallback for reduced-motion.
     overlay.addEventListener("transitionend", function () {
