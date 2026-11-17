@@ -19,13 +19,14 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const h = vi.hoisted(() => ({ referrers: vi.fn(), wake: vi.fn() }));
+const h = vi.hoisted(() => ({ referrers: vi.fn(), usage: vi.fn(), wake: vi.fn() }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 vi.mock("../../src/services/actionReferenceService.js", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   scriptReferrers: h.referrers,
+  scriptUsage: h.usage,
 }));
 vi.mock("../../src/services/agentCommandWake.js", () => ({ publishCommandWake: h.wake }));
 
@@ -195,6 +196,18 @@ describe("getScript / listScripts", () => {
   it("404s an unknown id", async () => {
     stubbed(prisma.automationScript.findUnique).mockResolvedValue(null);
     await rejects(getScript("x"), 404, /Automation script not found/);
+  });
+
+  it("attaches usedBy only when asked, [] for a script nothing runs", async () => {
+    const other = { ...STORED, id: "other-id", name: "other" };
+    stubbed(prisma.automationScript.findMany).mockResolvedValue([STORED, other]);
+    const users = [{ kind: "automation", id: "r1", name: "Cert renewed", enabled: true }];
+    h.usage.mockResolvedValue(new Map([[STORED.id, users]]));
+    const listed = await listScripts({ withUsage: true }) as Array<Record<string, unknown>>;
+    expect(listed.map((s) => s.usedBy)).toEqual([users, []]);
+    h.usage.mockClear();
+    expect(await listScripts()).toEqual([STORED, other]);
+    expect(h.usage).not.toHaveBeenCalled();
   });
 });
 

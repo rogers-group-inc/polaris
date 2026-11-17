@@ -134,6 +134,30 @@ async function pick(name: string, content: string) {
 const val = (id: string) => g.document.getElementById(id).value;
 const form = () => [val("script-name"), val("script-desc"), val("script-interp"), val("script-target"), val("script-timeout"), val("script-body")];
 
+describe("Used by pills", () => {
+  it("names each automation and alert group that runs the script, a disabled one dimmed", async () => {
+    SCRIPTS[0] = { ...SCRIPTS[0]!, usedBy: [
+      { kind: "automation", id: "r1", name: "TLS certificate renewed", enabled: true },
+      { kind: "automation", id: "r2", name: "Old <one>", enabled: false },
+      { kind: "alertGroup", id: "g1", name: "Core", enabled: true },
+    ] } as never;
+    (SCRIPTS[1] as Record<string, unknown>).usedBy = [];
+    await g.loadScriptsTab();
+    const pills = [...card("s1").querySelectorAll(".script-used-by .badge")] as any[];
+    expect(pills.map((p) => p.textContent)).toEqual(["TLS certificate renewed", "Old <one>", "Alert group: Core"]);
+    expect(pills[1].getAttribute("style")).toContain("opacity");
+    expect(pills[0].getAttribute("style")).toBeNull();
+    expect(card("s2").querySelector(".script-used-by").textContent).toContain("no automation");
+  });
+
+  it("leaves the row out when the list carries no usedBy (a reader who may not see automations)", async () => {
+    delete (SCRIPTS[0] as Record<string, unknown>).usedBy;
+    delete (SCRIPTS[1] as Record<string, unknown>).usedBy;
+    await g.loadScriptsTab();
+    expect(g.document.querySelector(".script-used-by")).toBeNull();
+  });
+});
+
 describe("Edit script — Replace from file", () => {
   // happy-dom reads `<option selected>` on a non-first option as the option
   // AFTER it (python3 comes back "sh"), so pin the selects to what a real

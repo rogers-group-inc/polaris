@@ -26,7 +26,7 @@
 import { intQuery } from "../../utils/queryParams.js";
 import { Router } from "express";
 import { z } from "zod";
-import { requirePermission } from "../middleware/permissions.js";
+import { hasPermission, requirePermission } from "../middleware/permissions.js";
 import { SCRIPT_INTERPRETERS } from "../../services/notificationTypes.js";
 import {
   listScripts,
@@ -60,9 +60,10 @@ const testRunSchema = z.object({
   emailChannelId: z.string().min(1).max(100).optional().nullable(),
 });
 
-automationScriptsRouter.get("/", requirePermission("automationScripts", "read"), async (_req, res, next) => {
+automationScriptsRouter.get("/", requirePermission("automationScripts", "read"), async (req, res, next) => {
   try {
-    res.json({ scripts: await listScripts() });
+    // `usedBy` names automations, so only a reader who may see them gets it.
+    res.json({ scripts: await listScripts({ withUsage: hasPermission(req, "automationManagement", "read") }) });
   } catch (err) { next(err); }
 });
 

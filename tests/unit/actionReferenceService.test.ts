@@ -37,7 +37,7 @@ vi.mock("../../src/db.js", () => ({
 }));
 vi.mock("../../src/services/eventLogService.js", () => ({ logEvent: h.logEvent }));
 
-import { channelReferrers, scriptReferrers, findActionReferrers, summarizeReferrers } from "../../src/services/actionReferenceService.js";
+import { channelReferrers, scriptReferrers, scriptUsage, findActionReferrers, summarizeReferrers } from "../../src/services/actionReferenceService.js";
 import { deleteChannel } from "../../src/services/notificationChannelService.js";
 
 const CH = "ch-1";
@@ -137,6 +137,29 @@ describe("rule 167: every place an action can live is searched", () => {
   it("summarizeReferrers caps the list and says how many more", () => {
     expect(summarizeReferrers(["a", "b"])).toBe("a, b");
     expect(summarizeReferrers(["a", "b", "c", "d", "e", "f", "g"])).toBe("a, b, c, d, e, … (+2 more)");
+  });
+});
+
+describe("scriptUsage — the Scripts tab's Used by pills", () => {
+  it("maps each script to every automation and alert group that runs it, in any location, once each", async () => {
+    h.rules = [
+      { ...rule("Direct", { actions: [script(), script()] }), id: "r1", enabled: true },
+      { ...rule("Tiered", { actions: [{ ...other(), escalation: tiers(script("sc-2")) }] }), id: "r2", enabled: false },
+      { ...rule("Neither", { actions: [other()] }), id: "r3", enabled: true },
+    ];
+    h.groups = [{ id: "g1", enabled: true, name: "Core", actions: [script()], resetActions: null, escalation: null }];
+    const usage = await scriptUsage();
+    expect(usage.get(SC)).toEqual([
+      { kind: "automation", id: "r1", name: "Direct", enabled: true },
+      { kind: "alertGroup", id: "g1", name: "Core", enabled: true },
+    ]);
+    expect(usage.get("sc-2")).toEqual([{ kind: "automation", id: "r2", name: "Tiered", enabled: false }]);
+    expect(usage.size).toBe(2);
+  });
+
+  it("is empty when nothing runs a script", async () => {
+    h.rules = [{ ...rule("Only notify", { actions: [other()] }), id: "r1", enabled: true }];
+    expect((await scriptUsage()).size).toBe(0);
   });
 });
 

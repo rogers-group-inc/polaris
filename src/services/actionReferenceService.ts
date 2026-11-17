@@ -45,26 +45,32 @@ function parseList<T>(raw: unknown, schema: { safeParse: (v: unknown) => { succe
   return out;
 }
 
-/**
- * Every automation and alert group with an action, in ANY location, that
- * `match` accepts. Labels read `automation "Name"` / `alert group "Name"`.
- */
-export async function findActionReferrers(match: (a: AutomationAction) => boolean): Promise<ActionReferrer[]> {
+/** One automation or alert group and every action it holds, in ANY location. */
+interface ActionHolder {
+  kind: "automation" | "alertGroup";
+  id: string;
+  name: string;
+  enabled: boolean;
+  actions: AutomationAction[];
+}
+
+/** Every automation and alert group with the actions each one holds. Two reads. */
+async function loadActionHolders(): Promise<ActionHolder[]> {
   const [rules, groups] = await Promise.all([
     prisma.notificationRule.findMany({
       select: {
-        name: true, trigger: true, targets: true, emailComposition: true, escalation: true, clearBehavior: true,
+        id: true, enabled: true, name: true, trigger: true, targets: true, emailComposition: true, escalation: true, clearBehavior: true,
         clearAfterSec: true, reset: true, actions: true, severityBands: true, bandNotify: true, resetActions: true, repeat: true,
       },
       orderBy: { name: "asc" },
     }),
     prisma.alertGroup.findMany({
-      select: { name: true, actions: true, resetActions: true, escalation: true },
+      select: { id: true, enabled: true, name: true, actions: true, resetActions: true, escalation: true },
       orderBy: { name: "asc" },
     }),
   ]);
 
-  const out: ActionReferrer[] = [];
+  const out: ActionHolder[] = [];
   for (const r of rules) {
     // normalizeRuleToV2 folds a pre-v2 row's legacy targets into actions, so a
     // rule that has never been re-saved is still walked.
@@ -76,7 +82,7 @@ export async function findActionReferrers(match: (a: AutomationAction) => boolea
       bandNotify: v2.bandNotify,
       resetActions: v2.resetActions,
     });
-    if (refs.some((ref) => match(ref.action))) out.push(`automation "${r.name}"`);
+    out.push({ kind: "automation", id: r.id, name: r.name, enabled: r.enabled, actions: refs.map((ref) => ref.action) });
   }
   for (const g of groups) {
     const refs = allRuleActionRefs({
@@ -84,7 +90,47 @@ export async function findActionReferrers(match: (a: AutomationAction) => boolea
       escalation: g.escalation,
       resetActions: parseList<AutomationAction>(g.resetActions, actionSchema),
     });
-    if (refs.some((ref) => match(ref.action))) out.push(`alert group "${g.name}"`);
+    out.push({ kind: "alertGroup", id: g.id, name: g.name, enabled: g.enabled, actions: refs.map((ref) => ref.action) });
+  }
+  return out;
+}
+
+/**
+ * Every automation and alert group with an action, in ANY location, that
+ * `match` accepts. Labels read `automation "Name"` / `alert group "Name"`.
+ */
+export async function findActionReferrers(match: (a: AutomationAction) => boolean): Promise<ActionReferrer[]> {
+  const holders = await loadActionHolders();
+  return holders
+    .filter((h) => h.actions.some(match))
+    .map((h) => (h.kind === "automation" ? `automation "${h.name}"` : `alert group "${h.name}"`));
+}
+
+/** An automation or alert group that runs a script (the Scripts tab's "Used by" pills). */
+export interface ScriptUser {
+  kind: "automation" | "alertGroup";
+  id: string;
+  name: string;
+  enabled: boolean;
+}
+
+/**
+ * Which automations and alert groups run each script, for every script at once
+ * — ONE walk over the same two reads `scriptReferrers` makes per script, so the
+ * Scripts tab never asks once per card. Keyed by script id; a script nothing
+ * runs has no key. Automations before alert groups, each by name.
+ */
+export async function scriptUsage(): Promise<Map<string, ScriptUser[]>> {
+  const holders = await loadActionHolders();
+  const out = new Map<string, ScriptUser[]>();
+  for (const h of holders) {
+    const ids = new Set<string>();
+    for (const a of h.actions) if (a.type === "script" && a.scriptId) ids.add(a.scriptId);
+    for (const id of ids) {
+      const list = out.get(id) ?? [];
+      list.push({ kind: h.kind, id: h.id, name: h.name, enabled: h.enabled });
+      out.set(id, list);
+    }
   }
   return out;
 }

@@ -23,7 +23,7 @@ import { prisma } from "../db.js";
 import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { publishCommandWake } from "./agentCommandWake.js";
-import { scriptReferrers, summarizeReferrers } from "./actionReferenceService.js";
+import { scriptReferrers, scriptUsage, summarizeReferrers, type ScriptUser } from "./actionReferenceService.js";
 import { versionAtLeast } from "../utils/version.js";
 import {
   SCRIPT_INTERPRETERS,
@@ -78,10 +78,19 @@ function validateInput(input: ScriptInput): void {
   }
 }
 
-export async function listScripts() {
+/**
+ * The registry. With `withUsage`, each script also carries `usedBy` — the
+ * automations and alert groups whose actions run it (the Scripts tab's pills).
+ * The caller asks for it only when the reader may see automations, since it
+ * names them.
+ */
+export async function listScripts(opts: { withUsage?: boolean } = {}) {
   // Body included — the registry is the editor surface and holds no secrets
   // by policy (the no-secrets rule is in the catalog help + docs).
-  return prisma.automationScript.findMany({ orderBy: { name: "asc" } });
+  const scripts = await prisma.automationScript.findMany({ orderBy: { name: "asc" } });
+  if (!opts.withUsage) return scripts;
+  const usage = await scriptUsage();
+  return scripts.map((s) => ({ ...s, usedBy: usage.get(s.id) ?? ([] as ScriptUser[]) }));
 }
 
 export async function getScript(id: string) {

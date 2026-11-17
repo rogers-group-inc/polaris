@@ -6,7 +6,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** Business rule 167 — "what still names this channel / script?" across every place an action can live, on automations and alert groups.
 
-**Public API:** `findActionReferrers(match)` (labels `automation "X"` / `alert group "Y"`), `scriptReferrers(scriptId)`, `channelReferrers(channelId)` (also counts pending firmware-upgrade and reboot bookings whose `notifyChannelIds` hold it), `summarizeReferrers(refs, max?)`.
+**Public API:** `findActionReferrers(match)` (labels `automation "X"` / `alert group "Y"`), `scriptUsage()` (EVERY script at once → `Map<scriptId, {kind, id, name, enabled}[]>` from one walk — the Scripts tab's "Used by" pills via `automationScriptService.listScripts({ withUsage })`; both it and `findActionReferrers` sit on the private `loadActionHolders`, the one place the two reads and the action walk live, so a new action location reaches the delete guard and the pills together), `scriptReferrers(scriptId)`, `channelReferrers(channelId)` (also counts pending firmware-upgrade and reboot bookings whose `notifyChannelIds` hold it), `summarizeReferrers(refs, max?)`.
 
 **Cross-service deps:** `notificationTypes` (`allRuleActionRefs`, `normalizeRuleToV2`, `notifyChannelIds`, the action schemas); `prisma` (`NotificationRule`, `AlertGroup`, `FirmwareUpgradeSchedule`, `RebootSchedule`). Read-only.
 

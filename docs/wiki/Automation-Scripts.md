@@ -78,6 +78,11 @@ survives deletion.
   the file's `#!` line, and the name from the file name. **Nothing is saved
   until you read the body and press Create script** — a script runs with full
   privileges, so an imported one gets the same review as one typed in.
+- **Used by** on each script card lists the automations (and alert groups)
+  whose actions run the script, wherever the action sits: the main actions,
+  an escalation step or the reset actions. A disabled automation's pill is
+  dimmed, and a script nothing runs says "no automation". You see the row only
+  if your role can read automations.
 - **Edit → Replace from file** loads a new version over an existing script.
   The script keeps its name, so every automation that runs it keeps running
   the new version. A plain script file replaces the body, and the interpreter

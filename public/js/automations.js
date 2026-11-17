@@ -1404,6 +1404,27 @@ async function loadScriptsTab() {
   }
 }
 
+/**
+ * A script card's "Used by" row: one pill per automation (and alert group)
+ * whose actions run the script, a disabled one dimmed. `usedBy` is absent when
+ * the reader may not see automations (GET /automations/scripts sends it only at
+ * automationManagement:read) — then the row is left out rather than claiming
+ * the script is unused.
+ */
+function scriptUsedByHtml(usedBy) {
+  if (!Array.isArray(usedBy)) return "";
+  var row = function (inner) {
+    return '<div class="script-used-by" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 0">' +
+      '<span style="font-size:0.75rem;color:var(--color-text-tertiary)">Used by</span>' + inner + '</div>';
+  };
+  if (!usedBy.length) return row('<span style="font-size:0.75rem;color:var(--color-text-tertiary)">no automation</span>');
+  return row(usedBy.map(function (u) {
+    var label = (u.kind === "alertGroup" ? "Alert group: " : "") + u.name;
+    var title = (u.kind === "alertGroup" ? "Alert group" : "Automation") + (u.enabled ? "" : " (disabled)");
+    return '<span class="badge badge-auto-rule"' + (u.enabled ? "" : ' style="opacity:0.6"') + ' title="' + escapeHtml(title) + '">' + escapeHtml(label) + '</span>';
+  }).join(""));
+}
+
 function renderScriptsList(scripts) {
   var container = document.getElementById("scripts-list");
   if (!container) return;
@@ -1431,6 +1452,7 @@ function renderScriptsList(scripts) {
         '<span style="margin-left:auto">' + actions + '</span>' +
       '</div>' +
       (sc.description ? '<p style="font-size:0.85rem;color:var(--color-text-secondary);margin:6px 0 0">' + escapeHtml(sc.description) + '</p>' : "") +
+      scriptUsedByHtml(sc.usedBy) +
       '<p style="font-size:0.75rem;color:var(--color-text-tertiary);margin:6px 0 0;font-family:var(--font-mono)">timeout ' + sc.timeoutSec + 's · sha256 ' + escapeHtml((sc.sha256 || "").slice(0, 12)) + '…</p>' +
       '<div class="script-test-out" data-id="' + sc.id + '"></div>' +
     '</div>';
