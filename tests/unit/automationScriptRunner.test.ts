@@ -253,7 +253,7 @@ describe("executeServerScript — how the interpreter is invoked", () => {
   it("hands an email-enabled run its pass and the loopback API URL, storing only the hash (rule 190)", async () => {
     const { createHash } = await import("node:crypto");
     stubbed(prisma.automationScriptRun.update).mockResolvedValue({} as never);
-    await executeServerScript(runRow({ emailChannelId: "ch1" }));
+    await executeServerScript(runRow({ emailChannelIds: ["ch1"] }));
     const env = lastExec().opts.env as Record<string, string>;
     expect(env.POLARIS_RUN_ID).toBe("run1");
     expect(env.POLARIS_RUN_TOKEN).toMatch(/^prun_[A-Za-z0-9_-]{40,}$/);
@@ -265,6 +265,8 @@ describe("executeServerScript — how the interpreter is invoked", () => {
   });
 
   it("gives a run without email no pass and no API URL", async () => {
+    await executeServerScript(runRow({ emailChannelIds: [] }));
+    expect((lastExec().opts.env as Record<string, string>).POLARIS_RUN_TOKEN).toBeUndefined();
     await executeServerScript(runRow());
     const env = lastExec().opts.env as Record<string, string>;
     expect(env.POLARIS_RUN_TOKEN).toBeUndefined();

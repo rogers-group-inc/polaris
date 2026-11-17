@@ -47,6 +47,7 @@ import {
   listScripts,
   pruneOldRuns,
   requestScriptRun,
+  MAX_SCRIPT_EMAIL_RECIPIENTS,
   sha256Hex,
   updateScript,
   type ScriptInput,
@@ -267,6 +268,31 @@ describe("requestScriptRun — server", () => {
   it("404s an unknown script", async () => {
     stubbed(prisma.automationScript.findUnique).mockResolvedValue(null);
     await rejects(requestScriptRun(req), 404);
+  });
+
+  it("snapshots the email channels and resolved To / Cc / Bcc, de-duplicated across the lists (rule 190(a))", async () => {
+    await requestScriptRun({
+      ...req,
+      email: {
+        channelIds: ["c1", "c1", "c2"],
+        to: [" Certs@Example.com ", "certs@example.com", "ops@example.com"],
+        cc: ["ops@example.com", "audit@example.com"],
+        bcc: ["AUDIT@example.com", "hidden@example.com"],
+      },
+    });
+    expect(stubbed(prisma.automationScriptRun.create).mock.calls[0]![0].data).toMatchObject({
+      emailChannelIds: ["c1", "c2"],
+      emailTo: ["certs@example.com", "ops@example.com"],
+      emailCc: ["audit@example.com"],
+      emailBcc: ["hidden@example.com"],
+    });
+  });
+
+  it("refuses an email block whose To is empty, or that resolved past the recipient cap, creating nothing", async () => {
+    await rejects(requestScriptRun({ ...req, email: { channelIds: ["c1"], to: [], cc: ["a@example.com"] } }), 422, /resolved to no address/);
+    const many = Array.from({ length: MAX_SCRIPT_EMAIL_RECIPIENTS + 1 }, (_, i) => `u${i}@example.com`);
+    await rejects(requestScriptRun({ ...req, email: { channelIds: ["c1"], to: many } }), 422, /at most 200/);
+    expect(prisma.automationScriptRun.create).not.toHaveBeenCalled();
   });
 });
 

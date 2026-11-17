@@ -318,10 +318,26 @@ describe("executeActions — script", () => {
     });
   });
 
-  it("hands the action's email block to the run (rule 190)", async () => {
-    const email = { channelId: "c1", addresses: ["certs@example.com"] };
-    await executeActions("n1", [{ type: "script", scriptId: "s1", runOn: "server", email } as AutomationAction], CTX, { ruleId: "r1" });
-    expect(h.scriptRun.mock.calls.at(-1)![0]).toMatchObject({ email });
+  it("resolves the email block's To / Cc / Bcc against the device and hands the run plain addresses (rule 190(a))", async () => {
+    h.rebootRecips.mockResolvedValue({ to: ["certs@example.com"], cc: ["audit@example.com"], bcc: [] });
+    const email = { channelIds: ["c1", "c2"], recipientDeviceRegionLevels: [1], cc: { addresses: ["audit@example.com"] } };
+    await executeActions("n1", [{ type: "script", scriptId: "s1", runOn: "server", email } as AutomationAction], CTX, { ruleId: "r1", assetId: "a1", assetRegionTags: ["ATL"] });
+    expect(h.rebootRecips.mock.calls.at(-1)![0]).toEqual(email);
+    expect(h.rebootRecips.mock.calls.at(-1)![1]).toMatchObject({ assetRegionTags: ["ATL"], logCtx: { action: "script" } });
+    expect(h.scriptRun.mock.calls.at(-1)![0]).toMatchObject({
+      email: { channelIds: ["c1", "c2"], to: ["certs@example.com"], cc: ["audit@example.com"], bcc: [] },
+    });
+  });
+
+  it("folds the rule-190 single channelId, and fails the action when To resolves to nobody", async () => {
+    h.rebootRecips.mockResolvedValue({ to: ["certs@example.com"], cc: [], bcc: [] });
+    await executeActions("n1", [{ type: "script", scriptId: "s1", runOn: "server", email: { channelId: "c1", addresses: ["certs@example.com"] } } as AutomationAction], CTX, {});
+    expect(h.scriptRun.mock.calls.at(-1)![0].email.channelIds).toEqual(["c1"]);
+    h.scriptRun.mockClear();
+    h.rebootRecips.mockResolvedValue({ to: [], cc: ["audit@example.com"], bcc: [] });
+    const res = await executeActions("n1", [{ type: "script", scriptId: "s1", runOn: "server", email: { channelIds: ["c1"], recipientRoles: ["empty"] } } as AutomationAction], CTX, {});
+    expect(res).toEqual({ executed: 0, failed: 1 });
+    expect(h.scriptRun).not.toHaveBeenCalled();
   });
 
   it("a blank args template is null; missing ids are null; actor rides as requestedBy", async () => {

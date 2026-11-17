@@ -3846,6 +3846,14 @@ works only from the Polaris server itself, and nothing about it is stored in the
 disk. Every email is recorded in Events. A test run from the Scripts tab can send email too, but
 only to you. See [Automation scripts](Automation-Scripts#sending-email-through-polaris).
 
+- **Recipients are chosen like a notification's (190(a)).** The email part of a Script action
+  works like **Send a notification**: tick one or more email channels and fill **To**, **Cc**
+  and **Bcc** with people, roles, regions, tags, the asset's region users or its contacts.
+  They are worked out when the automation fires, for the device that set it off. A To that
+  works out to nobody means the script is not run. Each email the script sends goes out as
+  one message per channel, with everyone in To able to see each other; use Bcc to hide an
+  address.
+
 ### Rule 191
 
 **Moving a site resets its map-based Topology views.** When a FortiGate's latitude and

@@ -5891,12 +5891,16 @@ model AutomationScriptRun {
   requestedAt    DateTime          @default(now())
   startedAt      DateTime?
   completedAt    DateTime?
-  // Business rule 190: a server run whose action may send email through a
-  // Polaris channel. The recipients are SNAPSHOT here at fire time — the
-  // script can never name its own. The pass is stored as a sha256 and cleared
-  // when the run ends; it is valid only while status = running.
-  emailChannelId     String?
+  // Business rule 190: a server run whose action may send email through
+  // Polaris channels. The recipients are SNAPSHOT here at fire time — the
+  // script can never name its own; rule 190(a) resolves the action's To / Cc /
+  // Bcc to plain addresses first. Empty emailChannelIds = no email. The pass is
+  // stored as a sha256 and cleared when the run ends; it is valid only while
+  // status = running.
+  emailChannelIds    String[]  @default([])
   emailTo            String[]  @default([])
+  emailCc            String[]  @default([])
+  emailBcc           String[]  @default([])
   emailTokenHash     String?   @unique
   emailTokenIssuedAt DateTime?
   emailsSent         Int       @default(0)

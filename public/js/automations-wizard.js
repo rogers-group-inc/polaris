@@ -965,20 +965,52 @@ async function openAutomationWizard(existing, opts) {
     if (!list) return "";
     return '<details id="' + id + '" class="tpl-palette"><summary>Insert variable…</summary>' + list + '</details>';
   }
-  /** Business rule 190: the script action's "send email through Polaris" block. */
+  function awEmailChannels() {
+    return (_ruleChannels || []).filter(function (c) { return c.type === "smtp" || c.type === "oauth_m365"; });
+  }
+  /**
+   * Business rule 190 / 190(a): the script action's "send email through
+   * Polaris" block — the Notify action's channel checklist (email channels
+   * only: a script's message has no push form) and its To / Cc / Bcc token
+   * fields, the same pills, typeahead and address book. Resolved to addresses
+   * when the automation fires, against the triggering device. The legacy
+   * rule-190 shape ({ channelId, addresses }) loads as one ticked channel and
+   * address pills in To.
+   */
   function scriptEmailHtml(email) {
-    var emailChans = (_ruleChannels || []).filter(function (c) { return c.type === "smtp" || c.type === "oauth_m365"; });
-    var on = !!(email && email.channelId);
-    var opts = emailChans.map(function (c) {
-      return '<option value="' + escapeHtml(c.id) + '"' + (email && c.id === email.channelId ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>';
+    var emailChans = awEmailChannels();
+    var on = !!email;
+    var sel = {};
+    var selIds = email ? (email.channelIds && email.channelIds.length ? email.channelIds : email.channelId ? [email.channelId] : []) : [];
+    if (!selIds.length && emailChans.length) selIds = [emailChans[0].id];
+    selIds.forEach(function (id) { sel[id] = true; });
+    var chans = emailChans.map(function (ch) {
+      var lbl = ch.name + " — " + chanTypeLabel(ch.type) + (ch.enabled ? "" : " (disabled)");
+      return '<label style="font-size:0.82rem;display:inline-flex;align-items:center;gap:5px;margin:0">' +
+        '<input type="checkbox" class="sa-email-chan" value="' + escapeHtml(ch.id) + '"' + (sel[ch.id] ? " checked" : "") + '>' +
+        escapeHtml(lbl) + '</label>';
     }).join("");
+    var deleted = selIds.filter(function (id) { return !emailChans.some(function (c) { return c.id === id; }); }).length;
+    var e = email || {};
+    var recips =
+      recipBoxHtml("to", "To", recipientsToPills(e, _ruleRecipientUsers, awRoles(), awRegionMaxLevel()), canReadContacts(), "email") +
+      recipBoxHtml("cc", "Cc", recipientsToPills(e.cc, _ruleRecipientUsers, awRoles()), false) +
+      recipBoxHtml("bcc", "Bcc", recipientsToPills(e.bcc, _ruleRecipientUsers, awRoles()), false);
     return '<div class="form-group sa-email-wrap" style="margin:8px 0 0">' +
         '<label style="font-size:0.85rem"><input type="checkbox" class="sa-email-on"' + (on ? " checked" : "") + (emailChans.length ? "" : " disabled") + '> Let this script send email through Polaris</label>' +
         '<p class="sa-email-why" style="font-size:0.75rem;color:var(--color-text-tertiary);margin:2px 0 0 24px"></p>' +
         '<div class="sa-email-fields" style="margin:4px 0 0 24px"' + (on ? "" : " hidden") + '>' +
-          '<label style="font-size:0.8rem">Email channel</label><select class="sa-email-ch" style="width:100%">' + opts + '</select>' +
-          '<label style="font-size:0.8rem;margin-top:4px;display:block">Send to (addresses, comma-separated)</label>' +
-          '<input type="text" class="sa-email-to" style="width:100%" value="' + escapeHtml(((email && email.addresses) || []).join(", ")) + '" placeholder="certs-team@example.com">' +
+          '<div class="form-group" style="margin-bottom:6px">' +
+            '<label style="font-size:0.8rem;display:block;margin-bottom:2px">Channels</label>' +
+            '<div class="sa-email-chans" style="display:flex;flex-wrap:wrap;gap:4px 14px">' + chans + '</div>' +
+            (deleted
+              ? '<p class="hint sa-email-chan-deleted" style="margin:4px 0 0;color:var(--color-warning)">' +
+                  (deleted === 1 ? "A channel this script emailed through was deleted." : deleted + " channels this script emailed through were deleted.") +
+                  " Tick another channel before saving.</p>"
+              : "") +
+          '</div>' +
+          '<div class="na-recips sa-email-recips">' + recips + '</div>' +
+          '<p class="hint" style="margin:0 0 6px">Resolved against the device that tripped the alert. Each email the script sends goes out as <strong>one</strong> message per channel with the full To list visible — put an address in Bcc to hide it.</p>' +
           '<p style="font-size:0.75rem;color:var(--color-text-tertiary);margin:4px 0 0">Each run gets a one-time pass in <code>POLARIS_RUN_TOKEN</code> and sends with <code>POST $POLARIS_API_URL/script-runs/self/email</code>. The script sets the subject, text and attachments — never who receives it. Up to 3 emails per run.</p>' +
         '</div>' +
       '</div>';
@@ -988,14 +1020,25 @@ async function openAutomationWizard(existing, opts) {
     var on = box.querySelector(".sa-email-on");
     if (!on) return;
     var agentRun = !!(box.querySelector("input.sa-runon-agent:checked"));
-    var hasChans = (_ruleChannels || []).some(function (c) { return c.type === "smtp" || c.type === "oauth_m365"; });
+    var hasChans = awEmailChannels().length > 0;
     on.disabled = agentRun || !hasChans;
     var why = box.querySelector(".sa-email-why");
     if (why) why.textContent = !hasChans ? "Add an SMTP or Microsoft 365 channel on the Delivery tab first." : agentRun ? "Only a script that runs on the Polaris server can send email." : "";
     box.querySelector(".sa-email-fields").hidden = !(on.checked && !on.disabled);
   }
-  function awSplitAddresses(raw) {
-    return String(raw || "").split(/[,;\s]+/).map(function (x) { return x.trim(); }).filter(Boolean);
+  /** The script action's email block as stored (rule 190(a)), or null when off. */
+  function collectScriptEmail(box) {
+    var on = box.querySelector(".sa-email-on");
+    if (!on || !on.checked) return null;
+    var rb = function (f) { return box.querySelector('.sa-email-recips .na-recip-box[data-field="' + f + '"]'); };
+    var cc = pillsToRecipients(pillsOf(rb("cc")));
+    var bcc = pillsToRecipients(pillsOf(rb("bcc")));
+    return Object.assign(
+      { channelIds: Array.from(box.querySelectorAll(".sa-email-chan:checked")).map(function (cb) { return cb.value; }) },
+      pillsToRecipients(pillsOf(rb("to"))),
+      Object.keys(cc).length ? { cc: cc } : {},
+      Object.keys(bcc).length ? { bcc: bcc } : {}
+    );
   }
   function scriptById(id) { return (_awScripts || []).find(function (x) { return x.id === id; }); }
 
@@ -7236,6 +7279,8 @@ async function openAutomationWizard(existing, opts) {
       runonServer.addEventListener("change", function () { syncScriptEmail(box); });
       runonAgent.addEventListener("change", function () { syncScriptEmail(box); });
       box.querySelector(".sa-email-on").addEventListener("change", function () { syncScriptEmail(box); });
+      var saRecips = box.querySelector(".sa-email-recips");
+      if (saRecips) wireRecipBoxes(saRecips, function () { /* collected on save; the summary names no one */ });
       syncScriptBits();
     } else if (t === "reboot") {
       // Business rule 115(c): books a reboot of the triggering device through
@@ -7432,13 +7477,8 @@ async function openAutomationWizard(existing, opts) {
       var to = box.querySelector(".sa-timeout").value;
       if (to !== "" && !isNaN(Number(to))) a3.timeoutSec = Number(to);
       // Business rule 190: only a server run carries the email block.
-      var emOn = box.querySelector(".sa-email-on");
-      if (emOn && emOn.checked && a3.runOn === "server") {
-        a3.email = {
-          channelId: box.querySelector(".sa-email-ch").value,
-          addresses: awSplitAddresses(box.querySelector(".sa-email-to").value),
-        };
-      }
+      var em = a3.runOn === "server" ? collectScriptEmail(box) : null;
+      if (em) a3.email = em;
       return a3;
     }
     // The audit Event carries no configuration — its presence IS the setting.
@@ -8190,11 +8230,14 @@ async function openAutomationWizard(existing, opts) {
     } else if (a.type === "script") {
       if (!a.scriptId) return label + ": pick a script.";
       if (a.email) {
-        if (!a.email.channelId) return label + ": pick the email channel the script sends through.";
-        if (!a.email.addresses.length) return label + ": add at least one address the script may email.";
-        var badAddr = a.email.addresses.filter(function (x) { return !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x); });
-        if (badAddr.length) return label + ": \"" + badAddr[0] + "\" is not an email address.";
-        if (a.email.addresses.length > 20) return label + ": a script may email at most 20 addresses.";
+        // Mirrors scriptEmailHasTo on the server (rule 190(a)).
+        var em2 = a.email;
+        if (!(em2.channelIds && em2.channelIds.length)) return label + ": tick the email channel the script sends through.";
+        var emHasTo = (em2.recipientUserIds && em2.recipientUserIds.length) || (em2.addresses && em2.addresses.length) ||
+          (em2.recipientRoles && em2.recipientRoles.length) || (em2.recipientRegions && em2.recipientRegions.length) ||
+          (em2.recipientTags && em2.recipientTags.length) || em2.recipientDeviceRegion ||
+          (em2.recipientDeviceRegionLevels && em2.recipientDeviceRegionLevels.length) || em2.recipientAssetContacts;
+        if (!emHasTo) return label + ": add a To recipient the script may email.";
       }
     } else if (a.type === "reboot") {
       if (a.when !== "now" && !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.at || "")) return label + ": pick the time of day to reboot at.";

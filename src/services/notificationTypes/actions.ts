@@ -498,22 +498,56 @@ const apiCallActionSchema = z
   .strict();
 
 /**
- * Business rule 190: a server script may send email through ONE Polaris email
- * channel, to exactly these addresses — the script names the subject, body and
- * attachments, never a recipient. The run gets a single-use pass for it
- * (scriptRunEmailService).
+ * Business rule 190: a server script may send email through Polaris email
+ * channels, to the people this action names — the script names the subject,
+ * body and attachments, never a recipient. The run gets a single-use pass for
+ * it (scriptRunEmailService).
+ *
+ * Rule 190(a): the recipients are the notify action's email vocabulary — the
+ * To fields below plus `cc` / `bcc`, the same pills, roles, regions, tags,
+ * "Asset's L<n> Region Users" and asset contacts — resolved to plain addresses
+ * when the automation FIRES (resolveRebootActionRecipients, against the
+ * triggering device) and snapshot on the run. `channelIds` mirrors the notify
+ * action's channel checklist, email channels only. `channelId` is the rule-190
+ * single-channel shape: still accepted, folded by scriptEmailChannelIds, never
+ * written by the builder. A channel and a To are required — enforced in
+ * assertActionRefs (a refinement here would make the object a ZodEffects).
  */
-const MAX_SCRIPT_EMAIL_ADDRESSES = 20;
 const scriptEmailSchema = z
   .object({
-    channelId: z.string().min(1).max(100),
-    addresses: z
-      .array(z.string().trim().max(254).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "is not an email address"))
-      .min(1)
-      .max(MAX_SCRIPT_EMAIL_ADDRESSES),
+    channelIds: z.array(z.string().min(1).max(100)).max(10).optional(),
+    channelId: z.string().min(1).max(100).optional(),
+    recipientUserIds: z.array(z.string().max(100)).max(500).optional(),
+    addresses: z.array(z.string().trim().max(320).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "is not an email address")).max(100).optional(),
+    recipientRoles: z.array(z.string().max(100)).max(50).optional(),
+    recipientRegions: z.array(z.string().max(100)).max(200).optional(),
+    recipientTags: z.array(z.string().max(100)).max(200).optional(),
+    recipientDeviceRegion: z.boolean().optional(),
+    recipientDeviceRegionLevels: z
+      .array(z.number().int().min(1).max(MAX_DEVICE_REGION_LEVELS))
+      .max(MAX_DEVICE_REGION_LEVELS)
+      .optional(),
+    recipientAssetContacts: z.boolean().optional(),
+    cc: emailRecipientsSchema.optional().nullable(),
+    bcc: emailRecipientsSchema.optional().nullable(),
   })
   .strict();
 
+export type ScriptEmailConfig = z.infer<typeof scriptEmailSchema>;
+
+/** The channels a script action's email block sends through (rule 190(a)). */
+export function scriptEmailChannelIds(e: { channelIds?: string[] | null; channelId?: string | null } | null | undefined): string[] {
+  if (!e) return [];
+  const list = e.channelIds?.length ? e.channelIds : e.channelId ? [e.channelId] : [];
+  return Array.from(new Set(list.filter(Boolean)));
+}
+
+/** Does a script action's email block name anyone in To? Mirrors the wizard. */
+export function scriptEmailHasTo(e: ScriptEmailConfig): boolean {
+  return !!(e.recipientUserIds?.length || e.addresses?.length || e.recipientRoles?.length ||
+    e.recipientRegions?.length || e.recipientTags?.length || e.recipientDeviceRegion ||
+    e.recipientDeviceRegionLevels?.length || e.recipientAssetContacts);
+}
 
 const scriptActionSchema = z
   .object({

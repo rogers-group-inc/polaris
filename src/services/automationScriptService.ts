@@ -189,8 +189,45 @@ export interface ScriptRunRequest {
   ruleId?: string | null;
   assetId?: string | null;
   requestedBy: string;
-  /** Business rule 190: the channel + addresses this run may email (server only). */
-  email?: { channelId: string; addresses: string[] } | null;
+  /** Business rule 190 / 190(a): the channels + RESOLVED addresses this run
+   *  may email (server only). The automation resolves the action's To / Cc /
+   *  Bcc pills before calling; a test run passes the tester's own address. */
+  email?: { channelIds: string[]; to: string[]; cc?: string[]; bcc?: string[] } | null;
+}
+
+/** The most addresses one run may hold across To, Cc and Bcc (rule 190(a)). */
+export const MAX_SCRIPT_EMAIL_RECIPIENTS = 200;
+
+/**
+ * Rule 190(a): the run row's email snapshot — channels de-duplicated, every
+ * address trimmed and lower-cased, de-duplicated ACROSS the lists (To wins,
+ * then Cc; Bcc never repeats a visible address). Null when no channel or no
+ * To survives, which the caller refuses. Throws past
+ * MAX_SCRIPT_EMAIL_RECIPIENTS rather than silently dropping people.
+ */
+function snapshotRunEmail(e: NonNullable<ScriptRunRequest["email"]>): {
+  emailChannelIds: string[]; emailTo: string[]; emailCc: string[]; emailBcc: string[];
+} | null {
+  const channels = [...new Set(e.channelIds.map((c) => c.trim()).filter(Boolean))];
+  const seen = new Set<string>();
+  const take = (list: string[] | undefined) => {
+    const out: string[] = [];
+    for (const raw of list ?? []) {
+      const a = raw.trim().toLowerCase();
+      if (!a || seen.has(a)) continue;
+      seen.add(a);
+      out.push(a);
+    }
+    return out;
+  };
+  const emailTo = take(e.to);
+  const emailCc = take(e.cc);
+  const emailBcc = take(e.bcc);
+  if (channels.length === 0 || emailTo.length === 0) return null;
+  if (seen.size > MAX_SCRIPT_EMAIL_RECIPIENTS) {
+    throw new AppError(422, `A script run may email at most ${MAX_SCRIPT_EMAIL_RECIPIENTS} addresses; this action resolved to ${seen.size}`);
+  }
+  return { emailChannelIds: channels, emailTo, emailCc, emailBcc };
 }
 
 /**
@@ -230,6 +267,8 @@ export async function requestScriptRun(req: ScriptRunRequest): Promise<{ runId: 
   if (req.email && req.runOn !== "server") {
     throw new AppError(400, `Script "${script.name}" runs on an agent, and only a server run can send email through Polaris`);
   }
+  const email = req.email ? snapshotRunEmail(req.email) : null;
+  if (req.email && !email) throw new AppError(422, `Script "${script.name}" may send email, but its To recipients resolved to no address`);
   // An override ≤ 0 or non-finite is "no override", not a zero-second run.
   const override = typeof req.timeoutSec === "number" && Number.isFinite(req.timeoutSec) && req.timeoutSec > 0 ? req.timeoutSec : null;
   const timeoutSec = Math.min(override ?? script.timeoutSec, MAX_SCRIPT_TIMEOUT_SEC);
@@ -245,7 +284,7 @@ export async function requestScriptRun(req: ScriptRunRequest): Promise<{ runId: 
       args: req.args,
       timeoutSec,
       requestedBy: req.requestedBy,
-      ...(req.email ? { emailChannelId: req.email.channelId, emailTo: [...new Set(req.email.addresses.map((a) => a.trim()))] } : {}),
+      ...(email ?? {}),
     },
   });
 
