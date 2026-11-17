@@ -1988,10 +1988,13 @@
       adjust.bar.className = "topo-plan-bar";
       adjust.bar.innerHTML = '<strong>Adjusting ' + esc(layerName(state.layer)) + "'s plan</strong>" +
         '<span class="hint" style="margin:0">Drag to move it · drag a corner to resize · Ctrl + corner stretches freely · Alt + drag rotates · right-drag moves the map</span>' +
+        lineUpButtonHtml(fp) +
         '<button type="button" class="btn btn-secondary btn-sm" data-plan="reset">Reset</button>' +
         '<button type="button" class="btn btn-primary btn-sm" data-plan="done">Done</button>';
       host.appendChild(adjust.bar);
       adjust.bar.addEventListener("click", function (e) {
+        var lu = e.target.closest('[data-plan="lineup"]');
+        if (lu) { pickLineUp(lu); return; }
         if (e.target.closest('[data-plan="done"]')) endAdjust();
         else if (e.target.closest('[data-plan="reset"]')) {
           var l = layerObj(adjust.level);
@@ -2010,6 +2013,42 @@
       applyFloorLook(true);
       drawCrossLinks();
       drawAdjustShapes();
+    }
+    // "Line up with <floor>" on the adjust bar (operator request 2026-11-17):
+    // the import's line-up (lineUpPlan) on demand, so a floor follows an
+    // edit to the one it was lined up with without a re-import. A one-off
+    // copy, never a link: nothing moves unless the operator asks. Offered
+    // only for a CAD floor while another floor has a CAD drawing.
+    function lineUpButtonHtml(fp) {
+      if (!fp.bg || !fp.bg.cad) return "";
+      var others = cadFloors(adjust.level);
+      if (!others.length) return "";
+      var word = others.length === 1 ? "Line up with " + layerName(others[0].level) : "Line up with";
+      return '<button type="button" class="btn btn-secondary btn-sm" data-plan="lineup"' +
+        ' title="Place this drawing by another floor’s drawing: right when both share coordinates">' + esc(word) + "</button>";
+    }
+    function pickLineUp(btn) {
+      if (!adjust) return;
+      var others = cadFloors(adjust.level);
+      if (others.length === 1) { lineUpWith(others[0].level); return; }
+      if (typeof showRowMenu !== "function") return;
+      showRowMenu(btn, [{ heading: "Line up with" }].concat(others.map(function (l) {
+        return { label: layerName(l.level), onSelect: function () { lineUpWith(l.level); } };
+      })), { label: "Line up with", overMap: true });
+    }
+    function lineUpWith(refLevel) {
+      var l = adjust && layerObj(adjust.level);
+      var ref = layerObj(refLevel);
+      if (!l || !l.background || !l.background.cad || !ref || !ref.background || !ref.background.cad) return;
+      var plan = lineUpPlan(l.background, refLevel);
+      if (!plan) { ctx.toast("That floor's drawing can't be lined up with", "error"); return; }
+      l.plan = plan;
+      changed("layers");
+      drawFloor(adjust.level); drawCrossLinks(); drawAdjustShapes();
+      var share = Math.round(overlapShare(l.background.cad.ext, ref.background.cad.ext) * 100);
+      ctx.toast(share < 50
+        ? "Lined up with " + layerName(refLevel) + ", but the drawings overlap only " + share + " %: check they share coordinates"
+        : "Lined up with " + layerName(refLevel), share < 50 ? "warning" : undefined);
     }
     function noMenu(e) { e.preventDefault(); e.stopPropagation(); }
     function endAdjust() {

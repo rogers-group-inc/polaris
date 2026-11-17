@@ -796,6 +796,9 @@ Then choose how to place it:
 - **Line up with** another floor — offered for every floor that already has a CAD drawing.
   It uses that floor's placement, which is right when both drawings share coordinates, as
   the levels of one mine survey do; the dialog shows how much the two drawings overlap.
+  It is a one-time copy, not a link: adjusting that floor later doesn't move this one. To
+  bring them back in line, open **Adjust floor plan** on this floor and press **Line up
+  with <floor>** on its bar (a menu when several floors have drawings). Undo reverses it.
 - **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
 - **Line it up by hand** — the default when the drawing has no location of its own and no
   other floor to line up with. The drawing opens ready to adjust: drag to move it, drag a
