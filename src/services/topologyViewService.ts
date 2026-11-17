@@ -223,7 +223,7 @@ export interface TopologyViewDto {
   mode: TopologyViewMode;
   shownTypes: string[];
   /** Topology: the ArcGIS layers drawn (rule 188), by configured layer id. */
-  arcgisLayers: string[];
+  arcgisHidden: string[];
   background: TopologyBackground | null;
   polygons: TopologyPolygon[];
   racks: TopologyRack[];
@@ -250,7 +250,7 @@ type ViewRow = {
   isDefault: boolean;
   mode: string;
   shownTypes: string[];
-  arcgisLayers: string[];
+  arcgisHidden: string[];
   background: Prisma.JsonValue | null;
   polygons: Prisma.JsonValue;
   racks: Prisma.JsonValue;
@@ -275,7 +275,7 @@ function toDto(row: ViewRow): TopologyViewDto {
     mode: (TOPOLOGY_VIEW_MODES as readonly string[]).includes(row.mode) ? (row.mode as TopologyViewMode)
       : row.mode === "rack" || row.mode === "wall" ? "room" : "layer2",
     shownTypes: row.shownTypes,
-    arcgisLayers: row.arcgisLayers ?? [],
+    arcgisHidden: row.arcgisHidden ?? [],
     background: (row.background ?? null) as unknown as TopologyBackground | null,
     polygons: ((Array.isArray(row.polygons) ? row.polygons : []) as unknown as TopologyPolygon[])
       .map((p) => ({ ...p, layer: Number.isInteger(p.layer) ? p.layer : 0 })),
@@ -363,15 +363,24 @@ export function sanitizeShownTypes(raw: unknown): string[] {
   return [...out];
 }
 
-/** The ArcGIS layer ids a Topology view draws (rule 188): uuids, de-duplicated, at most 20. */
-function sanitizeArcgisLayers(raw: unknown): string[] {
-  if (!Array.isArray(raw)) bad("arcgisLayers must be an array of layer ids");
+const ARCGIS_HIDDEN_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(#other|:[^\u0000-\u001f\u007f]{1,200})?$/i;
+
+/**
+ * What a Topology view hides of the ArcGIS layers that cover it (rule
+ * 188(c)): `<layerId>` hides a layer, `<layerId>:<type value>` one of its
+ * types, `<layerId>#other` its other-types bucket. Everything not listed is
+ * drawn, so a layer or type added later shows by itself. De-duplicated
+ * (the layer id lower-cased), at most 500.
+ */
+function sanitizeArcgisHidden(raw: unknown): string[] {
+  if (!Array.isArray(raw)) bad("arcgisHidden must be an array");
   const arr = raw as unknown[];
-  if (arr.length > 20) bad("A view draws at most 20 ArcGIS layers");
+  if (arr.length > 500) bad("A view hides at most 500 ArcGIS layers and types");
   const out = new Set<string>();
-  for (const id of arr) {
-    if (typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) bad("arcgisLayers contains an invalid layer id");
-    out.add((id as string).toLowerCase());
+  for (const k of arr) {
+    const m = typeof k === "string" ? ARCGIS_HIDDEN_RE.exec(k) : null;
+    if (!m) bad("arcgisHidden contains an invalid entry");
+    out.add(m![1].toLowerCase() + (m![2] ?? ""));
   }
   return [...out];
 }
@@ -792,7 +801,7 @@ function freshModeFields(mode: TopologyViewMode) {
   return {
     mode,
     shownTypes: [...DEFAULT_SHOWN_TYPES],
-    arcgisLayers: [] as string[],
+    arcgisHidden: [] as string[],
     background: null as unknown as Prisma.InputJsonValue,
     polygons: json([]),
     racks: json([]),
@@ -962,7 +971,7 @@ async function sameRegion(siteId: string, a: LocationCodes | null, b: LocationCo
 
 export async function createView(
   siteId: string,
-  input: { name: unknown; mode: unknown; shownTypes?: unknown; arcgisLayers?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown; fill?: unknown },
+  input: { name: unknown; mode: unknown; shownTypes?: unknown; arcgisHidden?: unknown; region?: unknown; wallWidth?: unknown; wallHeight?: unknown; rackUnits?: unknown; fill?: unknown },
   actor: string | null,
   devices: PlaceableDevice[] = [],
 ): Promise<{ view: TopologyViewDto; autoPlaced: AutoPlaced }> {
@@ -973,7 +982,7 @@ export async function createView(
   if (count >= MAX_VIEWS_PER_SITE) throw new AppError(400, `A site may have at most ${MAX_VIEWS_PER_SITE} views`);
   const fields: ReturnType<typeof freshModeFields> & { region?: Prisma.InputJsonValue } = freshModeFields(mode);
   if (input.shownTypes !== undefined) fields.shownTypes = sanitizeShownTypes(input.shownTypes);
-  if (input.arcgisLayers !== undefined && mode === "topology") fields.arcgisLayers = sanitizeArcgisLayers(input.arcgisLayers);
+  if (input.arcgisHidden !== undefined && mode === "topology") fields.arcgisHidden = sanitizeArcgisHidden(input.arcgisHidden);
   const region = sanitizeRegion(input.region);
   if (region && !modeTakesRegion(mode)) throw new AppError(400, "Only a Room view can stand for a room");
   if (region) fields.region = json(region);
@@ -1009,7 +1018,7 @@ export interface ViewPatch {
   name?: unknown;
   mode?: unknown;
   shownTypes?: unknown;
-  arcgisLayers?: unknown;
+  arcgisHidden?: unknown;
   background?: unknown;
   polygons?: unknown;
   racks?: unknown;
@@ -1102,7 +1111,7 @@ export async function updateView(
   }
 
   if (patch.shownTypes !== undefined) data.shownTypes = sanitizeShownTypes(patch.shownTypes);
-  if (patch.arcgisLayers !== undefined) data.arcgisLayers = sanitizeArcgisLayers(patch.arcgisLayers);
+  if (patch.arcgisHidden !== undefined) data.arcgisHidden = sanitizeArcgisHidden(patch.arcgisHidden);
   let linkedRegion: LocationCodes | null = null;
   if (patch.region !== undefined) {
     const region = sanitizeRegion(patch.region);

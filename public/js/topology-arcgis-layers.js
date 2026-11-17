@@ -5,8 +5,11 @@
  *   window.PolarisTopologyArcgisLayers.create(opts) → layer
  *
  * Polaris never writes to ArcGIS. An ArcGIS integration lists the feature
- * layers it reads; each Topology view ticks which of them it draws (the "Map
- * layers" card this module renders in the details pane). Features are asked
+ * layers it reads. Rule 188(c): a Topology view draws every layer whose area
+ * covers the map in view (a layer with no known area counts as everywhere),
+ * and stores only what it HIDES — a layer, or one of a by-type layer's types
+ * (rule 188(b)) — in the "Map layers" card this module renders in the details
+ * pane, so a layer or type added later shows by itself. Features are asked
  * for as the map moves (the server holds the ArcGIS token and answers only
  * the features inside the viewport), drawn on floor 0's ground over the map
  * or satellite — never over an uploaded plan, whose coordinates are not
@@ -23,7 +26,7 @@
  * opts: {
  *   L, map(), pane() → {name, renderer}, editing(), visible(),
  *   fetchLayers() → Promise<{layers}>, fetchFeatures(layerId, params) → Promise<{features, truncated}>,
- *   fetchLinks() → Promise<{links}>, shownLayers() → ids, setShownLayers(ids), canSaveShown(),
+ *   fetchLinks() → Promise<{links}>, hidden() → keys, setHidden(keys), canSaveShown(), onCoverChange(),
  *   stageLinks(changes), onRoutesChanged(), describeLink(pathKey), onChange(), toast(msg, kind),
  * }
  */
@@ -101,13 +104,69 @@
     var legend = null;
     var moveTimer = null;
     var reqSeq = 0;
+    var typeIndex = {};          // layerId → { String(value) → type entry } (by-type layers)
+    var coverSig = "";           // the covering layers last reported (onCoverChange)
+    var shapeWidth = {};         // ref → the line's own width (highlight restores it)
 
     function layerById(id) { for (var i = 0; i < layers.length; i++) if (layers[i].id === id) return layers[i]; return null; }
+    function hiddenSet() {
+      var h = {};
+      (opts.hidden ? opts.hidden() || [] : []).forEach(function (k) { h[k] = true; });
+      return h;
+    }
+    function isHidden(id) { return !!hiddenSet()[id]; }
+    /** Rule 188(c): does a layer's area overlap the map in view? No known area = everywhere. */
+    function covers(l, b) {
+      if (!b || !Array.isArray(l.extent) || l.extent.length !== 4) return true;
+      return !(l.extent[2] < b.getWest() || l.extent[0] > b.getEast() || l.extent[3] < b.getSouth() || l.extent[1] > b.getNorth());
+    }
+    function covering() {
+      var map = opts.map();
+      var b = map ? map.getBounds() : null;
+      return layers.filter(function (l) { return covers(l, b); });
+    }
+    /** The layers drawn now: covering the map and not hidden by the view. */
     function shownIds() {
-      var want = opts.shownLayers() || [];
-      return want.filter(function (id) { return !!layerById(id); });
+      var h = hiddenSet();
+      return covering().filter(function (l) { return !h[l.id]; }).map(function (l) { return l.id; });
     }
     function isShown(id) { return shownIds().indexOf(id) !== -1; }
+
+    // ── Types (rule 188(b)) ──────────────────────────────────────────────
+    function indexTypes() {
+      typeIndex = {};
+      layers.forEach(function (l) {
+        if (!l.types) return;
+        var m = {};
+        (l.types.values || []).forEach(function (v) { m[String(v.value)] = v; });
+        typeIndex[l.id] = m;
+      });
+    }
+    /** The listed type a feature's value belongs to, or null for the other-types bucket. */
+    function typeOf(l, ft) {
+      var m = typeIndex[l.id];
+      return m && ft.t !== null && ft.t !== undefined ? m[String(ft.t)] || null : null;
+    }
+    function typeKey(l, entry) { return entry ? l.id + ":" + String(entry.value) : l.id + "#other"; }
+    function featureShown(l, ft, h) {
+      if (!l.types) return true;
+      var e = typeOf(l, ft);
+      if (!e && !(l.types.other && l.types.other.on)) return false;
+      return !(h || hiddenSet())[typeKey(l, e)];
+    }
+    /** A by-type feature's own style, or null for a layer drawn in one style. */
+    function typeStyle(l, ft) {
+      if (!l.types) return null;
+      var e = typeOf(l, ft);
+      return e ? e.style : l.types.other.style;
+    }
+    /** The types a by-type layer can draw: its ticked types, then the other bucket when it is ticked. */
+    function typeRows(l) {
+      if (!l.types) return [];
+      var rows = (l.types.values || []).map(function (v) { return { key: typeKey(l, v), label: v.label || String(v.value), style: v.style }; });
+      if (l.types.other && l.types.other.on) rows.push({ key: typeKey(l, null), label: "Other types", style: l.types.other.style });
+      return rows;
+    }
     function feature(ref) {
       var r = splitRef(ref);
       if (!r) return null;
@@ -128,6 +187,7 @@
         opts.fetchLinks().catch(function () { return { links: {} }; }),
       ]).then(function (res) {
         layers = (res[0] && res[0].layers) || [];
+        indexTypes();
         loadedLinks = cloneLinks(res[1] && res[1].links);
         links = cloneLinks(loadedLinks);
         missing = {};
@@ -168,6 +228,8 @@
       }).then(function () {
         draw();
         routesChanged();
+        var sig = covering().map(function (l) { return l.id; }).join(",");
+        if (sig !== coverSig) { coverSig = sig; if (opts.onCoverChange) opts.onCoverChange(); }
       });
     }
 
@@ -206,6 +268,14 @@
       return d === "dashed" ? "10 7" : d === "dotted" ? "2 6" : null;
     }
     function widthOf(l) { return Math.max(1, Math.min(8, (l.style && l.style.width) || 3)); }
+    var DASH = { dashed: "10 7", dotted: "2 6" };
+    /** A by-type feature's colour rides `--arc` on its own element (any #rrggbb, rule 188(b)). */
+    function paintTyped(shape, color) {
+      shape.on("add", function () {
+        var el = shape.getElement && shape.getElement();
+        if (el && /^#[0-9a-f]{6}$/i.test(color)) el.style.setProperty("--arc", color);
+      });
+    }
 
     function draw() {
       var map = opts.map();
@@ -217,6 +287,8 @@
       }
       if (group) group.clearLayers(); else group = L.layerGroup().addTo(map);
       shapes = {};
+      shapeWidth = {};
+      var hidden = hiddenSet();
       paintLegend();
       if (!opts.visible()) return;
       var f = opts.pane();
@@ -229,23 +301,30 @@
         var labelsOn = !opts.labelsShown || opts.labelsShown(id);
         Object.keys(feats).forEach(function (ref) {
           var ft = feats[ref];
+          if (!featureShown(l, ft, hidden)) return;
+          var ts = typeStyle(l, ft);
+          var w = ts ? Math.max(1, Math.min(8, ts.width || 3)) : widthOf(l);
+          var dash = ts ? DASH[ts.dash] || null : dashOf(l);
+          var cls = ts ? "topo-arc topo-arc-" + l.geometry + " topo-arc-typed" : classes(l);
           var shape;
           if (l.geometry === "point") {
             shape = L.circleMarker(L.latLng(ft.g[0][0][1], ft.g[0][0][0]), {
-              pane: f.name, renderer: f.renderer, radius: 2 + widthOf(l), weight: 1.5, className: classes(l),
+              pane: f.name, renderer: f.renderer, radius: 2 + w, weight: 1.5, className: cls,
             });
           } else if (l.geometry === "area") {
             shape = L.polygon(ft.g.map(function (ring) { return ring.map(function (p) { return L.latLng(p[1], p[0]); }); }), {
-              pane: f.name, renderer: f.renderer, weight: widthOf(l), dashArray: dashOf(l), className: classes(l),
+              pane: f.name, renderer: f.renderer, weight: w, dashArray: dash, className: cls,
             });
           } else {
             var on = ref === targetKey;
             shape = L.polyline(ft.g.map(function (path) { return path.map(function (p) { return L.latLng(p[1], p[0]); }); }), {
-              pane: f.name, renderer: f.renderer, weight: on ? widthOf(l) + 8 : widthOf(l), dashArray: dashOf(l),
-              className: classes(l, on ? "is-target" : ""), lineCap: "round", lineJoin: "round",
+              pane: f.name, renderer: f.renderer, weight: on ? w + 8 : w, dashArray: dash,
+              className: cls + (on ? " is-target" : ""), lineCap: "round", lineJoin: "round",
             });
             shapes[ref] = shape;
+            shapeWidth[ref] = w;
           }
+          if (ts) paintTyped(shape, ts.color);
           shape.on("click", function (e) {
             if (e.originalEvent) L.DomEvent.stop(e.originalEvent);
             openCard(l, ft, ref, e.latlng);
@@ -270,8 +349,11 @@
       });
       if (l.geometry === "line") rows.push('<span class="hint">Length</span><span class="mono">' + lengthText(lengthM(featurePoints(ft))) + '</span>');
       var riders = l.geometry === "line" ? ridersOf(ref) : [];
+      var ts = typeStyle(l, ft);
+      var te = l.types ? typeOf(l, ft) : null;
       return '<div class="topo-arc-card">' +
         '<strong>' + esc(ft.label || l.title) + '</strong>' +
+        (ts ? '<div class="topo-arc-legend-row">' + typeSwatch(ts) + '<span>' + esc(te ? te.label || String(te.value) : "Other types") + '</span></div>' : '') +
         '<div class="hint">' + esc(l.title) + ' · from ArcGIS, read only</div>' +
         (rows.length ? '<div class="topo-arc-card-fields">' + rows.join("") + '</div>' : '') +
         (riders.length ? '<div class="topo-arc-card-riders"><div class="hint">Connections on this line</div>' +
@@ -297,15 +379,28 @@
         onAdd: function () {
           var el = L.DomUtil.create("div", "topo-arc-legend leaflet-bar");
           L.DomEvent.disableClickPropagation(el);
+          var h = hiddenSet();
           el.innerHTML = '<div class="topo-arc-legend-title">ArcGIS layers</div>' + ids.map(function (id) {
             var l = layerById(id);
-            return '<div class="topo-arc-legend-row">' + swatch(l) + esc(l.title) +
-              (truncated[id] ? ' <span class="hint" title="More features in view than one answer carries — zoom in">(partial)</span>' : '') + '</div>';
+            var part = truncated[id] ? ' <span class="hint" title="More features in view than one answer carries — zoom in">(partial)</span>' : '';
+            if (!l.types) return '<div class="topo-arc-legend-row">' + swatch(l) + esc(l.title) + part + '</div>';
+            // Rule 188(b): the layer's name, then each type it draws here.
+            return '<div class="topo-arc-legend-row topo-arc-legend-layer">' + esc(l.title) + part + '</div>' +
+              typeRows(l).filter(function (r) { return !h[r.key]; }).map(function (r) {
+                return '<div class="topo-arc-legend-row is-type">' + typeSwatch(r.style) + esc(r.label) + '</div>';
+              }).join("");
           }).join("");
           return el;
         },
       });
       legend = new Ctl().addTo(map);
+    }
+    /** A type's line sample, in its own colour (inline: any #rrggbb). */
+    function typeSwatch(st) {
+      var c = st && /^#[0-9a-f]{6}$/i.test(st.color) ? st.color : "#9aa0a6";
+      var dash = st && DASH[st.dash];
+      return '<svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="' + c + '" stroke-linecap="round" stroke-width="' +
+        Math.min(4, (st && st.width) || 3) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '></line></svg>';
     }
     function swatch(l) {
       if (l.geometry === "point") {
@@ -318,41 +413,61 @@
 
     // ── The Map layers card (details pane) ──────────────────────────────
     function brokenRoutes() {
+      var h = hiddenSet();
       return Object.keys(links).filter(function (k) {
         return links[k].some(function (ref) {
           var r = splitRef(ref);
-          return missing[ref] || !r || !layerById(r.layerId) || !isShown(r.layerId);
+          var l = r && layerById(r.layerId);
+          if (missing[ref] || !l || h[l.id]) return true;
+          var ft = feature(ref);
+          return !!(ft && !featureShown(l, ft, h));
         });
       }).length;
     }
     function sidebarHtml() {
       if (!layers.length) return "";
-      var shown = shownIds();
-      var rows = layers.map(function (l) {
-        var on = shown.indexOf(l.id) !== -1;
-        return '<label class="topology-arc-row"><input type="checkbox" data-arc-layer="' + esc(l.id) + '"' + (on ? " checked" : "") + '> ' +
-          swatch(l) + '<span>' + esc(l.title) + '</span></label>';
+      var h = hiddenSet();
+      var here = covering();
+      var away = layers.filter(function (l) { return here.indexOf(l) === -1; });
+      var rows = here.map(function (l) {
+        var on = !h[l.id];
+        var row = '<label class="topology-arc-row"><input type="checkbox" data-arc-hide="' + esc(l.id) + '"' + (on ? " checked" : "") + '> ' +
+          (l.types ? '' : swatch(l)) + '<span>' + esc(l.title) + '</span></label>';
+        return row + typeRows(l).map(function (r) {
+          return '<label class="topology-arc-row is-type' + (on ? '' : ' is-off') + '"><input type="checkbox" data-arc-hide="' + esc(r.key) + '"' +
+            (h[r.key] ? "" : " checked") + (on ? "" : " disabled") + '> ' + typeSwatch(r.style) + '<span>' + esc(r.label) + '</span></label>';
+        }).join("");
       }).join("");
+      if (!here.length) rows = '<p>No ArcGIS layer covers this part of the map.</p>';
       var hint = opts.visible()
-        ? (opts.canSaveShown() ? "Editing: saved with this view." : "Shown until you close the map. Edit the map to save them with the view.")
+        ? (opts.canSaveShown() ? "Editing: saved with this view." : "Just for you until you close the map. Edit the map to save it with the view.")
         : "Drawn over the map or satellite ground, not over a floor plan.";
       var broken = brokenRoutes();
-      return '<div class="topology-section topology-arc-layers"><h5>Map layers</h5>' + rows +
+      return '<div class="topology-section topology-arc-layers"><h5>Map layers</h5>' +
+        (here.length ? '<p class="topology-type-hint">Layers that cover this map, found automatically.</p>' : '') + rows +
+        (away.length ? '<p class="topology-type-hint">Not here: ' + away.map(function (l) { return esc(l.title); }).join(", ") + '.</p>' : '') +
         (broken ? '<p><span class="badge badge-expired">Route line missing</span> ' + broken + ' connection' + (broken === 1 ? " rides" : "s ride") +
           ' a line that is hidden, filtered out or gone from ArcGIS, and ' + (broken === 1 ? "is" : "are") + ' drawn straight there.</p>' : '') +
         '<p class="topology-type-hint">' + esc(hint) + '</p></div>';
     }
     function wireSidebar(pane) {
       if (!pane) return;
-      Array.prototype.forEach.call(pane.querySelectorAll("input[data-arc-layer]"), function (box) {
-        box.addEventListener("change", function () {
-          var id = box.getAttribute("data-arc-layer");
-          var next = shownIds().filter(function (x) { return x !== id; });
-          if (box.checked) next.push(id);
-          opts.setShownLayers(next);
-          refresh();
-        });
+      Array.prototype.forEach.call(pane.querySelectorAll("input[data-arc-hide]"), function (box) {
+        box.addEventListener("change", function () { setHidden(box.getAttribute("data-arc-hide"), !box.checked); });
       });
+    }
+
+    /**
+     * Hide or show one layer (`<layerId>`) or type (`<layerId>:<value>`,
+     * `<layerId>#other`). A layer coming back needs its features fetched; a
+     * type only needs a redraw — its features are already here.
+     */
+    function setHidden(key, hide) {
+      var next = (opts.hidden ? opts.hidden() || [] : []).filter(function (k) { return k !== key; });
+      if (hide) next.push(key);
+      opts.setHidden(next);
+      if (key.indexOf(":") === -1 && key.indexOf("#") === -1) refresh();
+      else { draw(); routesChanged(); }
     }
 
     // ── Links routed through lines (rule 188(a)) ────────────────────────
@@ -361,7 +476,7 @@
       if (!ft) return null;
       var r = splitRef(ref);
       var l = r && layerById(r.layerId);
-      if (!l || l.geometry !== "line" || !isShown(l.id)) return null;
+      if (!l || l.geometry !== "line" || isHidden(l.id) || !featureShown(l, ft)) return null;
       var pts = featurePoints(ft);
       return pts.length >= 2 ? { id: ref, key: ref, points: pts } : null;
     }
@@ -389,7 +504,9 @@
         var l = layerById(id);
         if (l.geometry !== "line") return;
         var feats = byLayer[id] || {};
+        var h = hiddenSet();
         Object.keys(feats).forEach(function (ref) {
+          if (!featureShown(l, feats[ref], h)) return;
           feats[ref].g.forEach(function (path) {
             var pts = path.map(function (p) { return map.latLngToContainerPoint(L.latLng(p[1], p[0])); });
             for (var i = 0; i < pts.length - 1; i++) {
@@ -417,9 +534,11 @@
         var l = r && layerById(r.layerId);
         if (!line || !l) return;
         var on = x === targetKey;
-        line.setStyle({ weight: on ? widthOf(l) + 8 : widthOf(l) });
+        var w = shapeWidth[x] || widthOf(l);
+        line.setStyle({ weight: on ? w + 8 : w });
         var el = line.getElement && line.getElement();
-        if (el) el.setAttribute("class", classes(l, on ? "is-target" : "") + " leaflet-interactive");
+        var cls = l.types ? "topo-arc topo-arc-line topo-arc-typed" : classes(l);
+        if (el) el.setAttribute("class", cls + (on ? " is-target" : "") + " leaflet-interactive");
       });
     }
 
@@ -443,13 +562,14 @@
       visible: function () { return opts.visible(); },
       sidebarHtml: sidebarHtml,
       wireSidebar: wireSidebar,
-      // The eye button's list: every layer the integration offers.
+      // The eye button's list: the layers covering the map (rule 188(c)).
       layerList: function () {
-        var shown = shownIds();
-        return layers.map(function (l) {
-          return { id: l.id, title: l.title, swatch: swatch(l), shown: shown.indexOf(l.id) !== -1, hasLabels: l.geometry !== "area" };
+        var h = hiddenSet();
+        return covering().map(function (l) {
+          return { id: l.id, title: l.title, swatch: l.types ? "" : swatch(l), shown: !h[l.id], hasLabels: l.geometry !== "area" };
         });
       },
+      setHidden: setHidden,
       setEditing: function () { draw(); },
       destroy: function () {
         if (moveTimer) clearTimeout(moveTimer);

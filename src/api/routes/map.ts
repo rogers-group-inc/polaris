@@ -332,8 +332,8 @@ const CreateViewSchema = z.object({
   name: z.string().min(1).max(200),
   mode: z.enum(["layer2", "topology", "room"]),
   shownTypes: z.array(z.string()).max(100).optional(),
-  // Topology: the ArcGIS layers the view draws (rule 188).
-  arcgisLayers: z.array(z.string().uuid()).max(20).optional(),
+  // Topology: what the view hides of the ArcGIS layers covering it (rule 188(c)).
+  arcgisHidden: z.array(z.string().max(300)).max(500).optional(),
   // Room only (rules 150, 156): the room the view stands for.
   region: z.unknown().optional(),
   // Room: an opening junction box's size in inches and / or an opening rack's size in U.
@@ -348,7 +348,7 @@ const UpdateViewSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   mode: z.enum(["layer2", "topology", "room"]).optional(),
   shownTypes: z.array(z.string()).max(100).optional(),
-  arcgisLayers: z.array(z.string().uuid()).max(20).optional(),
+  arcgisHidden: z.array(z.string().max(300)).max(500).optional(),
   background: z.unknown().optional(),
   polygons: z.array(z.unknown()).optional(),
   racks: z.array(z.unknown()).optional(),

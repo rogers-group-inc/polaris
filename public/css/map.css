@@ -1102,6 +1102,11 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .topology-arc-layers .topology-arc-row { display: flex; align-items: center; gap: 8px; margin: 4px 4px; font-weight: 400; cursor: pointer; }
 .topology-arc-layers .topology-arc-row input { width: auto; margin: 0; }
 .topology-arc-layers p { margin: 6px 4px 0; font-size: 0.78rem; }
+/* Rule 188(b): a by-type layer's types sit under it; its colour rides --arc on the element. */
+.topology-arc-layers .topology-arc-row.is-type { margin-left: 26px; }
+.topology-arc-layers .topology-arc-row.is-off { opacity: 0.5; }
+.topo-arc-legend-layer { font-weight: 600; }
+.topo-arc-legend-row.is-type { padding-left: 10px; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

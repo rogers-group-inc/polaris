@@ -453,13 +453,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** the ArcGIS feature layers READ for the Device Map's Topology views (business rule 188) — the `layers` list of an `arcgis` integration's config, finding layers in the portal, and answering features for a viewport or by id. Nothing here writes to ArcGIS.
 
-**Public API:** `LAYER_GEOMETRIES`, `LAYER_COLORS`, `LAYER_DASHES`, `MAX_LAYERS` (20), `MAX_POPUP_FIELDS` (10), `MAX_WHERE` (500), types ArcgisLayerConfig / ArcgisLayersConfig / LayerInfo / PortalItem / MapFeature / Bbox; pure `layerUrlProblem(url)`, `whereProblem(where)`, `layerHosts(cfg)`, `layersProblem(layers)`, `newLayerConfig(info, itemId?, title?)`, `parseBbox(raw)`, `snapBbox(bbox, zoom)`; `readLayer(cfg, url)`, `searchItems(cfg, {q, scope, start})`, `serviceLayers(cfg, serviceUrl)`, `listMapLayers()`, `queryFeatures(layerId, bbox, zoom)`, `featuresByIds(layerId, ids)`, `checkLayers(cfg)`, `clearFeatureCache()`.
+**Public API:** `LAYER_GEOMETRIES`, `LAYER_COLORS`, `LAYER_DASHES`, `MAX_LAYERS` (20), `MAX_POPUP_FIELDS` (10), `MAX_WHERE` (500), `MAX_TYPES` (50), `MAX_TYPE_VALUE` (200), `TYPE_COLOR_RE`, types ArcgisLayerConfig / ArcgisLayersConfig / LayerTypes / TypeStyle / LayerExtent / LayerInfo / TypeReading / PortalItem / MapFeature / Bbox; pure `layerUrlProblem(url)`, `whereProblem(where)`, `layerHosts(cfg)`, `layersProblem(layers)`, `typesProblem(types)`, `typeWhere(layer)`, `effectiveWhere(layer)`, `symbolStyle(sym)`, `extentToWgs84(extent)`, `newLayerConfig(info, itemId?, title?)`, `parseBbox(raw)`, `snapBbox(bbox, zoom)`; `readLayer(cfg, url)`, `readTypes(cfg, url, field)`, `searchItems(cfg, {q, scope, start})`, `serviceLayers(cfg, serviceUrl)`, `listMapLayers()`, `queryFeatures(layerId, bbox, zoom)`, `featuresByIds(layerId, ids)`, `checkLayers(cfg)`, `clearFeatureCache()`.
 
 **Cross-service deps:** `arcgisService` (`arcgisRequest`, `getArcgisToken`, `portalBase`, `ArcgisError`); `utils/netGuard.isBlockedOutboundHost`; prisma `integration` (enabled `arcgis` rows' `config.layers`).
 
 **Used by:**
 - `src/api/routes/map.ts` → `GET /arcgis-layers` (`listMapLayers`), `GET /arcgis-layers/:layerId/features` (`parseBbox`, `queryFeatures`, `featuresByIds`) — deviceMap read.
-- `src/api/routes/integrations.ts` → `ArcgisLayerSchema` + `ArcgisConfigSchema` (`LAYER_*`, `MAX_*`, `layersProblem`, `layerHosts` into the derived `config.layerHosts`), `stampArcgisLayerHosts` (rule 111), `arcgisConfigForUrl`, `POST /arcgis/search` / `service-layers` / `read-layer`, `clearFeatureCache` on create / PUT / delete.
+- `src/api/routes/integrations.ts` → `ArcgisLayerSchema` + `ArcgisConfigSchema` (`LAYER_*`, `MAX_*`, `layersProblem`, `layerHosts` into the derived `config.layerHosts`), `stampArcgisLayerHosts` (rule 111), `arcgisConfigForUrl`, `POST /arcgis/search` / `service-layers` / `read-layer` / `layer-types` (`readTypes`, rule 188(b)), `ArcgisTypeStyleSchema`, `clearFeatureCache` on create / PUT / delete.
 - `src/services/integrationAdapters.ts` → `arcgis.testConnection` runs `checkLayers` (fields still there, filter accepted).
 - `src/services/cableRunService.ts` → reads the same `config.layers` for the line-layer ids (type `ArcgisLayersConfig` only).
 
@@ -468,10 +468,13 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - **Bounded reads**: a bbox query is WGS84, generalised to half a pixel at the zoom (`maxAllowableOffset`), ≤ 2000 features (`truncated`), cached 1 h (≤ 300 entries, FIFO; `clearFeatureCache` on a layer settings save) on the bbox snapped outward to the zoom's tile grid; by id ≤ 50, quoted (`''`), POSTed, AND-ed with the layer's `where`.
 - **Rule 111**: `layerHosts` lists only hosts outside the portal (and, for an Online portal, outside `*.arcgis.com`), so adding a layer on a new host needs the secret typed again; reading a not-yet-saved foreign host from the form goes without a token (`arcgisConfigForUrl` in the route).
 - **Identity**: GlobalID preferred over OBJECTID (`newLayerConfig`), because a routed link (rule 188(a)) remembers a line by it.
+- **By type (rule 188(b))**: every feature read goes through `effectiveWhere` — the ticked types' clause ANDed with the layer's `where` — and `false` (nothing ticked) skips ArcGIS entirely; `listMapLayers` sends only ticked types; a feature carries its type value as `t`. Type colours are free `#rrggbb`, the one exception to the theme-token `LAYER_COLORS`.
+- **Area (rule 188(c))**: `extent` is stored on the layer config from `readLayer` (WGS84 / Web Mercator only); the browser, not this service, decides which layers cover the view — the server answers any configured layer it is asked for.
 
 **When changing this:**
 - The request shapes (`/sharing/rest/search`, service JSON, layer `query`) follow Esri's REST docs and are pinned only against a fake portal; check against a real portal before claiming a change works.
 - Scale: per map pan, one query per SHOWN layer (debounced client-side), cached; nothing per asset or on a tick. A layer with tens of thousands of features stays cheap because every read is bbox-scoped and capped.
+- `readTypes` reads the renderer only when it renders by that one field (no `field2`, no Arcade `valueExpression`); a CIM symbol yields no style and the type gets a fallback colour.
 - Tests: `tests/unit/arcgisLayerService.test.ts` (seam + mocked prisma), `tests/integration/cableRuns.test.ts` (routes against a real DB and a fake ArcGIS).
 
 ---

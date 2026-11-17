@@ -4377,8 +4377,9 @@ model TopologyView {
   isDefault      Boolean  @default(false) @map("is_default")
   mode           String   @default("layer2")
   shownTypes     String[] @default(["firewall", "router", "switch", "access_point"]) @map("shown_types")
-  // Topology: the ArcGIS layers drawn (rule 188), by configured layer id.
-  arcgisLayers   String[] @default([]) @map("arcgis_layers")
+  // Topology: what is hidden of the ArcGIS layers covering the view (rule 188(c)):
+  // `<layerId>`, `<layerId>:<type value>` or `<layerId>#other`. Not listed = drawn.
+  arcgisHidden   String[] @default([]) @map("arcgis_hidden")
   background     Json?
   polygons       Json     @default("[]")
   racks          Json     @default("[]")

@@ -173,14 +173,18 @@ d("ArcGIS layers on the Device Map (rule 188)", () => {
     expect((await agent.get("/api/v1/map/arcgis-layers/11111111-2222-4333-8444-555555555555/features").query({ bbox: "0,0,1,1" })).status).toBe(404);
   });
 
-  it("a view saves the layers it draws; a new view draws none", async () => {
+  it("a view saves what it hides (rule 188(c)); a new view hides nothing", async () => {
     const agent = await admin();
     const before = await prisma.topologyView.findUniqueOrThrow({ where: { id: viewId } });
-    expect(before.arcgisLayers).toEqual([]);
-    const res = await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, { arcgisLayers: [LINE_ID.toUpperCase(), LINE_ID] });
+    expect(before.arcgisHidden).toEqual([]);
+    const res = await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, {
+      arcgisHidden: [LINE_ID.toUpperCase(), LINE_ID, `${LINE_ID}:Gas line`, `${LINE_ID}#other`],
+    });
     expect(res.status).toBe(200);
-    expect(res.body.view.arcgisLayers).toEqual([LINE_ID]);
-    expect((await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, { arcgisLayers: ["not-a-uuid"] })).status).toBe(400);
+    expect(res.body.view.arcgisHidden).toEqual([LINE_ID, `${LINE_ID}:Gas line`, `${LINE_ID}#other`]);
+    for (const bad of ["not-a-uuid", `${LINE_ID}:`, `${LINE_ID}#nope`]) {
+      expect((await agent.put(`/api/v1/map/sites/${siteId}/topology/views/${viewId}`, { arcgisHidden: [bad] })).status).toBe(400);
+    }
   });
 });
 

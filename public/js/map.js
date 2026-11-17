@@ -3255,10 +3255,10 @@
         }
       }));
       // Until the PUT answers, the patch is what the view now is.
-      if (viewPatch.shownTypes || viewPatch.arcgisLayers) {
+      if (viewPatch.shownTypes || viewPatch.arcgisHidden) {
         var copy = Object.assign({}, editedView,
           viewPatch.shownTypes ? { shownTypes: viewPatch.shownTypes } : {},
-          viewPatch.arcgisLayers ? { arcgisLayers: viewPatch.arcgisLayers } : {});
+          viewPatch.arcgisHidden ? { arcgisHidden: viewPatch.arcgisHidden } : {});
         _replaceSiteView(copy);
       }
     }

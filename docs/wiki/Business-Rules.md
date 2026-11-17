@@ -3827,18 +3827,28 @@ process forwards its own events and picks up a settings change within about 30 s
 
 ### Rule 188
 
-**ArcGIS layers are read, never written, and each Topology view picks the ones it draws.**
+**ArcGIS layers are read, never written, and a Topology view draws the ones covering its map.**
 An [ArcGIS integration](Integration-ArcGIS#layers) lists the feature layers Polaris reads, found by
 searching your portal or by pasting a layer's address, each with its own colour, line style, label, the
 fields a click shows and an optional filter. Nothing is ever written to ArcGIS. Your sign-in stays on the
-Polaris server: the browser only receives the features in view. A Topology view draws only the layers ticked
-under **Map layers**, and a new view draws none. A layer on a host other than your portal needs the secret
-typed again when saved ([rule 111](#rule-111)).
+Polaris server: the browser only receives the features in view. A Topology view draws the layers that cover
+its map. A layer on a host other than your portal needs the secret typed again when saved
+([rule 111](#rule-111)).
 
 **188(a)** A connection between two devices can be dragged onto an ArcGIS line; it is then drawn through
 the line. Which connections ride a line stays in Polaris, so it needs only Device Map Read-Write. A line
 that is hidden, filtered out or deleted in ArcGIS leaves the connection straight, and the view says how many
 connections lost one.
+
+**188(b)** A layer that holds several kinds of line — gas, electric, water — in one type field can be drawn
+**By type**. Polaris reads the field's types from ArcGIS, up to 50, with how many lines each has and the
+names and colours ArcGIS itself uses. You choose which types to include and how each is drawn, in any
+colour. Types you leave out are never fetched from ArcGIS at all. **Other types** covers lines with no type
+and types added in ArcGIS later.
+
+**188(c)** Each layer knows the area it covers, and a Topology view draws every layer that overlaps the map
+on screen, so a site gets its own region's layers without any setting. A view only remembers what you
+**hide** — a layer, or one of its types — so a layer or type added later appears by itself.
 
 ### Rule 189
 

@@ -51,3 +51,58 @@ describe("lengthM", () => {
     expect(C._lengthM([[-85, 38], [-85, 38.001]])).toBeCloseTo(111.19, 1);
   });
 });
+
+describe("layers by area and types (rules 188(b), 188(c))", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
+  const N = "cccccccc-0000-4000-8000-000000000003";
+  const st = (color: string) => ({ color, width: 3, dash: "solid" });
+  const LAYERS = [
+    { id: A, title: "Lines — here", geometry: "line", style: { color: "accent", width: 3, dash: "solid" }, extent: [-86, 37, -85, 38],
+      types: { field: "T", numeric: false, values: [{ value: "GAS", label: "Gas line", on: true, style: st("#f4e04d") }, { value: "WATER", label: "Water line", on: true, style: st("#1e88e5") }],
+        other: { on: true, style: st("#9aa0a6") } } },
+    { id: B, title: "Lines — elsewhere", geometry: "line", style: { color: "accent", width: 3, dash: "solid" }, extent: [-80, 40, -79, 41] },
+    { id: N, title: "No area known", geometry: "point", style: { color: "green", width: 3, dash: "solid" } },
+  ];
+
+  async function mount(hidden: string[]) {
+    let keys = hidden.slice();
+    const fetched: string[] = [];
+    const bounds = { getWest: () => -85.6, getEast: () => -85.5, getSouth: () => 37.5, getNorth: () => 37.6 };
+    const map = { getBounds: () => bounds, getZoom: () => 15, on() {}, off() {} };
+    const L = { layerGroup: () => ({ addTo() { return this; }, clearLayers() {} }) };
+    const layer = C.create({
+      L, map: () => map, pane: () => ({}), editing: () => false, visible: () => false,
+      fetchLayers: () => Promise.resolve({ layers: LAYERS }),
+      fetchFeatures: (id: string) => { fetched.push(id); return Promise.resolve({ features: [] }); },
+      fetchLinks: () => Promise.resolve({ links: {} }),
+      hidden: () => keys, setHidden: (k: string[]) => { keys = k; }, canSaveShown: () => false,
+      toast() {},
+    });
+    await layer.load();
+    return { layer, keys: () => keys, fetched };
+  }
+
+  it("lists the layers covering the map, names the rest, and nests a by-type layer's types", async () => {
+    const { layer } = await mount([`${A}:GAS`]);
+    const html: string = layer.sidebarHtml();
+    expect(html).toContain("Lines — here");
+    expect(html).toContain("No area known");
+    expect(html).toMatch(/Not here: Lines — elsewhere\./);
+    expect(html).toMatch(new RegExp(`data-arc-hide="${A}:GAS"(?! checked)`));
+    expect(html).toContain(`data-arc-hide="${A}:WATER" checked`);
+    expect(html).toContain(`data-arc-hide="${A}#other" checked`);
+    expect(html).toContain("#1e88e5");
+    expect(layer.layerList().map((l: { id: string }) => l.id)).toEqual([A, N]);
+  });
+
+  it("hides a layer or a type by adding its key, and shows it again by removing it", async () => {
+    const { layer, keys } = await mount([]);
+    layer.setHidden(`${A}:WATER`, true);
+    expect(keys()).toEqual([`${A}:WATER`]);
+    layer.setHidden(B, true);
+    layer.setHidden(`${A}:WATER`, false);
+    expect(keys()).toEqual([B]);
+    expect(layer.layerList().find((l: { id: string }) => l.id === A).shown).toBe(true);
+  });
+});

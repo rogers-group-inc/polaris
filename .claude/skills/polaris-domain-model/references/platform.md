@@ -413,8 +413,9 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- "wall" were converted by migration 20261111120000_room_views)
   shownTypes    String[]        -- the SHOWN asset types (firewall always); default firewall/router/
                                 -- switch/access_point, so a custom type added later starts hidden
-  arcgisLayers  String[]        -- topology: the ArcGIS layer ids drawn (rule 188); default [] —
-                                -- a new view draws none; emptied by a mode reset
+  arcgisHidden  String[]        -- topology: what is HIDDEN of the ArcGIS layers covering the map
+                                -- (rule 188(c)): <layerId> | <layerId>:<type> | <layerId>#other;
+                                -- default [] (all drawn); emptied by a mode reset
   background    Json?           -- null | {kind:"osm", center:[lat,lng], zoom} |
                                 -- {kind:"image", imageId, width, height}  (topology views)
                                 -- an osm background also carries layer "map" | "satellite"

@@ -43,11 +43,14 @@
 
 <div class="demo-row">
   <div>
-    <p class="demo-cap">Legend — one row per shown layer, in its own style</p>
+    <p class="demo-cap">Legend — one row per shown layer; a by-type layer's types under its name (rule 188(b))</p>
     <div class="demo-float demo-legend">
       <div class="demo-legend-title">ArcGIS layers</div>
       <div class="demo-legend-row"><svg width="28" height="10"><line x1="2" y1="5" x2="26" y2="5" class="demo-line demo-accent" stroke-width="3"/></svg>Fiber Routes</div>
-      <div class="demo-legend-row"><svg width="28" height="10"><line x1="2" y1="5" x2="26" y2="5" class="demo-line demo-orange" stroke-width="3" stroke-dasharray="10 7"/></svg>Pole Lines</div>
+      <div class="demo-legend-row" style="font-weight: 600">Utility lines</div>
+      <div class="demo-legend-row" style="padding-left: 10px"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#f4e04d" stroke-width="3" stroke-linecap="round"/></svg>Gas line</div>
+      <div class="demo-legend-row" style="padding-left: 10px"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#e53935" stroke-width="3" stroke-linecap="round" stroke-dasharray="10 7"/></svg>OH electric line</div>
+      <div class="demo-legend-row" style="padding-left: 10px"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#1e88e5" stroke-width="3" stroke-linecap="round"/></svg>Water line</div>
       <div class="demo-legend-row"><svg width="28" height="10"><circle cx="14" cy="5" r="4" class="demo-dot"/></svg>Handholes <span class="hint">(partial)</span></div>
     </div>
   </div>
@@ -74,12 +77,16 @@
 
 <div class="demo-row">
   <div>
-    <p class="demo-cap">Details pane — Map layers (saved with the view while editing)</p>
+    <p class="demo-cap">Details pane — Map layers: the layers covering the map, found automatically; untick to hide (rule 188(c))</p>
     <div class="demo-float demo-pane">
       <h5>Map layers</h5>
+      <p class="hint" style="margin: 0">Layers that cover this map, found automatically.</p>
       <label class="demo-check"><input type="checkbox" checked> <span class="demo-sw" style="border-top: 3px solid var(--color-accent)"></span> Fiber Routes</label>
-      <label class="demo-check"><input type="checkbox" checked> <span class="demo-sw" style="border-top: 3px dashed var(--color-sev-serious)"></span> Pole Lines</label>
-      <label class="demo-check"><input type="checkbox"> <span class="demo-sw" style="height: 10px; border: 2px solid var(--color-sev-notice)"></span> Parcels</label>
+      <label class="demo-check"><input type="checkbox" checked> <span>Utility lines</span></label>
+      <label class="demo-check" style="margin-left: 26px"><input type="checkbox" checked> <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#f4e04d" stroke-width="3" stroke-linecap="round"/></svg> Gas line</label>
+      <label class="demo-check" style="margin-left: 26px"><input type="checkbox" checked> <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#e53935" stroke-width="3" stroke-linecap="round" stroke-dasharray="10 7"/></svg> OH electric line</label>
+      <label class="demo-check" style="margin-left: 26px"><input type="checkbox"> <svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#1e88e5" stroke-width="3" stroke-linecap="round"/></svg> Water line</label>
+      <p class="hint" style="margin: 0">Not here: Utility lines — WV.</p>
       <p style="margin: 4px 0 0"><span class="badge badge-expired">Route line missing</span> 1 connection rides a line that is hidden, filtered out or gone from ArcGIS.</p>
       <p class="hint" style="margin: 0">Editing: saved with this view.</p>
     </div>
@@ -134,6 +141,18 @@
               <button type="button" class="demo-swatch" aria-label="Green" style="background: var(--color-success)"></button>
               <button type="button" class="demo-swatch" aria-label="Grey" style="background: var(--color-sev-notice)"></button>
             </div>
+            <div class="demo-inline">
+              <span class="hint" style="margin: 0">Style</span>
+              <button type="button" class="btn btn-sm btn-secondary">One style</button>
+              <button type="button" class="btn btn-sm btn-secondary" style="background: var(--color-accent); color: var(--color-bg-primary); border-color: var(--color-accent)">By type</button>
+              <select aria-label="Type field" style="width: auto"><option>LINE_TYPE</option></select>
+              <button type="button" class="btn btn-sm btn-secondary">Read types</button>
+            </div>
+            <div class="table-wrapper"><table><thead><tr><th style="width: 34px"></th><th>Type</th><th>Value</th><th style="text-align: right">Lines</th><th>Colour</th></tr></thead><tbody>
+              <tr><td><input type="checkbox" checked aria-label="Draw Gas line" style="width: auto; margin: 0"></td><td><div class="demo-inline"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#f4e04d" stroke-width="3" stroke-linecap="round"/></svg>Gas line</div></td><td class="mono">GAS</td><td class="mono" style="text-align: right">1,204</td><td><input type="color" value="#f4e04d" aria-label="Colour of Gas line" style="width: 40px; height: 26px; padding: 0 2px"></td></tr>
+              <tr><td><input type="checkbox" checked aria-label="Draw OH electric line" style="width: auto; margin: 0"></td><td><div class="demo-inline"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#e53935" stroke-width="3" stroke-linecap="round" stroke-dasharray="10 7"/></svg>OH electric line</div></td><td class="mono">OH_ELEC</td><td class="mono" style="text-align: right">2,870</td><td><input type="color" value="#e53935" aria-label="Colour of OH electric line" style="width: 40px; height: 26px; padding: 0 2px"></td></tr>
+              <tr><td><input type="checkbox" aria-label="Draw Other types" style="width: auto; margin: 0"></td><td><div class="demo-inline"><svg width="28" height="10" aria-hidden="true"><line x1="2" y1="5" x2="26" y2="5" stroke="#9aa0a6" stroke-width="2" stroke-linecap="round"/></svg><span class="hint" style="margin: 0">Other types</span></div></td><td class="hint" colspan="2">blank, or added in ArcGIS later</td><td><input type="color" value="#9aa0a6" aria-label="Colour of Other types" style="width: 40px; height: 26px; padding: 0 2px"></td></tr>
+            </tbody></table></div>
             <div class="form-group" style="margin: 0"><label for="d-id">Identity field</label><select id="d-id"><option>GlobalID</option></select></div>
             <div class="demo-inline"><span class="badge badge-readonly">FIBER_COUNT</span><span class="badge badge-readonly">INSTALL_DATE</span><select aria-label="Add field" style="width: auto"><option>Add field</option></select></div>
             <div class="form-group" style="margin: 0"><label for="d-w">Only features where (optional)</label><input type="text" id="d-w" class="mono" value="STATUS = 'In service'"></div>

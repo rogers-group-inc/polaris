@@ -1362,6 +1362,13 @@ const GenericApiConfigSchema = z.object({
   if (badNetwork) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["networkQueries"], message: badNetwork });
 });
 
+/** Rule 188(b): one type's line — any colour (ArcGIS's own), as #rrggbb. */
+const ArcgisTypeStyleSchema = z.object({
+  color: z.string().regex(arcgisLayers.TYPE_COLOR_RE),
+  width: z.number().int().min(1).max(8),
+  dash:  z.enum(arcgisLayers.LAYER_DASHES),
+});
+
 /** Rule 188: one ArcGIS feature layer Polaris reads. `layersProblem` checks the rest. */
 const ArcgisLayerSchema = z.object({
   id:          z.string().uuid(),
@@ -1378,6 +1385,20 @@ const ArcgisLayerSchema = z.object({
     width: z.number().int().min(1).max(8),
     dash:  z.enum(arcgisLayers.LAYER_DASHES),
   }),
+  // Rule 188(b): drawn by type. `typesProblem` checks values against `numeric`.
+  types: z.object({
+    field:   z.string().trim().max(64),
+    numeric: z.boolean(),
+    values: z.array(z.object({
+      value: z.union([z.string().max(arcgisLayers.MAX_TYPE_VALUE), z.number()]),
+      label: z.string().trim().max(120),
+      on:    z.boolean(),
+      style: ArcgisTypeStyleSchema,
+    })).max(arcgisLayers.MAX_TYPES),
+    other: z.object({ on: z.boolean(), style: ArcgisTypeStyleSchema }),
+  }).optional(),
+  // Rule 188(c): the area the layer covers, [w, s, e, n] degrees.
+  extent: z.tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)]).optional(),
 }).transform((l) => ({
   ...l,
   id: l.id.toLowerCase(),
@@ -3245,6 +3266,21 @@ router.post("/arcgis/read-layer", async (req, res, next) => {
     const cfg = await arcgisConfigForUrl(req.body, b.url);
     const layer = await arcgisLayers.readLayer(cfg, b.url);
     res.json({ layer, entry: layer.geometry ? arcgisLayers.newLayerConfig(layer, b.itemId, b.title) : null });
+  } catch (err) {
+    arcgisFailure(err, next);
+  }
+});
+
+// POST /api/v1/integrations/arcgis/layer-types — { id?, config, url, field }
+// → the field's types: values, counts, ArcGIS's names and styles (rule 188(b)).
+router.post("/arcgis/layer-types", async (req, res, next) => {
+  try {
+    const b = z.object({
+      url: z.string().trim().url().max(500),
+      field: z.string().trim().min(1).max(64),
+    }).parse(req.body ?? {});
+    const cfg = await arcgisConfigForUrl(req.body, b.url);
+    res.json(await arcgisLayers.readTypes(cfg, b.url, b.field));
   } catch (err) {
     arcgisFailure(err, next);
   }
