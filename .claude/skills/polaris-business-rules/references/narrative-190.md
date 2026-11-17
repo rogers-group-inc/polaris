@@ -51,6 +51,37 @@ references by `cid:`.
   Notify would have to wait for a queued script (the runner ticks every 5 s and drains two at
   a time), which is a new ordering contract in the action engine for one feature.
 
+### 190(a) — the Notify picker, not a typed list (2026-11-17)
+
+The first build gave the script action a single channel `<select>` and a comma-separated
+address box. The operator asked for it to be the Notify action's recipient editor instead:
+the channel checkboxes and the To / Cc / Bcc pill fields with their typeahead and address
+book — "of course, it won't include web push." The point is that "who hears about this
+certificate" should be stated the same way whether Polaris composes the email or a script
+does, and that the people who already receive a site's alerts (its region's users, a role,
+the asset's contacts) can be named without retyping their addresses.
+
+- **Resolved at fire time, snapshot as addresses.** The pills are resolved when the
+  automation fires, against the triggering device, by the resolver the reboot action already
+  uses for its results email (`resolveRebootActionRecipients`) — so "Asset's L1 Region Users"
+  means the people who own THIS device. The run row stores plain addresses; the script still
+  never sees, chooses or widens the list, which is what rule 190 was about. A To that
+  resolves to nobody fails the action rather than running a script that can email no one.
+- **One message per channel, To visible.** A Notify action without Cc / Bcc fans out one
+  email per To address; a script's send does not, because the cap is three SENDS per run and
+  fanning out would make it three × N messages with no way for the script to see N. The
+  wizard says so beside the fields, and Bcc is there for an address that should be hidden.
+- **Several channels.** The checklist allows more than one, as Notify's does; each send goes
+  through each ticked channel. A gone or disabled channel is skipped, a partial send is a
+  success the failed channel's warning Event accounts for, and only an all-fail is the 502
+  the script sees.
+- **A recipient cap, not truncation.** A role or a tag can resolve to many people;
+  `requestScriptRun` refuses past 200 addresses rather than silently dropping the rest.
+- **Back-compat.** The rule-190 shape (`channelId` + `addresses`) still validates and loads in
+  the wizard as one ticked channel and address pills in To; the builder writes only the new
+  shape. The run row's `emailChannelId` became `emailChannelIds` (migration
+  `20261117100000_script_run_email_recipients` copies any value across).
+
 ### Rule 190 — the invariant as stated in full
 
 See `invariants-30-43.md` → 190. The implementation is `scriptRunEmailService.ts` (the pass,

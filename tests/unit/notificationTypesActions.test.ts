@@ -29,6 +29,8 @@ import {
   SCRIPT_INTERPRETERS,
   deliveryTargetSchema,
   emailRecipientsSchema,
+  scriptEmailChannelIds,
+  scriptEmailHasTo,
   emailCompositionSchema,
   escalationSchema,
   escalationV2Schema,
@@ -111,6 +113,23 @@ describe("deliveryTargetSchema", () => {
   it("carries respectUserPreference, so the runtime target path does not drop it (rule 39)", () => {
     const r = deliveryTargetSchema.parse({ channelId: "c", respectUserPreference: true });
     expect(r.respectUserPreference).toBe(true);
+  });
+});
+
+describe("script action email block (rules 190 + 190(a))", () => {
+  const parse = (email: unknown) => actionSchema.safeParse({ type: "script", scriptId: "s1", runOn: "server", email });
+  it("takes the Notify recipient vocabulary and still reads the rule-190 shape", () => {
+    expect(parse({ channelIds: ["c1"], recipientDeviceRegionLevels: [1], recipientAssetContacts: true, cc: { recipientRoles: ["r"] }, bcc: { addresses: ["b@x.com"] } }).success).toBe(true);
+    expect(parse({ channelId: "c1", addresses: ["certs@example.com"] }).success).toBe(true);
+    expect(parse({ channelIds: ["c1"], addresses: ["not-an-address"] }).success).toBe(false);
+    expect(parse({ channelIds: ["c1"], subject: "x" }).success).toBe(false); // the script owns the subject, not the action
+  });
+  it("folds the channels and answers whether anyone is in To", () => {
+    expect(scriptEmailChannelIds({ channelIds: ["a", "a", "b"] })).toEqual(["a", "b"]);
+    expect(scriptEmailChannelIds({ channelId: "a" })).toEqual(["a"]);
+    expect(scriptEmailChannelIds(null)).toEqual([]);
+    expect(scriptEmailHasTo({ channelIds: ["a"], cc: { addresses: ["c@x.com"] } })).toBe(false);
+    expect(scriptEmailHasTo({ channelIds: ["a"], recipientDeviceRegionLevels: [1] })).toBe(true);
   });
 });
 

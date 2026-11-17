@@ -794,7 +794,7 @@ describe("automation wizard DOM render", () => {
     expect(() => ruleInputSchema.parse(payload)).not.toThrow();
   });
 
-  it("script action email (rule 190): hydrates, offers email channels only, gates on Run on, round-trips", async () => {
+  it("script action email (rules 190 + 190(a)): legacy shape hydrates into the Notify picker, email channels only, gates on Run on, round-trips", async () => {
     doc.body.innerHTML = "";
     savedPayloads.length = 0;
     toastErrors.length = 0;
@@ -811,9 +811,24 @@ describe("automation wizard DOM render", () => {
     const fields = box.querySelector(".sa-email-fields") as unknown as { hidden: boolean };
     expect(on.checked).toBe(true);
     expect(fields.hidden).toBe(false);
-    const chOpts = Array.from(box.querySelectorAll(".sa-email-ch option")).map((o) => (o as unknown as { value: string }).value);
-    expect(chOpts).toEqual(["c1"]); // the web_push channel cannot carry a script's email
-    expect((box.querySelector(".sa-email-to") as unknown as { value: string }).value).toBe("certs@example.com, sec@example.com");
+    // The Notify action's channel checklist, email channels only — the
+    // web_push channel cannot carry a script's email. The legacy single
+    // channelId loads ticked.
+    const chans = Array.from(box.querySelectorAll(".sa-email-chan")) as unknown as Array<{ value: string; checked: boolean }>;
+    expect(chans.map((c) => c.value)).toEqual(["c1"]);
+    expect(chans[0]!.checked).toBe(true);
+    // The legacy typed addresses load as address pills in To, beside a Cc and
+    // a Bcc box and the To box's address book.
+    const toBox = box.querySelector('.sa-email-recips .na-recip-box[data-field="to"]')!;
+    expect(Array.from(toBox.querySelectorAll('.tag-chip[data-kind="address"]')).map((c) => c.getAttribute("data-value")))
+      .toEqual(["certs@example.com", "sec@example.com"]);
+    expect(box.querySelector('.sa-email-recips .na-recip-box[data-field="cc"]')).toBeTruthy();
+    expect(box.querySelector('.sa-email-recips .na-recip-box[data-field="bcc"]')).toBeTruthy();
+    expect(box.querySelectorAll(".sa-email-recips .na-book")).toHaveLength(1);
+    // A Cc typed into the picker rides along.
+    const ccInput = box.querySelector('.sa-email-recips .na-recip-box[data-field="cc"] .na-recip-input') as unknown as { value: string; dispatchEvent: (e: unknown) => void };
+    ccInput.value = "audit@example.com";
+    ccInput.dispatchEvent(new (g.window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 
     // An agent run cannot hold the pass: the block greys out and says why.
     const agentRadio = box.querySelector(".sa-runon-agent") as unknown as { checked: boolean; dispatchEvent: (e: unknown) => void };
@@ -832,8 +847,32 @@ describe("automation wizard DOM render", () => {
     expect(toastErrors).toEqual([]);
     const payload = savedPayloads[0]! as Record<string, any>;
     const sa = payload.actions.find((a: { type: string }) => a.type === "script");
-    expect(sa.email).toEqual({ channelId: "c1", addresses: ["certs@example.com", "sec@example.com"] });
+    // Written back in the 190(a) shape: channelIds, never the legacy channelId.
+    expect(sa.email).toEqual({
+      channelIds: ["c1"],
+      addresses: ["certs@example.com", "sec@example.com"],
+      cc: { addresses: ["audit@example.com"] },
+    });
     expect(() => ruleInputSchema.parse(payload)).not.toThrow();
+  });
+
+  it("script action email (rule 190(a)): refuses a block with no To recipient", async () => {
+    doc.body.innerHTML = "";
+    savedPayloads.length = 0;
+    toastErrors.length = 0;
+    await (g.openAutomationWizard as (r: unknown) => Promise<void>)({
+      id: "r-sc-mail2", name: "Cert renewed", description: null, enabled: true, severity: "informational",
+      trigger: { type: "event", actionPattern: "path_check.tls_cert_changed" },
+      scope: { allAssets: true }, reset: { mode: "timed", afterSec: 86400 }, cooldownSec: null, messageTemplate: null,
+      actions: [{ type: "script", scriptId: "sc1", runOn: "server", email: { channelIds: ["c1"], cc: { addresses: ["audit@example.com"] } } }],
+    });
+    (doc.querySelectorAll("#aw-stepper .stepper-step")[4] as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 10));
+    (doc.querySelector("#aw-save") as unknown as { click: () => void }).click();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(savedPayloads).toHaveLength(0);
+    expect(toastErrors.join(" ")).toMatch(/To recipient the script may email/);
+    toastErrors.length = 0; // later tests assert a clean toast list
   });
 
   it("repeat control: omits stopAfterHours when blank, which is the unbounded default", async () => {

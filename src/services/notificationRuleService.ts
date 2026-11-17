@@ -35,6 +35,8 @@ import {
   type RuleActionCarrier,
   notifyChannelIds,
   rebootActionHasTo,
+  scriptEmailChannelIds,
+  scriptEmailHasTo,
   buildShadowIndex,
   isAssetShadowed,
   triggerSignature,
@@ -680,7 +682,13 @@ export async function assertActionRefs(input: RuleActionCarrier): Promise<void> 
         if (action.runOn !== "server") {
           throw new AppError(400, `${label}: only a script that runs on the Polaris server can send email through a Polaris channel`);
         }
-        scriptEmailRefs.push({ label, channelId: action.email.channelId });
+        // Rule 190(a): the notify action's channel checklist and To/Cc/Bcc —
+        // at least one channel, and someone in To (a Cc/Bcc-only list has no
+        // To line to send to, the same reason the reboot action needs one).
+        const chIds = scriptEmailChannelIds(action.email);
+        if (chIds.length === 0) throw new AppError(400, `${label}: pick the email channel the script sends through`);
+        if (!scriptEmailHasTo(action.email)) throw new AppError(400, `${label}: name at least one To recipient the script may email`);
+        for (const channelId of chIds) scriptEmailRefs.push({ label, channelId });
       }
     }
     // `event` references nothing — no channel, script or URL to validate.

@@ -4,7 +4,8 @@
  * Pins: the pass answers only for a running run inside its timeout; recipients
  * come from the run row, never the request; the per-run cap is atomic; the
  * attachment vetting; the footer; one audit Event per attempt; the test-run
- * target is the tester alone.
+ * target is the tester alone. Rule 190(a): Cc / Bcc ride along, every ticked
+ * channel sends, a partial send succeeds and only an all-fail is a 502.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -28,7 +29,7 @@ const PASS = "prun_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
 const now = new Date("2026-11-16T12:00:00Z");
 const run = (extra: Record<string, unknown> = {}) => ({
   id: "run1", scriptId: "s1", scriptName: "cert-mail", ruleId: "r1", notificationId: "n1",
-  status: "running", timeoutSec: 30, emailChannelId: "ch1", emailTo: ["certs@example.com"],
+  status: "running", timeoutSec: 30, emailChannelIds: ["ch1"], emailTo: ["certs@example.com"], emailCc: [], emailBcc: [],
   emailTokenIssuedAt: new Date(now.getTime() - 5_000), emailsSent: 0, ...extra,
 });
 const b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -39,7 +40,7 @@ beforeEach(() => {
   mocks.send.mockReset().mockResolvedValue(undefined);
   stubbed(prisma.automationScriptRun.findUnique).mockResolvedValue(run() as never);
   stubbed(prisma.automationScriptRun.updateMany).mockResolvedValue({ count: 1 } as never);
-  stubbed(prisma.notificationChannel.findUnique).mockResolvedValue({ id: "ch1", name: "Corp relay", type: "smtp", enabled: true, config: { host: "relay" } } as never);
+  stubbed(prisma.notificationChannel.findMany).mockResolvedValue([{ id: "ch1", name: "Corp relay", type: "smtp", enabled: true, config: { host: "relay" } }] as never);
 });
 
 describe("attachment vetting (pure)", () => {
@@ -74,6 +75,8 @@ describe("sendRunEmail", () => {
     expect(msg.subject).toBe("Cert Bcc: evil@x"); // no header injection
     expect(msg.text).toMatch(/^hello\n\n--\nSent by the Polaris automation script "cert-mail" \(run run1\)/);
     expect(msg.files[0].filename).toBe("intranet.pem");
+    expect(msg.cc).toBeUndefined();
+    expect(msg.bcc).toBeUndefined();
     expect(out).toEqual({ sent: 1, remaining: MAX_EMAILS_PER_RUN - 1 });
     expect(eventLog.logEvent.mock.calls[0]![0]).toMatchObject({
       action: "automation.script.email_sent", level: "info",
@@ -102,10 +105,39 @@ describe("sendRunEmail", () => {
   });
 
   it("refuses a disabled or deleted channel", async () => {
-    stubbed(prisma.notificationChannel.findUnique).mockResolvedValueOnce({ id: "ch1", name: "Corp relay", type: "smtp", enabled: false, config: {} } as never);
+    stubbed(prisma.notificationChannel.findMany).mockResolvedValueOnce([{ id: "ch1", name: "Corp relay", type: "smtp", enabled: false, config: {} }] as never);
     await expect(sendRunEmail(PASS, { subject: "s", text: "" }, now)).rejects.toMatchObject({ httpStatus: 409 });
-    stubbed(prisma.notificationChannel.findUnique).mockResolvedValueOnce(null as never);
+    stubbed(prisma.notificationChannel.findMany).mockResolvedValueOnce([] as never);
     await expect(sendRunEmail(PASS, { subject: "s", text: "" }, now)).rejects.toMatchObject({ httpStatus: 409 });
+  });
+
+  it("carries the run's Cc and Bcc, and sends one message through every ticked channel (rule 190(a))", async () => {
+    stubbed(prisma.automationScriptRun.findUnique).mockResolvedValueOnce(run({
+      emailChannelIds: ["ch1", "ch2", "gone"], emailCc: ["audit@example.com"], emailBcc: ["hidden@example.com"],
+    }) as never);
+    stubbed(prisma.notificationChannel.findMany).mockResolvedValueOnce([
+      { id: "ch2", name: "M365", type: "oauth_m365", enabled: true, config: {} },
+      { id: "ch1", name: "Corp relay", type: "smtp", enabled: true, config: { host: "relay" } },
+    ] as never);
+    const out = await sendRunEmail(PASS, { subject: "s", text: "" }, now);
+    expect((mocks.send.mock.calls as unknown as Array<[{ type: string }]>).map((c) => c[0].type)).toEqual(["smtp", "oauth_m365"]); // the action's order
+    const msg = (mocks.send.mock.calls as unknown as Array<[unknown, Record<string, unknown>]>)[0]![1];
+    expect(msg).toMatchObject({ to: ["certs@example.com"], cc: ["audit@example.com"], bcc: ["hidden@example.com"] });
+    expect(out.sent).toBe(3);
+    expect(eventLog.logEvent.mock.calls.map((c) => c[0].action)).toEqual(["automation.script.email_sent", "automation.script.email_sent"]);
+  });
+
+  it("succeeds when one channel of two fails, auditing the failure; 502 only when all fail", async () => {
+    stubbed(prisma.automationScriptRun.findUnique).mockResolvedValue(run({ emailChannelIds: ["ch1", "ch2"] }) as never);
+    stubbed(prisma.notificationChannel.findMany).mockResolvedValue([
+      { id: "ch1", name: "Corp relay", type: "smtp", enabled: true, config: {} },
+      { id: "ch2", name: "M365", type: "oauth_m365", enabled: true, config: {} },
+    ] as never);
+    mocks.send.mockRejectedValueOnce(new Error("relay down"));
+    await expect(sendRunEmail(PASS, { subject: "s", text: "" }, now)).resolves.toMatchObject({ sent: 1 });
+    expect(eventLog.logEvent.mock.calls.map((c) => c[0].action)).toEqual(["automation.script.email_failed", "automation.script.email_sent"]);
+    mocks.send.mockRejectedValueOnce(new Error("relay down")).mockRejectedValueOnce(new Error("graph 403"));
+    await expect(sendRunEmail(PASS, { subject: "s", text: "" }, now)).rejects.toMatchObject({ httpStatus: 502, message: expect.stringMatching(/relay down.*graph 403/) });
   });
 
   it("reports a transport failure as 502 and audits it as a warning", async () => {
@@ -119,7 +151,7 @@ describe("testRunEmailTarget", () => {
   it("sends a test only to the signed-in tester, through an email channel", async () => {
     stubbed(prisma.user.findUnique).mockResolvedValue({ email: " me@example.com " } as never);
     stubbed(prisma.notificationChannel.findUnique).mockResolvedValue({ type: "oauth_m365", name: "M365" } as never);
-    expect(await testRunEmailTarget("ch1", "u1")).toEqual({ channelId: "ch1", addresses: ["me@example.com"] });
+    expect(await testRunEmailTarget("ch1", "u1")).toEqual({ channelIds: ["ch1"], to: ["me@example.com"] });
   });
   it("refuses no session, no address, or a non-email channel", async () => {
     await expect(testRunEmailTarget("ch1", null)).rejects.toMatchObject({ httpStatus: 400 });

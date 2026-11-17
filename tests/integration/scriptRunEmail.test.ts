@@ -36,7 +36,7 @@ async function runningRun(extra: Record<string, unknown> = {}): Promise<{ id: st
     data: {
       scriptId, scriptName: PFX, sha256: "x", runOn: "server", timeoutSec: 60, status: "running",
       startedAt: new Date(), requestedBy: "system:automation",
-      emailChannelId, emailTo: ["certs@example.invalid"], ...extra,
+      emailChannelIds: [emailChannelId], emailTo: ["certs@example.invalid"], ...extra,
     },
   });
   return { id: r.id, pass: await issueRunEmailPass(r.id) };
@@ -121,7 +121,7 @@ d("rule 190 — saving and deleting", () => {
     actions: [action],
   });
 
-  it("refuses email on an agent-run script and through a non-email channel; saves a server one", async () => {
+  it("refuses email on an agent-run script, through a non-email channel or with no To; saves a server one", async () => {
     const { agent, csrf } = await authedAgent(app);
     const onAgent = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf)
       .send(rule("agent", { type: "script", scriptId: agentScriptId, runOn: "agent", email: { channelId: emailChannelId, addresses: ["a@example.invalid"] } }));
@@ -134,6 +134,16 @@ d("rule 190 — saving and deleting", () => {
     const ok = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf)
       .send(rule("ok", { type: "script", scriptId, runOn: "server", email: { channelId: emailChannelId, addresses: ["a@example.invalid"] } }));
     expect(ok.status).toBe(201);
+    // Rule 190(a): the Notify picker's shape — a To is required, Cc alone is not one.
+    const ccOnly = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf)
+      .send(rule("cc-only", { type: "script", scriptId, runOn: "server", email: { channelIds: [emailChannelId], cc: { addresses: ["a@example.invalid"] } } }));
+    expect(ccOnly.status).toBe(400);
+    expect(ccOnly.body.error).toMatch(/at least one To recipient/);
+    const picker = await agent.post("/api/v1/automations").set("X-CSRF-Token", csrf)
+      .send(rule("picker", { type: "script", scriptId, runOn: "server", email: {
+        channelIds: [emailChannelId], recipientDeviceRegionLevels: [1], cc: { addresses: ["audit@example.invalid"] },
+      } }));
+    expect(picker.status).toBe(201);
   });
 
   it("refuses to delete a channel a script action emails through (rule 167)", async () => {
@@ -153,7 +163,7 @@ d("rule 190 — saving and deleting", () => {
         .send({ args: "dry_run=1", emailChannelId });
       expect(res.status).toBe(202);
       const run = await prisma.automationScriptRun.findUnique({ where: { id: res.body.runId } });
-      expect(run).toMatchObject({ emailChannelId, emailTo: ["tester@example.invalid"] });
+      expect(run).toMatchObject({ emailChannelIds: [emailChannelId], emailTo: ["tester@example.invalid"], emailCc: [], emailBcc: [] });
     } finally {
       await prisma.user.update({ where: { id: me!.id }, data: { email: before } });
     }

@@ -225,8 +225,8 @@ export async function executeServerScript(run: {
   notificationId: string | null;
   ruleId: string | null;
   assetId: string | null;
-  /** Business rule 190: set when the action lets this run send email. */
-  emailChannelId?: string | null;
+  /** Business rule 190: non-empty when the action lets this run send email. */
+  emailChannelIds?: string[] | null;
 }): Promise<ExecResult> {
   const script = run.scriptId ? await prisma.automationScript.findUnique({ where: { id: run.scriptId } }) : null;
   if (!script) return { status: "failed", exitCode: null, stdout: "", stderr: "script no longer exists in the registry" };
@@ -245,7 +245,7 @@ export async function executeServerScript(run: {
     // Rule 190: issued as late as possible, so the pass's clock starts with
     // the process, not with the claim (a batch is claimed at once and run two
     // at a time). Cleared by the completion update in runPendingServerScripts.
-    const emailEnv: Record<string, string> = run.emailChannelId
+    const emailEnv: Record<string, string> = run.emailChannelIds?.length
       ? { POLARIS_RUN_TOKEN: await issueRunEmailPass(run.id), POLARIS_API_URL: scriptApiUrl() }
       : {};
     return await new Promise<ExecResult>((resolveExec) => {

@@ -216,8 +216,12 @@ email delivery channels (SMTP or Microsoft 365), so it needs no mail settings
 or password of its own ([rule 190](Business-Rules#rule-190)).
 
 1. On the automation's **Script** action, tick **Let this script send email
-   through Polaris**, pick the **Email channel**, and type the addresses it may
-   send to under **Send to**.
+   through Polaris**. Tick the email **Channels** to send through and fill
+   **To**, **Cc** and **Bcc** exactly as on a **Send a notification** action:
+   type a name or address, or use the **Address book** for people, roles,
+   regions, tags, the asset's region users or its contacts. These are worked
+   out when the automation fires, for the device that set it off; if To works
+   out to nobody, the script is not run.
 2. Each run then finds a one-time pass in `POLARIS_RUN_TOKEN` and the address to
    use in `POLARIS_API_URL`. The script sends with:
 
@@ -241,8 +245,12 @@ print(urllib.request.urlopen(req, timeout=20).read().decode())
 What the script can and cannot do:
 
 - It sets the **subject, text and attachments**. It **cannot choose who
-  receives the email**: the addresses come from the action. A request that
+  receives the email**: the recipients come from the action. A request that
   names recipients is refused.
+- Each email goes out as **one message per ticked channel**, with everyone in
+  To able to see each other (use Bcc to hide an address). If one channel fails
+  and another works, the send counts as sent and the failure is recorded in
+  Events; if every channel fails the script gets a 502.
 - Up to **3 emails per run**, up to **5 attachments**, **512 KB** of
   attachments in total. Programs and scripts (`.exe`, `.ps1`, `.js`, …) cannot
   be attached.

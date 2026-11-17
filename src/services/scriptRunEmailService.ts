@@ -1,6 +1,6 @@
 /**
  * src/services/scriptRunEmailService.ts — business rule 190: a server-run
- * automation script sends email through the Polaris channel its action names.
+ * automation script sends email through the Polaris channels its action names.
  *
  * THE PASS
  *  A run whose action carries `email` gets a random pass in its environment
@@ -13,8 +13,10 @@
  * WHAT THE SCRIPT MAY SAY, AND WHAT IT MAY NOT
  *  Subject, text and file attachments — never a recipient. The addresses were
  *  snapshot on the run at fire time from the action the operator saved
- *  (AutomationScriptRun.emailTo), so a script cannot turn Polaris's mail relay
- *  on anyone else. At most MAX_EMAILS_PER_RUN sends per run, attachments capped
+ *  (AutomationScriptRun.emailTo / emailCc / emailBcc — rule 190(a): the
+ *  action's To / Cc / Bcc pills, resolved against the triggering device), so a
+ *  script cannot turn Polaris's mail relay on anyone else. Each send goes out
+ *  once per ticked channel. At most MAX_EMAILS_PER_RUN sends per run, attachments capped
  *  and executable types refused, a footer naming the script and run on every
  *  message, and an audit Event per attempt.
  *
@@ -72,7 +74,7 @@ export async function issueRunEmailPass(runId: string): Promise<string> {
  * when the caller has no session or no email address, or the channel is not
  * an email channel.
  */
-export async function testRunEmailTarget(channelId: string, userId: string | null): Promise<{ channelId: string; addresses: string[] }> {
+export async function testRunEmailTarget(channelId: string, userId: string | null): Promise<{ channelIds: string[]; to: string[] }> {
   if (!userId) throw new AppError(400, "An email test run sends to the signed-in user, so it needs a browser session");
   const [user, channel] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { email: true } }),
@@ -82,7 +84,7 @@ export async function testRunEmailTarget(channelId: string, userId: string | nul
   if (channel.type !== "smtp" && channel.type !== "oauth_m365") throw new AppError(400, `"${channel.name}" is not an email channel`);
   const email = user?.email?.trim();
   if (!email) throw new AppError(400, "Your account has no email address, so the test has nowhere to send");
-  return { channelId, addresses: [email] };
+  return { channelIds: [channelId], to: [email] };
 }
 
 export interface RunEmailFileInput {
@@ -144,10 +146,10 @@ export async function sendRunEmail(rawPass: string, input: RunEmailInput, now = 
     where: { emailTokenHash: hashRunPass(rawPass) },
     select: {
       id: true, scriptId: true, scriptName: true, ruleId: true, notificationId: true, status: true, timeoutSec: true,
-      emailChannelId: true, emailTo: true, emailTokenIssuedAt: true, emailsSent: true,
+      emailChannelIds: true, emailTo: true, emailCc: true, emailBcc: true, emailTokenIssuedAt: true, emailsSent: true,
     },
   });
-  if (!run || run.status !== "running" || !run.emailTokenIssuedAt || !run.emailChannelId) throw denied;
+  if (!run || run.status !== "running" || !run.emailTokenIssuedAt || run.emailChannelIds.length === 0) throw denied;
   if (now.getTime() > run.emailTokenIssuedAt.getTime() + run.timeoutSec * 1000 + PASS_GRACE_MS) throw denied;
   if (run.emailTo.length === 0) throw new AppError(409, "This run has no recipients to email");
 
@@ -162,39 +164,63 @@ export async function sendRunEmail(rawPass: string, input: RunEmailInput, now = 
   });
   if (claimed.count === 0) throw new AppError(429, `A run may send at most ${MAX_EMAILS_PER_RUN} emails`);
 
-  const channel = await prisma.notificationChannel.findUnique({ where: { id: run.emailChannelId } });
-  if (!channel) throw new AppError(409, "The email channel this automation names no longer exists");
-  if (!channel.enabled) throw new AppError(409, `The email channel "${channel.name}" is disabled`);
+  // Rule 190(a): every channel the action ticked, in the order it lists them.
+  // A gone or disabled channel is skipped; none left is a 409.
+  const rows = await prisma.notificationChannel.findMany({ where: { id: { in: run.emailChannelIds } } });
+  const byId = new Map(rows.map((c) => [c.id, c]));
+  const channels = run.emailChannelIds.map((id) => byId.get(id)).filter((c): c is NonNullable<typeof c> => !!c && c.enabled);
+  if (channels.length === 0) {
+    throw new AppError(409, rows.length === 0
+      ? "The email channel this automation names no longer exists"
+      : `The email channel${rows.length === 1 ? "" : "s"} this automation names ${rows.length === 1 ? "is" : "are"} disabled`);
+  }
 
   const text = `${input.text.slice(0, MAX_EMAIL_TEXT_CHARS)}\n\n--\nSent by the Polaris automation script "${run.scriptName}" (run ${run.id}).\n`;
-  const details = {
+  const recipients = run.emailTo.length + run.emailCc.length + run.emailBcc.length;
+  const baseDetails = {
     runId: run.id, scriptId: run.scriptId, ruleId: run.ruleId, notificationId: run.notificationId,
-    channelId: channel.id, channelName: channel.name, to: run.emailTo, subject,
+    to: run.emailTo, cc: run.emailCc, bcc: run.emailBcc, subject,
     files: files.map((f) => ({ filename: f.filename, bytes: f.content.length })),
   };
-  try {
-    await sendEmailThroughChannel(
-      { type: channel.type, config: channel.config as Record<string, unknown> },
-      { to: run.emailTo, subject, text, files },
-    );
-  } catch (err) {
-    const reason = (err as Error).message?.slice(0, 500) || "send failed";
+  // ONE message per channel: the full To line visible, Cc and Bcc as set.
+  const failures: string[] = [];
+  for (const channel of channels) {
+    const details = { ...baseDetails, channelId: channel.id, channelName: channel.name };
+    try {
+      await sendEmailThroughChannel(
+        { type: channel.type, config: channel.config as Record<string, unknown> },
+        {
+          to: run.emailTo,
+          ...(run.emailCc.length ? { cc: run.emailCc } : {}),
+          ...(run.emailBcc.length ? { bcc: run.emailBcc } : {}),
+          subject, text, files,
+        },
+      );
+    } catch (err) {
+      const reason = (err as Error).message?.slice(0, 500) || "send failed";
+      failures.push(`"${channel.name}": ${reason}`);
+      await logEvent({
+        action: "automation.script.email_failed",
+        resourceType: "automation-script", resourceId: run.scriptId ?? undefined, resourceName: run.scriptName,
+        actor: "system:automation", level: "warning",
+        message: `Automation script "${run.scriptName}" could not send "${subject}" through "${channel.name}": ${reason}`,
+        details: { ...details, error: reason },
+      }).catch(() => {});
+      continue;
+    }
     await logEvent({
-      action: "automation.script.email_failed",
+      action: "automation.script.email_sent",
       resourceType: "automation-script", resourceId: run.scriptId ?? undefined, resourceName: run.scriptName,
-      actor: "system:automation", level: "warning",
-      message: `Automation script "${run.scriptName}" could not send "${subject}" through "${channel.name}": ${reason}`,
-      details: { ...details, error: reason },
+      actor: "system:automation", level: "info",
+      message: `Automation script "${run.scriptName}" emailed "${subject}" to ${recipients} recipient${recipients === 1 ? "" : "s"} through "${channel.name}"`,
+      details,
     }).catch(() => {});
-    throw new AppError(502, `The email channel "${channel.name}" could not send: ${reason}`);
   }
-  await logEvent({
-    action: "automation.script.email_sent",
-    resourceType: "automation-script", resourceId: run.scriptId ?? undefined, resourceName: run.scriptName,
-    actor: "system:automation", level: "info",
-    message: `Automation script "${run.scriptName}" emailed "${subject}" to ${run.emailTo.length} recipient${run.emailTo.length === 1 ? "" : "s"} through "${channel.name}"`,
-    details,
-  }).catch(() => {});
+  // Every channel failing is the script's error; a partial send is a success
+  // the failed channels' warning Events account for.
+  if (failures.length === channels.length) {
+    throw new AppError(502, `The email channel${channels.length === 1 ? "" : "s"} could not send: ${failures.join("; ")}`);
+  }
   const sent = run.emailsSent + 1;
-  return { sent: run.emailTo.length, remaining: Math.max(0, MAX_EMAILS_PER_RUN - sent) };
+  return { sent: recipients, remaining: Math.max(0, MAX_EMAILS_PER_RUN - sent) };
 }

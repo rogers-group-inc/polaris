@@ -54,6 +54,7 @@ import { AppError } from "../utils/errors.js";
 import {
   actionsToTargets,
   notifyChannelIds,
+  scriptEmailChannelIds,
   CHANNEL_TRANSPORT,
   type ChannelType,
   type AutomationAction,
@@ -404,6 +405,20 @@ export async function executeActions(
         const args = action.argsTemplate && action.argsTemplate.trim()
           ? renderNotificationTemplate(action.argsTemplate, ctx)
           : null;
+        // Rule 190(a): the email block's To / Cc / Bcc resolve NOW, against the
+        // triggering device (the reboot action's resolver — the same pill
+        // vocabulary), and the run snapshots plain addresses. The script never
+        // sees the pills, only a pass that sends to these.
+        let email: { channelIds: string[]; to: string[]; cc: string[]; bcc: string[] } | null = null;
+        if (action.email) {
+          const recips = await resolveRebootActionRecipients(action.email, {
+            assetRegionTags: exec.assetRegionTags,
+            ...(action.email.recipientAssetContacts ? { assetContactEmails: await assetContactEmails() } : {}),
+            logCtx: { notificationId, assetId: exec.assetId, action: "script" },
+          });
+          if (recips.to.length === 0) throw new AppError(422, "the script's email To recipients resolved to no address — the script was not run");
+          email = { channelIds: scriptEmailChannelIds(action.email), ...recips };
+        }
         await requestScriptRun({
           scriptId: action.scriptId,
           runOn: action.runOn,
@@ -413,7 +428,7 @@ export async function executeActions(
           ruleId: exec.ruleId ?? null,
           assetId: exec.assetId ?? null,
           requestedBy: exec.actor ?? "system:automation",
-          email: action.email ?? null,
+          email,
         });
         executed++;
       }
