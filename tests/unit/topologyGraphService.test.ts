@@ -74,7 +74,11 @@ beforeEach(() => {
   ]) stubbed((prisma as any)[m].findMany).mockResolvedValue([]);
   stubbed(prisma.asset.findMany).mockImplementation(async ({ where }: any = {}) => {
     if (Array.isArray(where?.OR) && where.OR.some((c: any) => c.assetType === "switch")) return siblings;
-    if (where?.assetType?.notIn) return endpoints;
+    // The site endpoint list: non-infra types, or an infra-typed device the
+    // dependency recompute placed under a site switch (business rule 192).
+    const isEndpointQuery = Array.isArray(where?.AND) && where.AND.some((c: any) =>
+      Array.isArray(c?.OR) && c.OR.some((o: any) => o?.assetType?.notIn) && c.OR.some((o: any) => o?.dependencyParents?.some));
+    if (isEndpointQuery) return endpoints;
     if (where?.assetType === "firewall") return standbys;
     return [];
   });

@@ -3878,3 +3878,15 @@ views on the map re-centre on the new location, and the floor plans, placed devi
 polygons on every floor are cleared, because they sit at the old spot. The floors and
 their names stay, and descriptions are untouched; you place the floor plans and devices
 again. Editing the location shows what will be cleared before it saves.
+
+### Rule 192
+
+**A switch, firewall or access point Fortinet does not manage is placed like an endpoint
+when nothing else places it.** A Cisco Fibre Channel switch, say, is a switch, but no
+FortiGate manages it, and usually no LLDP or interface naming ties it to a FortiSwitch. When
+nothing does, Polaris gives it a parent the way it does an endpoint: its last-seen switch
+port, then its last-seen access point, then a FortiGate that saw it, then the gate that owns
+its address. So it reads **Dep. Down** behind that switch, and it appears in the Topology
+map's Device List under that switch. It is still a switch to everything behind it: a server
+whose last-seen switch is the Cisco switch keeps the Cisco switch as its parent. Once LLDP or
+interface naming connects it, that wins.

@@ -685,9 +685,18 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       const [endpointSamples, countRows] = await Promise.all([
         prisma.asset.findMany({
           where: {
-            assetType: { notIn: ["firewall", "switch", "access_point"] },
             status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
-            OR: attribution.whereOr,
+            AND: [
+              // An infra-typed asset is listed only when the dependency
+              // recompute placed it under a site switch like an endpoint
+              // (business rule 192 — a Cisco switch behind a FortiSwitch);
+              // a FortiSwitch never carries such an edge.
+              { OR: [
+                { assetType: { notIn: ["firewall", "switch", "access_point"] } },
+                { dependencyParents: { some: attribution.edgeSelect.where } },
+              ] },
+              { OR: attribution.whereOr },
+            ],
           },
           select: {
             id: true,
@@ -725,7 +734,7 @@ async function buildSiteTopologyAsWritten(siteId: string) {
             ON sw.id = ANY(${attribution.siteSwitchIds}::text[])
            AND sw.hostname = ANY(${attribution.uniqueHostnames}::text[])
            AND split_part(a."lastSeenSwitch", '/', 1) = sw.hostname
-          WHERE a."assetType" NOT IN ('firewall', 'switch', 'access_point')
+          WHERE (a."assetType" NOT IN ('firewall', 'switch', 'access_point') OR dp.id IS NOT NULL)
             AND a."status" NOT IN ('decommissioned', 'disabled')
             AND (dp.id IS NOT NULL OR sw.id IS NOT NULL)
           GROUP BY 1
