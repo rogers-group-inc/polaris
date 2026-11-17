@@ -1148,6 +1148,9 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
    member's health colour (topology-physical.js → clusterIcon); a click fans
    them out on legs. */
 .topo-phys-cluster { background: none; border: none; }
+/* A device inside a room / junction-box polygon while editing: faint (it is
+   hidden while viewing — its Room view shows it), still draggable out. */
+.topo-phys-marker.is-contained, .topo-phys-label.is-contained { opacity: 0.4; }
 .topo-phys-cluster-dot {
   width: 36px; height: 36px; border-radius: 50%;
   border: 3px solid #64748b; background: var(--color-surface); color: var(--color-text-primary);

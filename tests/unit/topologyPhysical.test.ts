@@ -45,10 +45,10 @@ describe("innermostPolygon", () => {
   });
 });
 
-describe("polyCodes (polygons are areas, buildings and rooms; the floor is the layer's)", () => {
-  it("keeps area / building / floor / room and drops rack and junction box", () => {
+describe("polyCodes (polygons are areas, buildings, rooms and junction boxes; the floor is the layer's)", () => {
+  it("keeps area / building / floor / room / junction box and drops the rack", () => {
     expect(P._polyCodes({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: "R1", junctionBox: "7" }))
-      .toEqual({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: null, junctionBox: null });
+      .toEqual({ area: "Mine", building: "Plant", floor: "1", room: "MDF", rack: null, junctionBox: "7" });
   });
 });
 

@@ -419,7 +419,8 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- {kind:"image", imageId, width, height}  (topology views)
                                 -- an osm background also carries layer "map" | "satellite"
                                 -- (satellite = the Setting("satelliteConfig") provider)
-  polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…]}]
+  polygons      Json            -- [{id, codes:{area,building,floor,room,junctionBox}, points:[[x,y]…], layer,
+                                --   viewId? (a room / junction-box polygon's Room view, rule 148(b))}]
                                 -- in background coordinates; codes in display casing (rule 148)
   racks         Json            -- [{id, name, units 1-60, order, face, cableManagers {left, right,
                                 -- trough}}]  (room views; name = ra:; each manager on unless false, rule 179)

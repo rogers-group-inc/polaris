@@ -678,6 +678,13 @@ Devices sharing a room code get an automatic outline with the room's name. Draw
 a Room polygon for that room (same area and building, on the same floor) and it
 replaces the outline.
 
+**Rooms and junction boxes are containers.** Drawing a Room or Junction box
+polygon creates a Room view for it straight away, named after the room (or
+`JB 7`). While you are viewing the map, the devices inside the shape are not
+drawn (they are in the Room view) and their connections end at the shape's
+middle; double-click the shape to open its Room view. In edit mode they show
+faintly inside it so you can still drag one out.
+
 **Devices close together join.** While you are viewing, devices that would
 overlap are drawn as one numbered circle in the colour of the worst health
 among them, as FortiGates do on the Device Map. Hover it for their names, and

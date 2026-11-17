@@ -123,6 +123,12 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
+**Room and junction-box polygons are containers** (rule 148(b)): `isContainer`, `containerFor` /
+`containedIn` per floor draw (the innermost container holding the placement), `addMarker` skips a
+contained device while viewing and marks it `.is-contained` (faint) while editing, `devCenter` ends
+its links at `polygonMiddle`. A draw creates the Room view (`createContainerView` → `ctx.createView`)
+and stores `viewId`; a view-mode `dblclick` on the shape opens it (`openContainerView` →
+`ctx.openView`; the Device Map widget's read-only context has no `createView`, so it only opens).
 **Nearby devices cluster while viewing** (operator request 2026-11-17, the Device Map's FortiGate
 pattern): `drawFloor` gives each floor an `L.markerClusterGroup` (`makeCluster`, `clusterPane` the
 floor's pane, `maxClusterRadius` `CLUSTER_PX` 30, no zoom-on-click; a click spiderfies and the

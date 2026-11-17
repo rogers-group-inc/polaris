@@ -57,12 +57,13 @@
     { field: "rack", key: "ra", kind: "ra", word: "Rack" },
     { field: "junctionBox", key: "jb", kind: "jb", word: "Junction box" },
   ];
-  // A Topology view's polygons stand for areas, buildings and rooms (the
-  // floor comes from the floor layer). Rooms joined on 2026-11-17 (operator
-  // request: a drawn room replaces the automatic outline round its devices);
-  // racks and junction boxes stay the Room views' business, so a polygon
-  // never sets them.
-  var POLY_FIELDS = CODE_FIELDS.slice(0, 4);
+  // A Topology view's polygons stand for areas, buildings, rooms and junction
+  // boxes (the floor comes from the floor layer). Rooms and junction boxes
+  // joined on 2026-11-17 (operator requests): a room or junction-box polygon
+  // is a CONTAINER — it replaces the outline round its devices, hides them
+  // while viewing, and opens its Room view on a double-click. A rack is never
+  // a polygon (racks live in Room views).
+  var POLY_FIELDS = CODE_FIELDS.filter(function (f) { return f.field !== "rack"; });
   function polyCodes(c) {
     var n = normCodes(c);
     var out = emptyCodes();
@@ -360,7 +361,7 @@
     var state = {
       editing: !!ctx.editing,
       polygons: (staged.polygons || view.polygons || []).map(function (p) {
-        return { id: p.id, codes: normCodes(p.codes), points: p.points.map(function (q) { return [q[0], q[1]]; }), layer: p.layer || 0 };
+        return { id: p.id, codes: normCodes(p.codes), points: p.points.map(function (q) { return [q[0], q[1]]; }), layer: p.layer || 0, viewId: p.viewId || undefined };
       }),
       // Floor layers (rule 152): layer 0 is the view itself; the others are
       // listed with their floor name and their own background.
@@ -808,7 +809,12 @@
         });
       }
       shapes.sort(function (a, b) { return b.area - a.area; }).forEach(function (sh) { sh.draw(); });
-      Object.keys(placementsOf(level)).forEach(function (id) { if (nodeById[id]) addMarker(id, level); });
+      Object.keys(placementsOf(level)).forEach(function (id) {
+        if (!nodeById[id]) return;
+        var box = containerFor(id, level);
+        if (box) containedIn[id] = { poly: box, level: level }; else delete containedIn[id];
+        addMarker(id, level);
+      });
       edges.forEach(function (e) {
         if (layerOfDevice(e.source) === level && layerOfDevice(e.target) === level) addLine(e, level);
       });
@@ -830,6 +836,23 @@
     // room: its automatic outline is not drawn (operator request 2026-11-17).
     function roomKey(c) {
       return ["area", "building", "room"].map(function (k) { return String((c && c[k]) || "").toLowerCase().replace(/\s+/g, " ").trim(); }).join("|");
+    }
+    // Room and junction-box polygons are containers (rule 148(b)): a device
+    // placed inside one on its floor is hidden while viewing (it lives in the
+    // Room view), drawn faint while editing so it can still be dragged out,
+    // and its links end at the container's middle.
+    function isContainer(p) { return !!(p && p.codes && (p.codes.room || p.codes.junctionBox)); }
+    var containedIn = {};   // device id → its innermost container polygon (refreshed per floor draw)
+    function containerFor(id, level) {
+      var pl = placementsOf(level)[id];
+      if (!pl) return null;
+      var polys = state.polygons.filter(function (p) { return (p.layer || 0) === level && isContainer(p); });
+      return polys.length ? innermostPolygon(polys, [pl.x, pl.y]) : null;
+    }
+    function polygonMiddle(p, level) {
+      var lat = 0, lng = 0;
+      p.points.forEach(function (q) { var ll = localToLatLng(level, q[0], q[1]); lat += ll.lat; lng += ll.lng; });
+      return L.latLng(lat / p.points.length, lng / p.points.length);
     }
     function drawnRooms(level) {
       var out = {};
@@ -1050,6 +1073,13 @@
       }
       shape.on("click", polyMenu);
       shape.on("contextmenu", polyMenu);
+      if (isContainer(p)) {
+        shape.on("dblclick", function (e) {
+          if (state.editing) return;
+          L.DomEvent.stopPropagation(e); // not the map's double-click zoom
+          openContainerView(p, level);
+        });
+      }
       function hoverLabel(on) {
         var tip = shape.getTooltip && shape.getTooltip();
         var el = tip && tip.getElement && tip.getElement();
@@ -1102,14 +1132,67 @@
           var ring = (e.layer.getLatLngs()[0] || []).map(function (ll) { var q = latLngToLocal(state.layer, ll); return [q.x, q.y]; });
           drawHandler = null;
           if (ring.length < 3) return;
-          state.polygons.push({ id: newId("poly"), codes: codes, points: ring, layer: state.layer });
+          var poly = { id: newId("poly"), codes: codes, points: ring, layer: state.layer };
+          state.polygons.push(poly);
           changed("polygons");
           drawPolygons();
           restageAllCodes();
+          // A room or junction box gets its Room view now (operator request 2026-11-17).
+          if (isContainer(poly)) createContainerView(poly, state.layer);
         });
         drawHandler.enable();
         ctx.toast("Drawing " + groupName(codes) + " — click to add points, click the first point to close, right-drag moves the map, Esc cancels");
       });
+    }
+
+    // A container's Room view: its own (viewId), else a Room view that stands
+    // for the same room (rule 150). Missing, it is created where the viewer
+    // may (Device Map write), else the viewer is told.
+    function containerRegion(p, level) {
+      var r = Object.assign(emptyCodes(), polyCodes(p.codes));
+      r.floor = floorCodeFor(level, state.layers.length > 0);
+      r.rack = null; r.junctionBox = null;
+      return r;
+    }
+    function viewForContainer(p, level) {
+      var views = ctx.listViews ? ctx.listViews() : [];
+      var own = p.viewId && views.filter(function (v) { return v.id === p.viewId; })[0];
+      if (own) return own;
+      if (p.codes.junctionBox) return null; // a box's view is only ever its own
+      var want = containerRegion(p, level);
+      return views.filter(function (v) { return v.mode === "room" && v.region && codesEqual(polyCodes(v.region), polyCodes(want)) && String(v.region.floor || "") === String(want.floor || ""); })[0] || null;
+    }
+    function containerViewName(p) {
+      return p.codes.junctionBox ? "JB " + p.codes.junctionBox : String(p.codes.room);
+    }
+    async function createContainerView(p, level) {
+      if (typeof ctx.createView !== "function" || !ctx.canEdit) return null;
+      var existing = viewForContainer(p, level);
+      if (existing) { if (!p.viewId) { p.viewId = existing.id; changed("polygons"); } return existing; }
+      var base = containerViewName(p), names = [base];
+      if (p.codes.building) names.push(base + " (" + p.codes.building + ")");
+      for (var n = 2; n <= 5; n++) names.push(base + " " + n);
+      for (var i = 0; i < names.length; i++) {
+        try {
+          var created = await ctx.createView({ name: names[i], mode: "room", region: containerRegion(p, level) });
+          p.viewId = created.id;
+          changed("polygons");
+          ctx.toast("Room view “" + created.name + "” created — double-click the shape while viewing to open it");
+          return created;
+        } catch (err) {
+          var msg = err && err.message ? err.message : String(err);
+          if (!/already exists/i.test(msg)) { ctx.toast("Room view not created — " + msg, "error"); return null; }
+        }
+      }
+      ctx.toast("Room view not created — every name tried is taken", "error");
+      return null;
+    }
+    async function openContainerView(p, level) {
+      if (typeof ctx.openView !== "function") return;
+      var v = viewForContainer(p, level);
+      if (!v && typeof ctx.createView === "function" && ctx.canEdit) v = await createContainerView(p, level);
+      if (v) ctx.openView(v.id);
+      else ctx.toast("No Room view for " + containerViewName(p) + " yet — draw or edit it on the Device Map page to make one");
     }
 
     // The "Draw polygon for which group?" dialog: the groups the site's
@@ -1143,7 +1226,7 @@
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
-        '<p class="hint" style="margin:0 0 8px">Areas, buildings and rooms from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on; a room polygon replaces the outline drawn round that room’s devices. Racks and junction boxes stay as they are.</p>' +
+        '<p class="hint" style="margin:0 0 8px">Areas, buildings, rooms and junction boxes from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on. A room or junction box gets its own Room view: its devices are hidden on this map while viewing, and a double-click on the shape opens the view.</p>' +
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
@@ -1206,6 +1289,8 @@
       var d = nodeById[id];
       var p = placementsOf(level)[id];
       if (!d || !p || !visOn("devices")) return;
+      // Inside a room / junction-box polygon: hidden while viewing.
+      if (containedIn[id] && !state.editing) return;
       var f = floorPane(level);
       var ll = localToLatLng(level, p.x, p.y);
       var m = L.marker(ll, {
@@ -1257,6 +1342,10 @@
       m._topoId = id;
       (clusterOf[level] || f.group).addLayer(m);
       f.group.addLayer(lab);
+      if (containedIn[id]) {
+        // Editing: drawn faint inside its container, still draggable out.
+        [m, lab].forEach(function (x) { var el = x.getElement && x.getElement(); if (el) el.classList.add("is-contained"); });
+      }
       markers[id] = m;
       labels[id] = lab;
       paintSelected();
@@ -1435,6 +1524,9 @@
     function devCenter(id, level) {
       var lv = layerOfDevice(id);
       if (lv === null) lv = level;
+      // A device hidden in a container: its links end at the container.
+      var box = containedIn[id];
+      if (box && !state.editing && box.level === lv) return visualLatLng(lv, polygonMiddle(box.poly, lv));
       var p = placementsOf(lv)[id];
       return visualLatLng(lv, localToLatLng(lv, p.x, p.y));
     }
