@@ -731,8 +731,8 @@ code, so renaming one in **Location regions** renames it here too.
 A device's icon (Server Settings → Customization) is drawn on its shape in a
 junction box, and beside its name in a rack.
 
-**Floors are stacked on one map.** Every Topology view opens on **floor 0, the
-ground**: its background (the map, satellite imagery or an uploaded site plan) is
+**Floors are stacked on one map.** Every Topology view opens on **floor 1, the
+ground** (floors run −2, −1, 1, 2, 3; there is no floor 0): its background (the map, satellite imagery or an uploaded site plan) is
 always shown. The **Floor** control at the left edge steps up (**+**) and down
 (**−**) through the view's floors; **Ground** jumps back. While editing, pressing
 **+** or **−** past the last floor adds one (−1 and −2 are basements) and asks for
@@ -741,9 +741,11 @@ delete it.
 
 All floors are drawn together, each at its true size and place. The floor you're on is
 at full strength, the floor above it at 5 % and the one above that at 2 %; floors below
-are hidden, except the ground. The ground map (or satellite, or site plan) is part of floor 0,
-and floor 0 stays at 5 % under any floor above it, and on floor −1 it fades to 5 % as the
-floor above. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
+are hidden, except the ground. The ground map (or satellite, or site plan) is part of the
+ground floor, which stays at 5 % under any floor above it, and on floor −1 it fades to 5 % as
+the floor above. A device on the ground gets `f:1` when the view has other floors; on floor 2
+it gets `f:2`. Devices whose codes still use the old numbering (when the ground was 0) are
+renumbered the next time the view is saved, listed in the save's confirmation. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
 floors fades from one floor's strength to the other's, and you can bend it in edit mode from
 either end's floor like any other connection: drag it to add a corner, click it to show its
 corners and ends, and select a corner and press Delete to remove it. Its corners stay where
@@ -779,7 +781,7 @@ Bends are saved with the floor, on Save or the tick like everything else, and
 move with the floor's plan when you adjust it.
 
 **A floor plan can be a CAD drawing.** On a floor, the map button also offers **Import CAD
-drawing (DXF)**. The ground (floor 0) offers it too, under the map or site plan choices: the
+drawing (DXF)**. The ground (floor 1) offers it too, under the map or site plan choices: the
 drawing lies over the map, and **Adjust CAD drawing**, **Place with two points** and
 **Remove CAD drawing** work as on a floor. Unlike a floor's plan, moving the ground's
 drawing never moves the ground's devices or polygons; they stay where they are on the map. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per

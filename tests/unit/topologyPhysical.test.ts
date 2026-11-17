@@ -92,6 +92,14 @@ describe("stacked floors (rule 152(a))", () => {
     expect(turned[0]).toBeCloseTo(0, 6);
     expect(turned[1]).toBeCloseTo(100, 6);
   });
+  it("numbers floors the building's way: the ground is 1, there is no 0", () => {
+    expect([-2, -1, 0, 1, 2].map((l) => P._floorNumber(l))).toEqual([-2, -1, 1, 2, 3]);
+    // f: codes follow the numbers; the ground writes f:1 only beside other floors.
+    expect(P._floorCodeFor(0, true)).toBe("1");
+    expect(P._floorCodeFor(0, false)).toBeNull();
+    expect(P._floorCodeFor(1, true)).toBe("2");
+    expect(P._floorCodeFor(-1, true)).toBe("-1");
+  });
   it("a corner drag moves only that corner: the opposite one stays put", () => {
     const start = { cx: 100, cy: 200, sx: 2, sy: 0.5, rot: 30 };
     const corners = [[0, 0], [1000, 0], [1000, 500], [0, 500]];

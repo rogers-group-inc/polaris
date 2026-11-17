@@ -3313,11 +3313,12 @@ square inch.
 
 ### Rule 152
 
-**Floors are layers of a Topology view.** Floor 0 is the ground: its background (the map,
-satellite imagery or a site plan) is always shown, and a device placed on it gets no floor code.
-Floors above and below (basements) each have their own plan, polygons and devices, all drawn on
-one map: the floor you're on at full strength, the floor above at 10 % and drawn a little larger,
-the one above that at 2 %, and floors below hidden. A device placed on a floor gets that floor's
+**Floors are layers of a Topology view.** Floor 1 is the ground: its background (the map,
+satellite imagery or a site plan) is always shown, and a device placed on it gets `f:1` when the
+view has other floors (no floor code otherwise). Floors above (2, 3…) and below (basements −1,
+−2) each have their own plan, polygons and devices, all drawn on one map: the floor you're on at
+full strength, the floor above at 5 %, the one above that at 2 %, and floors below hidden except
+the ground, which stays at 5 %. A device placed on a floor gets that floor's
 number as its `f:` code; it keeps its other codes unless you drop it inside a polygon.
 
 ### Rule 153
@@ -3587,7 +3588,8 @@ while a maintenance window covers the check. Turning the check back on starts it
 ### Rule 168
 
 **A floor is a number; its name is only a label.** A description's floor is a whole number:
-`f:0` is the ground, `f:1` and up are above it and `f:-1`, `f:-2` are basements. A floor can
+the ground is `f:1`, `f:2` and up are above it and `f:-1`, `f:-2` are basements; there is no
+floor 0 (an older `f:0` is still read). A floor can
 also have a name ("Basement", "Mezzanine") kept in **Location regions**. New descriptions must use
 the number; an existing text floor such as `f:Surface` keeps working, is matched to the floor of
 that name, and is listed under **Devices to check** with the number to use. Polaris never

@@ -163,6 +163,17 @@
       scale: 1,
     };
   }
+  // Floor numbers (operator request 2026-11-17): the ground is floor 1 and
+  // there is no floor 0 — −2, −1, 1, 2, 3. Levels are stored as before (the
+  // ground is level 0, the floor above it level 1); only what is shown and
+  // the f: code written follow the building's numbering.
+  function floorNumber(level) { return level >= 0 ? level + 1 : level; }
+  // The f: code a level writes. The ground writes f:1 only when the view has
+  // other floors; a single-floor view writes none (rule 168).
+  function floorCodeFor(level, hasFloors) {
+    if (level === 0) return hasFloors ? "1" : null;
+    return String(floorNumber(level));
+  }
   // A link between floors fades from one end's opacity to the other's.
   function fadeSteps(a, b, n) {
     var out = [];
@@ -1223,9 +1234,11 @@
       var assetId = d.assetId || id;
       var poly = innermostPolygon(layerPolys(), [p.x, p.y]);
       var want = poly ? polyCodes(poly.codes) : emptyCodes();
-      // Rule 152 / 168: a floor layer gives its floor NUMBER; floor 0 (the
-      // ground) gives none and clears an old one.
-      want.floor = state.layer !== 0 ? String(state.layer) : null;
+      // Rule 152 / 168: a floor layer gives its floor NUMBER (the ground is
+      // 1 when the view has floors; on a single-floor view it gives none and
+      // clears an old one).
+      want.floor = floorCodeFor(state.layer, state.layers.length > 0);
+      touchedCodes[id] = true;
       var levels = POLY_FIELDS.map(function (f) { return f.field; }).filter(function (k) { return want[k] !== null || k === "floor"; });
       var cur = normCodes(currentCodes[id]);
       var same = levels.every(function (k) { return String(want[k] || "").toLowerCase() === String(cur[k] || "").toLowerCase(); });
@@ -1237,6 +1250,33 @@
       });
     }
     function restageAllCodes() { Object.keys(state.placements).forEach(stageCodesFor); }
+    // Floor numbers moved (the ground became floor 1, 2026-11-17), or a floor
+    // was added or deleted: every placed device whose f: code no longer
+    // matches its floor gets a floor-only change staged, listed in the save's
+    // "descriptions will change" confirmation. A device already changed in
+    // this session is restaged whole on the floor in view. A single-floor
+    // view never clears floor codes in bulk.
+    var touchedCodes = {};
+    function restageFloorCodes() {
+      if (!state.editing) return;
+      var hasFloors = state.layers.length > 0;
+      levels().forEach(function (level) {
+        if (level === 0 && !hasFloors) return;
+        var want = floorCodeFor(level, hasFloors);
+        Object.keys(placementsOf(level)).forEach(function (id) {
+          var d = nodeById[id];
+          if (!d) return;
+          if (touchedCodes[id]) { if (level === state.layer) stageCodesFor(id); return; }
+          var cur = normCodes(currentCodes[id]);
+          if (String(cur.floor || "").toLowerCase() === String(want || "").toLowerCase()) return;
+          ctx.stageLocationCode(d.assetId || id, Object.assign(emptyCodes(), { floor: want }), {
+            name: d.label || d.assetId || id,
+            from: currentCodes[id] || emptyCodes(),
+            levels: ["floor"],
+          });
+        });
+      });
+    }
 
     // ── Links ───────────────────────────────────────────────────────────
     // ── Links: Layer 2's hover tooltip, and its bends and end points ────
@@ -2280,6 +2320,7 @@
         if (!on && wasEditing) arcgisLayers.load();
       }
       if (on) resetHistory();
+      if (on && !wasEditing) { touchedCodes = {}; restageFloorCodes(); }
       paintLayerCtl();
     }
 
@@ -2294,7 +2335,7 @@
     host.appendChild(layerCtl);
     function levels() { return [0].concat(state.layers.map(function (l) { return l.level; })).sort(function (a, b) { return a - b; }); }
     // Rule 168: a floor is its number; its name is a label ("-1 Basement").
-    function layerName(level) { var l = layerObj(level); return level === 0 ? "Ground" : (l && l.name ? l.name : "Floor " + level); }
+    function layerName(level) { var l = layerObj(level); return level === 0 ? "Ground" : (l && l.name ? l.name : "Floor " + floorNumber(level)); }
     function countOn(level) { return Object.keys(placementsOf(level)).filter(function (id) { return nodeById[id]; }).length; }
     function paintLayerCtl() {
       var lv = levels();
@@ -2306,7 +2347,7 @@
         '<span class="topo-layer-cap">Floor</span>' +
         '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="1"' + (canUp ? "" : " disabled") + ' aria-label="Up a layer">+</button>' +
         '<span class="topo-layer-now" aria-live="polite"' + (state.editing && state.layer !== 0 ? ' title="Right-click to rename or delete this layer"' : "") + '>' +
-          '<strong>' + state.layer + '</strong><span>' + esc(layerName(state.layer)) + '</span><span class="topo-layer-n">' + n + ' device' + (n === 1 ? "" : "s") + '</span></span>' +
+          '<strong>' + floorNumber(state.layer) + '</strong><span>' + esc(layerName(state.layer)) + '</span><span class="topo-layer-n">' + n + ' device' + (n === 1 ? "" : "s") + '</span></span>' +
         '<button type="button" class="btn btn-secondary btn-sm topo-layer-step" data-layer-step="-1"' + (canDown ? "" : " disabled") + ' aria-label="Down a layer">−</button>' +
         (state.layer !== 0 ? '<button type="button" class="btn btn-secondary btn-sm topo-layer-zero" data-layer-zero>Ground</button>' : "");
     }
@@ -2356,10 +2397,10 @@
       var l = layerObj(level);
       var body = '<div class="form-group"><label for="tl-name">Name (optional)</label>' +
         '<input id="tl-name" type="text" maxlength="64" placeholder="e.g. ' + (level < 0 ? "Basement" : "Mezzanine") + '" value="' + esc(isNew ? "" : (l ? l.name : "")) + '">' +
-        '<div class="hint">Floor ' + level + '. A device placed on it gets <code>f:' + level + '</code> when you save; the name is only a label.</div></div>';
+        '<div class="hint">Floor ' + floorNumber(level) + '. A device placed on it gets <code>f:' + floorNumber(level) + '</code> when you save; the name is only a label.</div></div>';
       var footer = '<button type="button" class="btn btn-secondary" data-tl="cancel">Cancel</button>' +
         '<button type="button" class="btn btn-primary" data-tl="ok">' + (isNew ? "Add layer" : "Apply") + '</button>';
-      var dlg = buildOverlay(1100, isNew ? "Add layer " + level : "Rename layer " + level, body, footer);
+      var dlg = buildOverlay(1100, isNew ? "Add floor " + floorNumber(level) : "Rename floor " + floorNumber(level), body, footer);
       var input = dlg.overlay.querySelector("#tl-name");
       function apply() {
         var name = input.value.trim().replace(/\s+/g, " ");
@@ -2371,7 +2412,7 @@
         state.layers.sort(function (a, b) { return a.level - b.level; });
         dlg.close();
         changed("layers");
-        if (isNew) setLayer(level); else { paintLayerCtl(); Object.keys(state.placements).forEach(stageCodesFor); }
+        if (isNew) { setLayer(level); restageFloorCodes(); } else { paintLayerCtl(); Object.keys(state.placements).forEach(stageCodesFor); }
       }
       dlg.overlay.querySelector('[data-tl="cancel"]').addEventListener("click", dlg.close);
       dlg.overlay.querySelector('[data-tl="ok"]').addEventListener("click", apply);
@@ -2392,6 +2433,7 @@
       state.layers = state.layers.filter(function (x) { return x.level !== level; });
       state.layer = 0;
       changed("layers", "polygons");
+      restageFloorCodes();
       drawAll();
       paintLayerCtl();
       ctx.refreshSidebar();
@@ -2725,6 +2767,8 @@
     _cornerDragPlan: cornerDragPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
+    _floorNumber: floorNumber,
+    _floorCodeFor: floorCodeFor,
     _tipGraph: tipGraph,
     _linkTipHtml: linkTipHtml,
     _cadToPlan: cadToPlan,
