@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   buildDependencyEdgesFromInputs,
+  unparentedNonFortinetInfraIds,
   assignLayers,
   evaluateSuppression,
   buildEndpointDependencyEdges,
@@ -1399,5 +1400,20 @@ describe("shared switch / AP names across sites (rule 91)", () => {
     const edges = buildEndpointDependencyEdges([endpoint("srv", { lastSeenSwitch: "CORE-1/port1" })], [...infra, unique], stats);
     expect(edges).toEqual([{ childAssetId: "srv", parentAssetId: "swU", detectedVia: "switch-port" }]);
     expect(stats.sharedNameEndpointIds.size).toBe(0);
+  });
+});
+describe("unparentedNonFortinetInfraIds (rule 192)", () => {
+  const active = [
+    { id: "fg", fortinetTopology: { role: "fortigate" } },
+    { id: "fsw", fortinetTopology: { role: "fortiswitch" } },
+    { id: "mds", fortinetTopology: null },
+    { id: "core", fortinetTopology: {} },
+    { id: "lldp-placed", fortinetTopology: null },
+    { id: "palo", fortinetTopology: null },
+  ];
+  it("lists only non-Fortinet infra with no kept parent that is not a layer-1 root", () => {
+    const kept = [{ childAssetId: "fsw" }, { childAssetId: "lldp-placed" }];
+    const layers = new Map([["fg", 1], ["fsw", 2], ["lldp-placed", 3], ["palo", 1]]);
+    expect([...unparentedNonFortinetInfraIds(active, kept, layers)].sort()).toEqual(["core", "mds"]);
   });
 });

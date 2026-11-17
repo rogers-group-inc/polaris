@@ -44,6 +44,11 @@ Edges live on the asset and come from these sources:
 (layer 1), using interface, LLDP and mesh adjacency as the primary signal, with
 controller edges as a fallback for assets the physical pass did not reach.
 
+A switch, firewall or access point that no FortiGate manages (a Cisco Fibre Channel
+switch, a third-party core switch) is placed the same way when FortiLink, interface naming
+and LLDP give it no parent, and it stays the parent of whatever hangs off it
+([rule 192](Business-Rules#rule-192)).
+
 ### Endpoints get exactly one parent
 
 The tree covers endpoints too, so a server or camera behind a dead gate reads

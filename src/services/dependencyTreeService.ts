@@ -89,6 +89,35 @@ const PLACEMENT_DEPENDENCY_SOURCES: readonly DependencySource[] = ["vcenter", "u
 export const FORTINET_INFRA_ASSET_TYPES = ["firewall", "switch", "access_point"] as const;
 
 /**
+ * Business rule 192: a switch, firewall or access point that Fortinet does
+ * not manage (no `fortinetTopology.role` — a Cisco Fibre Channel switch, a
+ * third-party core switch) is placed like an ENDPOINT when the infrastructure
+ * graph gives it no parent: its `lastSeenSwitch` / `lastSeenAp` / sighting /
+ * IPAM gate decides, through the endpoint half. It stays in the infra
+ * inventory, so whatever hangs off it keeps it as a parent; a device the
+ * graph roots (layer 1) stays a root; and once interface naming or LLDP gives
+ * it a parent, it leaves the endpoint half again (its endpoint edge is diffed
+ * away on the next recompute). Pure.
+ */
+export function unparentedNonFortinetInfraIds(
+  active: Array<{ id: string; fortinetTopology: unknown }>,
+  keptEdges: Array<{ childAssetId: string }>,
+  layers: Map<string, number>,
+): Set<string> {
+  const parented = new Set(keptEdges.map((e) => e.childAssetId));
+  const out = new Set<string>();
+  for (const a of active) {
+    const t = a.fortinetTopology;
+    const role = t && typeof t === "object" ? (t as Record<string, unknown>).role : null;
+    if (role) continue;                 // a FortiGate / FortiSwitch / FortiAP: the infra half's
+    if (parented.has(a.id)) continue;   // interface / LLDP already placed it
+    if (layers.get(a.id) === 1) continue; // a root stays a root
+    out.add(a.id);
+  }
+  return out;
+}
+
+/**
  * `source` on the endpoint half's rows. Its own value (rather than another
  * `computed` row) for three reasons: the infra recompute's delete-replace is
  * scoped to infra `assetId`s and must not see these; a distinct source makes
@@ -1574,7 +1603,9 @@ export async function recomputeDependencyTree(integrationId?: string): Promise<{
   // integrations finalizing at once from churning each other's rows.
   let endpointEdges = 0;
   try {
-    const ep = await syncEndpointDependencyEdges(depAssets, layers);
+    // Rule 192: non-Fortinet switches / firewalls / APs the graph left unparented.
+    const extraIds = unparentedNonFortinetInfraIds(active, keptEdges, layers);
+    const ep = await syncEndpointDependencyEdges(depAssets, layers, extraIds);
     endpointEdges = ep.edges;
     if (ep.added > 0 || ep.removed > 0 || ep.retyped > 0) {
       logger.debug(
@@ -1713,11 +1744,16 @@ const MAC_TABLE_FRESH_MS = 48 * 60 * 60 * 1000;
 async function syncEndpointDependencyEdges(
   infra: DepAsset[],
   layers: Map<string, number>,
+  /** Rule 192: infra-typed assets placed like endpoints this run. */
+  extraIds: Set<string> = new Set(),
 ): Promise<{ endpoints: number; edges: number; added: number; removed: number; retyped: number }> {
   const endpointRows = await prisma.asset.findMany({
     where: {
-      assetType: { notIn: [...FORTINET_INFRA_ASSET_TYPES] },
-      status:    { notIn: EXCLUDED_LIFECYCLE_STATUSES },
+      status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
+      OR: [
+        { assetType: { notIn: [...FORTINET_INFRA_ASSET_TYPES] } },
+        ...(extraIds.size > 0 ? [{ id: { in: [...extraIds] } }] : []),
+      ],
     },
     select: { id: true, lastSeenSwitch: true, lastSeenAp: true, dependencyLayer: true },
   });
@@ -1805,7 +1841,10 @@ async function syncEndpointDependencyEdges(
   }
 
   const resolution = newEndpointResolutionStats();
-  const desiredEdges = buildEndpointDependencyEdges(endpoints, infra, resolution);
+  // Rule 192: two infra devices placed this way never parent each other (a
+  // pair naming each other as last-seen would loop the suppression walk).
+  const desiredEdges = buildEndpointDependencyEdges(endpoints, infra, resolution)
+    .filter((e) => !(extraIds.has(e.childAssetId) && extraIds.has(e.parentAssetId)));
   if (resolution.ambiguous > 0) {
     // Rule 91: these endpoints named a switch / AP that exists at several
     // sites and neither a MAC table nor a sighting / IPAM gate singled one
