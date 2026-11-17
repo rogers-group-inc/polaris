@@ -92,6 +92,31 @@ describe("stacked floors (rule 152(a))", () => {
     expect(turned[0]).toBeCloseTo(0, 6);
     expect(turned[1]).toBeCloseTo(100, 6);
   });
+  it("a corner drag moves only that corner: the opposite one stays put", () => {
+    const start = { cx: 100, cy: 200, sx: 2, sy: 0.5, rot: 30 };
+    const corners = [[0, 0], [1000, 0], [1000, 500], [0, 500]];
+    for (let ci = 0; ci < 4; ci++) {
+      const anchor = corners[(ci + 2) % 4];
+      const before = P._planToGround(start, ext, anchor[0], anchor[1]);
+      const was = P._planToGround(start, ext, corners[ci][0], corners[ci][1]);
+      const pointer = [was[0] + 37, was[1] - 21];
+      // Free stretch (Ctrl): the grabbed corner lands on the pointer.
+      const free = P._cornerDragPlan(start, ext, ci, pointer, false);
+      const fa = P._planToGround(free, ext, anchor[0], anchor[1]);
+      expect(fa[0]).toBeCloseTo(before[0], 6);
+      expect(fa[1]).toBeCloseTo(before[1], 6);
+      const fd = P._planToGround(free, ext, corners[ci][0], corners[ci][1]);
+      expect(fd[0]).toBeCloseTo(pointer[0], 6);
+      expect(fd[1]).toBeCloseTo(pointer[1], 6);
+      // Default: the shape is kept, the opposite corner still holds.
+      const kept = P._cornerDragPlan(start, ext, ci, pointer, true);
+      expect(kept.sx / kept.sy).toBeCloseTo(start.sx / start.sy, 9);
+      const ka = P._planToGround(kept, ext, anchor[0], anchor[1]);
+      expect(ka[0]).toBeCloseTo(before[0], 6);
+      expect(ka[1]).toBeCloseTo(before[1], 6);
+      expect(kept.rot).toBe(30);
+    }
+  });
   it("fades floors above, hides floors below, and scales by 25 % a floor", () => {
     expect(P._floorLook(0)).toEqual({ opacity: 1, scale: 1 });
     // No zoom between floors (operator decision 2026-11-16).

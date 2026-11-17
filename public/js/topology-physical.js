@@ -84,6 +84,28 @@
     var a = plan.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
     return [plan.cx + dx * c - dy * sn, plan.cy + dx * sn + dy * c];
   }
+  // A corner drag while lining up a plan: the OPPOSITE corner stays put and
+  // only the grabbed one follows the pointer (operator request 2026-11-17;
+  // it stretched about the centre, moving every corner). `ci` indexes the
+  // corners [0,0] [w,0] [w,h] [0,h]; `g` is the pointer in ground units.
+  // keepShape scales both axes by one factor (the default; Ctrl = free).
+  function cornerDragPlan(start, ext, ci, g, keepShape) {
+    var cs = [[0, 0], [ext.w, 0], [ext.w, ext.h], [0, ext.h]];
+    var A = cs[(ci + 2) % 4], D = cs[ci];
+    var ag = planToGround(start, ext, A[0], A[1]);
+    var a = start.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
+    var dx = g[0] - ag[0], dy = g[1] - ag[1];
+    // The pointer from the anchor, in the plan's own (rotated) axes.
+    var vx = dx * c + dy * sn, vy = -dx * sn + dy * c;
+    var nsx = Math.max(Math.abs(vx) / ext.w, 1e-6), nsy = Math.max(Math.abs(vy) / ext.h, 1e-6);
+    if (keepShape) {
+      var r = (nsx / start.sx + nsy / start.sy) / 2;
+      nsx = start.sx * r; nsy = start.sy * r;
+    }
+    // The centre sits halfway from the anchor to the dragged corner.
+    var hx = (D[0] > A[0] ? 1 : -1) * ext.w * nsx / 2, hy = (D[1] > A[1] ? 1 : -1) * ext.h * nsy / 2;
+    return { cx: ag[0] + hx * c - hy * sn, cy: ag[1] + hx * sn + hy * c, sx: nsx, sy: nsy, rot: start.rot };
+  }
   function groundToPlan(plan, ext, gx, gy) {
     var a = -plan.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
     var dx = gx - plan.cx, dy = gy - plan.cy;
@@ -2048,16 +2070,8 @@
           var a0 = Math.atan2(g0[1] - start.cy, g0[0] - start.cx), a1 = Math.atan2(g[1] - start.cy, g[0] - start.cx);
           p.rot = start.rot + (a1 - a0) * 180 / Math.PI;
         } else {
-          // Stretch about the centre, in the plan's own (rotated) axes.
-          var a = -start.rot * Math.PI / 180, c = Math.cos(a), sn = Math.sin(a);
-          var dx = g[0] - start.cx, dy = g[1] - start.cy;
-          var nsx = Math.max(Math.abs(dx * c - dy * sn) / (fp.ext.w / 2), 1e-6);
-          var nsy = Math.max(Math.abs(dx * sn + dy * c) / (fp.ext.h / 2), 1e-6);
-          if (!(ev.ctrlKey || ev.metaKey)) {
-            var r = (nsx / start.sx + nsy / start.sy) / 2;
-            nsx = start.sx * r; nsy = start.sy * r;
-          }
-          p.sx = nsx; p.sy = nsy;
+          var nxt = cornerDragPlan(start, fp.ext, ci, g, !(ev.ctrlKey || ev.metaKey));
+          p.sx = nxt.sx; p.sy = nxt.sy; p.cx = nxt.cx; p.cy = nxt.cy;
         }
         if (!pending) { pending = true; requestAnimationFrame(redraw); }
       }
@@ -2613,6 +2627,7 @@
     _polyCodes: polyCodes,
     _planToGround: planToGround,
     _groundToPlan: groundToPlan,
+    _cornerDragPlan: cornerDragPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
     _tipGraph: tipGraph,
