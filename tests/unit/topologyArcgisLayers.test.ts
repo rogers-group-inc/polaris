@@ -83,17 +83,41 @@ describe("layers by area and types (rules 188(b), 188(c))", () => {
     return { layer, keys: () => keys, fetched };
   }
 
-  it("lists the layers covering the map, names the rest, and nests a by-type layer's types", async () => {
+  it("lists the layers covering the map for the eye menu, a by-type layer's types under it, and names the rest", async () => {
     const { layer } = await mount([`${A}:GAS`]);
-    const html: string = layer.sidebarHtml();
-    expect(html).toContain("Lines — here");
-    expect(html).toContain("No area known");
-    expect(html).toMatch(/Not here: Lines — elsewhere\./);
-    expect(html).toMatch(new RegExp(`data-arc-hide="${A}:GAS"(?! checked)`));
-    expect(html).toContain(`data-arc-hide="${A}:WATER" checked`);
-    expect(html).toContain(`data-arc-hide="${A}#other" checked`);
-    expect(html).toContain("#1e88e5");
-    expect(layer.layerList().map((l: { id: string }) => l.id)).toEqual([A, N]);
+    const list = JSON.parse(JSON.stringify(layer.layerList()));
+    expect(list.map((l: { id: string }) => l.id)).toEqual([A, N]);
+    const types = list[0].types.map((t: { key: string; label: string; shown: boolean }) => [t.key, t.label, t.shown]);
+    expect(types).toEqual([[`${A}:GAS`, "Gas line", false], [`${A}:WATER`, "Water line", true], [`${A}#other`, "Other types", true]]);
+    expect(list[0].types[1].swatch).toContain("#1e88e5");
+    expect(list[1].types).toEqual([]);
+    expect(JSON.parse(JSON.stringify(layer.notHere()))).toEqual(["Lines — elsewhere"]);
+    expect(layer.brokenCount()).toBe(0);
+    expect(layer).not.toHaveProperty("sidebarHtml");
+  });
+
+  it("gives the Legend panel an ArcGIS section: shown layers, a by-type layer's visible types under its name", async () => {
+    let legend = "";
+    const bounds = { getWest: () => -85.6, getEast: () => -85.5, getSouth: () => 37.5, getNorth: () => 37.6 };
+    const map = { getBounds: () => bounds, getZoom: () => 15, on() {}, off() {} };
+    const L = { layerGroup: () => ({ addTo() { return this; }, clearLayers() {} }) };
+    const layer = C.create({
+      L, map: () => map, pane: () => ({}), editing: () => false, visible: () => true,
+      fetchLayers: () => Promise.resolve({ layers: LAYERS }),
+      fetchFeatures: () => Promise.resolve({ features: [] }),
+      fetchLinks: () => Promise.resolve({ links: {} }),
+      hidden: () => [`${A}:GAS`, N], setHidden() {}, canSaveShown: () => false, toast() {},
+      paintLegend: (html: string) => { legend = html; },
+    });
+    await layer.load();
+    expect(legend).toContain("ArcGIS layers");
+    expect(legend).toContain("Lines — here");
+    expect(legend).toContain("Water line");
+    expect(legend).not.toContain("Gas line");
+    expect(legend).not.toContain("No area known");
+    expect(legend).not.toContain("Lines — elsewhere");
+    layer.destroy();
+    expect(legend).toBe("");
   });
 
   it("hides a layer or a type by adding its key, and shows it again by removing it", async () => {

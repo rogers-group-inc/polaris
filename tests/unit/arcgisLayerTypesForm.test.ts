@@ -51,11 +51,24 @@ describe("Layers tab — style by type (rule 188(b))", () => {
     expect(html).not.toContain("data-arc-types");
   });
 
-  it("By type draws the table: an unlabelled tick-box column, values, styles and Other types", () => {
+  it("By type keeps the Layers tab short: a summary, the drawn types and Edit types — no table", () => {
     open(layer({ types: TYPES }));
-    sb._arcgisDraft.typeInfo[ID] = { field: "LINE_TYPE", values: [{ value: "GAS", count: 1204, fromArcgis: true }], blank: 3 };
     const html: string = sb.arcgisEditorHTML();
     expect(html).not.toContain("data-arc-color=");
+    expect(html).not.toContain("data-arc-types");
+    expect(html).toContain('id="arc-types-edit"');
+    expect(html).toContain("1 of 2 types drawn");
+    expect(html).toContain("Gas line");
+    expect(html).not.toContain("OH electric line");
+  });
+
+  it("the types dialog draws the table: an unlabelled tick-box column, values, styles and Other types", () => {
+    open(layer({ types: TYPES }));
+    sb._arcgisDraft.typeInfo[ID] = { field: "LINE_TYPE", values: [{ value: "GAS", count: 1204, fromArcgis: true }], blank: 3 };
+    const html: string = sb.arcgisTypesDialogHTML(ID, TYPES);
+    const editor: string = sb.arcgisEditorHTML();
+    expect(html).toContain("data-arc-types");
+    expect(html).toContain('id="arc-types-reset"');
     expect(html).toContain('<th style="width:34px"></th>');
     expect(html).toContain('data-arc-type-on="0" aria-label="Draw Gas line" checked');
     expect(html).toMatch(/data-arc-type-on="1" aria-label="Draw OH electric line"(?! checked)/);
@@ -64,7 +77,7 @@ describe("Layers tab — style by type (rule 188(b))", () => {
     expect(html).toContain("Other types");
     expect(html).toContain("3 lines with no type");
     // Only text and whole-number fields can sort lines into types.
-    const typeSelect = html.slice(html.indexOf('id="arc-type-field"'), html.indexOf("</select>", html.indexOf('id="arc-type-field"')));
+    const typeSelect = editor.slice(editor.indexOf('id="arc-type-field"'), editor.indexOf("</select>", editor.indexOf('id="arc-type-field"')));
     expect(typeSelect).toContain('<option value="LINE_TYPE" selected>');
     expect(typeSelect).not.toContain('<option value="LEN"');
     // The layer list shows how many types are drawn.

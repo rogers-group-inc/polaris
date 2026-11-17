@@ -1099,14 +1099,12 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .topo-arc-card .hint { margin: 0; }
 .topo-arc-card-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 10px; }
 .topo-arc-card-riders { border-top: 1px solid var(--color-border-light); padding-top: 6px; }
-.topology-arc-layers .topology-arc-row { display: flex; align-items: center; gap: 8px; margin: 4px 4px; font-weight: 400; cursor: pointer; }
-.topology-arc-layers .topology-arc-row input { width: auto; margin: 0; }
-.topology-arc-layers p { margin: 6px 4px 0; font-size: 0.78rem; }
-/* Rule 188(b): a by-type layer's types sit under it; its colour rides --arc on the element. */
-.topology-arc-layers .topology-arc-row.is-type { margin-left: 26px; }
-.topology-arc-layers .topology-arc-row.is-off { opacity: 0.5; }
+/* Rule 188(b): a by-type layer's colour rides --arc on the element. */
 .topo-arc-legend-layer { font-weight: 600; }
-.topo-arc-legend-row.is-type { padding-left: 10px; }
+/* Pointing at a feature: its type, label and layer. */
+.topo-arc-hover { display: flex; flex-direction: column; gap: 2px; font: 0.8rem var(--font-sans); }
+.topo-arc-hover .hint { margin: 0; }
+.topo-arc-legend-row.is-type, .topology-legend-row.is-type { padding-left: 10px; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

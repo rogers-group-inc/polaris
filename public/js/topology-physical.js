@@ -2665,9 +2665,8 @@
     // The details pane's Device List (topology-device-list.js): every shown
     // device, the ones on the map highlighted with an × to take them off.
     function sidebarHtml() {
-      var arcHtml = arcgisLayers ? arcgisLayers.sidebarHtml() : "";
       var DL = window.PolarisTopologyDeviceList;
-      if (!DL) return arcHtml;
+      if (!DL) return "";
       var rows = Object.keys(nodeById).map(function (id) {
         var d = nodeById[id];
         var t = R.nodeAssetType(d) || "";
@@ -2685,7 +2684,7 @@
       }).sort(function (a, b) {
         return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" });
       });
-      return arcHtml + DL.html({
+      return DL.html({
         title: "Device List",
         hint: state.editing ? "Drag device from list to map." : "Edit the map to place devices.",
         rows: rows,
@@ -2696,7 +2695,6 @@
       });
     }
     function wireSidebar(pane) {
-      if (pane && arcgisLayers) arcgisLayers.wireSidebar(pane);
       var DL = window.PolarisTopologyDeviceList;
       if (!pane || !DL) return;
       DL.wire(pane, {
@@ -2803,29 +2801,48 @@
           (withLabels ? '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-labels="' + k + '"' +
             (vis[k].labels !== false ? " checked" : "") + (on ? "" : " disabled") + '> <span>Labels</span></label>' : '');
       }
-      var html = '<div class="dropdown-heading">Show on the map</div>' +
+      // While editing, only the ArcGIS section: editing shows every device,
+      // group and label, but which layers and types the view hides is saved
+      // with it (rule 188(c)).
+      var html = state.editing ? '' : '<div class="dropdown-heading">Show on the map</div>' +
         row("devices", "Devices", "", true) +
         row("groups", "Groups", "areas, buildings and rooms", true) +
         row("links", "Connections", "", false);
       var arc = arcgisLayers ? arcgisLayers.layerList() : [];
-      if (arc.length) {
-        html += '<div class="dropdown-divider"></div><div class="dropdown-heading">ArcGIS layers</div>';
+      var away = arcgisLayers ? arcgisLayers.notHere() : [];
+      if (arc.length || away.length) {
+        html += (state.editing ? '' : '<div class="dropdown-divider"></div>') + '<div class="dropdown-heading">ArcGIS layers</div>';
         arc.forEach(function (l) {
           html += '<label class="topo-vis-row"><input type="checkbox" data-vis-arc="' + esc(l.id) + '"' + (l.shown ? " checked" : "") + '> ' +
             l.swatch + '<span>' + esc(l.title) + '</span></label>';
-          if (l.hasLabels) {
+          if (l.hasLabels && !state.editing) {
             html += '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-arc-labels="' + esc(l.id) + '"' +
               (vis.arcLabelsOff[l.id] ? "" : " checked") + (l.shown ? "" : " disabled") + '> <span>Labels</span></label>';
           }
+          (l.types || []).forEach(function (t) {
+            html += '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-arc-type="' + esc(t.key) + '"' +
+              (t.shown ? " checked" : "") + (l.shown ? "" : " disabled") + '> ' + t.swatch + '<span>' + esc(t.label) + '</span></label>';
+          });
         });
+        if (!arc.length) html += '<p class="topo-vis-hint topo-vis-note">No ArcGIS layer covers this part of the map.</p>';
+        if (away.length) html += '<p class="topo-vis-hint topo-vis-note">Not here: ' + away.map(esc).join(", ") + '.</p>';
+        var broken = arcgisLayers.brokenCount();
+        if (broken) {
+          html += '<p class="topo-vis-hint topo-vis-note"><span class="badge badge-expired">Route line missing</span> ' + broken + ' connection' +
+            (broken === 1 ? " rides" : "s ride") + ' a line that is hidden, filtered out or gone from ArcGIS, and ' + (broken === 1 ? "is" : "are") + ' drawn straight there.</p>';
+        }
         if (imageGround()) html += '<p class="topo-vis-hint topo-vis-note">ArcGIS layers draw over the map or satellite, not over a floor plan.</p>';
+        html += '<p class="topo-vis-hint topo-vis-note">' + (canSaveArcgisLayers() ? "Layers and types: saved with this view."
+          : "Layers and types: just for you until you close the map. Edit the map to save them with the view.") + '</p>';
       }
-      html += '<p class="topo-vis-hint topo-vis-note">A hidden label shows when you point at its object. Editing shows everything.</p>';
+      if (!state.editing) html += '<p class="topo-vis-hint topo-vis-note">A hidden label shows when you point at its object. Editing shows everything.</p>';
       return html;
     }
+    // The ArcGIS section follows the map: the layers covering it change as it moves.
+    function repaintVisPanel() { if (visPanel) visPanel.el.innerHTML = visPanelHtml(); }
     function openVisPanel(anchor) {
       if (visPanel) { closeVisPanel(); return; }
-      if (state.editing) return;
+      if (state.editing && !(arcgisLayers && (arcgisLayers.layerList().length || arcgisLayers.notHere().length))) return;
       var el = document.createElement("div");
       el.className = "btn-dropdown-menu open topo-vis-panel";
       el.setAttribute("role", "dialog");
@@ -2849,8 +2866,13 @@
         } else if (kl) {
           vis[kl].labels = t.checked;
           saveVis(); paintVisClasses();
+        } else if (t.getAttribute("data-vis-arc-type") && arcgisLayers) {
+          arcgisLayers.setHidden(t.getAttribute("data-vis-arc-type"), !t.checked);
         } else if (a && arcgisLayers) {
           arcgisLayers.setHidden(a, !t.checked);
+          Array.prototype.forEach.call(el.querySelectorAll("[data-vis-arc-type]"), function (x) {
+            if (x.getAttribute("data-vis-arc-type").indexOf(a) === 0) x.disabled = !t.checked;
+          });
           var asub = el.querySelector('[data-vis-arc-labels="' + a + '"]');
           if (asub) asub.disabled = !t.checked;
         } else if (al && arcgisLayers) {
@@ -2876,7 +2898,6 @@
     function setHiddenArcgis(keys) {
       if (canSaveArcgisLayers() && ctx.stageViewPatch && ctx.stageViewPatch({ arcgisHidden: keys })) changed();
       else arcHiddenOverride = keys;
-      ctx.refreshSidebar();
     }
     var arcgisLayers = window.PolarisTopologyArcgisLayers && ctx.fetchArcgisLayers
       ? window.PolarisTopologyArcgisLayers.create({
@@ -2892,8 +2913,10 @@
           labelsShown: arcLabelsOn,
           setHidden: setHiddenArcgis,
           canSaveShown: canSaveArcgisLayers,
-          // The layers covering the map changed as it moved: repaint the Map layers card.
-          onCoverChange: function () { ctx.refreshSidebar(); },
+          // The ArcGIS layers' section of the map's Legend panel (map.js).
+          paintLegend: function (html) { if (ctx.setArcgisLegend) ctx.setArcgisLegend(html); },
+          // The layers covering the map changed as it moved: repaint the eye menu.
+          onCoverChange: function () { repaintVisPanel(); },
           // Rule 188(a): which lines each link rides — the view gate's, staged apart.
           stageLinks: function (changes) { if (ctx.stageCableRunLinks) ctx.stageCableRunLinks(changes); },
           onRoutesChanged: function () { refreshRoutedLinks(); },
@@ -2949,8 +2972,9 @@
             onClick: openBackgroundMenu, editOnly: true },
           { id: "topology-draw-polygon", label: "Draw polygon", tip: "Draw a polygon for a location group",
             icon: '<polygon points="12 2 22 9 18 21 6 21 2 9 12 2"/>', onClick: startDrawing, editOnly: true },
-          { id: "topology-visibility", label: "Show on the map", tip: "Show or hide devices, groups, connections and map layers, and their labels",
-            icon: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', onClick: openVisPanel, viewOnly: true },
+          // Shown while editing too: there it holds only the ArcGIS layers, whose hiding is saved with the view.
+          { id: "topology-visibility", label: "Show on the map", tip: "Show or hide devices, groups, connections and ArcGIS layers and types, and their labels",
+            icon: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', onClick: openVisPanel },
         ];
       },
       canUndo: function () { return state.history.index > 0; },

@@ -1757,6 +1757,8 @@
       // features in view (the token stays on the server), and which lines
       // the site's links ride.
       fetchArcgisLayers: function () { return api.map.arcgisLayers(); },
+      // The Legend panel's ArcGIS layers section (rule 188), painted by the canvas.
+      setArcgisLegend: function (html) { _arcgisLegendHtml = html || ""; _paintArcgisLegend(); },
       fetchArcgisFeatures: function (layerId, params) { return api.map.arcgisFeatures(layerId, params); },
       fetchCableRunLinks: function () { return api.map.cableRunLinks(topoState.siteId); },
       // Rule 188(a): which ArcGIS lines each link rides — Polaris-only
@@ -3025,6 +3027,7 @@
     if (body && !body.dataset.rendered) {
       body.innerHTML = _buildLegendHTML(spec);
       body.dataset.rendered = "1";
+      _paintArcgisLegend();
       // Hovering a row lights what it stands for on the map.
       window.PolarisTopologyRender.wireLegendHover(body, function () { return cyInstance; });
     }
@@ -3032,6 +3035,21 @@
     // Always the CSS-anchored bottom-left corner, like every map legend: it
     // is no longer dragged, so a position an older build saved is ignored.
     el.style.left = ""; el.style.top = "";
+  }
+  // The ArcGIS layers drawn on a Topology view (rule 188) close the Legend
+  // panel: a section of their own after the shared key, repainted by the canvas
+  // as layers and types are shown or hidden; empty on any other view.
+  var _arcgisLegendHtml = "";
+  function _paintArcgisLegend() {
+    var body = document.getElementById("topology-legend-body");
+    if (!body) return;
+    var host = body.querySelector(".topology-legend-arcgis");
+    if (!host) {
+      host = document.createElement("div");
+      host.className = "topology-legend-arcgis";
+      body.appendChild(host);
+    }
+    host.innerHTML = _arcgisLegendHtml;
   }
   function _buildLegendHTML(spec) {
     // Nodes / Monitor health / Edges / Location groups are the shared key

@@ -8,8 +8,10 @@
  * layers it reads. Rule 188(c): a Topology view draws every layer whose area
  * covers the map in view (a layer with no known area counts as everywhere),
  * and stores only what it HIDES — a layer, or one of a by-type layer's types
- * (rule 188(b)) — in the "Map layers" card this module renders in the details
- * pane, so a layer or type added later shows by itself. Features are asked
+ * (rule 188(b)) — in the eye menu's "ArcGIS layers" section (topology-physical.js
+ * draws it from `layerList` / `notHere` / `brokenCount`), so a layer or type
+ * added later shows by itself. Pointing at a feature says what it is (its
+ * type, its label, its layer). Features are asked
  * for as the map moves (the server holds the ArcGIS token and answers only
  * the features inside the viewport), drawn on floor 0's ground over the map
  * or satellite — never over an uploaded plan, whose coordinates are not
@@ -332,11 +334,40 @@
           if (showLabels && labelsOn && ft.label && labels < MAX_LABELS && l.geometry !== "area") {
             labels++;
             shape.bindTooltip(esc(ft.label), { permanent: true, direction: "center", className: "topo-arc-label", opacity: 1 });
-          } else if (ft.label) {
-            shape.bindTooltip(esc(ft.label), { sticky: true, direction: "top" });
           }
+          wireHover(shape, l, ft);
           group.addLayer(shape);
         });
+      });
+    }
+
+    // ── Pointing at a feature says what it is ───────────────────────────
+    // One floating tooltip, apart from the permanent label a line may carry
+    // when zoomed in (Leaflet gives a shape one bound tooltip).
+    var hoverTip = null;
+    function hoverHtml(l, ft) {
+      var te = l.types ? typeOf(l, ft) : null;
+      var kind = l.types ? (te ? te.label || String(te.value) : "Other types") : l.title;
+      var ts = typeStyle(l, ft);
+      return '<div class="topo-arc-hover">' +
+        '<div class="topo-arc-legend-row">' + (ts ? typeSwatch(ts) : swatch(l)) + '<strong>' + esc(kind) + '</strong></div>' +
+        (ft.label ? '<div>' + esc(ft.label) + '</div>' : '') +
+        (l.types ? '<div class="hint">' + esc(l.title) + '</div>' : '') + '</div>';
+    }
+    function wireHover(shape, l, ft) {
+      shape.on("mouseover", function (e) {
+        var map = opts.map();
+        if (!map) return;
+        if (hoverTip) map.closeTooltip(hoverTip);
+        hoverTip = L.tooltip({ direction: "top", offset: [0, -10], className: "topo-arc-hover-tip", opacity: 1 })
+          .setLatLng(e.latlng).setContent(hoverHtml(l, ft));
+        map.openTooltip(hoverTip);
+      });
+      shape.on("mousemove", function (e) { if (hoverTip) hoverTip.setLatLng(e.latlng); });
+      shape.on("mouseout", function () {
+        var map = opts.map();
+        if (hoverTip && map) map.closeTooltip(hoverTip);
+        hoverTip = null;
       });
     }
 
@@ -369,9 +400,30 @@
     }
 
     // ── Legend (bottom left, while any layer is shown) ──────────────────
+    /**
+     * The map's Legend panel gets an "ArcGIS layers" section (opts.paintLegend,
+     * map.js): each shown layer, a by-type layer's drawn types under its name.
+     * A host without that hook gets a small Leaflet legend in the corner.
+     */
+    function legendSectionHtml(ids) {
+      var h = hiddenSet();
+      function row(sw, label, cls, part) {
+        return '<div class="topology-legend-row' + (cls ? " " + cls : "") + '">' + (sw ? '<span class="topology-legend-swatch">' + sw + '</span>' : '') +
+          '<span class="topology-legend-label">' + esc(label) + '</span>' + (part || '') + '</div>';
+      }
+      return '<div class="topology-legend-section"><div class="topology-legend-section-title">ArcGIS layers</div>' + ids.map(function (id) {
+        var l = layerById(id);
+        var part = truncated[id] ? ' <span class="hint" title="More features in view than one answer carries — zoom in">(partial)</span>' : '';
+        if (!l.types) return row(swatch(l), l.title, "", part);
+        return row("", l.title, "topo-arc-legend-layer", part) + typeRows(l).filter(function (r) { return !h[r.key]; }).map(function (r) {
+          return row(typeSwatch(r.style), r.label, "is-type");
+        }).join("");
+      }).join("") + '</div>';
+    }
     function paintLegend() {
       var map = opts.map();
       var ids = opts.visible() ? shownIds() : [];
+      if (opts.paintLegend) { opts.paintLegend(map && ids.length ? legendSectionHtml(ids) : ""); return; }
       if (legend) { legend.remove(); legend = null; }
       if (!map || !ids.length) return;
       var Ctl = L.Control.extend({
@@ -423,38 +475,6 @@
           return !!(ft && !featureShown(l, ft, h));
         });
       }).length;
-    }
-    function sidebarHtml() {
-      if (!layers.length) return "";
-      var h = hiddenSet();
-      var here = covering();
-      var away = layers.filter(function (l) { return here.indexOf(l) === -1; });
-      var rows = here.map(function (l) {
-        var on = !h[l.id];
-        var row = '<label class="topology-arc-row"><input type="checkbox" data-arc-hide="' + esc(l.id) + '"' + (on ? " checked" : "") + '> ' +
-          (l.types ? '' : swatch(l)) + '<span>' + esc(l.title) + '</span></label>';
-        return row + typeRows(l).map(function (r) {
-          return '<label class="topology-arc-row is-type' + (on ? '' : ' is-off') + '"><input type="checkbox" data-arc-hide="' + esc(r.key) + '"' +
-            (h[r.key] ? "" : " checked") + (on ? "" : " disabled") + '> ' + typeSwatch(r.style) + '<span>' + esc(r.label) + '</span></label>';
-        }).join("");
-      }).join("");
-      if (!here.length) rows = '<p>No ArcGIS layer covers this part of the map.</p>';
-      var hint = opts.visible()
-        ? (opts.canSaveShown() ? "Editing: saved with this view." : "Just for you until you close the map. Edit the map to save it with the view.")
-        : "Drawn over the map or satellite ground, not over a floor plan.";
-      var broken = brokenRoutes();
-      return '<div class="topology-section topology-arc-layers"><h5>Map layers</h5>' +
-        (here.length ? '<p class="topology-type-hint">Layers that cover this map, found automatically.</p>' : '') + rows +
-        (away.length ? '<p class="topology-type-hint">Not here: ' + away.map(function (l) { return esc(l.title); }).join(", ") + '.</p>' : '') +
-        (broken ? '<p><span class="badge badge-expired">Route line missing</span> ' + broken + ' connection' + (broken === 1 ? " rides" : "s ride") +
-          ' a line that is hidden, filtered out or gone from ArcGIS, and ' + (broken === 1 ? "is" : "are") + ' drawn straight there.</p>' : '') +
-        '<p class="topology-type-hint">' + esc(hint) + '</p></div>';
-    }
-    function wireSidebar(pane) {
-      if (!pane) return;
-      Array.prototype.forEach.call(pane.querySelectorAll("input[data-arc-hide]"), function (box) {
-        box.addEventListener("change", function () { setHidden(box.getAttribute("data-arc-hide"), !box.checked); });
-      });
     }
 
     /**
@@ -560,21 +580,31 @@
       hitRun: hitRun,
       highlight: highlight,
       visible: function () { return opts.visible(); },
-      sidebarHtml: sidebarHtml,
-      wireSidebar: wireSidebar,
       // The eye button's list: the layers covering the map (rule 188(c)).
+      // Each type of a by-type layer comes with its own hide key and sample (rule 188(b)).
       layerList: function () {
         var h = hiddenSet();
         return covering().map(function (l) {
-          return { id: l.id, title: l.title, swatch: l.types ? "" : swatch(l), shown: !h[l.id], hasLabels: l.geometry !== "area" };
+          return {
+            id: l.id, title: l.title, swatch: l.types ? "" : swatch(l), shown: !h[l.id], hasLabels: l.geometry !== "area",
+            types: typeRows(l).map(function (r) { return { key: r.key, label: r.label, swatch: typeSwatch(r.style), shown: !h[r.key] }; }),
+          };
         });
       },
+      // The configured layers that cover somewhere else (the eye menu's "Not here").
+      notHere: function () {
+        var here = covering();
+        return layers.filter(function (l) { return here.indexOf(l) === -1; }).map(function (l) { return l.title; });
+      },
+      // Connections drawn straight because their line is hidden, filtered out or gone (rule 188(a)).
+      brokenCount: function () { return brokenRoutes(); },
       setHidden: setHidden,
       setEditing: function () { draw(); },
       destroy: function () {
         if (moveTimer) clearTimeout(moveTimer);
         if (drawnOn) drawnOn.off("moveend", onMove);
         if (legend) { legend.remove(); legend = null; }
+        if (opts.paintLegend) opts.paintLegend("");
         if (group) { group.clearLayers(); group = null; }
       },
     };

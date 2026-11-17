@@ -1322,7 +1322,7 @@ function arcgisTypesTableHTML(l) {
       '<td class="mono" style="text-align:right">' + (typeof c === "number" ? ARCGIS_COUNT.format(c) : "—") + '</td>', v.style);
   }).join("");
   rows += row("other", t.other.on, "Other types", '<td class="hint" colspan="2" style="margin:0">blank, or added in ArcGIS later</td>', '', t.other.style, true);
-  return '<div class="table-wrapper" data-arc-types style="max-height:320px;overflow:auto"><table><thead><tr><th style="width:34px"></th><th>Type</th><th>Value</th><th style="text-align:right">Lines</th><th>Colour</th><th>Width</th><th>Line</th></tr></thead>' +
+  return '<div class="table-wrapper" data-arc-types style="max-height:55vh;overflow:auto"><table><thead><tr><th style="width:34px"></th><th>Type</th><th>Value</th><th style="text-align:right">Lines</th><th>Colour</th><th>Width</th><th>Line</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div>';
 }
 
@@ -1368,6 +1368,29 @@ function arcgisFieldOptionsHTML(fields, current, blankLabel) {
   }).join("");
 }
 
+/** One line saying where a by-type layer's types came from (Layers tab and the types dialog). */
+function arcgisTypesSummaryHTML(layerId, types) {
+  if (!types) return 'Pick the field that sorts the lines into kinds, then <strong>Read types</strong>.';
+  var info = _arcgisDraft.typeInfo[layerId];
+  var on = types.values.filter(function (v) { return v.on; }).length;
+  return on + ' of ' + types.values.length + ' type' + (types.values.length === 1 ? '' : 's') + ' drawn' +
+    (info && info.field === types.field ? ' · read from ArcGIS' + (info.values.some(function (v) { return v.fromArcgis; }) ? ', names and styles copied from the layer&rsquo;s own styling' : '') +
+      (typeof info.blank === "number" && info.blank ? ' · ' + ARCGIS_COUNT.format(info.blank) + ' line' + (info.blank === 1 ? '' : 's') + ' with no type' : '')
+    : '');
+}
+
+/**
+ * The types dialog's body (rule 188(b)): the types table at full width, over
+ * the integration dialog — the Layers tab's right column is too narrow for it.
+ * `types` is the dialog's working copy; Done hands it back to the layer.
+ */
+function arcgisTypesDialogHTML(layerId, types) {
+  return '<p class="hint" style="margin:0 0 10px">' + arcgisTypesSummaryHTML(layerId, types) + '</p>' +
+    '<div data-arc-types-host>' + arcgisTypesTableHTML({ id: layerId, types: types }) + '</div>' +
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px"><button type="button" class="btn btn-sm btn-secondary" id="arc-types-reset">Reset to ArcGIS styles</button>' +
+    '<span class="hint" style="margin:0">Unticked types are never fetched: Polaris asks ArcGIS only for the ticked ones.</span></div>';
+}
+
 function arcgisEditorHTML() {
   var l = _arcgisDraft.layers[_arcgisDraft.selected];
   if (!l) return '';
@@ -1400,27 +1423,25 @@ function arcgisEditorHTML() {
       '<div class="form-group" style="margin:0"><label for="arc-dash">Line</label><select id="arc-dash">' + dashes + '</select></div>' +
     '</div>';
   } else {
-    var info = _arcgisDraft.typeInfo[l.id];
-    var summary = !l.types ? 'Pick the field that sorts the lines into kinds, then <strong>Read types</strong>.'
-      : l.types.values.length + ' type' + (l.types.values.length === 1 ? '' : 's') +
-        (info && info.field === l.types.field ? ' read from ArcGIS' + (info.values.some(function (v) { return v.fromArcgis; }) ? ' · names and styles copied from the layer&rsquo;s own styling' : '') +
-          (typeof info.blank === "number" && info.blank ? ' · ' + ARCGIS_COUNT.format(info.blank) + ' line' + (info.blank === 1 ? '' : 's') + ' with no type' : '')
-        : ' · <strong>Read types</strong> again to see counts');
-    styleBlock = '<p class="hint" style="margin:0">' + summary + '</p>' +
-      (l.types ? arcgisTypesTableHTML(l) +
-        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-sm btn-secondary" id="arc-types-reset">Reset to ArcGIS styles</button>' +
-        '<span class="hint" style="margin:0">Unticked types are never fetched: Polaris asks ArcGIS only for the ticked ones.</span></div>' : '');
+    // The table itself opens in a dialog over this one (arcgisTypesDialogHTML).
+    var drawn = l.types ? l.types.values.filter(function (v) { return v.on; }) : [];
+    if (l.types && l.types.other.on) drawn = drawn.concat([{ label: "Other types", style: l.types.other.style }]);
+    styleBlock = '<p class="hint" style="margin:0">' + arcgisTypesSummaryHTML(l.id, l.types) + '</p>' +
+      (l.types ? '<div style="display:flex;flex-wrap:wrap;gap:4px 12px">' + drawn.map(function (v) {
+          return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:0.82rem">' + arcgisTypeSwatchHTML(v.style) + escapeHtml(v.label || String(v.value)) + '</span>';
+        }).join("") + '</div>' +
+        '<div><button type="button" class="btn btn-sm btn-secondary" id="arc-types-edit">Edit types</button></div>' : '');
   }
   return '<div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:12px 14px;background:var(--color-bg-primary);display:flex;flex-direction:column;gap:10px">' +
     '<div class="form-group" style="margin:0"><label for="arc-title">Name on the map</label><input type="text" id="arc-title" maxlength="120" value="' + escapeHtml(l.title) + '"></div>' +
-    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:end">' +
+    '<div style="display:flex;flex-direction:column;gap:10px">' +
       '<div class="form-group" style="margin:0"><label>Style</label><div style="display:flex;gap:6px">' +
         '<button type="button" class="btn btn-sm btn-secondary" data-arc-mode="one" aria-pressed="' + !byType + '"' + (byType ? '' : ' style="' + onBtn + '"') + '>One style</button>' +
         '<button type="button" class="btn btn-sm btn-secondary" data-arc-mode="types" aria-pressed="' + byType + '"' + (byType ? ' style="' + onBtn + '"' : '') + '>By type</button>' +
       '</div></div>' +
       (byType ? '<div class="form-group" style="margin:0"><label for="arc-type-field">Type field</label><div style="display:flex;gap:8px">' +
         '<select id="arc-type-field" style="flex-grow:1">' + (fields ? arcgisFieldOptionsHTML(typeFields, curField, curField ? null : "Pick a field") : '<option>Reading the layer&rsquo;s fields…</option>') + '</select>' +
-        '<button type="button" class="btn btn-secondary" id="arc-read-types">Read types</button></div></div>' : '<div></div>') +
+        '<button type="button" class="btn btn-secondary" id="arc-read-types">Read types</button></div></div>' : '') +
     '</div>' +
     styleBlock +
     '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">' +

@@ -9074,7 +9074,9 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   left: 12px;
   z-index: 5;
   width: 260px;
-  max-height: calc(100% - 24px);
+  /* Shorter than the canvas, and the body scrolls: the key grew past a
+     laptop-height map once the ArcGIS layers joined it (2026-11-17). */
+  max-height: min(calc(100% - 24px), 440px);
   display: flex;
   flex-direction: column;
   /* The same glass as the menus opened on the canvas (--map-glass-bg). */
@@ -9110,6 +9112,7 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 .topology-legend-body {
   padding: 8px 10px 10px;
   overflow-y: auto;
+  min-height: 0;
 }
 .topology-legend-section {
   margin-top: 6px;
