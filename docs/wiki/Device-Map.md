@@ -724,8 +724,10 @@ can't go in a junction box. In edit mode:
 - Drag a device from the **Device List** onto a rack (it lands as a 1U block at
   the U under the pointer, or the nearest free U) or into a junction box (a
   12 × 8 in shape at the pointer, or the nearest free space). A device is in one
-  place: one already in a junction box can't also be racked, and the Device List
-  says where each one is, with an **×** to take it out. **Room items** adds
+  place, and the Device List says where each one is, with an **×** to take it
+  out. Dragging a placed device's row **moves** it: to another rack, another U,
+  or from a rack into a junction box and back. If the spot you drop on has no
+  room, it stays where it was. **Room items** adds
   **Cable management** and named **Third party** boxes (an ISP router, a patch
   panel), in a rack or a junction box, as many as you need.
 - **In a rack:** drag a block's top or bottom edge to change its height, and its

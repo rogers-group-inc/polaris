@@ -333,21 +333,22 @@
         });
         return;
       }
-      if (token !== CABLE_TOKEN && token !== THIRD_PARTY_TOKEN && state.placements.some(function (p) { return p.assetId === token; })) {
-        ctx.toast("That device is already in a junction box in this view", "error");
-        return;
-      }
-      // A device is in one place in a room: a rack or a junction box.
-      var elsewhere = token !== CABLE_TOKEN && token !== THIRD_PARTY_TOKEN && ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
-      if (elsewhere) { ctx.toast("That device is already in " + elsewhere + ": remove it there first", "error"); return; }
-      if (token === CABLE_TOKEN) mount(wall, at, { kind: "cableManagement", w: 3, h: 24 });
-      else if (token === THIRD_PARTY_TOKEN) mount(wall, at, { kind: "thirdParty", w: 12, h: 8, label: "Third party", rename: true });
-      else mount(wall, at, { kind: "asset", assetId: token, w: 12, h: 8 });
+      if (token === CABLE_TOKEN) { mount(wall, at, { kind: "cableManagement", w: 3, h: 24 }); return; }
+      if (token === THIRD_PARTY_TOKEN) { mount(wall, at, { kind: "thirdParty", w: 12, h: 8, label: "Third party", rename: true }); return; }
+      // A device already placed in this room is MOVED (operator report
+      // 2026-11-17): its old box spot is set aside while the new one is found
+      // (put back if there is no room); one in a rack is taken out of it once
+      // this box has it (a device is in one place in a room).
+      var before = state.placements;
+      state.placements = before.filter(function (p) { return p.assetId !== token; });
+      var elsewhere = ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
+      if (!mount(wall, at, { kind: "asset", assetId: token, w: 12, h: 8 })) { state.placements = before; return; }
+      if (elsewhere && ctx.takeFromElsewhere) ctx.takeFromElsewhere(token);
     });
     function mount(wall, at, spec) {
       var x = Math.round(at.x - spec.w / 2), y = Math.round(at.y - spec.h / 2);
       var spot = nearestFreeSpot(state.placements, wall, Math.max(0, x), Math.max(0, y), spec.w, spec.h);
-      if (!spot) { ctx.toast(wall.name + " has no free " + spec.w + " × " + spec.h + " in space for that", "error"); return; }
+      if (!spot) { ctx.toast(wall.name + " has no free " + spec.w + " × " + spec.h + " in space for that", "error"); return false; }
       var p = {
         id: newId(spec.kind === "asset" ? "wp" : spec.kind === "rack" ? "wr" : spec.kind === "cableManagement" ? "wc" : "wt"),
         kind: spec.kind,
@@ -363,6 +364,7 @@
       if (p.assetId) select(p.assetId, true);
       changed();
       if (spec.rename) renameItem(p);
+      return true;
     }
 
     // ── Gestures: move, corner drag, add corner ─────────────────────────

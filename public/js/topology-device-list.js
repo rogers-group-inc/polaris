@@ -31,15 +31,16 @@
 
   /**
    * opts: { title, hint, rows: [{id, label, meta, inUse, title?}], editing,
-   *         dragMime, filter, removeLabel, selectedId, emptyText }
+   *         dragMime, filter, removeLabel, selectedId, emptyText, dragPlaced }
    * A row in use is highlighted; while editing it has an × (data-unplace) and
-   * a row not in use is draggable (data-place-asset).
+   * a row not in use is draggable (data-place-asset). With `dragPlaced` a row
+   * in use drags too — the Room view moves the device to where it is dropped.
    */
   function html(opts) {
     var rows = opts.rows || [];
     var used = rows.filter(function (r) { return r.inUse; }).length;
     var items = rows.map(function (r) {
-      var drag = opts.editing && !r.inUse;
+      var drag = opts.editing && (!r.inUse || !!opts.dragPlaced);
       var hidden = matches(r, opts.filter) ? "" : " hidden";
       return '<li class="topo-device-row' + (r.inUse ? " is-in-use" : "") + (opts.selectedId === r.id ? " is-selected" : "") + '"' +
         ' data-device-row="' + esc(r.id) + '"' +

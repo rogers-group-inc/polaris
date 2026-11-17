@@ -622,16 +622,19 @@
       if (!rack) return;
       var isCable = token === CABLE_TOKEN;
       var isThird = token === THIRD_PARTY_TOKEN;
-      if (!isCable && !isThird && state.placements.some(function (p) { return p.assetId === token; })) {
-        ctx.toast("That device is already racked in this view", "error");
-        return;
-      }
-      // A device is in one place in a room: a rack or a junction box.
-      var elsewhere = !isCable && !isThird && ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
-      if (elsewhere) { ctx.toast("That device is already in " + elsewhere + ": remove it there first", "error"); return; }
+      // A device already placed in this room is MOVED (operator report
+      // 2026-11-17: dragging a racked switch's row showed the no-drop cursor):
+      // its old spot here is set aside while the new one is found, and put
+      // back if there is no room; one in a junction box is taken out of it
+      // once this rack has it (a device is in one place in a room).
+      var isAsset = !isCable && !isThird;
+      var before = state.placements;
+      if (isAsset) state.placements = before.filter(function (p) { return p.assetId !== token; });
+      var elsewhere = isAsset && ctx.placedElsewhere ? ctx.placedElsewhere(token) : null;
+      function takeIt() { if (elsewhere && ctx.takeFromElsewhere) ctx.takeFromElsewhere(token); }
       // Rule 179: beside the rack, outside its cable manager, using no U.
       if (zone) {
-        if (isCable) { ctx.toast("Cable management goes in the rack", "error"); return; }
+        if (isCable) { state.placements = before; ctx.toast("Cable management goes in the rack", "error"); return; }
         var zp = zone.getAttribute("data-side-zone").split("|");
         var beside = {
           id: newId(isThird ? "tp" : "rp"),
@@ -643,6 +646,7 @@
         };
         state.placements.push(beside);
         changed();
+        takeIt();
         if (isThird) renameThirdParty(beside);
         return;
       }
@@ -651,7 +655,7 @@
       // right-click opt-in for gear that fills the rack.
       var fullDepth = false;
       var u = nearestFreeU(state.placements, state.racks, rack.id, rack.face, uAt(bay, rack, e.clientY), 1, fullDepth, null);
-      if (u == null) { ctx.toast(rack.name + " has no free U", "error"); return; }
+      if (u == null) { state.placements = before; ctx.toast(rack.name + " has no free U", "error"); return; }
       var placed = {
         id: newId(isCable ? "cm" : isThird ? "tp" : "rp"),
         kind: isCable ? "cableManagement" : isThird ? "thirdParty" : "asset",
@@ -668,6 +672,7 @@
       };
       state.placements.push(placed);
       changed();
+      takeIt();
       // A third-party box is named on the spot: the placeholder name says nothing.
       if (isThird) renameThirdParty(placed);
     });
