@@ -613,7 +613,7 @@ opens **Show on the map**. It has a switch for each of these:
 
 - **Devices**, **Groups** (drawn areas, buildings and rooms, and room outlines), and
   **Connections**;
-- each ArcGIS layer that covers the map.
+- each ArcGIS layer that covers the map, and each type of a layer drawn by type.
 
 Under Devices, Groups and each ArcGIS layer that has labels, **Labels** turns
 off its labels. A hidden label still appears while you point at its device,
@@ -635,14 +635,15 @@ only reads them; edit them in ArcGIS ([rule 188](Business-Rules#rule-188)).
 
 A view draws every layer whose area covers the map on screen, found
 automatically, so each site gets its own region's layers with nothing to set
-([rule 188(c)](Business-Rules#rule-188)). **Map layers** at the top of the
-details pane lists those layers — a layer drawn by type has a box for each of
-its types — and names the ones that cover somewhere else under *Not here*.
-Untick a layer or a type to hide it. While editing, what you hide is saved
-with the view; otherwise it lasts until you close the map. Each layer, or
-each type, has the colour, width and line style set on the integration, and
-the legend in the bottom-left corner names every one shown, with a by-type
-layer's types under its name. Polaris reads the features in view as you pan;
+([rule 188(c)](Business-Rules#rule-188)). The eye button's **ArcGIS layers**
+section lists those layers — a layer drawn by type has a box for each of its
+types — and names the ones that cover somewhere else under *Not here*. Untick a
+layer or a type to hide it. While editing, the eye button shows just this
+section, and what you hide is saved with the view; otherwise it lasts until you
+close the map. Each layer, or each type, has the colour, width and line style
+set on the integration, and the **Legend** panel ends with an *ArcGIS layers*
+section naming every one shown, with a by-type layer's types under its name.
+Point at a line to see what it is: its type, its label and its layer. Polaris reads the features in view as you pan;
 a layer with more features in view than one answer carries says *(partial)* —
 zoom in. Labels appear when you zoom in close. Click a feature to see the
 fields chosen for it, a line's length, the connections riding it, and
@@ -658,8 +659,8 @@ or off the line (or press Delete) to take the connection off it. Which
 connections ride a line stays in Polaris, so it needs Device Map
 **Read-Write**, like any other layout change. If a line is hidden on this
 view, filtered out, or deleted in ArcGIS, the connection is drawn straight
-again and **Map layers** shows **Route line missing** with how many
-connections it affects.
+again and the eye button's ArcGIS section shows **Route line missing** with
+how many connections it affects.
 
 The details pane's **Device List** names every device of a shown type, with a
 filter box; it shows about five rows and scrolls past that. A device on the

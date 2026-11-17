@@ -1141,16 +1141,64 @@ function _wireArcgisLayers(id) {
     };
   }
 
-  function readTypes(l, reset) {
+  /** Ask ArcGIS for a field's types; resolves the reading (also kept for the counts). */
+  function fetchTypes(l, field) {
+    return api.integrations.arcgisLayerTypes(body({ url: l.url, field: field })).then(function (res) {
+      _arcgisDraft.typeInfo[l.id] = res;
+      return res;
+    }).catch(function (err) { fail("Could not read the types", err); return null; });
+  }
+
+  // Read types: merge the reading into a working copy and open the dialog on it.
+  function readTypes(l) {
     var sel = document.getElementById("arc-type-field");
     var field = sel ? sel.value : (l.types && l.types.field);
     if (!field) { showToast("Pick the type field first", "error"); return; }
-    api.integrations.arcgisLayerTypes(body({ url: l.url, field: field })).then(function (res) {
-      _arcgisDraft.typeInfo[l.id] = res;
-      mergeTypes(l, res, !!reset);
+    fetchTypes(l, field).then(function (res) {
+      if (!res) return;
+      var work = { id: l.id, types: l.types ? JSON.parse(JSON.stringify(l.types)) : null };
+      mergeTypes(work, res, false);
+      openTypesDialog(l, work.types);
+    });
+  }
+
+  /**
+   * The types dialog (rule 188(b)): a stacked dialog over the integration
+   * dialog with the full-width types table. It edits a copy: Done gives it to
+   * the layer, Cancel / X / Escape leave the layer as it was.
+   */
+  function openTypesDialog(l, types) {
+    var work = { id: l.id, types: JSON.parse(JSON.stringify(types)) };
+    var footer = '<button type="button" class="btn btn-secondary" data-arc-types-cancel>Cancel</button>' +
+      '<button type="button" class="btn btn-primary" data-arc-types-done>Done</button>';
+    var ov = buildOverlay(1300, "Types — " + l.title, arcgisTypesDialogHTML(l.id, work.types), footer, null, true);
+    var bodyEl = ov.dialog.querySelector(".modal-body");
+    function repaint() { bodyEl.innerHTML = arcgisTypesDialogHTML(l.id, work.types); }
+    function entry(i) { return i === "other" ? work.types.other : work.types.values[Number(i)]; }
+    bodyEl.addEventListener("change", function (e) {
+      var t = e.target, i;
+      if ((i = t.getAttribute("data-arc-type-on")) !== null) entry(i).on = t.checked;
+      else if ((i = t.getAttribute("data-arc-type-color")) !== null) entry(i).style.color = t.value.toLowerCase();
+      else if ((i = t.getAttribute("data-arc-type-width")) !== null) entry(i).style.width = parseInt(t.value, 10) || 3;
+      else if ((i = t.getAttribute("data-arc-type-dash")) !== null) entry(i).style.dash = t.value;
+      else return;
+      repaint();
+    });
+    bodyEl.addEventListener("click", function (e) {
+      if (!e.target.closest("#arc-types-reset")) return;
+      fetchTypes(l, work.types.field).then(function (res) {
+        if (!res) return;
+        mergeTypes(work, res, true);
+        repaint();
+      });
+    });
+    ov.dialog.querySelector("[data-arc-types-cancel]").addEventListener("click", function () { ov.close(); });
+    ov.dialog.querySelector("[data-arc-types-done]").addEventListener("click", function () {
+      l.types = work.types;
       delete _arcgisDraft.mode[l.id];
+      ov.close();
       if (_arcgisDraft.layers[_arcgisDraft.selected] === l) repaintEditor();
-    }).catch(function (err) { fail("Could not read the types", err); });
+    });
   }
 
   function wireTypes(l, ed, repaintList) {
@@ -1168,23 +1216,9 @@ function _wireArcgisLayers(id) {
       });
     });
     var readBtn = document.getElementById("arc-read-types");
-    if (readBtn) readBtn.addEventListener("click", function () { readTypes(l, false); });
-    var reset = document.getElementById("arc-types-reset");
-    if (reset) reset.addEventListener("click", function () { readTypes(l, true); });
-    if (!l.types) return;
-    function entry(i) { return i === "other" ? l.types.other : l.types.values[Number(i)]; }
-    var host = ed.querySelector("[data-arc-types]");
-    if (!host) return;
-    host.addEventListener("change", function (e) {
-      var t = e.target, i;
-      if ((i = t.getAttribute("data-arc-type-on")) !== null) { entry(i).on = t.checked; repaintEditor(); return; }
-      if ((i = t.getAttribute("data-arc-type-color")) !== null) entry(i).style.color = t.value.toLowerCase();
-      else if ((i = t.getAttribute("data-arc-type-width")) !== null) entry(i).style.width = parseInt(t.value, 10) || 3;
-      else if ((i = t.getAttribute("data-arc-type-dash")) !== null) entry(i).style.dash = t.value;
-      else return;
-      repaintEditor();
-      repaintList();
-    });
+    if (readBtn) readBtn.addEventListener("click", function () { readTypes(l); });
+    var editBtn = document.getElementById("arc-types-edit");
+    if (editBtn) editBtn.addEventListener("click", function () { if (l.types) openTypesDialog(l, l.types); });
   }
 
   // Scope buttons: organization / my content search, or paste a URL.

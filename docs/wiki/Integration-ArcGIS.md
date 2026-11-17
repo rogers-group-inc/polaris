@@ -94,7 +94,7 @@ have nothing to draw, cannot be added. Up to 20 layers.
 
 | Field | |
 |---|---|
-| **Name on the map** | What the legend and the Map layers card call it. |
+| **Name on the map** | What the legend and the eye button's ArcGIS layers section call it. |
 | **Style** | **One style** draws every feature alike. **By type** draws each kind of line its own way — see below. |
 | **Colour**, **Width**, **Line** | One style: one of six theme colours, 1–8 px, solid, dashed or dotted. Points are drawn as dots, areas as a faint fill with an outline. |
 | **Label field** | Drawn along each line (or beside each point) when zoomed in close. |
@@ -105,20 +105,22 @@ have nothing to draw, cannot be added. Up to 20 layers.
 **By type** ([rule 188(b)](Business-Rules#rule-188)). For a layer that keeps
 several kinds of line in one field — gas, overhead and underground electric,
 water — choose **By type**, pick that **Type field** (a text or whole-number
-field) and press **Read types**. Polaris lists each type with how many lines
-have it, and copies the names, colours and dashes the layer uses in ArcGIS, so
+field) and press **Read types**. A **Types** window opens over the dialog,
+listing each type with how many lines have it, and copies the names, colours and dashes the layer uses in ArcGIS, so
 it starts out looking the same. Untick a type to leave it out — Polaris never
 asks ArcGIS for it — and change any type's colour (any colour), width or line.
 **Other types** covers lines with no type and types added in ArcGIS later; it
-starts unticked. **Read types** again later to pick up new types: the ones you
-already set keep your settings. **Reset to ArcGIS styles** takes ArcGIS's
-colours again. A field with more than 50 different values names lines rather
+starts unticked. **Done** keeps your changes and **Cancel** drops them; the
+Layers tab then shows the types drawn, and **Edit types** opens the window
+again. **Read types** again later to pick up new types: the ones you already
+set keep your settings. **Reset to ArcGIS styles** takes ArcGIS's colours
+again. A field with more than 50 different values names lines rather
 than sorting them, and is refused.
 
 **Which views draw it.** Polaris reads the area each layer covers, and every
 Topology view whose map overlaps that area draws it — no per-site setting
 ([rule 188(c)](Business-Rules#rule-188)). A view can hide a layer, or one of
-its types, under **Map layers** ([Device Map](Device-Map#arcgis-layers)). A
+its types, from the eye button on the map ([Device Map](Device-Map#arcgis-layers)). A
 layer whose area Polaris cannot work out is offered on every view.
 
 **Your sign-in stays on the server.** The browser asks Polaris for the features

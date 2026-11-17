@@ -16,11 +16,19 @@ and for line types and layers by area (188(b), 188(c)) https://claude.ai/artifac
   (`#rrggbb`, ArcGIS's own, painted through the element's `--arc`) — the one exception to the
   token colours — plus a width and a line style. The legend puts the types under the layer's
   name; the card names a feature's type with its sample.
-- **Map layers** heads the details pane on a Topology view: a checkbox per layer that COVERS
-  the map (188(c), found from each layer's area), a by-type layer's types nested under it with
-  their own checkbox and sample, and "Not here: …" naming the rest. Everything draws until
-  unticked. While editing, what is hidden is staged and saved with the view; otherwise it
-  lasts until the map closes. A **Route line missing** pill
+- **The eye menu's ArcGIS layers section** (since 2026-11-17; it was a Map layers card in
+  the details pane): a checkbox per layer that COVERS the map (188(c), found from each
+  layer's area), a by-type layer's types nested under it with their own checkbox and sample,
+  and "Not here: …" naming the rest. Everything draws until unticked. The eye opens while
+  editing too, holding only this section; there what is hidden is staged and saved with the
+  view, otherwise it lasts until the map closes.
+- **The Legend panel** ends with an ArcGIS layers section in the shared `.topology-legend-*`
+  rows; the panel is capped at 440 px and its body scrolls.
+- **Hover**: pointing at a feature opens one tooltip — the type's sample and name, the
+  feature's label, the layer.
+- **The types table opens in a stacked dialog** (`buildOverlay` at 1300, wide) over the
+  integration dialog — Read types or Edit types opens it, Done keeps, Cancel drops; the
+  Layers tab shows only a summary, the drawn types and Edit types. A **Route line missing** pill
   (`badge-expired`) counts connections riding a line that is hidden, filtered out or gone.
 - **The click card** is a Leaflet popup over the floating glass: the label, "from ArcGIS, read
   only", the layer's chosen fields, a line's length, the connections riding it, and **Open in
@@ -39,7 +47,7 @@ and for line types and layers by area (188(b), 188(c)) https://claude.ai/artifac
 
 ## Source
 
-`public/js/topology-arcgis-layers.js` (features, legend, card, Map layers card),
+`public/js/topology-arcgis-layers.js` (features, legend section, card, hover, eye-menu data),
 `public/js/topology-physical.js` (link snap + handles), `public/js/cable-run-geometry.js`,
 `public/css/map.css` (`.topo-arc-*`, `.topology-arc-layers`),
 `public/js/integrations-forms.js → arcgisLayersHTML()`, `public/js/integrations.js →
