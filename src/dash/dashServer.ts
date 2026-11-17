@@ -96,9 +96,15 @@ const API_PREFIX_ALLOWLIST = ["/weather/", "/saved-dashboards/"];
  * a double-clicked one) from GET /map/sites/:id/topology — and the Status Map
  * widget's dot popup opens the same pane on the wallboard — exactly that path:
  * the site-scoped endpoint search beside it stays unreachable here, and the
- * layout writes under it are 405'd regardless.
+ * layout writes under it are 405'd regardless. A Topology view picked on the
+ * widget draws its floor plans and ground image from
+ * GET /map/sites/:id/topology/background/:imageId (looked up by site AND
+ * image id, a read).
  */
-const API_PATTERN_ALLOWLIST = [/^\/map\/sites\/[^/]+\/topology$/];
+const API_PATTERN_ALLOWLIST = [
+  /^\/map\/sites\/[^/]+\/topology$/,
+  /^\/map\/sites\/[^/]+\/topology\/background\/[^/]+$/,
+];
 
 /**
  * Is this source IP allowed under the current scope? "all" → always; "custom"

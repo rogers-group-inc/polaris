@@ -51,3 +51,4 @@ A region-tree rewrite (rule 153) still sends no `levels`: a rename or move repla
 
 Rejected: clearing the levels below the polygon's deepest one when its building changes (it is exactly the loss the operator reported); refusing old room polygons on save (an existing view would stop saving).
 
+**2026-11-17 — no floors in the polygon picker.** The operator saw floors offered in "Draw polygon for which group?". A device's floor comes from the floor layer it is placed on (rule 168), which overrides any floor a polygon carries (`stageCodesFor`), so a floor group decided nothing. The picker now offers areas and buildings only (`pickGroup` clears `floor`), and New group has no Floor kind. Older polygons that carry a floor keep working; their floor is ignored as before.

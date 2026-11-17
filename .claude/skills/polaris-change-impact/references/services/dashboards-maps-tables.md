@@ -465,7 +465,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **Invariants:**
 - **The token never leaves the server**: the browser gets styles and features; `listMapLayers` returns no URL, filter or token.
-- **Bounded reads**: a bbox query is WGS84, generalised to half a pixel at the zoom (`maxAllowableOffset`), ≤ 2000 features (`truncated`), cached 60 s (≤ 300 entries, FIFO) on the bbox snapped outward to the zoom's tile grid; by id ≤ 50, quoted (`''`), POSTed, AND-ed with the layer's `where`.
+- **Bounded reads**: a bbox query is WGS84, generalised to half a pixel at the zoom (`maxAllowableOffset`), ≤ 2000 features (`truncated`), cached 1 h (≤ 300 entries, FIFO; `clearFeatureCache` on a layer settings save) on the bbox snapped outward to the zoom's tile grid; by id ≤ 50, quoted (`''`), POSTed, AND-ed with the layer's `where`.
 - **Rule 111**: `layerHosts` lists only hosts outside the portal (and, for an Online portal, outside `*.arcgis.com`), so adding a layer on a new host needs the secret typed again; reading a not-yet-saved foreign host from the form goes without a token (`arcgisConfigForUrl` in the route).
 - **Identity**: GlobalID preferred over OBJECTID (`newLayerConfig`), because a routed link (rule 188(a)) remembers a line by it.
 

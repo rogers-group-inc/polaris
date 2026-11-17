@@ -578,7 +578,8 @@ Every site has a default view, and you can save more. A view is a name, one
 - **Room** — one room's racks and junction boxes, side by side, that you put
   devices into.
 
-The view button beside the site's name opens the view menu: pick a view to
+The view button beside the site's name opens the view menu, which lists the
+Layer 2 views first, then Topology, then Room. Pick a view to
 switch to it, or choose **New view**, **View settings** (its name and mode) or
 **Delete view** (the default view can't be deleted). Views are shared: everyone
 who can open the Device Map sees the same views, and creating or changing them
@@ -602,8 +603,28 @@ the column under the tick:
   layers use the same coordinates.
 - **Draw polygon**: pick the location group the polygon is for (a group the
   site's descriptions already name, or a new group inside one), then click to
-  add points and click the first point to close it. Click a polygon to
-  reshape it, change its group or delete it.
+  add points and click the first point to close it. While drawing, drag with
+  the right mouse button to move the map; **Esc** stops drawing and leaves the
+  Topology window open. Click or right-click a polygon to reshape it, change
+  its group or delete it.
+
+While you are **viewing** a Topology view, the eye button in the same column
+opens **Show on the map**. It has a switch for each of these:
+
+- **Devices**, **Groups** (drawn areas and buildings, and room outlines), and
+  **Connections**;
+- each ArcGIS layer the integration offers.
+
+Under Devices, Groups and each ArcGIS layer that has labels, **Labels** turns
+off its labels. A hidden label still appears while you point at its device,
+polygon, room or feature. Your choices are kept in your browser for that view
+only. Nobody else sees them, and editing always shows everything. The eye turns
+the accent colour while anything is hidden.
+
+Each device's name is drawn over every icon. Pointing at a name, or at its
+device, brings that name to the front, and a click, right-click or drag on a
+name acts on its device. Connections take the pointer a few pixels either side
+of the line, so you don't have to hit the line exactly.
 
 #### ArcGIS layers
 
@@ -642,9 +663,11 @@ again (its codes stay). The FortiSwitch and FortiAP lists further down the pane
 name only the devices on the map.
 
 Drag a device from the **Device List** onto the map. Polygons stand for
-areas, buildings and floors. A device dropped inside one takes that group's
-`a:` / `b:` / `f:` codes in its description when you save; the innermost polygon
-wins, so a device on a floor inside a building gets both. Only those levels
+areas and buildings; the floor comes from the floor you place the device on,
+so the polygon picker offers no floors. A device dropped inside one takes that
+group's `a:` / `b:` codes in its description when you save, plus the floor's
+`f:`; the innermost polygon wins, so a device in a building inside an area gets
+both. Only those levels
 change: the device's room (`r:`), rack (`ra:`) and junction box (`jb:`) stay as
 they are, and a device whose building is already right isn't listed at all. A
 device placed outside every polygon keeps its codes
@@ -708,8 +731,8 @@ code, so renaming one in **Location regions** renames it here too.
 A device's icon (Server Settings → Customization) is drawn on its shape in a
 junction box, and beside its name in a rack.
 
-**Floors are stacked on one map.** Every Topology view opens on **floor 0, the
-ground**: its background (the map, satellite imagery or an uploaded site plan) is
+**Floors are stacked on one map.** Every Topology view opens on **floor 1, the
+ground** (floors run −2, −1, 1, 2, 3; there is no floor 0): its background (the map, satellite imagery or an uploaded site plan) is
 always shown. The **Floor** control at the left edge steps up (**+**) and down
 (**−**) through the view's floors; **Ground** jumps back. While editing, pressing
 **+** or **−** past the last floor adds one (−1 and −2 are basements) and asks for
@@ -718,8 +741,11 @@ delete it.
 
 All floors are drawn together, each at its true size and place. The floor you're on is
 at full strength, the floor above it at 5 % and the one above that at 2 %; floors below
-are hidden. The ground map (or satellite, or site plan) is part of floor 0, so on floor −1
-it fades to 5 % with floor 0's devices. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
+are hidden, except the ground. The ground map (or satellite, or site plan) is part of the
+ground floor, which stays at 5 % under any floor above it, and on floor −1 it fades to 5 % as
+the floor above. A device on the ground gets `f:1` when the view has other floors; on floor 2
+it gets `f:2`. Devices whose codes still use the old numbering (when the ground was 0) are
+renumbered the next time the view is saved, listed in the save's confirmation. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
 floors fades from one floor's strength to the other's, and you can bend it in edit mode from
 either end's floor like any other connection: drag it to add a corner, click it to show its
 corners and ends, and select a corner and press Delete to remove it. Its corners stay where
@@ -728,7 +754,7 @@ you put them whichever floor you view.
 **Each floor can have its own plan.** On a floor, the map button offers **Upload
 floor plan** (PNG, JPEG or WebP), **Adjust floor plan** and **Remove floor plan**.
 **Adjust floor plan** shows the plan with corner handles: drag to move it, drag a
-corner to resize it (it keeps its shape), hold **Ctrl** while dragging a corner to stretch it freely, and
+corner to resize it (the opposite corner stays put and it keeps its shape), hold **Ctrl** while dragging a corner to stretch it freely, and
 hold **Alt** while dragging to rotate it; **Done** or Esc finishes and **Reset**
 puts it back. The floor's devices and polygons move with its plan, so they stay in
 the same rooms.
@@ -755,7 +781,10 @@ Bends are saved with the floor, on Save or the tick like everything else, and
 move with the floor's plan when you adjust it.
 
 **A floor plan can be a CAD drawing.** On a floor, the map button also offers **Import CAD
-drawing (DXF)**. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
+drawing (DXF)**. The ground (floor 1) offers it too, under the map or site plan choices: the
+drawing lies over the map, and **Adjust CAD drawing**, **Place with two points** and
+**Remove CAD drawing** work as on a floor. Unlike a floor's plan, moving the ground's
+drawing never moves the ground's devices or polygons; they stay where they are on the map. Save the drawing from AutoCAD as DXF (Save As → AutoCAD DXF, one file per
 level); DWG files are not read. The import dialog shows:
 
 - a preview of the drawing;
@@ -773,10 +802,13 @@ Then choose how to place it:
 - **Line up with** another floor — offered for every floor that already has a CAD drawing.
   It uses that floor's placement, which is right when both drawings share coordinates, as
   the levels of one mine survey do; the dialog shows how much the two drawings overlap.
+  It is a one-time copy, not a link: adjusting that floor later doesn't move this one. To
+  bring them back in line, open **Adjust floor plan** on this floor and press **Line up
+  with <floor>** on its bar (a menu when several floors have drawings). Undo reverses it.
 - **Keep this floor's placement** — when replacing a floor's CAD drawing with a newer one.
 - **Line it up by hand** — the default when the drawing has no location of its own and no
   other floor to line up with. The drawing opens ready to adjust: drag to move it, drag a
-  corner to resize it (it keeps its shape; Ctrl stretches freely), Alt + drag to turn it, and **right-drag** to
+  corner to resize it (the opposite corner stays put; it keeps its shape, Ctrl stretches freely), Alt + drag to turn it, and **right-drag** to
   move the whole map. Line a few features you can see on both (a portal, a shaft, a
   property corner) up with the floor above. While you adjust, the floor above and the
   ground show at 35 % instead of 5 % so you can see them.

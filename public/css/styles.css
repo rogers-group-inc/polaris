@@ -9208,6 +9208,18 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   display: flex; justify-content: space-between; gap: 8px; pointer-events: none;
 }
 .devmap-topo-bar > div { display: flex; align-items: center; gap: 4px; min-width: 0; pointer-events: auto; }
+/* The site's saved views (Layer 2 / Topology / Room), beside the gate's name. */
+.devmap-topo-viewsel {
+  width: auto; max-width: 180px; min-width: 0; margin: 0;
+  background: var(--color-bg-primary); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 2px 6px; height: auto;
+  font-size: 11px; font-weight: 600; color: var(--color-text-primary); font-family: inherit;
+  box-shadow: var(--map-btn-shadow); cursor: pointer;
+}
+.devmap-topo-viewsel[hidden] { display: none; }
+/* A Topology view's canvas in the pane: its zoom and Map | Satellite controls
+   start below the top bar (the gate's name and the view picker) they would sit under. */
+.devmap-topo-canvas .leaflet-top.leaflet-left { top: 34px; }
 .devmap-topo-title {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   background: var(--color-bg-primary); border: 1px solid var(--color-border);

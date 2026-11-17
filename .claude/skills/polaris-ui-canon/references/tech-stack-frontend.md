@@ -123,9 +123,41 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
+**Device names on the Topology canvas** are markers of their own (`labels[id]`, `.topo-phys-label`
+→ `.topo-phys-name`) in the device's floor pane, beside its icon marker (`markers[id]`) at the
+same point: `zIndexOffset` `LABEL_Z` puts every name over every icon, and hovering a name or its
+icon lifts that name to `LABEL_Z_HOVER`. A name is its device: both markers carry the same click /
+dblclick / contextmenu / drag handlers, a drag of either moves both, and `paintSelected` /
+`paintDragging` / `removePlacement` / `place` treat the pair together (operator request
+2026-11-17). Inside the icon's element a name could never sit over a later icon, and it took no
+mouse.
+**What the Topology canvas shows while viewing** (the eye corner button, `viewOnly: true` →
+`data-view-only`, hidden in edit mode by map.js → `_applyTopologyEditMode`; operator request
+2026-11-17): `vis` holds Show for devices / groups (drawn polygons + room outlines) / links, Labels
+for devices and groups, and `arcLabelsOff` per ArcGIS layer. It lives in localStorage
+(`polaris.topology.visibility.<viewId>`, try/catch), a per-viewer convenience, never staged.
+`visOn` / `labelsOn` / `arcLabelsOn` answer true while editing, so the edit session always sees
+everything. Hiding a kind skips it in `drawFloor` / `addMarker` / `addLine` / `drawCrossLinks`.
+Hiding labels is a class on the map element (`vis-no-device-labels` / `vis-no-group-labels`)
+plus `.is-hover` on the hovered object's label: a device's via `lift`, a polygon's tooltip on
+the shape's mouseover, a room outline's by `hoverOutlines`, a rAF point-in-ring test, because
+outlines take no pointer. ArcGIS labels pass `labelsShown` into
+`PolarisTopologyArcgisLayers.create`: off means the sticky hover tooltip. Its `layerList()` feeds
+the panel, and showing or hiding a layer goes through `setShownArcgisLayers`, which is
+session-only while viewing, as in the sidebar. The panel is a `.btn-dropdown-menu.open.topo-vis-panel` on
+`<body>`, beside the button. Esc and an outside pointerdown close it, and so does any change
+of edit mode.
+**Connection hit lines**: every same-floor link is a drawn line (not interactive) plus an
+invisible hit line `HIT_PX` (18) wide (`linkHits[id]`) that carries the hover card, the press
+and the click. `line.setLatLngs` is wrapped so the hit line follows every redraw. Links between
+floors use the same width.
 **Links on the Topology canvas** reuse Layer 2's pieces: the hover card is
-`PolarisTopologyRender.edgeTooltipHtml` through a two-method Cytoscape stand-in (`tipCy`, an
-edge `{data(k)}`), shown with map.js's `#topology-edge-tooltip` via `ctx.linkTip`; bends and end
+`PolarisTopologyRender.edgeTooltipHtml` over a HEADLESS Cytoscape graph of the canvas's own
+elements (`tipGraph`, built on first hover; `linkTipHtml`), shown with map.js's
+`#topology-edge-tooltip` via `ctx.linkTip`. Never a stand-in object: `_loopTipRows` walks the
+graph (`linkHoverSet` → `cy.collection()`), and a two-method stand-in threw on every wired link
+on a ring, so those links showed no card while wireless ones did (fixed 2026-11-17; without
+Cytoscape the stand-in remains, with `inLoop` dropped). Bends and end
 points are Layer 2's `edgepath:<pathKey>:b<n>` / `:s` / `:t` keys (`PolarisTopologyEdgeEditor`
 `assignPathKeys` / `parsePaths` / `serializePaths` / `insertIndex`) stored in the FLOOR's
 placement blob: bends in plan units (so they follow `PlanOverlay` adjustments), ends as a unit

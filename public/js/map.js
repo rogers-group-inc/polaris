@@ -1846,6 +1846,7 @@
       btn.innerHTML = _svg(b.icon);
       _setCornerTip(btn, b.label, b.tip);
       if (b.editOnly) btn.setAttribute("data-edit-only", "1");
+      if (b.viewOnly) { btn.setAttribute("data-view-only", "1"); btn.hidden = !!topoState.editing; }
       stack.appendChild(btn);
     });
   }
@@ -2109,7 +2110,13 @@
     var current = _currentView();
     var canEdit = _canEditViews();
     var items = [{ heading: "Views" }];
-    _siteViews().forEach(function (v) {
+    // Layer 2 views first, then Topology, then Room; within a mode the
+    // site's own order (operator request 2026-11-17).
+    var MODE_ORDER = { layer2: 0, topology: 1, room: 2 };
+    function rank(v) { var r = MODE_ORDER[v.mode]; return r === undefined ? 0 : r; }
+    _siteViews().map(function (v, i) { return { v: v, i: i }; }).sort(function (a, b) {
+      return rank(a.v) - rank(b.v) || a.i - b.i;
+    }).map(function (x) { return x.v; }).forEach(function (v) {
       items.push({
         label: (current && v.id === current.id ? "✓ " : "") + v.name + " — " + (VIEW_MODE_LABELS[v.mode] || "Layer 2"),
         onSelect: function () { _switchTopologyView(v.id); },
@@ -2974,7 +2981,7 @@
         ["Right-click a placed device", "Open it, or remove it from the map (its codes are left as they are)"],
         ["Click a placed device, then Delete", "Take it off the map — it goes back to the Device List"],
         ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
-        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
+        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close; right-drag moves the map, Esc cancels the polygon"],
         ["Click a polygon", "Reshape it, change its group or delete it"],
         ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
         ["Floor + / − (left)", "Change floor: the floor above shows faint and larger, the one above that fainter still; floors below are hidden"],
@@ -4500,6 +4507,8 @@
     if (viewMouse) viewMouse.hidden = on;
     // A mode canvas's own buttons (Background, Draw polygon) are edit-only.
     document.querySelectorAll("#topology-corner-stack [data-edit-only]").forEach(function (el) { el.hidden = !on; });
+    // ...and the eye button (what the map shows) is view-only.
+    document.querySelectorAll("#topology-corner-stack [data-view-only]").forEach(function (el) { el.hidden = on; });
     _paintMouseControls(); // an open panel swaps to this mode's rows
     var modeInst = _modeInstance();
     if (modeInst) {

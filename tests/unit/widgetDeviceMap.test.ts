@@ -550,3 +550,134 @@ describe("Device Map widget — location chips, pins and rotation", () => {
     unmount();
   });
 });
+
+describe("Device Map widget — the site's saved views (Layer 2 / Topology / Room)", () => {
+  const GATE = { gate: { id: "fg-river", name: "RIVERBEND-FG" } };
+  const w = () => win as unknown as Record<string, unknown>;
+  const VIEWS = [
+    { id: "room1", name: "Z Room", mode: "room", isDefault: false },
+    { id: "topo1", name: "B Topo", mode: "topology", isDefault: false },
+    { id: "l2b", name: "C Layer", mode: "layer2", isDefault: false },
+    { id: "base", name: "Base view", mode: "layer2", isDefault: true },
+  ];
+  const PAYLOAD = {
+    nodes: [], edges: [], views: VIEWS,
+    savedLayouts: {
+      "v:topo1|topo": { positions: { "sw-1": { x: 1, y: 2 } } },
+      "v:topo1|topo|L-1": { positions: { "ap-1": { x: 3, y: 4 } } },
+      "v:l2b": { positions: { "sw-1": { x: 9, y: 9 } } },
+    },
+  };
+  type Ctx = Record<string, unknown> & { loadPlacements: (l: number) => unknown };
+  let mounted: Array<{ mode: string; ctx: Ctx }> = [];
+  let savedArgs: unknown[] = [];
+  let stored: Array<[string, string, unknown]> = [];
+  let seq = 0;
+  const original = { apply: null as unknown };
+
+  beforeAll(() => {
+    // The canvases' scripts and map.css are on the page already (as a page
+    // that had loaded them); the fakes below stand in for what they define.
+    for (const src of ["/js/topology-device-list.js", "/js/cable-run-geometry.js", "/js/topology-arcgis-layers.js",
+      "/js/topology-physical.js", "/js/topology-rack.js", "/js/topology-wall.js", "/js/topology-room.js"]) {
+      const s = doc.createElement("script");
+      s.setAttribute("src", src);
+      doc.head.appendChild(s);
+    }
+    const fake = (mode: string) => ({
+      render: (_host: unknown, ctx: Ctx) => { mounted.push({ mode, ctx }); return { destroy() {}, resize() {}, viewState: () => ({ layer: -1 }) }; },
+    });
+    w().PolarisTopologyPhysical = fake("topology");
+    w().PolarisTopologyRoom = fake("room");
+    (g.api as { map: Record<string, unknown> }).map.topologyBackgroundUrl = (id: string, img: string) => `/bg/${id}/${img}`;
+    (g.api as { map: Record<string, unknown> }).map.arcgisLayers = () => Promise.resolve([]);
+    const R = w().PolarisTopologyRender as Record<string, unknown>;
+    original.apply = R.applySavedPositions;
+    R.applySavedPositions = (_cy: unknown, saved: unknown) => { savedArgs.push(saved); return { pinned: {}, restored: [], placed: [] }; };
+  });
+  beforeEach(() => {
+    mounted = []; savedArgs = []; stored = [];
+    topology.mockResolvedValue(PAYLOAD);
+    w().PolarisDashboard = {
+      isEditing: () => false,
+      setWidgetConfig: (id: string, key: string, value: unknown) => { stored.push([id, key, value]); return true; },
+    };
+  });
+  afterEach(() => {
+    delete w().PolarisDashboard;
+    delete w().POLARIS_DASH_LOCAL;
+  });
+
+  function render(config: Record<string, unknown> = {}) {
+    const article = doc.createElement("article");
+    article.className = "dashboard-widget";
+    article.setAttribute("data-id", "sv" + ++seq);
+    const el = doc.createElement("div");
+    article.appendChild(el);
+    doc.body.appendChild(article);
+    const unmounts: Array<() => void> = [];
+    mod().renderInstance(el, { fortigateScope: "custom", fortigates: ["RIVERBEND-FG"], ...config }, GATE, { onUnmount: (fn) => unmounts.push(fn) });
+    const sel = () => el.querySelector(".devmap-topo-viewsel") as unknown as {
+      hidden: boolean; value: string; dispatchEvent: (e: unknown) => void;
+      querySelectorAll: (s: string) => ArrayLike<{ label: string; textContent: string; value: string }>;
+    };
+    const pick = (id: string) => { const s = sel(); s.value = id; s.dispatchEvent(new win.Event("change")); };
+    return { el, sel, pick, unmount: () => { unmounts.forEach((fn) => fn()); article.remove(); } };
+  }
+
+  it("offers every view, Layer 2 then Topology then Room, and opens on the default", async () => {
+    const { sel, unmount } = render();
+    await vi.waitFor(() => expect(cyOptions.length).toBeGreaterThan(0), { timeout: 2000 });
+    expect(sel().hidden).toBe(false);
+    expect(Array.from(sel().querySelectorAll("optgroup")).map((o) => o.label)).toEqual(["Layer 2", "Topology", "Room"]);
+    expect(Array.from(sel().querySelectorAll("option")).map((o) => o.textContent)).toEqual(["C Layer", "Base view", "B Topo", "Z Room"]);
+    expect(sel().value).toBe("base");
+    expect(mounted).toHaveLength(0);
+    unmount();
+  });
+
+  it("a Topology view draws read-only on the page's canvas, from the view's own placements, floors included", async () => {
+    const { el, pick, unmount } = render();
+    await vi.waitFor(() => expect(cyOptions.length).toBeGreaterThan(0), { timeout: 2000 });
+    pick("topo1");
+    await vi.waitFor(() => expect(mounted).toHaveLength(1), { timeout: 2000 });
+    const ctx = mounted[0].ctx;
+    expect(mounted[0].mode).toBe("topology");
+    expect(ctx).toMatchObject({ editing: false, canEdit: false });
+    expect(ctx.loadPlacements(0)).toEqual({ "sw-1": { x: 1, y: 2 } });
+    expect(ctx.loadPlacements(-1)).toEqual({ "ap-1": { x: 3, y: 4 } });
+    expect((ctx.stagePlacements as () => boolean)()).toBe(false);
+    expect((ctx.backgroundUrl as (i: string) => string)("img1")).toBe("/bg/fg-river/img1");
+    expect(typeof ctx.fetchArcgisLayers).toBe("function");
+    // No Layer 2 chrome over a map: no location chips, no Fit.
+    expect((el.querySelector(".devmap-topo-views") as unknown as { hidden: boolean }).hidden).toBe(true);
+    expect((el.querySelector(".devmap-topo-fit") as unknown as { hidden: boolean }).hidden).toBe(true);
+    // Signed in: the pick is stored with the widget.
+    expect(stored.at(-1)!.slice(1)).toEqual(["topologyView", "topo1"]);
+    pick("room1");
+    await vi.waitFor(() => expect(mounted).toHaveLength(2), { timeout: 2000 });
+    expect(mounted[1].mode).toBe("room");
+    unmount();
+  });
+
+  it("opens on the stored view; on the wallboard a pick is the viewer's own and ArcGIS is not fetched", async () => {
+    w().POLARIS_DASH_LOCAL = true;
+    const { pick, unmount } = render({ topologyView: "topo1" });
+    await vi.waitFor(() => expect(mounted).toHaveLength(1), { timeout: 2000 });
+    expect(mounted[0].ctx.fetchArcgisLayers).toBeUndefined();
+    pick("room1");
+    await vi.waitFor(() => expect(mounted).toHaveLength(2), { timeout: 2000 });
+    expect(stored).toEqual([]);
+    unmount();
+  });
+
+  it("a Layer 2 view lays out from its own saved layout", async () => {
+    const { pick, unmount } = render();
+    await vi.waitFor(() => expect(cyOptions.length).toBeGreaterThan(0), { timeout: 2000 });
+    savedArgs = [];
+    pick("l2b");
+    await vi.waitFor(() => expect(savedArgs.length).toBeGreaterThan(0), { timeout: 2000 });
+    expect(savedArgs.at(-1)).toEqual({ "sw-1": { x: 9, y: 9 } });
+    unmount();
+  });
+});

@@ -203,6 +203,15 @@ whole loop when the link is on one — as on the
 where the topology can be edited. The graph refreshes every minute and keeps
 your zoom.
 
+When the site has more than one saved view, a picker beside the gate's name
+lists them: Layer 2 views, then Topology, then Room. A **Topology** view draws
+the map, its floor plans and its devices as the Device Map page does, read-only,
+with the page's floor control to step between floors. A **Room** view draws its
+racks and junction boxes. On the Dashboard the view you pick is kept with the
+widget. On the [wallboard](Mobile-and-Dash) it starts on that view, and a viewer's pick lasts
+until the page reloads. The location chips and **Rotate** belong to Layer 2 views.
+ArcGIS layers are drawn on the Dashboard only.
+
 The legend button in the topology's bottom-left corner opens the same key as
 the Device Map page: what each node, health colour, link and location box
 means. Hover a row to light up what it stands for on the graph. Its × folds it

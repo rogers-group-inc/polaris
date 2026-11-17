@@ -3280,8 +3280,9 @@ a Topology view, a device you drop inside a polygon takes that group's `a:` / `b
 codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
 needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
 
-Polygons stand for areas, buildings and floors, and a save changes only the levels that the
-polygon (or floor layer) sets: a device's room, rack and junction box are left as they are. A Rack
+Polygons stand for areas and buildings (the floor comes from the floor a device is placed on, so
+the polygon picker offers no floors), and a save changes only the levels that the polygon and the
+floor layer set: a device's room, rack and junction box are left as they are. A Rack
 or Wall view changes only the levels its region names, so a junction box below a rack is kept.
 
 ### Rule 149
@@ -3312,11 +3313,12 @@ square inch.
 
 ### Rule 152
 
-**Floors are layers of a Topology view.** Floor 0 is the ground: its background (the map,
-satellite imagery or a site plan) is always shown, and a device placed on it gets no floor code.
-Floors above and below (basements) each have their own plan, polygons and devices, all drawn on
-one map: the floor you're on at full strength, the floor above at 10 % and drawn a little larger,
-the one above that at 2 %, and floors below hidden. A device placed on a floor gets that floor's
+**Floors are layers of a Topology view.** Floor 1 is the ground: its background (the map,
+satellite imagery or a site plan) is always shown, and a device placed on it gets `f:1` when the
+view has other floors (no floor code otherwise). Floors above (2, 3…) and below (basements −1,
+−2) each have their own plan, polygons and devices, all drawn on one map: the floor you're on at
+full strength, the floor above at 5 %, the one above that at 2 %, and floors below hidden except
+the ground, which stays at 5 %. A device placed on a floor gets that floor's
 number as its `f:` code; it keeps its other codes unless you drop it inside a polygon.
 
 ### Rule 153
@@ -3586,7 +3588,8 @@ while a maintenance window covers the check. Turning the check back on starts it
 ### Rule 168
 
 **A floor is a number; its name is only a label.** A description's floor is a whole number:
-`f:0` is the ground, `f:1` and up are above it and `f:-1`, `f:-2` are basements. A floor can
+the ground is `f:1`, `f:2` and up are above it and `f:-1`, `f:-2` are basements; there is no
+floor 0 (an older `f:0` is still read). A floor can
 also have a name ("Basement", "Mezzanine") kept in **Location regions**. New descriptions must use
 the number; an existing text floor such as `f:Surface` keeps working, is matched to the floor of
 that name, and is listed under **Devices to check** with the number to use. Polaris never
@@ -3760,7 +3763,10 @@ saved from AutoCAD. Polaris reads it, lets you choose its units and which layers
 DXF itself is not kept. DWG files are not read: save them from AutoCAD as DXF first. The
 drawing is placed by the location it carries, by lining it up with another floor drawn in
 the same coordinates (as levels of one survey are), or by clicking two places on the
-drawing and the same two on the map.
+drawing and the same two on the map. The ground (floor 0) can carry a CAD drawing too, laid
+over the map or site plan. Moving it never moves the ground's devices, which stay where they
+are on the map. On a floor's **Adjust** bar, **Line up with** another floor copies that
+floor's placement again; it is a one-time copy, not a link.
 
 ### Rule 183
 

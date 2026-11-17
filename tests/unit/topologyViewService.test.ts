@@ -223,11 +223,17 @@ describe("wall views (rule 151)", () => {
 });
 
 describe("floor layers and regions (rules 150, 152)", () => {
-  it("orders layers by level, a name is an optional label (rule 168), and never lists layer 0", () => {
+  it("orders layers by level, a name is an optional label (rule 168); layer 0 is only the ground's drawing", () => {
     const out = sanitizeLayers([{ level: 2, name: "2" }, { level: -1, name: "Basement" }]);
     expect(out.map((l) => l.level)).toEqual([-1, 2]);
     expect(out[0]).toMatchObject({ name: "Basement", background: null });
+    // The ground is no floor: a level-0 entry carries a drawing and its
+    // placement, never a name (rule 182(a)).
     expect(status(() => sanitizeLayers([{ level: 0, name: "Ground" }]))).toBe(400);
+    const ground = sanitizeLayers([{ level: 0, name: "", plan: { cx: 1, cy: 2, sx: 1, sy: 1, rot: 0 } }, { level: 1, name: "" }]);
+    expect(ground.map((l) => l.level)).toEqual([0, 1]);
+    expect(ground[0].plan).toEqual({ cx: 1, cy: 2, sx: 1, sy: 1, rot: 0 });
+    expect(status(() => sanitizeLayers([{ level: 0, name: "" }, { level: 0, name: "" }]))).toBe(400);
     expect(sanitizeLayers([{ level: 1, name: "" }])[0]).toMatchObject({ level: 1, name: "" });
     // Rule 152(a): a floor plan's placement on the ground.
     const placed = sanitizeLayers([{ level: 1, name: "", plan: { cx: 10, cy: -5, sx: 0.5, sy: 2, rot: 370 } }])[0];

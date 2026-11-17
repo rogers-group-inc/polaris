@@ -563,7 +563,11 @@ export function sanitizeWallPlacements(raw: unknown, walls: TopologyWall[]): Top
   return out;
 }
 
-/** A Topology view's floor layers (rule 152): distinct non-zero levels, each with a floor name. */
+/**
+ * A Topology view's floor layers (rule 152): distinct non-zero levels, each
+ * with a floor name — plus, optionally, a level-0 entry that carries only the
+ * ground's CAD drawing and its placement (no name; the ground is no floor).
+ */
 export function sanitizeLayers(raw: unknown): TopologyLayer[] {
   if (!Array.isArray(raw)) bad("layers must be an array");
   const arr = raw as unknown[];
@@ -574,7 +578,7 @@ export function sanitizeLayers(raw: unknown): TopologyLayer[] {
     if (!isObj(l)) bad(`layer ${i + 1} must be an object`);
     const lr = l as Record<string, unknown>;
     const level = int(lr.level, `layer ${i + 1} level`, MIN_LAYER_LEVEL, MAX_LAYER_LEVEL);
-    if (level === 0) bad("layer 0 is the view itself and is not listed");
+    if (level === 0 && (typeof lr.name === "string" && lr.name.trim())) bad("layer 0 is the ground: it holds only a drawing, never a name");
     if (levels.has(level)) bad(`layer ${level} is listed twice`);
     levels.add(level);
     // Rule 168: the level IS the floor (f:<level>); the name is an optional label.
@@ -1225,7 +1229,7 @@ export async function describeModeChangeLoss(siteId: string, viewId: string): Pr
     rackPlacements: view.rackPlacements.length,
     walls: view.walls.length,
     wallPlacements: view.wallPlacements.length,
-    layers: view.layers.length,
+    layers: view.layers.filter((l) => l.level !== 0).length,
     hasImage: referencedImageIds(view.background, view.layers).length > 0,
   };
 }
@@ -1593,7 +1597,7 @@ export async function resetTopologyViewsForSiteMove(
           data: {
             updatedBy: actor,
             polygons: json([]),
-            layers: json(v.layers.map((l) => ({ level: l.level, name: l.name, background: null }))),
+            layers: json(v.layers.filter((l) => l.level !== 0).map((l) => ({ level: l.level, name: l.name, background: null }))),
             // A view with no saved camera opens on the site anyway; one with a camera follows it.
             background: bg
               ? json({ ...bg, center: [to.latitude, to.longitude] })
