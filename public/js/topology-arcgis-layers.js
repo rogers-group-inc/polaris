@@ -225,6 +225,8 @@
       shownIds().forEach(function (id) {
         var l = layerById(id);
         var feats = byLayer[id] || {};
+        // A viewer may keep a layer's labels hover-only (the eye button).
+        var labelsOn = !opts.labelsShown || opts.labelsShown(id);
         Object.keys(feats).forEach(function (ref) {
           var ft = feats[ref];
           var shape;
@@ -248,7 +250,7 @@
             if (e.originalEvent) L.DomEvent.stop(e.originalEvent);
             openCard(l, ft, ref, e.latlng);
           });
-          if (showLabels && ft.label && labels < MAX_LABELS && l.geometry !== "area") {
+          if (showLabels && labelsOn && ft.label && labels < MAX_LABELS && l.geometry !== "area") {
             labels++;
             shape.bindTooltip(esc(ft.label), { permanent: true, direction: "center", className: "topo-arc-label", opacity: 1 });
           } else if (ft.label) {
@@ -441,6 +443,13 @@
       visible: function () { return opts.visible(); },
       sidebarHtml: sidebarHtml,
       wireSidebar: wireSidebar,
+      // The eye button's list: every layer the integration offers.
+      layerList: function () {
+        var shown = shownIds();
+        return layers.map(function (l) {
+          return { id: l.id, title: l.title, swatch: swatch(l), shown: shown.indexOf(l.id) !== -1, hasLabels: l.geometry !== "area" };
+        });
+      },
       setEditing: function () { draw(); },
       destroy: function () {
         if (moveTimer) clearTimeout(moveTimer);

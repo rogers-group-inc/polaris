@@ -378,6 +378,33 @@
     var map = null;
     var markers = {};       // nodeId → L.marker
     var labels = {};        // nodeId → its name label (a marker of its own, above every icon)
+    var linkHits = {};      // edge id → its wide invisible hit line (what the pointer takes)
+    var hullsDrawn = {};    // level → [{ latlngs, marker }] room outlines and their name markers
+    // What the map shows while VIEWING (the eye button; operator request
+    // 2026-11-17): devices, groups (drawn polygons and room outlines) and
+    // connections on or off, and each one's labels on or only on hover.
+    // ArcGIS layers' labels too. Editing always shows everything. Kept per
+    // viewer and per view in the browser — a convenience, never shared.
+    var VIS_KEY = "polaris.topology.visibility." + ((ctx.view && ctx.view.id) || "default");
+    var vis = (function () {
+      var d = { devices: { show: true, labels: true }, groups: { show: true, labels: true }, links: { show: true }, arcLabelsOff: {} };
+      try {
+        var s = JSON.parse(window.localStorage.getItem(VIS_KEY) || "null");
+        if (s && typeof s === "object") {
+          ["devices", "groups", "links"].forEach(function (k) { if (s[k] && typeof s[k] === "object") Object.assign(d[k], s[k]); });
+          if (s.arcLabelsOff && typeof s.arcLabelsOff === "object") d.arcLabelsOff = s.arcLabelsOff;
+        }
+      } catch (err) { /* no storage: defaults */ }
+      return d;
+    })();
+    function saveVis() { try { window.localStorage.setItem(VIS_KEY, JSON.stringify(vis)); } catch (err) { /* no storage */ } }
+    function visOn(k) { return state.editing || vis[k].show !== false; }
+    function labelsOn(k) { return state.editing || vis[k].labels !== false; }
+    function arcLabelsOn(id) { return state.editing || !vis.arcLabelsOff[id]; }
+    function visAnyHidden() {
+      return ["devices", "groups", "links"].some(function (k) { return vis[k].show === false || vis[k].labels === false; }) ||
+        Object.keys(vis.arcLabelsOff).some(function (k) { return vis.arcLabelsOff[k]; });
+    }
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
     var drawHandler = null;
@@ -584,7 +611,7 @@
       if (map) { map.remove(); map = null; }
       baseLayer = null; layerSwitch = null;
       floorPanes = {}; crossGroup = null;
-      markers = {}; labels = {}; linkLines = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; polygonShapes = {};
       var bg = background0;
       if (bg && bg.kind === "image") {
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
@@ -641,7 +668,7 @@
     function drawAll() {
       if (!map) return;
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].group.clearLayers(); });
-      markers = {}; labels = {}; linkLines = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; polygonShapes = {};
       allLevels().forEach(drawFloor);
       applyFloorLook(false);
       drawCrossLinks();
@@ -656,13 +683,16 @@
       // Drawn polygons and room outlines, largest first, so a smaller one
       // (a room inside a building, a polygon inside another) is on top.
       var shapes = [];
-      state.polygons.filter(function (p) { return (p.layer || 0) === level; }).forEach(function (p) {
-        var lls = p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); });
-        shapes.push({ area: screenArea(lls), draw: function () { drawPolygon(p, level, f); } });
-      });
-      roomHulls(level).forEach(function (h) {
-        shapes.push({ area: screenArea(h.latlngs), draw: function () { drawRoomHull(h, f); } });
-      });
+      hullsDrawn[level] = [];
+      if (visOn("groups")) {
+        state.polygons.filter(function (p) { return (p.layer || 0) === level; }).forEach(function (p) {
+          var lls = p.points.map(function (q) { return localToLatLng(level, q[0], q[1]); });
+          shapes.push({ area: screenArea(lls), draw: function () { drawPolygon(p, level, f); } });
+        });
+        roomHulls(level).forEach(function (h) {
+          shapes.push({ area: screenArea(h.latlngs), draw: function () { drawRoomHull(h, f, level); } });
+        });
+      }
       shapes.sort(function (a, b) { return b.area - a.area; }).forEach(function (sh) { sh.draw(); });
       Object.keys(placementsOf(level)).forEach(function (id) { if (nodeById[id]) addMarker(id, level); });
       edges.forEach(function (e) {
@@ -697,7 +727,7 @@
         return { key: g.key, name: g.name, latlngs: ring.map(function (q) { return map.containerPointToLatLng(L.point(q[0], q[1])); }) };
       });
     }
-    function drawRoomHull(h, f) {
+    function drawRoomHull(h, f, level) {
       var color = R.locGroupColor("room", family());
       f.group.addLayer(L.polygon(h.latlngs, {
         color: color, weight: 1.5, dashArray: "4 4", fillColor: color, fillOpacity: 0.07,
@@ -705,10 +735,14 @@
       }));
       // The room's name at its top edge.
       var top = h.latlngs.reduce(function (a, b) { return map.latLngToContainerPoint(b).y < map.latLngToContainerPoint(a).y ? b : a; });
-      f.group.addLayer(L.marker(top, {
+      var name = L.marker(top, {
         pane: f.name, interactive: false, keyboard: false,
         icon: L.divIcon({ className: "topo-room-hull-label", html: '<span style="border-color:' + esc(color) + '">' + esc(h.name) + "</span>", iconSize: null, iconAnchor: [0, 0] }),
-      }));
+      });
+      f.group.addLayer(name);
+      // An outline takes no clicks; hoverOutlines finds the one under the
+      // pointer when group labels show only on hover.
+      (hullsDrawn[level] = hullsDrawn[level] || []).push({ latlngs: h.latlngs, marker: name });
     }
 
     // Each floor's opacity and scale (floorLook), eased when the floor
@@ -810,6 +844,7 @@
     function drawCrossLinks() {
       if (!crossGroup || !map) return;
       crossGroup.clearLayers();
+      if (!visOn("links")) return;
       edges.forEach(function (e) {
         var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
         if (la === null || lb === null || la === lb || !nodeById[e.source] || !nodeById[e.target]) return;
@@ -830,7 +865,7 @@
         // One invisible line along the whole path takes the pointer: Layer 2's
         // hover card, and in edit mode the same bend gestures as a same-floor link.
         var hit = L.polyline(pts, {
-          color: st.color, weight: Math.max(10, st.width + 6), opacity: 0, interactive: true,
+          color: st.color, weight: Math.max(HIT_PX, st.width + 12), opacity: 0, interactive: true,
           pane: "floor_links", renderer: crossRenderer, baseWeight: st.width,
         }).addTo(crossGroup);
         wireLinkTip(hit, e);
@@ -875,6 +910,13 @@
       }
       shape.on("click", polyMenu);
       shape.on("contextmenu", polyMenu);
+      function hoverLabel(on) {
+        var tip = shape.getTooltip && shape.getTooltip();
+        var el = tip && tip.getElement && tip.getElement();
+        if (el) el.classList.toggle("is-hover", on);
+      }
+      shape.on("mouseover", function () { hoverLabel(true); });
+      shape.on("mouseout", function () { hoverLabel(false); });
       f.group.addLayer(shape);
       polygonShapes[p.id] = shape;
     }
@@ -1023,7 +1065,7 @@
     function addMarker(id, level) {
       var d = nodeById[id];
       var p = placementsOf(level)[id];
-      if (!d || !p) return;
+      if (!d || !p || !visOn("devices")) return;
       var f = floorPane(level);
       var ll = localToLatLng(level, p.x, p.y);
       var m = L.marker(ll, {
@@ -1040,7 +1082,11 @@
         pane: f.name,
         zIndexOffset: LABEL_Z,
       });
-      function lift(on) { lab.setZIndexOffset(on ? LABEL_Z_HOVER : LABEL_Z); }
+      function lift(on) {
+        lab.setZIndexOffset(on ? LABEL_Z_HOVER : LABEL_Z);
+        var el = lab.getElement && lab.getElement();
+        if (el) el.classList.toggle("is-hover", on); // shown while labels are hover-only
+      }
       [m, lab].forEach(function (mk) {
         var other = mk === m ? lab : m;
         mk.on("mouseover", function () { lift(true); });
@@ -1156,17 +1202,24 @@
     if (EE) EE.assignPathKeys(edges).forEach(function (k, i) { pathKeyById[edges[i].id] = k; });
     // Built on the first hover (tipGraph).
     var tipCy = null;
-    function wireLinkTip(line, e) {
+    // `line` takes the pointer; `look` (default `line`) is the drawn line
+    // that thickens while hovered.
+    function wireLinkTip(line, e, look) {
+      look = look || line;
       line.on("mouseover", function (ev) {
         if (!tipCy) tipCy = tipGraph(elements, nodeById, window.cytoscape);
         var html = linkTipHtml(R, tipCy, e);
         if (!html || !ctx.linkTip) return;
-        line.setStyle({ weight: (line.options.baseWeight || 2) + 2 });
+        look.setStyle({ weight: (look.options.baseWeight || 2) + 2 });
         ctx.linkTip.show(html, ev.originalEvent.clientX, ev.originalEvent.clientY);
       });
       line.on("mousemove", function (ev) { if (ctx.linkTip) ctx.linkTip.move(ev.originalEvent.clientX, ev.originalEvent.clientY); });
-      line.on("mouseout", function () { line.setStyle({ weight: line.options.baseWeight || 2 }); if (ctx.linkTip) ctx.linkTip.hide(); });
+      line.on("mouseout", function () { look.setStyle({ weight: look.options.baseWeight || 2 }); if (ctx.linkTip) ctx.linkTip.hide(); });
     }
+    // A connection's pointer target: an invisible line HIT_PX wide along the
+    // drawn one, so hovering, clicking and bending it needs no pixel-perfect
+    // aim (operator request 2026-11-17).
+    var HIT_PX = 18;
     // A floor's hand-drawn paths live in that floor's placement blob under
     // Layer 2's own keys (edgepath:<pathKey>:b<n> / :s / :t): bends in the
     // floor's plan units, end points as a unit direction on screen.
@@ -1240,24 +1293,33 @@
     var handleLayers = [];
     function addLine(e, level) {
       var a = placementsOf(level)[e.source], b = placementsOf(level)[e.target];
-      if (!a || !b || !nodeById[e.source] || !nodeById[e.target]) return;
+      if (!a || !b || !nodeById[e.source] || !nodeById[e.target] || !visOn("links")) return;
       var f = floorPane(level);
       var st = R.edgeLineStyle(e, family());
       var pk = pathKeyById[e.id];
-      var line = L.polyline(linePoints(e, level, pk ? pathsOf(level)[pk] : null), {
-        color: st.color, weight: st.width, dashArray: st.dash, interactive: true, pane: f.name, renderer: f.renderer,
+      var pts = linePoints(e, level, pk ? pathsOf(level)[pk] : null);
+      var line = L.polyline(pts, {
+        color: st.color, weight: st.width, dashArray: st.dash, interactive: false, pane: f.name, renderer: f.renderer,
         baseWeight: st.width, baseDash: st.dash,
       });
-      wireLinkTip(line, e);
-      line.on("mousedown", function (ev) { onLinePress(ev, e, level); });
-      line.on("click", function (ev) {
+      var hit = L.polyline(pts, {
+        color: st.color, weight: Math.max(HIT_PX, st.width + 12), opacity: 0, interactive: true, pane: f.name, renderer: f.renderer,
+      });
+      // The hit line follows every redraw of the drawn one.
+      var setLls = line.setLatLngs;
+      line.setLatLngs = function (lls) { hit.setLatLngs(lls); return setLls.call(line, lls); };
+      wireLinkTip(hit, e, line);
+      hit.on("mousedown", function (ev) { onLinePress(ev, e, level); });
+      hit.on("click", function (ev) {
         if (!state.editing || level !== state.layer || adjust || !pk) return;
         L.DomEvent.stopPropagation(ev); // not a background click
         linkSel = { id: e.id, level: level, handle: null };
         drawHandles();
       });
       f.group.addLayer(line);
+      f.group.addLayer(hit);
       linkLines[e.id] = line;
+      linkHits[e.id] = hit;
       if (linkSel && linkSel.id === e.id) drawHandles();
     }
     // Press a line in edit mode: a drag past a few pixels drops a new bend
@@ -1469,6 +1531,7 @@
     function drawLinksFor(id) {
       (edgesByNode[id] || []).forEach(function (e) {
         if (linkLines[e.id]) { dropLayer(linkLines[e.id]); delete linkLines[e.id]; }
+        if (linkHits[e.id]) { dropLayer(linkHits[e.id]); delete linkHits[e.id]; }
         var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
         if (la !== null && la === lb) addLine(e, la);
       });
@@ -2111,6 +2174,9 @@
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
       if (!on) { endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
+      closeVisPanel();
+      paintVisClasses();
+      if (wasEditing !== state.editing && visAnyHidden() && map) { drawAll(); if (arcgisLayers) arcgisLayers.draw(); }
       if (arcgisLayers) {
         arcgisLayers.setEditing(!!on);
         // Leaving edit mode drops (or has just committed) the session: show the
@@ -2293,6 +2359,7 @@
     // listener never sees it (operator request 2026-11-17). With nothing
     // under way, Esc still closes the modal.
     function onKey(e) {
+      if (e.key === "Escape" && visPanel) { e.preventDefault(); e.stopPropagation(); closeVisPanel(); return; }
       if (e.key !== "Escape" || !(drawHandler || adjust || placing)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -2330,6 +2397,111 @@
     mapEl.addEventListener("mouseup", blockDrawRight, true);
     mapEl.addEventListener("contextmenu", noDrawMenu, true);
 
+    // ── The eye button's panel: what the map shows while viewing ──────────
+    var visPanel = null;
+    function paintVisClasses() {
+      mapEl.classList.toggle("vis-no-device-labels", !labelsOn("devices"));
+      mapEl.classList.toggle("vis-no-group-labels", !labelsOn("groups"));
+      var btn = document.getElementById("topology-visibility");
+      if (btn) btn.classList.toggle("is-active", visAnyHidden());
+    }
+    // Room outlines take no pointer: while group labels are hover-only, the
+    // outline under the pointer shows its name.
+    var hoverFrame = 0, hoverEv = null;
+    function hoverOutlines() {
+      hoverFrame = 0;
+      if (!map || !hoverEv) return;
+      var cp = map.mouseEventToContainerPoint(hoverEv);
+      (hullsDrawn[state.layer] || []).forEach(function (h) {
+        var ring = h.latlngs.map(function (ll) { var c = map.latLngToContainerPoint(ll); return [c.x, c.y]; });
+        var el = h.marker.getElement && h.marker.getElement();
+        if (el) el.classList.toggle("is-hover", pointInRing([cp.x, cp.y], ring));
+      });
+    }
+    mapEl.addEventListener("mousemove", function (e) {
+      if (labelsOn("groups")) return;
+      hoverEv = e;
+      if (!hoverFrame) hoverFrame = requestAnimationFrame(hoverOutlines);
+    });
+    function closeVisPanel() {
+      if (!visPanel) return;
+      document.removeEventListener("pointerdown", onVisOutside, true);
+      if (visPanel.el.parentNode) visPanel.el.parentNode.removeChild(visPanel.el);
+      visPanel = null;
+    }
+    function onVisOutside(e) {
+      if (!visPanel) return;
+      if (visPanel.el.contains(e.target) || (visPanel.anchor && visPanel.anchor.contains(e.target))) return;
+      closeVisPanel();
+    }
+    function visPanelHtml() {
+      function row(k, word, hint, withLabels) {
+        var on = vis[k].show !== false;
+        return '<label class="topo-vis-row"><input type="checkbox" data-vis-show="' + k + '"' + (on ? " checked" : "") + '> <span>' + word + '</span>' +
+          (hint ? ' <span class="topo-vis-hint">' + hint + '</span>' : '') + '</label>' +
+          (withLabels ? '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-labels="' + k + '"' +
+            (vis[k].labels !== false ? " checked" : "") + (on ? "" : " disabled") + '> <span>Labels</span></label>' : '');
+      }
+      var html = '<div class="dropdown-heading">Show on the map</div>' +
+        row("devices", "Devices", "", true) +
+        row("groups", "Groups", "areas, buildings and rooms", true) +
+        row("links", "Connections", "", false);
+      var arc = arcgisLayers ? arcgisLayers.layerList() : [];
+      if (arc.length) {
+        html += '<div class="dropdown-divider"></div><div class="dropdown-heading">ArcGIS layers</div>';
+        arc.forEach(function (l) {
+          html += '<label class="topo-vis-row"><input type="checkbox" data-vis-arc="' + esc(l.id) + '"' + (l.shown ? " checked" : "") + '> ' +
+            l.swatch + '<span>' + esc(l.title) + '</span></label>';
+          if (l.hasLabels) {
+            html += '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-arc-labels="' + esc(l.id) + '"' +
+              (vis.arcLabelsOff[l.id] ? "" : " checked") + (l.shown ? "" : " disabled") + '> <span>Labels</span></label>';
+          }
+        });
+        if (imageGround()) html += '<p class="topo-vis-hint topo-vis-note">ArcGIS layers draw over the map or satellite, not over a floor plan.</p>';
+      }
+      html += '<p class="topo-vis-hint topo-vis-note">A hidden label shows when you point at its object. Editing shows everything.</p>';
+      return html;
+    }
+    function openVisPanel(anchor) {
+      if (visPanel) { closeVisPanel(); return; }
+      if (state.editing) return;
+      var el = document.createElement("div");
+      el.className = "btn-dropdown-menu open topo-vis-panel";
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "Show on the map");
+      el.innerHTML = visPanelHtml();
+      document.body.appendChild(el);
+      var r = anchor.getBoundingClientRect();
+      el.style.top = Math.max(8, r.top) + "px";
+      el.style.right = Math.max(8, window.innerWidth - r.left + 8) + "px";
+      visPanel = { el: el, anchor: anchor };
+      setTimeout(function () { if (visPanel && visPanel.el === el) document.addEventListener("pointerdown", onVisOutside, true); }, 0);
+      el.addEventListener("change", function (e) {
+        var t = e.target;
+        var k = t.getAttribute("data-vis-show"), kl = t.getAttribute("data-vis-labels");
+        var a = t.getAttribute("data-vis-arc"), al = t.getAttribute("data-vis-arc-labels");
+        if (k) {
+          vis[k].show = t.checked;
+          var sub = el.querySelector('[data-vis-labels="' + k + '"]');
+          if (sub) sub.disabled = !t.checked;
+          saveVis(); paintVisClasses(); drawAll();
+        } else if (kl) {
+          vis[kl].labels = t.checked;
+          saveVis(); paintVisClasses();
+        } else if (a && arcgisLayers) {
+          var next = shownArcgisLayers().filter(function (x) { return x !== a; });
+          if (t.checked) next.push(a);
+          setShownArcgisLayers(next);
+          arcgisLayers.refresh();
+          var asub = el.querySelector('[data-vis-arc-labels="' + a + '"]');
+          if (asub) asub.disabled = !t.checked;
+        } else if (al && arcgisLayers) {
+          if (t.checked) delete vis.arcLabelsOff[al]; else vis.arcLabelsOff[al] = true;
+          saveVis(); paintVisClasses(); arcgisLayers.draw();
+        }
+      });
+    }
+
     // ArcGIS layers (rule 188), read only: drawn on floor 0's ground over the
     // map / satellite (an uploaded plan has no latitude / longitude). Which
     // layers the view draws: a staged edit, else this session's toggles,
@@ -2358,6 +2530,7 @@
           fetchFeatures: ctx.fetchArcgisFeatures,
           fetchLinks: ctx.fetchCableRunLinks,
           shownLayers: shownArcgisLayers,
+          labelsShown: arcLabelsOn,
           setShownLayers: setShownArcgisLayers,
           canSaveShown: canSaveArcgisLayers,
           // Rule 188(a): which lines each link rides — the view gate's, staged apart.
@@ -2371,6 +2544,7 @@
 
     buildMap();
     setEditing(state.editing);
+    paintVisClasses();
     if (arcgisLayers) arcgisLayers.load();
     // Leaflet measures its container on creation; the modal may still be
     // animating in.
@@ -2407,6 +2581,8 @@
             onClick: openBackgroundMenu, editOnly: true },
           { id: "topology-draw-polygon", label: "Draw polygon", tip: "Draw a polygon for a location group",
             icon: '<polygon points="12 2 22 9 18 21 6 21 2 9 12 2"/>', onClick: startDrawing, editOnly: true },
+          { id: "topology-visibility", label: "Show on the map", tip: "Show or hide devices, groups, connections and map layers, and their labels",
+            icon: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', onClick: openVisPanel, viewOnly: true },
         ];
       },
       canUndo: function () { return state.history.index > 0; },
@@ -2418,6 +2594,8 @@
       resize: function () { if (map) map.invalidateSize(); },
       captureElement: function () { return mapEl; },
       destroy: function () {
+        closeVisPanel();
+        if (hoverFrame) cancelAnimationFrame(hoverFrame);
         endAdjust();
         document.removeEventListener("keydown", onKey, true);
         if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }

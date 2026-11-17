@@ -1846,6 +1846,7 @@
       btn.innerHTML = _svg(b.icon);
       _setCornerTip(btn, b.label, b.tip);
       if (b.editOnly) btn.setAttribute("data-edit-only", "1");
+      if (b.viewOnly) { btn.setAttribute("data-view-only", "1"); btn.hidden = !!topoState.editing; }
       stack.appendChild(btn);
     });
   }
@@ -4506,6 +4507,8 @@
     if (viewMouse) viewMouse.hidden = on;
     // A mode canvas's own buttons (Background, Draw polygon) are edit-only.
     document.querySelectorAll("#topology-corner-stack [data-edit-only]").forEach(function (el) { el.hidden = !on; });
+    // ...and the eye button (what the map shows) is view-only.
+    document.querySelectorAll("#topology-corner-stack [data-view-only]").forEach(function (el) { el.hidden = on; });
     _paintMouseControls(); // an open panel swaps to this mode's rows
     var modeInst = _modeInstance();
     if (modeInst) {

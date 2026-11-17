@@ -608,6 +608,24 @@ the column under the tick:
   Topology window open. Click or right-click a polygon to reshape it, change
   its group or delete it.
 
+While you are **viewing** a Topology view, the eye button in the same column
+opens **Show on the map**. It has a switch for each of these:
+
+- **Devices**, **Groups** (drawn areas and buildings, and room outlines), and
+  **Connections**;
+- each ArcGIS layer the integration offers.
+
+Under Devices, Groups and each ArcGIS layer that has labels, **Labels** turns
+off its labels. A hidden label still appears while you point at its device,
+polygon, room or feature. Your choices are kept in your browser for that view
+only. Nobody else sees them, and editing always shows everything. The eye turns
+the accent colour while anything is hidden.
+
+Each device's name is drawn over every icon. Pointing at a name, or at its
+device, brings that name to the front, and a click, right-click or drag on a
+name acts on its device. Connections take the pointer a few pixels either side
+of the line, so you don't have to hit the line exactly.
+
 #### ArcGIS layers
 
 When an [ArcGIS integration](Integration-ArcGIS#layers) lists feature layers —

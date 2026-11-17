@@ -131,6 +131,26 @@ dblclick / contextmenu / drag handlers, a drag of either moves both, and `paintS
 `paintDragging` / `removePlacement` / `place` treat the pair together (operator request
 2026-11-17). Inside the icon's element a name could never sit over a later icon, and it took no
 mouse.
+**What the Topology canvas shows while viewing** (the eye corner button, `viewOnly: true` →
+`data-view-only`, hidden in edit mode by map.js → `_applyTopologyEditMode`; operator request
+2026-11-17): `vis` holds Show for devices / groups (drawn polygons + room outlines) / links, Labels
+for devices and groups, and `arcLabelsOff` per ArcGIS layer. It lives in localStorage
+(`polaris.topology.visibility.<viewId>`, try/catch), a per-viewer convenience, never staged.
+`visOn` / `labelsOn` / `arcLabelsOn` answer true while editing, so the edit session always sees
+everything. Hiding a kind skips it in `drawFloor` / `addMarker` / `addLine` / `drawCrossLinks`.
+Hiding labels is a class on the map element (`vis-no-device-labels` / `vis-no-group-labels`)
+plus `.is-hover` on the hovered object's label: a device's via `lift`, a polygon's tooltip on
+the shape's mouseover, a room outline's by `hoverOutlines`, a rAF point-in-ring test, because
+outlines take no pointer. ArcGIS labels pass `labelsShown` into
+`PolarisTopologyArcgisLayers.create`: off means the sticky hover tooltip. Its `layerList()` feeds
+the panel, and showing or hiding a layer goes through `setShownArcgisLayers`, which is
+session-only while viewing, as in the sidebar. The panel is a `.btn-dropdown-menu.open.topo-vis-panel` on
+`<body>`, beside the button. Esc and an outside pointerdown close it, and so does any change
+of edit mode.
+**Connection hit lines**: every same-floor link is a drawn line (not interactive) plus an
+invisible hit line `HIT_PX` (18) wide (`linkHits[id]`) that carries the hover card, the press
+and the click. `line.setLatLngs` is wrapped so the hit line follows every redraw. Links between
+floors use the same width.
 **Links on the Topology canvas** reuse Layer 2's pieces: the hover card is
 `PolarisTopologyRender.edgeTooltipHtml` over a HEADLESS Cytoscape graph of the canvas's own
 elements (`tipGraph`, built on first hover; `linkTipHtml`), shown with map.js's

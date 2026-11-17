@@ -1144,6 +1144,20 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
   cursor: pointer;
 }
 .topo-phys-label.is-selected .topo-phys-name { border-color: var(--color-accent); }
+/* Labels a viewer keeps hover-only (the eye button): shown while their
+   device / polygon / room outline is under the pointer. */
+.vis-no-device-labels .topo-phys-label:not(.is-hover),
+.vis-no-group-labels .topo-phys-polygon-label:not(.is-hover),
+.vis-no-group-labels .topo-room-hull-label:not(.is-hover) { visibility: hidden; }
+/* The eye button's panel: a dropdown of switches beside the corner tools. */
+.topo-vis-panel { position: fixed; z-index: 1200; min-width: 240px; max-width: 320px; max-height: 70vh; overflow-y: auto; padding: 6px 0; }
+.topo-vis-panel .topo-vis-row { display: flex; align-items: center; gap: 8px; margin: 0; padding: 5px 14px; font-weight: 500; cursor: pointer; }
+.topo-vis-panel .topo-vis-row input { width: auto; margin: 0; }
+.topo-vis-panel .topo-vis-sub { padding-left: 38px; font-weight: 400; font-size: 0.85rem; }
+.topo-vis-panel .topo-vis-row:has(input:disabled) { opacity: 0.5; cursor: default; }
+.topo-vis-hint { color: var(--color-text-tertiary); font-size: 0.78rem; font-weight: 400; }
+.topo-vis-panel .topo-vis-note { margin: 6px 14px 2px; }
+#topology-visibility.is-active { color: var(--color-accent); }
 .topo-phys-polygon-label {
   padding: 2px 8px;
   border-radius: var(--radius-sm);
