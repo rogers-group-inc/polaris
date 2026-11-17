@@ -171,6 +171,9 @@ describe("API path allowlist", () => {
       "/dash/api/v1/map/sites/some-id/topology/search",
       "/dash/api/v1/map/sites/some-id/topology/layout",
       "/dash/api/v1/map/sites/a/b/topology",
+      // A view's background images are admitted, nothing under or beside them.
+      "/dash/api/v1/map/sites/some-id/topology/background/img/extra",
+      "/dash/api/v1/map/sites/some-id/topology/views",
     ]) {
       const res = await request(app).get(path);
       expect(res.status, path).toBe(404);
@@ -188,6 +191,20 @@ describe("API path allowlist", () => {
       // widgets silently render empty on every wallboard.
       const res = await request(buildApp()).get("/dash/api/v1/map/sites");
       expect(res.status).toBe(200);
+    },
+    30_000,
+  );
+
+  // A Topology view on the wallboard's Device Map widget draws its floor
+  // plans from the background route: an unknown image reaches the service's
+  // own 404, not the allowlist's bare "Not found".
+  it.skipIf(!dbReachable)(
+    "lets /map/sites/:id/topology/background/:imageId through to the image route",
+    async () => {
+      const res = await request(buildApp()).get(
+        "/dash/api/v1/map/sites/00000000-0000-0000-0000-000000000000/topology/background/00000000-0000-0000-0000-000000000000");
+      expect(res.status).toBe(404);
+      expect(res.body.error ?? res.text).toMatch(/Image not found/i);
     },
     30_000,
   );

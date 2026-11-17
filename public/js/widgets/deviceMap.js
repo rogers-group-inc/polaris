@@ -176,6 +176,59 @@
     return _topoLibs;
   }
 
+  // A site's saved views (operator request 2026-11-17): a Topology view draws
+  // with the Device Map page's own canvas (topology-physical.js — floors and
+  // all), a Room view with topology-room.js, both read-only. Their scripts and
+  // map.css load on first use, like the graph libraries above.
+  var MODE_SCRIPTS = [
+    "/js/topology-device-list.js",
+    "/js/cable-run-geometry.js",
+    "/js/topology-arcgis-layers.js",
+    "/js/topology-physical.js",
+    "/js/topology-rack.js",
+    "/js/topology-wall.js",
+    "/js/topology-room.js",
+  ];
+  var _modeLibs = null;
+  function loadStyle(href) {
+    if (document.querySelector('link[href="' + href + '"]')) return;
+    var l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = href;
+    document.head.appendChild(l);
+  }
+  function loadModeLibs() {
+    if (_modeLibs) return _modeLibs;
+    loadStyle("/css/vendor/leaflet/leaflet.css");
+    loadStyle("/css/map.css");
+    _modeLibs = MODE_SCRIPTS.reduce(function (p, src) {
+      return p.then(function () { return loadScript(src); });
+    }, Promise.resolve()).catch(function (err) {
+      _modeLibs = null; // retry on the next pick
+      throw err;
+    });
+    return _modeLibs;
+  }
+  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", room: "Room" };
+  var VIEW_MODE_ORDER = { layer2: 0, topology: 1, room: 2 };
+  // The Device Map page's default for a view that names none (map.js).
+  var DEFAULT_SHOWN_TYPES = ["firewall", "router", "switch", "access_point"];
+  function viewMode(v) { return v && VIEW_MODE_LABELS[v.mode] ? v.mode : "layer2"; }
+  // Layer 2 first, then Topology, then Room — the page's view menu order.
+  function sortedViews(list) {
+    return (Array.isArray(list) ? list : []).map(function (v, i) { return { v: v, i: i }; }).sort(function (a, b) {
+      return VIEW_MODE_ORDER[viewMode(a.v)] - VIEW_MODE_ORDER[viewMode(b.v)] || a.i - b.i;
+    }).map(function (x) { return x.v; });
+  }
+  // A view's TopologyLayout key for a location key (map.js → _viewScopedKey):
+  // the default view keeps the bare keys, any other prefixes its id.
+  function scopedLayoutKey(view, key) {
+    if (!view || view.isDefault) return key;
+    var prefix = "v:" + view.id;
+    return key === "flat" ? prefix : prefix + "|" + key;
+  }
+  var _lastSiteView = {}; // widget id → the site view on screen, kept across a re-render
+
   // The graph follows the APP theme's family, as the Device Map modal's does —
   // its pane paints an app token, not a basemap.
   function topoTheme() {
@@ -227,7 +280,7 @@
   // page does (partitionElementsForFloor), over the layout saved for THAT
   // view; `onPortal(viewKey)` is called when a portal stub ("→ elsewhere")
   // is tapped.
-  function drawTopology(container, data, view, hidden, viewKey, onPortal) {
+  function drawTopology(container, data, view, hidden, viewKey, onPortal, layoutKeyOf) {
     var R = window.PolarisTopologyRender;
     var elements = R.buildTopologyElements(data);
     if (hidden) {
@@ -254,7 +307,8 @@
 
     // The page files each view's hand-tuned layout under its own key.
     var layouts = data && data.savedLayouts;
-    var saved = layouts && layouts[key] && layouts[key].positions;
+    var lk = layoutKeyOf ? layoutKeyOf(key) : key;
+    var saved = layouts && layouts[lk] && layouts[lk].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
     // Laid out for the widget's own tile shape.
@@ -413,6 +467,16 @@
     title.textContent = gate.name || "FortiGate";
     title.title = (gate.name || "FortiGate") + " — read-only topology";
     left.appendChild(title);
+    // The site's saved views — Layer 2, Topology (with its floors) and Room —
+    // shown once the site has more than one. A native select: the wallboard
+    // loads no menu helper, and a touch kiosk handles it best.
+    var viewSel = document.createElement("select");
+    viewSel.className = "devmap-topo-viewsel";
+    viewSel.setAttribute("aria-label", "View");
+    viewSel.title = "Switch view";
+    viewSel.hidden = true;
+    viewSel.addEventListener("change", function () { pickSiteView(viewSel.value, true); });
+    left.appendChild(viewSel);
     // Rotation through the pinned locations — shown once two or more pins
     // exist. A toggle: lit while rotating. Picking a chip turns it off.
     var rotateBtn = document.createElement("button");
@@ -427,6 +491,7 @@
     fit.textContent = "Fit";
     fit.title = "Fit the whole site";
     fit.addEventListener("click", function () { if (cy) try { cy.fit(undefined, 30); } catch (_) {} });
+    fit.className = "devmap-topo-fit";
     right.appendChild(fit);
     // The full Device Map page, where the topology can be edited. Not on the
     // /dash kiosk, which has no navigation.
@@ -524,6 +589,107 @@
     var rotating = false;
     var rotateTimer = null;
     var restrict = !!opts.restrict;
+    var siteViews = [];      // the site's saved views (GET …/topology → views), page order
+    var siteViewId = null;   // the saved view on screen
+    var modeInst = null;     // a Topology / Room canvas, when that view is on screen
+    var modeViewId = null;   // the view modeInst was drawn for
+    function siteView() {
+      return siteViews.filter(function (v) { return v.id === siteViewId; })[0] || null;
+    }
+    function curMode() { return viewMode(siteView()); }
+    function fillViewSel() {
+      viewSel.innerHTML = "";
+      viewSel.hidden = siteViews.length < 2;
+      var groups = {};
+      siteViews.forEach(function (v) {
+        var m = viewMode(v);
+        if (!groups[m]) {
+          groups[m] = document.createElement("optgroup");
+          groups[m].label = VIEW_MODE_LABELS[m];
+          viewSel.appendChild(groups[m]);
+        }
+        var o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = v.name;
+        groups[m].appendChild(o);
+      });
+      if (siteViewId) viewSel.value = siteViewId;
+    }
+    // A viewer's pick; on the signed-in Dashboard it is stored with the
+    // widget (opts.onSiteView), on the wallboard it is the viewer's own.
+    function pickSiteView(id, byViewer) {
+      if (!siteViews.some(function (v) { return v.id === id; }) || id === siteViewId) return;
+      siteViewId = id;
+      if (opts.viewId) _lastSiteView[opts.viewId] = id;
+      if (byViewer && opts.onSiteView) opts.onSiteView(id);
+      if (byViewer && rotating) setRotating(false, false);
+      if (viewSel.value !== id) viewSel.value = id;
+      renderChips();
+      render();
+    }
+    function teardownMode() {
+      if (!modeInst) return;
+      try { if (modeInst.destroy) modeInst.destroy(); } catch (_) { /* already gone */ }
+      modeInst = null;
+      modeViewId = null;
+      graph.innerHTML = "";
+    }
+    // The Topology / Room canvas's context: the Device Map page's, read-only
+    // (map.js → _modeCanvasContext). Nothing stages; placements come from the
+    // site's saved layouts under the view's own keys.
+    function modeCtx(v, initial) {
+      function none() { return false; }
+      function noop() {}
+      var signedIn = !isDash() && typeof api !== "undefined" && api.map;
+      return {
+        data: data,
+        view: v,
+        siteId: gate.id,
+        editing: false,
+        canEdit: false,
+        initial: initial || null,
+        shownTypes: Array.isArray(v.shownTypes) ? v.shownTypes : DEFAULT_SHOWN_TYPES,
+        loadPlacements: function (layer) {
+          var e = data.savedLayouts && data.savedLayouts[scopedLayoutKey(v, layer ? "topo|L" + layer : "topo")];
+          return e && e.positions && typeof e.positions === "object" ? e.positions : {};
+        },
+        backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(gate.id, imageId); },
+        // ArcGIS layers on the signed-in Dashboard only — the wallboard has no
+        // route to them, and the canvas draws without them.
+        fetchArcgisLayers: signedIn && api.map.arcgisLayers ? function () { return api.map.arcgisLayers(); } : undefined,
+        fetchArcgisFeatures: signedIn && api.map.arcgisFeatures ? function (id, p) { return api.map.arcgisFeatures(id, p); } : undefined,
+        fetchCableRunLinks: signedIn && api.map.cableRunLinks ? function () { return api.map.cableRunLinks(gate.id); } : undefined,
+        stageViewPatch: none, stagedViewPatch: function () { return {}; }, stagePlacements: none,
+        stageLocationCode: noop, stageCableRunLinks: none,
+        refreshSidebar: noop, historyChanged: noop, historyPushed: noop, closePopovers: noop,
+        placedElsewhere: function () { return null; },
+        selectAsset: noop, selectedId: function () { return null; },
+        listViews: function () { return siteViews; },
+        openView: function (id) { pickSiteView(id, true); },
+        linkTip: {
+          show: function (html, x, y) { var t = edgeTip(); t.innerHTML = html; t.classList.add("visible"); moveEdgeTip(x, y); },
+          move: moveEdgeTip,
+          hide: hideEdgeTip,
+        },
+        openAsset: function (id) { if (!isDash() && id && window.PolarisPanels) window.PolarisPanels.openAsset(id); },
+        toast: function (m, k) { if (typeof showToast === "function") showToast(m, k); },
+      };
+    }
+    function renderMode(v) {
+      var mod = viewMode(v) === "topology" ? window.PolarisTopologyPhysical : window.PolarisTopologyRoom;
+      // A refresh of the same view keeps the floor, centre and zoom.
+      var initial = modeInst && modeViewId === v.id && modeInst.viewState ? modeInst.viewState() : null;
+      teardownMode();
+      if (!mod || typeof mod.render !== "function") {
+        graph.innerHTML = '<p class="empty-state devmap-topo-msg">This view could not be drawn.</p>';
+        return;
+      }
+      var host = document.createElement("div");
+      host.className = "topology-mode-canvas devmap-topo-canvas";
+      graph.appendChild(host);
+      modeInst = mod.render(host, modeCtx(v, initial));
+      modeViewId = v.id;
+    }
 
     // A view a viewer may be on: anything, or (restricted) inside the pins.
     function reachable(key) {
@@ -558,7 +724,7 @@
     // Step to the pinned view after the one on screen (or after the one the
     // viewer drilled into, counted from the pinned view holding it).
     function rotate() {
-      if (!rotating || closed || document.hidden || !data) return;
+      if (!rotating || closed || document.hidden || !data || curMode() !== "layer2") return;
       var keys = rotationKeys(views, pins);
       if (keys.length < 2) return;
       var cur = views.filter(function (v) { return v.key === activeKey; })[0];
@@ -613,7 +779,7 @@
     }
 
     function renderChips() {
-      var rows = viewChipRows(views, pins, restrict, activeKey);
+      var rows = curMode() === "layer2" ? viewChipRows(views, pins, restrict, activeKey) : [];
       chips.innerHTML = "";
       chips.hidden = !rows.length;
       rows.forEach(function (row, depth) {
@@ -650,16 +816,37 @@
       legend.style.maxHeight = Math.max(room, 60) + "px";
     }
 
+    var renderedViewId = null;
     function render() {
       if (closed || !data) return;
-      // A refresh keeps the viewer's zoom and pan; a new view fits itself.
-      var view = cy && renderedKey === activeKey ? { zoom: cy.zoom(), pan: cy.pan() } : null;
+      var sv = siteView();
+      var mode = curMode();
+      fit.hidden = mode !== "layer2";
+      rotateBtn.hidden = mode !== "layer2" || rotationKeys(views, pins).length < 2;
+      legend.hidden = mode === "room" || !legendBody.innerHTML;
       // A refresh replaces the graph under the cursor, and the old graph
       // never sends the mouseout that would close its tooltip.
       hideEdgeTip();
+      if (mode !== "layer2") {
+        if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
+        renderedViewId = sv.id;
+        loadModeLibs().then(function () {
+          if (closed || siteView() !== sv) return;
+          renderMode(sv);
+        }).catch(function (err) {
+          graph.innerHTML = '<p class="empty-state devmap-topo-msg">' +
+            (typeof escapeHtml === "function" ? escapeHtml(err && err.message ? err.message : String(err)) : "This view could not be loaded") + "</p>";
+        });
+        return;
+      }
+      teardownMode();
+      // A refresh keeps the viewer's zoom and pan; a new view fits itself.
+      var view = cy && renderedKey === activeKey && renderedViewId === (sv && sv.id) ? { zoom: cy.zoom(), pan: cy.pan() } : null;
       if (cy) { try { cy.destroy(); } catch (_) {} }
       renderedKey = activeKey;
-      cy = drawTopology(graph, data, view, opts.hidden, activeKey, function (k) { setView(k, true); });
+      renderedViewId = sv ? sv.id : null;
+      cy = drawTopology(graph, data, view, opts.hidden, activeKey, function (k) { setView(k, true); },
+        function (k) { return scopedLayoutKey(sv, k); });
     }
     // Every load: the site's views again (a device may have been re-coded),
     // and the view on screen kept when it is still reachable. The first load
@@ -667,7 +854,18 @@
     // the first pin when restricted to pins, else on the whole site. Pins
     // naming locations the site no longer has are ignored; if none is left
     // the wallboard shows the whole site.
+    function settleSiteView() {
+      siteViews = sortedViews(data.views);
+      var ok = function (id) { return id && siteViews.some(function (v) { return v.id === id; }); };
+      if (!ok(siteViewId)) {
+        var last = opts.viewId ? _lastSiteView[opts.viewId] : null;
+        var def = siteViews.filter(function (v) { return v.isDefault; })[0];
+        siteViewId = ok(last) ? last : ok(opts.siteView) ? opts.siteView : def ? def.id : siteViews.length ? siteViews[0].id : null;
+      }
+      fillViewSel();
+    }
     function settleViews() {
+      settleSiteView();
       views = window.PolarisTopologyRender.computeFloorViews(window.PolarisTopologyRender.buildTopologyElements(data));
       var keys = rotationKeys(views, pins);
       if (pins.length && !keys.length) restrict = false;
@@ -676,7 +874,7 @@
         if (last && reachable(last)) activeKey = last;
       }
       if (activeKey === null || !reachable(activeKey)) activeKey = restrict && keys.length ? keys[0] : "flat";
-      rotateBtn.hidden = keys.length < 2;
+      rotateBtn.hidden = keys.length < 2 || curMode() !== "layer2";
       if (keys.length < 2 && rotating) setRotating(false, false);
       else if (!rotateTimer && opts.rotate && !rotateStarted) { rotateStarted = true; setRotating(true, false); }
     }
@@ -713,13 +911,17 @@
       // measured, not assumed, before the graph is resized under it.
       placeGraph();
       if (cy) try { cy.resize(); } catch (_) {}
+      if (modeInst && modeInst.resize) try { modeInst.resize(); } catch (_) {}
       fitLegend();
       markChipOverflow();
     });
     ro.observe(pane);
 
     return {
-      resize: function () { if (cy) try { cy.resize(); cy.fit(undefined, 30); } catch (_) {} },
+      resize: function () {
+        if (cy) try { cy.resize(); cy.fit(undefined, 30); } catch (_) {}
+        if (modeInst && modeInst.resize) try { modeInst.resize(); } catch (_) {}
+      },
       close: function () {
         closed = true;
         stopPoll();
@@ -728,6 +930,7 @@
         try { ro.disconnect(); } catch (_) {}
         hideEdgeTip();
         if (cy) { try { cy.destroy(); } catch (_) {} cy = null; }
+        teardownMode();
         if (pane.parentNode) pane.parentNode.removeChild(pane);
       },
     };
@@ -899,6 +1102,10 @@
           rotate: rotateOn(config),
           rotateSec: rotateSec(config),
           onRotate: canPin ? function (on) { dash.setWidgetConfig(widgetId, "topologyRotate", on); } : null,
+          // The saved view it opens on; a pick on the signed-in Dashboard
+          // (out of edit mode) is stored, on the wallboard it is the viewer's.
+          siteView: typeof config.topologyView === "string" ? config.topologyView : null,
+          onSiteView: canPin ? function (id) { dash.setWidgetConfig(widgetId, "topologyView", id); } : null,
           viewId: widgetId,
         });
         ctx.onUnmount(function () {

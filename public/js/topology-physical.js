@@ -2598,6 +2598,13 @@
     buildMap();
     setEditing(state.editing);
     paintVisClasses();
+    // A host that redraws the canvas (the Device Map widget's refresh) hands
+    // back where the viewer was: the floor, the centre and the zoom.
+    if (ctx.initial && map) {
+      var ini = ctx.initial;
+      if (ini.layer && allLevels().indexOf(ini.layer) !== -1) setLayer(ini.layer);
+      if (ini.center && typeof ini.zoom === "number") map.setView(ini.center, ini.zoom, { animate: false });
+    }
     if (arcgisLayers) arcgisLayers.load();
     // Leaflet measures its container on creation; the modal may still be
     // animating in.
@@ -2645,6 +2652,12 @@
         if (state.history.index < state.history.entries.length - 1) { state.history.index++; applySnapshot(state.history.entries[state.history.index]); }
       },
       resize: function () { if (map) map.invalidateSize(); },
+      // Where the viewer is, for a host to pass back as ctx.initial.
+      viewState: function () {
+        if (!map) return null;
+        var c = map.getCenter();
+        return { layer: state.layer, center: [c.lat, c.lng], zoom: map.getZoom() };
+      },
       captureElement: function () { return mapEl; },
       destroy: function () {
         closeVisPanel();
