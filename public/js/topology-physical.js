@@ -147,6 +147,27 @@
     for (var i = 0; i < n; i++) out.push(a + (b - a) * (i + 0.5) / n);
     return out;
   }
+  // The link hover card reads a headless Cytoscape graph of the canvas's own
+  // elements, so a wired link on a ring lists the ring's other links
+  // (_loopTipRows walks the graph) exactly as Layer 2 does. The two-method
+  // stand-in it replaces threw on every ringed link, and the card never
+  // showed (operator report 2026-11-17). `cyFactory` is window.cytoscape.
+  function tipGraph(elements, nodeById, cyFactory) {
+    if (typeof cyFactory === "function") {
+      try {
+        return cyFactory({ headless: true, styleEnabled: false, elements: elements.map(function (el) { return { data: el.data }; }) });
+      } catch (err) { /* fall through to the stand-in */ }
+    }
+    // No graph: names, ports and speed, never the ring rows.
+    return { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
+  }
+  function linkTipHtml(R, g, e) {
+    if (!R || !R.edgeTooltipHtml) return null;
+    var edge = g.collection ? g.getElementById(e.id) : null;
+    if (edge && edge.length) return R.edgeTooltipHtml(g, edge);
+    var plain = Object.assign({}, e, { inLoop: undefined });
+    return R.edgeTooltipHtml(g, { data: function (k) { return plain[k]; } });
+  }
   var FADE_MS = 300;
   var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
 
@@ -1096,13 +1117,12 @@
     var EE = window.PolarisTopologyEdgeEditor || null;
     var pathKeyById = {};
     if (EE) EE.assignPathKeys(edges).forEach(function (k, i) { pathKeyById[edges[i].id] = k; });
-    var tipCy = { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
-    function linkTipHtml(e) {
-      return R.edgeTooltipHtml ? R.edgeTooltipHtml(tipCy, { data: function (k) { return e[k]; } }) : null;
-    }
+    // Built on the first hover (tipGraph).
+    var tipCy = null;
     function wireLinkTip(line, e) {
       line.on("mouseover", function (ev) {
-        var html = linkTipHtml(e);
+        if (!tipCy) tipCy = tipGraph(elements, nodeById, window.cytoscape);
+        var html = linkTipHtml(R, tipCy, e);
         if (!html || !ctx.linkTip) return;
         line.setStyle({ weight: (line.options.baseWeight || 2) + 2 });
         ctx.linkTip.show(html, ev.originalEvent.clientX, ev.originalEvent.clientY);
@@ -2342,6 +2362,8 @@
     _groundToPlan: groundToPlan,
     _floorLook: floorLook,
     _fadeSteps: fadeSteps,
+    _tipGraph: tipGraph,
+    _linkTipHtml: linkTipHtml,
     _cadToPlan: cadToPlan,
     _fitTwoPoints: fitTwoPoints,
     _overlapShare: overlapShare,
