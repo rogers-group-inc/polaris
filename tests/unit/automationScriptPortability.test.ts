@@ -75,3 +75,13 @@ describe("import", () => {
     expect(r.problems[0]).toMatch(/version 2/);
   });
 });
+
+describe("what an import into an existing script may take", () => {
+  it("flags an export, a plain file, and an interpreter that is only a guess", () => {
+    expect(P.parseImportFile(JSON.stringify({ name: "x", interpreter: "sh", body: "true" }), "x.script.json")).toMatchObject({ fromExport: true, interpreterGuessed: false });
+    expect(P.parseImportFile(JSON.stringify({ name: "x", body: "true" }), "x.json")).toMatchObject({ fromExport: true, interpreterGuessed: true });
+    expect(P.parseImportFile("echo hi", "x.sh")).toMatchObject({ fromExport: false, interpreterGuessed: false });
+    expect(P.parseImportFile("#!/bin/bash\necho hi", "tool")).toMatchObject({ fromExport: false, interpreterGuessed: false });
+    expect(P.parseImportFile("echo hi", "notes.txt")).toMatchObject({ fromExport: false, interpreterGuessed: true });
+  });
+});

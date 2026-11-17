@@ -4,7 +4,9 @@
  * right click (the row-menu replay) with Edit / Test run / Export / Delete, a
  * plain click on the card body opens nothing, a reader gets Export alone;
  * Export downloads `<name>.script.json` without id, hash or enabled flag; the
- * New script dialog's Import from file fills the form and saves nothing.
+ * New script dialog's Import from file fills the form and saves nothing; the
+ * Edit dialog's Replace from file keeps the name, takes the body (and, from a
+ * .script.json, the settings) and saves nothing either.
  * showRowMenu / rowMenuGesture are stubbed — their replay is pinned in
  * rowContextMenu.test.ts.
  */
@@ -24,6 +26,7 @@ let downloads: string[] = [];
 let modal = { title: "", body: "" };
 const toasts: string[] = [];
 const created: unknown[] = [];
+const updated: unknown[] = [];
 
 const SCRIPTS = [
   { id: "s1", name: "cert-mail", description: "d", interpreter: "python3", runTarget: "server", timeoutSec: 30, enabled: true, sha256: "abcdef0123456789", body: "print('hi')\n" },
@@ -54,7 +57,7 @@ beforeAll(() => {
   (win.HTMLAnchorElement.prototype as any).click = function () { downloads.push(this.download); };
   g.api = {
     automations: { schema: async () => ({}) },
-    automationScripts: { list: async () => ({ scripts: SCRIPTS }), create: async (b: unknown) => { created.push(b); } },
+    automationScripts: { list: async () => ({ scripts: SCRIPTS }), create: async (b: unknown) => { created.push(b); }, update: async (_id: string, b: unknown) => { updated.push(b); } },
   };
   // Keep the rules tab from wiring at load (it needs the rules table).
   const realPerm = g.permAtLeast;
@@ -119,16 +122,79 @@ describe("Scripts tab row menu", () => {
   });
 });
 
-describe("New script — Import from file", () => {
-  it("is offered on a new script only", () => {
+async function pick(name: string, content: string) {
+  const input = g.document.getElementById("script-import-file");
+  const file = new win.File([content], name, { type: "text/plain" });
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
+  toasts.length = 0;
+  input.dispatchEvent(new win.Event("change"));
+  for (let i = 0; i < 40 && !toasts.some((t) => /Loaded/.test(t)); i++) await new Promise((r) => setTimeout(r, 25));
+  expect(toasts.filter((t) => t.startsWith("error"))).toEqual([]);
+}
+const val = (id: string) => g.document.getElementById(id).value;
+const form = () => [val("script-name"), val("script-desc"), val("script-interp"), val("script-target"), val("script-timeout"), val("script-body")];
+
+describe("Edit script — Replace from file", () => {
+  // happy-dom reads `<option selected>` on a non-first option as the option
+  // AFTER it (python3 comes back "sh"), so pin the selects to what a real
+  // browser shows before asserting what an import leaves alone.
+  const openEdit = () => {
+    g.document.getElementById("m")?.remove();
     g.openScriptModal(SCRIPTS[0]);
-    expect(modal.body).not.toContain("script-import");
+    g.document.getElementById("script-interp").value = SCRIPTS[0]!.interpreter;
+    g.document.getElementById("script-target").value = SCRIPTS[0]!.runTarget;
+  };
+
+  it("is offered while editing, worded as a replace", () => {
+    openEdit();
+    expect(g.document.getElementById("script-import").textContent).toBe("Replace from file");
+    expect(modal.body).toContain("the name stays");
+  });
+
+  it("a plain file replaces the body and its interpreter, and keeps the name and settings", async () => {
+    openEdit();
+    await pick("renewed.ps1", "Write-Host new");
+    expect(form()).toEqual(["cert-mail", "d", "powershell", "server", "30", "Write-Host new"]);
+    expect(updated).toHaveLength(0);
+  });
+
+  it("a plain file whose interpreter is only a guess keeps the script's interpreter", async () => {
+    openEdit();
+    await pick("renewed.txt", "echo new");
+    expect(val("script-interp")).toBe("python3");
+    expect(val("script-body")).toBe("echo new");
+    expect(g.document.getElementById("script-import-notes").hidden).toBe(true);
+  });
+
+  it("an export replaces every setting but the name, and says so when the names differ", async () => {
+    openEdit();
+    await pick("other.script.json", JSON.stringify({ polarisScript: 1, name: "other", description: "new desc", interpreter: "bash", runTarget: "either", timeoutSec: 45, body: "echo v2" }));
+    expect(form()).toEqual(["cert-mail", "new desc", "bash", "either", "45", "echo v2"]);
+    const notes = g.document.getElementById("script-import-notes");
+    expect(notes.hidden).toBe(false);
+    expect(notes.textContent).toContain('keeps its name "cert-mail"');
+    expect(updated).toHaveLength(0);
+  });
+
+  it("Save changes sends the replaced body under the kept name", async () => {
+    openEdit();
+    await pick("renewed.py", "print('v2')\n");
+    g.document.getElementById("script-save").click();
+    for (let i = 0; i < 20 && !updated.length; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(updated[0]).toMatchObject({ name: "cert-mail", interpreter: "python3", body: "print('v2')\n", timeoutSec: 30 });
+    updated.length = 0;
+  });
+});
+
+describe("New script — Import from file", () => {
+  it("is offered on a new script, worded as an import", () => {
     g.document.getElementById("m")?.remove();
     g.openScriptModal(null);
-    expect(g.document.getElementById("script-import")).toBeTruthy();
+    expect(g.document.getElementById("script-import").textContent).toBe("Import from file");
   });
 
   it("fills the form from a picked file and saves nothing", async () => {
+    toasts.length = 0;
     const input = g.document.getElementById("script-import-file");
     const file = new win.File([JSON.stringify({ polarisScript: 1, name: "imported", description: "x", interpreter: "powershell", runTarget: "either", timeoutSec: 45, body: "Write-Host hi" })], "imported.script.json", { type: "application/json" });
     Object.defineProperty(input, "files", { value: [file], configurable: true });

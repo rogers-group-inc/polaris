@@ -1598,8 +1598,17 @@ async function runScriptTest(sc, btn) {
   }
 }
 
-/** New script dialog: Import from file → fill the form from a picked file. */
-function wireScriptImport() {
+/**
+ * Script dialog: Import from file → fill the form from a picked file. On a NEW
+ * script the file fills every field. On an EXISTING one it REPLACES the script
+ * in place: the name is kept (the script's identity — automations point at its
+ * id, and its name is what the operator knows it by), a .script.json supplies
+ * every other field, and a plain file only the body plus the interpreter its
+ * extension or #! line names — the run target, timeout and description it has
+ * no opinion on stay as they were. Either way nothing is saved until the
+ * operator has read the body and pressed the save button.
+ */
+function wireScriptImport(existing) {
   var btn = document.getElementById("script-import");
   var input = document.getElementById("script-import-file");
   var notes = document.getElementById("script-import-notes");
@@ -1616,17 +1625,33 @@ function wireScriptImport() {
       var parsed;
       try { parsed = P.parseImportFile(String(reader.result || ""), file.name); }
       catch (err) { showToast(err.message || "Could not read that file", "error"); return; }
-      document.getElementById("script-name").value = parsed.name || "";
-      document.getElementById("script-desc").value = parsed.description || "";
-      document.getElementById("script-interp").value = parsed.interpreter;
-      document.getElementById("script-target").value = parsed.runTarget;
-      document.getElementById("script-body").value = parsed.body;
-      document.getElementById("script-timeout").value = String(parsed.timeoutSec);
-      if (notes) {
-        notes.textContent = (parsed.problems || []).join(" ");
-        notes.hidden = !(parsed.problems && parsed.problems.length);
+      var problems = (parsed.problems || []).slice();
+      if (existing) {
+        // The guessed-interpreter note only applies when the guess was used.
+        if (!parsed.fromExport && parsed.interpreterGuessed) problems = problems.filter(function (p) { return p.indexOf("Could not tell the interpreter") !== 0; });
+        if (parsed.fromExport && parsed.name && parsed.name !== existing.name) {
+          problems.push('The file is named "' + parsed.name + '"; this script keeps its name "' + existing.name + '".');
+        }
+        problems = problems.filter(function (p) { return p.indexOf("no usable name") === -1; });
+      } else {
+        document.getElementById("script-name").value = parsed.name || "";
       }
-      showToast('Loaded "' + file.name + '" — read the script before you create it', "info");
+      if (!existing || parsed.fromExport) {
+        document.getElementById("script-desc").value = parsed.description || "";
+        document.getElementById("script-target").value = parsed.runTarget;
+        document.getElementById("script-timeout").value = String(parsed.timeoutSec);
+      }
+      if (!existing || parsed.fromExport || !parsed.interpreterGuessed) {
+        document.getElementById("script-interp").value = parsed.interpreter;
+      }
+      document.getElementById("script-body").value = parsed.body;
+      if (notes) {
+        notes.textContent = problems.join(" ");
+        notes.hidden = !problems.length;
+      }
+      showToast(existing
+        ? 'Loaded "' + file.name + '" over this script — read it before you save'
+        : 'Loaded "' + file.name + '" — read the script before you create it', "info");
     };
     reader.onerror = function () { showToast("Could not read that file", "error"); };
     reader.readAsText(file);
@@ -1640,14 +1665,17 @@ function openScriptModal(existing) {
   function optList(list, sel) {
     return (list || []).map(function (v) { return '<option value="' + escapeHtml(v) + '"' + (v === sel ? " selected" : "") + '>' + escapeHtml(v) + '</option>'; }).join("");
   }
-  // A NEW script may start from a file — our own .script.json export or a plain
-  // script. It only fills this form: the operator reads the body and presses
-  // Create, because an import is exactly where an unread body would slip in.
-  var importRow = existing ? "" :
+  // A script may start from — or, when editing, be replaced by — a file: our own
+  // .script.json export or a plain script. It only fills this form: the
+  // operator reads the body and presses the save button, because an import is
+  // exactly where an unread body would slip in.
+  var importRow =
     '<div class="form-group" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-      '<button type="button" class="btn btn-secondary btn-sm" id="script-import">Import from file</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" id="script-import">' + (existing ? "Replace from file" : "Import from file") + '</button>' +
       '<input type="file" id="script-import-file" accept=".json,.sh,.bash,.py,.ps1,.cmd,.bat,.txt" hidden>' +
-      '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">A .script.json export or a plain script file. It fills this form; nothing is saved until you press Create script.</span>' +
+      '<span style="font-size:0.78rem;color:var(--color-text-tertiary)">' + (existing
+        ? "A .script.json export or a plain script file replaces this script’s body (an export also its settings); the name stays. Nothing is saved until you press Save changes."
+        : "A .script.json export or a plain script file. It fills this form; nothing is saved until you press Create script.") + '</span>' +
       '<div id="script-import-notes" style="flex-basis:100%;font-size:0.78rem;color:var(--color-warning,#d97706)" hidden></div>' +
     '</div>';
   var body = importRow +
@@ -1668,7 +1696,7 @@ function openScriptModal(existing) {
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
     '<button class="btn btn-primary" id="script-save">' + (existing ? "Save changes" : "Create script") + '</button>';
   openModal(existing ? "Edit script" : "New script", body, footer, { wide: true });
-  if (!existing) wireScriptImport();
+  wireScriptImport(existing || null);
 
   document.getElementById("script-save").addEventListener("click", async function () {
     var payload = {
