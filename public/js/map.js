@@ -2974,7 +2974,7 @@
         ["Right-click a placed device", "Open it, or remove it from the map (its codes are left as they are)"],
         ["Click a placed device, then Delete", "Take it off the map — it goes back to the Device List"],
         ["Map button (right)", "Choose OpenStreetMap or upload a floor-plan image"],
-        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close (Esc cancels)"],
+        ["Polygon button (right)", "Pick a location group, then click to add points and click the first point to close; right-drag moves the map, Esc cancels the polygon"],
         ["Click a polygon", "Reshape it, change its group or delete it"],
         ["Map | Satellite (under the zoom)", "Choose the basemap saved with the view"],
         ["Floor + / − (left)", "Change floor: the floor above shows faint and larger, the one above that fainter still; floors below are hidden"],

@@ -920,7 +920,7 @@
           restageAllCodes();
         });
         drawHandler.enable();
-        ctx.toast("Drawing " + groupName(codes) + " — click to add points, click the first point to close, Esc cancels");
+        ctx.toast("Drawing " + groupName(codes) + " — click to add points, click the first point to close, right-drag moves the map, Esc cancels");
       });
     }
 
@@ -928,19 +928,22 @@
     // descriptions already name, plus a new group inside any of them.
     function pickGroup(onPick, current) {
       if (typeof buildOverlay !== "function") return;
-      // Areas, buildings and floors only: each group cut back to those levels.
+      // Areas and buildings only, each group cut back to those levels: a
+      // device's floor comes from the floor it is placed on (rule 168), so a
+      // floor group here would decide nothing (operator request 2026-11-17).
+      function pickCodes(g) { var c = polyCodes(g); c.floor = null; return c; }
       var groups = [];
       groupsFromData(data).concat(state.polygons.map(function (p) { return p.codes; })).forEach(function (g) {
-        var c = polyCodes(g);
+        var c = pickCodes(g);
         if (polyHasCodes(c) && !groups.some(function (x) { return codesEqual(x, c); })) groups.push(c);
       });
       groups.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
       var drawn = {};
-      layerPolys().forEach(function (p) { drawn[codesKey(p.codes)] = true; });
+      layerPolys().forEach(function (p) { drawn[codesKey(pickCodes(p.codes))] = true; });
       var rows = groups.map(function (g, i) {
         var f = deepestField(g);
         var color = R.locGroupColor(f ? f.kind : "building", family());
-        var checked = current ? codesEqual(polyCodes(current), g) : i === 0;
+        var checked = current ? codesEqual(pickCodes(current), g) : i === 0;
         return '<label class="topo-phys-group" style="margin-left:' + (groupDepth(g) * 18) + 'px">' +
           '<input type="radio" name="topo-pg" value="' + i + '"' + (checked ? " checked" : "") + '>' +
           '<span class="topo-phys-swatch" style="background:' + color + '"></span>' +
@@ -952,15 +955,15 @@
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
-        '<p class="hint" style="margin:0 0 8px">Areas, buildings and floors from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save; its room, rack and junction box stay as they are.</p>' +
+        '<p class="hint" style="margin:0 0 8px">Areas and buildings from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on; its room, rack and junction box stay as they are.</p>' +
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
-          '<select id="topo-pg-kind" aria-label="Kind">' + POLY_FIELDS.filter(function (f) { return state.layer === 0 || f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
+          '<select id="topo-pg-kind" aria-label="Kind">' + POLY_FIELDS.filter(function (f) { return f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
           '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
           '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
           '<select id="topo-pg-parent">' + parentOptions + '</select>' +
-          '<p class="hint" style="grid-column:1 / -1;margin:0">The group this one sits within. A Floor "2" that is part of <code>b:Plant</code> gives a device <code>b:Plant f:2</code>; with Nothing it gets only <code>f:2</code>.</p>' +
+          '<p class="hint" style="grid-column:1 / -1;margin:0">The group this one sits within. A Building "Shop" that is part of <code>a:Mine</code> gives a device <code>a:Mine b:Shop</code>; with Nothing it gets only <code>b:Shop</code>.</p>' +
         '</div>';
       var footer = '<button type="button" class="btn btn-secondary" data-pg="cancel">Cancel</button>' +
         '<button type="button" class="btn btn-primary" data-pg="ok">' + (current ? "Use this group" : "Start drawing") + '</button>';
@@ -979,7 +982,6 @@
           var name = dlg.overlay.querySelector("#topo-pg-name").value.trim().replace(/\s+/g, " ");
           var parentIdx = Number(dlg.overlay.querySelector("#topo-pg-parent").value);
           if (!name) { ctx.toast("Give the new group a name", "error"); return; }
-          if (field === "floor" && !/^-?\d{1,2}$/.test(name)) { ctx.toast("A floor is a number: 0 is the ground, -1 below it, 1 above", "error"); return; }
           if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
           var parent = parentIdx >= 0 ? normCodes(groups[parentIdx]) : emptyCodes();
           var fieldIdx = CODE_FIELDS.findIndex(function (f) { return f.field === field; });
@@ -2248,12 +2250,48 @@
       });
     }
 
+    // Esc cancels what the canvas is in the middle of — drawing a polygon,
+    // lining up a plan, placing by two points — and ONLY that: it is caught
+    // in the capture phase and stopped, so map.js's Esc-closes-the-modal
+    // listener never sees it (operator request 2026-11-17). With nothing
+    // under way, Esc still closes the modal.
     function onKey(e) {
-      if (e.key === "Escape" && drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
-      if (e.key === "Escape" && adjust) endAdjust();
-      if (e.key === "Escape" && placing) endPlacing(false);
+      if (e.key !== "Escape" || !(drawHandler || adjust || placing)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (drawHandler) { try { drawHandler.disable(); } catch (x) {} drawHandler = null; }
+      if (adjust) endAdjust();
+      if (placing) endPlacing(false);
     }
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
+    // While drawing a polygon a right-button drag moves the map, as it does
+    // while lining up a plan (operator request 2026-11-17). Leaflet.draw never
+    // sees the right button, so it drops no point, and no browser menu opens.
+    function onDrawRightDown(e) {
+      if (!drawHandler || e.button !== 2 || !map) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var last = map.mouseEventToContainerPoint(e);
+      function mv(ev) {
+        var now = map.mouseEventToContainerPoint(ev);
+        map.panBy(last.subtract(now), { animate: false });
+        last = now;
+      }
+      function up() {
+        document.removeEventListener("pointermove", mv, true);
+        document.removeEventListener("pointerup", up, true);
+      }
+      document.addEventListener("pointermove", mv, true);
+      document.addEventListener("pointerup", up, true);
+    }
+    function blockDrawRight(e) {
+      if (drawHandler && e.button === 2) { e.preventDefault(); e.stopPropagation(); }
+    }
+    function noDrawMenu(e) { if (drawHandler) { e.preventDefault(); e.stopPropagation(); } }
+    mapEl.addEventListener("pointerdown", onDrawRightDown, true);
+    mapEl.addEventListener("mousedown", blockDrawRight, true);
+    mapEl.addEventListener("mouseup", blockDrawRight, true);
+    mapEl.addEventListener("contextmenu", noDrawMenu, true);
 
     // ArcGIS layers (rule 188), read only: drawn on floor 0's ground over the
     // map / satellite (an uploaded plan has no latitude / longitude). Which
@@ -2344,7 +2382,7 @@
       captureElement: function () { return mapEl; },
       destroy: function () {
         endAdjust();
-        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("keydown", onKey, true);
         if (drawHandler) { try { drawHandler.disable(); } catch (e) {} }
         if (arcgisLayers) arcgisLayers.destroy();
         if (map) { map.remove(); map = null; }

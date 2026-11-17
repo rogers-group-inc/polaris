@@ -602,8 +602,10 @@ the column under the tick:
   layers use the same coordinates.
 - **Draw polygon**: pick the location group the polygon is for (a group the
   site's descriptions already name, or a new group inside one), then click to
-  add points and click the first point to close it. Click a polygon to
-  reshape it, change its group or delete it.
+  add points and click the first point to close it. While drawing, drag with
+  the right mouse button to move the map; **Esc** stops drawing and leaves the
+  Topology window open. Click a polygon to reshape it, change its group or
+  delete it.
 
 #### ArcGIS layers
 
@@ -642,9 +644,11 @@ again (its codes stay). The FortiSwitch and FortiAP lists further down the pane
 name only the devices on the map.
 
 Drag a device from the **Device List** onto the map. Polygons stand for
-areas, buildings and floors. A device dropped inside one takes that group's
-`a:` / `b:` / `f:` codes in its description when you save; the innermost polygon
-wins, so a device on a floor inside a building gets both. Only those levels
+areas and buildings; the floor comes from the floor you place the device on,
+so the polygon picker offers no floors. A device dropped inside one takes that
+group's `a:` / `b:` codes in its description when you save, plus the floor's
+`f:`; the innermost polygon wins, so a device in a building inside an area gets
+both. Only those levels
 change: the device's room (`r:`), rack (`ra:`) and junction box (`jb:`) stay as
 they are, and a device whose building is already right isn't listed at all. A
 device placed outside every polygon keeps its codes
