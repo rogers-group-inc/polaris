@@ -162,6 +162,7 @@ the panel, and showing or hiding a layer goes through `setShownArcgisLayers`, wh
 session-only while viewing, as in the sidebar. The panel is a `.btn-dropdown-menu.open.topo-vis-panel` on
 `<body>`, beside the button. Esc and an outside pointerdown close it, and so does any change
 of edit mode.
+**Ring outline**: `edgeLineStyle` returns `halo` (the Layer 2 `line-outline-color`, `EDGE_COLORS[…].halo`) for a link with `inLoop`; the canvas draws it as a line `width + 4` UNDER the link (`linkHalos[id]`, kept in step by the `setLatLngs` wrapper; links between floors get faded halo slices).
 **Connection hit lines**: every same-floor link is a drawn line (not interactive) plus an
 invisible hit line `HIT_PX` (18) wide (`linkHits[id]`) that carries the hover card, the press
 and the click. `line.setLatLngs` is wrapped so the hit line follows every redraw. Links between

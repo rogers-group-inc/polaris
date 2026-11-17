@@ -441,6 +441,7 @@
     var markers = {};       // nodeId → L.marker
     var labels = {};        // nodeId → its name label (a marker of its own, above every icon)
     var linkHits = {};      // edge id → its wide invisible hit line (what the pointer takes)
+    var linkHalos = {};     // edge id → the yellow outline under a link on a ring
     var hullsDrawn = {};    // level → [{ latlngs, marker }] room outlines and their name markers
     var clusterOf = {};     // level → its L.markerClusterGroup while viewing (none while editing)
     // What the map shows while VIEWING (the eye button; operator request
@@ -724,7 +725,7 @@
       if (map) { map.remove(); map = null; }
       baseLayer = null; layerSwitch = null;
       floorPanes = {}; crossGroup = null;
-      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; linkHalos = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
       var bg = background0;
       if (bg && bg.kind === "image") {
         map = L.map(mapEl, { crs: L.CRS.Simple, minZoom: -5, maxZoom: 5, zoomSnap: 0.25, attributionControl: false });
@@ -781,7 +782,7 @@
     function drawAll() {
       if (!map) return;
       Object.keys(floorPanes).forEach(function (k) { floorPanes[k].group.clearLayers(); });
-      markers = {}; labels = {}; linkLines = {}; linkHits = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
+      markers = {}; labels = {}; linkLines = {}; linkHits = {}; linkHalos = {}; hullsDrawn = {}; clusterOf = {}; polygonShapes = {};
       allLevels().forEach(drawFloor);
       applyFloorLook(false);
       drawCrossLinks();
@@ -1020,6 +1021,12 @@
         var st = R.edgeLineStyle(e, family());
         var N = 12, ops = fadeSteps(oa, ob, N);
         for (var i = 0; i < N; i++) {
+          if (st.halo) {
+            L.polyline(slicePolyline(cps, i / N, (i + 1) / N).map(function (c) { return map.containerPointToLatLng(c); }), {
+              color: st.halo, weight: st.width + 4, opacity: ops[i] * 0.9, interactive: false,
+              pane: "floor_links", renderer: crossRenderer, lineCap: "butt",
+            }).addTo(crossGroup);
+          }
           L.polyline(slicePolyline(cps, i / N, (i + 1) / N).map(function (c) { return map.containerPointToLatLng(c); }), {
             color: st.color, weight: st.width, opacity: ops[i], dashArray: st.dash, interactive: false,
             pane: "floor_links", renderer: crossRenderer, lineCap: "butt",
@@ -1567,9 +1574,13 @@
       var hit = L.polyline(pts, {
         color: st.color, weight: Math.max(HIT_PX, st.width + 12), opacity: 0, interactive: true, pane: f.name, renderer: f.renderer,
       });
-      // The hit line follows every redraw of the drawn one.
+      // A link on a ring: the Layer 2 graph's yellow outline, drawn underneath.
+      var halo = st.halo ? L.polyline(pts, {
+        color: st.halo, weight: st.width + 4, opacity: 0.9, interactive: false, pane: f.name, renderer: f.renderer, lineCap: "round", lineJoin: "round",
+      }) : null;
+      // The hit line and the outline follow every redraw of the drawn one.
       var setLls = line.setLatLngs;
-      line.setLatLngs = function (lls) { hit.setLatLngs(lls); return setLls.call(line, lls); };
+      line.setLatLngs = function (lls) { hit.setLatLngs(lls); if (halo) halo.setLatLngs(lls); return setLls.call(line, lls); };
       wireLinkTip(hit, e, line);
       hit.on("mousedown", function (ev) { onLinePress(ev, e, level); });
       hit.on("click", function (ev) {
@@ -1578,6 +1589,7 @@
         linkSel = { id: e.id, level: level, handle: null };
         drawHandles();
       });
+      if (halo) { f.group.addLayer(halo); linkHalos[e.id] = halo; }
       f.group.addLayer(line);
       f.group.addLayer(hit);
       linkLines[e.id] = line;
@@ -1794,6 +1806,7 @@
       (edgesByNode[id] || []).forEach(function (e) {
         if (linkLines[e.id]) { dropLayer(linkLines[e.id]); delete linkLines[e.id]; }
         if (linkHits[e.id]) { dropLayer(linkHits[e.id]); delete linkHits[e.id]; }
+        if (linkHalos[e.id]) { dropLayer(linkHalos[e.id]); delete linkHalos[e.id]; }
         var la = layerOfDevice(e.source), lb = layerOfDevice(e.target);
         if (la !== null && la === lb) addLine(e, la);
       });
