@@ -678,12 +678,19 @@ Devices sharing a room code get an automatic outline with the room's name. Draw
 a Room polygon for that room (same area and building, on the same floor) and it
 replaces the outline.
 
-**Rooms and junction boxes are containers.** Drawing a Room or Junction box
-polygon creates a Room view for it straight away, named after the room (or
-`JB 7`). While you are viewing the map, the devices inside the shape are not
-drawn (they are in the Room view) and their connections end at the shape's
-middle; double-click the shape to open its Room view. In edit mode they show
-faintly inside it so you can still drag one out.
+**Rooms and junction boxes can be containers.** After you draw a Room or
+Junction box polygon, Polaris asks whether to create a Room view for it, named
+after the room (or `JB 7`). Say no and the shape just groups its devices, which
+stay on the map; you can create the view later from the shape's menu
+(**Create Room view**). With a Room view, the devices inside the shape are not
+drawn while you are viewing (they are in the Room view) and their connections end
+at the shape's middle; double-click the shape to open its Room view. In edit
+mode they show faintly inside it so you can still drag one out.
+
+Deleting such a Room view asks whether to remove its shape from the Topology
+view too. **Remove the shape** deletes it. **Keep the shape** keeps it as a plain
+grouping, and puts the devices that were in the Room view back on the Topology
+view inside the shape, unless they are already on that view.
 
 **Devices close together join.** While you are viewing, devices that would
 overlap are drawn as one numbered circle in the colour of the worst health

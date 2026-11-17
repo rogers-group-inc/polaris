@@ -2445,6 +2445,100 @@
       });
     });
   }
+  // ── Rule 148(c): deleting a Room view a Topology shape stands for ───────
+  function _topologyViewsLinkingTo(viewId) {
+    return _siteViews().filter(function (v) {
+      return v.mode === "topology" && (v.polygons || []).some(function (p) { return p.viewId === viewId; });
+    });
+  }
+  // true = remove the shapes, false = keep them (and put the devices back),
+  // null = cancelled (nothing is deleted).
+  function _askRemoveRoomShapes(view, linked) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      var where = linked.map(function (v) { return "“" + v.name + "”"; }).join(", ");
+      var body = '<p style="margin:0">The room <strong>' + escapeHtml(view.name) + '</strong> is drawn as a shape on the Topology view ' + escapeHtml(where) + '.</p>' +
+        '<p style="margin:8px 0 0">Remove that shape too?</p>' +
+        '<p class="hint" style="margin:8px 0 0">Keep it, and the devices that were in this Room view are put back on the Topology view inside the shape.</p>';
+      var footer = '<button type="button" class="btn btn-secondary" data-rs="cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-secondary" data-rs="keep">Keep the shape</button>' +
+        '<button type="button" class="btn btn-danger" data-rs="remove">Remove the shape</button>';
+      var dlg = buildOverlay(1300, "Also remove the room from the Topology view?", body, footer, function () { if (!settled) { settled = true; resolve(null); } });
+      function pick(v) { return function () { settled = true; resolve(v); dlg.close(); }; }
+      dlg.overlay.querySelector('[data-rs="cancel"]').addEventListener("click", pick(null));
+      dlg.overlay.querySelector('[data-rs="keep"]').addEventListener("click", pick(false));
+      dlg.overlay.querySelector('[data-rs="remove"]').addEventListener("click", pick(true));
+    });
+  }
+  // Spots inside a polygon (its own units), one per device: a grid over its
+  // bounds kept to the points inside, the middle when none fits.
+  function _spotsInPolygon(points, n) {
+    var P = window.PolarisTopologyPhysical;
+    var xs = points.map(function (q) { return q[0]; }), ys = points.map(function (q) { return q[1]; });
+    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs), minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+    var mid = [xs.reduce(function (a, b) { return a + b; }, 0) / xs.length, ys.reduce(function (a, b) { return a + b; }, 0) / ys.length];
+    var out = [];
+    for (var k = Math.ceil(Math.sqrt(n)) + 1; k <= Math.ceil(Math.sqrt(n)) + 6 && out.length < n; k++) {
+      out = [];
+      for (var i = 1; i <= k && out.length < n; i++) {
+        for (var j = 1; j <= k && out.length < n; j++) {
+          var q = [minX + (maxX - minX) * i / (k + 1), minY + (maxY - minY) * j / (k + 1)];
+          if (!P || !P._pointInRing || P._pointInRing(q, points)) out.push(q);
+        }
+      }
+    }
+    while (out.length < n) out.push(mid);
+    return out;
+  }
+  // Remove the shapes, or keep them unlinked and place the Room view's devices
+  // that are not already on that Topology view inside them.
+  async function _settleRoomShapes(siteId, roomView, linked, remove) {
+    var roomAssets = [];
+    (roomView.rackPlacements || []).concat(roomView.wallPlacements || []).forEach(function (p) {
+      if (p && p.assetId && roomAssets.indexOf(p.assetId) === -1) roomAssets.push(p.assetId);
+    });
+    var layouts = (topoState.data && topoState.data.savedLayouts) || {};
+    for (var i = 0; i < linked.length; i++) {
+      var v = linked[i];
+      var shapes = (v.polygons || []).filter(function (p) { return p.viewId === roomView.id; });
+      var polygons = remove
+        ? (v.polygons || []).filter(function (p) { return p.viewId !== roomView.id; })
+        : (v.polygons || []).map(function (p) {
+            if (p.viewId !== roomView.id) return p;
+            var copy = Object.assign({}, p);
+            delete copy.viewId;
+            return copy;
+          });
+      try {
+        await api.map.updateTopologyView(siteId, v.id, { polygons: polygons });
+        v.polygons = polygons;
+      } catch (err) {
+        if (typeof showToast === "function") showToast("The shape on “" + v.name + "” was not changed — " + (err && err.message ? err.message : String(err)), "error");
+        continue;
+      }
+      if (remove || !roomAssets.length) continue;
+      // Devices already on this Topology view (any floor) stay where they are.
+      var prefix = "v:" + v.id + "|topo";
+      var placed = {};
+      Object.keys(layouts).forEach(function (k) {
+        if (k !== prefix && k.indexOf(prefix + "|L") !== 0) return;
+        Object.keys((layouts[k] && layouts[k].positions) || {}).forEach(function (id) { placed[id] = true; });
+      });
+      var missing = roomAssets.filter(function (id) { return !placed[id]; });
+      if (!missing.length) continue;
+      var shape = shapes[0];
+      var key = shape.layer ? prefix + "|L" + shape.layer : prefix;
+      var positions = Object.assign({}, (layouts[key] && layouts[key].positions) || {});
+      _spotsInPolygon(shape.points, missing.length).forEach(function (q, idx) { positions[missing[idx]] = { x: q[0], y: q[1] }; });
+      try {
+        await api.map.saveTopologyLayout(siteId, key, positions);
+        layouts[key] = Object.assign({}, layouts[key] || {}, { positions: positions });
+        if (typeof showToast === "function") showToast(missing.length + " device" + (missing.length === 1 ? "" : "s") + " put back in " + roomView.name + " on “" + v.name + "”");
+      } catch (err) {
+        if (typeof showToast === "function") showToast("Devices not put back on “" + v.name + "” — " + (err && err.message ? err.message : String(err)), "error");
+      }
+    }
+  }
   async function deleteCurrentTopologyView() {
     var view = _currentView();
     if (!view || view.isDefault || !topoState.siteId) return;
@@ -2457,8 +2551,14 @@
       : false;
     if (!ok) return;
     var siteId = topoState.siteId;
+    // A Room view a room / junction-box shape on a Topology view stands for
+    // (rule 148(c)): keep the shape or remove it too.
+    var linked = _topologyViewsLinkingTo(view.id);
+    var removeShapes = linked.length ? await _askRemoveRoomShapes(view, linked) : false;
+    if (removeShapes === null) return;
     try {
       await api.map.deleteTopologyView(siteId, view.id);
+      if (linked.length) await _settleRoomShapes(siteId, view, linked, removeShapes);
       if (!topoState.data || topoState.siteId !== siteId) return;
       _forgetCurrentViewLayouts();
       topoState.data.views = _siteViews().filter(function (v) { return v.id !== view.id; });
