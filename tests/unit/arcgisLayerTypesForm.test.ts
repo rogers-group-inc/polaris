@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import vm from "node:vm";
-import { integrationsFileSource } from "./_integrationsSource";
+import { integrationsFileSource } from "./_integrationsSource.js";
 
 const ID = "aaaaaaaa-0000-4000-8000-000000000001";
 let sb: Record<string, any>;
