@@ -613,7 +613,7 @@ opens **Show on the map**. It has a switch for each of these:
 
 - **Devices**, **Groups** (drawn areas, buildings and rooms, and room outlines), and
   **Connections**;
-- each ArcGIS layer the integration offers.
+- each ArcGIS layer that covers the map.
 
 Under Devices, Groups and each ArcGIS layer that has labels, **Labels** turns
 off its labels. A hidden label still appears while you point at its device,
@@ -633,11 +633,16 @@ fiber routes, pole lines, handholes, parcels — a Topology view can draw them
 over the map or satellite imagery (never over an uploaded floor plan). Polaris
 only reads them; edit them in ArcGIS ([rule 188](Business-Rules#rule-188)).
 
-Tick the layers a view draws under **Map layers** at the top of the details
-pane. A new view draws none. While editing, the ticks are saved with the view;
-otherwise they last until you close the map. Each layer has the colour, width
-and line style set on the integration, and the legend in the bottom-left
-corner names every one shown. Polaris reads the features in view as you pan;
+A view draws every layer whose area covers the map on screen, found
+automatically, so each site gets its own region's layers with nothing to set
+([rule 188(c)](Business-Rules#rule-188)). **Map layers** at the top of the
+details pane lists those layers — a layer drawn by type has a box for each of
+its types — and names the ones that cover somewhere else under *Not here*.
+Untick a layer or a type to hide it. While editing, what you hide is saved
+with the view; otherwise it lasts until you close the map. Each layer, or
+each type, has the colour, width and line style set on the integration, and
+the legend in the bottom-left corner names every one shown, with a by-type
+layer's types under its name. Polaris reads the features in view as you pan;
 a layer with more features in view than one answer carries says *(partial)* —
 zoom in. Labels appear when you zoom in close. Click a feature to see the
 fields chosen for it, a line's length, the connections riding it, and

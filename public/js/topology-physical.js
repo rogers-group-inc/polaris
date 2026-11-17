@@ -2850,10 +2850,7 @@
           vis[kl].labels = t.checked;
           saveVis(); paintVisClasses();
         } else if (a && arcgisLayers) {
-          var next = shownArcgisLayers().filter(function (x) { return x !== a; });
-          if (t.checked) next.push(a);
-          setShownArcgisLayers(next);
-          arcgisLayers.refresh();
+          arcgisLayers.setHidden(a, !t.checked);
           var asub = el.querySelector('[data-vis-arc-labels="' + a + '"]');
           if (asub) asub.disabled = !t.checked;
         } else if (al && arcgisLayers) {
@@ -2864,20 +2861,21 @@
     }
 
     // ArcGIS layers (rule 188), read only: drawn on floor 0's ground over the
-    // map / satellite (an uploaded plan has no latitude / longitude). Which
-    // layers the view draws: a staged edit, else this session's toggles,
-    // else the view's own list (none for a new view).
-    var arcShownOverride = null;
-    function shownArcgisLayers() {
+    // map / satellite (an uploaded plan has no latitude / longitude). Rule
+    // 188(c): every layer covering the map is drawn; the view keeps only what
+    // it HIDES (`<layerId>`, `<layerId>:<type>`, `<layerId>#other`) — a staged
+    // edit, else this session's toggles, else the view's own list.
+    var arcHiddenOverride = null;
+    function hiddenArcgis() {
       var patch = ctx.stagedViewPatch ? ctx.stagedViewPatch() : {};
-      if (patch && Array.isArray(patch.arcgisLayers)) return patch.arcgisLayers;
-      if (arcShownOverride) return arcShownOverride;
-      return (ctx.view && Array.isArray(ctx.view.arcgisLayers)) ? ctx.view.arcgisLayers : [];
+      if (patch && Array.isArray(patch.arcgisHidden)) return patch.arcgisHidden;
+      if (arcHiddenOverride) return arcHiddenOverride;
+      return (ctx.view && Array.isArray(ctx.view.arcgisHidden)) ? ctx.view.arcgisHidden : [];
     }
     function canSaveArcgisLayers() { return !!(state.editing && ctx.canEdit); }
-    function setShownArcgisLayers(ids) {
-      if (canSaveArcgisLayers() && ctx.stageViewPatch && ctx.stageViewPatch({ arcgisLayers: ids })) changed();
-      else arcShownOverride = ids;
+    function setHiddenArcgis(keys) {
+      if (canSaveArcgisLayers() && ctx.stageViewPatch && ctx.stageViewPatch({ arcgisHidden: keys })) changed();
+      else arcHiddenOverride = keys;
       ctx.refreshSidebar();
     }
     var arcgisLayers = window.PolarisTopologyArcgisLayers && ctx.fetchArcgisLayers
@@ -2890,10 +2888,12 @@
           fetchLayers: ctx.fetchArcgisLayers,
           fetchFeatures: ctx.fetchArcgisFeatures,
           fetchLinks: ctx.fetchCableRunLinks,
-          shownLayers: shownArcgisLayers,
+          hidden: hiddenArcgis,
           labelsShown: arcLabelsOn,
-          setShownLayers: setShownArcgisLayers,
+          setHidden: setHiddenArcgis,
           canSaveShown: canSaveArcgisLayers,
+          // The layers covering the map changed as it moved: repaint the Map layers card.
+          onCoverChange: function () { ctx.refreshSidebar(); },
           // Rule 188(a): which lines each link rides — the view gate's, staged apart.
           stageLinks: function (changes) { if (ctx.stageCableRunLinks) ctx.stageCableRunLinks(changes); },
           onRoutesChanged: function () { refreshRoutedLinks(); },

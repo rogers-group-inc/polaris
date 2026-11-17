@@ -2,7 +2,8 @@
 
 Feature layers read from ArcGIS and drawn on a Device Map site's Topology views (business rule
 188), connections routed through ArcGIS lines (188(a)), and the ArcGIS integration's Layers tab.
-Polaris never writes to ArcGIS. Approved canvas: https://claude.ai/artifact/VUonHygAhBAcWXgAfxD3Tu
+Polaris never writes to ArcGIS. Approved canvases: https://claude.ai/artifact/VUonHygAhBAcWXgAfxD3Tu,
+and for line types and layers by area (188(b), 188(c)) https://claude.ai/artifact/NkYpLby5WVhFxcgAKC2B9f
 
 ## The rules
 
@@ -11,9 +12,15 @@ Polaris never writes to ArcGIS. Approved canvas: https://claude.ai/artifact/VUon
   `--color-warning`, `--color-sev-notice`, `--color-danger`), a width and solid / dashed / dotted.
   Points are dots, areas a faint fill with an outline. The legend (bottom left) and the Map
   layers card name every shown layer, so colour is never the only cue.
-- **Map layers** heads the details pane on a Topology view: a checkbox and a style sample per
-  configured layer. A new view ticks none. While editing, a tick is staged and saved with the
-  view; otherwise it lasts until the map closes. A **Route line missing** pill
+- **By type (188(b))**: a layer can be drawn by a type field instead. Each type takes ANY colour
+  (`#rrggbb`, ArcGIS's own, painted through the element's `--arc`) — the one exception to the
+  token colours — plus a width and a line style. The legend puts the types under the layer's
+  name; the card names a feature's type with its sample.
+- **Map layers** heads the details pane on a Topology view: a checkbox per layer that COVERS
+  the map (188(c), found from each layer's area), a by-type layer's types nested under it with
+  their own checkbox and sample, and "Not here: …" naming the rest. Everything draws until
+  unticked. While editing, what is hidden is staged and saved with the view; otherwise it
+  lasts until the map closes. A **Route line missing** pill
   (`badge-expired`) counts connections riding a line that is hidden, filtered out or gone.
 - **The click card** is a Leaflet popup over the floating glass: the label, "from ArcGIS, read
   only", the layer's chosen fields, a line's length, the connections riding it, and **Open in
@@ -23,7 +30,10 @@ Polaris never writes to ArcGIS. Approved canvas: https://claude.ai/artifact/VUon
   line it rides; drag it off (or Delete) to detach.
 - **Layers tab**: search scopes as `btn-sm` (picked = `btn-primary`), a results table whose items
   expand to their layers (Add / Added), the list Polaris reads (row selected = the layer being
-  edited, × removes) and the editor below it — colour swatches, width, line, label field,
+  edited, × removes) and the editor below it — **Style** (One style | By type, the picked one
+  in the accent fill), then either colour swatches, width and line, or the type field with
+  **Read types** and the types table (a tick-box column with NO header word, type with sample,
+  value, line count, colour picker, width, line, and an Other types row), then label field,
   identity field (GlobalID preferred), popup-field chips with an Add field picker, and the
   optional where clause.
 

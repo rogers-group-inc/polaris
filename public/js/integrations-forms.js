@@ -1275,7 +1275,56 @@ var ARCGIS_LAYER_COLORS = [
   { value: "red",    label: "Red",    css: "var(--color-danger)" },
 ];
 var ARCGIS_GEOMETRY_LABEL = { line: "Line", point: "Point", area: "Area" };
-var _arcgisDraft = { layers: [], selected: -1, fields: {} };
+// fields: layer id → its fields; typeInfo: layer id → the last Read types answer;
+// mode: layer id → "types" while By type is picked but no types are read yet;
+// stash: layer id → the types set aside by One style (back on By type).
+var _arcgisDraft = { layers: [], selected: -1, fields: {}, typeInfo: {}, mode: {}, stash: {} };
+var ARCGIS_TYPE_FIELD_TYPES = ["esriFieldTypeString", "esriFieldTypeSmallInteger", "esriFieldTypeInteger", "esriFieldTypeBigInteger"];
+var ARCGIS_COUNT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+var ARCGIS_DASH_CSS = { solid: "none", dashed: "6 4", dotted: "1 5" };
+
+/** A line sample in a type's own colour (rule 188(b)): any #rrggbb, so drawn inline. */
+function arcgisTypeSwatchHTML(st) {
+  var c = /^#[0-9a-f]{6}$/i.test(st && st.color) ? st.color : "#9aa0a6";
+  var w = Math.min(4, (st && st.width) || 3);
+  return '<svg width="28" height="8" aria-hidden="true" style="flex-shrink:0"><line x1="2" y1="4" x2="26" y2="4" stroke="' + c + '" stroke-width="' + w + '"' +
+    ' stroke-dasharray="' + (ARCGIS_DASH_CSS[st && st.dash] || "none") + '" stroke-linecap="round"></line></svg>';
+}
+
+function arcgisTypeKey(v) { return String(v); }
+
+/** The By type table: a tick box, the type, its value, its count, then colour / width / line. */
+function arcgisTypesTableHTML(l) {
+  var t = l.types;
+  var info = _arcgisDraft.typeInfo[l.id];
+  var counts = {};
+  if (info && info.field === t.field) (info.values || []).forEach(function (v) { counts[arcgisTypeKey(v.value)] = v.count; });
+  function widthSel(attr, i, cur, label) {
+    return '<select ' + attr + '="' + i + '" aria-label="Width of ' + escapeHtml(label) + '" style="width:auto">' +
+      [1, 2, 3, 4, 5, 6, 8].map(function (w) { return '<option value="' + w + '"' + (cur === w ? ' selected' : '') + '>' + w + ' px</option>'; }).join("") + '</select>';
+  }
+  function dashSel(attr, i, cur, label) {
+    return '<select ' + attr + '="' + i + '" aria-label="Line style of ' + escapeHtml(label) + '" style="width:auto">' +
+      [["solid", "Solid"], ["dashed", "Dashed"], ["dotted", "Dotted"]].map(function (d) { return '<option value="' + d[0] + '"' + (cur === d[0] ? ' selected' : '') + '>' + d[1] + '</option>'; }).join("") + '</select>';
+  }
+  function row(i, on, label, valueCell, countCell, st, dim) {
+    return '<tr>' +
+      '<td><input type="checkbox" data-arc-type-on="' + i + '" aria-label="Draw ' + escapeHtml(label) + '"' + (on ? ' checked' : '') + ' style="width:auto;margin:0"></td>' +
+      '<td><div style="display:flex;align-items:center;gap:8px">' + arcgisTypeSwatchHTML(st) + '<span' + (on ? '' : ' style="color:var(--color-text-tertiary)"') + (dim ? ' class="hint" style="margin:0;font-size:inherit"' : '') + '>' + escapeHtml(label) + '</span></div></td>' +
+      valueCell + countCell +
+      '<td><input type="color" data-arc-type-color="' + i + '" value="' + escapeHtml(st.color) + '" aria-label="Colour of ' + escapeHtml(label) + '" style="width:40px;height:26px;padding:0 2px"></td>' +
+      '<td>' + widthSel("data-arc-type-width", i, st.width, label) + '</td>' +
+      '<td>' + dashSel("data-arc-type-dash", i, st.dash, label) + '</td></tr>';
+  }
+  var rows = t.values.map(function (v, i) {
+    var c = counts[arcgisTypeKey(v.value)];
+    return row(i, v.on, v.label || String(v.value), '<td class="mono">' + escapeHtml(String(v.value)) + '</td>',
+      '<td class="mono" style="text-align:right">' + (typeof c === "number" ? ARCGIS_COUNT.format(c) : "—") + '</td>', v.style);
+  }).join("");
+  rows += row("other", t.other.on, "Other types", '<td class="hint" colspan="2" style="margin:0">blank, or added in ArcGIS later</td>', '', t.other.style, true);
+  return '<div class="table-wrapper" data-arc-types style="max-height:320px;overflow:auto"><table><thead><tr><th style="width:34px"></th><th>Type</th><th>Value</th><th style="text-align:right">Lines</th><th>Colour</th><th>Width</th><th>Line</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table></div>';
+}
 
 function arcgisColorCss(name) {
   for (var i = 0; i < ARCGIS_LAYER_COLORS.length; i++) if (ARCGIS_LAYER_COLORS[i].value === name) return ARCGIS_LAYER_COLORS[i].css;
@@ -1294,10 +1343,14 @@ function arcgisStyleSwatchHTML(l) {
 
 function arcgisSelectedRowsHTML() {
   var rows = _arcgisDraft.layers.map(function (l, i) {
+    var drawn = l.types ? l.types.values.filter(function (v) { return v.on; }) : null;
     return '<tr data-arc-pick="' + i + '"' + (i === _arcgisDraft.selected ? ' class="selected"' : '') + ' style="cursor:pointer">' +
       '<td><div>' + escapeHtml(l.title) + '</div><div class="hint">' + escapeHtml(ARCGIS_GEOMETRY_LABEL[l.geometry] || l.geometry) +
+        (drawn ? ' · ' + drawn.length + ' of ' + l.types.values.length + ' types' : '') +
         (l.where ? ' · filtered' : '') + '</div></td>' +
-      '<td>' + arcgisStyleSwatchHTML(l) + '</td>' +
+      '<td>' + (drawn
+        ? '<div style="display:flex;flex-direction:column;gap:2px">' + drawn.slice(0, 4).map(function (v) { return arcgisTypeSwatchHTML(v.style); }).join("") + '</div>'
+        : arcgisStyleSwatchHTML(l)) + '</td>' +
       '<td class="mono">' + escapeHtml(l.labelField || "—") + '</td>' +
       '<td><button type="button" class="btn-icon" data-arc-remove="' + i + '" aria-label="Remove ' + escapeHtml(l.title) + '">×</button></td></tr>';
   }).join("");
@@ -1335,13 +1388,41 @@ function arcgisEditorHTML() {
       ' <button type="button" class="btn-icon" data-arc-unpop="' + i + '" aria-label="Remove ' + escapeHtml(p.name) + '" style="padding:0 2px">×</button></span>';
   }).join(" ");
   var addable = (fields || []).filter(function (f) { return !(l.popupFields || []).some(function (p) { return p.name === f.name; }); });
-  return '<div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:12px 14px;background:var(--color-bg-primary);display:flex;flex-direction:column;gap:10px">' +
-    '<div class="form-group" style="margin:0"><label for="arc-title">Name on the map</label><input type="text" id="arc-title" maxlength="120" value="' + escapeHtml(l.title) + '"></div>' +
-    '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
+  var byType = !!l.types || _arcgisDraft.mode[l.id] === "types";
+  var onBtn = 'background:var(--color-accent);color:var(--color-bg-primary);border-color:var(--color-accent)';
+  var typeFields = (fields || []).filter(function (f) { return ARCGIS_TYPE_FIELD_TYPES.indexOf(f.type) !== -1; });
+  var curField = l.types ? l.types.field : (_arcgisDraft.typeInfo[l.id] || {}).field || "";
+  var styleBlock;
+  if (!byType) {
+    styleBlock = '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">' +
       '<div class="form-group" style="margin:0"><label>Colour</label><div style="display:flex;gap:6px;flex-wrap:wrap">' + swatches + '</div></div>' +
       '<div class="form-group" style="margin:0"><label for="arc-width">Width</label><select id="arc-width">' + widths + '</select></div>' +
       '<div class="form-group" style="margin:0"><label for="arc-dash">Line</label><select id="arc-dash">' + dashes + '</select></div>' +
+    '</div>';
+  } else {
+    var info = _arcgisDraft.typeInfo[l.id];
+    var summary = !l.types ? 'Pick the field that sorts the lines into kinds, then <strong>Read types</strong>.'
+      : l.types.values.length + ' type' + (l.types.values.length === 1 ? '' : 's') +
+        (info && info.field === l.types.field ? ' read from ArcGIS' + (info.values.some(function (v) { return v.fromArcgis; }) ? ' · names and styles copied from the layer&rsquo;s own styling' : '') +
+          (typeof info.blank === "number" && info.blank ? ' · ' + ARCGIS_COUNT.format(info.blank) + ' line' + (info.blank === 1 ? '' : 's') + ' with no type' : '')
+        : ' · <strong>Read types</strong> again to see counts');
+    styleBlock = '<p class="hint" style="margin:0">' + summary + '</p>' +
+      (l.types ? arcgisTypesTableHTML(l) +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-sm btn-secondary" id="arc-types-reset">Reset to ArcGIS styles</button>' +
+        '<span class="hint" style="margin:0">Unticked types are never fetched: Polaris asks ArcGIS only for the ticked ones.</span></div>' : '');
+  }
+  return '<div style="border:1px solid var(--color-border);border-radius:var(--radius-md);padding:12px 14px;background:var(--color-bg-primary);display:flex;flex-direction:column;gap:10px">' +
+    '<div class="form-group" style="margin:0"><label for="arc-title">Name on the map</label><input type="text" id="arc-title" maxlength="120" value="' + escapeHtml(l.title) + '"></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:end">' +
+      '<div class="form-group" style="margin:0"><label>Style</label><div style="display:flex;gap:6px">' +
+        '<button type="button" class="btn btn-sm btn-secondary" data-arc-mode="one" aria-pressed="' + !byType + '"' + (byType ? '' : ' style="' + onBtn + '"') + '>One style</button>' +
+        '<button type="button" class="btn btn-sm btn-secondary" data-arc-mode="types" aria-pressed="' + byType + '"' + (byType ? ' style="' + onBtn + '"' : '') + '>By type</button>' +
+      '</div></div>' +
+      (byType ? '<div class="form-group" style="margin:0"><label for="arc-type-field">Type field</label><div style="display:flex;gap:8px">' +
+        '<select id="arc-type-field" style="flex-grow:1">' + (fields ? arcgisFieldOptionsHTML(typeFields, curField, curField ? null : "Pick a field") : '<option>Reading the layer&rsquo;s fields…</option>') + '</select>' +
+        '<button type="button" class="btn btn-secondary" id="arc-read-types">Read types</button></div></div>' : '<div></div>') +
     '</div>' +
+    styleBlock +
     '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">' +
       '<div class="form-group" style="margin:0"><label for="arc-label">Label field</label><select id="arc-label">' + arcgisFieldOptionsHTML(fields, l.labelField, "No label") + '</select>' +
         '<p class="hint">Drawn along the line when zoomed in.</p></div>' +
@@ -1365,6 +1446,9 @@ function arcgisLayersHTML(defaults) {
     layers: JSON.parse(JSON.stringify(Array.isArray(d.layers) ? d.layers : [])),
     selected: Array.isArray(d.layers) && d.layers.length ? 0 : -1,
     fields: {},
+    typeInfo: {},
+    mode: {},
+    stash: {},
   };
   return '<p class="hint" style="margin-top:0">Polaris only reads these layers — nothing is ever written to ArcGIS. Lines can carry a connection on the Device Map&rsquo;s Topology views; points and areas are drawn for context. A sign-in that can only view is enough.</p>' +
     '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px">' +
@@ -1388,7 +1472,7 @@ function arcgisLayersHTML(defaults) {
         '<div class="table-wrapper"><table><thead><tr><th>Layer</th><th>Style</th><th>Label</th><th></th></tr></thead>' +
           '<tbody id="arc-selected">' + arcgisSelectedRowsHTML() + '</tbody></table></div>' +
         '<div id="arc-editor">' + arcgisEditorHTML() + '</div>' +
-        '<p class="hint" style="margin:0">Each Topology view ticks which of these it draws, under Map layers.</p>' +
+        '<p class="hint" style="margin:0">A Topology view draws every layer that covers its map; its Map layers card hides layers and types.</p>' +
       '</div>' +
     '</div>';
 }
@@ -1402,6 +1486,12 @@ function getArcgisLayersConfig() {
     if (l.itemId) out.itemId = l.itemId;
     if (l.labelField) out.labelField = l.labelField;
     if (l.where) out.where = l.where;
+    if (l.types) {
+      out.types = { field: l.types.field, numeric: !!l.types.numeric,
+        values: l.types.values.map(function (v) { return { value: v.value, label: v.label, on: !!v.on, style: v.style }; }),
+        other: { on: !!l.types.other.on, style: l.types.other.style } };
+    }
+    if (Array.isArray(l.extent) && l.extent.length === 4) out.extent = l.extent;
     return out;
   });
 }

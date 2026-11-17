@@ -1204,6 +1204,7 @@ const api = {
     arcgisSearch:        (body)     => trackedRequest("Searching ArcGIS", "POST", "/integrations/arcgis/search", body),
     arcgisServiceLayers: (body)     => trackedRequest("Reading the service", "POST", "/integrations/arcgis/service-layers", body),
     arcgisReadLayer:     (body)     => trackedRequest("Reading the layer", "POST", "/integrations/arcgis/read-layer", body),
+    arcgisLayerTypes:    (body)     => trackedRequest("Reading the types", "POST", "/integrations/arcgis/layer-types", body),
     llmProbeTools:      (body) => trackedRequest("Checking tool calling", "POST", "/integrations/llm/probe-tools", body),
     // Generic API Preview tab: the first page, mapped (nothing is written).
     genericApiPreview:  (body) => trackedRequest("Reading the first page", "POST", "/integrations/generic-api/preview", body),

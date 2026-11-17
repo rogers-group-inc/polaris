@@ -1027,6 +1027,8 @@ function _wireArcgisLayers(id) {
     _arcgisDraft.fields[l.id] = null;
     api.integrations.arcgisReadLayer(body({ url: l.url })).then(function (res) {
       _arcgisDraft.fields[l.id] = (res.layer && res.layer.fields) || [];
+      // The area the layer covers, kept fresh each time the layer is opened here.
+      if (res.layer && Array.isArray(res.layer.extent)) l.extent = res.layer.extent;
       if (_arcgisDraft.layers[_arcgisDraft.selected] === l) {
         document.getElementById("arc-editor").innerHTML = arcgisEditorHTML();
         wireEditor();
@@ -1077,8 +1079,11 @@ function _wireArcgisLayers(id) {
         ed.innerHTML = arcgisEditorHTML(); wireEditor(); repaintList();
       });
     });
-    document.getElementById("arc-width").addEventListener("change", function (e) { l.style.width = parseInt(e.target.value, 10) || 3; repaintList(); });
-    document.getElementById("arc-dash").addEventListener("change", function (e) { l.style.dash = e.target.value; repaintList(); });
+    var widthSel = document.getElementById("arc-width");
+    if (widthSel) widthSel.addEventListener("change", function (e) { l.style.width = parseInt(e.target.value, 10) || 3; repaintList(); });
+    var dashSel = document.getElementById("arc-dash");
+    if (dashSel) dashSel.addEventListener("change", function (e) { l.style.dash = e.target.value; repaintList(); });
+    wireTypes(l, ed, repaintList);
     document.getElementById("arc-label").addEventListener("change", function (e) { l.labelField = e.target.value || undefined; repaintList(); });
     document.getElementById("arc-idfield").addEventListener("change", function (e) { l.idField = e.target.value; });
     document.getElementById("arc-where").addEventListener("change", function (e) { l.where = e.target.value.trim() || undefined; repaintList(); });
@@ -1095,6 +1100,90 @@ function _wireArcgisLayers(id) {
         l.popupFields.splice(Number(b.getAttribute("data-arc-unpop")), 1);
         ed.innerHTML = arcgisEditorHTML(); wireEditor();
       });
+    });
+  }
+
+  // ── By type (rule 188(b)) ─────────────────────────────────────────
+  function repaintEditor() {
+    var ed = document.getElementById("arc-editor");
+    if (ed) { ed.innerHTML = arcgisEditorHTML(); wireEditor(); }
+    document.getElementById("arc-selected").innerHTML = arcgisSelectedRowsHTML();
+  }
+
+  /**
+   * A fresh reading merged over what the layer already has: a type already
+   * listed keeps its tick, colour and name; a new one comes in ticked with
+   * ArcGIS's style. `reset` takes ArcGIS's styles for every type instead.
+   */
+  function mergeTypes(l, reading, reset) {
+    var prev = l.types && l.types.field === reading.field ? l.types : null;
+    var old = {};
+    if (prev) prev.values.forEach(function (v) { old[String(v.value)] = v; });
+    var seen = {};
+    var values = reading.values.map(function (r) {
+      var k = String(r.value);
+      seen[k] = true;
+      var o = old[k];
+      return {
+        value: r.value,
+        label: o && !reset ? o.label : r.label,
+        on: o ? !!o.on : true,
+        style: o && !reset ? o.style : { color: r.style.color, width: r.style.width, dash: r.style.dash },
+      };
+    });
+    // A type kept from before that ArcGIS no longer lists stays, while there is room.
+    if (prev) prev.values.forEach(function (v) { if (!seen[String(v.value)] && values.length < 50) values.push(v); });
+    l.types = {
+      field: reading.field,
+      numeric: !!reading.numeric,
+      values: values,
+      other: prev ? { on: !!prev.other.on, style: reset ? reading.other : prev.other.style } : { on: false, style: reading.other },
+    };
+  }
+
+  function readTypes(l, reset) {
+    var sel = document.getElementById("arc-type-field");
+    var field = sel ? sel.value : (l.types && l.types.field);
+    if (!field) { showToast("Pick the type field first", "error"); return; }
+    api.integrations.arcgisLayerTypes(body({ url: l.url, field: field })).then(function (res) {
+      _arcgisDraft.typeInfo[l.id] = res;
+      mergeTypes(l, res, !!reset);
+      delete _arcgisDraft.mode[l.id];
+      if (_arcgisDraft.layers[_arcgisDraft.selected] === l) repaintEditor();
+    }).catch(function (err) { fail("Could not read the types", err); });
+  }
+
+  function wireTypes(l, ed, repaintList) {
+    Array.prototype.forEach.call(ed.querySelectorAll("[data-arc-mode]"), function (b) {
+      b.addEventListener("click", function () {
+        var m = b.getAttribute("data-arc-mode");
+        if (m === "one") {
+          if (l.types) { _arcgisDraft.stash[l.id] = l.types; delete l.types; }
+          delete _arcgisDraft.mode[l.id];
+        } else if (!l.types) {
+          if (_arcgisDraft.stash[l.id]) { l.types = _arcgisDraft.stash[l.id]; delete _arcgisDraft.stash[l.id]; }
+          else _arcgisDraft.mode[l.id] = "types";
+        }
+        repaintEditor();
+      });
+    });
+    var readBtn = document.getElementById("arc-read-types");
+    if (readBtn) readBtn.addEventListener("click", function () { readTypes(l, false); });
+    var reset = document.getElementById("arc-types-reset");
+    if (reset) reset.addEventListener("click", function () { readTypes(l, true); });
+    if (!l.types) return;
+    function entry(i) { return i === "other" ? l.types.other : l.types.values[Number(i)]; }
+    var host = ed.querySelector("[data-arc-types]");
+    if (!host) return;
+    host.addEventListener("change", function (e) {
+      var t = e.target, i;
+      if ((i = t.getAttribute("data-arc-type-on")) !== null) { entry(i).on = t.checked; repaintEditor(); return; }
+      if ((i = t.getAttribute("data-arc-type-color")) !== null) entry(i).style.color = t.value.toLowerCase();
+      else if ((i = t.getAttribute("data-arc-type-width")) !== null) entry(i).style.width = parseInt(t.value, 10) || 3;
+      else if ((i = t.getAttribute("data-arc-type-dash")) !== null) entry(i).style.dash = t.value;
+      else return;
+      repaintEditor();
+      repaintList();
     });
   }
 
