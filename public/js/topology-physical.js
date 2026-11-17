@@ -843,11 +843,19 @@
     // Room view), drawn faint while editing so it can still be dragged out,
     // and its links end at the container's middle.
     function isContainer(p) { return !!(p && p.codes && (p.codes.room || p.codes.junctionBox)); }
+    // A container hides its devices only while its Room view exists: one drawn
+    // without a view (the operator declined, 2026-11-17), or whose view was
+    // deleted, leaves its devices on the map.
+    function hasRoomView(p) {
+      if (!isContainer(p) || !p.viewId) return false;
+      if (!ctx.listViews) return true;
+      return ctx.listViews().some(function (v) { return v.id === p.viewId; });
+    }
     var containedIn = {};   // device id → its innermost container polygon (refreshed per floor draw)
     function containerFor(id, level) {
       var pl = placementsOf(level)[id];
       if (!pl) return null;
-      var polys = state.polygons.filter(function (p) { return (p.layer || 0) === level && isContainer(p); });
+      var polys = state.polygons.filter(function (p) { return (p.layer || 0) === level && hasRoomView(p); });
       return polys.length ? innermostPolygon(polys, [pl.x, pl.y]) : null;
     }
     function polygonMiddle(p, level) {
@@ -1084,7 +1092,7 @@
         shape.on("dblclick", function (e) {
           if (state.editing) return;
           L.DomEvent.stopPropagation(e); // not the map's double-click zoom
-          openContainerView(p, level);
+          openContainerView(p);
         });
       }
       function hoverLabel(on) {
@@ -1106,11 +1114,13 @@
         { heading: groupName(p.codes) },
         { label: "Reshape", onSelect: function () { reshapePolygon(p); } },
         { label: "Change group", onSelect: function () { pickGroup(function (codes) { p.codes = codes; changed("polygons"); drawPolygons(); restageAllCodes(); }, p.codes); } },
+      ].concat(isContainer(p) && !hasRoomView(p) && typeof ctx.createView === "function" && ctx.canEdit
+        ? [{ label: "Create Room view", onSelect: function () { createContainerView(p, p.layer || 0); } }] : []).concat([
         { label: "Delete polygon", danger: true, onSelect: function () {
           state.polygons = state.polygons.filter(function (q) { return q.id !== p.id; });
           changed("polygons"); drawPolygons(); restageAllCodes();
         } },
-      ], { menuAt: { x: ev.clientX, y: ev.clientY }, label: "Polygon", overMap: true });
+      ]), { menuAt: { x: ev.clientX, y: ev.clientY }, label: "Polygon", overMap: true });
     }
     function reshapePolygon(p) {
       var shape = polygonShapes[p.id];
@@ -1145,7 +1155,10 @@
           drawPolygons();
           restageAllCodes();
           // A room or junction box gets its Room view now (operator request 2026-11-17).
-          if (isContainer(poly)) createContainerView(poly, state.layer);
+          if (isContainer(poly) && typeof ctx.createView === "function" && ctx.canEdit) {
+            var drawnOn = state.layer;
+            askCreateRoomView(poly).then(function (yes) { if (yes) createContainerView(poly, drawnOn); });
+          }
         });
         drawHandler.enable();
         ctx.toast("Drawing " + groupName(codes) + " — click to add points, click the first point to close, right-drag moves the map, Esc cancels");
@@ -1161,10 +1174,14 @@
       r.rack = null; r.junctionBox = null;
       return r;
     }
-    function viewForContainer(p, level) {
+    function viewForContainer(p) {
       var views = ctx.listViews ? ctx.listViews() : [];
-      var own = p.viewId && views.filter(function (v) { return v.id === p.viewId; })[0];
-      if (own) return own;
+      return (p.viewId && views.filter(function (v) { return v.id === p.viewId; })[0]) || null;
+    }
+    // A Room view that already stands for this room (rule 150) — linked
+    // rather than duplicated when the operator asks for one.
+    function roomViewByRegion(p, level) {
+      var views = ctx.listViews ? ctx.listViews() : [];
       if (p.codes.junctionBox) return null; // a box's view is only ever its own
       var want = containerRegion(p, level);
       return views.filter(function (v) { return v.mode === "room" && v.region && codesEqual(polyCodes(v.region), polyCodes(want)) && String(v.region.floor || "") === String(want.floor || ""); })[0] || null;
@@ -1174,8 +1191,8 @@
     }
     async function createContainerView(p, level) {
       if (typeof ctx.createView !== "function" || !ctx.canEdit) return null;
-      var existing = viewForContainer(p, level);
-      if (existing) { if (!p.viewId) { p.viewId = existing.id; changed("polygons"); } return existing; }
+      var existing = viewForContainer(p) || roomViewByRegion(p, level);
+      if (existing) { if (p.viewId !== existing.id) { p.viewId = existing.id; changed("polygons"); drawAll(); } return existing; }
       var base = containerViewName(p), names = [base];
       if (p.codes.building) names.push(base + " (" + p.codes.building + ")");
       for (var n = 2; n <= 5; n++) names.push(base + " " + n);
@@ -1184,6 +1201,7 @@
           var created = await ctx.createView({ name: names[i], mode: "room", region: containerRegion(p, level) });
           p.viewId = created.id;
           changed("polygons");
+          drawAll(); // its devices now live in the view: hidden while viewing
           ctx.toast("Room view “" + created.name + "” created — double-click the shape while viewing to open it");
           return created;
         } catch (err) {
@@ -1194,12 +1212,27 @@
       ctx.toast("Room view not created — every name tried is taken", "error");
       return null;
     }
-    async function openContainerView(p, level) {
+    async function openContainerView(p) {
       if (typeof ctx.openView !== "function") return;
-      var v = viewForContainer(p, level);
-      if (!v && typeof ctx.createView === "function" && ctx.canEdit) v = await createContainerView(p, level);
+      var v = viewForContainer(p);
       if (v) ctx.openView(v.id);
-      else ctx.toast("No Room view for " + containerViewName(p) + " yet — draw or edit it on the Device Map page to make one");
+      else ctx.toast(containerViewName(p) + " has no Room view — edit the map and choose Create Room view on the shape to make one");
+    }
+    // "Create a Room view for …?" — asked after a room or junction-box polygon
+    // is drawn (operator request 2026-11-17). Resolves true / false.
+    function askCreateRoomView(p) {
+      return new Promise(function (resolve) {
+        if (typeof buildOverlay !== "function") { resolve(true); return; }
+        var settled = false;
+        var name = containerViewName(p);
+        var body = '<p style="margin:0">Create a Room view for <strong>' + esc(name) + '</strong>? Its devices then live in that view: hidden here while viewing, and a double-click on the shape opens it.</p>' +
+          '<p class="hint" style="margin:8px 0 0">Without one, the shape only groups its devices, and they stay on this map. You can create it later from the shape’s menu.</p>';
+        var footer = '<button type="button" class="btn btn-secondary" data-cv="no">No, keep the devices here</button>' +
+          '<button type="button" class="btn btn-primary" data-cv="yes">Create Room view</button>';
+        var dlg = buildOverlay(1300, "Create a Room view?", body, footer, function () { if (!settled) { settled = true; resolve(false); } });
+        dlg.overlay.querySelector('[data-cv="no"]').addEventListener("click", function () { settled = true; resolve(false); dlg.close(); });
+        dlg.overlay.querySelector('[data-cv="yes"]').addEventListener("click", function () { settled = true; resolve(true); dlg.close(); });
+      });
     }
 
     // The "Draw polygon for which group?" dialog: the groups the site's

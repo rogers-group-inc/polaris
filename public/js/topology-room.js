@@ -77,6 +77,12 @@
           var o = parts[other];
           return o && o.whereIs ? o.whereIs(assetId) : null;
         },
+        // A device dropped here from the other part is MOVED: taken out of
+        // there once this part has placed it (operator report 2026-11-17).
+        takeFromElsewhere: function (assetId) {
+          var o = parts[other];
+          if (o && o.removeAsset) o.removeAsset(assetId);
+        },
       });
     }
     parts.rack = Rack ? Rack.render(strip.querySelector('[data-room-part="rack"]'), partCtx("rack")) : null;
@@ -129,6 +135,8 @@
         title: "Device List",
         hint: editing ? "Drag a device onto a rack or a junction box." : "Edit the map to place devices.",
         rows: rows, editing: editing, filter: listFilter, selectedId: selectedId, removeLabel: "Remove from the room",
+        // A placed device's row drags too: dropping it moves the device.
+        dragPlaced: true,
       }) : "");
     }
     function wireSidebar(pane) {

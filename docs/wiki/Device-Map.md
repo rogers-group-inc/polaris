@@ -678,12 +678,19 @@ Devices sharing a room code get an automatic outline with the room's name. Draw
 a Room polygon for that room (same area and building, on the same floor) and it
 replaces the outline.
 
-**Rooms and junction boxes are containers.** Drawing a Room or Junction box
-polygon creates a Room view for it straight away, named after the room (or
-`JB 7`). While you are viewing the map, the devices inside the shape are not
-drawn (they are in the Room view) and their connections end at the shape's
-middle; double-click the shape to open its Room view. In edit mode they show
-faintly inside it so you can still drag one out.
+**Rooms and junction boxes can be containers.** After you draw a Room or
+Junction box polygon, Polaris asks whether to create a Room view for it, named
+after the room (or `JB 7`). Say no and the shape just groups its devices, which
+stay on the map; you can create the view later from the shape's menu
+(**Create Room view**). With a Room view, the devices inside the shape are not
+drawn while you are viewing (they are in the Room view) and their connections end
+at the shape's middle; double-click the shape to open its Room view. In edit
+mode they show faintly inside it so you can still drag one out.
+
+Deleting such a Room view asks whether to remove its shape from the Topology
+view too. **Remove the shape** deletes it. **Keep the shape** keeps it as a plain
+grouping, and puts the devices that were in the Room view back on the Topology
+view inside the shape, unless they are already on that view.
 
 **Devices close together join.** While you are viewing, devices that would
 overlap are drawn as one numbered circle in the colour of the worst health
@@ -717,8 +724,10 @@ can't go in a junction box. In edit mode:
 - Drag a device from the **Device List** onto a rack (it lands as a 1U block at
   the U under the pointer, or the nearest free U) or into a junction box (a
   12 × 8 in shape at the pointer, or the nearest free space). A device is in one
-  place: one already in a junction box can't also be racked, and the Device List
-  says where each one is, with an **×** to take it out. **Room items** adds
+  place, and the Device List says where each one is, with an **×** to take it
+  out. Dragging a placed device's row **moves** it: to another rack, another U,
+  or from a rack into a junction box and back. If the spot you drop on has no
+  room, it stays where it was. **Room items** adds
   **Cable management** and named **Third party** boxes (an ISP router, a patch
   panel), in a rack or a junction box, as many as you need.
 - **In a rack:** drag a block's top or bottom edge to change its height, and its

@@ -3290,9 +3290,10 @@ needs Assets Read-Write on each device, and each change is logged like an Edit A
 Polygons stand for areas, buildings, rooms and junction boxes (the floor comes from the floor a
 device is placed on, so the polygon picker offers no floors), and a save changes only the levels
 that the polygon and the floor layer set: a building polygon leaves a device's room as it is, and
-no polygon changes its rack. A room or junction-box polygon gets its own Room view when it is
-drawn; the devices inside it are hidden on the map while viewing, and a double-click opens the
-view. A Rack
+no polygon changes its rack. A room or junction-box polygon can have its own Room view (Polaris
+asks when you draw it); while it does, the devices inside it are hidden on the map while viewing
+and a double-click opens the view. Deleting that Room view asks whether to remove the shape too;
+kept, the shape gets the view's devices back inside it. A Rack
 or Wall view changes only the levels its region names, so a junction box below a rack is kept.
 
 ### Rule 149

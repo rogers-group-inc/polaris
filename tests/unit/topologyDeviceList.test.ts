@@ -36,6 +36,17 @@ function mount(opts: Record<string, unknown>): HTMLElement {
 }
 
 describe("topology Device List", () => {
+  it("dragPlaced (the Room view) makes a placed device's row draggable too, so it can be moved", () => {
+    const off = mount({ editing: true });
+    expect(off.querySelector('[data-device-row="sw1"]')!.getAttribute("draggable")).toBeNull();
+    const on = mount({ editing: true, dragPlaced: true });
+    expect(on.querySelector('[data-device-row="sw1"]')!.getAttribute("draggable")).toBe("true");
+    expect(on.querySelector('[data-device-row="sw1"]')!.getAttribute("data-place-asset")).toBe("sw1");
+    // Viewing, nothing drags.
+    const view = mount({ editing: false, dragPlaced: true });
+    expect(view.querySelector('[data-device-row="sw1"]')!.getAttribute("draggable")).toBeNull();
+  });
+
   it("matches on the name or the meta column, any case", () => {
     expect(DL._matches({ label: "PL-SW1", meta: "b:Plant" }, "plant")).toBe(true);
     expect(DL._matches({ label: "PL-SW1", meta: "b:Plant" }, "ap")).toBe(false);
