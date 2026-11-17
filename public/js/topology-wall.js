@@ -315,11 +315,14 @@
     // ── Drop from the details pane ─────────────────────────────────────
     strip.addEventListener("dragover", function (e) {
       if (!state.editing) return;
+      var DLd = window.PolarisTopologyDeviceList;
+      if (DLd && !DLd.carries(e, DRAG_MIME)) return;
       if (boardAt(e.clientX, e.clientY)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }
     });
     strip.addEventListener("drop", function (e) {
       if (!state.editing) return;
-      var token = e.dataTransfer && e.dataTransfer.getData(DRAG_MIME);
+      var DLd = window.PolarisTopologyDeviceList;
+      var token = DLd ? DLd.token(e, DRAG_MIME) : (e.dataTransfer && e.dataTransfer.getData(DRAG_MIME));
       var board = boardAt(e.clientX, e.clientY);
       if (!token || !board) return;
       e.preventDefault();
@@ -692,8 +695,8 @@
       if (!pane) return;
       pane.querySelectorAll(".topo-rack-items [data-place-asset]").forEach(function (li) {
         li.addEventListener("dragstart", function (e) {
-          e.dataTransfer.setData(DRAG_MIME, li.getAttribute("data-place-asset"));
-          e.dataTransfer.effectAllowed = "move";
+          var DLd = window.PolarisTopologyDeviceList;
+          if (DLd) DLd.startDrag(e, DRAG_MIME, li.getAttribute("data-place-asset"));
         });
       });
       var DL = window.PolarisTopologyDeviceList;

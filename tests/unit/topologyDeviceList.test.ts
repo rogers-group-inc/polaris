@@ -13,6 +13,10 @@ type DL = {
   html: (o: Record<string, unknown>) => string;
   wire: (pane: Element, o: Record<string, unknown>) => void;
   _matches: (row: { label?: string; meta?: string }, f: string) => boolean;
+  startDrag: (e: unknown, mime: string, token: string) => void;
+  carries: (e: unknown, mime: string) => boolean;
+  token: (e: unknown, mime: string) => string | null;
+  endDrag: () => void;
 };
 let DL: DL;
 
@@ -36,6 +40,26 @@ function mount(opts: Record<string, unknown>): HTMLElement {
 }
 
 describe("topology Device List", () => {
+  it("a drag whose custom type was stripped after dragstart still carries its device (operator report 2026-11-17)", () => {
+    const MIME = "application/x-polaris-asset";
+    const store: Record<string, string> = {};
+    const start = { dataTransfer: { setData: (t: string, v: string) => { store[t] = v; }, effectAllowed: "" } };
+    // What the add-on left on dragover / drop: no types, no data.
+    const stripped = { dataTransfer: { types: [], getData: () => "" } };
+    const foreign = { dataTransfer: { types: ["Files"], getData: () => "" } };
+    expect(DL.carries(foreign, MIME)).toBe(false);
+    DL.startDrag(start, MIME, "sw1");
+    expect(store[MIME]).toBe("sw1");
+    expect(DL.carries(stripped, MIME)).toBe(true);
+    expect(DL.token(stripped, MIME)).toBe("sw1");
+    // The drag's own data wins when it survived.
+    expect(DL.token({ dataTransfer: { types: [MIME], getData: () => "ap1" } }, MIME)).toBe("ap1");
+    // dragend ends it: a file dragged in later is not taken for a device.
+    document.dispatchEvent(new Event("dragend"));
+    expect(DL.carries(stripped, MIME)).toBe(false);
+    expect(DL.token(stripped, MIME)).toBeNull();
+  });
+
   it("dragPlaced (the Room view) makes a placed device's row draggable too, so it can be moved", () => {
     const off = mount({ editing: true });
     expect(off.querySelector('[data-device-row="sw1"]')!.getAttribute("draggable")).toBeNull();
