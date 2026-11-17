@@ -245,7 +245,7 @@ interface SourceRow {
   lastTlsNotAfter: Date | null;
   lastTlsIssuer: string | null;
   lastTlsChangeEventAt: Date | null;
-  check: { name: string; keepBodyExcerpt: boolean };
+  check: { name: string; target: string; keepBodyExcerpt: boolean };
 }
 
 async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise<Map<string, SourceRow>> {
@@ -254,7 +254,7 @@ async function sourcesFor(assetId: string, checkIds: readonly string[]): Promise
     select: {
       id: true, checkId: true, lastOk: true, lastPathHash: true, lastPathChangeEventAt: true, lastTracerouteAt: true, lastSampleAt: true,
       lastTlsNotAfter: true, lastTlsIssuer: true, lastTlsChangeEventAt: true,
-      check: { select: { name: true, keepBodyExcerpt: true } },
+      check: { select: { name: true, target: true, keepBodyExcerpt: true } },
     },
   });
   return new Map(rows.map((r) => [r.checkId, r]));
@@ -291,6 +291,8 @@ interface TlsState {
 interface TlsChange {
   checkId: string;
   checkName: string;
+  /** The check's target as configured (rule 85(e)) — a URL for an HTTPS check. */
+  checkTarget: string;
   at: Date;
   previousNotAfter: Date;
   notAfter: Date;
@@ -370,7 +372,7 @@ export async function ingestPathCheckSamples(
     } else if (tlsExpiryDirection(st.notAfter, next) !== null) {
       if (!st.lastEventAt || row.timestamp.getTime() - st.lastEventAt.getTime() >= TLS_CHANGE_EVENT_FLOOR_MS) {
         tlsChanges.push({
-          checkId: row.checkId, checkName: src.check.name, at: row.timestamp,
+          checkId: row.checkId, checkName: src.check.name, checkTarget: src.check.target, at: row.timestamp,
           previousNotAfter: st.notAfter, notAfter: next, previousIssuer: st.issuer, issuer: row.tlsIssuer,
         });
         st.lastEventAt = row.timestamp;
@@ -422,6 +424,10 @@ export async function ingestPathCheckSamples(
         details: {
           checkId: c.checkId,
           checkName: c.checkName,
+          // Rule 85(e): what the check points at, AS IT WAS when the change
+          // was seen — the {check.target} token reads it from here, so an
+          // automation's script is handed the site without looking it up.
+          checkTarget: c.checkTarget,
           ...(isServer ? { source: "server" } : {}),
           direction,
           shiftDays: tlsExpiryShiftDays(c.previousNotAfter, c.notAfter),
@@ -530,6 +536,7 @@ export async function ingestPathCheckTraceroutes(
         details: {
           checkId: t.checkId,
           checkName: src.check.name,
+          checkTarget: src.check.target,
           ...(isServer ? { source: "server" } : {}),
           destinationIp: t.destinationIp ?? null,
           previousHops: st.hops ? st.hops.map((h) => h.ip) : null,

@@ -184,6 +184,9 @@ const PLACEMENT: Record<string, Placement> = {
   "{event.resourceType}": { section: "event", appliesTo: "event" },
   "{event.actor}": { section: "event", appliesTo: "event" },
   "{event.level}": { section: "event", appliesTo: "event" },
+  "{check.name}": { section: "event", appliesTo: "event" },
+  "{check.target}": { section: "event", appliesTo: "event" },
+  "{check.id}": { section: "event", appliesTo: "event" },
   "{dependency.summary}": { section: "dependency", appliesTo: "dependency" },
   "{dependency.headline}": { section: "dependency", appliesTo: "dependency" },
   "{dependency.upstream}": { section: "dependency", appliesTo: "dependency" },
@@ -287,6 +290,9 @@ const RAW_TEMPLATE_VARIABLES: Array<Omit<TemplateVariable, keyof Placement>> = [
   { token: "{event.actor}", label: "Event actor", description: "Event-triggered alerts: who or what caused it (an operator, or a system: actor)", group: "notification" },
   { token: "{event.message}", label: "Event detail", description: "Event-triggered alerts: the audit event's own text — the REASON, e.g. \"Discovery failed: RPC -11 no valid session\". Empty on every other trigger type", group: "notification" },
   { token: "{event.level}", label: "Event level", description: "Event-triggered alerts: the audit level of the source event (info / warning / error)", group: "notification" },
+  { token: "{check.name}", label: "Path check name", description: "Path Monitor event alerts (certificate changed, path changed): the name of the path check the event is about. Empty on every other alert", group: "notification" },
+  { token: "{check.target}", label: "Path check target", description: "Path Monitor event alerts (certificate changed, path changed): what the check points at, as configured when the event was written — the URL for an HTTP / HTTPS check, host:port for TCP, the host for ICMP. Hand it to a script as target={check.target}. Empty on every other alert", group: "notification" },
+  { token: "{check.id}", label: "Path check ID", description: "Path Monitor event alerts: the path check's id. Empty on every other alert", group: "notification" },
   { token: "{rule}", label: "Rule name", description: "Name of the triggering rule", group: "rule" },
   { token: "{rule.description}", label: "Rule description", description: "Description of the triggering rule", group: "rule" },
   { token: "{asset.ip}", label: "Asset IP", description: "Primary IP address", group: "asset" },
@@ -561,6 +567,14 @@ export interface TemplateContextParts {
      */
     message?: string | null;
   } | null;
+  /**
+   * Business rule 85(e). The path check a Path Monitor EVENT is about
+   * (path_check.tls_cert_changed / path_check.path_changed), read from the
+   * Event's details — which carry the check's target as it was when the event
+   * was written, so `{check.target}` names the site even after the check is
+   * edited or deleted. Absent on every other alert; the tokens render blank.
+   */
+  check?: { id?: string | null; name?: string | null; target?: string | null } | null;
   assetDetail?: AssetTemplateDetail | null;
   /** Business rule 78 — set only on an alert raised for a dependency-suppressed device. */
   dependency?: DependencyTemplateParts | null;
@@ -769,6 +783,9 @@ export function buildTemplateContext(parts: TemplateContextParts): Record<string
     "event.resourceType": str(parts.event?.resourceType),
     "event.actor": str(parts.event?.actor),
     "event.message": str(parts.event?.message),
+    "check.id": str(parts.check?.id),
+    "check.name": str(parts.check?.name),
+    "check.target": str(parts.check?.target),
     "asset.ip": str(a?.ipAddress),
     "asset.mac": str(a?.macAddress),
     "asset.type": str(a?.assetType),

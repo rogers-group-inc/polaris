@@ -52,6 +52,7 @@ import {
   runEventRuleTimedClear,
   runEventTail,
   applyLinkedForecastLevels,
+  pathCheckOfEvent,
   type MaintenanceSpan,
 } from "../../src/services/notifications/eventTail.js";
 
@@ -158,6 +159,21 @@ describe("globToRegExp (rule 116)", () => {
     const m = globToRegExp(`${"*".repeat(40)}x`);
     expect(m.test(`${"a".repeat(5000)}y`)).toBe(false);
     expect(m.test("ax")).toBe(true);
+  });
+});
+
+describe("pathCheckOfEvent (rule 85(e))", () => {
+  it("reads the check from a path_check event's details", () => {
+    expect(pathCheckOfEvent({ checkId: "c1", checkName: "Portal", checkTarget: "https://p.example/" }))
+      .toEqual({ id: "c1", name: "Portal", target: "https://p.example/" });
+  });
+  it("leaves the target null on an event written before 85(e)", () => {
+    expect(pathCheckOfEvent({ checkId: "c1", checkName: "Portal" })).toEqual({ id: "c1", name: "Portal", target: null });
+  });
+  it("is null for an event about no check", () => {
+    expect(pathCheckOfEvent(null)).toBeNull();
+    expect(pathCheckOfEvent({ ruleId: "r1" })).toBeNull();
+    expect(pathCheckOfEvent({ checkId: 7 })).toBeNull();
   });
 });
 
@@ -411,6 +427,22 @@ describe("runEventTail — firing", () => {
     await runEventTail([dbRule({ emailComposition: { subjectTemplate: "{asset}" } })]);
     const ctx = created()[0]!.templateCtx as Record<string, string>;
     expect(ctx.message).toBe("Agent gone: Agent disconnected");
+  });
+
+  it("hands a Path Monitor event's check to {check.*} (rule 85(e))", async () => {
+    assets = [asset("a1")];
+    eventFind.mockResolvedValue([ev({
+      action: "path_check.tls_cert_changed",
+      details: { checkId: "chk-1", checkName: "Portal", checkTarget: "https://portal.example.com/", direction: "later" },
+    })]);
+    await runEventTail([dbRule({
+      trigger: { type: "change", changeType: "path_check_tls_cert_changed" } as never,
+      emailComposition: { subjectTemplate: "{asset}" },
+    })]);
+    const ctx = created()[0]!.templateCtx as Record<string, string>;
+    expect(ctx["check.target"]).toBe("https://portal.example.com/");
+    expect(ctx["check.name"]).toBe("Portal");
+    expect(ctx["check.id"]).toBe("chk-1");
   });
 
   it("gives an alert with actions a client id and runs its actions after the insert", async () => {

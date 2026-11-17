@@ -74,6 +74,7 @@ const FULL_PARTS: TemplateContextParts = {
   triggerSummary: "Response time (median over 5 minutes) is 760 ms",
   // An event-triggered alert usually fires on something that isn't a device,
   // so these are the only identifying facts its email gets.
+  check: { id: "chk-1", name: "Salesforce HTTPS", target: "https://login.salesforce.com/" },
   event: {
     action: "integration.discover.error",
     level: "error",
@@ -253,6 +254,16 @@ describe("buildTemplateContext", () => {
     for (const v of TEMPLATE_VARIABLES) {
       expect(v.sentOn === "delivery", `${v.token} sentOn`).toBe(isDeferredToken(v.token.slice(1, -1)));
     }
+  });
+
+  it("renders the path check tokens from parts.check, blank without it (rule 85(e))", () => {
+    const ctx = buildTemplateContext(FULL_PARTS);
+    expect(renderNotificationTemplate("target={check.target}", ctx)).toBe("target=https://login.salesforce.com/");
+    expect(ctx["check.name"]).toBe("Salesforce HTTPS");
+    expect(ctx["check.id"]).toBe("chk-1");
+    const none = buildTemplateContext({ check: null });
+    expect(none["check.target"]).toBe("");
+    expect(none["check.name"]).toBe("");
   });
 
   it("maps the derived fields correctly", () => {

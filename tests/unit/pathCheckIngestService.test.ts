@@ -65,13 +65,13 @@ const ASSET = "11111111-1111-1111-1111-111111111111";
 interface Src {
   id: string; checkId: string; lastOk: boolean | null; lastPathHash: string | null; lastPathChangeEventAt: Date | null;
   lastTracerouteAt?: Date | null; lastSampleAt: Date | null; lastTlsNotAfter: Date | null; lastTlsIssuer: string | null; lastTlsChangeEventAt: Date | null;
-  check: { name: string; keepBodyExcerpt: boolean };
+  check: { name: string; target: string; keepBodyExcerpt: boolean };
 }
 
 function src(checkId: string, over: Partial<Src> = {}): Src {
   return {
     id: `src-${checkId}`, checkId, lastOk: null, lastPathHash: null, lastPathChangeEventAt: null, lastSampleAt: null,
-    lastTlsNotAfter: null, lastTlsIssuer: null, lastTlsChangeEventAt: null, check: { name: `Check ${checkId}`, keepBodyExcerpt: false },
+    lastTlsNotAfter: null, lastTlsIssuer: null, lastTlsChangeEventAt: null, check: { name: `Check ${checkId}`, target: `https://${checkId}.example.com/`, keepBodyExcerpt: false },
     ...over,
   };
 }
@@ -178,7 +178,7 @@ describe("ingestPathCheckSamples", () => {
   });
 
   it("keeps a passing run's excerpt when the check asks for it", async () => {
-    sources(src("c1", { check: { name: "C", keepBodyExcerpt: true } }));
+    sources(src("c1", { check: { name: "C", target: "https://c.example.com/", keepBodyExcerpt: true } }));
     await ingestPathCheckSamples(ASSET, [sample({ bodyExcerpt: "<html>" })], NOW);
     expect(enqueued()[0].bodyExcerpt).toBe("<html>");
   });
@@ -253,7 +253,7 @@ describe("TLS baseline (rule 85(c))", () => {
     const ev = eventLog.logEvent.mock.calls[0][0];
     expect(ev).toMatchObject({ action: "path_check.tls_cert_changed", resourceType: "asset", resourceId: ASSET, resourceName: "web-01", level: "info" });
     expect(ev.message).toBe('TLS certificate seen from web-01 for path check "Check c1" renewed — expiry moved 1 day later (2026-07-01 → 2026-07-02)');
-    expect(ev.details).toEqual({ checkId: "c1", checkName: "Check c1", direction: "later", shiftDays: 1, previousNotAfter: D1.toISOString(), notAfter: D2.toISOString(), previousIssuer: "R3", issuer: "R10" });
+    expect(ev.details).toEqual({ checkId: "c1", checkName: "Check c1", checkTarget: "https://c1.example.com/", direction: "later", shiftDays: 1, previousNotAfter: D1.toISOString(), notAfter: D2.toISOString(), previousIssuer: "R3", issuer: "R10" });
     expect(srcUpdates()[0].data).toMatchObject({ lastTlsNotAfter: D2, lastTlsIssuer: "R10", lastTlsChangeEventAt: new Date(iso(1000)) });
   });
 
@@ -402,7 +402,7 @@ describe("ingestPathCheckTraceroutes", () => {
     const ev = eventLog.logEvent.mock.calls[0][0];
     expect(ev).toMatchObject({ action: "path_check.path_changed", resourceType: "asset", resourceId: ASSET, resourceName: "web-01", level: "warning" });
     expect(ev.message).toBe('Path from web-01 for path check "Check c1" changed (2 hops, incomplete)');
-    expect(ev.details).toEqual({ checkId: "c1", checkName: "Check c1", destinationIp: "8.8.8.8", previousHops: null, hops: ["10.0.0.1", "8.8.8.8"], previousPathHash: "old-hash", pathHash: hashOf(["10.0.0.1", "8.8.8.8"]) });
+    expect(ev.details).toEqual({ checkId: "c1", checkName: "Check c1", checkTarget: "https://c1.example.com/", destinationIp: "8.8.8.8", previousHops: null, hops: ["10.0.0.1", "8.8.8.8"], previousPathHash: "old-hash", pathHash: hashOf(["10.0.0.1", "8.8.8.8"]) });
     expect(srcUpdates()[0].data.lastPathChangeEventAt).toEqual(new Date(iso(1000)));
   });
 
