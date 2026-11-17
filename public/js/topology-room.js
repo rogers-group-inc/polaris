@@ -143,8 +143,8 @@
       if (!pane) return;
       pane.querySelectorAll(".topo-rack-items [data-place-asset]").forEach(function (li) {
         li.addEventListener("dragstart", function (e) {
-          e.dataTransfer.setData(DRAG_MIME, li.getAttribute("data-place-asset"));
-          e.dataTransfer.effectAllowed = "move";
+          var DLd = window.PolarisTopologyDeviceList;
+          if (DLd) DLd.startDrag(e, DRAG_MIME, li.getAttribute("data-place-asset"));
         });
       });
       var DL = window.PolarisTopologyDeviceList;

@@ -13,6 +13,13 @@
  * the details pane usable. The filter text survives a re-render: the caller
  * keeps it (opts.filter / opts.onFilter) because map.js redraws the whole
  * pane after every placement.
+ *
+ * The drag itself (startDrag / carries / token): a drop target must not rely
+ * on the drag's own data alone. A browser add-on or a data-loss-prevention
+ * hook can strip a custom type off the drag after dragstart (operator report
+ * 2026-11-17: dragover saw `types` = [] although dragstart set
+ * application/x-polaris-asset, so every rack refused the drop). The page
+ * remembers what it started dragging and the targets read that back.
  */
 (function () {
   "use strict";
@@ -20,6 +27,34 @@
   function esc(s) {
     return typeof escapeHtml === "function" ? escapeHtml(String(s == null ? "" : s))
       : String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; });
+  }
+
+  // ── The drag in flight (see the header) ─────────────────────────────
+  var dragToken = null;
+  function startDrag(e, mime, token) {
+    dragToken = token || null;
+    if (!e || !e.dataTransfer) return;
+    try { e.dataTransfer.setData(mime, token); } catch (_) { /* some browsers refuse custom types */ }
+    e.dataTransfer.effectAllowed = "move";
+  }
+  /** Does this drag carry a device or room item of ours? */
+  function carries(e, mime) {
+    if (dragToken) return true;
+    var types = e && e.dataTransfer && e.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, mime) !== -1;
+  }
+  /** The token being dropped: the drag's data, else what the page started. */
+  function token(e, mime) {
+    var t = null;
+    try { t = e && e.dataTransfer ? e.dataTransfer.getData(mime) : null; } catch (_) { t = null; }
+    return t || dragToken;
+  }
+  function endDrag() { dragToken = null; }
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("dragend", endDrag, true);
+    // The source row can be redrawn away before its dragend; a drop ends it
+    // too, once the targets' own drop handlers have read the token.
+    document.addEventListener("drop", function () { setTimeout(endDrag, 0); }, true);
   }
 
   /** Pure — does a row match the filter text (name or the meta column, any case)? */
@@ -91,9 +126,8 @@
     }
     sec.addEventListener("dragstart", function (e) {
       var li = e.target.closest && e.target.closest("[data-place-asset]");
-      if (!li || !e.dataTransfer) return;
-      e.dataTransfer.setData(opts.dragMime, li.getAttribute("data-place-asset"));
-      e.dataTransfer.effectAllowed = "move";
+      if (!li) return;
+      startDrag(e, opts.dragMime, li.getAttribute("data-place-asset"));
     });
     sec.addEventListener("click", function (e) {
       var x = e.target.closest("[data-unplace]");
@@ -107,5 +141,8 @@
     });
   }
 
-  window.PolarisTopologyDeviceList = { html: html, wire: wire, _matches: matches };
+  window.PolarisTopologyDeviceList = {
+    html: html, wire: wire, _matches: matches,
+    startDrag: startDrag, carries: carries, token: token, endDrag: endDrag,
+  };
 })();

@@ -1852,15 +1852,16 @@
       dropWired = true;
       mapEl.addEventListener("dragover", function (e) {
         if (!state.editing) return;
-        var types = e.dataTransfer && e.dataTransfer.types;
-        if (types && Array.prototype.indexOf.call(types, DRAG_MIME) !== -1) {
+        var DLd = window.PolarisTopologyDeviceList;
+        if (DLd && DLd.carries(e, DRAG_MIME)) {
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
         }
       });
       mapEl.addEventListener("drop", function (e) {
         if (!state.editing) return;
-        var id = e.dataTransfer && e.dataTransfer.getData(DRAG_MIME);
+        var DLd = window.PolarisTopologyDeviceList;
+        var id = DLd ? DLd.token(e, DRAG_MIME) : (e.dataTransfer && e.dataTransfer.getData(DRAG_MIME));
         if (!id) return;
         e.preventDefault();
         place(id, map.mouseEventToLatLng(e));

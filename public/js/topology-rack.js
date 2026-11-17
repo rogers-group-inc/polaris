@@ -600,8 +600,8 @@
     }
     strip.addEventListener("dragover", function (e) {
       if (!state.editing) return;
-      var types = e.dataTransfer && e.dataTransfer.types;
-      if (!types || Array.prototype.indexOf.call(types, DRAG_MIME) === -1) return;
+      var DLd = window.PolarisTopologyDeviceList;
+      if (!DLd || !DLd.carries(e, DRAG_MIME)) return;
       var zone = sideZoneAt(e.clientX, e.clientY);
       markDrop(zone);
       if (zone || bayAt(e.clientX, e.clientY)) {
@@ -613,7 +613,8 @@
     strip.addEventListener("drop", function (e) {
       if (!state.editing) return;
       markDrop(null);
-      var token = e.dataTransfer && e.dataTransfer.getData(DRAG_MIME);
+      var DLd = window.PolarisTopologyDeviceList;
+      var token = DLd ? DLd.token(e, DRAG_MIME) : (e.dataTransfer && e.dataTransfer.getData(DRAG_MIME));
       var zone = sideZoneAt(e.clientX, e.clientY);
       var bay = zone ? null : bayAt(e.clientX, e.clientY);
       if (!token || (!bay && !zone)) return;
@@ -1108,8 +1109,8 @@
       if (!pane) return;
       pane.querySelectorAll(".topo-rack-items [data-place-asset]").forEach(function (li) {
         li.addEventListener("dragstart", function (e) {
-          e.dataTransfer.setData(DRAG_MIME, li.getAttribute("data-place-asset"));
-          e.dataTransfer.effectAllowed = "move";
+          var DLd = window.PolarisTopologyDeviceList;
+          if (DLd) DLd.startDrag(e, DRAG_MIME, li.getAttribute("data-place-asset"));
         });
       });
       var DL = window.PolarisTopologyDeviceList;
