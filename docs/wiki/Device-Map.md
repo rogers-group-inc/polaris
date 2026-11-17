@@ -741,8 +741,9 @@ delete it.
 
 All floors are drawn together, each at its true size and place. The floor you're on is
 at full strength, the floor above it at 5 % and the one above that at 2 %; floors below
-are hidden. The ground map (or satellite, or site plan) is part of floor 0, so on floor −1
-it fades to 5 % with floor 0's devices. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
+are hidden, except the ground. The ground map (or satellite, or site plan) is part of floor 0,
+and floor 0 stays at 5 % under any floor above it, and on floor −1 it fades to 5 % as the
+floor above. Changing floors fades them smoothly. Only the floor you're on responds to clicks. A connection between two
 floors fades from one floor's strength to the other's, and you can bend it in edit mode from
 either end's floor like any other connection: drag it to add a corner, click it to show its
 corners and ends, and select a corner and press Delete to remove it. Its corners stay where

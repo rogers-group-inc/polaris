@@ -775,7 +775,7 @@
       var to = lookFor(level);
       if (!trans) return to;
       var k = easeInOut(Math.min(1, (performance.now() - trans.t0) / FADE_MS));
-      var fr = floorLook(level - trans.from);
+      var fr = baseLook(level, trans.from);
       return { opacity: fr.opacity + (to.opacity - fr.opacity) * k, scale: fr.scale + (to.scale - fr.scale) * k };
     }
     function screenOrigin() {
@@ -798,9 +798,19 @@
     // above it that show at all, and the ground) are drawn at this strength
     // instead of 10 % / 2 % (operator request 2026-11-16).
     var ADJUST_REF_OPACITY = 0.35;
+    // Viewing a floor above the ground, the ground (floor 0: its devices and
+    // the map / satellite / site plan) stays faintly in sight at this strength,
+    // instead of vanishing like any other floor below (operator request
+    // 2026-11-17). While a plan is adjusted it is a reference like the rest.
+    var GROUND_UNDER_OPACITY = 0.05;
+    function baseLook(level, cur) {
+      var look = floorLook(level - cur);
+      if (level === 0 && cur > 0 && look.opacity < GROUND_UNDER_OPACITY) look = { opacity: GROUND_UNDER_OPACITY, scale: 1 };
+      return look;
+    }
     // While a plan is lined up the floors it is matched against show stronger.
     function lookFor(level) {
-      var look = floorLook(level - state.layer);
+      var look = baseLook(level, state.layer);
       if (adjust) look = { opacity: level !== state.layer && look.opacity > 0 ? Math.max(look.opacity, ADJUST_REF_OPACITY) : look.opacity, scale: 1 };
       return look;
     }
