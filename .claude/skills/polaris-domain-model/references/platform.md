@@ -441,7 +441,8 @@ TopologyView                    -- a named, SHARED per-site Device Map view (bus
                                 -- wallId, points:[[x,y]…] whole inches, units null, linkedViewId null}]
                                 -- — never a rack; no two share a 1-inch cell (rule 151); an asset is
                                 -- never in both wallPlacements and rackPlacements (rule 156)
-  layers        Json            -- [{level (non-zero, −20..99) = the floor NUMBER, f:<level> (rule 168),
+  layers        Json            -- [{level (−20..99; shown and written as level+1 when ≥ 0, rule 168; a level-0 entry
+                                --   holds only the ground's CAD drawing, rule 182(a)),
                                 -- name (optional label), background (the floor's plan image),
                                 -- plan? {cx, cy, sx, sy, rot}: where the plan sits on the ground,
                                 -- rule 152(a) — devices / polygons on it are stored in plan units}]
