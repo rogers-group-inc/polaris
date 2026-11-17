@@ -82,8 +82,12 @@
   /**
    * Parse a picked file into the New script form's fields. Throws Error with an
    * operator-facing message. Returns { name, description, interpreter,
-   * runTarget, timeoutSec, body, problems: [] } — `problems` are notes the form
-   * shows (a guessed interpreter, a field it could not use), never blockers.
+   * runTarget, timeoutSec, body, fromExport, interpreterGuessed, problems: [] }
+   * — `problems` are notes the form shows (a guessed interpreter, a field it
+   * could not use), never blockers. `fromExport` says the file was a
+   * .script.json (every field is the file's own); on a plain file only the body
+   * and — unless `interpreterGuessed` — the interpreter came from the file, which
+   * is what an import into an EXISTING script replaces.
    */
   function parseImportFile(text, filename) {
     if (typeof text !== "string" || !text.trim()) throw new Error("That file is empty.");
@@ -105,19 +109,23 @@
         runTarget: RUN_TARGETS.indexOf(doc.runTarget) !== -1 ? doc.runTarget : "server",
         timeoutSec: Number.isInteger(doc.timeoutSec) && doc.timeoutSec >= 1 && doc.timeoutSec <= 600 ? doc.timeoutSec : 60,
         body: doc.body,
+        fromExport: true,
+        interpreterGuessed: false,
       };
       if (!out.interpreter) {
         out.interpreter = interpreterFromShebang(doc.body) || "bash";
+        out.interpreterGuessed = true;
         problems.push('The file names no interpreter this Polaris knows, so "' + out.interpreter + '" was picked — check it.');
       }
     } else {
       var ext = (lower.match(/\.([a-z0-9]+)$/) || [])[1] || "";
       var interp = EXT_INTERPRETER[ext] || interpreterFromShebang(text);
+      var guessed = !interp;
       if (!interp) {
         interp = "bash";
         problems.push('Could not tell the interpreter from "' + (ext ? "." + ext : "the file") + '", so bash was picked — check it.');
       }
-      out = { name: nameFromFilename(filename), description: "", interpreter: interp, runTarget: "server", timeoutSec: 60, body: text };
+      out = { name: nameFromFilename(filename), description: "", interpreter: interp, runTarget: "server", timeoutSec: 60, body: text, fromExport: false, interpreterGuessed: guessed };
     }
     if (!out.body.trim()) throw new Error("That file has an empty script body.");
     if (utf8Bytes(out.body) > MAX_BODY_BYTES) throw new Error("The script body is larger than 64 KB, which Polaris does not accept.");
