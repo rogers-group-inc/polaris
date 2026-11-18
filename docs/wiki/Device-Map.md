@@ -606,7 +606,9 @@ the column under the tick:
   add points and click the first point to close it. While drawing, drag with
   the right mouse button to move the map; **Esc** stops drawing and leaves the
   Topology window open. Click or right-click a polygon to reshape it, change
-  its group or delete it.
+  its group or delete it. After **Reshape**, drag the corners, then click the
+  map outside the polygon or press the check mark to save; **×** throws the
+  new shape away.
 
 While you are **viewing** a Topology view, the eye button in the same column
 opens **Show on the map**. It has a switch for each of these:

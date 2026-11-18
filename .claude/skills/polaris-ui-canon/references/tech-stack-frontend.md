@@ -89,7 +89,7 @@ corner tools to it (`_modeCornerTools`: the Layer 2 row minus grid / snapping, p
 Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse controls branch on
 `_modeInstance()`), adds its Not placed / Placed lists to the details pane (`sidebarHtml` /
 `wireSidebar`, HTML5 drag with the `application/x-polaris-asset` type), and commits through
-`_commitModeCanvasSession`: `beforeCommit` (the OSM centre + zoom), the rule-148 summary
+`_commitModeCanvasSession`: `beforeCommit` (lands a polygon Reshape still open — its corners otherwise reach the polygon only on a map click, so the check mark saved the old shape until 2026-11-18 — then the OSM centre + zoom; leaving edit mode drops an open reshape), the rule-148 summary
 (`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
 `_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
 picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.

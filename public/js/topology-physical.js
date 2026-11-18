@@ -471,6 +471,11 @@
     var linkLines = {};     // edge id → L.polyline
     var polygonShapes = {}; // polygon id → L.polygon
     var drawHandler = null;
+    // The polygon reshape in progress: { finish(keep) }. The check mark keeps
+    // it (beforeCommit), × and leaving edit mode drop it — the corners used to
+    // reach the polygon only on a map click, so a reshape saved with the check
+    // mark was thrown away.
+    var reshaping = null;
     var listFilter = "";        // the Device List's filter text, kept across pane redraws
     var selectedId = ctx.selectedId ? ctx.selectedId() : null;
     var baseLayer = null;
@@ -1124,19 +1129,29 @@
     function reshapePolygon(p) {
       var shape = polygonShapes[p.id];
       if (!shape || !shape.editing) { ctx.toast("Reshaping needs the drawing tools", "error"); return; }
+      endReshape(true); // another polygon's reshape keeps what it has
       shape.editing.enable();
-      ctx.toast("Drag the corner points; click the map outside the polygon when done");
-      var finish = function () {
-        map.off("click", finish);
-        shape.editing.disable();
+      ctx.toast("Drag the corner points; click the map outside the polygon or the check mark when done");
+      var level = state.layer;
+      var onClick = function () { finish(true); };
+      var finish = function (keep) {
+        if (reshaping !== session) return;
+        reshaping = null;
+        map.off("click", onClick);
+        try { shape.editing.disable(); } catch (e) { /* shape already gone */ }
+        if (!keep) return;
         var ring = shape.getLatLngs()[0] || [];
-        p.points = ring.map(function (ll) { var q = latLngToLocal(state.layer, ll); return [q.x, q.y]; });
+        if (ring.length < 3) return;
+        p.points = ring.map(function (ll) { var q = latLngToLocal(level, ll); return [q.x, q.y]; });
         changed("polygons");
         drawPolygons();
         restageAllCodes();
       };
-      setTimeout(function () { map.on("click", finish); }, 0);
+      var session = { finish: finish };
+      reshaping = session;
+      setTimeout(function () { if (reshaping === session) map.on("click", onClick); }, 0);
     }
+    function endReshape(keep) { if (reshaping) reshaping.finish(keep); }
     function startDrawing() {
       if (!state.editing) return;
       if (!L.Draw || !L.Draw.Polygon) { ctx.toast("The drawing tools did not load", "error"); return; }
@@ -2535,7 +2550,7 @@
       if (viewLayer) { viewLayer = null; applyBaseLayer(); }
       paintDragging();
       if (!on && drawHandler) { try { drawHandler.disable(); } catch (e) {} drawHandler = null; }
-      if (!on) { endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
+      if (!on) { endReshape(false); endAdjust(); endPlacing(false); linkSel = null; clearHandles(); }
       host.classList.toggle("is-editing", !!on);
       closeVisPanel();
       paintVisClasses();
@@ -2966,7 +2981,8 @@
         removePlacement(id);
         return true;
       },
-      beforeCommit: captureOsmView,
+      // The check mark: a reshape still open lands first, so it is saved.
+      beforeCommit: function () { endReshape(true); captureOsmView(); },
       // map.js, once the session's routed-link PUT has answered.
       reloadCableRuns: function () { if (arcgisLayers) arcgisLayers.load(); },
       cornerButtons: function () {
