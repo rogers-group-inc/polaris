@@ -32,6 +32,8 @@ import {
   classifyGroupChanges,
   queueGroupChanges,
   hasNewFault,
+  effectiveMinFailingPercent,
+  failingPercentMet,
   mergeMembers,
   primaryMember,
   groupSeverity,
@@ -107,6 +109,41 @@ describe("mergeGroupChanges — the update cadence's collapse table", () => {
   it("tolerates no pending list", () => {
     expect(mergeGroupChanges(null, [c("a", "joined")])).toEqual([c("a", "joined")]);
     expect(mergeGroupChanges(undefined, [])).toEqual([]);
+  });
+});
+
+describe("effectiveMinFailingPercent — rule 193: which threshold a group applies", () => {
+  it("is null on a per-device fold whatever is stored", () => {
+    expect(effectiveMinFailingPercent("device", 80)).toBeNull();
+    expect(effectiveMinFailingPercent(null, 80)).toBeNull();
+  });
+  it("keeps a whole 1-100 percent on every multi-device fold", () => {
+    for (const f of ["automation", "deviceAutomation", "subnet"]) expect(effectiveMinFailingPercent(f, 80)).toBe(80);
+  });
+  it("is null when unset or out of range", () => {
+    expect(effectiveMinFailingPercent("automation", null)).toBeNull();
+    expect(effectiveMinFailingPercent("automation", undefined)).toBeNull();
+    expect(effectiveMinFailingPercent("automation", 0)).toBeNull();
+    expect(effectiveMinFailingPercent("automation", 101)).toBeNull();
+    expect(effectiveMinFailingPercent("automation", Number.NaN)).toBeNull();
+  });
+});
+
+describe("failingPercentMet — rule 193: the count", () => {
+  it("meets at exactly the percent, not below", () => {
+    expect(failingPercentMet(3, 4, 75)).toBe(true);
+    expect(failingPercentMet(2, 4, 75)).toBe(false);
+    expect(failingPercentMet(70, 87, 80)).toBe(true); // 80.5 %
+    expect(failingPercentMet(69, 87, 80)).toBe(false); // 79.3 %
+  });
+  it("100 % needs every reporting device", () => {
+    expect(failingPercentMet(87, 87, 100)).toBe(true);
+    expect(failingPercentMet(86, 87, 100)).toBe(false);
+  });
+  it("never counts fewer reporting than failing, and an empty fold never meets", () => {
+    expect(failingPercentMet(3, 0, 100)).toBe(true);
+    expect(failingPercentMet(0, 4, 1)).toBe(false);
+    expect(failingPercentMet(0, 0, 50)).toBe(false);
   });
 });
 

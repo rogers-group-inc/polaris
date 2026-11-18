@@ -333,6 +333,24 @@ To set it up:
 3. Tick the down automation in the member list and save. The group's
    recipients are copied from it the first time, as for any group.
 
+### Only alert when enough of them are failing
+
+A group that puts several devices in one alert (per automation, per device + automation,
+or per subnet) can wait until a share of them is failing. Under **One alert per**, tick
+**Only alert when at least N % of the devices are failing** and set the percent.
+
+- The share is of the devices the group's automations got a reading from in that alert.
+  For a path check, that is the hosts with a current result — a host whose agent is
+  offline does not count against you, so 100 % can still be reached.
+- Below the line there is **no alert** — nothing on the Alerts page, no email.
+- When the line is reached the alert opens with every failing device in it, and its first
+  email follows one polling interval later, as for any grouped alert.
+- Once open it stays up until the **last** device recovers, even if fewer than the
+  percent are failing by then.
+
+The list shows the setting as a **≥ N% failing** badge beside the group's name. See
+[Business rule 193](Business-Rules#rule-193).
+
 Separately from groups, a single automation that watches something per
 component can raise **one alert per device** on its own — see
 [Actions and recipients](Automation-Actions#one-alert-per-device).

@@ -6385,6 +6385,14 @@ model AlertGroup {
   /// subnet alerts on its own. Changing it retires the group's live alerts.
   foldBy String @default("device")
 
+  /// Business rule 193: on a fold that spans devices (automation /
+  /// deviceAutomation / subnet), no alert is raised until at least this percent
+  /// of the devices the member automations got a reading from in that fold are
+  /// failing. NULL = off (raise on the first failure, as before). 1-100. Gates
+  /// only the OPENING of an alert; once up it ends when the last member recovers.
+  /// Stored NULL whenever the fold does not span devices.
+  minFailingPercent Int?
+
   /// The delivery half, lifted from NotificationRule. Seeded from the first
   /// member on create, so joining a group is not a re-authoring exercise.
   messageTemplate  String? @db.Text

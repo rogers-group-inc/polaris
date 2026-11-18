@@ -69,6 +69,9 @@ const groupInputSchema = z.object({
   // What one alert is per: a device (default), or a registry subnet — every
   // governed device in it folds into one alert (business rule 75).
   foldBy: z.enum(ALERT_GROUP_FOLD_BY).optional(),
+  // Business rule 193: no alert until this percent of the fold's reporting
+  // devices is failing. Null = off. Ignored (stored null) on a per-device fold.
+  minFailingPercent: z.number().int().min(1).max(100).optional().nullable(),
   messageTemplate: z.string().max(2000).optional().nullable(),
   requireAckNote: z.boolean().optional(),
   emailComposition: emailCompositionSchema.optional().nullable(),

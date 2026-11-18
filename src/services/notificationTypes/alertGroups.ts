@@ -184,6 +184,29 @@ export function foldSpansDevices(foldBy: string | null | undefined): boolean {
   return foldBy === "subnet" || foldBy === "automation" || foldBy === "deviceAutomation";
 }
 
+/**
+ * Business rule 193: the percent threshold a group actually applies — null
+ * (off) unless the fold spans devices and a whole 1-100 percent is set. The
+ * one place the stored value is decided, so a group switched to a per-device
+ * fold drops its threshold instead of carrying a setting that means nothing.
+ */
+export function effectiveMinFailingPercent(foldBy: string | null | undefined, percent: number | null | undefined): number | null {
+  if (!foldSpansDevices(foldBy) || percent === null || percent === undefined || !Number.isFinite(percent)) return null;
+  const p = Math.round(percent);
+  return p >= 1 && p <= 100 ? p : null;
+}
+
+/**
+ * Business rule 193: is `failing` of `reporting` devices at or over `percent`?
+ * `reporting` never counts fewer than `failing` (a failing device produced a
+ * reading by definition), and an empty fold never meets it.
+ */
+export function failingPercentMet(failing: number, reporting: number, percent: number): boolean {
+  const of = Math.max(reporting, failing);
+  if (failing <= 0 || of <= 0) return false;
+  return failing * 100 >= percent * of;
+}
+
 /** The `groupKey` target of a subnet-folded alert. Prefixed so it can never be
  *  mistaken for an asset id in the same group's key space. */
 export function subnetFoldTarget(subnetId: string): string {
