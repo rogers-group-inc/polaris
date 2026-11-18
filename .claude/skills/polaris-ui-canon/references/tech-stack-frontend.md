@@ -169,7 +169,7 @@ and the click. `line.setLatLngs` is wrapped so the hit line follows every redraw
 floors use the same width.
 **Links on the Topology canvas** reuse Layer 2's pieces: the hover card is
 `PolarisTopologyRender.edgeTooltipHtml` over a HEADLESS Cytoscape graph of the canvas's own
-elements (`tipGraph`, built on first hover; `linkTipHtml`), shown with map.js's
+elements (`tipGraph`, built on first hover; `linkTipHtml` — both now topology-render.js's shared `linkTipGraph` / `linkTipHtml`, which the Room view's rack cables use too, with `linkHoverIds` for what a hover lights), shown with map.js's
 `#topology-edge-tooltip` via `ctx.linkTip`. Never a stand-in object: `_loopTipRows` walks the
 graph (`linkHoverSet` → `cy.collection()`), and a two-method stand-in threw on every wired link
 on a ring, so those links showed no card while wireless ones did (fixed 2026-11-17; without

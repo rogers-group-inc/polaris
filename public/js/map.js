@@ -3107,7 +3107,7 @@
         ["Click a placed device", "Show it in the details pane"],
         ["Double-click a device", "Open its asset details"],
         ["Front / Back (rack header)", "Turn the rack round to show its other face"],
-        ["Hover over a cable", "Show the link: its devices, ports, speed and optics"],
+        ["Hover over a cable", "Show the link: its devices, ports, speed and optics, and light it and its two devices; a cable on a ring lights the whole ring"],
         ["Zoom buttons (right)", "Draw the junction boxes larger or smaller"],
       ],
       edit: [

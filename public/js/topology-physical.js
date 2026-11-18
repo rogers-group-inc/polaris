@@ -201,21 +201,14 @@
   // (_loopTipRows walks the graph) exactly as Layer 2 does. The two-method
   // stand-in it replaces threw on every ringed link, and the card never
   // showed (operator report 2026-11-17). `cyFactory` is window.cytoscape.
+  // Shared with the Room view's rack cables: topology-render.js → linkTipGraph
+  // / linkTipHtml (loaded after this file, so looked up at call time).
   function tipGraph(elements, nodeById, cyFactory) {
-    if (typeof cyFactory === "function") {
-      try {
-        return cyFactory({ headless: true, styleEnabled: false, elements: elements.map(function (el) { return { data: el.data }; }) });
-      } catch (err) { /* fall through to the stand-in */ }
-    }
-    // No graph: names, ports and speed, never the ring rows.
-    return { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
+    return window.PolarisTopologyRender.linkTipGraph(elements, nodeById, cyFactory);
   }
   function linkTipHtml(R, g, e) {
-    if (!R || !R.edgeTooltipHtml) return null;
-    var edge = g.collection ? g.getElementById(e.id) : null;
-    if (edge && edge.length) return R.edgeTooltipHtml(g, edge);
-    var plain = Object.assign({}, e, { inLoop: undefined });
-    return R.edgeTooltipHtml(g, { data: function (k) { return plain[k]; } });
+    if (!R || !R.linkTipHtml) return null;
+    return R.linkTipHtml(g, e);
   }
   var FADE_MS = 300;
 

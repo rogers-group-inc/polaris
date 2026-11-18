@@ -884,8 +884,10 @@ of the side of the device into the nearer cable manager, up to the trough, along
 the bridge between neighbouring racks) and down the other rack's manager into the other
 device. Within one rack the cable stays in the manager. With a trough turned off the cable
 runs over the top of the racks. Hover over a cable for the same card as Layer 2: the two
-devices, their ports, speed and optics. A cable is drawn only when both devices show on the
-face you're looking at.
+devices, their ports, speed and optics. The cable and the two devices it joins light up while
+you hover. A cable on a ring (a physical loop) has Layer 2's ring outline; hovering it lights
+the whole ring, and the card lists the ring's other links. A cable is drawn only when both
+devices show on the face you're looking at.
 
 In edit mode you re-route cables the way you edit a Layer 2 link:
 

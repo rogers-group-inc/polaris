@@ -437,9 +437,20 @@
         cables[pk] = { e: e, pts: pts, auto: auto, a: a, b: b, sig: sig };
         var st = R.edgeLineStyle(e, family());
         var on = cableSel && cableSel.pk === pk;
+        var ptsAttr = pts.map(function (q) { return q[0] + "," + q[1]; }).join(" ");
+        // A cable on a physical loop wears Layer 2's ring outline under it.
+        if (st.halo) {
+          var halo = document.createElementNS(SVG_NS, "polyline");
+          halo.setAttribute("class", "topo-cable-halo");
+          halo.setAttribute("points", ptsAttr);
+          halo.setAttribute("stroke", st.halo);
+          halo.setAttribute("stroke-width", String((on ? st.width + 2 : st.width) + 4));
+          svg.appendChild(halo);
+        }
         var line = document.createElementNS(SVG_NS, "polyline");
         line.setAttribute("class", "topo-cable" + (on ? " is-selected" : ""));
-        line.setAttribute("points", pts.map(function (q) { return q[0] + "," + q[1]; }).join(" "));
+        line.setAttribute("data-cable-line", pk);
+        line.setAttribute("points", ptsAttr);
         line.setAttribute("stroke", st.color);
         line.setAttribute("stroke-width", String(on ? st.width + 2 : st.width));
         if (st.dash) line.setAttribute("stroke-dasharray", st.dash);
@@ -480,19 +491,68 @@
       state.routes[pk] = r;
       return r;
     }
-    var tipCy = { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
+    // Hovering a cable is Layer 2's link hover (operator request 2026-11-18):
+    // its hover card (topology-render.js → linkTipHtml, the ring's other links
+    // listed for a cable on a loop) and the cable and the devices on its two
+    // ends lit — a cable on a loop lights the whole loop (linkHoverIds). Lit
+    // cables glow in the colour the hovered one is SEEN in (its ring outline,
+    // else its line); devices take the accent ring.
+    var tipG = null;
+    function tipGraphOf() {
+      if (!tipG) {
+        var els = Object.keys(nodeById).map(function (id) { return { data: nodeById[id] }; })
+          .concat(edges.map(function (d) { return { data: d }; }));
+        tipG = R.linkTipGraph(els, nodeById, window.cytoscape);
+      }
+      return tipG;
+    }
+    function unlightCable() {
+      strip.querySelectorAll(".topo-cable-glow").forEach(function (g) { g.remove(); });
+      strip.querySelectorAll(".topo-rack-blk.is-link-hover").forEach(function (b) { b.classList.remove("is-link-hover"); });
+    }
+    function lightCable(pk) {
+      unlightCable();
+      var c = cables[pk];
+      var layer = strip.querySelector(".topo-cable-layer");
+      if (!c || !layer || !R.linkHoverIds) return;
+      var lit = R.linkHoverIds(tipGraphOf(), c.e);
+      var seen = R.edgeLineStyle(c.e, family());
+      var glow = seen.halo || seen.color;
+      Object.keys(cables).forEach(function (k) {
+        var cb = cables[k];
+        if (!lit.edges[cb.e.id]) return;
+        var line = layer.querySelector('[data-cable-line="' + cssId(k) + '"]');
+        if (!line) return;
+        var st = R.edgeLineStyle(cb.e, family());
+        var g = document.createElementNS(SVG_NS, "polyline");
+        g.setAttribute("class", "topo-cable-glow");
+        g.setAttribute("points", line.getAttribute("points"));
+        g.setAttribute("stroke", glow);
+        g.setAttribute("stroke-width", String(st.width + (st.halo ? 4 : 0) + 8));
+        layer.insertBefore(g, layer.firstChild);
+      });
+      state.placements.forEach(function (p) {
+        if (!p.assetId || !lit.nodes[p.assetId]) return;
+        strip.querySelectorAll('[data-blk="' + cssId(p.id) + '"]').forEach(function (b) { b.classList.add("is-link-hover"); });
+      });
+    }
     strip.addEventListener("pointerover", function (e) {
       var hit = e.target.closest && e.target.closest("[data-cable]");
-      if (!hit || cableGesture || !ctx.linkTip) return;
-      var c = cables[hit.getAttribute("data-cable")];
-      var html = c && R.edgeTooltipHtml ? R.edgeTooltipHtml(tipCy, { data: function (k) { return c.e[k]; } }) : null;
-      if (html) ctx.linkTip.show(html, e.clientX, e.clientY);
+      if (!hit || cableGesture) return;
+      var pk = hit.getAttribute("data-cable");
+      var c = cables[pk];
+      if (!c || !R) return;
+      lightCable(pk);
+      var html = R.linkTipHtml ? R.linkTipHtml(tipGraphOf(), c.e) : null;
+      if (html && ctx.linkTip) ctx.linkTip.show(html, e.clientX, e.clientY);
     });
     strip.addEventListener("pointermove", function (e) {
       if (ctx.linkTip && e.target.closest && e.target.closest("[data-cable]") && !cableGesture) ctx.linkTip.move(e.clientX, e.clientY);
     });
     strip.addEventListener("pointerout", function (e) {
-      if (ctx.linkTip && e.target.closest && e.target.closest("[data-cable]")) ctx.linkTip.hide();
+      if (!(e.target.closest && e.target.closest("[data-cable]"))) return;
+      unlightCable();
+      if (ctx.linkTip) ctx.linkTip.hide();
     });
     // Press a cable (edit mode): a drag adds a corner under the pointer and
     // moves it; a click selects the cable. Press a handle: drag it.
@@ -504,6 +564,7 @@
       e.preventDefault();
       e.stopPropagation();
       if (ctx.linkTip) ctx.linkTip.hide();
+      unlightCable();
       var pk = hit ? hit.getAttribute("data-cable") : cableSel && cableSel.pk;
       if (!pk || !cables[pk]) return;
       var part = handle ? handle.getAttribute("data-cable-handle") : null;
