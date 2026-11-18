@@ -35,6 +35,8 @@ beforeEach(() => {
     (0, eval)(js("topology-render.js"));
     (0, eval)(js("topology-physical.js"));
     for (const k of ["L", "PolarisTopologyRender", "PolarisTopologyPhysical"]) w()[k] = (globalThis as any)[k] ?? w()[k];
+    // Leaflet init hooks receive the new map only as `this`.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     w().L.Map.addInitHook(function (this: any) { lastMap = this; });
   }
   menuItems = [];
