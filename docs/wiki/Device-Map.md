@@ -430,6 +430,7 @@ moved devices and boxes, drawn lines, snapping, and a **Load layout** pick.
 
 | Control | |
 |---|---|
+| **Back / Forward** | the arrows beside the title, or Alt+← and Alt+→: step through the views and sites you've looked at since you opened the map, like a browser's back and forward. Opening a new view or site drops anything ahead of where you are; the history clears when you close the map. Not while editing — the tick or Save first |
 | **Search** | find a node |
 | **Show full** | the whole graph rather than the narrowed view |
 | **Refresh** | re-read |

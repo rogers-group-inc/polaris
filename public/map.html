@@ -47,6 +47,16 @@
     <div class="modal modal-xl" role="dialog" aria-modal="true" aria-labelledby="topology-title">
       <div class="modal-header">
         <h3 id="topology-title">Site topology</h3>
+        <!-- Back / forward through the views and sites visited since the
+             modal opened (map.js → _navGo; Alt+Left / Alt+Right). -->
+        <div class="topology-nav" role="group" aria-label="View history">
+          <button type="button" class="btn-icon topology-nav-btn" id="topology-back" aria-label="Back" title="Back" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button type="button" class="btn-icon topology-nav-btn" id="topology-forward" aria-label="Forward" title="Forward" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
         <!-- Saved views (business rule 147): the picker opens the view menu
              (switch, New view, View settings, Delete view); the pill names
              the view's one mode. map.js → openTopologyViewMenu. -->
