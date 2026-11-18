@@ -375,6 +375,43 @@
     return d.assetType || null;
   }
 
+  // ── Default device-type icons ─────────────────────────────────────────
+  // One line icon per asset type (24-unit stroke style of the corner tools):
+  // a device with no vendor logo (iconUrl) is drawn with its type's icon on
+  // its health fill, so the type is read from the icon, not from the node's
+  // size (operator request 2026-11-18). The Device-types toggles, the legend
+  // and the Topology canvas's markers draw the same set. A type with no icon
+  // of its own (a custom type, "other") takes TYPE_ICON_OTHER.
+  var TYPE_ICON_PATHS = {
+    firewall: '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="M4 11h16M12 5.5V11M8 11v5.5M16 11v5.5"/>',
+    router: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 17h.01M10 17h.01M15 13V9M12 6.5a4.5 4.5 0 0 1 6 0M10 4a8 8 0 0 1 10 0"/>',
+    "switch": '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M9 11v2M12 11v2M15 11v2M18 11v2"/>',
+    access_point: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/>',
+    server: '<rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
+    workstation: '<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>',
+    printer: '<path d="M6 9V2h12v7"/><rect x="2" y="9" width="20" height="8" rx="2"/><path d="M6 14h12v7H6z"/>',
+    hypervisor: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/>',
+    container: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    kubernetes_cluster: '<path d="m12 2 8.5 5v10L12 22l-8.5-5V7z"/><circle cx="12" cy="12" r="3"/>',
+  };
+  var TYPE_ICON_OTHER = '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2.5"/>';
+  /** The type's icon as inline SVG (stroke = currentColor unless `color`). */
+  function typeIconSvg(type, size, color) {
+    var px = size || 18;
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" stroke="' +
+      (color || "currentColor") + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (TYPE_ICON_PATHS[type] || TYPE_ICON_OTHER) + '</svg>';
+  }
+  /** The type's icon as a data URI, for a Cytoscape background image. */
+  var _typeIconUriCache = {};
+  function typeIconDataUri(type, color) {
+    var k = (TYPE_ICON_PATHS[type] ? type : "") + "|" + (color || "#ffffff");
+    if (!_typeIconUriCache[k]) {
+      _typeIconUriCache[k] = "data:image/svg+xml;utf8," + encodeURIComponent(typeIconSvg(type, 48, color || "#ffffff"));
+    }
+    return _typeIconUriCache[k];
+  }
+
   // Rule 147: keep only the shown types (the FortiGate always — it is the
   // root), add the shown endpoints, and drop any link left without both ends.
   function applyShownTypes(elements, data, shownTypes) {
@@ -838,6 +875,20 @@
       { selector: 'node[hasIcon = 1][role="fortiswitch"]',  style: { "border-width": 7 } },
       { selector: 'node[hasIcon = 1][role="fortiap"]',      style: { "border-width": 6 } },
       { selector: 'node[hasIcon = 1][role="remote-asset"]', style: { "border-width": 7 } },
+      // No vendor logo: the type's default icon, white on the health fill
+      // (operator request 2026-11-18 — the type was only told by size).
+      {
+        selector: 'node[hasIcon = 0]',
+        style: {
+          "background-image": function (ele) { return typeIconDataUri(nodeAssetType(ele.data())); },
+          "background-fit": "none",
+          "background-width": "56%",
+          "background-height": "56%",
+          "background-position-x": "50%",
+          "background-position-y": "50%",
+          "background-clip": "node",
+        },
+      },
       {
         selector: "edge",
         style: {
@@ -1272,12 +1323,18 @@
     // `key` names what a row stands for on the map (legendMatch): hovering
     // the row lights those elements.
     return {
+      // Every device row is one size: the TYPE is told by its icon (a vendor
+      // logo replaces it on the map when the device has one).
       nodes: [
-        { key: "role:fortigate",    label: "Firewall",          kind: "circle",          size: "lg", fill: "data(nodeColor)" },
-        { key: "role:fortiswitch",  label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)" },
-        { key: "role:fortiap",      label: "Access Point",      kind: "circle",          size: "sm", fill: "data(nodeColor)" },
-        { key: "role:endpoint",     label: "Endpoint",          kind: "round-rectangle", size: "md", fill: "data(nodeColor)" },
-        { key: "role:remote-asset", label: "Remote asset",      kind: "circle",          size: "md", fill: "#1e3a5f", border: "#4fc3f7" },
+        { key: "type:firewall",     label: "Firewall",          kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "firewall" },
+        { key: "type:router",       label: "Router",            kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "router" },
+        { key: "type:switch",       label: "Switch",            kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "switch" },
+        { key: "type:access_point", label: "Access Point",      kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "access_point" },
+        { key: "type:server",       label: "Server",            kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "server" },
+        { key: "type:workstation",  label: "Workstation",       kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "workstation" },
+        { key: "type:printer",      label: "Printer",           kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "printer" },
+        { key: "type:other",        label: "Other device",      kind: "circle",          size: "md", fill: "data(nodeColor)", icon: "other" },
+        { key: "role:remote-asset", label: "Remote asset (another site)", kind: "circle", size: "md", fill: "#1e3a5f", border: "#4fc3f7", icon: "other" },
         { key: "role:fcport",       label: "FC device, no asset", kind: "round-rectangle", size: "sm", fill: fam === "dark" ? "#4a1d36" : "#fce7f3", border: ec.fc },
       ],
       health: [
@@ -1343,6 +1400,8 @@
   // The map elements a legend row (its spec `key`) stands for. Health
   // matches on the colour a device is painted, so it follows exactly what
   // fortinetNodeColor decided (maintenance over Dep. Down over probe health).
+  // The types the legend gives a row of their own; the rest are "Other device".
+  var LEGEND_TYPE_ROWS = { firewall: 1, router: 1, "switch": 1, access_point: 1, server: 1, workstation: 1, printer: 1 };
   function legendMatch(cy, key) {
     if (!cy || cy.destroyed() || !key) return cy ? cy.collection() : null;
     var i = key.indexOf(":");
@@ -1351,6 +1410,14 @@
       return !n.data("isLocGroup") && !n.data("isEdgeHandle") && !n.data("isPortal");
     });
     if (kind === "role") return devices.filter(function (n) { return n.data("role") === val; });
+    if (kind === "type") {
+      return devices.filter(function (n) {
+        var t = nodeAssetType(n.data());
+        if (!t) return false;
+        if (val === "other") return !LEGEND_TYPE_ROWS[t];
+        return t === val;
+      });
+    }
     if (kind === "health") {
       var color = HEALTH_NODE_COLORS[val];
       return devices.filter(function (n) { return !!color && n.data("nodeColor") === color; });
@@ -4863,6 +4930,10 @@
       var borderStyle = row.borderStyle === "dashed" ? "dashed" : "solid";
       var fill = row.fill === "data(nodeColor)" ? HEALTH_NODE_COLORS.up : row.fill;
       var shape = "";
+      if (row.icon) {
+        return '<span class="topology-legend-swatch"><span class="topology-legend-icon" style="background:' + fill +
+          ';border:2px ' + borderStyle + ' ' + border + '">' + typeIconSvg(row.icon, 14, "#ffffff") + '</span></span>';
+      }
       if (row.kind === "diamond") {
         shape = '<div style="width:' + size + 'px;height:' + size + 'px;background:' + fill +
                 ';border:2px ' + borderStyle + ' ' + border + ';transform:rotate(45deg)"></div>';
@@ -5088,6 +5159,8 @@
   }
 
   window.PolarisTopologyRender = {
+    typeIconSvg: typeIconSvg,
+    typeIconDataUri: typeIconDataUri,
     separatePositions: separatePositions,
     separateNodes: separateNodes,
     edgeTooltipHtml: edgeTooltipHtml,

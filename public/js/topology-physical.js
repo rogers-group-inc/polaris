@@ -218,7 +218,6 @@
     return R.edgeTooltipHtml(g, { data: function (k) { return plain[k]; } });
   }
   var FADE_MS = 300;
-  var TYPE_INITIALS = { firewall: "FW", switch: "SW", access_point: "AP", router: "RT", server: "SV", workstation: "PC", printer: "PR" };
 
   function esc(s) {
     return typeof escapeHtml === "function" ? escapeHtml(String(s == null ? "" : s))
@@ -1314,9 +1313,13 @@
     function nodeColor(d) { return d.nodeColor || "#64748b"; }
     function iconHtml(d) {
       var t = R.nodeAssetType(d) || "";
-      var inner = d.iconUrl ? '<img src="' + esc(d.iconUrl) + '" alt="">'
-        : '<span>' + esc(TYPE_INITIALS[t] || String(t || "?").slice(0, 2).toUpperCase()) + '</span>';
-      return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '">' + inner + '</div>';
+      // No vendor logo: the type's default icon, white on the health
+      // colour — the same icon the Layer 2 graph draws.
+      if (!d.iconUrl) {
+        return '<div class="topo-phys-node is-type-icon" style="border-color:' + esc(nodeColor(d)) +
+          ';background:' + esc(nodeColor(d)) + '">' + R.typeIconSvg(t, 16, "#ffffff") + '</div>';
+      }
+      return '<div class="topo-phys-node" style="border-color:' + esc(nodeColor(d)) + '"><img src="' + esc(d.iconUrl) + '" alt=""></div>';
     }
     // A device's name is a marker of its own in the floor's pane, so every
     // name sits over every icon (z-offset LABEL_Z), and the one under the
