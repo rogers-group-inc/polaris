@@ -254,6 +254,13 @@ subject, "pc-03 joined this alert; pc-01 recovered" at the top — one interval
 after the previous email. A device that joins and recovers inside the same
 interval is left out. A worse severity band is still emailed at once.
 
+**A device recovering is never emailed on its own.** If the only thing that
+changed in an interval is that some devices came good while others are still
+affected, no update is sent. The recovery is still shown on the alert in
+Polaris straight away, and it is named in the next update that has something
+new to say (a device joining or coming back) — or the alert's "Resolved" email
+goes out when the **last** device recovers.
+
 ### One alert per automation, or for the whole group
 
 **One alert per** decides what a single alert stands for:

@@ -31,6 +31,7 @@ import {
   describeGroupChanges,
   classifyGroupChanges,
   queueGroupChanges,
+  hasNewFault,
   mergeMembers,
   primaryMember,
   groupSeverity,
@@ -106,6 +107,25 @@ describe("mergeGroupChanges — the update cadence's collapse table", () => {
   it("tolerates no pending list", () => {
     expect(mergeGroupChanges(null, [c("a", "joined")])).toEqual([c("a", "joined")]);
     expect(mergeGroupChanges(undefined, [])).toEqual([]);
+  });
+});
+
+describe("hasNewFault — rule 75(a): a recovery alone sends no update", () => {
+  const c = (label: string, kind: GroupChange["kind"], awayMs?: number): GroupChange => ({ label, kind, ...(awayMs !== undefined ? { awayMs } : {}) });
+
+  it("is false for an empty or missing queue", () => {
+    expect(hasNewFault(null)).toBe(false);
+    expect(hasNewFault(undefined)).toBe(false);
+    expect(hasNewFault({ changes: [] })).toBe(false);
+  });
+
+  it("is false when only recoveries are queued", () => {
+    expect(hasNewFault({ changes: [c("port1", "recovered"), c("port2", "recovered")] })).toBe(false);
+  });
+
+  it("is true once a join or a return is queued beside them", () => {
+    expect(hasNewFault({ changes: [c("port1", "recovered"), c("port2", "joined")] })).toBe(true);
+    expect(hasNewFault({ changes: [c("port1", "returned", 5000)] })).toBe(true);
   });
 });
 

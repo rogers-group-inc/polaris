@@ -217,7 +217,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 72 | A detection script asserts every prerequisite its remediation establishes, and a mode that establishes nothing refuses instead of reporting success | invariants-30-43 | narrative-60-64 |
 | 73 | Planned downtime is reported as planned, and a scoped view of a window still reports the WHOLE window | invariants-30-43 | narrative-60-64 |
 | 74 | A field Polaris writes onto a device is budgeted where the operator types it, and the budget is the DEVICE's | invariants-30-43 | narrative-60-64 |
-| 75 | An alert may name many problems on one device, and it ends only when the last of them does | invariants-30-43 | narrative-75 |
+| 75 | An alert may name many problems on one device, and it ends only when the last of them does; (a) a member resetting sends no update — only a new fault, a band change or the last member's Resolved emails (`hasNewFault`) | invariants-30-43 | narrative-75 |
 | 76 | Access is granted on the network profile the endpoint is actually on, and scoping it counts for nothing while a wider rule stands beside it | invariants-30-43 | narrative-76 |
 | 77 | A VIP describes an address; it does not claim it — and the status says every fact it has | invariants-30-43 | narrative-77 |
 | 78 | An automation may choose to speak for a silenced device, and then it must name who silenced it | invariants-30-43 | narrative-78 |
