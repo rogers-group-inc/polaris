@@ -734,8 +734,12 @@ can't go in a junction box. In edit mode:
   12 × 8 in shape at the pointer, or the nearest free space). A device is in one
   place, and the Device List says where each one is, with an **×** to take it
   out. Dragging a placed device's row **moves** it: to another rack, another U,
-  or from a rack into a junction box and back. If the spot you drop on has no
-  room, it stays where it was. **Room items** adds
+  or from a rack into a junction box and back. You can also drag a device
+  straight out of a junction box onto a rack: the rack outlines where it will
+  land, and the room scrolls when you drag near its left or right edge. If the
+  spot you drop on has no room, it stays where it was. An HA cluster's standby
+  FortiGate is in the Device List too (marked **HA standby**), so you can rack
+  it beside the primary. **Room items** adds
   **Cable management** and named **Third party** boxes (an ISP router, a patch
   panel), in a rack or a junction box, as many as you need.
 - **In a rack:** drag a block's top or bottom edge to change its height, and its

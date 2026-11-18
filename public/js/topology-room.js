@@ -83,6 +83,17 @@
           var o = parts[other];
           if (o && o.removeAsset) o.removeAsset(assetId);
         },
+        // A device dragged out of this part onto the other (operator request
+        // 2026-11-18: junction box → rack): hover feedback, then the drop,
+        // which places it there and takes it out of here.
+        hoverOther: function (clientX, clientY) {
+          var o = parts[other];
+          return o && o.hintDropAt ? o.hintDropAt(clientX, clientY) : false;
+        },
+        dropOnOther: function (assetId, clientX, clientY) {
+          var o = parts[other];
+          return o && o.dropAt ? o.dropAt(assetId, clientX, clientY) : false;
+        },
       });
     }
     parts.rack = Rack ? Rack.render(strip.querySelector('[data-room-part="rack"]'), partCtx("rack")) : null;

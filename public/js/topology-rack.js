@@ -676,12 +676,20 @@
       markDrop(null);
       var DLd = window.PolarisTopologyDeviceList;
       var token = DLd ? DLd.token(e, DRAG_MIME) : (e.dataTransfer && e.dataTransfer.getData(DRAG_MIME));
-      var zone = sideZoneAt(e.clientX, e.clientY);
-      var bay = zone ? null : bayAt(e.clientX, e.clientY);
-      if (!token || (!bay && !zone)) return;
+      if (!token || (!sideZoneAt(e.clientX, e.clientY) && !bayAt(e.clientX, e.clientY))) return;
       e.preventDefault();
+      placeToken(token, e.clientX, e.clientY);
+    });
+    // A token dropped at a point: on a rack face (a 1U block at the U under
+    // the pointer, or the nearest free one) or in a side zone. Also how a
+    // device dragged out of a junction box lands here (dropAt, operator
+    // request 2026-11-18). True when it was placed.
+    function placeToken(token, clientX, clientY) {
+      var zone = sideZoneAt(clientX, clientY);
+      var bay = zone ? null : bayAt(clientX, clientY);
+      if (!token || (!bay && !zone)) return false;
       var rack = rackById(zone ? zone.getAttribute("data-side-zone").split("|")[0] : bay.getAttribute("data-rack-bay"));
-      if (!rack) return;
+      if (!rack) return false;
       var isCable = token === CABLE_TOKEN;
       var isThird = token === THIRD_PARTY_TOKEN;
       // A device already placed in this room is MOVED (operator report
@@ -696,7 +704,7 @@
       function takeIt() { if (elsewhere && ctx.takeFromElsewhere) ctx.takeFromElsewhere(token); }
       // Rule 179: beside the rack, outside its cable manager, using no U.
       if (zone) {
-        if (isCable) { state.placements = before; ctx.toast("Cable management goes in the rack", "error"); return; }
+        if (isCable) { state.placements = before; ctx.toast("Cable management goes in the rack", "error"); return false; }
         var zp = zone.getAttribute("data-side-zone").split("|");
         var beside = {
           id: newId(isThird ? "tp" : "rp"),
@@ -710,14 +718,14 @@
         changed();
         takeIt();
         if (isThird) renameThirdParty(beside);
-        return;
+        return true;
       }
       // Half depth by default (operator request 2026-11-10): a device racked
       // on the front leaves the same U free on the back. Full depth is the
       // right-click opt-in for gear that fills the rack.
       var fullDepth = false;
-      var u = nearestFreeU(state.placements, state.racks, rack.id, rack.face, uAt(bay, rack, e.clientY), 1, fullDepth, null);
-      if (u == null) { state.placements = before; ctx.toast(rack.name + " has no free U", "error"); return; }
+      var u = nearestFreeU(state.placements, state.racks, rack.id, rack.face, uAt(bay, rack, clientY), 1, fullDepth, null);
+      if (u == null) { state.placements = before; ctx.toast(rack.name + " has no free U", "error"); return false; }
       var placed = {
         id: newId(isCable ? "cm" : isThird ? "tp" : "rp"),
         kind: isCable ? "cableManagement" : isThird ? "thirdParty" : "asset",
@@ -737,7 +745,20 @@
       takeIt();
       // A third-party box is named on the spot: the placeholder name says nothing.
       if (isThird) renameThirdParty(placed);
-    });
+      return true;
+    }
+    // While a junction-box item is dragged over this part: light the bay or
+    // side zone under the pointer. True when a drop there would land.
+    var bayHint = null;
+    function hintAt(clientX, clientY) {
+      var zone = clientX == null ? null : sideZoneAt(clientX, clientY);
+      var bay = zone || clientX == null ? null : bayAt(clientX, clientY);
+      markDrop(zone);
+      if (bayHint && bayHint !== bay) bayHint.classList.remove("is-drop");
+      bayHint = bay;
+      if (bay) bay.classList.add("is-drop");
+      return !!(zone || bay);
+    }
 
     // ── Pointer gestures: block move / resize, rack reorder ─────────────
     var gesture = null;
@@ -1215,6 +1236,13 @@
       },
       cornerButtons: function () { return []; },
       // The Room canvas (topology-room.js): one Device List for both parts.
+      // A device dragged out of a junction box (topology-wall.js → endGesture,
+      // through topology-room.js): hover feedback, then the drop.
+      hintDropAt: function (clientX, clientY) { return state.editing ? hintAt(clientX, clientY) : false; },
+      dropAt: function (assetId, clientX, clientY) {
+        hintAt(null, null);
+        return state.editing ? placeToken(assetId, clientX, clientY) : false;
+      },
       whereIs: function (assetId) {
         var p = state.placements.filter(function (x) { return x.assetId === assetId; })[0];
         if (!p) return null;
