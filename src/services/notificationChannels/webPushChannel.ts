@@ -11,7 +11,10 @@
  * PushSubscription row.
  */
 
-import webpush from "web-push";
+// web-push 4 is a pure ES module with named exports only — no default. A
+// default import type-checks (esModuleInterop + @types/web-push) and then
+// fails to link at load time, taking every module that imports this one down.
+import * as webpush from "web-push";
 import { AppError } from "../../utils/errors.js";
 import { resolveAllowedHost } from "../../utils/netGuard.js";
 

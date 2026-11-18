@@ -13,7 +13,9 @@ const { setVapidDetails, sendNotification, generateVAPIDKeys, resolveAllowedHost
   generateVAPIDKeys: vi.fn(),
   resolveAllowedHost: vi.fn(),
 }));
-vi.mock("web-push", () => ({ default: { setVapidDetails, sendNotification, generateVAPIDKeys } }));
+// Named exports only, as web-push 4 ships them: a mock with a `default` would
+// pass while the real module (no default export) fails to load.
+vi.mock("web-push", () => ({ setVapidDetails, sendNotification, generateVAPIDKeys }));
 vi.mock("../../src/utils/netGuard.js", () => ({ resolveAllowedHost }));
 
 import {
