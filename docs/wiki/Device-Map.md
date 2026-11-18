@@ -680,15 +680,18 @@ leaves the device's room (`r:`) as it is, and no polygon touches its rack
 (`ra:`) or junction box (`jb:`). A device whose codes are already right isn't
 listed at all, and a device placed outside every polygon keeps its codes
 ([rule 148](Business-Rules#rule-148)). Racks and junction boxes are placed on
-Room views.
+Room views. The polygon picker lists, under each room, the racks and junction
+boxes that already have devices in them, each on its own line; they are there
+to show what the room holds and can't be picked.
 
 Devices sharing a room code get an automatic outline with the room's name. Draw
 a Room polygon for that room (same area and building, on the same floor) and it
 replaces the outline.
 
-**Rooms and junction boxes can be containers.** After you draw a Room or
-Junction box polygon, Polaris asks whether to create a Room view for it, named
-after the room (or `JB 7`). Say no and the shape just groups its devices, which
+**Rooms can be containers.** After you draw a Room polygon, Polaris asks
+whether to create a Room view for it, named after the room. (A Junction box
+polygon drawn before 2026-11-18 works the same way, its view named after the
+box; new ones can't be drawn.) Say no and the shape just groups its devices, which
 stay on the map; you can create the view later from the shape's menu
 (**Create Room view**). With a Room view, the devices inside the shape are not
 drawn while you are viewing (they are in the Room view) and their connections end

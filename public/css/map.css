@@ -1105,6 +1105,8 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .topo-arc-hover { display: flex; flex-direction: column; gap: 2px; font: 0.8rem var(--font-sans); }
 .topo-arc-hover .hint { margin: 0; }
 .topo-arc-legend-row.is-type, .topology-legend-row.is-type { padding-left: 10px; }
+/* A rack or junction box under its room in the polygon picker: shown, never picked (rule 148(d)). */
+.topo-phys-group.is-holder { color: var(--color-text-secondary); cursor: default; font-size: 0.82rem; border-color: transparent; padding-top: 2px; padding-bottom: 2px; }
 .topo-phys-marker { background: none; border: none; }
 .topo-phys-node {
   width: 30px;

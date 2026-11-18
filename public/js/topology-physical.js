@@ -62,7 +62,10 @@
   // joined on 2026-11-17 (operator requests): a room or junction-box polygon
   // is a CONTAINER — it replaces the outline round its devices, hides them
   // while viewing, and opens its Room view on a double-click. A rack is never
-  // a polygon (racks live in Room views).
+  // a polygon (racks live in Room views). Since 2026-11-18 the picker draws
+  // only areas, buildings and rooms (rule 148(d)): a junction-box polygon
+  // drawn before then still works, and a room's racks and boxes are listed
+  // under it there, never picked.
   var POLY_FIELDS = CODE_FIELDS.filter(function (f) { return f.field !== "rack"; });
   function polyCodes(c) {
     var n = normCodes(c);
@@ -325,6 +328,41 @@
     (data.aps || []).forEach(function (a) { addChain(a.location); });
     (data.endpoints || []).forEach(function (e) { addChain(e.location); });
     return out.sort(function (a, b) { return codesKey(a).localeCompare(codesKey(b)); });
+  }
+  // Rule 148(d): the racks and junction boxes the site's devices sit in, by
+  // the group above them (cut to area / building / room) — shown under their
+  // room in the polygon picker, never picked. Only a rack or a box a device's
+  // codes name: one made in a Room view with nothing in it yet is left out.
+  // Each is its OWN entry ("Rack 1", "JB 1"): a device in both
+  // gives one of each, never "Junction box … Rack …".
+  function pickerCodes(c) {
+    var n = polyCodes(c);
+    n.floor = null; n.junctionBox = null; n.rack = null;
+    return n;
+  }
+  function holdersFromData(data) {
+    var byParent = {};
+    function add(loc) {
+      var n = normCodes(loc);
+      // The kind's word goes in front unless the name already says it
+      // ("Rack 1", "JB 1" stand as they are; a rack "A3" reads "Rack A3").
+      [["rack", "Rack", /^rack\b/i], ["junctionBox", "Junction box", /^(jb|junction box)\b/i]].forEach(function (k) {
+        if (n[k[0]] === null) return;
+        var key = codesKey(pickerCodes(n));
+        var list = byParent[key] = byParent[key] || [];
+        var label = k[2].test(n[k[0]]) ? n[k[0]] : k[1] + " " + n[k[0]];
+        if (!list.some(function (x) { return x.label.toLowerCase() === label.toLowerCase(); })) list.push({ kind: k[0], label: label });
+      });
+    }
+    if (!data) return byParent;
+    if (data.fortigate) add(data.fortigate.location);
+    (data.switches || []).forEach(function (s) { add(s.location); });
+    (data.aps || []).forEach(function (a) { add(a.location); });
+    (data.endpoints || []).forEach(function (e) { add(e.location); });
+    Object.keys(byParent).forEach(function (k) {
+      byParent[k].sort(function (a, b) { return a.kind === b.kind ? a.label.localeCompare(b.label, undefined, { numeric: true }) : (a.kind === "rack" ? -1 : 1); });
+    });
+    return byParent;
   }
   function groupDepth(c) {
     var d = -1;
@@ -1246,10 +1284,13 @@
     // descriptions already name, plus a new group inside any of them.
     function pickGroup(onPick, current) {
       if (typeof buildOverlay !== "function") return;
-      // Areas and buildings only, each group cut back to those levels: a
-      // device's floor comes from the floor it is placed on (rule 168), so a
-      // floor group here would decide nothing (operator request 2026-11-17).
-      function pickCodes(g) { var c = polyCodes(g); c.floor = null; return c; }
+      // Areas, buildings and rooms only, each group cut back to those levels:
+      // a device's floor comes from the floor it is placed on (rule 168), so a
+      // floor group here would decide nothing (operator request 2026-11-17),
+      // and a rack or a junction box is not drawn as a polygon — it is listed
+      // under its room, not offered (rule 148(d), operator request 2026-11-18).
+      var pickCodes = pickerCodes;
+      var holders = holdersFromData(data);
       var groups = [];
       groupsFromData(data).concat(state.polygons.map(function (p) { return p.codes; })).forEach(function (g) {
         var c = pickCodes(g);
@@ -1267,17 +1308,22 @@
           '<span class="topo-phys-swatch" style="background:' + color + '"></span>' +
           '<span>' + esc(groupName(g)) + '</span>' +
           (drawn[codesKey(g)] ? ' <span class="badge badge-readonly">drawn</span>' : '') +
-          '<span class="topo-phys-codes">' + esc(codesLabel(g)) + '</span></label>';
+          '<span class="topo-phys-codes">' + esc(codesLabel(g)) + '</span></label>' +
+          (holders[codesKey(g)] || []).map(function (h) {
+            return '<div class="topo-phys-group is-holder" style="margin-left:' + ((groupDepth(g) + 1) * 18 + 22) + 'px">' +
+              '<span class="topo-phys-swatch" style="background:' + R.locGroupColor(h.kind === "rack" ? "ra" : "jb", family()) + '"></span>' +
+              '<span>' + esc(h.label) + '</span></div>';
+          }).join("");
       }).join("");
       var parentOptions = '<option value="-1">Nothing — a group of its own</option>' + groups.map(function (g, i) {
         return '<option value="' + i + '">' + esc(codesLabel(g)) + '</option>';
       }).join("");
       var body =
-        '<p class="hint" style="margin:0 0 8px">Areas, buildings, rooms and junction boxes from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on. A room or junction box gets its own Room view: its devices are hidden on this map while viewing, and a double-click on the shape opens the view.</p>' +
+        '<p class="hint" style="margin:0 0 8px">Areas, buildings and rooms from the location codes in device descriptions. A device dropped inside the polygon takes these codes when you save, and its floor from the floor it is on. A room gets its own Room view: its devices are hidden on this map while viewing, and a double-click on the shape opens the view. The racks and junction boxes listed under a room are its Room view\u2019s; they can\u2019t be drawn.</p>' +
         '<div class="topo-phys-groups">' + (rows || '<p class="hint">No device has location codes yet — make a new group below.</p>') + '</div>' +
         '<label class="topo-phys-group topo-phys-group-new"><input type="radio" name="topo-pg" value="new"' + (groups.length ? "" : " checked") + '> <strong>New group</strong></label>' +
         '<div class="topo-phys-new" style="display:grid;grid-template-columns:150px 1fr;gap:8px;margin-top:6px">' +
-          '<select id="topo-pg-kind" aria-label="Kind">' + POLY_FIELDS.filter(function (f) { return f.field !== "floor"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
+          '<select id="topo-pg-kind" aria-label="Kind">' + POLY_FIELDS.filter(function (f) { return f.field !== "floor" && f.field !== "junctionBox"; }).map(function (f) { return '<option value="' + f.field + '">' + f.word + '</option>'; }).join("") + '</select>' +
           '<input id="topo-pg-name" type="text" maxlength="64" placeholder="Name, e.g. Shipping" aria-label="Name">' +
           '<label for="topo-pg-parent" style="align-self:center;font-size:0.82rem">Part of</label>' +
           '<select id="topo-pg-parent">' + parentOptions + '</select>' +
@@ -3030,6 +3076,8 @@
     _worstColor: worstColor,
     _floorNumber: floorNumber,
     _floorCodeFor: floorCodeFor,
+    _holdersFromData: holdersFromData,
+    _pickerCodes: pickerCodes,
     _tipGraph: tipGraph,
     _linkTipHtml: linkTipHtml,
     _cadToPlan: cadToPlan,
