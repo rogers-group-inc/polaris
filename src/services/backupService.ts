@@ -465,6 +465,29 @@ export async function timescaleInstalled(): Promise<boolean> {
 
 // ─── Create ────────────────────────────────────────────────────────────────
 
+/**
+ * Wait for BOTH the write pipeline and pg_dump to finish, then fail with the
+ * first real error. Never `Promise.all`: it rejects the moment pg_dump exits
+ * non-zero while the write stream may not have opened its file yet, so the
+ * caller's existsSync-then-unlink cleanup ran too early and the stream created
+ * the file after it — a stray `.tmp-ct` or partial backup left on disk.
+ * A write failure kills pg_dump so `done` settles too, and reports the write
+ * error (it caused the kill, so pg_dump's exit message would mislead).
+ */
+async function settleDump(
+  writing: Promise<void>,
+  done: Promise<unknown>,
+  child: { kill: (signal?: NodeJS.Signals) => boolean },
+): Promise<void> {
+  const write = writing.catch((err) => {
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    throw err;
+  });
+  const [w, d] = await Promise.allSettled([write, done]);
+  if (w.status === "rejected") throw w.reason;
+  if (d.status === "rejected") throw d.reason;
+}
+
 export interface CreateBackupInput {
   /** Validated passphrase, or null for an unencrypted backup. */
   password: string | null;
@@ -525,10 +548,11 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
       const ciphertextFile = `${backupFile}.tmp-ct`;
 
       try {
-        await Promise.all([
+        await settleDump(
           pipeline(child.stdout!, createGzip(), cipher, createWriteStream(ciphertextFile, { mode: PRIVATE_FILE_MODE })),
           done,
-        ]);
+          child,
+        );
         const header = Buffer.concat([BACKUP_MAGIC, salt, iv, cipher.getAuthTag()]);
         const out = createWriteStream(backupFile, { mode: PRIVATE_FILE_MODE });
         await new Promise<void>((res, rej) => out.write(header, (err) => (err ? rej(err) : res())));
@@ -537,10 +561,11 @@ export async function createBackup(input: CreateBackupInput): Promise<CreateBack
         if (existsSync(ciphertextFile)) { try { unlinkSync(ciphertextFile); } catch { /* best effort */ } }
       }
     } else {
-      await Promise.all([
+      await settleDump(
         pipeline(child.stdout!, createGzip(), createWriteStream(backupFile, { mode: PRIVATE_FILE_MODE })),
         done,
-      ]);
+        child,
+      );
     }
   } catch (err: any) {
     // Never leave a truncated file behind masquerading as a usable backup.
