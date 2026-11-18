@@ -2050,23 +2050,10 @@
   // Device types as a row of icon toggles (operator request 2026-11-10: the
   // eye-and-name list was too tall). One icon per asset type on the site; the
   // tooltip names the type, its count and whether it is drawn; a click shows
-  // or hides it. Line icons in the 24-unit stroke style of the corner tools.
-  var TYPE_ICON_PATHS = {
-    firewall: '<path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z"/><path d="M4 11h16M12 5.5V11M8 11v5.5M16 11v5.5"/>',
-    router: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 17h.01M10 17h.01M15 13V9M12 6.5a4.5 4.5 0 0 1 6 0M10 4a8 8 0 0 1 10 0"/>',
-    "switch": '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11v2M9 11v2M12 11v2M15 11v2M18 11v2"/>',
-    access_point: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0"/><circle cx="12" cy="19.5" r="1"/>',
-    server: '<rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
-    workstation: '<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>',
-    printer: '<path d="M6 9V2h12v7"/><rect x="2" y="9" width="20" height="8" rx="2"/><path d="M6 14h12v7H6z"/>',
-    hypervisor: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5"/>',
-    container: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
-    kubernetes_cluster: '<path d="m12 2 8.5 5v10L12 22l-8.5-5V7z"/><circle cx="12" cy="12" r="3"/>',
-  };
-  var TYPE_ICON_OTHER = '<rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="12" cy="12" r="2.5"/>';
+  // or hides it. The icons are the map's own default device icons
+  // (topology-render.js → typeIconSvg), so a toggle looks like what it shows.
   function _typeIconSvg(type) {
-    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      (TYPE_ICON_PATHS[type] || TYPE_ICON_OTHER) + '</svg>';
+    return window.PolarisTopologyRender.typeIconSvg(type, 18);
   }
   function _deviceTypesHtml(data) {
     var types = window.PolarisTopologyRender && window.PolarisTopologyRender.siteDeviceTypes

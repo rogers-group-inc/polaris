@@ -213,6 +213,46 @@ describe("legend hover highlight", () => {
     const cy = legendGraph();
     for (const k of keyed) expect(() => R.legendMatch(cy, k)).not.toThrow();
   });
+
+  // Operator request 2026-11-18: the type was told only by node size. Every
+  // device row is now one size with its type's icon; type keys light by type.
+  it("device rows are one size with the type's icon, and type keys match by type", () => {
+    const spec = R.topologyLegendSpec("dark");
+    const devices = spec.nodes.filter((r: any) => r.icon);
+    expect(devices.map((r: any) => r.key)).toEqual(expect.arrayContaining(["type:firewall", "type:switch", "type:access_point", "type:other"]));
+    expect(new Set(devices.map((r: any) => r.size))).toEqual(new Set(["md"]));
+    const html: string = R.topologyLegendHtml(spec);
+    expect((html.match(/class="topology-legend-icon"/g) || []).length).toBe(devices.length);
+    expect(html).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="14"');
+    const cy = sb.make(JSON.stringify({
+      headless: true, styleEnabled: true, layout: { name: "preset" },
+      elements: [
+        { data: { id: "fg", role: "fortigate", hasIcon: 0 } },
+        { data: { id: "s1", role: "fortiswitch", hasIcon: 1, iconUrl: "/x.png" } },
+        { data: { id: "pc", role: "endpoint", assetType: "workstation", hasIcon: 0 } },
+        { data: { id: "cam", role: "endpoint", assetType: "camera", hasIcon: 0 } },
+        { data: { id: "box", isLocGroup: 1, locKind: "building" } },
+      ],
+    }));
+    const m = (k: string) => ids(R.legendMatch(cy, k));
+    expect(m("type:firewall")).toEqual(["fg"]);
+    expect(m("type:switch")).toEqual(["s1"]);
+    expect(m("type:workstation")).toEqual(["pc"]);
+    expect(m("type:other")).toEqual(["cam"]); // a custom type, never the box
+  });
+
+  it("a node with no vendor logo draws its type's default icon", () => {
+    expect(R.typeIconDataUri("switch")).toMatch(/^data:image\/svg\+xml;utf8,/);
+    expect(R.typeIconDataUri("switch")).not.toBe(R.typeIconDataUri("firewall"));
+    // A type with no icon of its own shares the "other" icon.
+    expect(R.typeIconDataUri("camera")).toBe(R.typeIconDataUri("nope"));
+    const sheet = R.topologyStylesheet("dark");
+    const rule = sheet.find((r: any) => r.selector === "node[hasIcon = 0]");
+    expect(rule).toBeTruthy();
+    const img = rule.style["background-image"];
+    expect(img({ data: () => ({ role: "fortiap" }) })).toBe(R.typeIconDataUri("access_point"));
+    expect(img({ data: () => ({ role: "endpoint", assetType: "printer" }) })).toBe(R.typeIconDataUri("printer"));
+  });
 });
 
 /**

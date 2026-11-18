@@ -9139,6 +9139,16 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
   justify-content: center;
 }
 .topology-legend-label { flex: 1; }
+/* A device row's swatch: the type's icon on the "up" fill, one size for all. */
+.topology-legend-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .topology-legend-desc {
   flex: 0 0 100%;
   margin-left: 36px;
