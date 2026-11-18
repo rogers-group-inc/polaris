@@ -628,6 +628,30 @@ devices — <host — check>, …`; mixed conditions keep `<name>: 3 path checks
 the same sentence, so an update states the current size rather than "N still affected". An
 operator's own Alert text replaces all of this, as before; the email subject is unchanged.
 
+### Rule 75(b) — a disabled group governs nothing (2026-11-18)
+
+The schema always said it ("Disabling a group does NOT disable its automations — they keep
+detecting and go back to delivering on their own") and `updateGroup` retired the group's live
+alerts on disable so the next tick could re-raise them. But the engine's rule loader read
+`alertGroupId` / `foldBy` straight off the row and never looked at `AlertGroup.enabled`. So the
+very next tick re-folded every contribution the group's way — one alert per path check across 87
+hosts, a `grp:` key, `alertGroupId` stamped — and, because `alertOwnerOf` gives a disabled group
+no delivery, those folded alerts went out through the member automation's own actions. An
+operator who disabled a Path Monitor group reported (2026-11-18) still getting grouped alerts.
+
+Fix: the loader includes `enabled` and blanks the three group fields for a disabled group's
+members, so `ruleGroupsByAsset`, `foldBuckets` and `createGroupAlert` all see an ungrouped rule
+(a member with its own `groupByAsset` still folds its own components per device, as it would
+outside any group). Alerts already raised under a disabled group are retired at the top of the
+tick by `retireDisabledGroupAlerts` — the same clear + state release `retireGroupAlerts` does, no
+reset actions, one `notification.superseded` Event — so installs that hit the bug heal on their
+own. It costs nothing unless some loaded rule names a disabled group.
+
+Rejected: nulling `NotificationRule.alertGroupId` on disable. Re-enabling must restore the same
+membership, and the group editor lists members by that column.
+
+Pinned by `tests/integration/alertGroupDisabled.test.ts`.
+
 ### Rule 75(a) — a member resetting is not an email (2026-11-18)
 
 The 2026-10-15 cadence mailed a mid-alert recovery as an `[UPDATED]` (`−pc-01`). In practice

@@ -924,6 +924,11 @@ Turning grouping on or off, changing a group's members, devices or fold, or disa
 or deleting a group ends the affected live alerts, and the next check raises
 them again under whoever owns them now. An alert never changes hands mid-life.
 
+A **disabled** group does nothing at all (rule 75(b)): its automations alert
+exactly as they would if they were in no group — one alert per device, sent
+through each automation's own actions — and are never folded the group's way.
+To stop the alerts themselves, disable the automations.
+
 ### Rule 76
 
 **Access is granted on the network profile the endpoint is actually on, and

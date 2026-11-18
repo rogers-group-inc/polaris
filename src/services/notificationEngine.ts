@@ -43,7 +43,7 @@ import { clearScopeAssetCache } from "./notifications/scope.js";
 import { clearTickSampleCache } from "./notifications/readings.js";
 
 // CQ-B063 — the alert lifecycle: fire / reset / recover + grouped alerts, business rule 75 (notifications/alertLifecycle.ts).
-import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends } from "./notifications/alertLifecycle.js";
+import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends, retireDisabledGroupAlerts } from "./notifications/alertLifecycle.js";
 
 // CQ-B063 — threshold / state + composite evaluation (notifications/evaluation.ts).
 import { evaluationOrder, evaluateThresholdRule, evaluateCompositeRule } from "./notifications/evaluation.js";
@@ -84,8 +84,13 @@ export { buildShadowIndex, isAssetShadowed };
 export async function evaluateAllNotificationRules(): Promise<void> {
   const dbRules = await prisma.notificationRule.findMany({
     where: { enabled: true },
-    include: { alertGroup: { select: { foldBy: true, name: true } } },
+    include: { alertGroup: { select: { foldBy: true, name: true, enabled: true } } },
   });
+  // Business rule 75(b): a DISABLED group governs nothing. Its members detect
+  // and deliver exactly as they would outside it — no fold, no group key, no
+  // group stamp — so the engine reads the membership as absent.
+  const disabledGroupIds = new Set<string>();
+  for (const r of dbRules) if (r.alertGroupId && r.alertGroup?.enabled === false) disabledGroupIds.add(r.alertGroupId);
   const rules: DbRule[] = dbRules.map((r) => {
     // Shape-v2 normalization: legacy rows (clearBehavior/targets) and v2 rows
     // (reset/actions) evaluate identically through the v2 view.
@@ -113,9 +118,9 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       // ungrouped sibling in the carve-out index, business rule 46).
       groupByAsset: r.groupByAsset === true,
       severityFromPriorityTag: r.severityFromPriorityTag === true,
-      alertGroupId: r.alertGroupId ?? null,
-      alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
-      alertGroupName: r.alertGroup?.name ?? null,
+      ...(r.alertGroupId && r.alertGroup?.enabled !== false
+        ? { alertGroupId: r.alertGroupId, alertGroupFoldBy: r.alertGroup?.foldBy ?? null, alertGroupName: r.alertGroup?.name ?? null }
+        : { alertGroupId: null, alertGroupFoldBy: null, alertGroupName: null }),
     };
   });
   await applyLinkedForecastLevels(rules);
@@ -141,6 +146,19 @@ export async function evaluateAllNotificationRules(): Promise<void> {
   // AlertGroup member actually needs it, so an install with no groups never
   // issues the query.
   const tickIndex = new TickAlertIndex();
+
+  // Rule 75(b): a live alert a disabled group still owns was folded under the
+  // group — retire it BEFORE the rules run, so this tick re-raises each
+  // contribution the member's own way. Disabling through the API already does
+  // this; this catches any alert raised under the group after that (the engine
+  // folded for disabled groups until 2026-11-18). No query unless a group is off.
+  if (disabledGroupIds.size) {
+    try {
+      await retireDisabledGroupAlerts([...disabledGroupIds]);
+    } catch (err) {
+      await logEvent({ action: "notification.engine_error", actor: "system:notification-engine", level: "error", message: "Retiring a disabled group's alerts failed", details: { err: (err as Error)?.message } }).catch(() => {});
+    }
+  }
 
   for (const rule of evaluationOrder(rules)) {
     try {
