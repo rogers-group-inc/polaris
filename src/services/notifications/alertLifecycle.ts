@@ -1681,6 +1681,39 @@ export async function clearAlertRow(st: { notificationId: string | null }, by: s
 }
 
 /**
+ * Business rule 75(b): retire every live alert a DISABLED group still owns —
+ * soft-clear it and release its state rows — so the next evaluation re-raises
+ * each contribution the member automation's own way. The same retirement the
+ * group's own disable does (`alertGroupService` → `retireGroupAlerts`), no
+ * reset actions (nothing recovered). One query when there is nothing to do.
+ */
+export async function retireDisabledGroupAlerts(groupIds: string[]): Promise<number> {
+  if (!groupIds.length) return 0;
+  const live = await prisma.notification.findMany({
+    where: { alertGroupId: { in: groupIds }, cleared: false },
+    select: { id: true, alertGroupId: true },
+  });
+  if (!live.length) return 0;
+  const ids = live.map((n) => n.id);
+  await prisma.notification.updateMany({
+    where: { id: { in: ids }, cleared: false },
+    data: { cleared: true, clearedBy: "system:group-disabled", clearedAt: new Date() },
+  });
+  await prisma.notificationRuleState.updateMany({
+    where: { notificationId: { in: ids } },
+    data: { state: "clear", conditionMetSince: null, recoveredSince: null, notificationId: null, bandMetSince: Prisma.DbNull, ...CLEARED_RUNS },
+  });
+  await logEvent({
+    action: "notification.superseded",
+    resourceType: "notification",
+    actor: "system:notification-engine",
+    message: `Cleared ${ids.length} alert${ids.length === 1 ? "" : "s"} still folded under a disabled alert group — raised again by each automation on its own`,
+    details: { alertGroupIds: [...new Set(live.map((n) => n.alertGroupId))], notificationIds: ids.slice(0, 50), count: ids.length, reason: "group-disabled" },
+  }).catch(() => {});
+  return ids.length;
+}
+
+/**
  * Stamp this contribution as departed and answer whether it was the last one.
  *
  * The count is asked of the STATE ROWS, never of the members snapshot: the
