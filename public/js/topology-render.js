@@ -4862,6 +4862,45 @@
     return html;
   }
 
+  // The graph a canvas that is not Cytoscape (the Topology canvas, the Room
+  // view's rack cables) hands edgeTooltipHtml / linkHoverSet: a headless
+  // Cytoscape graph of the canvas's own elements, so a wired link on a ring
+  // lists the ring's other links and lights the whole ring exactly as Layer 2
+  // does. A two-method stand-in threw on every ringed link, so the card never
+  // showed (operator reports 2026-11-17, 2026-11-18). `cyFactory` is
+  // window.cytoscape; without it the stand-in gives names, ports and speed.
+  function linkTipGraph(elements, nodeById, cyFactory) {
+    if (typeof cyFactory === "function") {
+      try {
+        return cyFactory({ headless: true, styleEnabled: false, elements: elements.map(function (el) { return { data: el.data }; }) });
+      } catch (err) { /* fall through to the stand-in */ }
+    }
+    return { getElementById: function (id) { return { data: function (k) { return (nodeById[id] || {})[k]; } }; } };
+  }
+  /** The hover card for link data `e` on a linkTipGraph graph. */
+  function linkTipHtml(g, e) {
+    var edge = g && g.collection ? g.getElementById(e.id) : null;
+    if (edge && edge.length) return edgeTooltipHtml(g, edge);
+    var plain = Object.assign({}, e, { inLoop: undefined });
+    return edgeTooltipHtml(g, { data: function (k) { return plain[k]; } });
+  }
+  /** What hovering link `e` lights: { edges: {id: 1}, nodes: {id: 1} } —
+   *  the link and its two devices, or a ringed link's whole ring (linkHoverSet). */
+  function linkHoverIds(g, e) {
+    var out = { edges: {}, nodes: {} };
+    var edge = g && g.collection ? g.getElementById(e.id) : null;
+    if (edge && edge.length) {
+      linkHoverSet(g, edge).forEach(function (el) {
+        if (el.isEdge()) out.edges[el.id()] = 1; else out.nodes[el.id()] = 1;
+      });
+      return out;
+    }
+    out.edges[e.id] = 1;
+    out.nodes[e.source] = 1;
+    out.nodes[e.target] = 1;
+    return out;
+  }
+
   // A link on a physical loop (inLoop) also lists the loop's OTHER links —
   // the same set the hover lights (linkHoverSet), so the tooltip names what
   // the operator sees glowing. Ordered by walking the ring from the hovered
@@ -5160,6 +5199,9 @@
 
   window.PolarisTopologyRender = {
     typeIconSvg: typeIconSvg,
+    linkTipGraph: linkTipGraph,
+    linkTipHtml: linkTipHtml,
+    linkHoverIds: linkHoverIds,
     typeIconDataUri: typeIconDataUri,
     separatePositions: separatePositions,
     separateNodes: separateNodes,

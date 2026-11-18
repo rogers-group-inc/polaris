@@ -1421,6 +1421,12 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .topo-cable-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: pointer; }
 .is-editing .topo-cable-hit { cursor: copy; }
 .topo-cable-bridge { fill: none; stroke: var(--color-border); stroke-dasharray: 3 3; }
+/* Layer 2's ring outline under a cable on a physical loop, and the hover glow
+   (topology-rack.js → lightCable): the hovered cable, or its whole ring. */
+.topo-cable-halo { fill: none; stroke-linejoin: round; stroke-linecap: round; opacity: 0.9; }
+.topo-cable-glow { fill: none; stroke-linejoin: round; stroke-linecap: round; opacity: 0.6; pointer-events: none; }
+.topo-rack-blk.is-link-hover { box-shadow: 0 0 0 3px #4fc3f7; z-index: 1; }
+:is([data-theme="morning"], [data-theme="noon"]) .topo-rack-blk.is-link-hover { box-shadow: 0 0 0 3px #0369a1; }
 .topo-cable-handle { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; z-index: 3; }
 .topo-rack-rail { width: 38px; flex: none; display: flex; flex-direction: column; background: var(--color-bg-tertiary); }
 .topo-rack-rail span {

@@ -70,6 +70,30 @@ describe("link hover highlight", () => {
     expect(ids(R.linkHoverSet(cy, cy.$id("ef")))).toEqual(["D", "E", "F", "de", "ef", "fd"]);
   });
 
+  // The Room view's rack cables are not Cytoscape: they read the same set
+  // through a headless graph of their own elements (operator request
+  // 2026-11-18: the cable and its ends lit, a ring lit whole, the ring card).
+  it("a canvas with no Cytoscape lights the same set and shows the ring card (linkTipGraph)", () => {
+    const n = (id: string) => ({ data: { id, label: id } });
+    const e = (id: string, s: string, t: string, inLoop = false) => ({ data: { id, source: s, target: t, ...(inLoop ? { inLoop: 1 } : {}) } });
+    const els = [n("A"), n("B"), n("C"), n("D"), e("ab", "A", "B", true), e("bc", "B", "C", true), e("ca", "C", "A", true), e("cd", "C", "D")];
+    const byId: Record<string, any> = {};
+    els.forEach((x: any) => { if (!x.data.source) byId[x.data.id] = x.data; });
+    const g = R.linkTipGraph(els, byId, sb.cytoscape);
+    const keys = (o: Record<string, number>) => Object.keys(o).sort();
+    const ring = R.linkHoverIds(g, els[4].data);
+    expect(keys(ring.edges)).toEqual(["ab", "bc", "ca"]);
+    expect(keys(ring.nodes)).toEqual(["A", "B", "C"]);
+    const tail = R.linkHoverIds(g, els[7].data);
+    expect(keys(tail.edges)).toEqual(["cd"]);
+    expect(keys(tail.nodes)).toEqual(["C", "D"]);
+    expect(R.linkTipHtml(g, els[4].data)).toContain("Part of a ring");
+    // No Cytoscape: the card still shows (no ring rows) and the link's own ends light.
+    const bare = R.linkTipGraph(els, byId, undefined);
+    expect(R.linkTipHtml(bare, els[4].data)).not.toContain("Part of a ring");
+    expect(keys(R.linkHoverIds(bare, els[4].data).nodes)).toEqual(["A", "B"]);
+  });
+
   it("highlight stamps the class, a second hover replaces it, and clear removes it", () => {
     const cy = graph();
     R.highlightLinkHover(cy, cy.$id("ab"));
