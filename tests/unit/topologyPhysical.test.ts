@@ -107,6 +107,29 @@ describe("stacked floors (rule 152(a))", () => {
     expect(P._floorCodeFor(1, true)).toBe("2");
     expect(P._floorCodeFor(-1, true)).toBe("-1");
   });
+  // Rule 148(d), operator request 2026-11-18: the polygon picker offers areas,
+  // buildings and rooms; the racks and junction boxes devices sit in are listed
+  // under their room — each its own entry, only ones a device names.
+  it("lists racks and junction boxes under their room, each its own entry, only those devices name", () => {
+    const loc = (c: Record<string, string>) => ({ area: null, building: null, floor: null, room: null, rack: null, junctionBox: null, ...c });
+    const data = {
+      fortigate: { location: loc({ building: "Shop", room: "Closet", rack: "Rack 1" }) },
+      switches: [
+        { location: loc({ building: "Shop", floor: "2", room: "Closet", rack: "Rack 2", junctionBox: "JB 1" }) },
+        { location: loc({ building: "Shop", room: "Closet", rack: "rack 1" }) },
+        { location: loc({ building: "Shop", room: "Closet", rack: "A3", junctionBox: "East" }) },
+      ],
+      aps: [{ location: loc({ building: "Shop", room: "Office" }) }],
+      endpoints: [],
+    };
+    const h = P._holdersFromData(data);
+    const closet = Object.keys(h).find((k) => k.includes("closet"))!;
+    expect(h[closet].map((x: any) => x.label)).toEqual(["Rack 1", "Rack 2", "Rack A3", "JB 1", "Junction box East"]);
+    expect(Object.keys(h)).toHaveLength(1); // the Office has no rack or box
+    const c = P._pickerCodes(loc({ building: "Shop", floor: "2", room: "Closet", rack: "Rack 2", junctionBox: "JB 1" }));
+    expect([c.floor, c.rack, c.junctionBox]).toEqual([null, null, null]);
+    expect(c.room).toBe("Closet");
+  });
   it("a corner drag moves only that corner: the opposite one stays put", () => {
     const start = { cx: 100, cy: 200, sx: 2, sy: 0.5, rot: 30 };
     const corners = [[0, 0], [1000, 0], [1000, 500], [0, 500]];

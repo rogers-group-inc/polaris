@@ -123,7 +123,7 @@ interactive, never a code write) and padded in screen pixels, so `zoomend` redra
 `drawFloor` sorts drawn polygons and outlines by SCREEN area, largest first, so a smaller shape
 is always on top; anything that moves a device (`dragend`, `place`, `removePlacement`) redraws
 its floor rather than one marker so the outlines follow.
-**Room and junction-box polygons are containers** (rule 148(b)): `isContainer`, `containerFor` /
+**Room and junction-box polygons are containers** (rule 148(b); the picker draws only areas, buildings and rooms since 2026-11-18 and lists a room's occupied racks / junction boxes under it, unpickable — rule 148(d), `holdersFromData` / `pickerCodes`): `isContainer`, `containerFor` /
 `containedIn` per floor draw (the innermost container holding the placement), `addMarker` skips a
 contained device while viewing and marks it `.is-contained` (faint) while editing, `devCenter` ends
 its links at `polygonMiddle`. A draw creates the Room view (`createContainerView` → `ctx.createView`)

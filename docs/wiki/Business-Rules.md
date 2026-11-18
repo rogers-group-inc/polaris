@@ -3290,10 +3290,12 @@ a Topology view, a device you drop inside a polygon takes that group's `a:` / `b
 codes is kept. A device placed outside every polygon keeps its codes. Writing descriptions
 needs Assets Read-Write on each device, and each change is logged like an Edit Asset save.
 
-Polygons stand for areas, buildings, rooms and junction boxes (the floor comes from the floor a
-device is placed on, so the polygon picker offers no floors), and a save changes only the levels
+Polygons stand for areas, buildings and rooms (the floor comes from the floor a device is placed
+on, so the polygon picker offers no floors). Under each room the picker lists the racks and
+junction boxes its devices are in, each on its own line, as information only: they are placed in
+the room's Room view, not drawn. A save changes only the levels
 that the polygon and the floor layer set: a building polygon leaves a device's room as it is, and
-no polygon changes its rack. A room or junction-box polygon can have its own Room view (Polaris
+no polygon changes its rack. A room polygon (or a junction-box polygon drawn before 2026-11-18) can have its own Room view (Polaris
 asks when you draw it); while it does, the devices inside it are hidden on the map while viewing
 and a double-click opens the view. Deleting that Room view asks whether to remove the shape too;
 kept, the shape gets the view's devices back inside it. A Rack
