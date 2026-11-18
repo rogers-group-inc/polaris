@@ -628,6 +628,37 @@ devices — <host — check>, …`; mixed conditions keep `<name>: 3 path checks
 the same sentence, so an update states the current size rather than "N still affected". An
 operator's own Alert text replaces all of this, as before; the email subject is unchanged.
 
+### Rule 75(a) — a member resetting is not an email (2026-11-18)
+
+The 2026-10-15 cadence mailed a mid-alert recovery as an `[UPDATED]` (`−pc-01`). In practice
+that was most of the update traffic: a flapping group sent "pc-01 recovered" emails all day
+while the alert itself was still open and nothing new was wrong. The operator asked for the
+opposite: for a grouped alert, send nothing when ONE member resets; only when ALL of them have
+reset (the alert's own Resolved).
+
+So the queue still records the recovery — `releaseGroupMember` still queues kind `"recovered"`,
+refreshes the stored context, and rewrites the alert's message, members, count and severity, so
+the alert page and the next email are accurate — but `releaseDueGroupSends` only claims and sends
+a queue that `hasNewFault` passes (it holds a `"joined"` or `"returned"` change). A queue of
+recoveries alone is left standing, unclaimed, with `nextUpdateDueAt` still in the past: the next
+join's update goes out at once and names the recoveries beside it ("pc-03 joined this alert;
+pc-01 recovered"), and the joined-then-recovered collapse in `mergeGroupChanges` keeps working.
+Such a row stays due every tick, so the pass reads `id` + `pendingChanges` first and loads the
+full row (context, members) only for alerts that will send — the extra read is bounded by live
+grouped alerts, not fleet size.
+
+Rejected: not queueing recoveries at all. It would lose the recovery from the next real update
+and break the joined→recovered collapse (a device that joined and recovered inside one interval
+would be mailed as "joined"). Also rejected: pushing `nextUpdateDueAt` on by an interval when
+nothing is sendable — that would delay the next join's update for no email saved.
+
+Unchanged: severity-band changes still send at once; the last member recovering clears the alert
+through `recover()` → `fireReset` exactly as before; an alert with `sendIntervalSec` NULL (opened
+before the cadence) never queued anything, so a recovery there was already silent.
+
+Pinned by `hasNewFault` in `tests/unit/alertGroups.test.ts` and the "rule 75(a)" cases in
+`tests/integration/alertGroupUpdateCadence.test.ts`.
+
 ### Rule 75 — the invariant as stated in full until 2026-09-30
 
 Moved here verbatim when this branch caught up with the 2026-09-22 restructure and the invariant in `invariants-30-43.md` was cut back to the contract shape.

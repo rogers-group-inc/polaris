@@ -3,7 +3,8 @@
  *
  * Business rule 75, the update cadence and the per-check automation fold:
  *  - after a grouped alert's first send, a device that joins or recovers is
- *    not emailed the tick it happens — it is queued (`pendingChanges`) and ONE
+ *    not emailed the tick it happens; a recovery alone is never emailed
+ *    (rule 75(a)) — it rides the next join's update, or the Resolved — it is queued (`pendingChanges`) and ONE
  *    [UPDATED] send names it when `nextUpdateDueAt` passes, one polling
  *    interval after the previous send;
  *  - several changes inside one interval are one update;
@@ -135,9 +136,10 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(await deliveries(ruleId)).toBe(2);
   });
 
-  it("a device recovering mid-alert is an update too, and the stored context drops it", async () => {
+  it("a device recovering mid-alert sends nothing on its own (rule 75(a)); the next join's update names it", async () => {
     await seedSwitch("a", true);
     const b = await seedSwitch("b", true);
+    const c = await seedSwitch("c", false);
     const { ruleId } = await seedGroup("automation", poeTrigger);
     await openAndRelease(ruleId);
     expect(await deliveries(ruleId)).toBe(1);
@@ -147,12 +149,39 @@ d("grouped alert updates go at most once per polling interval (business rule 75)
     expect(await deliveries(ruleId)).toBe(1);
     const mid = await liveAlert(ruleId);
     const queued = mid.pendingChanges as unknown as PendingGroupChanges;
-    expect(queued.changes.every((c) => c.kind === "recovered")).toBe(true);
+    expect(queued.changes.every((x) => x.kind === "recovered")).toBe(true);
     expect((mid.templateCtx as Record<string, string>)["dimension"]).not.toContain(`${HOST}-b`);
 
+    // Due, but only recoveries are queued: no [UPDATED], and the queue stays.
+    await expire(ruleId, "nextUpdateDueAt");
+    await evaluateAllNotificationRules();
+    expect(await deliveries(ruleId)).toBe(1);
+    expect((await liveAlert(ruleId)).pendingChanges).not.toBeNull();
+
+    // A new fault is news: ONE update, naming the join and the recovery.
+    await setPoe(c, "fault");
+    await evaluateAllNotificationRules();
     await expire(ruleId, "nextUpdateDueAt");
     await evaluateAllNotificationRules();
     expect(await deliveries(ruleId)).toBe(2);
+    expect((await liveAlert(ruleId)).pendingChanges).toBeNull();
+  });
+
+  it("the last member recovering still ends the alert", async () => {
+    const a = await seedSwitch("a", true);
+    const b = await seedSwitch("b", true);
+    const { ruleId } = await seedGroup("automation", poeTrigger);
+    await openAndRelease(ruleId);
+
+    await setPoe(b, "delivering");
+    await evaluateAllNotificationRules();
+    await expire(ruleId, "nextUpdateDueAt");
+    await evaluateAllNotificationRules();
+    expect(await deliveries(ruleId)).toBe(1);
+
+    await setPoe(a, "delivering");
+    await evaluateAllNotificationRules();
+    expect(await prisma.notification.count({ where: { ruleId, cleared: false } })).toBe(0);
   });
 
   it("several changes inside one interval are one update", async () => {

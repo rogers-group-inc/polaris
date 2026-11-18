@@ -436,6 +436,16 @@ export interface PendingGroupChanges {
 }
 
 /**
+ * Business rule 75(a): is anything in this queue worth an [UPDATED] email?
+ * Only a NEW fault is — a component that joined or came back. Recoveries ride
+ * along with the next such update (or end in the alert's own Resolved when the
+ * last one goes), but a queue holding nothing else sends nothing.
+ */
+export function hasNewFault(queued: PendingGroupChanges | null | undefined): boolean {
+  return Array.isArray(queued?.changes) && queued.changes.some((c) => c.kind !== "recovered");
+}
+
+/**
  * The next value of `Notification.pendingChanges` after `incoming` (and,
  * when this change re-opened an acknowledged alert, who had acknowledged it),
  * or null when there is nothing new to queue — the column is then left alone.

@@ -12,7 +12,7 @@ import { triggerSummary, pathConditionPhrase, recoveredConditionSuffix } from ".
 import { sensorReadingDisplay } from "../alertChartService.js";
 import { resolveAssetCadenceSec } from "../notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, sameAssetDownAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "../notificationService.js";
-import { isPathMetric, type Trigger, type RuleScope, type AutomationAction, type RuleActionCarrier, expandResetActions, parseEscalationFired, severityRank, type AlertMember, type GroupChange, classifyGroupChanges, describeGroupChanges, ruleGroupsByAsset, alertScopeOf, groupKeyOf, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, type SpanCounts, memberMatches, queueGroupChanges, refreshMemberContext, type PendingGroupChanges, mergeMembers, markMemberLeft, activeMembers, groupSeverity, primaryMember, renderMemberList, forecastLevelsOf, type ForecastLevel, scopeIsUnconstrained, isDownDetectionTrigger } from "../notificationTypes.js";
+import { isPathMetric, type Trigger, type RuleScope, type AutomationAction, type RuleActionCarrier, expandResetActions, parseEscalationFired, severityRank, type AlertMember, type GroupChange, classifyGroupChanges, describeGroupChanges, ruleGroupsByAsset, alertScopeOf, groupKeyOf, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, type SpanCounts, memberMatches, queueGroupChanges, refreshMemberContext, type PendingGroupChanges, hasNewFault, mergeMembers, markMemberLeft, activeMembers, groupSeverity, primaryMember, renderMemberList, forecastLevelsOf, type ForecastLevel, scopeIsUnconstrained, isDownDetectionTrigger } from "../notificationTypes.js";
 // Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame } from "../dependencyTreeService.js";
@@ -806,7 +806,8 @@ async function firstSendHoldSec(rule: DbRule, reading: Reading): Promise<number>
  * that has changes queued in `pendingChanges` — devices or components that
  * joined, recovered or came back — and whose `nextUpdateDueAt` has passed gets
  * ONE [UPDATED] send naming them all, and its next update moves a whole
- * interval on. So however many hosts come and go, the reader gets at most one
+ * interval on. A queue of recoveries alone sends nothing (rule 75(a)): it waits
+ * for a join or a return to ride along with, or for the alert's Resolved. So however many hosts come and go, the reader gets at most one
  * email per polling interval of the reading that opened the alert.
  *
  * Two indexed queries (the partial indexes on held and on due rows); nothing
@@ -872,19 +873,33 @@ export async function releaseDueGroupSends(rulesById: Map<string, DbRule>, pendi
     });
   }
 
-  const updates = await prisma.notification.findMany({
+  // Business rule 75(a): a member recovering is not worth an email on its own
+  // — the reader hears about the group again when something new is wrong (a
+  // join or a return) or when the LAST member recovers (the Resolved). A queue
+  // holding only recoveries is left standing, unclaimed, so the next real
+  // update still names what came good in the meantime. Such a row stays due on
+  // every tick, so the queue is read alone first and the full row (context,
+  // members) only for the alerts that will actually send.
+  const dueQueues = await prisma.notification.findMany({
     where: {
       cleared: false,
       firstSentAt: { not: null },
       pendingChanges: { not: Prisma.DbNull },
       OR: [{ nextUpdateDueAt: null }, { nextUpdateDueAt: { lte: now } }],
     },
-    select,
+    select: { id: true, pendingChanges: true },
   });
+  const sendable = dueQueues
+    .filter((q) => !pending.has(q.id) && hasNewFault(q.pendingChanges as unknown as PendingGroupChanges | null))
+    .map((q) => q.id);
+  const updates = sendable.length
+    ? await prisma.notification.findMany({ where: { id: { in: sendable }, cleared: false }, select })
+    : [];
   for (const n of updates) {
     // A send this pass already owns the alert (its first release just above).
     if (pending.has(n.id)) continue;
     const queued = n.pendingChanges as unknown as PendingGroupChanges | null;
+    if (!hasNewFault(queued)) continue;
     // Claimed by clearing the queue: an overlapping pass sees nothing to send.
     const claimed = await prisma.notification.updateMany({
       where: { id: n.id, cleared: false, pendingChanges: { not: Prisma.DbNull } },
@@ -1712,9 +1727,11 @@ async function releaseGroupMember(
       // at MAX_GROUP_MEMBERS). One indexed query, only on such an alert.
       const counts = members.some((m) => m.assetId) ? await spanCounts(rule, st.notificationId, [], st.id) : null;
       const message = regroupedMessage(rule, members, counts);
-      // Paced (business rule 75): the recovery is news for the next update —
-      // queued, and the stored context refreshed so that update names the
-      // alert as it now stands. Held: the first send will simply not name it.
+      // Paced (business rule 75): the recovery is queued for the next update,
+      // and the stored context refreshed so that update names the alert as it
+      // now stands. It never sends one on its own (rule 75(a)) — only a join
+      // or a return does, or the last member's Resolved. Held: the first send
+      // will simply not name it.
       const paced = !firstSendHeld(row) && row.sendIntervalSec != null;
       const queued = paced && departing
         ? queueGroupChanges(row.pendingChanges, [{ label: departing.label || departing.key, kind: "recovered" }])
