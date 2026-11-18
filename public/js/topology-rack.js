@@ -1102,14 +1102,23 @@
         var cur = locById[p.assetId] || null;
         var want = Object.assign({}, region);
         want.rack = (rackById(p.rackId) || {}).name || null;
+        // Rule 150(b) (operator request 2026-11-18): the U its bottom sits
+        // on; a device beside the rack (rule 179) has none.
+        want.unit = p.mount === "side" ? null : String(p.startU);
         want.junctionBox = null;
-        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); }).concat(["rack", "junctionBox"]);
+        var levels = CODE_KEYS.filter(function (k) { return String(region[k] || "").trim(); }).concat(["rack", "unit", "junctionBox"]);
         var same = levels.every(function (k) { return String(want[k] || "").trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
         if (!want.rack || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
         ctx.stageLocationCode(p.assetId, want, { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
-      Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
+      // A device that left this part for the OTHER one (a rack <-> a junction
+      // box) keeps the change that part staged: un-staging it here ran after
+      // the other part's restage and wiped the move (found 2026-11-18).
+      Object.keys(stagedAssets).forEach(function (id) {
+        if (now[id] || (ctx.placedElsewhere && ctx.placedElsewhere(id))) return;
+        ctx.stageLocationCode(id, null);
+      });
       stagedAssets = now;
     }
     function changed() {

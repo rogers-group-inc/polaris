@@ -1870,7 +1870,7 @@
   }
   function _codesText(c) {
     if (!c) return "no codes";
-    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]]
+    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["unit", "u"], ["junctionBox", "jb"]]
       .filter(function (p) { return c[p[0]]; })
       .map(function (p) { return p[1] + ":" + c[p[0]]; });
     return parts.length ? parts.join(" ") : "no codes";
@@ -5147,7 +5147,7 @@
   }
   function _locationText(loc) {
     if (!loc) return "";
-    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
+    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["unit", "u"], ["junctionBox", "jb"]];
     return keys.filter(function (k) { return loc[k[0]]; }).map(function (k) { return k[1] + ":" + loc[k[0]]; }).join(" ");
   }
   function _topologyAssetCardHtml(data) {

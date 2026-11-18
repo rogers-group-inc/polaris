@@ -166,6 +166,10 @@ describe("racks and rack placements", () => {
 describe("sanitizeLocationCodeChanges", () => {
   it("parses a valid body and rejects duplicates and codeless changes", () => {
     expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { building: "Plant" } }])[0].codes.building).toBe("Plant");
+    // Rule 150(b): a rack unit is a whole number from 1 to 60.
+    expect(sanitizeLocationCodeChanges([{ assetId: A1, codes: { rack: "R1", unit: "12" }, levels: ["rack", "unit"] }])[0].codes.unit).toBe("12");
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { rack: "R1", unit: "top" }, levels: ["rack", "unit"] }]))).toBe(400);
+    expect(status(() => sanitizeLocationCodeChanges([{ assetId: A1, codes: { rack: "R1", unit: "61" }, levels: ["rack", "unit"] }]))).toBe(400);
     expect(status(() => sanitizeLocationCodeChanges([]))).toBe(400);
     expect(status(() => sanitizeLocationCodeChanges([
       { assetId: A1, codes: { building: "a" } },

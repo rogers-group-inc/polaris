@@ -175,7 +175,11 @@ export function autoPlaceRack(
     claimed.add(rack.id);
     for (const d of todo) {
       let spot: { face: "front" | "rear"; u: number } | null = null;
-      for (const face of ["front", "rear"] as const) {
+      // Rule 150(b): a device whose description names its rack unit (u:)
+      // goes back on that U when it is free on the front.
+      const want = Number(String(d.location?.unit ?? "").trim());
+      if (Number.isInteger(want) && want >= 1 && want <= rack.units && free(rack, "front", want)) spot = { face: "front", u: want };
+      if (!spot) for (const face of ["front", "rear"] as const) {
         for (let u = 1; u <= rack.units && !spot; u++) if (free(rack, face, u)) spot = { face, u };
         if (spot) break;
       }

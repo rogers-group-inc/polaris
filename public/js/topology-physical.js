@@ -1300,7 +1300,7 @@
           var name = dlg.overlay.querySelector("#topo-pg-name").value.trim().replace(/\s+/g, " ");
           var parentIdx = Number(dlg.overlay.querySelector("#topo-pg-parent").value);
           if (!name) { ctx.toast("Give the new group a name", "error"); return; }
-          if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
+          if (/(?:^|\s)(?:jb|ra|a|b|f|r|u):/i.test(name)) { ctx.toast("A group name can't contain another location code", "error"); return; }
           var parent = parentIdx >= 0 ? normCodes(groups[parentIdx]) : emptyCodes();
           var fieldIdx = CODE_FIELDS.findIndex(function (f) { return f.field === field; });
           if (fieldIdx <= groupDepth(parent)) {
@@ -2639,7 +2639,7 @@
       var input = dlg.overlay.querySelector("#tl-name");
       function apply() {
         var name = input.value.trim().replace(/\s+/g, " ");
-        if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(name)) { ctx.toast("A floor name can't contain another location code", "error"); return; }
+        if (/(?:^|\s)(?:jb|ra|a|b|f|r|u):/i.test(name)) { ctx.toast("A floor name can't contain another location code", "error"); return; }
         var clash = name && state.layers.some(function (x) { return x.level !== level && (x.name || "").toLowerCase() === name.toLowerCase(); });
         if (clash) { ctx.toast("Another layer is already called " + name, "error"); return; }
         if (isNew) state.layers.push({ level: level, name: name, background: null });

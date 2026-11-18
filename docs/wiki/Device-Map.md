@@ -300,9 +300,10 @@ under a heading per group, with devices that have no location last.
 While editing the map (**Edit Map**), right-click a device to edit its
 description in place; viewing the map never changes an asset. That is the quick way
 to put it into a location box. The codes are `a:` area, `b:` building, `f:`
-floor, `r:` room, `ra:` rack and `jb:` junction box, written anywhere in the
-description (`a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305`); each value
-runs until the next code. A rack sits inside a room, and a junction box can sit
+floor, `r:` room, `ra:` rack, `u:` rack unit and `jb:` junction box, written
+anywhere in the description (`a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305`);
+each value runs until the next code. `u:` is the U a racked device sits on; the
+Room view writes it and no location box is drawn for it. A rack sits inside a room, and a junction box can sit
 inside a rack. Each level is a box inside the one above it, and the editor shows
 that nesting as a small diagram in the map's own box colours. Skip any level
 you don't need: `b:Shop f:2` puts a device in floor 2 of Shop with no area.

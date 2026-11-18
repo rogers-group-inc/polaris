@@ -291,13 +291,20 @@
         var want = Object.assign({}, region);
         want.junctionBox = (wallById(p.wallId) || {}).name || null;
         want.rack = null;
-        var levels = CODE_KEYS.slice(0, 4).filter(function (k) { return String(region[k] || "").trim(); }).concat(["junctionBox", "rack"]);
+        want.unit = null;
+        var levels = CODE_KEYS.slice(0, 4).filter(function (k) { return String(region[k] || "").trim(); }).concat(["junctionBox", "rack", "unit"]);
         var same = levels.every(function (k) { return String(want[k] || "").trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
         if (!want.junctionBox || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
         ctx.stageLocationCode(p.assetId, want, { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
-      Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
+      // A device that left this part for the OTHER one (a rack <-> a junction
+      // box) keeps the change that part staged: un-staging it here ran after
+      // the other part's restage and wiped the move (found 2026-11-18).
+      Object.keys(stagedAssets).forEach(function (id) {
+        if (now[id] || (ctx.placedElsewhere && ctx.placedElsewhere(id))) return;
+        ctx.stageLocationCode(id, null);
+      });
       stagedAssets = now;
     }
 
