@@ -203,7 +203,7 @@
     var nodeById = {};
     var edges = [];
     if (R) {
-      R.buildTopologyElements(data, { shownTypes: ctx.shownTypes }).forEach(function (el) {
+      R.buildTopologyElements(data, { shownTypes: ctx.shownTypes, withStandbys: true }).forEach(function (el) {
         if (!el.data.source) nodeById[el.data.id] = el.data;
         else edges.push(el.data);
       });

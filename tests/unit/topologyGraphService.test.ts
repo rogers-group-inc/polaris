@@ -215,6 +215,24 @@ describe("buildSiteTopology", () => {
     expect(t.regionConflicts).toEqual([]);
   });
 
+  // Operator request 2026-11-18: the standby is racked in the Room view, so
+  // the payload lists this cluster's standby member(s) — never as a node.
+  it("lists this cluster's HA standby by its member stamp, apart from the graph", async () => {
+    stubbed(prisma.asset.findFirst).mockResolvedValue(FG);
+    standbys = [{ id: "fg-b", hostname: "HQ-FW-B", serialNumber: "FG100FTK0002", manufacturer: "Fortinet", model: "FG-100F",
+      status: "active", monitored: false, description: "b:HQ r:Closet ra:R1",
+      fortinetTopology: { role: "fortigate", haRole: "secondary", haPeerSerial: "FG100FTK0001", deviceName: "FMG-HQ", haMemberStatus: "standby" } }];
+    const t: any = await buildSiteTopology("fg");
+    expect(t.haStandbys).toHaveLength(1);
+    expect(t.haStandbys[0]).toMatchObject({ id: "fg-b", hostname: "HQ-FW-B", assetType: "firewall", haMemberStatus: "standby", monitorHealth: null });
+    expect(t.haStandbys[0].location).toMatchObject({ building: "HQ", room: "Closet", rack: "R1" });
+    const q = stubbed(prisma.asset.findMany).mock.calls.map((c) => c[0]).find((a: any) => JSON.stringify(a?.where ?? {}).includes("haPeerSerial"));
+    const keys = JSON.stringify(q.where);
+    expect(keys).toContain("FG100FTK0001");
+    expect(keys).toContain("FMG-HQ");
+    expect(q.where.id).toEqual({ not: "fg" });
+  });
+
   it("finds its children by the controller stamp — serial, FMG device name and hostname", async () => {
     stubbed(prisma.asset.findFirst).mockResolvedValue(FG);
     await buildSiteTopology("fg");

@@ -141,7 +141,7 @@
     // Devices that can be mounted: the same element set as the other modes.
     var nodeById = {};
     var locById = {};
-    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes }) : []).forEach(function (el) {
+    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes, withStandbys: true }) : []).forEach(function (el) {
       var d = el.data;
       if (!d || d.source || d.isLocGroup || d.isPortal) return;
       if (d.role === "lldp" || d.role === "fcport" || d.role === "wireless-station" || d.role === "remote-asset") return;

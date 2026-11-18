@@ -110,6 +110,28 @@
   function buildTopologyElements(data, opts) {
     if (!data) return [];
     var elements = [];
+    // opts.withStandbys (the Room view — topology-room / -rack / -wall): the
+    // cluster's HA standby FortiGate(s) as nodes with no links, so they can be
+    // racked (operator request 2026-11-18). Never on a graph: the primary
+    // stands for the cluster there.
+    if (opts && opts.withStandbys) {
+      (data.haStandbys || []).forEach(function (s) {
+        if (!s || !s.id) return;
+        elements.push({
+          data: Object.assign({
+            id: s.id,
+            label: s.hostname || "FortiGate standby",
+            role: "fortigate-standby",
+            assetId: s.id,
+            assetType: "firewall",
+            haStandby: 1,
+            nodeColor: fortinetNodeColor(s),
+            iconUrl: s.iconUrl || null,
+            hasIcon: s.iconUrl ? 1 : 0,
+          }, locationData(s.location)),
+        });
+      });
+    }
 
     if (data.fortigate) {
       elements.push({
