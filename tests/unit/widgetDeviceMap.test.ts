@@ -573,6 +573,7 @@ describe("Device Map widget — the site's saved views (Layer 2 / Topology / Roo
   let savedArgs: unknown[] = [];
   let stored: Array<[string, string, unknown]> = [];
   let seq = 0;
+  let eyeClicks: unknown[] = [];
   const original = { apply: null as unknown };
 
   beforeAll(() => {
@@ -584,8 +585,19 @@ describe("Device Map widget — the site's saved views (Layer 2 / Topology / Roo
       s.setAttribute("src", src);
       doc.head.appendChild(s);
     }
+    // The Topology canvas offers an edit-only button and its view-mode eye
+    // (topology-physical.js → cornerButtons); the Room canvas offers none.
     const fake = (mode: string) => ({
-      render: (_host: unknown, ctx: Ctx) => { mounted.push({ mode, ctx }); return { destroy() {}, resize() {}, viewState: () => ({ layer: -1 }) }; },
+      render: (_host: unknown, ctx: Ctx) => {
+        mounted.push({ mode, ctx });
+        return {
+          destroy() {}, resize() {}, viewState: () => ({ layer: -1 }),
+          ...(mode === "topology" ? { cornerButtons: () => [
+            { id: "topology-background", label: "Background", editOnly: true, onClick: () => eyeClicks.push("background") },
+            { id: "topology-visibility", label: "Show on the map", onClick: (a: unknown) => eyeClicks.push(a) },
+          ] } : {}),
+        };
+      },
     });
     w().PolarisTopologyPhysical = fake("topology");
     w().PolarisTopologyRoom = fake("room");
@@ -596,7 +608,7 @@ describe("Device Map widget — the site's saved views (Layer 2 / Topology / Roo
     R.applySavedPositions = (_cy: unknown, saved: unknown) => { savedArgs.push(saved); return { pinned: {}, restored: [], placed: [] }; };
   });
   beforeEach(() => {
-    mounted = []; savedArgs = []; stored = [];
+    mounted = []; savedArgs = []; stored = []; eyeClicks = [];
     topology.mockResolvedValue(PAYLOAD);
     w().PolarisDashboard = {
       isEditing: () => false,
@@ -657,6 +669,25 @@ describe("Device Map widget — the site's saved views (Layer 2 / Topology / Roo
     pick("room1");
     await vi.waitFor(() => expect(mounted).toHaveLength(2), { timeout: 2000 });
     expect(mounted[1].mode).toBe("room");
+    unmount();
+  });
+
+  // Operator request 2026-11-18: the eye (show / hide) on the dashboard and /dash.
+  it("a Topology view gets the canvas's eye in the bar; Layer 2 and Room views have none", async () => {
+    w().POLARIS_DASH_LOCAL = true;
+    const { el, pick, unmount } = render();
+    await vi.waitFor(() => expect(cyOptions.length).toBeGreaterThan(0), { timeout: 2000 });
+    const eye = () => el.querySelector(".devmap-topo-eye") as unknown as { hidden: boolean; title: string; click: () => void };
+    expect(eye().hidden).toBe(true);
+    pick("topo1");
+    await vi.waitFor(() => expect(mounted).toHaveLength(1), { timeout: 2000 });
+    expect(eye().hidden).toBe(false);
+    expect(eye().title).toBe("Show on the map");
+    eye().click();
+    expect(eyeClicks).toEqual([eye()]); // the view-mode button, never the edit-only one
+    pick("room1");
+    await vi.waitFor(() => expect(mounted).toHaveLength(2), { timeout: 2000 });
+    expect(eye().hidden).toBe(true);
     unmount();
   });
 
