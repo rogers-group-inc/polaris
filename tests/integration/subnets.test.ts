@@ -375,8 +375,14 @@ d("GET /api/v1/subnets/:id/ips", () => {
     const withRes = await prisma.asset.create({
       data: { hostname: "PANEL-LINK-A", assetType: "server", status: "active", ipAddress: "10.70.0.2" },
     });
+    // Disabled, not active: rule 11 auto-creates a dns_resolved reservation
+    // (fire-and-forget) for an ELIGIBLE asset in a known subnet, which raced
+    // this row's `reservation: null` and failed CI about half the time.
+    // Disabled is ineligible yet keeps its address (decommissioned would not —
+    // rule 40(k) strips it), and the listing links an asset by IP whatever its
+    // status, so the "linked asset, no reservation" row is still exercised.
     const bare = await prisma.asset.create({
-      data: { hostname: "PANEL-LINK-B", assetType: "server", status: "active", ipAddress: "10.70.0.3" },
+      data: { hostname: "PANEL-LINK-B", assetType: "server", status: "disabled", ipAddress: "10.70.0.3" },
     });
     try {
       const resp = await agent.get(`/api/v1/subnets/${subnetId}/ips?page=1&pageSize=4`);
