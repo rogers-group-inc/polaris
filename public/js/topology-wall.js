@@ -141,7 +141,7 @@
     // Devices that can be mounted: the same element set as the other modes.
     var nodeById = {};
     var locById = {};
-    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes }) : []).forEach(function (el) {
+    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes, withStandbys: true }) : []).forEach(function (el) {
       var d = el.data;
       if (!d || d.source || d.isLocGroup || d.isPortal) return;
       if (d.role === "lldp" || d.role === "fcport" || d.role === "wireless-station" || d.role === "remote-asset") return;
@@ -291,13 +291,20 @@
         var want = Object.assign({}, region);
         want.junctionBox = (wallById(p.wallId) || {}).name || null;
         want.rack = null;
-        var levels = CODE_KEYS.slice(0, 4).filter(function (k) { return String(region[k] || "").trim(); }).concat(["junctionBox", "rack"]);
+        want.unit = null;
+        var levels = CODE_KEYS.slice(0, 4).filter(function (k) { return String(region[k] || "").trim(); }).concat(["junctionBox", "rack", "unit"]);
         var same = levels.every(function (k) { return String(want[k] || "").trim().toLowerCase() === String((cur && cur[k]) || "").trim().toLowerCase(); });
         if (!want.junctionBox || same) { ctx.stageLocationCode(p.assetId, null); return; }
         var d = nodeById[p.assetId];
         ctx.stageLocationCode(p.assetId, want, { name: d ? d.label : p.assetId, from: cur || {}, levels: levels });
       });
-      Object.keys(stagedAssets).forEach(function (id) { if (!now[id]) ctx.stageLocationCode(id, null); });
+      // A device that left this part for the OTHER one (a rack <-> a junction
+      // box) keeps the change that part staged: un-staging it here ran after
+      // the other part's restage and wiped the move (found 2026-11-18).
+      Object.keys(stagedAssets).forEach(function (id) {
+        if (now[id] || (ctx.placedElsewhere && ctx.placedElsewhere(id))) return;
+        ctx.stageLocationCode(id, null);
+      });
       stagedAssets = now;
     }
 
@@ -411,6 +418,27 @@
       }
       if (!g.moved) return;
       var wall = wallById(g.p.wallId);
+      // A device dragged out over a rack (operator request 2026-11-18): it
+      // waits in its spot here while the rack shows where it would land;
+      // releasing there racks it (endGesture).
+      if (g.kind === "move" && g.p.kind === "asset" && ctx.hoverOther) {
+        // Near the Room view's left / right edge the room scrolls, so a rack
+        // out of sight can be reached.
+        var scroller = strip.closest ? strip.closest(".topo-room-strip") : null;
+        if (scroller) {
+          var sr = scroller.getBoundingClientRect();
+          if (e.clientX < sr.left + 48) scroller.scrollLeft -= 24;
+          else if (e.clientX > sr.right - 48) scroller.scrollLeft += 24;
+        }
+        g.overOther = !boardAt(e.clientX, e.clientY) && ctx.hoverOther(e.clientX, e.clientY);
+        if (g.overOther) {
+          g.p.points = g.orig;
+          redraw();
+          var away = strip.querySelector('[data-item="' + g.p.id + '"]');
+          if (away) away.classList.add("is-leaving");
+          return;
+        }
+      }
       if (g.kind === "move") {
         var b = bbox(g.orig);
         dx = Math.max(-b.x0, Math.min(wall.width - b.x1, dx));
@@ -426,10 +454,19 @@
       var el = strip.querySelector('[data-item="' + g.p.id + '"]');
       if (el) el.classList.toggle("is-refused", !!hit);
     });
-    function endGesture() {
+    function endGesture(e) {
       if (!gesture) return;
       var g = gesture;
       gesture = null;
+      if (ctx.hoverOther) ctx.hoverOther(null, null);
+      if (g.overOther && e && e.type === "pointerup") {
+        g.p.points = g.orig;
+        // Racked there, taken out of here (takeFromElsewhere → removeAsset).
+        if (ctx.dropOnOther && ctx.dropOnOther(g.p.assetId, e.clientX, e.clientY)) return;
+        redraw();
+        return;
+      }
+      if (g.overOther) { g.p.points = g.orig; redraw(); return; }
       if (!g.moved) {
         if (g.addedCorner) { g.p.points = g.orig; }
         selectItem(g.p);

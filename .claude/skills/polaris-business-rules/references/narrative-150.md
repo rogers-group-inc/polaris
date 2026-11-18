@@ -24,3 +24,13 @@ It writes no description: every device it places already carries the codes. That
 Rejected: filling on every open (brings back removed devices); placing devices with no rack or junction box code on a room-level view (the operator named racks and junction boxes as the groups).
 
 Rejected: a separate Region table synced from descriptions (a second source of truth that could drift from, or overwrite, the codes); letting Topology / Layer 2 views carry a region (the operator's call).
+
+### Rule 150(b) — the U a device sits on (2026-11-18)
+
+"when a device is in a rack, also update the desc with the u number"
+
+A rack placement already wrote `ra:`; the U was only in the view, so a description could not say where in the rack a device was, and a Room view filled from descriptions stacked every device from U1. The U is written as its own code, `u:`, after `ra:` — the bottom U the block sits on, the number the rack's rails show. It is a position, not a place: nothing groups by it, no box or region is drawn for it, and `LocationCodes.unit` is optional so the places-only code paths stay untouched. A value must be a whole number 1-60 (a rack holds at most 60 U). A device beside a rack or in a junction box has no U, so its `u:` is cleared.
+
+Found while checking it: a device moved from a junction box into a rack in one edit session lost the rack's staged codes, because the junction box's restage ran after the rack's and un-staged a device that had left it. A part now un-stages only a device no other part holds.
+
+Rejected: putting the U inside the rack value (`ra:R1/U32`), which would break every rack grouping and region lookup; writing the top U too (the height is the view's, and a block resized would rewrite descriptions for no placement change).

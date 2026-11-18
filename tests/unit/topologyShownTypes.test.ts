@@ -85,6 +85,22 @@ describe("buildTopologyElements shownTypes", () => {
   });
 });
 
+// Operator request 2026-11-18: the Room view lists the cluster's HA standby so
+// it can be racked; every graph keeps it out (the primary stands for it).
+describe("buildTopologyElements withStandbys", () => {
+  it("adds the standby as a linkless firewall node only when asked", () => {
+    const data: any = { ...payload(), haStandbys: [{ id: "fg-b", hostname: "FG-B", assetType: "firewall", monitored: false }] };
+    const ids = (els: any[]) => els.filter((e) => !e.data.source).map((e) => e.data.id);
+    expect(ids(R.buildTopologyElements(data, { shownTypes: ["switch"] }))).not.toContain("fg-b");
+    expect(ids(R.buildTopologyElements(data))).not.toContain("fg-b");
+    const els = R.buildTopologyElements(data, { shownTypes: ["switch"], withStandbys: true });
+    const node = els.find((e: any) => e.data.id === "fg-b");
+    expect(node.data).toMatchObject({ label: "FG-B", haStandby: 1, assetType: "firewall" });
+    expect(R.nodeAssetType(node.data)).toBe("firewall");
+    expect(els.some((e: any) => e.data.source === "fg-b" || e.data.target === "fg-b")).toBe(false);
+  });
+});
+
 describe("siteDeviceTypes", () => {
   it("lists firewall, router, switch, AP first, then endpoint types by count", () => {
     const data = payload();

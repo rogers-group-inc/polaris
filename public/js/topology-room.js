@@ -83,6 +83,17 @@
           var o = parts[other];
           if (o && o.removeAsset) o.removeAsset(assetId);
         },
+        // A device dragged out of this part onto the other (operator request
+        // 2026-11-18: junction box → rack): hover feedback, then the drop,
+        // which places it there and takes it out of here.
+        hoverOther: function (clientX, clientY) {
+          var o = parts[other];
+          return o && o.hintDropAt ? o.hintDropAt(clientX, clientY) : false;
+        },
+        dropOnOther: function (assetId, clientX, clientY) {
+          var o = parts[other];
+          return o && o.dropAt ? o.dropAt(assetId, clientX, clientY) : false;
+        },
       });
     }
     parts.rack = Rack ? Rack.render(strip.querySelector('[data-room-part="rack"]'), partCtx("rack")) : null;
@@ -96,7 +107,7 @@
 
     // Devices that can be placed: the same element set as the other modes.
     var nodeById = {};
-    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes }) : []).forEach(function (el) {
+    (R ? R.buildTopologyElements(data, { shownTypes: ctx.shownTypes, withStandbys: true }) : []).forEach(function (el) {
       var d = el.data;
       if (!d || d.source || d.isLocGroup || d.isPortal) return;
       if (d.role === "lldp" || d.role === "fcport" || d.role === "wireless-station" || d.role === "remote-asset") return;
@@ -129,7 +140,7 @@
         var d = nodeById[id];
         var t = R ? R.nodeAssetType(d) : "";
         var w = whereIs(id);
-        return { id: id, label: d.label || id, inUse: !!w, meta: w || String(t || "").replace(/_/g, " ") };
+        return { id: id, label: d.label || id, inUse: !!w, meta: w || String(t || "").replace(/_/g, " ") + (d.haStandby ? " · HA standby" : "") };
       }).sort(function (a, b) { return String(a.label).localeCompare(String(b.label), undefined, { numeric: true, sensitivity: "base" }); });
       return (editing ? items : "") + regionNote + (DL ? DL.html({
         title: "Device List",

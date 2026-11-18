@@ -25,7 +25,7 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { detectImageMagic } from "../utils/imageMagic.js";
 import { parseDxf, extentsOf, renderDxfSvg, dxfPreview, DxfError, DXF_UNIT_METRES, type DxfGeo, type DxfExtents } from "../utils/dxf.js";
 import { readImageSize } from "../utils/imageDimensions.js";
-import { isFloorNumber, locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
+import { isFloorNumber, isRackUnit, MAX_RACK_UNIT, locationCodeValueProblem, mergeLocationLevels, resolveEffectiveLocation, setLocationCodes, LOCATION_LEVELS, type LocationCodes, type LocationLevel } from "../utils/locationCodes.js";
 import { deleteLayoutsForView, countTopologyPlacements, viewLayoutPrefix } from "./topologyLayoutService.js";
 import { loadRegionIndex, resolveLocation, type RegionIndex } from "./regionTreeService.js";
 import { polygonsOverlap, doubleArea, type Point } from "../utils/wallGeometry.js";
@@ -413,7 +413,7 @@ export function sanitizeBackground(raw: unknown): { kind: "osm"; center: [number
   return bad('background.kind must be "osm" or "image"');
 }
 
-const CODE_FIELDS: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "rack", "junctionBox"];
+const CODE_FIELDS: Array<keyof LocationCodes> = ["area", "building", "floor", "room", "rack", "unit", "junctionBox"];
 
 /** Location codes of a polygon's group: at least one value, each writable. */
 function sanitizeLocationCodesObject(raw: unknown, what: string, allowEmpty = false): LocationCodes {
@@ -426,9 +426,11 @@ function sanitizeLocationCodesObject(raw: unknown, what: string, allowEmpty = fa
     if (typeof v !== "string") bad(`${what} ${f} must be a string`);
     const problem = locationCodeValueProblem(v as string);
     if (problem) bad(`${what} ${f} ${problem}`);
+    // Rule 150(b): a rack unit is a whole number.
+    if (f === "unit" && !isRackUnit(v as string)) bad(`${what} unit must be a whole number from 1 to ${MAX_RACK_UNIT}`);
     out[f] = (v as string).trim().replace(/\s+/g, " ");
   }
-  if (!allowEmpty && CODE_FIELDS.every((f) => out[f] === null)) bad(`${what} needs at least one location code`);
+  if (!allowEmpty && CODE_FIELDS.every((f) => (out[f] ?? null) === null)) bad(`${what} needs at least one location code`);
   return out;
 }
 

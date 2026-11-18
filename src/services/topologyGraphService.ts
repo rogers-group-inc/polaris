@@ -1957,7 +1957,52 @@ async function buildSiteTopologyAsWritten(siteId: string) {
       };
     });
 
+    // This cluster's HA standby member(s): never a node on the graph (the
+    // primary stands for the cluster, see standbyIds above), but a real box
+    // in a real rack — the Room view lists them so they can be racked
+    // (operator request 2026-11-18). Matched to THIS gate by the member stamp:
+    // the standby's haPeerSerial is the primary's serial, and both members
+    // carry the cluster's FMG device name.
+    const clusterKeys = [
+      ...(fgSerial ? [{ fortinetTopology: { path: ["haPeerSerial"], equals: fgSerial } }] : []),
+      ...(fgDeviceName ? [{ fortinetTopology: { path: ["deviceName"], equals: fgDeviceName } }] : []),
+    ];
+    const haStandbyRows = clusterKeys.length
+      ? await prisma.asset.findMany({
+          where: {
+            id: { not: fg.id },
+            assetType: "firewall",
+            status: { notIn: EXCLUDED_LIFECYCLE_STATUSES },
+            AND: [{ fortinetTopology: { path: ["haRole"], equals: "secondary" } }, { OR: clusterKeys }],
+          },
+          select: {
+            id: true, hostname: true, serialNumber: true, manufacturer: true, model: true,
+            status: true, monitored: true, description: true, fortinetTopology: true,
+          },
+          take: 8,
+        })
+      : [];
+    const haStandbys = haStandbyRows.map((s) => {
+      const topo = (s.fortinetTopology ?? null) as Record<string, unknown> | null;
+      return {
+        id: s.id,
+        hostname: s.hostname,
+        serial: s.serialNumber,
+        model: s.model,
+        status: s.status,
+        monitored: s.monitored,
+        // The roster's member health is the standby's only live signal
+        // (the cluster IP reaches the active member); no traffic light.
+        monitorHealth: null,
+        haMemberStatus: typeof topo?.haMemberStatus === "string" ? topo.haMemberStatus : null,
+        assetType: "firewall",
+        iconUrl: resolveIconUrl({ manufacturer: s.manufacturer, model: s.model, assetType: "firewall" }, iconCache),
+        location: nodeLocation(resolveEffectiveLocation({ description: s.description })),
+      };
+    });
+
     return {
+      haStandbys,
       fortigate: {
         id: fg.id,
         hostname: fg.hostname,

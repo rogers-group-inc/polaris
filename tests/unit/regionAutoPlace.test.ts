@@ -88,6 +88,15 @@ describe("autoPlaceRack", () => {
     expect(byAsset.sw3.rackId).toBe(r.containers[1].id);
   });
 
+  // Rule 150(b): a device whose description names its rack unit goes back on it.
+  it("racks a device on the U its u: names when that U is free, else the first free U", () => {
+    const racks: AutoRack[] = [{ id: "r1", name: "R1", units: 42, order: 0, face: "front" }];
+    const devs = [dev("a", { room: "MDF", rack: "R1", unit: "20" }), dev("b", { room: "MDF", rack: "R1", unit: "20" }), dev("c", { room: "MDF", rack: "R1", unit: "99" })];
+    const r = autoPlaceRack(L({ room: "MDF" }), racks, [], devs, RACK_OPTS);
+    const u = Object.fromEntries(r.placements.map((p) => [p.assetId, p.startU]));
+    expect(u).toEqual({ a: 20, b: 1, c: 2 });
+  });
+
   it("never moves what is already racked, and skips a device already placed", () => {
     const existing = [{ id: "x", kind: "asset" as const, assetId: "sw1", label: null, rackId: "r1", face: "front" as const, startU: 1, heightU: 2, fullDepth: true }];
     const racks: AutoRack[] = [{ id: "r1", name: "R1", units: 42, order: 0, face: "front" }];

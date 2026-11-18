@@ -4,8 +4,11 @@
  * Physical-location codes embedded in FortiSwitch/FortiAP admin descriptions,
  * e.g. "a:Mine b:Shop f:2 r:North Closet ra:R2 jb:112-305":
  *
- *   a: area    b: building    f: floor    r: room    ra: rack    jb: junction box
+ *   a: area    b: building    f: floor    r: room    ra: rack    u: rack unit    jb: junction box
  *
+ * `u:` (business rule 150(b), 2026-11-18) is the rack unit a racked device's
+ * bottom sits on, written by a Room view's rack. It is a POSITION, not a
+ * place: no region, location box or polygon is ever made of it.
  * Hierarchy (outermost first): area > building > floor > room > rack >
  * junction box. `ra:` was added 2026-11-10 (operator request); `r:` still
  * means room — a key matches only when the colon follows it directly, so
@@ -30,6 +33,8 @@ export type LocationCodes = {
   floor: string | null;
   room: string | null;
   rack: string | null;
+  /** The rack unit (`u:`), a whole number (rule 150(b)); optional so the places-only literals stay as they are. */
+  unit?: string | null;
   junctionBox: string | null;
 };
 
@@ -41,13 +46,14 @@ const KEY_TO_FIELD: Record<string, keyof LocationCodes> = {
   f: "floor",
   r: "room",
   ra: "rack",
+  u: "unit",
   jb: "junctionBox",
 };
 
 // Longest keys first ("jb" before "b", "ra" before "r") so a multi-letter key
 // is never shadowed by a single-letter prefix. Matches only at ^ or after
 // whitespace.
-const TOKEN_RE = /(?:^|\s)(jb|ra|a|b|f|r):/gi;
+const TOKEN_RE = /(?:^|\s)(jb|ra|a|b|f|r|u):/gi;
 
 /** Parse a:/b:/f:/r:/ra:/jb: codes out of a free-text description. */
 export function parseLocationCodes(raw: string | null | undefined): LocationCodes {
@@ -112,7 +118,7 @@ export function floorCodeProblem(before: string | null | undefined, after: strin
 }
 
 /** The six location levels, outermost first. */
-export const LOCATION_LEVELS = ["area", "building", "floor", "room", "rack", "junctionBox"] as const;
+export const LOCATION_LEVELS = ["area", "building", "floor", "room", "rack", "unit", "junctionBox"] as const;
 export type LocationLevel = (typeof LOCATION_LEVELS)[number];
 
 /**
@@ -142,7 +148,7 @@ export function resolveEffectiveLocation(sources: {
 /** True when the resolved codes carry at least one value. */
 export function hasLocationCodes(codes: LocationCodes): boolean {
   return codes.area !== null || codes.building !== null || codes.floor !== null ||
-    codes.room !== null || codes.rack !== null || codes.junctionBox !== null;
+    codes.room !== null || codes.rack !== null || (codes.unit ?? null) !== null || codes.junctionBox !== null;
 }
 
 /** Output order of the codes, outermost first. */
@@ -152,8 +158,19 @@ const CODE_ORDER: Array<[keyof LocationCodes, string]> = [
   ["floor", "f"],
   ["room", "r"],
   ["rack", "ra"],
+  ["unit", "u"],
   ["junctionBox", "jb"],
 ];
+
+/** Highest rack unit a `u:` may name (a rack holds 1-60 U, topologyViewService). */
+export const MAX_RACK_UNIT = 60;
+
+/** True when `v` is a rack unit: a whole number 1..MAX_RACK_UNIT (rule 150(b)). */
+export function isRackUnit(v: string | null | undefined): boolean {
+  if (typeof v !== "string" || !/^\d{1,2}$/.test(v.trim())) return false;
+  const n = Number(v.trim());
+  return n >= 1 && n <= MAX_RACK_UNIT;
+}
 
 /** Longest code value setLocationCodes accepts. */
 export const MAX_LOCATION_CODE_VALUE_LEN = 64;
@@ -168,7 +185,7 @@ export function locationCodeValueProblem(value: string): string | null {
   if (!v) return "is empty";
   if (v.length > MAX_LOCATION_CODE_VALUE_LEN) return `is longer than ${MAX_LOCATION_CODE_VALUE_LEN} characters`;
   if (/[\u0000-\u001f\u007f]/.test(v)) return "contains a control character";
-  if (/(?:^|\s)(?:jb|ra|a|b|f|r):/i.test(v)) return "contains another location code";
+  if (/(?:^|\s)(?:jb|ra|a|b|f|r|u):/i.test(v)) return "contains another location code";
   return null;
 }
 

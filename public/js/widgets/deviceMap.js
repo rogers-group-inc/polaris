@@ -486,6 +486,28 @@
     rotateBtn.innerHTML = ROTATE_SVG + "Rotate";
     rotateBtn.addEventListener("click", function () { setRotating(!rotating, true); });
     right.appendChild(rotateBtn);
+    // A Topology view's "Show on the map" eye (operator request 2026-11-18):
+    // the canvas's own view-mode corner button (topology-physical.js →
+    // cornerButtons, not editOnly), so the widget and the /dash wallboard show
+    // or hide devices, groups, links and ArcGIS layers like the Device Map page.
+    // What it hides is this browser's choice (the canvas's own storage).
+    var eyeBtn = document.createElement("button");
+    eyeBtn.type = "button";
+    eyeBtn.className = "devmap-topo-eye";
+    eyeBtn.hidden = true;
+    eyeBtn.title = "Show on the map";
+    eyeBtn.setAttribute("aria-label", "Show on the map");
+    eyeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    var eyeAction = null;
+    eyeBtn.addEventListener("click", function () { if (eyeAction) eyeAction(eyeBtn); });
+    right.appendChild(eyeBtn);
+    function paintEye() {
+      var b = modeInst && typeof modeInst.cornerButtons === "function"
+        ? modeInst.cornerButtons().filter(function (x) { return !x.editOnly && typeof x.onClick === "function"; })[0] : null;
+      eyeAction = b ? b.onClick : null;
+      eyeBtn.hidden = !b;
+      if (b) { eyeBtn.title = b.label || "Show on the map"; eyeBtn.setAttribute("aria-label", eyeBtn.title); }
+    }
     var fit = document.createElement("button");
     fit.type = "button";
     fit.textContent = "Fit";
@@ -633,6 +655,7 @@
       modeInst = null;
       modeViewId = null;
       graph.innerHTML = "";
+      paintEye();
     }
     // The Topology / Room canvas's context: the Device Map page's, read-only
     // (map.js → _modeCanvasContext). Nothing stages; placements come from the
@@ -689,6 +712,7 @@
       graph.appendChild(host);
       modeInst = mod.render(host, modeCtx(v, initial));
       modeViewId = v.id;
+      paintEye();
     }
 
     // A view a viewer may be on: anything, or (restricted) inside the pins.

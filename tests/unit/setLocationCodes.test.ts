@@ -15,6 +15,7 @@ import {
   mergeLocationLevels,
   isFloorNumber,
   floorCodeProblem,
+  isRackUnit,
 } from "../../src/utils/locationCodes.js";
 
 describe("mergeLocationLevels (rule 148(a))", () => {
@@ -69,6 +70,28 @@ describe("setLocationCodes", () => {
 
   it("refuses a value that would re-parse as another code", () => {
     expect(() => setLocationCodes("", { building: "Plant f:2" })).toThrow(/another location code/);
+  });
+});
+
+// Rule 150(b), operator request 2026-11-18: a racked device's U is u:.
+describe("the rack unit code (u:)", () => {
+  it("parses u: apart from the rack, writes it after ra:, and round-trips", () => {
+    expect(parseLocationCodes("Core b:Plant r:MDF ra:R2 u:14").rack).toBe("R2");
+    expect(parseLocationCodes("Core b:Plant r:MDF ra:R2 u:14").unit).toBe("14");
+    expect(parseLocationCodes("menu:x r:MDF").unit).toBeUndefined();
+    const d = setLocationCodes("Core", { building: "Plant", room: "MDF", rack: "R2", unit: "14", junctionBox: null });
+    expect(d).toBe("Core b:Plant r:MDF ra:R2 u:14");
+    expect(parseLocationCodes(d)).toMatchObject({ rack: "R2", unit: "14" });
+    expect(locationCodeValueProblem("R2 u:3")).toBe("contains another location code");
+  });
+  it("a rack placement sets the U; a junction box clears it", () => {
+    const cur = parseLocationCodes("b:Plant r:MDF ra:R2 u:14");
+    expect(mergeLocationLevels(cur, { rack: "R1", unit: "3" }, ["rack", "unit", "junctionBox"])).toMatchObject({ rack: "R1", unit: "3", room: "MDF" });
+    expect(mergeLocationLevels(cur, { junctionBox: "JB 1" }, ["junctionBox", "rack", "unit"])).toMatchObject({ rack: null, unit: null, junctionBox: "JB 1" });
+  });
+  it("knows a rack unit", () => {
+    expect(["1", "42", "60", " 7 "].every((v) => isRackUnit(v))).toBe(true);
+    expect(["0", "61", "1.5", "U3", "", "-2"].some((v) => isRackUnit(v))).toBe(false);
   });
 });
 

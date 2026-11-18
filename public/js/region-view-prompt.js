@@ -20,7 +20,7 @@
   "use strict";
 
   var FIELDS = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
-  var KEY_TO_FIELD = { a: "area", b: "building", f: "floor", r: "room", ra: "rack", jb: "junctionBox" };
+  var KEY_TO_FIELD = { a: "area", b: "building", f: "floor", r: "room", ra: "rack", u: "unit", jb: "junctionBox" };
   var ASK_LEVELS = { room: "Room" };
   var SKIP_PREFIX = "polaris.regionPrompt.skip:";
 
@@ -33,7 +33,7 @@
   function parseCodes(raw) {
     var out = { area: null, building: null, floor: null, room: null, rack: null, junctionBox: null };
     if (!raw || typeof raw !== "string") return out;
-    var re = /(?:^|\s)(jb|ra|a|b|f|r):/gi;
+    var re = /(?:^|\s)(jb|ra|a|b|f|r|u):/gi;
     var hits = [], m;
     while ((m = re.exec(raw))) hits.push({ field: KEY_TO_FIELD[m[1].toLowerCase()], start: m.index, valueStart: m.index + m[0].length });
     hits.forEach(function (h, i) {

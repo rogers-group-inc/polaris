@@ -1597,8 +1597,83 @@
     }, "image/png");
   }
 
+  // ── Back / forward (operator request 2026-11-18) ──────────────────────
+  // The views and sites visited since the modal opened, like a browser's
+  // history: a new view or site drops anything ahead of where you are. A
+  // step is refused mid-edit (the tick or Save first), as a view switch is.
+  // Cleared when the modal closes.
+  var _navHist = { entries: [], index: -1, replaying: false };
+  function _navEntryName(e) {
+    return e ? (e.siteId === topoState.siteId ? (e.viewName || "the view") : (e.hostname || "the site") + (e.viewName ? " · " + e.viewName : "")) : "";
+  }
+  function _paintNav() {
+    var back = document.getElementById("topology-back");
+    var fwd = document.getElementById("topology-forward");
+    var b = _navHist.entries[_navHist.index - 1], f = _navHist.entries[_navHist.index + 1];
+    if (back) { back.disabled = !b; back.title = b ? "Back to " + _navEntryName(b) + " (Alt+Left)" : "Back"; }
+    if (fwd) { fwd.disabled = !f; fwd.title = f ? "Forward to " + _navEntryName(f) + " (Alt+Right)" : "Forward"; }
+  }
+  function _navPush() {
+    if (_navHist.replaying || !topoState.siteId) return;
+    var v = _currentView();
+    var e = { siteId: topoState.siteId, hostname: topoState.hostname, viewId: topoState.viewId, viewName: v ? v.name : null };
+    var cur = _navHist.entries[_navHist.index];
+    if (cur && cur.siteId === e.siteId && cur.viewId === e.viewId) { _paintNav(); return; }
+    _navHist.entries = _navHist.entries.slice(0, _navHist.index + 1);
+    _navHist.entries.push(e);
+    if (_navHist.entries.length > 50) _navHist.entries.shift();
+    _navHist.index = _navHist.entries.length - 1;
+    _paintNav();
+  }
+  function _navReset() { _navHist = { entries: [], index: -1, replaying: false }; _paintNav(); }
+  async function _navGo(step) {
+    var e = _navHist.entries[_navHist.index + step];
+    if (!e || _navHist.replaying) return;
+    if (topoState.editing) {
+      if (typeof showToast === "function") showToast("Finish editing (the tick) before going back or forward", "error");
+      return;
+    }
+    _navHist.index += step;
+    _navHist.replaying = true;
+    try {
+      if (e.siteId !== topoState.siteId) {
+        if (e.viewId) _writeViewPref(e.siteId, e.viewId);
+        await openTopology(e.siteId, e.hostname || "");
+      } else if (e.viewId && e.viewId !== topoState.viewId) {
+        // A view deleted since it was visited drops out of the history.
+        if (!_siteViews().some(function (v) { return v.id === e.viewId; })) {
+          _navHist.entries.splice(_navHist.index, 1);
+          if (step > 0) _navHist.index -= 1;
+          if (typeof showToast === "function") showToast("That view no longer exists", "error");
+        } else {
+          _switchTopologyView(e.viewId);
+        }
+      }
+    } finally {
+      _navHist.replaying = false;
+      _paintNav();
+    }
+  }
+  (function wireTopologyNav() {
+    var back = document.getElementById("topology-back");
+    var fwd = document.getElementById("topology-forward");
+    if (back) back.addEventListener("click", function () { _navGo(-1); });
+    if (fwd) fwd.addEventListener("click", function () { _navGo(1); });
+    document.addEventListener("keydown", function (ev) {
+      if (!ev.altKey || (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight")) return;
+      var ov = document.getElementById("topology-overlay");
+      if (!ov || !ov.classList.contains("open")) return;
+      // While the modal is open Alt+arrows step its history, never the page's.
+      ev.preventDefault();
+      _navGo(ev.key === "ArrowLeft" ? -1 : 1);
+    }, true);
+  })();
+
   async function openTopology(id, hostname) {
     var overlay = document.getElementById("topology-overlay");
+    // A fresh open starts a new history; a site opened from inside the modal
+    // (search, a step back) carries on with it.
+    if (!overlay.classList.contains("open")) _navReset();
     document.getElementById("topology-title").textContent = hostname || "Site topology";
     // Wipe the graph container but keep the legend overlay alive — it's
     // static markup shipped inside #topology-graph (map.html), so a plain
@@ -1634,6 +1709,7 @@
       _renderViewPicker();
       renderTopologyGraph(data);
       renderTopologyInfo(data);
+      _navPush();
     } catch (err) {
       document.getElementById("topology-info").innerHTML =
         '<p class="error">Failed to load topology: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</p>';
@@ -1870,7 +1946,7 @@
   }
   function _codesText(c) {
     if (!c) return "no codes";
-    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]]
+    var parts = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["unit", "u"], ["junctionBox", "jb"]]
       .filter(function (p) { return c[p[0]]; })
       .map(function (p) { return p[1] + ":" + c[p[0]]; });
     return parts.length ? parts.join(" ") : "no codes";
@@ -2151,6 +2227,7 @@
     _renderViewPicker();
     renderTopologyGraph(topoState.data);
     renderTopologyInfo(topoState.data);
+    _navPush();
   }
   function _modeSelectHtml(id, selected) {
     return '<select id="' + id + '">' + ["layer2", "topology", "room"].map(function (m) {
@@ -5147,7 +5224,7 @@
   }
   function _locationText(loc) {
     if (!loc) return "";
-    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["junctionBox", "jb"]];
+    var keys = [["area", "a"], ["building", "b"], ["floor", "f"], ["room", "r"], ["rack", "ra"], ["unit", "u"], ["junctionBox", "jb"]];
     return keys.filter(function (k) { return loc[k[0]]; }).map(function (k) { return k[1] + ":" + loc[k[0]]; }).join(" ");
   }
   function _topologyAssetCardHtml(data) {

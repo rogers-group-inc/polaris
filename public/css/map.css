@@ -923,6 +923,9 @@
 }
 .topology-type-hint { margin: 6px 4px 0; font-size: 0.72rem; color: var(--color-text-tertiary); }
 /* The header's view picker and mode pill (rule 147). */
+/* Back / forward through the modal's visited views (map.js → _navGo). */
+.topology-nav { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; }
+.topology-nav-btn[disabled] { opacity: 0.35; cursor: default; }
 .topology-view-picker {
   display: inline-flex;
   align-items: center;
@@ -1413,6 +1416,10 @@ path.topo-arc-line.is-target { filter: drop-shadow(0 0 4px var(--arc)); }
 .topo-rack-side-item.is-third-party { border-color: var(--color-text-tertiary); background: var(--color-bg-tertiary); }
 .topo-rack-side-item.is-selected { box-shadow: 0 0 0 2px var(--color-accent); }
 .topo-rack-side-slot { border: 1.5px dashed var(--color-border); opacity: 0.8; }
+/* A junction-box device dragged over a rack: the face it would land on, and
+   the item waiting in its box (topology-rack.js → hintAt, topology-wall.js). */
+.topo-rack-bay.is-drop { outline: 2px dashed var(--color-accent); outline-offset: 2px; }
+.topo-wall-item.is-leaving, [data-item].is-leaving { opacity: 0.45; }
 .topo-rack-side-slot.is-drop { border-color: var(--color-accent); background: var(--color-hover-tint); opacity: 1; }
 .topo-rack-side-slot.is-empty { border-color: transparent; }
 .topo-rack-vcm.is-off, .topo-rack-trough.is-off { background: none; border-color: transparent; }

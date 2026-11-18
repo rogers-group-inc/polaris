@@ -3320,6 +3320,11 @@ description as typed. When a Rack or Wall view is created for a region, or linke
 devices whose descriptions already name its racks or junction boxes are placed for you, one rack
 per rack and one wall per junction box. Nothing already placed moves and no description changes.
 
+A device placed in a rack also gets `u:` with the rack unit it sits on (its bottom U), right after
+its `ra:`; a device beside a rack or in a junction box loses any `u:`. A U is a whole number from 1
+to 60, and it is a position, not a place: no location box is drawn for it. When a view is filled
+from descriptions, a device goes back on the U its `u:` names if that U is free.
+
 ### Rule 151
 
 **Things mounted on a wall cannot overlap.** A Wall view's walls are measured in inches, and
