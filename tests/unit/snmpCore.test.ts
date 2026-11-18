@@ -617,7 +617,7 @@ describe("withSnmpGate — wait accounting", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(state).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
-    expect(await settled).toMatch(new RegExp(`SNMP gate timeout for ${host.replace(/\./g, "\\.")}:161 after 30000ms`));
+    expect(await settled).toContain(`SNMP gate timeout for ${host}:161 after 30000ms`);
     release();
     await first;
   });

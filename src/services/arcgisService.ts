@@ -139,7 +139,10 @@ export function basemapTileUrl(config: ArcgisConfig, token: string | null, z: nu
 /** The portal's base URL with no trailing slash (ArcGIS Online when unset). */
 export function portalBase(config: ArcgisConfig): string {
   const raw = (config.portalUrl ?? "").trim() || ARCGIS_ONLINE_PORTAL;
-  return raw.replace(/\/+$/, "");
+  // A loop, not /\/+$/: that regex is polynomial on operator input of many slashes.
+  let end = raw.length;
+  while (end > 0 && raw[end - 1] === "/") end--;
+  return raw.slice(0, end);
 }
 
 /** `<portal>/sharing/rest` — the portal's REST root. */
