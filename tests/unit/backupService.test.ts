@@ -397,6 +397,21 @@ describe("createBackup", () => {
     expect(files()).toEqual([]);
   });
 
+  // createBackup waits for the write AND pg_dump before cleaning up: with
+  // Promise.all it rejected on pg_dump's exit while the write stream had not
+  // yet created its file, so the temp appeared after the cleanup (CI flake on
+  // the case above). A write failure must also kill a still-running pg_dump.
+  it("a write failure kills a still-running pg_dump and leaves no file", async () => {
+    queue.push((c) => {
+      c.stdout.write("partial");
+      later(() => c.stdout.destroy(new Error("disk full")), 20);
+    });
+    await expect(createBackup({ password: "pw-pw-pw-pw", kind: "manual" })).rejects.toMatchObject({ httpStatus: 500 });
+    expect(spawned[0].kill).toHaveBeenCalledWith("SIGKILL");
+    expect(String(h.logger.error.mock.calls[0][0].err)).toContain("disk full");
+    expect(files()).toEqual([]);
+  });
+
   it("a pg_dump that cannot be spawned (ENOENT) says so", async () => {
     queue.push((c) => {
       c.stdout.end();
