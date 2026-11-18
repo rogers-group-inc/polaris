@@ -29,7 +29,7 @@
 
 import { prisma } from "../db.js";
 import { logEvent } from "./eventLogService.js";
-import { type Trigger, type RuleScope, type EmailComposition, ruleGroupsByAsset, normalizeRuleToV2, buildShadowIndex, isAssetShadowed } from "./notificationTypes.js";
+import { type Trigger, type RuleScope, type EmailComposition, ruleGroupsByAsset, effectiveMinFailingPercent, normalizeRuleToV2, buildShadowIndex, isAssetShadowed } from "./notificationTypes.js";
 import { buildComposedEmail } from "./notificationRecipientService.js";
 
 // CQ-B063 — the rule model, comparators, lookback windows (notifications/ruleModel.ts).
@@ -43,7 +43,7 @@ import { clearScopeAssetCache } from "./notifications/scope.js";
 import { clearTickSampleCache } from "./notifications/readings.js";
 
 // CQ-B063 — the alert lifecycle: fire / reset / recover + grouped alerts, business rule 75 (notifications/alertLifecycle.ts).
-import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends, retireDisabledGroupAlerts } from "./notifications/alertLifecycle.js";
+import { type PendingSends, TickAlertIndex, releaseDueGroupSends, drainPendingSends, retireDisabledGroupAlerts, releaseFailingPercentAlerts } from "./notifications/alertLifecycle.js";
 
 // CQ-B063 — threshold / state + composite evaluation (notifications/evaluation.ts).
 import { evaluationOrder, evaluateThresholdRule, evaluateCompositeRule } from "./notifications/evaluation.js";
@@ -84,7 +84,7 @@ export { buildShadowIndex, isAssetShadowed };
 export async function evaluateAllNotificationRules(): Promise<void> {
   const dbRules = await prisma.notificationRule.findMany({
     where: { enabled: true },
-    include: { alertGroup: { select: { foldBy: true, name: true, enabled: true } } },
+    include: { alertGroup: { select: { foldBy: true, name: true, enabled: true, minFailingPercent: true } } },
   });
   // Business rule 75(b): a DISABLED group governs nothing. Its members detect
   // and deliver exactly as they would outside it — no fold, no group key, no
@@ -119,8 +119,13 @@ export async function evaluateAllNotificationRules(): Promise<void> {
       groupByAsset: r.groupByAsset === true,
       severityFromPriorityTag: r.severityFromPriorityTag === true,
       ...(r.alertGroupId && r.alertGroup?.enabled !== false
-        ? { alertGroupId: r.alertGroupId, alertGroupFoldBy: r.alertGroup?.foldBy ?? null, alertGroupName: r.alertGroup?.name ?? null }
-        : { alertGroupId: null, alertGroupFoldBy: null, alertGroupName: null }),
+        ? {
+          alertGroupId: r.alertGroupId,
+          alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
+          alertGroupName: r.alertGroup?.name ?? null,
+          alertGroupMinPercent: effectiveMinFailingPercent(r.alertGroup?.foldBy, r.alertGroup?.minFailingPercent),
+        }
+        : { alertGroupId: null, alertGroupFoldBy: null, alertGroupName: null, alertGroupMinPercent: null }),
     };
   });
   await applyLinkedForecastLevels(rules);
@@ -179,6 +184,9 @@ export async function evaluateAllNotificationRules(): Promise<void> {
     // Grouped alerts whose first-send hold has ended join this drain. Only an
     // install with a grouping automation can hold one, so every other skips
     // the query.
+    // Business rule 193 first: an alert a percent threshold opens this tick is
+    // an ordinary held alert from here on.
+    if (tickIndex.deferred.size) await releaseFailingPercentAlerts(pendingSends, new Date(), tickIndex);
     if (rules.some((r) => ruleGroupsByAsset(r))) {
       await releaseDueGroupSends(new Map(rules.map((r) => [r.id, r])), pendingSends, new Date());
     }

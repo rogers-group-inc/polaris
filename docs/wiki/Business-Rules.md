@@ -3916,3 +3916,16 @@ its address. So it reads **Dep. Down** behind that switch, and it appears in the
 map's Device List under that switch. It is still a switch to everything behind it: a server
 whose last-seen switch is the Cisco switch keeps the Cisco switch as its parent. Once LLDP or
 interface naming connects it, that wins.
+
+### Rule 193
+
+**A group can wait until a share of its devices is failing before it raises anything.** On
+a group whose alert spans devices (one alert per automation, per device + automation, or per
+subnet), **Only alert when at least N % of the devices are failing** holds the alert back
+until that share of the devices is failing. If 87 hosts run the same path check and you set
+80 %, nothing is raised while 10 of them fail; the alert opens, naming every failing host, the
+moment 70 do. The share is of the devices the automations actually got a reading from: a
+host whose agent is offline has no current result and does not count, and neither does a
+device in maintenance. Below the line there is no alert at all. Once the alert is up it
+behaves like any grouped alert, and it ends when the **last** device recovers; dropping back
+under the line does not end it. A group that alerts per device has no such setting.

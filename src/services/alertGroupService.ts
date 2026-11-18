@@ -38,7 +38,7 @@ import { AppError } from "../utils/errors.js";
 import { logEvent } from "./eventLogService.js";
 import { assertActionRefs, applyResetSnapshots } from "./notificationRuleService.js";
 import { restoreMaskedActionHeaders } from "../utils/actionHeaderMask.js";
-import { triggerCanJoinGroup, foldSpansDevices, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
+import { triggerCanJoinGroup, foldSpansDevices, effectiveMinFailingPercent, normalizeRuleToV2, type Trigger, type AlertGroupFoldBy } from "./notificationTypes.js";
 import { jsonEqual } from "../utils/jsonEqual.js";
 
 export interface AlertGroupInput {
@@ -50,6 +50,9 @@ export interface AlertGroupInput {
   scope?: unknown;
   /** "device" (default) or "subnet" — what one alert is per. */
   foldBy?: AlertGroupFoldBy;
+  /** Business rule 193: percent of the fold's reporting devices that must be
+   *  failing before an alert opens. Null = off; dropped on a per-device fold. */
+  minFailingPercent?: number | null;
   messageTemplate?: string | null;
   requireAckNote?: boolean;
   emailComposition?: unknown;
@@ -63,7 +66,7 @@ export interface AlertGroupInput {
 }
 
 const GROUP_SELECT = {
-  id: true, name: true, description: true, enabled: true, scope: true, foldBy: true,
+  id: true, name: true, description: true, enabled: true, scope: true, foldBy: true, minFailingPercent: true,
   messageTemplate: true, requireAckNote: true, emailComposition: true,
   actions: true, resetActions: true, escalation: true, repeat: true,
   createdBy: true, createdAt: true, updatedAt: true,
@@ -143,6 +146,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
       enabled: input.enabled !== false,
       scope: (input.scope ?? undefined) as Prisma.InputJsonValue | undefined,
       foldBy: input.foldBy ?? "device",
+      minFailingPercent: effectiveMinFailingPercent(input.foldBy ?? "device", input.minFailingPercent),
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: (input.emailComposition ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -187,6 +191,12 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
       enabled: input.enabled !== false,
       scope: jsonOrClear(input.scope),
       foldBy,
+      // Rule 193. Changing it does not retire live alerts: it only gates the
+      // OPENING of an alert, and a live one ends with its last member.
+      minFailingPercent: effectiveMinFailingPercent(
+        foldBy,
+        input.minFailingPercent !== undefined ? input.minFailingPercent : existing.minFailingPercent,
+      ),
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: jsonOrClear(input.emailComposition),

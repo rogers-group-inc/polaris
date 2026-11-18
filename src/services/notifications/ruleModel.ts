@@ -208,6 +208,10 @@ export interface DbRule {
   alertGroupFoldBy?: string | null;
   /** That group's name — what a whole-group alert is named for. */
   alertGroupName?: string | null;
+  /** Business rule 193: the group's percent threshold, already resolved by
+   *  `effectiveMinFailingPercent` (null = off, and always null on a per-device
+   *  fold or a disabled group). Gates only the opening of a multi-device alert. */
+  alertGroupMinPercent?: number | null;
 }
 
 // Extends ScopeAsset (which extends notificationTypes.ScopeConditionAsset), so

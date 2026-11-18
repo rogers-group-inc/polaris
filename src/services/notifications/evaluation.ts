@@ -19,7 +19,7 @@ import { loadScopeAssets, isSuppressedForNotifications, suppressionOwedToMainten
 import { rulePrioritySubject, applyPrioritySeverity, tagGateGone, deletedTargetGone, sdwanCollectionStopped, resolveAssetMetricReadings, resolveAssetStateReadings, resolveHostMetricReading, readingMeets, engineSustainSec, recoveredMeets, type SweepStateRow } from "./readings.js";
 import { type CompositeFireInfo, round2 } from "./templating.js";
 import { ruleHasBands, bandSeverityFor, tierLadderFor, readingRuns, tierRuns, CLEARED_RUNS, metSinceJson, metSinceOf, tierForSeverity } from "./severityBands.js";
-import { type GroupBuffer, type PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour } from "./alertLifecycle.js";
+import { type GroupBuffer, type PendingSends, TickAlertIndex, liveAlertsByAsset, flushGroupFires, fire, applyBandTransition, refreshForecastCountdowns, fireResolved, readingFromState, fireReset, recover, clearActiveNotification, stillFiringElsewhere, clearAlertRow, handoffDependencyFlavour, recordFoldReporting } from "./alertLifecycle.js";
 
 type ShadowIndex = ShadowIndexOf<DbRule>;
 
@@ -633,6 +633,10 @@ export async function evaluateThresholdRule(
   // device-down, vanished-state) all read `states`, which is the snapshot —
   // they cannot see these rows and have no business with them: a contribution
   // that only just fired has not gone out of scope or been superseded.
+  // Business rule 193: the devices this rule READ (not only the failing ones)
+  // are the denominator of a group's percent threshold. Live readings only —
+  // a device in maintenance is neither failing nor reporting.
+  if (groupBuf) await recordFoldReporting(rule, readings, tickIndex);
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
   if (forecastLive.length) await refreshForecastCountdowns(rule, forecastLive, now);
 
@@ -1425,6 +1429,10 @@ export async function evaluateCompositeRule(
   // GROUPED ALERTS (business rule 75): land this composite's contributions
   // before the sweeps below, for the same reason the threshold path does —
   // a state row must never be left `firing` with no notification behind it.
+  // Business rule 193: every live asset the tree had evidence for is reporting.
+  if (groupBuf) {
+    await recordFoldReporting(rule, activeAssets.filter((a) => evaluatedIds.has(a.id)).map((a) => ({ assetId: a.id, dimKey: "" })), tickIndex);
+  }
   if (groupBuf?.size) await flushGroupFires(rule, groupBuf, liveByAsset, now, pendingSends, tickIndex);
 
   // Device-down handoff (business rule 29(i)) — same contract as the

@@ -54,6 +54,18 @@
     return foldOptionOf(g && g.foldBy).value;
   }
 
+  /** Business rule 193: the percent threshold applies only to a fold that
+   *  puts several devices in one alert — the server stores null otherwise. */
+  function foldSpansDevices(value) {
+    return value === "automation" || value === "deviceAutomation" || value === "subnet";
+  }
+
+  /** The stored threshold, or null when off or meaningless for the fold. */
+  function minPercentOf(g) {
+    var p = g && g.minFailingPercent;
+    return foldSpansDevices(foldByOf(g)) && typeof p === "number" && p >= 1 && p <= 100 ? p : null;
+  }
+
   /** `permAtLeast` is the page-wide helper in app.js (a global, not a
    *  namespace). Defaults to FALSE when it is somehow absent: hiding a control
    *  the caller may actually hold is recoverable, showing one they do not is a
@@ -111,6 +123,7 @@
     return "<tr>" +
       "<td><strong>" + escapeHtml(g.name) + "</strong>" +
         (foldByOf(g) !== "device" ? ' <span class="badge">' + escapeHtml(foldOptionOf(foldByOf(g)).badge) + "</span>" : "") +
+        (minPercentOf(g) ? ' <span class="badge" title="No alert until at least this share of the devices reporting is failing">≥ ' + minPercentOf(g) + "% failing</span>" : "") +
         (g.description ? '<div style="font-size:0.8rem;color:var(--color-text-tertiary)">' + escapeHtml(g.description) + "</div>" : "") +
       "</td>" +
       "<td>" + memberText + "</td>" +
@@ -151,6 +164,7 @@
         enabled: desired,
         scope: g.scope == null ? null : g.scope,
         foldBy: foldByOf(g),
+        minFailingPercent: minPercentOf(g),
         messageTemplate: g.messageTemplate || null,
         requireAckNote: !!g.requireAckNote,
         repeat: g.repeat || null,
@@ -244,8 +258,15 @@
     // What may join depends on the fold: a "monitor status is down" automation
     // has nothing to fold per device but plenty per automation or subnet. Re-ask the server
     // for the mode on screen, keeping whatever is ticked.
+    var pctRow = ov.overlay.querySelector("#ag-min-pct-row");
+    var pctOn = ov.overlay.querySelector("#ag-min-pct-on");
+    var pctInput = ov.overlay.querySelector("#ag-min-pct");
+    if (pctOn && pctInput) {
+      pctOn.addEventListener("change", function () { pctInput.disabled = !pctOn.checked; });
+    }
     ov.overlay.querySelectorAll('input[name="ag-fold-by"]').forEach(function (radio) {
       radio.addEventListener("change", async function () {
+        if (pctRow) pctRow.style.display = foldSpansDevices(radio.value) ? "" : "none";
         var membersEl = ov.overlay.querySelector("#ag-members");
         var ticked = new Set(Array.prototype.slice.call(membersEl.querySelectorAll(".ag-member:checked")).map(function (el) { return el.value; }));
         try {
@@ -311,6 +332,19 @@
         "Those two also take a <em>monitor status is down</em> automation — turn on <em>Also alert when the device is dependency-down</em> there, so the hosts behind a failed switch report at all. Changing this retires the group's open alerts; the next check raises them again the new way. " +
         "Whichever you pick, the first email waits one polling interval, and after it whatever joins or recovers goes out as one update email at most once per interval." +
       "</p>" +
+      // Business rule 193 — only for the folds that put several devices in one alert.
+      '<div id="ag-min-pct-row" style="margin:0.6rem 0 0 1.4rem' + (foldSpansDevices(foldByOf(g)) ? "" : ";display:none") + '">' +
+        '<label style="display:block;font-weight:400;margin:0 0 0.2rem">' +
+          '<input type="checkbox" id="ag-min-pct-on"' + (minPercentOf(g) ? " checked" : "") + "> " +
+          "Only alert when at least " +
+          '<input type="number" id="ag-min-pct" min="1" max="100" step="1" value="' + (minPercentOf(g) || 80) + '"' +
+            (minPercentOf(g) ? "" : " disabled") + ' style="width:4.5rem"> % of the devices are failing' +
+        "</label>" +
+        '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:2px 0 0 1.4rem">' +
+          "Out of the devices the automations got a reading from in that alert (for a path check, the hosts with a current result — an offline agent does not count). " +
+          "Below it there is no alert at all; once it is reached the alert opens with every failing device and stays up until the last one recovers." +
+        "</p>" +
+      "</div>" +
 
       "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
       '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">Automations in this group</h4>' +
@@ -386,9 +420,22 @@
     }
 
     var foldEl = root.querySelector('input[name="ag-fold-by"]:checked');
+    var foldBy = foldEl ? foldOptionOf(foldEl.value).value : "device";
+    // Business rule 193: null when unticked or when the fold is per device.
+    var minPct = null;
+    var pctOnEl = root.querySelector("#ag-min-pct-on");
+    if (foldSpansDevices(foldBy) && pctOnEl && pctOnEl.checked) {
+      var raw = Number((root.querySelector("#ag-min-pct") || {}).value);
+      if (!Number.isInteger(raw) || raw < 1 || raw > 100) {
+        showToast("The failing percent must be a whole number from 1 to 100", "error");
+        return false;
+      }
+      minPct = raw;
+    }
     var body = {
       scope: scope,
-      foldBy: foldEl ? foldOptionOf(foldEl.value).value : "device",
+      foldBy: foldBy,
+      minFailingPercent: minPct,
       name: name.trim(),
       description: ((root.querySelector("#ag-desc") || {}).value || "").trim() || null,
       enabled: !!(root.querySelector("#ag-enabled") || {}).checked,

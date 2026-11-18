@@ -12,7 +12,7 @@ import { triggerSummary, pathConditionPhrase, recoveredConditionSuffix } from ".
 import { sensorReadingDisplay } from "../alertChartService.js";
 import { resolveAssetCadenceSec } from "../notificationCadenceService.js";
 import { REGION_TAG_PREFIX, rootCauseAckFor, sameAssetDownAckFor, inheritableRootCauseId, inheritedAckData, type InheritedAck } from "../notificationService.js";
-import { isPathMetric, type Trigger, type RuleScope, type AutomationAction, type RuleActionCarrier, expandResetActions, parseEscalationFired, severityRank, type AlertMember, type GroupChange, classifyGroupChanges, describeGroupChanges, ruleGroupsByAsset, alertScopeOf, groupKeyOf, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, type SpanCounts, memberMatches, queueGroupChanges, refreshMemberContext, type PendingGroupChanges, hasNewFault, mergeMembers, markMemberLeft, activeMembers, groupSeverity, primaryMember, renderMemberList, forecastLevelsOf, type ForecastLevel, scopeIsUnconstrained, isDownDetectionTrigger } from "../notificationTypes.js";
+import { isPathMetric, type Trigger, type RuleScope, type AutomationAction, type RuleActionCarrier, expandResetActions, parseEscalationFired, severityRank, type AlertMember, type GroupChange, classifyGroupChanges, describeGroupChanges, ruleGroupsByAsset, alertScopeOf, groupKeyOf, subnetFoldTarget, automationFoldTarget, WHOLE_GROUP_FOLD_TARGET, wholeGroupSubject, countNoun, type SpanCounts, memberMatches, failingPercentMet, queueGroupChanges, refreshMemberContext, type PendingGroupChanges, hasNewFault, mergeMembers, markMemberLeft, activeMembers, groupSeverity, primaryMember, renderMemberList, forecastLevelsOf, type ForecastLevel, scopeIsUnconstrained, isDownDetectionTrigger } from "../notificationTypes.js";
 // Business rule 78 — who silenced a dependency-suppressed device, for the
 // alert a down automation raises about it anyway.
 import { resolveDependencyBlame } from "../dependencyTreeService.js";
@@ -145,6 +145,18 @@ export class TickAlertIndex {
   remember(groupKey: string, notificationId: string): void {
     this.byKey.set(groupKey, notificationId);
   }
+
+  // ── Business rule 193: a group's percent threshold ─────────────────────────
+  //
+  // Per groupKey, the devices any member automation got a reading from in that
+  // fold this tick (the denominator), and the buckets that would have OPENED an
+  // alert there but were held for the count (their devices are the numerator).
+  // Decided once every rule has run (releaseFailingPercentAlerts), because a
+  // whole-group fold spans automations evaluated one after another.
+  /** groupKey → the devices reporting in that fold this tick. */
+  readonly reporting = new Map<string, Set<string>>();
+  /** groupKey → the held openings, one per member automation. */
+  readonly deferred = new Map<string, { percent: number; entries: { rule: DbRule; bucket: FoldBucket }[] }>();
 
   // ── Which subnet each device folds into (a SUBNET AlertGroup) ──────────────
   //
@@ -378,22 +390,18 @@ function leadFire(fires: GroupFire[], primary: AlertMember | null): GroupFire {
     ?? fires[0]!;
 }
 
-/**
- * Sort this tick's buffered contributions into the alerts they belong to.
- *
- * A device group (or an ungrouped rule) keeps one alert per device. A
- * DEVICE-AND-AUTOMATION group folds both ways at once: ONE alert for the whole
- * group, every device and every member automation in it. An
- * AUTOMATION group puts every device it governs into this automation's one
- * alert — one per PATH CHECK for a Path Monitor automation, whose components
- * are fleet-wide checks rather than parts of one device — and a SUBNET group
- * into the alert of the device's registry subnet. A device the group does not
- * govern, or (by subnet) one in no subnet, keeps its own.
- */
-async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertIndex | null): Promise<FoldBucket[]> {
+/** What a rule's fold needs to know once per pass: its spans and, for a
+ *  subnet group, the subnet of every device about to be placed. */
+interface FoldPlan {
+  automation: FoldSpan | null;
+  whole: FoldSpan | null;
+  perComponent: boolean;
+  subnets: Map<string, FoldSpan | null> | null;
+}
+
+async function foldPlanFor(rule: DbRule, assetIds: string[], tickIndex: TickAlertIndex | null): Promise<FoldPlan> {
   const foldBy = rule.alertGroupId ? (rule.alertGroupFoldBy ?? "device") : "device";
   const bySubnet = foldBy === "subnet" && !!tickIndex;
-  const subnets = bySubnet ? await tickIndex!.subnetsOf([...buf.keys()]) : null;
   const automation: FoldSpan | null = foldBy === "automation" ? { kind: "automation", id: rule.id, label: rule.name } : null;
   // Both folds at once: every device and every member automation in ONE alert,
   // the group's. Shared across automations through the group's key, as a
@@ -407,43 +415,151 @@ async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertI
   // device — port2 on two switches is not one finding — so only path checks
   // split.
   const perComponent = !!automation && rule.trigger.type === "asset_metric" && isPathMetric(rule.trigger.metric);
+  return {
+    automation, whole, perComponent,
+    subnets: bySubnet ? await tickIndex!.subnetsOf(assetIds) : null,
+  };
+}
+
+/**
+ * Where one contribution (a device, and on a per-check split the check) folds:
+ * the alert's `groupKey` target, whether the group governs the device, and the
+ * span when the alert holds several devices. The one placement both the fold
+ * (foldBuckets) and the rule-193 denominator (recordFoldReporting) use, so the
+ * two can never disagree about which alert a device belongs to.
+ */
+async function placeContribution(
+  rule: DbRule,
+  plan: FoldPlan,
+  assetId: string,
+  dimKey: string,
+  dimLabel: string,
+  tickIndex: TickAlertIndex | null,
+): Promise<{ target: string; governs: boolean; span: FoldSpan | null }> {
+  // Where this rule's grouped alerts live: its AlertGroup when it belongs to
+  // one AND that group governs THIS device, else itself. The two scopes can
+  // never collide in the partial unique index.
+  //
+  // The per-device test is what lets one set of automations serve several
+  // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
+  // same checks, routed to different people. On a device no group governs,
+  // the automation still folds its own components; it just does so alone.
+  const governs = await groupGovernsAsset(rule, assetId, tickIndex);
+  if (plan.perComponent) {
+    const comp = { key: dimKey, label: dimLabel || dimKey };
+    return governs
+      ? { target: automationFoldTarget(rule.id, comp.key), governs, span: { ...plan.automation!, label: `${rule.name} — ${comp.label}`, component: comp } }
+      : { target: assetId, governs, span: null };
+  }
+  const span = !governs ? null : plan.automation ?? plan.whole ?? plan.subnets?.get(assetId) ?? null;
+  const target = !governs ? assetId
+    : span?.kind === "subnet" ? subnetFoldTarget(span.id)
+    : span?.kind === "automation" ? automationFoldTarget(rule.id)
+    : span?.kind === "group" ? WHOLE_GROUP_FOLD_TARGET
+    : assetId;
+  return { target, governs, span };
+}
+
+/**
+ * Sort this tick's buffered contributions into the alerts they belong to.
+ *
+ * A device group (or an ungrouped rule) keeps one alert per device. A
+ * DEVICE-AND-AUTOMATION group folds both ways at once: ONE alert for the whole
+ * group, every device and every member automation in it. An
+ * AUTOMATION group puts every device it governs into this automation's one
+ * alert — one per PATH CHECK for a Path Monitor automation, whose components
+ * are fleet-wide checks rather than parts of one device — and a SUBNET group
+ * into the alert of the device's registry subnet. A device the group does not
+ * govern, or (by subnet) one in no subnet, keeps its own.
+ */
+async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertIndex | null): Promise<FoldBucket[]> {
+  const plan = await foldPlanFor(rule, [...buf.keys()], tickIndex);
   const out = new Map<string, FoldBucket>();
-  for (const [assetId, fires] of buf) {
-    if (!fires.length) continue;
-    if (perComponent) {
-      const governs = await groupGovernsAsset(rule, assetId, tickIndex);
-      for (const f of fires) {
-        const comp = { key: f.reading.dimKey, label: f.reading.dimLabel || f.reading.dimKey };
-        const span: FoldSpan | null = governs ? { ...automation!, label: `${rule.name} — ${comp.label}`, component: comp } : null;
-        const target = governs ? automationFoldTarget(rule.id, comp.key) : assetId;
-        const k = `${governs ? "g" : "r"}|${target}`;
-        const b = out.get(k);
-        if (b) b.fires.push(f);
-        else out.set(k, { target, governs, span, fires: [f] });
-      }
-      continue;
-    }
-    // Where this rule's grouped alerts live: its AlertGroup when it belongs to
-    // one AND that group governs THIS device, else itself. The two scopes can
-    // never collide in the partial unique index.
-    //
-    // The per-device test is what lets one set of automations serve several
-    // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
-    // same checks, routed to different people. On a device no group governs,
-    // the automation still folds its own components; it just does so alone.
-    const governs = await groupGovernsAsset(rule, assetId, tickIndex);
-    const span = !governs ? null : automation ?? whole ?? subnets?.get(assetId) ?? null;
-    const target = !governs ? assetId
-      : span?.kind === "subnet" ? subnetFoldTarget(span.id)
-      : span?.kind === "automation" ? automationFoldTarget(rule.id)
-      : span?.kind === "group" ? WHOLE_GROUP_FOLD_TARGET
-      : assetId;
-    const k = `${governs ? "g" : "r"}|${target}`;
+  const add = (p: { target: string; governs: boolean; span: FoldSpan | null }, fires: GroupFire[]) => {
+    const k = `${p.governs ? "g" : "r"}|${p.target}`;
     const b = out.get(k);
     if (b) b.fires.push(...fires);
-    else out.set(k, { target, governs, span, fires: [...fires] });
+    else out.set(k, { target: p.target, governs: p.governs, span: p.span, fires: [...fires] });
+  };
+  for (const [assetId, fires] of buf) {
+    if (!fires.length) continue;
+    if (plan.perComponent) {
+      for (const f of fires) add(await placeContribution(rule, plan, assetId, f.reading.dimKey, f.reading.dimLabel, tickIndex), [f]);
+      continue;
+    }
+    add(await placeContribution(rule, plan, assetId, "", "", tickIndex), fires);
   }
   return [...out.values()];
+}
+
+/** The groupKey a governed, multi-device bucket's alert carries. */
+function governedGroupKey(rule: DbRule, target: string): string {
+  const scope = alertScopeOf(rule, true);
+  return groupKeyOf(scope.scope, scope.id, target);
+}
+
+/**
+ * Business rule 193 — the denominator. Every device this rule got a reading
+ * from (devices in maintenance excluded: the caller passes only live
+ * readings), placed the way its fires would be, counted under the governed
+ * multi-device alert it would join. Only for a member of a group with a
+ * percent threshold; nothing for anyone else.
+ */
+export async function recordFoldReporting(
+  rule: DbRule,
+  readings: { assetId: string; dimKey: string; dimLabel?: string }[],
+  tickIndex: TickAlertIndex | null,
+): Promise<void> {
+  if (!rule.alertGroupMinPercent || !rule.alertGroupId || !tickIndex || !readings.length) return;
+  const plan = await foldPlanFor(rule, [...new Set(readings.map((r) => r.assetId).filter(Boolean))], tickIndex);
+  for (const r of readings) {
+    if (!r.assetId) continue;
+    const p = await placeContribution(rule, plan, r.assetId, r.dimKey, r.dimLabel ?? "", tickIndex);
+    if (!p.governs || !p.span) continue;
+    const key = governedGroupKey(rule, p.target);
+    let set = tickIndex.reporting.get(key);
+    if (!set) tickIndex.reporting.set(key, (set = new Set()));
+    set.add(r.assetId);
+  }
+}
+
+/** Business rule 193: hold a bucket that would OPEN a governed multi-device
+ *  alert until the tick's count is in. True when held. */
+function deferForFailingPercent(rule: DbRule, bucket: FoldBucket, tickIndex: TickAlertIndex | null): boolean {
+  if (!rule.alertGroupMinPercent || !tickIndex || !bucket.governs || !bucket.span) return false;
+  const key = governedGroupKey(rule, bucket.target);
+  let d = tickIndex.deferred.get(key);
+  if (!d) tickIndex.deferred.set(key, (d = { percent: rule.alertGroupMinPercent, entries: [] }));
+  d.entries.push({ rule, bucket });
+  return true;
+}
+
+/**
+ * Business rule 193 — after every rule has run, open each held alert whose
+ * fold now has at least the group's percent of its reporting devices failing.
+ *
+ * One below the line opens nothing and writes nothing: its contributions were
+ * only buffered, never written to state, so each re-fires next tick and is
+ * counted again. The first member automation opens the alert; the others join
+ * it, exactly as two members landing in one tick always have.
+ */
+export async function releaseFailingPercentAlerts(pending: PendingSends, now: Date, tickIndex: TickAlertIndex): Promise<void> {
+  for (const [key, d] of tickIndex.deferred) {
+    const failing = new Set<string>();
+    for (const e of d.entries) for (const f of e.bucket.fires) if (f.reading.assetId) failing.add(f.reading.assetId);
+    const reporting = new Set([...(tickIndex.reporting.get(key) ?? []), ...failing]);
+    if (!failingPercentMet(failing.size, reporting.size, d.percent)) continue;
+    const opened = new Map<string, string>();
+    const [first, ...rest] = d.entries;
+    if (!first) continue;
+    await createGroupAlert(first.rule, first.bucket, now, pending, opened, tickIndex,
+      { failing: failing.size, reporting: reporting.size, percent: d.percent });
+    const id = opened.get(first.bucket.target);
+    if (!id) continue;
+    for (const e of rest) await joinGroupAlert(e.rule, id, e.bucket.fires, now, pending, e.bucket.span);
+  }
+  tickIndex.deferred.clear();
+  tickIndex.reporting.clear();
 }
 
 /**
@@ -466,7 +582,11 @@ export async function flushGroupFires(
   for (const bucket of await foldBuckets(rule, buf, tickIndex)) {
     const live = liveByAsset.get(bucket.target);
     const joined = live ? await joinGroupAlert(rule, live, bucket.fires, now, pending, bucket.span) : false;
-    if (!joined) await createGroupAlert(rule, bucket, now, pending, liveByAsset, tickIndex);
+    if (joined) continue;
+    // Business rule 193: a group with a percent threshold opens nothing yet —
+    // the count is taken once every member automation has run.
+    if (deferForFailingPercent(rule, bucket, tickIndex)) continue;
+    await createGroupAlert(rule, bucket, now, pending, liveByAsset, tickIndex);
   }
 }
 
@@ -478,6 +598,8 @@ async function createGroupAlert(
   pending: PendingSends,
   liveByAsset: Map<string, string>,
   tickIndex: TickAlertIndex | null,
+  /** Set when a rule-193 threshold opened it: the count that crossed. */
+  failingPercent?: { failing: number; reporting: number; percent: number },
 ): Promise<void> {
   const { fires, governs, span, target } = bucket;
   const members = mergeMembers([], fires.map((f) => memberOf(rule, f, now, span)), now);
@@ -579,6 +701,7 @@ async function createGroupAlert(
         grouped: true,
         members: members.map((m) => (m.assetId ? m.label : m.key)),
         ...(span ? { [span.kind]: span.label } : {}),
+        ...(failingPercent ? { failingPercent } : {}),
       },
     });
   }
