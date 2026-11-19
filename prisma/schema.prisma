@@ -6393,6 +6393,13 @@ model AlertGroup {
   /// Stored NULL whenever the fold does not span devices.
   minFailingPercent Int?
 
+  /// Business rule 194: which path checks this group governs for its Path
+  /// Monitor members. Empty = every check (the default). A path reading for a
+  /// check NOT listed is not governed — its automation alerts on its own, as on
+  /// a device outside `scope`. Ignored for every non-path automation. Changing
+  /// it retires the group's live alerts, like a scope change.
+  pathCheckIds String[] @default([])
+
   /// The delivery half, lifted from NotificationRule. Seeded from the first
   /// member on create, so joining a group is not a re-authoring exercise.
   messageTemplate  String? @db.Text

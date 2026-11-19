@@ -3929,3 +3929,13 @@ host whose agent is offline has no current result and does not count, and neithe
 device in maintenance. Below the line there is no alert at all. Once the alert is up it
 behaves like any grouped alert, and it ends when the **last** device recovers; dropping back
 under the line does not end it. A group that alerts per device has no such setting.
+
+### Rule 194
+
+**A group can cover only some path checks.** Under **Which path checks**, untick **Every
+path check its automations cover** and tick the checks this group is for. Only those checks
+are folded and delivered by the group. A check you leave out is not silenced: the Path
+Monitor automation alerts on it on its own, once per host, to its own recipients — the same
+as a device outside the group's device filter. Other kinds of automation in the group are not
+affected. Changing the list retires the group's open alerts; the next check raises them again
+under the new list.

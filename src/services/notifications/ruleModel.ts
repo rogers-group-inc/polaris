@@ -212,6 +212,9 @@ export interface DbRule {
    *  `effectiveMinFailingPercent` (null = off, and always null on a per-device
    *  fold or a disabled group). Gates only the opening of a multi-device alert. */
   alertGroupMinPercent?: number | null;
+  /** Business rule 194: the path checks the group governs, or null for every
+   *  check (and for a disabled group). Read only for a path-metric trigger. */
+  alertGroupPathCheckIds?: string[] | null;
 }
 
 // Extends ScopeAsset (which extends notificationTypes.ScopeConditionAsset), so

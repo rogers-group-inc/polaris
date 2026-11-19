@@ -72,6 +72,9 @@ const groupInputSchema = z.object({
   // Business rule 193: no alert until this percent of the fold's reporting
   // devices is failing. Null = off. Ignored (stored null) on a per-device fold.
   minFailingPercent: z.number().int().min(1).max(100).optional().nullable(),
+  // Business rule 194: which path checks the group governs for its Path
+  // Monitor members. Empty / null = every check; omitted = unchanged.
+  pathCheckIds: z.array(z.string().min(1).max(64)).max(500).optional().nullable(),
   messageTemplate: z.string().max(2000).optional().nullable(),
   requireAckNote: z.boolean().optional(),
   emailComposition: emailCompositionSchema.optional().nullable(),
@@ -132,7 +135,7 @@ alertGroupsRouter.put("/:id", requirePermission("automationManagement", "write")
     // Re-scan F56: changing WHO a group's stored (or seeded) script runs for —
     // its members or its scope — needs the script grant too, even when the
     // request leaves the actions themselves alone.
-    if (input.ruleIds !== undefined || input.scope !== undefined) {
+    if (input.ruleIds !== undefined || input.scope !== undefined || input.pathCheckIds !== undefined) {
       assertScriptActionPermission(req, (await deliveryAfterChange(req.params.id as string, input)) as never);
     }
     res.json(maskActionHeaders(await updateGroup(req.params.id as string, input, req.session?.username)));

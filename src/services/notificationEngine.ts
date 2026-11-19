@@ -84,7 +84,7 @@ export { buildShadowIndex, isAssetShadowed };
 export async function evaluateAllNotificationRules(): Promise<void> {
   const dbRules = await prisma.notificationRule.findMany({
     where: { enabled: true },
-    include: { alertGroup: { select: { foldBy: true, name: true, enabled: true, minFailingPercent: true } } },
+    include: { alertGroup: { select: { foldBy: true, name: true, enabled: true, minFailingPercent: true, pathCheckIds: true } } },
   });
   // Business rule 75(b): a DISABLED group governs nothing. Its members detect
   // and deliver exactly as they would outside it — no fold, no group key, no
@@ -124,8 +124,10 @@ export async function evaluateAllNotificationRules(): Promise<void> {
           alertGroupFoldBy: r.alertGroup?.foldBy ?? null,
           alertGroupName: r.alertGroup?.name ?? null,
           alertGroupMinPercent: effectiveMinFailingPercent(r.alertGroup?.foldBy, r.alertGroup?.minFailingPercent),
+          // Business rule 194: empty = every check.
+          alertGroupPathCheckIds: r.alertGroup?.pathCheckIds?.length ? r.alertGroup.pathCheckIds : null,
         }
-        : { alertGroupId: null, alertGroupFoldBy: null, alertGroupName: null, alertGroupMinPercent: null }),
+        : { alertGroupId: null, alertGroupFoldBy: null, alertGroupName: null, alertGroupMinPercent: null, alertGroupPathCheckIds: null }),
     };
   });
   await applyLinkedForecastLevels(rules);
