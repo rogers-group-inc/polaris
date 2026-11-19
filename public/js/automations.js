@@ -868,8 +868,12 @@ var _rulesPage = 1;
       stateProbes: (_ruleSchema && _ruleSchema.stateProbes) || [],
       tags: _ruleTagList || [],
       assetTypes: _ruleAssetTypes || [],
+      // Names for an alert group's path-check list (its export lists them).
+      pathChecks: (_ruleSchema && _ruleSchema.pathChecks) || [],
     };
   }
+  // The Alert Groups tab exports through the same catalogs (alert-groups.js).
+  window._automationPortabilityCatalogs = portabilityCatalogs;
 
   /** The leading separator belongs to these items, so a page without the
    *  portability module renders one rule before Delete rather than two.

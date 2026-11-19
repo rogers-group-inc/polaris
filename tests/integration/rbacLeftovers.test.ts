@@ -122,6 +122,17 @@ d("alert groups (114(a), 114(h))", () => {
     expect(moved.status).toBe(400);
     expect(JSON.stringify(moved.body)).toMatch(/enter the header value again/);
   });
+
+  it("refuses to clone a group whose stored actions run a script without Automation Scripts Read-Write", async () => {
+    const src = await prisma.alertGroup.create({
+      data: { name: PFX + "-clone-src", actions: [{ type: "script", scriptId: "anything", runOn: "server" }] } as never,
+      select: { id: true },
+    });
+    const { agent, csrf } = await loginAs(automationsUser);
+    const res = await agent.post(`/api/v1/automations/groups/${src.id}/clone`).set("X-CSRF-Token", csrf).send({ name: PFX + "-clone-copy" });
+    expect(res.status).toBe(403);
+    expect(await prisma.alertGroup.count({ where: { name: PFX + "-clone-copy" } })).toBe(0);
+  });
 });
 
 d("roles (114(g))", () => {

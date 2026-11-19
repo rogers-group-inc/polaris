@@ -26,6 +26,7 @@ import { deliveryAfterChange,
   createGroup,
   updateGroup,
   deleteGroup,
+  cloneGroup,
   groupRemovalImpact,
   listJoinableRules,
 } from "../../services/alertGroupService.js";
@@ -139,6 +140,17 @@ alertGroupsRouter.put("/:id", requirePermission("automationManagement", "write")
       assertScriptActionPermission(req, (await deliveryAfterChange(req.params.id as string, input)) as never);
     }
     res.json(maskActionHeaders(await updateGroup(req.params.id as string, input, req.session?.username)));
+  } catch (err) { next(err); }
+});
+
+/** Copy a group under a new name, with no automations (one group each). Its
+ *  stored actions are re-checked for the script grant, as a create's are
+ *  (business rule 114(a)) — a copy runs the same scripts. */
+alertGroupsRouter.post("/:id/clone", requirePermission("automationManagement", "write"), async (req, res, next) => {
+  try {
+    const { name } = z.object({ name: z.string().trim().min(1).max(200) }).parse(req.body ?? {});
+    assertScriptActionPermission(req, (await deliveryAfterChange(req.params.id as string, {})) as never);
+    res.status(201).json(maskActionHeaders(await cloneGroup(req.params.id as string, name, req.session?.username)));
   } catch (err) { next(err); }
 });
 

@@ -199,6 +199,24 @@ The list shows each group's members, who it tells, and an **Enabled** switch
 that turns the group on or off without opening it (users without
 Automations Read-Write see **Yes** / **No** instead).
 
+Click a group's name (or double-click its row) to open it in the editor.
+Right-click the name or the row for its menu:
+
+- **Edit** — the editor.
+- **Clone** — a copy named "<name> (copy)" with every setting, its recipients
+  and escalation included, but **no automations**: an automation can be in only
+  one group, so the copy opens in the editor for you to choose its members.
+- **View code** — the group as JSON, editable and saved in place, as for an
+  automation. Deleting a key removes that setting.
+- **Export** — downloads a `.alert-group.json` file. Member automations and path
+  checks are listed by name; recipients and other delivery wiring are left out
+  and listed as things the group needs. There is no import yet.
+- **Delete** — after telling you which automations go back to delivering on
+  their own.
+
+Without Automations Read-Write the menu has only **View code** (read-only) and
+**Export**.
+
 The editor holds a name, an **Enabled** checkbox, **One alert per** (**Device**,
 **Automation**, **Device + automation** or **Subnet**), a **Which devices** filter, the member list, the alert text,
 **Require a note when acknowledging** and **Remind while unhandled**.

@@ -503,6 +503,76 @@
     return file;
   }
 
+  // ── Alert group export ─────────────────────────────────────────────────────
+
+  var GROUP_FORMAT_VERSION = 1;
+  var GROUP_FILE_SUFFIX = ".alert-group.json";
+
+  /**
+   * One alert group as a portable file, by the same rules as an automation:
+   * nothing install-specific travels as an id. Member automations and path
+   * checks are listed BY NAME (`automations`, `pathChecks`); the delivery half
+   * (recipients, escalation, reset actions, email layout) is delivery wiring and
+   * travels only as named dependencies, with `actions` emitted empty; a device
+   * filter is made portable exactly as an automation's is.
+   *
+   * `group` is the API row (with `rules: [{id,name}]`); `catalogs` adds
+   * `pathChecks: [{id,name}]` to the automation catalogs.
+   */
+  function buildGroupExportFile(group, catalogs, meta) {
+    var g = isPlainObject(group) ? group : {};
+    var cat = catalogs || {};
+    var deps = makeDeps();
+    var scoped = g.scope == null || (isPlainObject(g.scope) && (g.scope.allAssets === true || !g.scope.condition && !Object.keys(g.scope).length))
+      ? { scope: { allAssets: true }, needsDevices: false }
+      : portableScope(g.scope, cat, deps);
+    portableActions(g.actions, "Group action", cat, deps);
+    if (Array.isArray(g.resetActions)) portableActions(g.resetActions, "Group reset action", cat, deps);
+    if (g.escalation) recordEscalationDeps(g.escalation, "Group", cat, deps);
+    if (isPlainObject(g.emailComposition)) {
+      recordEmailBox(g.emailComposition.cc, "Email composition cc", cat, deps);
+      recordEmailBox(g.emailComposition.bcc, "Email composition bcc", cat, deps);
+    }
+    var checkNames = {};
+    (cat.pathChecks || []).forEach(function (c) { if (c && c.id) checkNames[c.id] = c.name; });
+    var pathChecks = (Array.isArray(g.pathCheckIds) ? g.pathCheckIds : []).map(function (id) {
+      var n = checkNames[id] || id;
+      deps.add("pathCheck", n, "path-check list", !checkNames[id]);
+      return n;
+    });
+    var automations = (Array.isArray(g.rules) ? g.rules : []).map(function (r) {
+      deps.add("automation", r.name, "member");
+      return r.name;
+    });
+    var out = {
+      name: g.name || "",
+      description: g.description == null ? null : g.description,
+      enabled: g.enabled !== false,
+      scope: scoped.scope,
+      foldBy: g.foldBy || "device",
+      minFailingPercent: typeof g.minFailingPercent === "number" ? g.minFailingPercent : null,
+      pathChecks: pathChecks,
+      automations: automations,
+      messageTemplate: g.messageTemplate == null ? null : g.messageTemplate,
+      requireAckNote: g.requireAckNote === true,
+      repeat: g.repeat ? clone(g.repeat) : null,
+      actions: [],
+    };
+    var file = {
+      polarisAlertGroup: GROUP_FORMAT_VERSION,
+      exportedAt: (meta && meta.exportedAt) || new Date().toISOString(),
+    };
+    if (meta && meta.polarisVersion) file.polarisVersion = meta.polarisVersion;
+    file.dependencies = deps.list();
+    if (scoped.needsDevices) file.needsDeviceSelection = true;
+    file.group = out;
+    return file;
+  }
+
+  function groupFilenameForExport(name) {
+    return filenameForExport(name).replace(/\.automation\.json$/, "") + GROUP_FILE_SUFFIX;
+  }
+
   // ── Import ─────────────────────────────────────────────────────────────────
 
   /**
@@ -650,15 +720,15 @@
    *  `alarming` flags the changes that are dangerous rather than merely
    *  different: taking a disabled automation live, and emptying the device
    *  filter or the action list. */
-  function diffForConfirm(before, after) {
+  function diffForConfirm(before, after, keys) {
     var out = [];
-    DIFF_KEYS.forEach(function (k) {
+    (Array.isArray(keys) ? keys : DIFF_KEYS).forEach(function (k) {
       var a = isPlainObject(before) ? before[k] : undefined;
       var b = isPlainObject(after) ? after[k] : undefined;
       if (JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b)) return;
       var alarming = false;
       if (k === "enabled" && a === false && b !== false) alarming = true;
-      if (k === "actions" && Array.isArray(a) && a.length && (b === undefined || (Array.isArray(b) && !b.length))) alarming = true;
+      if ((k === "actions" || k === "ruleIds") && Array.isArray(a) && a.length && (b === undefined || (Array.isArray(b) && !b.length))) alarming = true;
       if (k === "scope" && b === undefined) alarming = true;
       var fromS = describeValue(a);
       var toS = describeValue(b);
@@ -696,14 +766,18 @@
     var text = JSON.stringify(original, null, 2);
     var canSave = o.canSave !== false && typeof o.onSave === "function";
     var canExport = typeof o.onExport === "function";
+    // What is being edited — "automation" unless the caller says otherwise
+    // (the Alert Groups tab passes "alert group").
+    var noun = o.noun || "automation";
+    var Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
 
     var note =
       '<p style="font-size:0.85rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
-      'This is the automation exactly as it is stored. ' +
+      'This is the ' + escapeHtml(noun) + ' exactly as it is stored. ' +
       (canSave
-        ? '<strong>Removing a key removes that setting</strong> \u2014 saving replaces the whole automation rather than merging. ' +
-          '<code>enabled</code>, <code>severity</code> and <code>reset</code> fall back to their defaults if you delete them, ' +
-          'not to their current values.'
+        ? '<strong>Removing a key removes that setting</strong> \u2014 saving replaces the whole ' + escapeHtml(noun) + ' rather than merging. ' +
+          (o.defaultsNote || ('<code>enabled</code>, <code>severity</code> and <code>reset</code> fall back to their defaults if you delete them, ' +
+          'not to their current values.'))
         : 'You do not have permission to change it.') +
       '</p>' +
       '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.75rem">' +
@@ -726,13 +800,13 @@
     var footer =
       (canExport
         ? '<button class="btn btn-secondary" id="aw-code-export" type="button" ' +
-          'title="Download this automation as a portable file">Export</button>'
+          'title="Download this ' + escapeHtml(noun) + ' as a portable file">Export</button>'
         : "") +
       '<button class="btn btn-secondary" id="aw-code-copy" type="button">Copy</button>' +
       '<button class="btn btn-secondary" id="aw-code-cancel" type="button">' + (canSave ? "Cancel" : "Close") + '</button>' +
       (canSave ? '<button class="btn btn-primary" id="aw-code-save" type="button">Save changes</button>' : "");
 
-    var ov = buildOverlay(1300, o.title || "Automation code", body, footer, null, true);
+    var ov = buildOverlay(1300, o.title || (Noun + " code"), body, footer, null, true);
     var ta = ov.overlay.querySelector("#aw-code-text");
     var errBox = ov.overlay.querySelector("#aw-code-err");
 
@@ -762,8 +836,8 @@
         showErr(err2.message);
         return null;
       }
-      if (!isPlainObject(parsed)) { showErr("The automation must be a JSON object."); return null; }
-      if (!parsed.name || typeof parsed.name !== "string") { showErr("The automation needs a name."); return null; }
+      if (!isPlainObject(parsed)) { showErr("The " + noun + " must be a JSON object."); return null; }
+      if (!parsed.name || typeof parsed.name !== "string") { showErr("The " + noun + " needs a name."); return null; }
       return parsed;
     }
 
@@ -807,7 +881,7 @@
         if (JSON.stringify(parsed) === JSON.stringify(original)) { ov.close(); return; }
 
         // Deleting one of the tracked keys REMOVES that setting, so say so.
-        var diff = diffForConfirm(original, parsed);
+        var diff = diffForConfirm(original, parsed, o.diffKeys);
         if (!diff.length) {
           // Changed, but nothing destructive — save without a confirm.
           btn.disabled = true;
@@ -822,7 +896,7 @@
         }
         var alarming = diff.filter(function (d) { return d.alarming; });
         var lead = alarming.length
-          ? "Save these changes? Some of them change whether or what this automation alerts on:"
+          ? "Save these changes? Some of them change whether or what this " + noun + " alerts on:"
           : "Save these changes?";
         var ok = await showConfirm(lead + "\n\n" + diff.map(function (d) {
           return (d.alarming ? "! " : "- ") + d.key + ": " + (d.changed ? "changed" : d.from + " -> " + d.to);
@@ -856,5 +930,8 @@
     forCodeView: forCodeView,
     diffForConfirm: diffForConfirm,
     openCodeModal: openCodeModal,
+    GROUP_FILE_SUFFIX: GROUP_FILE_SUFFIX,
+    buildGroupExportFile: buildGroupExportFile,
+    groupFilenameForExport: groupFilenameForExport,
   };
 })();
