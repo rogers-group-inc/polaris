@@ -626,6 +626,7 @@ describe("list pages that open on double click and menu on right click", () => {
     ["public/js/subnets.js", 2], // a live network + an archived one (read-only View / Delete menu)
     ["public/js/path-checks.js", 2],
     ["public/js/assets-discovery.js", 1],
+    ["public/js/alert-groups.js", 1], // Automations → Alert Groups (Edit / Clone / View code / Export / Delete)
   ];
   for (const [file, n] of cases) {
     it(file + " marks its row" + (n > 1 ? "s" : ""), () => {

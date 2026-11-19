@@ -114,7 +114,7 @@ describe("row menu", () => {
     const read = CC.menuItems(check, { canEdit: false });
     expect(read.map((i: any) => i.label)).toEqual(["Results"]);
     const edit = CC.menuItems(check, { canEdit: true }).filter((i: any) => !i.separator);
-    expect(edit.map((i: any) => i.label)).toEqual(["Results", "Edit", "Duplicate", "Disable", "Delete"]);
+    expect(edit.map((i: any) => i.label)).toEqual(["Results", "Edit", "Clone", "Disable", "Delete"]);
     expect(edit[edit.length - 1].danger).toBe(true);
   });
   it("never asks for fullwrite on the UP_TO_WRITE key (rule 43d)", () => {

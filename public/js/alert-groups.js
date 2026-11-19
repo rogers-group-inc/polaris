@@ -101,19 +101,147 @@
     }
     host.innerHTML =
       '<table class="data-table"><thead><tr>' +
-        "<th>Group</th><th>Automations</th><th>Tells</th><th>Enabled</th><th></th>" +
+        "<th>Group</th><th>Automations</th><th>Tells</th><th>Enabled</th>" +
       "</tr></thead><tbody>" +
       groups.map(rowHtml).join("") +
       "</tbody></table>";
     host.querySelectorAll(".ag-enabled-toggle").forEach(function (cb) {
       cb.addEventListener("change", function () { toggleEnabled(cb); });
     });
-    host.querySelectorAll("[data-ag-edit]").forEach(function (el) {
-      el.addEventListener("click", function () { openEditor(el.getAttribute("data-ag-edit")); });
+    // The name is the row's one trigger (canon: Row context menu): a left click
+    // runs the primary verb, a right click anywhere on the row — replayed by
+    // app.js through `data-row-menu-row` — shows the menu. ONE delegated
+    // listener on the host, bound once: the table is repainted on every load.
+    if (host.dataset.agMenuWired !== "1") {
+      host.dataset.agMenuWired = "1";
+      host.addEventListener("click", function (e) {
+        var b = e.target && typeof e.target.closest === "function" ? e.target.closest(".ag-menu") : null;
+        if (b && host.contains(b)) onGroupMenu(b);
+      });
+    }
+  }
+
+  // ── Row menu ───────────────────────────────────────────────────────────────
+
+  /** Edit (primary) / Clone / View code / Export / Delete for an editor; View
+   *  code (primary) / Export for a read-only role — the Automations list's set. */
+  function onGroupMenu(b) {
+    var g = groups.find(function (x) { return x.id === b.getAttribute("data-id"); });
+    if (!g) return;
+    var P = window.PolarisAutomationPortability;
+    var code = P ? [
+      { label: "View code", primary: !canEdit(), title: "See and edit this alert group as JSON", onSelect: function () { openCodeFor(g); } },
+      { label: "Export", title: "Download this alert group as a portable file", onSelect: function () { exportGroup(g); } },
+    ] : [];
+    if (!canEdit()) {
+      if (code.length) showRowMenu(b, code, { label: "Actions for " + g.name });
+      return;
+    }
+    showRowMenu(b, [
+      { label: "Edit", primary: true, onSelect: function () { openEditor(g.id); } },
+      { label: "Clone", title: "Create a copy of this group with no automations in it", onSelect: function () { cloneGroupRow(g); } },
+    ].concat(code.length ? [{ separator: true }].concat(code) : [], [
+      { separator: true },
+      { label: "Delete", danger: true, onSelect: function () { confirmDelete(g.id); } },
+    ]), { label: "Actions for " + g.name });
+  }
+
+  /** "<name> (copy)", "(copy 2)" … — the Automations list's namer when the
+   *  page has it, so the two Clone verbs name copies the same way. */
+  function copyName(name) {
+    var taken = groups.map(function (x) { return x.name; });
+    if (typeof window._automationCloneName === "function") return window._automationCloneName(name, taken);
+    return String(name || "Alert group") + " (copy)";
+  }
+
+  /** The copy is made SERVER-side (masked webhook headers copy as stored), with
+   *  no automations — each belongs to one group — and then opened for editing. */
+  async function cloneGroupRow(g) {
+    try {
+      var copy = await api.alertGroups.clone(g.id, copyName(g.name));
+      showToast("Copied. Add automations to “" + copy.name + "” to put it to work.", "success");
+      await renderTab();
+      openEditor(copy.id);
+    } catch (err) {
+      showToast((err && err.message) || "Failed to copy the group", "error");
+    }
+  }
+
+  /** A listed row as the PUT body: every plain field explicit (PUT replaces
+   *  them), membership as `ruleIds`. Server-owned fields are dropped by the
+   *  code view itself (`forCodeView`). */
+  function groupToInput(g) {
+    return {
+      name: g.name,
+      description: g.description == null ? null : g.description,
+      enabled: g.enabled !== false,
+      scope: g.scope == null ? null : g.scope,
+      foldBy: foldByOf(g),
+      minFailingPercent: minPercentOf(g),
+      pathCheckIds: Array.isArray(g.pathCheckIds) ? g.pathCheckIds : [],
+      messageTemplate: g.messageTemplate == null ? null : g.messageTemplate,
+      requireAckNote: !!g.requireAckNote,
+      emailComposition: g.emailComposition == null ? null : g.emailComposition,
+      actions: g.actions == null ? null : g.actions,
+      resetActions: g.resetActions == null ? null : g.resetActions,
+      escalation: g.escalation == null ? null : g.escalation,
+      repeat: g.repeat == null ? null : g.repeat,
+      ruleIds: (g.rules || []).map(function (r) { return r.id; }),
+    };
+  }
+
+  /** The keys whose change the code view's Save confirms. */
+  var GROUP_DIFF_KEYS = ["enabled", "scope", "foldBy", "minFailingPercent", "pathCheckIds", "ruleIds", "actions", "escalation", "resetActions", "emailComposition"];
+
+  function openCodeFor(g) {
+    var P = window.PolarisAutomationPortability;
+    if (!P) return;
+    P.openCodeModal({
+      title: "Code for “" + g.name + "”",
+      noun: "alert group",
+      body: groupToInput(g),
+      diffKeys: GROUP_DIFF_KEYS,
+      defaultsNote: "<code>enabled</code> turns on and <code>ruleIds</code> empties if you delete them, not keep their current values. Changing <code>scope</code>, <code>foldBy</code>, <code>pathCheckIds</code> or turning the group off retires its open alerts.",
+      canSave: canEdit(),
+      // Exports what is in the textarea, so an edit can leave without being saved.
+      onExport: function (edited) { exportGroup(inputToRow(edited, g)); },
+      onSave: canEdit() ? async function (edited) {
+        await api.alertGroups.update(g.id, edited);
+        showToast("Alert group saved", "success");
+        renderTab();
+      } : null,
     });
-    host.querySelectorAll("[data-ag-delete]").forEach(function (el) {
-      el.addEventListener("click", function () { confirmDelete(el.getAttribute("data-ag-delete")); });
-    });
+  }
+
+  /** An edited PUT body back into the row shape the exporter reads: member
+   *  ids named from every group's members the list knows. */
+  function inputToRow(body, g) {
+    var names = {};
+    groups.forEach(function (x) { (x.rules || []).forEach(function (r) { names[r.id] = r.name; }); });
+    (joinable || []).forEach(function (r) { names[r.id] = r.name; });
+    var row = Object.assign({}, body);
+    row.rules = (Array.isArray(body.ruleIds) ? body.ruleIds : []).map(function (id) { return { id: id, name: names[id] || id }; });
+    return row;
+  }
+
+  /** Download one group as a portable `.alert-group.json`: members and path
+   *  checks by name, delivery wiring as named dependencies. */
+  async function exportGroup(g) {
+    var P = window.PolarisAutomationPortability;
+    if (!P || !P.buildGroupExportFile) { showToast("Export is not available on this page", "error"); return; }
+    var cat = typeof window._automationPortabilityCatalogs === "function" ? window._automationPortabilityCatalogs() : {};
+    if (!(cat.pathChecks && cat.pathChecks.length) && Array.isArray(g.pathCheckIds) && g.pathCheckIds.length) {
+      try {
+        var schema = await api.automations.schema();
+        cat = Object.assign({}, cat, { pathChecks: (schema && schema.pathChecks) || [] });
+      } catch (_e) { /* names degrade to ids, flagged unresolved in the file */ }
+    }
+    var file = P.buildGroupExportFile(g, cat, { polarisVersion: window.polarisVersion || undefined });
+    window.downloadJson(file, P.groupFilenameForExport(g.name));
+    var deps = (file.dependencies || []).length;
+    showToast(deps
+      ? "Exported. The file lists " + deps + " thing" + (deps === 1 ? "" : "s") + " it needs — delivery wiring is not included."
+      : "Exported.", "success");
   }
 
   function rowHtml(g) {
@@ -122,8 +250,11 @@
       ? members.slice(0, 3).map(function (r) { return escapeHtml(r.name); }).join(", ") +
         (members.length > 3 ? " <span style=\"color:var(--color-text-tertiary)\">and " + (members.length - 3) + " more</span>" : "")
       : '<span style="color:var(--color-text-tertiary)">none yet — this group folds nothing</span>';
-    return "<tr>" +
-      "<td><strong>" + escapeHtml(g.name) + "</strong>" +
+    // Standard row gestures: the name opens (Edit, or View code read-only),
+    // a right click anywhere on the row is the menu, a double click opens.
+    return "<tr data-row-menu-row>" +
+      '<td><button type="button" class="row-menu-trigger ag-menu" data-id="' + escapeHtml(g.id) + '" ' +
+        'aria-haspopup="menu" aria-expanded="false" title="' + (canEdit() ? "Actions for this group" : "View this group") + '"><strong>' + escapeHtml(g.name) + "</strong></button>" +
         (foldByOf(g) !== "device" ? ' <span class="badge">' + escapeHtml(foldOptionOf(foldByOf(g)).badge) + "</span>" : "") +
         (g.pathCheckIds && g.pathCheckIds.length ? ' <span class="badge" title="Governs only these path checks">' + g.pathCheckIds.length + " path check" + (g.pathCheckIds.length === 1 ? "" : "s") + "</span>" : "") +
         (minPercentOf(g) ? ' <span class="badge" title="No alert until at least this share of the devices reporting is failing">≥ ' + minPercentOf(g) + "% failing</span>" : "") +
@@ -140,12 +271,6 @@
           "</label>"
         : (g.enabled ? "Yes" : '<span style="color:var(--color-text-tertiary)">No</span>')) +
         (g.enabled ? "" : ' <span style="font-size:0.78rem;color:var(--color-text-tertiary)">members deliver on their own</span>') +
-      "</td>" +
-      '<td style="text-align:right;white-space:nowrap">' +
-        (canEdit()
-          ? '<button type="button" class="btn btn-sm btn-secondary" data-ag-edit="' + escapeHtml(g.id) + '">Edit</button> ' +
-            '<button type="button" class="btn btn-sm btn-danger" data-ag-delete="' + escapeHtml(g.id) + '">Delete</button>'
-          : "") +
       "</td>" +
     "</tr>";
   }

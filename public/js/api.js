@@ -1403,6 +1403,8 @@ const api = {
     create:   (body)  => request("POST", "/automations/groups", body),
     update:   (id, b) => request("PUT", `/automations/groups/${id}`, b),
     delete:   (id)    => request("DELETE", `/automations/groups/${id}`),
+    /** A copy with every setting and no automations (one group each). */
+    clone:    (id, name) => request("POST", `/automations/groups/${id}/clone`, { name }),
     /** What deleting it would change — live alerts, members, and which members
      *  would go SILENT because the group was doing the telling. */
     removalImpact: (id) => request("GET", `/automations/groups/${id}/removal-impact`),

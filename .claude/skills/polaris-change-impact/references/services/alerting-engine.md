@@ -49,7 +49,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 **What it owns:** The `AlertGroup` registry (business rule 75, second half) — a named set of automations whose alerts about ONE device (or, by `foldBy`, about one automation across devices, one device per automation, or every device in one registry subnet) fold into a single alert, with the group owning DELIVERY (notify actions, escalation chain, reminder cadence, acknowledge-note policy, `emailComposition`, `resetActions`) while its members keep owning DETECTION. CRUD, the membership swap, the joinable-rules picker source and the removal-impact preview.
 
-**Public API:** `listGroups`, `getGroup(id)`, `createGroup(input, actor)`, `updateGroup(id, input, actor)`, `deleteGroup(id, actor)`, `groupRemovalImpact(id)`, `listJoinableRules(forGroupId?, foldBy?)` (the mode the editor is SHOWING, else the group's stored one, else device), `AlertGroupInput` (now with `foldBy`).
+**Public API:** `listGroups`, `getGroup(id)`, `createGroup(input, actor)`, `updateGroup(id, input, actor)`, `cloneGroup(id, name, actor)` (every setting and the delivery half copied server-side so masked api_call headers copy as stored; NO members — one group per automation; logs `alert_group.created` with `clonedFrom`), `deleteGroup(id, actor)`, `groupRemovalImpact(id)`, `listJoinableRules(forGroupId?, foldBy?)` (the mode the editor is SHOWING, else the group's stored one, else device), `AlertGroupInput` (now with `foldBy`).
 
 **Cross-service deps:** `prisma` (AlertGroup, NotificationRule, Notification, NotificationRuleState), `eventLogService.logEvent`, `notificationTypes.triggerCanJoinGroup` + `normalizeRuleToV2`.
 

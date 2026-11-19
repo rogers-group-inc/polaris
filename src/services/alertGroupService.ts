@@ -286,6 +286,50 @@ function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
   return b.every((x) => s.has(x));
 }
 
+/**
+ * Copy a group: every setting — device filter, fold, percent threshold,
+ * path-check list, alert text, ack-note policy and the whole delivery half —
+ * copied server-side so masked api_call headers are copied as stored, never as
+ * the "••••" the browser holds. It starts with NO automations: an automation
+ * belongs to at most one group, so the source's members cannot be in the copy
+ * too. With no members it changes nothing until someone adds some.
+ */
+export async function cloneGroup(id: string, name: string, actor?: string) {
+  const src = await prisma.alertGroup.findUnique({ where: { id } });
+  if (!src) throw new AppError(404, "Alert group not found");
+  const json = (v: unknown) => (v == null ? undefined : (v as Prisma.InputJsonValue));
+  const group = await prisma.alertGroup.create({
+    data: {
+      name,
+      description: src.description,
+      enabled: src.enabled,
+      scope: json(src.scope),
+      foldBy: src.foldBy,
+      minFailingPercent: src.minFailingPercent,
+      pathCheckIds: src.pathCheckIds,
+      messageTemplate: src.messageTemplate,
+      requireAckNote: src.requireAckNote,
+      emailComposition: json(src.emailComposition),
+      actions: json(src.actions),
+      resetActions: json(src.resetActions),
+      escalation: json(src.escalation),
+      repeat: json(src.repeat),
+      createdBy: actor ?? null,
+    },
+    select: { id: true, name: true },
+  });
+  await logEvent({
+    action: "alert_group.created",
+    resourceType: "alert-group",
+    resourceId: group.id,
+    resourceName: group.name,
+    actor,
+    message: `Alert group "${group.name}" created as a copy of "${src.name}"`,
+    details: { clonedFrom: src.id, ruleIds: [] },
+  });
+  return getGroup(group.id);
+}
+
 export async function deleteGroup(id: string, actor?: string) {
   const existing = await getGroup(id);
   // Retire the live alerts FIRST. `alertGroupId` is SetNull, so after the

@@ -195,7 +195,7 @@
     if (perms && perms.canEdit) {
       items.push({ separator: true });
       items.push({ label: "Edit", onSelect: function () { openCheckModal(check); } });
-      items.push({ label: "Duplicate", title: "Create a disabled copy", onSelect: function () { openCheckModal(check, { duplicate: true }); } });
+      items.push({ label: "Clone", title: "Create a disabled copy of this check", onSelect: function () { openCheckModal(check, { duplicate: true }); } });
       items.push({
         label: check.enabled ? "Disable" : "Enable",
         onSelect: function () { toggleEnabled(check, !check.enabled); },
