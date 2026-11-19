@@ -24,9 +24,10 @@
  *     fortigate-endpoint source with the leased IP), then adopted into
  *     FMG — after adoption the management IP is the address Polaris must
  *     use (monitoring probes, Open HTTPS/SSH), not the pre-adoption lease.
- *     Plain endpoints have no infrastructure source, so for them the
- *     fortigate-endpoint rule still wins (freshest DHCP/ARP binding; MDM
- *     sources don't carry IP at all).
+ *     Below infra, the host's own agent wins when it confirms the address it
+ *     connects from (business rule 195, `confirmedIp`); then vCenter, the
+ *     workload platforms, Arc, and the fortigate-endpoint sighting
+ *     (freshest DHCP/ARP binding; MDM sources don't carry IP at all).
  *
  * Per-field priority order (first truthy wins). Inferred sources are
  * skipped — they're phase-1 backfill skeletons, not authoritative
@@ -59,6 +60,7 @@ import { normalizeWindowsOs } from "./osNormalize.js";
 import { isValidGeoCoord } from "./geo.js";
 import { usableSerialOrNull } from "./serialNumber.js";
 import { isFactoryDefaultSysName } from "./snmpIdentity.js";
+import { AGENT_ADDRESS_FRESH_MS } from "./agentAddress.js";
 import {
   contributedLocation,
   defaultSourceLocationPriority,
@@ -214,6 +216,13 @@ type FieldRule = {
    * learnedLocation once a fortigate-firewall source is on file.
    */
   applies?: (sources: AssetSourceForProjection[]) => boolean;
+  /**
+   * Optional freshness window: the kind's freshest row speaks only when its
+   * lastSeen is within this many ms of the projection's `now`. A row with no
+   * lastSeen (callers that don't supply it) is treated as fresh — the
+   * historical behaviour. Every caller that writes ipAddress supplies it.
+   */
+  maxAgeMs?: number;
 };
 
 /** True when a non-inferred source of the given kind exists. */
@@ -707,6 +716,13 @@ const IP_ADDRESS_RULES: FieldRule[] = [
   { sourceKind: "fortigate-firewall", pick: (o) => obsString(o, "mgmtIp") },
   { sourceKind: "fortiswitch", pick: (o) => obsString(o, "mgmtIp") },
   { sourceKind: "fortiap", pick: (o) => obsString(o, "mgmtIp") },
+  // Business rule 195: the address the host's own agent connects to Polaris
+  // from, confirmed against the addresses it reports (utils/agentAddress.ts —
+  // never the raw primaryIp, which can name a virtual adapter). The host's
+  // routing table chose it, so it beats every observer: vCenter Tools' first
+  // guest IP, Arc's network profile and a gate's DHCP/ARP sighting. Held for
+  // AGENT_ADDRESS_FRESH_MS after the agent's last push.
+  { sourceKind: "polaris-agent", pick: (o) => obsString(o, "confirmedIp"), maxAgeMs: AGENT_ADDRESS_FRESH_MS },
   // VMware Tools' live guest IP — the address the OS itself reports through
   // the hypervisor. Beats the fortigate-endpoint DHCP/ARP sighting
   // (Tools is current-state; a lease row can be stale), but stays below
@@ -838,6 +854,7 @@ const LEARNED_ADDRESS_RULES: FieldRule[] = [
 function projectField<T extends string | number>(
   sources: AssetSourceForProjection[],
   rules: FieldRule[],
+  nowMs: number = Date.now(),
 ): { value: T | null; source: AssetSourceKind | null } {
   for (const rule of rules) {
     if (rule.applies && !rule.applies(sources)) continue;
@@ -856,6 +873,7 @@ function projectField<T extends string | number>(
       }
     }
     if (!candidate) continue;
+    if (rule.maxAgeMs !== undefined && candidate.lastSeen && candidateSeen < nowMs - rule.maxAgeMs) continue;
     const picked = rule.pick(candidate.observed);
     if (picked !== null && picked !== undefined && picked !== "") {
       return { value: picked as T, source: rule.sourceKind };
@@ -871,6 +889,8 @@ export interface ProjectionOptions {
    * has configured (tests, previews).
    */
   learnedLocation?: SourceLocationPriority;
+  /** The clock rules with a freshness window (`maxAgeMs`) are judged against. Defaults to now. */
+  now?: Date;
 }
 
 export function projectAssetFromSources(
@@ -893,9 +913,10 @@ export function projectAssetFromSources(
     productType: null,
   };
   const provenance: ProjectionProvenance = {};
+  const nowMs = opts?.now ? opts.now.getTime() : Date.now();
 
   const apply = <K extends keyof ProjectedAsset>(field: K, rules: FieldRule[]): void => {
-    const { value, source } = projectField(sources, rules);
+    const { value, source } = projectField(sources, rules, nowMs);
     if (value !== null) {
       // The discriminated rules above guarantee string-only fields get
       // strings and number-only fields get numbers, but the type system

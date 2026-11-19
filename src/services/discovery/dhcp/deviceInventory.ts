@@ -282,7 +282,11 @@ export async function syncDeviceInventory(input: {
             // An UNTRUSTED row may fill a blank address but never moves an
             // asset off the one it has: it stakes its (low) claim, and Phase
             // 7.5's ARP claims decide from the standing address.
-            const mayMove = !invUntrusted || !existingAsset.ipAddress;
+            //
+            // Business rule 195: an address the asset's own agent holds is not
+            // the ladder's to move — the claim above still ranks.
+            const mayMove = (!invUntrusted || !existingAsset.ipAddress)
+              && !claims.agentHeldAddress?.has(existingAsset.id);
             if (
               mayMove && (
                 inv.ipAddress !== existingAsset.ipAddress ||

@@ -318,7 +318,10 @@ export async function associateDhcpMacs(input: {
           : {}),
       };
       if (leasePresence && !isFortinetOwnedInfra) bumpLastSeen(updateData, asset, new Date(now), "dhcp-lease");
-      if (!isInfraAsset && winsIpClaim) {
+      // Business rule 195: an address the asset's own agent holds is not the
+      // ladder's to move; the claim still ranks so a later pass can't take it.
+      const stagesIp = !isInfraAsset && winsIpClaim && !claims.agentHeldAddress?.has(asset.id);
+      if (stagesIp) {
         updateData.ipAddress = entry.ipAddress;
         updateData.ipSource = entry.device || integrationType;
         if (entry.device) updateData.learnedLocation = entry.device;
@@ -333,7 +336,7 @@ export async function associateDhcpMacs(input: {
       // Update in-memory so device inventory phase sees current state
       asset.macAddress = dhcpPrimaryMac;
       asset.macAddresses = macList;
-      if (!isInfraAsset && winsIpClaim) {
+      if (stagesIp) {
         asset.ipAddress = entry.ipAddress;
         if (entry.device) asset.learnedLocation = entry.device;
       }

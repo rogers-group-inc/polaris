@@ -92,6 +92,25 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ---
 
+## services/agentAddressService.ts
+
+**What it owns:** Business rule 195 — the host's own Polaris agent deciding the asset's primary address. The pure decision is `utils/agentAddress.ts → confirmAgentAddress`; the ranking is the `polaris-agent` row of `utils/assetProjection.ts → IP_ADDRESS_RULES` (`confirmedIp`, `maxAgeMs` = `AGENT_ADDRESS_FRESH_MS`).
+
+**Public API:** `confirmedAgentAddress(assetId, sourceIp, primaryIp)` (reads the asset's `agent-interface` `AssetAssociatedIp` rows; null without a source address), `applyAgentAddress(assetId, now?)` (re-projects and writes `ipAddress` + `ipSource: "polaris-agent"` only when the agent's answer won and differs; returns the new address or null), `loadAgentHeldAddressAssetIds(now?)` (asset ids with a fresh polaris-agent row carrying `confirmedIp`).
+
+**Cross-service deps:** `prisma`, `eventLogService.logEvent`, `utils/agentAddress`, `utils/assetProjection.projectAssetFromSources`.
+
+**Used by:** `api/routes/agents.ts` (`POST /agents/system-info`: `confirmedAgentAddress` before the AssetSource upsert, `applyAgentAddress` after the identity write-back), `discovery/discoveryEngine.ts → syncDhcpSubnets` (`loadAgentHeldAddressAssetIds` once per run onto the claim state; read by `discovery/dhcp/dhcpMacAssociation.ts`, `deviceInventory.ts`, `switchArpEnrichment.ts`).
+
+**Invariants:**
+- `applyAgentAddress` never writes an asset carrying `ipOverride`, `ipBlankPinned` or `primaryAddressIp` — the 5-minute push must not keep reopening an ip-override conflict; discovery's projection pass still casts that vote.
+- It writes only when `provenance.ipAddress === "polaris-agent"`; any other winner is discovery's write on its own run.
+- The source address is `req.ip || req.socket.remoteAddress` — the same expression the bearer middleware stamps `ManagedAgent.lastSeenIp` with, so `trust proxy` governs both. Behind a proxy without `trust proxy` it is loopback and nothing is confirmed (rule 101 decides, as before).
+- Events: `asset.address.agent` (from / to).
+
+**When changing this:** `loadAgentHeldAddressAssetIds` is one query per discovery run over polaris-agent rows (assetId + the small identity blob); keep it out of per-gate or per-asset loops. A new pathway that stages `ipAddress` for endpoints in `syncDhcpSubnets` must honour `claims.agentHeldAddress`, or the asset flaps between the gate's address and the agent's every run.
+
+---
 ## services/addressConfidenceService.ts
 
 **What it owns:** The ADDRESS CONFIDENCE score (business rule 103) — a 0–100 figure for each address on an asset, computed on read and never stored. This file gathers the evidence; the pure scoring (`EVIDENCE_KINDS` weight / half-life table, `scoreAddress`, bands, penalty factors, `pollingRunStart`, `pollingHoursFor`) is `utils/addressConfidence.ts`. Evidence per address: its `AssetAssociatedIp` row (interface / `agent-interface` (rule 103(e), 0.97) / detected-online / held reservation / held lease / ARP; a `manual` row = operator), the gates' own ARP tables (`AssetArpEntry` by `macAddress` ∈ the asset's MACs — its MAC rows, identity MAC and address-row MACs — seen within `ARP_EVIDENCE_WINDOW_MS`, 24 h: an `arp` piece, `device` = the gate's hostname, for ANY address ARP binds one of the asset's MACs to, whatever source names the address row), an active `dhcp_reservation` Reservation whose MAC is one of the asset's (configured always + held decaying from `lastSeenLeased`), every `AssetSource` kind that carries an address, through the `SOURCE_ADDRESS_KINDS` table (the same fields `utils/assetProjection.ts → IP_ADDRESS_RULES` projects from): `fortigate-firewall` / `fortiswitch` / `fortiap` mgmtIp → `controller`, `vcenter-vm` guestIp and `vcenter-host` resolvedIp → `vcenter`, the unraid / truenas / proxmox host, VM and container `ip` → `hypervisor`, `arc` ipAddresses → `arc`, `fortigate-endpoint` ipAddress → `endpoint-sighting`, `generic-api` ip → `generic-api` (before 2026-10-11 only the vcenter-vm / arc / generic-api rows were read, so every FortiAP — no interface table, kept off the address list by discovery — scored 0), the polling run (`Asset.ipConfirmedFor` / `ipConfirmedSince`), and the operator (pinned primary or `ipOverride`). Penalties: alive-elsewhere (primary down while a `device-inventory` row for another IP was seen within 1h), claimed-elsewhere (another network-present asset's `ipAddress` is this IP, seen more recently than this IP's best evidence) and arp-elsewhere (`ARP_ELSEWHERE_FACTOR` 0.5: the address rests on detected-online / endpoint-sighting evidence, has no ARP evidence, and a gate has the row's MAC at a different address within `ARP_CONTRADICT_WINDOW_MS`, 4 h — absence from ARP alone is never held against an address). Detected-online / endpoint-sighting evidence is re-kinded `detected-ambiguous` when ARP shows that MAC with more than one address within the same 4 h: the gate's row only says which of a card's addresses it last saw traffic from.

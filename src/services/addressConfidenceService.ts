@@ -73,6 +73,10 @@ const field = (name: string) => (o: Observed, ip: string) => o[name] === ip;
  * projection would use to SET the address is evidence for it. Missing the
  * three Fortinet infra kinds left every FortiAP at 0 (prod 2026-10-11): an AP
  * has no interface table, and discovery keeps infra off the address list.
+ * The one deliberate exception is the polaris-agent `confirmedIp` (rule 195):
+ * it is the agent-source address cross-checked against the agent-interface
+ * rows, both already scored under rule 103(e), so listing it would count the
+ * same evidence twice.
  */
 const SOURCE_ADDRESS_KINDS = new Map<string, { kind: EvidenceKind; carries: (o: Observed, ip: string) => boolean }>([
   ["fortigate-firewall", { kind: "controller", carries: field("mgmtIp") }],

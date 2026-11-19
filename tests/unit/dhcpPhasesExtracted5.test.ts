@@ -183,7 +183,7 @@ describe("Phase 11 — projection apply pass", () => {
   it("writes only the fields the projection disagrees with, baselining os / osVersion first", async () => {
     const asset = { id: "e1", hostname: "pc-1", os: "Windows", osVersion: "10.0", ipAddress: "10.1.0.5" };
     db.sourceFindMany.mockResolvedValue([{ assetId: "e1", sourceKind: "intune", inferred: false, observed: {}, lastSeen: null }]);
-    m.project.mockReturnValue({ projected: { ...nothing, hostname: "pc-1", osVersion: "10.0.19045" } });
+    m.project.mockReturnValue({ provenance: {}, projected: { ...nothing, hostname: "pc-1", osVersion: "10.0.19045" } });
     const state = run([asset]);
     expect(await applyEndpointProjection(state)).toBe(1);
     expect(m.project).toHaveBeenCalledWith([{ sourceKind: "intune", inferred: false, observed: {}, lastSeen: null }]);
@@ -193,20 +193,20 @@ describe("Phase 11 — projection apply pass", () => {
   });
 
   it("an address correction re-tags ipSource; a primary-address pin keeps its address (rule 102)", async () => {
-    m.project.mockReturnValue({ projected: { ...nothing, ipAddress: "10.1.0.99" } });
+    m.project.mockReturnValue({ provenance: {}, projected: { ...nothing, ipAddress: "10.1.0.99" } });
     await applyEndpointProjection(run([{ id: "free", ipAddress: "10.1.0.5" }, { id: "pinned", ipAddress: "10.1.0.6", primaryAddressIp: "10.1.0.6" }]));
     expect(db.assetUpdate).toHaveBeenCalledTimes(1);
     expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "free" }, data: { ipAddress: "10.1.0.99", ipSource: "fortimanager:fortigate-endpoint" } });
   });
 
   it("an IP override the projection agrees with is staged so the pin can release", async () => {
-    m.project.mockReturnValue({ projected: { ...nothing, ipAddress: "10.1.0.6" } });
+    m.project.mockReturnValue({ provenance: {}, projected: { ...nothing, ipAddress: "10.1.0.6" } });
     await applyEndpointProjection(run([{ id: "o1", ipAddress: "10.1.0.6", ipOverride: "10.1.0.6" }]));
     expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "o1" }, data: { ipAddress: "10.1.0.6", ipSource: "fortimanager:fortigate-endpoint" } });
   });
 
   it("a quiet sync writes nothing", async () => {
-    m.project.mockReturnValue({ projected: { ...nothing, hostname: "pc-1" } });
+    m.project.mockReturnValue({ provenance: {}, projected: { ...nothing, hostname: "pc-1" } });
     const state = run([{ id: "e1", hostname: "pc-1" }]);
     expect(await applyEndpointProjection(state)).toBe(0);
     expect(db.assetUpdate).not.toHaveBeenCalled();

@@ -404,6 +404,67 @@ describe("projectAssetFromSources — ipAddress + lat/long", () => {
   });
 });
 
+describe("projectAssetFromSources — the agent's confirmed address (rule 195)", () => {
+  const NOW = new Date("2026-11-19T12:00:00Z");
+  const at = (msAgo: number) => new Date(NOW.getTime() - msAgo);
+  const agent = (observed: Record<string, unknown>, lastSeen: Date | null = at(60_000)): AssetSourceForProjection =>
+    ({ sourceKind: "polaris-agent", observed, inferred: false, lastSeen });
+
+  it("the plant HMI: the agent's wired address beats the gate's Wi-Fi lease", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      { ...src("fortigate-endpoint", { ipAddress: "172.22.174.134" }), lastSeen: at(60_000) },
+      agent({ primaryIp: "172.22.175.193", confirmedIp: "172.22.175.193" }),
+    ], { now: NOW });
+    expect(projected.ipAddress).toBe("172.22.175.193");
+    expect(provenance.ipAddress).toBe("polaris-agent");
+  });
+
+  it("the raw primaryIp alone decides nothing — it can name a virtual adapter", () => {
+    const { projected, provenance } = projectAssetFromSources([
+      src("fortigate-endpoint", { ipAddress: "172.22.174.134" }),
+      agent({ primaryIp: "172.29.0.1" }),
+    ], { now: NOW });
+    expect(projected.ipAddress).toBe("172.22.174.134");
+    expect(provenance.ipAddress).toBe("fortigate-endpoint");
+  });
+
+  it("beats vCenter's guest IP and Arc's network profile", () => {
+    const { provenance } = projectAssetFromSources([
+      src("vcenter-vm", { guestIp: "10.1.1.51" }),
+      src("arc", { ipAddresses: ["10.1.1.52"] }),
+      agent({ confirmedIp: "10.1.1.50" }),
+    ], { now: NOW });
+    expect(provenance.ipAddress).toBe("polaris-agent");
+  });
+
+  it("stays below a Fortinet management IP", () => {
+    const { provenance } = projectAssetFromSources([
+      src("fortiap", { mgmtIp: "10.255.1.10" }),
+      agent({ confirmedIp: "10.0.0.9" }),
+    ], { now: NOW });
+    expect(provenance.ipAddress).toBe("fortiap");
+  });
+
+  it("an agent silent for over 24 h hands the address back to the network", () => {
+    const sources = [
+      src("fortigate-endpoint", { ipAddress: "172.22.174.134" }),
+      agent({ confirmedIp: "172.22.175.193" }, at(25 * 60 * 60 * 1000)),
+    ];
+    expect(projectAssetFromSources(sources, { now: NOW }).provenance.ipAddress).toBe("fortigate-endpoint");
+    // Within the window it still holds.
+    sources[1] = agent({ confirmedIp: "172.22.175.193" }, at(23 * 60 * 60 * 1000));
+    expect(projectAssetFromSources(sources, { now: NOW }).provenance.ipAddress).toBe("polaris-agent");
+  });
+
+  it("the window touches no other field: a stale agent still names the host", () => {
+    const { provenance } = projectAssetFromSources([
+      agent({ hostname: "HICKMAN-HMI2", confirmedIp: "10.0.0.9" }, at(30 * 24 * 60 * 60 * 1000)),
+    ], { now: NOW });
+    expect(provenance.hostname).toBe("polaris-agent");
+    expect(provenance.ipAddress).toBeUndefined();
+  });
+});
+
 describe("projectAssetFromSources — learnedAddress", () => {
   it("comes from the fortigate-firewall metavarAddress", () => {
     const { projected, provenance } = projectAssetFromSources([

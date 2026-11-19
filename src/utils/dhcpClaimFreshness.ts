@@ -194,6 +194,16 @@ export interface DhcpClaimState {
    * pass, carry the same claim.
    */
   hostnameAdoptRefused: Set<string>;
+  /**
+   * Assets whose primary address their own agent holds (business rule 195,
+   * services/agentAddressService.ts → loadAgentHeldAddressAssetIds). The ladder
+   * still ranks their claims, records sightings, MAC rows and the address
+   * list, but never stages ipAddress / ipSource / learnedLocation for them —
+   * the end-of-run projection writes the agent's address, and staging the
+   * gate's would move the asset off it and back on every run. Null until the
+   * run's first syncDhcpSubnets call loads it (once per run, shared by gates).
+   */
+  agentHeldAddress: Set<string> | null;
 }
 
 export function createDhcpClaimState(): DhcpClaimState {
@@ -201,5 +211,6 @@ export function createDhcpClaimState(): DhcpClaimState {
     bestAddressClaimByAsset: new Map(),
     bestGateClaimMsByAsset: new Map(),
     hostnameAdoptRefused: new Set(),
+    agentHeldAddress: null,
   };
 }

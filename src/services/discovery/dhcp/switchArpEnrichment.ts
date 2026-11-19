@@ -167,7 +167,11 @@ export async function enrichFromSwitchMacAndArp(input: {
           // ARP confirms the standing address — recorded so a weaker claim
           // iterated later can't take it.
           if (!incumbent || claimBeats(arpScore, incumbent)) claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
-        } else if (hadLadderClaim && incumbent && claimBeats(arpScore, incumbent)) {
+        } else if (
+          hadLadderClaim && incumbent && claimBeats(arpScore, incumbent)
+          // Business rule 195: the agent's address is not ARP's to move.
+          && !claims.agentHeldAddress?.has(arpAssetId)
+        ) {
           claims.bestAddressClaimByAsset.set(arpAssetId, arpScore);
           queueUpdate(arpAssetId, { ipAddress: row.ip, ipSource: `${row.device}:arp`, learnedLocation: row.device });
           asset.ipAddress = row.ip;

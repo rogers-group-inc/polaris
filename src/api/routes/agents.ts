@@ -76,6 +76,7 @@ import { splitInterfaceAddresses } from "../../utils/interfaceAddress.js";
 import { ipv6Enabled } from "../../services/ipv6GateService.js";
 import { sortNewestFirst } from "../../utils/sortByTime.js";
 import { recordHostHbaPorts } from "../../services/fibreChannelService.js";
+import { applyAgentAddress, confirmedAgentAddress } from "../../services/agentAddressService.js";
 
 // ─── /enroll (public) ─────────────────────────────────────────────────
 //
@@ -1253,6 +1254,15 @@ agentsRouter.post("/system-info", async (req, res, next) => {
     for (const [k, v] of Object.entries(body)) {
       if (v !== undefined && v !== null && v !== "") observed[k] = v;
     }
+    // Business rule 195: the address this push came from, when the agent's
+    // own report backs it — the projection ranks it above every observer.
+    // Same caller-address expression the bearer middleware stamps lastSeenIp with.
+    const confirmedIp = await confirmedAgentAddress(
+      assetId,
+      req.ip || req.socket.remoteAddress || null,
+      body.primaryIp,
+    );
+    if (confirmedIp) observed.confirmedIp = confirmedIp;
 
     // Upsert the per-agent source row. The externalId is the ManagedAgent
     // id (stable per install, rotates on reinstall) — matches the pattern
@@ -1410,6 +1420,10 @@ agentsRouter.post("/system-info", async (req, res, next) => {
         }
       }
     }
+
+    // Business rule 195: the confirmed address takes the primary now, not on
+    // the next discovery run. No-op on a pinned asset or an unchanged address.
+    await applyAgentAddress(assetId, now);
 
     // Bump the running agent's version stamp opportunistically — keeps
     // the asset details modal's Agent panel current without waiting for

@@ -538,6 +538,13 @@ source. A serial the hardware never had programmed (`To Be Filled By O.E.M.`
 and friends) is reported as no serial at all rather than passed on — see
 [Business Rules](Business-Rules#rule-83).
 
+The agent also decides the device's **primary address**: the address it connects to Polaris
+from, as long as the agent reports that address among its own network cards. It beats the
+address a FortiGate, vCenter or Azure Arc reports, so a machine with both Ethernet and Wi-Fi is
+monitored on the card it actually uses to reach Polaris. Behind NAT, or behind a reverse proxy
+that does not pass the client's address on (set `TRUST_PROXY`), the agent has no say. See
+[Business Rules](Business-Rules#rule-195).
+
 ### Fibre-channel HBAs
 
 From agent 0.29.0 the host identity also lists the server's fibre-channel HBA

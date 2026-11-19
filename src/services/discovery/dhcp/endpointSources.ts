@@ -193,7 +193,7 @@ export async function applyEndpointProjection(input: {
         const asset = assetIdx.findById(assetId);
         if (!asset) return false;
         const sourceRows = sourcesByAsset.get(assetId) ?? [];
-        const { projected } = projectAssetFromSources(
+        const { projected, provenance } = projectAssetFromSources(
           sourceRows.map((s) => ({
             sourceKind: s.sourceKind,
             inferred: s.inferred,
@@ -233,7 +233,10 @@ export async function applyEndpointProjection(input: {
         // ipAddress correction needs to clear ipSource if the inline path
         // wrote a stale tag. Mirror the existing inline pattern.
         if ("ipAddress" in corrections) {
-          corrections.ipSource = `${integrationType}:fortigate-endpoint`;
+          // Business rule 195: the agent's address is labelled as the agent's.
+          corrections.ipSource = provenance.ipAddress === "polaris-agent"
+            ? "polaris-agent"
+            : `${integrationType}:fortigate-endpoint`;
         }
         clampAcquiredToLastSeen(corrections, asset);
         // Baseline before the in-memory assign: this pass is the one that

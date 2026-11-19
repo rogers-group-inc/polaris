@@ -3939,3 +3939,18 @@ Monitor automation alerts on it on its own, once per host, to its own recipients
 as a device outside the group's device filter. Other kinds of automation in the group are not
 affected. Changing the list retires the group's open alerts; the next check raises them again
 under the new list.
+
+### Rule 195
+
+**A device running the Polaris agent is monitored on the address its agent reaches Polaris
+from.** That is the network card the machine itself chose to talk to the server on, so it
+beats what vCenter, Azure Arc or a FortiGate's DHCP and ARP tables say — a PC with an
+Ethernet card and a Wi-Fi card stays on its Ethernet address even when the gate only knows
+the Wi-Fi lease. Polaris uses that address only when the agent itself reports having it: an
+agent reaching Polaris through NAT, or a proxy that does not pass on the client's address, has
+no say, and the network evidence decides as before. The address the agent lists first is never
+used on its own, because on Windows that is often a Hyper-V, WSL, VPN or Docker adapter.
+The change takes effect on the agent's next check-in and is recorded in Events. A pinned or
+typed address still wins, and a FortiGate, FortiSwitch or FortiAP keeps its management address.
+If the agent stops checking in, its address holds for 24 hours, then the network evidence
+decides again.
