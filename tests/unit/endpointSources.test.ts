@@ -201,7 +201,7 @@ describe("stampEndpointSources (Phase 10)", () => {
 
 describe("applyEndpointProjection (Phase 11)", () => {
   const NOTHING = { hostname: null, os: null, osVersion: null, manufacturer: null, model: null, learnedLocation: null, ipAddress: null, serialNumber: null };
-  const projected = (p: Record<string, unknown>) => ({ projected: { ...NOTHING, ...p } });
+  const projected = (p: Record<string, unknown>, provenance: Record<string, string> = {}) => ({ projected: { ...NOTHING, ...p }, provenance });
   function run(assets: Row[], over: Record<string, unknown> = {}) {
     return {
       fortigateEndpointAssetIds: new Set(assets.map((a) => a.id as string)),
@@ -278,6 +278,13 @@ describe("applyEndpointProjection (Phase 11)", () => {
     await applyEndpointProjection(state);
     expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "e1" }, data: { ipAddress: "2001:db8::9", ipSource: "fortigate:fortigate-endpoint" } });
     expect(state.noteChangeBaseline).not.toHaveBeenCalled();
+  });
+
+  it("the agent's confirmed address is labelled as the agent's (rule 195)", async () => {
+    m.project.mockReturnValue(projected({ ipAddress: "10.1.0.193" }, { ipAddress: "polaris-agent" }));
+    const state = run([{ id: "e1", ipAddress: "10.1.0.5" }]);
+    await applyEndpointProjection(state);
+    expect(db.assetUpdate).toHaveBeenCalledWith({ where: { id: "e1" }, data: { ipAddress: "10.1.0.193", ipSource: "polaris-agent" } });
   });
 
   it("stages an IP override the projection agrees with, so the pin can release; one it disagrees with is a plain correction", async () => {

@@ -57,6 +57,7 @@ import type { DiscoveryResult, DiscoveryProgressCallback } from "../fortimanager
 import { projectAssetFromSources, copyProjectedFields } from "../../utils/assetProjection.js";
 import { classifyDirectoryRows, absenceExceedsGuard } from "../../utils/directoryAbsence.js";
 import { createDhcpClaimState, type DhcpClaimState } from "../../utils/dhcpClaimFreshness.js";
+import { loadAgentHeldAddressAssetIds } from "../agentAddressService.js";
 import type { AddressSighting } from "../assetAddressService.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
@@ -2107,6 +2108,8 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // last-gate-wins. Callers that fan out over gates pass one state for the
   // whole run; a single-call path can omit it. See utils/dhcpClaimFreshness.ts.
   const claims = claimState ?? createDhcpClaimState();
+  // Business rule 195: loaded once per run, by whichever gate syncs first.
+  claims.agentHeldAddress ??= await loadAgentHeldAddressAssetIds();
   // Business rule 128: with IPv6 off for the install, nothing IPv6 is stored.
   if (!ipv6Enabled()) result = withoutIpv6(result);
   const syncLog = makeSyncLog(integrationId, integrationName, actor);
