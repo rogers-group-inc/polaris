@@ -333,6 +333,22 @@ To set it up:
 3. Tick the down automation in the member list and save. The group's
    recipients are copied from it the first time, as for any group.
 
+### Only some path checks
+
+A group with Path Monitor automations in it covers every path check they watch, unless you
+narrow it. Under **Which path checks**, untick **Every path check its automations cover** and
+tick the checks this group is for.
+
+- Only the ticked checks are folded into the group's alerts and sent to its recipients.
+- A check you leave out still alerts — from its automation, once per host, to the
+  automation's own recipients, as if the automation were not in a group. To stop a check
+  alerting at all, narrow the automation's own check instead.
+- A percent threshold (below) counts only the ticked checks.
+- Changing the list retires the group's open alerts; the next check raises them again.
+
+The list shows the setting as an **N path checks** badge beside the group's name. See
+[Business rule 194](Business-Rules#rule-194).
+
 ### Only alert when enough of them are failing
 
 A group that puts several devices in one alert (per automation, per device + automation,

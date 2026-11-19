@@ -53,6 +53,9 @@ export interface AlertGroupInput {
   /** Business rule 193: percent of the fold's reporting devices that must be
    *  failing before an alert opens. Null = off; dropped on a per-device fold. */
   minFailingPercent?: number | null;
+  /** Business rule 194: the path checks this group governs. Empty / null =
+   *  every check; omitted on update = unchanged. */
+  pathCheckIds?: string[] | null;
   messageTemplate?: string | null;
   requireAckNote?: boolean;
   emailComposition?: unknown;
@@ -66,7 +69,7 @@ export interface AlertGroupInput {
 }
 
 const GROUP_SELECT = {
-  id: true, name: true, description: true, enabled: true, scope: true, foldBy: true, minFailingPercent: true,
+  id: true, name: true, description: true, enabled: true, scope: true, foldBy: true, minFailingPercent: true, pathCheckIds: true,
   messageTemplate: true, requireAckNote: true, emailComposition: true,
   actions: true, resetActions: true, escalation: true, repeat: true,
   createdBy: true, createdAt: true, updatedAt: true,
@@ -139,6 +142,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
   restoreMaskedActionHeaders(input, null);
   applyResetSnapshots(input as never);
   await assertActionRefs(input as never);
+  const pathCheckIds = await normalizePathCheckIds(input.pathCheckIds);
   const group = await prisma.alertGroup.create({
     data: {
       name: input.name,
@@ -147,6 +151,7 @@ export async function createGroup(input: AlertGroupInput, actor?: string) {
       scope: (input.scope ?? undefined) as Prisma.InputJsonValue | undefined,
       foldBy: input.foldBy ?? "device",
       minFailingPercent: effectiveMinFailingPercent(input.foldBy ?? "device", input.minFailingPercent),
+      pathCheckIds: pathCheckIds ?? [],
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: (input.emailComposition ?? undefined) as Prisma.InputJsonValue | undefined,
@@ -183,6 +188,7 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   applyResetSnapshots(input as never);
   await assertActionRefs(input as never);
   const jsonOrClear = (v: unknown) => (v === undefined ? undefined : v === null ? Prisma.DbNull : (v as Prisma.InputJsonValue));
+  const pathCheckIds = await normalizePathCheckIds(input.pathCheckIds);
   const group = await prisma.alertGroup.update({
     where: { id },
     data: {
@@ -197,6 +203,8 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
         foldBy,
         input.minFailingPercent !== undefined ? input.minFailingPercent : existing.minFailingPercent,
       ),
+      // Rule 194: omitted = unchanged (the list's Enabled switch does not resend it).
+      ...(pathCheckIds !== undefined ? { pathCheckIds } : {}),
       messageTemplate: input.messageTemplate ?? null,
       requireAckNote: input.requireAckNote === true,
       emailComposition: jsonOrClear(input.emailComposition),
@@ -232,7 +240,9 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
   // compare retired them anyway (CQ-B054). An OMITTED scope is left unchanged
   // by the update above (jsonOrClear → undefined), so it is no change here
   // either — a rename that does not resend the scope must not retire alerts.
-  if (input.scope !== undefined && !jsonEqual(existing.scope ?? null, input.scope ?? null)) {
+  // The path-check list (rule 194) is the same kind of filter, over checks.
+  const checksChanged = pathCheckIds !== undefined && !sameIdSet(existing.pathCheckIds ?? [], pathCheckIds);
+  if ((input.scope !== undefined && !jsonEqual(existing.scope ?? null, input.scope ?? null)) || checksChanged) {
     await retireGroupAlerts(id, "system:group-rescoped");
   } else if (existing.foldBy !== foldBy) {
     // A new fold changes what ONE alert is: a live alert per device
@@ -248,9 +258,32 @@ export async function updateGroup(id: string, input: AlertGroupInput, actor?: st
     resourceName: group.name,
     actor,
     message: `Alert group "${group.name}" updated`,
-    details: { enabled: input.enabled !== false, foldBy, ruleIds: input.ruleIds ?? null },
+    details: { enabled: input.enabled !== false, foldBy, ruleIds: input.ruleIds ?? null, ...(checksChanged ? { pathCheckIds } : {}) },
   });
   return getGroup(id);
+}
+
+/**
+ * Business rule 194: the posted path-check list, de-duplicated and checked to
+ * exist. undefined stays undefined (no change); null and [] both mean "every
+ * check" and store []. An unknown id is refused rather than stored: a list
+ * holding only a deleted check would silently govern nothing.
+ */
+async function normalizePathCheckIds(ids: string[] | null | undefined): Promise<string[] | undefined> {
+  if (ids === undefined) return undefined;
+  const distinct = [...new Set(ids ?? [])];
+  if (!distinct.length) return [];
+  const found = await prisma.pathCheck.findMany({ where: { id: { in: distinct } }, select: { id: true } });
+  if (found.length !== distinct.length) {
+    throw new AppError(400, "One of the chosen path checks no longer exists — reopen the group and choose again");
+  }
+  return distinct;
+}
+
+function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const s = new Set(a);
+  return b.every((x) => s.has(x));
 }
 
 export async function deleteGroup(id: string, actor?: string) {

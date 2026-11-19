@@ -33,6 +33,8 @@
 
   var groups = [];
   var joinable = [];
+  /** Business rule 194: the path-check catalog (id, name) the editor offers. */
+  var pathChecks = [];
 
   /** The "One alert per" choices, in the order the editor lists them. The
    *  values are the server's ALERT_GROUP_FOLD_BY; `badge` is what the list
@@ -123,6 +125,7 @@
     return "<tr>" +
       "<td><strong>" + escapeHtml(g.name) + "</strong>" +
         (foldByOf(g) !== "device" ? ' <span class="badge">' + escapeHtml(foldOptionOf(foldByOf(g)).badge) + "</span>" : "") +
+        (g.pathCheckIds && g.pathCheckIds.length ? ' <span class="badge" title="Governs only these path checks">' + g.pathCheckIds.length + " path check" + (g.pathCheckIds.length === 1 ? "" : "s") + "</span>" : "") +
         (minPercentOf(g) ? ' <span class="badge" title="No alert until at least this share of the devices reporting is failing">≥ ' + minPercentOf(g) + "% failing</span>" : "") +
         (g.description ? '<div style="font-size:0.8rem;color:var(--color-text-tertiary)">' + escapeHtml(g.description) + "</div>" : "") +
       "</td>" +
@@ -217,6 +220,10 @@
       // so this awaits here and bails with a toast rather than opening a
       // dialog it cannot populate. Same contract every other consumer holds.
       vocab = await window.PolarisScopeVocabulary.load();
+      // Rule 194: the checks to choose from — the same catalog the automation
+      // wizard names checks from, behind the same automationManagement gate.
+      var schema = await api.automations.schema();
+      pathChecks = (schema && schema.pathChecks) || [];
     } catch (err) {
       showToast((err && err.message) || "Failed to open the group", "error");
       return;
@@ -254,6 +261,14 @@
     allBox.addEventListener("change", function () {
       scopeHost.style.display = allBox.checked ? "none" : "";
     });
+    // Same hide-don't-clear contract for the path-check list (rule 194).
+    var allChecks = ov.overlay.querySelector("#ag-all-checks");
+    var checkList = ov.overlay.querySelector("#ag-check-list");
+    if (allChecks && checkList) {
+      allChecks.addEventListener("change", function () {
+        checkList.style.display = allChecks.checked ? "none" : "";
+      });
+    }
 
     // What may join depends on the fold: a "monitor status is down" automation
     // has nothing to fold per device but plenty per automation or subnet. Re-ask the server
@@ -318,6 +333,7 @@
         '<input type="checkbox" id="ag-all-devices"' + (scopeIsAll(g.scope) ? " checked" : "") + "> Every device its automations cover" +
       "</label>" +
       '<div id="ag-scope-builder"' + (scopeIsAll(g.scope) ? ' style="display:none"' : "") + "></div>" +
+      pathChecksHtml(g) +
 
       "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
       '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">One alert per</h4>' +
@@ -377,6 +393,35 @@
     );
   }
 
+  /** Business rule 194: which path checks the group governs. Only drawn when
+   *  there are checks to choose from; a stored id whose check was deleted is
+   *  simply not offered, so the next save drops it. */
+  function pathChecksHtml(g) {
+    if (!pathChecks.length) return "";
+    var chosen = new Set(Array.isArray(g.pathCheckIds) ? g.pathCheckIds : []);
+    var all = !pathChecks.some(function (c) { return chosen.has(c.id); });
+    return (
+      "<hr style=\"border:0;border-top:1px solid var(--color-border);margin:1rem 0\">" +
+      '<h4 style="margin:0 0 0.25rem;font-size:0.95rem">Which path checks</h4>' +
+      '<p style="font-size:0.8rem;color:var(--color-text-tertiary);margin:0 0 0.5rem">' +
+        "For the Path Monitor automations in this group. A check outside this list is not folded by this group — its automation alerts on it on its own, exactly as it would ungrouped. Other automations are not affected." +
+      "</p>" +
+      '<label style="display:block;font-weight:400;margin:0 0 0.4rem">' +
+        '<input type="checkbox" id="ag-all-checks"' + (all ? " checked" : "") + "> Every path check its automations cover" +
+      "</label>" +
+      '<div id="ag-check-list" style="max-height:200px;overflow:auto;border:1px solid var(--color-border);border-radius:6px;padding:0.5rem' + (all ? ";display:none" : "") + '">' +
+        pathChecks.map(function (c) {
+          return '<label style="display:block;font-weight:400;padding:0.2rem">' +
+            '<input type="checkbox" class="ag-check" value="' + escapeHtml(c.id) + '"' + (chosen.has(c.id) ? " checked" : "") + "> " +
+            escapeHtml(c.name) +
+            (c.target ? ' <span style="color:var(--color-text-tertiary);font-size:0.78rem">' + escapeHtml(c.target) + "</span>" : "") +
+            (c.enabled === false ? ' <span class="badge badge-deprecated">disabled</span>' : "") +
+          "</label>";
+        }).join("") +
+      "</div>"
+    );
+  }
+
   function memberRowHtml(r, selected) {
     var checked = selected.has(r.id);
     var disabled = !r.selectable && !checked;
@@ -432,9 +477,21 @@
       }
       minPct = raw;
     }
+    // Rule 194: [] = every check. Only sent when the section was drawn, so a
+    // save with no checks in the catalog leaves the stored list alone.
+    var pathCheckIds;
+    var allChecksEl = root.querySelector("#ag-all-checks");
+    if (allChecksEl) {
+      pathCheckIds = allChecksEl.checked ? [] : Array.prototype.slice.call(root.querySelectorAll(".ag-check:checked")).map(function (el) { return el.value; });
+      if (!allChecksEl.checked && !pathCheckIds.length) {
+        showToast("Choose at least one path check, or tick every path check", "error");
+        return false;
+      }
+    }
     var body = {
       scope: scope,
       foldBy: foldBy,
+      pathCheckIds: pathCheckIds,
       minFailingPercent: minPct,
       name: name.trim(),
       description: ((root.querySelector("#ag-desc") || {}).value || "").trim() || null,

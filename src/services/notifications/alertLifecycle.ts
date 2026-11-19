@@ -397,6 +397,9 @@ interface FoldPlan {
   whole: FoldSpan | null;
   perComponent: boolean;
   subnets: Map<string, FoldSpan | null> | null;
+  /** Business rule 194: the path checks the group governs, or null when every
+   *  contribution's check is governed (no list, or not a path trigger). */
+  checks: Set<string> | null;
 }
 
 async function foldPlanFor(rule: DbRule, assetIds: string[], tickIndex: TickAlertIndex | null): Promise<FoldPlan> {
@@ -414,9 +417,15 @@ async function foldPlanFor(rule: DbRule, assetIds: string[], tickIndex: TickAler
   // fold unrelated outages together. A port, by contrast, is part of ONE
   // device — port2 on two switches is not one finding — so only path checks
   // split.
-  const perComponent = !!automation && rule.trigger.type === "asset_metric" && isPathMetric(rule.trigger.metric);
+  const pathMetric = rule.trigger.type === "asset_metric" && isPathMetric(rule.trigger.metric);
+  const perComponent = !!automation && pathMetric;
+  // Business rule 194: a group may govern only some path checks. A path
+  // reading's component key IS its check id, so the test is per contribution.
+  const checks = rule.alertGroupId && pathMetric && rule.alertGroupPathCheckIds?.length
+    ? new Set(rule.alertGroupPathCheckIds)
+    : null;
   return {
-    automation, whole, perComponent,
+    automation, whole, perComponent, checks,
     subnets: bySubnet ? await tickIndex!.subnetsOf(assetIds) : null,
   };
 }
@@ -444,7 +453,9 @@ async function placeContribution(
   // groups — "Switch health — Ashfield" and "Switch health — Dock" over the
   // same checks, routed to different people. On a device no group governs,
   // the automation still folds its own components; it just does so alone.
-  const governs = await groupGovernsAsset(rule, assetId, tickIndex);
+  // Business rule 194: a check the group does not list is governed nowhere —
+  // the automation alerts on it alone, exactly as on a device outside `scope`.
+  const governs = (!plan.checks || plan.checks.has(dimKey)) && await groupGovernsAsset(rule, assetId, tickIndex);
   if (plan.perComponent) {
     const comp = { key: dimKey, label: dimLabel || dimKey };
     return governs
@@ -483,7 +494,9 @@ async function foldBuckets(rule: DbRule, buf: GroupBuffer, tickIndex: TickAlertI
   };
   for (const [assetId, fires] of buf) {
     if (!fires.length) continue;
-    if (plan.perComponent) {
+    // Per fire when the check decides placement: the per-check split, or a
+    // group that governs only some checks (rule 194).
+    if (plan.perComponent || plan.checks) {
       for (const f of fires) add(await placeContribution(rule, plan, assetId, f.reading.dimKey, f.reading.dimLabel, tickIndex), [f]);
       continue;
     }
