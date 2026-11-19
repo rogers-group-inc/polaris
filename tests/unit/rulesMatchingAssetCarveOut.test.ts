@@ -81,3 +81,44 @@ describe("findRulesMatchingAsset — specificity carve-out", () => {
     expect(ids(await findRulesMatchingAsset("a1"))).toEqual(["general", "server"]);
   });
 });
+
+/**
+ * Business rule 85(f): the Alerts tab matches the EFFECTIVE scope the engine
+ * evaluates (`scopeForTrigger`). A Path Monitor automation stored as "All
+ * assets" pools only agent hosts, so it must not list on every asset.
+ */
+describe("findRulesMatchingAsset — Path Monitor automations (rule 85(f))", () => {
+  const AGENT_HOST = { ...SERVER, id: "a3", hostname: "agent-1", managedAgent: { installStatus: "active" } };
+  const PENDING_AGENT = { ...SERVER, id: "a4", hostname: "agent-2", managedAgent: { installStatus: "pending" } };
+  const pathDown = { type: "asset_metric", metric: "pathOk", operator: "==", threshold: 0, aggregation: "latest", windowSec: 300, forDurationSec: 0 };
+  const pathChanged = { type: "change", changeType: "path_check_path_changed" };
+  const rules = () => [
+    rule("path-down", pathDown, { allAssets: true }),
+    rule("path-route", pathChanged, { allAssets: true }),
+    rule("asset-down", down, { allAssets: true }),
+  ];
+
+  it("leaves path automations off an asset with no agent", async () => {
+    findUnique.mockResolvedValue(SWITCH);
+    findMany.mockResolvedValue(rules());
+    expect(ids(await findRulesMatchingAsset("a2", { carveOut: true }))).toEqual(["asset-down"]);
+  });
+
+  it("leaves them off an asset whose agent is not active", async () => {
+    findUnique.mockResolvedValue(PENDING_AGENT);
+    findMany.mockResolvedValue(rules());
+    expect(ids(await findRulesMatchingAsset("a4", { carveOut: true }))).toEqual(["asset-down"]);
+  });
+
+  it("lists them on an agent host, where their alerts land", async () => {
+    findUnique.mockResolvedValue(AGENT_HOST);
+    findMany.mockResolvedValue(rules());
+    expect(ids(await findRulesMatchingAsset("a3", { carveOut: true }))).toEqual(["asset-down", "path-down", "path-route"]);
+  });
+
+  it("still applies the path automation's own device filter on an agent host", async () => {
+    findUnique.mockResolvedValue(AGENT_HOST);
+    findMany.mockResolvedValue([rule("path-switches", pathDown, { condition: { op: "and", children: [{ field: "assetType", operator: "equals", value: "switch" }] } })]);
+    expect(ids(await findRulesMatchingAsset("a3", { carveOut: true }))).toEqual([]);
+  });
+});

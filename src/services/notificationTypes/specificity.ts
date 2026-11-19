@@ -145,13 +145,18 @@ export function scopeIsUnconstrained(scope: RuleScope | null | undefined): boole
 
 /**
  * Does `scope` select `asset`? AND across the provided dimensions, OR within
- * each list. `allAssets` short-circuits true. A scope with no dimensions and
+ * each list. `allAssets` skips the lists; a condition tree still applies. A scope with no dimensions and
  * allAssets unset matches NOTHING (the builder requires an explicit selection).
  * KEEP IN LOCKSTEP with the engine's SQL `scopeWhere` + loadScopeAssets
  * subnet post-filter (notificationEngine.ts) — this is the in-memory twin.
  */
 export function scopeMatchesAsset(scope: RuleScope, asset: ScopeAsset): boolean {
-  if (scope.allAssets) return true;
+  // allAssets skips the flat lists but NOT a condition tree: loadScopeAssets
+  // filters an allAssets scope by its condition too, and that is the shape
+  // `pathMonitorScope` produces — {allAssets, condition: agent installed}.
+  // Short-circuiting here listed every Path Monitor automation on every
+  // asset's Alerts tab (business rule 85(f)).
+  if (scope.allAssets) return !scope.condition || evaluateScopeCondition(scope.condition, asset);
   let anyDimension = false;
 
   if (scope.assetTypes && scope.assetTypes.length > 0) {

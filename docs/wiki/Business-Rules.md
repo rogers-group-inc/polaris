@@ -1397,6 +1397,10 @@ describes whether that source can reach the target, so:
   script's arguments can say `target={check.target}` and one automation can
   cover every check. Automations on a path check reading (latency, days
   remaining, ...) leave these blank.
+- **An asset's Alerts tab lists Path Monitor automations only on agent hosts
+  (85(f)).** A Path Monitor automation can only fire for a host with an active
+  Polaris Agent, so it appears in the automation list on those hosts' Alerts
+  tab and on no other asset's, even when it is set to All assets.
 - **The Polaris server is a source, not an asset.** Its results are charted
   and listed under the check's Results. They alert only through a Path Monitor
   automation with *Include the Polaris server's own runs* ticked. That works
