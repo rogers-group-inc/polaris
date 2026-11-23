@@ -12,6 +12,11 @@
  * read time — its underlay address first, then its overlay / assigned
  * address — through applicationMapService → resolveIpsToAssets, so a peer
  * discovered after the scrape links without waiting for another one.
+ *
+ * Dial-up templates (business rule 196): FortiOS reports no counters and no
+ * uptime for a template, only for the sessions under it. The tab shows a
+ * template's Up as its longest-connected session, and its In / Out as a
+ * running total (AssetIpsecTemplateTotal) that keeps what ended sessions moved.
  */
 
 import { randomUUID } from "node:crypto";
@@ -32,6 +37,61 @@ function toBigInt(n: number | null): bigint | null {
   return n == null || !Number.isFinite(n) ? null : BigInt(Math.round(n));
 }
 
+interface PriorSession {
+  name:          string;
+  parentTunnel:  string | null;
+  remoteGateway: string | null;
+  peerId:        string | null;
+  userName:      string | null;
+  incomingBytes: bigint | null;
+  outgoingBytes: bigint | null;
+}
+
+export interface TemplateByteGrowth {
+  /** Bytes added since the previous pass — what an existing total grows by. */
+  growthIn:   number;
+  growthOut:  number;
+  /** What the sessions hold now — the starting value of a template with no total yet. */
+  currentIn:  number;
+  currentOut: number;
+}
+
+/**
+ * Pure: per parent tunnel, how far its sessions' counters moved since the
+ * previous pass (rule 196). A session that was there before — same slot name
+ * AND same peer — counts the difference; a new session, a slot FortiOS handed
+ * to a different peer, or a counter that went backwards (the SA was
+ * re-established) counts its whole counter. A session that ended counts
+ * nothing more: what it moved was added on the passes it was seen.
+ */
+export function templateByteGrowth(
+  prior: PriorSession[],
+  current: IpsecConnectionSample[],
+): Map<string, TemplateByteGrowth> {
+  const priorByName = new Map(prior.map((p) => [p.name, p]));
+  const out = new Map<string, TemplateByteGrowth>();
+  const pos = (n: number | null): number => (n != null && Number.isFinite(n) && n > 0 ? n : 0);
+  const grow = (cur: number | null, was: bigint | null | undefined): number => {
+    const c = pos(cur);
+    if (was == null) return c;
+    const w = Number(was);
+    return c >= w ? c - w : c;
+  };
+  for (const c of current) {
+    if (!c.parentTunnel) continue;
+    const p = priorByName.get(c.name);
+    const same = !!p && p.parentTunnel === c.parentTunnel && p.remoteGateway === c.remoteGateway &&
+      p.peerId === c.peerId && p.userName === c.userName;
+    const g = out.get(c.parentTunnel) ?? { growthIn: 0, growthOut: 0, currentIn: 0, currentOut: 0 };
+    g.growthIn   += grow(c.incomingBytes, same ? p!.incomingBytes : null);
+    g.growthOut  += grow(c.outgoingBytes, same ? p!.outgoingBytes : null);
+    g.currentIn  += pos(c.incomingBytes);
+    g.currentOut += pos(c.outgoingBytes);
+    out.set(c.parentTunnel, g);
+  }
+  return out;
+}
+
 /**
  * Replace an asset's connection rows with the latest scrape. Each half is
  * replaced only when it is an array — `undefined` means that read did not
@@ -40,6 +100,11 @@ function toBigInt(n: number | null): bigint | null {
  * a row whose name AND peer are unchanged: FortiOS reuses `<template>_<n>`
  * slots, so the same name can be a different spoke on the next scrape.
  * Returns the number of rows written.
+ *
+ * When the IPsec half was read, the same transaction grows each parent
+ * tunnel's AssetIpsecTemplateTotal by templateByteGrowth (rule 196): an
+ * existing total by the growth since the last pass, a new one starting at
+ * what its sessions hold now.
  */
 export async function persistIpsecConnections(
   assetId: string,
@@ -68,7 +133,7 @@ export async function persistIpsecConnections(
 
   const prior = await prisma.assetIpsecConnection.findMany({
     where: { assetId },
-    select: { name: true, remoteGateway: true, peerId: true, userName: true, firstSeen: true },
+    select: { name: true, parentTunnel: true, remoteGateway: true, peerId: true, userName: true, firstSeen: true, incomingBytes: true, outgoingBytes: true },
   });
   const priorByName = new Map(prior.map((p) => [p.name, p]));
 
@@ -99,6 +164,19 @@ export async function persistIpsecConnections(
     : replaceIpsec
       ? { assetId, kind: { not: SSL_KIND } }
       : { assetId, kind: SSL_KIND };
+  // Rule 196: only the IPsec half has parent tunnels, and only a pass that
+  // read it grows the totals — its rows are the priors the next pass diffs.
+  const totalOps: Array<ReturnType<typeof prisma.assetIpsecTemplateTotal.upsert>> = [];
+  if (replaceIpsec) {
+    const growth = templateByteGrowth(prior, rows.filter((r) => r.kind !== SSL_KIND));
+    for (const [tunnelName, g] of growth) {
+      totalOps.push(prisma.assetIpsecTemplateTotal.upsert({
+        where:  { assetId_tunnelName: { assetId, tunnelName } },
+        create: { assetId, tunnelName, incomingBytes: BigInt(Math.round(g.currentIn)), outgoingBytes: BigInt(Math.round(g.currentOut)), since: now, updatedAt: now },
+        update: { incomingBytes: { increment: BigInt(Math.round(g.growthIn)) }, outgoingBytes: { increment: BigInt(Math.round(g.growthOut)) }, updatedAt: now },
+      }));
+    }
+  }
   // A half that was not read keeps its rows, so its incoming set is empty
   // here by construction and nothing it owns is re-inserted.
   // Chunked inserts: 15 columns × the 5000-row cap would overrun Postgres'
@@ -107,11 +185,13 @@ export async function persistIpsecConnections(
     prisma.$transaction([
       prisma.assetIpsecConnection.deleteMany({ where: scope }),
       ...chunkArray(data, INSERT_CHUNK).map((chunk) => prisma.assetIpsecConnection.createMany({ data: chunk, skipDuplicates: true })),
+      ...totalOps,
     ]),
   );
   // skipDuplicates can drop rows, so report what the inserts actually wrote
-  // (results[0] is the delete).
-  return results.slice(1).reduce((sum, r) => sum + r.count, 0);
+  // (results[0] is the delete; the template-total upserts come last).
+  const inserts = results.slice(1, results.length - totalOps.length) as Array<{ count: number }>;
+  return inserts.reduce((sum, r) => sum + r.count, 0);
 }
 
 export interface IpsecTunnelRow {
@@ -195,6 +275,10 @@ export interface IpsecTabTunnelRow extends IpsecTunnelRow {
   interfacePinned: boolean;
   /** A site-to-site tunnel's far end, matched by its remote gateway; null for a dial-up template. */
   matchedAsset:    { id: string; hostname: string | null; ipAddress: string | null; assetType: string } | null;
+  /** Dial-up template only: when its longest-connected session came up (rule 196); null otherwise. */
+  connectedSince:  Date | null;
+  /** Dial-up template only: when its running byte total started counting; null when In / Out are the device's own counters. */
+  bytesSince:      Date | null;
 }
 
 /**
@@ -216,13 +300,22 @@ export async function readAssetIpsec(assetId: string): Promise<{
     where: { id: assetId },
     select: { lastSystemInfoAt: true, monitoredIpsecTunnels: true, monitoredInterfaces: true },
   });
-  const [tunnelSamples, rows] = await Promise.all([
+  const [tunnelSamples, rows, totals] = await Promise.all([
     readLatestIpsecTunnels(assetId, asset?.lastSystemInfoAt ?? null),
     prisma.assetIpsecConnection.findMany({
       where: { assetId },
       orderBy: [{ parentTunnel: "asc" }, { name: "asc" }],
     }),
+    prisma.assetIpsecTemplateTotal.findMany({ where: { assetId } }),
   ]);
+  const totalByName = new Map(totals.map((t) => [t.tunnelName, t]));
+  // Earliest session start per parent: a template's Up is its longest-connected session.
+  const earliestByParent = new Map<string, Date>();
+  for (const r of rows) {
+    if (!r.parentTunnel || !r.connectedSince) continue;
+    const was = earliestByParent.get(r.parentTunnel);
+    if (!was || r.connectedSince < was) earliestByParent.set(r.parentTunnel, r.connectedSince);
+  }
   const twins = tunnelSamples.length > 0
     ? await prisma.assetInterface.findMany({
         where: { assetId, ifName: { in: tunnelSamples.map((t) => t.tunnelName) } },
@@ -250,8 +343,14 @@ export async function readAssetIpsec(assetId: string): Promise<{
   const tunnels: IpsecTabTunnelRow[] = tunnelSamples.map((t) => {
     const ip = overlayByName.get(t.tunnelName);
     const far = usable(t.remoteGateway) ? resolved.get(t.remoteGateway) : undefined;
+    const isTemplate = t.status === "dynamic";
+    const total = isTemplate ? totalByName.get(t.tunnelName) : undefined;
     return {
       ...t,
+      // A template's own counters are empty; its running total stands in (rule 196).
+      ...(total ? { incomingBytes: bigToNum(total.incomingBytes), outgoingBytes: bigToNum(total.outgoingBytes) } : {}),
+      connectedSince:  isTemplate ? earliestByParent.get(t.tunnelName) ?? null : null,
+      bytesSince:      total ? total.since : null,
       overlayIp:       usable(ip) ? ip : null,
       pinned:          pinnedTunnels.has(t.tunnelName),
       interfacePinned: pinnedIfaces.has(t.tunnelName),

@@ -35,6 +35,7 @@ import {
   readAssetIpsec,
   listIpsecConnections,
   countIpsecConnectionsByKind,
+  templateByteGrowth,
 } from "../../src/services/ipsecConnectionService.js";
 import type { IpsecConnectionSample } from "../../src/utils/fortiosIpsec.js";
 
@@ -65,6 +66,8 @@ beforeEach(() => {
   stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([]);
   stubbed(prisma.assetIpsecConnection.deleteMany).mockResolvedValue({ count: 0 });
   stubbed(prisma.assetIpsecConnection.createMany).mockImplementation(async (a: { data: unknown[] }) => ({ count: a.data.length }));
+  stubbed(prisma.assetIpsecTemplateTotal.findMany).mockResolvedValue([]);
+  stubbed(prisma.assetIpsecTemplateTotal.upsert).mockResolvedValue({});
 });
 
 // ─── persistIpsecConnections ───────────────────────────────────────────────
@@ -101,10 +104,10 @@ describe("persistIpsecConnections — which halves are replaced", () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("runs the delete and the inserts in one transaction, with skipDuplicates", async () => {
+  it("runs the delete, the inserts and the template total in one transaction, with skipDuplicates", async () => {
     await persistIpsecConnections("fw1", { ipsec: [conn()] }, NOW);
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(stubbed(prisma.$transaction).mock.calls[0][0]).toHaveLength(2);
+    expect(stubbed(prisma.$transaction).mock.calls[0][0]).toHaveLength(3);
     expect(stubbed(prisma.assetIpsecConnection.createMany).mock.calls[0][0].skipDuplicates).toBe(true);
   });
 
@@ -173,7 +176,7 @@ describe("persistIpsecConnections — firstSeen carry", () => {
     expect(created()[0].firstSeen).toEqual(EARLIER);
     expect(prisma.assetIpsecConnection.findMany).toHaveBeenCalledWith({
       where: { assetId: "fw1" },
-      select: { name: true, remoteGateway: true, peerId: true, userName: true, firstSeen: true },
+      select: { name: true, parentTunnel: true, remoteGateway: true, peerId: true, userName: true, firstSeen: true, incomingBytes: true, outgoingBytes: true },
     });
   });
 
@@ -505,5 +508,98 @@ describe("countIpsecConnectionsByKind", () => {
       { kind: "remote-access", parentTunnel: "IPsecRA_VPN", count: 35 },
     ]);
     expect(stubbed(prisma.assetIpsecConnection.groupBy).mock.calls[0][0]).toMatchObject({ by: ["kind", "parentTunnel"], where: { assetId: "fw1" } });
+  });
+});
+// ─── rule 196: a dial-up template's running total and uptime ──────────────
+
+function prior(over: Record<string, unknown> = {}) {
+  return {
+    name: "Overlay-1_0", parentTunnel: "Overlay-1", remoteGateway: "203.0.113.10", peerId: "spoke-1", userName: null,
+    incomingBytes: 100n, outgoingBytes: 200n, firstSeen: EARLIER, ...over,
+  };
+}
+
+describe("templateByteGrowth", () => {
+  it("counts a continuing session's growth and a new session in full", () => {
+    const g = templateByteGrowth([prior()], [
+      conn({ incomingBytes: 150, outgoingBytes: 260 }),
+      conn({ name: "Overlay-1_1", peerId: "spoke-2", incomingBytes: 40, outgoingBytes: 50 }),
+    ]);
+    expect(g.get("Overlay-1")).toEqual({ growthIn: 90, growthOut: 110, currentIn: 190, currentOut: 310 });
+  });
+
+  it("an ended session adds nothing more — its bytes were counted while it was seen", () => {
+    const g = templateByteGrowth([prior(), prior({ name: "Overlay-1_1", peerId: "spoke-2" })], [conn({ incomingBytes: 100, outgoingBytes: 200 })]);
+    expect(g.get("Overlay-1")).toMatchObject({ growthIn: 0, growthOut: 0 });
+  });
+
+  it("a slot handed to a different peer counts the new session in full", () => {
+    const g = templateByteGrowth([prior()], [conn({ peerId: "spoke-9", incomingBytes: 30, outgoingBytes: 40 })]);
+    expect(g.get("Overlay-1")).toMatchObject({ growthIn: 30, growthOut: 40 });
+  });
+
+  it("a counter that went backwards (SA re-established) counts its new value", () => {
+    const g = templateByteGrowth([prior()], [conn({ incomingBytes: 7, outgoingBytes: 250 })]);
+    expect(g.get("Overlay-1")).toMatchObject({ growthIn: 7, growthOut: 50 });
+  });
+
+  it("groups by parent, skips parentless rows, treats null bytes as zero", () => {
+    const g = templateByteGrowth([], [
+      conn({ parentTunnel: "Overlay-3", incomingBytes: null, outgoingBytes: 5 }),
+      conn({ name: "ssl:0", kind: "ssl-vpn", parentTunnel: null }),
+    ]);
+    expect([...g.keys()]).toEqual(["Overlay-3"]);
+    expect(g.get("Overlay-3")).toEqual({ growthIn: 0, growthOut: 5, currentIn: 0, currentOut: 5 });
+  });
+});
+
+describe("persistIpsecConnections — template totals", () => {
+  it("upserts each parent: a new total starts at what its sessions hold, an existing one grows", async () => {
+    stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([prior()]);
+    await persistIpsecConnections("fw1", { ipsec: [conn({ incomingBytes: 150, outgoingBytes: 260 })] }, NOW);
+    expect(prisma.assetIpsecTemplateTotal.upsert).toHaveBeenCalledWith({
+      where:  { assetId_tunnelName: { assetId: "fw1", tunnelName: "Overlay-1" } },
+      create: { assetId: "fw1", tunnelName: "Overlay-1", incomingBytes: 150n, outgoingBytes: 260n, since: NOW, updatedAt: NOW },
+      update: { incomingBytes: { increment: 50n }, outgoingBytes: { increment: 60n }, updatedAt: NOW },
+    });
+  });
+
+  it("an SSL-only read never touches the totals", async () => {
+    await persistIpsecConnections("fw1", { sslVpn: [conn({ name: "ssl:0", kind: "ssl-vpn", parentTunnel: null })] }, NOW);
+    expect(prisma.assetIpsecTemplateTotal.upsert).not.toHaveBeenCalled();
+  });
+
+  it("the row count it returns leaves the total upserts out", async () => {
+    stubbed(prisma.assetIpsecTemplateTotal.upsert).mockResolvedValue({ count: 99 });
+    expect(await persistIpsecConnections("fw1", { ipsec: [conn()] }, NOW)).toBe(1);
+  });
+});
+
+describe("readAssetIpsec — dial-up templates", () => {
+  const SINCE = new Date("2026-11-01T00:00:00Z");
+  it("a template takes its running total and its longest-connected session; a static tunnel keeps its own", async () => {
+    setup({
+      tunnels: [tunnelRow({ tunnelName: "Overlay-1", status: "dynamic", remoteGateway: "0.0.0.0", incomingBytes: null, outgoingBytes: null }), tunnelRow()],
+      conns: [
+        connRow({ name: "a", connectedSince: new Date("2026-11-13T00:00:00Z") }),
+        connRow({ name: "b", connectedSince: EARLIER }),
+        connRow({ name: "c", connectedSince: null }),
+        connRow({ name: "hq_0", parentTunnel: "HQ", connectedSince: new Date("2026-11-01T00:00:00Z") }),
+      ],
+    });
+    stubbed(prisma.assetIpsecTemplateTotal.findMany).mockResolvedValue([
+      { assetId: "fw1", tunnelName: "Overlay-1", incomingBytes: 9000n, outgoingBytes: 8000n, since: SINCE, updatedAt: NOW },
+      { assetId: "fw1", tunnelName: "HQ", incomingBytes: 1n, outgoingBytes: 1n, since: SINCE, updatedAt: NOW },
+    ]);
+    const out = await readAssetIpsec("fw1");
+    const byName = Object.fromEntries(out.tunnels.map((t) => [t.tunnelName, t]));
+    expect(byName["Overlay-1"]).toMatchObject({ incomingBytes: 9000, outgoingBytes: 8000, bytesSince: SINCE, connectedSince: EARLIER });
+    expect(byName.HQ).toMatchObject({ incomingBytes: 10, outgoingBytes: 20, bytesSince: null, connectedSince: null });
+  });
+
+  it("a template with no total yet keeps the device's counters", async () => {
+    setup({ tunnels: [tunnelRow({ tunnelName: "Overlay-1", status: "dynamic", incomingBytes: null, outgoingBytes: null })] });
+    const [t] = (await readAssetIpsec("fw1")).tunnels;
+    expect(t).toMatchObject({ incomingBytes: null, outgoingBytes: null, bytesSince: null, connectedSince: null });
   });
 });

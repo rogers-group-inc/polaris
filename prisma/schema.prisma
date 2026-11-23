@@ -1341,6 +1341,7 @@ model Asset {
   // the back-link for the switch on the far end of each ICL leg.
   mclagPeers             AssetMclagPeer[]         @relation("AssetMclagPeers")
   ipsecConnections       AssetIpsecConnection[]   @relation("AssetIpsecConnections")
+  ipsecTemplateTotals    AssetIpsecTemplateTotal[] @relation("AssetIpsecTemplateTotals")
   physicalEntities       AssetPhysicalEntity[]    @relation("AssetPhysicalEntities")
   fcPorts                AssetFcPort[]            @relation("AssetFcPorts")
   fcLogins               AssetFcLogin[]           @relation("AssetFcLogins")
@@ -2576,6 +2577,29 @@ model AssetIpsecConnection {
   @@unique([assetId, name])
   @@index([assetId])
   @@map("asset_ipsec_connections")
+}
+
+// A dial-up template's running byte total (business rule 196): what every
+// session that has hung off it since `since` moved, INCLUDING sessions that
+// have since ended. FortiOS reports no counters for the template itself and a
+// child's counters vanish with the child, so the IPsec tab's In / Out for a
+// template is this row. Grown by persistIpsecConnections on each FULL pass by
+// every session's growth since the previous pass (a new session, or one whose
+// counter went backwards, counts in full); never reduced. Bytes moved by a
+// session that came and went between two passes are not seen. Plain
+// current-state table with a real FK (not a sample table); keyed by the
+// parent phase-1 name, so a template renamed on the gate starts again at 0.
+model AssetIpsecTemplateTotal {
+  assetId       String
+  asset         Asset    @relation("AssetIpsecTemplateTotals", fields: [assetId], references: [id], onDelete: Cascade)
+  tunnelName    String
+  incomingBytes BigInt   @default(0)
+  outgoingBytes BigInt   @default(0)
+  since         DateTime @default(now())
+  updatedAt     DateTime @default(now())
+
+  @@id([assetId, tunnelName])
+  @@map("asset_ipsec_template_totals")
 }
 
 // Field-replaceable hardware inventory from ENTITY-MIB (RFC 4133)

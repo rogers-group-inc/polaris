@@ -54,7 +54,9 @@ function payload() {
         incomingBytes: 500, outgoingBytes: 50, pinned: false, interfacePinned: true,
         matchedAsset: { id: "HUB2", hostname: "HUB2", ipAddress: null, assetType: "firewall" } },
       { tunnelName: "Overlay-1", status: "dynamic", remoteGateway: "0.0.0.0", parentInterface: "wan1", overlayIp: "10.10.1.1",
-        incomingBytes: 9000, outgoingBytes: 10, pinned: true, interfacePinned: false },
+        incomingBytes: 9000, outgoingBytes: 10, pinned: true, interfacePinned: false,
+        // Rule 196: the server's running total + the longest-connected session.
+        connectedSince: new Date(Date.now() - 50 * hour).toISOString(), bytesSince: "2026-11-01T00:00:00.000Z" },
       { tunnelName: "Overlay-3", status: "down", remoteGateway: "0.0.0.0", parentInterface: "wan2", overlayIp: null,
         incomingBytes: null, outgoingBytes: null, pinned: false, interfacePinned: false },
     ],
@@ -191,6 +193,28 @@ describe("tunnel table — default view", () => {
     expect(box("H2H-1").checked).toBe(true);       // interface twin only
     expect(box("Overlay-1").checked).toBe(true);   // IPsec pin
     expect(box("Overlay-3").checked).toBe(false);
+  });
+});
+
+describe("dial-up templates — Up and the running byte total (rule 196)", () => {
+  const cells = (name: string) => {
+    const tr = tunRows().find((r) => firstCellText(r) === name)!;
+    return Array.from(tr.querySelectorAll(":scope > td")) as any[];
+  };
+
+  it("shows a template's longest-connected session as its Up, a site-to-site tunnel none", () => {
+    expect(cells("Overlay-1")[6].textContent).toBe(g._ipsecUptimeLabel(payload().tunnels[1].connectedSince));
+    expect(cells("Overlay-1")[6].querySelector("span").getAttribute("title")).toContain("Longest-connected session");
+    expect(cells("H2H-1")[6].textContent).toBe("—");
+  });
+
+  it("titles a template's In / Out as the total since it started counting, ended sessions included", () => {
+    const [inTd, outTd] = cells("Overlay-1").slice(7, 9);
+    expect(inTd.textContent).toBe("9000B");
+    for (const td of [inTd, outTd]) {
+      expect(td.getAttribute("title")).toBe("Every session on this template since 2026-11-01T00:00:00.000Z, including sessions that have ended");
+    }
+    expect(cells("H2H-1")[7].hasAttribute("title")).toBe(false);
   });
 });
 
