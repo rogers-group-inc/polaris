@@ -212,6 +212,7 @@ export const ASSET_SECTION_HELP: Partial<Record<AssetSection, string>> = {
   hardware: "modules, disks, temperatures, fans, PSUs",
   lifecycle: "agent, firmware, reboots",
   sources: "integrations reporting it, gate sightings",
+  ipsec: "tunnels + connections unfiltered; for peers by kind or a report use list_ipsec_connections",
 };
 
 /** Drop null / empty fields so a section costs the model less; Dates to ISO, BigInts to numbers. */
