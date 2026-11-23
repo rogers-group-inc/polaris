@@ -2106,11 +2106,16 @@ function _renderAssetIpsec(assetId, data, asset) {
   var USER_COLS = 8;
 
   function monoOrDash(v) { return v && v !== "0.0.0.0" ? '<span class="mono" style="white-space:nowrap">' + escapeHtml(v) + '</span>' : dash; }
-  function bytesCell(n) { return '<td class="mono" style="white-space:nowrap">' + _fmtBytes(n) + '</td>'; }
+  function bytesCell(n, title) {
+    return '<td class="mono" style="white-space:nowrap"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' + _fmtBytes(n) + '</td>';
+  }
+  function totalTitle(t) {
+    return t.bytesSince ? "Every session on this template since " + formatDateTime(t.bytesSince) + ", including sessions that have ended" : "";
+  }
   function uptimeSec(c) { return c.connectedSince ? Math.max(0, (Date.now() - new Date(c.connectedSince).getTime()) / 1000) : null; }
-  function uptimeCell(c) {
+  function uptimeCell(c, titlePrefix) {
     var up = _ipsecUptimeLabel(c.connectedSince);
-    return up ? '<span style="white-space:nowrap" title="' + escapeHtml(formatDateTime(c.connectedSince)) + '">' + escapeHtml(up) + '</span>' : dash;
+    return up ? '<span style="white-space:nowrap" title="' + escapeHtml((titlePrefix || "") + formatDateTime(c.connectedSince)) + '">' + escapeHtml(up) + '</span>' : dash;
   }
   // The row's kind, as a quiet second line under its name — a column of its
   // own cost the addresses their width in a slide-over.
@@ -2174,7 +2179,8 @@ function _renderAssetIpsec(assetId, data, asset) {
       gw: t.remoteGateway && t.remoteGateway !== "0.0.0.0" ? t.remoteGateway : "",
       via: [t.parentInterface, t.overlayIp].filter(Boolean),
       device: t.matchedAsset ? (t.matchedAsset.hostname || t.matchedAsset.ipAddress || "") : "",
-      up: null,
+      // A dial-up template: its longest-connected session (rule 196).
+      up: uptimeSec(t),
       "in": t.incomingBytes, out: t.outgoingBytes,
     };
   }
@@ -2236,8 +2242,10 @@ function _renderAssetIpsec(assetId, data, asset) {
       '<td>' + via + '</td>' +
       // A site-to-site tunnel's far end, matched by its remote gateway.
       '<td>' + deviceCell({ matchedAsset: t.matchedAsset, peerId: null }) + '</td>' +
-      '<td>' + dash + '</td>' +
-      bytesCell(t.incomingBytes) + bytesCell(t.outgoingBytes) +
+      // Rule 196: a template's Up is its longest-connected session, its
+      // In / Out a running total that keeps what ended sessions moved.
+      '<td>' + (t.connectedSince ? uptimeCell(t, "Longest-connected session, up since ") : dash) + '</td>' +
+      bytesCell(t.incomingBytes, totalTitle(t)) + bytesCell(t.outgoingBytes, totalTitle(t)) +
     '</tr>';
   }
 
@@ -2636,7 +2644,8 @@ function _ipsecExportModel(data, choices, ifaces) {
       gw: usable(t.remoteGateway), iface: t.parentInterface || "", tunnelIp: t.overlayIp || "",
       peerId: "", device: devName(t.matchedAsset), deviceIp: (t.matchedAsset && t.matchedAsset.ipAddress) || "",
       sessions: t.status === "dynamic" || sessionsOf(t.tunnelName) ? sessionsOf(t.tunnelName) : null,
-      since: null, uptime: null, firstSeen: null, lastSeen: null,
+      // A dial-up template: its longest-connected session (rule 196).
+      since: t.connectedSince || null, uptime: t.connectedSince || null, firstSeen: null, lastSeen: null,
       "in": t.incomingBytes, out: t.outgoingBytes,
       selectors: t.proxyIdCount != null ? t.proxyIdCount : null,
       poll: (t.pinned || t.interfacePinned) ? "yes" : "no",

@@ -13,6 +13,9 @@
  *    pass's tunnels beside the connections, each connection matched to an
  *    asset by its underlay address, then its overlay address — never to the
  *    gate itself;
+ *  - a dial-up template's In / Out on the tab is a running total of its
+ *    sessions that keeps what an ended session moved, and its Up is its
+ *    longest-connected session (rule 196);
  *  - GET /assets/:id/system-info still serves the tunnel list through the
  *    shared reader (its shape is what the System tab draws).
  *
@@ -124,6 +127,43 @@ d("persistIpsecConnections", () => {
 
   it("dedupes a repeated name instead of aborting the scrape", async () => {
     expect(await persistIpsecConnections(hubId, { ipsec: [spoke(), spoke()] }, new Date())).toBe(1);
+  });
+});
+
+d("dial-up template totals (rule 196)", () => {
+  it("grows across reads, keeps an ended session's bytes, and serves the total as the template's In / Out", async () => {
+    const t0 = new Date(Date.now() - 20 * 60_000);
+    const t1 = new Date(Date.now() - 10 * 60_000);
+    const t2 = new Date();
+    // Read 1: two spokes. The total starts at what they hold.
+    await persistIpsecConnections(hubId, { ipsec: [spoke(), spoke({ name: "Overlay-1_1", peerId: "SPK2", remoteGateway: "10.4.1.2", incomingBytes: 300, outgoingBytes: 100, uptimeSec: 7200 })] }, t0);
+    // Read 2: both grew.
+    await persistIpsecConnections(hubId, { ipsec: [spoke({ incomingBytes: 1500, outgoingBytes: 700 }), spoke({ name: "Overlay-1_1", peerId: "SPK2", remoteGateway: "10.4.1.2", incomingBytes: 400, outgoingBytes: 150, uptimeSec: 7800 })] }, t1);
+    // Read 3: SPK2 has disconnected. Its bytes stay in the total; SPK1 keeps adding.
+    await persistIpsecConnections(hubId, { ipsec: [spoke({ incomingBytes: 1600, outgoingBytes: 800, uptimeSec: 4800 })] }, t2);
+
+    const total = await prisma.assetIpsecTemplateTotal.findUnique({ where: { assetId_tunnelName: { assetId: hubId, tunnelName: "Overlay-1" } } });
+    // In: 1300 seed + 600 + 100. Out: 600 seed + 250 + 100.
+    expect(total).toMatchObject({ incomingBytes: 2000n, outgoingBytes: 950n, since: t0 });
+
+    await prisma.asset.update({ where: { id: hubId }, data: { lastSystemInfoAt: t2 } });
+    await prisma.assetIpsecTunnelSample.create({
+      data: { assetId: hubId, timestamp: t2, cadence: "slow", tunnelName: "Overlay-1", parentInterface: "wan1", remoteGateway: "0.0.0.0", status: "dynamic" },
+    });
+    const { agent } = await authedAgent(app);
+    const res = await agent.get(`/api/v1/assets/${hubId}/ipsec`);
+    expect(res.status).toBe(200);
+    expect(res.body.tunnels[0]).toMatchObject({
+      tunnelName: "Overlay-1", incomingBytes: 2000, outgoingBytes: 950,
+      bytesSince: t0.toISOString(), connectedSince: new Date(t2.getTime() - 4800 * 1000).toISOString(),
+    });
+  });
+
+  it("is removed with its asset", async () => {
+    await persistIpsecConnections(hubId, { ipsec: [spoke()] }, new Date());
+    await prisma.assetIpsecConnection.deleteMany({ where: { assetId: hubId } });
+    await prisma.asset.delete({ where: { id: hubId } });
+    expect(await prisma.assetIpsecTemplateTotal.count({ where: { assetId: hubId } })).toBe(0);
   });
 });
 
