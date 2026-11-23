@@ -1269,10 +1269,19 @@ export interface BlameLoadCache {
   parents: Map<string, string[]>;
   /** Ids whose parent EDGES have been loaded (an id with none is still "loaded"). */
   edgesLoaded: Set<string>;
+  /**
+   * The load in flight for each id — set before the first await, settled only
+   * once its edges AND its parents' states are in the cache. The engine walks
+   * every suppressed device in parallel through one cache
+   * (`suppressionOwedToMaintenance`); without this a walk that met an id whose
+   * edges another walk had just stored went no further, read the graph before
+   * the states above it arrived, and missed the maintained gate there.
+   */
+  inflight: Map<string, Promise<void>>;
 }
 
 export function newBlameLoadCache(): BlameLoadCache {
-  return { states: new Map(), parents: new Map(), edgesLoaded: new Set() };
+  return { states: new Map(), parents: new Map(), edgesLoaded: new Set(), inflight: new Map() };
 }
 
 const BLAME_ASSET_SELECT = {
@@ -1280,11 +1289,38 @@ const BLAME_ASSET_SELECT = {
   dependencyLayer: true, dependencySuppressed: true, dependencyTestUntil: true,
 } as const;
 
-/** Load the parent edges of `ids` (effective set: override rows win per child)
- *  and the state of every parent they name, into the cache. */
+/**
+ * Load the parent edges of `ids` (effective set: override rows win per child)
+ * and the state of every parent they name, into the cache, and return those
+ * parents — the next frontier. Safe for walks running concurrently on one
+ * cache: an id another walk is loading is AWAITED, never skipped, and the
+ * parents of an already-loaded id are returned rather than nothing, so the
+ * caller goes on up and meets (and awaits) whatever is still loading above.
+ * Re-walking loaded ids costs no query; the caller's hop bound ends a cycle.
+ */
 async function loadBlameLayer(ids: string[], cache: BlameLoadCache): Promise<string[]> {
-  const want = ids.filter((id) => !cache.edgesLoaded.has(id));
-  if (want.length === 0) return [];
+  const unique = Array.from(new Set(ids));
+  const pending = new Set<Promise<void>>();
+  const want: string[] = [];
+  for (const id of unique) {
+    const p = cache.inflight.get(id);
+    if (p) pending.add(p);
+    else if (!cache.edgesLoaded.has(id)) want.push(id);
+  }
+  if (want.length > 0) {
+    const p = fetchBlameLayer(want, cache);
+    for (const id of want) cache.inflight.set(id, p);
+    // A failed read is not cached: a later walk this tick may try again.
+    p.catch(() => { for (const id of want) if (cache.inflight.get(id) === p) cache.inflight.delete(id); });
+    pending.add(p);
+  }
+  if (pending.size > 0) await Promise.all(pending);
+  return Array.from(new Set(unique.flatMap((id) => cache.parents.get(id) ?? [])));
+}
+
+/** The reads behind `loadBlameLayer`. `edgesLoaded` is marked only once the
+ *  parents' states are in the cache too. */
+async function fetchBlameLayer(want: string[], cache: BlameLoadCache): Promise<void> {
   const rows = await prisma.assetDependencyParent.findMany({
     where: { assetId: { in: want } },
     select: { assetId: true, parentAssetId: true, source: true },
@@ -1296,16 +1332,11 @@ async function loadBlameLayer(ids: string[], cache: BlameLoadCache): Promise<str
     const cur = target.get(r.assetId);
     if (cur) cur.push(r.parentAssetId); else target.set(r.assetId, [r.parentAssetId]);
   }
-  for (const id of want) {
-    cache.edgesLoaded.add(id);
-    cache.parents.set(id, overrides.get(id) ?? computed.get(id) ?? []);
-  }
-  // Every parent named is the next frontier (the next call skips the ones
-  // whose edges are already loaded); only the ones without a cached state
-  // need reading.
+  for (const id of want) cache.parents.set(id, overrides.get(id) ?? computed.get(id) ?? []);
+  // Only the parents without a cached state need reading.
   const parentIds = Array.from(new Set(want.flatMap((id) => cache.parents.get(id) ?? [])));
   const missing = parentIds.filter((p) => !cache.states.has(p));
-  if (missing.length === 0) return parentIds;
+  if (missing.length === 0) { for (const id of want) cache.edgesLoaded.add(id); return; }
   const assets = await prisma.asset.findMany({ where: { id: { in: missing } }, select: BLAME_ASSET_SELECT });
   // Only the in-maintenance parents need their schedules' suppressChildren,
   // and only the firewalls can be HA standbys — two narrow reads, both usually empty.
@@ -1344,7 +1375,7 @@ async function loadBlameLayer(ids: string[], cache: BlameLoadCache): Promise<str
       isHaStandby: standbyIds.has(a.id),
     });
   }
-  return parentIds;
+  for (const id of want) cache.edgesLoaded.add(id);
 }
 
 /**
