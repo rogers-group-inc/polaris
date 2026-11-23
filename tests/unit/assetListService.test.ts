@@ -85,3 +85,28 @@ describe("monitoring methods per row", () => {
     expect(h.resolve).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Monitored Via filter", () => {
+  it("no monitoredVia param resolves nothing up front", async () => {
+    await listAssetsPage(q({}), {}, "op");
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.calls[0][0].where).toEqual({});
+  });
+
+  it("matches the column's own summary: any chosen method, a 'Multiple' row on each of its methods, monitored only", async () => {
+    findMany.mockResolvedValueOnce([
+      row("agent", { monitored: true, managedAgent: { installStatus: "active" } }),
+      row("multi", { monitored: true }),
+      row("ping", { monitored: true }),
+      row("winrm", { monitored: true }),
+    ]);
+    h.resolve
+      .mockResolvedValueOnce({ responseTimePolling: "icmp", cpuMemoryPolling: "snmp", interfacesPolling: "ssh" })
+      .mockResolvedValueOnce({ responseTimePolling: "icmp" })
+      .mockResolvedValueOnce({ responseTimePolling: "icmp", cpuMemoryPolling: "winrm" });
+    await listAssetsPage(q({ monitoredVia: "SSH,agent,icmp" }), {}, "op");
+    const [pre, page] = findMany.mock.calls.map((c) => c[0]);
+    expect(pre.where).toEqual({ monitored: true });
+    expect(page.where.AND).toContainEqual({ id: { in: ["agent", "multi", "ping"] } });
+  });
+});

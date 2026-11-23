@@ -376,6 +376,10 @@
                 multi-value. <code>monitor</code> accepts
                 <code>Unmonitored, Monitored, Dep. Down, Up, Missed, Warning, Down, Recovering,
                 Passive, Pending</code>.</li>
+            <li><code>monitoredVia</code> — comma-separated monitoring methods (<code>agent, snmp,
+                ssh, winrm, icmp, rest_api, vcenter, fortimanager, unraid, truenas, proxmox,
+                genericapi</code>), any-of, matched against each row's
+                <code>monitoringMethods</code>; only monitored devices match.</li>
             <li>Per-column text filters: pass the column name (<code>hostname</code>,
                 <code>ipAddress</code>, <code>serialNumber</code>, <code>assetTag</code>,
                 <code>manufacturer</code>, <code>model</code>, <code>os</code>,

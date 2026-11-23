@@ -153,7 +153,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 
 ## services/assetListService.ts
 
-**What it owns:** The assets list engine behind `GET /api/v1/assets`, moved out of `routes/assets/list.ts` (CQ-B062 slice 2): the query contract (`AssetListQuerySchema` — kept here, not beside the route, because `buildAssetListWhere` is typed by it), the sort whitelist (`ASSET_SORT_COLUMNS`) and operator-aware text columns, the where builder (`monitorClause`, the server / location filter, the IP Address column's `in_networks`, tag and discovered-hostname pre-resolves), ordering, favorites-first two-bucket paging, the tags-sort path, and the per-row enrichment (`enrichAssetList`: monitoring methods, active-alert summary, management access, HA, address confidence, MACs, associated IPs). The route parses the query and adds the caller's per-row `canEdit` / `canQuarantine` / `canMaintain` flags (rule 141(e)), which need the request.
+**What it owns:** The assets list engine behind `GET /api/v1/assets`, moved out of `routes/assets/list.ts` (CQ-B062 slice 2): the query contract (`AssetListQuerySchema` — kept here, not beside the route, because `buildAssetListWhere` is typed by it), the sort whitelist (`ASSET_SORT_COLUMNS`) and operator-aware text columns, the where builder (`monitorClause`, the server / location filter, the IP Address column's `in_networks`, tag, discovered-hostname and Monitored Via pre-resolves), ordering, favorites-first two-bucket paging, the tags-sort path, and the per-row enrichment (`enrichAssetList`: monitoring methods, active-alert summary, management access, HA, address confidence, MACs, associated IPs). The route parses the query and adds the caller's per-row `canEdit` / `canQuarantine` / `canMaintain` flags (rule 141(e)), which need the request.
 
 **Public API:** `AssetListQuerySchema`, `listAssetsPage(q, raw, actor)` → `{ enriched, total, limit, offset }`.
 
@@ -165,6 +165,7 @@ Per-service touches (What it owns / Public API / Cross-service deps / Used by / 
 - `orderBy` never takes a user string: only `ASSET_SORT_COLUMNS` keys reach Prisma; `tags` sorts in memory through `pageAssetIdsByTags`.
 - `ASSET_SORT_COLUMNS` and `monitorClause`'s cases are the server half of the phone's sort sheet and status chips; `tests/unit/mobileAssetsSortFilter.test.ts` reads both from this file and fails on a key the server would 400.
 - Enrichment is batched per page (one query per concern for the page's ids), never per row — this is the hot read at 2000+ assets.
+- The `monitoredVia` filter (the Monitored Via column's dropdown) is pre-resolved by `resolveMonitoredViaMatches`: one tight-select `findMany` of every monitored asset, reduced by the SAME `computeMonitoringMethods` the cell renders (any-of; a "Multiple" row matches each of its methods), then `id IN (…)` in the where. Only when the param is set. The column is `data-sf-nosort` — the summary is not a column the server can order by. Change the reducer and the filter moves with it; never filter on a second copy.
 
 **When changing this:** a new list column → `ASSET_LIST_SELECT` (tight select; every column costs at 2000 rows), the sort whitelist if sortable, `ASSET_TEXT_COLUMNS` if text-filterable, and the browser's column spec; keep [server-side-list-tables](../cross-cutting/server-side-list-tables.md) current.
 
