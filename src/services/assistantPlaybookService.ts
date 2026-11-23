@@ -22,7 +22,7 @@
  */
 
 export interface AssistantPlaybook {
-  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "interfaces" | "changed" | "health" | "capacity" | "address" | "endpoint";
+  id: "profile" | "telemetry" | "correlate" | "dependencies" | "paths" | "interfaces" | "changed" | "health" | "inventory" | "capacity" | "address" | "endpoint";
   /** Shown in the audit Event and tests. */
   label: string;
   match: RegExp;
@@ -32,6 +32,13 @@ export interface AssistantPlaybook {
 }
 
 const SEPARATE = "Keep what the data shows apart from what you infer, and say so in those words.";
+
+/**
+ * One device named by a hostname-shaped token: it has a digit, a "-" or a "."
+ * ("fw1", "sw-nsh-02", "core.nsh"). "status of the fleet" and "check the
+ * alerts" are not one device and must not be steered to get_asset (rule 95(o)).
+ */
+const DEVICE = String.raw`(?=[\w.-]*[\d.-])[a-z0-9][\w.-]*[a-z0-9]`;
 
 export const PLAYBOOKS: readonly AssistantPlaybook[] = [
   {
@@ -168,7 +175,7 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
   {
     id: "health",
     label: "device health",
-    match: /\b(is \S+ (ok|okay|healthy|up|fine|alright|alive)\b|health of|how (is|'s) \S+ (doing|looking)|status of \S+|check (on )?\S+)/i,
+    match: new RegExp(String.raw`\b(is ${DEVICE} (ok|okay|healthy|up|fine|alright|alive)\b|health of ${DEVICE}|how (is|'s) ${DEVICE} (doing|looking)|status of ${DEVICE}|check (on )?${DEVICE})`, "i"),
     firstRoundTools: ["search", "get_asset", "list_alerts"],
     guidance: [
       "Playbook — device health. Follow these steps in order:",
@@ -179,6 +186,25 @@ export const PLAYBOOKS: readonly AssistantPlaybook[] = [
       "3. list_events for the device over the same window.",
       "4. Answer with a one-line verdict first (up / degraded / down, and since when), then the evidence. " +
         "If nothing is wrong, say so plainly and stop. " + SEPARATE,
+    ].join("\n"),
+  },
+  {
+    // After health, before capacity: "how many switches per region" is a
+    // count, and before count_assets it was answered by counting list rows
+    // that never all fit (rule 95(o)). Not for networks, alerts, events,
+    // ports or tunnels — those have their own lookups.
+    id: "inventory",
+    label: "inventory counts",
+    match: /^(?!.*\b(networks?|subnets?|reservations?|alerts?|events?|interfaces?|ports?|tunnels?|vpn|ipsec|blocks?)\b).*\b(how many|count of|number of|breakdown|tally|group(ed)? by|by (model|region|type|firmware|version|os|location|site|manufacturer|vendor)|per (region|site|model|location|type|manufacturer|vendor))\b/is,
+    firstRoundTools: ["count_assets", "list_assets", "fleet_summary"],
+    guidance: [
+      "Playbook — inventory counts. Follow these steps in order:",
+      "1. count_assets with the filters the person named and groupBy the field they want it broken down by " +
+        "(osVersion for firmware, region, model, assetType, location, manufacturer); a plain \"how many\" needs no groupBy.",
+      "2. Only if they also want to see WHICH devices: list_assets with the same filters. The counts still come " +
+        "from step 1, never from the rows.",
+      "3. Answer with the total first, then the groups largest first, and say how many fell under otherCount when " +
+        "it is present. More than about 15 groups → offer a report (create_report with source count_assets). " + SEPARATE,
     ].join("\n"),
   },
   {

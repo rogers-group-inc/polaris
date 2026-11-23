@@ -53,6 +53,16 @@ describe("pickPlaybook", () => {
     ["which switch ports are down at HQ", "interfaces"],
     ["any PoE faults?", "interfaces"],
     ["which port is 0a:11:22:33:44:55 on", "endpoint"],
+    // Rule 95(o): health is about ONE named device, never the fleet.
+    ["check on fw1", "health"],
+    ["status of the fleet", null],
+    ["check the alerts from last night", "changed"],
+    ["how is the network doing", null],
+    // Rule 95(o): counts and breakdowns go to count_assets.
+    ["how many fortigates per region?", "inventory"],
+    ["switches by firmware version", "inventory"],
+    ["breakdown of access points by model", "inventory"],
+    ["number of servers grouped by os", "inventory"],
   ])("%s → %s", (q, id) => {
     expect(pickPlaybook(q)?.id ?? null).toBe(id);
   });

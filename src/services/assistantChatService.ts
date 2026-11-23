@@ -356,7 +356,23 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
 export function asksHowTo(text: string): boolean {
   const t = text.trim();
   if (/^using the polaris help documentation/i.test(t)) return true; // /docs
-  return /\b(how (do|can|should|would) (i|we|you)|how to|where (do|can|is|are|would) |steps to|walk me through|what does .{1,40} mean|is it possible to|configure|set up|setup)\b/i.test(t);
+  if (/\b(how (do|can|should|would) (i|we|you)|how to|steps to|walk me through|what does .{1,40} mean|is it possible to)\b/i.test(t)) return true;
+  // "where is", "configure" and "set up" are how-to words only about Polaris
+  // itself: "where is sw-nsh-02?" is a data question, and offered search_help
+  // alone a small model answered it from the help (rule 95(o), 2026-11-23).
+  if (!/\b(where (do|can|is|are|would) |configure|set up|setup)\b/i.test(t)) return false;
+  if (namesAThing(t)) return false;
+  return /\b(page|tab|settings?|menu|button|screen|integrations?|automations?|profiles?|roles?|permissions?|dashboards?|widgets?|wizard|option|toggle|sidebar|theme|polaris|change|edit|enable|disable|turn (on|off)|create|delete|find the|see the|view the)\b/i.test(t);
+}
+
+/**
+ * Does the text name a specific device or address — an IPv4, a MAC, or a
+ * hostname-shaped token (letters and digits joined by "-" or ".")? Exported for tests.
+ */
+export function namesAThing(text: string): boolean {
+  return /\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(text)
+    || /\b[0-9a-f]{2}([:-])[0-9a-f]{2}(\1[0-9a-f]{2}){2,4}\b/i.test(text)
+    || /(?<![\w.-])(?=[\w.-]*\d)(?=[\w.-]*[a-z])[a-z0-9]+(?:[-.][a-z0-9]+)+(?![\w-])/i.test(text);
 }
 
 /**
@@ -903,7 +919,11 @@ export async function streamAssistantTurn(input: {
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);
-  const helpOnlyTools = tools.filter((t) => t.function.name === "search_help");
+  // A how-to opens on the help, but keeps the two lookups that say whether
+  // the thing asked about exists — help ALONE made a small model answer data
+  // questions from the documentation (rule 95(o)).
+  const HOW_TO_TOOLS = new Set(["search_help", "search", "list_assets"]);
+  const howToTools = tools.filter((t) => HOW_TO_TOOLS.has(t.function.name));
   let lastListCall: { name: string; args: string } | null = null;
   // Every uuid a lookup returned this turn — the only ids an asset link may name.
   const seenIds = new Set<string>();
@@ -968,7 +988,7 @@ export async function streamAssistantTurn(input: {
       // "give me a report on the network utilizations" → list_networks, no card).
       const roundTools = lastRound ? []
         : round === 0 && wantsReport ? reportOnlyTools
-        : round === 0 && wantsHowTo ? helpOnlyTools
+        : round === 0 && wantsHowTo ? howToTools
         : round === 0 && playbookTools.length ? playbookTools
         : tools;
       compactToolResults(messages, budget.promptTokens);

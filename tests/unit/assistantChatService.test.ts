@@ -80,7 +80,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
-  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
+  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, namesAThing, sanitizeAnswerLinks,
   contextBudget, fitHistory, compactToolResults, fitToolResult, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS, turnHeader, stripTurnHeaders,
 } from "../../src/services/assistantChatService.js";
@@ -110,24 +110,33 @@ beforeEach(() => {
 
 describe("streamAssistantTurn — memory (rule 95(i))", () => {
   it("sends no memory block and no memory tools while memory is off", async () => {
+    // Captured and asserted AFTER the turn: an expect thrown inside the mock is
+    // caught as a failed turn and never fails the test (it hid stale
+    // expectations here until 2026-11-23).
+    let prompt = "", names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
-      expect(msgs[0].content).not.toContain("Memory —");
-      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets"]);
+      prompt = msgs[0].content; names = tools.map((t: any) => t.function.name);
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run().p;
+    expect(prompt).not.toContain("Memory —");
+    expect(names).toContain("list_assets");
+    expect(names).not.toContain("remember");
+    expect(names).not.toContain("forget");
     expect(h.listMemory).not.toHaveBeenCalled();
   });
 
   it("puts the entries in the system prompt and offers remember/forget while on", async () => {
     h.getMemoryEnabled.mockResolvedValueOnce(true);
     h.listMemory.mockResolvedValueOnce([{ id: "e1", text: "Manages Nashville", source: "user", createdAt: new Date() }]);
+    let prompt = "", names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
-      expect(msgs[0].content).toContain("[1] Manages Nashville");
-      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets", "remember", "forget"]);
+      prompt = msgs[0].content; names = tools.map((t: any) => t.function.name);
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run().p;
+    expect(prompt).toContain("[1] Manages Nashville");
+    expect(names).toEqual(expect.arrayContaining(["list_assets", "remember", "forget"]));
   });
 
   it("routes a remember call to the memory runner with this turn's question, and emits the change", async () => {
@@ -302,14 +311,16 @@ describe("streamAssistantTurn", () => {
     expect(h.finishTurn.mock.calls[0][1].content).toBe("The report is ready — preview and download it below.");
   });
 
-  it("offers only search_help on the first round of a how-to question", async () => {
+  it("opens a how-to on the help plus the two existence lookups (rule 95(o))", async () => {
     h.beginTurn.mockResolvedValueOnce({ question: "how do i add a new ip block?" });
+    let names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
-      expect(tools.map((t: any) => t.function.name)).toEqual(["search_help"]);
+      names = tools.map((t: any) => t.function.name);
       o.onText("ok");
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run({ content: "how do i add a new ip block?" }).p;
+    expect(names).toEqual(["search_help", "search", "list_assets"]);
   });
 
   it("unlinks an invented docs URL in the shown and stored answer", async () => {
@@ -326,12 +337,15 @@ describe("streamAssistantTurn", () => {
   });
 
   it("offers only create_report on the first round of a report request", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "give me a report on the network utilizations" });
+    let names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
-      expect(tools.map((t: any) => t.function.name)).toEqual(["create_report"]);
+      names = tools.map((t: any) => t.function.name);
       o.onText("ok");
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run({ content: "give me a report on the network utilizations" }).p;
+    expect(names).toEqual(["create_report"]);
   });
 
   it("builds the report from the model's list lookup when it never called create_report", async () => {
@@ -580,7 +594,7 @@ describe("playbooks steer round 0", () => {
 
   it("a playbook never hides the memory tools (rule 95(i) needs `remember` reachable to refuse it)", async () => {
     h.getMemoryEnabled.mockResolvedValueOnce(true);
-    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of the branch switch?" });
+    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of sw-branch-01?" });
     let round0Tools: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
       round0Tools = tools.map((t) => t.function.name);
@@ -604,7 +618,8 @@ describe("playbooks steer round 0", () => {
   });
 
   it("a report request and a how-to keep priority over a playbook", async () => {
-    for (const [question, only] of [["give me a report on what changed overnight", "create_report"], ["how do I check the health of a device?", "search_help"]] as const) {
+    // A how-to opens on the help plus the two lookups that say whether a thing exists (rule 95(o)).
+    for (const [question, only] of [["give me a report on what changed overnight", ["create_report"]], ["how do I check the health of a device?", ["search_help", "search", "list_assets"]]] as const) {
       h.beginTurn.mockResolvedValueOnce({ question });
       let round0Tools: string[] = [];
       h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
@@ -614,7 +629,7 @@ describe("playbooks steer round 0", () => {
         return { content: "Done.", toolCalls: [], finishReason: "stop" };
       });
       await run().p;
-      expect(round0Tools).toEqual([only]);
+      expect(round0Tools).toEqual([...only]);
     }
   });
 });
@@ -626,6 +641,18 @@ describe("help questions and links", () => {
     expect(asksHowTo("Using the Polaris help documentation, answer: maintenance windows")).toBe(true);
     expect(asksHowTo("how many cities do we have devices in?")).toBe(false);
     expect(asksHowTo("what's down right now?")).toBe(false);
+  });
+
+  it("does not read a data question as a how-to (rule 95(o))", () => {
+    expect(asksHowTo("where is sw-nsh-02?")).toBe(false);
+    expect(asksHowTo("where is 10.20.3.4")).toBe(false);
+    expect(asksHowTo("where are the access points in Nashville?")).toBe(false);
+    expect(asksHowTo("which switches were set up last week")).toBe(false);
+    expect(asksHowTo("where is the maintenance window setting?")).toBe(true);
+    expect(asksHowTo("how do I add 10.1.1.0/24 as a network?")).toBe(true);
+    expect(namesAThing("is fw-nsh-01 up")).toBe(true);
+    expect(namesAThing("aa:bb:cc:dd:ee:ff")).toBe(true);
+    expect(namesAThing("where are the switches")).toBe(false);
   });
 
   it("keeps real help pages and in-app paths, and unlinks everything else", () => {
