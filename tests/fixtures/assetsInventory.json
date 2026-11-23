@@ -850,7 +850,15 @@
     "viewRow",
     "wireDescriptionCapWarning",
     "_customWidgetLevelColor",
-    "_customWidgetGaugeTick"
+    "_customWidgetGaugeTick",
+    "_ipsecExportTemplates",
+    "_ipsecExportModel",
+    "_ipsecExportCellText",
+    "_ipsecExportCsvText",
+    "_ipsecExportSaveCsv",
+    "_ipsecExportSavePdf",
+    "_openIpsecExportOptions",
+    "_runIpsecExport"
   ],
   "vars": [
     "ASSET_HISTORY_MAX",
@@ -1032,6 +1040,8 @@
     "_snmpWalkLastOid",
     "_storagePanelState",
     "_typeDropdown",
-    "_typeDropdownOutsideHandler"
+    "_typeDropdownOutsideHandler",
+    "_assetIpsecData",
+    "_IPSEC_EXPORT_COLUMNS"
   ]
 }

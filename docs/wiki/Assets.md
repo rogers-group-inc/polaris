@@ -491,6 +491,9 @@ runs onto as many pages as it needs.
 On the **Events** tab both buttons give way to an **Export** dropdown instead (CSV or PDF, this page or
 every event for the asset).
 
+On the **IPsec** tab the button reads **Export** and exports the tab's data
+rather than a picture of it — see [Exporting the IPsec tab](#exporting-the-ipsec-tab).
+
 Individual tables and charts have their own camera buttons: for a table, beside
 its column-chooser gear, and for a chart, in its corner. A table's camera
 captures just that table exactly as it is drawn for you — the columns you have
@@ -2045,6 +2048,31 @@ gate's interfaces are polled over SNMP — and it is refreshed on the gate's
 system-info cadence. The REST credential needs read access to VPN monitoring;
 SSL-VPN sessions are read separately, so a credential that can see one and not
 the other still fills in the half it can see.
+
+#### Exporting the IPsec tab
+
+The header's **Export** button opens a dialog that asks what to export:
+
+- **Format** — **PDF** or **CSV**.
+- **Tunnels & ADVPN sessions** — every tunnel, and under it a list of each
+  tunnel that has sessions connected through it (an ADVPN hub's dial-up
+  template, a spoke's shortcuts), with its interface and session count. Tick
+  a tunnel to list its connected sessions under it; leave it unticked and it
+  exports collapsed, as one row with its session count. **Expand all** and
+  **Collapse all** set every tick at once. The ticks start the way the tab
+  shows them.
+- **Remote access sessions** — every FortiClient user.
+- **Interfaces carrying IPsec tunnels** — each interface a tunnel rides,
+  with its address, status and speed, and the tunnels on it.
+
+Every row from the gate's last read is exported, whatever the tables are
+sorted or filtered to on screen. The PDF carries the columns the tab shows,
+plus each session's IKE peer ID and when it connected. The CSV carries every
+field Polaris holds, including the parent tunnel, the matched device's
+address, when each session was first and last seen, the tunnel's phase-2
+selector count and whether it is polled every minute. Byte counts are plain
+numbers so a spreadsheet can add them up. The format and section choices are
+remembered for next time.
 
 ### SD-WAN (FortiGate firewalls)
 

@@ -967,7 +967,11 @@ async function openViewModal(id, opts) {
       _openScreenshotOptions(a);
     });
     document.getElementById("btn-asset-pdf").addEventListener("click", function () {
-      _openScreenshotOptions(a, "pdf");
+      // The IPsec tab exports its data (sections, ADVPN sessions, CSV or PDF)
+      // rather than a capture of what is on screen — assets-network.js.
+      var activeKey = (document.querySelector("#asset-view-tabs .page-tab.active") || { getAttribute: function () { return null; } }).getAttribute("data-tab");
+      if (activeKey === "ipsec" && typeof _openIpsecExportOptions === "function") _openIpsecExportOptions(a);
+      else _openScreenshotOptions(a, "pdf");
     });
     _wireAssetRefreshExport(a);
     _wireManagementAccessButtons(a);

@@ -132,7 +132,7 @@ function setup(): void {
   };
   (0, eval)(tableSfSrc);
   g.PolarisPrefs = (win as any).PolarisPrefs;
-  for (const v of ["_IPSEC_KIND_LABELS", "_assetIpsecAsset"]) (0, eval)(varSrc(v));
+  for (const v of ["_IPSEC_KIND_LABELS", "_assetIpsecAsset", "_assetIpsecData"]) (0, eval)(varSrc(v));
   for (const f of FNS) (0, eval)(fnSrc(f));
 }
 
