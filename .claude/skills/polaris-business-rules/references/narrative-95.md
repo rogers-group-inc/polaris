@@ -479,6 +479,77 @@ model an answer was looked up, invented, or simply out of date.
   time before that, and the desktop shows the full local stamp on hover. A live message takes
   the browser's time; a reopened one takes the stored `createdAt`.
 
+### (o) The model is never handed a fragment presented as the whole
+
+2026-11-23. The owner reported that in production the assistant made up results and could not
+do simple data review of the assets. Production runs Azure AI Foundry's model-router (the
+chat-completions path; the router picks an underlying model per request) with the Context
+window set to 1,000,000. Other installs run a local model on a small window. A review found the
+prompt's rules mostly sound. The made-up answers came from the plumbing:
+
+- **The fragment.** `listResult` wrote `total`, `returned: 200` and `truncated` before the
+  rows, and the chat service then cut the JSON string at `toolResultChars`. That cut was never
+  above 24,000 characters, even on a 1M window, and about 7,000 on the 8K default. A list_assets
+  row was about 30 fields, around 800 characters, many of them empty. So the model saw about 30
+  rows (a local model about 8) under a header promising 200, followed by a broken tail, and it
+  counted and ranked from the fragment as if it held them all. Every list tool went the same way.
+  `fitToolResult` replaces the cut. It drops empty fields, then trims whole rows from the end of
+  the largest list (one level down too, for `get_network`'s nested rows). It rewrites `returned`
+  and `truncated` to what was actually sent, and adds `sent: "N of TOTAL"` and a note telling the
+  model not to count beyond the rows, placed after the rows so a model reading the end sees it.
+  A list the lookup itself capped (200 of 1,964) gets the note even when it fits. The ceiling now
+  scales with the window, up to 120,000 characters.
+- **Lean rows.** list_assets sends a default set of 13 fields. `fields` adds others, and the
+  fields its own sort and date filters use come along automatically. That fits about three
+  times the rows in the same budget. Reports are unaffected: `create_report` reads `rows()`.
+- **The breakdown.** Over 15 matches, list_assets also returns counts by type and by monitor
+  status for the WHOLE filtered set: two `groupBy` calls on the same `where`. So a model that
+  sees 8 rows still has true totals.
+- **No count lookup.** `fleet_summary` takes no filters. "How many 61Fs per region" or
+  "switches by firmware version" could only be answered by listing every row, which never fit,
+  so the model guessed. `count_assets` takes the list_assets filters through `assetFilterWhere`
+  (so the two cannot disagree about what matches) and up to two `groupBy` fields. A plain field
+  is one Prisma `groupBy`. Region and tag live in an array column and a CIDR is not a Prisma
+  predicate, so for those it reads a narrow select once and counts in memory. Raw SQL was
+  rejected because it could not reuse the Prisma `where`, and a second predicate would drift.
+  Monitor status is counted over monitored assets only, like `fleet_summary`. It is a report
+  source, and its columns follow its `groupBy` (`reportColumns`).
+- **Routing.** `asksHowTo` treated "where is", "configure" and "set up" as how-to words, so
+  "where is sw-nsh-02?" got `search_help` alone together with "answer ONLY from what it
+  returns". Those words now count only about Polaris itself, and never when the question names a
+  device, an IP or a MAC (`namesAThing`). A how-to's first round keeps `search` and `list_assets`
+  beside `search_help`. The health playbook needs one hostname-shaped device, so "status of the
+  fleet" no longer steers to `get_asset`. A new inventory playbook sends counts to `count_assets`.
+  Four tests asserted round tools inside the model mock, where a failed `expect` is caught as a
+  failed turn and never fails the test. Three of them had gone stale on main unnoticed.
+- **The prefix.** The prompt opened with a millisecond timestamp. Azure's automatic prefix
+  caching and Ollama / llama.cpp's reuse of an already-processed prompt both stop at the first
+  changed token, so every turn paid to read the whole prompt and tool list again; on a local GPU
+  that is tens of seconds. The shared instructions (`CORE_PROMPT_LINES`) now come first, byte
+  for byte. The per-person blocks follow, and the time is the last line, to the minute. The
+  instructions open with three numbered core rules, most important first, and the
+  item-specific rules the tool descriptions already carry fold into one "which lookup" line
+  (6,542 → 5,172 characters). A Claude deployment caches nothing unless asked, so it gets cache
+  breakpoints on the system prompt and the last tool.
+- **The window.** A blank Context window meant 8192 for every provider. It is now the
+  provider's default: 200K for a Claude deployment, 128K for Azure chat completions, 8192 for a
+  local server. With 1M set, history was never trimmed and old results never compacted, while
+  the router could pick an underlying model with a much smaller window. A deployment named like
+  the router is therefore budgeted at 128K whatever the field says. Ollama silently drops the
+  OLDEST tokens when the prompt is larger than the context it loaded, and those are the
+  instructions. Test Connection reads the context the model was actually loaded with
+  (`/api/ps`, after Ollama's documented empty-prompt preload) and warns when it is below the
+  field; it stays silent when the server does not report one. Lookup rounds default to 8,
+  because the correlate playbook alone is four or five lookups.
+- **Which model answered.** Every chat-completions chunk names the model that produced it (on
+  the router, the one it picked), and Polaris dropped it. `servedBy` is carried on the round and
+  listed on the `assistant.chat` Event, so an operator can see when bad answers came from a small
+  model. The remedy for that is the router's mode in Foundry, not Polaris.
+- **The (m) exception.** A follow-up such as "those 15 firewalls — by region or firmware?" was
+  withdrawn by (m) because it counts devices with no lookup that turn. `onlyRepeatsLookedUpFigures`
+  excuses an answer whose every number appears in an earlier answer that ran lookups. A claimed
+  check, or any new number, is still nudged.
+
 ### What is deliberately not here
 
 The assistant is not on the Dash wallboard (the phone app gained a Chat tab on 2026-10-09, shown only where the assistant is usable), takes no action
