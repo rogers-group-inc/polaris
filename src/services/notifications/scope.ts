@@ -250,7 +250,7 @@ export async function suppressionOwedToMaintenance(assets: ScopeAssetRow[]): Pro
   if (candidates.length === 0) return out;
   const blames = await Promise.all(candidates.map((a) => resolveDependencyBlame(a.id, _blameCache)));
   candidates.forEach((a, i) => {
-    if (blames[i]?.chain.some((n) => n.reason === "maintenance")) out.add(a.id);
+    if (blames[i]?.maintenance) out.add(a.id);
   });
   return out;
 }

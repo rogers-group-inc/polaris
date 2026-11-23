@@ -1034,7 +1034,10 @@ Three things the toggle does **not** change. A **maintenance window still
 silences** the device, whether the window is on the device itself or on
 anything above it: a PLC behind a switch that is being upgraded is planned
 downtime, not an outage, and an alert already live when that window opens is
-retired. **Reminders and escalation still wait** while the device
+retired. Polaris looks up **every** dark path above the device for that window,
+not only the one it names in the alert, so a switch in between that briefly
+reads down in its own right (a flapping uplink) does not hide the window
+above it. **Reminders and escalation still wait** while the device
 is dependency-down — you get one notification, and the follow-ups resume when
 the upstream is back. And every automation **without** the toggle stays silent
 about a dependency-down device.
