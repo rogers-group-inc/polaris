@@ -40,6 +40,7 @@ import {
   recoverTextToolCalls,
   estimateTokens,
   acceptsImages,
+  effectiveContextWindow,
   LLM_DEFAULTS,
   type ChatMessage,
   type LlmConfig,
@@ -837,7 +838,8 @@ export async function streamAssistantTurn(input: {
     }
     : null;
   const allTools = memoryTurn ? [...assistantToolDefs(), ...memoryToolDefs()] : assistantToolDefs();
-  const budget = contextBudget(config.contextWindow);
+  // The provider's default when the field is blank, capped on model-router (rule 95(o)).
+  const budget = contextBudget(effectiveContextWindow(config));
   // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
   // Gathered whether or not the advisor is on; it costs a regex per lookup.
   const signals: TurnSignals = {

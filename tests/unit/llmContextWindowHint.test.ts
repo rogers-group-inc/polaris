@@ -30,6 +30,8 @@ describe("AI Assistant form — Context window hint", () => {
     expect(h).toMatch(/Haiku 5\.5/);
     expect(h).toMatch(/Messages of history sent/);
     expect(h).not.toMatch(/Ollama/);
+    // Rule 95(o): model-router is budgeted at 128K whatever the field says.
+    expect(h).toMatch(/model-router[\s\S]*128000/);
   });
 
   it("on a local server keeps the Ollama guidance", () => {

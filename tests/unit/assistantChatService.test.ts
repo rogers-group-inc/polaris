@@ -42,6 +42,7 @@ vi.mock("../../src/services/llmService.js", async () => ({
   recoverTextToolCalls: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).recoverTextToolCalls,
   estimateTokens: (t: string) => Math.ceil((t ?? "").length / 3.5),
   acceptsImages: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).acceptsImages,
+  effectiveContextWindow: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).effectiveContextWindow,
   LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({

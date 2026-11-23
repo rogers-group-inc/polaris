@@ -94,7 +94,8 @@ export const LLM_DEFAULTS = {
   port: 11434,
   basePath: "/v1",
   temperature: 0.2,
-  maxToolRounds: 6,
+  // 8, not 6: the correlate playbook alone is four or five lookups (rule 95(o)).
+  maxToolRounds: 8,
   requestTimeoutMs: 120_000,
   maxRowsPerTool: 200,
   contextMessages: 20,
@@ -161,6 +162,34 @@ export const AZURE_API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/;
 
 export function isAzureProvider(config: Pick<LlmConfig, "provider">): boolean {
   return config.provider === "azure";
+}
+
+/** A blank Context window on a Claude deployment / an Azure chat-completions deployment. */
+const HOSTED_CONTEXT_DEFAULTS = { claude: 200_000, azureChat: 128_000 } as const;
+/**
+ * What a turn budgets for on an Azure AI Foundry model-router deployment,
+ * whatever the field says: the router picks an underlying model per request,
+ * and a 1M setting let a long turn overflow a smaller one it picked.
+ */
+const MODEL_ROUTER_WINDOW = 128_000;
+
+/** Is this deployment Azure AI Foundry's model router (by its deployment name)? */
+function isModelRouter(config: Pick<LlmConfig, "provider" | "model">): boolean {
+  return isAzureProvider(config) && /router/i.test(config.model ?? "");
+}
+
+/**
+ * The context window a turn is budgeted against (rule 95(o)): the operator's
+ * figure, else the provider's default — a Claude deployment 200K, an Azure
+ * chat-completions deployment 128K, a local server LLM_DEFAULTS.contextWindow
+ * — capped at MODEL_ROUTER_WINDOW on a model-router deployment.
+ */
+export function effectiveContextWindow(config: Pick<LlmConfig, "provider" | "azureApiShape" | "model" | "contextWindow">): number {
+  const fallback = !isAzureProvider(config) ? LLM_DEFAULTS.contextWindow
+    : config.azureApiShape === "anthropic" ? HOSTED_CONTEXT_DEFAULTS.claude
+    : HOSTED_CONTEXT_DEFAULTS.azureChat;
+  const w = config.contextWindow ?? fallback;
+  return isModelRouter(config) ? Math.min(w, MODEL_ROUTER_WINDOW) : w;
 }
 
 /**
@@ -671,11 +700,53 @@ const SMALL_CONTEXT_WINDOW = 6000;
 
 export async function testConnection(config: LlmConfig): Promise<LlmTestResult> {
   const out = await testConnectionInner(config);
-  const w = config.contextWindow ?? LLM_DEFAULTS.contextWindow;
+  const w = effectiveContextWindow(config);
   if (out.ok && w < SMALL_CONTEXT_WINDOW) {
     out.message += `. Context window is ${w} tokens — lookup results will be cut short; raise it on the server (Ollama: OLLAMA_CONTEXT_LENGTH) and here if you can`;
   }
+  // Rule 95(o): a window set larger than the one Ollama really loaded is the
+  // worst case — the prompt is budgeted for the field, Ollama silently drops
+  // the OLDEST tokens to fit, and those are the instructions and tool list.
+  if (out.ok && out.model) {
+    const loaded = await ollamaLoadedContext(config, out.model);
+    if (loaded !== null && loaded < w) {
+      out.message += `. Ollama loaded "${out.model}" with a ${loaded}-token context, smaller than the ${w} set here — ` +
+        `the assistant's instructions would be cut off. Set OLLAMA_CONTEXT_LENGTH to at least ${w} on the server, or lower Context window to ${loaded}`;
+    }
+  }
   return out;
+}
+
+/**
+ * The context length Ollama loaded `model` with, from `/api/ps` — loading it
+ * first with an empty prompt (Ollama's documented preload) when it is not
+ * resident. Null when this is not Ollama, the server does not report a
+ * context length, or anything fails: never guessed. Exported for tests.
+ */
+export async function ollamaLoadedContext(config: LlmConfig, model: string): Promise<number | null> {
+  if (isAzureProvider(config)) return null;
+  const base = normalizeBasePath(config.basePath);
+  if (base !== "/v1" && base !== "") return null;
+  const native: LlmConfig = { ...config, basePath: "", requestTimeoutMs: 30_000 };
+  const same = (a: unknown) => typeof a === "string" && (a === model || a === `${model}:latest` || `${a}:latest` === model);
+  const read = async (): Promise<{ resident: boolean; ctx: number | null }> => {
+    const ps = await getJson(native, "GET", "/api/ps");
+    const row = Array.isArray(ps.json?.models) ? ps.json.models.find((m: { name?: unknown; model?: unknown }) => same(m.name) || same(m.model)) : undefined;
+    const ctx = row?.context_length;
+    return { resident: Boolean(row), ctx: typeof ctx === "number" && ctx > 0 ? ctx : null };
+  };
+  try {
+    const tags = await getJson(native, "GET", "/api/tags");
+    if (tags.status !== 200 || !Array.isArray(tags.json?.models)) return null;
+    let r = await read();
+    if (!r.resident) {
+      await getJson(native, "POST", "/api/generate", { model, prompt: "", stream: false });
+      r = await read();
+    }
+    return r.ctx;
+  } catch {
+    return null;
+  }
 }
 
 async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {

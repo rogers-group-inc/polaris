@@ -826,10 +826,10 @@ function llmFormHTML(defaults) {
     sectionHeading("Assistant Behaviour") +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
       '<div class="form-group"><label>Temperature</label><input type="number" id="f-temperature" value="' + (d.temperature != null ? d.temperature : 0.2) + '" min="0" max="2" step="0.1"><p class="hint">Low keeps answers factual.</p></div>' +
-      '<div class="form-group"><label>Lookup rounds per answer</label><input type="number" id="f-maxToolRounds" value="' + (d.maxToolRounds || 6) + '" min="1" max="12"></div>' +
+      '<div class="form-group"><label>Lookup rounds per answer</label><input type="number" id="f-maxToolRounds" value="' + (d.maxToolRounds || 8) + '" min="1" max="12"></div>' +
       '<div class="form-group"><label>Rows per lookup</label><input type="number" id="f-maxRowsPerTool" value="' + (d.maxRowsPerTool || 200) + '" min="10" max="1000"><p class="hint">Reports go up to 5,000 regardless.</p></div>' +
       '<div class="form-group"><label>Messages of history sent</label><input type="number" id="f-contextMessages" value="' + (d.contextMessages || 20) + '" min="2" max="100"><p class="hint">At most — older ones are dropped first when they would not fit the context window.</p></div>' +
-      '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || 8192) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint" id="f-contextWindow-hint">' + _llmContextWindowHint(azure) + '</p></div>' +
+      '<div class="form-group"><label>Context window</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-contextWindow" value="' + (d.contextWindow || "") + '" placeholder="' + _llmContextWindowDefault(azure, d.azureApiShape) + '" min="2048" max="1000000" step="1024" style="width:110px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">tokens</span></div><p class="hint" id="f-contextWindow-hint">' + _llmContextWindowHint(azure) + '</p></div>' +
       '<div class="form-group"><label>Response timeout</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-requestTimeoutSec" value="' + timeoutSec + '" min="5" max="600" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">seconds idle</span></div></div>' +
       '<div class="form-group"><label>Start a fresh chat after</label><div style="display:flex;align-items:center;gap:8px"><input type="number" id="f-idleResetMinutes" value="' + (d.idleResetMinutes != null ? d.idleResetMinutes : 30) + '" min="0" max="1440" style="width:90px"><span style="color:var(--color-text-tertiary);font-size:0.85rem">minutes idle</span></div><p class="hint">A conversation nobody has used for this long is saved and set aside; the chat opens fresh, and <code>/resume</code> or History brings it back. 0 = never.</p></div>' +
     '</div>' +
@@ -881,10 +881,11 @@ function getLlmFormConfig() {
     omitTemperature: document.getElementById("f-omitTemperature").checked,
     acceptsImages: document.getElementById("f-acceptsImages").checked,
     temperature: num("f-temperature", 0.2),
-    maxToolRounds: Math.round(num("f-maxToolRounds", 6)),
+    maxToolRounds: Math.round(num("f-maxToolRounds", 8)),
     maxRowsPerTool: Math.round(num("f-maxRowsPerTool", 200)),
     contextMessages: Math.round(num("f-contextMessages", 20)),
-    contextWindow: Math.round(num("f-contextWindow", 8192)),
+    // Blank = the provider's default (llmService.effectiveContextWindow).
+    contextWindow: isNaN(num("f-contextWindow", NaN)) ? undefined : Math.round(num("f-contextWindow", NaN)),
     idleResetMinutes: Math.max(0, Math.min(1440, Math.round(num("f-idleResetMinutes", 30)))),
     requestTimeoutMs: Math.round(num("f-requestTimeoutSec", 120)) * 1000,
     systemPromptExtra: (document.getElementById("f-systemPromptExtra").value || "").trim(),
@@ -915,8 +916,13 @@ function _llmAzureEndpointText(c) {
  */
 function _llmContextWindowHint(azure) {
   return azure
-    ? "Match the deployment's context window: Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 take <code>1000000</code>; most current GPT deployments 128000 or more. Polaris sizes each question to fit it — history is still capped by <em>Messages of history sent</em> and each lookup at 24,000 characters, so a large window does not mean a large bill."
-    : "Match the model server. Ollama uses 4096 unless <code>OLLAMA_CONTEXT_LENGTH</code> raises it; 8192 or more leaves room for lookups.";
+    ? "Match the deployment's context window: Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 take <code>1000000</code>; most current GPT deployments 128000 or more. Blank uses 200000 for Claude and 128000 otherwise. A <em>model-router</em> deployment may answer with a smaller model, so Polaris budgets it at 128000 whatever is set here. Polaris sizes each question to fit — history is still capped by <em>Messages of history sent</em> and each lookup at 120,000 characters, so a large window does not mean a large bill."
+    : "Match the model server. Ollama uses 4096 unless <code>OLLAMA_CONTEXT_LENGTH</code> raises it; 8192 or more leaves room for lookups. Test Connection warns when Ollama loaded the model with less than this.";
+}
+
+/** The Context window a blank field means (llmService.effectiveContextWindow, before the model-router cap). */
+function _llmContextWindowDefault(azure, shape) {
+  return azure ? (shape === "anthropic" ? 200000 : 128000) : 8192;
 }
 
 function _applyLlmProvider(id) {
@@ -940,6 +946,8 @@ function _applyLlmProvider(id) {
   set("f-apiToken-hint", azure ? "Stored encrypted. Key 1 or Key 2 from the resource's Keys and Endpoint page." : "Stored encrypted. Ollama and LM Studio need none by default.");
   var ctxHint = document.getElementById("f-contextWindow-hint");
   if (ctxHint) ctxHint.innerHTML = _llmContextWindowHint(azure);
+  var ctxBox = document.getElementById("f-contextWindow");
+  if (ctxBox) ctxBox.placeholder = String(_llmContextWindowDefault(azure, val("f-azureApiShape")));
   var host = document.getElementById("f-host");
   if (host) host.placeholder = azure ? "https://my-resource.openai.azure.com" : "e.g. 10.1.5.20 or llm.example.com";
   var model = document.getElementById("f-model");
