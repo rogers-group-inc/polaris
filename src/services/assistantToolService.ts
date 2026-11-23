@@ -684,6 +684,144 @@ async function listAssetRows(args: unknown, ctx: ToolContext, cap: number, withB
   }
 }
 
+// ─── count_assets ────────────────────────────────────────────────────────────
+//
+// Counts and breakdowns, counted in the database (rule 95(o)). Before it,
+// "how many 61Fs per region" or "switches by firmware" could only be answered
+// by listing every row — which never fit the window, so the model counted a
+// fragment and guessed the rest. Same filters as list_assets
+// (assetFilterWhere), so the two can never disagree about what matches.
+//
+// Scale: a plain field is one Prisma groupBy, flat from 100 to 2000 assets.
+// region / tag (array column) and a network CIDR (not a Prisma predicate)
+// read the matching assets' few grouped columns once and count in memory —
+// one query, a narrow select, on demand only.
+
+const COUNT_GROUP_FIELDS = [
+  "assetType", "status", "monitorStatus", "manufacturer", "model", "os", "osVersion", "location",
+  "department", "assignedTo", "monitored", "region", "tag",
+] as const;
+type CountField = (typeof COUNT_GROUP_FIELDS)[number];
+type ScalarCountField = Exclude<CountField, "region" | "tag">;
+const COUNT_FIELD_LABELS: Record<CountField, string> = {
+  assetType: "Type", status: "Status", monitorStatus: "Monitor", manufacturer: "Manufacturer", model: "Model",
+  os: "OS", osVersion: "OS version", location: "Location", department: "Department", assignedTo: "Assigned to",
+  monitored: "Monitored", region: "Region", tag: "Tag",
+};
+/** Groups a chat lookup returns before folding the rest into otherCount. */
+const COUNT_TOP_DEFAULT = 50;
+
+const CountArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  groupBy: oneOrMany(z.enum(COUNT_GROUP_FIELDS), 2),
+  top: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+/** The values one asset contributes to a grouping: one for a plain field, each region / tag for those. */
+function countValues(row: Record<string, unknown>, field: CountField): unknown[] {
+  if (field === "region" || field === "tag") {
+    const tags = Array.isArray(row.tags) ? (row.tags as string[]) : [];
+    const prefix = new RegExp(`^${REGION_TAG_PREFIX}`, "i");
+    const vals = field === "region"
+      ? tags.filter((t) => prefix.test(t)).map((t) => t.replace(prefix, "").trim()).filter(Boolean)
+      : tags.filter((t) => !prefix.test(t));
+    return vals.length ? Array.from(new Set(vals)) : [field === "region" ? "(no region)" : "(no tags)"];
+  }
+  const v = row[field];
+  return [v === null || v === undefined || v === "" ? "(none)" : v];
+}
+
+const countAssetsTool: ListToolDef = {
+  argSchema: CountArgs,
+  name: "count_assets",
+  label: "counted assets",
+  description:
+    "Count assets, optionally broken down by one or two fields (groupBy), counted by Polaris across EVERY match. " +
+    "Use for any 'how many', 'count', 'breakdown', 'by model / region / firmware / type / site' or 'per region' " +
+    "question — never count list_assets rows yourself. Takes the same filters as list_assets. groupBy osVersion " +
+    "is the firmware version; region and tag count an asset under each one it carries. Returns the largest " +
+    "groups first (top, default 50) with the rest folded into otherCount.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...ASSET_FILTER_PROPS,
+      groupBy: { type: "array", items: { type: "string", enum: [...COUNT_GROUP_FIELDS] }, description: "One or two fields, e.g. [\"region\", \"model\"]. Omit for a plain count." },
+      top: { type: "number", description: "How many groups to return, largest first (default 50)" },
+    },
+  },
+  columns: [...COUNT_GROUP_FIELDS.map((k) => ({ key: k, label: COUNT_FIELD_LABELS[k] })), { key: "count", label: "Count" }],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = CountArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const fields: CountField[] = a.groupBy ?? [];
+    // A monitor status is only meaningful on a device Polaris polls — the
+    // same reading fleet_summary and the monitorStatus filter use.
+    const byMonitor = fields.includes("monitorStatus") && a.monitored === undefined;
+    const filter = await assetFilterWhere(byMonitor ? { ...a, monitored: true } : a, ctx.req);
+    if ("ok" in filter) return filter;
+    const { where, subnet } = filter;
+
+    const counts = new Map<string, { key: unknown[]; count: number }>();
+    let matching: number;
+    if (!fields.length && !subnet) {
+      matching = await prisma.asset.count({ where });
+    } else if (!subnet && !fields.includes("region") && !fields.includes("tag")) {
+      const grouped = await prisma.asset.groupBy({ by: fields as ScalarCountField[], where, _count: { _all: true } }) as unknown as Array<Record<string, unknown> & { _count: { _all: number } }>;
+      matching = 0;
+      for (const g of grouped) {
+        const key = fields.map((f) => countValues(g, f)[0]);
+        counts.set(JSON.stringify(key), { key, count: g._count._all });
+        matching += g._count._all;
+      }
+    } else {
+      const select: Record<string, true> = { ipAddress: true, tags: true };
+      for (const f of fields) if (f !== "region" && f !== "tag") select[f] = true;
+      const assets = inSubnet(await prisma.asset.findMany({ where, select }) as unknown as Array<{ ipAddress: string | null } & Record<string, unknown>>, subnet);
+      matching = assets.length;
+      for (const row of assets) {
+        let keys: unknown[][] = [[]];
+        for (const f of fields) keys = keys.flatMap((k) => countValues(row, f).map((v) => [...k, v]));
+        for (const key of fields.length ? keys : []) {
+          const id = JSON.stringify(key);
+          const c = counts.get(id);
+          if (c) c.count++;
+          else counts.set(id, { key, count: 1 });
+        }
+      }
+    }
+
+    const sorted = Array.from(counts.values()).sort((x, y) => y.count - x.count);
+    const top = Math.min(a.top ?? (cap >= REPORT_ROW_CAP ? REPORT_ROW_CAP : COUNT_TOP_DEFAULT), cap >= REPORT_ROW_CAP ? REPORT_ROW_CAP : 500);
+    const shown = sorted.slice(0, top);
+    const rest = sorted.slice(top);
+    const rows = fields.length
+      ? shown.map((g) => ({ ...Object.fromEntries(fields.map((f, i) => [f, g.key[i]])), count: g.count }))
+      : [{ count: matching }];
+    const multiValued = fields.includes("region") || fields.includes("tag");
+    return {
+      rows,
+      total: fields.length ? sorted.length : 1,
+      extra: {
+        matchingAssets: matching,
+        ...(fields.length ? { groupBy: fields } : {}),
+        ...(byMonitor ? { monitoredOnly: "Monitor status is counted over monitored assets only." } : {}),
+        ...(rest.length ? { otherGroups: rest.length, otherCount: rest.reduce((n, g) => n + g.count, 0) } : {}),
+        ...(multiValued ? { countingNote: "An asset with several regions or tags is counted under each, so the counts can add up to more than matchingAssets." } : {}),
+        reportColumns: [...fields.map((f) => ({ key: f, label: COUNT_FIELD_LABELS[f] })), { key: "count", label: "Count" }],
+      },
+    };
+  },
+  async run(args, ctx) {
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    // The report's column set is for create_report, not the model.
+    const { reportColumns: _cols, ...extra } = res.extra ?? {};
+    return listResult({ ...res, extra });
+  },
+};
+
 // ─── telemetry_summary ───────────────────────────────────────────────────────
 //
 // CPU and memory over a window, one row per asset, aggregated in the database
@@ -2462,7 +2600,8 @@ const fleetSummaryTool: ToolDef = {
   label: "summarized the fleet",
   description:
     "Counts across the whole install: monitored devices by monitor status, assets by type and status, " +
-    "open alerts by severity. Use for overview questions ('how is the network doing?').",
+    "open alerts by severity. Use for overview questions ('how is the network doing?'). It takes no filters: " +
+    "for a count of some devices, or a breakdown by any other field, use count_assets.",
   parameters: { type: "object", properties: {} },
   async run(_args, ctx) {
     const out: Record<string, unknown> = {};
@@ -2498,11 +2637,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool, listIpsecConnectionsTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, countAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool, listIpsecConnectionsTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "count_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -2562,15 +2701,17 @@ const createReportTool: ToolDef = {
     if (res.rows.length === 0 && typeof res.extra?.retryHint === "string") {
       return { ok: false, data: { error: "The report would be EMPTY — no card was shown.", ...res.extra } };
     }
-    let columns = tool.columns;
+    // A source whose columns depend on its arguments (count_assets' groupBy) names them.
+    const sourceColumns = Array.isArray(res.extra?.reportColumns) ? res.extra.reportColumns as ReportColumn[] : tool.columns;
+    let columns = sourceColumns;
     // A column key the source does not have is dropped like an unknown filter
     // — and said, so the model does not promise a column the table lacks.
     let unknownColumns: string[] = [];
     if (p.data.columns?.length) {
       const wanted = new Set(p.data.columns);
-      const picked = tool.columns.filter((c) => wanted.has(c.key));
+      const picked = sourceColumns.filter((c) => wanted.has(c.key));
       if (picked.length) columns = picked;
-      const have = new Set(tool.columns.map((c) => c.key));
+      const have = new Set(sourceColumns.map((c) => c.key));
       unknownColumns = p.data.columns.filter((k) => !have.has(k));
     }
     const formats = ctx.reportFormats?.length ? ctx.reportFormats : p.data.formats;
@@ -2927,7 +3068,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, countAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
   listIpsecConnectionsTool, listAlertsTool, listEventsTool, listSubnetsTool, getNetworkTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

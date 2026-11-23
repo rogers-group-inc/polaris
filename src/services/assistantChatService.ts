@@ -308,6 +308,8 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
     "- CPU and memory figures (highest, lowest, average, peak, over a period) come from telemetry_summary, which " +
       "takes the same device filters as list_assets; a report of them is create_report with source " +
       "telemetry_summary. Never estimate a percentage yourself.",
+    "- Counts and breakdowns (\"how many\", \"by model / region / firmware / type\", \"per site\") come from " +
+      "count_assets, counted across every match — never count list rows yourself.",
     (opts.memory
       ? "- Apart from your memory of the user, you can only look things up. "
       : "- You can only look things up. ") +

@@ -51,6 +51,7 @@ describe("permission gate", () => {
   const none = reqWith({});
   it.each([
     ["list_assets", "{}"],
+    ["count_assets", JSON.stringify({ groupBy: ["region"] })],
     ["get_asset", '{"hostname":"fw1"}'],
     ["list_alerts", "{}"],
     ["list_events", "{}"],
@@ -125,6 +126,72 @@ describe("argument handling", () => {
     ]);
     const r = await runAssistantTool("list_assets", '{"network":"10.20.0.0/16"}', { req, maxRows: 50 });
     expect((r.data as any).rows.map((x: any) => x.hostname)).toEqual(["in"]);
+  });
+});
+
+describe("count_assets (rule 95(o))", () => {
+  const req = reqWith({ assets: "read" });
+
+  it("counts a plain field in the database, largest first, with the list_assets filters", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([
+      { model: "FGT-61F", _count: { _all: 12 } },
+      { model: "FGT-100F", _count: { _all: 40 } },
+      { model: null, _count: { _all: 3 } },
+    ] as never);
+    const r = await runAssistantTool("count_assets", JSON.stringify({ assetType: "firewall", groupBy: "model" }), { req, maxRows: 50 });
+    const call = stubbed(prisma.asset.groupBy).mock.calls[0][0] as any;
+    expect(call.by).toEqual(["model"]);
+    expect(call.where.AND).toContainEqual({ assetType: { in: ["firewall"] } });
+    expect(call.where.AND).toContainEqual({ status: { not: "decommissioned" } });
+    expect(r.data).toMatchObject({ matchingAssets: 55, total: 3, rows: [{ model: "FGT-100F", count: 40 }, { model: "FGT-61F", count: 12 }, { model: "(none)", count: 3 }] });
+    expect(r.data).not.toHaveProperty("reportColumns");
+  });
+
+  it("counts regions from the region tags, an asset under each it carries", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { ipAddress: "10.0.0.1", tags: ["region:Middle Tennessee", "core"] },
+      { ipAddress: "10.0.0.2", tags: ["Region:Middle Tennessee", "region:Alabama"] },
+      { ipAddress: "10.0.0.3", tags: [] },
+    ]);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: ["region"] }), { req, maxRows: 50 })).data as any;
+    expect(stubbed(prisma.asset.groupBy)).not.toHaveBeenCalled();
+    expect(r.matchingAssets).toBe(3);
+    expect(r.rows).toEqual([{ region: "Middle Tennessee", count: 2 }, { region: "Alabama", count: 1 }, { region: "(no region)", count: 1 }]);
+    expect(r.countingNote).toMatch(/counted under each/);
+  });
+
+  it("matches a network by CIDR containment before counting", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { ipAddress: "10.20.3.4", tags: [], assetType: "switch" },
+      { ipAddress: "110.20.3.4", tags: [], assetType: "switch" },
+    ]);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ network: "10.20.0.0/16", groupBy: "assetType" }), { req, maxRows: 50 })).data as any;
+    expect(r.rows).toEqual([{ assetType: "switch", count: 1 }]);
+    const plain = (await runAssistantTool("count_assets", JSON.stringify({ network: "10.20.0.0/16" }), { req, maxRows: 50 })).data as any;
+    expect(plain.rows).toEqual([{ count: 1 }]);
+  });
+
+  it("folds the groups past top into otherCount", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ location: `site-${i}`, _count: { _all: 10 - i } })) as never);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: "location", top: 2 }), { req, maxRows: 50 })).data as any;
+    expect(r.rows.map((x: any) => x.location)).toEqual(["site-0", "site-1"]);
+    expect(r).toMatchObject({ otherGroups: 3, otherCount: 8 + 7 + 6, truncated: true });
+  });
+
+  it("counts monitor status over monitored assets only", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([] as never);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: "monitorStatus" }), { req, maxRows: 50 })).data as any;
+    expect((stubbed(prisma.asset.groupBy).mock.calls[0][0] as any).where.AND).toContainEqual({ monitored: true });
+    expect(r.monitoredOnly).toBeTruthy();
+  });
+
+  it("is a report source whose columns are the groupBy fields and the count", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([{ osVersion: "7.4.5", _count: { _all: 9 } }] as never);
+    const onReport = vi.fn();
+    await runAssistantTool("create_report", JSON.stringify({ title: "Firmware", source: "count_assets", args: { groupBy: ["osVersion"] } }), { req, maxRows: 10, onReport });
+    const report = onReport.mock.calls[0][0];
+    expect(report.columns.map((c: any) => c.key)).toEqual(["osVersion", "count"]);
+    expect(report.rows).toEqual([{ osVersion: "7.4.5", count: 9 }]);
   });
 });
 
