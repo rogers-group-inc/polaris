@@ -19,7 +19,8 @@
  *   WHAT GOES QUIET  the per-severity tree (`severityTreeHtml`): each severity,
  *                and under it Alerts and Escalation alerts, each with its own
  *                Reminders — ticked = held. Ticking a severity ticks all four;
- *                unticking its last kind unticks the severity. Hidden when the
+ *                ticking a kind ticks its severity, unticking its last kind
+ *                unticks it, and an unticked severity hides its kinds. Hidden when the
  *                host asks the question itself (the global wizard's Alerts
  *                step renders the same tree through the exported helpers).
  *   RECIPIENT EXCEPTIONS  a button opening a stacked modal of addresses that
@@ -152,7 +153,10 @@
             '<input type="checkbox" class="qte-sev" value="' + esc(sv) + '"' + (on ? " checked" : "") + ' style="width:auto"> ' +
             '<span class="sev-select sev-' + esc(sv) + '" style="padding:1px 8px;border-radius:999px;font-size:0.78rem">' + esc(SEVERITY_LABELS[sv] || sv) + '</span>' +
           '</label>' +
-          '<div class="qte-sev-kinds" style="display:grid;grid-template-columns:repeat(2,minmax(0,max-content));gap:3px 2.5rem;margin:5px 0 0 1.6rem"' + (on ? "" : " hidden") + '>' +
+          // `display` rides inline beside `hidden`: an inline display:grid
+          // beats the UA's [hidden] rule, which left the boxes on screen
+          // under an unticked severity — tickable, and dropped on save.
+          '<div class="qte-sev-kinds" style="display:' + (on ? "grid" : "none") + ';grid-template-columns:repeat(2,minmax(0,max-content));gap:3px 2.5rem;margin:5px 0 0 1.6rem"' + (on ? "" : " hidden") + '>' +
             kind(sv, "alerts", false) + kind(sv, "escalations", false) +
             kind(sv, "alertReminders", true) + kind(sv, "escalationReminders", true) +
           '</div>' +
@@ -160,6 +164,12 @@
       }).join("") +
     '</div>' +
     (bare ? "" : '<p style="font-size:0.78rem;color:var(--color-text-tertiary);margin:6px 0 0">Ticked = held during the quiet period and, for Alerts, reported in the summary email. Untick a box to let that send go out live; untick a severity to let it through entirely — critical usually should. Scripts, API calls and the audit event always run.</p>');
+  }
+
+  function showKinds(kinds, on) {
+    if (!kinds) return;
+    kinds.hidden = !on;
+    kinds.style.display = on ? "grid" : "none";
   }
 
   /** Delegated handlers for the tree; `onChange` fires after every edit. */
@@ -173,12 +183,13 @@
       var sev = row.querySelector(".qte-sev");
       if (t.classList.contains("qte-sev")) {
         if (t.checked) row.querySelectorAll(".qte-kind").forEach(function (k) { k.checked = true; });
-        if (kinds) kinds.hidden = !t.checked;
+        showKinds(kinds, t.checked);
       } else if (t.classList.contains("qte-kind")) {
-        // Only the boxes on screen count: unticking the last VISIBLE one lets
-        // the severity through, whatever a hidden one says.
+        // The severity box follows the VISIBLE kinds: ticking one holds the
+        // severity (the save reads only ticked severities), unticking the
+        // last one lets it through, whatever a hidden one says.
         var any = Array.prototype.some.call(row.querySelectorAll(".qte-kind:not(.qte-kind-hidden)"), function (k) { return k.checked; });
-        if (!any && sev) { sev.checked = false; if (kinds) kinds.hidden = true; }
+        if (sev) { sev.checked = any; showKinds(kinds, any); }
       }
       if (typeof onChange === "function") onChange();
     });

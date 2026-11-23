@@ -172,6 +172,27 @@ describe("PolarisQuietTimeEditor", () => {
     expect(qte.collect(root).config.severities).toEqual(["critical"]);
   });
 
+  it("an unticked severity's kinds are really off screen, and ticking a kind holds the severity (reminders only saves)", () => {
+    const root = mountEditor({ windows: [{ version: 1, kind: "recurring", freq: "daily" }], severities: ["warning"] });
+    const critical = root.querySelector('.qte-sevrow[data-sev="critical"]')!;
+    const kinds = critical.querySelector(".qte-sev-kinds") as HTMLElement;
+    // An inline display:grid beat [hidden] — the boxes showed under an unticked severity.
+    expect(kinds.style.display).toBe("none");
+    // Ticking just the two Reminders boxes (the boxes were tickable while on
+    // screen) must hold critical, not be dropped by the save.
+    set(critical, '.qte-kind[data-kind="alertReminders"]', true);
+    set(critical, '.qte-kind[data-kind="escalationReminders"]', true);
+    expect((critical.querySelector(".qte-sev") as HTMLInputElement).checked).toBe(true);
+    expect(kinds.style.display).toBe("grid");
+    const got = qte.collect(root);
+    expect(got.config.held.critical).toEqual({ alerts: false, alertReminders: true, escalations: false, escalationReminders: true });
+    expect(() => quietTimeConfigSchema.parse(got.config)).not.toThrow();
+    // Unticking the severity hides its kinds again.
+    set(critical, ".qte-sev", false);
+    expect(kinds.style.display).toBe("none");
+    expect(qte.collect(root).config.held.critical).toBeUndefined();
+  });
+
   it("a scope limits the tree to the automation's own severities and sends; hidden boxes keep their value", () => {
     // An automation at warning with a critical band: warning has escalation
     // tiers but nothing repeats; critical only alerts.

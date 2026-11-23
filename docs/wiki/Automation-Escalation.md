@@ -126,7 +126,8 @@ severity you tick are four boxes:
 | **Escalation alerts** | each escalation tier's first run |
 | ↳ **Reminders** | a tier's own repeats |
 
-Ticking a severity ticks all four; a ticked box is **held** during the quiet
+Ticking a severity shows its four boxes and ticks them all; unticking it
+hides them. A ticked box is **held** during the quiet
 period, an unticked one goes out live whatever the hour. Untick a severity to
 let it through entirely — the usual shape is everything but critical, and a new
 global quiet time starts that way. Untick **Alerts** but leave the rest to hold
