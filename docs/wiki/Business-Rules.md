@@ -1844,7 +1844,9 @@ the Alerts page. It can only look things up — it never changes, acknowledges,
 pushes or deletes anything, and it cannot read stored credentials, API tokens,
 user accounts, roles, sign-in settings, automation scripts or server settings.
 A report it builds is a database extract: Polaris runs the query itself (up to
-5,000 rows), so the rows you download were never written by the model. Measured
+5,000 rows), so the rows you download were never written by the model. Removing
+duplicates ("only unique public IPs") is done by Polaris over those rows too, never
+by the model. Measured
 figures (CPU and memory, interface traffic and errors, Path Monitor availability
 and latency) are computed the same way, by Polaris from the stored samples, never
 by the model. Your

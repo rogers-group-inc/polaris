@@ -299,6 +299,9 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
       "[\"remote-access\",\"ssl-vpn\"], not a guessed ADVPN kind. A report of them is create_report with that source.",
     "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
       "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
+      "Export as much as possible: leave columns out (every column) unless the user named the exact columns. " +
+      "Several devices go in ONE report (all of them in the source's args); \"remove duplicates\" / \"unique X\" is " +
+      "dedupeBy with X's column key. " +
       "The user sees the finished table with download buttons; you do not see its rows, " +
       "so never type a table or rows for it — reply with one sentence naming what it holds.",
     "- CPU and memory figures (highest, lowest, average, peak, over a period) come from telemetry_summary, which " +
