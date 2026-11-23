@@ -1024,9 +1024,13 @@ async function anthropicRound(
   };
   // No `temperature`: current Claude models refuse non-default sampling.
   // No `thinking`: the model's adaptive default.
-  if (req.system) params.system = req.system;
+  // Prompt caching (rule 95(o)): Claude caches nothing unless asked. A
+  // breakpoint on the last tool caches the tool list — identical on every
+  // turn — and one on the system prompt caches it across a turn's rounds,
+  // which resend it up to maxToolRounds times.
+  if (req.system) params.system = [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }];
   if (req.tools.length) {
-    params.tools = req.tools;
+    params.tools = req.tools.map((t, i) => (i === req.tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t));
     params.tool_choice = { type: "auto" };
   }
   const idleMs = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;

@@ -206,7 +206,10 @@ describe("chatCompletionRound on a Claude deployment", () => {
     expect(seen[0].headers["x-api-key"]).toBe("foundry-key");
     expect(seen[0].headers.authorization).toBeUndefined();
     expect(seen[0].headers["anthropic-version"]).toBeTruthy();
-    expect(seen[0].body).toMatchObject({ model: "claude-haiku-5-5", max_tokens: ANTHROPIC_MAX_TOKENS, system: "You are Polaris.", stream: true, tool_choice: { type: "auto" } });
+    expect(seen[0].body).toMatchObject({ model: "claude-haiku-5-5", max_tokens: ANTHROPIC_MAX_TOKENS, stream: true, tool_choice: { type: "auto" } });
+    // Rule 95(o): cache breakpoints on the system prompt and the last tool.
+    expect(seen[0].body.system).toEqual([{ type: "text", text: "You are Polaris.", cache_control: { type: "ephemeral" } }]);
+    expect(seen[0].body.tools.at(-1).cache_control).toEqual({ type: "ephemeral" });
     expect(seen[0].body).not.toHaveProperty("temperature");
     expect(seen[0].body).not.toHaveProperty("thinking");
   });
