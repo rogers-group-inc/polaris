@@ -307,6 +307,8 @@ function toConnectionRows(assetId: string, rows: StoredConnection[], resolved: M
 export interface IpsecConnectionFilter {
   /** Connection kinds to keep (IpsecConnectionKind values); empty / absent = every kind. */
   kinds?: string[];
+  /** Connection kinds to leave out — "everything but remote access" without guessing what the rest is called. */
+  excludeKinds?: string[];
   /** Parent phase-1 names to keep, matched case-insensitively. */
   parentTunnels?: string[];
   /** "up" / "down" / "partial". */
@@ -324,7 +326,12 @@ export async function listIpsecConnections(
   filter: IpsecConnectionFilter = {},
 ): Promise<{ connections: IpsecConnectionRow[]; collectedAt: Date | null }> {
   const where: Record<string, unknown> = { assetId };
-  if (filter.kinds?.length) where.kind = { in: filter.kinds };
+  if (filter.kinds?.length || filter.excludeKinds?.length) {
+    where.kind = {
+      ...(filter.kinds?.length ? { in: filter.kinds } : {}),
+      ...(filter.excludeKinds?.length ? { notIn: filter.excludeKinds } : {}),
+    };
+  }
   if (filter.parentTunnels?.length) {
     where.OR = filter.parentTunnels.map((t) => ({ parentTunnel: { equals: t, mode: "insensitive" } }));
   }
@@ -341,4 +348,20 @@ export async function listIpsecConnections(
   const resolved = ips.size > 0 ? await resolveIpsToAssets([...ips]) : new Map<string, ResolvedAsset>();
   const connections = toConnectionRows(assetId, rows, resolved);
   return { connections, collectedAt: newestLastSeen(connections) };
+}
+
+/**
+ * How many connections of each kind × parent tunnel one gate holds — what a
+ * filter that matched nothing is told, so it can be retried with the kinds
+ * the gate really reports (a hub's ADVPN spokes are `dialup-peer` when the
+ * template's CMDB entry was not read — fortiosIpsec.classifyIpsecChild).
+ */
+export async function countIpsecConnectionsByKind(assetId: string): Promise<Array<{ kind: string; parentTunnel: string | null; count: number }>> {
+  const groups = await prisma.assetIpsecConnection.groupBy({
+    by: ["kind", "parentTunnel"],
+    where: { assetId },
+    _count: { _all: true },
+    orderBy: [{ parentTunnel: "asc" }, { kind: "asc" }],
+  });
+  return groups.map((g) => ({ kind: g.kind, parentTunnel: g.parentTunnel, count: g._count._all }));
 }

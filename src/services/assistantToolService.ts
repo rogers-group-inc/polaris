@@ -43,7 +43,7 @@ import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../uti
 import { deviceUptime } from "../utils/uptime.js";
 import type { ChatToolDef } from "./llmService.js";
 import { ASSET_SECTIONS, ASSET_SECTION_HELP, readAssetSections } from "./assetDetailReadService.js";
-import { listIpsecConnections } from "./ipsecConnectionService.js";
+import { listIpsecConnections, countIpsecConnectionsByKind } from "./ipsecConnectionService.js";
 import { IPSEC_CONNECTION_KINDS } from "../utils/fortiosIpsec.js";
 
 export const REPORT_ROW_CAP = 5000;
@@ -2092,11 +2092,38 @@ const IpsecConnArgs = z.object({
   id: z.string().max(60).optional(),
   hostname: z.string().max(255).optional(),
   ip: z.string().max(60).optional(),
-  kind: z.array(z.enum(IPSEC_CONNECTION_KINDS)).max(IPSEC_CONNECTION_KINDS.length).optional(),
-  tunnel: z.array(z.string().max(100)).max(50).optional(),
+  // One kind, a list, or "a, b" — a model sends all three (a bare string
+  // failed the first live report, 2026-11-23).
+  kind: oneOrMany(z.enum(IPSEC_CONNECTION_KINDS), IPSEC_CONNECTION_KINDS.length),
+  excludeKind: oneOrMany(z.enum(IPSEC_CONNECTION_KINDS), IPSEC_CONNECTION_KINDS.length),
+  tunnel: oneOrMany(z.string().trim().min(1).max(100), 50),
   status: z.enum(["up", "down", "partial"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
 });
+
+/** The kinds a "not remote access" question leaves out. */
+const REMOTE_ACCESS_KINDS = ["remote-access", "ssl-vpn"] as const;
+
+/**
+ * The gate a name / IP / id means. A hostname can be held by a decommissioned
+ * twin as well as the live gate; a live one wins, and among several the one
+ * that actually holds IPsec connections.
+ */
+async function resolveIpsecGate(a: { id?: string; hostname?: string; ip?: string }): Promise<{ id: string; hostname: string | null } | null> {
+  const where = a.id ? { id: a.id }
+    : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
+    : { ipAddress: a.ip };
+  const found = await prisma.asset.findMany({ where, take: 10, select: { id: true, hostname: true, status: true } });
+  const live = found.filter((g) => g.status !== "decommissioned");
+  const pool = live.length ? live : found;
+  if (pool.length <= 1) return pool[0] ? { id: pool[0].id, hostname: pool[0].hostname } : null;
+  const counts = await prisma.assetIpsecConnection.groupBy({
+    by: ["assetId"], where: { assetId: { in: pool.map((g) => g.id) } }, _count: { _all: true },
+  });
+  const n = new Map(counts.map((c) => [c.assetId, c._count._all]));
+  const best = [...pool].sort((x, y) => (n.get(y.id) ?? 0) - (n.get(x.id) ?? 0))[0];
+  return { id: best.id, hostname: best.hostname };
+}
 
 const listIpsecConnectionsTool: ListToolDef = {
   argSchema: IpsecConnArgs,
@@ -2105,10 +2132,11 @@ const listIpsecConnectionsTool: ListToolDef = {
   description:
     "List the peers / users CONNECTED through one FortiGate's IPsec or SSL-VPN (by id, exact hostname or IP) — " +
     "each row's remoteGateway is the peer's public (underlay) address, tunnelIp its overlay / assigned address. " +
-    "kind narrows it: advpn-spoke (spokes dialled into this hub's ADVPN), advpn-shortcut (spoke-to-spoke " +
-    "shortcuts), dialup-peer (non-ADVPN dial-up sites), remote-access (FortiClient IPsec users), ssl-vpn. " +
-    "For \"ADVPN peers, not remote access\" use kind [\"advpn-spoke\"]. tunnel narrows to parent phase-1 names. " +
-    "Use this, not asset_details, for connected peers; it is a create_report source.",
+    "Kinds: advpn-spoke, advpn-shortcut, dialup-peer, remote-access (FortiClient IPsec users), ssl-vpn. A hub's " +
+    "ADVPN spokes are often stored as dialup-peer (when the template's config could not be read), so for " +
+    "\"site / ADVPN peers, not remote access\" use excludeKind [\"remote-access\",\"ssl-vpn\"], never a guessed kind. " +
+    "tunnel narrows to parent phase-1 names. An empty result lists the kinds the gate DOES hold — retry with " +
+    "those before reporting nothing. Use this, not asset_details, for connected peers; it is a create_report source.",
   parameters: {
     type: "object",
     properties: {
@@ -2116,6 +2144,7 @@ const listIpsecConnectionsTool: ListToolDef = {
       hostname: { type: "string" },
       ip: { type: "string" },
       kind: { type: "array", items: { type: "string", enum: [...IPSEC_CONNECTION_KINDS] } },
+      excludeKind: { type: "array", items: { type: "string", enum: [...IPSEC_CONNECTION_KINDS] } },
       tunnel: { type: "array", items: { type: "string" }, description: "Parent tunnel names, e.g. [\"Overlay-1\"]" },
       status: { type: "string", enum: ["up", "down", "partial"] },
       limit: { type: "number" },
@@ -2137,13 +2166,30 @@ const listIpsecConnectionsTool: ListToolDef = {
     if (!a.id && !a.hostname && !a.ip) {
       return { ok: false, data: { error: "Give the FortiGate's id, hostname or ip." } };
     }
-    const where = a.id ? { id: a.id }
-      : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
-      : { ipAddress: a.ip };
-    const gate = await prisma.asset.findFirst({ where, select: { id: true, hostname: true } });
+    const gate = await resolveIpsecGate(a);
     if (!gate) return { ok: true, data: { found: false, note: "No asset matches that id, hostname or IP." } };
-    const r = await listIpsecConnections(gate.id, { kinds: a.kind, parentTunnels: a.tunnel, status: a.status });
+    const r = await listIpsecConnections(gate.id, {
+      kinds: a.kind, excludeKinds: a.excludeKind, parentTunnels: a.tunnel, status: a.status,
+    });
     const take = Math.min(a.limit ?? cap, cap);
+    // A filter that matched nothing on a gate that HAS connections is almost
+    // always the wrong kind (seen live 2026-11-23: kind advpn-spoke on a hub
+    // whose spokes are dialup-peer → an empty report). Say what is there.
+    let emptyHint: Record<string, unknown> = {};
+    if (r.connections.length === 0 && (a.kind || a.excludeKind || a.tunnel || a.status)) {
+      const onGate = await countIpsecConnectionsByKind(gate.id);
+      if (onGate.length) {
+        const siteKinds = Array.from(new Set(onGate.map((g) => g.kind)))
+          .filter((k) => !(REMOTE_ACCESS_KINDS as readonly string[]).includes(k));
+        emptyHint = {
+          connectionsOnGate: onGate,
+          retryHint: "Nothing matched these filters, but the gate holds the connections listed in connectionsOnGate. " +
+            "Retry with the kind / tunnel that fits the question" +
+            (siteKinds.length ? ` — its non-remote-access kinds are ${siteKinds.join(", ")}` : "") +
+            ". Do not report an empty result.",
+        };
+      }
+    }
     return {
       rows: r.connections.slice(0, take).map((c) => plain({
         gate: gate.hostname, parentTunnel: c.parentTunnel, name: c.name, kind: c.kind, peerId: c.peerId,
@@ -2152,7 +2198,7 @@ const listIpsecConnectionsTool: ListToolDef = {
         incomingBytes: c.incomingBytes, outgoingBytes: c.outgoingBytes, lastSeen: c.lastSeen,
       })),
       total: r.connections.length,
-      extra: { gate: gate.hostname, assetId: gate.id, collectedAt: r.collectedAt?.toISOString() ?? null },
+      extra: { gate: gate.hostname, assetId: gate.id, collectedAt: r.collectedAt?.toISOString() ?? null, ...emptyHint },
     };
   },
   async run(args, ctx) {
@@ -2431,6 +2477,12 @@ const createReportTool: ToolDef = {
     const tool = LIST_BY_NAME.get(p.data.source)!;
     const res = await tool.rows(p.data.args ?? {}, ctx, REPORT_ROW_CAP);
     if ("ok" in res) return res;
+    // A source that knows its empty result is a wrong filter says so in
+    // `retryHint`; the model gets that back instead of the user getting an
+    // empty card it then apologizes for (seen live 2026-11-23).
+    if (res.rows.length === 0 && typeof res.extra?.retryHint === "string") {
+      return { ok: false, data: { error: "The report would be EMPTY — no card was shown.", ...res.extra } };
+    }
     let columns = tool.columns;
     // A column key the source does not have is dropped like an unknown filter
     // — and said, so the model does not promise a column the table lacks.
