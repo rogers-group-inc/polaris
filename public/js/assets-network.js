@@ -1995,6 +1995,8 @@ function _assetIpsecTabHTML(assetId) {
 // The asset each mounted tab renders for — Refresh re-renders from a fresh
 // payload and the tunnel link opens the history panel against it.
 var _assetIpsecAsset = {};
+// The payload each mounted tab last rendered — what the IPsec Export writes.
+var _assetIpsecData = {};
 
 // "3d 04h" / "5h 12m" / "40m" — how long a connection has been up.
 function _ipsecUptimeLabel(since) {
@@ -2087,6 +2089,9 @@ function _renderAssetIpsec(assetId, data, asset) {
   if (!mount) return;
   if (asset) _assetIpsecAsset[assetId] = asset;
   asset = _assetIpsecAsset[assetId] || { id: assetId };
+  // The payload on screen — the Export dialog writes from it, so the file
+  // says what the tab says (same read, same matched devices).
+  _assetIpsecData[assetId] = data || null;
   var dash = '<span style="color:var(--color-text-secondary)">—</span>';
   var tunnels = (data && data.tunnels) || [];
   var connections = (data && data.connections) || [];
@@ -2489,6 +2494,494 @@ function _renderAssetIpsec(assetId, data, asset) {
     });
   }
   _wireCurrentStateRefresh(refreshId, assetId, function () { return _reloadAssetIpsec(assetId); });
+}
+
+// ─── Asset slide-over → IPsec tab → Export ──────────────────────────
+//
+// On the IPsec tab the header's Export button opens this dialog instead of
+// the generic tab capture (which can only print what is on screen — a
+// collapsed ADVPN template's spokes, or rows a filter hides, never made it
+// into the PDF). The operator picks:
+//   - the format: CSV or PDF;
+//   - the sections: Tunnels & ADVPN sessions, Remote access sessions,
+//     Interfaces carrying IPsec tunnels;
+//   - which tunnels with connected sessions (ADVPN hubs, dial-up templates,
+//     a spoke's shortcuts) list those sessions under them — the rest export
+//     collapsed, as one row with its session count.
+// Every row of the last read is written, whatever the tables are sorted or
+// filtered to. The CSV carries every field the read holds (first / last
+// seen, phase-2 selector count, the 1m pin, raw byte counts); the PDF the
+// columns the tab shows, plus peer ID and connected-since.
+
+/**
+ * Pure: the tunnels that have site-to-site sessions under them (remote-access
+ * users are their own section) — the dialog's "list sessions under" picker.
+ * A session whose tunnel was not in the read still gets an entry, keyed by
+ * its parent name ("" when it named none), as the tab's orphan groups do.
+ */
+function _ipsecExportTemplates(data) {
+  var tunnels = (data && data.tunnels) || [];
+  var conns = (data && data.connections) || [];
+  var counts = {};
+  conns.forEach(function (c) {
+    if (_ipsecIsRemoteAccess(c)) return;
+    var k = c.parentTunnel || "";
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  var out = [];
+  var seen = {};
+  tunnels.forEach(function (t) {
+    if (!counts[t.tunnelName]) return;
+    seen[t.tunnelName] = true;
+    out.push({ name: t.tunnelName, sessions: counts[t.tunnelName], iface: t.parentInterface || null, status: t.status || "", orphan: false });
+  });
+  Object.keys(counts).sort().forEach(function (k) {
+    if (!seen[k]) out.push({ name: k, sessions: counts[k], iface: null, status: "", orphan: true });
+  });
+  return out;
+}
+
+// Column sets. `type` picks the formatter (_ipsecExportCellText); `pdf: false`
+// keeps a column out of the PDF, where the page has room only for what the
+// tab itself shows (+ peer ID and connected-since).
+var _IPSEC_EXPORT_COLUMNS = {
+  tunnels: [
+    { key: "name",      label: "Tunnel / session" },
+    { key: "type",      label: "Type" },
+    { key: "parent",    label: "Parent tunnel", pdf: false },
+    { key: "status",    label: "Status" },
+    { key: "gw",        label: "Remote gateway" },
+    { key: "iface",     label: "Interface" },
+    { key: "tunnelIp",  label: "Tunnel IP" },
+    { key: "peerId",    label: "Peer ID" },
+    { key: "device",    label: "Device" },
+    { key: "deviceIp",  label: "Device IP", pdf: false },
+    { key: "sessions",  label: "Sessions", type: "number" },
+    { key: "since",     label: "Connected since", type: "date" },
+    { key: "uptime",    label: "Uptime", type: "uptime" },
+    { key: "firstSeen", label: "First seen", type: "date", pdf: false },
+    { key: "lastSeen",  label: "Last seen", type: "date", pdf: false },
+    { key: "in",        label: "Bytes in", type: "bytes" },
+    { key: "out",       label: "Bytes out", type: "bytes" },
+    { key: "selectors", label: "Phase-2 selectors", type: "number", pdf: false },
+    { key: "poll",      label: "Poll 1m", pdf: false },
+  ],
+  remote: [
+    { key: "user",      label: "User" },
+    { key: "type",      label: "Type" },
+    { key: "tunnel",    label: "Tunnel" },
+    { key: "status",    label: "Status" },
+    { key: "gw",        label: "Remote address" },
+    { key: "tunnelIp",  label: "Assigned IP" },
+    { key: "peerId",    label: "Peer ID" },
+    { key: "session",   label: "Session" },
+    { key: "since",     label: "Connected since", type: "date" },
+    { key: "uptime",    label: "Uptime", type: "uptime" },
+    { key: "firstSeen", label: "First seen", type: "date", pdf: false },
+    { key: "lastSeen",  label: "Last seen", type: "date", pdf: false },
+    { key: "in",        label: "Bytes in", type: "bytes" },
+    { key: "out",       label: "Bytes out", type: "bytes" },
+  ],
+  // The interface's own fields ride every CSV row; the PDF prints them once,
+  // as the group row above that interface's tunnels.
+  interfaces: [
+    { key: "iface",       label: "Interface", pdf: false },
+    { key: "ifaceIp",     label: "Interface IP", pdf: false },
+    { key: "ifaceStatus", label: "Interface status", pdf: false },
+    { key: "ifaceSpeed",  label: "Interface speed", type: "speed", pdf: false },
+    { key: "name",        label: "Tunnel" },
+    { key: "type",        label: "Type" },
+    { key: "status",      label: "Status" },
+    { key: "gw",          label: "Remote gateway" },
+    { key: "tunnelIp",    label: "Tunnel IP" },
+    { key: "sessions",    label: "Sessions", type: "number" },
+    { key: "in",          label: "Bytes in", type: "bytes" },
+    { key: "out",         label: "Bytes out", type: "bytes" },
+  ],
+};
+
+/**
+ * Pure: the export as sections of rows. `choices` is
+ *   { tunnels: bool, remote: bool, interfaces: bool, expand: { <tunnel>: true } }
+ * and `ifaces` the system-info interface list (may be empty — the interfaces
+ * section then names each interface without its address / status / speed).
+ *
+ * A row is { cells: { <column key>: value }, depth: 0 | 1, bold?: true } or a
+ * group row { group: "<text>" } (PDF only — the CSV repeats the group's
+ * fields on every row instead). Values stay raw (ISO dates, byte counts,
+ * bps); the writers format them.
+ */
+function _ipsecExportModel(data, choices, ifaces) {
+  choices = choices || {};
+  var expand = choices.expand || {};
+  var tunnels = (data && data.tunnels) || [];
+  var conns = (data && data.connections) || [];
+  var sitePeers = conns.filter(function (c) { return !_ipsecIsRemoteAccess(c); });
+  var users = conns.filter(_ipsecIsRemoteAccess);
+  var byParent = {};
+  sitePeers.forEach(function (c) { var k = c.parentTunnel || ""; (byParent[k] = byParent[k] || []).push(c); });
+  var usersByParent = {};
+  users.forEach(function (c) { if (c.parentTunnel) usersByParent[c.parentTunnel] = (usersByParent[c.parentTunnel] || 0) + 1; });
+  var tunnelByName = {};
+  tunnels.forEach(function (t) { tunnelByName[t.tunnelName] = t; });
+
+  function usable(ip) { return ip && ip !== "0.0.0.0" ? ip : ""; }
+  function devName(m) { return m ? (m.hostname || m.ipAddress || m.id || "") : ""; }
+  function tunnelType(t) { return t.status === "dynamic" ? "Dial-up template" : "Site-to-site"; }
+  function sessionsOf(name) { return (byParent[name] || []).length + (usersByParent[name] || 0); }
+
+  function tunnelCells(t) {
+    return {
+      name: t.tunnelName, type: tunnelType(t), parent: "", status: t.status || "",
+      gw: usable(t.remoteGateway), iface: t.parentInterface || "", tunnelIp: t.overlayIp || "",
+      peerId: "", device: devName(t.matchedAsset), deviceIp: (t.matchedAsset && t.matchedAsset.ipAddress) || "",
+      sessions: t.status === "dynamic" || sessionsOf(t.tunnelName) ? sessionsOf(t.tunnelName) : null,
+      since: null, uptime: null, firstSeen: null, lastSeen: null,
+      "in": t.incomingBytes, out: t.outgoingBytes,
+      selectors: t.proxyIdCount != null ? t.proxyIdCount : null,
+      poll: (t.pinned || t.interfacePinned) ? "yes" : "no",
+    };
+  }
+  function peerCells(c) {
+    var parent = c.parentTunnel ? tunnelByName[c.parentTunnel] : null;
+    return {
+      name: c.name, type: _IPSEC_KIND_LABELS[c.kind] || c.kind || "", parent: c.parentTunnel || "",
+      status: c.status || "", gw: usable(c.remoteGateway), iface: (parent && parent.parentInterface) || "",
+      tunnelIp: c.tunnelIp || "", peerId: c.peerId || "",
+      device: devName(c.matchedAsset), deviceIp: (c.matchedAsset && c.matchedAsset.ipAddress) || "",
+      sessions: null, since: c.connectedSince || null, uptime: c.connectedSince || null,
+      firstSeen: c.firstSeen || null, lastSeen: c.lastSeen || null,
+      "in": c.incomingBytes, out: c.outgoingBytes, selectors: null, poll: "",
+    };
+  }
+
+  var sections = [];
+
+  if (choices.tunnels) {
+    var rows = [];
+    tunnels.forEach(function (t) {
+      var kids = byParent[t.tunnelName] || [];
+      rows.push({ cells: tunnelCells(t), depth: 0, bold: true });
+      if (kids.length && expand[t.tunnelName]) kids.forEach(function (c) { rows.push({ cells: peerCells(c), depth: 1 }); });
+    });
+    // Sessions whose tunnel was not in the read: a group row stands in for
+    // the missing tunnel, and a collapsed one still says how many there were.
+    Object.keys(byParent).filter(function (k) { return !tunnelByName[k]; }).sort().forEach(function (k) {
+      var kids = byParent[k];
+      var label = (k || "(no tunnel reported)") + " — tunnel not in the last read · " + kids.length + " session" + (kids.length === 1 ? "" : "s");
+      rows.push({ group: label });
+      if (expand[k]) kids.forEach(function (c) { rows.push({ cells: peerCells(c), depth: 1 }); });
+    });
+    sections.push({ key: "tunnels", title: "Tunnels & ADVPN sessions", columns: _IPSEC_EXPORT_COLUMNS.tunnels, rows: rows });
+  }
+
+  if (choices.remote) {
+    var urows = users.slice().sort(function (x, y) {
+      return String(x.userName || x.peerId || "").localeCompare(String(y.userName || y.peerId || ""), undefined, { sensitivity: "base" });
+    }).map(function (c) {
+      return { depth: 0, cells: {
+        user: c.userName || c.peerId || "", type: _IPSEC_KIND_LABELS[c.kind] || c.kind || "",
+        tunnel: c.parentTunnel || "", status: c.status || "", gw: usable(c.remoteGateway),
+        tunnelIp: c.tunnelIp || "", peerId: c.peerId || "", session: c.name || "",
+        since: c.connectedSince || null, uptime: c.connectedSince || null,
+        firstSeen: c.firstSeen || null, lastSeen: c.lastSeen || null,
+        "in": c.incomingBytes, out: c.outgoingBytes,
+      } };
+    });
+    sections.push({ key: "remote", title: "Remote access sessions", columns: _IPSEC_EXPORT_COLUMNS.remote, rows: urows });
+  }
+
+  if (choices.interfaces) {
+    var ifByName = {};
+    (ifaces || []).forEach(function (i) { if (i && i.ifName) ifByName[i.ifName] = i; });
+    var byIface = {};
+    tunnels.forEach(function (t) { var k = t.parentInterface || ""; (byIface[k] = byIface[k] || []).push(t); });
+    var irows = [];
+    Object.keys(byIface).sort(function (a, b) {
+      // The unnamed bucket last; the rest in natural order (port2 before port10).
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    }).forEach(function (k) {
+      var info = ifByName[k] || {};
+      var ifStatus = info.adminStatus && String(info.adminStatus).toLowerCase() === "down" ? "admin shut"
+        : String(info.operStatus || info.adminStatus || "").toLowerCase();
+      var list = byIface[k];
+      var head = [k || "(interface not reported)"];
+      if (info.alias && String(info.alias).trim() && String(info.alias).trim() !== k) head[0] += " (" + String(info.alias).trim() + ")";
+      if (info.ipAddress) head.push(info.ipAddress);
+      if (ifStatus) head.push(ifStatus);
+      if (info.speedBps != null && Number(info.speedBps) > 0) head.push(_fmtSpeed(Number(info.speedBps)));
+      head.push(list.length + " tunnel" + (list.length === 1 ? "" : "s"));
+      irows.push({ group: head.join(" · ") });
+      list.forEach(function (t) {
+        irows.push({ depth: 1, cells: {
+          iface: k, ifaceIp: info.ipAddress || "", ifaceStatus: ifStatus,
+          ifaceSpeed: info.speedBps != null ? Number(info.speedBps) : null,
+          name: t.tunnelName, type: tunnelType(t), status: t.status || "", gw: usable(t.remoteGateway),
+          tunnelIp: t.overlayIp || "", sessions: t.status === "dynamic" || sessionsOf(t.tunnelName) ? sessionsOf(t.tunnelName) : null,
+          "in": t.incomingBytes, out: t.outgoingBytes,
+        } });
+      });
+    });
+    sections.push({ key: "interfaces", title: "Interfaces carrying IPsec tunnels", columns: _IPSEC_EXPORT_COLUMNS.interfaces, rows: irows });
+  }
+
+  return sections;
+}
+
+/** Pure: one cell as text. `fmt` "csv" keeps byte counts raw so a sheet can sum them. */
+function _ipsecExportCellText(col, v, fmt) {
+  var empty = fmt === "pdf" ? "-" : "";
+  if (v == null || v === "") return empty;
+  switch (col.type) {
+    case "date":   return formatDateTime(v);
+    case "uptime": return _ipsecUptimeLabel(v) || empty;
+    case "bytes":  return fmt === "csv" ? String(v) : _fmtBytes(v);
+    case "speed":  return fmt === "csv" ? String(v) : _fmtSpeed(v);
+    default:       return String(v);
+  }
+}
+
+/** Pure: the CSV text — each section as a title line, a header line and its rows, a blank line between. */
+function _ipsecExportCsvText(sections, meta) {
+  var lines = [];
+  lines.push(_csvRow(["IPsec export", meta.subject]));
+  lines.push(_csvRow(["Last read", meta.collectedAt ? formatDateTime(meta.collectedAt) : "never"]));
+  lines.push(_csvRow(["Generated", formatDateTime(meta.generatedAt)]));
+  sections.forEach(function (s) {
+    lines.push("");
+    lines.push(_csvRow([s.title]));
+    lines.push(_csvRow(s.columns.map(function (c) { return c.label; })));
+    s.rows.forEach(function (r) {
+      if (r.group != null) return; // every data row carries its group's fields
+      lines.push(_csvRow(s.columns.map(function (c) { return _ipsecExportCellText(c, r.cells[c.key], "csv"); })));
+    });
+  });
+  return lines.join("\r\n") + "\r\n";
+}
+
+function _ipsecExportSaveCsv(sections, meta) {
+  // A BOM so Excel reads the file as UTF-8 (user names, em dashes).
+  var blob = new Blob(["﻿" + _ipsecExportCsvText(sections, meta)], { type: "text/csv;charset=utf-8;" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = meta.fileBase + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function _ipsecExportSavePdf(sections, meta) {
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    throw new Error("PDF library not loaded. Check your internet connection and reload the page.");
+  }
+  var doc = new window.jspdf.jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
+  var pageW = doc.internal.pageSize.getWidth();
+  var pageH = doc.internal.pageSize.getHeight();
+  var appName = (typeof _branding !== "undefined" && _branding && _branding.appName) || "Polaris";
+
+  doc.setFontSize(16);
+  doc.setTextColor(40, 40, 40);
+  doc.text(appName + " — IPsec — " + meta.subject, 40, 36);
+  doc.setFontSize(9);
+  doc.setTextColor(120, 120, 120);
+  doc.text("Generated: " + formatDateTime(meta.generatedAt) +
+    "  |  Last read: " + (meta.collectedAt ? formatDateTime(meta.collectedAt) : "never") +
+    "  |  " + meta.counts, 40, 52);
+
+  var y = 72;
+  sections.forEach(function (s) {
+    var cols = s.columns.filter(function (c) { return c.pdf !== false; });
+    if (y > pageH - 90) { doc.addPage(); y = 40; }
+    doc.setFontSize(11);
+    doc.setTextColor(40, 40, 40);
+    doc.text(s.title, 40, y);
+    if (!s.rows.length) {
+      doc.setFontSize(9);
+      doc.setTextColor(120, 120, 120);
+      doc.text("None at the last read.", 40, y + 16);
+      y += 40;
+      return;
+    }
+    var body = s.rows.map(function (r) {
+      if (r.group != null) {
+        return [{ content: r.group, colSpan: cols.length, styles: { fontStyle: "bold", fillColor: [228, 230, 240] } }];
+      }
+      return cols.map(function (c, i) {
+        var cell = { content: _ipsecExportCellText(c, r.cells[c.key], "pdf") };
+        var st = {};
+        if (i === 0 && r.depth) st.cellPadding = { top: 3, right: 3, bottom: 3, left: 3 + 12 * r.depth };
+        if (r.bold) st.fontStyle = "bold";
+        if (Object.keys(st).length) cell.styles = st;
+        return cell;
+      });
+    });
+    doc.autoTable({
+      startY: y + 8,
+      head: [cols.map(function (c) { return c.label; })],
+      body: body,
+      theme: "grid",
+      styles: { fontSize: 7, cellPadding: 3, overflow: "linebreak" },
+      headStyles: { fillColor: [30, 30, 54], textColor: [230, 230, 230], fontStyle: "bold" },
+      margin: { left: 40, right: 40, top: 40, bottom: 36 },
+    });
+    y = doc.lastAutoTable.finalY + 26;
+  });
+
+  // Footers once every page exists, so "of N" is the real total.
+  var total = doc.internal.getNumberOfPages();
+  for (var p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text("Page " + p + " of " + total + "  |  " + appName + " IPsec — " + meta.subject, pageW / 2, pageH - 20, { align: "center" });
+  }
+  doc.save(meta.fileBase + ".pdf");
+}
+
+/**
+ * The IPsec Export dialog (the header Export button on the IPsec tab).
+ * Format and section ticks persist per user; which tunnels list their
+ * sessions starts from the screen — a template expanded on the tab, or a
+ * tunnel the tab always shows its sessions under (a spoke's shortcuts), is
+ * ticked.
+ */
+function _openIpsecExportOptions(asset) {
+  var data = _assetIpsecData[asset.id];
+  if (!data) { showToast("The IPsec tab has not loaded yet", "error"); return; }
+  var tunnels = data.tunnels || [];
+  var conns = data.connections || [];
+  var users = conns.filter(_ipsecIsRemoteAccess);
+  var templates = _ipsecExportTemplates(data);
+  var ifaceCount = {};
+  tunnels.forEach(function (t) { ifaceCount[t.parentInterface || ""] = true; });
+  var opened = _getCollapsedIfaces(asset.id, "ipsec-open");
+  var saved = (typeof PolarisPrefs !== "undefined" ? PolarisPrefs.load("asset-ipsec-export", currentUsername) : null) || {};
+  var secOn = function (k) { return !saved.sections || saved.sections[k] !== false; };
+  var fmt = saved.format === "csv" ? "csv" : "pdf";
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+
+  function secRow(key, label, note, subHTML) {
+    var on = secOn(key);
+    return '<div style="padding:0.45rem 0;border-bottom:1px solid var(--color-border)">' +
+      '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+        '<input type="checkbox" class="ipsec-exp-sec" data-key="' + key + '"' + (on ? " checked" : "") + '>' +
+        '<span style="font-weight:500">' + escapeHtml(label) + '</span>' +
+        '<span style="font-size:0.8rem;color:var(--color-text-secondary)">' + escapeHtml(note) + '</span>' +
+      '</label>' +
+      (subHTML ? '<div class="ipsec-exp-sub" data-key="' + key + '" style="margin:0.4rem 0 0 1.6rem;display:' + (on ? "block" : "none") + '">' + subHTML + '</div>' : '') +
+    '</div>';
+  }
+
+  var tplHTML;
+  if (!templates.length) {
+    tplHTML = '<div style="font-size:0.82rem;color:var(--color-text-secondary)">No tunnel had connected sessions at the last read.</div>';
+  } else {
+    tplHTML =
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.3rem;font-size:0.82rem">' +
+        '<span style="color:var(--color-text-secondary)">List the connected sessions under — unticked tunnels export collapsed, with their session count</span>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;margin-bottom:0.35rem">' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="ipsec-exp-all">Expand all</button>' +
+        '<button type="button" class="btn btn-sm btn-secondary" id="ipsec-exp-none">Collapse all</button>' +
+      '</div>' +
+      '<div id="ipsec-exp-tpls" style="max-height:220px;overflow:auto;border:1px solid var(--color-border);border-radius:4px;padding:4px 8px">' +
+      templates.map(function (t) {
+        var t0 = tunnels.find(function (x) { return x.tunnelName === t.name; });
+        // On screen, only a dial-up template folds; any other tunnel shows its sessions.
+        var on = t.orphan || !t0 || t0.status !== "dynamic" || opened.has(t.name);
+        var bits = [plural(t.sessions, "session")];
+        if (t.iface) bits.unshift(t.iface);
+        if (t.orphan) bits.push("tunnel not in the last read");
+        return '<label style="display:flex;align-items:center;gap:8px;padding:2px 0;cursor:pointer;font-size:0.85rem">' +
+          '<input type="checkbox" class="ipsec-exp-tpl" data-name="' + escapeHtml(t.name) + '"' + (on ? " checked" : "") + '>' +
+          '<span class="mono">' + escapeHtml(t.name || "(no tunnel reported)") + '</span>' +
+          '<span style="color:var(--color-text-secondary);font-size:0.78rem">' + escapeHtml(bits.join(" · ")) + '</span>' +
+        '</label>';
+      }).join("") +
+      '</div>';
+  }
+
+  var body =
+    '<p style="margin:0 0 0.6rem;font-size:0.85rem;color:var(--color-text-secondary)">Choose what to export. Every row of the gate\'s last read is included, whatever the tables are sorted or filtered to on screen.</p>' +
+    '<div style="display:flex;align-items:center;gap:14px;margin-bottom:0.5rem;font-size:0.88rem">' +
+      '<span style="font-weight:500">Format</span>' +
+      '<label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="ipsec-exp-fmt" value="pdf"' + (fmt === "pdf" ? " checked" : "") + '> PDF</label>' +
+      '<label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="ipsec-exp-fmt" value="csv"' + (fmt === "csv" ? " checked" : "") + '> CSV</label>' +
+    '</div>' +
+    '<div id="ipsec-exp-list">' +
+      secRow("tunnels", "Tunnels & ADVPN sessions", plural(tunnels.length, "tunnel") + " · " + plural(conns.length - users.length, "session"), tplHTML) +
+      secRow("remote", "Remote access sessions", plural(users.length, "user"), "") +
+      secRow("interfaces", "Interfaces carrying IPsec tunnels", plural(Object.keys(ifaceCount).length, "interface"), "") +
+    '</div>';
+  var footer =
+    '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>' +
+    '<button class="btn btn-primary" id="btn-ipsec-export">Export</button>';
+  openModal("Export — IPsec", body, footer);
+
+  var list = document.getElementById("ipsec-exp-list");
+  list.querySelectorAll(".ipsec-exp-sec").forEach(function (cb) {
+    cb.addEventListener("change", function () {
+      var sub = list.querySelector('.ipsec-exp-sub[data-key="' + cb.getAttribute("data-key") + '"]');
+      if (sub) sub.style.display = cb.checked ? "block" : "none";
+    });
+  });
+  function setAll(v) { list.querySelectorAll(".ipsec-exp-tpl").forEach(function (cb) { cb.checked = v; }); }
+  var allBtn = document.getElementById("ipsec-exp-all");
+  var noneBtn = document.getElementById("ipsec-exp-none");
+  if (allBtn) allBtn.addEventListener("click", function () { setAll(true); });
+  if (noneBtn) noneBtn.addEventListener("click", function () { setAll(false); });
+
+  document.getElementById("btn-ipsec-export").addEventListener("click", async function () {
+    var choices = { expand: {} };
+    var secState = {};
+    list.querySelectorAll(".ipsec-exp-sec").forEach(function (cb) {
+      choices[cb.getAttribute("data-key")] = cb.checked;
+      secState[cb.getAttribute("data-key")] = cb.checked;
+    });
+    if (!choices.tunnels && !choices.remote && !choices.interfaces) { showToast("Select at least one section", "error"); return; }
+    list.querySelectorAll(".ipsec-exp-tpl").forEach(function (cb) {
+      if (cb.checked) choices.expand[cb.getAttribute("data-name")] = true;
+    });
+    var fmtEl = document.querySelector('input[name="ipsec-exp-fmt"]:checked');
+    var format = fmtEl ? fmtEl.value : "pdf";
+    if (typeof PolarisPrefs !== "undefined") PolarisPrefs.save("asset-ipsec-export", currentUsername, { format: format, sections: secState });
+    closeModal();
+    await _runIpsecExport(asset, data, choices, format);
+  });
+}
+
+async function _runIpsecExport(asset, data, choices, format) {
+  await trackedPdfExport("Exporting IPsec " + format.toUpperCase(), async function (signal) {
+    // The interfaces section names each port's address / status / speed from
+    // the System tab's read; without it the section still lists the tunnels.
+    var ifaces = [];
+    if (choices.interfaces) {
+      try {
+        var si = await api.assets.systemInfo(asset.id);
+        ifaces = (si && si.interfaces) || [];
+      } catch (_) { ifaces = []; }
+    }
+    if (signal && signal.aborted) return;
+    var sections = _ipsecExportModel(data, choices, ifaces);
+    var tunnels = data.tunnels || [];
+    var conns = data.connections || [];
+    var nUsers = conns.filter(_ipsecIsRemoteAccess).length;
+    var now = new Date();
+    var meta = {
+      subject: (asset && (asset.hostname || asset.ipAddress || asset.id)) || "asset",
+      collectedAt: data.collectedAt || null,
+      generatedAt: now.toISOString(),
+      counts: tunnels.length + " tunnels · " + (conns.length - nUsers) + " site sessions · " + nUsers + " remote users",
+      fileBase: "polaris-ipsec-" + _assetExportSubject(asset) + "-" + now.toISOString().slice(0, 10),
+    };
+    if (format === "csv") _ipsecExportSaveCsv(sections, meta);
+    else _ipsecExportSavePdf(sections, meta);
+    showToast("Exported " + meta.fileBase + "." + format);
+  });
 }
 
 // ─── Asset slide-over → Paths tab ───────────────────────────────────

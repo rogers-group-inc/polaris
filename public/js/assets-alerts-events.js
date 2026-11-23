@@ -883,6 +883,13 @@ function _syncAssetFooterButtons() {
   if (shot) shot.style.display = isEvents ? "none" : "";
   if (pdf) pdf.style.display = isEvents ? "none" : "";
   if (wrap) wrap.style.display = isEvents ? "" : "none";
+  // On the IPsec tab the same button opens the IPsec export dialog (sections,
+  // ADVPN sessions, CSV or PDF) — assets-network.js → _openIpsecExportOptions.
+  var isIpsec = !!(active && active.getAttribute("data-tab") === "ipsec");
+  if (pdf) {
+    pdf.textContent = isIpsec ? "Export" : "Export PDF";
+    pdf.title = isIpsec ? "Export IPsec tunnels and sessions — CSV or PDF" : "Export this tab to PDF";
+  }
 }
 
 async function _handleAssetEventExport(mode, fmt, asset) {
