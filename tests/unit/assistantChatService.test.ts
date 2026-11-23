@@ -740,7 +740,7 @@ describe("fitToolResult (rule 95(o))", () => {
 describe("buildSystemPrompt", () => {
   it("states the ground rules and appends operator instructions", () => {
     const p = buildSystemPrompt({ username: "dana", now: new Date("2026-10-07T12:00:00Z"), extra: "Sites are named NSH-*." });
-    expect(p).toContain("2026-10-07T12:00:00.000Z");
+    expect(p).toContain("Current time: 2026-10-07 12:00 UTC.");
     expect(p).toContain("dana");
     expect(p).toMatch(/search_help/);
     expect(p).toMatch(/create_report/);
@@ -750,6 +750,18 @@ describe("buildSystemPrompt", () => {
     expect(p).toMatch(/offer to do the search for them/);
     expect(p).toMatch(/Never imply someone is about to create a duplicate/);
     expect(p).toMatch(/Operator instructions:\nSites are named NSH-\*\./);
+  });
+
+  it("keeps the start of the prompt identical across turns and people (rule 95(o))", () => {
+    const a = buildSystemPrompt({ username: "dana", now: new Date("2026-10-07T12:00:01Z"), access: "ACCESS-A", memory: "Memory — x" });
+    const b = buildSystemPrompt({ username: "lee", now: new Date("2026-11-23T08:30:59Z") });
+    const shared = a.indexOf("ACCESS-A");
+    expect(shared).toBeGreaterThan(2_000);
+    expect(b.slice(0, shared)).toBe(a.slice(0, shared));
+    // The time is the last line, to the minute.
+    expect(b.trimEnd().split(/\r?\n/).pop()).toBe("Current time: 2026-11-23 08:30 UTC. You are talking to lee.");
+    // The rule against counting a fragment is in the core block.
+    expect(a).toMatch(/"N of TOTAL" sent you only N rows/);
   });
 
   it("tells the model the name the operator gave it, and stays nameless otherwise", () => {
