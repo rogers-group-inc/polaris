@@ -19,7 +19,8 @@
  *   WHAT GOES QUIET  the per-severity tree (`severityTreeHtml`): each severity,
  *                and under it Alerts and Escalation alerts, each with its own
  *                Reminders — ticked = held. Ticking a severity ticks all four;
- *                unticking its last kind unticks the severity. Hidden when the
+ *                ticking a kind ticks its severity, unticking its last kind
+ *                unticks it, and an unticked severity hides its kinds. Hidden when the
  *                host asks the question itself (the global wizard's Alerts
  *                step renders the same tree through the exported helpers).
  *   RECIPIENT EXCEPTIONS  a button opening a stacked modal of addresses that
