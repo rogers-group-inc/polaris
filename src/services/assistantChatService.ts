@@ -91,8 +91,12 @@ import {
 
 export type AssistantEmit = (event: "start" | "token" | "retract" | "thinking" | "tool" | "report" | "preface" | "signoff" | "memory" | "done" | "error", data: unknown) => void;
 
-/** Ceiling on one tool result handed back to the model (characters of JSON); contextBudget sizes it down for small windows. */
-const TOOL_RESULT_MAX_CHARS = 24_000;
+/**
+ * Ceiling on one tool result handed back to the model (characters of JSON);
+ * contextBudget sizes it down for small windows. It was 24,000 whatever the
+ * window — about 30 asset rows even on a 1M-token deployment (rule 95(o)).
+ */
+const TOOL_RESULT_MAX_CHARS = 120_000;
 
 export interface AssistantIntegrationRef {
   id: string;
@@ -481,6 +485,101 @@ function clipJson(value: unknown, maxChars: number): string {
   const s = JSON.stringify(value);
   if (s.length <= maxChars) return s;
   return s.slice(0, maxChars) + '…"(truncated — narrow the filters or use create_report)"';
+}
+
+/** A row without its empty fields (null, "", []) — they cost the model's window and say nothing. */
+function leanRow(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (x === null || x === undefined || x === "" || (Array.isArray(x) && x.length === 0)) continue;
+    out[k] = x;
+  }
+  return out;
+}
+
+/**
+ * A lookup result as the model reads it (rule 95(o)). Rows lose their empty
+ * fields, and a result too long for the window loses whole ROWS from the end
+ * of its largest list — never a cut through the JSON. A list result's
+ * `returned` / `truncated` are rewritten to what was actually sent and a note
+ * says "N of TOTAL" after the rows: the char cut this replaces left
+ * `returned: 200` in front of the ~30 rows that fit, and the model counted
+ * and ranked from the fragment as if it held all 200 (seen live 2026-11-23).
+ * Exported for tests.
+ */
+export function fitToolResult(value: unknown, maxChars: number): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return clipJson(value, maxChars);
+  const data: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  // Every list at the top level and one level down (get_network nests its rows).
+  type Slot = { holder: Record<string, unknown>; key: string; items: unknown[]; path: string };
+  const slots: Slot[] = [];
+  const collect = (holder: Record<string, unknown>, prefix: string, depth: number) => {
+    for (const [k, v] of Object.entries(holder)) {
+      if (Array.isArray(v)) {
+        const items = v.map(leanRow);
+        holder[k] = items;
+        slots.push({ holder, key: k, items, path: prefix + k });
+      } else if (depth === 0 && v && typeof v === "object") {
+        const copy = { ...(v as Record<string, unknown>) };
+        holder[k] = copy;
+        collect(copy, `${k}.`, 1);
+      }
+    }
+  };
+  collect(data, "", 0);
+  const isList = Array.isArray(data.rows) && typeof data.total === "number";
+  const listTotal = isList ? (data.total as number) : 0;
+  const clipped: Record<string, string> = {};
+  const annotate = () => {
+    if (isList) {
+      const sent = (data.rows as unknown[]).length;
+      data.returned = sent;
+      data.truncated = listTotal > sent;
+      if (listTotal > sent) {
+        data.sent = `${sent} of ${listTotal}`;
+        data.note = `Only these ${sent} of ${listTotal} matching rows were sent to you — the rest did not fit. ` +
+          "Do not count, rank or summarise beyond them: counts and breakdowns come from count_assets (or the " +
+          "breakdown field when present); the full list is create_report.";
+      }
+    }
+    if (Object.keys(clipped).length) {
+      data.clipped = clipped;
+      if (!isList) data.note = "Lists marked in `clipped` were cut to fit: speak only about the entries you received.";
+    }
+  };
+  // A list the lookup already capped (200 of 1,964) says so even when it fits.
+  annotate();
+  let s = JSON.stringify(data);
+  if (s.length <= maxChars) return s;
+  // Trim the largest list first, by whole entries, until the result fits.
+  for (let guard = 0; guard < 8 && s.length > maxChars; guard++) {
+    const slot = slots
+      .filter((x) => (x.holder[x.key] as unknown[]).length > 0)
+      .sort((a, b) => JSON.stringify(b.holder[b.key]).length - JSON.stringify(a.holder[a.key]).length)[0];
+    if (!slot) break;
+    const had = (slot.holder[slot.key] as unknown[]).length;
+    const sizeWith = (n: number): number => {
+      slot.holder[slot.key] = slot.items.slice(0, n);
+      if (n < slot.items.length) clipped[slot.path] = `${n} of ${slot.items.length}`;
+      else delete clipped[slot.path];
+      annotate();
+      return JSON.stringify(data).length;
+    };
+    let lo = 0, hi = had - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (sizeWith(mid) <= maxChars) lo = mid;
+      else hi = mid - 1;
+    }
+    sizeWith(lo);
+    // The list's own "N of TOTAL" says it; `clipped` would only repeat it.
+    if (isList && slot.path === "rows") delete clipped.rows;
+    if (!Object.keys(clipped).length) delete data.clipped;
+    annotate();
+    s = JSON.stringify(data);
+  }
+  return s.length <= maxChars ? s : clipJson(data, maxChars);
 }
 
 // ─── Fitting the model's context window ──────────────────────────────────────
@@ -942,7 +1041,7 @@ export async function streamAssistantTurn(input: {
         lookups++;
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
-        const content = clipJson(result.data, budget.toolResultChars);
+        const content = fitToolResult(result.data, budget.toolResultChars);
         // Every asset id a lookup returned this turn — `id` on a row, the
         // gate / far end an IPsec search hit names in its context, and the
         // switch / gateway / AP / matched device a find_endpoint sighting names.

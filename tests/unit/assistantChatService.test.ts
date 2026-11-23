@@ -81,7 +81,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
+  contextBudget, fitHistory, compactToolResults, fitToolResult, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS, turnHeader, stripTurnHeaders,
 } from "../../src/services/assistantChatService.js";
 
@@ -479,7 +479,8 @@ describe("context budget", () => {
     expect(contextBudget(undefined).window).toBe(8192);
     expect(contextBudget(512).window).toBe(2048); // floor
     expect(contextBudget(2048).toolResultChars).toBe(1792);
-    expect(contextBudget(131_072).toolResultChars).toBe(24_000); // ceiling
+    expect(contextBudget(131_072).toolResultChars).toBe(114_688);
+    expect(contextBudget(1_000_000).toolResultChars).toBe(120_000); // ceiling (rule 95(o))
   });
 
   it("keeps the newest turns that fit and never opens on an orphaned answer", () => {
@@ -671,6 +672,41 @@ describe("stripMarkdownTables", () => {
   });
   it("leaves text without a separator row alone", () => {
     expect(stripMarkdownTables("use a | b here")).toBe("use a | b here");
+  });
+});
+
+describe("fitToolResult (rule 95(o))", () => {
+  const row = (i: number) => ({ id: `id-${i}`, hostname: `sw-${String(i).padStart(3, "0")}`, ipAddress: `10.0.${Math.floor(i / 250)}.${i % 250}`, serialNumber: null, tags: "", model: "FS-148F" });
+  const list = (n: number, total = n) => ({ total, returned: n, truncated: total > n, rows: Array.from({ length: n }, (_, i) => row(i)) });
+
+  it("drops empty fields and leaves a result that fits alone", () => {
+    const out = JSON.parse(fitToolResult(list(2), 10_000));
+    expect(out.rows[0]).toEqual({ id: "id-0", hostname: "sw-000", ipAddress: "10.0.0.0", model: "FS-148F" });
+    expect(out).not.toHaveProperty("note");
+  });
+
+  it.each([2_000, 7_168, 24_000])("cuts whole rows at %i chars and says how many were sent", (max) => {
+    const s = fitToolResult(list(200, 1964), max);
+    expect(s.length).toBeLessThanOrEqual(max);
+    const out = JSON.parse(s); // never a cut through the JSON
+    expect(out.returned).toBe(out.rows.length);
+    expect(out.rows.length).toBeGreaterThan(0);
+    expect(out.truncated).toBe(true);
+    expect(out.sent).toBe(`${out.rows.length} of 1964`);
+    expect(out.note).toMatch(/Do not count, rank or summarise beyond them/);
+    // The note comes after the rows, so a model reading the end still sees it.
+    expect(s.indexOf('"note"')).toBeGreaterThan(s.indexOf('"rows"'));
+  });
+
+  it("trims a nested list and marks it, for a result that is not a list tool's", () => {
+    const big = { network: { cidr: "10.0.0.0/22", rows: Array.from({ length: 300 }, (_, i) => row(i)) } };
+    const out = JSON.parse(fitToolResult(big, 3_000));
+    expect(out.network.rows.length).toBeLessThan(300);
+    expect(out.clipped["network.rows"]).toBe(`${out.network.rows.length} of 300`);
+  });
+
+  it("falls back to the old clip for a result with no list to trim", () => {
+    expect(fitToolResult({ text: "x".repeat(5_000) }, 1_000)).toContain("truncated");
   });
 });
 

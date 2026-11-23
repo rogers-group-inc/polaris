@@ -42,6 +42,7 @@ beforeEach(() => {
   stubbed(prisma.tag.findMany).mockImplementation(async (_args: any) => [] as Array<{ name: string }>);
   stubbed(prisma.assetIpHistory.findMany).mockImplementation(async (_args: any) => [] as Array<Record<string, unknown>>);
   stubbed(prisma.$queryRawUnsafe).mockImplementation(async (..._args: unknown[]) => [] as Array<Record<string, unknown>>);
+  stubbed(prisma.asset.groupBy).mockImplementation(async (_args: any) => [] as never);
 });
 
 beforeEach(() => vi.clearAllMocks());
@@ -134,10 +135,36 @@ describe("list_assets — acquired date and warranty", () => {
   it("returns the Acquired date, warranty expiry and PO on every row", async () => {
     stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1", acquiredAt: new Date("2019-03-01T00:00:00Z"), warrantyExpiry: null, purchaseOrder: "PO-7" }]);
     stubbed(prisma.asset.count).mockResolvedValue(1);
-    const r = await runAssistantTool("list_assets", "{}", { req, maxRows: 10 });
+    const r = await runAssistantTool("list_assets", JSON.stringify({ fields: ["acquiredAt", "purchaseOrder"] }), { req, maxRows: 10 });
     const select = stubbed(prisma.asset.findMany).mock.calls[0][0].select;
     expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
     expect((r.data as any).rows[0]).toMatchObject({ acquiredAt: "2019-03-01T00:00:00.000Z", purchaseOrder: "PO-7" });
+  });
+
+  it("sends the model a lean row unless it asks for more fields (rule 95(o))", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ id: "a1", hostname: "sw1", serialNumber: "S1", purchaseOrder: "PO-7", warrantyExpiry: new Date("2027-01-01T00:00:00Z") }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
+    const lean = (await runAssistantTool("list_assets", "{}", { req, maxRows: 10 })).data as any;
+    expect(lean.rows[0]).toMatchObject({ id: "a1", hostname: "sw1" });
+    expect(lean.rows[0]).not.toHaveProperty("serialNumber");
+    expect(lean.rows[0]).not.toHaveProperty("purchaseOrder");
+    const asked = (await runAssistantTool("list_assets", JSON.stringify({ fields: ["serialNumber"], sortBy: "warrantyExpiry" }), { req, maxRows: 10 })).data as any;
+    expect(asked.rows[0]).toMatchObject({ serialNumber: "S1", warrantyExpiry: "2027-01-01T00:00:00.000Z" });
+    expect(asked).not.toHaveProperty("ignoredArgs");
+  });
+
+  it("a long list carries the whole set's breakdown; a report never asks for it", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ id: "a1", hostname: "sw1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(400);
+    stubbed(prisma.asset.groupBy).mockImplementation(async (args: any) => (args.by[0] === "assetType"
+      ? [{ assetType: "switch", _count: { _all: 150 } }, { assetType: "access_point", _count: { _all: 250 } }]
+      : [{ monitorStatus: "up", _count: { _all: 390 } }, { monitorStatus: "down", _count: { _all: 10 } }]) as never);
+    const r = (await runAssistantTool("list_assets", "{}", { req, maxRows: 10 })).data as any;
+    expect(r.breakdown).toEqual({ byType: { access_point: 250, switch: 150 }, monitoredByStatus: { up: 390, down: 10 } });
+    expect(Object.keys(r.breakdown.byType)).toEqual(["access_point", "switch"]); // largest first
+    stubbed(prisma.asset.groupBy).mockClear();
+    await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets" }), { req, maxRows: 10, onReport: vi.fn() });
+    expect(stubbed(prisma.asset.groupBy)).not.toHaveBeenCalled();
   });
 
   it("filters on the Acquired date the page shows (entered, else first seen) and on warranty", async () => {
