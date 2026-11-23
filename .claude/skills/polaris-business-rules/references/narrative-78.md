@@ -244,6 +244,21 @@ found. The chain itself — what the alert NAMES — is unchanged. Pinned by
 `tests/unit/dependencyBlame.test.ts` ("maintenance above any dark path") and
 `tests/unit/notificationDependencyDownAlert.test.ts` ("even when the chain stops short").
 
+### Concurrent walks, one cache (2026-11-23, later the same day)
+
+The any-path fix did not stop the Boone loop: the DEPENDENCY DOWN alert went on firing and being
+retired by the next sweep every few minutes, with the scales steadily Dep. Down. The gate
+(`suppressionOwedToMaintenance`) walks every suppressed device in a `Promise.all` through the
+tick's ONE `BlameLoadCache`, and `loadBlameLayer` marked a node's edges loaded before the states
+of the parents above it had arrived. A second scale's walk that reached the plant switch in that
+gap found nothing left to load, read a graph without the gate in it, saw no maintenance, and the
+engine kept the scale; the sweep's batched walk (`resolveDependencyBlameMany`, one layer at a time,
+its own cache) never races, so it always found the window and retired the alert. Several devices
+behind one switch is exactly the shape the cache exists for, which is why the plant hit it and a
+lone device never would. `loadBlameLayer` now keeps an `inflight` promise per id, settled only once
+edges and parent states are both cached: a walk awaits a loading id and walks on up through a
+loaded one instead of stopping. Pinned by `tests/unit/dependencyBlameCacheRace.test.ts`.
+
 ### A grouped alert has no flavour (2026-10-21)
 
 Rule 75 grouping and this rule met for the first time on a subnet-folded plant automation with
