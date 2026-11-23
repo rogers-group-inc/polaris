@@ -10,6 +10,7 @@ Each rule records the decision *and the constraint that forced it*. The invarian
 - [Rule 85](#rule-85) — A path check measures a PATH from a host, not the host — it never moves `monitorStatus`, and the automation, not the check, says what failing means
   - [The Polaris server as a source (2026-09-30)](#rule-85-server-source)
   - [The Path Monitor trigger type (2026-10-05)](#rule-85-path-monitor-trigger)
+  - [(f) The Alerts tab lists a path automation on agent hosts only (2026-11-19)](#rule-85f)
 
 <a id="rule-85"></a>
 
@@ -440,3 +441,25 @@ See `invariants-30-43.md` → 85. The implementation is `pathCheckService.ts` (t
 check, its validation and membership), `pathCheckIngestService.ts` (the two streams),
 the `path*` metrics in `notificationTypes.ts` / `notificationEngine.ts`, and the agent's
 `agent/internal/collectors/path_check*.go`.
+
+<a id="rule-85f"></a>
+
+### (f) The Alerts tab lists a path automation on agent hosts only (2026-11-19)
+
+**What was reported.** Every asset's Alerts tab listed every Path Monitor automation, including
+switches, printers and anything else that has no agent and so can never run a path check.
+
+**Why.** Two layers each looked at the wrong scope. `findRulesMatchingAsset` tested the rule's
+STORED scope, which for a path automation is almost always `{ allAssets: true }`, where the
+engine evaluates `scopeForTrigger` (stored scope AND "Polaris Agent installed"). And even given
+that effective scope, `scopeMatchesAsset` short-circuited on `allAssets` before it read the
+condition tree, although `loadScopeAssets`, the SQL twin it is documented to stay in lockstep
+with, filters an `allAssets` scope by its condition. `pathMonitorScope` keeps `allAssets` and
+adds the condition, so the in-memory twin matched every asset.
+
+**The decision.** Fix the list, not the wizard. Path automations still list on agent hosts,
+because a path alert is filed against the agent host and its check. Splitting the wizard into
+Devices / Path Monitors selections was discussed and deferred. `scopeMatchesAsset` now applies a
+condition beside `allAssets`. That is behaviour-neutral for every scope the wizard writes (it
+writes one or the other) and brings the in-memory callers (the Alerts tab, the event tail, down
+detection coverage) into agreement with the engine for an API-written scope that carries both.

@@ -51,7 +51,7 @@ import { listRegions, REGION_TAG_CATEGORY } from "./mapRegionService.js";
 import { regionLevelIndex } from "./regionHierarchyService.js";
 import { invalidateDownDetectionCache } from "./downDetectionService.js";
 import { bumpQuietTimeCache } from "./quietTimeHoldService.js";
-import { scopeMatchesAsset } from "./notificationTypes.js";
+import { scopeMatchesAsset, scopeForTrigger } from "./notificationTypes.js";
 import { sdwanFilterSelects } from "../utils/sdwanDimensions.js";
 import { METRIC_DIMENSIONS } from "./notificationTypes/dimensions.js";
 
@@ -81,6 +81,10 @@ export { scopeMatchesAsset, type ScopeAsset } from "./notificationTypes.js";
  * that table opens the SAME edit wizard the Automations page uses, and a
  * pre-v2 row handed over with NULL reset/actions would open with its actions
  * missing and save them away.
+ *
+ * Scope is matched through `scopeForTrigger` (business rule 85(f)), never the
+ * raw stored scope: a Path Monitor automation saved as "All assets" can only
+ * alert on an agent host, and listing it on every asset claimed otherwise.
  */
 export async function findRulesMatchingAsset(assetId: string, opts: { carveOut?: boolean } = {}) {
   const asset = await prisma.asset.findUnique({
@@ -107,7 +111,10 @@ export async function findRulesMatchingAsset(assetId: string, opts: { carveOut?:
     .filter((_r, i) => {
       const v = views[i];
       if (!isAssetScopedTrigger(v.trigger)) return false;
-      if (!scopeMatchesAsset(v.scope, asset)) return false;
+      // The EFFECTIVE scope, as the engine evaluates it (business rule 85(f)):
+      // a Path Monitor automation's pool is its scope AND "Polaris Agent
+      // installed", so one stored as All assets lists on agent hosts only.
+      if (!scopeMatchesAsset(scopeForTrigger(v.scope, v.trigger), asset)) return false;
       if (!shadowIndex) return true;
       const sig = triggerSignature(v.trigger);
       return !(sig && isAssetShadowed(shadowIndex, v, sig, scopeRank(v.scope), asset));
