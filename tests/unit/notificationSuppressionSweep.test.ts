@@ -44,7 +44,8 @@ type Reason = "down" | "maintenance" | "dependency_test" | "suppressed";
 /** A blame chain, upstream first, root cause last. */
 const blame = (...reasons: Reason[]) => {
   const chain = reasons.map((reason, i) => ({ id: `p${i}`, hostname: `P-${i}`, reason }));
-  return { upstream: chain[0], rootCause: chain[chain.length - 1], chain, hops: chain.length, truncated: false };
+  const maintenance = chain.find((n) => n.reason === "maintenance") ?? null;
+  return { upstream: chain[0], rootCause: chain[chain.length - 1], chain, hops: chain.length, truncated: false, maintenance };
 };
 
 beforeEach(() => {

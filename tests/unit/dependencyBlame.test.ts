@@ -148,3 +148,70 @@ describe("blameFromGraph", () => {
     expect(l.hops).toBe(BLAME_MAX_HOPS);
   });
 });
+
+// Business rule 78 — `maintenance`: the window ANY dark path up reaches, not
+// only the one the chain followed. Production, 2026-11-23: a belt scale behind
+// a flapping plant switch, gate put in maintenance mid-outage; the sweep
+// retired the dependency alert, then the switch read down for one tick before
+// its Dep. Down flag came back, the chain stopped at it, and the opted-in
+// automation re-fired mid-window.
+describe("blameFromGraph — maintenance above any dark path", () => {
+  it("a node down in its own right does not hide the maintained gate above it", () => {
+    const states = [
+      st("fg", 1, "down", { status: "maintenance" }),
+      st("sw", 2, "down"), // flag lagging: dark, but not (yet) marked suppressed
+      st("scale", 3, "down", { currentlySuppressed: true }),
+    ];
+    const b = blameFromGraph(states, parents({ scale: ["sw"], sw: ["fg"] }), "scale", NOW)!;
+    expect(b.rootCause.id).toBe("sw"); // the chain still names the switch
+    expect(b.maintenance).toEqual({ id: "fg", hostname: "FG", reason: "maintenance" });
+  });
+
+  it("a second dark parent sorting first does not hide the maintained one", () => {
+    const states = [
+      st("a-sw", 2, "down"),
+      st("b-sw", 2, "up", { status: "maintenance" }),
+      st("scale", 3, "down", { currentlySuppressed: true }),
+    ];
+    const b = blameFromGraph(states, parents({ scale: ["a-sw", "b-sw"] }), "scale", NOW)!;
+    expect(b.upstream.id).toBe("a-sw");
+    expect(b.maintenance?.id).toBe("b-sw");
+  });
+
+  it("walks through an unmonitored parent", () => {
+    const states = [
+      st("fg", 1, "up", { status: "maintenance" }),
+      st("dumb", 2, null, { monitored: false }),
+      st("sw", 2, "down"),
+      st("scale", 3, "down", { currentlySuppressed: true }),
+    ];
+    const b = blameFromGraph(states, parents({ scale: ["sw"], sw: ["dumb"], dumb: ["fg"] }), "scale", NOW)!;
+    expect(b.maintenance?.id).toBe("fg");
+  });
+
+  it("stops at a healthy monitored node — a window behind a working parent is not the cause", () => {
+    const states = [
+      st("fg", 1, "up", { status: "maintenance" }),
+      st("core", 2, "up"),
+      st("sw", 3, "down"),
+      st("scale", 4, "down", { currentlySuppressed: true }),
+    ];
+    const b = blameFromGraph(states, parents({ scale: ["sw"], sw: ["core"], core: ["fg"] }), "scale", NOW)!;
+    expect(b.maintenance).toBeNull();
+  });
+
+  it("a window that opted out of suppressing children is not found", () => {
+    const states = [
+      st("fg", 1, "down", { status: "maintenance", maintenanceSuppressChildren: false }),
+      st("sw", 2, "down", { currentlySuppressed: true }),
+      st("scale", 3, "down", { currentlySuppressed: true }),
+    ];
+    const b = blameFromGraph(states, parents({ scale: ["sw"], sw: ["fg"] }), "scale", NOW)!;
+    expect(b.maintenance).toBeNull();
+  });
+
+  it("an outage with no window anywhere reads null", () => {
+    const states = [st("fg", 1, "down"), st("sw", 2, "down", { currentlySuppressed: true }), st("scale", 3, "down", { currentlySuppressed: true })];
+    expect(blameFromGraph(states, parents({ scale: ["sw"], sw: ["fg"] }), "scale", NOW)!.maintenance).toBeNull();
+  });
+});

@@ -786,7 +786,7 @@ export async function clearSuppressedAlerts(): Promise<number> {
       // No blame (a flag the reconciler is about to release, or a failed walk)
       // is not evidence of an outage — leave the alert alone this tick.
       if (!blame) continue;
-      const owedToMaintenance = blame.chain.some((node) => node.reason === "maintenance");
+      const owedToMaintenance = !!blame.maintenance;
       reasonById.set(a.id, { hostname: a.hostname ?? a.id, reason: owedToMaintenance ? "maintenance" : "dependency" });
     }
   }
@@ -986,7 +986,7 @@ export async function maintenanceHoldsByAsset(assetIds: string[]): Promise<Map<s
     const { resolveDependencyBlameMany } = await import("./dependencyTreeService.js");
     const blameById = await resolveDependencyBlameMany(toWalk);
     for (const id of toWalk) {
-      if (blameById.get(id)?.chain.some((node) => node.reason === "maintenance")) out.set(id, "upstream");
+      if (blameById.get(id)?.maintenance) out.set(id, "upstream");
     }
   }
   return out;

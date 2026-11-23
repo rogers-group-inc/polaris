@@ -232,7 +232,7 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     // The PLC is Dep. Down because the switch above it is in a window: rule 16
     // wins exactly as it does for the PLC's own window.
     const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
-    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
+    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint], maintenance: maint });
     stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);
@@ -245,6 +245,22 @@ describe("an opted-in automation speaks for its silenced devices", () => {
       ...TWO_HOPS,
       rootCause: { id: "fg", hostname: "FG-PLANT", reason: "maintenance" },
       chain: [TWO_HOPS.chain[0], { id: "fg", hostname: "FG-PLANT", reason: "maintenance" }],
+      maintenance: { id: "fg", hostname: "FG-PLANT", reason: "maintenance" },
+    });
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
+    ]);
+    await evaluateAllNotificationRules();
+    expect(stubbed(prisma.notification.create)).not.toHaveBeenCalled();
+  });
+
+  it("…even when the chain stops short of the window: the walk's `maintenance` decides, not the chain", async () => {
+    // Production 2026-11-23: a flapping plant switch read down in its own right
+    // for one tick, so the chain ended at it and never reached the maintained
+    // gate — and the opted-in automation re-fired mid-window.
+    h.blame.mockResolvedValue({
+      ...ONE_HOP,
+      maintenance: { id: "fg", hostname: "FG-PLANT", reason: "maintenance" },
     });
     stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
@@ -257,7 +273,7 @@ describe("an opted-in automation speaks for its silenced devices", () => {
     // The sweep retires it (rule 16(a)); the engine must not raise a plain
     // Down alert in its place on the way.
     const maint = { id: "sw", hostname: "SW-PLANT-3", reason: "maintenance" };
-    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint] });
+    h.blame.mockResolvedValue({ ...ONE_HOP, upstream: maint, rootCause: maint, chain: [maint], maintenance: maint });
     stubbed(prisma.asset.findMany).mockResolvedValue([
       scopeAsset("plc", { dependencySuppressed: true, monitorStatus: "down" }),
     ]);

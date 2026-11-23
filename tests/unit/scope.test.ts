@@ -202,8 +202,8 @@ describe("suppressionOwedToMaintenance (rule 78)", () => {
 
   it("claims only assets whose blame chain runs through maintenance; a failed walk claims nothing", async () => {
     h.resolveDependencyBlame.mockImplementation(async (id: string) => {
-      if (id === "m") return { chain: [{ reason: "down" }, { reason: "maintenance" }] };
-      if (id === "d") return { chain: [{ reason: "down" }] };
+      if (id === "m") return { chain: [{ reason: "down" }, { reason: "maintenance" }], maintenance: { id: "gw", hostname: "GW", reason: "maintenance" } };
+      if (id === "d") return { chain: [{ reason: "down" }], maintenance: null };
       return null;
     });
     const out = await suppressionOwedToMaintenance([

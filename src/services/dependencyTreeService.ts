@@ -1124,6 +1124,16 @@ export interface DependencyBlame {
   hops: number;
   /** The walk hit `BLAME_MAX_HOPS` or a cycle before reaching a node down in its own right. */
   truncated: boolean;
+  /**
+   * Business rule 78: the device in a maintenance window that ANY dark path up
+   * from the asset reaches, or null. Not just `chain`: the chain follows one
+   * parent and stops at the first node down in its own right, so a switch
+   * that read down for a tick before its Dep. Down flag came back (a flapping
+   * uplink), or a second dark parent that sorted first, hid the maintained
+   * gate above it — and an opted-in automation re-fired mid-window. This is
+   * what "the suppression is owed to maintenance" reads, everywhere.
+   */
+  maintenance: DependencyBlameNode | null;
 }
 
 /** Bound on the upward walk — the `connectionPathService` figure. */
@@ -1215,7 +1225,38 @@ export function blameFromGraph(
     chain.push(next);
     current = next;
   }
-  return { upstream: first, rootCause: current, chain, hops: chain.length, truncated };
+  return { upstream: first, rootCause: current, chain, hops: chain.length, truncated, maintenance: maintenanceAbove() };
+
+  /** Breadth-first up EVERY parent that is dark (blamed for any reason) or
+   *  transparent (unmonitored), stopping a branch at a healthy monitored node,
+   *  until a node blamed `maintenance` is found. A window whose schedule opted
+   *  out of suppressing children is not blamed, so it is not found either.
+   *  Nearest layer first; ties break on hostname, then id. */
+  function maintenanceAbove(): DependencyBlameNode | null {
+    const seen = new Set<string>([assetId]);
+    let frontier = [assetId];
+    for (let hop = 0; hop <= BLAME_MAX_HOPS && frontier.length > 0; hop++) {
+      const next: string[] = [];
+      const found: DependencyBlameNode[] = [];
+      for (const id of frontier) {
+        for (const pid of parentsByChild.get(id) ?? []) {
+          if (seen.has(pid) || isIgnoredStandby(pid)) continue;
+          seen.add(pid);
+          const ps = stateById.get(pid);
+          if (!ps) continue;
+          const reason = blameReasonOf(ps, nowMs);
+          if (reason === "maintenance") found.push({ id: ps.id, hostname: ps.hostname, reason });
+          else if (reason || !ps.monitored) next.push(pid);
+        }
+      }
+      if (found.length > 0) {
+        found.sort((a, b) => (a.hostname ?? a.id).localeCompare(b.hostname ?? b.id) || a.id.localeCompare(b.id));
+        return found[0];
+      }
+      frontier = next;
+    }
+    return null;
+  }
 }
 
 /**

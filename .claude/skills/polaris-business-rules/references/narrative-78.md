@@ -224,6 +224,26 @@ maintenance: rule 16(a) retires a down alert in a window, and this is one. The e
 for an upstream OUTAGE, which is the case it was written for. A failed walk claims nothing, and
 the alert goes out as before.
 
+### Any dark path, not the chain (2026-11-23)
+
+"A device whose chain holds a `maintenance` link" turned out to be too narrow. The chain follows
+ONE blamed parent per hop and stops at the first node down in its own right — right for naming
+the cause, wrong for asking whether a window is behind it. Production: the Boone plant belt
+scales were Dep. Down behind a flapping uplink before the operator put the upstream device in
+maintenance. The sweep retired the live DEPENDENCY DOWN alert as maintenance (08:30), then the
+switch in between read down on its own probe for a tick before its Dep. Down flag came back, the
+chain ended at it, the gate kept the scale, and the opted-in automation emailed again (08:39) —
+retired by the next sweep (08:40). A second dark parent that sorts ahead of the maintained one
+hides it the same way. `blameFromGraph` now also returns `maintenance`: breadth-first up EVERY
+parent that is blamed for any reason or unmonitored, stopping a branch at a healthy monitored
+node, the first node blamed `maintenance` (nearest layer, then hostname). The gate
+(`suppressionOwedToMaintenance`), the sweep (`clearSuppressedAlerts`) and the MAINT pill
+(`maintenanceHoldsByAsset`) read it instead of scanning `chain`, so the three cannot disagree.
+A window whose schedule opted out of suppressing children is still not blamed, so still not
+found. The chain itself — what the alert NAMES — is unchanged. Pinned by
+`tests/unit/dependencyBlame.test.ts` ("maintenance above any dark path") and
+`tests/unit/notificationDependencyDownAlert.test.ts` ("even when the chain stops short").
+
 ### A grouped alert has no flavour (2026-10-21)
 
 Rule 75 grouping and this rule met for the first time on a subnet-folded plant automation with
