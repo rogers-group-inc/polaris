@@ -33,6 +33,7 @@ import {
   persistIpsecConnections,
   readLatestIpsecTunnels,
   readAssetIpsec,
+  listIpsecConnections,
 } from "../../src/services/ipsecConnectionService.js";
 import type { IpsecConnectionSample } from "../../src/utils/fortiosIpsec.js";
 
@@ -443,5 +444,42 @@ describe("readAssetIpsec", () => {
   it("falls back to the tunnel batch stamp for collectedAt when there are no connections", async () => {
     setup({ tunnels: [tunnelRow()] });
     expect((await readAssetIpsec("fw1")).collectedAt).toEqual(T_FULL);
+  });
+});
+
+// ─── listIpsecConnections ──────────────────────────────────────────────────
+
+describe("listIpsecConnections", () => {
+  it("filters by kind, tunnel (case-insensitive) and status in SQL, ordered like the tab", async () => {
+    stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([]);
+    await listIpsecConnections("fw1", { kinds: ["advpn-spoke"], parentTunnels: ["overlay-1"], status: "up" });
+    expect(stubbed(prisma.assetIpsecConnection.findMany).mock.calls[0][0]).toEqual({
+      where: {
+        assetId: "fw1", kind: { in: ["advpn-spoke"] }, status: "up",
+        OR: [{ parentTunnel: { equals: "overlay-1", mode: "insensitive" } }],
+      },
+      orderBy: [{ parentTunnel: "asc" }, { name: "asc" }],
+    });
+  });
+
+  it("with no filter reads every connection of the gate and resolves nothing when there are none", async () => {
+    stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([]);
+    const out = await listIpsecConnections("fw1");
+    expect(stubbed(prisma.assetIpsecConnection.findMany).mock.calls[0][0].where).toEqual({ assetId: "fw1" });
+    expect(out).toEqual({ connections: [], collectedAt: null });
+    expect(h.resolveIpsToAssets).not.toHaveBeenCalled();
+  });
+
+  it("matches peers like the tab — underlay first, never the gate, 0.0.0.0 never resolved", async () => {
+    const later = new Date(NOW.getTime() + 60_000);
+    stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([
+      connRow({ name: "a" }),
+      connRow({ name: "self", remoteGateway: "198.51.100.1", tunnelIp: "0.0.0.0", lastSeen: later }),
+    ]);
+    h.resolveIpsToAssets.mockResolvedValue(new Map<string, unknown>([["203.0.113.10", SPOKE], ["198.51.100.1", SELF]]));
+    const out = await listIpsecConnections("fw1", { kinds: ["advpn-spoke"] });
+    expect(h.resolveIpsToAssets.mock.calls[0][0].sort()).toEqual(["10.255.0.2", "198.51.100.1", "203.0.113.10"]);
+    expect(out.connections.map((c) => [c.name, c.matchedAsset?.id ?? null, c.incomingBytes])).toEqual([["a", "spoke-asset", 5], ["self", null, 5]]);
+    expect(out.collectedAt).toEqual(later);
   });
 });

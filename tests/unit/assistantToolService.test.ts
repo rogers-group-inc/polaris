@@ -64,6 +64,7 @@ describe("permission gate", () => {
     ["get_dependencies", "{\"hostname\":\"fw1\"}"],
     ["asset_details", JSON.stringify({ hostname: "fw1", sections: ["hardware"] })],
     ["get_network", JSON.stringify({ cidr: "10.0.0.0/24" })],
+    ["list_ipsec_connections", JSON.stringify({ hostname: "fw1", kind: ["advpn-spoke"] })],
   ])("%s refuses a role without the key and queries nothing", async (name, args) => {
     const r = await runAssistantTool(name, args, { req: none, maxRows: 50 });
     expect(r.ok).toBe(false);

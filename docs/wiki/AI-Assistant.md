@@ -239,6 +239,15 @@ is ping, SSH or WinRM reports no uptime. It reads what Polaris last collected; i
 runs an SNMP walk or looks up DNS. VIPs need **Reservations** read, contacts
 **Address Book** read and gate sightings **Asset Quarantine** read, as on the page.
 
+Who is **connected through a FortiGate's IPsec or VPN** is its own lookup, and it can
+be a report. Ask for one kind of connection: ADVPN spokes, ADVPN shortcuts, other
+dial-up sites, FortiClient IPsec users or SSL-VPN users. You can also narrow it to
+one tunnel. Each row has the peer's public address, its tunnel address, the device
+Polaris matched it to and how long it has been connected. *Export the public IPs of
+the ADVPN peers connected to hub-fw-01 as a CSV, not the remote-access users* is one
+report. These rows are what the gate reported at its last full pass, the same data
+as the asset's **IPsec** tab.
+
 It can open **one network** the way its slide-in does: purpose, VLAN, the
 FortiGate and interface serving it, when it was last discovered, how many
 addresses are held and by what (reservation, lease, interface, VIP), conflicts,

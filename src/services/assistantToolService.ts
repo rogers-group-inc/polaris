@@ -43,6 +43,8 @@ import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../uti
 import { deviceUptime } from "../utils/uptime.js";
 import type { ChatToolDef } from "./llmService.js";
 import { ASSET_SECTIONS, ASSET_SECTION_HELP, readAssetSections } from "./assetDetailReadService.js";
+import { listIpsecConnections } from "./ipsecConnectionService.js";
+import { IPSEC_CONNECTION_KINDS } from "../utils/fortiosIpsec.js";
 
 export const REPORT_ROW_CAP = 5000;
 
@@ -2076,6 +2078,88 @@ const listReservationsTool: ListToolDef = {
   },
 };
 
+// ─── list_ipsec_connections ──────────────────────────────────────────────────
+//
+// The connected peers / users of ONE FortiGate's IPsec (and SSL-VPN), filtered
+// by kind in SQL. asset_details → ipsec returns every connection unfiltered,
+// so a hub carrying hundreds of FortiClient sessions overran the tool-result
+// cap before its ADVPN spokes were all listed, and no report could be built
+// from it (seen live 2026-11-23: "public IPs of the connected ADVPN peers on a
+// hub, as a CSV"). A list tool fixes both: the filter keeps the result small,
+// and create_report can source it.
+
+const IpsecConnArgs = z.object({
+  id: z.string().max(60).optional(),
+  hostname: z.string().max(255).optional(),
+  ip: z.string().max(60).optional(),
+  kind: z.array(z.enum(IPSEC_CONNECTION_KINDS)).max(IPSEC_CONNECTION_KINDS.length).optional(),
+  tunnel: z.array(z.string().max(100)).max(50).optional(),
+  status: z.enum(["up", "down", "partial"]).optional(),
+  limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+const listIpsecConnectionsTool: ListToolDef = {
+  argSchema: IpsecConnArgs,
+  name: "list_ipsec_connections",
+  label: "looked up IPsec connections",
+  description:
+    "List the peers / users CONNECTED through one FortiGate's IPsec or SSL-VPN (by id, exact hostname or IP) — " +
+    "each row's remoteGateway is the peer's public (underlay) address, tunnelIp its overlay / assigned address. " +
+    "kind narrows it: advpn-spoke (spokes dialled into this hub's ADVPN), advpn-shortcut (spoke-to-spoke " +
+    "shortcuts), dialup-peer (non-ADVPN dial-up sites), remote-access (FortiClient IPsec users), ssl-vpn. " +
+    "For \"ADVPN peers, not remote access\" use kind [\"advpn-spoke\"]. tunnel narrows to parent phase-1 names. " +
+    "Use this, not asset_details, for connected peers; it is a create_report source.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      hostname: { type: "string" },
+      ip: { type: "string" },
+      kind: { type: "array", items: { type: "string", enum: [...IPSEC_CONNECTION_KINDS] } },
+      tunnel: { type: "array", items: { type: "string" }, description: "Parent tunnel names, e.g. [\"Overlay-1\"]" },
+      status: { type: "string", enum: ["up", "down", "partial"] },
+      limit: { type: "number" },
+    },
+  },
+  columns: [
+    { key: "gate", label: "FortiGate" }, { key: "parentTunnel", label: "Tunnel" }, { key: "name", label: "Connection" },
+    { key: "kind", label: "Kind" }, { key: "peerId", label: "Peer ID" }, { key: "userName", label: "User" },
+    { key: "peerDevice", label: "Peer device" }, { key: "remoteGateway", label: "Public IP" },
+    { key: "tunnelIp", label: "Tunnel IP" }, { key: "status", label: "Status" },
+    { key: "connectedSince", label: "Connected since" }, { key: "incomingBytes", label: "Bytes in" },
+    { key: "outgoingBytes", label: "Bytes out" }, { key: "lastSeen", label: "Collected" },
+  ],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = IpsecConnArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    if (!a.id && !a.hostname && !a.ip) {
+      return { ok: false, data: { error: "Give the FortiGate's id, hostname or ip." } };
+    }
+    const where = a.id ? { id: a.id }
+      : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
+      : { ipAddress: a.ip };
+    const gate = await prisma.asset.findFirst({ where, select: { id: true, hostname: true } });
+    if (!gate) return { ok: true, data: { found: false, note: "No asset matches that id, hostname or IP." } };
+    const r = await listIpsecConnections(gate.id, { kinds: a.kind, parentTunnels: a.tunnel, status: a.status });
+    const take = Math.min(a.limit ?? cap, cap);
+    return {
+      rows: r.connections.slice(0, take).map((c) => plain({
+        gate: gate.hostname, parentTunnel: c.parentTunnel, name: c.name, kind: c.kind, peerId: c.peerId,
+        userName: c.userName, peerDevice: c.matchedAsset?.hostname ?? null, remoteGateway: c.remoteGateway,
+        tunnelIp: c.tunnelIp, status: c.status, connectedSince: c.connectedSince,
+        incomingBytes: c.incomingBytes, outgoingBytes: c.outgoingBytes, lastSeen: c.lastSeen,
+      })),
+      total: r.connections.length,
+      extra: { gate: gate.hostname, assetId: gate.id, collectedAt: r.collectedAt?.toISOString() ?? null },
+    };
+  },
+  async run(args, ctx) {
+    return listResult(await this.rows(args, ctx, ctx.maxRows));
+  },
+};
+
 // ─── get_network ─────────────────────────────────────────────────────────────
 //
 // Everything the network slide-in (ip-panel.js) shows, for ONE network: the
@@ -2289,11 +2373,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool, listIpsecConnectionsTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -2713,7 +2797,7 @@ const getAutomationTool: ToolDef = {
 
 const TOOLS: ToolDef[] = [
   searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
-  listAlertsTool, listEventsTool, listSubnetsTool, getNetworkTool, listReservationsTool, createReportTool,
+  listIpsecConnectionsTool, listAlertsTool, listEventsTool, listSubnetsTool, getNetworkTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));

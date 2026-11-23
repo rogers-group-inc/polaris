@@ -68,12 +68,8 @@ export interface IpsecTunnelSample {
  *   remote-access   — a FortiClient user on an IPsec dial-up template
  *   ssl-vpn         — a FortiClient / web user on SSL-VPN
  */
-export type IpsecConnectionKind =
-  | "advpn-spoke"
-  | "advpn-shortcut"
-  | "dialup-peer"
-  | "remote-access"
-  | "ssl-vpn";
+export const IPSEC_CONNECTION_KINDS = ["advpn-spoke", "advpn-shortcut", "dialup-peer", "remote-access", "ssl-vpn"] as const;
+export type IpsecConnectionKind = (typeof IPSEC_CONNECTION_KINDS)[number];
 
 export interface IpsecConnectionSample {
   /** Unique per gate: the FortiOS child name ("Overlay-1_0"), or `ssl:<index>` for an SSL-VPN session. */

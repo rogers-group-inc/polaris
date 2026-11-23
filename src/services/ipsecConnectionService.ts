@@ -259,9 +259,25 @@ export async function readAssetIpsec(assetId: string): Promise<{
     };
   });
 
-  let collectedAt: Date | null = null;
-  const connections: IpsecConnectionRow[] = rows.map((r) => {
-    if (!collectedAt || r.lastSeen > collectedAt) collectedAt = r.lastSeen;
+  const connections = toConnectionRows(assetId, rows, resolved);
+  let collectedAt = newestLastSeen(connections);
+  // No connection rows: the tunnel batch's own stamp is the read time.
+  if (!collectedAt && tunnels.length > 0) collectedAt = tunnels[0].timestamp;
+  return { tunnels, connections, collectedAt };
+}
+
+type StoredConnection = Awaited<ReturnType<typeof prisma.assetIpsecConnection.findMany>>[number];
+type ResolvedAsset = { id: string; hostname: string | null; ipAddress: string | null; assetType: string | null };
+
+function newestLastSeen(rows: IpsecConnectionRow[]): Date | null {
+  let out: Date | null = null;
+  for (const r of rows) if (!out || r.lastSeen > out) out = r.lastSeen;
+  return out;
+}
+
+/** Stored rows → tab rows, each peer matched against the resolved addresses. */
+function toConnectionRows(assetId: string, rows: StoredConnection[], resolved: Map<string, ResolvedAsset>): IpsecConnectionRow[] {
+  return rows.map((r) => {
     // The underlay address names the peer DEVICE; an overlay address is
     // only consulted when that does not resolve. A gate's own resolution
     // is never a match (a hub reached through its own NAT).
@@ -282,10 +298,47 @@ export async function readAssetIpsec(assetId: string): Promise<{
       connectedSince: r.connectedSince,
       firstSeen:      r.firstSeen,
       lastSeen:       r.lastSeen,
-      matchedAsset:   hit ? { id: hit.id, hostname: hit.hostname, ipAddress: hit.ipAddress, assetType: hit.assetType } : null,
+      // assetType passes through as resolveIpsToAssets gives it (unchanged from before the helper existed).
+      matchedAsset:   hit ? { id: hit.id, hostname: hit.hostname, ipAddress: hit.ipAddress, assetType: hit.assetType as string } : null,
     };
   });
-  // No connection rows: the tunnel batch's own stamp is the read time.
-  if (!collectedAt && tunnels.length > 0) collectedAt = tunnels[0].timestamp;
-  return { tunnels, connections, collectedAt };
+}
+
+export interface IpsecConnectionFilter {
+  /** Connection kinds to keep (IpsecConnectionKind values); empty / absent = every kind. */
+  kinds?: string[];
+  /** Parent phase-1 names to keep, matched case-insensitively. */
+  parentTunnels?: string[];
+  /** "up" / "down" / "partial". */
+  status?: string;
+}
+
+/**
+ * One gate's connected peers / users, filtered in SQL BEFORE the peer
+ * resolution pass — the assistant's list_ipsec_connections and its report.
+ * A hub with thousands of FortiClient sessions costs the same as its
+ * handful of ADVPN spokes when the caller asks only for `advpn-spoke`.
+ */
+export async function listIpsecConnections(
+  assetId: string,
+  filter: IpsecConnectionFilter = {},
+): Promise<{ connections: IpsecConnectionRow[]; collectedAt: Date | null }> {
+  const where: Record<string, unknown> = { assetId };
+  if (filter.kinds?.length) where.kind = { in: filter.kinds };
+  if (filter.parentTunnels?.length) {
+    where.OR = filter.parentTunnels.map((t) => ({ parentTunnel: { equals: t, mode: "insensitive" } }));
+  }
+  if (filter.status) where.status = filter.status;
+  const rows = await prisma.assetIpsecConnection.findMany({
+    where,
+    orderBy: [{ parentTunnel: "asc" }, { name: "asc" }],
+  });
+  const ips = new Set<string>();
+  for (const r of rows) {
+    if (r.remoteGateway && r.remoteGateway !== "0.0.0.0") ips.add(r.remoteGateway);
+    if (r.tunnelIp && r.tunnelIp !== "0.0.0.0") ips.add(r.tunnelIp);
+  }
+  const resolved = ips.size > 0 ? await resolveIpsToAssets([...ips]) : new Map<string, ResolvedAsset>();
+  const connections = toConnectionRows(assetId, rows, resolved);
+  return { connections, collectedAt: newestLastSeen(connections) };
 }
