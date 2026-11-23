@@ -29,7 +29,7 @@ vi.mock("../../src/services/dependencyTreeService.js", () => ({ resolveDependenc
 vi.mock("../../src/services/sampleQueryRouter.js", () => ({ pickSampleTierForAsset: h.tier }));
 vi.mock("../../src/services/eventArchiveService.js", () => ({ getRetentionSettings: async () => ({ retentionDays: 7 }) }));
 
-import { runAssistantTool, assistantToolDefs, REPORT_ROW_CAP, REPORT_COLUMN_HINT_SOURCES } from "../../src/services/assistantToolService.js";
+import { runAssistantTool, assistantToolDefs, dedupeRows, REPORT_ROW_CAP, REPORT_COLUMN_HINT_SOURCES } from "../../src/services/assistantToolService.js";
 import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
 
@@ -577,5 +577,27 @@ describe("an address a device HELD is a hit, and says so (seen live 2026-10-09)"
     const r = await runAssistantTool("get_asset", '{"hostname":"ONEIDA-61F-1"}', { req, maxRows: 25 });
     expect((r.data as any).acquiredAt).toBe("2025-01-22T15:00:00.000Z");
     expect((r.data as any).acquiredFrom).toBe("first seen by Polaris");
+  });
+});
+
+describe("dedupeRows", () => {
+  it("keeps the first row per key, in order, folding case and whitespace, and counts what each absorbed", () => {
+    const { rows, removed } = dedupeRows([
+      { ip: "1.1.1.1", h: "A" }, { ip: "2.2.2.2", h: "B" }, { ip: " 1.1.1.1 ", h: "C" }, { ip: "1.1.1.1", h: "D" },
+    ], ["ip"]);
+    expect(removed).toBe(2);
+    expect(rows).toEqual([{ ip: "1.1.1.1", h: "A", duplicatesRemoved: 2 }, { ip: "2.2.2.2", h: "B", duplicatesRemoved: 0 }]);
+    expect(dedupeRows([{ h: "Sw" }, { h: "sw" }], ["h"]).removed).toBe(1);
+  });
+
+  it("dedupes on the combination of several keys", () => {
+    const { rows } = dedupeRows([{ a: 1, b: "x" }, { a: 1, b: "y" }, { a: 1, b: "x" }], ["a", "b"]);
+    expect(rows.map((r) => r.b)).toEqual(["x", "y"]);
+  });
+
+  it("never treats rows with every key empty as duplicates of each other", () => {
+    const { rows, removed } = dedupeRows([{ ip: null }, { ip: "" }, { ip: undefined }], ["ip"]);
+    expect(removed).toBe(0);
+    expect(rows).toHaveLength(3);
   });
 });

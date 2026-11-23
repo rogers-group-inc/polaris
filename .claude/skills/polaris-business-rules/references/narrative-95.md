@@ -101,6 +101,18 @@ Three changes followed:
   page shows them), and its `sortBy: "uptime"` ranks by them. That ranking keeps devices with
   an uptime but no CPU / memory in the window, so one report holds both.
 
+2026-11-23. The owner asked for the public IPs of the ADVPN sessions on two hubs, combined, with
+duplicate public IPs removed, and for an "IPsec session export" to carry every field rather
+than the few the model chose. Removing duplicates is the model choosing which rows survive, so
+it is done by Polaris: `create_report` takes `dedupeBy` (column keys), and `dedupeRows` keeps
+the first row per value in the source's order over the database rows, counting what each kept
+row absorbed in a `Duplicates removed` column. A row whose key is empty is never a duplicate (no
+address is not the same address), and a key the source has no column for is refused rather
+than ignored, because a report asked to be unique must not silently come back with repeats.
+Combining devices is the source's job: `list_ipsec_connections` takes several gates in one call
+and names any it could not resolve. A report carries every column unless the user named the
+exact ones they want.
+
 ### (d) Conversations belong to one person
 
 A conversation contains whatever its owner could see, so it is that owner's data: every query
