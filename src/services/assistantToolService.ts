@@ -329,12 +329,74 @@ const ASSET_FILTER_ARGS = {
   warrantyExpiresAfter: z.string().max(40).optional(),
 };
 
+/**
+ * The fields a list_assets row carries to the MODEL unless it asks for more
+ * with `fields` (rule 95(o)). A full row is ~30 fields; these are the ones a
+ * fleet question reads, so about three times as many rows fit one lookup.
+ * Reports are unaffected — create_report reads rows() and picks its columns.
+ */
+const ASSET_ROW_FIELDS = [
+  "id", "hostname", "ipAddress", "assetType", "status", "monitorStatus", "manufacturer", "model",
+  "osVersion", "location", "tags", "lastSeen", "uptime",
+] as const;
+/** Every field `fields` may name. */
+const ASSET_ROW_FIELDS_ALL = [
+  "id", "hostname", "ipAddress", "macAddress", "assetType", "status", "manufacturer", "model", "serialNumber", "os",
+  "osVersion", "location", "learnedLocation", "tags", "monitored", "monitorStatus", "monitorStatusChangedAt", "lastSeen",
+  "lastResponseTimeMs", "assignedTo", "department", "acquiredAt", "acquiredFrom", "warrantyExpiry", "purchaseOrder",
+  "uptime", "upSince",
+] as const;
+
 const AssetArgs = z.object({
   ...ASSET_FILTER_ARGS,
   sortBy: z.enum(["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry", "uptime"]).optional(),
   order: z.enum(["asc", "desc"]).optional(),
   limit: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+  // Extra fields for the rows the model reads; unknown names are dropped.
+  fields: oneOrMany(z.string().trim().max(40), 30),
 });
+
+/**
+ * The fields a list_assets lookup sends the model: the default set, the ones
+ * it asked for, and the ones its own sort and filters name — a model that
+ * sorts by warranty must see the warranty date.
+ */
+function assetRowFields(a: { fields?: string[]; sortBy?: string; acquiredBefore?: string; acquiredAfter?: string; warrantyExpiresBefore?: string; warrantyExpiresAfter?: string; notSeenForHours?: number; monitored?: boolean }): string[] {
+  const known = new Set<string>(ASSET_ROW_FIELDS_ALL);
+  const out = new Set<string>(ASSET_ROW_FIELDS);
+  for (const f of a.fields ?? []) if (known.has(f)) out.add(f);
+  if (a.sortBy === "acquiredAt" || a.acquiredBefore || a.acquiredAfter) { out.add("acquiredAt"); out.add("acquiredFrom"); }
+  if (a.sortBy === "warrantyExpiry" || a.warrantyExpiresBefore || a.warrantyExpiresAfter) out.add("warrantyExpiry");
+  if (a.sortBy === "monitorStatusChangedAt") out.add("monitorStatusChangedAt");
+  if (a.sortBy === "uptime") out.add("upSince");
+  if (typeof a.monitored === "boolean") out.add("monitored");
+  return Array.from(out);
+}
+
+/** Counts by type and monitor status over the WHOLE filtered set — true when only some rows fit the window. */
+async function assetBreakdown(where: Record<string, unknown>, subnetRows?: ReadonlyArray<object>): Promise<Record<string, unknown>> {
+  const tally = (pairs: Array<[string, number]>) => Object.fromEntries(pairs.sort((x, y) => y[1] - x[1]));
+  if (subnetRows) {
+    const byType = new Map<string, number>(), byMon = new Map<string, number>();
+    for (const row of subnetRows) {
+      const r = row as { assetType?: string | null; monitorStatus?: string | null; monitored?: boolean | null };
+      byType.set(r.assetType ?? "(none)", (byType.get(r.assetType ?? "(none)") ?? 0) + 1);
+      if (r.monitored) byMon.set(r.monitorStatus ?? "unknown", (byMon.get(r.monitorStatus ?? "unknown") ?? 0) + 1);
+    }
+    return { byType: tally([...byType]), monitoredByStatus: tally([...byMon]) };
+  }
+  const [byType, byMon] = await Promise.all([
+    prisma.asset.groupBy({ by: ["assetType"], where, _count: { _all: true } }),
+    prisma.asset.groupBy({ by: ["monitorStatus"], where: { AND: [where, { monitored: true }] }, _count: { _all: true } }),
+  ]);
+  return {
+    byType: tally(byType.map((r) => [r.assetType ?? "(none)", r._count._all])),
+    monitoredByStatus: tally(byMon.map((r) => [r.monitorStatus ?? "unknown", r._count._all])),
+  };
+}
+
+/** Lists longer than this carry a breakdown with the rows. */
+const BREAKDOWN_MIN_TOTAL = 15;
 
 const ASSET_TOOL_SELECT = {
   id: true, hostname: true, ipAddress: true, macAddress: true, assetType: true, status: true,
@@ -537,7 +599,10 @@ const listAssetsTool: ListToolDef = {
     "acquiredAt or warrantyExpiry (order asc = oldest / soonest first). " +
     "Rows carry uptime / upSince as the asset page shows them (null where no probe reports uptime); " +
     "sortBy uptime ranks longest-up first (order asc = most recently rebooted). " +
-    "Carries no CPU or memory figures — use telemetry_summary for those.",
+    "Carries no CPU or memory figures — use telemetry_summary for those. " +
+    `Rows carry ${ASSET_ROW_FIELDS.join(", ")} (plus the fields your sort and filters use); add others with fields. ` +
+    "A field missing from a row is empty. A long list also carries breakdown: counts by type and monitor status " +
+    "over EVERY match, not just the rows sent. For counts by any other field, use count_assets.",
   parameters: {
     type: "object",
     properties: {
@@ -545,6 +610,7 @@ const listAssetsTool: ListToolDef = {
       sortBy: { type: "string", enum: ["hostname", "lastSeen", "monitorStatusChangedAt", "ipAddress", "acquiredAt", "warrantyExpiry", "uptime"] },
       order: { type: "string", enum: ["asc", "desc"], description: "Sort direction; dates default to newest first" },
       limit: { type: "number" },
+      fields: { type: "array", items: { type: "string", enum: [...ASSET_ROW_FIELDS_ALL] }, description: "Extra fields for each row, e.g. [\"serialNumber\", \"warrantyExpiry\"]" },
     },
   },
   columns: [
@@ -558,6 +624,20 @@ const listAssetsTool: ListToolDef = {
     { key: "uptime", label: "Uptime" }, { key: "upSince", label: "Up since" },
   ],
   async rows(args, ctx, cap) {
+    return listAssetRows(args, ctx, cap, false);
+  },
+  async run(args, ctx) {
+    const res = await listAssetRows(args, ctx, ctx.maxRows, true);
+    if ("ok" in res) return res;
+    const p = AssetArgs.safeParse(args ?? {});
+    const keep = assetRowFields(p.success ? p.data : {});
+    return listResult({ ...res, rows: res.rows.map((r) => Object.fromEntries(keep.filter((k) => k in r).map((k) => [k, r[k]]))) });
+  },
+};
+
+/** list_assets' rows — and, for a chat lookup over a long list, the whole set's breakdown. */
+async function listAssetRows(args: unknown, ctx: ToolContext, cap: number, withBreakdown: boolean): Promise<ListRows | ToolResult> {
+  {
     if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
     const p = AssetArgs.safeParse(args ?? {});
     if (!p.success) return invalid(p.error);
@@ -592,16 +672,153 @@ const listAssetsTool: ListToolDef = {
           return dir === "asc" ? tx - ty : ty - tx;
         });
       }
-      return { rows: hits.slice(0, take).map(plain), total: hits.length };
+      const extra = withBreakdown && hits.length > BREAKDOWN_MIN_TOTAL ? { breakdown: await assetBreakdown(where, subnet ? hits : undefined) } : undefined;
+      return { rows: hits.slice(0, take).map(plain), total: hits.length, ...(extra ? { extra } : {}) };
     }
     const [rows, total] = await Promise.all([
       prisma.asset.findMany({ where, orderBy: orderBy as never, take, select: ASSET_TOOL_SELECT }),
       prisma.asset.count({ where }),
     ]);
-    return { rows: rows.map((r) => plain(shown(r))), total };
+    const extra = withBreakdown && total > BREAKDOWN_MIN_TOTAL ? { breakdown: await assetBreakdown(where) } : undefined;
+    return { rows: rows.map((r) => plain(shown(r))), total, ...(extra ? { extra } : {}) };
+  }
+}
+
+// ─── count_assets ────────────────────────────────────────────────────────────
+//
+// Counts and breakdowns, counted in the database (rule 95(o)). Before it,
+// "how many 61Fs per region" or "switches by firmware" could only be answered
+// by listing every row — which never fit the window, so the model counted a
+// fragment and guessed the rest. Same filters as list_assets
+// (assetFilterWhere), so the two can never disagree about what matches.
+//
+// Scale: a plain field is one Prisma groupBy, flat from 100 to 2000 assets.
+// region / tag (array column) and a network CIDR (not a Prisma predicate)
+// read the matching assets' few grouped columns once and count in memory —
+// one query, a narrow select, on demand only.
+
+const COUNT_GROUP_FIELDS = [
+  "assetType", "status", "monitorStatus", "manufacturer", "model", "os", "osVersion", "location",
+  "department", "assignedTo", "monitored", "region", "tag",
+] as const;
+type CountField = (typeof COUNT_GROUP_FIELDS)[number];
+type ScalarCountField = Exclude<CountField, "region" | "tag">;
+const COUNT_FIELD_LABELS: Record<CountField, string> = {
+  assetType: "Type", status: "Status", monitorStatus: "Monitor", manufacturer: "Manufacturer", model: "Model",
+  os: "OS", osVersion: "OS version", location: "Location", department: "Department", assignedTo: "Assigned to",
+  monitored: "Monitored", region: "Region", tag: "Tag",
+};
+/** Groups a chat lookup returns before folding the rest into otherCount. */
+const COUNT_TOP_DEFAULT = 50;
+
+const CountArgs = z.object({
+  ...ASSET_FILTER_ARGS,
+  groupBy: oneOrMany(z.enum(COUNT_GROUP_FIELDS), 2),
+  top: z.number().int().positive().max(REPORT_ROW_CAP).optional(),
+});
+
+/** The values one asset contributes to a grouping: one for a plain field, each region / tag for those. */
+function countValues(row: Record<string, unknown>, field: CountField): unknown[] {
+  if (field === "region" || field === "tag") {
+    const tags = Array.isArray(row.tags) ? (row.tags as string[]) : [];
+    const prefix = new RegExp(`^${REGION_TAG_PREFIX}`, "i");
+    const vals = field === "region"
+      ? tags.filter((t) => prefix.test(t)).map((t) => t.replace(prefix, "").trim()).filter(Boolean)
+      : tags.filter((t) => !prefix.test(t));
+    return vals.length ? Array.from(new Set(vals)) : [field === "region" ? "(no region)" : "(no tags)"];
+  }
+  const v = row[field];
+  return [v === null || v === undefined || v === "" ? "(none)" : v];
+}
+
+const countAssetsTool: ListToolDef = {
+  argSchema: CountArgs,
+  name: "count_assets",
+  label: "counted assets",
+  description:
+    "Count assets, optionally broken down by one or two fields (groupBy), counted by Polaris across EVERY match. " +
+    "Use for any 'how many', 'count', 'breakdown', 'by model / region / firmware / type / site' or 'per region' " +
+    "question — never count list_assets rows yourself. Takes the same filters as list_assets. groupBy osVersion " +
+    "is the firmware version; region and tag count an asset under each one it carries. Returns the largest " +
+    "groups first (top, default 50) with the rest folded into otherCount.",
+  parameters: {
+    type: "object",
+    properties: {
+      ...ASSET_FILTER_PROPS,
+      groupBy: { type: "array", items: { type: "string", enum: [...COUNT_GROUP_FIELDS] }, description: "One or two fields, e.g. [\"region\", \"model\"]. Omit for a plain count." },
+      top: { type: "number", description: "How many groups to return, largest first (default 50)" },
+    },
+  },
+  columns: [...COUNT_GROUP_FIELDS.map((k) => ({ key: k, label: COUNT_FIELD_LABELS[k] })), { key: "count", label: "Count" }],
+  async rows(args, ctx, cap) {
+    if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
+    const p = CountArgs.safeParse(args ?? {});
+    if (!p.success) return invalid(p.error);
+    const a = p.data;
+    const fields: CountField[] = a.groupBy ?? [];
+    // A monitor status is only meaningful on a device Polaris polls — the
+    // same reading fleet_summary and the monitorStatus filter use.
+    const byMonitor = fields.includes("monitorStatus") && a.monitored === undefined;
+    const filter = await assetFilterWhere(byMonitor ? { ...a, monitored: true } : a, ctx.req);
+    if ("ok" in filter) return filter;
+    const { where, subnet } = filter;
+
+    const counts = new Map<string, { key: unknown[]; count: number }>();
+    let matching: number;
+    if (!fields.length && !subnet) {
+      matching = await prisma.asset.count({ where });
+    } else if (!subnet && !fields.includes("region") && !fields.includes("tag")) {
+      const grouped = await prisma.asset.groupBy({ by: fields as ScalarCountField[], where, _count: { _all: true } }) as unknown as Array<Record<string, unknown> & { _count: { _all: number } }>;
+      matching = 0;
+      for (const g of grouped) {
+        const key = fields.map((f) => countValues(g, f)[0]);
+        counts.set(JSON.stringify(key), { key, count: g._count._all });
+        matching += g._count._all;
+      }
+    } else {
+      const select: Record<string, true> = { ipAddress: true, tags: true };
+      for (const f of fields) if (f !== "region" && f !== "tag") select[f] = true;
+      const assets = inSubnet(await prisma.asset.findMany({ where, select }) as unknown as Array<{ ipAddress: string | null } & Record<string, unknown>>, subnet);
+      matching = assets.length;
+      for (const row of assets) {
+        let keys: unknown[][] = [[]];
+        for (const f of fields) keys = keys.flatMap((k) => countValues(row, f).map((v) => [...k, v]));
+        for (const key of fields.length ? keys : []) {
+          const id = JSON.stringify(key);
+          const c = counts.get(id);
+          if (c) c.count++;
+          else counts.set(id, { key, count: 1 });
+        }
+      }
+    }
+
+    const sorted = Array.from(counts.values()).sort((x, y) => y.count - x.count);
+    const top = Math.min(a.top ?? (cap >= REPORT_ROW_CAP ? REPORT_ROW_CAP : COUNT_TOP_DEFAULT), cap >= REPORT_ROW_CAP ? REPORT_ROW_CAP : 500);
+    const shown = sorted.slice(0, top);
+    const rest = sorted.slice(top);
+    const rows = fields.length
+      ? shown.map((g) => ({ ...Object.fromEntries(fields.map((f, i) => [f, g.key[i]])), count: g.count }))
+      : [{ count: matching }];
+    const multiValued = fields.includes("region") || fields.includes("tag");
+    return {
+      rows,
+      total: fields.length ? sorted.length : 1,
+      extra: {
+        matchingAssets: matching,
+        ...(fields.length ? { groupBy: fields } : {}),
+        ...(byMonitor ? { monitoredOnly: "Monitor status is counted over monitored assets only." } : {}),
+        ...(rest.length ? { otherGroups: rest.length, otherCount: rest.reduce((n, g) => n + g.count, 0) } : {}),
+        ...(multiValued ? { countingNote: "An asset with several regions or tags is counted under each, so the counts can add up to more than matchingAssets." } : {}),
+        reportColumns: [...fields.map((f) => ({ key: f, label: COUNT_FIELD_LABELS[f] })), { key: "count", label: "Count" }],
+      },
+    };
   },
   async run(args, ctx) {
-    return listResult(await this.rows(args, ctx, ctx.maxRows));
+    const res = await this.rows(args, ctx, ctx.maxRows);
+    if ("ok" in res) return res;
+    // The report's column set is for create_report, not the model.
+    const { reportColumns: _cols, ...extra } = res.extra ?? {};
+    return listResult({ ...res, extra });
   },
 };
 
@@ -2424,7 +2641,8 @@ const fleetSummaryTool: ToolDef = {
   label: "summarized the fleet",
   description:
     "Counts across the whole install: monitored devices by monitor status, assets by type and status, " +
-    "open alerts by severity. Use for overview questions ('how is the network doing?').",
+    "open alerts by severity. Use for overview questions ('how is the network doing?'). It takes no filters: " +
+    "for a count of some devices, or a breakdown by any other field, use count_assets.",
   parameters: { type: "object", properties: {} },
   async run(_args, ctx) {
     const out: Record<string, unknown> = {};
@@ -2460,11 +2678,11 @@ const fleetSummaryTool: ToolDef = {
 
 // ─── create_report ───────────────────────────────────────────────────────────
 
-const LIST_TOOLS: ListToolDef[] = [listAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool, listIpsecConnectionsTool];
+const LIST_TOOLS: ListToolDef[] = [listAssetsTool, countAssetsTool, listAlertsTool, listEventsTool, listSubnetsTool, listReservationsTool, telemetrySummaryTool, listServicesTool, pathCheckSummaryTool, interfaceSummaryTool, listIpsecConnectionsTool];
 const LIST_BY_NAME = new Map(LIST_TOOLS.map((t) => [t.name, t]));
 
 /** The list tools a report can be built from (create_report's `source`). */
-export const REPORT_SOURCE_NAMES = ["list_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
+export const REPORT_SOURCE_NAMES = ["list_assets", "count_assets", "list_alerts", "list_events", "list_networks", "list_reservations", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
 
 const ReportArgs = z.object({
   title: z.string().min(1).max(150),
@@ -2562,15 +2780,17 @@ const createReportTool: ToolDef = {
     if (res.rows.length === 0 && typeof res.extra?.retryHint === "string") {
       return { ok: false, data: { error: "The report would be EMPTY — no card was shown.", ...res.extra } };
     }
-    let columns = tool.columns;
+    // A source whose columns depend on its arguments (count_assets' groupBy) names them.
+    const sourceColumns = Array.isArray(res.extra?.reportColumns) ? res.extra.reportColumns as ReportColumn[] : tool.columns;
+    let columns = sourceColumns;
     // A column key the source does not have is dropped like an unknown filter
     // — and said, so the model does not promise a column the table lacks.
     let unknownColumns: string[] = [];
     if (p.data.columns?.length) {
       const wanted = new Set(p.data.columns);
-      const picked = tool.columns.filter((c) => wanted.has(c.key));
+      const picked = sourceColumns.filter((c) => wanted.has(c.key));
       if (picked.length) columns = picked;
-      const have = new Set(tool.columns.map((c) => c.key));
+      const have = new Set(sourceColumns.map((c) => c.key));
       unknownColumns = p.data.columns.filter((k) => !have.has(k));
     }
     // Duplicates are removed HERE, over the database rows, never by the model
@@ -2579,7 +2799,7 @@ const createReportTool: ToolDef = {
     let sourceRows = res.rows;
     let removed = 0;
     if (p.data.dedupeBy?.length) {
-      const have = new Set(tool.columns.map((c) => c.key));
+      const have = new Set(sourceColumns.map((c) => c.key));
       const bad = p.data.dedupeBy.filter((k) => !have.has(k));
       if (bad.length) {
         return {
@@ -2947,7 +3167,7 @@ const getAutomationTool: ToolDef = {
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 const TOOLS: ToolDef[] = [
-  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
+  searchHelpTool, searchTool, fleetSummaryTool, listAssetsTool, countAssetsTool, telemetrySummaryTool, getAssetTool, assetDetailsTool, getDependenciesTool, listServicesTool, findEndpointTool, pathCheckSummaryTool, interfaceSummaryTool,
   listIpsecConnectionsTool, listAlertsTool, listEventsTool, listSubnetsTool, getNetworkTool, listReservationsTool, createReportTool,
   listProfilesTool, getProfileTool, listMibsTool, searchMibSymbolsTool, listAutomationsTool, getAutomationTool,
 ];

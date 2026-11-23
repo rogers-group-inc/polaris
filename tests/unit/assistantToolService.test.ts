@@ -42,6 +42,7 @@ beforeEach(() => {
   stubbed(prisma.tag.findMany).mockImplementation(async (_args: any) => [] as Array<{ name: string }>);
   stubbed(prisma.assetIpHistory.findMany).mockImplementation(async (_args: any) => [] as Array<Record<string, unknown>>);
   stubbed(prisma.$queryRawUnsafe).mockImplementation(async (..._args: unknown[]) => [] as Array<Record<string, unknown>>);
+  stubbed(prisma.asset.groupBy).mockImplementation(async (_args: any) => [] as never);
 });
 
 beforeEach(() => vi.clearAllMocks());
@@ -50,6 +51,7 @@ describe("permission gate", () => {
   const none = reqWith({});
   it.each([
     ["list_assets", "{}"],
+    ["count_assets", JSON.stringify({ groupBy: ["region"] })],
     ["get_asset", '{"hostname":"fw1"}'],
     ["list_alerts", "{}"],
     ["list_events", "{}"],
@@ -127,6 +129,72 @@ describe("argument handling", () => {
   });
 });
 
+describe("count_assets (rule 95(o))", () => {
+  const req = reqWith({ assets: "read" });
+
+  it("counts a plain field in the database, largest first, with the list_assets filters", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([
+      { model: "FGT-61F", _count: { _all: 12 } },
+      { model: "FGT-100F", _count: { _all: 40 } },
+      { model: null, _count: { _all: 3 } },
+    ] as never);
+    const r = await runAssistantTool("count_assets", JSON.stringify({ assetType: "firewall", groupBy: "model" }), { req, maxRows: 50 });
+    const call = stubbed(prisma.asset.groupBy).mock.calls[0][0] as any;
+    expect(call.by).toEqual(["model"]);
+    expect(call.where.AND).toContainEqual({ assetType: { in: ["firewall"] } });
+    expect(call.where.AND).toContainEqual({ status: { not: "decommissioned" } });
+    expect(r.data).toMatchObject({ matchingAssets: 55, total: 3, rows: [{ model: "FGT-100F", count: 40 }, { model: "FGT-61F", count: 12 }, { model: "(none)", count: 3 }] });
+    expect(r.data).not.toHaveProperty("reportColumns");
+  });
+
+  it("counts regions from the region tags, an asset under each it carries", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { ipAddress: "10.0.0.1", tags: ["region:Middle Tennessee", "core"] },
+      { ipAddress: "10.0.0.2", tags: ["Region:Middle Tennessee", "region:Alabama"] },
+      { ipAddress: "10.0.0.3", tags: [] },
+    ]);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: ["region"] }), { req, maxRows: 50 })).data as any;
+    expect(stubbed(prisma.asset.groupBy)).not.toHaveBeenCalled();
+    expect(r.matchingAssets).toBe(3);
+    expect(r.rows).toEqual([{ region: "Middle Tennessee", count: 2 }, { region: "Alabama", count: 1 }, { region: "(no region)", count: 1 }]);
+    expect(r.countingNote).toMatch(/counted under each/);
+  });
+
+  it("matches a network by CIDR containment before counting", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([
+      { ipAddress: "10.20.3.4", tags: [], assetType: "switch" },
+      { ipAddress: "110.20.3.4", tags: [], assetType: "switch" },
+    ]);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ network: "10.20.0.0/16", groupBy: "assetType" }), { req, maxRows: 50 })).data as any;
+    expect(r.rows).toEqual([{ assetType: "switch", count: 1 }]);
+    const plain = (await runAssistantTool("count_assets", JSON.stringify({ network: "10.20.0.0/16" }), { req, maxRows: 50 })).data as any;
+    expect(plain.rows).toEqual([{ count: 1 }]);
+  });
+
+  it("folds the groups past top into otherCount", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue(Array.from({ length: 5 }, (_, i) => ({ location: `site-${i}`, _count: { _all: 10 - i } })) as never);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: "location", top: 2 }), { req, maxRows: 50 })).data as any;
+    expect(r.rows.map((x: any) => x.location)).toEqual(["site-0", "site-1"]);
+    expect(r).toMatchObject({ otherGroups: 3, otherCount: 8 + 7 + 6, truncated: true });
+  });
+
+  it("counts monitor status over monitored assets only", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([] as never);
+    const r = (await runAssistantTool("count_assets", JSON.stringify({ groupBy: "monitorStatus" }), { req, maxRows: 50 })).data as any;
+    expect((stubbed(prisma.asset.groupBy).mock.calls[0][0] as any).where.AND).toContainEqual({ monitored: true });
+    expect(r.monitoredOnly).toBeTruthy();
+  });
+
+  it("is a report source whose columns are the groupBy fields and the count", async () => {
+    stubbed(prisma.asset.groupBy).mockResolvedValue([{ osVersion: "7.4.5", _count: { _all: 9 } }] as never);
+    const onReport = vi.fn();
+    await runAssistantTool("create_report", JSON.stringify({ title: "Firmware", source: "count_assets", args: { groupBy: ["osVersion"] } }), { req, maxRows: 10, onReport });
+    const report = onReport.mock.calls[0][0];
+    expect(report.columns.map((c: any) => c.key)).toEqual(["osVersion", "count"]);
+    expect(report.rows).toEqual([{ osVersion: "7.4.5", count: 9 }]);
+  });
+});
+
 describe("list_assets — acquired date and warranty", () => {
   const req = reqWith({ assets: "read" });
   beforeEach(() => { stubbed(prisma.asset.findMany).mockResolvedValue([]); stubbed(prisma.asset.count).mockResolvedValue(0); });
@@ -134,10 +202,36 @@ describe("list_assets — acquired date and warranty", () => {
   it("returns the Acquired date, warranty expiry and PO on every row", async () => {
     stubbed(prisma.asset.findMany).mockResolvedValue([{ hostname: "sw1", acquiredAt: new Date("2019-03-01T00:00:00Z"), warrantyExpiry: null, purchaseOrder: "PO-7" }]);
     stubbed(prisma.asset.count).mockResolvedValue(1);
-    const r = await runAssistantTool("list_assets", "{}", { req, maxRows: 10 });
+    const r = await runAssistantTool("list_assets", JSON.stringify({ fields: ["acquiredAt", "purchaseOrder"] }), { req, maxRows: 10 });
     const select = stubbed(prisma.asset.findMany).mock.calls[0][0].select;
     expect(select).toMatchObject({ acquiredAt: true, warrantyExpiry: true, purchaseOrder: true });
     expect((r.data as any).rows[0]).toMatchObject({ acquiredAt: "2019-03-01T00:00:00.000Z", purchaseOrder: "PO-7" });
+  });
+
+  it("sends the model a lean row unless it asks for more fields (rule 95(o))", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ id: "a1", hostname: "sw1", serialNumber: "S1", purchaseOrder: "PO-7", warrantyExpiry: new Date("2027-01-01T00:00:00Z") }]);
+    stubbed(prisma.asset.count).mockResolvedValue(1);
+    const lean = (await runAssistantTool("list_assets", "{}", { req, maxRows: 10 })).data as any;
+    expect(lean.rows[0]).toMatchObject({ id: "a1", hostname: "sw1" });
+    expect(lean.rows[0]).not.toHaveProperty("serialNumber");
+    expect(lean.rows[0]).not.toHaveProperty("purchaseOrder");
+    const asked = (await runAssistantTool("list_assets", JSON.stringify({ fields: ["serialNumber"], sortBy: "warrantyExpiry" }), { req, maxRows: 10 })).data as any;
+    expect(asked.rows[0]).toMatchObject({ serialNumber: "S1", warrantyExpiry: "2027-01-01T00:00:00.000Z" });
+    expect(asked).not.toHaveProperty("ignoredArgs");
+  });
+
+  it("a long list carries the whole set's breakdown; a report never asks for it", async () => {
+    stubbed(prisma.asset.findMany).mockResolvedValue([{ id: "a1", hostname: "sw1" }]);
+    stubbed(prisma.asset.count).mockResolvedValue(400);
+    stubbed(prisma.asset.groupBy).mockImplementation(async (args: any) => (args.by[0] === "assetType"
+      ? [{ assetType: "switch", _count: { _all: 150 } }, { assetType: "access_point", _count: { _all: 250 } }]
+      : [{ monitorStatus: "up", _count: { _all: 390 } }, { monitorStatus: "down", _count: { _all: 10 } }]) as never);
+    const r = (await runAssistantTool("list_assets", "{}", { req, maxRows: 10 })).data as any;
+    expect(r.breakdown).toEqual({ byType: { access_point: 250, switch: 150 }, monitoredByStatus: { up: 390, down: 10 } });
+    expect(Object.keys(r.breakdown.byType)).toEqual(["access_point", "switch"]); // largest first
+    stubbed(prisma.asset.groupBy).mockClear();
+    await runAssistantTool("create_report", JSON.stringify({ title: "x", source: "list_assets" }), { req, maxRows: 10, onReport: vi.fn() });
+    expect(stubbed(prisma.asset.groupBy)).not.toHaveBeenCalled();
   });
 
   it("filters on the Acquired date the page shows (entered, else first seen) and on warranty", async () => {

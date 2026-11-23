@@ -18,6 +18,8 @@ import {
   normalizeBasePath,
   testConnection,
   listModels,
+  ollamaLoadedContext,
+  effectiveContextWindow,
   looksLikeEmbeddingModel,
   matchModelId,
   pickDefaultModel,
@@ -94,6 +96,16 @@ describe("recoverTextToolCalls", () => {
   it("copes with braces inside strings", () => {
     const t = '{"name":"list_assets","arguments":{"search":"a}b{c"}}';
     expect(recoverTextToolCalls(t, known)[0].function.arguments).toBe('{"search":"a}b{c"}');
+  });
+});
+
+describe("applyStreamChunk — the model that answered (rule 95(o))", () => {
+  it("keeps the last non-empty chunk model, as model-router names the model it picked", () => {
+    const round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; servedBy?: string } = { content: "", toolCalls: new Map(), finishReason: null };
+    applyStreamChunk(round, { model: "", choices: [], prompt_filter_results: [] });
+    expect(round.servedBy).toBeUndefined();
+    applyStreamChunk(round, { model: "gpt-5-mini-2025-08-07", choices: [{ delta: { content: "Hi" } }] });
+    expect(round.servedBy).toBe("gpt-5-mini-2025-08-07");
   });
 });
 
@@ -321,6 +333,51 @@ describe("testConnection", () => {
     expect((await testConnection(cfg({ contextWindow: 4096 }))).message).toMatch(/Context window is 4096 tokens.*OLLAMA_CONTEXT_LENGTH/);
     expect((await testConnection(cfg({ contextWindow: 8192 }))).message).not.toMatch(/Context window/);
     expect((await testConnection(cfg())).message).not.toMatch(/Context window/);
+  });
+
+  // Rule 95(o): a window larger than the one Ollama loaded cuts off the instructions.
+  const ollamaPs = (loaded: number | null, resident: boolean, seen: string[] = []): Handler => {
+    let isResident = resident;
+    return (req, b, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      const json = (o: unknown) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(o)); };
+      if (req.url === "/api/generate") { isResident = true; return json({ done: true }); }
+      if (req.url === "/api/ps") return json({ models: isResident ? [{ name: "qwen2.5:7b", model: "qwen2.5:7b", ...(loaded ? { context_length: loaded } : {}) }] : [] });
+      modelServer({ ids: ["qwen2.5:7b"], ollama: { "qwen2.5:7b": ["completion", "tools"] } })(req, b, res);
+    };
+  };
+
+  it("warns when Ollama loaded the model with a smaller context than the field", async () => {
+    handler = ollamaPs(4096, true);
+    const r = await testConnection(cfg({ model: "qwen2.5:7b", contextWindow: 32768 }));
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/Ollama loaded "qwen2.5:7b" with a 4096-token context.*OLLAMA_CONTEXT_LENGTH to at least 32768/);
+    handler = ollamaPs(32768, true);
+    expect((await testConnection(cfg({ model: "qwen2.5:7b", contextWindow: 32768 }))).message).not.toMatch(/Ollama loaded/);
+  });
+
+  it("loads a model that is not resident before reading its context, and stays quiet when none is reported", async () => {
+    const seen: string[] = [];
+    handler = ollamaPs(4096, false, seen);
+    expect(await ollamaLoadedContext(cfg(), "qwen2.5:7b")).toBe(4096);
+    expect(seen).toContain("POST /api/generate");
+    handler = ollamaPs(null, true);
+    expect(await ollamaLoadedContext(cfg(), "qwen2.5:7b")).toBeNull();
+    handler = modelServer({ ids: ["x"] }); // not Ollama
+    expect(await ollamaLoadedContext(cfg(), "x")).toBeNull();
+  });
+});
+
+describe("effectiveContextWindow (rule 95(o))", () => {
+  it("uses the field, else the provider's default, and caps model-router", () => {
+    expect(effectiveContextWindow({ contextWindow: 32768 })).toBe(32768);
+    expect(effectiveContextWindow({})).toBe(8192);
+    expect(effectiveContextWindow({ provider: "azure", azureApiShape: "anthropic" })).toBe(200_000);
+    expect(effectiveContextWindow({ provider: "azure", azureApiShape: "v1", model: "gpt-5" })).toBe(128_000);
+    expect(effectiveContextWindow({ provider: "azure", model: "model-router", contextWindow: 1_000_000 })).toBe(128_000);
+    expect(effectiveContextWindow({ provider: "azure", model: "polaris-router", contextWindow: 64_000 })).toBe(64_000);
+    // A local model named like a router is not Azure's router.
+    expect(effectiveContextWindow({ model: "router-7b", contextWindow: 1_000_000 })).toBe(1_000_000);
   });
 });
 

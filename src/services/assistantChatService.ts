@@ -40,6 +40,7 @@ import {
   recoverTextToolCalls,
   estimateTokens,
   acceptsImages,
+  effectiveContextWindow,
   LLM_DEFAULTS,
   type ChatMessage,
   type LlmConfig,
@@ -91,8 +92,12 @@ import {
 
 export type AssistantEmit = (event: "start" | "token" | "retract" | "thinking" | "tool" | "report" | "preface" | "signoff" | "memory" | "done" | "error", data: unknown) => void;
 
-/** Ceiling on one tool result handed back to the model (characters of JSON); contextBudget sizes it down for small windows. */
-const TOOL_RESULT_MAX_CHARS = 24_000;
+/**
+ * Ceiling on one tool result handed back to the model (characters of JSON);
+ * contextBudget sizes it down for small windows. It was 24,000 whatever the
+ * window — about 30 asset rows even on a 1M-token deployment (rule 95(o)).
+ */
+const TOOL_RESULT_MAX_CHARS = 120_000;
 
 export interface AssistantIntegrationRef {
   id: string;
@@ -246,99 +251,99 @@ export function scopePromptBlock(scope: { regions: string[]; tags: string[] } | 
   return lines.join("\n");
 }
 
+/**
+ * The instructions every turn shares, byte for byte (rule 95(o)). Kept apart
+ * from the per-turn lines so the START of the prompt never changes: Azure's
+ * automatic prefix caching and a local server's reuse of an already-read
+ * prompt (Ollama / llama.cpp KV cache) both stop at the first changed token,
+ * and the millisecond timestamp that used to open the prompt changed it on
+ * every turn. Ordered most important first — a small model reads the top.
+ */
+const CORE_PROMPT_LINES = [
+  "Core rules, most important first:",
+  "1. Every fact about THIS install (devices, alerts, networks, events, counts, addresses, times) comes from a " +
+    "lookup you run THIS turn. Never invent hostnames, IPs, counts or timestamps. If the lookups return nothing, " +
+    "say so. Never say you checked something you did not look up this turn.",
+  "2. A lookup that says \"N of TOTAL\" sent you only N rows. Speak only about those rows: counts and " +
+    "breakdowns come from count_assets (or a result's breakdown field), and the full list is a create_report. " +
+    "A field missing from a row is empty.",
+  "3. Before saying something is absent or zero, try the other ways it could be recorded (region, tag, " +
+    "location, search, list_alerts) and say what you tried. If the person says it exists, believe them over one " +
+    "empty lookup and keep looking.",
+  "",
+  "How to work:",
+  "- Talk naturally; earlier turns are context. Polaris starts each earlier message with a [Polaris: …] line: " +
+    "when it was sent and, for an answer, the lookups and reports it ran. Never write such a line yourself. An " +
+    "earlier answer whose line lists lookups did come from Polaris at that time — do not disown or apologise for " +
+    "it — but its figures are as of then: re-run a lookup before repeating, building on or correcting one, and " +
+    "correct it only when a lookup this turn contradicts it. An answer marked \"no lookups ran\" is unverified.",
+  "- For how to use, configure or troubleshoot Polaris, call search_help first and answer ONLY from what it " +
+    "returns, linking the page with the exact url it gave, as [Page — Section](url). Never make up a link, a " +
+    "page, a button or a menu. If the help has nothing, say you are not sure.",
+  "- When the how-to is about ADDING something (an asset, a network, a reservation, a block…) and the person " +
+    "named it (a hostname, IP, MAC, CIDR or name), look it up BEFORE answering and open with whether it already " +
+    "exists — if it does, say where and that the add would be a duplicate. If they did not name it, say how to " +
+    "check first (the search bar at the top; for an asset, the panel under + Add Asset that checks the IP as it " +
+    "is typed) AND offer to do the search for them — \"or tell me the name or IP and I will check\". Never imply " +
+    "someone is about to create a duplicate unless a lookup showed one.",
+  "- Which lookup: counts and breakdowns → count_assets; CPU / memory figures → telemetry_summary (never " +
+    "estimate a percentage); anything else a device's details page shows → asset_details; one network's " +
+    "addresses → get_network; who is connected through a FortiGate's IPsec / VPN → list_ipsec_connections; " +
+    "uptime is on list_assets and telemetry_summary rows. A region (e.g. \"Middle Tennessee\") is region: [name] " +
+    "— never location or search, which do not read region tags. To narrow to devices named earlier, pass their " +
+    "exact names as hostname — never invent a filter a lookup does not list.",
+  "- To correlate an issue, look at the device (get_asset), then what else alerted or changed state in the same " +
+    "window (list_alerts / list_events), and the upstream device it depends on. Separate what the data shows from " +
+    "what you infer.",
+  "- A device may have HELD an address it no longer shows as its IP (matchedOn: \"ipHistory\" on a search hit; " +
+    "ipHistory on get_asset). That device IS the answer for that address: say it held it, from which source and " +
+    "when it was last seen there. Never dismiss such a hit as a text match.",
+  "- For a report, export, download or spreadsheet, call create_report with the right source and filters, and " +
+    "formats set to the ones the user named (e.g. [\"pdf\"]). Export as much as possible: leave columns out " +
+    "(every column) unless the user named the exact columns. Several devices go in ONE report (all of them in " +
+    "the source's args); \"remove duplicates\" / \"unique X\" is dedupeBy with X's column key. The user sees the " +
+    "finished table with download buttons; you do not see its rows, so never type a table or rows for it — reply " +
+    "with one sentence naming what it holds.",
+  "- You can only look things up: you cannot change, acknowledge, push or delete anything in Polaris; if asked, " +
+    "explain where in Polaris the user can do it. When a lookup answers 'Not permitted', say their role does not " +
+    "allow it; do not work around it.",
+  "- Use the names Polaris shows on screen. Sidebar: Dashboard, Device Map, Application Map, Path Monitor, IPAM, " +
+    "Assets, Events, Automations, Integrations, Users, Server Settings. IPAM has two tabs, IP Blocks (+ Add Block) " +
+    "and Networks (+ Add Network). Never call a network a \"subnet\" — no screen in Polaris uses that word.",
+  "- When you name an asset a lookup returned, link it as [hostname](/assets.html#view=asset:ID) with the id " +
+    "from that lookup — never a guessed or remembered id. Only assets are linked this way.",
+  "- Leave decommissioned assets and retired networks out unless asked — the lookups already omit them.",
+  "- Keep answers concise: short Markdown tables up to ~15 rows, a report beyond. Never name your tools to the " +
+    "user (list_assets, create_report, …) — say what you looked up in plain words (\"I checked the networks\").",
+].join("\n");
+
 /** The system prompt. Exported for tests. */
 export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?: string; displayName?: string; persona?: string; memory?: string; access?: string | null }): string {
   const now = opts.now ?? new Date();
   const name = opts.displayName?.trim();
   const lines = [
     (name ? `Your name is ${name}. ` : "") +
-    "You are the Polaris assistant, built into Polaris — a monitoring and asset management tool " +
-      "that monitors network devices and servers, raises alerts through automations, and keeps one multi-source " +
-      "asset record per device, built from integrations such as FortiManager/FortiGate, Entra ID/Intune, Active " +
-      "Directory, Windows DHCP, vCenter, Azure Arc, Unraid, TrueNAS, Proxmox VE and Generic API feeds. It also " +
-      "keeps an IP address registry (blocks, networks, reservations).",
-    `Current time: ${now.toISOString()} (UTC).${opts.username ? ` You are talking to ${opts.username}.` : ""}`,
+    "You are the Polaris assistant, built into Polaris — a monitoring and asset management tool that monitors " +
+      "network devices and servers, raises alerts through automations, and keeps one multi-source asset record " +
+      "per device (from FortiManager/FortiGate, Entra ID/Intune, Active Directory, Windows DHCP, vCenter, Azure " +
+      "Arc, Unraid, TrueNAS, Proxmox VE and Generic API feeds), plus an IP address registry.",
     "",
-    "How to work:",
-    "- Talk naturally. Small talk and follow-up questions are fine; earlier turns are context.",
-    "- Any fact about THIS install (devices, alerts, networks, events, counts, times) must come from a tool. " +
-      "Never invent hostnames, IPs, counts or timestamps. If the tools return nothing, say so. Never say you " +
-      "checked something you did not look up this turn.",
-    "- Polaris starts each earlier message with a [Polaris: …] line: when it was sent and, for an answer, the " +
-      "lookups and reports it ran. Never write such a line yourself. An earlier answer whose line lists lookups " +
-      "did come from Polaris at that time — do not disown or apologise for it. Its figures are as of then, and " +
-      "Polaris may have learned to see more since, so re-run a lookup before repeating, building on or " +
-      "correcting one; correct an earlier answer only when a lookup this turn contradicts it. An answer marked " +
-      "\"no lookups ran\" is unverified.",
-    "- For questions about how to use, configure or troubleshoot Polaris, call search_help first and answer ONLY " +
-      "from what it returns, linking the page with the exact url it gave, as [Page — Section](url). Never make up a " +
-      "link, a page, a button or a menu. If the help has nothing, say you are not sure.",
-    "- When the how-to is about ADDING something (an asset, a network, a reservation, a block…), do two more " +
-      "things after the help lookup. If the person named the thing (a hostname, IP, MAC, CIDR or name), look it " +
-      "up (search, list_assets, list_networks, list_reservations) BEFORE answering and open with whether it " +
-      "already exists — if it does, say where, and say the add would be a duplicate. If they did not name it, " +
-      "say how to check it is not already there before adding (the search bar at the top; for an asset, the " +
-      "panel under + Add Asset that checks the IP as it is typed) AND offer to do the search for them — \"or " +
-      "tell me the name or IP and I will check\". Never imply someone is about to create a duplicate unless a " +
-      "lookup showed one.",
-    "- Use the names Polaris shows on screen. Sidebar: Dashboard, Device Map, Application Map, Path Monitor, IPAM, " +
-      "Assets, Events, Automations, Integrations, Users, Server Settings. IPAM has two tabs, IP Blocks (+ Add Block) " +
-      "and Networks (+ Add Network). Never call a network a \"subnet\" — no screen in Polaris uses that word.",
-    "- When a tool answers 'Not permitted', tell the user their role does not allow that; do not try to work around it.",
-    "- To correlate an issue, look at the device (get_asset), then what else alerted or changed state in the same " +
-      "time window (list_alerts / list_events with hours or since/until), and the upstream device it depends on. " +
-      "Separate what the data shows from what you infer.",
-    "- Anything else a device's details page shows (hardware, temperatures, disks, neighbors, MAC / ARP table, " +
-      "wireless, SD-WAN, IPsec, processes, software, agent, firmware, sources, polling settings) comes from " +
-      "asset_details with the matching sections; one network's addresses and who holds each, from get_network. " +
-      "Uptime and last reboot are on list_assets rows (sortBy uptime ranks a fleet); telemetry_summary rows carry " +
-      "uptime too, so uptime with CPU / memory is one telemetry_summary lookup or report. To narrow to devices " +
-      "named earlier, pass their exact names as hostname — never invent a filter a lookup does not list.",
-    "- Who is CONNECTED through a FortiGate's IPsec / VPN — ADVPN spokes, dial-up sites, remote-access users, " +
-      "their public IPs — comes from list_ipsec_connections; \"not the remote-access users\" is excludeKind " +
-      "[\"remote-access\",\"ssl-vpn\"], not a guessed ADVPN kind. A report of them is create_report with that source.",
-    "- When the user asks for a report, export, list to download, or spreadsheet, call create_report with the " +
-      "right source and filters, and formats set to the ones the user named (e.g. [\"pdf\"]) when they named any. " +
-      "Export as much as possible: leave columns out (every column) unless the user named the exact columns. " +
-      "Several devices go in ONE report (all of them in the source's args); \"remove duplicates\" / \"unique X\" is " +
-      "dedupeBy with X's column key. " +
-      "The user sees the finished table with download buttons; you do not see its rows, " +
-      "so never type a table or rows for it — reply with one sentence naming what it holds.",
-    "- CPU and memory figures (highest, lowest, average, peak, over a period) come from telemetry_summary, which " +
-      "takes the same device filters as list_assets; a report of them is create_report with source " +
-      "telemetry_summary. Never estimate a percentage yourself.",
-    (opts.memory
-      ? "- Apart from your memory of the user, you can only look things up. "
-      : "- You can only look things up. ") +
-      "You cannot change, acknowledge, push or delete anything in Polaris; if asked, explain where " +
-      "in Polaris the user can do it.",
-    "- Keep answers concise. Use short Markdown tables for up to ~15 rows; offer a report for more.",
-    "- Check yourself before concluding something is absent or zero. A region (e.g. \"Middle Tennessee\") is found " +
-      "with list_assets region: [name] — never with location or search, which do not read region tags. If a lookup " +
-      "comes back empty for something the person named, try the other ways it could be recorded (region, tag, " +
-      "location, search, list_alerts) before answering, and say what you tried. If the person says it exists, " +
-      "believe them over one empty lookup and keep looking.",
-    "- A device may have HELD an address it no longer shows as its IP (a WAN, secondary or former address). " +
-      "search marks such a hit matchedOn: \"ipHistory\" with heldThisAddress, and get_asset returns ipHistory. " +
-      "That device IS the answer for that address: say it held it, from which source and when it was last seen " +
-      "there. Never dismiss such a hit as a text match.",
-    "- When you name an asset that a lookup returned, link the name to its details as " +
-      "[hostname](/assets.html#view=asset:ID) using the id field from that lookup — never a guessed or " +
-      "remembered id. Only assets are linked this way.",
-    "- Leave decommissioned assets and deprecated (retired) networks out of answers and reports unless the person " +
-      "asks about them — the lookups already omit them unless their status is asked for.",
-    "- Never mention your tools or their names (list_assets, create_report, …) to the user — say what you looked " +
-      "up in plain words (\"I checked the networks\").",
+    CORE_PROMPT_LINES,
   ];
-  // The Efficiency Advisor persona (rule 95(k)): only on a hosted model, only
-  // for a user who ticked it, never on a turn about an outage. Before the
-  // operator's instructions, so those still have the last word.
+  // Everything below changes per person or per turn, so it comes after the
+  // shared instructions. The access block names the caller's role.
   if (opts.access) lines.push("", opts.access);
+  // The Efficiency Advisor persona (rule 95(k)): only on a hosted model, only
+  // for a user who ticked it. Before the operator's instructions, so those
+  // still have the last word.
   if (opts.persona?.trim()) lines.push("", opts.persona.trim());
   if (opts.extra?.trim()) lines.push("", "Operator instructions:", opts.extra.trim());
   // Rule 95(i): the person's memory, framed as background about them — after
   // the operator's instructions so it can never read as overriding them.
-  if (opts.memory) lines.push("", opts.memory);
+  if (opts.memory) lines.push("", opts.memory, "Remembering things about the person is the one thing you may write.");
+  // Last, and to the minute: the only line that changes turn to turn.
+  const minute = now.toISOString().slice(0, 16).replace("T", " ");
+  lines.push("", `Current time: ${minute} UTC.${opts.username ? ` You are talking to ${opts.username}.` : ""}`);
   return lines.join("\n");
 }
 
@@ -353,7 +358,23 @@ export function buildSystemPrompt(opts: { username?: string; now?: Date; extra?:
 export function asksHowTo(text: string): boolean {
   const t = text.trim();
   if (/^using the polaris help documentation/i.test(t)) return true; // /docs
-  return /\b(how (do|can|should|would) (i|we|you)|how to|where (do|can|is|are|would) |steps to|walk me through|what does .{1,40} mean|is it possible to|configure|set up|setup)\b/i.test(t);
+  if (/\b(how (do|can|should|would) (i|we|you)|how to|steps to|walk me through|what does .{1,40} mean|is it possible to)\b/i.test(t)) return true;
+  // "where is", "configure" and "set up" are how-to words only about Polaris
+  // itself: "where is sw-nsh-02?" is a data question, and offered search_help
+  // alone a small model answered it from the help (rule 95(o), 2026-11-23).
+  if (!/\b(where (do|can|is|are|would) |configure|set up|setup)\b/i.test(t)) return false;
+  if (namesAThing(t)) return false;
+  return /\b(page|tab|settings?|menu|button|screen|integrations?|automations?|profiles?|roles?|permissions?|dashboards?|widgets?|wizard|option|toggle|sidebar|theme|polaris|change|edit|enable|disable|turn (on|off)|create|delete|find the|see the|view the)\b/i.test(t);
+}
+
+/**
+ * Does the text name a specific device or address — an IPv4, a MAC, or a
+ * hostname-shaped token (letters and digits joined by "-" or ".")? Exported for tests.
+ */
+export function namesAThing(text: string): boolean {
+  return /\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(text)
+    || /\b[0-9a-f]{2}([:-])[0-9a-f]{2}(\1[0-9a-f]{2}){2,4}\b/i.test(text)
+    || /(?<![\w.-])(?=[\w.-]*\d)(?=[\w.-]*[a-z])[a-z0-9]+(?:[-.][a-z0-9]+)+(?![\w-])/i.test(text);
 }
 
 /**
@@ -442,6 +463,27 @@ export function claimsUnlookedFacts(text: string): boolean {
 }
 
 /**
+ * Does an answer only repeat figures an earlier LOOKED-UP answer in this
+ * conversation already gave? "Of those 15 firewalls, which are 61Fs?" names
+ * a count from the last answer; that is not an invented fact, and withdrawing
+ * it made the model re-run lookups or apologise for a correct answer. Only the
+ * counting pattern is excused — "I checked" with no lookup still is not — and
+ * only when every number in the answer appears in such an earlier answer.
+ * Exported for tests.
+ */
+export function onlyRepeatsLookedUpFigures(answer: string, lookedUpAnswers: readonly string[]): boolean {
+  if (!lookedUpAnswers.length) return false;
+  if (/\bI(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:checked|looked(?:\s+it)?\s+up|looked\s+at|verified|confirmed|queried|pulled|reviewed|searched)\b/i.test(answer)) return false;
+  if (/\baccording to (?:Polaris|the inventory|your inventory|the data)\b/i.test(answer)) return false;
+  const nums = (s: string) => new Set((s.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => n.replace(/,/g, "")));
+  const said = nums(answer);
+  if (!said.size) return false;
+  const earlier = nums(lookedUpAnswers.join("\n"));
+  for (const n of said) if (!earlier.has(n)) return false;
+  return true;
+}
+
+/**
  * Sent once, as the user's side of the turn, when an answer claimed facts
  * without a lookup: the answer is withdrawn and the model asked again.
  */
@@ -484,6 +526,101 @@ function clipJson(value: unknown, maxChars: number): string {
   const s = JSON.stringify(value);
   if (s.length <= maxChars) return s;
   return s.slice(0, maxChars) + '…"(truncated — narrow the filters or use create_report)"';
+}
+
+/** A row without its empty fields (null, "", []) — they cost the model's window and say nothing. */
+function leanRow(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (x === null || x === undefined || x === "" || (Array.isArray(x) && x.length === 0)) continue;
+    out[k] = x;
+  }
+  return out;
+}
+
+/**
+ * A lookup result as the model reads it (rule 95(o)). Rows lose their empty
+ * fields, and a result too long for the window loses whole ROWS from the end
+ * of its largest list — never a cut through the JSON. A list result's
+ * `returned` / `truncated` are rewritten to what was actually sent and a note
+ * says "N of TOTAL" after the rows: the char cut this replaces left
+ * `returned: 200` in front of the ~30 rows that fit, and the model counted
+ * and ranked from the fragment as if it held all 200 (seen live 2026-11-23).
+ * Exported for tests.
+ */
+export function fitToolResult(value: unknown, maxChars: number): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return clipJson(value, maxChars);
+  const data: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  // Every list at the top level and one level down (get_network nests its rows).
+  type Slot = { holder: Record<string, unknown>; key: string; items: unknown[]; path: string };
+  const slots: Slot[] = [];
+  const collect = (holder: Record<string, unknown>, prefix: string, depth: number) => {
+    for (const [k, v] of Object.entries(holder)) {
+      if (Array.isArray(v)) {
+        const items = v.map(leanRow);
+        holder[k] = items;
+        slots.push({ holder, key: k, items, path: prefix + k });
+      } else if (depth === 0 && v && typeof v === "object") {
+        const copy = { ...(v as Record<string, unknown>) };
+        holder[k] = copy;
+        collect(copy, `${k}.`, 1);
+      }
+    }
+  };
+  collect(data, "", 0);
+  const isList = Array.isArray(data.rows) && typeof data.total === "number";
+  const listTotal = isList ? (data.total as number) : 0;
+  const clipped: Record<string, string> = {};
+  const annotate = () => {
+    if (isList) {
+      const sent = (data.rows as unknown[]).length;
+      data.returned = sent;
+      data.truncated = listTotal > sent;
+      if (listTotal > sent) {
+        data.sent = `${sent} of ${listTotal}`;
+        data.note = `Only these ${sent} of ${listTotal} matching rows were sent to you — the rest did not fit. ` +
+          "Do not count, rank or summarise beyond them: counts and breakdowns come from count_assets (or the " +
+          "breakdown field when present); the full list is create_report.";
+      }
+    }
+    if (Object.keys(clipped).length) {
+      data.clipped = clipped;
+      if (!isList) data.note = "Lists marked in `clipped` were cut to fit: speak only about the entries you received.";
+    }
+  };
+  // A list the lookup already capped (200 of 1,964) says so even when it fits.
+  annotate();
+  let s = JSON.stringify(data);
+  if (s.length <= maxChars) return s;
+  // Trim the largest list first, by whole entries, until the result fits.
+  for (let guard = 0; guard < 8 && s.length > maxChars; guard++) {
+    const slot = slots
+      .filter((x) => (x.holder[x.key] as unknown[]).length > 0)
+      .sort((a, b) => JSON.stringify(b.holder[b.key]).length - JSON.stringify(a.holder[a.key]).length)[0];
+    if (!slot) break;
+    const had = (slot.holder[slot.key] as unknown[]).length;
+    const sizeWith = (n: number): number => {
+      slot.holder[slot.key] = slot.items.slice(0, n);
+      if (n < slot.items.length) clipped[slot.path] = `${n} of ${slot.items.length}`;
+      else delete clipped[slot.path];
+      annotate();
+      return JSON.stringify(data).length;
+    };
+    let lo = 0, hi = had - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (sizeWith(mid) <= maxChars) lo = mid;
+      else hi = mid - 1;
+    }
+    sizeWith(lo);
+    // The list's own "N of TOTAL" says it; `clipped` would only repeat it.
+    if (isList && slot.path === "rows") delete clipped.rows;
+    if (!Object.keys(clipped).length) delete data.clipped;
+    annotate();
+    s = JSON.stringify(data);
+  }
+  return s.length <= maxChars ? s : clipJson(data, maxChars);
 }
 
 // ─── Fitting the model's context window ──────────────────────────────────────
@@ -724,7 +861,8 @@ export async function streamAssistantTurn(input: {
     }
     : null;
   const allTools = memoryTurn ? [...assistantToolDefs(), ...memoryToolDefs()] : assistantToolDefs();
-  const budget = contextBudget(config.contextWindow);
+  // The provider's default when the field is blank, capped on model-router (rule 95(o)).
+  const budget = contextBudget(effectiveContextWindow(config));
   // What the turn did, for the Efficiency Advisor's sign-off (rule 95(h)).
   // Gathered whether or not the advisor is on; it costs a regex per lookup.
   const signals: TurnSignals = {
@@ -768,6 +906,9 @@ export async function streamAssistantTurn(input: {
     }),
     budget.promptTokens,
   );
+  // Earlier answers that ran lookups: figures repeated from them are not
+  // unlooked facts (onlyRepeatsLookedUpFigures).
+  const lookedUpAnswers = turns.filter((t) => t.role === "assistant" && (t.toolsUsed ?? []).some((u) => u.ok)).map((t) => t.content);
   const imageBytes = await loadTurnImages(turns.flatMap((t) => (t.imageIds ?? []).filter((id) => resent.has(id))));
   const historyMessages: ChatMessage[] = turns.map((t): ChatMessage => {
     if (t.role === "assistant") return { role: "assistant", content: `${t.header}\n${t.content}` };
@@ -805,7 +946,11 @@ export async function streamAssistantTurn(input: {
   const wantsReport = asksForReport(question);
   const reportOnlyTools = tools.filter((t) => t.function.name === "create_report");
   const wantsHowTo = !wantsReport && asksHowTo(question);
-  const helpOnlyTools = tools.filter((t) => t.function.name === "search_help");
+  // A how-to opens on the help, but keeps the two lookups that say whether
+  // the thing asked about exists — help ALONE made a small model answer data
+  // questions from the documentation (rule 95(o)).
+  const HOW_TO_TOOLS = new Set(["search_help", "search", "list_assets"]);
+  const howToTools = tools.filter((t) => HOW_TO_TOOLS.has(t.function.name));
   let lastListCall: { name: string; args: string } | null = null;
   // Every uuid a lookup returned this turn — the only ids an asset link may name.
   const seenIds = new Set<string>();
@@ -831,6 +976,9 @@ export async function streamAssistantTurn(input: {
   let failure: string | null = null;
   let lookups = 0;
   let nudged = false;
+  // Which model answered each round, as the server names it (rule 95(o)):
+  // on a model-router deployment the rounds of one turn may differ.
+  const servedBy = new Set<string>();
 
   // Once a report exists in this turn, later rounds are HELD rather than
   // streamed: the model has not seen the report's rows (create_report hands
@@ -870,12 +1018,13 @@ export async function streamAssistantTurn(input: {
       // "give me a report on the network utilizations" → list_networks, no card).
       const roundTools = lastRound ? []
         : round === 0 && wantsReport ? reportOnlyTools
-        : round === 0 && wantsHowTo ? helpOnlyTools
+        : round === 0 && wantsHowTo ? howToTools
         : round === 0 && playbookTools.length ? playbookTools
         : tools;
       compactToolResults(messages, budget.promptTokens);
       roundReasoning = 0;
       const res = await chatCompletionRound(config, messages, roundTools, { signal, onText, onReasoning });
+      if (res.servedBy) servedBy.add(res.servedBy);
       reasoningTotal += roundReasoning;
       const wasHeld = held !== null;
       held = null;
@@ -901,8 +1050,10 @@ export async function streamAssistantTurn(input: {
       }
       const spoke = Boolean(roundText.trim());
       // Rule 95(m): an answer that claims facts with no lookup behind it is
-      // withdrawn and asked again, once, with every tool on offer.
-      if (calls.length === 0 && !lastRound && !nudged && lookups === 0 && reports.length === 0 && tools.length > 0 && claimsUnlookedFacts(answer)) {
+      // withdrawn and asked again, once, with every tool on offer — unless it
+      // only repeats figures an earlier looked-up answer gave (rule 95(o)).
+      if (calls.length === 0 && !lastRound && !nudged && lookups === 0 && reports.length === 0 && tools.length > 0 && claimsUnlookedFacts(answer)
+        && !onlyRepeatsLookedUpFigures(answer, lookedUpAnswers)) {
         nudged = true;
         messages.push({ role: "assistant", content: answer });
         messages.push({ role: "user", content: LOOKUP_NUDGE });
@@ -945,7 +1096,7 @@ export async function streamAssistantTurn(input: {
         lookups++;
         toolsUsed.push({ name, label: toolLabel(name), ok: result.ok });
         emit("tool", { name, label: toolLabel(name), status: "done", ok: result.ok });
-        const content = clipJson(result.data, budget.toolResultChars);
+        const content = fitToolResult(result.data, budget.toolResultChars);
         // Every asset id a lookup returned this turn — `id` on a row, the
         // gate / far end an IPsec search hit names in its context, and the
         // switch / gateway / AP / matched device a find_endpoint sighting names.
@@ -1034,8 +1185,12 @@ export async function streamAssistantTurn(input: {
     // happened and which lookups ran.
     message: failure
       ? `Assistant turn failed for ${input.username ?? "a user"}: ${failure}`
-      : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${stopped ? " (stopped)" : ""}`,
-    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped, ...(playbook ? { playbook: playbook.id } : {}) },
+      : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${servedBy.size ? ` (model: ${Array.from(servedBy).join(", ")})` : ""}${stopped ? " (stopped)" : ""}`,
+    details: {
+      tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped,
+      ...(playbook ? { playbook: playbook.id } : {}),
+      ...(servedBy.size ? { models: Array.from(servedBy) } : {}),
+    },
   });
 
   if (failure) emit("error", { message: failure, messageId });

@@ -65,7 +65,7 @@ Sonnet or Opus from the Foundry model catalog). The form then shows:
 | Authentication | **API key** — Key 1 or Key 2 from Keys and Endpoint — or **Entra ID app**: the app registration's Tenant ID, Client ID and Client secret. Give the app's service principal the **Cognitive Services OpenAI User** role on the resource (for Claude, **Foundry User** or **Cognitive Services User**). Keys and secrets are stored encrypted. **Token scope** is advanced; leave it blank for the default (`https://cognitiveservices.azure.com/.default` for GPT, `https://ai.azure.com/.default` for Claude) |
 | Deployment name | the name **you gave the deployment** in Foundry, not the model's name |
 | Omit temperature | GPT only: tick for reasoning models (o-series, gpt-5), which refuse it. If you forget, Polaris retries once without it. Claude never gets a temperature, so the box is hidden |
-| Context window | under **Assistant Behaviour** — set it to the deployment's window: `1000000` for Claude Haiku, Sonnet or Opus 5.5. Left at the 8192 default, Polaris trims history and lookups as if the model were small |
+| Context window | under **Assistant Behaviour** — set it to the deployment's window: `1000000` for Claude Haiku, Sonnet or Opus 5.5. Left blank, Polaris uses 200000 for a Claude deployment and 128000 for a GPT one. A **model-router** deployment picks a different model for each request, some with smaller windows, so Polaris budgets it at 128000 whatever you enter |
 
 **Test Connection** sends one short chat message to the deployment, the only way
 to prove the endpoint, the credential and the deployment name are all right. It
@@ -150,6 +150,7 @@ context. Some things to try:
 - *What are the busiest WAN links this week?*
 - *How do I set up a maintenance window that repeats monthly?*
 - *How many devices are down in my region?*
+- *How many FortiGates do we have per region, and on which firmware versions?*
 - *Why are the hardware sensors unresolved on our Fortinet profile?*
 - *Which object in PowerNet-MIB carries the battery temperature?*
 - *Which automation alerts when a firewall's CPU is high?*
@@ -158,7 +159,9 @@ context. Some things to try:
 A few kinds of question follow a set procedure, so the answer is built the same way
 every time: **why did a device go down** (the device, then alerts and events around
 the time it changed, then the device it hangs off), **what changed** since a time,
-**is a device healthy**, **which networks are filling up**, **CPU and memory**
+**is a device healthy**, **which networks are filling up**, **how many devices,
+and broken down by what** (counted by Polaris across every match — by model,
+region, type, firmware, site and more — never counted from a list), **CPU and memory**
 (the ranking for the devices you named, the period it covers, and how many had
 no data), **who has an address**
 (*look up 153.66.102.165*) — which also finds a device that held the address on
@@ -433,10 +436,10 @@ See [rule 95](Business-Rules#rule-95).
 | Field | |
 |---|---|
 | Temperature | lower = more factual and repeatable; 0.2 is the default |
-| Lookup rounds per answer | how many rounds of lookups one answer may take (default 6) |
+| Lookup rounds per answer | how many rounds of lookups one answer may take (default 8) |
 | Rows per lookup | rows one lookup hands the model (default 200); reports go to 5,000 regardless |
 | Messages of history sent | the most earlier turns sent with each question (default 20); older ones are dropped first when they would not fit the context window |
-| Context window | the model server's context size in tokens (default 8192) — set it to match the server. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. Below about 32k the CPU / memory, interface, service, Path Monitor, endpoint and dependency lookups are offered only to the questions that need them, so their definitions do not crowd out the rest. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
+| Context window | the model server's context size in tokens (blank = 8192 for a local server; for Azure see [above](#azure-ai-foundry)) — set it to match the server. When a lookup finds more rows than fit, the model is given whole rows and told how many it got out of how many matched, and counts come from a separate count that Polaris runs in the database. For an Ollama model, **Test Connection** also checks the context Ollama actually loaded the model with and warns when it is smaller than this field, because Ollama would then silently cut off the assistant's instructions. Polaris sizes each question to fit: the conversation, the lookup results (cut down for a small window) and room for the answer. **Ollama uses 4096 unless `OLLAMA_CONTEXT_LENGTH` raises it**, and the assistant's own instructions take about 2,700 of those, so raise it to 8192 or more on the server and here. Test Connection warns below 6000. Below about 32k the CPU / memory, interface, service, Path Monitor, endpoint and dependency lookups are offered only to the questions that need them, so their definitions do not crowd out the rest. On **Azure AI Foundry** use the deployment's window (`1000000` for Claude 5.5 models); history stays capped by *Messages of history sent* and each lookup at 24,000 characters, so a large window does not mean large requests |
 | Response timeout | how long the model may go silent before the answer fails |
 | Start a fresh chat after | how long a conversation can sit idle before the chat window saves it, sets it aside and opens fresh (default 30 minutes; 0 = never). `/resume` or History brings it back |
 | Extra instructions | added to the assistant's instructions — site naming conventions, who to escalate to |
@@ -455,6 +458,8 @@ See [rule 95](Business-Rules#rule-95).
 | Answers arrive all at once instead of streaming | a proxy or load balancer in front of Polaris buffers responses; the answer still arrives |
 | "Not permitted" in an answer | your role cannot read that area — the assistant is telling you, not failing |
 | An answer appears, vanishes and is rewritten | it gave facts without looking anything up, and Polaris asked it again to run the lookups ([rule 95(m)](Business-Rules#rule-95)) |
+| Answers on an Azure **model-router** deployment are vague or wrong | open **Events** and look at the *Assistant answered …* entry: it names the model the router picked for each answer. If the poor answers came from a small model, change the router's mode in Foundry (for example from Cost to Quality), or deploy a single model for the assistant |
+| Test Connection says "Ollama loaded … with a 4096-token context" | Ollama is running the model with a smaller window than **Context window** says — set `OLLAMA_CONTEXT_LENGTH` on the Ollama server (then restart it), or lower the field to the number shown |
 | "Polaris ran no lookup for this answer" under a reply | asked again, the model still looked nothing up — do not trust its figures; ask again naming the device or list you want |
 | "Help is not available on this install" | the `docs/wiki` folder is missing from this install |
 | Azure: "refused the API key (HTTP 401)" | the key is wrong or was regenerated — paste Key 1 or Key 2 again |

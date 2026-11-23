@@ -1883,7 +1883,18 @@ counts, Polaris withdraws that answer and asks the model again, once, telling it
 to look the facts up. If the second answer still has no lookup behind it,
 Polaris keeps it and adds a line saying no lookup was run, so its figures did
 not come from your install. The assistant's own earlier answers in a
-conversation do not count as lookups.
+conversation do not count as lookups — except that an answer which only repeats
+numbers an earlier looked-up answer gave ("those 15 firewalls") is not withdrawn.
+
+**What the model is shown (95(o)).** When a lookup finds more than fits, the
+model receives whole rows and is told how many it got out of how many matched
+("40 of 1,964"), and to count nothing beyond them. Counts and breakdowns ("how
+many FortiGates per region", "switches by firmware version") are counted by
+Polaris in the database, never by the model from a list. A question that names
+a device, an address or a MAC is treated as a lookup, not as a question about
+how to use Polaris. The event log names the model that answered each question,
+which matters on an Azure AI Foundry *model-router* deployment, where the router
+picks a model per request.
 
 See [AI Assistant](AI-Assistant).
 

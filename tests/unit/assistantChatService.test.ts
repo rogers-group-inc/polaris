@@ -42,6 +42,7 @@ vi.mock("../../src/services/llmService.js", async () => ({
   recoverTextToolCalls: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).recoverTextToolCalls,
   estimateTokens: (t: string) => Math.ceil((t ?? "").length / 3.5),
   acceptsImages: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).acceptsImages,
+  effectiveContextWindow: (await vi.importActual<typeof import("../../src/services/llmService.js")>("../../src/services/llmService.js")).effectiveContextWindow,
   LLM_DEFAULTS: { maxToolRounds: 6, maxRowsPerTool: 200, contextMessages: 20, contextWindow: 8192 },
 }));
 vi.mock("../../src/services/assistantToolService.js", () => ({
@@ -80,8 +81,8 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
-  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
+  streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, namesAThing, sanitizeAnswerLinks,
+  contextBudget, fitHistory, compactToolResults, fitToolResult, onlyRepeatsLookedUpFigures, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS, turnHeader, stripTurnHeaders,
 } from "../../src/services/assistantChatService.js";
 
@@ -110,24 +111,33 @@ beforeEach(() => {
 
 describe("streamAssistantTurn — memory (rule 95(i))", () => {
   it("sends no memory block and no memory tools while memory is off", async () => {
+    // Captured and asserted AFTER the turn: an expect thrown inside the mock is
+    // caught as a failed turn and never fails the test (it hid stale
+    // expectations here until 2026-11-23).
+    let prompt = "", names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
-      expect(msgs[0].content).not.toContain("Memory —");
-      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets"]);
+      prompt = msgs[0].content; names = tools.map((t: any) => t.function.name);
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run().p;
+    expect(prompt).not.toContain("Memory —");
+    expect(names).toContain("list_assets");
+    expect(names).not.toContain("remember");
+    expect(names).not.toContain("forget");
     expect(h.listMemory).not.toHaveBeenCalled();
   });
 
   it("puts the entries in the system prompt and offers remember/forget while on", async () => {
     h.getMemoryEnabled.mockResolvedValueOnce(true);
     h.listMemory.mockResolvedValueOnce([{ id: "e1", text: "Manages Nashville", source: "user", createdAt: new Date() }]);
+    let prompt = "", names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[]) => {
-      expect(msgs[0].content).toContain("[1] Manages Nashville");
-      expect(tools.map((t: any) => t.function.name)).toEqual(["list_assets", "remember", "forget"]);
+      prompt = msgs[0].content; names = tools.map((t: any) => t.function.name);
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run().p;
+    expect(prompt).toContain("[1] Manages Nashville");
+    expect(names).toEqual(expect.arrayContaining(["list_assets", "remember", "forget"]));
   });
 
   it("routes a remember call to the memory runner with this turn's question, and emits the change", async () => {
@@ -302,14 +312,16 @@ describe("streamAssistantTurn", () => {
     expect(h.finishTurn.mock.calls[0][1].content).toBe("The report is ready — preview and download it below.");
   });
 
-  it("offers only search_help on the first round of a how-to question", async () => {
+  it("opens a how-to on the help plus the two existence lookups (rule 95(o))", async () => {
     h.beginTurn.mockResolvedValueOnce({ question: "how do i add a new ip block?" });
+    let names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
-      expect(tools.map((t: any) => t.function.name)).toEqual(["search_help"]);
+      names = tools.map((t: any) => t.function.name);
       o.onText("ok");
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run({ content: "how do i add a new ip block?" }).p;
+    expect(names).toEqual(["search_help", "search", "list_assets"]);
   });
 
   it("unlinks an invented docs URL in the shown and stored answer", async () => {
@@ -326,12 +338,15 @@ describe("streamAssistantTurn", () => {
   });
 
   it("offers only create_report on the first round of a report request", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "give me a report on the network utilizations" });
+    let names: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
-      expect(tools.map((t: any) => t.function.name)).toEqual(["create_report"]);
+      names = tools.map((t: any) => t.function.name);
       o.onText("ok");
       return { content: "ok", toolCalls: [], finishReason: "stop" };
     });
     await run({ content: "give me a report on the network utilizations" }).p;
+    expect(names).toEqual(["create_report"]);
   });
 
   it("builds the report from the model's list lookup when it never called create_report", async () => {
@@ -387,6 +402,17 @@ describe("streamAssistantTurn", () => {
     const ev = eventLog.logEvent.mock.calls[0][0] as any;
     expect(ev.action).toBe("assistant.chat");
     expect(JSON.stringify(ev)).not.toContain("what is down?");
+  });
+
+  it("records which model answered each round on the audit Event (rule 95(o))", async () => {
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls", servedBy: "gpt-5-nano-2025-08-07" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText("Two."); return { content: "Two.", toolCalls: [], finishReason: "stop", servedBy: "gpt-5-mini-2025-08-07" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 2, rows: [] } });
+    await run().p;
+    const ev = eventLog.logEvent.mock.calls.at(-1)![0] as any;
+    expect(ev.details.models).toEqual(["gpt-5-nano-2025-08-07", "gpt-5-mini-2025-08-07"]);
+    expect(ev.message).toMatch(/\(model: gpt-5-nano-2025-08-07, gpt-5-mini-2025-08-07\)/);
   });
 
   it("refuses an integration with no host before touching the conversation", async () => {
@@ -479,7 +505,8 @@ describe("context budget", () => {
     expect(contextBudget(undefined).window).toBe(8192);
     expect(contextBudget(512).window).toBe(2048); // floor
     expect(contextBudget(2048).toolResultChars).toBe(1792);
-    expect(contextBudget(131_072).toolResultChars).toBe(24_000); // ceiling
+    expect(contextBudget(131_072).toolResultChars).toBe(114_688);
+    expect(contextBudget(1_000_000).toolResultChars).toBe(120_000); // ceiling (rule 95(o))
   });
 
   it("keeps the newest turns that fit and never opens on an orphaned answer", () => {
@@ -579,7 +606,7 @@ describe("playbooks steer round 0", () => {
 
   it("a playbook never hides the memory tools (rule 95(i) needs `remember` reachable to refuse it)", async () => {
     h.getMemoryEnabled.mockResolvedValueOnce(true);
-    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of the branch switch?" });
+    h.beginTurn.mockResolvedValueOnce({ question: "what is the status of sw-branch-01?" });
     let round0Tools: string[] = [];
     h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, tools: any[], o: any) => {
       round0Tools = tools.map((t) => t.function.name);
@@ -603,7 +630,8 @@ describe("playbooks steer round 0", () => {
   });
 
   it("a report request and a how-to keep priority over a playbook", async () => {
-    for (const [question, only] of [["give me a report on what changed overnight", "create_report"], ["how do I check the health of a device?", "search_help"]] as const) {
+    // A how-to opens on the help plus the two lookups that say whether a thing exists (rule 95(o)).
+    for (const [question, only] of [["give me a report on what changed overnight", ["create_report"]], ["how do I check the health of a device?", ["search_help", "search", "list_assets"]]] as const) {
       h.beginTurn.mockResolvedValueOnce({ question });
       let round0Tools: string[] = [];
       h.chatCompletionRound.mockImplementationOnce(async (_c: any, msgs: any[], tools: any[], o: any) => {
@@ -613,7 +641,7 @@ describe("playbooks steer round 0", () => {
         return { content: "Done.", toolCalls: [], finishReason: "stop" };
       });
       await run().p;
-      expect(round0Tools).toEqual([only]);
+      expect(round0Tools).toEqual([...only]);
     }
   });
 });
@@ -625,6 +653,18 @@ describe("help questions and links", () => {
     expect(asksHowTo("Using the Polaris help documentation, answer: maintenance windows")).toBe(true);
     expect(asksHowTo("how many cities do we have devices in?")).toBe(false);
     expect(asksHowTo("what's down right now?")).toBe(false);
+  });
+
+  it("does not read a data question as a how-to (rule 95(o))", () => {
+    expect(asksHowTo("where is sw-nsh-02?")).toBe(false);
+    expect(asksHowTo("where is 10.20.3.4")).toBe(false);
+    expect(asksHowTo("where are the access points in Nashville?")).toBe(false);
+    expect(asksHowTo("which switches were set up last week")).toBe(false);
+    expect(asksHowTo("where is the maintenance window setting?")).toBe(true);
+    expect(asksHowTo("how do I add 10.1.1.0/24 as a network?")).toBe(true);
+    expect(namesAThing("is fw-nsh-01 up")).toBe(true);
+    expect(namesAThing("aa:bb:cc:dd:ee:ff")).toBe(true);
+    expect(namesAThing("where are the switches")).toBe(false);
   });
 
   it("keeps real help pages and in-app paths, and unlinks everything else", () => {
@@ -664,6 +704,34 @@ describe("claimsUnlookedFacts", () => {
   });
 });
 
+describe("onlyRepeatsLookedUpFigures (rule 95(o))", () => {
+  const earlier = ["You have 1,964 assets; 15 firewalls are FortiGate-61F."];
+  it("excuses a follow-up that only repeats an earlier looked-up count", () => {
+    expect(onlyRepeatsLookedUpFigures("Those 15 firewalls are all in Middle Tennessee? I can look that up.", earlier)).toBe(true);
+    expect(onlyRepeatsLookedUpFigures("Of the 1964 assets, which type do you mean?", earlier)).toBe(true);
+  });
+  it("still catches a new figure, a claimed check, or no looked-up history", () => {
+    expect(onlyRepeatsLookedUpFigures("Of those 15 firewalls, 4 are down.", earlier)).toBe(false);
+    expect(onlyRepeatsLookedUpFigures("I checked: 15 firewalls.", earlier)).toBe(false);
+    expect(onlyRepeatsLookedUpFigures("Those 15 firewalls.", [])).toBe(false);
+  });
+  it("lets the turn stand instead of withdrawing it", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "and those 15 firewalls?" });
+    h.recentTurns.mockResolvedValueOnce([
+      { role: "user", content: "how many 61Fs?", createdAt: new Date() },
+      { role: "assistant", content: "There are 15 firewalls on FortiGate-61F.", createdAt: new Date(), toolsUsed: [{ name: "count_assets", label: "counted assets", ok: true }] },
+      { role: "user", content: "and those 15 firewalls?", createdAt: new Date() },
+    ] as any);
+    const text = "Those 15 firewalls — do you want them by region or by firmware?";
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText(text); return { content: text, toolCalls: [], finishReason: "stop" }; });
+    const { p, events } = run();
+    await p;
+    expect(h.chatCompletionRound).toHaveBeenCalledTimes(1);
+    expect(events).not.toContainEqual(["retract", { from: 0 }]);
+    expect(h.finishTurn.mock.calls[0][1].content).toBe(text);
+  });
+});
+
 describe("stripMarkdownTables", () => {
   it("removes pipe tables and keeps the prose around them", () => {
     const t = "Intro.\n\n| a | b |\n| --- | :---: |\n| 1 | 2 |\n| 3 | 4 |\n\nOutro.";
@@ -674,10 +742,45 @@ describe("stripMarkdownTables", () => {
   });
 });
 
+describe("fitToolResult (rule 95(o))", () => {
+  const row = (i: number) => ({ id: `id-${i}`, hostname: `sw-${String(i).padStart(3, "0")}`, ipAddress: `10.0.${Math.floor(i / 250)}.${i % 250}`, serialNumber: null, tags: "", model: "FS-148F" });
+  const list = (n: number, total = n) => ({ total, returned: n, truncated: total > n, rows: Array.from({ length: n }, (_, i) => row(i)) });
+
+  it("drops empty fields and leaves a result that fits alone", () => {
+    const out = JSON.parse(fitToolResult(list(2), 10_000));
+    expect(out.rows[0]).toEqual({ id: "id-0", hostname: "sw-000", ipAddress: "10.0.0.0", model: "FS-148F" });
+    expect(out).not.toHaveProperty("note");
+  });
+
+  it.each([2_000, 7_168, 24_000])("cuts whole rows at %i chars and says how many were sent", (max) => {
+    const s = fitToolResult(list(200, 1964), max);
+    expect(s.length).toBeLessThanOrEqual(max);
+    const out = JSON.parse(s); // never a cut through the JSON
+    expect(out.returned).toBe(out.rows.length);
+    expect(out.rows.length).toBeGreaterThan(0);
+    expect(out.truncated).toBe(true);
+    expect(out.sent).toBe(`${out.rows.length} of 1964`);
+    expect(out.note).toMatch(/Do not count, rank or summarise beyond them/);
+    // The note comes after the rows, so a model reading the end still sees it.
+    expect(s.indexOf('"note"')).toBeGreaterThan(s.indexOf('"rows"'));
+  });
+
+  it("trims a nested list and marks it, for a result that is not a list tool's", () => {
+    const big = { network: { cidr: "10.0.0.0/22", rows: Array.from({ length: 300 }, (_, i) => row(i)) } };
+    const out = JSON.parse(fitToolResult(big, 3_000));
+    expect(out.network.rows.length).toBeLessThan(300);
+    expect(out.clipped["network.rows"]).toBe(`${out.network.rows.length} of 300`);
+  });
+
+  it("falls back to the old clip for a result with no list to trim", () => {
+    expect(fitToolResult({ text: "x".repeat(5_000) }, 1_000)).toContain("truncated");
+  });
+});
+
 describe("buildSystemPrompt", () => {
   it("states the ground rules and appends operator instructions", () => {
     const p = buildSystemPrompt({ username: "dana", now: new Date("2026-10-07T12:00:00Z"), extra: "Sites are named NSH-*." });
-    expect(p).toContain("2026-10-07T12:00:00.000Z");
+    expect(p).toContain("Current time: 2026-10-07 12:00 UTC.");
     expect(p).toContain("dana");
     expect(p).toMatch(/search_help/);
     expect(p).toMatch(/create_report/);
@@ -687,6 +790,18 @@ describe("buildSystemPrompt", () => {
     expect(p).toMatch(/offer to do the search for them/);
     expect(p).toMatch(/Never imply someone is about to create a duplicate/);
     expect(p).toMatch(/Operator instructions:\nSites are named NSH-\*\./);
+  });
+
+  it("keeps the start of the prompt identical across turns and people (rule 95(o))", () => {
+    const a = buildSystemPrompt({ username: "dana", now: new Date("2026-10-07T12:00:01Z"), access: "ACCESS-A", memory: "Memory — x" });
+    const b = buildSystemPrompt({ username: "lee", now: new Date("2026-11-23T08:30:59Z") });
+    const shared = a.indexOf("ACCESS-A");
+    expect(shared).toBeGreaterThan(2_000);
+    expect(b.slice(0, shared)).toBe(a.slice(0, shared));
+    // The time is the last line, to the minute.
+    expect(b.trimEnd().split(/\r?\n/).pop()).toBe("Current time: 2026-11-23 08:30 UTC. You are talking to lee.");
+    // The rule against counting a fragment is in the core block.
+    expect(a).toMatch(/"N of TOTAL" sent you only N rows/);
   });
 
   it("tells the model the name the operator gave it, and stays nameless otherwise", () => {

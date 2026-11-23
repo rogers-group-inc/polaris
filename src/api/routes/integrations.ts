@@ -1114,14 +1114,15 @@ const LlmConfigSchema = z.preprocess(normalizeLlmProviderInput, z.object({
   // the first tool-calling model, else the first chat model).
   model:     z.string().trim().max(200).optional().default(""),
   temperature:      z.number().min(0).max(2).optional().default(0.2),
-  maxToolRounds:    z.number().int().min(1).max(12).optional().default(6),
+  maxToolRounds:    z.number().int().min(1).max(12).optional().default(llm.LLM_DEFAULTS.maxToolRounds),
   requestTimeoutMs: z.number().int().min(5_000).max(600_000).optional().default(120_000),
   maxRowsPerTool:   z.number().int().min(10).max(1000).optional().default(200),
   contextMessages:  z.number().int().min(2).max(100).optional().default(20),
   // The model server's context window in tokens — what each turn is budgeted
   // against (assistantChatService.contextBudget). Ollama's default is 4096
-  // unless OLLAMA_CONTEXT_LENGTH raises it.
-  contextWindow:    z.number().int().min(2048).max(1_000_000).optional().default(8192),
+  // unless OLLAMA_CONTEXT_LENGTH raises it. Blank = the provider's default
+  // (llmService.effectiveContextWindow), never a flat 8192 for a hosted model.
+  contextWindow:    z.number().int().min(2048).max(1_000_000).optional(),
   // Minutes a conversation may sit idle before the chat window sets it aside
   // and starts fresh (/resume brings it back); 0 = never. Read by the desktop
   // widget and the phone's Chat tab via GET /assistant/status.

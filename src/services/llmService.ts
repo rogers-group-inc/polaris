@@ -94,7 +94,8 @@ export const LLM_DEFAULTS = {
   port: 11434,
   basePath: "/v1",
   temperature: 0.2,
-  maxToolRounds: 6,
+  // 8, not 6: the correlate playbook alone is four or five lookups (rule 95(o)).
+  maxToolRounds: 8,
   requestTimeoutMs: 120_000,
   maxRowsPerTool: 200,
   contextMessages: 20,
@@ -145,6 +146,12 @@ export interface CompletionRound {
   finishReason: string | null;
   /** Provider-native content to replay on the next round's assistant message (see ChatMessage.raw). */
   raw?: unknown;
+  /**
+   * The model that answered, as the server names it (a chat-completions
+   * chunk's `model`, Claude's message `model`). On Azure's model-router it is
+   * the underlying model the router picked for this round (rule 95(o)).
+   */
+  servedBy?: string;
 }
 
 export const AZURE_DEFAULTS = {
@@ -161,6 +168,34 @@ export const AZURE_API_VERSION_RE = /^\d{4}-\d{2}-\d{2}(-preview)?$/;
 
 export function isAzureProvider(config: Pick<LlmConfig, "provider">): boolean {
   return config.provider === "azure";
+}
+
+/** A blank Context window on a Claude deployment / an Azure chat-completions deployment. */
+const HOSTED_CONTEXT_DEFAULTS = { claude: 200_000, azureChat: 128_000 } as const;
+/**
+ * What a turn budgets for on an Azure AI Foundry model-router deployment,
+ * whatever the field says: the router picks an underlying model per request,
+ * and a 1M setting let a long turn overflow a smaller one it picked.
+ */
+const MODEL_ROUTER_WINDOW = 128_000;
+
+/** Is this deployment Azure AI Foundry's model router (by its deployment name)? */
+function isModelRouter(config: Partial<Pick<LlmConfig, "provider" | "model">>): boolean {
+  return isAzureProvider(config) && /router/i.test(config.model ?? "");
+}
+
+/**
+ * The context window a turn is budgeted against (rule 95(o)): the operator's
+ * figure, else the provider's default — a Claude deployment 200K, an Azure
+ * chat-completions deployment 128K, a local server LLM_DEFAULTS.contextWindow
+ * — capped at MODEL_ROUTER_WINDOW on a model-router deployment.
+ */
+export function effectiveContextWindow(config: Partial<Pick<LlmConfig, "provider" | "azureApiShape" | "model" | "contextWindow">>): number {
+  const fallback = !isAzureProvider(config) ? LLM_DEFAULTS.contextWindow
+    : config.azureApiShape === "anthropic" ? HOSTED_CONTEXT_DEFAULTS.claude
+    : HOSTED_CONTEXT_DEFAULTS.azureChat;
+  const w = config.contextWindow ?? fallback;
+  return isModelRouter(config) ? Math.min(w, MODEL_ROUTER_WINDOW) : w;
 }
 
 /**
@@ -671,11 +706,53 @@ const SMALL_CONTEXT_WINDOW = 6000;
 
 export async function testConnection(config: LlmConfig): Promise<LlmTestResult> {
   const out = await testConnectionInner(config);
-  const w = config.contextWindow ?? LLM_DEFAULTS.contextWindow;
+  const w = effectiveContextWindow(config);
   if (out.ok && w < SMALL_CONTEXT_WINDOW) {
     out.message += `. Context window is ${w} tokens — lookup results will be cut short; raise it on the server (Ollama: OLLAMA_CONTEXT_LENGTH) and here if you can`;
   }
+  // Rule 95(o): a window set larger than the one Ollama really loaded is the
+  // worst case — the prompt is budgeted for the field, Ollama silently drops
+  // the OLDEST tokens to fit, and those are the instructions and tool list.
+  if (out.ok && out.model) {
+    const loaded = await ollamaLoadedContext(config, out.model);
+    if (loaded !== null && loaded < w) {
+      out.message += `. Ollama loaded "${out.model}" with a ${loaded}-token context, smaller than the ${w} set here — ` +
+        `the assistant's instructions would be cut off. Set OLLAMA_CONTEXT_LENGTH to at least ${w} on the server, or lower Context window to ${loaded}`;
+    }
+  }
   return out;
+}
+
+/**
+ * The context length Ollama loaded `model` with, from `/api/ps` — loading it
+ * first with an empty prompt (Ollama's documented preload) when it is not
+ * resident. Null when this is not Ollama, the server does not report a
+ * context length, or anything fails: never guessed. Exported for tests.
+ */
+export async function ollamaLoadedContext(config: LlmConfig, model: string): Promise<number | null> {
+  if (isAzureProvider(config)) return null;
+  const base = normalizeBasePath(config.basePath);
+  if (base !== "/v1" && base !== "") return null;
+  const native: LlmConfig = { ...config, basePath: "", requestTimeoutMs: 30_000 };
+  const same = (a: unknown) => typeof a === "string" && (a === model || a === `${model}:latest` || `${a}:latest` === model);
+  const read = async (): Promise<{ resident: boolean; ctx: number | null }> => {
+    const ps = await getJson(native, "GET", "/api/ps");
+    const row = Array.isArray(ps.json?.models) ? ps.json.models.find((m: { name?: unknown; model?: unknown }) => same(m.name) || same(m.model)) : undefined;
+    const ctx = row?.context_length;
+    return { resident: Boolean(row), ctx: typeof ctx === "number" && ctx > 0 ? ctx : null };
+  };
+  try {
+    const tags = await getJson(native, "GET", "/api/tags");
+    if (tags.status !== 200 || !Array.isArray(tags.json?.models)) return null;
+    let r = await read();
+    if (!r.resident) {
+      await getJson(native, "POST", "/api/generate", { model, prompt: "", stream: false });
+      r = await read();
+    }
+    return r.ctx;
+  } catch {
+    return null;
+  }
 }
 
 async function testConnectionInner(config: LlmConfig): Promise<LlmTestResult> {
@@ -847,9 +924,11 @@ export function recoverTextToolCalls(text: string, knownNames: Iterable<string>)
  * running round. Exported for tests.
  */
 export function applyStreamChunk(
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars?: number },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars?: number; servedBy?: string },
   data: Record<string, any>,
 ): string {
+  // Every chunk names the model; a router's first chunk may name none.
+  if (typeof data?.model === "string" && data.model.trim()) round.servedBy = data.model.trim();
   const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
   if (!choice) return "";
   const delta = choice.delta ?? choice.message ?? {};
@@ -1024,9 +1103,13 @@ async function anthropicRound(
   };
   // No `temperature`: current Claude models refuse non-default sampling.
   // No `thinking`: the model's adaptive default.
-  if (req.system) params.system = req.system;
+  // Prompt caching (rule 95(o)): Claude caches nothing unless asked. A
+  // breakpoint on the last tool caches the tool list — identical on every
+  // turn — and one on the system prompt caches it across a turn's rounds,
+  // which resend it up to maxToolRounds times.
+  if (req.system) params.system = [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }];
   if (req.tools.length) {
-    params.tools = req.tools;
+    params.tools = req.tools.map((t, i) => (i === req.tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t));
     params.tool_choice = { type: "auto" };
   }
   const idleMs = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
@@ -1066,7 +1149,7 @@ async function anthropicRound(
       : final.stop_reason === "end_turn" ? "stop"
       : final.stop_reason === "max_tokens" ? "length"
       : final.stop_reason ?? null;
-    return { content: text, toolCalls, finishReason, raw: blocks };
+    return { content: text, toolCalls, finishReason, raw: blocks, ...(typeof final.model === "string" && final.model ? { servedBy: final.model } : {}) };
   } catch (err) {
     clearTimeout(idle);
     if (stalled && !opts.signal?.aborted) {
@@ -1129,7 +1212,7 @@ export async function chatCompletionRound(
     throw upstreamError(res.status, await readAll(res.stream), config);
   }
 
-  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
+  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0, servedBy: undefined as string | undefined };
 
   try {
     await readRound(config, res, round, opts.onText, opts.onReasoning);
@@ -1144,13 +1227,13 @@ export async function chatCompletionRound(
     .sort((a, b) => a[0] - b[0])
     .map(([i, tc]) => ({ ...tc, id: tc.id || `call_${i}` }))
     .filter((tc) => tc.function.name);
-  return { content: round.content, toolCalls, finishReason: round.finishReason };
+  return { content: round.content, toolCalls, finishReason: round.finishReason, ...(round.servedBy ? { servedBy: round.servedBy } : {}) };
 }
 
 async function readRound(
   config: LlmConfig,
   res: RawResponse,
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars: number },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars: number; servedBy?: string },
   onText: ((text: string) => void) | undefined,
   onReasoning?: (totalChars: number) => void,
 ): Promise<void> {
