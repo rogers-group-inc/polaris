@@ -241,7 +241,7 @@ runs an SNMP walk or looks up DNS. VIPs need **Reservations** read, contacts
 
 Who is **connected through a FortiGate's IPsec or VPN** is its own lookup, and it can
 be a report. Ask for one kind of connection: ADVPN spokes, ADVPN shortcuts, other
-dial-up sites, FortiClient IPsec users or SSL-VPN users. You can also narrow it to
+dial-up sites, FortiClient IPsec users or SSL-VPN users, or everything except the remote-access users. You can also narrow it to
 one tunnel. Each row has the peer's public address, its tunnel address, the device
 Polaris matched it to and how long it has been connected. *Export the public IPs of
 the ADVPN peers connected to hub-fw-01 as a CSV, not the remote-access users* is one

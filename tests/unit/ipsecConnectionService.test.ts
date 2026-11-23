@@ -34,6 +34,7 @@ import {
   readLatestIpsecTunnels,
   readAssetIpsec,
   listIpsecConnections,
+  countIpsecConnectionsByKind,
 } from "../../src/services/ipsecConnectionService.js";
 import type { IpsecConnectionSample } from "../../src/utils/fortiosIpsec.js";
 
@@ -481,5 +482,28 @@ describe("listIpsecConnections", () => {
     expect(h.resolveIpsToAssets.mock.calls[0][0].sort()).toEqual(["10.255.0.2", "198.51.100.1", "203.0.113.10"]);
     expect(out.connections.map((c) => [c.name, c.matchedAsset?.id ?? null, c.incomingBytes])).toEqual([["a", "spoke-asset", 5], ["self", null, 5]]);
     expect(out.collectedAt).toEqual(later);
+  });
+});
+describe("listIpsecConnections — excludeKinds", () => {
+  it("leaves the excluded kinds out in SQL, alone or beside kinds", async () => {
+    stubbed(prisma.assetIpsecConnection.findMany).mockResolvedValue([]);
+    await listIpsecConnections("fw1", { excludeKinds: ["remote-access", "ssl-vpn"] });
+    expect(stubbed(prisma.assetIpsecConnection.findMany).mock.calls[0][0].where).toEqual({ assetId: "fw1", kind: { notIn: ["remote-access", "ssl-vpn"] } });
+    await listIpsecConnections("fw1", { kinds: ["dialup-peer", "advpn-spoke"], excludeKinds: ["advpn-spoke"] });
+    expect(stubbed(prisma.assetIpsecConnection.findMany).mock.calls[1][0].where.kind).toEqual({ in: ["dialup-peer", "advpn-spoke"], notIn: ["advpn-spoke"] });
+  });
+});
+
+describe("countIpsecConnectionsByKind", () => {
+  it("groups one gate's connections by kind and parent tunnel", async () => {
+    stubbed(prisma.assetIpsecConnection.groupBy).mockResolvedValue([
+      { kind: "dialup-peer", parentTunnel: "Overlay-1", _count: { _all: 176 } },
+      { kind: "remote-access", parentTunnel: "IPsecRA_VPN", _count: { _all: 35 } },
+    ]);
+    expect(await countIpsecConnectionsByKind("fw1")).toEqual([
+      { kind: "dialup-peer", parentTunnel: "Overlay-1", count: 176 },
+      { kind: "remote-access", parentTunnel: "IPsecRA_VPN", count: 35 },
+    ]);
+    expect(stubbed(prisma.assetIpsecConnection.groupBy).mock.calls[0][0]).toMatchObject({ by: ["kind", "parentTunnel"], where: { assetId: "fw1" } });
   });
 });
