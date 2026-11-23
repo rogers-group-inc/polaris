@@ -950,6 +950,9 @@ export async function streamAssistantTurn(input: {
   let failure: string | null = null;
   let lookups = 0;
   let nudged = false;
+  // Which model answered each round, as the server names it (rule 95(o)):
+  // on a model-router deployment the rounds of one turn may differ.
+  const servedBy = new Set<string>();
 
   // Once a report exists in this turn, later rounds are HELD rather than
   // streamed: the model has not seen the report's rows (create_report hands
@@ -995,6 +998,7 @@ export async function streamAssistantTurn(input: {
       compactToolResults(messages, budget.promptTokens);
       roundReasoning = 0;
       const res = await chatCompletionRound(config, messages, roundTools, { signal, onText, onReasoning });
+      if (res.servedBy) servedBy.add(res.servedBy);
       reasoningTotal += roundReasoning;
       const wasHeld = held !== null;
       held = null;
@@ -1153,8 +1157,12 @@ export async function streamAssistantTurn(input: {
     // happened and which lookups ran.
     message: failure
       ? `Assistant turn failed for ${input.username ?? "a user"}: ${failure}`
-      : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${stopped ? " (stopped)" : ""}`,
-    details: { tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped, ...(playbook ? { playbook: playbook.id } : {}) },
+      : `Assistant answered ${input.username ?? "a user"}${toolsUsed.length ? ` using ${Array.from(new Set(toolsUsed.map((t) => t.name))).join(", ")}` : ""}${servedBy.size ? ` (model: ${Array.from(servedBy).join(", ")})` : ""}${stopped ? " (stopped)" : ""}`,
+    details: {
+      tools: toolsUsed.map((t) => t.name), reports: reports.length, stopped,
+      ...(playbook ? { playbook: playbook.id } : {}),
+      ...(servedBy.size ? { models: Array.from(servedBy) } : {}),
+    },
   });
 
   if (failure) emit("error", { message: failure, messageId });

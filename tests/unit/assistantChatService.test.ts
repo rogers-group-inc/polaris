@@ -404,6 +404,17 @@ describe("streamAssistantTurn", () => {
     expect(JSON.stringify(ev)).not.toContain("what is down?");
   });
 
+  it("records which model answered each round on the audit Event (rule 95(o))", async () => {
+    h.chatCompletionRound
+      .mockImplementationOnce(async () => ({ content: "", toolCalls: [{ id: "t", type: "function", function: { name: "list_assets", arguments: "{}" } }], finishReason: "tool_calls", servedBy: "gpt-5-nano-2025-08-07" }))
+      .mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText("Two."); return { content: "Two.", toolCalls: [], finishReason: "stop", servedBy: "gpt-5-mini-2025-08-07" }; });
+    h.runAssistantTool.mockResolvedValueOnce({ ok: true, data: { total: 2, rows: [] } });
+    await run().p;
+    const ev = eventLog.logEvent.mock.calls.at(-1)![0] as any;
+    expect(ev.details.models).toEqual(["gpt-5-nano-2025-08-07", "gpt-5-mini-2025-08-07"]);
+    expect(ev.message).toMatch(/\(model: gpt-5-nano-2025-08-07, gpt-5-mini-2025-08-07\)/);
+  });
+
   it("refuses an integration with no host before touching the conversation", async () => {
     await expect(run({ integration: { ...integration, config: { host: "", model: "" } } }).p).rejects.toThrow(/has no host/);
     expect(h.beginTurn).not.toHaveBeenCalled();

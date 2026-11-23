@@ -99,6 +99,16 @@ describe("recoverTextToolCalls", () => {
   });
 });
 
+describe("applyStreamChunk — the model that answered (rule 95(o))", () => {
+  it("keeps the last non-empty chunk model, as model-router names the model it picked", () => {
+    const round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; servedBy?: string } = { content: "", toolCalls: new Map(), finishReason: null };
+    applyStreamChunk(round, { model: "", choices: [], prompt_filter_results: [] });
+    expect(round.servedBy).toBeUndefined();
+    applyStreamChunk(round, { model: "gpt-5-mini-2025-08-07", choices: [{ delta: { content: "Hi" } }] });
+    expect(round.servedBy).toBe("gpt-5-mini-2025-08-07");
+  });
+});
+
 describe("applyStreamChunk", () => {
   it("joins a tool call split across fragments, by index", () => {
     const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null };

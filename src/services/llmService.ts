@@ -146,6 +146,12 @@ export interface CompletionRound {
   finishReason: string | null;
   /** Provider-native content to replay on the next round's assistant message (see ChatMessage.raw). */
   raw?: unknown;
+  /**
+   * The model that answered, as the server names it (a chat-completions
+   * chunk's `model`, Claude's message `model`). On Azure's model-router it is
+   * the underlying model the router picked for this round (rule 95(o)).
+   */
+  servedBy?: string;
 }
 
 export const AZURE_DEFAULTS = {
@@ -918,9 +924,11 @@ export function recoverTextToolCalls(text: string, knownNames: Iterable<string>)
  * running round. Exported for tests.
  */
 export function applyStreamChunk(
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars?: number },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars?: number; servedBy?: string },
   data: Record<string, any>,
 ): string {
+  // Every chunk names the model; a router's first chunk may name none.
+  if (typeof data?.model === "string" && data.model.trim()) round.servedBy = data.model.trim();
   const choice = Array.isArray(data?.choices) ? data.choices[0] : undefined;
   if (!choice) return "";
   const delta = choice.delta ?? choice.message ?? {};
@@ -1141,7 +1149,7 @@ async function anthropicRound(
       : final.stop_reason === "end_turn" ? "stop"
       : final.stop_reason === "max_tokens" ? "length"
       : final.stop_reason ?? null;
-    return { content: text, toolCalls, finishReason, raw: blocks };
+    return { content: text, toolCalls, finishReason, raw: blocks, ...(typeof final.model === "string" && final.model ? { servedBy: final.model } : {}) };
   } catch (err) {
     clearTimeout(idle);
     if (stalled && !opts.signal?.aborted) {
@@ -1204,7 +1212,7 @@ export async function chatCompletionRound(
     throw upstreamError(res.status, await readAll(res.stream), config);
   }
 
-  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0 };
+  const round = { content: "", toolCalls: new Map<number, ChatToolCall>(), finishReason: null as string | null, reasoningChars: 0, servedBy: undefined as string | undefined };
 
   try {
     await readRound(config, res, round, opts.onText, opts.onReasoning);
@@ -1219,13 +1227,13 @@ export async function chatCompletionRound(
     .sort((a, b) => a[0] - b[0])
     .map(([i, tc]) => ({ ...tc, id: tc.id || `call_${i}` }))
     .filter((tc) => tc.function.name);
-  return { content: round.content, toolCalls, finishReason: round.finishReason };
+  return { content: round.content, toolCalls, finishReason: round.finishReason, ...(round.servedBy ? { servedBy: round.servedBy } : {}) };
 }
 
 async function readRound(
   config: LlmConfig,
   res: RawResponse,
-  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars: number },
+  round: { content: string; toolCalls: Map<number, ChatToolCall>; finishReason: string | null; reasoningChars: number; servedBy?: string },
   onText: ((text: string) => void) | undefined,
   onReasoning?: (totalChars: number) => void,
 ): Promise<void> {
