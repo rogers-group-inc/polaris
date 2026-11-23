@@ -180,7 +180,7 @@ const HOSTED_CONTEXT_DEFAULTS = { claude: 200_000, azureChat: 128_000 } as const
 const MODEL_ROUTER_WINDOW = 128_000;
 
 /** Is this deployment Azure AI Foundry's model router (by its deployment name)? */
-function isModelRouter(config: Pick<LlmConfig, "provider" | "model">): boolean {
+function isModelRouter(config: Partial<Pick<LlmConfig, "provider" | "model">>): boolean {
   return isAzureProvider(config) && /router/i.test(config.model ?? "");
 }
 
@@ -190,7 +190,7 @@ function isModelRouter(config: Pick<LlmConfig, "provider" | "model">): boolean {
  * chat-completions deployment 128K, a local server LLM_DEFAULTS.contextWindow
  * — capped at MODEL_ROUTER_WINDOW on a model-router deployment.
  */
-export function effectiveContextWindow(config: Pick<LlmConfig, "provider" | "azureApiShape" | "model" | "contextWindow">): number {
+export function effectiveContextWindow(config: Partial<Pick<LlmConfig, "provider" | "azureApiShape" | "model" | "contextWindow">>): number {
   const fallback = !isAzureProvider(config) ? LLM_DEFAULTS.contextWindow
     : config.azureApiShape === "anthropic" ? HOSTED_CONTEXT_DEFAULTS.claude
     : HOSTED_CONTEXT_DEFAULTS.azureChat;
