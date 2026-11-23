@@ -248,8 +248,8 @@ dial-up sites, FortiClient IPsec users or SSL-VPN users, or everything except th
 one tunnel. Each row has the peer's public address, its tunnel address, the device
 Polaris matched it to and how long it has been connected. *Export the public IPs of
 the ADVPN peers connected to hub-fw-01 as a CSV, not the remote-access users* is one
-report. These rows are what the gate reported at its last full pass, the same data
-as the asset's **IPsec** tab.
+report. Name several gates and their sessions land in one table. These rows are what
+each gate reported at its last full pass, the same data as the asset's **IPsec** tab.
 
 It can open **one network** the way its slide-in does: purpose, VLAN, the
 FortiGate and interface serving it, when it was last discovered, how many
@@ -280,6 +280,14 @@ To narrow a report or lookup to particular devices, name them: *"just those 15
 firewalls"* matches each hostname exactly. If you ask for a filter or column
 Polaris doesn't have, the assistant says it was left out instead of handing back
 an unfiltered table.
+
+A report carries **every column** the lookup has unless you name the ones you want.
+*"Export the IPsec sessions"* gives you the gate, tunnel, public IP, tunnel IP,
+status, uptime, bytes in and out and the rest. Ask to **remove duplicates**
+(*"only unique public IPs"*) and Polaris keeps the first row for each value and
+adds a **Duplicates removed** column counting what each kept row stood for. This
+works across devices as well: combine two hubs in one report and a spoke connected
+to both appears once.
 
 Name a format and you get only that one: *"a PDF of the switches acquired
 before 2022"* shows just the **PDF** button. The first PDF in a session takes a

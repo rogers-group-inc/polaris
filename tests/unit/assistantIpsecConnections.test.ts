@@ -133,7 +133,7 @@ describe("list_ipsec_connections — filters", () => {
     });
     const r = await call({ hostname: "HUB-1" }, 1);
     expect(r.data).toMatchObject({
-      gate: "HUB-1", collectedAt: SEEN.toISOString(), total: 2, returned: 1, truncated: true,
+      gates: [{ gate: "HUB-1", assetId: "hub1", connections: 2, collectedAt: SEEN.toISOString() }], total: 2, returned: 1, truncated: true,
       rows: [{ gate: "HUB-1", peerId: "SPOKE-A", peerDevice: "SPOKE-A", remoteGateway: "203.0.113.10", connectedSince: SINCE.toISOString() }],
     });
     expect(h.countIpsecConnectionsByKind).not.toHaveBeenCalled();
@@ -172,7 +172,7 @@ describe("create_report from list_ipsec_connections", () => {
     expect(reports).toHaveLength(1);
     expect(reports[0]).toMatchObject({
       rowCount: 2, truncated: false, formats: ["csv"],
-      columns: [{ key: "parentTunnel", label: "Tunnel" }, { key: "peerId", label: "Peer ID" }, { key: "remoteGateway", label: "Public IP" }],
+      columns: [{ key: "parentTunnel", label: "Tunnel" }, { key: "remoteGateway", label: "Public IP" }, { key: "peerId", label: "Peer ID" }],
       rows: [
         { parentTunnel: "Overlay-1", peerId: "SPOKE-A", remoteGateway: "203.0.113.10" },
         { parentTunnel: "Overlay-3", peerId: "SPOKE-A", remoteGateway: "198.51.100.7" },
@@ -196,5 +196,80 @@ describe("create_report from list_ipsec_connections", () => {
     expect(r.ok).toBe(true);
     expect(reports).toHaveLength(1);
     expect(reports[0].rowCount).toBe(0);
+  });
+});
+
+describe("list_ipsec_connections — several gates in one call", () => {
+  beforeEach(() => {
+    stubbed(prisma.asset.findMany).mockImplementation(async (q: any) => {
+      const name = String(q.where.hostname?.equals ?? "").toUpperCase();
+      return name === "HUB-1" ? [{ id: "hub1", hostname: "HUB-1", status: "active" }]
+        : name === "HUB-2" ? [{ id: "hub2", hostname: "HUB-2", status: "active" }]
+        : [];
+    });
+    h.listIpsecConnections.mockImplementation(async (id: string) => ({
+      connections: id === "hub1"
+        ? [conn({ remoteGateway: "203.0.113.10" }), conn({ name: "Overlay-1_1", remoteGateway: "198.51.100.7" })]
+        : [conn({ name: "Overlay-2_0", parentTunnel: "Overlay-2", remoteGateway: "203.0.113.10" })],
+      collectedAt: SEEN,
+    }));
+  });
+
+  it("combines every named gate's rows, each row naming its gate, and names what did not resolve", async () => {
+    const r = await call({ hostname: ["HUB-1", "hub-2", "NOPE"], excludeKind: ["remote-access", "ssl-vpn"] });
+    expect(h.listIpsecConnections.mock.calls.map((x) => x[0])).toEqual(["hub1", "hub2"]);
+    expect(r.data).toMatchObject({
+      total: 3,
+      gates: [{ gate: "HUB-1", connections: 2 }, { gate: "HUB-2", connections: 1 }],
+      notFound: ["NOPE"],
+    });
+    expect((r.data as { rows: Array<{ gate: string }> }).rows.map((x) => x.gate)).toEqual(["HUB-1", "HUB-1", "HUB-2"]);
+  });
+
+  it("asks for a gate named twice only once", async () => {
+    await call({ hostname: "HUB-1, hub-1" });
+    expect(h.listIpsecConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes by public IP across both gates in a report, keeping every column and counting what it removed", async () => {
+    const reports: AssistantReportPayload[] = [];
+    const r = await runAssistantTool("create_report", JSON.stringify({
+      title: "Hub peers, unique public IPs", source: "list_ipsec_connections",
+      args: { hostname: ["HUB-1", "HUB-2"] }, dedupeBy: ["remoteGateway"],
+    }), { req, maxRows: 50, onReport: (x) => reports.push(x) });
+    expect(r.data).toMatchObject({ rowCount: 2, totalMatching: 3, dedupedBy: ["remoteGateway"], duplicatesRemoved: 1 });
+    const rep = reports[0];
+    expect(rep.rows.map((x) => [x.gate, x.remoteGateway, x.duplicatesRemoved])).toEqual([
+      ["HUB-1", "203.0.113.10", 1], ["HUB-1", "198.51.100.7", 0],
+    ]);
+    // No columns asked → every source column, then the duplicates count.
+    expect(rep.columns.map((x) => x.key)).toEqual([
+      "gate", "parentTunnel", "remoteGateway", "tunnelIp", "status", "uptime", "incomingBytes", "outgoingBytes",
+      "name", "kind", "peerId", "peerDevice", "userName", "connectedSince", "lastSeen", "duplicatesRemoved",
+    ]);
+  });
+
+  it("refuses a dedupe key the source has no column for instead of shipping repeats", async () => {
+    const reports: AssistantReportPayload[] = [];
+    const r = await runAssistantTool("create_report", JSON.stringify({
+      title: "x", source: "list_ipsec_connections", args: { hostname: "HUB-1" }, dedupeBy: "publicIp",
+    }), { req, maxRows: 50, onReport: (x) => reports.push(x) });
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r.data)).toMatch(/publicIp.*remoteGateway/);
+    expect(reports).toHaveLength(0);
+  });
+});
+
+describe("list_ipsec_connections — uptime", () => {
+  it("is the uptime as of the scrape that saw the session, never a now-relative one", async () => {
+    h.listIpsecConnections.mockResolvedValue({
+      connections: [
+        conn({ connectedSince: new Date(SEEN.getTime() - (2 * 86400 + 3 * 3600) * 1000) }),
+        conn({ name: "b", connectedSince: null }),
+      ],
+      collectedAt: SEEN,
+    });
+    const r = await call({ hostname: "HUB-1" });
+    expect((r.data as { rows: Array<{ uptime: string | null }> }).rows.map((x) => x.uptime)).toEqual(["2d 3h", null]);
   });
 });

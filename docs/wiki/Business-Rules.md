@@ -1844,7 +1844,9 @@ the Alerts page. It can only look things up — it never changes, acknowledges,
 pushes or deletes anything, and it cannot read stored credentials, API tokens,
 user accounts, roles, sign-in settings, automation scripts or server settings.
 A report it builds is a database extract: Polaris runs the query itself (up to
-5,000 rows), so the rows you download were never written by the model. Measured
+5,000 rows), so the rows you download were never written by the model. Removing
+duplicates ("only unique public IPs") is done by Polaris over those rows too, never
+by the model. Measured
 figures (CPU and memory, interface traffic and errors, Path Monitor availability
 and latency) are computed the same way, by Polaris from the stored samples, never
 by the model. Your
@@ -3972,3 +3974,14 @@ The change takes effect on the agent's next check-in and is recorded in Events. 
 typed address still wins, and a FortiGate, FortiSwitch or FortiAP keeps its management address.
 If the agent stops checking in, its address holds for 24 hours, then the network evidence
 decides again.
+
+### Rule 196
+
+**A dial-up IPsec template shows the uptime and traffic of its sessions.** A FortiGate keeps
+no counters for a dial-up template itself, only for each peer or user connected through it.
+On the IPsec tab, a template's **Up** is how long its longest-connected session has been up,
+and its **In** / **Out** is a running total of what every session on the template has moved
+since Polaris started counting. When a session ends, its traffic stays in the total. Polaris
+adds each session's new traffic each time it reads the gate (every 10 minutes by default), so
+a session that connects and disconnects between two reads is not counted. Site-to-site tunnels
+keep the gate's own counters, and a tunnel's history charts are unchanged.

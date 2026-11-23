@@ -37,6 +37,7 @@ Each entity below carries its CLAUDE.md definition + load-bearing invariant, fol
 
 - **AssetMclagPeer** — current-state MCLAG ICL peers (one row per local `mclag-icl-port`), delete-replaced per scrape by `persistMclagPeers`. `peerSn` is the canonical pairing key and resolves to `matchedAssetId`.
 
+- **AssetIpsecTemplateTotal** — a dial-up IPsec template's running byte total (business rule 196): what every session that has hung off it since `since` moved, ended sessions included. Grown (never recomputed, never reduced) by `persistIpsecConnections` on each full pass that read the IPsec half; read by `readAssetIpsec` as the template row's In / Out. Plain table, PK (assetId, tunnelName), real FK cascade.
 - **AssetIpsecConnection** — who is connected through a FortiGate's IPsec / SSL-VPN: one row per dynamic child FortiOS hangs under a phase-1 (a hub's ADVPN spokes and dial-up peers, a spoke's ADVPN shortcuts, FortiClient IPsec users) plus one per SSL-VPN session. Current-state, delete-replaced per FULL system-info pass by `persistIpsecConnections` — the IPsec half and the SSL-VPN half **independently**, each only when its own read answered. Never pinned, never sampled: the phase-1 tunnels stay in `AssetIpsecTunnelSample`. The peer is matched to an asset at READ time, not stored.
 
 ## Schema
@@ -172,6 +173,13 @@ AssetApVap                      -- Current-state table of the BROADCAST SSIDs on
   @@unique([assetId, radioIndex, vapName])
 
 AssetMclagPeer                  -- Current-state table of MCLAG (Multi-Chassis LAG) Inter-Chassis-Link peers, one row per local physical ICL port on a FortiSwitch (the ICL can be a multi-link aggregate → several rows to the same peer). Plain table (NOT a hypertable), full-replaced per scrape per asset by `monitoringService.persistMclagPeers` (delete-then-`createMany` in one `retryOnDeadlock($transaction)`) — same delete-replace pattern as AssetLldpNeighbor / AssetSdwanRule. Parsed by `utils/fortiswitchCmdb.parseFortiswitchMclagPeers` from the parent FortiGate's `switch-controller/managed-switch` CMDB (`ports[]` rows where `mclag-icl-port` is truthy), read off the SAME cached payload the FortiSwitch VLAN/trunk overlay already fetches in `fetchFortiswitchControllerPortsCmdb` (no extra query; works on FortiManager + standalone FortiGate). The discriminator is `mclag-icl-port`; `peerSn` (`isl-peer-device-sn`) is the canonical pairing key (port names aren't unique across the two chassis) and is resolved to `matchedAssetId` via a serial lookup at persist time. Surfaced via `GET /assets/:id/mclag-peers` (asset-detail General-tab "MCLAG Peer" row, switch-only, one grouped row per peer with ICL port pairs) and `GET /map/sites/:id/topology` (`mclagEdges` — one undirected fuchsia sibling ICL edge per pair; the LLDP/interface representations of the same adjacency are stripped server-side so it renders once and the column solver treats it as visual-only — peers never become parent/child). Case B (the downstream `mclag:enable` trunks for dual-homed endpoints) is intentionally NOT parsed yet.
+AssetIpsecTemplateTotal         -- A dial-up IPsec template's running byte total (rule 196), grown per full pass by each session's growth; keeps what ended sessions moved
+  assetId        UUID FK -> Asset (cascade delete)   -- PK (assetId, tunnelName)
+  tunnelName     String          -- the template's phase-1 name (a connection's parentTunnel)
+  incomingBytes  BigInt  default 0
+  outgoingBytes  BigInt  default 0
+  since          DateTime        -- the pass that created the row: when counting started
+  updatedAt      DateTime        -- the last pass that grew it
 AssetIpsecConnection            -- Current-state table of who is connected through a FortiGate's IPsec / SSL-VPN (the asset IPsec tab), delete-replaced per full system-info pass, each half (IPsec / SSL-VPN) only when its read answered
   id             UUID PK
   assetId        UUID FK -> Asset (cascade delete)   -- the FortiGate

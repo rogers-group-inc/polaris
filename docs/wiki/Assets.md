@@ -2004,6 +2004,15 @@ through it:
 ▶ before its name; click it to show the peers (▼ hides them again). Polaris
 remembers which templates you opened, per gate.
 
+**A dial-up template's Up, In and Out describe its sessions.** The gate keeps
+no uptime or traffic counters for a template itself, so **Up** shows how long
+its longest-connected session has been up, and **In** / **Out** show a running
+total of the traffic of every session that has used the template since Polaris
+started counting. When a session ends, its traffic stays in the total. Hover
+over the figure to see when counting started. A session that connects and
+disconnects between two reads of the gate is not counted. See
+[rule 196](Business-Rules#rule-196).
+
 Each peer row carries its **remote gateway** (the peer's public / underlay
 address), its **tunnel IP** (its overlay or assigned address), how long it
 has been **up**, and its traffic. The **Device** column links to the peer's

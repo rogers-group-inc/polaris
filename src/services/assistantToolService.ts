@@ -40,7 +40,7 @@ import { POLARIS_SERVER_SUBJECT, POLARIS_SERVER_LABEL } from "./pathCheckIngestS
 import { agentOnline, pathResultStaleReason } from "../utils/pathCheckStale.js";
 import { macColonUpperOrNull } from "../utils/mac.js";
 import { usableHostCount, isValidCidr, ipInCidr, isValidIpAddress } from "../utils/cidr.js";
-import { deviceUptime } from "../utils/uptime.js";
+import { deviceUptime, formatUptime } from "../utils/uptime.js";
 import type { ChatToolDef } from "./llmService.js";
 import { ASSET_SECTIONS, ASSET_SECTION_HELP, readAssetSections } from "./assetDetailReadService.js";
 import { listIpsecConnections, countIpsecConnectionsByKind } from "./ipsecConnectionService.js";
@@ -2305,12 +2305,17 @@ const listReservationsTool: ListToolDef = {
 // hub, as a CSV"). A list tool fixes both: the filter keeps the result small,
 // and create_report can source it.
 
+/** Gates one list_ipsec_connections call may combine. */
+const IPSEC_MAX_GATES = 50;
+
 const IpsecConnArgs = z.object({
-  id: z.string().max(60).optional(),
-  hostname: z.string().max(255).optional(),
-  ip: z.string().max(60).optional(),
-  // One kind, a list, or "a, b" — a model sends all three (a bare string
-  // failed the first live report, 2026-11-23).
+  // One gate or several — "the ADVPN peers of both hubs" is ONE lookup, so a
+  // report can combine them (and create_report's dedupeBy can collapse a spoke
+  // seen on both). Each takes one value, a list or "a, b".
+  id: oneOrMany(z.string().trim().min(1).max(60), IPSEC_MAX_GATES),
+  hostname: oneOrMany(z.string().trim().min(1).max(255), IPSEC_MAX_GATES),
+  ip: oneOrMany(z.string().trim().min(1).max(60), IPSEC_MAX_GATES),
+  // A bare string failed the first live report, 2026-11-23.
   kind: oneOrMany(z.enum(IPSEC_CONNECTION_KINDS), IPSEC_CONNECTION_KINDS.length),
   excludeKind: oneOrMany(z.enum(IPSEC_CONNECTION_KINDS), IPSEC_CONNECTION_KINDS.length),
   tunnel: oneOrMany(z.string().trim().min(1).max(100), 50),
@@ -2321,12 +2326,14 @@ const IpsecConnArgs = z.object({
 /** The kinds a "not remote access" question leaves out. */
 const REMOTE_ACCESS_KINDS = ["remote-access", "ssl-vpn"] as const;
 
+type IpsecGate = { id: string; hostname: string | null };
+
 /**
- * The gate a name / IP / id means. A hostname can be held by a decommissioned
- * twin as well as the live gate; a live one wins, and among several the one
- * that actually holds IPsec connections.
+ * The gate one name / IP / id means. A hostname can be held by a
+ * decommissioned twin as well as the live gate; a live one wins, and among
+ * several the one that actually holds IPsec connections.
  */
-async function resolveIpsecGate(a: { id?: string; hostname?: string; ip?: string }): Promise<{ id: string; hostname: string | null } | null> {
+async function resolveIpsecGate(a: { id?: string; hostname?: string; ip?: string }): Promise<IpsecGate | null> {
   const where = a.id ? { id: a.id }
     : a.hostname ? { hostname: { equals: a.hostname, mode: "insensitive" as const } }
     : { ipAddress: a.ip };
@@ -2342,24 +2349,43 @@ async function resolveIpsecGate(a: { id?: string; hostname?: string; ip?: string
   return { id: best.id, hostname: best.hostname };
 }
 
+/** Every gate the args name, in the order named, each once; what did not resolve is listed. */
+async function resolveIpsecGates(a: { id?: string[]; hostname?: string[]; ip?: string[] }): Promise<{ gates: IpsecGate[]; notFound: string[] }> {
+  const asked = [
+    ...(a.id ?? []).map((id) => ({ key: id, q: { id } })),
+    ...(a.hostname ?? []).map((hostname) => ({ key: hostname, q: { hostname } })),
+    ...(a.ip ?? []).map((ip) => ({ key: ip, q: { ip } })),
+  ];
+  const hits = await Promise.all(asked.map((x) => resolveIpsecGate(x.q)));
+  const gates: IpsecGate[] = [];
+  const seen = new Set<string>();
+  const notFound: string[] = [];
+  hits.forEach((g, i) => {
+    if (!g) notFound.push(asked[i].key);
+    else if (!seen.has(g.id)) { seen.add(g.id); gates.push(g); }
+  });
+  return { gates, notFound };
+}
+
 const listIpsecConnectionsTool: ListToolDef = {
   argSchema: IpsecConnArgs,
   name: "list_ipsec_connections",
   label: "looked up IPsec connections",
   description:
-    "List the peers / users CONNECTED through one FortiGate's IPsec or SSL-VPN (by id, exact hostname or IP) — " +
-    "each row's remoteGateway is the peer's public (underlay) address, tunnelIp its overlay / assigned address. " +
+    "List the peers / users CONNECTED through one or more FortiGates' IPsec or SSL-VPN (hostname / ip / id, each " +
+    "one value or a list — name every gate asked about in ONE call so their rows combine). Each row: the gate, " +
+    "tunnel, remoteGateway (the peer's public address), tunnelIp, status, uptime, bytes in / out and more. " +
     "Kinds: advpn-spoke, advpn-shortcut, dialup-peer, remote-access (FortiClient IPsec users), ssl-vpn. A hub's " +
     "ADVPN spokes are often stored as dialup-peer (when the template's config could not be read), so for " +
     "\"site / ADVPN peers, not remote access\" use excludeKind [\"remote-access\",\"ssl-vpn\"], never a guessed kind. " +
-    "tunnel narrows to parent phase-1 names. An empty result lists the kinds the gate DOES hold — retry with " +
+    "tunnel narrows to parent phase-1 names. An empty result lists the kinds the gates DO hold — retry with " +
     "those before reporting nothing. Use this, not asset_details, for connected peers; it is a create_report source.",
   parameters: {
     type: "object",
     properties: {
-      id: { type: "string" },
-      hostname: { type: "string" },
-      ip: { type: "string" },
+      hostname: { type: "array", items: { type: "string" }, description: "One or more gate hostnames, e.g. [\"HUB-1\",\"HUB-2\"]" },
+      ip: { type: "array", items: { type: "string" } },
+      id: { type: "array", items: { type: "string" } },
       kind: { type: "array", items: { type: "string", enum: [...IPSEC_CONNECTION_KINDS] } },
       excludeKind: { type: "array", items: { type: "string", enum: [...IPSEC_CONNECTION_KINDS] } },
       tunnel: { type: "array", items: { type: "string" }, description: "Parent tunnel names, e.g. [\"Overlay-1\"]" },
@@ -2367,13 +2393,16 @@ const listIpsecConnectionsTool: ListToolDef = {
       limit: { type: "number" },
     },
   },
+  // The order a report prints them: what an "IPsec session export" is asked
+  // for first (operator, 2026-11-23), then the rest.
   columns: [
-    { key: "gate", label: "FortiGate" }, { key: "parentTunnel", label: "Tunnel" }, { key: "name", label: "Connection" },
-    { key: "kind", label: "Kind" }, { key: "peerId", label: "Peer ID" }, { key: "userName", label: "User" },
-    { key: "peerDevice", label: "Peer device" }, { key: "remoteGateway", label: "Public IP" },
-    { key: "tunnelIp", label: "Tunnel IP" }, { key: "status", label: "Status" },
-    { key: "connectedSince", label: "Connected since" }, { key: "incomingBytes", label: "Bytes in" },
-    { key: "outgoingBytes", label: "Bytes out" }, { key: "lastSeen", label: "Collected" },
+    { key: "gate", label: "FortiGate" }, { key: "parentTunnel", label: "Tunnel" },
+    { key: "remoteGateway", label: "Public IP" }, { key: "tunnelIp", label: "Tunnel IP" },
+    { key: "status", label: "Status" }, { key: "uptime", label: "Uptime" },
+    { key: "incomingBytes", label: "Bytes in" }, { key: "outgoingBytes", label: "Bytes out" },
+    { key: "name", label: "Connection" }, { key: "kind", label: "Kind" }, { key: "peerId", label: "Peer ID" },
+    { key: "peerDevice", label: "Peer device" }, { key: "userName", label: "User" },
+    { key: "connectedSince", label: "Connected since" }, { key: "lastSeen", label: "Collected" },
   ],
   async rows(args, ctx, cap) {
     if (!hasPermission(ctx.req, "assets", "read")) return denied("assets");
@@ -2381,41 +2410,53 @@ const listIpsecConnectionsTool: ListToolDef = {
     if (!p.success) return invalid(p.error);
     const a = p.data;
     if (!a.id && !a.hostname && !a.ip) {
-      return { ok: false, data: { error: "Give the FortiGate's id, hostname or ip." } };
+      return { ok: false, data: { error: "Give the FortiGate's id, hostname or ip (one or several)." } };
     }
-    const gate = await resolveIpsecGate(a);
-    if (!gate) return { ok: true, data: { found: false, note: "No asset matches that id, hostname or IP." } };
-    const r = await listIpsecConnections(gate.id, {
-      kinds: a.kind, excludeKinds: a.excludeKind, parentTunnels: a.tunnel, status: a.status,
-    });
+    const { gates, notFound } = await resolveIpsecGates(a);
+    if (gates.length === 0) return { ok: true, data: { found: false, notFound, note: "No asset matches those ids, hostnames or IPs." } };
+    const filter = { kinds: a.kind, excludeKinds: a.excludeKind, parentTunnels: a.tunnel, status: a.status };
+    // At most IPSEC_MAX_GATES gates, each one indexed query + one resolution pass.
+    const perGate = await Promise.all(gates.map(async (gate) => ({ gate, r: await listIpsecConnections(gate.id, filter) })));
+    const all = perGate.flatMap(({ gate, r }) => r.connections.map((c) => ({ gate, c })));
     const take = Math.min(a.limit ?? cap, cap);
-    // A filter that matched nothing on a gate that HAS connections is almost
+    // A filter that matched nothing on gates that HAVE connections is almost
     // always the wrong kind (seen live 2026-11-23: kind advpn-spoke on a hub
     // whose spokes are dialup-peer → an empty report). Say what is there.
     let emptyHint: Record<string, unknown> = {};
-    if (r.connections.length === 0 && (a.kind || a.excludeKind || a.tunnel || a.status)) {
-      const onGate = await countIpsecConnectionsByKind(gate.id);
-      if (onGate.length) {
-        const siteKinds = Array.from(new Set(onGate.map((g) => g.kind)))
+    if (all.length === 0 && (a.kind || a.excludeKind || a.tunnel || a.status)) {
+      const onGates = (await Promise.all(gates.map(async (g) =>
+        (await countIpsecConnectionsByKind(g.id)).map((x) => ({ gate: g.hostname, ...x }))))).flat();
+      if (onGates.length) {
+        const siteKinds = Array.from(new Set(onGates.map((g) => g.kind)))
           .filter((k) => !(REMOTE_ACCESS_KINDS as readonly string[]).includes(k));
         emptyHint = {
-          connectionsOnGate: onGate,
-          retryHint: "Nothing matched these filters, but the gate holds the connections listed in connectionsOnGate. " +
+          connectionsOnGate: onGates,
+          retryHint: "Nothing matched these filters, but the gates hold the connections listed in connectionsOnGate. " +
             "Retry with the kind / tunnel that fits the question" +
-            (siteKinds.length ? ` — its non-remote-access kinds are ${siteKinds.join(", ")}` : "") +
+            (siteKinds.length ? ` — their non-remote-access kinds are ${siteKinds.join(", ")}` : "") +
             ". Do not report an empty result.",
         };
       }
     }
     return {
-      rows: r.connections.slice(0, take).map((c) => plain({
-        gate: gate.hostname, parentTunnel: c.parentTunnel, name: c.name, kind: c.kind, peerId: c.peerId,
-        userName: c.userName, peerDevice: c.matchedAsset?.hostname ?? null, remoteGateway: c.remoteGateway,
-        tunnelIp: c.tunnelIp, status: c.status, connectedSince: c.connectedSince,
-        incomingBytes: c.incomingBytes, outgoingBytes: c.outgoingBytes, lastSeen: c.lastSeen,
+      rows: all.slice(0, take).map(({ gate, c }) => plain({
+        gate: gate.hostname, parentTunnel: c.parentTunnel, remoteGateway: c.remoteGateway, tunnelIp: c.tunnelIp,
+        status: c.status,
+        // Uptime AS OF the scrape that saw it (connectedSince is that scrape's
+        // time minus FortiOS's reported uptime), so a stale row never reads longer.
+        uptime: c.connectedSince ? formatUptime((c.lastSeen.getTime() - c.connectedSince.getTime()) / 1000) : null,
+        incomingBytes: c.incomingBytes, outgoingBytes: c.outgoingBytes,
+        name: c.name, kind: c.kind, peerId: c.peerId, peerDevice: c.matchedAsset?.hostname ?? null,
+        userName: c.userName, connectedSince: c.connectedSince, lastSeen: c.lastSeen,
       })),
-      total: r.connections.length,
-      extra: { gate: gate.hostname, assetId: gate.id, collectedAt: r.collectedAt?.toISOString() ?? null, ...emptyHint },
+      total: all.length,
+      extra: {
+        gates: perGate.map(({ gate, r }) => ({
+          gate: gate.hostname, assetId: gate.id, connections: r.connections.length, collectedAt: r.collectedAt?.toISOString() ?? null,
+        })),
+        ...(notFound.length ? { notFound, notFoundNote: `No asset matches ${notFound.join(", ")} — those gates are NOT in the result; say so.` } : {}),
+        ...emptyHint,
+      },
     };
   },
   async run(args, ctx) {
@@ -2648,6 +2689,7 @@ const ReportArgs = z.object({
   source: z.enum(REPORT_SOURCE_NAMES),
   args: z.record(z.string(), z.unknown()).optional(),
   columns: z.array(z.string().max(60)).max(30).optional(),
+  dedupeBy: oneOrMany(z.string().trim().min(1).max(60), 5),
   formats: z.preprocess((v) => {
     if (v == null || v === "") return undefined;
     const list = Array.isArray(v) ? v : String(v).split(",");
@@ -2662,11 +2704,41 @@ const ReportArgs = z.object({
  * never named, and the assistant told a user an uptime PDF could not print
  * uptime (seen live 2026-10-28). Exported for tests.
  */
-export const REPORT_COLUMN_HINT_SOURCES = ["list_assets", "telemetry_summary", "list_services", "path_check_summary", "interface_summary"] as const;
+export const REPORT_COLUMN_HINT_SOURCES = ["list_assets", "telemetry_summary", "list_services", "path_check_summary", "interface_summary", "list_ipsec_connections"] as const;
 const reportColumnsHint = (): string =>
-  "Column keys to include. " + REPORT_COLUMN_HINT_SOURCES
+  "OMIT this unless the user named the exact columns they want: a report carries EVERY column by default, and " +
+  "\"export the public IPs\" or \"export the session information\" still means every column. Column keys: " +
+  REPORT_COLUMN_HINT_SOURCES
     .map((s) => `${s}: ${LIST_BY_NAME.get(s)!.columns.map((c) => c.key).join(", ")}`)
     .join(". ");
+
+/** The column a report adds when dedupeBy collapsed rows. */
+const DUPLICATES_COLUMN: ReportColumn = { key: "duplicatesRemoved", label: "Duplicates removed" };
+
+/**
+ * Keep the first row for each value of the `keys` columns (trimmed, case
+ * folded), in the source's order, counting what each kept row absorbed. A row
+ * whose key columns are all empty is never a duplicate — no address is not
+ * the same address. Exported for tests.
+ */
+export function dedupeRows(rows: Array<Record<string, unknown>>, keys: string[]): { rows: Array<Record<string, unknown>>; removed: number } {
+  const kept: Array<Record<string, unknown>> = [];
+  const byKey = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const parts = keys.map((k) => {
+      const v = r[k];
+      return v == null ? "" : String(v).trim().toLowerCase();
+    });
+    if (parts.every((x) => x === "")) { kept.push({ ...r, duplicatesRemoved: 0 }); continue; }
+    const key = JSON.stringify(parts);
+    const first = byKey.get(key);
+    if (first) { first.duplicatesRemoved = (first.duplicatesRemoved as number) + 1; continue; }
+    const row = { ...r, duplicatesRemoved: 0 };
+    byKey.set(key, row);
+    kept.push(row);
+  }
+  return { rows: kept, removed: rows.length - kept.length };
+}
 
 const createReportTool: ToolDef = {
   name: "create_report",
@@ -2674,7 +2746,10 @@ const createReportTool: ToolDef = {
   description:
     "Build a downloadable report (CSV / PDF / Markdown) for the user. Polaris runs the named list tool " +
     `itself with the given filter args (up to ${REPORT_ROW_CAP} rows) — never type report rows yourself. ` +
-    "Optionally pick which columns to include. After calling it, briefly tell the user what the report holds.",
+    "It includes every column unless the user named specific ones. To combine several devices, give the source " +
+    "all of them in one args (e.g. hostname [\"HUB-1\",\"HUB-2\"]). When the user asks to remove duplicates, set " +
+    "dedupeBy to the column key(s) that must be unique (e.g. [\"remoteGateway\"] for unique public IPs): Polaris " +
+    "keeps the first row per value and counts what it removed. After calling it, briefly tell the user what the report holds.",
   parameters: {
     type: "object",
     properties: {
@@ -2682,6 +2757,10 @@ const createReportTool: ToolDef = {
       source: { type: "string", enum: LIST_TOOLS.map((t) => t.name) },
       args: { type: "object", description: "The same filter arguments the source tool accepts" },
       columns: { type: "array", items: { type: "string" }, description: reportColumnsHint() },
+      dedupeBy: {
+        type: "array", items: { type: "string" },
+        description: "Only when the user asks to remove duplicates: the column key(s) whose value must be unique across the report.",
+      },
       formats: {
         type: "array", items: { type: "string", enum: [...REPORT_FORMATS] },
         description: "Only the download formats the user asked for, e.g. [\"pdf\"]. Omit when they named none — all three are offered.",
@@ -2714,12 +2793,29 @@ const createReportTool: ToolDef = {
       const have = new Set(sourceColumns.map((c) => c.key));
       unknownColumns = p.data.columns.filter((k) => !have.has(k));
     }
+    // Duplicates are removed HERE, over the database rows, never by the model
+    // (rule 95(c)). A dedupe key the source lacks is refused, not ignored: a
+    // report the user asked to be unique must not silently come back with repeats.
+    let sourceRows = res.rows;
+    let removed = 0;
+    if (p.data.dedupeBy?.length) {
+      const have = new Set(sourceColumns.map((c) => c.key));
+      const bad = p.data.dedupeBy.filter((k) => !have.has(k));
+      if (bad.length) {
+        return {
+          ok: false,
+          data: { error: `dedupeBy names ${bad.join(", ")}, which ${p.data.source} has no column for. Its column keys: ${[...have].join(", ")}.` },
+        };
+      }
+      ({ rows: sourceRows, removed } = dedupeRows(res.rows, p.data.dedupeBy));
+      if (!columns.some((c) => c.key === DUPLICATES_COLUMN.key)) columns = [...columns, DUPLICATES_COLUMN];
+    }
     const formats = ctx.reportFormats?.length ? ctx.reportFormats : p.data.formats;
     const report: AssistantReportPayload = {
       title: p.data.title,
       columns,
-      rows: res.rows.map((r) => Object.fromEntries(columns.map((c) => [c.key, r[c.key] ?? null]))),
-      rowCount: res.rows.length,
+      rows: sourceRows.map((r) => Object.fromEntries(columns.map((c) => [c.key, r[c.key] ?? null]))),
+      rowCount: sourceRows.length,
       truncated: res.total > res.rows.length,
       ...(formats?.length ? { formats } : {}),
     };
@@ -2733,6 +2829,8 @@ const createReportTool: ToolDef = {
         title: report.title,
         rowCount: report.rowCount,
         totalMatching: res.total,
+        ...(p.data.dedupeBy?.length ? { dedupedBy: p.data.dedupeBy, duplicatesRemoved: removed } : {}),
+        ...(res.extra?.notFoundNote ? { notFound: res.extra.notFound, notFoundNote: res.extra.notFoundNote } : {}),
         truncated: report.truncated,
         columns: columns.map((c) => c.label),
         downloads: (report.formats ?? REPORT_FORMATS).map((f) => (f === "md" ? "Markdown" : f.toUpperCase())),
@@ -2741,7 +2839,8 @@ const createReportTool: ToolDef = {
         // from text after a report regardless (stripMarkdownTables); this says why.
         note: "The user ALREADY SEES the full table with CSV / PDF / Markdown download buttons. " +
           "You have NOT seen its rows. Reply with ONE short sentence about what the report holds " +
-          "(its title and row count), plus one about anything ignoredArgsNote or unknownColumnsNote says. " +
+          "(its title and row count, and how many duplicates were removed when it was deduplicated), plus one " +
+          "about anything ignoredArgsNote, unknownColumnsNote or notFoundNote says. " +
           "Do NOT write a table, list rows, or invent values.",
       },
     };

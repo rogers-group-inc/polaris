@@ -2536,6 +2536,9 @@
       var isOpen = !!opened[t.tunnelName];
       var connected = kids.length + (usersByParent[t.tunnelName] || 0);
       var kindText = t.status === "dynamic" ? "Dial-up template · " + connected + " connected" : "Site-to-site";
+      // Rule 196: a template's Up is its longest-connected session.
+      var tUp = t.status === "dynamic" ? ipsecUptime(t.connectedSince) : "";
+      if (tUp) kindText += " · up " + tUp;
       var via = [t.parentInterface ? '<span class="mono">' + escapeHtml(t.parentInterface) + '</span>' : "", addr(t.overlayIp)].filter(Boolean).join(" · ");
       var toggle = collapsible
         ? '<button type="button" class="btn btn-text ipsec-toggle" data-parent="' + escapeHtml(t.tunnelName) + '" aria-expanded="' + isOpen + '"'

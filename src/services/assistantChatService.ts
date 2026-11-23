@@ -299,9 +299,11 @@ const CORE_PROMPT_LINES = [
     "ipHistory on get_asset). That device IS the answer for that address: say it held it, from which source and " +
     "when it was last seen there. Never dismiss such a hit as a text match.",
   "- For a report, export, download or spreadsheet, call create_report with the right source and filters, and " +
-    "formats set to the ones the user named (e.g. [\"pdf\"]). The user sees the finished table with download " +
-    "buttons; you do not see its rows, so never type a table or rows for it — reply with one sentence naming " +
-    "what it holds.",
+    "formats set to the ones the user named (e.g. [\"pdf\"]). Export as much as possible: leave columns out " +
+    "(every column) unless the user named the exact columns. Several devices go in ONE report (all of them in " +
+    "the source's args); \"remove duplicates\" / \"unique X\" is dedupeBy with X's column key. The user sees the " +
+    "finished table with download buttons; you do not see its rows, so never type a table or rows for it — reply " +
+    "with one sentence naming what it holds.",
   "- You can only look things up: you cannot change, acknowledge, push or delete anything in Polaris; if asked, " +
     "explain where in Polaris the user can do it. When a lookup answers 'Not permitted', say their role does not " +
     "allow it; do not work around it.",
