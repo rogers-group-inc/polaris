@@ -166,7 +166,8 @@
               <th style="width:130px" data-col-no-resize="true" data-sf-key="assetType" data-sf-type="string" data-sf-options="server|switch|router|firewall|workstation|printer|access_point=Access Point|hypervisor|other">Type</th>
               <th style="width:130px" data-col-no-resize="true" data-sf-key="status" data-sf-type="string" data-sf-options="active|maintenance|storage|decommissioned|disabled|quarantined">State</th>
               <th style="width:130px" data-col-no-resize="true" data-sf-key="_monitor" data-sf-type="string" data-sf-options="Monitored|Unmonitored|Up|Missed|Recovering|Down|Passive|Dep. Down">Status</th>
-              <th style="width:160px" data-col-no-resize="true" data-col-id="monitoredVia">Monitored Via</th>
+              <!-- Filter only (data-sf-nosort): the method summary is resolved per row, not a column the server can order by. -->
+              <th style="width:160px" data-col-no-resize="true" data-col-id="monitoredVia" data-sf-key="monitoredVia" data-sf-type="string" data-sf-nosort data-sf-options="agent=Agent|snmp=SNMP|ssh=SSH|winrm=WinRM|icmp=ICMP|rest_api=REST API|vcenter=vCenter|fortimanager=FortiManager|unraid=Unraid|truenas=TrueNAS|proxmox=Proxmox|genericapi=Generic API">Monitored Via</th>
               <!-- "Sources": location || learnedLocation — where this asset was
                    learned. The data-sf-key stays `_server` on purpose: it's the
                    id saved presets (SavedTableFilter.state) and per-browser

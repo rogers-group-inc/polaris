@@ -283,6 +283,8 @@ export const AssetListQuerySchema = z.object({
   status: z.string().optional(),
   assetType: z.string().optional(),
   monitor: z.string().optional(),
+  // "Monitored Via" multi-select (CSV of method keys: agent, snmp, ssh, icmp…).
+  monitoredVia: z.string().optional(),
   // Existing scalar filters.
   department: z.string().optional(),
   createdBy: z.string().optional(),
@@ -368,9 +370,13 @@ function buildAssetListWhere(
   sessionUsername: string | undefined,
   discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
   tagIds: string[] | null = null,
+  monitoredViaIds: string[] | null = null,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
+
+  // "Monitored Via" — resolved to ids up front (resolveMonitoredViaMatches).
+  if (monitoredViaIds) and.push({ id: { in: monitoredViaIds } });
 
   const statuses = csvToArray(q.status);
   if (statuses) where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
@@ -567,6 +573,42 @@ async function computeMonitoringMethods(a: {
   return all.includes("icmp") ? ["icmp"] : [];
 }
 
+/**
+ * Ids whose "Monitored Via" summary names any of the chosen methods, or null
+ * when the column carries no filter. The summary is resolved through the
+ * monitor-settings hierarchy (computeMonitoringMethods), not stored, so it
+ * cannot be a Prisma where: only monitored assets can match, and each is
+ * reduced by exactly the reducer the column renders, so the filter and the
+ * cell never disagree. A row showing "Multiple" matches each of its methods.
+ * Tight select — the polling scalars only — and the resolver's tiers are
+ * cached, so 2000 monitored assets cost one query plus in-memory resolution.
+ */
+async function resolveMonitoredViaMatches(q: z.infer<typeof AssetListQuerySchema>): Promise<string[] | null> {
+  const wanted = csvToArray(q.monitoredVia);
+  if (!wanted) return null;
+  const want = new Set(wanted.map((v) => v.toLowerCase()));
+  const rows = await prisma.asset.findMany({
+    where: { monitored: true },
+    select: {
+      id: true,
+      monitored: true,
+      assetType: true,
+      ipAddress: true,
+      discoveredByIntegrationId: true,
+      discoveredByIntegration: { select: { type: true } },
+      managedAgent: { select: { installStatus: true } },
+      responseTimePolling: true,
+      cpuMemoryPolling: true,
+      temperaturePolling: true,
+      interfacesPolling: true,
+      lldpPolling: true,
+      storagePolling: true,
+    },
+  });
+  const methods = await Promise.all(rows.map((r) => computeMonitoringMethods(r)));
+  return rows.filter((_r, i) => methods[i].some((m) => want.has(m))).map((r) => r.id);
+}
+
 async function enrichAssetList(
   assets: Array<{ ipAddress: string | null; associatedIpRows: unknown; macAddressRows: unknown; fortinetTopology?: unknown; managementAccess?: unknown } & Record<string, unknown>>,
 ) {
@@ -618,6 +660,7 @@ async function enrichAssetList(
     monitoringMethods: await computeMonitoringMethods({
       monitored: a.monitored as boolean | undefined,
       assetType: a.assetType,
+      ipAddress: a.ipAddress,
       discoveredByIntegrationId: a.discoveredByIntegrationId,
       discoveredByIntegration: discoveredByIntegration as { type?: string | null } | null,
       managedAgent: managedAgent as { installStatus?: string | null } | null,
@@ -641,11 +684,12 @@ export async function listAssetsPage(
   const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
   const offset = q.offset ?? 0;
 
-  const [discovered, tagIds] = await Promise.all([
+  const [discovered, tagIds, monitoredViaIds] = await Promise.all([
     resolveDiscoveredHostnameMatches(q, raw),
     resolveTagMatches(raw),
+    resolveMonitoredViaMatches(q),
   ]);
-  const where = buildAssetListWhere(q, raw, actor, discovered, tagIds);
+  const where = buildAssetListWhere(q, raw, actor, discovered, tagIds, monitoredViaIds);
 
   let favoriteIds = csvToArray(q.favoriteIds);
   if (favoriteIds && favoriteIds.length > ASSET_FAVORITES_MAX) {

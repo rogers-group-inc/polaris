@@ -40,7 +40,10 @@ the list, and each view tab keeps its own set.
 *REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS*, *Proxmox* and so on —
 resolved per stream as [Polling methods](Polling-Methods) describes. An asset
 whose streams use more than one reads **Multiple**, with the list in the
-tooltip; an unmonitored asset reads `—`.
+tooltip; an unmonitored asset reads `—`. Its header filter is a drop-down list
+of the methods — tick one or several to see the devices monitored by any of
+them. A **Multiple** device shows under each of its methods, and an
+unmonitored device never matches. The column filters but does not sort.
 
 **IP Address** filters by network, not by text. Type the first one, two or
 three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
