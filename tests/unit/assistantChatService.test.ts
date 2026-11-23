@@ -82,7 +82,7 @@ vi.mock("../../src/services/assistantConversationService.js", () => ({
 import { SIGN_OFFS, LOOKUP_LINES, ADVISOR_PERSONA, advisorVoice, _setAdvisorPlacementRand } from "../../src/services/efficiencyAdvisorService.js";
 import {
   streamAssistantTurn, buildSystemPrompt, stripMarkdownTables, claimsUnlookedFacts, asksForReport, reportTitleFromQuestion, reportFormatsFromQuestion, asksHowTo, namesAThing, sanitizeAnswerLinks,
-  contextBudget, fitHistory, compactToolResults, fitToolResult, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
+  contextBudget, fitHistory, compactToolResults, fitToolResult, onlyRepeatsLookedUpFigures, toolsForWindow, permissionsPromptBlock, scopePromptBlock,
   pickResentImages, userTurnText, SCREENSHOT_GUIDANCE, IMAGE_TOKENS, turnHeader, stripTurnHeaders,
 } from "../../src/services/assistantChatService.js";
 
@@ -701,6 +701,34 @@ describe("claimsUnlookedFacts", () => {
       "I can't change settings; I only read.",
       "Set the down threshold to 3 polls.",
     ]) expect(claimsUnlookedFacts(t), t).toBe(false);
+  });
+});
+
+describe("onlyRepeatsLookedUpFigures (rule 95(o))", () => {
+  const earlier = ["You have 1,964 assets; 15 firewalls are FortiGate-61F."];
+  it("excuses a follow-up that only repeats an earlier looked-up count", () => {
+    expect(onlyRepeatsLookedUpFigures("Those 15 firewalls are all in Middle Tennessee? I can look that up.", earlier)).toBe(true);
+    expect(onlyRepeatsLookedUpFigures("Of the 1964 assets, which type do you mean?", earlier)).toBe(true);
+  });
+  it("still catches a new figure, a claimed check, or no looked-up history", () => {
+    expect(onlyRepeatsLookedUpFigures("Of those 15 firewalls, 4 are down.", earlier)).toBe(false);
+    expect(onlyRepeatsLookedUpFigures("I checked: 15 firewalls.", earlier)).toBe(false);
+    expect(onlyRepeatsLookedUpFigures("Those 15 firewalls.", [])).toBe(false);
+  });
+  it("lets the turn stand instead of withdrawing it", async () => {
+    h.beginTurn.mockResolvedValueOnce({ question: "and those 15 firewalls?" });
+    h.recentTurns.mockResolvedValueOnce([
+      { role: "user", content: "how many 61Fs?", createdAt: new Date() },
+      { role: "assistant", content: "There are 15 firewalls on FortiGate-61F.", createdAt: new Date(), toolsUsed: [{ name: "count_assets", label: "counted assets", ok: true }] },
+      { role: "user", content: "and those 15 firewalls?", createdAt: new Date() },
+    ] as any);
+    const text = "Those 15 firewalls — do you want them by region or by firmware?";
+    h.chatCompletionRound.mockImplementationOnce(async (_c: any, _m: any, _t: any, o: any) => { o.onText(text); return { content: text, toolCalls: [], finishReason: "stop" }; });
+    const { p, events } = run();
+    await p;
+    expect(h.chatCompletionRound).toHaveBeenCalledTimes(1);
+    expect(events).not.toContainEqual(["retract", { from: 0 }]);
+    expect(h.finishTurn.mock.calls[0][1].content).toBe(text);
   });
 });
 

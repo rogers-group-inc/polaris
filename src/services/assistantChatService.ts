@@ -461,6 +461,27 @@ export function claimsUnlookedFacts(text: string): boolean {
 }
 
 /**
+ * Does an answer only repeat figures an earlier LOOKED-UP answer in this
+ * conversation already gave? "Of those 15 firewalls, which are 61Fs?" names
+ * a count from the last answer; that is not an invented fact, and withdrawing
+ * it made the model re-run lookups or apologise for a correct answer. Only the
+ * counting pattern is excused — "I checked" with no lookup still is not — and
+ * only when every number in the answer appears in such an earlier answer.
+ * Exported for tests.
+ */
+export function onlyRepeatsLookedUpFigures(answer: string, lookedUpAnswers: readonly string[]): boolean {
+  if (!lookedUpAnswers.length) return false;
+  if (/\bI(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:checked|looked(?:\s+it)?\s+up|looked\s+at|verified|confirmed|queried|pulled|reviewed|searched)\b/i.test(answer)) return false;
+  if (/\baccording to (?:Polaris|the inventory|your inventory|the data)\b/i.test(answer)) return false;
+  const nums = (s: string) => new Set((s.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => n.replace(/,/g, "")));
+  const said = nums(answer);
+  if (!said.size) return false;
+  const earlier = nums(lookedUpAnswers.join("\n"));
+  for (const n of said) if (!earlier.has(n)) return false;
+  return true;
+}
+
+/**
  * Sent once, as the user's side of the turn, when an answer claimed facts
  * without a lookup: the answer is withdrawn and the model asked again.
  */
@@ -883,6 +904,9 @@ export async function streamAssistantTurn(input: {
     }),
     budget.promptTokens,
   );
+  // Earlier answers that ran lookups: figures repeated from them are not
+  // unlooked facts (onlyRepeatsLookedUpFigures).
+  const lookedUpAnswers = turns.filter((t) => t.role === "assistant" && (t.toolsUsed ?? []).some((u) => u.ok)).map((t) => t.content);
   const imageBytes = await loadTurnImages(turns.flatMap((t) => (t.imageIds ?? []).filter((id) => resent.has(id))));
   const historyMessages: ChatMessage[] = turns.map((t): ChatMessage => {
     if (t.role === "assistant") return { role: "assistant", content: `${t.header}\n${t.content}` };
@@ -1024,8 +1048,10 @@ export async function streamAssistantTurn(input: {
       }
       const spoke = Boolean(roundText.trim());
       // Rule 95(m): an answer that claims facts with no lookup behind it is
-      // withdrawn and asked again, once, with every tool on offer.
-      if (calls.length === 0 && !lastRound && !nudged && lookups === 0 && reports.length === 0 && tools.length > 0 && claimsUnlookedFacts(answer)) {
+      // withdrawn and asked again, once, with every tool on offer — unless it
+      // only repeats figures an earlier looked-up answer gave (rule 95(o)).
+      if (calls.length === 0 && !lastRound && !nudged && lookups === 0 && reports.length === 0 && tools.length > 0 && claimsUnlookedFacts(answer)
+        && !onlyRepeatsLookedUpFigures(answer, lookedUpAnswers)) {
         nudged = true;
         messages.push({ role: "assistant", content: answer });
         messages.push({ role: "user", content: LOOKUP_NUDGE });
