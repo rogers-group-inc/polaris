@@ -26,7 +26,8 @@ Gated by `events`. The page has two tabs: **Events** (the log, below) and
 | **User** | the actor |
 
 Sortable (all but Device), inline-filterable, resizable, with saved layouts like every other list
-page. **Export** downloads PDF or CSV of the current page, all filtered results,
+page. **User** sizes itself to its longest name, and **Message** fills the rest of the row;
+drag the line between them to make Message narrower and User wider. **Export** downloads PDF or CSV of the current page, all filtered results,
 or the entire event log; **Export** (download icon), **Alerts**, **Settings** (gear icon), **Refresh** (circular-arrows icon), **Clear Filters** and the page size (**15 / page** …)
 sit on the tab row, and the page buttons are below the page card. The **Calendar**
 tab's month and week views fill the card. In a CSV, a cell that begins with `=`, `+`, `-` or `@` (a hostname or
