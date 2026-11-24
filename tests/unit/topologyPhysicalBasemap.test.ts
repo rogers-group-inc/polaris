@@ -27,7 +27,7 @@ const DASH_TILES = "/dash/api/v1/map/satellite/{z}/{x}/{y}";
 let maps: any[] = [];
 let mounted: { inst: any; host: HTMLElement }[] = [];
 
-function mount(initial: any = null) {
+function mount(initial: any = null, editing = false) {
   const host = document.createElement("div");
   host.style.width = "800px";
   host.style.height = "600px";
@@ -35,8 +35,8 @@ function mount(initial: any = null) {
   const inst = w().PolarisTopologyPhysical.render(host, {
     data: { nodes: [], edges: [] },
     view: { id: "v1", polygons: [] },
-    editing: false,
-    canEdit: false,
+    editing,
+    canEdit: editing,
     initial,
     stagedViewPatch: () => ({}),
     stageViewPatch: () => false,
@@ -64,6 +64,8 @@ function tileUrl(map: any): string | null {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
+  // The eye's choices persist per view in localStorage; each test starts clean.
+  window.localStorage.clear();
   (globalThis as any).api = {
     map: {
       satellite: () => Promise.resolve({ available: true, attribution: "", maxNativeZoom: 19, source: "custom" }),
@@ -124,6 +126,31 @@ describe("Topology canvas basemap and eye on the Device Map widget", () => {
     expect(inst.viewState().visOpen).toBe(true);
     inst.destroy();
     expect(document.querySelector(".topo-vis-panel")).toBeNull();
+    anchor.remove();
+  });
+
+  // Operator request 2026-11-24: editing used to show everything, and its
+  // eye held only the ArcGIS section (or did nothing without ArcGIS).
+  it("offers the device, group and connection switches while editing, and honours them", async () => {
+    const { inst, host } = mount(null, true);
+    await flush();
+    const eye = inst.cornerButtons().find((b: any) => b.id === "topology-visibility");
+    const anchor = document.createElement("button");
+    document.body.appendChild(anchor);
+    eye.onClick(anchor);
+    const panel = document.querySelector(".topo-vis-panel") as HTMLElement;
+    expect(panel).toBeTruthy();
+    for (const k of ["devices", "groups", "links"]) {
+      expect(panel.querySelector(`[data-vis-show="${k}"]`), k).toBeTruthy();
+    }
+    expect(panel.querySelector('[data-vis-labels="devices"]')).toBeTruthy();
+    expect(panel.querySelector('[data-vis-labels="groups"]')).toBeTruthy();
+    // Unticking device labels hides them on the map while editing.
+    const labels = panel.querySelector('[data-vis-labels="devices"]') as HTMLInputElement;
+    labels.checked = false;
+    labels.dispatchEvent(new Event("change", { bubbles: true }));
+    const mapEl = host.querySelector(".leaflet-container") as HTMLElement;
+    expect(mapEl.classList.contains("vis-no-device-labels")).toBe(true);
     anchor.remove();
   });
 });

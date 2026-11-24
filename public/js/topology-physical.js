@@ -479,11 +479,13 @@
     var linkHalos = {};     // edge id → the yellow outline under a link on a ring
     var hullsDrawn = {};    // level → [{ latlngs, marker }] room outlines and their name markers
     var clusterOf = {};     // level → its L.markerClusterGroup while viewing (none while editing)
-    // What the map shows while VIEWING (the eye button; operator request
-    // 2026-11-17): devices, groups (drawn polygons and room outlines) and
-    // connections on or off, and each one's labels on or only on hover.
-    // ArcGIS layers' labels too. Editing always shows everything. Kept per
-    // viewer and per view in the browser — a convenience, never shared.
+    // What the map shows (the eye button; operator request 2026-11-17):
+    // devices, groups (drawn polygons and room outlines) and connections on or
+    // off, and each one's labels on or only on hover. ArcGIS layers' labels
+    // too. The same switches while editing (operator request 2026-11-24 —
+    // editing used to show everything, so a crowded map could not be thinned
+    // out to place one device). Kept per viewer and per view in the browser —
+    // a convenience, never shared, never saved with the view.
     var VIS_KEY = "polaris.topology.visibility." + ((ctx.view && ctx.view.id) || "default");
     var vis = (function () {
       var d = { devices: { show: true, labels: true }, groups: { show: true, labels: true }, links: { show: true }, arcLabelsOff: {} };
@@ -497,9 +499,9 @@
       return d;
     })();
     function saveVis() { try { window.localStorage.setItem(VIS_KEY, JSON.stringify(vis)); } catch (err) { /* no storage */ } }
-    function visOn(k) { return state.editing || vis[k].show !== false; }
-    function labelsOn(k) { return state.editing || vis[k].labels !== false; }
-    function arcLabelsOn(id) { return state.editing || !vis.arcLabelsOff[id]; }
+    function visOn(k) { return vis[k].show !== false; }
+    function labelsOn(k) { return vis[k].labels !== false; }
+    function arcLabelsOn(id) { return !vis.arcLabelsOff[id]; }
     function visAnyHidden() {
       return ["devices", "groups", "links"].some(function (k) { return vis[k].show === false || vis[k].labels === false; }) ||
         Object.keys(vis.arcLabelsOff).some(function (k) { return vis.arcLabelsOff[k]; });
@@ -2864,21 +2866,21 @@
           (withLabels ? '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-labels="' + k + '"' +
             (vis[k].labels !== false ? " checked" : "") + (on ? "" : " disabled") + '> <span>Labels</span></label>' : '');
       }
-      // While editing, only the ArcGIS section: editing shows every device,
-      // group and label, but which layers and types the view hides is saved
-      // with it (rule 188(c)).
-      var html = state.editing ? '' : '<div class="dropdown-heading">Show on the map</div>' +
+      // The same switches viewing or editing. Which ArcGIS layers and types
+      // the view hides is saved with it while editing (rule 188(c)); the
+      // rest is this browser's own.
+      var html = '<div class="dropdown-heading">Show on the map</div>' +
         row("devices", "Devices", "", true) +
         row("groups", "Groups", "areas, buildings and rooms", true) +
         row("links", "Connections", "", false);
       var arc = arcgisLayers ? arcgisLayers.layerList() : [];
       var away = arcgisLayers ? arcgisLayers.notHere() : [];
       if (arc.length || away.length) {
-        html += (state.editing ? '' : '<div class="dropdown-divider"></div>') + '<div class="dropdown-heading">ArcGIS layers</div>';
+        html += '<div class="dropdown-divider"></div><div class="dropdown-heading">ArcGIS layers</div>';
         arc.forEach(function (l) {
           html += '<label class="topo-vis-row"><input type="checkbox" data-vis-arc="' + esc(l.id) + '"' + (l.shown ? " checked" : "") + '> ' +
             l.swatch + '<span>' + esc(l.title) + '</span></label>';
-          if (l.hasLabels && !state.editing) {
+          if (l.hasLabels) {
             html += '<label class="topo-vis-row topo-vis-sub"><input type="checkbox" data-vis-arc-labels="' + esc(l.id) + '"' +
               (vis.arcLabelsOff[l.id] ? "" : " checked") + (l.shown ? "" : " disabled") + '> <span>Labels</span></label>';
           }
@@ -2898,14 +2900,14 @@
         html += '<p class="topo-vis-hint topo-vis-note">' + (canSaveArcgisLayers() ? "Layers and types: saved with this view."
           : "Layers and types: just for you until you close the map. Edit the map to save them with the view.") + '</p>';
       }
-      if (!state.editing) html += '<p class="topo-vis-hint topo-vis-note">A hidden label shows when you point at its object. Editing shows everything.</p>';
+      html += '<p class="topo-vis-hint topo-vis-note">A hidden label shows when you point at its object.' +
+        (state.editing ? " Hiding is just for you: it is not saved with the view." : "") + '</p>';
       return html;
     }
     // The ArcGIS section follows the map: the layers covering it change as it moves.
     function repaintVisPanel() { if (visPanel) visPanel.el.innerHTML = visPanelHtml(); }
     function openVisPanel(anchor) {
       if (visPanel) { closeVisPanel(); return; }
-      if (state.editing && !(arcgisLayers && (arcgisLayers.layerList().length || arcgisLayers.notHere().length))) return;
       var el = document.createElement("div");
       el.className = "btn-dropdown-menu open topo-vis-panel";
       el.setAttribute("role", "dialog");
