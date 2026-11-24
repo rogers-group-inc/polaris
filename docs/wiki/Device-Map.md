@@ -622,8 +622,10 @@ opens **Show on the map**. It has a switch for each of these:
 Under Devices, Groups and each ArcGIS layer that has labels, **Labels** turns
 off its labels. A hidden label still appears while you point at its device,
 polygon, room or feature. Your choices are kept in your browser for that view
-only. Nobody else sees them, and editing always shows everything. The eye turns
-the accent colour while anything is hidden.
+only. Nobody else sees them, and they are not saved with the view. The same
+switches work while you edit, so you can thin out a crowded map to place a
+device; a hidden device, group or connection cannot be dragged or reshaped until
+you show it again. The eye turns the accent colour while anything is hidden.
 
 Each device's name is drawn over every icon. Pointing at a name, or at its
 device, brings that name to the front, and a click, right-click or drag on a
