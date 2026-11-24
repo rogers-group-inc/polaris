@@ -179,6 +179,15 @@ describe("API path allowlist", () => {
       "/dash/api/v1/map/satellite/1/2",
       "/dash/api/v1/map/satellite/1/2/3/4",
       "/dash/api/v1/map/satellite/1/2/3.png",
+      // ArcGIS: the layer list, one layer's features and the site's run
+      // links — nothing beside or under them.
+      "/dash/api/v1/map/arcgis-layers/some-id",
+      "/dash/api/v1/map/arcgis-layers/some-id/features/extra",
+      "/dash/api/v1/map/sites/some-id/cable-run-links/extra",
+      // Device icons: one icon's image, never the list or its metadata.
+      "/dash/api/v1/device-icons",
+      "/dash/api/v1/device-icons/some-id",
+      "/dash/api/v1/device-icons/some-id/image/extra",
     ]) {
       const res = await request(app).get(path);
       expect(res.status, path).toBe(404);
@@ -238,6 +247,35 @@ describe("API path allowlist", () => {
       // failure, or its "not configured" 404 — never the allowlist's.
       expect(res.body.error ?? "").not.toBe("Not found");
       if (res.status === 404) expect(res.body.error).toMatch(/not configured/i);
+    },
+    30_000,
+  );
+
+  // The eye's ArcGIS section on the wallboard's Topology view (rule 188).
+  it.skipIf(!dbReachable)(
+    "lets the ArcGIS layer list, a layer's features and the site's run links through",
+    async () => {
+      const app = buildApp();
+      const layers = await request(app).get("/dash/api/v1/map/arcgis-layers");
+      expect(layers.status).toBe(200);
+      expect(Array.isArray(layers.body.layers)).toBe(true);
+      // No bbox: the features route's own 400, not the allowlist's 404.
+      const features = await request(app).get("/dash/api/v1/map/arcgis-layers/00000000-0000-0000-0000-000000000000/features");
+      expect(features.status).toBe(400);
+      const links = await request(app).get("/dash/api/v1/map/sites/00000000-0000-0000-0000-000000000000/cable-run-links");
+      expect(links.body.error ?? "").not.toBe("Not found");
+    },
+    30_000,
+  );
+
+  // Custom icons on the wallboard's topology: an unknown icon reaches the
+  // image handler's own 404, with no session asked for.
+  it.skipIf(!dbReachable)(
+    "serves /device-icons/:id/image without a session",
+    async () => {
+      const res = await request(buildApp()).get("/dash/api/v1/device-icons/00000000-0000-0000-0000-000000000000/image");
+      expect(res.status).toBe(404);
+      expect(res.body.error).toMatch(/Icon not found/i);
     },
     30_000,
   );

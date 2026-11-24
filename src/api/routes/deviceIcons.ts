@@ -6,7 +6,7 @@
  * modal can render them without a secondary auth dance.
  */
 
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 import {
@@ -150,7 +150,11 @@ router.delete("/:id", requirePermission("deviceIcons", "write"), async (req, res
 // raster formats. The SVG branch below stays as defense-in-depth for a
 // legacy row stored before upload-time rasterization (e.g. one resvg
 // refused to parse when the retired boot backfill ran).
-router.get("/:id/image", requireAuth, async (req, res, next) => {
+//
+// The handler is exported for the /dash listener, which serves it at the
+// same path behind its own source-IP gate (no session): the Device Map
+// widget's topology draws custom icons on the wallboard too.
+export async function serveIconImage(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const img = await getIconImage(String(req.params.id));
     if (!img) throw new AppError(404, "Icon not found");
@@ -174,6 +178,7 @@ router.get("/:id/image", requireAuth, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
-});
+}
+router.get("/:id/image", requireAuth, serveIconImage);
 
 export default router;

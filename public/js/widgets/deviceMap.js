@@ -663,7 +663,7 @@
     function modeCtx(v, initial) {
       function none() { return false; }
       function noop() {}
-      var signedIn = !isDash() && typeof api !== "undefined" && api.map;
+      var hasApi = typeof api !== "undefined" && api.map;
       return {
         data: data,
         view: v,
@@ -677,11 +677,12 @@
           return e && e.positions && typeof e.positions === "object" ? e.positions : {};
         },
         backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(gate.id, imageId); },
-        // ArcGIS layers on the signed-in Dashboard only — the wallboard has no
-        // route to them, and the canvas draws without them.
-        fetchArcgisLayers: signedIn && api.map.arcgisLayers ? function () { return api.map.arcgisLayers(); } : undefined,
-        fetchArcgisFeatures: signedIn && api.map.arcgisFeatures ? function (id, p) { return api.map.arcgisFeatures(id, p); } : undefined,
-        fetchCableRunLinks: signedIn && api.map.cableRunLinks ? function () { return api.map.cableRunLinks(gate.id); } : undefined,
+        // ArcGIS layers and the links routed along them (rule 188), on the
+        // signed-in Dashboard and the wallboard alike: the /dash listener
+        // admits their read routes (dashServer.ts → API_PATTERN_ALLOWLIST).
+        fetchArcgisLayers: hasApi && api.map.arcgisLayers ? function () { return api.map.arcgisLayers(); } : undefined,
+        fetchArcgisFeatures: hasApi && api.map.arcgisFeatures ? function (id, p) { return api.map.arcgisFeatures(id, p); } : undefined,
+        fetchCableRunLinks: hasApi && api.map.cableRunLinks ? function () { return api.map.cableRunLinks(gate.id); } : undefined,
         stageViewPatch: none, stagedViewPatch: function () { return {}; }, stagePlacements: none,
         stageLocationCode: noop, stageCableRunLinks: none,
         refreshSidebar: noop, historyChanged: noop, historyPushed: noop, closePopovers: noop,

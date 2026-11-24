@@ -7,6 +7,21 @@
 // IP-gated listener at /dash/api/v1 instead of the authenticated API.
 const API_BASE = (typeof window !== "undefined" && window.__polarisApiBase) || "/api/v1";
 
+// The server writes custom device icons into a topology as an absolute
+// `iconUrl: "/api/v1/device-icons/<id>/image"`. On the wallboard that path
+// asks the signed-in API, which has no session for it, so the icons drew
+// blank: re-root every iconUrl under this page's API base. A no-op off /dash.
+function _rebaseIconUrls(node) {
+  if (API_BASE === "/api/v1" || !node || typeof node !== "object") return node;
+  if (Array.isArray(node)) { node.forEach(_rebaseIconUrls); return node; }
+  Object.keys(node).forEach(function (k) {
+    var v = node[k];
+    if (k === "iconUrl" && typeof v === "string" && v.indexOf("/api/v1/") === 0) node[k] = API_BASE + v.slice("/api/v1".length);
+    else if (v && typeof v === "object") _rebaseIconUrls(v);
+  });
+  return node;
+}
+
 // ─── Shared HTML escaper ────────────────────────────────────────────────────
 //
 // Canonical escapeHtml for the whole front-end. api.js loads first on every
@@ -1880,7 +1895,7 @@ const api = {
   },
   map: {
     sites:    (regionNames) => request("GET", "/map/sites" + (regionNames && regionNames.length ? "?regionTags=" + encodeURIComponent(regionNames.slice().sort().join(",")) : "")),
-    topology: (id)      => request("GET", `/map/sites/${id}/topology`),
+    topology: (id)      => request("GET", `/map/sites/${id}/topology`).then(_rebaseIconUrls),
     topologySearch: (id, q) => request("GET", `/map/sites/${id}/topology/search?q=${encodeURIComponent(q)}`),
     saveTopologyLayout:   (id, view, positions) => request("PUT",    `/map/sites/${id}/topology/layout`, { view, positions }),
     deleteTopologyLayout: (id, view)            => request("DELETE", `/map/sites/${id}/topology/layout?view=${encodeURIComponent(view)}`),
