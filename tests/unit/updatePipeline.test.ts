@@ -74,6 +74,7 @@ const {
   _setExecRunnerForTests,
   _resetApplyingForTests,
   _setRunningCommitForTests,
+  _setMigrateProbeForTests,
   checkForUpdates,
 } = await import("../../src/services/updateService.js");
 
@@ -784,5 +785,58 @@ d("getUpdateActivity — the redacted nav-bar view", () => {
     await Promise.resolve();
     expect(getUpdateStatus().state).toBe("restarting");
     expect(getUpdateActivity().state).toBe("restarting");
+  });
+});
+
+// Business rule 197: the migrate step goes through the migration guard. The
+// guard's own behaviour is pinned in migrationGuardService.test.ts; these pin
+// that applyUpdate hands it the step, the lock-timeout URL and the probe, and
+// reports what it says.
+d("applyUpdate — migrate step through the migration guard (rule 197)", () => {
+  afterEach(() => _setMigrateProbeForTests(null));
+
+  function probe() {
+    return {
+      blockers: vi.fn(async () => []),
+      terminate: vi.fn(async () => 1),
+      close: vi.fn(async () => {}),
+    };
+  }
+
+  it("runs migrate deploy with lock_timeout and the guard's application_name in DATABASE_URL", async () => {
+    const urls: string[] = [];
+    _setMigrateProbeForTests(probe());
+    _setExecRunnerForTests(async (cmd: string, opts?: Record<string, unknown>) => {
+      if (cmd.includes("migrate deploy")) urls.push(String((opts?.env as any)?.DATABASE_URL ?? ""));
+      return { stdout: "", stderr: "" };
+    });
+
+    await runUpdate();
+
+    expect(steps()[STEP.MIGRATE]?.status).toBe("done");
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("lock_timeout%3D10000");
+    expect(urls[0]).toContain("application_name=polaris-migrate-update");
+  });
+
+  it("a migrate timeout cancels the database session the killed CLI left running", async () => {
+    const p = probe();
+    _setMigrateProbeForTests(p);
+    _setExecRunnerForTests(async (cmd: string) => {
+      if (cmd.includes("migrate deploy")) {
+        throw Object.assign(new Error("Command failed"), { killed: true, signal: "SIGTERM", stdout: "", stderr: "" });
+      }
+      return { stdout: "", stderr: "" };
+    });
+
+    await runUpdate();
+
+    const msg = steps()[STEP.MIGRATE]?.message ?? "";
+    expect(getUpdateStatus().state).toBe("failed");
+    expect(p.terminate).toHaveBeenCalledTimes(1);
+    expect(msg).toContain("timed out");
+    expect(msg).toContain("has been cancelled (1 backend)");
+    expect(msg).not.toContain("npm cache");
+    expect(steps()[STEP.RESTART]?.status).toBe("pending");
   });
 });

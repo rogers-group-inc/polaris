@@ -15,6 +15,8 @@ UI canon builds on, [design/POLARIS-UI-GUIDE.md](design/POLARIS-UI-GUIDE.md).
 npm install                       # also runs prisma generate + wires the pre-commit hook
 cp .env.example .env              # then fill in DATABASE_URL etc.
 npx prisma migrate dev            # apply migrations to your dev DB
+# A new migration.sql starts with BEGIN; and ends with COMMIT; (business rule 197;
+# tests/unit/migrationsRunAsOneTransaction.test.ts checks it).
 npm run dev                       # single-process dev runtime (POLARIS_ROLE unset = "all")
 ```
 
