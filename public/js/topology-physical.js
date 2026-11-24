@@ -33,8 +33,13 @@
   // The optional satellite basemap (an ArcGIS integration's, else Server
   // Settings → Customization — business rule 183), proxied
   // through Polaris so the CSP keeps its one tile host. Asked once per page;
-  // null until the answer arrives.
-  var SATELLITE_TILE_URL = "/api/v1/map/satellite/{z}/{x}/{y}";
+  // null until the answer arrives. The tile template comes from api.js so it
+  // follows the API base: the /dash wallboard's Device Map widget draws this
+  // canvas too, and its tiles come from /dash/api/v1.
+  function satelliteTileUrl() {
+    return typeof api !== "undefined" && api.map && api.map.satelliteTileUrl
+      ? api.map.satelliteTileUrl() : "/api/v1/map/satellite/{z}/{x}/{y}";
+  }
   var _satelliteStatus = null;
   var _satellitePending = null;
   function loadSatelliteStatus() {
@@ -530,7 +535,7 @@
       if (!map) return;
       if (baseLayer) { map.removeLayer(baseLayer); baseLayer = null; }
       if (currentLayer() === "satellite") {
-        baseLayer = L.tileLayer(SATELLITE_TILE_URL, {
+        baseLayer = L.tileLayer(satelliteTileUrl(), {
           maxNativeZoom: _satelliteStatus.maxNativeZoom || OSM_NATIVE_MAX,
           maxZoom: OSM_MAX_ZOOM,
           attribution: esc(_satelliteStatus.attribution || ""),
@@ -2987,6 +2992,14 @@
     buildMap();
     setEditing(state.editing);
     paintVisClasses();
+    // A redraw keeps the viewer's Map | Satellite pick: the Device Map widget
+    // re-mounts this canvas on its minute poll, and the pick reverted each time.
+    // After setEditing, which drops a viewer's pick. Never while editing, where
+    // the switch stages the view's own background instead.
+    if (!state.editing && ctx.initial && (ctx.initial.basemap === "map" || ctx.initial.basemap === "satellite")) {
+      viewLayer = ctx.initial.basemap;
+      applyBaseLayer();
+    }
     // A host that redraws the canvas (the Device Map widget's refresh) hands
     // back where the viewer was: the floor, the centre and the zoom.
     if (ctx.initial && map) {
@@ -3047,7 +3060,9 @@
       viewState: function () {
         if (!map) return null;
         var c = map.getCenter();
-        return { layer: state.layer, center: [c.lat, c.lng], zoom: map.getZoom() };
+        // basemap: the viewer's Map | Satellite pick (null = the view's own);
+        // visOpen: the eye panel is open, for the host to reopen it.
+        return { layer: state.layer, center: [c.lat, c.lng], zoom: map.getZoom(), basemap: viewLayer, visOpen: !!visPanel };
       },
       captureElement: function () { return mapEl; },
       destroy: function () {

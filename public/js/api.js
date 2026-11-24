@@ -1888,6 +1888,9 @@ const api = {
     saveTopologyCheckpoint: (id, view, positions) => request("POST", `/map/sites/${id}/topology/layout/checkpoint`, { view, positions }),
     // Saved topology views (business rules 147-149).
     satellite:          ()                 => request("GET",    "/map/satellite"),
+    // Leaflet's tile template — under the API base, so the /dash wallboard
+    // fetches from its own listener (/dash/api/v1), not the signed-in API.
+    satelliteTileUrl:   ()                 => `${API_BASE}/map/satellite/{z}/{x}/{y}`,
     assetRegionViews:   (assetId)          => request("GET",    `/map/assets/${assetId}/region-views`),
     // The site's region tree (rule 153).
     regions:            (id)               => request("GET",    `/map/sites/${id}/regions`),

@@ -46,7 +46,7 @@ import weatherRouter from "../api/routes/weather.js";
 import savedDashboardsRouter from "../api/routes/savedDashboards.js";
 import { errorHandler } from "../api/middleware/errorHandler.js";
 import { requirePermission } from "../api/middleware/permissions.js";
-import { dashWeatherLimiter, makeRateLimiter } from "../api/middleware/rateLimits.js";
+import { dashSatelliteLimiter, dashWeatherLimiter, makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { ipInScope } from "../utils/ipScope.js";
 import { getDashSettings, type DashSettings } from "../services/dashSettingsService.js";
 import {
@@ -77,6 +77,10 @@ const API_PATH_ALLOWLIST = new Set<string>([
   "/reservations/alerts",
   "/reservations/alerts/count",
   "/map/sites",
+  // Whether satellite imagery is configured (rule 183) — a Topology view's
+  // Map | Satellite switch on the Device Map widget shows only when it is.
+  // Status only: never the provider URL or key.
+  "/map/satellite",
   // Published (public) dashboards a wallboard can be pinned to. The read
   // routes only; every write verb is already 405'd app-wide, and with no
   // session the list answers with public rows alone.
@@ -101,9 +105,14 @@ const API_PREFIX_ALLOWLIST = ["/weather/", "/saved-dashboards/"];
  * GET /map/sites/:id/topology/background/:imageId (looked up by site AND
  * image id, a read).
  */
+const SATELLITE_TILE_PATH = /^\/map\/satellite\/\d+\/\d+\/\d+$/;
+
 const API_PATTERN_ALLOWLIST = [
   /^\/map\/sites\/[^/]+\/topology$/,
   /^\/map\/sites\/[^/]+\/topology\/background\/[^/]+$/,
+  // One satellite tile through Polaris's proxy (rule 183), integers only —
+  // the imagery behind that same switch. The provider key stays server-side.
+  SATELLITE_TILE_PATH,
 ];
 
 /**
@@ -206,14 +215,20 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
 
   // Weather-proxy requests ride their own generous limiter (a single radar
   // refresh is hundreds of small tile GETs — it would exhaust the general
-  // budget in one load); everything else keeps the tight wallboard ceiling.
+  // budget in one load), satellite tiles theirs (dashSatelliteLimiter);
+  // everything else keeps the tight wallboard ceiling.
   const generalLimiter = makeRateLimiter({
     windowMs: 5 * 60 * 1000,
     max: 600,
     message: "Too many requests to the Dash wallboard. Please slow down.",
   });
   app.use((req: Request, res: Response, next: NextFunction) => {
-    const limiter = req.path.startsWith("/dash/api/v1/weather/") ? dashWeatherLimiter : generalLimiter;
+    const apiPath = req.path.startsWith("/dash/api/v1/") ? req.path.slice("/dash/api/v1".length) : "";
+    const limiter = apiPath.startsWith("/weather/")
+      ? dashWeatherLimiter
+      : SATELLITE_TILE_PATH.test(apiPath)
+        ? dashSatelliteLimiter
+        : generalLimiter;
     limiter(req, res, next);
   });
 

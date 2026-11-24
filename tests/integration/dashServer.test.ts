@@ -174,6 +174,11 @@ describe("API path allowlist", () => {
       // A view's background images are admitted, nothing under or beside them.
       "/dash/api/v1/map/sites/some-id/topology/background/img/extra",
       "/dash/api/v1/map/sites/some-id/topology/views",
+      // Satellite: the status and integer z/x/y tiles only.
+      "/dash/api/v1/map/satellite/a/b/c",
+      "/dash/api/v1/map/satellite/1/2",
+      "/dash/api/v1/map/satellite/1/2/3/4",
+      "/dash/api/v1/map/satellite/1/2/3.png",
     ]) {
       const res = await request(app).get(path);
       expect(res.status, path).toBe(404);
@@ -205,6 +210,34 @@ describe("API path allowlist", () => {
         "/dash/api/v1/map/sites/00000000-0000-0000-0000-000000000000/topology/background/00000000-0000-0000-0000-000000000000");
       expect(res.status).toBe(404);
       expect(res.body.error ?? res.text).toMatch(/Image not found/i);
+    },
+    30_000,
+  );
+
+  // A Topology view's Map | Satellite switch on the wallboard asks whether
+  // satellite is configured — status only, never the provider URL or key.
+  it.skipIf(!dbReachable)(
+    "lets /map/satellite through to the status route, with no provider URL",
+    async () => {
+      const res = await request(buildApp()).get("/dash/api/v1/map/satellite");
+      expect(res.status).toBe(200);
+      expect(typeof res.body.available).toBe("boolean");
+      expect(res.body).not.toHaveProperty("urlTemplate");
+      expect(res.body).not.toHaveProperty("apiToken");
+    },
+    30_000,
+  );
+
+  // A tile reaches the proxy's own handler: with no imagery configured that
+  // is the service's refusal, not the allowlist's bare "Not found".
+  it.skipIf(!dbReachable)(
+    "lets /map/satellite/:z/:x/:y through to the tile route",
+    async () => {
+      const res = await request(buildApp()).get("/dash/api/v1/map/satellite/1/0/0");
+      // Configured or not, the answer is the proxy's: a tile, an upstream
+      // failure, or its "not configured" 404 — never the allowlist's.
+      expect(res.body.error ?? "").not.toBe("Not found");
+      if (res.status === 404) expect(res.body.error).toMatch(/not configured/i);
     },
     30_000,
   );
