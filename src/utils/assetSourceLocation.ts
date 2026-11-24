@@ -5,7 +5,7 @@
  * learned?", what each one contributes, and the operator-orderable priority
  * between them. Pure — no DB, no config reads.
  *
- * This is the backing vocabulary for the Assets table's **Sources** column
+ * This is the backing vocabulary for the Assets table's **Location** column
  * (`location || learnedLocation`) and for the drag-and-drop priority list on
  * Assets → Settings → Sources. Before this existed the order was hardcoded in
  * `assetProjection.ts`'s LEARNED_LOCATION_RULES; operators with an asset

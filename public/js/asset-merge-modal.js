@@ -179,7 +179,7 @@ async function openAssetMergeModal(assetId, preselectOtherId, opts) {
       api.assets.getSources(assetId).catch(function () { return []; }),
       api.assets.pollingHistory(assetId).catch(function () { return null; }),
       api.assets.getDependencies(assetId).catch(function () { return null; }),
-      // Same setting the Sources column reads. Fetched here (not cached
+      // Same setting the Location column reads. Fetched here (not cached
       // globally) so an order saved in another tab is picked up by the next
       // merge; a failure just drops back to the empty-value default.
       api.assets.getSourcePriority().catch(function () { return null; })

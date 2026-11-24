@@ -50,7 +50,7 @@
  * that must keep using the NAME: anything addressing an FMG/FortiOS API
  * (monitoringService's parent-FortiGate polling, the discovery decommission
  * sweeps comparing against the FMG roster, infraDhcpBinding's name-to-name
- * compare, and the Sources column, which shows the FMG name deliberately —
+ * compare, and the Location column, which shows the FMG name deliberately —
  * business rule 22). Those are not asset-identity lookups and must not route
  * through here.
  *

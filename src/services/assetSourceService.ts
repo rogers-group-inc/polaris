@@ -20,6 +20,7 @@ import { repointDuplicateSerialConflicts, settleDuplicateSerialConflictsAfterMer
 import { mergeAssets, type MergeableField, type FieldWinner, type MergeAssetsResult } from "./assetMergeService.js";
 import { projectAssetFromSources } from "../utils/assetProjection.js";
 import { deriveAssetSourceState } from "../utils/assetSourceState.js";
+import { orderAndCollapseSources } from "../utils/assetSourceOrder.js";
 import { assetTypeForWorkloadRole, parseWorkloadSourceKind } from "../utils/workloadSources.js";
 import { assertAssetExists } from "./assetDetailReadService.js";
 
@@ -37,48 +38,11 @@ export async function listAssetSourcesForDisplay(id: string) {
     orderBy: [{ sourceKind: "asc" }, { lastSeen: "desc" }],
   });
 
-  // Stable presentation order — identity-first, manual last.
-  const ORDER: Record<string, number> = {
-    "entra": 1,
-    "intune": 2,
-    "ad": 3,
-    "fortigate-firewall": 4,
-    "fortiswitch": 5,
-    "fortiap": 6,
-    "fortigate-endpoint": 7,
-    // Enrichment, so it sorts under the sources that own the device — but
-    // above "manual", since it is a real reading rather than a fallback.
-    "snmp-sysdescr": 8,
-    "snmp-identity": 8,
-    "snmp-profile": 8,
-    "fortinet-live": 9,
-    "manual": 99,
-  };
-  rows.sort((a, b) => {
-    const ai = ORDER[a.sourceKind] ?? 50;
-    const bi = ORDER[b.sourceKind] ?? 50;
-    if (ai !== bi) return ai - bi;
-    return (b.lastSeen?.getTime() ?? 0) - (a.lastSeen?.getTime() ?? 0);
-  });
-
-  // Collapse rows that are the "same source" but split across multiple
-  // AssetSource rows because the device's identity key churned. The worst
-  // offender is `fortigate-endpoint`, whose externalId is the endpoint MAC —
-  // a MAC change spawns a fresh source row and leaves the old one behind, so
-  // the same integration would render as several near-identical cards. We
-  // key dedup on (sourceKind, integrationId) and keep the most recent row
-  // (rows are already lastSeen-desc within each sourceKind from the sort
-  // above). The serial/GUID-keyed kinds (fortigate-firewall/switch/ap, ad,
-  // entra, intune) have stable externalIds and so never collapse. The
-  // dropped MAC history is still visible in the Firewall Sightings and IP
-  // History tables on the same Sources tab.
-  const seen = new Set<string>();
-  const deduped = rows.filter((r) => {
-    const key = `${r.sourceKind}\u0000${r.integrationId ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // Stable presentation order, one card per (sourceKind, integration) — the
+  // same set the Assets table's Sources column names (utils/assetSourceOrder).
+  // A collapsed endpoint's dropped MAC history is still visible in the
+  // Firewall Sightings and IP History tables on the same Sources tab.
+  const deduped = orderAndCollapseSources(rows);
 
   return deduped.map((r) => ({
     id: r.id,

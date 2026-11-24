@@ -136,3 +136,66 @@ describe("Monitored Via filter", () => {
     expect(page.where.AND).toContainEqual({ id: { in: ["agent", "multi", "ping"] } });
   });
 });
+
+describe("Sources column (rule 199)", () => {
+  it("ships each row's sources in Sources-tab order, one per integration, kind + integration name only", async () => {
+    findMany.mockResolvedValue([row("a1", {
+      sources: [
+        { sourceKind: "fortigate-endpoint", integrationId: "i1", lastSeen: new Date("2026-01-01"), integration: { name: "FMG" } },
+        { sourceKind: "fortigate-endpoint", integrationId: "i1", lastSeen: new Date("2026-02-01"), integration: { name: "FMG" } },
+        { sourceKind: "ad", integrationId: "i2", lastSeen: new Date("2026-01-01"), integration: { name: "Corp AD" } },
+        { sourceKind: "manual", integrationId: null, lastSeen: new Date("2026-01-01"), integration: null },
+      ],
+    })]);
+    count.mockResolvedValue(1);
+    const r = await listAssetsPage(q({}), {}, "op");
+    expect((r.enriched[0] as { sources: unknown }).sources).toEqual([
+      { sourceKind: "ad", integrationName: "Corp AD" },
+      { sourceKind: "fortigate-endpoint", integrationName: "FMG" },
+      { sourceKind: "manual", integrationName: null },
+    ]);
+  });
+
+  it("selects the source rows in the Sources tab's tie-break order", async () => {
+    await listAssetsPage(q({}), {}, "op");
+    expect(findMany.mock.calls[0][0].select.sources).toMatchObject({
+      orderBy: [{ sourceKind: "asc" }, { lastSeen: "desc" }],
+    });
+  });
+
+  it("a row with no source rows ships an empty list", async () => {
+    findMany.mockResolvedValue([row("a1")]);
+    count.mockResolvedValue(1);
+    const r = await listAssetsPage(q({}), {}, "op");
+    expect((r.enriched[0] as { sources: unknown }).sources).toEqual([]);
+  });
+});
+
+describe("Sources filter (rule 199)", () => {
+  const whereOf = () => findMany.mock.calls[0][0].where as { AND?: unknown[] };
+
+  it("one kind → a relation `some` on that kind", async () => {
+    await listAssetsPage(q({ sources: "ad" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { some: { sourceKind: "ad" } } });
+  });
+
+  it("several kinds → any-of", async () => {
+    await listAssetsPage(q({ sources: "ad,intune" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { some: { sourceKind: { in: ["ad", "intune"] } } } });
+  });
+
+  it("`none` alone → assets with no source row", async () => {
+    await listAssetsPage(q({ sources: "none" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { none: {} } });
+  });
+
+  it("kinds plus `none` → either", async () => {
+    await listAssetsPage(q({ sources: "manual,none" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ OR: [{ sources: { some: { sourceKind: "manual" } } }, { sources: { none: {} } }] });
+  });
+
+  it("no param → no sources clause", async () => {
+    await listAssetsPage(q({}), {}, "op");
+    expect(JSON.stringify(findMany.mock.calls[0][0].where)).not.toContain("sourceKind");
+  });
+});

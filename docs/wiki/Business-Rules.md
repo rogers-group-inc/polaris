@@ -166,8 +166,8 @@ the connection**. An internal error refuses rather than silently skipping. See
 certificates.
 
 ### Rule 22
-**The Sources column is `location || learnedLocation`, and the order is
-operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
+**The Location column (titled "Sources" until rule 199) is `location ||
+learnedLocation`, and the order is operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
 source blob may never be built from the projection's own output** — doing so
 launders one source's value (an AD OU path) into another's field (a
 FortiGate-sourced one) and accumulates a prefix per cycle.
@@ -4016,3 +4016,13 @@ merged, is closed automatically at the start of that integration's next discover
 Event that says why. A card whose device is linked to a *different* asset is left for you to
 decide. Review cards also name the integration that raised them: an Azure Arc, Proxmox VE or
 Generic API card no longer reads "Entra ID".
+
+### Rule 199
+
+**The Assets table's Sources column names the sources the asset's Sources tab shows.** An
+asset with one source shows that source's name (hover it for the integration). An asset with
+several shows **N sources**, and hovering it lists each source with the integration that
+reports it. Several records from the same integration of the same kind count once, as on the
+Sources tab. The column's filter is a tick-list of source kinds plus **(No source)**;
+it does not sort. Where a device is learned
+is the **Location** column (rule 22), which this column's name used to belong to.

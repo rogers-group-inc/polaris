@@ -117,7 +117,7 @@ router.get("/agent-signing-alert", requirePermission("assets", "write"), async (
   }
 });
 
-// GET /api/v1/assets/source-priority — the operator's Sources-column priority
+// GET /api/v1/assets/source-priority — the operator's Location-column priority
 // (which discovery source's learned location wins) plus the catalogue of what
 // each source contributes, so the drag-and-drop list renders its labels and
 // hints from the server rather than hardcoding them. Before /:id.

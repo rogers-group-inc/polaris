@@ -380,13 +380,17 @@
                 ssh, winrm, icmp, rest_api, vcenter, fortimanager, unraid, truenas, proxmox,
                 genericapi</code>), any-of, matched against each row's
                 <code>monitoringMethods</code>; only monitored devices match.</li>
-            <li><code>server</code> + optional <code>serverOp</code> (the Sources column, same
+            <li><code>server</code> + optional <code>serverOp</code> (the Location column, same
                 operators as the text columns) — matches the device's <code>location</code> /
                 <code>learnedLocation</code> AND, for <code>contains</code> /
                 <code>not_contains</code>, every discovery source the device has: each source's
                 location (AD OU, vCenter cluster or host, FortiGate…), its kind
                 (<code>Active Directory</code>, <code>polaris-agent</code>…) and its integration's
                 name — not only the source the priority order shows.</li>
+            <li><code>sources</code> — comma-separated discovery source kinds (<code>ad, entra, intune,
+                fortigate-firewall, fortiswitch, fortiap, fortigate-endpoint, vcenter-vm, polaris-agent,
+                manual</code>…), any-of, matched against each row's <code>sources</code>; <code>none</code>
+                matches assets with no source.</li>
             <li>Per-column text filters: pass the column name (<code>hostname</code>,
                 <code>ipAddress</code>, <code>serialNumber</code>, <code>assetTag</code>,
                 <code>manufacturer</code>, <code>model</code>, <code>os</code>,

@@ -1,13 +1,13 @@
 /**
  * src/services/assetSourcePriorityService.ts
  *
- * Operator-settable priority for the Assets table's **Sources** column — which
+ * Operator-settable priority for the Assets table's **Location** column — which
  * discovery source's "where was this learned?" answer wins when an asset is
  * known to several at once. Single Setting row (`assetSourcePriority`), JSON
  * blob, TTL-cached via createSettingStore.
  *
  * The value feeds `Asset.learnedLocation` through the projection, NOT just the
- * column's rendering. That's deliberate: the Sources column, its text filter,
+ * column's rendering. That's deliberate: the Location column, its text filter,
  * its sort, "behind FortiGate X" tag/maintenance criteria and the Device Map's
  * per-site narrowing all read learnedLocation, so deciding the winner at render
  * time would make the column disagree with everything that filters on it.

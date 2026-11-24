@@ -298,7 +298,7 @@ describe("projectAssetFromSources — learnedLocation", () => {
       src("entra", { displayName: "WS-01" }),
       src("intune", { deviceName: "WS-01" }),
     ]);
-    // Previously null — the Sources column now names who knows the device
+    // Previously null — the Location column now names who knows the device
     // rather than sitting blank.
     expect(projected.learnedLocation).toBe("Microsoft Intune");
     expect(provenance.learnedLocation).toBe("intune");

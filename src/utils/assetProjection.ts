@@ -626,7 +626,7 @@ const OS_VERSION_RULES: FieldRule[] = [
 /**
  * learnedLocation is the one projected field whose priority order is
  * OPERATOR-CONFIGURABLE (Assets → Settings → Sources; the Assets table's
- * "Sources" column reads `location || learnedLocation`). An asset learned from
+ * "Location" column reads `location || learnedLocation`). An asset learned from
  * several sources at once has several competing answers to "where is it?" — an
  * AD OU path, a controller FortiGate, an Azure Arc onboarding — and which one
  * an operator wants to read is a site convention, not something Polaris can

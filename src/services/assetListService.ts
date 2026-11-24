@@ -28,6 +28,7 @@ import { activeAlertSummaryByAsset } from "./notificationService.js";
 import { type PollingMethod } from "../utils/pollingCompatibility.js";
 import { buildAddressConfidence } from "./addressConfidenceService.js";
 import { shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "./assetAddressService.js";
+import { orderAndCollapseSources } from "../utils/assetSourceOrder.js";
 
 // ─── Asset list: server-side filter / sort / pagination ────────────────────
 //
@@ -160,6 +161,25 @@ function buildServerFilter(
   return { OR: cols.map((c) => ({ [c]: { contains: v, mode: "insensitive" } })) };
 }
 
+/** The Sources filter's pseudo-kind for "this asset has no AssetSource row". */
+const NO_SOURCE = "none";
+
+/**
+ * The Sources column's filter (business rule 199): a CSV of AssetSource kinds,
+ * any-of, where the pseudo-kind `none` matches assets with no source row. The
+ * column lists the collapsed set, but collapsing never removes a KIND, so a
+ * relation `some` on the raw rows matches exactly the rows whose cell names it.
+ */
+function buildSourcesFilter(value: string | undefined): Record<string, unknown> | undefined {
+  const picked = csvToArray(value);
+  if (!picked) return undefined;
+  const kinds = picked.filter((k) => k !== NO_SOURCE);
+  const arms: Record<string, unknown>[] = [];
+  if (kinds.length) arms.push({ sources: { some: { sourceKind: kinds.length === 1 ? kinds[0] : { in: kinds } } } });
+  if (picked.includes(NO_SOURCE)) arms.push({ sources: { none: {} } });
+  return arms.length === 1 ? arms[0] : { OR: arms };
+}
+
 /**
  * Translate one `_monitor` synthetic-column chip into a where fragment. Mirrors
  * the client's `_mapAsset` mapping: "Monitored"/"Unmonitored" gate on the
@@ -193,6 +213,12 @@ function monitorClause(v: string): Record<string, unknown> | null {
     default:            return null;
   }
 }
+
+// Outside the `as const` select below: Prisma's orderBy wants a mutable array.
+const LIST_SOURCE_ORDER: Array<{ sourceKind?: "asc" | "desc"; lastSeen?: "asc" | "desc" }> = [
+  { sourceKind: "asc" },
+  { lastSeen: "desc" },
+];
 
 // Shared list payload select. Omits heavy fields (notes, associatedUsers) and
 // anything the list table + CSV/PDF export never reference; the single-asset
@@ -253,6 +279,14 @@ const ASSET_LIST_SELECT = {
   storagePolling: true,
   discoveredByIntegration: { select: { type: true } },
   managedAgent: { select: { installStatus: true } },
+  // Sources column: the same set the asset's Sources tab lists, reduced by
+  // enrichAssetList to `{ sourceKind, integrationName }` per collapsed entry
+  // (utils/assetSourceOrder). The ordering mirrors listAssetSourcesForDisplay
+  // so ties break identically on both surfaces.
+  sources: {
+    select: { sourceKind: true, integrationId: true, lastSeen: true, integration: { select: { name: true } } },
+    orderBy: LIST_SOURCE_ORDER,
+  },
   dependencyLayer: true,
   dependencySuppressed: true,
   dependencyTestUntil: true,
@@ -287,6 +321,8 @@ export const AssetListQuerySchema = z.object({
   monitor: z.string().optional(),
   // "Monitored Via" multi-select (CSV of method keys: agent, snmp, ssh, icmp…).
   monitoredVia: z.string().optional(),
+  // "Sources" multi-select (CSV of AssetSource kinds; `none` = no source row).
+  sources: z.string().optional(),
   // Existing scalar filters.
   department: z.string().optional(),
   createdBy: z.string().optional(),
@@ -337,7 +373,7 @@ async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[]
 }
 
 /**
- * Ids matching the Sources column's term through ANY of the asset's sources,
+ * Ids matching the Location (`_server`) column's term through ANY of the asset's sources,
  * not only the one the priority order (Assets → Settings → Sources) put in the
  * cell — or null when the column carries no contains / not_contains term. The
  * cell shows one winner, but an operator typing a lower-ranked source (the AD
@@ -423,6 +459,10 @@ function buildAssetListWhere(
 
   // "Monitored Via" — resolved to ids up front (resolveMonitoredViaMatches).
   if (monitoredViaIds) and.push({ id: { in: monitoredViaIds } });
+
+  // "Sources" (rule 199) — any of the ticked kinds, or no source row at all.
+  const sourcesFrag = buildSourcesFilter(q.sources);
+  if (sourcesFrag) and.push(sourcesFrag);
 
   const statuses = csvToArray(q.status);
   if (statuses) where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
@@ -661,6 +701,27 @@ async function resolveMonitoredViaMatches(q: z.infer<typeof AssetListQuerySchema
   return rows.filter((_r, i) => methods[i].some((m) => want.has(m))).map((r) => r.id);
 }
 
+interface ListSourceRow {
+  sourceKind: string;
+  integrationId: string | null;
+  lastSeen: Date | null;
+  integration: { name: string } | null;
+}
+
+/**
+ * The Sources column's wire shape: one entry per source the asset's Sources tab
+ * shows, in the tab's order. Only the kind (the client labels it from
+ * `_assetSourceLabels`) and the integration's name — the observed blobs and
+ * timestamps stay on GET /assets/:id/sources.
+ */
+function shapeListSources(rows: unknown): { sourceKind: string; integrationName: string | null }[] {
+  if (!Array.isArray(rows)) return [];
+  return orderAndCollapseSources(rows as ListSourceRow[]).map((r) => ({
+    sourceKind: r.sourceKind,
+    integrationName: r.integration?.name ?? null,
+  }));
+}
+
 async function enrichAssetList(
   assets: Array<{ ipAddress: string | null; associatedIpRows: unknown; macAddressRows: unknown; fortinetTopology?: unknown; managementAccess?: unknown } & Record<string, unknown>>,
 ) {
@@ -698,9 +759,11 @@ async function enrichAssetList(
     // `monitoringMethods` array is surfaced to the list.
     responseTimePolling, cpuMemoryPolling, temperaturePolling, interfacesPolling, lldpPolling, storagePolling,
     discoveredByIntegration, managedAgent,
+    sources,
     ...a
   }) => ({
     ...a,
+    sources: shapeListSources(sources),
     associatedIps: shapeAssociatedIps(associatedIpRows as never),
     macAddresses: shapeMacRows(macAddressRows as never),
     hostnameDiscovered: discoveredHostnames.get(a.id as string) ?? null,

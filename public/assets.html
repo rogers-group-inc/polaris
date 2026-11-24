@@ -168,14 +168,23 @@
               <th style="width:130px" data-col-no-resize="true" data-sf-key="_monitor" data-sf-type="string" data-sf-options="Monitored|Unmonitored|Up|Missed|Recovering|Down|Passive|Dep. Down">Status</th>
               <!-- Filter only (data-sf-nosort): the method summary is resolved per row, not a column the server can order by. -->
               <th style="width:160px" data-col-no-resize="true" data-col-id="monitoredVia" data-sf-key="monitoredVia" data-sf-type="string" data-sf-nosort data-sf-options="agent=Agent|snmp=SNMP|ssh=SSH|winrm=WinRM|icmp=ICMP|rest_api=REST API|vcenter=vCenter|fortimanager=FortiManager|unraid=Unraid|truenas=TrueNAS|proxmox=Proxmox|genericapi=Generic API">Monitored Via</th>
-              <!-- "Sources": location || learnedLocation — where this asset was
-                   learned. The data-sf-key stays `_server` on purpose: it's the
-                   id saved presets (SavedTableFilter.state) and per-browser
+              <!-- "Location": location || learnedLocation — where this asset was
+                   learned (titled "Sources" until rule 199 gave that name to the
+                   column below). The data-sf-key stays `_server` on purpose: it's
+                   the id saved presets (SavedTableFilter.state) and per-browser
                    column prefs are keyed by, so renaming it would silently drop
                    every operator's saved filter on this column. Which source's
                    learned location wins is operator-ordered on Assets →
                    Settings → Sources (Setting `assetSourcePriority`). -->
-              <th data-sf-key="_server" data-sf-type="string">Sources</th>
+              <th data-sf-key="_server" data-sf-type="string">Location</th>
+              <!-- "Sources" (rule 199): the sources the asset's Sources tab
+                   lists — the one name, or "N sources" with a hover list.
+                   Filter only (data-sf-nosort): tick source kinds, any-of, sent
+                   as sources=<csv>; "none" = assets with no source row. The
+                   options are every key of _assetSourceLabels (app.js) with its
+                   label, plus none — tests/unit/assetSourcesCellDom.test.ts
+                   holds the two lists equal. -->
+              <th data-col-id="sources" data-sf-key="sources" data-sf-type="string" data-sf-nosort data-sf-options="entra=Microsoft Entra ID|intune=Microsoft Intune|ad=Active Directory|fortigate-firewall=FortiGate (firewall)|fortiswitch=FortiSwitch|fortiap=FortiAP|fortigate-endpoint=FortiGate / FortiManager (endpoint)|vcenter-vm=VMware vCenter (VM)|vcenter-host=VMware vCenter (ESXi host)|arc=Azure Arc|arc-k8s=Azure Arc (Kubernetes)|polaris-agent=Polaris Agent|generic-api=Generic API|unraid-host=Unraid (host)|unraid-vm=Unraid (VM)|unraid-container=Unraid (container)|truenas-host=TrueNAS SCALE (host)|truenas-vm=TrueNAS SCALE (VM)|truenas-app=TrueNAS SCALE (App)|proxmox-node=Proxmox VE (node)|proxmox-qemu=Proxmox VE (VM)|proxmox-lxc=Proxmox VE (container)|snmp-sysdescr=Device self-report (SNMP sysDescr)|snmp-identity=Device self-report (SNMP sysName + ENTITY-MIB)|snmp-profile=Device self-report (manufacturer profile over SNMP)|fortinet-live=Device self-report (FortiOS firmware)|manual=Manual / other|none=(No source)">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
               <!-- Asset.tags (String[]). The filter is a pick menu (TableSF
                    data-sf-filter="pick"): tick tags in use (GET /assets/tags,
@@ -202,7 +211,7 @@
             </tr>
           </thead>
           <tbody id="assets-tbody">
-            <tr><td colspan="24" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="25" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>
