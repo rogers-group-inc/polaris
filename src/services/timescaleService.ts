@@ -345,6 +345,67 @@ export function getEffectiveCompressAfterDays(table: string): number {
  * the recreate when the window is unchanged lets the policy's schedule survive
  * across restarts.
  */
+/**
+ * Does `table` already carry the compression settings migrateToHypertables
+ * would set (compression on, segmentby "assetId", orderby the partition column
+ * DESC)? `ALTER TABLE … SET (timescaledb.compress …)` takes an ACCESS
+ * EXCLUSIVE lock even when it changes nothing, and a waiting exclusive lock
+ * queues every later read and write on the table behind it. At boot that
+ * stalled all sample inserts and every sample read on prod for as long as a
+ * long-running query held the table (2026-11-24) — so the ALTER is issued only
+ * when the settings differ. Introspection failing answers false (ALTER, as
+ * before).
+ */
+async function compressionSettingsMatch(table: string, partitionColumn: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRawUnsafe<{ enabled: boolean; seg: string | null; ord: string | null; asc: boolean | null }[]>(
+      `SELECT h.compression_enabled AS enabled,
+              (SELECT string_agg(s.attname, ',' ORDER BY s.segmentby_column_index)
+                 FROM timescaledb_information.compression_settings s
+                WHERE s.hypertable_schema = h.hypertable_schema AND s.hypertable_name = h.hypertable_name
+                  AND s.segmentby_column_index IS NOT NULL) AS seg,
+              (SELECT string_agg(s.attname, ',' ORDER BY s.orderby_column_index)
+                 FROM timescaledb_information.compression_settings s
+                WHERE s.hypertable_schema = h.hypertable_schema AND s.hypertable_name = h.hypertable_name
+                  AND s.orderby_column_index IS NOT NULL) AS ord,
+              (SELECT bool_and(s.orderby_asc)
+                 FROM timescaledb_information.compression_settings s
+                WHERE s.hypertable_schema = h.hypertable_schema AND s.hypertable_name = h.hypertable_name
+                  AND s.orderby_column_index IS NOT NULL) AS asc
+         FROM timescaledb_information.hypertables h
+        WHERE h.hypertable_name = $1`,
+      table,
+    );
+    return compressionSettingsRowMatches(rows[0], partitionColumn);
+  } catch (err) {
+    logger.debug({ err, table }, "compression settings introspection failed; will re-apply");
+    return false;
+  }
+}
+
+/** The settings row says compression is on, by "assetId", ordered by the partition column DESC. Pure. */
+export function compressionSettingsRowMatches(
+  row: { enabled: boolean; seg: string | null; ord: string | null; asc: boolean | null } | undefined,
+  partitionColumn: string,
+): boolean {
+  return !!row && row.enabled === true && row.seg === "assetId" && row.ord === partitionColumn && row.asc === false;
+}
+
+/**
+ * Boot DDL that needs a table lock waits at most this long. A statement that
+ * cannot get its lock fails (55P03), is logged, and is retried next boot —
+ * rather than queuing every insert and read on a live sample table behind it.
+ */
+const BOOT_DDL_LOCK_TIMEOUT = "5s";
+
+/** Run one DDL statement with `lock_timeout` set for its transaction only. */
+async function runWithLockTimeout(sql: string, ...params: unknown[]): Promise<void> {
+  await prisma.$transaction([
+    prisma.$executeRawUnsafe(`SET LOCAL lock_timeout = '${BOOT_DDL_LOCK_TIMEOUT}'`),
+    prisma.$executeRawUnsafe(sql, ...params),
+  ]);
+}
+
 async function compressionPolicyMatches(table: string, days: number): Promise<boolean> {
   try {
     const rows = await prisma.$queryRawUnsafe<{ matches: boolean }[]>(
@@ -451,22 +512,32 @@ export async function migrateToHypertables(): Promise<void> {
       // Smaller chunk interval for the selection-aware tables. Affects only
       // chunks created after this call — existing chunks keep their interval
       // and age out naturally. Idempotent.
+      // Lock-timed: on a live table it must not queue the writers behind it.
+      // A timeout here skips only the interval (retried next boot); the
+      // compression settings and policy below still apply.
       if (selectionAware) {
-        await prisma.$executeRawUnsafe(
-          `SELECT set_chunk_time_interval($1::regclass, INTERVAL '${SELECTION_AWARE_CHUNK_INTERVAL}')`,
-          table,
-        );
+        try {
+          await runWithLockTimeout(
+            `SELECT set_chunk_time_interval($1::regclass, INTERVAL '${SELECTION_AWARE_CHUNK_INTERVAL}')`,
+            table,
+          );
+        } catch (err) {
+          logger.warn({ table, err: err instanceof Error ? err.message : String(err) }, "set_chunk_time_interval skipped this boot");
+        }
       }
 
-      // Enable column compression. Setting these table options is idempotent
-      // — re-running with the same values is a no-op. compress_segmentby
-      // pins compressed rows by assetId so per-asset queries inside a
-      // compressed chunk decompress only the relevant segment, not the whole
-      // chunk. The orderby column matches the partition column so compressed
-      // chunks stay time-ordered for drop_chunks pruning.
-      await prisma.$executeRawUnsafe(
-        `ALTER TABLE "${table}" SET (timescaledb.compress = on, timescaledb.compress_segmentby = '"assetId"', timescaledb.compress_orderby = '"${partitionColumn}" DESC')`,
-      );
+      // Enable column compression. compress_segmentby pins compressed rows
+      // by assetId so per-asset queries inside a compressed chunk decompress
+      // only the relevant segment, not the whole chunk. The orderby column
+      // matches the partition column so compressed chunks stay time-ordered
+      // for drop_chunks pruning. The values never change, but the ALTER takes
+      // an ACCESS EXCLUSIVE lock even as a no-op, so it runs only when the
+      // table's settings differ (compressionSettingsMatch), and lock-timed.
+      if (!(await compressionSettingsMatch(table, partitionColumn))) {
+        await runWithLockTimeout(
+          `ALTER TABLE "${table}" SET (timescaledb.compress = on, timescaledb.compress_segmentby = '"assetId"', timescaledb.compress_orderby = '"${partitionColumn}" DESC')`,
+        );
+      }
 
       // Compression policy. Selection-aware tables keep the recent window
       // uncompressed long enough that the unselected 24h deleteMany never hits
