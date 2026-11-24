@@ -235,13 +235,13 @@ describe("ensureBoss + ensureQueues (via startQueueProducer)", () => {
     await q.startQueueProducer();
     const created = new Map<string, any>(boss().createQueue.mock.calls.map((c: any[]) => [c[0], c[1]]));
     for (const name of Object.values(q.QUEUE_NAMES)) {
-      expect(created.get(name)).toMatchObject({ policy: "stately", retryLimit: 0, deleteAfterSeconds: 86_400, retentionSeconds: 3_600 });
+      expect(created.get(name)).toMatchObject({ policy: "stately", retryLimit: 0, deleteAfterSeconds: 3_600, retentionSeconds: 3_600 });
     }
     expect(created.get(q.QUEUE_NAMES.probe).expireInSeconds).toBe(30);
     expect(created.get(q.QUEUE_NAMES.lossSample).expireInSeconds).toBe(15);
     expect(created.get(q.QUEUE_NAMES.systemInfo).expireInSeconds).toBe(300);
     const updated = new Map<string, any>(boss().updateQueue.mock.calls.map((c: any[]) => [c[0], c[1]]));
-    expect(updated.get(q.QUEUE_NAMES.telemetry)).toEqual({ retryLimit: 0, deleteAfterSeconds: 86_400, retentionSeconds: 3_600, expireInSeconds: 180, notify: true });
+    expect(updated.get(q.QUEUE_NAMES.telemetry)).toEqual({ retryLimit: 0, deleteAfterSeconds: 3_600, retentionSeconds: 3_600, expireInSeconds: 180, notify: true });
     expect(updated.get(q.DISCOVERY_QUEUE_NAME).notify).toBe(true);
     expect(boss().deleteQueue).not.toHaveBeenCalled();
   });
