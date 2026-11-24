@@ -670,3 +670,20 @@ describe("unwrapMappedIpv4", () => {
     expect(unwrapMappedIpv4("::ffff:abcd")).toBe("::ffff:abcd");
   });
 });
+
+describe("parseIpv4Range dash split (CodeQL #134)", () => {
+  it("allows spaces around the dash and the short form", async () => {
+    const { parseIpv4Range } = await import("../../src/utils/cidr.js");
+    expect(parseIpv4Range("10.0.0.10 - 10.0.0.50")).toEqual({ first: "10.0.0.10", last: "10.0.0.50" });
+    expect(parseIpv4Range("10.0.0.10-50")).toEqual({ first: "10.0.0.10", last: "10.0.0.50" });
+    expect(parseIpv4Range(" 10.0.0.7 ")).toEqual({ first: "10.0.0.7", last: "10.0.0.7" });
+    expect(parseIpv4Range("10.0.0.1-10.0.0.2-10.0.0.3")).toBeNull();
+    expect(parseIpv4Range("10.0.0.5 -")).toBeNull();
+  });
+  it("is fast on a long space run", async () => {
+    const { parseIpv4Range } = await import("../../src/utils/cidr.js");
+    const started = Date.now();
+    expect(parseIpv4Range("1" + " ".repeat(100_000) + "x")).toBeNull();
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

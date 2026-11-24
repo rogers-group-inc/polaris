@@ -62,7 +62,9 @@ export const AUTOMATION_MAX_RECIPIENTS = 200;
 const DUE_BATCH = 50;
 const LOG_TAIL = 15;
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Domain labels exclude ".", so the dots are the only split points and the
+// match is linear (the old `[^\s@]+\.[^\s@]+` could split a dotted run many ways).
+const EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 
 export interface ScheduleSummary {
   id: string;

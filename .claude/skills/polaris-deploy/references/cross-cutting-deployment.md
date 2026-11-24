@@ -144,13 +144,13 @@ Dockerfile for it.** And `test` / `integration` carry per-job `concurrency` with
 instead (never cancelled mid-publish, so no unattested image). A **cancelled** older run is
 therefore normal — the check below applies to the newest run.
 
-**CodeQL runs nightly, not per push** (2026-10-28): `.github/workflows/codeql.yml` (07:00 UTC +
-`workflow_dispatch`, languages `javascript-typescript` / `go` / `actions`, categories
-`/language:<x>` to match the default-setup alerts). It replaced GitHub's default setup, which ran
-on every push (~13 runner-min each, ~4,800 min/month at 13 pushes/day). It only works once the
-repo's code scanning is switched to **Advanced** — while default setup is on, the upload is
-refused. A push to `main` now runs only `docker-publish.yml` and `check-docs.yml`, plus
-GitHub Code Quality if it is still enabled — that one has no schedule and is a repo setting.
+**CodeQL runs per push, through GitHub's default setup** (a repo setting, not a workflow file;
+languages `javascript-typescript` / `go` / `actions`, categories `/language:<x>`). A nightly
+advanced-setup `codeql.yml` was added 2026-10-28 to save runner minutes (~13 runs a day), but
+GitHub refuses its upload while default setup is on, so it failed every night. It was removed on
+2026-11-24 in favour of default setup. Don't add an advanced workflow back without first switching
+code scanning to **Advanced** in the repo settings. A push to `main` runs `docker-publish.yml`,
+`check-docs.yml`, default-setup CodeQL and GitHub Code Quality (also a repo setting).
 
 **This workflow is also the only test gate on `main`.** `check-docs.yml` runs the structural
 doc guards and CodeQL runs separately; nothing else runs the suites. And `build` declares

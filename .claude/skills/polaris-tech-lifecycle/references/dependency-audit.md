@@ -23,7 +23,7 @@ and disagree often. Triage each on its own; clearing one says nothing about the 
 | Feed | Covers | Read it with |
 |---|---|---|
 | **Dependabot alerts** | advisories against the dependency tree | `gh api repos/:owner/:repo/dependabot/alerts` |
-| **CodeQL / code scanning** | defects in **our own source**, server and browser — scanned **nightly** by `.github/workflows/codeql.yml` (advanced setup, 2026-10-28), so a fix pushed today closes its alert tomorrow | `gh api repos/:owner/:repo/code-scanning/alerts` |
+| **CodeQL / code scanning** | defects in **our own source**, server and browser — scanned on **every push to `main`** by GitHub's default setup (a repo setting; the nightly `codeql.yml` was removed 2026-11-24 because default setup refused its upload), so a pushed fix closes its alert within the hour | `gh api repos/:owner/:repo/code-scanning/alerts` |
 | **`npm audit`** | advisories again, but a different verdict set from Dependabot's | `npm run audit:deps` |
 | **Aikido** | SAST + secrets + IaC + container, via its MCP plugin | the `aikido:issues` skill |
 
@@ -73,6 +73,27 @@ Three things that cost time if you don't know them:
   corpus and diffing the output. For `scripts/check-versions.mjs` this was the only possible proof:
   that rule has matched nothing since the 2026-09-09 incident removed every bare
   `dnf install -y postgresql`, so `check:versions` passes whether the regex works or not.
+  Generate the corpus with `Math.random`, and check that the old matcher returned true a
+  meaningful number of times. A hand-rolled `seed * 1103515245` LCG overflows doubles and
+  collapses into a short cycle. On 2026-11-24 that produced "0 differences, 0 old matches" and
+  looked like a pass.
+- **CodeQL does not see a Zod bound.** `.max()`, `.regex()` and `.int()` in a route schema are
+  invisible to the analyzer, and so is a bound behind a generic helper that returns `T`. The
+  2026-11-24 sweep (#130-144, all raised at once by a query-pack update on old code) re-asserted
+  each bound at the sink in a form it does recognise: an anchored `RE.test()` before a SQL
+  identifier, `Array.isArray(x) ? x.slice(0, N) : []` before a `.length` loop,
+  `if (v > MAX) return MAX` before a timer, a length cap before a string walk, and a **literal
+  origin ending in "/"** as the URL prefix (`` `https://graph.microsoft.com/${path.slice(1)}` ``,
+  not `BASE + path`, even when `BASE` is a const). Polynomial-ReDoS sites were rewritten
+  without the ambiguous regex: index loops, `split("-").map(trim)`, `search()` + `slice`.
+- **Reaching an operator-chosen host is a feature, not request forgery, but only behind the
+  rule 110 guard.** The Generic API preview (#140) and the HA advisory probe (#141) exist to
+  reach a host the operator typed. Both go through `assertOutboundHostAllowed` /
+  `isBlockedOutboundHost` + `guardedLookup`, so they were dismissed as "won't fix" with that
+  reason. Check for the guard before dismissing: the satellite-tile fetch (#142) had none and
+  would fetch `http://169.254.169.254/`. It now refuses literal blocked addresses and fetches
+  through `utils/guardedFetch`, and the alert is dismissed on that basis. Don't try to make CodeQL
+  accept these with a fake allow-list.
 
 ## The quarterly pass
 

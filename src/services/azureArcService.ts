@@ -1496,7 +1496,9 @@ export async function proxyQuery(
     throw new AppError(400, "POST is only permitted to /providers/Microsoft.ResourceGraph/resources");
   }
 
-  const url = new URL(ARM_BASE + path);
+  // Literal origin + "/" as the prefix (not ARM_BASE + path): the host is fixed
+  // before the caller's path is appended. The ARM_HOST check below stays.
+  const url = new URL(`https://management.azure.com/${path.slice(1)}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (k) url.searchParams.set(k, v);

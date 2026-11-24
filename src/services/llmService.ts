@@ -102,6 +102,23 @@ export const LLM_DEFAULTS = {
   contextWindow: 8192,
 } as const;
 
+/** The settings form allows 5 s – 10 min; the bounds here are looser, never wider than that ceiling. */
+const MIN_REQUEST_TIMEOUT_MS = 100;
+const MAX_REQUEST_TIMEOUT_MS = 600_000;
+
+/**
+ * The request / idle timeout to arm, clamped. `config` can come from an
+ * unsaved form (probe-tools takes a free-form config record), so the stored
+ * schema's bounds cannot be assumed here. Exported for tests.
+ */
+export function requestTimeoutOf(config: { requestTimeoutMs?: number }): number {
+  const v = Number(config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs);
+  if (!Number.isFinite(v)) return LLM_DEFAULTS.requestTimeoutMs;
+  if (v > MAX_REQUEST_TIMEOUT_MS) return MAX_REQUEST_TIMEOUT_MS;
+  if (v < MIN_REQUEST_TIMEOUT_MS) return MIN_REQUEST_TIMEOUT_MS;
+  return v;
+}
+
 /**
  * Rough token count for budgeting: ~3.5 characters a token for English and
  * JSON under the tokenizers local models use. Deliberately approximate —
@@ -430,7 +447,7 @@ async function openRequest(
   }
   const entraToken = isAzureProvider(config) && config.azureAuth === "entra" ? await getAzureEntraToken(config) : undefined;
   Object.assign(headers, llmAuthHeaders(config, entraToken));
-  const timeout = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
+  const timeout = requestTimeoutOf(config);
 
   return new Promise((resolve, reject) => {
     const req = mod.request(
@@ -1068,7 +1085,7 @@ function anthropicClient(config: LlmConfig): AnthropicFoundry {
     resource: null as unknown as undefined,
     apiKey: (entra ? null : config.apiToken || null) as unknown as undefined,
     ...(entra ? { azureADTokenProvider: () => getAzureEntraToken(config) } : {}),
-    timeout: config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs,
+    timeout: requestTimeoutOf(config),
     maxRetries: 2,
   });
 }
@@ -1112,7 +1129,7 @@ async function anthropicRound(
     params.tools = req.tools.map((t, i) => (i === req.tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t));
     params.tool_choice = { type: "auto" };
   }
-  const idleMs = config.requestTimeoutMs ?? LLM_DEFAULTS.requestTimeoutMs;
+  const idleMs = requestTimeoutOf(config);
   let idle: NodeJS.Timeout | undefined;
   let stalled = false;
   let stream: ReturnType<AnthropicFoundry["messages"]["stream"]> | undefined;

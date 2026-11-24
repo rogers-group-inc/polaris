@@ -322,7 +322,8 @@ export function compareIpv4(a: string, b: string): number {
  */
 export function parseIpv4Range(raw: string): { first: string; last: string } | null {
   if (typeof raw !== "string") return null;
-  const parts = raw.trim().split(/\s*-\s*/);
+  // Split on the bare dash, then trim: `/\s*-\s*/` is quadratic on long space runs.
+  const parts = raw.trim().split("-").map((p) => p.trim());
   if (parts.length < 1 || parts.length > 2) return null;
   const first = parts[0] ?? "";
   let last = parts[1] ?? first;

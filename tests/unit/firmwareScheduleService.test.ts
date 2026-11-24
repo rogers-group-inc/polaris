@@ -732,3 +732,17 @@ describe("notifyScheduledRunFinished", () => {
     expect(h.sendEmail.mock.calls[0][0]).toEqual({ to: ["resolved@x.io"], cc: ["cc@x.io"], bcc: [], channelIds: ["ch-3"] });
   });
 });
+
+describe("normalizeRecipients address shape (CodeQL #132)", () => {
+  it("accepts dotted domains and refuses empty labels", () => {
+    expect(normalizeRecipients(["ops@mail.example.co.uk"])).toEqual(["ops@mail.example.co.uk"]);
+    expect(() => normalizeRecipients(["a@b..c"])).toThrow(AppError);
+    expect(() => normalizeRecipients(["a@.b.c"])).toThrow(AppError);
+    expect(() => normalizeRecipients(["a@nodot"])).toThrow(AppError);
+  });
+  it("rejects a hostile dotted run quickly", () => {
+    const started = Date.now();
+    expect(() => normalizeRecipients(["!@!." + "!.".repeat(5_000) + " "])).toThrow(AppError);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

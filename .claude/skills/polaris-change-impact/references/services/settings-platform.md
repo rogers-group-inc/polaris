@@ -791,6 +791,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Transport failures throw AppError 502 and never poison any cache (geocoderService precedent); the widget interprets non-200 as "fall back to the CDN for this cycle/cell".
 - Tile render options (256px, color scheme 6, "1_1") are hardcoded to match the widget's direct-CDN URL template — a mismatch would make proxy and fallback look different.
 - In-flight dedupe on the index and per-tile fetches — a 14-frame layer add must not stampede upstream.
+- The tile host is PINNED to `https://tilecache.rainviewer.com` (2026-11-24, CodeQL #143): an index naming any other `host` is a 502, and the tile URL is built from that literal origin + "/", never from the index's `host`. If RainViewer moves its tile CDN, change `RAINVIEWER_TILE_ORIGIN` and the literal in `getRadarTile` together (and the CSP fallback host if it leaves *.rainviewer.com).
 
 **When changing this:**
 - Keep the CSP fallback hosts (api.rainviewer.com / *.rainviewer.com / api.open-meteo.com in securityHeaders.ts) as long as the widget's CDN fallback exists.

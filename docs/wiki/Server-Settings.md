@@ -380,7 +380,10 @@ and its settings apply again once that basemap is off.
 **Test** fetches one tile with what is on screen, before you save. The Polaris
 server fetches the tiles and passes them on, so the key never reaches a browser
 and the browser only talks to Polaris. The server therefore needs to reach the
-provider; check with your IT team that the provider is approved. Saving needs
+provider; check with your IT team that the provider is approved. An imagery
+server on your own network is fine, but a loopback (`127.0.0.1`, `localhost`) or
+link-local / cloud-metadata (`169.254.x.x`) address is refused
+([rule 110](Business-Rules#rule-110)). Saving needs
 **Read-Write** on `serverSettingsSystem` and is recorded as an Event (without
 the key).
 

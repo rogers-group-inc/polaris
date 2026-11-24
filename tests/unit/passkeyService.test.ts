@@ -571,3 +571,20 @@ describe("credential management", () => {
     await expect(userHasPasskey("user-1")).resolves.toBe(true);
   });
 });
+
+describe("normalizeRpId (CodeQL #133)", () => {
+  it("cuts at the first path, query or fragment character", async () => {
+    const { normalizeRpId } = await import("../../src/services/passkeyService.js");
+    expect(normalizeRpId(" HTTPS://Polaris.Example.com:8443/login?x=1#y ")).toBe("polaris.example.com");
+    expect(normalizeRpId("polaris.example.com.")).toBe("polaris.example.com");
+    expect(normalizeRpId("host#frag")).toBe("host");
+    expect(normalizeRpId("host?q")).toBe("host");
+    expect(normalizeRpId("plainhost")).toBe("plainhost");
+  });
+  it("is linear on a long run of '#'", async () => {
+    const { normalizeRpId } = await import("../../src/services/passkeyService.js");
+    const started = Date.now();
+    expect(normalizeRpId("#" + "#".repeat(200_000))).toBe("");
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

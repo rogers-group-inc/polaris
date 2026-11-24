@@ -442,8 +442,11 @@ export async function applyProfileImport(raw: unknown, selected: string[], actor
       defaultSensorColumns: m.sensorColumns ?? null,
     }));
     const row = current?.metrics.find((x) => x.metricKey === m.metricKey);
-    for (let i = 0; i < m.overrides.length; i++) {
-      const o = upgradeLegacySensorTable(m.metricKey, m.overrides[i]);
+    // The file schema caps overrides at 500; re-asserted here because the
+    // generic upgrade above hides that bound from the loop.
+    const overrides = Array.isArray(m.overrides) ? m.overrides.slice(0, 500) : [];
+    for (let i = 0; i < overrides.length; i++) {
+      const o = upgradeLegacySensorTable(m.metricKey, overrides[i]);
       const input = {
         assetType: o.assetType, modelPattern: o.modelPattern, symbol: o.symbol, symbolB: o.symbolB,
         mibId: resolve(o.mib), mibStdKey: o.mibStdKey, type: o.type, transform: o.transform,
