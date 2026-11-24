@@ -69,3 +69,20 @@ describe("sourcesCellHTML", () => {
     expect(rows[2].querySelector(".mac-tooltip-source")).toBeNull();
   });
 });
+
+describe("Sources column filter options", () => {
+  it("offer every labelled source kind with its label, then (No source)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const root = resolve(__dirname, "../../public");
+    const html = readFileSync(resolve(root, "assets.html"), "utf8");
+    const th = /<th[^>]*data-sf-key="sources"[^>]*data-sf-options="([^"]+)"/.exec(html);
+    expect(th).not.toBeNull();
+    const options = th![1].split("|").map((o) => o.split("="));
+    const app = readFileSync(resolve(root, "js/app.js"), "utf8");
+    const block = /var _assetSourceLabels = \{([\s\S]*?)\n\};/.exec(app)![1];
+    const labels = [...block.matchAll(/^\s*"([^"]+)":\s*"([^"]+)",?/gm)].map((m) => [m[1], m[2]]);
+    expect(options.at(-1)).toEqual(["none", "(No source)"]);
+    expect(new Map(options.slice(0, -1) as [string, string][])).toEqual(new Map(labels as [string, string][]));
+  });
+});

@@ -457,6 +457,7 @@ function _buildAssetsQuery() {
   if (Array.isArray(filters.assetType) && filters.assetType.length) params.assetType = filters.assetType.join(",");
   if (Array.isArray(filters._monitor) && filters._monitor.length) params.monitor = filters._monitor.join(",");
   if (Array.isArray(filters.monitoredVia) && filters.monitoredVia.length) params.monitoredVia = filters.monitoredVia.join(",");
+  if (Array.isArray(filters.sources) && filters.sources.length) params.sources = filters.sources.join(",");
 
   // Operator-aware text columns. Param name == column key, except _server→server.
   var textCols = ["hostname", "ipAddress", "serialNumber", "assetTag", "manufacturer",

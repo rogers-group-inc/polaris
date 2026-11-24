@@ -179,8 +179,12 @@
               <th data-sf-key="_server" data-sf-type="string">Location</th>
               <!-- "Sources" (rule 197): the sources the asset's Sources tab
                    lists — the one name, or "N sources" with a hover list.
-                   Display only, like Network. -->
-              <th data-col-id="sources">Sources</th>
+                   Filter only (data-sf-nosort): tick source kinds, any-of, sent
+                   as sources=<csv>; "none" = assets with no source row. The
+                   options are every key of _assetSourceLabels (app.js) with its
+                   label, plus none — tests/unit/assetSourcesCellDom.test.ts
+                   holds the two lists equal. -->
+              <th data-col-id="sources" data-sf-key="sources" data-sf-type="string" data-sf-nosort data-sf-options="entra=Microsoft Entra ID|intune=Microsoft Intune|ad=Active Directory|fortigate-firewall=FortiGate (firewall)|fortiswitch=FortiSwitch|fortiap=FortiAP|fortigate-endpoint=FortiGate / FortiManager (endpoint)|vcenter-vm=VMware vCenter (VM)|vcenter-host=VMware vCenter (ESXi host)|arc=Azure Arc|arc-k8s=Azure Arc (Kubernetes)|polaris-agent=Polaris Agent|generic-api=Generic API|unraid-host=Unraid (host)|unraid-vm=Unraid (VM)|unraid-container=Unraid (container)|truenas-host=TrueNAS SCALE (host)|truenas-vm=TrueNAS SCALE (VM)|truenas-app=TrueNAS SCALE (App)|proxmox-node=Proxmox VE (node)|proxmox-qemu=Proxmox VE (VM)|proxmox-lxc=Proxmox VE (container)|snmp-sysdescr=Device self-report (SNMP sysDescr)|snmp-identity=Device self-report (SNMP sysName + ENTITY-MIB)|snmp-profile=Device self-report (manufacturer profile over SNMP)|fortinet-live=Device self-report (FortiOS firmware)|manual=Manual / other|none=(No source)">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
               <!-- Asset.tags (String[]). The filter is a pick menu (TableSF
                    data-sf-filter="pick"): tick tags in use (GET /assets/tags,

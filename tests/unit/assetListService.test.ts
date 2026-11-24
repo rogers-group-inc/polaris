@@ -144,3 +144,32 @@ describe("Sources column (rule 197)", () => {
     expect((r.enriched[0] as { sources: unknown }).sources).toEqual([]);
   });
 });
+
+describe("Sources filter (rule 197)", () => {
+  const whereOf = () => findMany.mock.calls[0][0].where as { AND?: unknown[] };
+
+  it("one kind → a relation `some` on that kind", async () => {
+    await listAssetsPage(q({ sources: "ad" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { some: { sourceKind: "ad" } } });
+  });
+
+  it("several kinds → any-of", async () => {
+    await listAssetsPage(q({ sources: "ad,intune" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { some: { sourceKind: { in: ["ad", "intune"] } } } });
+  });
+
+  it("`none` alone → assets with no source row", async () => {
+    await listAssetsPage(q({ sources: "none" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ sources: { none: {} } });
+  });
+
+  it("kinds plus `none` → either", async () => {
+    await listAssetsPage(q({ sources: "manual,none" }), {}, "op");
+    expect(whereOf().AND).toContainEqual({ OR: [{ sources: { some: { sourceKind: "manual" } } }, { sources: { none: {} } }] });
+  });
+
+  it("no param → no sources clause", async () => {
+    await listAssetsPage(q({}), {}, "op");
+    expect(JSON.stringify(findMany.mock.calls[0][0].where)).not.toContain("sourceKind");
+  });
+});

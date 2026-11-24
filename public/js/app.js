@@ -367,6 +367,16 @@ var _assetSourceLabels = {
   "arc":                "Azure Arc",
   "arc-k8s":            "Azure Arc (Kubernetes)",
   "polaris-agent":      "Polaris Agent",
+  "generic-api":        "Generic API",
+  "unraid-host":        "Unraid (host)",
+  "unraid-vm":          "Unraid (VM)",
+  "unraid-container":   "Unraid (container)",
+  "truenas-host":       "TrueNAS SCALE (host)",
+  "truenas-vm":         "TrueNAS SCALE (VM)",
+  "truenas-app":        "TrueNAS SCALE (App)",
+  "proxmox-node":       "Proxmox VE (node)",
+  "proxmox-qemu":       "Proxmox VE (VM)",
+  "proxmox-lxc":        "Proxmox VE (container)",
   "manual":             "Manual / other",
 };
 

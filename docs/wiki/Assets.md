@@ -44,7 +44,10 @@ several know the device is set under **Settings → Sources** (see below).
 **Sources** names the systems that report the device, the same list as its
 **Sources** tab. One source shows its name; several show **N sources**, and
 hovering lists each with the integration that reports it
-([rule 197](Business-Rules#rule-197)). It does not sort or filter.
+([rule 197](Business-Rules#rule-197)). Its header filter is a tick-list of source
+kinds plus **(No source)**: an asset matches when it has any ticked source, and
+**(No source)** finds assets nothing reports — for example one added by hand or
+from a Discovery scan. The column does not sort.
 
 **Monitored Via** names the polling method actually in use — *ICMP*, *SNMP*,
 *REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS*, *Proxmox* and so on —

@@ -3992,5 +3992,6 @@ keep the gate's own counters, and a tunnel's history charts are unchanged.
 asset with one source shows that source's name (hover it for the integration). An asset with
 several shows **N sources**, and hovering it lists each source with the integration that
 reports it. Several records from the same integration of the same kind count once, as on the
-Sources tab. The column is display-only: it does not sort or filter. Where a device is learned
+Sources tab. The column's filter is a tick-list of source kinds plus **(No source)**;
+it does not sort. Where a device is learned
 is the **Location** column (rule 22), which this column's name used to belong to.

@@ -14,9 +14,11 @@
 
 **The hover.** The table's existing pill tooltip (`.mac-hover-trigger` / `.mac-tooltip`, delegated from the tbody) — the one the MAC and IP cells use — so it positions, lifts out of overflow and hides the same way. One source shows its name with no pill; the integration goes in the title.
 
+**The filter (asked the same day: "a drop down menu with the different sources or null source").** The header is a multi-select of every kind `_assetSourceLabels` names (generic-api and the Unraid / TrueNAS / Proxmox workload kinds were added to that map for it, which also gave the Sources tab their names), plus **(No source)**. Server-side, `sources=<csv>` → `buildSourcesFilter`: a relation `some` on `sourceKind` for the ticked kinds, any-of, and `sources: { none: {} }` for `none`. Filtering on raw rows is safe because the column's collapse only merges rows of the SAME kind, so a row matches exactly when its cell names the kind. A scan-adopted or hand-added asset with no source row is what **(No source)** finds.
+
 **Scale.** One extra relation select per list query (Prisma batches it as a single `IN` over the page's ids); a page is 50 rows by default. At the 10 000-row export ceiling it is one more query of narrow rows; the endpoint-heavy kinds are collapsed in memory.
 
 **Rejected.**
-- *Sort and filter on the column.* Not asked for. A count sort would need the collapse in SQL or a denormalised count kept current by every source writer.
+- *Sort on the column.* A count sort would need the collapse in SQL or a denormalised count kept current by every source writer. The filter needed neither.
 - *Counting "Manual" and Network-Discovery adoption as sources.* Discussed first, then dropped by the owner in favour of "what the Sources tab shows". A scan-adopted asset has no source row, so it reads "-" until something reports it.
 - *Inheriting a location from the dependency parent.* Raised, then scratched by the owner.

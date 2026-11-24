@@ -159,6 +159,25 @@ function buildServerFilter(
   return { OR: cols.map((c) => ({ [c]: { contains: v, mode: "insensitive" } })) };
 }
 
+/** The Sources filter's pseudo-kind for "this asset has no AssetSource row". */
+const NO_SOURCE = "none";
+
+/**
+ * The Sources column's filter (business rule 197): a CSV of AssetSource kinds,
+ * any-of, where the pseudo-kind `none` matches assets with no source row. The
+ * column lists the collapsed set, but collapsing never removes a KIND, so a
+ * relation `some` on the raw rows matches exactly the rows whose cell names it.
+ */
+function buildSourcesFilter(value: string | undefined): Record<string, unknown> | undefined {
+  const picked = csvToArray(value);
+  if (!picked) return undefined;
+  const kinds = picked.filter((k) => k !== NO_SOURCE);
+  const arms: Record<string, unknown>[] = [];
+  if (kinds.length) arms.push({ sources: { some: { sourceKind: kinds.length === 1 ? kinds[0] : { in: kinds } } } });
+  if (picked.includes(NO_SOURCE)) arms.push({ sources: { none: {} } });
+  return arms.length === 1 ? arms[0] : { OR: arms };
+}
+
 /**
  * Translate one `_monitor` synthetic-column chip into a where fragment. Mirrors
  * the client's `_mapAsset` mapping: "Monitored"/"Unmonitored" gate on the
@@ -300,6 +319,8 @@ export const AssetListQuerySchema = z.object({
   monitor: z.string().optional(),
   // "Monitored Via" multi-select (CSV of method keys: agent, snmp, ssh, icmp…).
   monitoredVia: z.string().optional(),
+  // "Sources" multi-select (CSV of AssetSource kinds; `none` = no source row).
+  sources: z.string().optional(),
   // Existing scalar filters.
   department: z.string().optional(),
   createdBy: z.string().optional(),
@@ -392,6 +413,10 @@ function buildAssetListWhere(
 
   // "Monitored Via" — resolved to ids up front (resolveMonitoredViaMatches).
   if (monitoredViaIds) and.push({ id: { in: monitoredViaIds } });
+
+  // "Sources" (rule 197) — any of the ticked kinds, or no source row at all.
+  const sourcesFrag = buildSourcesFilter(q.sources);
+  if (sourcesFrag) and.push(sourcesFrag);
 
   const statuses = csvToArray(q.status);
   if (statuses) where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
