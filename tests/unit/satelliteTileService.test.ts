@@ -29,6 +29,11 @@ vi.mock("../../src/db.js", () => ({
     },
   },
 }));
+// The service fetches through guardedFetch (rule 110); route it to the global
+// fetch every test below stubs.
+vi.mock("../../src/utils/guardedFetch.js", () => ({
+  guardedFetch: (url: string, init: unknown) => (globalThis.fetch as (u: string, i: unknown) => Promise<unknown>)(url, init),
+}));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => {
@@ -252,5 +257,19 @@ describe("the ArcGIS home (rule 183)", () => {
     expect((await testArcgisBasemap({ authMode: "none", basemapEnabled: true })).ok).toBe(false);
     expect(await testArcgisBasemap({ basemapSource: "service", imageryUrl: "https://x.example.com/foo" }))
       .toMatchObject({ ok: false, message: expect.stringMatching(/MapServer or \/ImageServer/) });
+  });
+});
+
+describe("tile host guard (rule 110, CodeQL #142)", () => {
+  it("refuses a loopback or metadata tile host before fetching, and allows a private LAN portal", async () => {
+    const fetchMock = vi.fn(async () => imageResponse("image/png", "png"));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const host of ["169.254.169.254", "127.0.0.1", "[::1]"]) {
+      await expect(testSatelliteSettings({ enabled: true, urlTemplate: `http://${host}/{z}/{x}/{y}`, attribution: "", maxNativeZoom: 19 }))
+        .rejects.toMatchObject({ httpStatus: 400 });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(testSatelliteSettings({ enabled: true, urlTemplate: "https://10.1.2.3/arcgis/{z}/{x}/{y}", attribution: "", maxNativeZoom: 19 }))
+      .resolves.toMatchObject({ ok: true });
   });
 });

@@ -48,6 +48,8 @@ import { AppError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { getAppVersion } from "../utils/version.js";
 import { tlsFetch } from "../utils/tlsDispatcher.js";
+import { isBlockedOutboundHost } from "../utils/netGuard.js";
+import { guardedFetch } from "../utils/guardedFetch.js";
 
 const SATELLITE_SETTING_KEY = "satelliteConfig";
 
@@ -385,6 +387,17 @@ interface TileResponse {
  * goes through tlsFetch, which pins the certificate instead (rule 113(e)).
  */
 async function fetchTile(url: string, verifySsl = true): Promise<Tile> {
+  // Rule 110: the tile server is operator-chosen (a private ArcGIS Enterprise
+  // portal on RFC1918 is fine) but never loopback or link-local / cloud
+  // metadata. A literal is refused here; a NAME is judged on the connection by
+  // guardedFetch. The pinned-certificate path (tlsFetch) has its own dispatcher
+  // and gets the literal check only.
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new AppError(400, "The satellite tile URL is not a valid URL"); }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new AppError(400, "The satellite tile URL must be http or https");
+  if (isBlockedOutboundHost(parsed.hostname)) {
+    throw new AppError(400, `The satellite tile host "${parsed.hostname}" is in a blocked range (loopback / link-local / metadata)`);
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   let res: TileResponse;
@@ -394,7 +407,7 @@ async function fetchTile(url: string, verifySsl = true): Promise<Tile> {
       signal: ctrl.signal,
       redirect: "error" as const,
     };
-    res = verifySsl ? await fetch(url, init) : await tlsFetch(url, init, false);
+    res = verifySsl ? await guardedFetch(url, init) : await tlsFetch(url, init, false);
   } catch (err) {
     const why = (err as Error)?.name === "AbortError" ? "timed out" : "could not be reached";
     throw new AppError(502, `The satellite tile server ${why}`);
