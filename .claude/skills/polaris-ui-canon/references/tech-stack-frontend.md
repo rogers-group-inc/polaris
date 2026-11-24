@@ -93,6 +93,11 @@ Background and Draw polygon buttons; Save, Load, Undo / Redo, Export and Mouse c
 (`_confirmLocationCodeChanges`, z 1300, "Save the view only" for a caller without `assets:write`),
 `_commitEditSession`, then `POST …/location-codes` and a silent refresh. Export there is a
 picture of the canvas (`captureMapCanvas(el)`), not the Cytoscape PDF / Visio writers.
+The canvas opens on the view's saved OSM centre, else the FortiGate's latitude / longitude at
+zoom 19, and a `ResizeObserver` on its map box calls `invalidateSize()` (rAF-debounced,
+disconnected in `destroy`): Leaflet watches only the window, so a box that grew after mount (the
+modal settling, the details pane filling) left the map pinned at its top-left and a new view
+opened beside its gate, not on it (until 2026-11-24; `tests/unit/topologyPhysicalResize.test.ts`).
 **The Wall canvas (`topology-wall.js`)** is plain SVG in inch units, one `<svg>` per wall with a
 `viewBox` of the wall's inches (so geometry never converts), redrawn whole on each change. Two
 traps it hit: a gesture must re-find its board on every pointer move (a redraw replaces the SVG and

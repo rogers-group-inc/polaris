@@ -3011,6 +3011,17 @@
     // Leaflet measures its container on creation; the modal may still be
     // animating in.
     setTimeout(function () { if (map) map.invalidateSize(); }, 60);
+    // …and the box keeps changing after that: the modal settling, the device
+    // list pane filling, a widget going full screen. Leaflet only watches the
+    // window, so an unnoticed resize left the map pinned at its top-left and a
+    // new view opened beside its FortiGate, not on it (operator report
+    // 2026-11-24). invalidateSize() keeps the centre through every resize.
+    var resizeFrame = 0;
+    var resizeObs = typeof ResizeObserver === "function" ? new ResizeObserver(function () {
+      if (resizeFrame) return;
+      resizeFrame = requestAnimationFrame(function () { resizeFrame = 0; if (map) map.invalidateSize(); });
+    }) : null;
+    if (resizeObs) resizeObs.observe(mapEl);
 
     return {
       mode: "topology",
@@ -3067,6 +3078,8 @@
       captureElement: function () { return mapEl; },
       destroy: function () {
         closeVisPanel();
+        if (resizeObs) resizeObs.disconnect();
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
         if (hoverFrame) cancelAnimationFrame(hoverFrame);
         endAdjust();
         document.removeEventListener("keydown", onKey, true);
