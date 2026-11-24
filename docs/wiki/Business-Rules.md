@@ -3985,3 +3985,15 @@ since Polaris started counting. When a session ends, its traffic stays in the to
 adds each session's new traffic each time it reads the gate (every 10 minutes by default), so
 a session that connects and disconnects between two reads is not counted. Site-to-site tunnels
 keep the gate's own counters, and a tunnel's history charts are unchanged.
+
+### Rule 197
+
+**An update's database migrations never freeze monitoring.** While an in-app update runs its
+migrations, the running Polaris keeps writing to the database. A migration that needs a lock
+on a busy table waits at most 10 seconds for it. If it cannot get the lock, it gives up and
+rolls back, and the update tries again after a short pause until its 5-minute limit. Before
+this, such a migration could wait behind another transaction for minutes and hold up every
+write behind it, so devices missed polls and showed Down. The Run migrations step names the
+session that held the lock. If the update times out, Polaris cancels the migration's database
+session so it does not keep running after the update has stopped, and re-running the update
+picks up where it left off.

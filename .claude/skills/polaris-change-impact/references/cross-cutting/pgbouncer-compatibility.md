@@ -13,7 +13,7 @@
 - **`pg_dump` backup + restore** → `getDirectDatabaseUrl()` in `src/api/routes/serverSettings.ts` (`/database/backup` and `/database/restore` routes). PgBouncer doesn't proxy the COPY-heavy dump protocol reliably.
 - **`pg_stat_activity` reads** (connection-pool snapshot) AND **`pg_stat_database` reads** (disk-read pressure: `blks_read`/`blks_hit`/`blk_read_time`/`track_io_timing`, via `readPgStatDatabaseIo()`) → dedicated `pg.Pool` (max 2) in `src/services/capacityService.ts:getDirectStatsPool()`, opened lazily only when PgBouncer mode is detected. Going through PgBouncer would show the multiplexed view of backend connections, which under-counts what Polaris actually holds.
 - **express-session** → DATABASE_URL (PgBouncer-safe; low-volume INSERT/SELECT/DELETE with no LISTEN/NOTIFY, no held prepared statements).
-- **Prisma CLI migrations** → operator concern. The in-app updater inherits whatever DATABASE_URL is set; CLI invocations under PgBouncer should explicitly set `DATABASE_URL=<direct URL>` before `npx prisma migrate deploy`. Documented in `docs/INSTALL.md`.
+- **Prisma CLI migrations** → the in-app updater passes the migrate child `getDirectDatabaseUrl()` (plus `lock_timeout` and its application_name, rule 197 — `services/migrationGuardService.ts`), so it reaches Postgres directly; CLI invocations under PgBouncer should explicitly set `DATABASE_URL=<direct URL>` before `npx prisma migrate deploy`. Documented in `docs/INSTALL.md`.
 
 **Detection signal:** `polaris_db_connection_mode{mode}` gauge (set once at boot from `recordDbConnectionMode()` in `src/app.ts`) plus an info-level log line at boot. Operators verify Polaris recognized their topology without grepping for connection errors.
 
