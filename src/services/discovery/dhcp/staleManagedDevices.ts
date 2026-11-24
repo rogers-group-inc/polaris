@@ -12,6 +12,7 @@ import { prisma } from "../../../db.js";
 import { logEvent } from "../../eventLogService.js";
 import { releaseAssetsForDecommission } from "../../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../../reservationService.js";
+import { markAssetSourcesMissing } from "../../assetSourceAbsenceService.js";
 import { readControllerStamp, normalizeNameKey, normalizeSerialKey } from "../../../utils/fortinetParentKey.js";
 
 /**
@@ -253,6 +254,9 @@ export async function decommissionStaleManagedDevices(input: {
       where: { id: { in: staleIds } },
       data: { status: "decommissioned", statusChangedAt: new Date(now), statusChangedBy: integrationLabel },
     });
+    // Rule 200: the switch / AP source row stays (it always has); it now says
+    // Missing on the Sources tab until the controller reports the device again.
+    await markAssetSourcesMissing(staleIds, ["fortiswitch", "fortiap"], integrationId, new Date(now));
     // The device is gone from its controller's inventory — deletion at source,
     // which business rule 16 already treats as config truth. Give the address
     // back rather than leaving it claimed (or, once auto-push exists, leaving a

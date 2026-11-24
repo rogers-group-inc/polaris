@@ -453,7 +453,11 @@
             <span class="gate">assets:read</span></div>
           <p>Which discovery sources claim this device (Entra / Intune / AD / FortiGate /
             vCenter / agent / manual …). Response: a JSON array of
-            <code>{ id, sourceKind, externalId, integration, observed, firstSeen, lastSeen }</code>.</p>
+            <code>{ id, sourceKind, externalId, integration, observed, state, firstSeen, lastSeen, missingSince, retired }</code>.
+            A source that no longer finds the device has <code>missingSince</code> set and
+            <code>state.state</code> <code>"missing"</code>; an entry with <code>retired: true</code>
+            is the last-known copy of a source record a disappearance sweep removed, listed after
+            the live sources — its <code>id</code> is not a source id and cannot be split.</p>
         </div>
 
         <div class="endpoint">

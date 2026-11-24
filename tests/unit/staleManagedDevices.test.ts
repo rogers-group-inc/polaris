@@ -25,6 +25,7 @@ vi.mock("../../src/services/eventLogService.js", (orig) =>
   import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
+vi.mock("../../src/services/assetSourceAbsenceService.js", () => ({ markAssetSourcesMissing: vi.fn(async () => 0) }));
 
 import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 const {

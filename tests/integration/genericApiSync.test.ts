@@ -175,10 +175,20 @@ d("syncGenericApiDevices", () => {
   it("keeps everything when decommissioning is off, and sweeps a vanished record when it is on — not a filtered one", async () => {
     await syncGenericApiDevices(integrationId, NAME, {}, result([rec("x1"), rec("x2"), rec("x3")]));
 
-    // Off (the default): x3 leaves the feed, nothing happens.
+    // Off (the default): x3 leaves the feed, nothing is removed — but its row
+    // now says Missing (rule 200), and only its row.
     const off = await syncGenericApiDevices(integrationId, NAME, {}, result([rec("x1"), rec("x2")]));
     expect(off.decommissioned).toEqual([]);
     expect(await prisma.assetSource.count({ where: { integrationId } })).toBe(3);
+    const x3Id = (await byName("x3"))!.id;
+    const stamped = await prisma.assetSource.findMany({ where: { integrationId, missingSince: { not: null } }, select: { assetId: true } });
+    expect(stamped.map((s) => s.assetId)).toEqual([x3Id]);
+
+    // Back in the feed: the stamp clears. Out again: stamped again.
+    await syncGenericApiDevices(integrationId, NAME, {}, result([rec("x1"), rec("x2"), rec("x3")]));
+    expect(await prisma.assetSource.count({ where: { integrationId, missingSince: { not: null } } })).toBe(0);
+    await syncGenericApiDevices(integrationId, NAME, {}, result([rec("x1"), rec("x2")]));
+    expect(await prisma.assetSource.count({ where: { integrationId, missingSince: { not: null } } })).toBe(1);
 
     // On: x3 is gone; x2 is still in the feed but filtered out (present in
     // presentIdentities, absent from records) and must keep its asset.
@@ -188,6 +198,12 @@ d("syncGenericApiDevices", () => {
     expect((await byName("x3"))?.status).toBe("decommissioned");
     expect((await byName("x2"))?.status).toBe("active");
     expect(await prisma.assetSource.count({ where: { integrationId } })).toBe(2);
+    // Rule 200: the swept row left a last-known copy on x3, carrying the time
+    // it first went missing (the off-run stamp), not the sweep's.
+    const kept = await prisma.assetSourceRetired.findMany({ where: { assetId: x3Id } });
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ sourceKind: "generic-api", integrationId });
+    expect(kept[0].missingSince.getTime()).toBeLessThan(Date.now());
   });
 
   it("refuses to sweep an incomplete read, an empty read, and a mass removal", async () => {

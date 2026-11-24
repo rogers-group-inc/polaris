@@ -40,13 +40,17 @@ var _assetSourceStateBadgeClass = {
   "enabled":  "badge-active",
   "disabled": "badge-disabled",
   "unknown":  "badge-unmonitored",
+  // Rule 200: the source's last whole read no longer held the device.
+  "missing":  "badge-expired",
 };
 
 // Header badge answering "does THIS source consider the asset enabled?".
 function _assetSourceStateBadge(state) {
   if (!state || !state.label) return "";
   var cls = _assetSourceStateBadgeClass[state.state] || "badge-unmonitored";
-  var tip = state.field
+  var tip = state.state === "missing"
+    ? "This source's full reads have not included the device since " + formatDate(state.value) + "."
+    : state.field
     ? "This source reports " + state.field + " = " + (state.value === null ? "—" : state.value)
     : "This source reports no enabled/disabled state for the asset.";
   return '<span class="badge ' + cls + '" title="' + escapeHtml(tip) + '">' + escapeHtml(state.label) + '</span>';
@@ -79,10 +83,18 @@ function _assetSourceStateSummaryHTML(sources) {
   };
   var enabled  = reported.filter(function (s) { return s.state.state === "enabled"; });
   var disabled = reported.filter(function (s) { return s.state.state === "disabled"; });
+  var missing  = reported.filter(function (s) { return s.state.state === "missing"; });
 
   var lines = [];
   if (enabled.length)  lines.push('<div><strong style="color:var(--color-success)">Enabled</strong> per ' + render(enabled) + '</div>');
   if (disabled.length) lines.push('<div><strong style="color:#ef9a9a">Disabled</strong> per ' + render(disabled) + '</div>');
+  // Rule 200: the sources that no longer find the device, with since when.
+  if (missing.length) {
+    lines.push('<div><strong style="color:var(--color-warning)">Missing</strong> per ' + missing.map(function (s) {
+      var label = _assetSourceLabels[s.sourceKind] || s.sourceKind;
+      return '<span style="white-space:nowrap">' + escapeHtml(label) + ' <span style="color:var(--color-text-secondary)">(not found since ' + escapeHtml(formatDate(s.missingSince)) + ')</span></span>';
+    }).join(", ") + '</div>');
+  }
 
   var conflict = _assetSourceAccountStatesDisagree(reported.map(function (s) { return s.state; }))
     ?'<div style="margin-top:0.35rem;color:var(--color-warning)">Directory sources disagree — a disabled account decommissions the asset, so the disabling directory wins on the next discovery run.</div>'
@@ -863,7 +875,10 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
   // source on the asset (the backend rejects splitting the only source).
   // Manual sources can never be split (backend also rejects those).
   // Splitting creates a record and detaches a source: an edit, not a merge.
-  var canSplit = canManageAssets() && sources.length > 1;
+  // A retired (Missing) copy is not a source row and can never be split, nor
+  // count toward "more than one source" (rule 200).
+  var liveSourceCount = sources.filter(function (s) { return !s.retired; }).length;
+  var canSplit = canManageAssets() && liveSourceCount > 1;
   var tlsPinsPlaced = false;
   var sourceCards = sources.map(function (s) {
     var label = _assetSourceLabels[s.sourceKind] || s.sourceKind;
@@ -878,7 +893,7 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
       badges.push('<span class="badge badge-active" title="' + escapeHtml(s.integration.type) + '">' + escapeHtml(s.integration.name) + '</span>');
     }
     var splitButton = "";
-    if (canSplit && s.sourceKind !== "manual") {
+    if (canSplit && s.sourceKind !== "manual" && !s.retired) {
       splitButton = '<button class="btn btn-sm btn-secondary" onclick="splitAssetSource(' + jsArg(assetId) + ', ' + jsArg(s.id) + ', ' + jsArg(label) + ')" title="Detach this source onto a new asset (recovery action for bad merges)">Split</button>';
     }
     var headerRight = (badges.length || splitButton)
@@ -886,6 +901,8 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
       : '';
 
     var meta = [];
+    // Rule 200: a source that no longer finds the device leads with since when.
+    if (s.missingSince) meta.push('<strong style="color:var(--color-warning);font-weight:600">Missing since ' + escapeHtml(formatDate(s.missingSince)) + '</strong>');
     if (s.syncedAt) meta.push("Synced " + escapeHtml(formatDate(s.syncedAt)));
     if (s.firstSeen) meta.push("First seen " + escapeHtml(formatDate(s.firstSeen)));
     if (s.lastSeen)  meta.push("Last seen " + escapeHtml(formatDate(s.lastSeen)));
@@ -903,8 +920,14 @@ function _assetSourcesTabHTML(sources, assetId, sightings, ipHistory, discoverin
     // table-layout:fixed + an explicit colgroup makes the label column the
     // same width on every card, so values align vertically across sources
     // even when the longest label in each source differs.
+    // Rule 200: a Missing source's values are what it LAST reported — dimmed,
+    // under a line saying so.
+    var missingNote = s.missingSince
+      ? '<div style="font-size:0.78rem;color:var(--color-text-tertiary);margin-bottom:0.4rem">Last known values. Not found in ' +
+          escapeHtml(s.integration ? s.integration.name : label) + '’s full reads since ' + escapeHtml(formatDate(s.missingSince)) + '.</div>'
+      : '';
     var observedTable = rows
-      ? '<table style="width:100%;font-size:0.85rem;border-collapse:collapse;table-layout:fixed">' +
+      ? missingNote + '<table style="width:100%;font-size:0.85rem;border-collapse:collapse;table-layout:fixed' + (s.missingSince ? ';opacity:0.6' : '') + '">' +
           '<colgroup><col style="width:220px"><col></colgroup>' +
           rows +
         '</table>'

@@ -619,6 +619,12 @@ export async function absorbAssetRelations(
     where: { assetId: fromAssetId },
     data: { assetId: toAssetId },
   });
+  // Rule 200: the absorbed record's retired (Missing) sources follow it, so
+  // the survivor's Sources tab still says what used to report the device.
+  await tx.assetSourceRetired.updateMany({
+    where: { assetId: fromAssetId },
+    data: { assetId: toAssetId },
+  });
   const side = await transferAssetSideTables(tx, fromAssetId, toAssetId);
   const deps = await transferDependencyEdges(
     tx,

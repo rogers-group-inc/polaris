@@ -49,6 +49,14 @@ const h = vi.hoisted(() => ({
   publishDiscoveryJob: vi.fn(),
   integrationAdapter: vi.fn(),
   releaseAssetsForDecommission: vi.fn(),
+  retireSourceRows: vi.fn(),
+  markSourcesMissing: vi.fn(),
+  clearSourcesMissing: vi.fn(),
+}));
+vi.mock("../../src/services/assetSourceAbsenceService.js", () => ({
+  retireSourceRows: h.retireSourceRows,
+  markSourcesMissing: h.markSourcesMissing,
+  clearSourcesMissing: h.clearSourcesMissing,
 }));
 
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
@@ -117,6 +125,9 @@ beforeEach(async () => {
   const real = await vi.importActual<typeof import("../../src/services/integrationAdapters.js")>("../../src/services/integrationAdapters.js");
   h.integrationAdapter.mockImplementation(real.integrationAdapter);
   h.releaseAssetsForDecommission.mockResolvedValue([]);
+  h.retireSourceRows.mockResolvedValue(0);
+  h.markSourcesMissing.mockResolvedValue(0);
+  h.clearSourcesMissing.mockResolvedValue(0);
   h.persistSlowFlags.mockResolvedValue(undefined);
   h.requestCancel.mockResolvedValue(true);
 });
@@ -438,7 +449,8 @@ describe("sweepArcAbsence", () => {
     // 55 of 60 gone > max(50, 20% of 60)
     const out = await sweepArcAbsence("i1", "Arc", on, result([0, 1, 2, 3, 4].map(machine), null));
     expect(out).toEqual([]);
-    expect(prisma.assetSource.deleteMany).not.toHaveBeenCalled();
+    expect(h.retireSourceRows).not.toHaveBeenCalled();
+    expect(h.markSourcesMissing).not.toHaveBeenCalled();
     expect(syncLines().some((l) => l.startsWith("warning: [Arc] Disappearance sweep skipped — 55 of 60 Azure Arc source row(s) vanished"))).toBe(true);
   });
 
@@ -450,8 +462,36 @@ describe("sweepArcAbsence", () => {
     vi.mocked(prisma.asset.findMany).mockResolvedValue([] as never);
     const out = await sweepArcAbsence("i1", "Arc", on, result([machine(2)], null));
     expect(out).toEqual([]);
-    expect(prisma.assetSource.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ["s1"] } } });
+    // Rule 200: the swept row leaves a last-known copy behind.
+    expect(h.retireSourceRows).toHaveBeenCalledWith(["s1"], NOW);
     expect(prisma.asset.updateMany).not.toHaveBeenCalled();
+  });
+
+  // Business rule 200: the sweep OFF still says which rows the directory lost.
+  it("with the sweep off, stamps the gone rows Missing and clears a row that came back — nothing removed or decommissioned", async () => {
+    vi.mocked(prisma.assetSource.findMany).mockResolvedValue([
+      { id: "s1", assetId: "a1", sourceKind: "arc", externalId: machine(1), missingSince: null },
+      { id: "s2", assetId: "a2", sourceKind: "arc", externalId: machine(2), missingSince: new Date("2026-06-01") },
+    ] as never);
+    h.markSourcesMissing.mockResolvedValue(1);
+    const out = await sweepArcAbsence("i1", "Arc", { decommissionMissing: false }, result([machine(2)], null));
+    expect(out).toEqual([]);
+    expect(h.markSourcesMissing).toHaveBeenCalledWith(["s1"], NOW);
+    expect(h.clearSourcesMissing).toHaveBeenCalledWith(["s2"]);
+    expect(h.retireSourceRows).not.toHaveBeenCalled();
+    expect(prisma.asset.updateMany).not.toHaveBeenCalled();
+    expect(h.releaseAssetsForDecommission).not.toHaveBeenCalled();
+    expect(syncLines().some((l) => l.includes("Marked 1 Azure Arc source row(s) Missing"))).toBe(true);
+  });
+
+  it("with the sweep off, a scoped or broken read stamps nothing", async () => {
+    vi.mocked(prisma.assetSource.findMany).mockResolvedValue([
+      { id: "s1", assetId: "a1", sourceKind: "arc", externalId: machine(1), missingSince: null },
+    ] as never);
+    const scoped = { machines: [], clusters: [], absence: { machineIds: [], clusterIds: null, subscriptionsRead: ["sub1"], complete: true, scoped: true } } as unknown as ArcDiscoveryResult;
+    await sweepArcAbsence("i1", "Arc", { decommissionMissing: false }, scoped);
+    expect(h.markSourcesMissing).not.toHaveBeenCalled();
+    expect(syncLines().some((l) => l.includes("Disappearance sweep skipped"))).toBe(false);
   });
 
   it("strips azure: tags from an asset left with no Arc row, then decommissions what this integration manages", async () => {

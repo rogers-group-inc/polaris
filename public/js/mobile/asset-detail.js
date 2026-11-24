@@ -4238,11 +4238,13 @@
         // question "which source is calling this disabled?" is answerable
         // without opening the desktop UI. Omitted when unreported.
         if (s.state && s.state.state && s.state.state !== "unknown") {
-          var col = s.state.state === "disabled" ? "var(--md-error)" : "var(--md-success)";
+          // Rule 200: a source that no longer finds the device reads Missing, in the warning colour.
+          var col = s.state.state === "disabled" ? "var(--md-error)" : s.state.state === "missing" ? "var(--md-warning)" : "var(--md-success)";
           bits.push('<span style="color:' + col + ';font-weight:500;">' + escapeHtml(s.state.label) + '</span>');
         }
         if (s.integration && s.integration.name) bits.push(escapeHtml(s.integration.name));
-        if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
+        if (s.missingSince) bits.push("missing since " + escapeHtml(timeAgo(s.missingSince)));
+        else if (s.lastSeen) bits.push("seen " + escapeHtml(timeAgo(s.lastSeen)));
         var inferred = s.inferred ? ' <span class="muted" style="font-size:12px;font-weight:400;">· inferred</span>' : '';
         var extId = s.externalId
           ? '<div class="mono" style="font-size:11px;opacity:.65;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(s.externalId) + '</div>'

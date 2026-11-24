@@ -10,6 +10,7 @@
  */
 
 import { chunkArray } from "../../utils/chunk.js";
+import { clearSourcesMissing, markSourcesMissing, retireSourceRows } from "../assetSourceAbsenceService.js";
 import { createTrailingThrottle } from "../../utils/trailingThrottle.js";
 import { prisma } from "../../db.js";
 import { AppError, throwIfAborted } from "../../utils/errors.js";
@@ -1718,6 +1719,8 @@ export async function upsertFortigateFirewallAssetSource(
       inferred: false,
       syncedAt,
       ...(lastSeen ? { lastSeen } : {}),
+      // Rule 200: the roster reports the gate again.
+      missingSince: null,
     },
   });
   // Pre-`fgt:`-tag firewalls were classified as "manual" by the phase-1
@@ -1787,7 +1790,8 @@ export async function upsertFortinetInfraAssetSource(
   await prisma.assetSource.upsert({
     where: { sourceKind_externalId: { sourceKind, externalId: serial } },
     create: { assetId, sourceKind, externalId: serial, integrationId, observed: observed as any, inferred: false, syncedAt, firstSeen: lastSeen, lastSeen },
-    update: { assetId, integrationId, observed: observed as any, inferred: false, syncedAt, lastSeen },
+    // Rule 200: missingSince cleared — the controller reports the device again.
+    update: { assetId, integrationId, observed: observed as any, inferred: false, syncedAt, lastSeen, missingSince: null },
   });
   // Clears the phantom `manual` row the shadow-write mints on a new switch/AP
   // — live, not a spent migration, and must stay per-device. See the fuller
@@ -4526,7 +4530,6 @@ interface DirectorySweepInput {
 async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string[]> {
   const { integrationId, integrationName, directoryLabel, now, actor, syncLog } = input;
   const decommissioned: string[] = [];
-  if (!input.enabled) return decommissioned;
 
   const sourceKinds = input.kinds.map((k) => k.sourceKind);
 
@@ -4535,20 +4538,29 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
     // memory. Deliberately NOT `externalId: { notIn: [...] }` the way the
     // vCenter sweep does it — a 10,000-element NOT IN is the shape this
     // integration hits at fleet scale.
-    const rows = await prisma.assetSource.findMany({
+    const allRows = await prisma.assetSource.findMany({
       where: { integrationId, sourceKind: { in: sourceKinds } },
-      select: { id: true, assetId: true, sourceKind: true, externalId: true },
+      select: { id: true, assetId: true, sourceKind: true, externalId: true, missingSince: true },
     });
-    if (rows.length === 0) return decommissioned;
+    if (allRows.length === 0) return decommissioned;
 
     const blockedReason = input.blockedReason();
     if (blockedReason) {
-      syncLog(
-        "warning",
-        `Disappearance sweep skipped — ${blockedReason}. ${rows.length} existing ${directoryLabel} source row(s) left untouched rather than reading a partial answer as deleted devices.`,
-      );
+      if (input.enabled) {
+        syncLog(
+          "warning",
+          `Disappearance sweep skipped — ${blockedReason}. ${allRows.length} existing ${directoryLabel} source row(s) left untouched rather than reading a partial answer as deleted devices.`,
+        );
+      }
       return decommissioned;
     }
+
+    // Rule 200: with the sweep OFF the pass still runs, behind the same
+    // guards, but only to say which rows the directory no longer holds
+    // (`missingSince`) — no row is deleted and no asset decommissioned.
+    // With it ON, a row already stamped while it was off is judged like any
+    // other gone row. A row stamped while ON never exists: ON deletes it.
+    const rows = allRows;
 
     const gone: typeof rows = [];
     // assetId → how its rows of THIS integration came back. An asset is only
@@ -4584,18 +4596,29 @@ async function sweepDirectoryAbsence(input: DirectorySweepInput): Promise<string
     if (absenceExceedsGuard(gone.length, rows.length)) {
       syncLog(
         "warning",
-        `Disappearance sweep skipped — ${gone.length} of ${rows.length} ${directoryLabel} source row(s) vanished from this read, which is too large a share to be ordinary turnover. Check the search scope and the read permissions before trusting it; nothing was deleted or decommissioned.`,
+        `Disappearance sweep skipped — ${gone.length} of ${rows.length} ${directoryLabel} source row(s) vanished from this read, which is too large a share to be ordinary turnover. Check the search scope and the read permissions before trusting it; nothing was ${input.enabled ? "deleted or decommissioned" : "marked missing"}.`,
       );
+      return decommissioned;
+    }
+
+    // Rule 200: a row whose device is back (alive or disabled — read either
+    // way) loses its Missing stamp, whatever the toggle says.
+    const goneIds = new Set(gone.map((r) => r.id));
+    const backIds = rows.filter((r) => r.missingSince && !goneIds.has(r.id)).map((r) => r.id);
+    if (backIds.length > 0) await clearSourcesMissing(backIds);
+
+    if (!input.enabled) {
+      const newly = gone.length > 0 ? await markSourcesMissing(gone.map((r) => r.id), now) : 0;
+      if (newly > 0) syncLog("info", `Marked ${newly} ${directoryLabel} source row(s) Missing — device(s) no longer in the directory. The disappearance sweep is off, so nothing was removed or decommissioned.`);
       return decommissioned;
     }
 
     // Stale provenance goes regardless of who manages the asset — the row is
     // this integration's claim on a device it no longer holds. Rows for
     // DISABLED devices are kept: the device still exists, it is switched off.
+    // Rule 200: the row leaves a last-known copy for the Sources tab.
     if (gone.length > 0) {
-      for (const batch of chunkArray(gone.map((r) => r.id), 500)) {
-        await prisma.assetSource.deleteMany({ where: { id: { in: batch } } });
-      }
+      await retireSourceRows(gone.map((r) => r.id), now);
       syncLog("info", `Swept ${gone.length} stale ${directoryLabel} source row(s) for device(s) no longer in the directory.`);
       if (input.onRowsGone) {
         await input.onRowsGone([...new Set(gone.map((r) => r.assetId))]).catch((err: any) =>
@@ -6939,7 +6962,8 @@ export async function syncVcenterDevices(
       const { retained, gone } = vcenter.partitionStaleVcenterSources(staleRows, result.presentVmMorefs);
 
       if (gone.length > 0) {
-        await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
+        // Rule 200: the row leaves a last-known copy for the Sources tab.
+        await retireSourceRows(gone.map((r) => r.id), now);
         syncLog("info", `Swept ${gone.length} stale vcenter AssetSource row(s) no longer present in the inventory.`);
       }
       if (retained.length > 0) {

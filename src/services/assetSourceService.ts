@@ -23,6 +23,7 @@ import { deriveAssetSourceState } from "../utils/assetSourceState.js";
 import { orderAndCollapseSources } from "../utils/assetSourceOrder.js";
 import { assetTypeForWorkloadRole, parseWorkloadSourceKind } from "../utils/workloadSources.js";
 import { assertAssetExists } from "./assetDetailReadService.js";
+import { listShownRetiredSources } from "./assetSourceAbsenceService.js";
 
 /**
  * Every AssetSource row of an asset with the originating integration joined
@@ -44,7 +45,7 @@ export async function listAssetSourcesForDisplay(id: string) {
   // Firewall Sightings and IP History tables on the same Sources tab.
   const deduped = orderAndCollapseSources(rows);
 
-  return deduped.map((r) => ({
+  const live = deduped.map((r) => ({
     id: r.id,
     sourceKind: r.sourceKind,
     externalId: r.externalId,
@@ -54,13 +55,56 @@ export async function listAssetSourcesForDisplay(id: string) {
     // `accountEnabled`, AD's inverted `accountDisabled`, vCenter's
     // powerState/connectionState and the Fortinet connection flags all
     // collapse to one tri-state so the Sources tab can badge each card
-    // instead of making the operator decode four vocabularies.
-    state: deriveAssetSourceState(r.sourceKind, r.observed),
+    // instead of making the operator decode four vocabularies. A source that
+    // no longer finds the device says Missing instead (rule 200).
+    state: r.missingSince ? missingSourceState(r.missingSince) : deriveAssetSourceState(r.sourceKind, r.observed),
     inferred: r.inferred,
     syncedAt: r.syncedAt,
     firstSeen: r.firstSeen,
     lastSeen: r.lastSeen,
+    missingSince: r.missingSince,
+    retired: false,
   }));
+
+  // Rule 200: last-known copies of the rows a sweep removed, after the live
+  // sources — skipped when a live card of the same (kind, integration) is
+  // already shown, which the dedup above would have kept instead.
+  const seen = new Set(deduped.map((r) => `${r.sourceKind}\u0000${r.integrationId ?? ""}`));
+  const retired = (await listShownRetiredSources(id))
+    .sort((a, b) => b.missingSince.getTime() - a.missingSince.getTime())
+    .filter((r) => {
+      const key = `${r.sourceKind}\u0000${r.integrationId ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((r) => ({
+      id: r.id,
+      sourceKind: r.sourceKind,
+      externalId: r.externalId,
+      integration: r.integration ? { id: r.integration.id, name: r.integration.name, type: r.integration.type } : null,
+      observed: r.observed,
+      state: missingSourceState(r.missingSince),
+      inferred: false,
+      syncedAt: r.syncedAt,
+      firstSeen: r.firstSeen,
+      lastSeen: r.lastSeen,
+      missingSince: r.missingSince,
+      retired: true,
+    }));
+
+  return [...live, ...retired];
+}
+
+/** The Sources-tab verdict for a source that no longer finds the device (rule 200). */
+export function missingSourceState(since: Date) {
+  return {
+    state: "missing" as const,
+    kind: "absence" as const,
+    label: "Missing",
+    field: "missingSince",
+    value: since.toISOString(),
+  };
 }
 
 /**

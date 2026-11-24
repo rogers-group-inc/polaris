@@ -997,6 +997,12 @@ which it is. Off, the pass does nothing at all: the stale source rows are left i
 because deleting them is the same judgement wearing a smaller hat, and because a sweep that
 deleted rows but skipped the status flip would leave the next run with nothing to notice.
 
+(2026-11-24, [rule 200](narrative-200.md#rule-200).) "Does nothing at all" is no longer
+literal: off, the pass runs behind all three guards below and STAMPS the rows the directory
+no longer holds (`AssetSource.missingSince`), so the Sources tab can say Missing. It still
+deletes nothing and decommissions nothing — a stamp is not the judgement this paragraph
+refuses to make, because the row goes on counting everywhere it counted.
+
 ### The three guards, in the order they fire
 
 **`adSweepBlockedReason` / `entraSweepBlockedReason`** refuse the whole pass on cause 4 —

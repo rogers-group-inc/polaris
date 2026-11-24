@@ -134,6 +134,11 @@ POST   /assets/:id/address-check            score an address before pinning or t
 GET    /credentials                         stored credentials, secrets masked
 ```
 
+`GET /assets/:id/sources` marks a source that no longer finds the device with
+`missingSince` and a `state` of `"missing"`; an entry with `retired: true` is the
+last-known copy of a source record a disappearance sweep removed — its `id` is not
+a source id and cannot be split ([rule 200](Business-Rules#rule-200)).
+
 `azure:` tags belong to the Azure Arc integration. `POST /assets`, `PUT
 /assets/:id` and `POST /assets/bulk-tags` ignore any `azure:` tag in the body
 and always keep the ones a device already has.

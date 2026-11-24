@@ -12,6 +12,7 @@ import { prisma } from "../../../db.js";
 import { logEvent } from "../../eventLogService.js";
 import { releaseAssetsForDecommission } from "../../maintenanceScheduleService.js";
 import { releaseInfraReservationsForAssets } from "../../reservationService.js";
+import { markAssetSourcesMissing } from "../../assetSourceAbsenceService.js";
 import { readFirewallDeviceName } from "../../../utils/fortinetParentKey.js";
 import { isUsableSerial } from "../../../utils/serialNumber.js";
 
@@ -279,6 +280,8 @@ export async function decommissionStaleFirewalls(input: {
       where: { id: { in: staleFwIds } },
       data: { status: "decommissioned", statusChangedAt: new Date(now), statusChangedBy: integrationLabel },
     });
+    // Rule 200: the gate's source row stays; the Sources tab says Missing.
+    await markAssetSourcesMissing(staleFwIds, ["fortigate-firewall"], integrationId, new Date(now));
     // Keep the in-memory index in step with the DB. `assetIdx` is a snapshot
     // taken before this sweep, and in "full" mode (the standalone FortiGate
     // integration — one pass, Phase 2a ahead of the Phase 3 firewall fan-out)
@@ -341,6 +344,7 @@ export async function decommissionStaleFirewalls(input: {
         where: { id: { in: cascadeIds } },
         data: { status: "decommissioned", statusChangedAt: new Date(now), statusChangedBy: integrationLabel },
       });
+      await markAssetSourcesMissing(cascadeIds, ["fortiswitch", "fortiap"], integrationId, new Date(now));
       // Same snapshot sync as the firewall flip above — the switch / AP
       // update paths resurrect off `existingAsset.status`, which comes from
       // the pre-sweep `assetIdx`.

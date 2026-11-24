@@ -28,6 +28,7 @@ import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 beforeEach(() => resetEventLogStub());
 vi.mock("../../src/services/maintenanceScheduleService.js", () => ({ releaseAssetsForDecommission: m.releaseForDecommission }));
 vi.mock("../../src/services/reservationService.js", () => ({ releaseInfraReservationsForAssets: m.releaseInfra }));
+vi.mock("../../src/services/assetSourceAbsenceService.js", () => ({ markAssetSourcesMissing: vi.fn(async () => 0) }));
 vi.mock("../../src/utils/assetProjection.js", () => ({ projectAssetFromSources: m.project }));
 
 const { decommissionStaleFirewalls } = await import("../../src/services/discovery/dhcp/staleFirewalls.js");

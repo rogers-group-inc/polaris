@@ -61,6 +61,7 @@ import { listAssetTypes } from "../assetTypeService.js";
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets, observedUnchanged, bumpSourcesSeen } from "./syncSteps.js";
+import { clearSourcesMissing, markSourcesMissing, retireSourceRows } from "../assetSourceAbsenceService.js";
 import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
 import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
 import { mapSettledWithConcurrency } from "../../utils/concurrency.js";
@@ -556,22 +557,31 @@ export async function syncGenericApiDevices(
   // ── Disappearance sweep (opt-in, rule 70's guards) ──────────────────────────
   const decommissioned: string[] = [];
   try {
-    const blocked = genericApiSweepBlockedReason(result, priorCount, cfg.decommissionMissing === true);
+    const sweepOn = cfg.decommissionMissing === true;
+    // Rule 200: the read is judged whether or not the sweep is on — off, it
+    // only stamps the rows Missing. So the toggle is applied below, not here.
+    const blocked = genericApiSweepBlockedReason(result, priorCount, true);
     if (blocked) {
-      if (cfg.decommissionMissing === true && priorCount > 0) {
+      if (sweepOn && priorCount > 0) {
         syncLog("warning", `Missing-record sweep skipped — ${blocked}. ${priorCount} existing source row(s) left untouched.`);
       }
     } else {
       const present = new Set(result.presentIdentities.map((id) => genericApiExternalId(integrationId, id)));
       const ownRows = await prisma.assetSource.findMany({
         where: { integrationId, sourceKind: KIND },
-        select: { id: true, assetId: true, externalId: true },
+        select: { id: true, assetId: true, externalId: true, missingSince: true },
       });
       const gone = ownRows.filter((row) => !present.has(row.externalId));
+      const back = ownRows.filter((row) => row.missingSince && present.has(row.externalId));
+      if (back.length > 0) await clearSourcesMissing(back.map((r) => r.id));
       if (gone.length > 0 && absenceExceedsGuard(gone.length, priorCount)) {
-        syncLog("warning", `Missing-record sweep refused — ${gone.length} of ${priorCount} record(s) vanished in one read, which is more than the guard allows. Nothing was removed; if this is real, the next runs will keep reporting it.`);
+        syncLog("warning", `Missing-record sweep refused — ${gone.length} of ${priorCount} record(s) vanished in one read, which is more than the guard allows. Nothing was ${sweepOn ? "removed" : "marked missing"}; if this is real, the next runs will keep reporting it.`);
+      } else if (gone.length > 0 && !sweepOn) {
+        const newly = await markSourcesMissing(gone.map((r) => r.id), now);
+        if (newly > 0) syncLog("info", `Marked ${newly} source row(s) Missing — record(s) no longer in the feed. Decommissioning missing records is off, so nothing was removed.`);
       } else if (gone.length > 0) {
-        await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
+        // Rule 200: the row leaves a last-known copy for the Sources tab.
+        await retireSourceRows(gone.map((r) => r.id), now);
         syncLog("info", `Swept ${gone.length} source row(s) for records no longer in the feed.`);
         // Ownership decides (rule 70): an asset another integration owns
         // loses only this feed's row; the feed's word is final only on what
