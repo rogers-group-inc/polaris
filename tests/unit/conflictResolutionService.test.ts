@@ -76,6 +76,7 @@ import { eventLog, resetEventLogStub } from "./_eventLogStub.js";
 import {
   listConflicts, countPendingConflicts, loadPendingConflict,
   acceptConflict, mergeAssetConflict, rejectConflict,
+  dismissLinkedIdentityConflicts, assetConflictSourceDescriptor,
 } from "../../src/services/conflictResolutionService.js";
 
 const NOW = new Date("2026-06-10T12:00:00Z");
@@ -427,5 +428,92 @@ describe("asset reject", () => {
 
   it("refuses a reject with no device id (500)", async () => {
     await expect(rejectConflict(assetConflict({}, {}, { proposedDeviceId: null }))).rejects.toMatchObject({ httpStatus: 500 });
+  });
+});
+
+const ARM = "/subscriptions/s1/resourcegroups/rg/providers/microsoft.hybridcompute/machines/rhel8test";
+
+describe("dismissLinkedIdentityConflicts — rule 198(a): a card whose device is already linked to its asset is closed", () => {
+  const pendingCard = (over: Record<string, unknown> = {}, proposed: Record<string, unknown> = {}) => ({
+    id: "c1", assetId: "a1", proposedDeviceId: ARM,
+    proposedAssetFields: { sourceType: "azurearc", hostname: "rhel8test", collisionReason: "untagged-collision", ...proposed },
+    ...over,
+  });
+
+  it("closes an Arc card whose machine is linked to the card's own asset, as accepted by system, with one Event", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([pendingCard()]);
+    stubbed(prisma.assetSource.findMany).mockResolvedValue([
+      { assetId: "a1", sourceKind: "arc", externalId: ARM, asset: { hostname: "rhel8test" } },
+    ]);
+    stubbed(prisma.conflict.updateMany).mockResolvedValue({ count: 1 });
+    expect(await dismissLinkedIdentityConflicts("int-arc")).toBe(1);
+    expect(vi.mocked(prisma.conflict.findMany).mock.calls[0][0]!.where).toMatchObject({ entityType: "asset", status: "pending", integrationId: "int-arc" });
+    expect(vi.mocked(prisma.assetSource.findMany).mock.calls[0][0]!.where).toEqual({ OR: [{ sourceKind: "arc", externalId: ARM }] });
+    expect(vi.mocked(prisma.conflict.updateMany).mock.calls[0][0]).toEqual({
+      where: { id: { in: ["c1"] }, status: "pending" },
+      data: { status: "accepted", resolvedBy: "system", resolvedAt: NOW },
+    });
+    expect(eventLog.logEvent).toHaveBeenCalledTimes(1);
+    expect(lastEvent()).toMatchObject({
+      action: "conflict.accepted", resourceId: "a1", actor: "system",
+      details: { conflictId: "c1", sourceKind: "arc", reason: "already-linked" },
+    });
+    expect(lastEvent().message).toContain("Azure Arc machine");
+  });
+
+  it("matches an Entra / AD id case-blind, the way Accept stamps it", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([pendingCard({ proposedDeviceId: "DEV-ABC" }, { sourceType: undefined })]);
+    stubbed(prisma.assetSource.findMany).mockResolvedValue([{ assetId: "a1", sourceKind: "entra", externalId: "dev-abc", asset: { hostname: "pc01" } }]);
+    stubbed(prisma.conflict.updateMany).mockResolvedValue({ count: 1 });
+    expect(await dismissLinkedIdentityConflicts()).toBe(1);
+    expect(vi.mocked(prisma.assetSource.findMany).mock.calls[0][0]!.where).toEqual({ OR: [{ sourceKind: "entra", externalId: "dev-abc" }] });
+  });
+
+  it("leaves a card whose device is linked to a DIFFERENT asset — that is the duplicate-asset question", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([pendingCard()]);
+    stubbed(prisma.assetSource.findMany).mockResolvedValue([{ assetId: "a2", sourceKind: "arc", externalId: ARM, asset: { hostname: "rhel8test" } }]);
+    expect(await dismissLinkedIdentityConflicts()).toBe(0);
+    expect(prisma.conflict.updateMany).not.toHaveBeenCalled();
+    expect(eventLog.logEvent).not.toHaveBeenCalled();
+  });
+
+  it("leaves a card whose device is linked nowhere", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([pendingCard()]);
+    stubbed(prisma.assetSource.findMany).mockResolvedValue([]);
+    expect(await dismissLinkedIdentityConflicts()).toBe(0);
+    expect(prisma.conflict.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("never reads links for report-only cards or the both-assets-exist flavour", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([
+      pendingCard({ id: "c2" }, { collisionReason: "duplicate-ip" }),
+      pendingCard({ id: "c3" }, { bothAssetsExist: true }),
+    ]);
+    expect(await dismissLinkedIdentityConflicts()).toBe(0);
+    expect(prisma.assetSource.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("assetConflictSourceDescriptor — the card names the integration that raised it", () => {
+  it.each([
+    [{ sourceType: "azurearc" }, { kind: "arc", platform: "Azure Arc", device: "Azure Arc machine", column: "Azure Arc" }],
+    [{}, { kind: "entra", platform: "Entra ID", device: "Entra device", column: "Entra / Intune" }],
+    [{ assetTagPrefix: "ad:" }, { kind: "ad", platform: "Active Directory", device: "Active Directory computer", column: "Active Directory" }],
+    [{ sourceType: "vcenter", assetType: "hypervisor" }, { kind: "vcenter-host", platform: "vCenter", column: "vCenter" }],
+    [{ sourceType: "proxmox", workloadRole: "vm" }, { kind: "proxmox-qemu", platform: "Proxmox VE", device: "Proxmox VE VM" }],
+    [{ sourceType: "genericapi" }, { kind: "generic-api", platform: "Generic API" }],
+  ])("%o", (proposed, expected) => {
+    expect(assetConflictSourceDescriptor(proposed as Record<string, unknown>)).toMatchObject(expected);
+  });
+
+  it("listConflicts attaches it to identity cards only", async () => {
+    stubbed(prisma.conflict.findMany).mockResolvedValue([
+      { entityType: "asset", proposedAssetFields: { sourceType: "azurearc", collisionReason: "untagged-collision" } },
+      { entityType: "asset", proposedAssetFields: { collisionReason: "duplicate-ip" } },
+    ]);
+    stubbed(prisma.conflict.count).mockResolvedValue(2);
+    const out = await listConflicts(["asset"], "pending", 50, 0);
+    expect((out.conflicts[0] as any).source).toMatchObject({ kind: "arc", column: "Azure Arc" });
+    expect((out.conflicts[1] as any).source).toBeUndefined();
   });
 });

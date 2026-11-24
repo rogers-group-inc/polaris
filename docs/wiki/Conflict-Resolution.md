@@ -91,6 +91,15 @@ or container. The device gets its own asset instead, and any card already
 pending for such a pair is rejected by the system on the next discovery run
 ([rule 91(a)](Business-Rules#rule-91)).
 
+A card whose device has since been linked to the card's own asset — an earlier
+card for the same device was accepted, a serial number tied them together, or
+the two were merged — has nothing left to decide. It is closed as accepted by
+the system at the start of that integration's next discovery run, with an Event
+on the asset saying so ([rule 198(a)](Business-Rules#rule-198)). The card's
+header and right-hand column name the integration that raised it (Entra ID,
+Active Directory, vCenter, Azure Arc, Unraid, TrueNAS SCALE, Proxmox VE or
+Generic API).
+
 | Card | Means | **Apply merge** | **Reject (keep separate)** |
 |---|---|---|---|
 | *Hostname collision* | the existing asset has no link to this source | the existing asset becomes this device's record | a separate asset is created for the device |

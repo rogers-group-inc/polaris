@@ -110,7 +110,8 @@ function run(
     arpMacDeviceIndex: buildArpMacDeviceIndex(arpTable as never),
     arpIpsByMacDevice: buildArpIpsByMacDevice(arpTable as never),
     bestGateClaimMsByAsset: claims.bestGateClaimMsByAsset,
-    addressSightings: [] as any[], fortigateEndpointAssetIds: new Set<string>(), inventoryAssets: [] as string[], now: NOW,
+    addressSightings: [] as any[], fortigateEndpointAssetIds: new Set<string>(),
+    inventoryOsByAsset: new Map<string, { os: string | null; osVersion: string | null }>(), inventoryAssets: [] as string[], now: NOW,
     noteChangeBaseline: vi.fn(), noteEndpointGate: vi.fn(),
     hostnameAdoptRefused: vi.fn(() => false), noteHostnameAdoptRefused: vi.fn(),
     inferInventoryAssetType: vi.fn(() => "other"),
@@ -148,8 +149,10 @@ describe("Phase 7 — presence on an existing asset (rule 12)", () => {
     expect(db.update.mock.calls[0][0].where).toEqual({ id: "a1" });
     expect(written()).toMatchObject({
       ipAddress: "10.1.0.40", ipSource: "FGT-A", lastSeen: new Date(NOW), lastSeenSource: "device-inventory",
-      osVersion: "11 24H2", lastSeenSwitch: "SW1/port7",
+      lastSeenSwitch: "SW1/port7",
     });
+    // Rule 198: the OS version rides the source row, not this write.
+    expect(written()).not.toHaveProperty("osVersion");
     expect(state.addressSightings).toEqual([{
       assetId: "a1", mac: MAC, ip: "10.1.0.40", source: "device-inventory", device: "FGT-A", medium: "wired", seenAt: new Date(NOW),
     }]);
@@ -228,7 +231,10 @@ describe("Phase 7 — locality (ZTNA relays)", () => {
     const a = asset({ os: null, learnedLocation: null });
     const { state, done } = run([inv({ switchName: "", switchPort: "" })], [a]);
     await done;
-    expect(written()).toMatchObject({ lastSeen: new Date(NOW), os: "Windows" });
+    expect(written()).toMatchObject({ lastSeen: new Date(NOW) });
+    // Rule 198: the OS fingerprint is staged for the source row, not written.
+    expect(written()).not.toHaveProperty("os");
+    expect(state.inventoryOsByAsset.get("a1")).toEqual({ os: "Windows", osVersion: "11 24H2" });
     expect(written()).not.toHaveProperty("ipAddress");
     expect(written()).not.toHaveProperty("learnedLocation");
     expect(state.addressSightings).toEqual([]);
@@ -318,18 +324,51 @@ describe("Phase 7 — the address ladder (rule 101)", () => {
 });
 
 describe("Phase 7 — fingerprints and users", () => {
-  it("fills OS and manufacturer only when blank, always refreshes the OS version, and notes the change baseline", async () => {
+  it("fills a blank manufacturer, stages the OS fingerprint for the source row instead of writing it (rule 198), and notes the change baseline", async () => {
     const a = asset({ os: null, manufacturer: null });
     const { state, done } = run([inv()], [a]);
     await done;
-    expect(written()).toMatchObject({ os: "Windows", manufacturer: "Dell", osVersion: "11 24H2" });
-    expect(state.noteChangeBaseline).toHaveBeenCalledWith(a, ["os", "osVersion", "lastSeenSwitch"]);
+    expect(written()).toMatchObject({ manufacturer: "Dell" });
+    expect(written()).not.toHaveProperty("os");
+    expect(written()).not.toHaveProperty("osVersion");
+    expect(state.inventoryOsByAsset.get("a1")).toEqual({ os: "Windows", osVersion: "11 24H2" });
+    expect(state.noteChangeBaseline).toHaveBeenCalledWith(a, ["lastSeenSwitch"]);
   });
 
-  it("never overwrites an OS or manufacturer the asset already has", async () => {
-    await run([inv({ os: "Linux", hardwareVendor: "Acme" })], [asset()]).done;
+  it("never overwrites an OS or manufacturer the asset already has — the gate's differing OS is only staged (rule 198)", async () => {
+    // The reported case: Arc / Intune own "Red Hat Enterprise Linux 8.10" and a
+    // kernel version; the gate fingerprints "Linux" / "8.10". Writing the
+    // version here flipped it every run until Phase 11 put it back.
+    const a = asset({ os: "Red Hat Enterprise Linux 8.10 (Ootpa)", osVersion: "4.18.0-553.el8_10.x86_64" });
+    const { state, done } = run([inv({ os: "Linux", osVersion: "8.10", hardwareVendor: "Acme" })], [a]);
+    await done;
     expect(written()).not.toHaveProperty("os");
+    expect(written()).not.toHaveProperty("osVersion");
     expect(written()).not.toHaveProperty("manufacturer");
+    expect(state.inventoryOsByAsset.get("a1")).toEqual({ os: "Linux", osVersion: "8.10" });
+  });
+
+  it("keeps each field's last non-empty value when several gates report one client", async () => {
+    const { state, done } = run([inv({ os: "Linux", osVersion: "8.9" }), inv({ device: "FGT-B", os: "", osVersion: "8.10" })], [asset()]);
+    await done;
+    expect(state.inventoryOsByAsset.get("a1")).toEqual({ os: "Linux", osVersion: "8.10" });
+  });
+
+  it("writes the OS straight to an asset with no MAC — it never gets a fortigate-endpoint row to carry it (rule 198)", async () => {
+    const a = asset({ macAddress: null, macAddresses: [], os: null });
+    const idx = index([a], "hostname");
+    idx.findByEntryWithRung.mockImplementation(() => ({ asset: a, rung: "serial" }) as never);
+    const { state, done } = run([inv({ macAddress: "" })], [a], { assetIdx: idx });
+    await done;
+    expect(written()).toMatchObject({ os: "Windows", osVersion: "11 24H2" });
+    expect(state.inventoryOsByAsset.size).toBe(0);
+  });
+
+  it("stages nothing for Fortinet infrastructure", async () => {
+    const ap = asset({ assetType: "access_point", fortinetTopology: { role: "fortiap" } });
+    const { state, done } = run([inv({ os: "FortiAP", osVersion: "7.4.5 Build 0734" })], [ap]);
+    await done;
+    expect(state.inventoryOsByAsset.size).toBe(0);
   });
 
   it("fills a blank learned location from a local row even when the address claim loses", async () => {
@@ -435,6 +474,7 @@ describe("Phase 7 — a refused hostname-only match (rule 91(b))", () => {
       expect(written()).not.toHaveProperty(k);
     }
     expect(state.inferInventoryAssetType).not.toHaveBeenCalled();
+    expect(state.inventoryOsByAsset.size).toBe(0);
     const entry = m.reconcileMacs.mock.calls[0][1].find((e: any) => e.mac === MAC);
     expect(entry).toEqual({ mac: MAC, lastSeen: NOW, source: UNVERIFIED_HOSTNAME_MAC_SOURCE });
     expect(state.addressSightings).toEqual([]);
