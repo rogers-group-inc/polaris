@@ -871,7 +871,6 @@ const api = {
     updateHistorySettings:(body) => request("PUT",  "/assets/ip-history-settings", body),
     // Location-column priority: which discovery source's learned location wins.
     getSourcePriority:    ()    => request("GET",  "/assets/source-priority"),
-    updateSourcePriority: (body) => request("PUT",  "/assets/source-priority", body),
     bulkMonitor:          (body) => request("POST", "/assets/bulk-monitor", body),
     // Bulk-bar Tags: mode is "add" | "remove" | "replace".
     bulkTags:             (ids, mode, tags) => request("POST", "/assets/bulk-tags", { ids, mode, tags }),

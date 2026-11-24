@@ -624,15 +624,12 @@ const OS_VERSION_RULES: FieldRule[] = [
 ];
 
 /**
- * learnedLocation is the one projected field whose priority order is
- * OPERATOR-CONFIGURABLE (Assets → Settings → Sources; the Assets table's
- * "Location" column reads `location || learnedLocation`). An asset learned from
- * several sources at once has several competing answers to "where is it?" — an
- * AD OU path, a controller FortiGate, an Azure Arc onboarding — and which one
- * an operator wants to read is a site convention, not something Polaris can
- * decide. So the rule list is BUILT from the priority config rather than
- * declared here; the catalogue of who can contribute what lives in
- * utils/assetSourceLocation.ts.
+ * learnedLocation (the Assets table's "Location" column reads
+ * `location || learnedLocation`) builds its rule list from the catalogue in
+ * utils/assetSourceLocation.ts rather than declaring it here: the catalogue
+ * owns who can contribute what, and its declaration order is the priority. An
+ * asset learned from several sources at once — an AD OU path, a controller
+ * FortiGate, an Azure Arc onboarding — shows the first that has an answer.
  *
  * Notes that survive the move:
  *   - Firewalls contribute nothing: a firewall's location label is its own
@@ -640,7 +637,7 @@ const OS_VERSION_RULES: FieldRule[] = [
  *     them and the legacy "set when null" inline rule keeps working.
  *   - The fortigate-endpoint rule is suppressed on any asset that ALSO has a
  *     Fortinet infrastructure source (fortigate-firewall / fortiswitch /
- *     fortiap), whatever the operator's order says. A managed device's site
+ *     fortiap), whatever the order says. A managed device's site
  *     label is its own identity or its controller — the gate that happened to
  *     sight it as a DHCP client pre-adoption is not its location, and that
  *     stale endpoint row outlives the adoption. An invariant, not a
@@ -671,27 +668,12 @@ function buildLearnedLocationRules(config: SourceLocationPriority): FieldRule[] 
 }
 
 /**
- * Process-wide learned-location priority, seeded with the default order and
- * refreshed from the `assetSourcePriority` Setting by
- * services/assetSourcePriorityService.refreshProjectionPriority() — at boot and
- * at the start of every discovery run, which is what propagates an operator's
- * edit into the split-role discovery process.
- *
- * Module state in an otherwise-pure util is a deliberate trade: there are ~25
- * projectAssetFromSources() call sites across discoveryEngine / routes /
- * drift detection, and threading a config object through all of them to serve
- * one field's ordering would be far more invasive than one refresh seam. Tests
- * and any caller that wants determinism pass `opts.learnedLocation` explicitly
- * and never observe this value.
+ * The learned-location rules every projection uses: the catalogue's own order
+ * (utils/assetSourceLocation.ts), bare device names. Fixed since the operator
+ * setting that reordered them was retired (business rule 22). Callers that need
+ * another order pass `opts.learnedLocation`.
  */
-let activeLocationPriority: SourceLocationPriority = defaultSourceLocationPriority();
-let activeLearnedLocationRules: FieldRule[] = buildLearnedLocationRules(activeLocationPriority);
-
-/** Install the operator's order process-wide. Idempotent; cheap to re-call. */
-export function setLearnedLocationPriority(config: SourceLocationPriority): void {
-  activeLocationPriority = config;
-  activeLearnedLocationRules = buildLearnedLocationRules(config);
-}
+const DEFAULT_LEARNED_LOCATION_RULES: FieldRule[] = buildLearnedLocationRules(defaultSourceLocationPriority());
 
 /**
  * Product type: the device's own words, and nobody else's.
@@ -884,9 +866,7 @@ function projectField<T extends string | number>(
 
 export interface ProjectionOptions {
   /**
-   * Override the process-wide learned-location priority for this call. Pass it
-   * whenever the result must be deterministic regardless of what an operator
-   * has configured (tests, previews).
+   * Override the default learned-location order for this call (tests).
    */
   learnedLocation?: SourceLocationPriority;
   /** The clock rules with a freshness window (`maxAgeMs`) are judged against. Defaults to now. */
@@ -950,7 +930,7 @@ export function projectAssetFromSources(
     "learnedLocation",
     opts?.learnedLocation
       ? buildLearnedLocationRules(opts.learnedLocation)
-      : activeLearnedLocationRules,
+      : DEFAULT_LEARNED_LOCATION_RULES,
   );
   apply("ipAddress", IP_ADDRESS_RULES);
   apply("latitude", LATITUDE_RULES);

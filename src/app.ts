@@ -1185,18 +1185,6 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     setInterval(() => { void refreshTrustedCas(); }, TRUSTED_CA_REFRESH_MS).unref();
   }
 
-  // Install the operator's Location-column (learned-location) priority into this
-  // process's projection before anything projects. Every role does this: the
-  // web role projects on the asset-detail + agent-enroll paths, the discovery
-  // role on every sync. Discovery additionally re-reads it per run so a later
-  // edit lands without a restart. Never throws — falls back to the default order.
-  try {
-    const { refreshProjectionPriority } = await import("./services/assetSourcePriorityService.js");
-    await refreshProjectionPriority();
-  } catch (err: any) {
-    logger.warn({ err: err?.message }, "asset source priority refresh failed; using default order");
-  }
-
   // Warm the asset-type registry + its inference rules on EVERY role, for the
   // same reason the priority refresh above is every-role: `seedAssetTypes`
   // runs only where `runsMigrations` is true (web / all), so in the split-role

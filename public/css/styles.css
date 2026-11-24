@@ -9836,35 +9836,6 @@ label.tag-picker-chip.selected::before { content: "✓"; font-weight: 700; }
 }
 .na-chip-save:hover { opacity: 1; }
 
-/* Assets → Settings → Sources: drag-to-reorder learned-location priority list.
-   Reuses .aw-grip + the .aw-drop-before/after edge cues + .sf-col-dragging. */
-.monset-src-list {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.monset-src-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  padding: 0.5rem 0.65rem;
-  background: var(--color-bg-secondary);
-  border-bottom: 1px solid var(--color-border);
-}
-.monset-src-row:last-child { border-bottom: none; }
-.monset-src-row:hover { background: var(--color-bg-tertiary, var(--color-bg-secondary)); }
-.monset-src-rank {
-  flex: 0 0 1.4rem;
-  text-align: center;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  line-height: 1.35;
-}
-.monset-src-body { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
-.monset-src-label { font-size: 0.85rem; font-weight: 500; }
-.monset-src-desc { font-size: 0.75rem; margin: 0; }
-
 /* ─── Maintenance calendar (Assets → Maintenance → Calendar tab) ───────────────
    Month grid of every schedule's occurrences. Occurrence times are SERVER-local
    wall-clock strings expanded by the API (see listOccurrences) — nothing here

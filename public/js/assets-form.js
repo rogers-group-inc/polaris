@@ -1935,11 +1935,6 @@ var _monsetIntegrations  = [];   // for the source picker on add/edit
 var _monsetOverrides     = [];   // class override rows currently rendered
 var _monsetManualValues  = null; // last-fetched manual-tier settings (or null = not yet seeded)
 var _monsetLifecycle     = { inactivityMonths: 0, historyRetentionDays: 0 }; // Asset Lifecycle section values
-// Sources section: { order, integrationPrefix, contributors[] } from
-// GET /assets/source-priority. `contributors` arrives in the operator's order,
-// so the list renders straight through; dragging rewrites the array in place
-// and Save posts the resulting `order`.
-var _monsetSourcePriority = null;
 
 async function openMonitoringSettingsModal() {
   // Loading shell first so the operator sees instant feedback. Replaced by
@@ -1958,7 +1953,6 @@ async function openMonitoringSettingsModal() {
       _ensureCredentials(),
       api.events.getAssetDecommissionSettings().catch(function () { return null; }),
       api.assets.getHistorySettings().catch(function () { return null; }),
-      api.assets.getSourcePriority().catch(function () { return null; }),
     ]);
     _monsetManualValues = results[0] || Object.assign({}, MON_TIER_DEFAULTS);
     _monsetOverrides    = Array.isArray(results[1]) ? results[1] : [];
@@ -1971,10 +1965,6 @@ async function openMonitoringSettingsModal() {
       inactivityMonths:     Number.isFinite(m) && m >= 0 ? Math.floor(m) : 0,
       historyRetentionDays: Number.isFinite(d) && d >= 0 ? Math.floor(d) : 0,
     };
-    // null (fetch failed / older server) hides the Sources section rather than
-    // rendering an empty list the operator could "save" as an empty order.
-    var sp = results[6];
-    _monsetSourcePriority = (sp && Array.isArray(sp.contributors) && sp.contributors.length) ? sp : null;
   } catch (err) {
     showToast(err.message || "Failed to load settings", "error");
     return;
@@ -1984,15 +1974,13 @@ async function openMonitoringSettingsModal() {
 
 function _monsetRender() {
   var lifecycleBody = _monsetLifecycleSectionHTML(_monsetLifecycle);
-  var sourcesBody   = _monsetSourcesSectionHTML(_monsetSourcePriority);
   var manualBody    = _monsetManualSectionHTML(_monsetManualValues);
   var overridesBody = _monsetOverridesSectionHTML(_monsetOverrides);
   // Mass Pinning renders as a section like the rest ("" when its module didn't
-  // load, which drops the section and its rule the same way an absent Sources
-  // payload does).
+  // load, which drops the section and its rule).
   var massPinBody   = window.PolarisMassPin ? window.PolarisMassPin.sectionHTML() : "";
   var hr = '<hr style="margin:1.5rem 0;border:none;border-top:1px solid var(--color-border)">';
-  var body = lifecycleBody + (sourcesBody ? hr + sourcesBody : "") + hr + manualBody + hr + overridesBody +
+  var body = lifecycleBody + hr + manualBody + hr + overridesBody +
     (massPinBody ? hr + massPinBody : "");
   openModal(
     "Settings",
@@ -2001,7 +1989,6 @@ function _monsetRender() {
     { wide: true }
   );
   document.getElementById("btn-monset-save-lifecycle").addEventListener("click", _monsetSaveLifecycle);
-  if (sourcesBody) _monsetWireSources();
   // Mass Pinning mounts its own condition builder + fetches its vocabulary;
   // idempotent per render via a dataset stamp that dies with the section DOM.
   if (massPinBody) window.PolarisMassPin.init();
@@ -2075,145 +2062,6 @@ function _monsetLifecycleSectionHTML(v) {
     '</div>' +
     '<button class="btn btn-primary btn-sm" id="btn-monset-save-lifecycle">Save Lifecycle Settings</button>'
   );
-}
-
-// ── Sources section of the merged Settings modal ───────────────────────────
-//
-// The Assets table's "Location" column shows `location || learnedLocation` —
-// where an asset was learned. An asset known to several discovery sources at
-// once (domain-joined AND Intune-enrolled AND sighted behind a FortiGate) has
-// several competing answers, and which one an operator wants to read is a site
-// convention. This list is that decision: drag to reorder, top wins.
-//
-// Labels + "what this contributes" hints come from the server's catalogue
-// (utils/assetSourceLocation.ts) rather than being duplicated here, so adding a
-// source kind server-side lights it up in this list with no client change.
-function _monsetSourcesSectionHTML(sp) {
-  if (!sp) return "";
-  var rows = sp.contributors.map(function (c, i) {
-    return _monsetSourceRowHTML(c, i);
-  }).join("");
-  return (
-    '<h4 style="margin:0 0 0.35rem">Sources</h4>' +
-    '<p class="hint" style="margin:0 0 0.75rem">The <strong>Location</strong> column on the assets table shows where a device was learned. ' +
-      'When a device is known to more than one discovery source, the highest source in this list that has something to say wins — ' +
-      'drag to reorder. A device\'s own <strong>Location</strong> field, when an operator has set one, always outranks all of these.</p>' +
-    '<div id="monset-src-list" class="monset-src-list">' + rows + '</div>' +
-    '<label style="display:flex;align-items:flex-start;gap:0.5rem;margin:0.85rem 0 0.25rem;cursor:pointer">' +
-      '<input type="checkbox" id="f-monset-src-prefix"' + (sp.integrationPrefix ? " checked" : "") + ' style="margin-top:0.2rem">' +
-      '<span>Prefix FortiGate names with the integration that manages them' +
-        '<span class="hint" style="display:block">Renders as <code class="mono">FortiManager-Prod:ACME-FW-ASHFIELD</code> instead of ' +
-        '<code class="mono">ACME-FW-ASHFIELD</code>. Useful when several FortiManagers manage gates with overlapping names. ' +
-        'Applies to FortiSwitch, FortiAP and FortiGate-sighted endpoints; devices discovered before this setting existed keep the bare name until their next discovery run.</span>' +
-      '</span>' +
-    '</label>' +
-    '<button class="btn btn-primary btn-sm" id="btn-monset-save-sources" style="margin-top:0.5rem">Save Source Priority</button>' +
-    '<p class="hint" style="margin:0.5rem 0 0">Takes effect on each integration\'s next discovery run — that\'s when a device\'s learned location is rewritten.</p>'
-  );
-}
-
-function _monsetSourceRowHTML(c, i) {
-  return (
-    '<div class="monset-src-row" draggable="true" data-kind="' + escapeHtml(c.kind) + '">' +
-      '<span class="aw-grip" title="Drag to reorder">⠿</span>' +
-      '<span class="monset-src-rank">' + (i + 1) + '</span>' +
-      '<span class="monset-src-body">' +
-        '<span class="monset-src-label">' + escapeHtml(c.label) + '</span>' +
-        '<span class="hint monset-src-desc">' + escapeHtml(c.describe || "") + '</span>' +
-      '</span>' +
-    '</div>'
-  );
-}
-
-// Re-stamp the visible rank numbers after a drop. The DOM order is the source
-// of truth for what Save posts — nothing is mirrored into _monsetSourcePriority
-// until then, so a cancelled edit can't leave the cached copy half-updated.
-function _monsetRenumberSources() {
-  var list = document.getElementById("monset-src-list");
-  if (!list) return;
-  var rows = list.querySelectorAll(".monset-src-row");
-  for (var i = 0; i < rows.length; i++) {
-    var rank = rows[i].querySelector(".monset-src-rank");
-    if (rank) rank.textContent = String(i + 1);
-  }
-}
-
-// Vertical list reorder. Same grip + before/after edge-cue idiom as the column
-// chooser (.sf-col-grip) and the automations condition builder (.aw-grip);
-// simpler than either because this list is flat — no nesting, no drop-into.
-function _monsetWireSources() {
-  var list = document.getElementById("monset-src-list");
-  if (!list) return;
-  var dragEl = null;
-
-  var clearCues = function () {
-    list.querySelectorAll(".aw-drop-before, .aw-drop-after").forEach(function (el) {
-      el.classList.remove("aw-drop-before", "aw-drop-after");
-    });
-  };
-
-  list.addEventListener("dragstart", function (e) {
-    var row = e.target.closest && e.target.closest(".monset-src-row");
-    if (!row || !list.contains(row)) return;
-    dragEl = row;
-    row.classList.add("sf-col-dragging");
-    try { e.dataTransfer.setData("text/plain", ""); e.dataTransfer.effectAllowed = "move"; } catch (_e) {}
-  });
-
-  list.addEventListener("dragover", function (e) {
-    if (!dragEl) return;
-    var over = e.target.closest && e.target.closest(".monset-src-row");
-    if (!over || over === dragEl || !list.contains(over)) return;
-    e.preventDefault();
-    try { e.dataTransfer.dropEffect = "move"; } catch (_e) {}
-    var rect = over.getBoundingClientRect();
-    var after = e.clientY > rect.top + rect.height / 2;
-    clearCues();
-    over.classList.add(after ? "aw-drop-after" : "aw-drop-before");
-  });
-
-  list.addEventListener("drop", function (e) {
-    if (!dragEl) return;
-    var over = e.target.closest && e.target.closest(".monset-src-row");
-    if (!over || over === dragEl || !list.contains(over)) return;
-    e.preventDefault();
-    var rect = over.getBoundingClientRect();
-    var after = e.clientY > rect.top + rect.height / 2;
-    over.parentNode.insertBefore(dragEl, after ? over.nextSibling : over);
-    clearCues();
-    _monsetRenumberSources();
-  });
-
-  list.addEventListener("dragend", function () {
-    if (dragEl) dragEl.classList.remove("sf-col-dragging");
-    dragEl = null;
-    clearCues();
-  });
-
-  var saveBtn = document.getElementById("btn-monset-save-sources");
-  if (saveBtn) saveBtn.addEventListener("click", _monsetSaveSources);
-}
-
-async function _monsetSaveSources() {
-  var btn = document.getElementById("btn-monset-save-sources");
-  var list = document.getElementById("monset-src-list");
-  if (!list) return;
-  var order = Array.prototype.map.call(list.querySelectorAll(".monset-src-row"), function (row) {
-    return row.getAttribute("data-kind");
-  });
-  var prefixEl = document.getElementById("f-monset-src-prefix");
-  if (btn) btn.disabled = true;
-  try {
-    _monsetSourcePriority = await api.assets.updateSourcePriority({
-      order: order,
-      integrationPrefix: !!(prefixEl && prefixEl.checked),
-    });
-    showToast("Source priority saved — applies on each integration's next discovery run");
-  } catch (err) {
-    showToast(err.message || "Failed to save source priority", "error");
-  } finally {
-    if (btn) btn.disabled = false;
-  }
 }
 
 async function _monsetSaveLifecycle() {

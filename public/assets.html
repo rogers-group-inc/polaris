@@ -174,8 +174,8 @@
                    the id saved presets (SavedTableFilter.state) and per-browser
                    column prefs are keyed by, so renaming it would silently drop
                    every operator's saved filter on this column. Which source's
-                   learned location wins is operator-ordered on Assets →
-                   Settings → Sources (Setting `assetSourcePriority`). -->
+                   learned location wins follows the fixed order in
+                   utils/assetSourceLocation.ts (rule 22). -->
               <th data-sf-key="_server" data-sf-type="string">Location</th>
               <!-- "Sources" (rule 199): the sources the asset's Sources tab
                    lists — the one name, or "N sources" with a hover list.

@@ -374,7 +374,7 @@ async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[]
 
 /**
  * Ids matching the Location (`_server`) column's term through ANY of the asset's sources,
- * not only the one the priority order (Assets → Settings → Sources) put in the
+ * not only the one the source priority order (rule 22) put in the
  * cell — or null when the column carries no contains / not_contains term. The
  * cell shows one winner, but an operator typing a lower-ranked source (the AD
  * OU of a device a FortiGate also sighted, the vCenter cluster of a VM Arc

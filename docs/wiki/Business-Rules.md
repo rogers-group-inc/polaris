@@ -167,7 +167,7 @@ certificates.
 
 ### Rule 22
 **The Location column (titled "Sources" until rule 199) is `location ||
-learnedLocation`, and the order is operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
+learnedLocation`, and the source order is fixed.** It feeds the **projection**, not just rendering. Invariant: **a
 source blob may never be built from the projection's own output** — doing so
 launders one source's value (an AD OU path) into another's field (a
 FortiGate-sourced one) and accumulates a prefix per cycle.
