@@ -110,3 +110,37 @@ describe("Monitored Via filter", () => {
     expect(page.where.AND).toContainEqual({ id: { in: ["agent", "multi", "ping"] } });
   });
 });
+
+describe("Sources column (rule 197)", () => {
+  it("ships each row's sources in Sources-tab order, one per integration, kind + integration name only", async () => {
+    findMany.mockResolvedValue([row("a1", {
+      sources: [
+        { sourceKind: "fortigate-endpoint", integrationId: "i1", lastSeen: new Date("2026-01-01"), integration: { name: "FMG" } },
+        { sourceKind: "fortigate-endpoint", integrationId: "i1", lastSeen: new Date("2026-02-01"), integration: { name: "FMG" } },
+        { sourceKind: "ad", integrationId: "i2", lastSeen: new Date("2026-01-01"), integration: { name: "Corp AD" } },
+        { sourceKind: "manual", integrationId: null, lastSeen: new Date("2026-01-01"), integration: null },
+      ],
+    })]);
+    count.mockResolvedValue(1);
+    const r = await listAssetsPage(q({}), {}, "op");
+    expect((r.enriched[0] as { sources: unknown }).sources).toEqual([
+      { sourceKind: "ad", integrationName: "Corp AD" },
+      { sourceKind: "fortigate-endpoint", integrationName: "FMG" },
+      { sourceKind: "manual", integrationName: null },
+    ]);
+  });
+
+  it("selects the source rows in the Sources tab's tie-break order", async () => {
+    await listAssetsPage(q({}), {}, "op");
+    expect(findMany.mock.calls[0][0].select.sources).toMatchObject({
+      orderBy: [{ sourceKind: "asc" }, { lastSeen: "desc" }],
+    });
+  });
+
+  it("a row with no source rows ships an empty list", async () => {
+    findMany.mockResolvedValue([row("a1")]);
+    count.mockResolvedValue(1);
+    const r = await listAssetsPage(q({}), {}, "op");
+    expect((r.enriched[0] as { sources: unknown }).sources).toEqual([]);
+  });
+});

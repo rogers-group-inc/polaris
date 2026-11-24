@@ -168,14 +168,19 @@
               <th style="width:130px" data-col-no-resize="true" data-sf-key="_monitor" data-sf-type="string" data-sf-options="Monitored|Unmonitored|Up|Missed|Recovering|Down|Passive|Dep. Down">Status</th>
               <!-- Filter only (data-sf-nosort): the method summary is resolved per row, not a column the server can order by. -->
               <th style="width:160px" data-col-no-resize="true" data-col-id="monitoredVia" data-sf-key="monitoredVia" data-sf-type="string" data-sf-nosort data-sf-options="agent=Agent|snmp=SNMP|ssh=SSH|winrm=WinRM|icmp=ICMP|rest_api=REST API|vcenter=vCenter|fortimanager=FortiManager|unraid=Unraid|truenas=TrueNAS|proxmox=Proxmox|genericapi=Generic API">Monitored Via</th>
-              <!-- "Sources": location || learnedLocation — where this asset was
-                   learned. The data-sf-key stays `_server` on purpose: it's the
-                   id saved presets (SavedTableFilter.state) and per-browser
+              <!-- "Location": location || learnedLocation — where this asset was
+                   learned (titled "Sources" until rule 197 gave that name to the
+                   column below). The data-sf-key stays `_server` on purpose: it's
+                   the id saved presets (SavedTableFilter.state) and per-browser
                    column prefs are keyed by, so renaming it would silently drop
                    every operator's saved filter on this column. Which source's
                    learned location wins is operator-ordered on Assets →
                    Settings → Sources (Setting `assetSourcePriority`). -->
-              <th data-sf-key="_server" data-sf-type="string">Sources</th>
+              <th data-sf-key="_server" data-sf-type="string">Location</th>
+              <!-- "Sources" (rule 197): the sources the asset's Sources tab
+                   lists — the one name, or "N sources" with a hover list.
+                   Display only, like Network. -->
+              <th data-col-id="sources">Sources</th>
               <th style="min-width:100px" data-sf-key="description" data-sf-type="string">Description</th>
               <!-- Asset.tags (String[]). The filter is a pick menu (TableSF
                    data-sf-filter="pick"): tick tags in use (GET /assets/tags,
@@ -202,7 +207,7 @@
             </tr>
           </thead>
           <tbody id="assets-tbody">
-            <tr><td colspan="24" class="empty-state">Loading...</td></tr>
+            <tr><td colspan="25" class="empty-state">Loading...</td></tr>
           </tbody>
         </table>
       </div>

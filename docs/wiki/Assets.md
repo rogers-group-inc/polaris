@@ -24,7 +24,7 @@ serial — describes.
 ## The list
 
 **Columns:** Hostname · IP Address · Network · Serial Number · Type · State · **Status** ·
-**Monitored Via** · **Sources** · Description · Tags · Asset Tag · Manufacturer · Model ·
+**Monitored Via** · **Location** · **Sources** · Description · Tags · Asset Tag · Manufacturer · Model ·
 OS / Firmware · MAC Address · Assigned To · Purchase Order · DNS Name · Latitude ·
 Longitude · Last Seen.
 
@@ -35,6 +35,16 @@ Name, Latitude and Longitude start hidden.
 
 The **star** left of Hostname marks a favourite. Favourites pin to the top of
 the list, and each view tab keeps its own set.
+
+**Location** is the device's own Location field when someone has set one (asset
+**Edit** → Location & Ownership), else where discovery learned it — the FortiGate
+it sits behind, its AD OU, its vCenter cluster, and so on. Which source wins when
+several know the device is set under **Settings → Sources** (see below).
+
+**Sources** names the systems that report the device, the same list as its
+**Sources** tab. One source shows its name; several show **N sources**, and
+hovering lists each with the integration that reports it
+([rule 197](Business-Rules#rule-197)). It does not sort or filter.
 
 **Monitored Via** names the polling method actually in use — *ICMP*, *SNMP*,
 *REST API*, *Agent*, *vCenter*, *FortiManager*, *Unraid*, *TrueNAS*, *Proxmox* and so on —
@@ -2409,8 +2419,8 @@ Two fields:
 
 ### Sources
 
-The drag-to-reorder **learned-location priority list**
-([rule 22](Business-Rules#rule-22)). Contributors come from the server
+The drag-to-reorder **learned-location priority list** behind the **Location**
+column ([rule 22](Business-Rules#rule-22)). Contributors come from the server
 catalogue, each with a "what this contributes" hint, so a new source kind needs
 no client change. Two kinds exist: **field** contributors carry a real location
 string; **label** contributors contribute their own name.

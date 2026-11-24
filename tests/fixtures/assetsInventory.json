@@ -858,7 +858,9 @@
     "_ipsecExportSaveCsv",
     "_ipsecExportSavePdf",
     "_openIpsecExportOptions",
-    "_runIpsecExport"
+    "_runIpsecExport",
+    "_sourceEntryLabel",
+    "sourcesCellHTML"
   ],
   "vars": [
     "ASSET_HISTORY_MAX",

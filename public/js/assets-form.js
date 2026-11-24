@@ -171,6 +171,40 @@ function macCellHTML(asset) {
   '</span>';
 }
 
+// Assets table Sources column (business rule 197): the sources the asset's
+// Sources tab lists, from the list row's `sources` ([{ sourceKind,
+// integrationName }], already in the tab's order and collapsed per
+// integration). One source reads as its name; several read "N sources", and
+// hovering lists each — the same hover pill as the MAC / IP cells.
+function _sourceEntryLabel(s) {
+  return _assetSourceLabels[s.sourceKind] || s.sourceKind;
+}
+
+function sourcesCellHTML(asset) {
+  var sources = Array.isArray(asset.sources) ? asset.sources : [];
+  if (sources.length === 0) return '-';
+  if (sources.length === 1) {
+    var only = sources[0];
+    return '<span' + (only.integrationName ? ' title="' + escapeHtml(only.integrationName) + '"' : '') + '>' +
+      escapeHtml(_sourceEntryLabel(only)) + '</span>';
+  }
+  var rows = sources.map(function (s) {
+    return '<div class="mac-tooltip-row">' +
+      '<span>' + escapeHtml(_sourceEntryLabel(s)) + '</span>' +
+      (s.integrationName
+        ? '<span class="mac-tooltip-meta"><span class="mac-tooltip-source">' + escapeHtml(s.integrationName) + '</span></span>'
+        : '') +
+    '</div>';
+  }).join("");
+  return '<span class="mac-hover-trigger">' +
+    '<span>' + sources.length + ' sources</span>' +
+    '<div class="mac-tooltip">' +
+      '<div class="mac-tooltip-header">Sources</div>' +
+      rows +
+    '</div>' +
+  '</span>';
+}
+
 function assetFormHTML(defaults) {
   var d = defaults || {};
   // The device-side cap this asset's Description pushes into, when it pushes
@@ -2045,7 +2079,7 @@ function _monsetLifecycleSectionHTML(v) {
 
 // ── Sources section of the merged Settings modal ───────────────────────────
 //
-// The Assets table's "Sources" column shows `location || learnedLocation` —
+// The Assets table's "Location" column shows `location || learnedLocation` —
 // where an asset was learned. An asset known to several discovery sources at
 // once (domain-joined AND Intune-enrolled AND sighted behind a FortiGate) has
 // several competing answers, and which one an operator wants to read is a site
@@ -2061,7 +2095,7 @@ function _monsetSourcesSectionHTML(sp) {
   }).join("");
   return (
     '<h4 style="margin:0 0 0.35rem">Sources</h4>' +
-    '<p class="hint" style="margin:0 0 0.75rem">The <strong>Sources</strong> column on the assets table shows where a device was learned. ' +
+    '<p class="hint" style="margin:0 0 0.75rem">The <strong>Location</strong> column on the assets table shows where a device was learned. ' +
       'When a device is known to more than one discovery source, the highest source in this list that has something to say wins — ' +
       'drag to reorder. A device\'s own <strong>Location</strong> field, when an operator has set one, always outranks all of these.</p>' +
     '<div id="monset-src-list" class="monset-src-list">' + rows + '</div>' +

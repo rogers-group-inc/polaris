@@ -26,6 +26,7 @@ import { activeAlertSummaryByAsset } from "./notificationService.js";
 import { type PollingMethod } from "../utils/pollingCompatibility.js";
 import { buildAddressConfidence } from "./addressConfidenceService.js";
 import { shapeAssociatedIps, ASSOCIATED_IP_SELECT } from "./assetAddressService.js";
+import { orderAndCollapseSources } from "../utils/assetSourceOrder.js";
 
 // ─── Asset list: server-side filter / sort / pagination ────────────────────
 //
@@ -192,6 +193,12 @@ function monitorClause(v: string): Record<string, unknown> | null {
   }
 }
 
+// Outside the `as const` select below: Prisma's orderBy wants a mutable array.
+const LIST_SOURCE_ORDER: Array<{ sourceKind?: "asc" | "desc"; lastSeen?: "asc" | "desc" }> = [
+  { sourceKind: "asc" },
+  { lastSeen: "desc" },
+];
+
 // Shared list payload select. Omits heavy fields (notes, associatedUsers) and
 // anything the list table + CSV/PDF export never reference; the single-asset
 // GET /:id below still returns the full record for the view/edit modal.
@@ -251,6 +258,14 @@ const ASSET_LIST_SELECT = {
   storagePolling: true,
   discoveredByIntegration: { select: { type: true } },
   managedAgent: { select: { installStatus: true } },
+  // Sources column: the same set the asset's Sources tab lists, reduced by
+  // enrichAssetList to `{ sourceKind, integrationName }` per collapsed entry
+  // (utils/assetSourceOrder). The ordering mirrors listAssetSourcesForDisplay
+  // so ties break identically on both surfaces.
+  sources: {
+    select: { sourceKind: true, integrationId: true, lastSeen: true, integration: { select: { name: true } } },
+    orderBy: LIST_SOURCE_ORDER,
+  },
   dependencyLayer: true,
   dependencySuppressed: true,
   dependencyTestUntil: true,
@@ -609,6 +624,27 @@ async function resolveMonitoredViaMatches(q: z.infer<typeof AssetListQuerySchema
   return rows.filter((_r, i) => methods[i].some((m) => want.has(m))).map((r) => r.id);
 }
 
+interface ListSourceRow {
+  sourceKind: string;
+  integrationId: string | null;
+  lastSeen: Date | null;
+  integration: { name: string } | null;
+}
+
+/**
+ * The Sources column's wire shape: one entry per source the asset's Sources tab
+ * shows, in the tab's order. Only the kind (the client labels it from
+ * `_assetSourceLabels`) and the integration's name — the observed blobs and
+ * timestamps stay on GET /assets/:id/sources.
+ */
+function shapeListSources(rows: unknown): { sourceKind: string; integrationName: string | null }[] {
+  if (!Array.isArray(rows)) return [];
+  return orderAndCollapseSources(rows as ListSourceRow[]).map((r) => ({
+    sourceKind: r.sourceKind,
+    integrationName: r.integration?.name ?? null,
+  }));
+}
+
 async function enrichAssetList(
   assets: Array<{ ipAddress: string | null; associatedIpRows: unknown; macAddressRows: unknown; fortinetTopology?: unknown; managementAccess?: unknown } & Record<string, unknown>>,
 ) {
@@ -646,9 +682,11 @@ async function enrichAssetList(
     // `monitoringMethods` array is surfaced to the list.
     responseTimePolling, cpuMemoryPolling, temperaturePolling, interfacesPolling, lldpPolling, storagePolling,
     discoveredByIntegration, managedAgent,
+    sources,
     ...a
   }) => ({
     ...a,
+    sources: shapeListSources(sources),
     associatedIps: shapeAssociatedIps(associatedIpRows as never),
     macAddresses: shapeMacRows(macAddressRows as never),
     hostnameDiscovered: discoveredHostnames.get(a.id as string) ?? null,

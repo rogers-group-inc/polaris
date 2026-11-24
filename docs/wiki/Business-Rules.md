@@ -166,8 +166,8 @@ the connection**. An internal error refuses rather than silently skipping. See
 certificates.
 
 ### Rule 22
-**The Sources column is `location || learnedLocation`, and the order is
-operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
+**The Location column (titled "Sources" until rule 197) is `location ||
+learnedLocation`, and the order is operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
 source blob may never be built from the projection's own output** — doing so
 launders one source's value (an AD OU path) into another's field (a
 FortiGate-sourced one) and accumulates a prefix per cycle.
@@ -3985,3 +3985,12 @@ since Polaris started counting. When a session ends, its traffic stays in the to
 adds each session's new traffic each time it reads the gate (every 10 minutes by default), so
 a session that connects and disconnects between two reads is not counted. Site-to-site tunnels
 keep the gate's own counters, and a tunnel's history charts are unchanged.
+
+### Rule 197
+
+**The Assets table's Sources column names the sources the asset's Sources tab shows.** An
+asset with one source shows that source's name (hover it for the integration). An asset with
+several shows **N sources**, and hovering it lists each source with the integration that
+reports it. Several records from the same integration of the same kind count once, as on the
+Sources tab. The column is display-only: it does not sort or filter. Where a device is learned
+is the **Location** column (rule 22), which this column's name used to belong to.

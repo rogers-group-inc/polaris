@@ -738,7 +738,7 @@ async function fetchAssetsPage() {
     _assetsData = all.map(_mapAsset);
     renderAssetsPage();
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="24" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="25" class="empty-state">Error: ' + escapeHtml(err.message) + '</td></tr>';
   }
 }
 
@@ -1353,8 +1353,8 @@ function renderAssetsPage() {
   if (_assetsData.length === 0) {
     var hasFilters = _assetsSF && _assetsSF._filters && Object.keys(_assetsSF._filters).length > 0;
     tbody.innerHTML = hasFilters
-      ? '<tr><td colspan="24" class="empty-state">No results match the current filters.</td></tr>'
-      : '<tr><td colspan="24" class="empty-state">No assets found. Add one to get started.</td></tr>';
+      ? '<tr><td colspan="25" class="empty-state">No results match the current filters.</td></tr>'
+      : '<tr><td colspan="25" class="empty-state">No assets found. Add one to get started.</td></tr>';
     _renderAssetsPageControls();
     _assetsUpdateSelectAll();
     return;
@@ -1384,6 +1384,7 @@ function renderAssetsPage() {
       '<td>' + assetMonitorBadge(a) + '</td>' +
       '<td>' + assetMonitoredViaCell(a) + '</td>' +
       '<td>' + escapeHtml(a.location || a.learnedLocation || "-") + '</td>' +
+      '<td>' + sourcesCellHTML(a) + '</td>' +
       '<td>' + escapeHtml(a.description || "-") + '</td>' +
       '<td>' + escapeHtml((a.tags || []).join(", ") || "-") + '</td>' +
       '<td>' + _copyableCell(a.assetTag) + '</td>' +
