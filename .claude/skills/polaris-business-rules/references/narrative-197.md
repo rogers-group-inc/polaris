@@ -28,3 +28,16 @@
 - *Killing only the CLI.* That is what happened on prod: the engine child and its backend outlived it.
 
 Pinned by `tests/unit/migrationGuardService.test.ts` (URL, parsing, every retry and give-up branch, the sampler with fake timers, the timeout terminate), `tests/unit/updatePipeline.test.ts` ("migrate step through the migration guard") and `tests/unit/migrationsRunAsOneTransaction.test.ts`. Verified end to end against TimescaleDB pg17 on 2026-11-24: with a session holding ROW EXCLUSIVE on `assets` for 25 s, a wrapped FK migration failed attempt 1 in 3 s, named the holder, was marked rolled back, and was applied on attempt 2.
+
+<a id="rule-197a"></a>
+### 197(a) — boot-time DDL on a live sample table (2026-11-24)
+
+The same freeze came back from the other side of the restart. After an update, the web role's `migrateToHypertables()` re-issued `ALTER TABLE "asset_monitor_samples" SET (timescaledb.compress = on, …)` on every sample table. The settings never change, but the ALTER takes ACCESS EXCLUSIVE even as a no-op. On prod it queued behind a 13-minute read: the rule-103 polling seed (`seedAddressPollingRuns`), which ran at every boot, scanning 30 days of probe samples for every monitored asset that had never answered. Every probe insert, the hourly rollup, the chart reads and the Device Map's sites read queued behind the waiting ALTER. The desktop map sat on "Loading FortiGates…", and the phone map drew no pins.
+
+- **Skip the no-op.** `compressionSettingsMatch` reads `timescaledb_information.hypertables` and `compression_settings` (verified on TimescaleDB 2.32; prod runs 2.28). The ALTER runs only when compression is off, or segmentby is not `assetId`, or orderby is not the partition column DESC (`compressionSettingsRowMatches`, pure). If introspection fails, the ALTER is applied, as before.
+- **Never wait long.** The ALTER and `set_chunk_time_interval` run through `runWithLockTimeout`: one transaction, `SET LOCAL lock_timeout = '5s'`, then the statement. A lock it cannot get fails (55P03). The table's step is logged and retried on the next boot. A timed-out chunk interval skips only itself; the compression settings and policy still apply.
+- **The seed runs once.** `seedAddressPollingRuns` now carries the `_runOnce` marker `seedAddressPollingRunsAt`. An install that already has polling runs ran it on earlier boots, so it is stamped without the scan, and prod never pays the 13 minutes again. A fresh install seeds once. A failed seed stamps nothing and retries. After that, the probe path starts each run on its first success (rule 103).
+
+Any new boot-time DDL that touches a live sample table goes through `runWithLockTimeout`.
+
+**Relief on a host caught in it:** find the waiting `ALTER TABLE … timescaledb.compress` in `pg_stat_activity` (wait_event_type `Lock`) and `pg_cancel_backend` it. The settings are already in place, the error is caught and logged, and the queue drains.

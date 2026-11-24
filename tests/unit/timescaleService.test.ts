@@ -34,6 +34,7 @@ import {
   dropChunks,
   getEffectiveCompressAfterDays,
   migrateToHypertables,
+  compressionSettingsRowMatches,
 } from "../../src/services/timescaleService.js";
 
 // ─── A fake catalog ─────────────────────────────────────────────────────────
@@ -45,6 +46,8 @@ interface Catalog {
   policy: (table: string, days: string) => Array<{ matches: boolean }> | Error;
   /** table → eligible uncompressed chunks. */
   chunks: (table: string, cutoffIso: string) => Array<{ qualified: string }> | Error;
+  /** table → the compression-settings row (compressionSettingsMatch). */
+  settings: (table: string) => Array<{ enabled: boolean; seg: string | null; ord: string | null; asc: boolean | null }> | Error;
 }
 
 let cat: Catalog;
@@ -59,6 +62,7 @@ function answer<T>(v: T | Error): T {
 function installCatalog(): void {
   query().mockImplementation(async (sql: string, ...params: unknown[]) => {
     if (sql.includes("FROM pg_extension")) return answer(cat.ext);
+    if (sql.includes("compression_settings")) return answer(cat.settings(params[0] as string));
     if (sql.includes("timescaledb_information.hypertables")) return answer(cat.hypertables);
     if (sql.includes("timescaledb_information.jobs")) return answer(cat.policy(params[0] as string, params[1] as string));
     if (sql.includes("timescaledb_information.chunks")) return answer(cat.chunks(params[0] as string, params[1] as string));
@@ -81,6 +85,7 @@ beforeEach(async () => {
     hypertables: [],
     policy: () => [],
     chunks: () => [],
+    settings: () => [],
   };
   installCatalog();
   for (const fn of Object.values(logger) as unknown[]) {
@@ -493,5 +498,59 @@ describe("migrateToHypertables — the backlog self-heal", () => {
     await detectTimescale();
     await migrateToHypertables();
     expect(query().mock.calls.some(([sql]) => String(sql).includes("timescaledb_information.chunks"))).toBe(false);
+  });
+});
+
+// ─── The boot ALTER must not queue a live table (2026-11-24) ────────────────
+
+describe("migrateToHypertables — no lock convoy at boot", () => {
+  const ROW = (part: string) => [{ enabled: true, seg: "assetId", ord: part, asc: false }];
+
+  it("skips the compression ALTER when the table already carries those settings", async () => {
+    cat.hypertables = ALL_HYPERTABLE_CANDIDATES.map((t) => ({ hypertable_name: t }));
+    cat.settings = (t) => ROW(t.endsWith("_hourly") || t.endsWith("_daily") ? "bucketStart" : "timestamp");
+    await detectTimescale();
+    await migrateToHypertables();
+    expect(execCalls().some(([sql]) => sql.startsWith("ALTER TABLE"))).toBe(false);
+  });
+
+  it("still issues it when a setting differs, and only for that table", async () => {
+    cat.hypertables = ALL_HYPERTABLE_CANDIDATES.map((t) => ({ hypertable_name: t }));
+    cat.settings = (t) => (t === "asset_monitor_samples"
+      ? [{ enabled: true, seg: "assetId", ord: "timestamp", asc: true }]
+      : ROW(t.endsWith("_hourly") || t.endsWith("_daily") ? "bucketStart" : "timestamp"));
+    await detectTimescale();
+    await migrateToHypertables();
+    const alters = execCalls().filter(([sql]) => sql.startsWith("ALTER TABLE"));
+    expect(alters.map(([sql]) => sql.split('"')[1])).toEqual(["asset_monitor_samples"]);
+  });
+
+  it("runs the ALTER under a transaction-local lock_timeout", async () => {
+    await detectTimescale();
+    await migrateToHypertables();
+    const calls = execCalls().map(([sql]) => sql);
+    const at = calls.findIndex((sql) => sql.startsWith(`ALTER TABLE "asset_monitor_samples"`));
+    expect(at).toBeGreaterThan(0);
+    expect(calls[at - 1]).toMatch(/^SET LOCAL lock_timeout = '\d+s'$/);
+  });
+
+  it("a lock timeout on the chunk interval skips only the interval", async () => {
+    await detectTimescale();
+    exec().mockImplementation(async (sql: string) => {
+      if (sql.includes("set_chunk_time_interval")) throw new Error("canceling statement due to lock timeout");
+      return 0;
+    });
+    await migrateToHypertables();
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ table: "asset_interface_samples" }), "set_chunk_time_interval skipped this boot");
+    expect(execCalls().some(([sql]) => sql.startsWith(`ALTER TABLE "asset_interface_samples"`))).toBe(true);
+  });
+
+  it("matches only compression on, by assetId, ordered by the partition column descending", () => {
+    expect(compressionSettingsRowMatches({ enabled: true, seg: "assetId", ord: "timestamp", asc: false }, "timestamp")).toBe(true);
+    expect(compressionSettingsRowMatches({ enabled: false, seg: "assetId", ord: "timestamp", asc: false }, "timestamp")).toBe(false);
+    expect(compressionSettingsRowMatches({ enabled: true, seg: null, ord: "timestamp", asc: false }, "timestamp")).toBe(false);
+    expect(compressionSettingsRowMatches({ enabled: true, seg: "assetId", ord: "bucketStart", asc: false }, "timestamp")).toBe(false);
+    expect(compressionSettingsRowMatches({ enabled: true, seg: "assetId", ord: "timestamp", asc: true }, "timestamp")).toBe(false);
+    expect(compressionSettingsRowMatches(undefined, "timestamp")).toBe(false);
   });
 });

@@ -3998,6 +3998,13 @@ session that held the lock. If the update times out, Polaris cancels the migrati
 session so it does not keep running after the update has stopped, and re-running the update
 picks up where it left off.
 
+The same holds when Polaris restarts after an update. Its start-up re-applied the sample
+tables' compression settings every time, even though they never change, and the address
+confidence history scan ran at every start. On a large install, the first could wait behind
+the second for many minutes, and every probe result and chart read waited behind it, so the
+Device Map stayed on "Loading FortiGates". Now the settings are re-applied only when they
+differ, never wait more than 5 seconds for a lock, and the history scan runs once per install.
+
 ### Rule 198
 
 **What a FortiGate guesses about a device's operating system never overrides a better source.**

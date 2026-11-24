@@ -1245,8 +1245,9 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
       // release first — docs/UPGRADING.md.
       "./jobs/backfillDependencyTree.js",
       // Rule 103: polling credit from existing probe history, so devices that
-      // answered for months don't start at zero. Not marker-guarded — it only
-      // touches assets whose run is still empty. See its header.
+      // answered for months don't start at zero. Once per install (marker
+      // seedAddressPollingRunsAt) — re-run at every boot it scanned 30 days of
+      // samples for 13 minutes on prod. See its header.
       "./jobs/seedAddressPollingRuns.js",
       "./jobs/backfillInterfaceInventory.js",
       // Deliberately not marker-guarded — one indexed UPDATE that keeps
