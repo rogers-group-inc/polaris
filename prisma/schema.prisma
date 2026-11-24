@@ -296,6 +296,7 @@ model Integration {
   pushedReservations    Reservation[]            @relation("ReservationPushedTo")
   fortigateSightings    AssetFortigateSighting[] // Back-relation: sightings recorded against this integration's discovered FortiGates
   assetSources          AssetSource[] // Back-relation: per-source asset rows attributed to this integration
+  retiredAssetSources   AssetSourceRetired[] // Back-relation: last-known copies of rows its sweeps removed (rule 200)
   controllerClaims      AssetControllerClaim[] // Back-relation: managed-device claims this integration's gates asserted (business rule 83)
   monitorClassOverrides MonitorClassOverride[] // Back-relation: (assetType, integration) override rows
   vcenterDatastores     VcenterDatastore[] // Back-relation: current-state datastore rows (vcenter type only)
@@ -1366,6 +1367,7 @@ model Asset {
   mclagPeerMatches   AssetMclagPeer[]         @relation("AssetMclagPeerMatch")
   mibFiles           MibFile[]                @relation("MibFilesOnAsset")
   sources            AssetSource[]
+  retiredSources     AssetSourceRetired[]
   associatedIpRows   AssetAssociatedIp[]
   macAddressRows     AssetMacAddress[]
   softwareRows       AssetSoftware[]
@@ -5572,6 +5574,12 @@ model AssetSource {
   firstSeen DateTime  @default(now())
   lastSeen  DateTime  @default(now())
 
+  // Business rule 200: when this source's last whole read no longer held the
+  // device (an opt-in sweep that is OFF keeps the row live, so the Sources
+  // tab says "Missing" instead). Null = the source still reports it. Cleared
+  // when the source sees the device again. Display only — nothing else reads it.
+  missingSince DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -5580,6 +5588,37 @@ model AssetSource {
   @@index([sourceKind])
   @@index([integrationId])
   @@map("asset_sources")
+}
+
+// Business rule 200: the last-known copy of a source row a disappearance sweep
+// removed (directory sweep on, vCenter, Unraid / TrueNAS / Proxmox, Generic
+// API). Display only — the Sources tab shows it as "Missing"; no projection,
+// claim, match or decommission check reads it. One per (sourceKind,
+// externalId): a later retirement of the same identity replaces it, and it is
+// hidden while a live row with that identity exists. Kept until the asset goes.
+model AssetSourceRetired {
+  id      String @id @default(uuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  sourceKind String
+  externalId String
+
+  integrationId String?
+  integration   Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  observed  Json      @default("{}")
+  syncedAt  DateTime?
+  firstSeen DateTime
+  lastSeen  DateTime
+  /** When the sweep found it gone (the live row's missingSince when it had one). */
+  missingSince DateTime
+
+  createdAt DateTime @default(now())
+
+  @@unique([sourceKind, externalId])
+  @@index([assetId])
+  @@map("asset_sources_retired")
 }
 
 // Persistent parent→child edges of the Fortinet infrastructure dependency

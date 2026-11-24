@@ -4026,3 +4026,22 @@ reports it. Several records from the same integration of the same kind count onc
 Sources tab. The column's filter is a tick-list of source kinds plus **(No source)**;
 it does not sort. Where a device is learned
 is the **Location** column (rule 22), which this column's name used to belong to.
+
+### Rule 200
+
+**A source that no longer finds its device says Missing on the Sources tab, and saying so
+changes nothing else.** When Active Directory, Entra ID, Intune, Azure Arc, vCenter, Unraid,
+TrueNAS, Proxmox, a Generic API feed or a FortiManager / FortiGate stops reporting a device it
+used to report, that source's card on the asset's **Sources** tab reads **Missing**, says since
+when, and keeps the values the source last reported, dimmed. The card stays until the asset is
+deleted, and goes back to its normal state if the source reports the device again.
+
+This happens whether or not the integration's decommission option (**Decommission computers
+that leave the directory**, **Decommission devices that leave Entra ID** and the like) is
+switched on — that option still decides only whether the asset is decommissioned
+([rule 70](Business-Rules#rule-70)). The same safety checks apply: a partial, scoped or empty
+read, or one where an unusually large share of devices vanished at once, marks nothing. A
+Missing card is information only: it never changes what the asset's fields say, whether the
+asset counts as still reported by something, or how it is matched or merged, and it is not
+counted in the Assets table's **Sources** column ([rule 199](Business-Rules#rule-199)) once
+the source has removed its record.

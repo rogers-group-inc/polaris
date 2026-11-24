@@ -185,7 +185,8 @@ async function openAssetMergeModal(assetId, preselectOtherId, opts) {
       api.assets.getSourcePriority().catch(function () { return null; })
     ]);
     _mergeThisAsset = fetched[0];
-    _mergeThisSources = Array.isArray(fetched[1]) ? fetched[1] : [];
+    // Rule 200: a retired (Missing) copy is history, not a source that ranks the record.
+    _mergeThisSources = Array.isArray(fetched[1]) ? fetched[1].filter(function (s) { return !s.retired; }) : [];
     _mergeThisHistory = fetched[2];
     _mergeThisDeps = fetched[3];
     _mergeSourcePriority = _mergeNormalizePriority(fetched[4]);
@@ -243,7 +244,7 @@ async function selectMergeTarget(otherId) {
       api.assets.getDependencies(otherId).catch(function () { return null; })
     ]);
     _mergeOtherAsset = fetched[0];
-    _mergeOtherSources = Array.isArray(fetched[1]) ? fetched[1] : [];
+    _mergeOtherSources = Array.isArray(fetched[1]) ? fetched[1].filter(function (s) { return !s.retired; }) : [];
     _mergeOtherHistory = fetched[2];
     _mergeOtherDeps = fetched[3];
   } catch (err) {

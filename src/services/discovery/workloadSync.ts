@@ -73,6 +73,7 @@ import {
 import { indexHostname, lookupHostname, normalizeMacKey, upsertAssetConflict } from "./discoveryEngine.js";
 import { makeSyncLog } from "./syncLog.js";
 import { loadAssetsForSync, decommissionUnclaimedAssets, observedUnchanged, bumpSourcesSeen } from "./syncSteps.js";
+import { retireSourceRows } from "../assetSourceAbsenceService.js";
 import { pruneUnchangedAssetFields } from "../../utils/assetWritePrune.js";
 import { refreshIpHistoryLastSeen } from "../assetIpHistoryService.js";
 
@@ -1148,7 +1149,8 @@ export async function syncWorkloadDevices(
       if (gone.length > 0 && (absenceExceedsGuard(gone.length - goneHosts, priorWorkloadCount) || absenceExceedsGuard(goneHosts, priorHostCount))) {
         syncLog("warning", `Stale-source sweep refused — ${gone.length - goneHosts} of ${priorWorkloadCount} workload(s) and ${goneHosts} of ${priorHostCount} host(s) vanished in one read, which is more than the guard allows. Nothing was removed; if this is real, the next runs will keep reporting it.`);
       } else if (gone.length > 0) {
-        await prisma.assetSource.deleteMany({ where: { id: { in: gone.map((r) => r.id) } } });
+        // Rule 200: the row leaves a last-known copy for the Sources tab.
+        await retireSourceRows(gone.map((r) => r.id), now);
         syncLog("info", `Swept ${gone.length} stale ${label} source row(s) no longer present on the host.`);
         const swept = await decommissionUnclaimedAssets(gone.map((r) => r.assetId), {
           now, actor, integrationId, integrationName,

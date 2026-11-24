@@ -34,6 +34,7 @@ vi.mock("../../src/db.js", () => {
     assetIpHistory: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetFortigateSighting: { findMany: vi.fn(async () => []), update: vi.fn(), delete: vi.fn() },
     assetSource: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    assetSourceRetired: { updateMany: vi.fn(async () => ({ count: 0 })) },
     assetDependencyParent: {
       findMany: vi.fn(async () => []),
       updateMany: vi.fn(async () => ({ count: 0 })),

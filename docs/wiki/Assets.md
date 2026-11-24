@@ -2184,6 +2184,15 @@ each one said, side by side. This is where you go when a field looks wrong: the
 projection shows the highest-priority source's answer, and this tab shows all of
 them.
 
+A source that **no longer finds the device** — a computer deleted from Active Directory, a
+device removed from Entra ID, a VM gone from vCenter, a switch dropped from its FortiGate —
+keeps its card with a **Missing** badge in place of Enabled / Connected, a **Missing since**
+date, and the values it last reported, dimmed. The **Reported state by source** summary above
+the cards lists it on a **Missing** line. The card returns to normal if the source reports the
+device again, and otherwise stays until the asset is deleted. Missing is information only: the
+asset is decommissioned only where the integration's decommission option says so
+([rule 200](Business-Rules#rule-200)).
+
 It also hosts the **merge** flow. Per-field winners are pre-selected from the
 Sources priority order, with the winning column badged *higher-ranked source*
 and one line naming which two sources decided it. Two rules outrank the order:

@@ -695,18 +695,41 @@ Also `carryRegionRename(from, to)` / `rewriteRegionRefs` (rule 169(a)): the `reg
 - Anything added here that should be visible to the operator first also goes in `previewIntegrationDetach` and `public/js/integrations.js → _integrationDeleteBodyHTML`.
 - Scale: chunked by 500 asset ids, batched writes, once per operator click; a 2000-VM vCenter is four chunks.
 
+## services/assetSourceAbsenceService.ts
+
+**What it owns:** Business rule 200 — what a disappearance sweep leaves behind for the Sources tab when a source no longer finds a device. Two shapes, chosen so nothing but the tab changes behaviour: a stamp on a row the sweep leaves LIVE (`AssetSource.missingSince`), and a copy of a row the sweep DELETES (`AssetSourceRetired`).
+
+**Public API:** `markSourcesMissing(ids, at)`, `markAssetSourcesMissing(assetIds, kinds, integrationId, at)`, `clearSourcesMissing(ids)`, `retireSourceRows(ids, at)`, `listShownRetiredSources(assetId)`.
+
+**Cross-service deps:** none (prisma + `utils/chunk`).
+
+**Used by:** `discovery/discoveryEngine.ts → sweepDirectoryAbsence` (AD / Entra / Intune / Arc: mark + clear with the sweep off, retire with it on) and the vCenter Pass E sweep (retire); `discovery/workloadSync.ts` (Unraid / TrueNAS / Proxmox stale-source sweep, retire); `discovery/genericApiSync.ts` (mark + clear off, retire on); `discovery/dhcp/staleFirewalls.ts` (Phase 2a gates + their cascaded switches / APs) and `discovery/dhcp/staleManagedDevices.ts` (Phase 2b) — `markAssetSourcesMissing`; `assetSourceService.listAssetSourcesForDisplay` (`listShownRetiredSources`).
+
+**Invariants:**
+- Display only. A stamped row keeps counting everywhere it counted; a retired copy is read by nothing but the Sources tab. Never add a reader that treats either as a claim — or as NOT a claim — without revisiting rule 200.
+- `markSourcesMissing` keeps the FIRST time (only `missingSince: null` rows are stamped); `retireSourceRows` carries that stamp into the copy, else uses the sweep's time.
+- One copy per (sourceKind, externalId): a re-retirement deletes the old copy first. Copy + delete commit together per 500-row chunk.
+- A copy is hidden while a live row with its identity exists anywhere.
+
+**When changing this:**
+- A new disappearance sweep: retire (if it deletes rows) or mark (if it leaves them), and clear on reappearance; behind the same guards as its decommission.
+- Keep `tests/integration/assetSourceAbsence.test.ts`, `tests/integration/genericApiSync.test.ts` and the `sweepArcAbsence` cases in `tests/unit/discoveryEngine.test.ts` green.
+
+---
+
 ## services/assetSourceService.ts
 
 **What it owns:** The server half of the asset details **Sources** tab, moved out of `routes/assets/sources.ts` (CQ-B062 slice 2): the per-discovery-source view, splitting one source off into a new asset, and the operator-driven merge with its audit Event and conflict settling. The route keeps only Zod validation and the merge body's "this" / "other" -> canonical / ghost translation.
 
 **Public API:** `listAssetSourcesForDisplay(id)`, `splitAssetSource(id, sourceId, actor)`, `mergeAssetsAudited({ canonicalId, ghostId, fieldWinners, dependencyWinner, canManageIntegrations, actor })`.
 
-**Cross-service deps:** assetMergeService (`mergeAssets`), duplicateIpConflictService (`repointDuplicateIpConflicts`, `reconcileDuplicateIpForAddresses`), duplicateSerialConflictService (`repointDuplicateSerialConflicts`, `settleDuplicateSerialConflictsAfterMerge`), assetDetailReadService (`assertAssetExists`), eventLogService (`logEvent`), utils/assetProjection (`projectAssetFromSources`), utils/assetSourceState (`deriveAssetSourceState`), utils/workloadSources.
+**Cross-service deps:** assetMergeService (`mergeAssets`), duplicateIpConflictService (`repointDuplicateIpConflicts`, `reconcileDuplicateIpForAddresses`), duplicateSerialConflictService (`repointDuplicateSerialConflicts`, `settleDuplicateSerialConflictsAfterMerge`), assetDetailReadService (`assertAssetExists`), assetSourceAbsenceService (`listShownRetiredSources`, rule 200), eventLogService (`logEvent`), utils/assetProjection (`projectAssetFromSources`), utils/assetSourceState (`deriveAssetSourceState`), utils/workloadSources.
 
 **Used by:** `src/api/routes/assets/sources.ts — GET /assets/:id/sources, POST /assets/:id/sources/:sourceId/split, POST /assets/:id/merge`.
 
 **Invariants:**
 - The source view sorts identity-first (entra, intune, ad, the Fortinet kinds, snmp-sysdescr, fortinet-live), unknown kinds at 50, `manual` last, and collapses rows to one per (sourceKind, integrationId), keeping the newest — a churned `fortigate-endpoint` MAC must not render as several cards. Both halves live in `utils/assetSourceOrder.ts`, shared with the Assets table's Sources column (`assetListService.shapeListSources`, rule 199): change them there, never locally.
+- Rule 200: a row stamped `missingSince` reads `state: "missing"` (`missingSourceState`) in place of its own verdict; `AssetSourceRetired` copies (`listShownRetiredSources`) follow the live rows with `retired: true`, skipped when a live card of the same (kind, integration) is shown. A retired entry's id is not an AssetSource id — it cannot be split, and the merge dialog filters them out of its ranking.
 - A split refuses a `manual` source and an asset's only source (409); the new asset and the moved source are one transaction, so no AssetSource is ever left pointing at an asset that was never created. Writes `asset.split`.
 - The merge moves the duplicate-serial and duplicate-ip cards off the absorbed row BEFORE `mergeAssets` deletes it (rules 83 and 40(i)), writes `asset.merged`, then settles both card kinds AWAITED; a settle failure is logged and never fails a merge that already committed.
 - The merge orchestration lives here, not in assetMergeService, because both conflict services import assetMergeService.

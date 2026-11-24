@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
   repointIp: vi.fn(),
   reconcileIp: vi.fn(),
   settleSerial: vi.fn(),
+  retired: vi.fn(async (_assetId: string): Promise<any[]> => []),
 }));
 vi.mock("../../src/db.js", () => import("./_dbStub.js"));
 vi.mock("../../src/services/eventLogService.js", (orig) => import("./_eventLogStub.js").then((s) => s.withEventLogStubs(orig)));
@@ -37,6 +38,10 @@ vi.mock("../../src/services/assetDetailReadService.js", () => ({
   },
 }));
 
+vi.mock("../../src/services/assetSourceAbsenceService.js", () => ({
+  listShownRetiredSources: (assetId: string) => m.retired(assetId),
+}));
+
 import { listAssetSourcesForDisplay, splitAssetSource, mergeAssetsAudited } from "../../src/services/assetSourceService.js";
 import { prisma } from "../../src/db.js";
 import { resetDbStub, stubbed } from "./_dbStub.js";
@@ -48,7 +53,9 @@ const db = {
 };
 
 beforeEach(() => {
-  resetDbStub(); for (const f of Object.values(m)) f.mockReset(); });
+  resetDbStub(); for (const f of Object.values(m)) f.mockReset();
+  m.retired.mockResolvedValue([]);
+});
 
 const src = (over: Record<string, unknown>) => ({
   id: "s", sourceKind: "manual", externalId: "x", integrationId: null, integration: null,
@@ -73,6 +80,37 @@ describe("listAssetSourcesForDisplay", () => {
     const out = await listAssetSourcesForDisplay("a");
     expect(out.map((r) => r.id)).toEqual(["ent", "ep-new", "odd", "man"]);
     expect(out[0]).toHaveProperty("state");
+  });
+
+  // Business rule 200.
+  it("says Missing for a live row stamped missingSince, in place of the source's own state", async () => {
+    db.assetFindUnique.mockResolvedValue({ id: "a" });
+    const since = new Date("2026-11-20T10:00:00Z");
+    db.sourceFindMany.mockResolvedValue([
+      src({ id: "ad", sourceKind: "ad", integrationId: "i1", observed: { accountDisabled: false }, missingSince: since }),
+      src({ id: "ent", sourceKind: "entra", integrationId: "i2", observed: { accountEnabled: true }, missingSince: null }),
+    ]);
+    const out = await listAssetSourcesForDisplay("a");
+    const ad = out.find((r) => r.id === "ad")!;
+    expect(ad.state).toMatchObject({ state: "missing", label: "Missing", value: since.toISOString() });
+    expect(ad.missingSince).toEqual(since);
+    expect(ad.retired).toBe(false);
+    expect(out.find((r) => r.id === "ent")!.state).toMatchObject({ state: "enabled" });
+  });
+
+  it("appends retired copies after the live rows, as Missing, unless a live card of that kind + integration is shown", async () => {
+    db.assetFindUnique.mockResolvedValue({ id: "a" });
+    db.sourceFindMany.mockResolvedValue([src({ id: "ent", sourceKind: "entra", integrationId: "i2" })]);
+    const since = new Date("2026-11-21T00:00:00Z");
+    m.retired.mockResolvedValue([
+      { id: "r-vm", sourceKind: "vcenter-vm", externalId: "u1", integrationId: "i9", integration: { id: "i9", name: "VC", type: "vcenter" },
+        observed: { name: "vm1" }, syncedAt: null, firstSeen: since, lastSeen: since, missingSince: since },
+      { id: "r-ent", sourceKind: "entra", externalId: "old", integrationId: "i2", integration: null,
+        observed: {}, syncedAt: null, firstSeen: since, lastSeen: since, missingSince: since },
+    ]);
+    const out = await listAssetSourcesForDisplay("a");
+    expect(out.map((r) => r.id)).toEqual(["ent", "r-vm"]);
+    expect(out[1]).toMatchObject({ retired: true, state: { state: "missing" }, integration: { name: "VC" } });
   });
 });
 
