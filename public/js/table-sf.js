@@ -1470,7 +1470,10 @@ TableSF.prototype.apply = function (data) {
  *
  * data-col-no-resize="true" pins a column to its declared width (no handle);
  * data-col-fit="content" does the same at its widest rendered cell, re-measured
- * on every tbody repaint.
+ * on every tbody repaint. The rightmost resizable column auto-fills; when one
+ * of those static columns sits on its right, the auto-fill column gets a
+ * handle on that divider and narrowing it widens the static column (trailGive,
+ * persisted in getPrefs).
  *
  * Reordering physically moves the <th>, its <col>, and each body row's cells,
  * because there is no CSS way to permute table columns. Pages that rebuild
@@ -1718,6 +1721,14 @@ function setupColumnLayout(tableEl, options) {
   // floored here so a table that overflows scrolls horizontally instead of
   // ballooning its header height.
   var AUTOFILL_MIN_W = 36;
+  // Width the operator handed from the auto-fill column to the static-width
+  // column on its right ({ id, px }) by dragging the divider between them —
+  // the Events table's Message | User border. That column keeps its declared /
+  // content width as its floor and carries this on top, so narrowing the
+  // auto-fill column moves its right edge instead of being undone by the fit
+  // pass. Applied only while `id` is still the column right of the auto-fill
+  // one (a hide or reorder that changes the pair leaves it inert).
+  var trailGive = null;
   var widths = {};
   var hidden = {};
   var alwaysHidden = {};
@@ -1817,8 +1828,32 @@ function setupColumnLayout(tableEl, options) {
     return -1;
   }
 
+  // Source index of the column on the auto-fill column's RIGHT when that is a
+  // static-width one (`data-col-no-resize` / `data-col-fit="content"`), else
+  // -1. That pair is the one divider the auto-fill column can be dragged at:
+  // the static column takes the width the auto-fill one gives up (trailGive).
+  // A utility column (cb/fav) there, or nothing, leaves the handle hidden —
+  // the auto-fill column's right edge is then the table's own border.
+  function trailAbsorberIdx(lastIdx) {
+    if (lastIdx < 0) return -1;
+    var disp = displayIds();
+    for (var k = disp.indexOf(colIds[lastIdx]) + 1; k > 0 && k < disp.length; k++) {
+      if (hidden[disp[k]]) continue;
+      return fixedW[disp[k]] ? srcIdxOf[disp[k]] : -1;
+    }
+    return -1;
+  }
+
+  /** The width trailGive adds to column `absIdx`, or 0 when it is not the absorber. */
+  function giveFor(absIdx) {
+    if (absIdx < 0 || !trailGive || trailGive.id !== colIds[absIdx]) return 0;
+    return trailGive.px > 0 ? trailGive.px : 0;
+  }
+
   function applyWidths() {
     var lastIdx = lastVisibleResizableIdx();
+    var absIdx = trailAbsorberIdx(lastIdx);
+    var give = giveFor(absIdx);
     var anyWidth = false;
     colIds.forEach(function (id, i) {
       if (i === lastIdx) {
@@ -1830,17 +1865,18 @@ function setupColumnLayout(tableEl, options) {
       } else {
         var w = widths[id];
         if (typeof w === "number" && w > 0) {
-          cols[i].style.width = Math.max(MIN_COL_W, w) + "px";
+          cols[i].style.width = (Math.max(MIN_COL_W, w) + (i === absIdx ? give : 0)) + "px";
           anyWidth = true;
         } else {
           cols[i].style.width = "";
         }
       }
-      // The auto-fill column's handle is inert (nothing to its right to push
-      // into); hide it so the user can't drag the table's right edge off the
-      // border. Every other resizable column keeps its handle.
+      // The auto-fill column's handle is shown only when a static-width column
+      // sits on its right to trade width with; with nothing there its right
+      // edge is the table border, and dragging it would pull the table off it.
+      // Every other resizable column keeps its handle.
       var handle = ths[i] && ths[i].querySelector(".sf-resize-handle");
-      if (handle) handle.style.display = (i === lastIdx) ? "none" : "";
+      if (handle) handle.style.display = (i === lastIdx && absIdx < 0) ? "none" : "";
     });
     tableEl.style.tableLayout = anyWidth ? "fixed" : "";
     rewriteHideStyle();
@@ -1922,6 +1958,20 @@ function setupColumnLayout(tableEl, options) {
       else fixedSum += w;
     });
     if (!flex.length) return;
+    // The width handed to the static column right of the auto-fill one
+    // (trailGive) comes out of the room BEFORE the resizable columns share it,
+    // and is the first thing given back when the container is too narrow — an
+    // operator who narrowed Message to widen User should not get a horizontal
+    // scrollbar while User still holds spare width.
+    var absIdx = trailAbsorberIdx(lastIdx);
+    var give = giveFor(absIdx);
+    // Only once the column has a base of its own: an unmeasured one would read
+    // its base back off the <col> this writes, and compound the give each pass.
+    if (absIdx >= 0 && typeof widths[colIds[absIdx]] === "number") {
+      var effGive = Math.max(0, Math.min(give, Math.floor(availW - fixedSum - flexSum)));
+      setColWidth(absIdx, Math.max(MIN_COL_W, baseWidthOf(absIdx)) + effGive);
+      fixedSum += effGive;
+    }
     var budget = Math.floor(availW - fixedSum);     // px the resizable columns share
 
     if (flexSum > 0 && budget - flexSum >= 1) {
@@ -2085,8 +2135,78 @@ function setupColumnLayout(tableEl, options) {
    * truncating the column next door. Capped at the container width so one
    * long notes cell can't push a column off the screen.
    */
+  /**
+   * The floor a drag or autofit may take the auto-fill column to — the same
+   * one the fit pass enforces (AUTOFILL_MIN_W, raised by a width declared on
+   * its th), so the column never lands where the next pass would undo it.
+   */
+  function autofillFloor(lastIdx) {
+    return Math.max(AUTOFILL_MIN_W, parseFloat(ths[lastIdx].style.width) || 0);
+  }
+
+  /** Set the auto-fill column's width and the matching give on `absIdx`. */
+  function setTrailSplit(lastIdx, absIdx, lastW, givePx) {
+    widths[colIds[lastIdx]] = Math.round(lastW);
+    var px = Math.max(0, Math.round(givePx));
+    trailGive = px > 0 ? { id: colIds[absIdx], px: px } : null;
+  }
+
+  /**
+   * Resize drag on the auto-fill column's handle: the divider between it and
+   * the static-width column on its right. Narrowing the auto-fill column hands
+   * the width to that column (trailGive); widening takes it back, and past
+   * zero give it grows the auto-fill column into the wrapper's horizontal
+   * scroll, as an over-committed table does. 1:1 against what is on screen.
+   */
+  function startTrailDrag(lastIdx, absIdx, startX) {
+    ensureAllWidthsMeasured();
+    commitStretchedWidths();
+    var startW = parseFloat(cols[lastIdx].style.width) || widths[colIds[lastIdx]] ||
+      ths[lastIdx].getBoundingClientRect().width;
+    // Width the absorber shows beyond its own base right now — what the fit
+    // pass actually granted, which can be less than the stored give when the
+    // container is narrow.
+    var absBase = widths[colIds[absIdx]] || 0;
+    var startGive = Math.max(0, (parseFloat(cols[absIdx].style.width) || absBase) - absBase);
+    var floor = autofillFloor(lastIdx);
+    function onMove(ev) {
+      var d = Math.max(-(startW - floor), ev.clientX - startX);
+      setTrailSplit(lastIdx, absIdx, startW + d, startGive - d);
+      applyWidths();
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("sf-resizing");
+      if (typeof options.onChange === "function") options.onChange();
+    }
+    document.body.classList.add("sf-resizing");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
   function autofitColumn(i) {
-    if (i === lastVisibleResizableIdx()) return;
+    if (i === lastVisibleResizableIdx()) {
+      // The auto-fill column fits like a drag on its divider: what it gives up
+      // (or takes back) is the static column's give on its right.
+      var absAt = trailAbsorberIdx(i);
+      if (absAt < 0) return;
+      ensureAllWidthsMeasured();
+      commitStretchedWidths();
+      var parentEl = tableEl.parentElement;
+      var capW = (parentEl && parentEl.clientWidth) || tableEl.getBoundingClientRect().width || 0;
+      var fitW = contentWidthOf(i);
+      if (!(fitW > 0)) return;
+      if (capW > 0) fitW = Math.min(fitW, capW);
+      fitW = Math.max(autofillFloor(i), fitW);
+      var curW = parseFloat(cols[i].style.width) || widths[colIds[i]] || 0;
+      var absBaseW = widths[colIds[absAt]] || 0;
+      var curGive = Math.max(0, (parseFloat(cols[absAt].style.width) || absBaseW) - absBaseW);
+      setTrailSplit(i, absAt, fitW, curGive + (curW - fitW));
+      applyWidths();
+      if (typeof options.onChange === "function") options.onChange();
+      return;
+    }
     ensureAllWidthsMeasured();
     commitStretchedWidths();
     var id = colIds[i];
@@ -2104,12 +2224,14 @@ function setupColumnLayout(tableEl, options) {
       var nId = dispNow[nk];
       if (hidden[nId] || !isResizableCol(nId)) continue;
       var nIdx = srcIdxOf[nId];
-      // The auto-fill column absorbs the delta on its own.
-      if (nIdx === lastIdx) break;
+      // The auto-fill column trades like any other neighbour (its committed
+      // width is what is on screen), never below its own floor.
       var startWNext = widths[nId] || ths[nIdx].getBoundingClientRect().width;
       if (d < 0) widths[nId] = Math.round(startWNext - d);
       else {
-        var give = Math.max(0, Math.min(d, startWNext - contentWidthOf(nIdx)));
+        var keep = contentWidthOf(nIdx);
+        if (nIdx === lastIdx) keep = Math.max(keep, autofillFloor(lastIdx));
+        var give = Math.max(0, Math.min(d, startWNext - keep));
         widths[nId] = Math.round(startWNext - give);
       }
       break;
@@ -2140,9 +2262,14 @@ function setupColumnLayout(tableEl, options) {
     handle.addEventListener("mousedown", function (e) {
       e.preventDefault();
       e.stopPropagation();
-      // The rightmost visible column auto-fills to keep the table's right edge
-      // on the border, so its handle does nothing — bail before starting a drag.
-      if (i === lastVisibleResizableIdx()) return;
+      // The auto-fill column's handle is the divider with the static-width
+      // column on its right: dragging trades width with that column's give.
+      // With no such column its handle is hidden; bail all the same.
+      if (i === lastVisibleResizableIdx()) {
+        var absAt = trailAbsorberIdx(i);
+        if (absAt >= 0) startTrailDrag(i, absAt, e.clientX);
+        return;
+      }
       ensureAllWidthsMeasured();
       commitStretchedWidths();   // drag against what's on screen, 1:1
       var id = colIds[i];
@@ -2159,17 +2286,21 @@ function setupColumnLayout(tableEl, options) {
       for (var nk = dispNow.indexOf(id) + 1; nk > 0 && nk < dispNow.length; nk++) {
         if (!hidden[dispNow[nk]] && isResizableCol(dispNow[nk])) { nIdx = srcIdxOf[dispNow[nk]]; break; }
       }
-      // When the right neighbor is the auto-fill (last) column it has no fixed
-      // width — let it absorb the delta naturally (only this column + the
-      // auto-fill column change). Otherwise trade width 1:1 with the neighbor
-      // so every other column stays put.
-      var nId = (nIdx >= 0 && nIdx !== lastIdx) ? colIds[nIdx] : null;
+      // Trade width 1:1 with the neighbor so every other column stays put —
+      // the auto-fill column included. Its committed width is what is on
+      // screen, so it trades like any other; leaving it to "absorb the delta"
+      // meant a wider drag kept its saved width and pushed the table past its
+      // border into the scroll, and a narrower one re-spread the slack across
+      // every column, so the divider moved less than the pointer. It stops at
+      // its own floor (AUTOFILL_MIN_W / declared), not the sliver.
+      var nId = nIdx >= 0 ? colIds[nIdx] : null;
       var startWNext = nId ? (widths[nId] || ths[nIdx].getBoundingClientRect().width) : null;
+      var nextFloor = (nIdx >= 0 && nIdx === lastIdx) ? autofillFloor(lastIdx) : MIN_COL_W;
       function onMove(ev) {
         var dx = ev.clientX - startX;
         if (startWNext != null) {
-          // Clamp so neither the dragged column nor its neighbor goes below MIN_COL_W.
-          var d = Math.max(-(startW - MIN_COL_W), Math.min(startWNext - MIN_COL_W, dx));
+          // Clamp so neither the dragged column nor its neighbor goes below its floor.
+          var d = Math.max(-(startW - MIN_COL_W), Math.min(Math.max(0, startWNext - nextFloor), dx));
           widths[id] = Math.round(startW + d);
           widths[nId] = Math.round(startWNext - d);
         } else {
@@ -2566,16 +2697,31 @@ function setupColumnLayout(tableEl, options) {
       // "I turned this on" decision survives reloads even for columns that
       // default to hidden.
       var shown = colIds.filter(function (id) { return !required[id] && !hidden[id]; });
-      return {
+      var out = {
         widths: Object.assign({}, widths),
         hidden: Object.keys(hidden).filter(function (id) { return !alwaysHidden[id]; }),
         shown: shown,
         order: order.slice(),
       };
+      // Only when set, so a table nobody has dragged this way saves the same
+      // blob it always did.
+      if (trailGive) out.trailGive = { id: trailGive.id, px: trailGive.px };
+      return out;
     },
     setPrefs: function (p) {
       if (!p) return;
       if (Array.isArray(p.order)) order = normalizeOrder(p.order);
+      // Untrusted (localStorage / server blob): a known static-width column and
+      // a positive number, or nothing. A blob that omits the key leaves the
+      // current give alone, like every other key here.
+      if (p.trailGive === null) trailGive = null;
+      else if (p.trailGive && typeof p.trailGive === "object") {
+        var tg = p.trailGive;
+        trailGive = (typeof tg.id === "string" && Object.prototype.hasOwnProperty.call(fixedW, tg.id) &&
+                     typeof tg.px === "number" && isFinite(tg.px) && tg.px > 0)
+          ? { id: tg.id, px: Math.round(tg.px) }
+          : null;
+      }
       if (p.widths && typeof p.widths === "object") {
         Object.keys(p.widths).forEach(function (id) {
           // Utility + static-width columns stay at their pinned/declared width;

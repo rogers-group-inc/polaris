@@ -168,6 +168,28 @@ describe("column fit — spending the leftover width", () => {
     expect(widthOf("created")).toBe(217);
     expect(colWidths().reduce((a, b) => a + b, 0)).toBe(AVAIL);
   });
+
+  it("trades 1:1 with the auto-fill column when it is the right-hand neighbor", () => {
+    // Narrower used to re-spread the slack across every column (the divider
+    // lagged the pointer); wider used to push the table past its border.
+    layout.setPrefs({ widths: { hostname: 100, ip: 200, created: 100 } });
+    dragHandle("ip", -50);
+    expect(widthOf("ip")).toBe(383);
+    expect(widthOf("created")).toBe(267);
+    expect(widthOf("hostname")).toBe(216);
+    expect(colWidths().reduce((a, b) => a + b, 0)).toBe(AVAIL);
+
+    dragHandle("ip", 100);
+    expect(widthOf("ip")).toBe(483);
+    expect(widthOf("created")).toBe(167);
+    expect(colWidths().reduce((a, b) => a + b, 0)).toBe(AVAIL);
+  });
+
+  it("hides the auto-fill column's handle when nothing sits on its right", () => {
+    layout.setPrefs({ widths: { hostname: 100, ip: 200, created: 100 } });
+    const h = doc.querySelector('thead th[data-col-id="created"] .sf-resize-handle') as any;
+    expect(h.style.display).toBe("none");
+  });
 });
 
 /**

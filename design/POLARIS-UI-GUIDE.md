@@ -322,7 +322,9 @@ record id.
 - Text filters with an operator chooser: contains / not-contains / empty /
   not-empty. Date columns get a from→to range popover.
 - Column resize by dragging the divider on a header's right edge — affects only
-  the two adjacent columns; the rightmost resizable column auto-fills.
+  the two adjacent columns; the rightmost resizable column auto-fills. When a
+  fixed-width column sits to its right, the auto-fill column has a divider too,
+  and narrowing it widens that fixed column.
 - Show/hide chooser behind a **gear that floats at the table's top-right corner
   on hover** — this replaced the old "Columns ▾" toolbar button; never add one
   back. Pass `onScreenshot` to get a camera button beside it.
