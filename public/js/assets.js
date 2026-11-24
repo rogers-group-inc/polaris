@@ -501,7 +501,8 @@ function _isTagFilterHidden(name) {
 // EDIT picker must never offer them) and a FILTER must: they appear under
 // their own registry category in their own colours, as Server Settings → Tags
 // shows them. Tags in use with no registry row land in "Other tags in use";
-// the prev-entra: / prev-ad: breadcrumbs are left out. Any / All and
+// the prev-entra: / prev-ad: breadcrumbs are left out. "Match all tags" /
+// "Match any tags" (mode all / any) and
 // "Include untagged" sit above the chips; nothing filters until OK.
 // `current` is the stored { op: "pick", … } or null; `done` is TableSF's.
 async function openAssetTagFilterModal(current, done) {
@@ -556,8 +557,8 @@ async function openAssetTagFilterModal(current, done) {
   var body =
     '<div class="tag-filter-head">' +
       '<div class="sf-pick-mode" role="radiogroup" aria-label="Match">' +
-        '<button type="button" class="sf-pick-mode-btn" data-mode="any" title="Assets carrying ANY selected tag">Any</button>' +
-        '<button type="button" class="sf-pick-mode-btn" data-mode="all" title="Assets carrying EVERY selected tag">All</button>' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="all" title="Assets carrying EVERY selected tag — each tag narrows the list">Match all tags</button>' +
+        '<button type="button" class="sf-pick-mode-btn" data-mode="any" title="Assets carrying ANY selected tag — each tag widens the list">Match any tags</button>' +
       '</div>' +
       '<label class="tag-filter-none"><input type="checkbox" id="tag-filter-none"' + (cur.none ? " checked" : "") + '> Include untagged assets</label>' +
     '</div>' +
