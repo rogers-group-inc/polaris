@@ -691,11 +691,13 @@ describe("Device Map widget — the site's saved views (Layer 2 / Topology / Roo
     unmount();
   });
 
-  it("opens on the stored view; on the wallboard a pick is the viewer's own and ArcGIS is not fetched", async () => {
+  it("opens on the stored view; on the wallboard a pick is the viewer's own and ArcGIS layers are fetched", async () => {
     w().POLARIS_DASH_LOCAL = true;
     const { pick, unmount } = render({ topologyView: "topo1" });
     await vi.waitFor(() => expect(mounted).toHaveLength(1), { timeout: 2000 });
-    expect(mounted[0].ctx.fetchArcgisLayers).toBeUndefined();
+    // The /dash listener admits the ArcGIS read routes (operator report
+    // 2026-11-24: the eye showed no ArcGIS layers on the wallboard).
+    expect(typeof mounted[0].ctx.fetchArcgisLayers).toBe("function");
     pick("room1");
     await vi.waitFor(() => expect(mounted).toHaveLength(2), { timeout: 2000 });
     expect(stored).toEqual([]);

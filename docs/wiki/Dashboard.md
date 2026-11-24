@@ -216,7 +216,8 @@ refresh keeps your basemap and an open eye panel. A **Room** view draws its
 racks and junction boxes. On the Dashboard the view you pick is kept with the
 widget. On the [wallboard](Mobile-and-Dash) it starts on that view, and a viewer's pick lasts
 until the page reloads. The location chips and **Rotate** belong to Layer 2 views.
-ArcGIS layers are drawn on the Dashboard only.
+ArcGIS layers and custom device icons show on the Dashboard and the wallboard
+alike.
 
 The legend button in the topology's bottom-left corner opens the same key as
 the Device Map page: what each node, health colour, link and location box

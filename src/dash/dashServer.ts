@@ -42,11 +42,12 @@ import compression from "compression";
 import dashboardRouter from "../api/routes/dashboard.js";
 import reservationsRouter from "../api/routes/reservations.js";
 import mapRouter from "../api/routes/map.js";
+import { serveIconImage } from "../api/routes/deviceIcons.js";
 import weatherRouter from "../api/routes/weather.js";
 import savedDashboardsRouter from "../api/routes/savedDashboards.js";
 import { errorHandler } from "../api/middleware/errorHandler.js";
 import { requirePermission } from "../api/middleware/permissions.js";
-import { dashSatelliteLimiter, dashWeatherLimiter, makeRateLimiter } from "../api/middleware/rateLimits.js";
+import { dashMapLimiter, dashWeatherLimiter, makeRateLimiter } from "../api/middleware/rateLimits.js";
 import { ipInScope } from "../utils/ipScope.js";
 import { getDashSettings, type DashSettings } from "../services/dashSettingsService.js";
 import {
@@ -81,6 +82,10 @@ const API_PATH_ALLOWLIST = new Set<string>([
   // Map | Satellite switch on the Device Map widget shows only when it is.
   // Status only: never the provider URL or key.
   "/map/satellite",
+  // The ArcGIS layers a Topology view can draw (rule 188) — the eye's ArcGIS
+  // section on the widget. Layer metadata only; the integration's token stays
+  // server-side.
+  "/map/arcgis-layers",
   // Published (public) dashboards a wallboard can be pinned to. The read
   // routes only; every write verb is already 405'd app-wide, and with no
   // session the list answers with public rows alone.
@@ -106,6 +111,8 @@ const API_PREFIX_ALLOWLIST = ["/weather/", "/saved-dashboards/"];
  * image id, a read).
  */
 const SATELLITE_TILE_PATH = /^\/map\/satellite\/\d+\/\d+\/\d+$/;
+const ARCGIS_FEATURES_PATH = /^\/map\/arcgis-layers\/[^/]+\/features$/;
+const DEVICE_ICON_PATH = /^\/device-icons\/[^/]+\/image$/;
 
 const API_PATTERN_ALLOWLIST = [
   /^\/map\/sites\/[^/]+\/topology$/,
@@ -113,6 +120,14 @@ const API_PATTERN_ALLOWLIST = [
   // One satellite tile through Polaris's proxy (rule 183), integers only —
   // the imagery behind that same switch. The provider key stays server-side.
   SATELLITE_TILE_PATH,
+  // One ArcGIS layer's features in a bbox (rule 188), and the site's
+  // cable-run links (rule 188(a)) that route device links along them — the
+  // read halves only; the PUT beside the links is 405'd here regardless.
+  ARCGIS_FEATURES_PATH,
+  /^\/map\/sites\/[^/]+\/cable-run-links$/,
+  // A custom device icon's bytes: the topology's nodes name it in iconUrl.
+  // Served by the main route's own handler (deviceIcons.ts → serveIconImage).
+  DEVICE_ICON_PATH,
 ];
 
 /**
@@ -215,8 +230,9 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
 
   // Weather-proxy requests ride their own generous limiter (a single radar
   // refresh is hundreds of small tile GETs — it would exhaust the general
-  // budget in one load), satellite tiles theirs (dashSatelliteLimiter);
-  // everything else keeps the tight wallboard ceiling.
+  // budget in one load), satellite tiles and ArcGIS feature queries — a
+  // Topology view's per-pan map data — theirs (dashMapLimiter); everything
+  // else keeps the tight wallboard ceiling.
   const generalLimiter = makeRateLimiter({
     windowMs: 5 * 60 * 1000,
     max: 600,
@@ -226,8 +242,8 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
     const apiPath = req.path.startsWith("/dash/api/v1/") ? req.path.slice("/dash/api/v1".length) : "";
     const limiter = apiPath.startsWith("/weather/")
       ? dashWeatherLimiter
-      : SATELLITE_TILE_PATH.test(apiPath)
-        ? dashSatelliteLimiter
+      : SATELLITE_TILE_PATH.test(apiPath) || ARCGIS_FEATURES_PATH.test(apiPath)
+        ? dashMapLimiter
         : generalLimiter;
     limiter(req, res, next);
   });
@@ -308,6 +324,11 @@ export function buildDashApp(opts: BuildDashAppOptions = {}): express.Express {
   // (deviceMap=read in every seeded matrix), so this passes on a stock install
   // and fails closed if an operator ever edits that role down.
   api.use("/map", requirePermission("deviceMap", "read"), mapRouter);
+  // Custom device icons on the widget's topology. The main route asks for a
+  // session (requireAuth), which the wallboard never has; this listener's own
+  // source-IP gate stands in for it, at the same deviceMap=read floor as the
+  // topology that names the icons.
+  api.get("/device-icons/:id/image", requirePermission("deviceMap", "read"), serveIconImage);
   api.use("/weather", weatherRouter);
   // Published dashboards. The router carries its own savedDashboards=read
   // floor, satisfied by the built-in readonly role this listener answers as,

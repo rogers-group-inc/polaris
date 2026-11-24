@@ -164,13 +164,15 @@ export const dashWeatherLimiter = makeRateLimiter({
 });
 
 /**
- * Dash wallboard satellite tiles (rule 183's proxy, GET /map/satellite/:z/:x/:y).
- * A Topology view on the Device Map widget asks for a screenful of tiles per
- * pan or zoom, which the general 600/5min budget cannot carry. Every tile the
- * cache misses is an upstream fetch on the operator's imagery account, so it
- * gets a ceiling of its own rather than the weather proxy's.
+ * Dash wallboard map data for a Topology view on the Device Map widget:
+ * satellite tiles (rule 183's proxy, GET /map/satellite/:z/:x/:y) and ArcGIS
+ * feature queries (rule 188, GET /map/arcgis-layers/:id/features). Each pan
+ * or zoom asks for a screenful of tiles and one query per shown layer, which
+ * the general 600/5min budget cannot carry. A cache miss is an upstream fetch
+ * on the operator's imagery or ArcGIS account, so it gets a ceiling of its
+ * own rather than the weather proxy's.
  */
-export const dashSatelliteLimiter = makeRateLimiter({
+export const dashMapLimiter = makeRateLimiter({
   windowMs: 5 * 60 * 1000,
   max: 2000,
   message: "Rate limit exceeded — retry shortly.",
