@@ -82,10 +82,17 @@ Three things that cost time if you don't know them:
   2026-11-24 sweep (#130-144, all raised at once by a query-pack update on old code) re-asserted
   each bound at the sink in a form it does recognise: an anchored `RE.test()` before a SQL
   identifier, `Array.isArray(x) ? x.slice(0, N) : []` before a `.length` loop,
-  `if (v > MAX) return MAX` before a timer, a length cap before a string walk, and a **literal
-  origin ending in "/"** as the URL prefix (`` `https://graph.microsoft.com/${path.slice(1)}` ``,
-  not `BASE + path`, even when `BASE` is a const). Polynomial-ReDoS sites were rewritten
-  without the ambiguous regex: index loops, `split("-").map(trim)`, `search()` + `slice`.
+  `if (v > MAX) return MAX` before a timer, and a length cap before a string walk. All of those
+  closed on the next scan. Polynomial-ReDoS sites were rewritten without the ambiguous regex:
+  index loops, `split("-").map(trim)`, `search()` + `slice`.
+- **`js/request-forgery` (CodeQL 2.27) flags a user-supplied PATH under a fixed host.** A
+  literal origin prefix does NOT clear it. `` `https://graph.microsoft.com/${path.slice(1)}` ``
+  was pushed as the fix for #138, #139 and #143, and the next scan reported all three again
+  with the flow running straight through the literal. When the host is pinned and the
+  user-supplied part is either the feature (the Entra / Arc Query API consoles choose a Graph
+  or ARM path) or already bounded (the weather tile's integer-checked z/x/y), dismiss with
+  that reason. Don't rewrite it again: no prefix idiom satisfies this query. A user-supplied
+  HOST is a different case, covered in the next bullet.
 - **Reaching an operator-chosen host is a feature, not request forgery, but only behind the
   rule 110 guard.** The Generic API preview (#140) and the HA advisory probe (#141) exist to
   reach a host the operator typed. Both go through `assertOutboundHostAllowed` /
